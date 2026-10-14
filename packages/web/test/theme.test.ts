@@ -42,4 +42,16 @@ describe('theme tokens', () => {
       for (const bg of ['--warnBg', '--panel', '--bg', '--field']) expect(ratio(tok(b, '--warn'), tok(b, bg)), `${sel} ${bg}`).toBeGreaterThanOrEqual(4.5);
     }
   });
+  it('keeps the faint text colour --faint AA (4.5:1) on --panel, --bg, --field and --sel in every theme (Q3)', () => {
+    const lum = (hex: string) => {
+      const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+      return 0.2126 * c[0]! + 0.7152 * c[1]! + 0.0722 * c[2]!;
+    };
+    const ratio = (a: string, b: string) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x! + 0.05) / (y! + 0.05); };
+    const tok = (b: string, name: string) => new RegExp(`${name}:\\s*(#[0-9A-Fa-f]{6})`).exec(b)![1]!;
+    for (const sel of [':root {', ':root:not([data-theme="light"])', ':root[data-theme="dark"]']) {
+      const b = sel === ':root {' ? css.slice(css.indexOf(sel), css.indexOf('@media')) : block(sel);
+      for (const bg of ['--panel', '--bg', '--field', '--sel']) expect(ratio(tok(b, '--faint'), tok(b, bg)), `${sel} ${bg}`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
 });

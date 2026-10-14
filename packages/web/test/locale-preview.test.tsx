@@ -1,0 +1,216 @@
+import { render, screen, waitFor, within, act } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import type { Composition, LocalizationRow } from '@motion-studio/shared';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { I18nProvider } from '../src/i18n.tsx';
+
+class ApiError extends Error { constructor(public status: number, m: string, public code?: string) { super(m); } }
+const base = { $schema: 'motion-studio/composition@1', width: 1080, height: 1920, fps: 30, duration: 6, background: '#000000', fonts: [], scenes: [], tracks: [
+  { id: 't', kind: 'text', clips: [{ id: 'title', type: 'text', name: 'Title', start: 0, duration: 3, props: { text: 'Welcome' } }, { id: 'sub', type: 'text', start: 0, duration: 3, props: { text: 'Fresh' } }] },
+] } as unknown as Composition;
+const localized = (texts: Record<string, string>) => ({ ...base, tracks: [{ id: 't', kind: 'text', clips: [
+  { id: 'title', type: 'text', name: 'Title', start: 0, duration: 3, props: { text: texts.title } }, { id: 'sub', type: 'text', start: 0, duration: 3, props: { text: texts.sub } }] }] }) as unknown as Composition;
+let view: { composition: Composition; localization: { locale: string; stale: string[]; problems: string[]; voice: string } };
+const api = {
+  getLocalizedComposition: vi.fn(async (..._a: unknown[]) => ({ ...view, n: 3, format: 'reel', primaryFormat: 'reel', hash: 'h', files: [], fonts: [] })),
+  attachLocalePreview: vi.fn(async (..._a: unknown[]) => ({ files: ['assets/fonts/NotoSansJP-400.woff2'] })),
+  getEditorComposition: vi.fn(async (..._a: unknown[]) => ({ composition: base })),
+};
+vi.mock('../src/api.ts', () => ({ api, ApiError }));
+const { useLocalePreview } = await import('../src/screens/creative/useLocalePreview.ts');
+const { LocaleOutline, LocaleSwitcher } = await import('../src/screens/creative/LocaleSwitcher.tsx');
+type Player = Parameters<typeof useLocalePreview>[0]['player'];
+
+class FakePlayer extends EventTarget {
+  clipBounds: { clipId: string | null; bounds: { x: number; y: number; width: number; height: number } | null; scale: number } | null = null;
+  setComposition = vi.fn((_c: Composition) => 1);
+  select = vi.fn((id: string | null) => {
+    this.clipBounds = id ? { clipId: id, bounds: { x: 10, y: 20, width: 300, height: 80 }, scale: 0.5 } : null;
+    this.dispatchEvent(new Event('clipbounds'));
+  });
+}
+const row = (locale: LocalizationRow['locale'], over: Partial<LocalizationRow> = {}): LocalizationRow => ({ locale, instanceId: 'reel', hash: 'a'.repeat(64), origin: 'agent', stale: [], voice: 'original', ...over });
+
+function Harness({ player, rows, token = 'T'.repeat(43), brief = { locales: { primary: 'en', extra: ['de', 'ja', 'fr'] } } as const, original }: {
+  player: FakePlayer; rows: LocalizationRow[]; token?: string | null; brief?: { locales?: { primary: 'en'; extra: Array<'de' | 'ja' | 'fr'> } }; original?: () => Composition | null;
+}) {
+  const preview = useLocalePreview({ slug: 'acme', creative: 'c1', n: 3, format: 'reel', rows, player: player as unknown as Player, token, ...(original ? { original } : {}) });
+  return (
+    <I18nProvider locale="en">
+      <div style={{ position: 'relative' }}>
+        <LocaleOutline player={player as unknown as Player} preview={preview} />
+      </div>
+      <LocaleSwitcher brief={brief} preview={preview} />
+    </I18nProvider>
+  );
+}
+beforeEach(() => {
+  vi.clearAllMocks();
+  view = { composition: localized({ title: 'Willkommen', sub: 'Frisch' }), localization: { locale: 'de', stale: [], problems: [], voice: 'original' } };
+});
+
+describe('the language switcher of the preview', () => {
+  it('offers the original and only the languages that have a translation of the format', () => {
+    render(<Harness player={new FakePlayer()} rows={[row('de'), row('ja')]} />);
+    const group = screen.getByRole('radiogroup', { name: 'Language of the preview' });
+    expect(within(group).getByRole('radio', { name: 'Original (English)' }).getAttribute('aria-checked')).toBe('true');
+    expect((within(group).getByRole('radio', { name: 'German' }) as HTMLButtonElement).disabled).toBe(false);
+    const fr = within(group).getByRole('radio', { name: 'French' }) as HTMLButtonElement;
+    expect(fr.disabled).toBe(true);
+    expect(fr.title).toBe('Not translated');
+  });
+
+  it('shows nothing for a creative without languages (old briefs)', () => {
+    const { container } = render(<Harness player={new FakePlayer()} rows={[]} brief={{}} />);
+    expect(container.querySelector('.ms-loc')).toBeNull();
+    expect(screen.queryByRole('radiogroup')).toBeNull();
+  });
+
+  it('loads the localized composition, lets the session serve its fonts and voices, then sends it to the player', async () => {
+    const player = new FakePlayer();
+    render(<Harness player={player} rows={[row('de')]} />);
+    await userEvent.click(screen.getByRole('radio', { name: 'German' }));
+    await waitFor(() => expect(player.setComposition).toHaveBeenCalledOnce());
+    expect(api.getLocalizedComposition).toHaveBeenCalledWith('acme', 'c1', 3, 'reel', 'de');
+    expect(api.attachLocalePreview).toHaveBeenCalledWith('acme', 'c1', 3, 'de', 'reel', 'T'.repeat(43));
+    // The files are attached before the composition reaches the frame.
+    expect(api.attachLocalePreview.mock.invocationCallOrder[0]!).toBeLessThan(player.setComposition.mock.invocationCallOrder[0]!);
+    expect(player.setComposition.mock.calls[0]![0]).toBe(view.composition);
+    expect(screen.getByRole('radio', { name: 'German' }).getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('goes back to the original: the base composition (the draft) is sent again', async () => {
+    const player = new FakePlayer();
+    const draft = { ...base, duration: 9 } as Composition;
+    render(<Harness player={player} rows={[row('de')]} original={() => draft} />);
+    await userEvent.click(screen.getByRole('radio', { name: 'German' }));
+    await waitFor(() => expect(player.setComposition).toHaveBeenCalledOnce());
+    await userEvent.click(screen.getByRole('radio', { name: 'Original (English)' }));
+    expect(player.setComposition).toHaveBeenLastCalledWith(draft);
+    // The runtime selection of a flagged clip goes away with the language.
+    expect(player.select).toHaveBeenLastCalledWith(null);
+    // Without a draft the base composition is read from the core.
+    const second = new FakePlayer();
+    render(<Harness player={second} rows={[row('ja')]} />);
+    await userEvent.click(screen.getAllByRole('radio', { name: 'Japanese' }).at(-1)!);
+    await waitFor(() => expect(second.setComposition).toHaveBeenCalledOnce());
+    await userEvent.click(screen.getAllByRole('radio', { name: 'Original (English)' }).at(-1)!);
+    await waitFor(() => expect(second.setComposition).toHaveBeenLastCalledWith(base));
+  });
+
+  it('outlines the outdated clips with the "outdated" label, and the clips that overflow', async () => {
+    view = { composition: localized({ title: 'Willkommen', sub: 'Frisch' }), localization: {
+      locale: 'de', stale: ['title'], problems: ['The translation of "sub" does not fit its box, even at 70% size'], voice: 'original' } };
+    const player = new FakePlayer();
+    const { container } = render(<Harness player={player} rows={[row('de', { stale: ['title'] })]} />);
+    await userEvent.click(screen.getByRole('radio', { name: 'German' }));
+    const flags = await screen.findByRole('list', { name: 'Clips to check' });
+    const items = within(flags).getAllByRole('listitem');
+    expect(items.map((li) => li.textContent)).toEqual(['Titleoutdated', 'suboutside the box']);
+    // The first flagged clip is outlined at once, with its label.
+    await waitFor(() => expect(player.select).toHaveBeenCalledWith('title'));
+    const outline = container.querySelector('.ms-loc-outline') as HTMLElement;
+    expect(outline.dataset.clip).toBe('title');
+    expect(outline.className).toContain('ms-stale');
+    expect(outline.textContent).toBe('outdated');
+    expect(outline.style.left).toBe('10px');
+    expect(outline.style.width).toBe('300px');
+    // Another flagged clip is outlined when chosen from the list.
+    await userEvent.click(within(flags).getByRole('button', { name: /sub/ }));
+    await waitFor(() => expect((container.querySelector('.ms-loc-outline') as HTMLElement).dataset.clip).toBe('sub'));
+    expect(container.querySelector('.ms-loc-outline')!.textContent).toBe('outside the box');
+  });
+
+  it('an up-to-date translation flags nothing and outlines nothing', async () => {
+    const player = new FakePlayer();
+    const { container } = render(<Harness player={player} rows={[row('de')]} />);
+    await userEvent.click(screen.getByRole('radio', { name: 'German' }));
+    await waitFor(() => expect(player.setComposition).toHaveBeenCalled());
+    expect(screen.queryByRole('list', { name: 'Clips to check' })).toBeNull();
+    expect(container.querySelector('.ms-loc-outline')).toBeNull();
+  });
+
+  it('says why a translation cannot be shown', async () => {
+    api.getLocalizedComposition.mockRejectedValueOnce(new ApiError(409, 'The German translation no longer fits its composition', 'localization-unusable'));
+    const player = new FakePlayer();
+    render(<Harness player={player} rows={[row('de')]} />);
+    await userEvent.click(screen.getByRole('radio', { name: 'German' }));
+    expect((await screen.findByRole('alert')).textContent).toBe('The translation cannot be shown: The German translation no longer fits its composition');
+    expect(player.setComposition).not.toHaveBeenCalled();
+  });
+
+  it('a renewed session serves the translation again: the files are attached to the new token and the composition sent once more', async () => {
+    const player = new FakePlayer();
+    const r = render(<Harness player={player} rows={[row('de')]} token={'A'.repeat(43)} />);
+    await userEvent.click(screen.getByRole('radio', { name: 'German' }));
+    await waitFor(() => expect(player.setComposition).toHaveBeenCalledOnce());
+    await act(async () => { r.rerender(<Harness player={player} rows={[row('de')]} token={'B'.repeat(43)} />); });
+    await waitFor(() => expect(player.setComposition).toHaveBeenCalledTimes(2));
+    expect(api.attachLocalePreview).toHaveBeenLastCalledWith('acme', 'c1', 3, 'de', 'reel', 'B'.repeat(43));
+  });
+
+  it('flags by the core\'s issues (code and clip): two clips with the same name are told apart, and each kind has its own label', async () => {
+    const twin = (id: string, voice = false) => voice
+      ? { id, type: 'audio', role: 'voice', name: 'Narration', start: 0, duration: 3, src: 'assets/a.mp3', props: {} }
+      : { id, type: 'text', name: 'Headline', start: 0, duration: 3, props: { text: id } };
+    const composition = { ...base, tracks: [{ id: 't', kind: 'text', clips: [twin('h1'), twin('h2'), twin('h3'), twin('vo', true)] }] } as unknown as Composition;
+    view = { composition, localization: { locale: 'de', stale: [], voice: 'translated', problems: ['x'], issues: [
+      { code: 'textOverflow', clipId: 'h1', message: 'The translation of "Headline" does not fit its box, even at 70% size' },
+      { code: 'notTranslated', clipId: 'h2', message: '"Headline" is not translated yet' },
+      { code: 'voiceTooLong', clipId: 'vo', message: 'The translated voice of "Narration" lasts 3.0 s' },
+    ] } as never };
+    const player = new FakePlayer();
+    render(<Harness player={player} rows={[row('de')]} />);
+    await userEvent.click(screen.getByRole('radio', { name: 'German' }));
+    const flags = await screen.findByRole('list', { name: 'Clips to check' });
+    expect(within(flags).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Headlineoutside the box', 'Headlinenot translated', 'Narrationvoice problem']);
+    expect(within(flags).getAllByRole('button').map((b) => b.getAttribute('title'))).toEqual([
+      'The translation of "Headline" does not fit its box, even at 70% size', '"Headline" is not translated yet', 'The translated voice of "Narration" lasts 3.0 s',
+    ]);
+    await waitFor(() => expect(player.select).toHaveBeenCalledWith('h1'));
+  });
+
+  it('an old row (no issues) is read by the overflow sentences only: a "not translated" sentence is not an overflow', async () => {
+    view = { composition: localized({ title: 'W', sub: 'F' }), localization: { locale: 'de', stale: [], voice: 'original', problems: [
+      '"Title" is not translated yet', 'The translation of "sub" does not fit its box, even at 70% size',
+    ] } };
+    render(<Harness player={new FakePlayer()} rows={[row('de')]} />);
+    await userEvent.click(screen.getByRole('radio', { name: 'German' }));
+    const flags = await screen.findByRole('list', { name: 'Clips to check' });
+    expect(within(flags).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['suboutside the box']);
+  });
+});
+
+describe('the version a preview takes its translations from (live F3)', () => {
+  const comp = (format: string, hash: string) => ({ format, dir: `compositions/${format}`, hash });
+  const ver = (n: number, hashes: Record<string, string>, rows: LocalizationRow[] = []) => ({
+    n, compositions: Object.entries(hashes).map(([f, h]) => comp(f, h)), ...(rows.length ? { localizations: rows } : {}),
+  }) as never;
+  const h1 = '1'.repeat(64), h2 = '2'.repeat(64), h3 = '3'.repeat(64);
+
+  it('uses the shown version when it has the translations', async () => {
+    const { localePreviewSource } = await import('../src/screens/creative/useLocalePreview.ts');
+    const v1 = ver(1, { reel: h1 }, [row('de')]);
+    expect(localePreviewSource([v1, ver(2, { reel: h1 }, [row('ja')])], v1, 'reel')).toEqual({ n: 1, rows: [row('de')] });
+  });
+
+  it('takes the latest later version that carries the same composition and has translations of the format', async () => {
+    const { localePreviewSource } = await import('../src/screens/creative/useLocalePreview.ts');
+    const v1 = ver(1, { reel: h1, other: h1 });
+    const v2 = ver(2, { reel: h1, other: h2 }, [row('de'), row('ja')]);
+    const v3 = ver(3, { reel: h3, other: h2 }, [row('fr')]);
+    expect(localePreviewSource([v1, v2, v3], v1, 'reel')).toEqual({ n: 2, rows: [row('de'), row('ja')] });
+  });
+
+  it('ignores a later version whose composition of the format changed, and one without translations of it', async () => {
+    const { localePreviewSource } = await import('../src/screens/creative/useLocalePreview.ts');
+    const v1 = ver(1, { reel: h1 });
+    expect(localePreviewSource([v1, ver(2, { reel: h2 }, [row('de')]), ver(3, { reel: h1 }, [row('de', { instanceId: 'other' })])], v1, 'reel')).toEqual({ n: 1, rows: [] });
+  });
+
+  it('keeps the shown version for a legacy version without compositions', async () => {
+    const { localePreviewSource } = await import('../src/screens/creative/useLocalePreview.ts');
+    const v1 = { n: 1 } as never;
+    expect(localePreviewSource([v1, ver(2, { reel: h1 }, [row('de')])], v1, 'reel')).toEqual({ n: 1, rows: [] });
+  });
+});

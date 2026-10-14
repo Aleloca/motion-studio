@@ -5,8 +5,8 @@ import { basename, dirname, join, posix } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { FileHandle } from 'node:fs/promises';
 import type { Stats } from 'node:fs';
-import { COMPOSITION_MAX_BYTES, isCompositionPath } from '@motion-studio/shared';
-import { injectLayerBootstrap, renderRuntimePage, RUNTIME_FILES } from '@motion-studio/composition-runtime/page';
+import { COMPOSITION_MAX_BYTES, INSTANCE_FOLDER_RE, isCompositionPath } from '@motion-studio/shared';
+import { injectLayerBootstrap, renderRuntimePage, RUNTIME_FILES, safeZoneOf, type SafeZone } from '@motion-studio/composition-runtime/page';
 import { RUNTIME_DIST_DIR } from '@motion-studio/composition-runtime/dist';
 import { withConfinedFile } from '../brand/agent-guard.ts';
 import { readRegularFile } from '../safe-read.ts';
@@ -81,7 +81,8 @@ const FONT_EXT = new Set(['.woff2', '.woff', '.ttf', '.otf']);
 /** A segment of `versionDir` (`outputs/v3`): no dot first, so never `.` or `..`. */
 const VERSION_SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 /** A format id (shared formats `ID_RE`). */
-const FORMAT_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+/** A composition folder: a preset id, or an instance id `<preset>@<k>` (Phase 12). */
+const FORMAT_RE = INSTANCE_FOLDER_RE;
 const ENCODED_SEPARATOR_RE = /%(?:2f|5c|00)/i;
 const RANGE_RE = /^bytes=(\d{0,15})-(\d{0,15})$/;
 /** A normalised media file of the cache (`<sha256 of the source>-<fps>-<w>x<h>-n<recipe>.mp4`, media-normalize.ts). */
@@ -110,6 +111,8 @@ export interface CompositionServerOptions {
   now?: () => number;
   /** Called after each response with its method, path (no query; the token included) and status: diagnostics and tests. */
   onResponse?: (e: { method: string; path: string; status: number }) => void;
+  /** Called each time a localized preview's file is read whole and hashed (`serveLocaleAsset`): diagnostics and tests. */
+  onLocaleHash?: (rel: string) => void;
 }
 
 export interface MintSessionOptions {
@@ -133,6 +136,11 @@ export interface MintSessionOptions {
    * lenient rule). Without it the composition is inlined as given (the agent's schema forbids those fields anyway).
    */
   media?: SessionMedia;
+  /**
+   * The format's safe zone (insets), when its preset has one (Phase 12 final wave P6): inlined with the composition, so the
+   * render-mode text measure bounds a text clip without an explicit box by it.
+   */
+  safeZone?: { top: number; bottom: number; left: number; right: number };
 }
 
 /** One normalised video file and the values ffprobe read from it (media-normalize.ts). */
@@ -188,6 +196,14 @@ export interface CompositionSession {
    * Throws when refused, when the session ended or when it already serves 1000 media files.
    */
   addMedia(src: string, media: SessionMediaFile): Promise<AddedMedia>;
+  /**
+   * Preview only (Phase 12): the files a localized preview needs from the creative's PROJECT folder, `files` by project path
+   * (`assets/audio/…` voices and `assets/fonts/…` fallback fonts only) with the sha256 recorded for each. A request for one of
+   * them that the composition folder lacks is served from the project, after the bytes are read through the confined-read
+   * checks and found equal to the hash; anything else (not listed, changed, a link) is 404. `projectDir` must be the real
+   * project of the session's creative. Attaching again replaces the list. Throws when refused or when the session ended.
+   */
+  attachLocaleAssets(projectDir: string, files: Readonly<Record<string, string>>): Promise<void>;
 }
 
 export interface CompositionServer {
@@ -224,7 +240,24 @@ interface Session {
   realCreative: string;
   /** The staging overlay (preview only): the real staging folder and its identity. */
   staging: { dir: string; dev: number; ino: number } | null;
+  /** The localized preview's project files (preview only): the real project folder and the sha256 of each served path. */
+  locale: { dir: string; dev: number; ino: number; files: Map<string, string> } | null;
+  /** The format's safe zone, inlined in the runtime page (checked by `safeZoneOf`). */
+  safeZone: SafeZone | undefined;
 }
+
+/** Project folders a localized preview may serve from, and the largest such file. */
+const LOCALE_ASSET_RE = /^assets\/(?:audio|fonts)\/[^/]+$/;
+const MAX_LOCALE_ASSET_BYTES = 64 * 1024 * 1024;
+/** Locale files whose hash is known, by identity (`localeIdentity`); the oldest goes first past this many. */
+const MAX_LOCALE_HASHES = 512;
+/**
+ * The identity of an open locale file (its fstat): device, inode, size, mtime and ctime. Any write to the file, a rename onto
+ * its name or a metadata change moves ctime, so a known hash is reused only for the very same unchanged file.
+ */
+const localeIdentity = (s: Stats) => `${s.dev}:${s.ino}:${s.size}:${s.mtimeMs}:${s.ctimeMs}`;
+const MAX_LOCALE_ASSETS = 400;
+const HEX64 = /^[0-9a-f]{64}$/;
 
 const VIDEO_SOURCE_FIELDS = ['sourceStart', 'sourceVideoEnd', 'sourceTrusted', 'audioSrc', 'audioStart', 'originalSrc'] as const;
 
@@ -472,6 +505,74 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
     if (!ok) send(res, 404, headers);
   }
 
+  /** The sha256 of locale files already read whole, by identity (final wave P8: a voice scrubbed by range is hashed once). */
+  const localeHashes = new Map<string, string>();
+  /**
+   * One file of a localized preview that has a recorded hash (`dir` is the composition folder or the project), through the
+   * confined checks, served only when its sha256 is the recorded one (anything else is not served, whichever folder it is in):
+   * - the first time (or after any change: `localeIdentity`), read whole, hashed, and served from those very bytes;
+   * - while it is that same unchanged file, only the requested range is read, and served once the file's identity is checked
+   *   again after the read (a write meanwhile refuses it). Only these files (voices, fallback fonts, at most 64 MB) are hashed:
+   *   every other file of the session is served as before.
+   */
+  async function serveLocaleAsset(req: IncomingMessage, res: ServerResponse, dir: string, stillThere: () => Promise<boolean>, rel: string, sha256: string,
+    headers: Record<string, string | string[]>): Promise<boolean> {
+    if (!(await stillThere())) return false;
+    const r = await withConfinedFile(dir, rel, true, async (fh: FileHandle, info: Stats) => {
+      if (info.size > MAX_LOCALE_ASSET_BYTES) return { skipped: 'too-large' as const };
+      const identity = localeIdentity(info);
+      if (localeHashes.get(identity) === sha256) {
+        const size = info.size;
+        const range = parseRange(req.headers.range, size);
+        if (range === 'unsatisfiable') { send(res, 416, { ...headers, 'content-range': `bytes */${size}` }); return true as const; }
+        const { start, end } = range ?? { start: 0, end: size - 1 };
+        const length = size === 0 ? 0 : end - start + 1;
+        const body = Buffer.alloc(length);
+        let n = 0;
+        while (n < length) {
+          const { bytesRead } = await fh.read(body, n, length - n, start + n);
+          if (bytesRead === 0) break;
+          n += bytesRead;
+        }
+        if (n !== length || localeIdentity(await fh.stat()) !== identity) { localeHashes.delete(identity); return { skipped: 'outside' as const }; }
+        res.writeHead(range ? 206 : 200, {
+          ...headers, 'accept-ranges': 'bytes', 'content-length': String(length),
+          ...(range ? { 'content-range': `bytes ${start}-${end}/${size}` } : {}),
+        });
+        res.end(req.method === 'HEAD' ? undefined : body);
+        return true as const;
+      }
+      opts.onLocaleHash?.(rel);
+      const buf = Buffer.alloc(info.size + 1);
+      let n = 0;
+      for (;;) {
+        const { bytesRead } = await fh.read(buf, n, buf.length - n, n);
+        if (bytesRead === 0) break;
+        n += bytesRead;
+        if (n > info.size) return { skipped: 'too-large' as const };
+      }
+      const bytes = buf.subarray(0, n);
+      if (createHash('sha256').update(bytes).digest('hex') !== sha256) return { skipped: 'outside' as const };
+      // Remembered only for the identity it had before and after the read: a write during the read is never cached.
+      if (n === info.size && localeIdentity(await fh.stat()) === identity) {
+        localeHashes.delete(identity);
+        localeHashes.set(identity, sha256);
+        while (localeHashes.size > MAX_LOCALE_HASHES) localeHashes.delete(localeHashes.keys().next().value!);
+      }
+      const range = parseRange(req.headers.range, n);
+      if (range === 'unsatisfiable') { send(res, 416, { ...headers, 'content-range': `bytes */${n}` }); return true as const; }
+      const { start, end } = range ?? { start: 0, end: n - 1 };
+      const body = n === 0 ? Buffer.alloc(0) : bytes.subarray(start, end + 1);
+      res.writeHead(range ? 206 : 200, {
+        ...headers, 'accept-ranges': 'bytes', 'content-length': String(body.length),
+        ...(range ? { 'content-range': `bytes ${start}-${end}/${n}` } : {}),
+      });
+      res.end(req.method === 'HEAD' ? undefined : body);
+      return true as const;
+    });
+    return r === true;
+  }
+
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const headers = baseHeaders();
     if (req.headers.host !== expectedHost) return send(res, 421, headers);
@@ -490,6 +591,7 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
         if (page.kind !== 'file') return notFound();
         const html = renderRuntimePage(page.data.toString('utf8'), {
           base: `../${session.versionDir}/compositions/${session.format}/`, composition: session.composition,
+          ...(session.safeZone ? { safeZone: session.safeZone } : {}),
         });
         const body = Buffer.from(html, 'utf8');
         const pageHeaders: Record<string, string | string[]> = {
@@ -543,6 +645,21 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
         const served = await serveFile(req, res, staging.dir, rel, fileHeaders, { maxBytes: maxFileBytes, ranges: true, check: stagingStill });
         return served ? undefined : notFound();
       }
+    }
+    // A localized preview's fallback fonts and voices have a recorded hash: the file that wins (the composition folder's, else
+    // the project's) must be that one, else 404 (the composition folder is agent-writable, Ruling L).
+    const wanted = session.locale?.files.get(rel);
+    if (session.locale && wanted !== undefined) {
+      const inBase = await lstat(join(session.compDir, ...rel.split('/'))).then(() => true, (e: NodeJS.ErrnoException) => (e.code === 'ENOENT' || e.code === 'ENOTDIR' ? false : null));
+      if (inBase === null) return notFound();
+      if (inBase) return (await serveLocaleAsset(req, res, session.compDir, stillThere, rel, wanted, fileHeaders)) ? undefined : notFound();
+      const loc = session.locale;
+      const projectStill = async () => {
+        if ((await realpath(loc.dir).catch(() => null)) !== loc.dir) return false;
+        const st = await lstat(loc.dir).catch(() => null);
+        return st !== null && st.isDirectory() && st.dev === loc.dev && st.ino === loc.ino;
+      };
+      return (await serveLocaleAsset(req, res, loc.dir, projectStill, rel, wanted, fileHeaders)) ? undefined : notFound();
     }
     const ok = await serveFile(req, res, session.compDir, rel, fileHeaders, layer
       ? { maxBytes: maxLayerBytes, ranges: false, check: stillThere, transform: (html) => injectLayerBootstrap(html, `/${target.token}/runtime/layer.js`) }
@@ -604,7 +721,7 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
       const data: Session = {
         versionSegments: segs, versionDir: segs.join('/'), format: o.format, compDir, compDev: dirInfo.dev, compIno: dirInfo.ino,
         composition: media ? withSessionMedia(o.composition, media.bySrc) : o.composition, frameAncestors, sandboxed: o.mode === 'preview',
-        media: media?.session ?? null, realCreative, staging: null,
+        media: media?.session ?? null, realCreative, staging: null, locale: null, safeZone: safeZoneOf(o.safeZone),
       };
       const { token, expiresAt } = tokens.mint(data, ttl);
       const preview = o.mode === 'preview';
@@ -631,6 +748,20 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
           const info = await lstat(real);
           if (!info.isDirectory()) throw new Error('composition server: the staging folder is not a directory');
           liveData().staging = { dir: real, dev: info.dev, ino: info.ino };
+        },
+        async attachLocaleAssets(projectDir, files) {
+          liveData();
+          const entries = Object.entries(files ?? {});
+          if (entries.length > MAX_LOCALE_ASSETS) throw new Error('composition server: too many locale assets');
+          for (const [rel, hash] of entries) {
+            if (!LOCALE_ASSET_RE.test(rel) || !isCompositionPath(rel) || rel.normalize('NFC') !== rel || !HEX64.test(hash)) throw new Error('composition server: bad locale asset');
+          }
+          if (typeof projectDir !== 'string' || basename(dirname(realCreative)) !== 'creatives') throw new Error('composition server: not the creative\'s project');
+          const real = await realpath(projectDir);
+          if (real !== dirname(dirname(realCreative))) throw new Error('composition server: not the creative\'s project');
+          const info = await lstat(real);
+          if (!info.isDirectory()) throw new Error('composition server: the project folder is not a directory');
+          liveData().locale = { dir: real, dev: info.dev, ino: info.ino, files: new Map(entries) };
         },
         async addMedia(src, f) {
           liveData();

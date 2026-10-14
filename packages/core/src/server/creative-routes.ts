@@ -1,14 +1,16 @@
 import type { Git } from '../git.ts';
 import { recoverRenameJournal } from '../library/rename-recovery.ts';
 import { lstat, readdir, realpath } from 'node:fs/promises';
-import { dirname, join, sep } from 'node:path';
+import { basename, dirname, join, sep } from 'node:path';
+import { changedAssets, overlayAssetPaths, readOverlay } from '../localization/store.ts';
 import type { FastifyInstance } from 'fastify';
-import { briefSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatLabel, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage } from '@motion-studio/shared';
+import { messages, type JobSummary, INSTANCE_FOLDER_RE, briefSchema, briefWriteSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
 import { CreativeStore } from '../creatives/creative-store.ts';
-import { exportResolved, exportVersion, pendingRenders, resolveExportPicks } from '../creatives/export.ts';
+import { exportResolved, exportVersion, pendingRenders, resolveExportPicks, resolveLocalizedItems, type ExportItem } from '../creatives/export.ts';
+import { assertLocalesInBrief, checkedLocale } from '../localization/validate.ts';
 import { storyboardDir, storyboardSchema, sweepStoryboardTemps, type PreviewService } from '../creatives/previews.ts';
 import { readJsonFile } from '../json-file.ts';
 import { isRealDirChain } from '../creatives/core-files.ts';
@@ -17,16 +19,17 @@ import { formatSummaries } from '../creatives/format-summary.ts';
 import { withLazyHashes } from '../creatives/output-hashes.ts';
 import { creativeJobKey, PICK_RETRY_AFTER_SEC, type CreativeRef, type CreativeTurnService } from '../creatives/creative-turns.ts';
 import type { RenderJobService } from '../creatives/render-jobs.ts';
-import { reconcileRenders } from '../creatives/render-stamps.ts';
+import { reconcileRenders, renderFileMatches } from '../creatives/render-stamps.ts';
 import { sweepDerivedCaches, sweepEditorStaging } from '../creatives/cache-sweep.ts';
 import { editorCompositionView } from '../creatives/editor-staging.ts';
 import { directEditBodySchema, type DirectEditService } from '../creatives/direct-edit.ts';
 import { sweepProjectRenders } from '../render/render-sweep.ts';
-import { FormatCatalog } from '../formats/format-catalog.ts';
+import { FormatCatalog, findPreset } from '../formats/format-catalog.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { completeGitignore, sweepProject } from '../project-maintenance.ts';
 import { CodedError, expandHome, WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
 import { sendConfinedFile } from './serve-file.ts';
+import { localizedCompositionView } from './localization-routes.ts';
 import { currentLocale, t } from '../i18n.ts';
 
 export interface CreativeRoutesContext {
@@ -51,9 +54,22 @@ const isInsideDir = (p: string, base: string | null) => Boolean(base && p.starts
 
 /** `formats`: the formats the request applies to (spec §2.5); absent or empty: all of them. */
 export const turnBodySchema = z.object({ text: z.string().max(10_000).optional(), pins: z.array(pinSchema).max(50).optional(), formats: z.array(z.string().min(1).max(200)).max(100).optional() });
-const createBody = z.object({ title: z.string(), brief: briefSchema, generate: z.boolean().optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
+const createBody = z.object({ title: z.string(), brief: briefWriteSchema, generate: z.boolean().optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
 // `services` alone changes only that field of the stored brief (the composer's Services chip); `brief` replaces the brief.
-const editBody = z.object({ title: z.string().optional(), brief: briefSchema.optional(), services: briefSchema.shape.services, linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
+// `formatLabels` / `formats` alone merge into the stored brief the same way (Phase 12: inline labels, reorder, removal).
+// `formatLabels` merges per key (an omitted key is kept; `''` or `null` clears that key), so a stale tab cannot drop a newer label.
+// `formats` is checked against the stored ones by the core (only reorder or remove), so a legacy odd id can be taken out.
+const editBody = z.object({ title: z.string().optional(), brief: briefWriteSchema.optional(), services: briefSchema.shape.services,
+  formatLabels: z.record(z.string(), z.union([z.string().trim().max(60), z.null()])).optional(),
+  formats: z.array(z.string().min(1).max(200)).min(1).max(100).optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() })
+  .refine((b) => !b.brief || (b.formats === undefined && b.formatLabels === undefined), { message: 'issue.briefWithPartial' });
+/** Ruling H: a full brief save whose `formatLabels` name formats it no longer has drops those labels (no 400). */
+function pruneLabelsOfRemovedFormats(raw: unknown): unknown {
+  const b = (raw as { brief?: { formats?: unknown; formatLabels?: unknown } } | null)?.brief;
+  if (!b || !Array.isArray(b.formats) || !b.formatLabels || typeof b.formatLabels !== 'object' || Array.isArray(b.formatLabels)) return raw;
+  const kept = Object.fromEntries(Object.entries(b.formatLabels).filter(([k]) => (b.formats as unknown[]).includes(k)));
+  return { ...(raw as object), brief: { ...b, formatLabels: kept } };
+}
 const pickBody = z.object({ format: z.string().min(1).max(200), version: z.number().int().min(1).nullable() });
 /**
  * Export of the ★ versions (spec §3.3): `picks` (format → vN), `follow` (followers, exported in their primary's version),
@@ -71,10 +87,20 @@ const exportBody = z.object({
   pattern: z.unknown().optional(),
   date: z.unknown().optional(),
   version: z.number().int().min(1).optional(),
+  /** Phase 12 §3.5: the languages to export (the primary one is the primary-language file); absent: today's files. */
+  locales: z.array(z.string().min(1).max(40)).min(1).max(11).optional(),
+  /** "Render anyway" for translations rendered first that have open problems or outdated entries. */
+  force: z.boolean().optional(),
 });
 const linkBody = z.object({ follower: z.string().min(1).max(200), primary: z.string().min(1).max(200).nullable() });
 /** A render request (Task 5): `formats` to render (a follower stands for its primary); absent or empty: every primary. */
-const renderBody = z.object({ formats: z.array(z.string().min(1).max(200)).max(100).optional() }).strict();
+const renderBody = z.object({
+  formats: z.array(z.string().min(1).max(200)).max(100).optional(),
+  /** Phase 12 §3.5: languages to render (`outputs/vN/<instanceId>.<locale>.<ext>`); absent or empty: today's files. */
+  locales: z.array(z.string().min(1).max(40)).max(11).optional(),
+  /** "Render anyway": translations with open problems or outdated entries are rendered and marked as forced. */
+  force: z.boolean().optional(),
+}).strict();
 /**
  * A live preview session (Task 5b): the format, and the exact origin of the UI page that embeds the iframe. `renewFrom`
  * (Phase 10b): the session this one renews; the editor's staged files move to the new one when both show the same version
@@ -89,7 +115,8 @@ const stageBody = z.object({
     z.object({ kind: z.literal('brandFont'), id: z.string().min(1).max(64) }).strict(),
   ]),
 }).strict();
-const FOLDER_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+/** A composition folder's name: a preset id, or an instance id `<preset>@<k>` (Phase 12). */
+const FOLDER_RE = INSTANCE_FOLDER_RE;
 const FRAME_FILE_RE = /^f-\d{1,3}\.jpg$/;
 /** A pin frame of version n: `<n>-<i>.jpg` (creative-turns `extractPinFrames`). */
 const PIN_FRAME_RE = /^(\d{1,6})-(\d{1,3})(e?)\.jpg$/;
@@ -101,12 +128,12 @@ const PIN_FRAME_RE = /^(\d{1,6})-(\d{1,3})(e?)\.jpg$/;
  */
 function initialLinks(brief: Brief, presets: FormatPreset[]): Record<string, string> {
   if (brief.links === undefined) {
-    const known = brief.formats.map((id) => presets.find((p) => p.id === id)).filter((p): p is FormatPreset => p !== undefined);
+    const known = brief.formats.map((id) => findPreset(presets, id)).filter((p): p is FormatPreset => p !== undefined);
     return defaultLinks(known, undefined);
   }
   const links = effectiveLinks(brief.links, brief.formats);
   const e = t().errors;
-  const label = (id: string) => { const p = presets.find((x) => x.id === id); return p ? formatLabel(p, currentLocale()) : id; };
+  const label = (id: string) => formatDisplayName(presets, id, currentLocale(), brief.formatLabels);
   for (const [follower, primary] of Object.entries(links)) {
     const c = checkLink({ formats: brief.formats, links }, [], presets, follower, primary);
     if (!c.ok) throw new CodedError(400, e.linkIncompatible({ follower: label(follower), primary: label(primary), reason: e.followReason[c.reason] }), 'link-incompatible');
@@ -161,6 +188,20 @@ export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: st
     });
   }
 }
+
+/**
+ * Ruling L: whether the voice and font files a translation's row recorded are still those files, as a render would take
+ * them (the composition folder, then the project). An unreadable overlay counts as fine here: the render reports it.
+ */
+export const localeAssetsCheck = (projectDir: string, creativeDir: string) => async (n: number, row: LocalizationRow): Promise<boolean> => {
+  if (!row.assetHashes) return true;
+  const read = await readOverlay(creativeDir, n, row.locale, row.instanceId);
+  if (!read) return true;
+  const v = (await new CreativeStore(projectDir).readVersions(basename(creativeDir))).find((x) => x.n === n);
+  const dir = v?.compositions?.find((c) => c.format === row.instanceId)?.dir;
+  if (!dir) return true;
+  return (await changedAssets([join(creativeDir, 'outputs', `v${n}`, ...dir.split('/')), projectDir], row, overlayAssetPaths(read.overlay, row))).length === 0;
+};
 
 export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutesContext): void {
   const catalog = () => new FormatCatalog(ctx.requireWorkspace().root);
@@ -256,7 +297,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   });
 
   app.put<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c', async (req) => {
-    const body = parse(editBody, req.body);
+    const body = parse(editBody, pruneLabelsOfRemovedFormats(req.body));
     const ref = await refOf(req.params.slug, req.params.c);
     return ctx.turns.updateBrief(ref, body);
   });
@@ -287,7 +328,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const n = Number(req.params.n);
     if (!Number.isInteger(n) || n < 1) throw new WorkspaceError(404, t().errors.versionNotFound);
     const body = parse(renderBody, req.body);
-    return reply.status(202).send(await ctx.renders.start(ref, n, body.formats));
+    return reply.status(202).send(await ctx.renders.start(ref, n, body.formats, { ...(body.locales ? { locales: body.locales } : {}), ...(body.force !== undefined ? { force: body.force } : {}) }));
   });
 
   app.post<{ Params: { slug: string; c: string; n: string } }>('/api/projects/:slug/creatives/:c/versions/:n/reveal', async (req) => {
@@ -335,10 +376,21 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const creativeDir = ref.store.dir(ref.creativeSlug);
     const presets = (await catalog().load()).presets;
     // The pattern sent (else the workspace's) and the date the client previewed (else today) apply to both payloads.
+    // Languages (Phase 12): with extra languages the original's `{locale}` is the primary tag.
+    const extraLocales = creative.brief.locales?.extra ?? [];
+    const primaryLocale = extraLocales.length > 0 ? creative.brief.locales?.primary : undefined;
+    // Ruling R: one naming rule for the dialog and this default. The workspace pattern as it is: the original's names stay
+    // today's, and each translated file gets its language (`localizedStem`), exactly as the dialog sends and shows them.
     const pattern = typeof body.pattern === 'string' ? body.pattern : (await ctx.requireWorkspace().readSettings()).exportNamePattern;
+    const tags = body.locales ? [...new Set(body.locales.map((x) => checkedLocale(x, currentLocale())))] : null;
+    if (tags) assertLocalesInBrief(creative.brief, tags, currentLocale());
+    // The brief's primary language is today's file, also for a creative whose extra languages were all removed.
+    const briefPrimary = creative.brief.locales?.primary;
+    const includeSource = tags === null || (briefPrimary !== undefined && tags.includes(briefPrimary));
+    const otherTags = tags === null ? [] : tags.filter((x) => x !== briefPrimary);
     const common = { creativeDir, destination, slug: ref.creativeSlug, title: creative.title, forbiddenRoot: ref.root, presets, pattern,
       ...(typeof body.date === 'string' ? { now: body.date } : {}),
-      label: (id: string) => { const p = presets.find((x) => x.id === id); return p ? formatLabel(p, currentLocale()) : id; } };
+      label: (id: string) => formatDisplayName(presets, id, currentLocale(), creative.brief.formatLabels) };
     if (body.picks === undefined && body.follow === undefined && body.version !== undefined) {
       // The older single-version payload: every output of that version.
       const version = (await ref.store.readVersions(ref.creativeSlug)).find((v) => v.n === body.version);
@@ -360,7 +412,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     // Task 5b: a v2 ★ with no current render is rendered first (a render job per version, its progress on the job list),
     // then the picks are resolved again on the new records and copied. Legacy versions export their media as they are.
     const rendered: Array<{ version: number; formats: string[] }> = [];
-    if (pending.size > 0) {
+    if (pending.size > 0 && includeSource) {
       await ctx.renders.renderAndWait(ref, pending);
       for (const [version, formats] of pending) rendered.push({ version, formats });
       ({ items, pending } = await resolve());
@@ -373,7 +425,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     // reported apart (`excluded`, with its problems and their codes: P2, never a silent exclusion); the dialog then shows
     // the problems and copies it once the row is ticked again.
     const problems: string[] = [];
-    const excluded: Array<{ format: string; version: number; problems: string[]; issues: OutputIssue[] }> = [];
+    const excluded: Array<{ format: string; version: number; problems: string[]; issues: OutputIssue[]; locale?: string }> = [];
     if (rendered.length > 0) {
       const versions = await ref.store.readVersions(ref.creativeSlug);
       items = items.filter((it) => {
@@ -387,10 +439,63 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       });
       if (!items.length) throw new CodedError(409, t().export.renderProblemsOnly({ list: problems.join(', ') }), 'export-render-problems');
     }
-    const result = await exportResolved(items, common);
+    const localeRendered: Array<{ version: number; formats: string[]; locale: string }> = [];
+    if (tags !== null || primaryLocale !== undefined) {
+      const loc = await withLocales(ref, creativeDir, items, { includeSource, primaryLocale, otherTags, force: body.force === true, label: common.label });
+      localeRendered.push(...loc.rendered);
+      // Ruling J: a translation rendered now with problems is not copied either: reported in `excluded`, as the primary's (I2).
+      items = loc.items.filter((it) => {
+        if (!it.localized || !it.problems?.length || !loc.rendered.some((r) => r.version === it.n && r.locale === it.locale && r.formats.includes(it.format))) return true;
+        problems.push(t().export.renderProblems({ item: `${common.label(it.format)} v${it.n} (${it.locale})`, list: it.problems.join('; ') }));
+        excluded.push({ format: it.format, version: it.n, locale: it.locale!, problems: it.problems, issues: [] });
+        return false;
+      });
+      if (!items.length) throw new CodedError(409, t().export.renderProblemsOnly({ list: problems.join(', ') }), 'export-render-problems');
+    }
+    const result = await exportResolved(items.map(({ problems: _p, ...it }) => it), common);
     const withProblems = excluded.length ? { ...result, excluded } : result;
-    return rendered.length > 0 ? { ...withProblems, rendered } : withProblems;
+    const allRendered = [...rendered, ...localeRendered];
+    return allRendered.length > 0 ? { ...withProblems, rendered: allRendered } : withProblems;
   });
+
+  /**
+   * The export items with their languages (Phase 12, spec §3.5): the primary-language files (when exported) carry the primary
+   * tag, and each other language adds the translated renders of the same formats and versions. A translation without a
+   * current render is rendered first (409 `localization-needs-force` when it has open problems or outdated entries and
+   * `force` is not set: the dialog asks "render anyway"); a format with no translation is refused (409 `localization-missing`).
+   */
+  async function withLocales(ref: CreativeRef & { store: CreativeStore }, creativeDir: string, items: ExportItem[],
+    o: { includeSource: boolean; primaryLocale: string | undefined; otherTags: string[]; force: boolean; label: (id: string) => string }):
+    Promise<{ items: ExportItem[]; rendered: Array<{ version: number; formats: string[]; locale: string }> }> {
+    const source = o.includeSource ? items.map((it) => (o.primaryLocale !== undefined ? { ...it, locale: o.primaryLocale } : it)) : [];
+    const rendered: Array<{ version: number; formats: string[]; locale: string }> = [];
+    if (o.otherTags.length === 0) return { items: source, rendered };
+    const v = messages(currentLocale()).variants;
+    const matches = (n: number, file: string, sha: string) => renderFileMatches(ref.projectDir, creativeDir, ref.creativeSlug, n, file, sha);
+    const assets = localeAssetsCheck(ref.projectDir, creativeDir);
+    let r = await resolveLocalizedItems(creativeDir, await ref.store.readVersions(ref.creativeSlug), items, o.otherTags, matches, assets);
+    const refuseMissing = () => {
+      if (r.missing.length === 0) return;
+      const list = r.missing.map((x) => `${o.label(x.format)} v${x.n} (${x.locale})`);
+      const err = new CodedError(409, v.localizationMissing({ list: list.slice(0, 10).join(', ') }), 'localization-missing');
+      err.problems = list.slice(0, 50);
+      throw err;
+    };
+    refuseMissing();
+    if (r.pending.size > 0) {
+      for (const [n, p] of r.pending) {
+        await ctx.renders.renderLocalesAndWait(ref, n, p.formats, p.locales, o.force);
+        for (const locale of p.locales) rendered.push({ version: n, formats: [...p.formats], locale });
+      }
+      r = await resolveLocalizedItems(creativeDir, await ref.store.readVersions(ref.creativeSlug), items, o.otherTags, matches, assets);
+      refuseMissing();
+      if (r.pending.size > 0) {
+        const list = [...r.pending].flatMap(([n, p]) => p.formats.map((f) => `${o.label(f)} v${n}`)).join(', ');
+        throw new CodedError(409, t().export.renderFailed({ list }), 'export-render-failed');
+      }
+    }
+    return { items: [...source, ...r.items], rendered };
+  }
 
   /**
    * What a ★ export would have to render first (Task 5b), started now: the web shows "Rendering 2 formats first…" with the
@@ -402,19 +507,40 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     if (!r.success || (r.data.picks === undefined && r.data.follow === undefined)) throw new CodedError(400, t().export.invalidPicks, 'export-invalid-picks');
     const creative = await ref.store.get(ref.creativeSlug);
     const creativeDir = ref.store.dir(ref.creativeSlug);
+    const presetsForLabels = r.data.locales ? (await catalog().load()).presets : [];
     await reconcileRenders({ projectDir: ref.projectDir, store: ref.store, creativeSlug: ref.creativeSlug }).catch(() => false);
     const { versions, complete } = await withLazyHashes({ projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir, versions: await ref.store.readVersions(ref.creativeSlug) });
     // As for the export: a follower's version is never decided on partial hashes.
     if (!complete && r.data.follow !== undefined) throw new CodedError(503, t().errors.hashesPending, 'hashes-pending', PICK_RETRY_AFTER_SEC);
     const items = resolveExportPicks({ creativeDir, destination: '/', slug: ref.creativeSlug, versions, picks: (r.data.picks ?? {}) as Record<string, number>,
       follow: r.data.follow as string[] | Record<string, number> | undefined, links: effectiveLinks(creative.brief.links, creative.brief.formats), storedPicks: creative.exportPicks });
-    const pending = await pendingRenders(creativeDir, versions, items);
-    const renders = [];
+    // Languages (Phase 12): the primary one is today's file; the others' translations without a current render are started too.
+    const briefPrimary = creative.brief.locales?.primary;
+    const tags = r.data.locales ? [...new Set(r.data.locales.map((x) => checkedLocale(x, currentLocale())))] : null;
+    if (tags) assertLocalesInBrief(creative.brief, tags, currentLocale());
+    const includeSource = tags === null || (briefPrimary !== undefined && tags.includes(briefPrimary));
+    const otherTags = tags === null ? [] : tags.filter((x) => x !== briefPrimary);
+    const pending = includeSource ? await pendingRenders(creativeDir, versions, items) : new Map<number, string[]>();
+    const renders: Array<{ version: number; formats: string[]; job: JobSummary; covers: boolean; locales?: string[] }> = [];
     // Answers at once: an active job of that version is reused for the formats it covers and a follow-up job is queued for
     // the rest (I3), so the job returned covers them all.
     for (const [version, formats] of pending) {
       const { job, covers } = await ctx.renders.ensureJob(ref, version, formats, { wait: false });
       renders.push({ version, formats, job, covers });
+    }
+    if (otherTags.length > 0) {
+      const loc = await resolveLocalizedItems(creativeDir, versions, items, otherTags,
+        (n, file, sha) => renderFileMatches(ref.projectDir, creativeDir, ref.creativeSlug, n, file, sha), localeAssetsCheck(ref.projectDir, creativeDir));
+      if (loc.missing.length > 0) {
+        const list = loc.missing.map((x) => `${formatDisplayName(presetsForLabels, x.format, currentLocale(), creative.brief.formatLabels)} v${x.n} (${x.locale})`);
+        const err = new CodedError(409, messages(currentLocale()).variants.localizationMissing({ list: list.slice(0, 10).join(', ') }), 'localization-missing');
+        err.problems = list.slice(0, 50);
+        throw err;
+      }
+      for (const [version, p] of loc.pending) {
+        const job = await ctx.renders.start(ref, version, p.formats, { locales: p.locales, force: r.data.force === true });
+        renders.push({ version, formats: p.formats, job, covers: true, locales: p.locales });
+      }
     }
     return { renders };
   });
@@ -450,11 +576,16 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
    * The editor's view of one format of a saved v2 version (Phase 10b): the primary's composition (a follower's is its
    * primary's, `primaryFormat`), its files and the fonts offered. 404 for a legacy version or a format it lacks.
    */
-  app.get<{ Params: { slug: string; c: string; n: string; format: string } }>('/api/projects/:slug/creatives/:c/versions/:n/compositions/:format', async (req) => {
+  app.get<{ Params: { slug: string; c: string; n: string; format: string }; Querystring: { locale?: string } }>('/api/projects/:slug/creatives/:c/versions/:n/compositions/:format', async (req) => {
     const ref = await refOf(req.params.slug, req.params.c);
     const n = /^\d{1,6}$/.test(req.params.n) ? Number(req.params.n) : 0;
     const version = n > 0 ? (await ref.store.readVersions(ref.creativeSlug)).find((v) => v.n === n) : undefined;
     if (!version) throw new WorkspaceError(404, t().errors.versionNotFound);
+    // `?locale=xx` (Phase 12): the localized composition for the preview, with the language's stale ids and problems.
+    if (req.query.locale !== undefined) {
+      return localizedCompositionView({ projectDir: ref.projectDir, creativeDir: ref.store.dir(ref.creativeSlug), version, format: req.params.format,
+        rawLocale: req.query.locale, presets: (await catalog().load()).presets, locale: currentLocale() });
+    }
     return editorCompositionView({
       projectDir: ref.projectDir, creativeDir: ref.store.dir(ref.creativeSlug), version, format: req.params.format,
       presets: (await catalog().load()).presets, locale: currentLocale(),
@@ -481,6 +612,18 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const ref = await refOf(req.params.slug, req.params.c);
     const body = parse(directEditBodySchema, req.body);
     return ctx.edits.save({ root: ref.root, projectSlug: ref.projectSlug, projectDir: ref.projectDir, creativeSlug: ref.creativeSlug }, body, currentLocale());
+  });
+
+  /**
+   * Duplicate format (Phase 12, `DirectEditService.duplicate`): `{ instanceId, label? }` → `{ version, instanceId }`, a new
+   * editor version with a copy of that instance's composition of version n as the next instance of its preset. 409 while a
+   * turn or a render runs, when 20 instances exist or the source is not in version n.
+   */
+  app.post<{ Params: { slug: string; c: string; n: string } }>('/api/projects/:slug/creatives/:c/versions/:n/duplicate-format', async (req) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const n = /^\d{1,6}$/.test(req.params.n) ? Number(req.params.n) : 0;
+    if (n < 1) throw new CodedError(404, t().errors.versionNotFound, 'version-not-found');
+    return ctx.edits.duplicate({ root: ref.root, projectSlug: ref.projectSlug, projectDir: ref.projectDir, creativeSlug: ref.creativeSlug }, n, req.body, currentLocale());
   });
 
   /**

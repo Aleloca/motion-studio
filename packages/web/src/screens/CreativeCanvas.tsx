@@ -4,7 +4,7 @@
 // Brief panel, the version history with Compare, and Export. Replaces the interim CreativePage. A board opens in the
 // format view (screens/FormatView.tsx) with T3.
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
-import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, formatName, outputWarningText, shownTotal, type ConversationEntry, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
+import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, outputWarningText, shownTotal, type ConversationEntry, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../api.ts';
@@ -14,6 +14,7 @@ import { Conversation } from '../components/Conversation.tsx';
 import type { EventsState } from '../eventsReducer.ts';
 import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
 import { D, enter, flip, pulse, stagger, usePageShortcut } from '../motion/index.ts';
+import { instanceName, presetFor } from '../instances.ts';
 import { href, routeKey } from '../routes.ts';
 import { useBarClaim } from '../shell/barSlots.ts';
 import { setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } from '../shell/intents.ts';
@@ -22,11 +23,15 @@ import { Button, ChannelMark, Empty, Icon, Input, Pill, Spinner, Tabs, Tag, Togg
 import { useCreative } from '../useCreative.ts';
 import { jobLiveTokens, jobUsagePartial } from '../usageLive.ts';
 import { costText, TokenCount, UsageBadge } from '../shell/Tokens.tsx';
-import { boardLabel, CanvasBoard, type Draft, type Tool } from './CanvasBoard.tsx';
+import { boardLabel, boardName, CanvasBoard, type Draft, type Tool } from './CanvasBoard.tsx';
 import { boardsWith, fitBoards, isTall, ratioText, type BoardModel } from './canvasModel.ts';
 import { CompareDialog } from './CompareDialog.tsx';
 import { channelOf } from './creativeState.ts';
 import { ExportDialog, type ExportSnapshot } from './ExportDialog.tsx';
+import { StorePackExport } from './creative/StorePackExport.tsx';
+import { LanguagesButton } from './creative/LanguagesButton.tsx';
+import { RenderLanguagesDialog } from './creative/RenderLanguagesDialog.tsx';
+import { creativeLocales, packLanguageGaps } from './creative/languagesModel.ts';
 import { activatesControl, bare, inOverlay, isTyping } from './keys.ts';
 import { pinsKey, usePendingPins } from './pendingPins.ts';
 import { FollowerChip, FormatBadge, useNewVersionNotice, useVersionActions, VersionTimeline } from './FormatVersions.tsx';
@@ -123,7 +128,7 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
   // Boards.
   const boards = useMemo(() => {
     if (!detail || !presetsLoaded || presetsFailure) return [];
-    return boardsWith(detail.creative.brief.formats, presets, versions, (id) => boardSource(states, id, viewing));
+    return boardsWith(detail.creative.brief.formats, presets, versions, (id) => boardSource(states, id, viewing), detail.creative.brief.formatLabels);
   }, [detail, presets, presetsLoaded, presetsFailure, versions, states, viewing]);
   const [sel, setSel] = useState<string | null>(null);
 
@@ -237,11 +242,14 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
 
   // Version actions.
   const [actionError, setActionError] = useState<string | null>(null);
-  const formatLabel = (id: string) => boardLabel({ id, preset: presets.find((p) => p.id === id) ?? null, out: null }, locale);
+  const formatLabel = (id: string) => boardLabel({ id, preset: presetFor(presets, id), out: null, labels: detail?.creative.brief.formatLabels }, locale);
   const actions = useVersionActions({ slug, creative, states, labelOf: formatLabel, resumeFrom: detail?.creative.resumeFrom?.version ?? null, onChanged: reload, onError: setActionError });
   // Renders of v2 versions (Task 8): a board's Retry and its menu's "Render vN", and the bar's "Render ★".
   const jobList = useMemo(() => Object.values(live.jobs), [live.jobs]);
+  // A creative with languages asks which ones first (Phase 12); the others render at once.
+  const [renderPlan, setRenderPlan] = useState<Array<[number, string[]]> | null>(null);
   const renderNow = (list: Array<[number, string[]]>) => {
+    if (detail?.creative.brief.locales?.extra.length) { setRenderPlan(list); return; }
     // One request per version: each starts or not on its own, and the toast says which.
     void Promise.allSettled(list.map(([n, formats]) => Promise.resolve().then(() => api.renderVersion(slug, creative, n, formats)))).then((results) => {
       const started = results.reduce((k, r, i) => k + (r.status === 'fulfilled' ? list[i]![1].length : 0), 0);
@@ -267,6 +275,7 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
     setCompare({ open: true, init: other < shown ? [other, shown] : [shown, other], format });
   };
   const [exporting, setExporting] = useState<{ open: boolean; snapshot: ExportSnapshot } | null>(null);
+  const [packExport, setPackExport] = useState(false);
 
   // Open a board in the format view (T3): its rect goes along for the shared-element transition.
   const openEditor = (id: string, frame: HTMLElement) => {
@@ -372,8 +381,7 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
   const followsOf = (id: string) => {
     const primary = states[id]?.follows;
     if (!primary) return null;
-    const p = presets.find((x) => x.id === primary);
-    return t.web.formatVersions.follows({ primary: p ? formatName(p, locale) : primary });
+    return t.web.formatVersions.follows({ primary: instanceName(presetFor(presets, primary), primary, locale, cr.brief.formatLabels) });
   };
   const primaries = cr.brief.formats.filter((f) => states[f] && !states[f]!.follows);
   const appliesTo = versions.length && primaries.length > 1 ? {
@@ -390,8 +398,7 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
     if (s.follows) {
       const primary = formatLabel(s.follows);
       // In the narrow header the primary goes by its format name, as the column does (the menu keeps the full label).
-      const pp = presets.find((p) => p.id === s.follows);
-      const short = pp ? formatName(pp, locale) : primary;
+      const short = instanceName(presetFor(presets, s.follows), s.follows, locale, cr.brief.formatLabels);
       const star = states[s.follows]?.star.version ?? null;
       return {
         badge: <FollowerChip label={formatLabel(b.id)} primary={primary} short={short} primaryStar={star} follower={b.id} actions={actions} busy={busyLinks}
@@ -450,6 +457,12 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
               {t.web.render.renderStars}
             </Button>
           ) : null}
+          <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} />
+          {cr.brief.storePack ? (
+            <Button variant="outline" className="ms-cv-pack-export" disabled={!version} onClick={() => setPackExport(true)}>
+              <Icon name="download" size={13} strokeWidth={1.7} />{t.web.storePack.export.action}
+            </Button>
+          ) : null}
           <Button variant="ink" className="ms-cv-export" disabled={!version} onClick={() => { if (version) setExporting({ open: true, snapshot: { versions, states } }); }}>
             <Icon name="download" size={13} strokeWidth={1.7} />{c.export}
           </Button>
@@ -468,12 +481,12 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
                 <Icon name={b.preset?.kind === 'image' ? 'image' : 'video'} size={14} />
                 {followsOf(b.id) ? (
                   <span className="ms-cv-fmt-text">
-                    <span className="ms-navitem-label">{b.preset ? formatName(b.preset, locale) : b.id}</span>
+                    <span className="ms-navitem-label">{boardName(b, locale)}</span>
                     <span className="ms-cv-fmt-follows"><Icon name="link" size={11} />{followsOf(b.id)}</span>
                   </span>
                 ) : (
                   <>
-                    <span className="ms-navitem-label">{b.preset ? formatName(b.preset, locale) : b.id}</span>
+                    <span className="ms-navitem-label">{boardName(b, locale)}</span>
                     <span className="ms-cv-fmt-side">{formatSide(b.id, b.preset)}</span>
                   </>
                 )}
@@ -578,10 +591,23 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
 
       {compare ? (
         <CompareDialog open={compare.open} onClose={() => setCompare((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
-          versions={versions} presets={presets} states={states} format={compare.format} initial={compare.init} actions={actions} />
+          versions={versions} presets={presets} labels={cr.brief.formatLabels} states={states} format={compare.format} initial={compare.init} actions={actions} />
       ) : null}
       <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
-        title={title} snapshot={exporting?.snapshot ?? null} presets={presets} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings} jobs={live.jobs} />
+        title={title} snapshot={exporting?.snapshot ?? null} presets={presets} labels={cr.brief.formatLabels} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings} jobs={live.jobs}
+        {...(creativeLocales(cr.brief) ? { locales: creativeLocales(cr.brief)! } : {})} />
+      {cr.brief.storePack && version ? (() => {
+        const packGaps = packLanguageGaps(cr.brief.formats, version, creativeLocales(cr.brief)?.extra ?? []);
+        return (
+        <StorePackExport open={packExport} onClose={() => setPackExport(false)} slug={slug} creative={creative} title={title} version={version.n}
+          untranslated={packGaps.untranslated} needsReview={packGaps.review}
+          {...(creativeLocales(cr.brief) ? { locales: creativeLocales(cr.brief)! } : {})} />
+        );
+      })() : null}
+      {renderPlan && creativeLocales(cr.brief) ? (
+        <RenderLanguagesDialog open onClose={() => setRenderPlan(null)} slug={slug} creative={creative} plan={renderPlan} locales={creativeLocales(cr.brief)!}
+          rowsOf={(n) => versions.find((v) => v.n === n)?.localizations ?? []} labelOf={formatLabel} />
+      ) : null}
     </div>
   );
 }
@@ -796,7 +822,7 @@ function BriefTab({ project, detail, presets, disabled, formatLabel, onChanged }
     return (
       <div className="ms-cv-tabbody ms-cv-brief-edit">
         <Button size="sm" variant="ghost" className="ms-cv-brief-back" onClick={() => setEditing(false)}><Icon name="back" size={13} />{c.back}</Button>
-        <BriefEditor slug={project} detail={detail} presets={presets} disabled={disabled} onChanged={() => { setEditing(false); onChanged(); }} />
+        <BriefEditor slug={project} detail={detail} presets={presets} disabled={disabled} onChanged={() => { setEditing(false); onChanged(); }} onRefresh={onChanged} />
       </div>
     );
   }

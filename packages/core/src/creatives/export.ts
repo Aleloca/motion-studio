@@ -1,7 +1,8 @@
 import { access, constants, lstat, mkdir, realpath, rm, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { DEFAULT_EXPORT_NAME_PATTERN, exportExtension, exportNameCollisions, exportNameVars, followerMatches, followerVersion, hasFormat, renderName, renderState, starOf, type FormatPreset, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_NAME_PATTERN, exportExtension, exportNameCollisions, exportNameVars, followerMatches, followerVersion, hasFormat, localizedStem, renderName, renderState, separateInstanceNames, starOf, type FormatPreset, type VersionEntry } from '@motion-studio/shared';
 import { copyConfinedFile, probeConfinedFile } from '../brand/agent-guard.ts';
+import { findPreset } from '../formats/format-catalog.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
 import { t } from '../i18n.ts';
 
@@ -23,10 +24,10 @@ const isInside = (p: string, base: string) => {
  * Copies `from` to `to` without overwriting (EEXIST when `to` exists). On a failure after creating `to`, the error carries
  * `targetCreated: true` so the export removes the partial file; without it nothing is removed.
  */
-type CopyFn = (from: string, to: string, mode: number) => Promise<void>;
+export type CopyFn = (from: string, to: string, mode: number) => Promise<void>;
 
 /** Copies without overwriting; null when the computed target would not be a direct child of `dir`. */
-async function copyUnique(copy: CopyFn, from: string, dir: string, stem: string, ext: string): Promise<string | null> {
+export async function copyUnique(copy: CopyFn, from: string, dir: string, stem: string, ext: string): Promise<string | null> {
   for (let i = 1; ; i++) {
     const to = join(dir, i === 1 ? `${stem}${ext}` : `${stem}-${i}${ext}`);
     if (dirname(to) !== dir) return null;
@@ -41,7 +42,8 @@ async function copyUnique(copy: CopyFn, from: string, dir: string, stem: string,
   }
 }
 
-function reasonOf(e: unknown): string {
+/** The export's text for a failed write (disk full, permission, quota, name too long, other). */
+export function reasonOf(e: unknown): string {
   switch ((e as NodeJS.ErrnoException).code) {
     case 'ENOSPC': return t().export.diskFull;
     case 'EACCES': case 'EPERM': case 'EROFS': return t().export.permissionDenied;
@@ -70,7 +72,13 @@ async function resolveLoose(p: string): Promise<string> {
  * One file to export: the output `file` of `format` in version `n`. `v` is the number the name's `{v}` shows when it
  * differs from `n`: a follower is named after its primary's version (decisions log 140), whose file is byte-identical.
  */
-export interface ExportItem { format: string; n: number; v?: number; file: string; width: number; height: number }
+export interface ExportItem { format: string; n: number; v?: number; file: string; width: number; height: number;
+  /** The language of the file (Phase 12): the `{locale}` of its name; absent for a creative without extra languages. */
+  locale?: string;
+  /** A translated render (not the primary language's file). */
+  localized?: boolean;
+  /** A translated render's own problems (its checks and the browser's overflow measure, Phase 12 Rulings I and J). */
+  problems?: string[] }
 
 export interface ExportCommon {
   creativeDir: string;
@@ -89,7 +97,8 @@ export interface ExportCommon {
   copy?: CopyFn;
 }
 
-const plainName = (f: string) => Boolean(f) && f !== '.' && f !== '..' && f === basename(f) && !f.includes('\\') && !f.includes('/');
+/** A plain file name (no folder part, not `.`/`..`). */
+export const plainName = (f: string) => Boolean(f) && f !== '.' && f !== '..' && f === basename(f) && !f.includes('\\') && !f.includes('/');
 
 /**
  * Copies the files of `items` into `destination`, named with the pattern, never overwriting (`-2`, `-3`…).
@@ -97,13 +106,31 @@ const plainName = (f: string) => Boolean(f) && f !== '.' && f !== '..' && f === 
  * folder) or with an unsafe name is `'refuse'`d (409 `export-file-missing`, nothing copied) or `'skip'`ped (listed in
  * `skipped`; 404 when nothing is left). Names that collide (case-insensitively) are refused before any copy.
  */
-async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refuse' | 'skip', emptyN: number): Promise<ExportResult> {
-  const dest = opts.destination.trim();
+/**
+ * The export destination rules, before anything is written: an absolute path (400 `export-invalid-destination`), never inside
+ * `forbiddenRoot` (the workspace), links resolved. Returns the trimmed destination.
+ */
+export async function checkDestination(destination: string, forbiddenRoot?: string): Promise<string> {
+  const dest = destination.trim();
   if (!isAbsolute(dest)) throw new CodedError(400, t().export.absoluteDestination, 'export-invalid-destination');
-  if (opts.forbiddenRoot) {
-    const root = await resolveLoose(opts.forbiddenRoot);
+  if (forbiddenRoot) {
+    const root = await resolveLoose(forbiddenRoot);
     if (isInside(await resolveLoose(dest), root)) throw new WorkspaceError(400, t().export.outsideWorkspace);
   }
+  return dest;
+}
+
+/** Creates the (checked) destination folder when needed and makes sure it is a writable folder (400 otherwise). */
+export async function ensureDestination(dest: string): Promise<void> {
+  const info = await lstat(dest).catch(() => null);
+  if (info && !info.isDirectory() && !info.isSymbolicLink()) throw new WorkspaceError(400, t().export.destinationIsFile);
+  try { await mkdir(dest, { recursive: true }); await access(dest, constants.W_OK); }
+  catch { throw new WorkspaceError(400, t().export.cannotWrite({ path: dest })); }
+  if (!(await stat(dest)).isDirectory()) throw new WorkspaceError(400, t().export.destinationIsFile);
+}
+
+async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refuse' | 'skip', emptyN: number): Promise<ExportResult> {
+  const dest = await checkDestination(opts.destination, opts.forbiddenRoot);
   const label = opts.label ?? ((f: string) => f);
   const skipped: string[] = [];
   const bad: ExportItem[] = [];
@@ -119,19 +146,23 @@ async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refu
   const date = opts.now ?? new Date();
   const pattern = opts.pattern ?? DEFAULT_EXPORT_NAME_PATTERN;
   const named = ok.map((it) => {
-    const r = renderName(pattern, exportNameVars({ title: opts.title, slug: opts.slug, format: it.format, preset: opts.presets?.find((p) => p.id === it.format),
-      size: { width: it.width, height: it.height }, version: it.v ?? it.n, date }));
+    const r = renderName(pattern, exportNameVars({ title: opts.title, slug: opts.slug, format: it.format, preset: opts.presets ? findPreset(opts.presets, it.format) : undefined,
+      size: { width: it.width, height: it.height }, version: it.v ?? it.n, date, ...(it.locale !== undefined ? { locale: it.locale } : {}) }));
     if (!r.ok) throw new CodedError(400, t().export.nameEmpty, 'export-name-empty');
     return { ...it, stem: r.name, ext: exportExtension(it.file) };
   });
+  // Languages (Phase 12, final review I2): a pattern without `{locale}` names each translated file with its language, also
+  // when it is exported alone, so a translation is never named like the original; the primary language's file keeps its name.
+  for (const x of named) x.stem = localizedStem(pattern, x.stem, x.locale, x.localized === true);
+  // Format instances (Phase 12, Ruling C): two files that would share a name (a pattern without `{format}`, or a preset id
+  // equal to an instance's slug, `foo-2` and `foo@2`) keep them apart with the instance's slugged id on each k > 1 instance;
+  // a bare instance's name never changes. What still collides is refused below, as before.
+  const stems = separateInstanceNames(named);
+  named.forEach((x, i) => { x.stem = stems[i]!; });
   const collisions = exportNameCollisions(named.map((x) => `${x.stem}${x.ext}`));
   if (collisions.length) throw new CodedError(400, t().export.nameCollision({ list: collisions.join(', ') }), 'export-name-collision');
 
-  const info = await lstat(dest).catch(() => null);
-  if (info && !info.isDirectory() && !info.isSymbolicLink()) throw new WorkspaceError(400, t().export.destinationIsFile);
-  try { await mkdir(dest, { recursive: true }); await access(dest, constants.W_OK); }
-  catch { throw new WorkspaceError(400, t().export.cannotWrite({ path: dest })); }
-  if (!(await stat(dest)).isDirectory()) throw new WorkspaceError(400, t().export.destinationIsFile);
+  await ensureDestination(dest);
   const copy: CopyFn = opts.copy ?? ((from, to) => copyConfinedFile(opts.creativeDir, relative(opts.creativeDir, from).split(sep).join('/'), to));
   const files: ExportResult['files'] = [];
   for (const it of named) {
@@ -147,6 +178,47 @@ async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refu
   }
   if (!files.length) throw new WorkspaceError(404, t().export.nothingToExport({ n: emptyN }));
   return { destination: dest, files, skipped };
+}
+
+/**
+ * The translated files of export `items` in `locales` (Phase 12, spec §3.5): for each item (a format in a version) and
+ * language, its row's render when it is current (made from the row's overlay and the version's composition of that format,
+ * still a usable file); `missing`: no translation at all; `stale`: a translation whose render is not current (to render first).
+ */
+export async function resolveLocalizedItems(creativeDir: string, versions: VersionEntry[], items: ExportItem[], locales: readonly string[],
+  /** Whether the file still has its recorded content (`renderFileMatches`); absent: only that it is a usable file. */
+  matches?: (n: number, file: string, sha256: string) => Promise<boolean>,
+  /**
+   * Ruling L: whether the voice and font files the row recorded are still the ones it recorded; when not, the render is not
+   * current (rendering it again records the problem and fails, so the export says so). Absent: not checked.
+   */
+  assetsOk?: (n: number, row: NonNullable<VersionEntry['localizations']>[number]) => Promise<boolean>):
+  Promise<{ items: ExportItem[]; missing: Array<{ format: string; n: number; locale: string }>; pending: Map<number, { formats: string[]; locales: string[] }> }> {
+  const out: ExportItem[] = [];
+  const missing: Array<{ format: string; n: number; locale: string }> = [];
+  const pending = new Map<number, { formats: string[]; locales: string[] }>();
+  for (const it of items) {
+    const v = versions.find((x) => x.n === it.n);
+    const comp = v?.compositions?.find((c) => c.format === it.format);
+    for (const locale of locales) {
+      const row = v?.localizations?.find((r) => r.locale === locale && r.instanceId === it.format);
+      if (!v || !comp || !row) { missing.push({ format: it.format, n: it.n, locale }); continue; }
+      const r = row.render;
+      const current = r !== undefined && r.overlayHash === row.hash && r.fromComposition === comp.hash && plainName(r.file)
+        && (await probeConfinedFile(creativeDir, `outputs/v${it.n}/${r.file}`)) === true && (!matches || await matches(it.n, r.file, r.sha256))
+        && (!assetsOk || await assetsOk(it.n, row));
+      if (!current) {
+        const p = pending.get(it.n) ?? { formats: [], locales: [] };
+        if (!p.formats.includes(it.format)) p.formats.push(it.format);
+        if (!p.locales.includes(locale)) p.locales.push(locale);
+        pending.set(it.n, p);
+        continue;
+      }
+      out.push({ format: it.format, n: it.n, ...(it.v !== undefined ? { v: it.v } : {}), file: r.file, width: r.width, height: r.height, locale, localized: true,
+        ...(r.problems?.length ? { problems: r.problems } : {}) });
+    }
+  }
+  return { items: out, missing, pending };
 }
 
 const isVersionNumber = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0;

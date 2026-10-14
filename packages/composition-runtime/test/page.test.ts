@@ -19,6 +19,16 @@ describe('runtime page', () => {
       expect(() => renderRuntimePage(INDEX, { base, composition: {} })).toThrow();
     }
   });
+  it('carries the format\'s safe zone when it is one (four finite insets), and drops anything else (final wave P6)', () => {
+    const at = (html: string) => html.slice(html.indexOf('>', html.indexOf(COMPOSITION_DATA_ID)) + 1, html.indexOf('</script>'));
+    const safeZone = { top: 220, bottom: 420, left: 60, right: 120 };
+    expect(readCompositionData(at(renderRuntimePage(INDEX, { base: './', composition: {}, safeZone })))).toEqual({ base: './', composition: {}, safeZone });
+    for (const bad of [{ top: -1, bottom: 0, left: 0, right: 0 }, { top: 1, bottom: 2, left: 3 }, { top: '1', bottom: 0, left: 0, right: 0 }, null]) {
+      const html = renderRuntimePage(INDEX, { base: './', composition: {}, safeZone: bad as never });
+      expect(html).not.toContain('safeZone');
+      expect(readCompositionData(`{"base":"./","composition":{},"safeZone":${JSON.stringify(bad)}}`)).toEqual({ base: './', composition: {} });
+    }
+  });
   it('readCompositionData rejects malformed data', () => {
     expect(readCompositionData('nope')).toBeNull();
     expect(readCompositionData('{"base":1,"composition":{}}')).toBeNull();

@@ -85,7 +85,7 @@ export class CreativeStore {
         const last = versions.at(-1);
         const first = last?.outputs[0];
         const cover = last && first ? `outputs/v${last.n}/${first.preview ?? first.file}` : null;
-        items.push({ ok: true, slug: e.name, title: c.title, status: c.status, formats: c.brief.formats, versions: versions.length, updatedAt: c.updatedAt, cover });
+        items.push({ ok: true, slug: e.name, title: c.title, status: c.status, formats: c.brief.formats, ...(c.brief.formatLabels ? { formatLabels: c.brief.formatLabels } : {}), versions: versions.length, updatedAt: c.updatedAt, cover });
       } catch (err) {
         if (err instanceof JsonFileError && err.reason === 'missing') continue;
         items.push({ ok: false, slug: e.name, error: (err as Error).message });
@@ -104,7 +104,7 @@ export class CreativeStore {
     }
   }
 
-  update(slug: string, patch: Partial<Pick<CreativeFile, 'title' | 'brief' | 'status' | 'error' | 'resumeFrom' | 'linkedCodebases' | 'exportPicks'>>): Promise<CreativeFile> {
+  update(slug: string, patch: Partial<Pick<CreativeFile, 'title' | 'brief' | 'status' | 'error' | 'resumeFrom' | 'linkedCodebases' | 'exportPicks' | 'freedInstances'>>): Promise<CreativeFile> {
     return this.lock.run(`c:${slug}`, async () => {
       const current = await this.get(slug);
       const nowIso = new Date().toISOString();

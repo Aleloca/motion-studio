@@ -30,6 +30,7 @@ const api = {
   updateCreative: vi.fn(async () => detail.creative),
   restoreVersion: vi.fn(async () => detail.creative),
   revealVersion: vi.fn(async () => ({ ok: true })),
+  exportStorePack: vi.fn(async (..._a: unknown[]) => ({ folder: '/out/pack', written: ['AppStore/en/iphone-69/01-a.png'], failed: [] as Array<{ file: string; reason: string }> })),
   exportPicks: vi.fn(async (_s: string, _c: string, body: { destination: string; picks: Record<string, number> }) => ({ destination: body.destination, files: Object.keys(body.picks).map((f) => ({ from: f, to: `${body.destination}/${f}` })), skipped: [] as string[] })),
   cancelJob: vi.fn(async () => ({ cancelled: true })),
   setExportPick: vi.fn(async (..._a: unknown[]) => detail),
@@ -388,6 +389,29 @@ describe('CreativeCanvas · versions', () => {
     // Previous version on the left, the shown one on the right.
     expect(within(dialog).getByRole('img', { name: /v1$/ }).getAttribute('src')).toBe('/f/acme/lancio/outputs/v1/post.png');
     expect(within(dialog).getByRole('img', { name: /v2$/ }).getAttribute('src')).toBe('/f/acme/lancio/outputs/v2/post.png');
+  });
+});
+
+describe('CreativeCanvas · store pack export', () => {
+  const pack = { app: { name: 'Fotonica', tagline: '' }, stores: ['appstore' as const], devices: { appstore: ['iphone-69' as const] }, screenshots: [{ caption: 'Uno', screen: null }], preview: false };
+
+  it('has no pack export without brief.storePack', async () => {
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    expect(screen.queryByRole('button', { name: 'Esporta il pacchetto' })).toBeNull();
+  });
+
+  it('with brief.storePack the header offers the pack export for the version on screen', async () => {
+    localStorage.setItem('ms.exportFolder', '/out');
+    const base = makeDetail([version(1, 'Dal brief')]);
+    detail = makeDetail([version(1, 'Dal brief')], { brief: { ...base.creative.brief, storePack: pack } });
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    await userEvent.click(screen.getByRole('button', { name: 'Esporta il pacchetto' }));
+    const dialog = await screen.findByRole('dialog', { name: /pacchetto store/ });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Esporta il pacchetto' }));
+    await waitFor(() => expect(api.exportStorePack).toHaveBeenCalledWith('acme', 'lancio', 1, { destination: '/out' }));
+    expect(await within(dialog).findByText('AppStore/en/iphone-69/01-a.png')).toBeTruthy();
   });
 });
 

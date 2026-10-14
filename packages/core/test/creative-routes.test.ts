@@ -113,6 +113,72 @@ describe('creatives', { timeout: 90_000 }, () => {
     expect(res.json().brief).toMatchObject({ goal: 'Newer goal', durationSec: 7, services: { voice: 'none' } });
     expect((await app.inject({ method: 'PUT', url, payload: { services: { voice: 'bogus' } } })).statusCode).toBe(400);
   });
+  it('a partial save of labels, order and removal merges into the stored brief under the lock (Phase 12)', async () => {
+    const { slug } = await createCreative(false);
+    const url = `/api/projects/acme/creatives/${slug}`;
+    const three = { ...brief, formats: ['instagram-post-1x1', 'instagram-post-1x1@2', 'web-banner-300x250'], formatLabels: { 'instagram-post-1x1@2': 'Promo' } };
+    expect((await app.inject({ method: 'PUT', url, payload: { brief: three } })).statusCode).toBe(200);
+    // A newer brief is on the server; the caller holds an old copy and sends only labels.
+    await app.inject({ method: 'PUT', url, payload: { brief: { ...three, goal: 'Newer goal' } } });
+    let res = await app.inject({ method: 'PUT', url, payload: { formatLabels: { 'instagram-post-1x1@2': 'Summer', 'web-banner-300x250': 'Banner' } } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().brief).toMatchObject({ goal: 'Newer goal', formats: three.formats, formatLabels: { 'instagram-post-1x1@2': 'Summer', 'web-banner-300x250': 'Banner' } });
+    // Reorder.
+    res = await app.inject({ method: 'PUT', url, payload: { formats: ['web-banner-300x250', 'instagram-post-1x1', 'instagram-post-1x1@2'] } });
+    expect(res.json().brief.formats).toEqual(['web-banner-300x250', 'instagram-post-1x1', 'instagram-post-1x1@2']);
+    expect(res.json().brief.goal).toBe('Newer goal');
+    // Removal prunes the labels of the removed format (no 400), and sends labels in the same save too.
+    res = await app.inject({ method: 'PUT', url, payload: { formats: ['instagram-post-1x1', 'web-banner-300x250'], formatLabels: { 'web-banner-300x250': 'B2' } } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().brief.formats).toEqual(['instagram-post-1x1', 'web-banner-300x250']);
+    expect(res.json().brief.formatLabels).toEqual({ 'web-banner-300x250': 'B2' });
+    // Removal alone drops the stored label of the format that goes.
+    res = await app.inject({ method: 'PUT', url, payload: { formats: ['instagram-post-1x1'] } });
+    expect(res.json().brief.formatLabels).toBeUndefined();
+    // Refused: adding, duplicates, empty, an odd id, a label too long; a label for a format not in the brief is dropped.
+    for (const formats of [['instagram-post-1x1', 'web-banner-300x250'], ['instagram-post-1x1', 'instagram-post-1x1'], [], ['Bad Id']]) {
+      expect((await app.inject({ method: 'PUT', url, payload: { formats } })).statusCode).toBe(400);
+    }
+    expect((await app.inject({ method: 'PUT', url, payload: { formatLabels: { 'instagram-post-1x1': 'x'.repeat(61) } } })).statusCode).toBe(400);
+    res = await app.inject({ method: 'PUT', url, payload: { formatLabels: { 'web-banner-300x250': 'gone', 'instagram-post-1x1': 'Main' } } });
+    expect(res.json().brief.formatLabels).toEqual({ 'instagram-post-1x1': 'Main' });
+    // Labels merge per key: a key left out is kept (a stale tab cannot drop a newer label); '' or null clears that key only.
+    await app.inject({ method: 'PUT', url, payload: { formatLabels: { 'instagram-post-1x1': 'Newer' } } });
+    res = await app.inject({ method: 'PUT', url, payload: { formatLabels: {} } });
+    expect(res.json().brief.formatLabels).toEqual({ 'instagram-post-1x1': 'Newer' });
+    res = await app.inject({ method: 'PUT', url, payload: { formatLabels: { 'instagram-post-1x1@2': 'Other' } } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().brief.formatLabels).toEqual({ 'instagram-post-1x1': 'Newer' });
+    res = await app.inject({ method: 'PUT', url, payload: { formatLabels: { 'instagram-post-1x1': null } } });
+    expect(res.json().brief.formatLabels).toBeUndefined();
+    await app.inject({ method: 'PUT', url, payload: { formatLabels: { 'instagram-post-1x1': 'Again' } } });
+    res = await app.inject({ method: 'PUT', url, payload: { formatLabels: { 'instagram-post-1x1': '' } } });
+    expect(res.json().brief.formatLabels).toBeUndefined();
+  });
+  it('a full brief together with formats or labels is refused, not half ignored', async () => {
+    const { slug } = await createCreative(false);
+    const url = `/api/projects/acme/creatives/${slug}`;
+    expect((await app.inject({ method: 'PUT', url, payload: { brief, formats: ['instagram-post-1x1'] } })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'PUT', url, payload: { brief, formatLabels: { 'instagram-post-1x1': 'x' } } })).statusCode).toBe(400);
+  });
+  it('a legacy odd format id stored in a brief can be removed through the partial path', async () => {
+    const { slug } = await createCreative(false);
+    const file = join(base, 'ws', 'acme', 'creatives', slug, 'creative.json');
+    const c = JSON.parse(await readFile(file, 'utf8'));
+    c.brief.formats = ['instagram-post-1x1', 'Old_One', 'Old_Two'];
+    await writeFile(file, JSON.stringify(c));
+    const url = `/api/projects/acme/creatives/${slug}`;
+    const res = await app.inject({ method: 'PUT', url, payload: { formats: ['instagram-post-1x1', 'Old_Two'] } });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json().brief.formats).toEqual(['instagram-post-1x1', 'Old_Two']);
+  });
+  it('a full brief save with labels of formats it removes prunes them instead of answering 400 (Ruling H)', async () => {
+    const { slug } = await createCreative(false);
+    const url = `/api/projects/acme/creatives/${slug}`;
+    const res = await app.inject({ method: 'PUT', url, payload: { brief: { ...brief, formatLabels: { 'instagram-post-1x1': 'A', 'tiktok-9x16': 'gone' } } } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().brief.formatLabels).toEqual({ 'instagram-post-1x1': 'A' });
+  });
   it('restores a version and reveals its folder', async () => {
     const { slug } = await createCreative();
     await waitJobs();

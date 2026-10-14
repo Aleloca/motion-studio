@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  audioMixFilter, filterArgv, frameScaleFilter, gamutStage, h264ColourFilter, hdrStage, normalizeVideoFilter, ssimCompareFilter, testPatternInput,
+  audioMixFilter, filterArgv, flattenFilter, frameScaleFilter, silentAudioInput, gamutStage, h264ColourFilter, hdrStage, normalizeVideoFilter, ssimCompareFilter, testPatternInput,
   type ColourStage, type FilterArg,
 } from '../src/media/ffmpeg-filters.ts';
 import { mixGraph } from '../src/render/audio-mix.ts';
@@ -124,5 +124,18 @@ describe('ffmpeg filter builders: invalid values are refused', () => {
     const made = frameScaleFilter(64);
     expect(Object.isFrozen(made) && Object.keys(made).length === 0).toBe(true);
     expect(Object.isFrozen(filterArgv(made))).toBe(true);
+  });
+
+  it('store steps (Phase 12): the flatten graph and the silent audio input, with their values checked', () => {
+    expect(argv(flattenFilter(1320, 2868, '0a1b2c'))).toEqual(['-filter_complex',
+      'color=c=0x0a1b2c:s=1320x2868:r=1[bg];[0:v]format=rgba[fg];[bg][fg]overlay=format=rgb:shortest=1,format=rgb24[out]']);
+    for (const bad of ['#0a1b2c', '0A1B2C', 'red', '0a1b2c:s=1x1', '']) expect(() => flattenFilter(10, 10, bad), bad).toThrow(RangeError);
+    expect(() => flattenFilter(0, 10, '000000')).toThrow(RangeError);
+    expect(() => flattenFilter(10.5, 10, '000000')).toThrow(RangeError);
+    expect(argv(silentAudioInput(960_000, 48_000))).toEqual(['-protocol_whitelist', 'file', '-format_whitelist', 'lavfi', '-f', 'lavfi', '-i',
+      'anullsrc=r=48000:cl=stereo,atrim=end_sample=960000']);
+    expect(() => silentAudioInput(0, 48_000)).toThrow(RangeError);
+    expect(() => silentAudioInput(100, 100)).toThrow(RangeError);
+    expect(() => silentAudioInput(Number.NaN, 48_000)).toThrow(RangeError);
   });
 });

@@ -11,6 +11,7 @@ import { useLocale, useT } from '../i18n.tsx';
 import { isVideoFile } from '../media.ts';
 import { Button, Chip, Icon, Modal, Pill, Segmented, cx } from '../ui/index.ts';
 import { useSyncedMedia, type SyncMedia } from '../ui/useSyncedMedia.ts';
+import { presetFor } from '../instances.ts';
 import { boardSize, outputUrl } from './canvasModel.ts';
 import { boardLabel } from './CanvasBoard.tsx';
 import type { VersionActions } from './FormatVersions.tsx';
@@ -27,6 +28,8 @@ export interface CompareDialogProps {
   creative: string;
   versions: VersionEntry[];
   presets: FormatPreset[];
+  /** The brief's labels of format instances. */
+  labels?: Record<string, string>;
   states: Record<string, FormatState>;
   /** The format compared. A follower has no versions of its own: its primary's history and ★ are compared. */
   format: string;
@@ -53,7 +56,7 @@ export function CompareDialog(p: CompareDialogProps) {
   );
 }
 
-function CompareBody({ onClose, slug, creative, versions, presets, states, format: asked, initial, actions }: CompareDialogProps) {
+function CompareBody({ onClose, slug, creative, versions, presets, labels, states, format: asked, initial, actions }: CompareDialogProps) {
   const t = useT();
   const c = t.web.canvas.compare;
   const fv = t.web.formatVersions;
@@ -69,8 +72,8 @@ function CompareBody({ onClose, slug, creative, versions, presets, states, forma
   const root = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
 
-  const preset = presets.find((x) => x.id === format) ?? null;
-  const label = boardLabel({ id: format, preset, out: null }, locale);
+  const preset = presetFor(presets, format);
+  const label = boardLabel({ id: format, preset, out: null, labels }, locale);
   // The live sessions of the two sides (only v2 versions mint one; a legacy answer falls back to the file).
   const compOf = (n: number) => compositionOf(versions.find((x) => x.n === n), format);
   const previews = [

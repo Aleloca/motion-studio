@@ -36,13 +36,16 @@ export class PreviewLane {
   /** Previews running and waiting now (tests, diagnostics). */
   get load(): { active: number; waiting: number } { return { active: this.active, waiting: this.waiting.length }; }
 
-  /** Runs `fn` in a slot; its signal aborts on `signal`, on the time limit and on `close()`. Throws `PreviewLaneBusyError` when full. */
-  async run<T>(fn: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
+  /**
+   * Runs `fn` in a slot; its signal aborts on `signal`, on the time limit and on `close()`. Throws `PreviewLaneBusyError` when
+   * full, or at once when no slot is free and `o.noWait` is set (a caller that must not wait: the text measure under a lock).
+   */
+  async run<T>(fn: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal, o: { noWait?: boolean } = {}): Promise<T> {
     if (this.closed) throw new Error('preview lane closed');
     if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error('cancelled');
     if (this.active < this.slots) this.active++;
     else {
-      if (this.waiting.length >= this.maxWaiting) throw new PreviewLaneBusyError();
+      if (o.noWait || this.waiting.length >= this.maxWaiting) throw new PreviewLaneBusyError();
       await new Promise<void>((resolve, reject) => {
         const go = () => { signal?.removeEventListener('abort', onAbort); resolve(); };
         const onAbort = () => {

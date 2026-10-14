@@ -45,6 +45,14 @@
         "$ref": "#/$defs/font"
       }
     },
+    "fontFallbacks": {
+      "description": "Declared families tried after a text clip's own family, before the generic fallback (per character). Set by localization for scripts the font lacks; leave it as it is.",
+      "maxItems": 3,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fontFamily"
+      }
+    },
     "scenes": {
       "maxItems": 200,
       "type": "array",
@@ -1187,6 +1195,11 @@
             "music",
             "sfx"
           ]
+        },
+        "script": {
+          "description": "The spoken text of a voice clip (role \"voice\" only); used to translate the voice.",
+          "type": "string",
+          "maxLength": 5000
         }
       },
       "required": [

@@ -2,6 +2,7 @@ import type { LanguageSetting, Locale } from './i18n/index.ts';
 import type { Explanation } from './explain/index.ts';
 import type { ModelUsage, TokenCounts } from './usage.ts';
 import type { BrandPhase } from './services.ts';
+import type { PaidBatch } from './permissions.ts';
 import type { ProjectFile, WorkspaceSettings, WorkspaceSettingsView } from './schemas.ts';
 
 /** Agent-neutral event stream produced by any AgentRunner. */
@@ -36,7 +37,8 @@ export type AgentEvent =
 export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
 /** What a job does: logic and the UI branch on this, never on the (localized) label. */
-export type JobKind = 'creative' | 'brand-analysis' | 'asset-description' | 'console' | 'render' | 'asset-generation';
+/** `localize` (Phase 12): an agent turn that translates an existing version (overlays only, no new version). */
+export type JobKind = 'creative' | 'brand-analysis' | 'asset-description' | 'console' | 'render' | 'asset-generation' | 'localize';
 
 /**
  * Progress of a render job (Task 5), per format: `media` while the video sources are normalised ("Preparing media…",
@@ -71,7 +73,7 @@ export interface JobSummary {
   queuePosition?: number;
 }
 
-export type ApprovalKind = 'tool' | 'provider';
+export type ApprovalKind = 'tool' | 'provider' | 'paid-batch';
 export interface ApprovalRequest {
   id: string; jobId: string; projectSlug: string; creativeSlug: string | null; kind: ApprovalKind;
   /** Display title in the language current when the request was created, e.g. "Edit a file outside the project". Logic uses `kind`/`toolName`, never this text. */
@@ -88,6 +90,8 @@ export interface ApprovalRequest {
   agentReason: string | null;
   /** The agent's tool call this request is about (Claude Code's `tool_use_id`), when it sent one. */
   toolUseId?: string;
+  /** `paid-batch` requests only: the calls the user confirms together. */
+  paidBatch?: PaidBatch;
   createdAt: string; expiresAt: string;
 }
 export type ApprovalDecision = 'once' | 'always' | 'deny';

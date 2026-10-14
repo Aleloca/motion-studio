@@ -3,17 +3,23 @@ import { SERVICE_CHOICES } from './services.ts';
 import type { AgentEvent } from './events.ts';
 import { linkedCodebaseSchema } from './schemas.ts';
 import { usageSummarySchema } from './usage.ts';
-import { channelName, DEFAULT_FORMATS, formatLabel } from './formats.ts';
+import { INSTANCE_FOLDER_SOURCE, INSTANCE_ID_RE } from './format-instance.ts';
+import { storePackSchema } from './store-pack.ts';
+import { localeTag } from './localization/schema.ts';
+import { channelName, DEFAULT_FORMATS, formatDisplayName } from './formats.ts';
 import { messages, type Locale } from './i18n/index.ts';
 import type { FormatSummary } from './formats/link.ts';
 
 export const creativeStatusSchema = z.enum(['draft', 'working', 'ready', 'incomplete', 'error', 'interrupted']);
 export type CreativeStatus = z.infer<typeof creativeStatusSchema>;
 
-export const briefSchema = z.object({
+const makeBriefSchema = (formats: z.ZodType<string[]>) => z.object({
   goal: z.string().trim().min(1),
   message: z.string(),
-  formats: z.array(z.string().min(1)).min(1),
+  /** Format instance ids (`<presetId>` or `<presetId>@<k>`, Phase 12): the order is the display and export order. */
+  formats,
+  /** A label per instance (1..60 characters); a key that is not in `formats` is refused. */
+  formatLabels: z.record(z.string(), z.string().min(1).max(60)).optional(),
   durationSec: z.number().int().min(1).max(600).nullable(),
   assets: z.array(z.string()),
   notes: z.string(),
@@ -28,7 +34,24 @@ export const briefSchema = z.object({
     images: z.enum(SERVICE_CHOICES.images), voice: z.enum(SERVICE_CHOICES.voice),
     music: z.enum(SERVICE_CHOICES.music), sfx: z.enum(SERVICE_CHOICES.sfx),
   }).partial().optional(),
-});
+  /** The languages of the creative (Phase 12); absent: no localization. `extra` has up to 10 languages, never the primary. */
+  locales: z.object({
+    primary: localeTag,
+    extra: z.array(localeTag).max(10),
+  }).refine((l) => new Set(l.extra).size === l.extra.length && !l.extra.includes(l.primary), 'issue.badLocales').optional(),
+  /** The App Store / Google Play pack choices (Phase 12). */
+  storePack: storePackSchema.optional(),
+}).refine((b) => Object.keys(b.formatLabels ?? {}).every((k) => b.formats.includes(k)), { message: 'issue.labelNotInFormats', path: ['formatLabels'] });
+
+/**
+ * Reading (a stored brief, Phase 12 Ruling F): a brief written before instances may hold the same format twice or an id that the
+ * instance pattern refuses; neither may make the creative unreadable, so duplicates are dropped (the first stays) and any
+ * non-empty id is kept as it is (consumers ignore ids that are not in the catalog, as they always did).
+ */
+export const briefSchema = makeBriefSchema(z.array(z.string().min(1)).min(1).transform((f) => [...new Set(f)]));
+/** Writing (create and edit requests): format ids must be instance ids and unique. */
+export const briefWriteSchema = makeBriefSchema(z.array(z.string().regex(INSTANCE_ID_RE)).min(1).refine((f) => new Set(f).size === f.length, 'issue.duplicateFormats'));
+
 export type Brief = z.infer<typeof briefSchema>;
 
 export const creativeFileSchema = z.object({
@@ -46,13 +69,20 @@ export const creativeFileSchema = z.object({
    * means the default rule (see `starOf`). Picking the latest version of a format's history clears its entry.
    */
   exportPicks: z.record(z.string().min(1), z.number().int().min(1)).optional(),
+  /**
+   * Instance ids freed since a version (Phase 12, final review I1): instance id → the number of the latest version when the
+   * id was removed from the brief or added to it (0 before any version). A version's localization rows for that id, up to
+   * that number, belong to the old instance and are never carried into a new version: a freed id taken again starts clean,
+   * as its links and picks do. Absent in old files (nothing freed).
+   */
+  freedInstances: z.record(z.string().min(1), z.number().int().min(0)).optional(),
 });
 export type CreativeFile = z.infer<typeof creativeFileSchema>;
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const FILE_NAME = /^[^/\\]+$/;
-/** `compositions/<format id>`: a composition folder inside `outputs/vN/`. */
-const COMPOSITION_DIR = /^compositions\/[a-z0-9][a-z0-9-]{0,62}$/;
+/** `compositions/<instance id>`: a composition folder inside `outputs/vN/`. */
+const COMPOSITION_DIR = new RegExp(`^compositions/${INSTANCE_FOLDER_SOURCE}$`);
 
 /**
  * A non-blocking note on an output file: never a problem, never triggers the fix loop. `key` is an i18n key
@@ -125,6 +155,24 @@ export const versionCompositionSchema = z.object({
 });
 export type VersionComposition = z.infer<typeof versionCompositionSchema>;
 
+/**
+ * Why a translation has a problem, as the core knows it when it writes the sentence (Phase 12, Ruling M): the UI flags clips by
+ * `code` and `clipId` and words the label itself, never by reading the (translated, stored) sentence. `message` is that sentence.
+ * `stale`: the entry's source text changed since the translation (only in `issues`, never in `problems`).
+ * `sourceTextOverflow`: the render measured an overflow on a clip that shows the source text (not translated, or outdated):
+ * the original's problem, not the translation's (only in `issues`, never in `problems`: it does not ask for "render anyway").
+ */
+export const LOCALIZATION_ISSUE_CODES = [
+  'textOverflow', 'textOverflowMeasured', 'notTranslated', 'stale', 'voiceTooLong', 'voiceFailed', 'voiceDurationUnknown', 'voiceFileInvalid',
+  'assetChanged', 'fallbackFontUnavailable', 'renderCheckFailed', 'invalid', 'sourceTextOverflow',
+] as const;
+/** Issue codes that are notes on a row, never its problems (`problems` leaves them out). */
+export const LOCALIZATION_NOTE_CODES: ReadonlySet<string> = new Set(['stale', 'sourceTextOverflow']);
+export const localizationIssueSchema = z.object({
+  code: z.enum(LOCALIZATION_ISSUE_CODES), clipId: z.string().max(200).optional(), message: z.string().max(1000),
+});
+export type LocalizationIssue = z.infer<typeof localizationIssueSchema>;
+
 export const versionEntrySchema = z.object({
   n: z.number().int().min(1),
   commit: z.string().nullable(),
@@ -145,8 +193,47 @@ export const versionEntrySchema = z.object({
   compositions: z.array(versionCompositionSchema).optional(),
   /** Who wrote the version: the agent (default when absent) or a direct edit in the editor (Phase 10b). */
   origin: z.enum(['agent', 'editor']).optional(),
+  /**
+   * Localization overlays of this version (Phase 12): one per language and format instance. `hash` is the overlay file's hash;
+   * `stale` lists the ids (clips, `<clipId>.<key>` params) whose source text changed since the translation; `voice` says what
+   * the voices of that language do. Absent on versions without localizations.
+   */
+  localizations: z.array(z.object({
+    locale: localeTag, instanceId: z.string().regex(INSTANCE_ID_RE), hash: z.string().regex(HEX64),
+    origin: z.enum(['agent', 'editor']), stale: z.array(z.string()),
+    voice: z.enum(['translated', 'original', 'muted']), problems: z.array(z.string()).optional(),
+    /** Phase 12, Ruling M: the same problems (and the outdated entries) with their code and clip; absent on rows written before. */
+    issues: z.array(localizationIssueSchema).max(400).optional(),
+    /**
+     * Phase 12, Task 4: why a language asked to translate its voices keeps a fallback (`voice` is then `original`): the brief's
+     * voice service is off, no key, a key known to lack text-to-speech (F5), the batch confirmation declined, or the
+     * generation failed. Absent: no fallback.
+     */
+    voiceFallback: z.enum(['off', 'noKey', 'missingPermission', 'declined', 'failed']).optional(),
+    /** Phase 12, Task 4: voice clips with no known script (no `script`, no tts description): they keep the original voice. */
+    noScript: z.array(z.string().max(200)).max(200).optional(),
+    /**
+     * Phase 12, Ruling L: the sha256 of each project file the core wrote or attached for this language (a translated voice in
+     * `assets/audio/`, a fallback font in `assets/fonts/`), by its overlay path. The localized render (and the export) checks
+     * the file it uses against it: a file changed since is a problem, never rendered silently. Absent: nothing recorded.
+     */
+    assetHashes: z.record(z.string().max(1024), z.string().regex(HEX64)).optional(),
+    /**
+     * The latest render of this language and instance (`outputs/vN/<instanceId>.<locale>.<ext>`, Phase 12 §3.5), written by
+     * the core. Current while `overlayHash` is the row's `hash` and `fromComposition` the instance's composition hash;
+     * `forced`: rendered with open problems or outdated entries ("render anyway"), whose ids are in `stale`.
+     */
+    render: z.object({
+      file: z.string().regex(FILE_NAME).refine((f) => f !== '.' && f !== '..', 'issue.fileName'),
+      width: z.number().int().positive(), height: z.number().int().positive(), durationSec: z.number().positive().nullable(),
+      sha256: z.string().regex(HEX64), fromComposition: z.string().regex(HEX64), overlayHash: z.string().regex(HEX64),
+      forced: z.boolean(), stale: z.array(z.string()), problems: z.array(z.string()).optional(), renderedAt: z.iso.datetime(),
+    }).optional(),
+  })).optional(),
 });
 export type VersionEntry = z.infer<typeof versionEntrySchema>;
+/** One localization row of a version (Phase 12). */
+export type LocalizationRow = NonNullable<VersionEntry['localizations']>[number];
 
 export const versionsFileSchema = z.object({ schemaVersion: z.literal(1), versions: z.array(versionEntrySchema).default([]) });
 export type VersionsFile = z.infer<typeof versionsFileSchema>;
@@ -184,6 +271,13 @@ export const manifestV2Schema = z.object({
     sha256: z.string().regex(HEX64),
     renderedAt: z.iso.datetime(),
     fromComposition: z.string().regex(HEX64).optional(),
+    /**
+     * A localized render (Phase 12 §3.5): its language, whether it was made with open problems or outdated entries
+     * ("render anyway"), and the outdated ids it shows in the source language. Absent on the primary language's renders.
+     */
+    locale: localeTag.optional(),
+    forced: z.boolean().optional(),
+    stale: z.array(z.string()).optional(),
   })),
 });
 export type ManifestV2 = z.infer<typeof manifestV2Schema>;
@@ -227,7 +321,7 @@ export type ConversationEntry =
   /** `warning`: something the user should know that did not fail the turn (e.g. a link removed); shown like `info`. */
   | { type: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string };
 
-export interface CreativeSummary { slug: string; title: string; status: CreativeStatus; formats: string[]; versions: number; updatedAt: string; cover: string | null }
+export interface CreativeSummary { slug: string; title: string; status: CreativeStatus; formats: string[]; /** The brief's labels of format instances (Phase 12); absent when there are none. */ formatLabels?: Record<string, string>; versions: number; updatedAt: string; cover: string | null }
 /** A creative summary tagged with its project, for cross-project lists such as "Jump back in". */
 export type RecentCreative = CreativeSummary & { project: { slug: string; name: string } };
 export type CreativeListItem = ({ ok: true } & CreativeSummary) | { ok: false; slug: string; error: string };
@@ -247,7 +341,7 @@ export function outputWarningText(w: OutputWarning, locale: Locale): string {
     return messages(locale).outputs.largeFile({ sizeMB, mbps, targetMbps, channel: channelName(String(w.params.channel ?? ''), locale) });
   }
   // A catalog format is named in the reader's language; any other id is shown as stored.
-  const name = (v: unknown) => { const id = String(v ?? ''); const preset = DEFAULT_FORMATS.find((p) => p.id === id); return preset ? formatLabel(preset, locale) : id; };
+  const name = (v: unknown) => formatDisplayName(DEFAULT_FORMATS, String(v ?? ''), locale);
   if (w.key === 'outputs.keptUnchanged') return messages(locale).outputs.keptUnchanged({ format: name(w.params.format) });
   if (w.key === 'outputs.followerReplaced') return messages(locale).outputs.followerReplaced({ format: name(w.params.format), primary: name(w.params.primary) });
   return w.key;

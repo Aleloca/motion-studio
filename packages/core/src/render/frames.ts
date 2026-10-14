@@ -74,7 +74,7 @@ export async function renderFrames(o: RenderFramesOptions): Promise<RenderFrames
     server = o.server ?? await startCompositionServer({ uiOrigins: [], distDir });
     session = await server.mintSession({
       creativeDir: o.dir, versionDir: o.versionDir, format: o.format.id, composition: c, mode: 'render', ttlMs: (o.timeLimitMs ?? 300_000) + 60_000,
-      ...(o.media ? { media: o.media } : {}),
+      ...(o.media ? { media: o.media } : {}), ...(o.format.safeZone ? { safeZone: o.format.safeZone } : {}),
     });
     const clock = await readRegularFile(join(distDir, 'clock.js'), 1024 * 1024).catch(() => null);
     page = await o.provider.open({
@@ -93,7 +93,8 @@ export async function renderFrames(o: RenderFramesOptions): Promise<RenderFrames
     }
     const seen = new Set<string>();
     const errors = [...page.info.errors, ...(await page.errors())]
-      .filter((e) => !IGNORED.has(e.code) && !seen.has(`${e.code}:${e.message}`) && (seen.add(`${e.code}:${e.message}`), true))
+      // Keyed by clip too: two clips with the same message (equal boxes that both overflow) are two reports (fix I3).
+      .filter((e) => !IGNORED.has(e.code) && !seen.has(`${e.code}:${e.clipId ?? ""}:${e.message}`) && (seen.add(`${e.code}:${e.clipId ?? ""}:${e.message}`), true))
       .slice(0, 20);
     return { frames, errors };
   } catch (e) {

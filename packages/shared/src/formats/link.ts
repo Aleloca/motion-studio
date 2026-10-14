@@ -1,5 +1,6 @@
 import type { FormatPreset } from '../formats.ts';
 import type { Brief, VersionEntry } from '../creative.ts';
+import { instancePreset, presetOf } from '../format-instance.ts';
 
 export type FollowCheck = { ok: true } | { ok: false; reason: 'kind' | 'size' | 'extension' | 'duration' | 'safeZone' };
 
@@ -35,7 +36,9 @@ function check(primary: FormatPreset, follower: FormatPreset, durationSec: numbe
 
 /**
  * Default links for a new brief, follower → primary, in the order of `formats`: each format follows the first earlier
- * primary it can follow, otherwise it becomes a primary itself. Followers never get followers (no chains).
+ * primary it can follow, otherwise it becomes a primary itself. Followers never get followers (no chains). An instance never
+ * follows another instance of its own preset by default (Phase 12: they are separate designs; a link can still be set).
+ * `formats` carry their instance ids (`instancePreset`).
  * `durationSec` is the brief's duration:
  * - omitted (`undefined`): only the catalog data is compared and the duration is left to the check at materialization.
  *   Callers that do not know the duration yet MUST pass `undefined`, not `null`;
@@ -48,7 +51,8 @@ export function defaultLinks(formats: FormatPreset[], durationSec?: number | nul
   const primaries: FormatPreset[] = [];
   for (const f of formats) {
     if (primaries.some((p) => p.id === f.id) || Object.hasOwn(links, f.id)) continue;
-    const primary = primaries.find((p) => check(p, f, durationSec ?? null, durationSec !== undefined).ok);
+    // Two instances of one preset are separate designs (Phase 12): neither follows the other by default.
+    const primary = primaries.find((p) => presetOf(p.id) !== presetOf(f.id) && check(p, f, durationSec ?? null, durationSec !== undefined).ok);
     if (primary) links[f.id] = primary.id;
     else primaries.push(f);
   }
@@ -65,7 +69,7 @@ export function linksAfterBriefSave(current: Pick<Brief, 'formats' | 'links'>, n
   if (added.length === 0) return current.links;
   const active = effectiveLinks(current.links, current.formats);
   const primaries = current.formats.filter((f) => next.includes(f) && !Object.hasOwn(active, f));
-  const known = [...primaries, ...added].map((id) => presets.find((p) => p.id === id)).filter((p): p is FormatPreset => p !== undefined);
+  const known = [...primaries, ...added].map((id) => instancePreset(presets, id)).filter((p): p is FormatPreset => p !== undefined);
   const defaults = defaultLinks(known, undefined);
   const out = { ...current.links };
   for (const f of added) {
@@ -291,8 +295,8 @@ export type LinkCheck = { ok: true } | { ok: false; reason: LinkReason };
 export function checkLink(brief: Pick<Brief, 'formats' | 'links'>, versions: VersionEntry[], presets: FormatPreset[],
   follower: string, primary: string): LinkCheck {
   if (follower === primary) return { ok: false, reason: 'self' };
-  const f = brief.formats.includes(follower) ? presets.find((p) => p.id === follower) : undefined;
-  const p = brief.formats.includes(primary) ? presets.find((x) => x.id === primary) : undefined;
+  const f = brief.formats.includes(follower) ? instancePreset(presets, follower) : undefined;
+  const p = brief.formats.includes(primary) ? instancePreset(presets, primary) : undefined;
   if (!f || !p) return { ok: false, reason: 'unknown' };
   const links = effectiveLinks(brief.links, brief.formats);
   if (Object.hasOwn(links, primary) || Object.entries(links).some(([x, to]) => to === follower && x !== follower)) return { ok: false, reason: 'chain' };

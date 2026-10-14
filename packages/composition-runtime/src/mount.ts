@@ -17,6 +17,8 @@ export interface MountOptions {
   report(e: RuntimeError): void;
   /** Native-time limits (ms). Generous by default: render machines can be heavily loaded. */
   timeouts?: { load?: number; seek?: number; layer?: number };
+  /** The format's safe zone (insets): the room of a text clip without an explicit box (render-mode measure). */
+  safeZone?: { top: number; bottom: number; left: number; right: number };
 }
 
 export interface ReadyInfo { duration: number; fps: number; width: number; height: number; frames: number }
@@ -239,7 +241,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
         else if (!declaredFamilies.has(family.toLowerCase())) report('fontMissing', `font ${family} is not declared in fonts[]; using a fallback`, clip.id);
         content.textContent = tp.text;
         Object.assign(content.style, {
-          fontFamily: family ? `${cssString(family)}, ${FALLBACK_FONT}` : FALLBACK_FONT,
+          fontFamily: [...(family ? [cssString(family)] : []), ...(c.fontFallbacks ?? []).map(cssString), FALLBACK_FONT].join(', '),
           fontSize: `${tp.fontSize ?? 48}px`, fontWeight: String(tp.fontWeight ?? 'normal'), color: tp.color ?? '#ffffff',
           textAlign: tp.align ?? 'left', lineHeight: '1.2', whiteSpace: 'pre-wrap', overflowWrap: 'break-word',
         });
@@ -711,8 +713,54 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
 
   let readyPromise: Promise<ReadyInfo> | null = null;
   let loadPromise: Promise<void> | null = null;
+  /**
+   * Render mode (Phase 12, Ruling I): each text clip is laid out once, hidden, with its fonts loaded, and a text that needs
+   * more room than it has is reported as an advisory `textOverflow`. Never throws; nothing is changed on screen.
+   * - A dimension the clip sets (width, height) is its box: the text's scroll size past its client size in it.
+   * - A dimension it leaves free (no height, or neither: final wave P6) is bounded by the frame, or by the format's safe zone
+   *   when it has one: the clip's laid-out box must lie inside it on all four edges (fix round 1, M6). The box's rectangle is
+   *   read as the browser draws it, so the clip's own `rotation` and `scale` count; its animations do not (they move the
+   *   content, not the box).
+   */
+  const room = opts.safeZone
+    ? { left: opts.safeZone.left, top: opts.safeZone.top, right: c.width - opts.safeZone.right, bottom: c.height - opts.safeZone.bottom }
+    : { left: 0, top: 0, right: c.width, bottom: c.height };
+  const measureText = () => {
+    if (opts.mode !== 'render' || destroyed) return;
+    for (const m of mounted) {
+      if (m.clip.type !== 'text') continue;
+      const p = m.clip.props;
+      try {
+        const { display, visibility } = m.box.style;
+        Object.assign(m.box.style, { display: 'block', visibility: 'hidden' });
+        const need = { w: m.content.scrollWidth, h: m.content.scrollHeight };
+        const box = { w: m.content.clientWidth, h: m.content.clientHeight };
+        const outer = { w: m.box.offsetWidth, h: m.box.offsetHeight };
+        // The box as drawn, in composition pixels (the stage may be scaled); without a layout (no rectangle) the clip's x/y.
+        const sr = stage.getBoundingClientRect();
+        const br = m.box.getBoundingClientRect();
+        const k = sr.width > 0 ? sr.width / c.width : 0;
+        const ext = k > 0 && br.width > 0 && br.height > 0
+          ? { left: (br.left - sr.left) / k, top: (br.top - sr.top) / k, right: (br.right - sr.left) / k, bottom: (br.bottom - sr.top) / k }
+          : { left: p.x ?? 0, top: p.y ?? 0, right: (p.x ?? 0) + Math.max(outer.w, need.w), bottom: (p.y ?? 0) + Math.max(outer.h, need.h) };
+        Object.assign(m.box.style, { display, visibility });
+        if (p.width !== undefined || p.height !== undefined) {
+          const over = (p.width !== undefined && need.w > box.w + 1) || (p.height !== undefined && need.h > box.h + 1);
+          if (over && box.w > 0 && box.h > 0) { report('textOverflow', `text overflows its box: needs ${need.w}x${need.h}, box ${box.w}x${box.h}`, m.clip.id); continue; }
+        }
+        if (p.height === undefined) {
+          // The free dimensions end where the frame (or its safe zone) ends, on every edge.
+          const over = ext.left < room.left - 1 || ext.top < room.top - 1 || ext.right > room.right + 1 || ext.bottom > room.bottom + 1;
+          if (over && need.w > 0 && need.h > 0) {
+            const at = [ext.left, ext.top, ext.right, ext.bottom].map((x) => Math.round(x)).join(',');
+            report('textOverflow', `text overflows the frame: spans ${at}, room ${room.left},${room.top},${room.right},${room.bottom}`, m.clip.id);
+          }
+        }
+      } catch { /* advisory only */ }
+    }
+  };
   const load = () => (loadPromise ??= Promise.all([fontsLoaded, ...mounted.map((m) => m.prepare),
-    ...audios.map((a) => (a.derived ? loadDerivedAudio(a) : loadMedia(a.el, a.clip.id, a.clip.src)))]).then(() => {}));
+    ...audios.map((a) => (a.derived ? loadDerivedAudio(a) : loadMedia(a.el, a.clip.id, a.clip.src)))]).then(() => { measureText(); }));
   const player: Player = {
     duration: still ? 0 : c.duration,
     fps: c.fps,

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { LOCALES, messages, type Locale } from './i18n/index.ts';
+import { instanceLabel, instancePreset, presetOf } from './format-instance.ts';
 
 export type FormatKind = 'video' | 'image';
 
@@ -50,6 +51,16 @@ export function channelName(channel: string, locale: Locale): string {
 /** `Instagram · Post 1:1`. */
 export const formatLabel = (preset: Pick<FormatPreset, 'id' | 'name' | 'channel'>, locale: Locale): string =>
   `${channelName(preset.channel, locale)} · ${formatName(preset, locale)}`;
+
+/**
+ * What an instance is called in messages and on screen (Phase 12): its label (`brief.formatLabels`), else the preset's
+ * `formatLabel` plus `#k` for k > 1; the id itself when its preset is not in the catalog. A bare id without a label gives
+ * exactly `formatLabel`.
+ */
+export function formatDisplayName(presets: readonly FormatPreset[], id: string, locale: Locale, labels?: Record<string, string>): string {
+  const p = instancePreset(presets, id);
+  return p ? instanceLabel(id, formatLabel({ ...p, id: presetOf(id) }, locale), labels) : id;
+}
 
 /**
  * Target H.264 bitrate (kbps) for a video of `width`x`height`. Reference points at 30 fps:
@@ -109,6 +120,12 @@ export const DEFAULT_FORMATS: FormatPreset[] = [
   i('web-banner-300x250', 'Web', 'Banner 300×250', 300, 250),
   i('web-banner-728x90', 'Web', 'Banner 728×90', 728, 90),
   i('web-banner-160x600', 'Web', 'Banner 160×600', 160, 600),
+  // App Store and Google Play (Phase 12, Task 6 Step 0): sizes and limits re-checked on 2026-10-14 against the public pages
+  // below (read only, no API): every shipped value still matches, nothing changed. The limits the store pack checks are in
+  // `STORE_LIMITS` (end of this file).
+  //   https://developer.apple.com/help/app-store-connect/reference/screenshot-specifications/
+  //   https://developer.apple.com/help/app-store-connect/reference/app-preview-specifications/
+  //   https://support.google.com/googleplay/android-developer/answer/9866151
   i('appstore-iphone-69', 'App Store', 'Screenshot iPhone 6.9"', 1320, 2868),
   i('appstore-iphone-65', 'App Store', 'Screenshot iPhone 6.5"', 1284, 2778),
   i('appstore-ipad-13', 'App Store', 'Screenshot iPad 13"', 2064, 2752),
@@ -121,3 +138,29 @@ export const DEFAULT_FORMATS: FormatPreset[] = [
   i('playstore-icon', 'Play Store', 'Icona', 512, 512),
   v('playstore-promo-16x9', 'Play Store', 'Video promo 16:9', 1920, 1080),
 ];
+
+/**
+ * The store requirements the App Store pack checks before export (Phase 12, spec §4.2), as documented on the pages named in the
+ * comment above the App Store presets, checked on `checkedOn`. Screenshots and the feature graphic: PNG or JPEG, the preset's
+ * exact size, no alpha channel (both stores). App Store preview: H.264, `fps` frames per second at most (Motion Studio renders
+ * exactly 30), `minSec`–`maxSec` seconds, an audio track (AAC 256 kbps stereo). Google Play takes the promo video as a YouTube
+ * link, never as a file.
+ */
+export const STORE_LIMITS = {
+  checkedOn: '2026-10-14',
+  sources: [
+    'https://developer.apple.com/help/app-store-connect/reference/screenshot-specifications/',
+    'https://developer.apple.com/help/app-store-connect/reference/app-preview-specifications/',
+    'https://support.google.com/googleplay/android-developer/answer/9866151',
+  ],
+  appstore: {
+    screenshots: { min: 1, max: 10 },
+    preview: { minSec: 15, maxSec: 30, fps: 30, codec: 'h264', audioKbps: 256, maxFileMB: 500, maxPerDevice: 3 },
+  },
+  playstore: {
+    screenshots: { min: 2, max: 8, minSide: 320, maxSide: 3840 },
+    feature: { width: 1024, height: 500 },
+    /** Only the first 30 seconds autoplay on the listing. */
+    promoAutoplaySec: 30,
+  },
+} as const;

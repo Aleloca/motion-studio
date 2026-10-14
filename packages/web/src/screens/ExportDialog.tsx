@@ -5,16 +5,17 @@
 // is remembered; progress, then a success screen with Show in Finder. File sizes are not shown: the API does not report
 // them (ruling R6).
 import {
-  EXPORT_NAME_TOKENS, exportDate, exportExtension, exportNameCollisions, exportNameVars, formatName, renderName, renderProblems, renderState,
-  type FormatPreset, type JobSummary, type VersionEntry, type WorkspaceSettings,
+  EXPORT_NAME_TOKENS, exportDate, exportExtension, exportNameCollisions, exportNameVars, localizedStem, renderName, renderProblems, renderState, separateInstanceNames,
+  type FormatPreset, type JobSummary, type LocaleTag, type VersionEntry, type WorkspaceSettings,
 } from '@motion-studio/shared';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { api } from '../api.ts';
+import { api, ApiError } from '../api.ts';
 import { desktop } from '../desktop.ts';
 import { useLocale, useT } from '../i18n.tsx';
 import { pop } from '../motion/index.ts';
 import { isMac } from '../platform.ts';
 import { Button, ChannelMark, Check, Chip, Icon, Input, Modal, ProgressBar, cx } from '../ui/index.ts';
+import { instanceName, presetFor } from '../instances.ts';
 import { boardLabel } from './CanvasBoard.tsx';
 import { outputMedia } from './canvasModel.ts';
 import { channelOf } from './creativeState.ts';
@@ -22,6 +23,7 @@ import { message } from './common.tsx';
 import { abortableWait, exportErrorText, withHashRetry } from './versionErrors.ts';
 import type { FormatState } from './versionModel.ts';
 import { compositionOf, renderPct, shortProblems } from './renderModel.ts';
+import { localeName } from './creative/languagesModel.ts';
 
 /** The last destination folder, kept in this browser only. */
 export const EXPORT_FOLDER_KEY = 'ms.exportFolder';
@@ -41,12 +43,16 @@ export interface ExportDialogProps {
   title: string;
   snapshot: ExportSnapshot | null;
   presets: FormatPreset[];
+  /** The brief's labels of format instances: rows are named after them (Phase 12). */
+  labels?: Record<string, string>;
   /** The workspace's file name pattern: the field starts with it. */
   pattern: string;
   /** The workspace settings after "Save as default". */
   onSettings?(next: WorkspaceSettings): void;
   /** The live jobs (the render jobs a ★ export waits for show their progress, Task 8). */
   jobs?: Record<string, JobSummary>;
+  /** The creative's languages (Phase 12): with extra languages the dialog offers a multiselect; absent: as before. */
+  locales?: { primary: LocaleTag; extra: LocaleTag[] };
 }
 
 /** The extension a render will have (core render-jobs `renderExtension`): the preset's first H.264 container or image type. */
@@ -114,7 +120,7 @@ interface Row {
   problems: string[];
 }
 
-function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern: initialPattern, onSettings, onBusy, jobs = {} }: ExportDialogProps & { snapshot: ExportSnapshot; onBusy(busy: boolean): void }) {
+function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels, pattern: initialPattern, onSettings, onBusy, jobs = {}, locales }: ExportDialogProps & { snapshot: ExportSnapshot; onBusy(busy: boolean): void }) {
   const t = useT();
   const x = t.web.exportUi;
   const locale = useLocale();
@@ -128,16 +134,15 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
     const version = fileN === null ? undefined : versions.find((v) => v.n === fileN);
     const output = version?.outputs.find((o) => o.format === s.id) ?? null;
     const needsRender = version !== undefined && compositionOf(version, s.id) !== null && renderState(version, s.id) !== 'rendered';
-    const preset = presets.find((pr) => pr.id === s.id) ?? null;
-    const primaryPreset = s.follows ? presets.find((pr) => pr.id === s.follows) : undefined;
-    const follows = s.follows ? (primaryPreset ? formatName(primaryPreset, locale) : s.follows) : null;
+    const preset = presetFor(presets, s.id);
+    const follows = s.follows ? instanceName(presetFor(presets, s.follows), s.follows, locale, labels) : null;
     const blocked = needsRender ? null : !output
       ? (follows !== null ? x.noFollowerFile({ n, primary: follows }) : x.fileMissing({ n }))
       : s.starFileMissing ? x.fileMissing({ n: fileN ?? n }) : null;
     const file = output?.file ?? (needsRender ? `${s.id}${renderedExtension(preset)}` : null);
     const problems = version && !needsRender && renderProblems(version, s.id).length ? shortProblems(output, t, locale) : [];
     return [{ id: s.id, preset, n, fileN, output, needsRender, file, follows, newer: follows === null ? s.star.newer : null, blocked, problems }];
-  }), [states, versions, presets, x, locale, t]);
+  }), [states, versions, presets, labels, x, locale, t]);
   const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(rows.map((r) => [r.id, r.blocked === null && r.problems.length === 0])));
   const [pattern, setPattern] = useState(initialPattern);
   const [savedPattern, setSavedPattern] = useState(initialPattern);
@@ -148,6 +153,11 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
   const remembered = folder !== '' && folder === readFolder();
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
   const [error, setError] = useState<string | null>(null);
+  // Languages (Phase 12): the original is on, the translations are chosen. A translation with open problems or outdated texts
+  // is refused by the core with the list; "Render anyway" sends `force`.
+  const withLanguages = Boolean(locales && locales.extra.length > 0);
+  const [langs, setLangs] = useState<Record<string, boolean>>(() => (locales ? { [locales.primary]: true } : {}));
+  const [refused, setRefused] = useState<string[] | null>(null);
   const field = useRef<HTMLInputElement>(null);
   const running = phase.kind === 'run' || phase.kind === 'render';
   const labelId = useId();
@@ -165,13 +175,33 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
   }, []);
   const reveal = isMac() ? x.showInFinder : x.showInFolder;
 
-  // The final names: the pattern rendered per row with the same shared code as the core, extension added.
-  const vars = (r: Row) => exportNameVars({ title, slug: creative, format: r.id, preset: r.preset ?? undefined, size: r.output ?? undefined, version: r.n, date });
-  const named = rows.map((r) => {
-    const rendered = r.file ? renderName(pattern, vars(r)) : null;
-    return { row: r, name: rendered?.ok && r.file ? `${rendered.name}${exportExtension(r.file)}` : null };
+  // The final names: the pattern rendered per row with the same shared code as the core, extension added. With extra
+  // languages the original's `{locale}` is the primary tag, as the core renders it.
+  const primaryTag: string | undefined = locales && withLanguages ? locales.primary : undefined;
+  const vars = (r: Row, tag: string | undefined = primaryTag) => exportNameVars({ title, slug: creative, format: r.id, preset: r.preset ?? undefined, size: r.output ?? undefined, version: r.n, date, ...(tag ? { locale: tag } : {}) });
+  const rendered = rows.map((r) => (r.file ? renderName(pattern, vars(r)) : null));
+  // Instances that would share a name are told apart exactly as the core does it on export (shared code).
+  const stems = separateInstanceNames(rows.flatMap((r, i) => (rendered[i]?.ok && r.file ? [{ format: r.id, stem: rendered[i]!.name, ext: exportExtension(r.file) }] : [])));
+  let k = 0;
+  const named = rows.map((r, i) => {
+    const ok = rendered[i]?.ok && r.file;
+    return { row: r, name: ok ? `${stems[k++]!}${exportExtension(r.file!)}` : null };
   });
   const chosen = named.filter((c) => c.row.blocked === null && on[c.row.id]);
+  // The files of the export as the core names them (final review I2): the original's (when its language is ticked) and each
+  // ticked translation's, which gains its language when the pattern has no `{locale}`; instances kept apart over all of them.
+  const otherTags = locales && withLanguages ? locales.extra.filter((tag) => langs[tag]) : [];
+  const withOriginal = !locales || !withLanguages || Boolean(langs[locales.primary]);
+  const exportEntries = [
+    ...(withOriginal ? chosen.map((c) => ({ row: c.row, tag: undefined as string | undefined })) : []),
+    ...otherTags.flatMap((tag) => chosen.map((c) => ({ row: c.row, tag: tag as string | undefined }))),
+  ].flatMap((e) => {
+    const r = e.row.file ? renderName(pattern, vars(e.row, e.tag ?? primaryTag)) : null;
+    return r?.ok ? [{ ...e, format: e.row.id, stem: localizedStem(pattern, r.name, e.tag, e.tag !== undefined), ext: exportExtension(e.row.file!) }] : [];
+  });
+  const exportStems = separateInstanceNames(exportEntries);
+  const exportNames = exportEntries.map((e, i) => ({ tag: e.tag, name: `${exportStems[i]!}${e.ext}` }));
+  const translatedNames = otherTags.map((tag) => ({ tag, names: exportNames.filter((e) => e.tag === tag).map((e) => e.name) })).filter((x) => x.names.length > 0);
   // Unknown variables are the same on every row: they are left out of the names and flagged here.
   const firstRow = chosen[0]?.row ?? rows[0];
   const unknown = firstRow ? renderName(pattern, vars(firstRow)).unknown : [];
@@ -179,9 +209,9 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
   // Export needs a name for each chosen row only; a default pattern must name every row (blocked or not chosen too).
   const empty = !pattern.trim() || chosen.some((c) => c.name === null);
   const anyRowEmpty = rows.some((r) => !renderName(pattern, vars(r)).ok);
-  const collisions = exportNameCollisions(chosen.flatMap((c) => (c.name ? [c.name] : [])));
+  const collisions = exportNameCollisions(exportNames.map((e) => e.name));
   const nameProblem = tooLong ? x.errors.invalidPattern : empty ? x.emptyName : collisions.length ? x.collision({ list: collisions.join(', ') }) : null;
-  const preview = (chosen[0] ?? named.find((c) => c.name !== null))?.name ?? null;
+  const preview = withOriginal ? (chosen[0] ?? named.find((c) => c.name !== null))?.name ?? null : null;
 
   const insert = (token: string) => {
     const el = field.current;
@@ -209,10 +239,14 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
     } catch (e) { setError(message(e)); }
   };
   const canRun = chosen.length > 0 && folder.trim() !== '' && nameProblem === null && !running;
-  const run = async () => {
+  const wanted = locales && withLanguages ? [locales.primary, ...locales.extra].filter((tag) => langs[tag]) : [];
+  const otherLanguages = locales ? wanted.some((tag) => tag !== locales.primary) : false;
+  const languageBody = otherLanguages ? { locales: wanted } : {};
+  const run = async (force = false) => {
     const dest = folder.trim();
     if (!canRun) return;
     setError(null);
+    setRefused(null);
     setPhase({ kind: 'run' });
     // Followers are never picked on their own: they go with the version whose file the row shows (resolved from their
     // primary's ★), which the core checks against the primary version it exports.
@@ -224,8 +258,8 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
     try {
       // A ★ v2 version without a render is rendered first (Task 8): the jobs start now and show their progress here; the
       // export below waits for them on the core's side.
-      if (chosen.some((c) => c.row.needsRender)) {
-        const prep = await withHashRetry(() => api.prepareExport(slug, creative, { picks, ...followed }), abortableWait(signal));
+      if (chosen.some((c) => c.row.needsRender) || otherLanguages) {
+        const prep = await withHashRetry(() => api.prepareExport(slug, creative, { picks, ...followed, ...languageBody, ...(force ? { force: true } : {}) }), abortableWait(signal));
         if (signal.aborted) return;
         if (prep.renders.length) {
           setPhase({ kind: 'render', jobs: prep.renders.map((r) => r.job.id), count: prep.renders.reduce((k, r) => k + r.formats.length, 0) });
@@ -233,19 +267,24 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
       }
       // A follower's version is decided on hashes: while old versions are still hashed the core answers hashes-pending,
       // retried after its Retry-After (bounded, like a ★ pick).
-      const r = await withHashRetry(() => api.exportPicks(slug, creative, { destination: dest, picks, ...followed, pattern, date }),
+      const r = await withHashRetry(() => api.exportPicks(slug, creative, { destination: dest, picks, ...followed, pattern, date, ...languageBody, ...(force ? { force: true } : {}) }),
         abortableWait(signal));
       if (signal.aborted) return;
       writeFolder(dest);
       // A render made now that had problems was not copied: said apart, with its short reasons (P2).
       const excluded = (r.excluded ?? []).map((e) => {
         const row = rows.find((x) => x.id === e.format);
-        const label = boardLabel({ id: e.format, preset: row?.preset ?? null, out: row?.output ?? null }, locale);
+        const label = boardLabel({ id: e.format, preset: row?.preset ?? null, out: row?.output ?? null, labels }, locale);
         return x.excludedItem({ label, n: e.version, list: shortProblems(e, t, locale).join('; ') });
       });
       setPhase({ kind: 'done', destination: r.destination, count: r.files.length, skipped: r.skipped ?? [], excluded });
     } catch (e) {
       if (signal.aborted) return;
+      if (e instanceof ApiError && e.code === 'localization-needs-force') {
+        setRefused(e.problems?.length ? e.problems : [e.message]);
+        setPhase({ kind: 'idle' });
+        return;
+      }
       setError(exportErrorText(e, t));
       setPhase({ kind: 'idle' });
     }
@@ -292,7 +331,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
         <div className="ms-exp-rows">
           <div className="ms-exp-row ms-exp-cols ms-cap" aria-hidden="true"><span /><span /><span>{x.format}</span><span>{x.version}</span></div>
           {named.map(({ row: r, name }) => {
-            const label = boardLabel({ id: r.id, preset: r.preset, out: r.output }, locale);
+            const label = boardLabel({ id: r.id, preset: r.preset, out: r.output, labels }, locale);
             const media = r.output && r.fileN !== null ? outputMedia(slug, creative, r.fileN, r.output) : null;
             const aspect = r.preset ? r.preset.width / r.preset.height : r.output ? r.output.width / r.output.height : 1;
             const blocked = r.blocked !== null;
@@ -318,6 +357,27 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
           })}
         </div>
       ) : <p className="ms-exp-empty">{x.empty}</p>}
+      {locales && withLanguages ? (
+        <div className="ms-exp-langs" role="group" aria-label={t.web.languages.exportLanguages}>
+          <span className="ms-exp-dest-label">{t.web.languages.exportLanguages}</span>
+          <div className="ms-exp-langs-list">
+            {[locales.primary, ...locales.extra].map((tag) => (
+              <label key={tag} className="ms-exp-lang">
+                <Check on={Boolean(langs[tag])} label={tag === locales.primary ? t.web.languages.renderOriginal({ language: localeName(tag, locale) }) : localeName(tag, locale)}
+                  disabled={running} onChange={(v) => { setRefused(null); setLangs((s) => ({ ...s, [tag]: v })); }} />
+                <span>{tag === locales.primary ? t.web.languages.renderOriginal({ language: localeName(tag, locale) }) : localeName(tag, locale)}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {refused ? (
+        <div className="ms-exp-refused" role="alert">
+          <b>{t.web.languages.needsForceTitle}</b>
+          <ul>{refused.map((r) => <li key={r}>{r}</li>)}</ul>
+          <Button variant="outline" size="sm" disabled={running} onClick={() => void run(true)}>{t.web.languages.renderAnyway}</Button>
+        </div>
+      ) : null}
       <div className="ms-exp-dest">
         <span className="ms-exp-dest-label" id={labelId}>{x.saveTo}</span>
         <div className="ms-exp-dest-field">
@@ -349,6 +409,12 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
           </div>
           <div id={previewId} className="ms-exp-preview">
             {preview ? <span className="ms-exp-preview-line"><span className="ms-exp-preview-label">{x.preview}</span><span className="ms-exp-file">{preview}</span></span> : null}
+            {translatedNames.map((l) => (
+              <span key={l.tag} className="ms-exp-preview-line">
+                <span className="ms-exp-preview-label">{x.previewLanguage({ language: localeName(l.tag, locale) })}</span>
+                <span className="ms-exp-file">{l.names.join(', ')}</span>
+              </span>
+            ))}
             {unknown.length ? <span className="ms-exp-hint">{x.unknownVars({ list: unknown.map((u) => `{${u}}`).join(', ') })}</span> : null}
             {nameProblem ? <span role="alert" className="ms-exp-error">{nameProblem}</span> : null}
             {save.kind === 'saved' ? <span role="status" className="ms-exp-note">{x.savedDefault}</span> : null}
@@ -375,7 +441,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
           </div>
         )}
         <Button size="lg" variant="ghost" disabled={running} onClick={onClose}>{t.common.cancel}</Button>
-        <Button size="lg" variant="ink" loading={running} disabled={!canRun} onClick={() => void run()}>
+        <Button size="lg" variant="ink" loading={running} disabled={!canRun || (withLanguages && wanted.length === 0)} onClick={() => void run()}>
           {x.run({ count: chosen.length })}
         </Button>
       </div>

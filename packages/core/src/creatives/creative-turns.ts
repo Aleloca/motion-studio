@@ -1,7 +1,7 @@
 import { creativeJobKey } from '@motion-studio/shared';
 import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
-import { canFollow, effectiveServices, checkLink, effectiveLinks, legacyTurnKind, linksAfterBriefSave, formatHistory, formatLabel, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
+import { canFollow, effectiveServices, checkLink, effectiveLinks, legacyTurnKind, linksAfterBriefSave, formatHistory, formatDisplayName, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import { detachLinksUnder } from '../agent/protected-links.ts';
 import { noteCoreChange } from '../core-changes.ts';
@@ -32,6 +32,8 @@ import { realDirChain, writeThroughTemp } from './core-files.ts';
 import { acceptedDurationsOf, alignEditorCopies, assembleCompositions, carriableComposition, type CarriedComposition } from './composition-turn.ts';
 import { checkedPreviewTimes, type PreviewService } from './previews.ts';
 import { sumUsage } from '../usage/usage-tracker.ts';
+import { carryLocalizations } from '../localization/carry.ts';
+import { instanceComposition, type InstanceComposition } from '../localization/store.ts';
 import { currentLocale, t } from '../i18n.ts';
 
 export interface CreativeTurnDeps {
@@ -129,6 +131,32 @@ export function editorLineSummary(versions: readonly VersionEntry[], base: Versi
   return out.join('; ');
 }
 
+/**
+ * The stored links without those whose follower or primary is in `gone`, and the manual picks without `gone`'s (Phase 12): what
+ * a removed format, or a freed instance id taken again, must not carry. Empty picks become absent; links keep their shape.
+ */
+export function withoutFormatState(links: Record<string, string> | undefined, picks: Record<string, number> | undefined, gone: ReadonlySet<string>):
+  { links: Record<string, string> | undefined; exportPicks: Record<string, number> | undefined } {
+  const l = links === undefined ? undefined : Object.fromEntries(Object.entries(links).filter(([f, p]) => !gone.has(f) && !gone.has(p)));
+  const k = picks === undefined ? undefined : Object.fromEntries(Object.entries(picks).filter(([f]) => !gone.has(f)));
+  return { links: l, exportPicks: k && Object.keys(k).length > 0 ? k : undefined };
+}
+
+/**
+ * `freed` with `ids` marked as freed at version `at` (the latest version now; `withoutFormatState`'s twin for the localization
+ * rows, final review I1): a row of one of them in a version up to `at` is never carried. A later freeing moves the mark up.
+ */
+export function withFreedInstances(freed: Record<string, number> | undefined, ids: Iterable<string>, at: number): { freedInstances: Record<string, number> | undefined } {
+  const out = { ...(freed ?? {}) };
+  for (const id of ids) out[id] = Math.max(out[id] ?? 0, at);
+  return { freedInstances: Object.keys(out).length > 0 ? out : undefined };
+}
+
+/** The instance ids whose rows in version `base` belong to an instance freed since (`withFreedInstances`). */
+export function freedSince(freed: Record<string, number> | undefined, base: number): Set<string> {
+  return new Set(Object.entries(freed ?? {}).filter(([, at]) => at >= base).map(([id]) => id));
+}
+
 export class CreativeTurnService {
   private readonly maxAttempts: number;
   private readonly locks = new KeyedMutex();
@@ -143,7 +171,7 @@ export class CreativeTurnService {
   }
 
   /** Edits title and/or brief; refused while a generation is queued or running for the creative. */
-  async updateBrief(ref: CreativeRef, patch: { title?: string; brief?: Brief; services?: Brief['services']; linkedCodebases?: LinkedCodebase[] }): Promise<CreativeFile> {
+  async updateBrief(ref: CreativeRef, patch: { title?: string; brief?: Brief; services?: Brief['services']; formatLabels?: Record<string, string | null>; formats?: string[]; linkedCodebases?: LinkedCodebase[] }): Promise<CreativeFile> {
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     return this.locks.run(key, async () => {
       if (this.isActive(key)) throw new WorkspaceError(409, t().errors.waitBeforeBrief);
@@ -154,20 +182,70 @@ export class CreativeTurnService {
       // save adds get the default links against the primaries already there (and each other), with the duration unknown
       // (`undefined`): it is checked on the real file when the follower is materialized (spec §2.4).
       let brief: Brief | undefined;
+      let exportPicks: { exportPicks: CreativeFile['exportPicks'] } | undefined;
+      let freed: { freedInstances: CreativeFile['freedInstances'] } | undefined;
+      // Ids removed or added by this save are freed (final review I1): the rows the latest version holds for them belong to
+      // the old instance and are never carried. Saved versions are not touched.
+      const markFreed = async (stored: CreativeFile, ids: string[]) => {
+        if (ids.length === 0) return;
+        const latest = (await store.readVersions(ref.creativeSlug)).at(-1)?.n ?? 0;
+        freed = withFreedInstances(stored.freedInstances, ids, latest);
+      };
       if (patch.brief) {
         const { links: _ignored, ...rest } = patch.brief;
-        const current = (await store.get(ref.creativeSlug)).brief;
+        const stored = await store.get(ref.creativeSlug);
+        const current = stored.brief;
         const added = rest.formats.filter((f) => !current.formats.includes(f));
         // Shared with the web, which tells before "Save and regenerate" whether a legacy creative converts (I4).
-        const links = added.length > 0 ? linksAfterBriefSave(current, rest.formats, await this.deps.presets()) : current.links;
+        let links = added.length > 0 ? linksAfterBriefSave(current, rest.formats, await this.deps.presets()) : current.links;
+        // Formats the save removes leave no link (either end) and no manual pick behind (Phase 12): a freed instance id
+        // reused later starts clean. Saved versions are not touched.
+        const gone = new Set(current.formats.filter((f) => !rest.formats.includes(f)));
+        if (gone.size > 0) {
+          const pruned = withoutFormatState(links, stored.exportPicks, gone);
+          links = pruned.links;
+          exportPicks = { exportPicks: pruned.exportPicks };
+        }
+        await markFreed(stored, [...gone, ...added]);
         brief = links ? { ...rest, links } : rest;
-      } else if (patch.services) {
-        // Only the service choices change: everything else comes from the brief stored now, never from the caller's copy.
-        brief = { ...(await store.get(ref.creativeSlug)).brief, services: patch.services };
+      } else if (patch.services || patch.formatLabels || patch.formats) {
+        // A partial save (services chip, inline labels, reorder, removal): everything else comes from the brief stored now,
+        // never from the caller's copy.
+        const stored = await store.get(ref.creativeSlug);
+        const next: Brief = { ...stored.brief };
+        if (patch.services) next.services = patch.services;
+        if (patch.formats) {
+          const f = patch.formats;
+          if (new Set(f).size !== f.length || f.some((id) => !stored.brief.formats.includes(id))) {
+            throw new CodedError(400, t().errors.formatsReorderRemoveOnly, 'formats-reorder-remove-only');
+          }
+          next.formats = f;
+          const gone = new Set(stored.brief.formats.filter((id) => !f.includes(id)));
+          if (gone.size > 0) {
+            const pruned = withoutFormatState(next.links, stored.exportPicks, gone);
+            if (pruned.links) next.links = pruned.links;
+            exportPicks = { exportPicks: pruned.exportPicks };
+            await markFreed(stored, [...gone]);
+          }
+        }
+        if (patch.formatLabels) {
+          // Per key: a key left out is kept (a newer label from another tab survives); '' or null clears the key.
+          const merged: Record<string, string> = { ...(next.formatLabels ?? {}) };
+          for (const [k, v] of Object.entries(patch.formatLabels)) { if (v === null || v === '') delete merged[k]; else merged[k] = v; }
+          next.formatLabels = merged;
+        }
+        // Ruling H: a label of a format the brief no longer has goes with it.
+        if (next.formatLabels) {
+          const kept = Object.fromEntries(Object.entries(next.formatLabels).filter(([k]) => next.formats.includes(k)));
+          if (Object.keys(kept).length > 0) next.formatLabels = kept; else delete next.formatLabels;
+        }
+        brief = next;
       }
       const updated = await store.update(ref.creativeSlug, {
         ...(patch.title !== undefined ? { title: patch.title } : {}),
         ...(brief ? { brief } : {}),
+        ...(exportPicks ?? {}),
+        ...(freed ?? {}),
         ...(linkedCodebases ? { linkedCodebases } : {}),
       });
       await this.commitState(ref, t().jobs.briefUpdatedCommit({ title: updated.title }));
@@ -184,7 +262,7 @@ export class CreativeTurnService {
   async setExportPick(ref: CreativeRef, format: string, version: number | null): Promise<CreativeFile> {
     const store = new CreativeStore(ref.projectDir);
     const presets = await this.deps.presets();
-    const label = (id: string) => { const p = presets.find((x) => x.id === id); return p ? formatLabel(p, currentLocale()) : id; };
+    const label = (id: string) => formatDisplayName(presets, id, currentLocale());
     const e = t().errors;
     /** The checks that need no hashes; run on an unlocked read first (fail fast), then again under the lock. */
     const validate = (creative: CreativeFile, versions: VersionEntry[]) => {
@@ -247,7 +325,7 @@ export class CreativeTurnService {
       const creative = await store.get(ref.creativeSlug);
       const { brief } = creative;
       const presets = await this.deps.presets();
-      const label = (id: string) => { const p = presets.find((x) => x.id === id); return p ? formatLabel(p, currentLocale()) : id; };
+      const label = (id: string) => formatDisplayName(presets, id, currentLocale(), brief.formatLabels);
       const e = t().errors;
       for (const f of primary === null ? [follower] : [follower, primary]) {
         if (!brief.formats.includes(f)) throw new CodedError(400, e.formatNotInBrief({ format: label(f) }), 'format-not-in-brief');
@@ -377,7 +455,7 @@ export class CreativeTurnService {
         plan = await this.planTurn(ref, store, plan.creative, presets, base, hasMessage, requestedFormats, locale, contract);
       }
       const { creative, targets } = plan;
-      const label = (id: string) => { const p = findPreset(presets, id); return p ? formatLabel(p, locale) : id; };
+      const label = (id: string) => formatDisplayName(presets, id, locale, creative.brief.formatLabels);
       const j = t().jobs;
       const noAgent = targets.length === 0;
       const primaries = creative.brief.formats.filter((f) => !Object.hasOwn(plan.links, f));
@@ -593,7 +671,7 @@ export class CreativeTurnService {
       }
 
       finalizing = true;
-      let saved: { outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: string | null; compositions?: VersionComposition[] };
+      let saved: { outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: string | null; compositions?: VersionComposition[]; localizations?: VersionEntry['localizations'] };
       if (turnContract === 'compositions') saved = await this.finishCompositions(ref, store, plan, presets, base, n, label, locale, { accepted });
       else {
         const assembled = await this.assemble(ref, store, plan, presets, base, n, result, label, locale);
@@ -623,6 +701,7 @@ export class CreativeTurnService {
         basedOn: creative.resumeFrom?.version ?? latest?.n ?? null,
         ...(usage ? { usage } : {}),
         ...(saved.compositions ? { compositions: saved.compositions } : {}),
+        ...(saved.localizations ? { localizations: saved.localizations } : {}),
       });
       if (noAgent && request) await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: `${request} · ${j.noAgentNeeded}` });
       await store.appendConversation(slug, { type: 'version', at: now(), n, status });
@@ -701,7 +780,7 @@ export class CreativeTurnService {
         } else wanted.add(p);
       }
     }
-    const label = (id: string) => { const p = findPreset(presets, id); return p ? formatLabel(p, locale) : id; };
+    const label = (id: string) => formatDisplayName(presets, id, locale, creative.brief.formatLabels);
     const e = t().errors;
     const unlinked: string[] = [];
     for (const [f, p] of Object.entries(links)) {
@@ -910,7 +989,7 @@ export class CreativeTurnService {
   async finishCompositions(ref: CreativeRef, store: CreativeStore, plan: Pick<TurnPlan, 'creative' | 'targets' | 'carried' | 'carriedComps' | 'links'>, presets: FormatPreset[], base: VersionEntry | undefined, n: number,
     label: (id: string) => string, locale: Locale,
     /** `direct`: a direct edit (decisions log 262): the brief's duration is not checked. `accepted`: see `acceptedDurationsOf`. */
-    duration: { direct: true; base?: { durationSec: number | null; userDuration?: { durationSec: number } } } | { accepted: ReadonlyMap<string, number> } = { accepted: new Map() }): Promise<{ outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: null; compositions: VersionComposition[] }> {
+    duration: { direct: true; base?: { durationSec: number | null; userDuration?: { durationSec: number } } } | { accepted: ReadonlyMap<string, number> } = { accepted: new Map() }): Promise<{ outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: null; compositions: VersionComposition[]; localizations?: VersionEntry['localizations'] }> {
     const slug = ref.creativeSlug;
     const j = t().jobs;
     const a = await assembleCompositions({
@@ -927,7 +1006,33 @@ export class CreativeTurnService {
     const list = (items: string[]) => items.slice(0, 5).join('; ') + (items.length > 5 ? '; …' : '');
     if (a.stray.length > 0) await say('warning', j.strayRemoved({ list: list(a.stray) }));
     if (a.check && a.check.warnings.length > 0) await say('info', j.layerWarnings({ list: list(a.check.warnings) }));
-    return { outputs: a.outputs, problems: a.problems, tools: [], renderCommand: null, compositions: a.compositions };
+    const exclude = base ? freedSince(plan.creative.freedInstances, base.n) : new Set<string>();
+    const localizations = await this.carryLocalizations(ref, store, base, n, a.compositions, presets, locale, exclude);
+    return { outputs: a.outputs, problems: a.problems, tools: [], renderCommand: null, compositions: a.compositions, ...(localizations ? { localizations } : {}) };
+  }
+
+  /**
+   * The base's localization overlays carried into the new version `n` (Phase 12, spec §3.3: kept, stale or dropped,
+   * `carryLocalizations`), for every way a version is made (turns, direct edits, duplicates all finish here). Best effort: a
+   * failure leaves the new version without overlays and says so in the chat, it never fails the version.
+   */
+  private async carryLocalizations(ref: CreativeRef, store: CreativeStore, base: VersionEntry | undefined, n: number, compositions: VersionComposition[],
+    presets: FormatPreset[], locale: Locale, exclude: ReadonlySet<string>): Promise<VersionEntry['localizations']> {
+    if (!base?.localizations?.length) return undefined;
+    const creativeDir = store.dir(ref.creativeSlug);
+    try {
+      const next = { n, compositions } as VersionEntry;
+      const comps = new Map<string, InstanceComposition>();
+      for (const c of compositions) {
+        if (!base.localizations.some((r) => r.instanceId === c.format)) continue;
+        const ic = await instanceComposition(creativeDir, next, c.format, presets);
+        if (ic) comps.set(c.format, ic);
+      }
+      return await carryLocalizations({ creativeDir, n: base.n, version: base }, { creativeDir, n }, comps, { projectDir: ref.projectDir, uiLocale: locale, exclude });
+    } catch (e) {
+      await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'warning', text: messages(locale).variants.localizationInvalid({ detail: (e as Error).message.slice(0, 200) }) }).catch(() => {});
+      return undefined;
+    }
   }
 
   private async buildContext(ref: CreativeRef, store: CreativeStore, creativeCodebases: LinkedCodebase[], services: Brief['services']): Promise<{ context: CreativeContext; existing: string[] }> {

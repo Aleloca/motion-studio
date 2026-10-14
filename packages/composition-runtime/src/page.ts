@@ -25,6 +25,21 @@ export interface CompositionData {
   base: string;
   /** The composition, normalised (`normalizeComposition`) and validated by the core. */
   composition: unknown;
+  /**
+   * The format's safe zone (insets in composition pixels), when the preset has one (Phase 12 final wave P6): a text clip
+   * without an explicit box is measured against the frame inside it, else against the whole frame.
+   */
+  safeZone?: SafeZone;
+}
+
+export interface SafeZone { top: number; bottom: number; left: number; right: number }
+
+const isInset = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 100_000;
+/** `v` as a safe zone when it is one (four finite, non-negative insets), else undefined. */
+export function safeZoneOf(v: unknown): SafeZone | undefined {
+  if (typeof v !== 'object' || v === null) return undefined;
+  const o = v as Record<string, unknown>;
+  return isInset(o.top) && isInset(o.bottom) && isInset(o.left) && isInset(o.right) ? { top: o.top, bottom: o.bottom, left: o.left, right: o.right } : undefined;
 }
 
 /** Whether `base` is a relative folder path: no scheme, no host, no backslash, no query or fragment, ends in `/`. */
@@ -47,7 +62,8 @@ export function renderRuntimePage(indexHtml: string, data: CompositionData): str
   if (!isRelativeBase(data.base)) throw new Error('renderRuntimePage: base must be a relative folder path ending in "/"');
   const at = indexHtml.indexOf(COMPOSITION_PLACEHOLDER);
   if (at < 0) throw new Error('renderRuntimePage: placeholder not found');
-  const block = `<script type="application/json" id="${COMPOSITION_DATA_ID}">${scriptSafeJson({ base: data.base, composition: data.composition })}</script>`;
+  const safeZone = safeZoneOf(data.safeZone);
+  const block = `<script type="application/json" id="${COMPOSITION_DATA_ID}">${scriptSafeJson({ base: data.base, composition: data.composition, ...(safeZone ? { safeZone } : {}) })}</script>`;
   return indexHtml.slice(0, at) + block + indexHtml.slice(at + COMPOSITION_PLACEHOLDER.length);
 }
 
@@ -58,7 +74,8 @@ export function readCompositionData(text: string): CompositionData | null {
   if (typeof v !== 'object' || v === null) return null;
   const o = v as Record<string, unknown>;
   if (typeof o.base !== 'string' || typeof o.composition !== 'object' || o.composition === null) return null;
-  return { base: o.base, composition: o.composition };
+  const safeZone = safeZoneOf(o.safeZone);
+  return { base: o.base, composition: o.composition, ...(safeZone ? { safeZone } : {}) };
 }
 
 /**

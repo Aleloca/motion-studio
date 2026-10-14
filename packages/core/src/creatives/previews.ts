@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { lstat, mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
-import { compositionProblemText, messages, type Composition, type FormatPreset, type Locale, type PreviewSessionInfo, type StagedAsset, type VersionEntry } from '@motion-studio/shared';
+import { compositionProblemText, INSTANCE_FOLDER_SOURCE, messages, type Composition, type FormatPreset, type Locale, type PreviewSessionInfo, type StagedAsset, type VersionEntry } from '@motion-studio/shared';
 import { loadComposition } from '../compositions/composition-files.ts';
 import { EDITOR_STAGING, startCompositionServer, type CompositionServer, type CompositionSession, type SessionMediaFile } from '../compositions/composition-server.ts';
 import { noteCoreChange } from '../core-changes.ts';
@@ -212,7 +212,7 @@ export class PreviewService {
   }
 
   /** Frames through the lane, with the normalised media (released after). */
-  private async frames(o: { ref: VersionFormatRef; folder: string; preset: FormatPreset; composition: Composition; times: number[]; width: number; imageFormat: 'png' | 'jpeg'; signal?: AbortSignal }) {
+  private async frames(o: { ref: VersionFormatRef; folder: string; preset: FormatPreset; composition: Composition; times: number[]; width: number; imageFormat: 'png' | 'jpeg'; signal?: AbortSignal; noWait?: boolean }) {
     const engine = this.deps.engine;
     if (!engine || !(await this.available())) throw new CodedError(503, messages(currentLocale()).errors.previewUnavailable, 'no-renderer');
     const signal = AbortSignal.any([this.closing.signal, ...(o.signal ? [o.signal] : [])]);
@@ -228,7 +228,7 @@ export class PreviewService {
           dir: o.ref.creativeDir, versionDir: `outputs/v${o.ref.n}`, composition: o.composition, format: { ...o.preset, id: o.folder },
           times: o.times, width: o.width, imageFormat: o.imageFormat, quality: 80, signal: laneSignal, ...withMedia(prepared),
           ...(this.deps.distDir ? { distDir: this.deps.distDir } : {}),
-        }), signal);
+        }), signal, { noWait: o.noWait === true });
       } finally {
         prepared.release();
       }
@@ -261,6 +261,41 @@ export class PreviewService {
       ...(r.errors.length ? { runtimeErrors: r.errors.map((x) => ({ code: x.code, message: x.message, ...(x.clipId ? { clipId: x.clipId } : {}) })) } : {}),
       images: r.frames.map((f) => ({ mimeType: 'image/png', data: f.data.toString('base64') })),
     };
+  }
+
+  /**
+   * `preview_frames` of a localize turn (Phase 12): frames of a localized composition held in memory (the version's composition
+   * folder `folder`, with the overlay applied), same limits as `agentFrames`.
+   */
+  async localizedAgentFrames(o: { ref: VersionFormatRef; format: string; folder: string; preset: FormatPreset; composition: Composition; times: unknown; locale: Locale; signal: AbortSignal }): Promise<Record<string, unknown>> {
+    const times = checkedPreviewTimes(o.times, o.locale);
+    const c = o.composition;
+    const r = await this.frames({ ref: o.ref, folder: o.folder, preset: o.preset, composition: c, times, width: Math.min(AGENT_FRAME_MAX_WIDTH, c.width), imageFormat: 'png', signal: o.signal });
+    return {
+      format: o.format, ok: true,
+      frames: r.frames.map((f) => ({ t: f.t, width: f.width, height: f.height })),
+      ...(r.errors.length ? { runtimeErrors: r.errors.map((x) => ({ code: x.code, message: x.message, ...(x.clipId ? { clipId: x.clipId } : {}) })) } : {}),
+      images: r.frames.map((f) => ({ mimeType: 'image/png', data: f.data.toString('base64') })),
+    };
+  }
+
+  /**
+   * The browser's text measure of a composition held in memory (Phase 12, Ruling I): one small frame in render mode, whose
+   * runtime lays out every boxed text clip once and reports a text that needs more room than its box (`textOverflow`).
+   * Returns the clip ids that overflow, or null when no renderer can run it now (no engine, busy lane, a failure).
+   */
+  async measureTextOverflow(o: { ref: VersionFormatRef; folder: string; preset: FormatPreset; composition: Composition; signal?: AbortSignal; noWait?: boolean }): Promise<string[] | null> {
+    if (!this.deps.engine) return null;
+    try {
+      // Only the text clips are laid out (fix round 1, M3): each is placed on its own, so the others change nothing, and no
+      // media is normalised. `noWait`: a busy lane answers null at once (the caller holds a lock; the estimate decides).
+      const textOnly: Composition = { ...o.composition, tracks: o.composition.tracks.map((t) => ({ ...t, clips: t.clips.filter((c) => c.type === 'text') })) as Composition['tracks'] };
+      const r = await this.frames({ ref: o.ref, folder: o.folder, preset: o.preset, composition: textOnly, times: [0], width: Math.min(64, o.composition.width), imageFormat: 'jpeg',
+        ...(o.signal ? { signal: o.signal } : {}), ...(o.noWait ? { noWait: true } : {}) });
+      return [...new Set(r.errors.filter((e) => e.code === 'textOverflow' && e.clipId).map((e) => e.clipId!))];
+    } catch {
+      return null;
+    }
   }
 
   /** The storyboard index of (version, format) when it exists and matches `hash`; null otherwise. */
@@ -612,6 +647,24 @@ export class PreviewService {
     });
   }
 
+  /**
+   * Phase 12: makes the files of a localized preview (the overlay's fallback fonts and translated voices, project files under
+   * `assets/fonts/` and `assets/audio/`) servable by the live session `token`: only `paths` that the row recorded a hash for
+   * (`hashes`), which the composition server checks against the bytes at every request. The paths served are returned.
+   * 404 `editor-no-session` when the token is not a live session of this creative.
+   */
+  async attachLocale(ref: Pick<VersionFormatRef, 'projectDir' | 'creativeDir' | 'creativeSlug' | 'n'> & { folder: string }, token: string, paths: Iterable<string>, hashes: Readonly<Record<string, string>>, locale: Locale): Promise<string[]> {
+    const s = this.sessions.get(token);
+    // The session must show this very version and format: another one's row files are not its to serve.
+    if (!s || s.creativeDir !== ref.creativeDir || s.creativeSlug !== ref.creativeSlug || s.n !== ref.n || s.format !== ref.folder || !s.session.live() || this.closing.signal.aborted) {
+      throw new CodedError(404, messages(locale).editor.stageNoSession, 'editor-no-session');
+    }
+    const files: Record<string, string> = {};
+    for (const p of paths) if (/^assets\/(?:audio|fonts)\/[^/]+$/.test(p) && typeof hashes[p] === 'string') files[p] = hashes[p]!;
+    await s.session.attachLocaleAssets(ref.projectDir, files);
+    return Object.keys(files);
+  }
+
   /** A staged video normalised as at a preview (the session's frame and rate) and added to the session's media. */
   private async normaliseStaged(s: LiveSession, staging: SessionStaging, asset: StagedAsset, locale: Locale): Promise<StagedAsset> {
     // One video clip over the whole frame: what `videoNeeds` sizes the normalised file for.
@@ -667,6 +720,9 @@ export class PreviewService {
   }
 }
 
+/** `<folder>.<hex>.tmp`: a storyboard folder being written (`folder` a preset or an instance id). */
+const STORYBOARD_TEMP_RE = new RegExp(`^${INSTANCE_FOLDER_SOURCE}\\.[0-9a-f]{12}\\.tmp$`);
+
 /**
  * Leftover storyboard temp folders (`<format>.<hex>.tmp`, a crash while one was written) of a project, older than
  * `olderThanMs` (default 10 min, so a storyboard being written now is never touched). Startup and workspace switch.
@@ -682,7 +738,7 @@ export async function sweepStoryboardTemps(projectDir: string, o: { now?: number
       const vdir = join(cdir, v);
       if (!/^v\d+$/.test(v) || !(await lstat(vdir).catch(() => null))?.isDirectory()) continue;
       for (const name of await readdir(vdir).catch(() => [] as string[])) {
-        if (!/^[a-z0-9][a-z0-9-]{0,62}\.[0-9a-f]{12}\.tmp$/.test(name)) continue;
+        if (!STORYBOARD_TEMP_RE.test(name)) continue;
         const st = await lstat(join(vdir, name)).catch(() => null);
         if (!st || st.mtimeMs > limit) continue;
         await rm(join(vdir, name), { recursive: true, force: true }).catch(() => {});

@@ -1,4 +1,4 @@
-import type { BrandFont, EditOp, EditorCompositionView, StagedAsset, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
+import type { LocaleTag, Localization, LocalizationIssue, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings, StorePack } from '@motion-studio/shared';
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
 
@@ -77,7 +77,20 @@ async function request<T>(method: string, url: string, body?: unknown, opts: Req
 export interface SaveEditsBody { baseVersion: number; format: string; baseHash: string; composition: unknown; staged: string[]; ops: EditOp[]; token: string }
 
 /** A render made during an export that had problems, so not copied (final wave P2): said in the summary. */
-export interface ExportExcluded { format: string; version: number; problems: string[]; issues: OutputIssue[] }
+export interface ExportExcluded { format: string; version: number; problems: string[]; issues: OutputIssue[]; /** A translation that was excluded (Phase 12). */ locale?: string }
+
+/** A translation as the core answers GET and PUT of one language and format (Phase 12). `warnings`: PUT only, advisory. */
+export interface LocalizationView { overlay: Localization; problems: string[]; /** The problems with their code and clip; absent on rows written before. */ issues?: LocalizationIssue[]; stale: string[]; voice: LocalizationRow['voice']; origin: LocalizationRow['origin']; hash: string; warnings?: string[] }
+/** The edit PUT takes: `null` removes an entry; `voice`: keep the original voice or mute it. */
+export interface LocalizationEdit { texts?: Record<string, string | null>; params?: Record<string, string | null>; fit?: Record<string, number | null>; voice?: 'original' | 'muted' }
+/** The body of a localize turn (`POST …/versions/:n/localize`): `voice` per language. */
+export interface LocalizeRequest { locales: string[]; formats?: string[]; voice?: Record<string, 'translate' | 'original' | 'muted'>; text?: string }
+/** The localized composition of a format (preview): the editor view with the overlay applied, plus the language's state. */
+export type LocalizedCompositionView = EditorCompositionView & { localization: { locale: LocaleTag; stale: string[]; problems: string[]; issues?: LocalizationIssue[]; voice: LocalizationRow['voice'] } };
+/** What a pack export did (Phase 12 §4.3): paths relative to the pack folder; `rendered` lists what was rendered first. */
+export interface StorePackExportResult { folder: string; written: string[]; failed: Array<{ file: string; reason: string }>; rendered?: Array<{ version: number; formats: string[]; locale?: string }> }
+/** "Render anyway" and the languages of a render or an export (Phase 12 §3.5). */
+export interface LocaleOptions { locales?: string[]; force?: boolean }
 
 export interface CodebaseCheck { path: string; note?: string; exists: boolean }
 const enc = (rel: string) => rel.split('/').map(encodeURIComponent).join('/');
@@ -182,8 +195,21 @@ export const api = {
   listCreatives: (slug: string) => request<CreativeListItem[]>('GET', `${p(slug)}/creatives`),
   createCreative: (slug: string, body: { title: string; brief: Brief; generate: boolean; linkedCodebases?: LinkedCodebase[] }) =>
     request<{ slug: string; creative: CreativeFile; job: JobSummary | null }>('POST', `${p(slug)}/creatives`, body),
+  /** Creates an App store pack creative (Phase 12 §4.1): the core builds the brief from the choices and checks every app screen. */
+  createStorePack: (slug: string, body: { title: string; storePack: StorePack; generate?: boolean }) =>
+    request<{ slug: string; creative: CreativeFile; job: JobSummary | null }>('POST', `${p(slug)}/creatives/store-pack`, body),
+  /** Exports the pack of version n (§4.3): written and failed files are relative to the pack folder. */
+  exportStorePack: (slug: string, creative: string, n: number, body: { destination: string; locales?: string[] }) =>
+    request<StorePackExportResult>('POST', `${c(slug, creative)}/versions/${n}/store-pack/export`, body),
   getCreative: (slug: string, creative: string) => request<CreativeDetail>('GET', c(slug, creative)),
-  updateCreative: (slug: string, creative: string, body: { title?: string; brief?: Brief; services?: Brief['services']; linkedCodebases?: LinkedCodebase[] }) => request<CreativeFile>('PUT', c(slug, creative), body),
+  updateCreative: (slug: string, creative: string, body: {
+    title?: string; brief?: Brief; services?: Brief['services']; linkedCodebases?: LinkedCodebase[];
+    /** Alone, each merges into the stored brief under the creative's lock: labels per key (`''` or null clears one), order and removal of formats. */
+    formatLabels?: Record<string, string | null>; formats?: string[];
+  }) => request<CreativeFile>('PUT', c(slug, creative), body),
+  /** Duplicates a format of version n as the next free instance and saves a new version; the new instance's id comes back. */
+  duplicateFormat: (slug: string, creative: string, n: number, body: { instanceId: string; label?: string }) =>
+    request<{ version: VersionEntry; instanceId: string }>('POST', `${c(slug, creative)}/versions/${n}/duplicate-format`, body),
   /** Manual ★ of a format (`null` clears it; the version the default rule gives also clears it). */
   setExportPick: (slug: string, creative: string, format: string, version: number | null) =>
     request<CreativeDetail>('PUT', `${c(slug, creative)}/export-picks`, { format, version }),
@@ -200,17 +226,34 @@ export const api = {
    * `pattern` the file name pattern (the workspace default when omitted), `date` the `{date}` previewed (YYYY-MM-DD).
    * Refusals carry an `export-*` code.
    */
-  exportPicks: (slug: string, creative: string, body: { destination: string; picks: Record<string, number>; follow?: Record<string, number>; pattern?: string; date?: string }) =>
+  exportPicks: (slug: string, creative: string, body: { destination: string; picks: Record<string, number>; follow?: Record<string, number>; pattern?: string; date?: string } & LocaleOptions) =>
     request<{ destination: string; files: Array<{ from: string; to: string }>; skipped: string[]; excluded?: ExportExcluded[] }>('POST', `${c(slug, creative)}/export`, body),
   /**
    * What a ★ export renders first (Task 8): the same picks and followers as `exportPicks`; the jobs are started (or joined)
    * at once and the export, called next, waits for them.
    */
-  prepareExport: (slug: string, creative: string, body: { picks: Record<string, number>; follow?: Record<string, number> }) =>
+  prepareExport: (slug: string, creative: string, body: { picks: Record<string, number>; follow?: Record<string, number> } & LocaleOptions) =>
     request<ExportPrepareResult>('POST', `${c(slug, creative)}/export/prepare`, body),
   /** Renders a v2 version's compositions (all its primaries, or `formats`; a follower stands for its primary). 202 with the job. */
-  renderVersion: (slug: string, creative: string, n: number, formats?: string[]) =>
-    request<JobSummary>('POST', `${c(slug, creative)}/versions/${n}/render`, formats ? { formats } : {}),
+  renderVersion: (slug: string, creative: string, n: number, formats?: string[], opts: LocaleOptions = {}) =>
+    request<JobSummary>('POST', `${c(slug, creative)}/versions/${n}/render`, { ...(formats ? { formats } : {}), ...(opts.locales?.length ? { locales: opts.locales } : {}), ...(opts.force ? { force: true } : {}) }),
+  /** The translations of version n (rows) and the creative's extra languages. */
+  getLocalizations: (slug: string, creative: string, n: number) =>
+    request<{ entries: LocalizationRow[]; available: LocaleTag[] }>('GET', `${c(slug, creative)}/versions/${n}/localizations`),
+  getLocalization: (slug: string, creative: string, n: number, locale: string, instanceId: string) =>
+    request<LocalizationView>('GET', `${c(slug, creative)}/versions/${n}/localizations/${encodeURIComponent(locale)}/${encodeURIComponent(instanceId)}`),
+  /** Saves a manual edit of a translation (origin `editor`); the checks run again. 409 `localization-busy` while the agent works. */
+  saveLocalization: (slug: string, creative: string, n: number, locale: string, instanceId: string, edit: LocalizationEdit) =>
+    request<LocalizationView>('PUT', `${c(slug, creative)}/versions/${n}/localizations/${encodeURIComponent(locale)}/${encodeURIComponent(instanceId)}`, edit),
+  /** Starts a localize turn on version n (202, the job id). */
+  localize: (slug: string, creative: string, n: number, body: LocalizeRequest) =>
+    request<{ jobId: string }>('POST', `${c(slug, creative)}/versions/${n}/localize`, body),
+  /** The composition of a format with a language's translation applied (the locale preview). */
+  getLocalizedComposition: (slug: string, creative: string, n: number, format: string, locale: string) =>
+    request<LocalizedCompositionView>('GET', `${c(slug, creative)}/versions/${n}/compositions/${encodeURIComponent(format)}?locale=${encodeURIComponent(locale)}`),
+  /** Lets live preview session `token` serve the translation's fallback fonts and voices (hash-checked by the core). */
+  attachLocalePreview: (slug: string, creative: string, n: number, locale: string, instanceId: string, token: string) =>
+    request<{ files: string[] }>('POST', `${c(slug, creative)}/versions/${n}/localizations/${encodeURIComponent(locale)}/${encodeURIComponent(instanceId)}/preview-assets`, { token }),
   /**
    * A live preview session of one format of a saved v2 version, embeddable by `parentOrigin` (this page's origin). 404 for
    * a legacy version (no composition), 429 `preview-busy` when the previews are busy.

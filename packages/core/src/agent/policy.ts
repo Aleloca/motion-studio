@@ -1,9 +1,10 @@
 import { join } from 'node:path';
 import { dirDenyRules, fileDenyRules, globDenyRules, readOnlyRules } from '../codebases.ts';
-import { AGENT_ALLOWED_TOOLS, BRAND_ANALYSIS_TOOLS, DESCRIBE_TOOLS } from './runner.ts';
+import { AGENT_ALLOWED_TOOLS, BRAND_ANALYSIS_TOOLS, DESCRIBE_TOOLS, LOCALIZE_TOOLS } from './runner.ts';
 import { DEFAULT_ALLOWED_DOMAINS, sensitiveHomeEntries, sensitiveHomePaths } from './sandbox.ts';
 
-export type AgentJobKind = 'creative' | 'brand-analysis' | 'describe' | 'console';
+/** `localize` (Phase 12): a translation turn on an existing version; it writes only through `submit_localization`. */
+export type AgentJobKind = 'creative' | 'brand-analysis' | 'describe' | 'console' | 'localize';
 export interface PolicyInput {
   kind: AgentJobKind; sandbox: boolean; projectDir?: string; home: string; configDir: string;
   codebases: string[]; protectedFiles: string[];
@@ -50,8 +51,8 @@ export function sandboxCacheEnv(projectDir: string): Record<string, string> {
 export const sandboxPath = (p: string): string => p.replace(/[[*?]/g, (c) => (c === '[' ? '[[]' : '?'));
 
 const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
-const SANDBOXED_TOOLS: Record<AgentJobKind, readonly string[]> = { creative: [], console: [], 'brand-analysis': BRAND_ANALYSIS_TOOLS, describe: DESCRIBE_TOOLS };
-const LEGACY_TOOLS: Record<AgentJobKind, readonly string[]> = { creative: AGENT_ALLOWED_TOOLS, console: [], 'brand-analysis': BRAND_ANALYSIS_TOOLS, describe: DESCRIBE_TOOLS };
+const SANDBOXED_TOOLS: Record<AgentJobKind, readonly string[]> = { creative: [], console: [], 'brand-analysis': BRAND_ANALYSIS_TOOLS, describe: DESCRIBE_TOOLS, localize: LOCALIZE_TOOLS };
+const LEGACY_TOOLS: Record<AgentJobKind, readonly string[]> = { creative: AGENT_ALLOWED_TOOLS, console: [], 'brand-analysis': BRAND_ANALYSIS_TOOLS, describe: DESCRIBE_TOOLS, localize: LOCALIZE_TOOLS };
 const unique = (xs: string[]) => [...new Set(xs)];
 
 export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
@@ -69,6 +70,9 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
     ...(i.protectedFiles.length ? fileDenyRules(EDIT_TOOLS, i.protectedFiles) : []),
     ...dirDenyRules(EDIT_TOOLS, i.protectedDirs),
     ...globDenyRules(EDIT_TOOLS, i.protectedGlobs ?? []),
+    // A localize turn writes only through `submit_localization` (Phase 12): the editing tools and Bash are denied everywhere,
+    // whatever `autoApproveSandboxed` says (fix I1).
+    ...(i.kind === 'localize' ? [...EDIT_TOOLS, 'Bash'] : []),
   ];
   const extra = [...i.projectAllowRules, ...i.mcpTools];
   if (!i.sandbox) {
@@ -87,7 +91,7 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
       // Phase 8 (spec §3.2, docs/superpowers/specs/2026-10-09-motion-studio-phase8-approvals-usage-design.md): the per-kind
       // AUTO_BASH table is gone. Every kind follows the workspace setting `autoApproveSandboxed`: brand and describe jobs
       // too, since their sandbox has no network, writes stay in the project and the configuration files are protected.
-      autoAllowBashIfSandboxed: i.autoApproveSandboxed,
+      autoAllowBashIfSandboxed: i.kind === 'localize' ? false : i.autoApproveSandboxed,
       filesystem: { denyRead: [...sensitiveHomePaths(i.home), i.configDir].map(sandboxPath), denyWrite: [...[...i.codebases, ...i.protectedFiles, ...i.protectedDirs].map(sandboxPath), ...(i.sandboxGlobs ?? [])] },
       ...(network ? { network } : {}),
     },

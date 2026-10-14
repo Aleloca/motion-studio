@@ -51,6 +51,7 @@ describe('buildUsageReport', () => {
       { kind: 'brand-analysis', tokens: 6, costUsd: 0.2 },
       { kind: 'describe', tokens: 100, costUsd: null, estimated: true },
       { kind: 'console', tokens: 0, costUsd: null },
+      { kind: 'localize', tokens: 0, costUsd: null },
     ]);
     expect(r.total).toEqual({ tokens: tokens(111, 22, 5000, 33), costUsd: expect.closeTo(0.3, 12), estimated: true });
     expect(r.trackedSince).toBe('2026-09-01T09:00:00.000Z');
@@ -71,7 +72,7 @@ describe('buildUsageReport', () => {
     expect(r.byDay).toHaveLength(7);
     expect(r.byDay.every((d) => d.tokens === 0 && d.costUsd === null)).toBe(true);
     expect(r.byProject).toEqual([]);
-    expect(r.byKind.map((k) => [k.kind, k.tokens, k.costUsd])).toEqual([['creative', 0, null], ['brand-analysis', 0, null], ['describe', 0, null], ['console', 0, null]]);
+    expect(r.byKind.map((k) => [k.kind, k.tokens, k.costUsd])).toEqual([['creative', 0, null], ['brand-analysis', 0, null], ['describe', 0, null], ['console', 0, null], ['localize', 0, null]]);
     expect(r.total).toEqual({ tokens: tokens(0, 0, 0, 0), costUsd: null });
     expect(r.trackedSince).toBeNull();
   });
@@ -106,5 +107,14 @@ describe('firstGenerationTokens', () => {
       record({ creativeSlug: 'ok', version: 1, attempt: 1, tokens: tokens(900, 0, 0, 0), costUsd: null }),
     ];
     expect(firstGenerationTokens([a], from)).toEqual([900]);
+  });
+
+  it('a translate turn is its own kind and does not count as a first generation (Q8)', async () => {
+    const { ledger, projects } = await workspace();
+    await ledger.append(projects[0]!.dir, record({ creativeSlug: 'c', version: 1, attempt: 1, tokens: tokens(100, 0, 0, 0) }));
+    await ledger.append(projects[0]!.dir, record({ kind: 'localize', creativeSlug: 'c', version: 1, attempt: 1, tokens: tokens(50, 0, 0, 0) }));
+    const r = await buildUsageReport({ ledger, projects, billing: 'subscription', ...defaultUsageRange(new Date('2026-10-09T12:00:00.000Z')) });
+    expect(r.byKind.find((k) => k.kind === 'localize')?.tokens).toBe(50);
+    expect(firstGenerationTokens([await ledger.read(projects[0]!.dir)], new Date('2026-10-01T00:00:00.000Z'))).toEqual([100]);
   });
 });

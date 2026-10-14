@@ -8,7 +8,7 @@
 // composition turns then plant those symlinks under the version folder.
 // FAKE_CLAUDE_STRAY=1: composition turns also write a media file and a manifest.json next to the compositions.
 // FAKE_CLAUDE_FONT=<file>: composition turns declare that font (family Mono, weight 700) and copy it into assets/.
-// FAKE_CLAUDE_TEXT=1 / FAKE_CLAUDE_IMAGE=1: composition turns add a text clip `title` / an svg clip `logo` (assets/logo.svg).
+// FAKE_CLAUDE_TEXT=1 / FAKE_CLAUDE_IMAGE=1: composition turns add a text clip `title` (text FAKE_CLAUDE_TEXT_VALUE, default "Hello") / an svg clip `logo` (assets/logo.svg).
 // FAKE_CLAUDE_BRIDGE_CALLS=<json [[tool, args], …]>: before finishing, calls the studio bridge (as the MCP server would) and
 // appends `{ tool, status, body }` per call to FAKE_CLAUDE_BRIDGE_LOG.
 // FAKE_CLAUDE_NO_FFMPEG=1: render placeholder media even with ffmpeg installed, each file with its own content.
@@ -112,7 +112,7 @@ rl.once('line', async (line) => {
         clips.push({ id: 'fx', type: 'html', src: 'layers/fx.html', start: 0, duration, props: { x: 0, y: 0, width: f.width, height: f.height } });
       }
       // FAKE_CLAUDE_TEXT=1: a text clip `title` ("Hello"); FAKE_CLAUDE_IMAGE=1: an svg clip `logo` (assets/logo.svg).
-      if (process.env.FAKE_CLAUDE_TEXT) clips.push({ id: 'title', name: 'Title', type: 'text', start: 0, duration, props: { x: 10, y: 10, width: 200, height: 40, text: 'Hello', fontSize: 20, color: '#ffffff' } });
+      if (process.env.FAKE_CLAUDE_TEXT) clips.push({ id: 'title', name: 'Title', type: 'text', start: 0, duration, props: { x: 10, y: 10, width: 200, height: 40, text: process.env.FAKE_CLAUDE_TEXT_VALUE ?? 'Hello', fontSize: 20, color: '#ffffff' } });
       if (process.env.FAKE_CLAUDE_IMAGE) {
         mkdirSync(join(dir, 'assets'), { recursive: true });
         writeFileSync(join(dir, 'assets', 'logo.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"/>');
@@ -126,7 +126,23 @@ rl.once('line', async (line) => {
         scenes: still || process.env.FAKE_CLAUDE_NO_SCENES ? [] : [{ id: 'one', start: 0, duration: half }, { id: 'two', start: half, duration: Math.round((duration - half) * 10) / 10 }],
         tracks: [{ id: 'visual', kind: 'visual', clips }],
       };
+      // FAKE_CLAUDE_VOICE=1 (Phase 12): an audio track with a voice clip `vo` (script FAKE_CLAUDE_VOICE_SCRIPT, default
+      // "Welcome to Acme", 2 s) and a voice clip `vo2` without a script (1 s), both with their files in assets/.
+      if (process.env.FAKE_CLAUDE_VOICE && !still) {
+        mkdirSync(join(dir, 'assets'), { recursive: true });
+        writeFileSync(join(dir, 'assets', 'vo.mp3'), 'voice-one');
+        writeFileSync(join(dir, 'assets', 'vo2.mp3'), 'voice-two');
+        composition.tracks.push({ id: 'voices', kind: 'audio', clips: [
+          { id: 'vo', name: 'Voice', type: 'audio', src: 'assets/vo.mp3', start: 0, duration: 2, role: 'voice', script: process.env.FAKE_CLAUDE_VOICE_SCRIPT ?? 'Welcome to Acme' },
+          { id: 'vo2', name: 'Second voice', type: 'audio', src: 'assets/vo2.mp3', start: 2, duration: 1, role: 'voice' },
+        ] });
+      }
       writeFileSync(join(dir, 'composition.json'), JSON.stringify(composition, null, 2));
+      // FAKE_CLAUDE_COMP_FILES=<json [[path, content], …]>: extra files the agent puts in every composition folder.
+      for (const [rel, content] of JSON.parse(process.env.FAKE_CLAUDE_COMP_FILES ?? '[]')) {
+        mkdirSync(dirname(join(dir, rel)), { recursive: true });
+        writeFileSync(join(dir, rel), content);
+      }
       if (process.env.FAKE_CLAUDE_STRAY) writeFileSync(join(block.outputDir, `${f.id}.mp4`), 'agent media');
     }
     if (process.env.FAKE_CLAUDE_STRAY) writeFileSync(join(block.outputDir, 'manifest.json'), JSON.stringify({ schemaVersion: 1, files: [], renderCommand: 'node render.js' }));
@@ -145,6 +161,25 @@ rl.once('line', async (line) => {
       const res = await fetch(`${env.MOTION_STUDIO_BRIDGE_URL}/api/bridge/${tool}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-motion-studio-bridge': tokenFile.content.trim() }, body: JSON.stringify(payload) });
       appendFileSync(process.env.FAKE_CLAUDE_BRIDGE_LOG, `${JSON.stringify({ tool, status: res.status, body: await res.json().catch(() => null) })}\n`);
     }
+  }
+  // Localize turns (Phase 12): FAKE_CLAUDE_LOCALIZE_CALLS (first attempt) or FAKE_CLAUDE_LOCALIZE_FIX_CALLS (repair attempts),
+  // `[[tool, args], …]`, called on the studio bridge like FAKE_CLAUDE_BRIDGE_CALLS and logged to FAKE_CLAUDE_BRIDGE_LOG.
+  // FAKE_CLAUDE_LOCALIZE_WRITE=<path>: the agent first tries to write that file (the sandbox would refuse it).
+  const localizeBlock = /```motion-studio-localize\n/.test(prompt);
+  if (localizeBlock) {
+    const fix = prompt.includes('still have problems');
+    // The write comes first (fix round 1 M2: a file changed before the core resolves a font must still be reported).
+    if (process.env.FAKE_CLAUDE_LOCALIZE_WRITE) { try { writeFileSync(process.env.FAKE_CLAUDE_LOCALIZE_WRITE, 'agent'); } catch { /* refused */ } }
+    const calls = JSON.parse((fix ? process.env.FAKE_CLAUDE_LOCALIZE_FIX_CALLS : process.env.FAKE_CLAUDE_LOCALIZE_CALLS) ?? '[]');
+    if (calls.length) {
+      const env = JSON.parse(mcpConfigFile.content).mcpServers.studio.env;
+      for (const [tool, payload] of calls) {
+        const res = await fetch(`${env.MOTION_STUDIO_BRIDGE_URL}/api/bridge/${tool}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-motion-studio-bridge': tokenFile.content.trim() }, body: JSON.stringify(payload) });
+        appendFileSync(process.env.FAKE_CLAUDE_BRIDGE_LOG, `${JSON.stringify({ tool, fix, status: res.status, body: await res.json().catch(() => null) })}\n`);
+      }
+    }
+    // FAKE_CLAUDE_LOCALIZE_WAIT_FILE=<path>: the run holds until that file exists (a test changes the project meanwhile).
+    if (process.env.FAKE_CLAUDE_LOCALIZE_WAIT_FILE) { while (!existsSync(process.env.FAKE_CLAUDE_LOCALIZE_WAIT_FILE)) await sleep(20); }
   }
   // An entry the agent makes at the top of its creative folder (final wave B6: the tripwire's documented trigger).
   if (block && process.env.FAKE_CLAUDE_STRAY_ROOT) mkdirSync(join(dirname(block.workDir.replace(/\/+$/, '')), process.env.FAKE_CLAUDE_STRAY_ROOT), { recursive: true });

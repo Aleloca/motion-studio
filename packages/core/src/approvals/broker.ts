@@ -1,14 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { explainTool, type ApprovalDecision, type ApprovalKind, type ApprovalRequest, type ExplainContext, type Explanation, type ServerMessage } from '@motion-studio/shared';
+import { explainTool, paidBatchSchema, type ApprovalDecision, type ApprovalKind, type ApprovalRequest, type ExplainContext, type Explanation, type PaidBatch, type ServerMessage } from '@motion-studio/shared';
 import { CREATIVE_SLUG_RE } from '../creatives/creative-store.ts';
 import { cleanAgentReason } from '../display-text.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 import { PermissionsStore, ruleFor } from './permissions-store.ts';
 import { t } from '../i18n.ts';
 
-export interface ApprovalInput { jobId: string; projectSlug: string; projectDir: string; creativeSlug: string | null; kind: ApprovalKind; toolName: string; input: unknown; title?: string; detail?: string; /** Claude Code's `tool_use_id` of the call (already validated by the caller). */ toolUseId?: string }
+export interface ApprovalInput { jobId: string; projectSlug: string; projectDir: string; creativeSlug: string | null; kind: ApprovalKind; toolName: string; input: unknown; title?: string; detail?: string; /** Claude Code's `tool_use_id` of the call (already validated by the caller). */ toolUseId?: string;
+  /** `paid-batch` requests only (Phase 12): the calls confirmed together, shown on the card. */
+  paidBatch?: PaidBatch }
 export interface ApprovalOutcome { decision: ApprovalDecision | 'expired' | 'cancelled' }
 
 export function describeRequest(toolName: string, input: unknown): { title: string; detail: string } {
@@ -67,6 +69,8 @@ export class ApprovalBroker {
       id: randomUUID(), jobId: input.jobId, projectSlug: input.projectSlug, creativeSlug: input.creativeSlug, kind: input.kind,
       title: input.title ?? described.title, detail: (input.detail ?? described.detail).slice(0, 2000), toolName: input.toolName,
       alwaysRule: always?.rule ?? null, explanation, agentReason, ...(input.toolUseId ? { toolUseId: input.toolUseId } : {}),
+      // Only on a batch, and only in its schema's shape: a card never carries anything else from the caller.
+      ...(input.kind === 'paid-batch' && input.paidBatch ? { paidBatch: paidBatchSchema.parse(input.paidBatch) } : {}),
       createdAt: created.toISOString(), expiresAt: new Date(created.getTime() + this.timeoutMs).toISOString(),
     };
     return new Promise((resolve) => {

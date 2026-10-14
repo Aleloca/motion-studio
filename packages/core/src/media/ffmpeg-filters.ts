@@ -30,7 +30,7 @@ export function filterArgv(x: unknown): readonly string[] | undefined {
 export const BUILT_FILTERS: readonly string[] = [
   'setpts', 'fps', 'colorspace', 'zscale', 'format', 'tonemap', 'scale', 'setsar', 'setparams',
   'aresample', 'aformat', 'atrim', 'asetpts', 'volume', 'afade', 'adelay', 'amix', 'apad', 'alimiter',
-  'ssim', 'testsrc', 'overlay',
+  'ssim', 'testsrc', 'overlay', 'color', 'anullsrc',
 ];
 
 // ---------- values ----------
@@ -174,4 +174,25 @@ export function ssimCompareFilter(): FilterArg {
  */
 export function waveformPcmFilter(sampleRate: number): FilterArg {
   return mint(['-af', `aresample=${int(sampleRate, 1000, 48_000, 'sample rate')},aformat=sample_fmts=s16:channel_layouts=mono`]);
+}
+
+/**
+ * The `-filter_complex` that flattens a still (input 0) onto an opaque colour (Phase 12, store screenshots, spec §4.2): a
+ * `color` source of exactly `width`×`height` under the image (`overlay` in RGB, so the colours stay exact), then `rgb24`, so
+ * the PNG written has no alpha channel (IHDR colour type 2). `rgb` is six hex digits; the output pad is `[out]`.
+ */
+export function flattenFilter(width: number, height: number, rgb: string): FilterArg {
+  if (!/^[0-9a-f]{6}$/.test(rgb)) throw new RangeError('ffmpeg filter: the colour must be six lowercase hex digits');
+  const w = int(width, 1, MAX_SIDE, 'width'), h = int(height, 1, MAX_SIDE, 'height');
+  return mint(['-filter_complex', `color=c=0x${rgb}:s=${w}x${h}:r=1[bg];[0:v]format=rgba[fg];[bg][fg]overlay=format=rgb:shortest=1,format=rgb24[out]`]);
+}
+
+/**
+ * A silent stereo audio source of exactly `totalSamples` samples at `sampleRate`, as a lavfi INPUT (whitelists,
+ * `-f lavfi -i graph`): the track an App Store preview needs when its composition has no audio (Phase 12, spec §4.2).
+ */
+export function silentAudioInput(totalSamples: number, sampleRate: number): FilterArg {
+  const sr = int(sampleRate, 8000, 192_000, 'sample rate');
+  const total = int(totalSamples, 1, MAX_SAMPLES, 'total samples');
+  return mint(['-protocol_whitelist', 'file', '-format_whitelist', 'lavfi', '-f', 'lavfi', '-i', `anullsrc=r=${sr}:cl=stereo,atrim=end_sample=${total}`]);
 }

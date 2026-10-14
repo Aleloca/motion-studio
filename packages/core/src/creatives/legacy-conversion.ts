@@ -3,6 +3,7 @@ import { join, relative, sep } from 'node:path';
 import { hasFormat, type FormatPreset, type VersionEntry } from '@motion-studio/shared';
 import { noteCoreChange } from '../core-changes.ts';
 import type { MediaTools } from '../media/media-tools.ts';
+import { findPreset } from '../formats/format-catalog.ts';
 import { isConfinedFile } from './carry-over.ts';
 import { realDirChain, writeThroughTemp } from './core-files.ts';
 
@@ -100,7 +101,7 @@ export async function extractReferenceFrames(o: {
   for (const { format, version: src } of o.sources) {
     const output = src.outputs.find((x) => x.format === format);
     if (!output) continue;
-    const kind = o.presets.find((p) => p.id === format)?.kind ?? (/\.(png|jpe?g|webp|gif)$/i.test(output.file) && output.durationSec == null ? 'image' : 'video');
+    const kind = findPreset(o.presets, format)?.kind ?? (/\.(png|jpe?g|webp|gif)$/i.test(output.file) && output.durationSec == null ? 'image' : 'video');
     const rel = `outputs/v${src.n}/${output.file}`;
     const ref: LegacyFormatReference = { format, version: src.n, source: relative(o.projectDir, join(o.creativeDir, ...rel.split('/'))).split(sep).join('/'), kind, durationSec: output.durationSec ?? null, frames: [] };
     out.push(ref);

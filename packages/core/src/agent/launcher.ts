@@ -26,6 +26,8 @@ export const MCP_TOOLS: Record<AgentJobKind, string[]> = {
   console: ['report_progress', 'read_brand_kit', 'generate_image', 'tts', 'sound_effect', 'music', 'list_voices', 'stock_search', 'stock_download', 'fonts_fetch'],
   'brand-analysis': ['report_progress', 'read_brand_kit', 'fonts_fetch', 'download_file', 'inspect_site_fonts'],
   describe: ['report_progress'],
+  // Phase 12: the translation turn. No composition-writing tool, no paid provider tool: the core makes the voices.
+  localize: ['report_progress', 'submit_localization', 'preview_frames', 'read_brand_kit'],
 };
 
 /** Characters that make Claude Code's sandbox read a path as a glob. */
@@ -70,6 +72,8 @@ export interface LaunchInput {
   onEvent(e: AgentEvent): void;
   validateComposition?: BridgeContext['validateComposition'];
   previewFrames?: BridgeContext['previewFrames'];
+  /** Localize turns (Phase 12): the handler of `submit_localization`. */
+  submitLocalization?: BridgeContext['submitLocalization'];
   /** Brand analysis: the job's language and where its tools' notes go (see BridgeContext). */
   locale?: BridgeContext['locale'];
   addNotes?: BridgeContext['addNotes'];
@@ -196,6 +200,7 @@ export class AgentLauncher {
           // The same value as the policy's autoAllowBashIfSandboxed: a setting turned on later never reaches this job.
           autoApproveAtStart,
           emit: i.onEvent, signal: abort.signal, ...(i.validateComposition ? { validateComposition: i.validateComposition } : {}), ...(i.previewFrames ? { previewFrames: i.previewFrames } : {}),
+          ...(i.submitLocalization ? { submitLocalization: i.submitLocalization } : {}),
           ...(i.locale ? { locale: i.locale } : {}), ...(i.addNotes ? { addNotes: i.addNotes } : {}),
           ...(i.services ? { services: i.services } : {}),
         });
@@ -218,6 +223,7 @@ export class AgentLauncher {
       }
       // Every run is metered here, whatever the job: the final usage is held back and re-emitted with per-run values.
       const tracker = new UsageTracker({
+        // A translation turn is metered with the creative's turns (the usage report has no kind of its own for it).
         projectDir: i.projectDir, jobId: i.jobId, kind: i.kind, creativeSlug: i.creativeSlug ?? null,
         version: i.usage?.version ?? null, attempt: i.usage?.attempt ?? null,
         ...(i.request.resumeSessionId ? { resumeSessionId: i.request.resumeSessionId } : {}),

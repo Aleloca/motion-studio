@@ -3,22 +3,22 @@ import { copyFile, lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import {
-  COMPOSITION_LIMITS, compositionProblem, compositionProblemText, describeEdits, draftSizeProblem, editOpSchema, effectiveLinks, formatLabel, isCompositionPath, messages,
-  normalizeComposition, renderJobKey, validateComposition,
-  type CompositionProblem, type FormatPreset, type Locale, type StagedAsset, type VersionEntry,
+  COMPOSITION_LIMITS, compositionProblem, compositionProblemText, describeEdits, draftSizeProblem, editOpSchema, effectiveLinks, formatDisplayName, INSTANCE_ID_RE, isCompositionPath, MAX_INSTANCES, messages,
+  nextInstanceId, normalizeComposition, presetOf, renderJobKey, validateComposition,
+  type Brief, type CompositionProblem, type CreativeFile, type FormatPreset, type Locale, type StagedAsset, type VersionEntry,
 } from '@motion-studio/shared';
 import { hashConfinedFile } from '../brand/agent-guard.ts';
-import { loadComposition } from '../compositions/composition-files.ts';
+import { loadComposition, readCompositionFolder } from '../compositions/composition-files.ts';
 import { findPreset } from '../formats/format-catalog.ts';
 import type { Git } from '../git.ts';
 import type { JobQueue } from '../jobs/job-queue.ts';
 import { CodedError } from '../workspace-store.ts';
 import { versionDirReady } from './carry-over.ts';
 import { compositionDirOf } from './composition-contract.ts';
-import { alignEditorCopies, carriableComposition, copyComposition, type CarriedComposition } from './composition-turn.ts';
+import { alignEditorCopies, carriableComposition, compositionDuration, copyComposition, type CarriedComposition } from './composition-turn.ts';
 import { writeThroughTemp } from './core-files.ts';
 import { CreativeStore } from './creative-store.ts';
-import type { CreativeRef, CreativeTurnService } from './creative-turns.ts';
+import { withFreedInstances, withoutFormatState, type CreativeRef, type CreativeTurnService } from './creative-turns.ts';
 import type { PreviewService, StagingView } from './previews.ts';
 
 /**
@@ -57,6 +57,13 @@ export const directEditBodySchema = z.strictObject({
   token: z.string().regex(/^[A-Za-z0-9_-]{43}$/), // the preview session that owns the staging (as the stage and preview bodies)
 });
 export type DirectEditBody = z.infer<typeof directEditBodySchema>;
+
+/** `POST …/versions/:n/duplicate-format` (Phase 12): the instance to copy and the new instance's label. */
+export const duplicateFormatBodySchema = z.strictObject({
+  instanceId: z.string().max(200).regex(INSTANCE_ID_RE),
+  label: z.string().min(1).max(60).optional(),
+});
+export type DuplicateFormatBody = z.infer<typeof duplicateFormatBodySchema>;
 
 export interface DirectEditDeps {
   turns: CreativeTurnService;
@@ -152,6 +159,118 @@ export class DirectEditService {
     return this.deps.queue.list().some((j) => j.key.startsWith(prefix) && (j.state === 'queued' || j.state === 'running'));
   }
 
+  /**
+   * Duplicate format (Phase 12, spec §2): copies `instanceId`'s composition of version `n` (a follower's is the one it shows,
+   * its primary's) into the next free instance of the same preset, saved as a new editor version with no agent (request
+   * "Duplicated <label>"). The new instance enters the brief right after its source, a primary of its own, with `label` when
+   * given; every other format is carried from the latest version as in a direct edit (`finishCompositions`). Under the
+   * creative's lock. Refused: 400 a bad body or a source not in the brief, 404 an unknown version, 409 `duplicate-busy`
+   * while a turn or a render runs, `format-not-in-version`, `format-instances-full` (20 instances), `duplicate-carry-failed`
+   * (a source folder no longer the recorded one). A failure before the version is recorded leaves the brief and the versions as
+   * they were.
+   */
+  async duplicate(ref: CreativeRef, n: number, body: unknown, locale: Locale): Promise<{ version: VersionEntry; instanceId: string }> {
+    const parsed = duplicateFormatBodySchema.safeParse(body ?? {});
+    if (!parsed.success) throw new CodedError(400, messages(locale).errors.invalidRequestDetail({ detail: parsed.error.issues[0]?.message ?? '' }), 'duplicate-invalid-body');
+    return this.deps.turns.runLocked(ref, () => this.duplicateLocked(ref, n, parsed.data, locale));
+  }
+
+  private async duplicateLocked(ref: CreativeRef, n: number, body: DuplicateFormatBody, locale: Locale): Promise<{ version: VersionEntry; instanceId: string }> {
+    const m = messages(locale);
+    const v = m.variants;
+    if (this.deps.turns.turnActive(ref) || this.renderActive(ref)) throw new CodedError(409, v.duplicateBusy, 'duplicate-busy');
+    const slug = ref.creativeSlug;
+    const store = new CreativeStore(ref.projectDir);
+    const creativeDir = store.dir(slug);
+    const creative = await store.get(slug);
+    const versions = await store.readVersions(slug);
+    const latest = versions.at(-1);
+    const presets = await this.deps.presets();
+    const { formats } = creative.brief;
+    const source = body.instanceId;
+    const label = (id: string, labels = creative.brief.formatLabels) => formatDisplayName(presets, id, locale, labels);
+    if (!formats.includes(source)) throw new CodedError(400, m.errors.formatNotInBrief({ format: label(source) }), 'format-not-in-brief');
+    const version = versions.find((x) => x.n === n);
+    if (!version || !latest) throw new CodedError(404, m.errors.versionNNotFound({ n }), 'version-not-found');
+    const srcEntry = version.compositions?.find((c) => c.format === source);
+    if (!srcEntry) throw new CodedError(409, v.formatNotInVersion({ format: label(source), n }), 'format-not-in-version');
+    if (!findPreset(presets, source)) throw new CodedError(409, m.errors.compositionUnusable({ format: source, n }), 'composition-unusable');
+    const instanceId = nextInstanceId(presetOf(source), formats);
+    if (instanceId === null) throw new CodedError(409, v.instancesFull({ format: label(presetOf(source)), max: MAX_INSTANCES }), 'format-instances-full');
+    const carryFailed = (f: string, at: number) => new CodedError(409, m.editor.carryFailed({ format: label(f), n: at }), 'duplicate-carry-failed');
+    // The source folder as it is now: still the recorded composition (a follower's entry names its primary's folder).
+    const srcDir = join(creativeDir, 'outputs', `v${n}`, ...srcEntry.dir.split('/'));
+    const folder = await readCompositionFolder(srcDir).catch(() => null);
+    if (!folder || folder.hash !== srcEntry.hash) throw carryFailed(source, n);
+    const cc: CarriedComposition = { entry: srcEntry, files: folder.files, duration: await compositionDuration(srcDir) };
+    // Every other primary of the latest version, carried as in a direct edit.
+    const links = effectiveLinks(creative.brief.links, formats);
+    const own = (x: VersionEntry, f: string) => x.compositions?.find((c) => c.format === f && c.followsFormat === undefined);
+    const carried: string[] = [];
+    const carriedComps = new Map<string, CarriedComposition>();
+    for (const p of formats.filter((f) => !Object.hasOwn(links, f))) {
+      const followed = latest.compositions?.find((c) => c.format === p && c.followsFormat !== undefined)?.followsFormat;
+      const from = own(latest, p) ? p : followed !== undefined && own(latest, followed) ? followed : null;
+      if (from === null) continue; // not in the latest version
+      const carriable = await carriableComposition(creativeDir, latest, from);
+      if (!carriable) throw carryFailed(p, latest.n);
+      carried.push(p);
+      carriedComps.set(p, carriable);
+    }
+    const nextFormats = [...formats];
+    nextFormats.splice(formats.indexOf(source) + 1, 0, instanceId);
+    const labels = body.label !== undefined ? { ...creative.brief.formatLabels, [instanceId]: body.label } : creative.brief.formatLabels;
+    // A freed id taken again (a gap) starts clean: no stored link at either end, no manual pick (Phase 12).
+    const fresh = (c: CreativeFile) => {
+      const pruned = withoutFormatState(c.brief.links, c.exportPicks, new Set([instanceId]));
+      const brief: Brief = { ...c.brief, formats: nextFormats, ...(labels ? { formatLabels: labels } : {}), ...(pruned.links ? { links: pruned.links } : {}) };
+      // Nor the old instance's translations (final review I1): its rows up to the latest version are not carried.
+      return { brief, exportPicks: pruned.exportPicks, ...withFreedInstances(c.freedInstances, [instanceId], latest.n) };
+    };
+    const newLabel = (id: string) => label(id, labels);
+
+    const newN = await store.nextVersionNumber(slug);
+    await this.deps.turns.clearStaleOutputs(store, slug, newN, versions);
+    await versionDirReady(creativeDir, newN);
+    const vdir = store.outputsDir(slug, newN);
+    let recorded = false;
+    let before: { brief: Brief; exportPicks: CreativeFile['exportPicks']; freedInstances: CreativeFile['freedInstances'] } | null = null;
+    try {
+      if ((await copyComposition(creativeDir, n, cc, `outputs/v${newN}/${compositionDirOf(instanceId)}`)) !== 'ok') throw carryFailed(source, n);
+      const plan = { creative: { ...creative, ...fresh(creative) }, targets: [instanceId], carried, carriedComps, links };
+      const saved = await this.deps.turns.finishCompositions(ref, store, plan, presets, latest, newN, newLabel, locale,
+        { direct: true, base: { durationSec: cc.duration, ...(srcEntry.userDuration ? { userDuration: srcEntry.userDuration } : {}) } });
+      const status = saved.problems.length === 0 ? 'complete' : 'incomplete';
+      // The brief as stored now (a follower unlinked by the save above stays unlinked), with the new instance.
+      const stored = await store.get(slug);
+      before = { brief: stored.brief, exportPicks: stored.exportPicks, freedInstances: stored.freedInstances };
+      await store.update(slug, fresh(stored));
+      await alignEditorCopies(creativeDir, { n: newN, origin: 'editor', compositions: saved.compositions } as VersionEntry).catch(() => []);
+      const commit = await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${newN}`);
+      await store.appendVersion(slug, {
+        n: newN, commit, sessionId: creative.resumeFrom?.sessionId ?? latest.sessionId ?? null, status, createdAt: now(),
+        request: v.duplicatedRequest({ label: newLabel(instanceId) }), outputs: saved.outputs, problems: saved.problems, tools: [], renderCommand: null,
+        basedOn: latest.n, compositions: saved.compositions, origin: 'editor', ...(saved.localizations ? { localizations: saved.localizations } : {}),
+      });
+      recorded = true;
+      await store.appendConversation(slug, { type: 'version', at: now(), n: newN, status });
+      const resumeFrom = creative.resumeFrom ? { version: newN, sessionId: creative.resumeFrom.sessionId } : null;
+      await store.update(slug, { status: status === 'complete' ? 'ready' : 'incomplete', error: null, resumeFrom });
+      await this.deps.turns.commitState(ref, m.jobs.versionStateCommit({ title: creative.title, n: newN }));
+      this.deps.turns.changed(ref);
+      this.deps.turns.storyboardsLater(ref, store, newN);
+      const entry = (await store.readVersions(slug)).find((x) => x.n === newN)!;
+      return { version: entry, instanceId };
+    } catch (err) {
+      if (!recorded) {
+        if (before) await store.update(slug, before).catch(() => {});
+        const st = await lstat(vdir).catch(() => null);
+        if (st) await rm(vdir, st.isDirectory() ? { recursive: true, force: true } : { force: true }).catch(() => {});
+      }
+      throw err;
+    }
+  }
+
   private async saveLocked(ref: CreativeRef, body: DirectEditBody, locale: Locale): Promise<{ version: number }> {
     const m = messages(locale);
     const e = m.editor;
@@ -163,7 +282,7 @@ export class DirectEditService {
     const versions = await store.readVersions(slug);
     const latest = versions.at(-1);
     const presets = await this.deps.presets();
-    const label = (id: string) => { const p = findPreset(presets, id); return p ? formatLabel(p, locale) : id; };
+    const label = (id: string) => formatDisplayName(presets, id, locale, creative.brief.formatLabels);
     const { formats } = creative.brief;
     const links = effectiveLinks(creative.brief.links, formats);
     const format = body.format;
@@ -280,7 +399,7 @@ export class DirectEditService {
         await store.appendVersion(slug, {
           n, commit, sessionId: creative.resumeFrom?.sessionId ?? latest.sessionId ?? null, status, createdAt: now(),
           request, outputs: saved.outputs, problems, tools: [], renderCommand: null, basedOn: body.baseVersion,
-          compositions: saved.compositions, origin: 'editor',
+          compositions: saved.compositions, origin: 'editor', ...(saved.localizations ? { localizations: saved.localizations } : {}),
         });
         recorded = true;
         await store.appendConversation(slug, { type: 'version', at: now(), n, status });

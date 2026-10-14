@@ -27,7 +27,9 @@ import { defaultConfigDir, type AppConfigStore } from '../app-config.ts';
 import { AgentBridge } from '../bridge/bridge.ts';
 import { registerBridgeRoutes } from '../bridge/bridge-routes.ts';
 import { downloadTool } from '../bridge/download-tool.ts';
-import { providerTools } from '../bridge/provider-tools.ts';
+import { providerTools, voiceAvailability, voiceBatch } from '../bridge/provider-tools.ts';
+import { LocalizeService, ProjectActivity } from '../localization/localize-turn.ts';
+import type { LookupFn, Transport } from '../providers/safe-fetch.ts';
 import { checkCodebases, codebaseOverlaps, normalizeCodebaseList } from '../codebases.ts';
 import type { Git } from '../git.ts';
 import { JobConflictError, JobQueue } from '../jobs/job-queue.ts';
@@ -44,6 +46,8 @@ import { registerVoicesRoutes } from './voices-routes.ts';
 import { KeyCheckCache } from '../providers/key-check.ts';
 import { GoogleFontsCatalog } from '../providers/google-fonts-catalog.ts';
 import type { HttpDeps } from '../providers/http.ts';
+import { registerLocalizationRoutes } from './localization-routes.ts';
+import { registerStorePackRoutes } from './store-pack-routes.ts';
 import type { InstallIo } from '../providers/google-fonts.ts';
 import { registerBrandRoutes } from './brand-routes.ts';
 import { EventHub } from './event-hub.ts';
@@ -79,6 +83,8 @@ export interface ServerDeps {
   generateHttp?: Pick<HttpDeps, 'fetch' | 'transport' | 'lookup' | 'timeoutMs'>;
   /** Network of the voice list and previews (tests inject a fake fetch; default: the real one through the safe transport). */
   voicesHttp?: HttpDeps;
+  /** Network of a localize turn's translated voices (tests inject a fake fetch; default: the real one). */
+  localizeHttp?: { fetch?: typeof fetch; transport?: Transport; lookup?: LookupFn };
   /** What the app has learned about the provider keys (core memory only; tests inject one to read it). */
   keyChecks?: KeyCheckCache;
   /** Network of the key checks (tests inject a fake fetch; default: the real one). */
@@ -292,6 +298,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   const renders = new RenderJobService({
     queue, engine: deps.render, media, normalizer,
+    // The browser's text measure of a source composition (fix round 2, N1): the localized render judges translations against it.
+    measureText: (o) => previews.measureTextOverflow(o),
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
     broadcast: (msg) => hub.broadcast(msg),
     ...(deps.renderOptions ? { renderOptions: deps.renderOptions } : {}),
@@ -463,12 +471,28 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.get('/api/preview/origin', async () => ({ origin: (await previews.compositionServer()).origin, uiOrigins: [...(deps.uiOrigins?.() ?? [])] }));
 
   registerCreativeRoutes(app, { requireWorkspace, turns, edits, renders, previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m) });
+  registerStorePackRoutes(app, { requireWorkspace, turns, renders, media });
 
   const routeCtx = { requireWorkspace, brand: brandService, media, git: deps.git, broadcast: (m: ServerMessage) => hub.broadcast(m) };
   registerBrandRoutes(app, routeCtx);
   registerLibraryRoutes(app, routeCtx);
   const fontsHttp = deps.fontsHttp ?? { fetch: globalThis.fetch };
   registerFontsRoutes(app, { ...routeCtx, catalog: new GoogleFontsCatalog({ configDir, http: fontsHttp }), http: fontsHttp, signer: new UrlSigner(deps.signedUrlTtlMs), ...(deps.fontsInstallIo ? { installIo: deps.fontsInstallIo } : {}) });
+  // Localize turns (Phase 12, Task 4): the agent translates through submit_localization; the core makes the voices.
+  const voiceDeps = { vault, approvals, media, keyChecks, settings: () => requireWorkspace().readSettings(), broadcast: (m: ServerMessage) => hub.broadcast(m), ...deps.localizeHttp };
+  const activity = new ProjectActivity();
+  hub.listen((m) => activity.note(m));
+  const localize = new LocalizeService({
+    turns, queue, launcher, media, previews, activity,
+    presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
+    model: async () => (await requireWorkspace().readSettings()).model,
+    broadcast: (msg) => hub.broadcast(msg),
+    voices: { available: voiceAvailability(voiceDeps), batch: voiceBatch(voiceDeps) },
+    fonts: { http: fontsHttp, ...(deps.fontsInstallIo ? { io: deps.fontsInstallIo } : {}) },
+    ...(deps.previewFramesPerTurn !== undefined ? { previewFramesPerTurn: deps.previewFramesPerTurn } : {}),
+  });
+  registerLocalizationRoutes(app, { requireWorkspace, turns, media, presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets, fontsHttp,
+    ...(deps.fontsInstallIo ? { fontsIo: deps.fontsInstallIo } : {}), localize, previews });
   registerVoicesRoutes(app, { vault, http: deps.voicesHttp ?? { fetch: globalThis.fetch }, signer: new UrlSigner(deps.signedUrlTtlMs), keyChecks });
   registerGenerateRoutes(app, { requireWorkspace, vault, approvals, media, queue, keyChecks, http: deps.generateHttp ?? { fetch: globalThis.fetch }, broadcast: (m) => hub.broadcast(m) });
   registerProjectRoutes(app, { requireWorkspace, jobKeyOf: projectJobKey, broadcast: (m) => hub.broadcast(m) });

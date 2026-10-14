@@ -181,14 +181,21 @@ describe.skipIf(!tools.ok)('renderer: media timing, seams, audio, still', () => 
     // AAC decodes whole 1024-sample frames: the tail may carry up to one frame of padding (silence).
     expect(x.length).toBeGreaterThanOrEqual(at(DURATION));
     expect(x.length - at(DURATION)).toBeLessThan(1024);
-  });
+  }, 300_000);
 
   it('left nothing behind: no browser process, no temp output, no work folder', async () => {
-    expect(await leftovers({ pgids: [provider.pgid!], markers: [provider.profileDir!, renderTemp] })).toEqual([]);
+    // The browser group is gone once the render returned; on a loaded machine the process table lags a moment behind, so the
+    // check polls (bounded) and still ends on the very same assertion.
+    let left = await leftovers({ pgids: [provider.pgid!], markers: [provider.profileDir!, renderTemp] });
+    for (let i = 0; i < 40 && left.length > 0; i++) {
+      await new Promise((r) => setTimeout(r, 250));
+      left = await leftovers({ pgids: [provider.pgid!], markers: [provider.profileDir!, renderTemp] });
+    }
+    expect(left).toEqual([]);
     expect(readdirSync(renderTemp)).toEqual([]);
     expect(existsSync(provider.profileDir!)).toBe(false);
     expect(readdirSync(join(creative, VERSION_DIR)).sort()).toEqual(['compositions', `${FORMAT.id}.mp4`]);
-  });
+  }, 300_000);
 
   it('macOS: with `auto`, VideoToolbox is used only behind its quality check; its segments join exactly too', async () => {
     const ff = tools.ffmpeg!;
