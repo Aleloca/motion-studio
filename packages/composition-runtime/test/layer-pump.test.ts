@@ -43,12 +43,12 @@ describe('pumpUntilDone (C8)', () => {
 // UX feedback 1, task 2b (decision 709): a layer promise waiting on a timer the frozen render clock never fires.
 describe('pumpUntilDone stall (render mode)', () => {
   /** A frozen clock at `now` with one timer due at `due` (null: none); `firing` makes every macrotask fire a timer. */
-  function frozen(due: number | null, o: { firing?: () => boolean } = {}) {
+  function frozen(due: number | null, o: { firing?: () => boolean; frames?: () => number } = {}) {
     return {
       now: 100,
       native: { setTimeout: (fn: () => void) => setTimeout(fn, 0), performanceNow: () => performance.now() },
       runDueTimers: () => (o.firing?.() ? 1 : 0),
-      runFrame: () => {},
+      runFrame: () => o.frames?.() ?? 0,
       nextTimerDue: () => due,
     } as never;
   }
@@ -80,5 +80,18 @@ describe('pumpUntilDone stall (render mode)', () => {
     resolve();
     await expect(run).resolves.toBeUndefined();
     await expect(plain).resolves.toBeUndefined();
+  });
+
+  it('an animation frame that runs a callback starts the stall count again; an empty frame does not (final wave M1)', async () => {
+    // A layer that keeps a requestAnimationFrame loop going while it waits: every frame runs a callback, so no stall.
+    let resolve!: () => void;
+    const waiting = new Promise<void>((r) => { resolve = r; });
+    const run = pumpUntilDone(waiting, frozen(400, { frames: () => 1 }), 20_000, { ms: 20, what: 'msSeek' });
+    await new Promise((r) => setTimeout(r, 120));
+    resolve();
+    await expect(run).resolves.toBeUndefined();
+    // Frames with no callback are not progress: the wait still stalls.
+    const err = await pumpUntilDone(never(), frozen(400, { frames: () => 0 }), 20_000, { ms: 20, what: 'msSeek' }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ClockStallError);
   });
 });

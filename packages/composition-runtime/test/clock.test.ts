@@ -98,7 +98,8 @@ describe('virtual clock', () => {
     w.requestAnimationFrame((ts) => log.push(`raf@${ts}`));
     expect(clock.runDueTimers()).toBe(1);
     expect(clock.runDueTimers()).toBe(0);
-    clock.runFrame();
+    expect(clock.runFrame()).toBe(1); // the count of frame callbacks run (the stall watchdog reads it)
+    expect(clock.runFrame()).toBe(0);
     expect(log).toEqual(['now', 'raf@500']);
     expect(w.performance.now()).toBe(500);
   });

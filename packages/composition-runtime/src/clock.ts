@@ -31,8 +31,8 @@ export interface VirtualClock {
   advanceTo(ms: number): void;
   /** Fires the timers due at or before `now`, without moving time and without an animation frame. Returns how many fired. */
   runDueTimers(): number;
-  /** Fires one animation frame at `now`, without moving time. */
-  runFrame(): void;
+  /** Fires one animation frame at `now`, without moving time; returns how many frame callbacks ran. */
+  runFrame(): number;
   /** The due time of the earliest pending timer, or null when no timer is pending (read-only: nothing fires). */
   nextTimerDue(): number | null;
   readonly native: Natives;
@@ -111,10 +111,11 @@ export function installVirtualClock(w: Window & typeof globalThis): VirtualClock
     }
     return fired;
   };
-  const runFrame = () => {
+  const runFrame = (): number => {
     const due = frames;
     frames = new Map();
     for (const fn of due.values()) call(fn, [now]);
+    return due.size;
   };
 
   const clock: VirtualClock = {

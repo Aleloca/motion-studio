@@ -55,8 +55,9 @@ type PumpClock = Pick<VirtualClock, 'native' | 'runDueTimers' | 'runFrame' | 'no
  * an idle macrotask, so a frame is also forced every `PUMP_FRAME_EVERY` busy ones: a `requestAnimationFrame` awaited next
  * to such a chain is not starved until `maxPumps` runs out. Time never moves.
  *
- * `stall` (render mode): once `stall.ms` of native time pass in which no timer fired while a timer due later is pending,
- * the wait rejects with a `ClockStallError` naming `stall.what`, instead of running on until the runtime's layer timeout.
+ * `stall` (render mode): once `stall.ms` of native time pass in which no timer fired and no animation frame ran a callback
+ * while a timer due later is pending, the wait rejects with a `ClockStallError` naming `stall.what`, instead of running on
+ * until the runtime's layer timeout.
  */
 export async function pumpUntilDone<T>(value: T, clock: PumpClock, maxPumps = MAX_PUMPS, stall?: { ms: number; what: string }): Promise<Awaited<T>> {
   if (!value || typeof (value as { then?: unknown }).then !== 'function') return value as Awaited<T>;
@@ -69,7 +70,11 @@ export async function pumpUntilDone<T>(value: T, clock: PumpClock, maxPumps = MA
   for (let i = 0; !done && i < maxPumps; i++) {
     await new Promise<void>((r) => clock.native.setTimeout(r, 0));
     if (done) break;
-    if (idle || busy >= PUMP_FRAME_EVERY) { clock.runFrame(); idle = false; busy = 0; continue; }
+    if (idle || busy >= PUMP_FRAME_EVERY) {
+      // Layer code that ran on this frame is progress, like a timer that fired: the stall count starts again.
+      if (clock.runFrame() > 0) stallSince = null;
+      idle = false; busy = 0; continue;
+    }
     idle = clock.runDueTimers() === 0;
     busy = idle ? 0 : busy + 1;
     if (!stall) continue;
@@ -126,7 +131,12 @@ export function startLayerAgent(w: Window & typeof globalThis): void {
    */
   const pumping = <T>(value: T, what: string): Promise<Awaited<T>> =>
     pumpUntilDone(value, clock, MAX_PUMPS, config.mode === 'render' ? { ms: CLOCK_STALL_MS, what } : undefined);
-  /** Render mode: set once an `msSeek` stalled on the clock; later seeks fail at once instead of waiting again. */
+  /**
+   * Render mode: set once an `msSeek` stalled on the clock; later seeks fail at once instead of waiting again. The layer
+   * cannot tell a final render from a storyboard (both are `mode: 'render'`; telling them apart would change the layer
+   * protocol), so the memo holds for both. In a final render a failed seek is a `layerError`, which fails the render
+   * anyway: the memo only makes it fail sooner, it never ships a video with the layer blank (decision 709).
+   */
   let seekStalled: string | null = null;
   const callSeek = async (t: number) => {
     if (typeof lw.msSeek === 'function') {
