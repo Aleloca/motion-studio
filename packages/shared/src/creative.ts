@@ -91,6 +91,13 @@ export const creativeFileSchema = z.object({
 });
 export type CreativeFile = z.infer<typeof creativeFileSchema>;
 
+/**
+ * A Claude Code session id the core passes to `--resume` (final review I1): 1..128 of [A-Za-z0-9-], never starting with
+ * '-'. Every id the core resumes is checked against it where the command line is built; a stored id that fails is ignored.
+ */
+export const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/;
+export const isSessionId = (s: unknown): s is string => typeof s === 'string' && SESSION_ID_RE.test(s);
+
 /** Phase 13 limits (spec §2, decisions log 606): characters per message, live messages per turn, queued requests per creative. */
 export const LIVE_LIMITS = { maxChars: 4000, perTurn: 10, queued: 5 } as const;
 

@@ -64,7 +64,7 @@ import { CONSOLE_REDIRECT_NOTE, defuseTags, pinLine, USER_REQUEST_CLOSE, USER_RE
 import { stopJob } from '../jobs/stop.ts';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { LIVE_LIMITS, pinSchema, type RedirectOutcome } from '@motion-studio/shared';
+import { LIVE_LIMITS, pinSchema, SESSION_ID_RE, type RedirectOutcome } from '@motion-studio/shared';
 
 export interface ServerDeps {
   appConfig: AppConfigStore;
@@ -171,8 +171,6 @@ function isLoopbackOrigin(origin: string): boolean {
   }
 }
 
-// 1..128 of [A-Za-z0-9-], not starting with '-' so it can never be read as a CLI flag after --resume.
-const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/;
 
 function describeWorkspaceProblem(err: unknown): WorkspaceProblem {
   if (err instanceof WorkspaceError && err.code) return { code: err.code, message: err.message };

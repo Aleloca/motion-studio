@@ -45,8 +45,10 @@ if (args[0] === 'auth' && args[1] === 'status') {
 }
 
 const scenario = process.env.FAKE_CLAUDE_SCENARIO ?? 'ok';
+// The core passes `--resume=<id>` (one element); the older two-element spelling is still read.
+const resumeArg = args.find((a) => a.startsWith('--resume='));
 const resumeAt = args.indexOf('--resume');
-const resumed = resumeAt >= 0 ? args[resumeAt + 1] : null;
+const resumed = resumeArg ? resumeArg.slice('--resume='.length) : resumeAt >= 0 ? args[resumeAt + 1] : null;
 const sessionId = resumed ? (args.includes('--fork-session') ? `${resumed}-fork` : resumed) : 'fake-session-1';
 const hasFfmpeg = () => spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' }).status === 0;
 // Real (tiny) media when ffmpeg is installed, so tests that use real MediaTools see valid files.

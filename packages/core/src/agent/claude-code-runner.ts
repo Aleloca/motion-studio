@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { statSync } from 'node:fs';
-import type { AgentEvent } from '@motion-studio/shared';
+import { isSessionId, type AgentEvent } from '@motion-studio/shared';
 import { ClaudeStreamParser, LineSplitter, type ControlResponse } from './claude-stream-parser.ts';
 import type { AgentRun, AgentRunner, AgentRunResult, AgentTurnRequest } from './runner.ts';
 import { t } from '../i18n.ts';
@@ -14,8 +14,10 @@ export function buildClaudeArgs(req: AgentTurnRequest): string[] {
   // Without a prompt tool anything that would prompt is denied; with one, prompts reach the app (phase 4 approvals).
   if (req.permissionPromptTool) args.push('--permission-prompt-tool', req.permissionPromptTool);
   else args.push('--permission-prompts', 'none');
-  if (req.resumeSessionId) {
-    args.push('--resume', req.resumeSessionId);
+  // Final review I1: a stored session id reaches argv only when it is a plain id, and as one `--resume=<id>` element, so it
+  // can never be read as a flag. Anything else is ignored (a new session starts).
+  if (isSessionId(req.resumeSessionId)) {
+    args.push(`--resume=${req.resumeSessionId}`);
     if (req.forkSession) args.push('--fork-session');
   }
   for (const d of req.addDirs ?? []) args.push('--add-dir', d);

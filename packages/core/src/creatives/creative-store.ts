@@ -1,7 +1,7 @@
 import { appendFile, lstat, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import {
-  creativeFileSchema, versionsFileSchema,
+  creativeFileSchema, isSessionId, versionsFileSchema,
   type Brief, type ConversationEntry, type CreativeFile, type CreativeListItem, type VersionEntry,
   issuesText,
 } from '@motion-studio/shared';
@@ -246,7 +246,7 @@ export class CreativeStore {
       cut ??= e.jobId;
       if (e.jobId !== cut) return null;
       const sid = e.event?.kind === 'session' || e.event?.kind === 'result' ? e.event.sessionId : undefined;
-      if (typeof sid === 'string' && /^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/.test(sid)) return { sessionId: sid, at: new Date().toISOString(), jobId: e.jobId };
+      if (isSessionId(sid)) return { sessionId: sid, at: new Date().toISOString(), jobId: e.jobId };
     }
     return null;
   }

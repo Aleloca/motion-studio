@@ -521,8 +521,7 @@ describe('saving a draft as a new version', { timeout: 120_000 }, () => {
     expect(last.prompt).toContain(`creatives/${slug}/outputs/v2/compositions/<format-id>/`);
     expect(last.prompt).toContain('assets/lib/');
     // Resumed: the session of the agent's last version, now told explicitly what changed.
-    expect(last.args).toContain('--resume');
-    expect(last.args[last.args.indexOf('--resume') + 1]).toBe(v1.sessionId);
+    expect(last.args).toContain(`--resume=${v1.sessionId}`);
     // v3 is the agent's: the next turn finds no stale copy.
     expect((await versionOf(slug, 3))!.origin).toBeUndefined();
     await turn(slug, { text: 'again' });
