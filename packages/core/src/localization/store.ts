@@ -286,8 +286,10 @@ const MAX_SOURCE_OVERFLOWS = 256;
  * The clips of `base` whose SOURCE text already overflows in the browser (N1): measured once per composition (folder and
  * recorded hash) and remembered. Null when the browser cannot measure now.
  */
-export async function sourceOverflowOf(base: Pick<InstanceComposition, 'compDir' | 'entry' | 'composition'>, measure: TextMeasure, signal: AbortSignal): Promise<string[] | null> {
-  const key = `${base.compDir}\u0000${base.entry.hash}`;
+export async function sourceOverflowOf(base: Pick<InstanceComposition, 'compDir' | 'entry' | 'composition' | 'preset'>, measure: TextMeasure, signal: AbortSignal): Promise<string[] | null> {
+  // The preset's frame and safe zone are part of the verdict (a custom preset can change them: fix round 2).
+  const sz = base.preset.safeZone;
+  const key = [base.compDir, base.entry.hash, base.preset.width, base.preset.height, sz ? `${sz.top},${sz.right},${sz.bottom},${sz.left}` : '-'].join('\u0000');
   const known = sourceOverflowCache.get(key);
   if (known) return known;
   const ids = await measure(base.composition, signal);
@@ -421,7 +423,7 @@ export async function finishOverlay(o: {
   }
   for (const id of noted ?? []) {
     if (!Object.hasOwn(overlay.texts, id) || stale.includes(id)) continue;
-    issues.push({ code: 'sourceTextOverflow', clipId: id, message: v.sourceTextOverflow({ clip: clipLabel(o.base.composition, id) }) });
+    issues.push({ code: 'sourceTextOverflow', clipId: id, message: v.sourceLayoutOverflow({ clip: clipLabel(o.base.composition, id) }) });
   }
   for (const [id, voice] of Object.entries(overlay.voices)) {
     if (!stale.includes(id) && !(await voiceFileOk(o.voiceRoots, voice.src))) add('voiceFileInvalid', v.voiceFileInvalid({ clip: clipLabel(o.base.composition, id) }), id);

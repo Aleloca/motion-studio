@@ -298,6 +298,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   const renders = new RenderJobService({
     queue, engine: deps.render, media, normalizer,
+    // The browser's text measure of a source composition (fix round 2, N1): the localized render judges translations against it.
+    measureText: (o) => previews.measureTextOverflow(o),
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
     broadcast: (msg) => hub.broadcast(msg),
     ...(deps.renderOptions ? { renderOptions: deps.renderOptions } : {}),

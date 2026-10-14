@@ -2,7 +2,7 @@ import { renderJobKey } from '@motion-studio/shared';
 import { randomBytes } from 'node:crypto';
 import { constants } from 'node:fs';
 import { copyFile, lstat, mkdir, rename, rm } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import {
   compositionProblemText, effectiveLinks, formatDisplayName, messages, renderProblems, renderState,
   type Brief, type Composition, type FormatPreset, type JobProgress, type JobSummary, type Locale, type LocaleTag, type Localization, type LocalizationIssue, type LocalizationRow, type ManifestV2, type OutputFileInfo,
@@ -11,6 +11,7 @@ import {
 import { copyConfinedFile, hashConfinedFile } from '../brand/agent-guard.ts';
 import { loadComposition, readCompositionFolder } from '../compositions/composition-files.ts';
 import { withIssues, withoutIssues } from '../localization/issues.ts';
+import { sourceOverflowOf } from '../localization/store.ts';
 import { changedAssets, instanceComposition, isAssetChangedProblem, localizedComposition, overlayAssetPaths, readOverlay } from '../localization/store.ts';
 import { checkedLocale, clipLabel, voiceFileOk } from '../localization/validate.ts';
 import { realDirChain } from './core-files.ts';
@@ -71,6 +72,11 @@ export interface RenderJobDeps {
   renderOptions?: Partial<Pick<RenderCompositionOptions, 'distDir' | 'tempDir' | 'parallel' | 'encoder' | 'x264Preset' | 'timeLimitMs' | 'jpegQuality'>>;
   /** Least time between two progress updates of a job, ms (default 250); phase changes always go out. */
   progressIntervalMs?: number;
+  /**
+   * The browser's text measure (the preview service's `measureTextOverflow`): a localized render takes the SOURCE verdict from
+   * it (`sourceOverflowOf`, cached), so a translation is judged against its source (fix round 2, N1). Absent: the row's notes.
+   */
+  measureText?: (o: { ref: { projectDir: string; creativeDir: string; creativeSlug: string; n: number }; folder: string; preset: FormatPreset; composition: Composition; signal?: AbortSignal }) => Promise<string[] | null>;
 }
 
 export interface RenderPlan {
@@ -710,13 +716,18 @@ export class RenderJobService {
       // language. A clip that shows the source text (not translated, or outdated: the stale rule) overflows with the original's
       // words: a note on the row (`sourceTextOverflow`, live F4), never a problem of the translation nor a reason to force.
       const translated = (id: string) => Object.hasOwn(read.overlay.texts, id) && !row.stale.includes(id);
-      // A translated clip whose SOURCE already overflows (noted when the translation was judged, fix round 1 N1) keeps its note:
-      // the source-relative estimate judged the translation itself. Any other translated clip that overflows is a problem.
-      const sourceNoted = new Set((row.issues ?? []).filter((i) => i.code === 'sourceTextOverflow' && i.clipId !== undefined && translated(i.clipId)).map((i) => i.clipId!));
+      // A translated clip whose SOURCE already overflows keeps a note: the source-relative estimate judged the translation itself.
+      // The source verdict comes from the browser (cached per composition and preset, fix round 2 N1); the row's notes (written
+      // when the translation was judged, or carried) only when the browser cannot measure now. Any other translated clip that
+      // overflows is a problem: nothing is exported silently.
+      const measureText = this.deps.measureText;
+      const sourceOver = measureText ? await sourceOverflowOf(ic, (c, s) => measureText({ ref: { projectDir: ref.projectDir, creativeDir, creativeSlug: ref.creativeSlug, n },
+        folder: basename(ic.compDir), preset: ic.preset, composition: c, signal: s }), signal).catch(() => null) : null;
+      const sourceNoted = new Set((sourceOver ?? (row.issues ?? []).filter((i) => i.code === 'sourceTextOverflow' && i.clipId !== undefined).map((i) => i.clipId!)).filter((id) => translated(id)));
       const measured = (result.textOverflows ?? []).filter((e) => e.clipId !== undefined).map((e) => e.clipId!);
       const overflowIssues: LocalizationIssue[] = [...new Set([...measured, ...sourceNoted])].map((id): LocalizationIssue => (translated(id) && !sourceNoted.has(id)
         ? { code: 'textOverflowMeasured', clipId: id, message: m.variants.textOverflowMeasured({ clip: clipLabel(ic.composition, id), fit: Math.round((read.overlay.fit[id] ?? 1) * 100) }) }
-        : { code: 'sourceTextOverflow', clipId: id, message: m.variants.sourceTextOverflow({ clip: clipLabel(ic.composition, id) }) }));
+        : { code: 'sourceTextOverflow', clipId: id, message: (translated(id) ? m.variants.sourceLayoutOverflow : m.variants.sourceTextOverflow)({ clip: clipLabel(ic.composition, id) }) }));
       const overflows = overflowIssues.filter((i) => i.code === 'textOverflowMeasured').map((i) => i.message);
       const problems = [...new Set([...(info.problems ?? []), ...overflows])];
       const at = new Date().toISOString();

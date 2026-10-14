@@ -101,7 +101,7 @@ describe('localization routes', { timeout: 120_000 }, () => {
     expect(r.statusCode, r.body).toBe(200);
     expect(r.json().problems).toEqual([]);
     expect(r.json().overlay.fit).toEqual({});
-    expect(r.json().issues).toEqual([{ code: 'sourceTextOverflow', clipId: 'title', message: v().sourceTextOverflow({ clip: 'Title' }) }]);
+    expect(r.json().issues).toEqual([{ code: 'sourceTextOverflow', clipId: 'title', message: v().sourceLayoutOverflow({ clip: 'Title' }) }]);
     // No fit search for it: the source once, the translation once.
     expect(calls() - start).toBe(2);
     // A render needs no force for it, and keeps it a note.

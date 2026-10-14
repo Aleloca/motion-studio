@@ -163,9 +163,82 @@ describe('render problems of a translation (Rulings I, J)', { timeout: 120_000 }
     await put(slug, 2, 'de', 'test-wide', { texts: { title: 'Hallo' } });
     await done(await render(slug, 2, { formats: ['test-wide'], locales: ['de'] }));
     const after = (await env.versionOf(slug, 2))!.localizations!.find((r) => r.locale === 'de')!;
-    expect(after.issues).toEqual([{ code: 'sourceTextOverflow', clipId: 'title', message: text }]);
+    // Translated now, the note says the original's layout overflows (not "untranslated or outdated").
+    expect(after.issues).toEqual([{ code: 'sourceTextOverflow', clipId: 'title', message: v().sourceLayoutOverflow({ clip: 'Title' }) }]);
     expect(after.problems).toBeUndefined();
     expect(after.render!.problems).toBeUndefined();
+  });
+
+  it('the note of an outdated clip is cleared by the next render once the clip is translated and its source fits (F4)', async () => {
+    const slug = await create();
+    await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Hallo' } });
+    const view = (await env.app.inject({ url: `/api/projects/acme/creatives/${slug}/versions/1/compositions/test-wide`, headers: H })).json() as { hash: string; composition: { tracks: Array<{ clips: Array<{ id: string; props: { text?: string } }> }> } };
+    const c = structuredClone(view.composition);
+    c.tracks.flatMap((t) => t.clips).find((k) => k.id === 'title')!.props.text = 'Goodbye';
+    const e = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/edits`, headers: H,
+      payload: { baseVersion: 1, format: 'test-wide', baseHash: view.hash, composition: c, staged: [], ops: [], token: 'A'.repeat(43) } });
+    expect(e.statusCode, e.body).toBe(200);
+    // The preview measure says the source fits; the render (showing the outdated clip's source) says it overflows.
+    env.fake.measure = () => [];
+    env.fake.overflows = ['title'];
+    await done(await render(slug, 2, { formats: ['test-wide'], locales: ['de'], force: true }));
+    const row = (await env.versionOf(slug, 2))!.localizations!.find((r) => r.locale === 'de')!;
+    expect(row.issues).toEqual(expect.arrayContaining([{ code: 'sourceTextOverflow', clipId: 'title', message: v().sourceTextOverflow({ clip: 'Title' }) }]));
+    env.fake.overflows = [];
+    await put(slug, 2, 'de', 'test-wide', { texts: { title: 'Tschüss' } });
+    await done(await render(slug, 2, { formats: ['test-wide'], locales: ['de'] }));
+    const after = (await env.versionOf(slug, 2))!.localizations!.find((r) => r.locale === 'de')!;
+    expect(after.issues ?? []).toEqual([]);
+    expect(after.problems).toBeUndefined();
+  });
+
+  it('a carried row of a clip whose source already overflows: no problem and no force at render (fix round 2, N1, reviewer probe)', async () => {
+    const slug = await env.create(['test-wide'], { links: {}, locales: { primary: 'en', extra: ['de'] } });
+    env.fake.measure = () => ['title'];
+    const p = await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Hallo' } });
+    expect(p.json().problems).toEqual([]);
+    const dup = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/duplicate-format`, headers: H, payload: { instanceId: 'test-wide' } });
+    expect(dup.statusCode, dup.body).toBe(200);
+    // The carried row keeps the source note (its source text did not change).
+    const carried = (await env.versionOf(slug, 2))!.localizations!.find((x) => x.locale === 'de' && x.instanceId === 'test-wide')!;
+    expect(carried.issues).toEqual([{ code: 'sourceTextOverflow', clipId: 'title', message: v().sourceLayoutOverflow({ clip: 'Title' }) }]);
+    env.fake.overflows = ['title'];
+    // No force: the render's own measure of the source says it overflows too.
+    await done(await render(slug, 2, { formats: ['test-wide'], locales: ['de'] }));
+    const row = (await env.versionOf(slug, 2))!.localizations!.find((x) => x.locale === 'de' && x.instanceId === 'test-wide')!;
+    expect(row.problems).toBeUndefined();
+    expect(row.render!.problems).toBeUndefined();
+  });
+
+  it('the render takes the source verdict from the browser itself: a row with no note is not blamed for an overflowing source (fix round 2)', async () => {
+    const slug = await env.create(['test-wide'], { links: {}, locales: { primary: 'en', extra: ['de'] } });
+    env.fake.measure = () => [];
+    await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Hallo' } });
+    expect((await env.versionOf(slug, 1))!.localizations![0]!.issues).toBeUndefined();
+    // A new version of the same composition hash is not needed: the preset changes the verdict (another cache key), so the
+    // render measures the source again. Here the browser now says the title overflows whatever its text.
+    const f = await env.app.inject({ method: 'PUT', url: '/api/formats', headers: H, payload: { presets: [{ id: 'test-wide', channel: 'Test', name: 'Wide', width: 320, height: 180, kind: 'video', extensions: ['mp4'], safeZone: { top: 0, bottom: 150, left: 0, right: 0 } }, { id: 'test-tall', channel: 'Test', name: 'Tall', width: 180, height: 320, kind: 'video', extensions: ['mp4'] }] } });
+    expect(f.statusCode, f.body).toBe(200);
+    env.fake.measure = () => ['title'];
+    env.fake.overflows = ['title'];
+    await done(await render(slug, 1, { formats: ['test-wide'], locales: ['de'] }));
+    const row = (await env.versionOf(slug, 1))!.localizations!.find((x) => x.locale === 'de')!;
+    expect(row.problems).toBeUndefined();
+    expect(row.issues).toEqual([{ code: 'sourceTextOverflow', clipId: 'title', message: v().sourceLayoutOverflow({ clip: 'Title' }) }]);
+  });
+
+  it('after carry, a source that fits while its translation overflows is still flagged at render (fix round 2)', async () => {
+    const slug = await env.create(['test-wide'], { links: {}, locales: { primary: 'en', extra: ['de'] } });
+    // The browser: only a translated title overflows (the source "Hello" fits).
+    env.fake.measure = (c) => (c.tracks.flatMap((t) => t.clips).some((x) => x.id === 'title' && x.type === 'text' && x.props.text !== 'Hello') ? ['title'] : []);
+    await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Hallo' }, fit: { title: 1 } });
+    const dup = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/duplicate-format`, headers: H, payload: { instanceId: 'test-wide' } });
+    expect(dup.statusCode, dup.body).toBe(200);
+    env.fake.overflows = ['title'];
+    await done(await render(slug, 2, { formats: ['test-wide'], locales: ['de'], force: true }));
+    const row = (await env.versionOf(slug, 2))!.localizations!.find((x) => x.locale === 'de' && x.instanceId === 'test-wide')!;
+    expect(row.render!.problems).toEqual([v().textOverflowMeasured({ clip: 'Title', fit: 100 })]);
+    expect(row.problems).toContain(v().textOverflowMeasured({ clip: 'Title', fit: 100 }));
   });
 
   it('a check that cannot run after the render is a problem, never a clean record', async () => {

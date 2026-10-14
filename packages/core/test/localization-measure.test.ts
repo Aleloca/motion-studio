@@ -65,7 +65,7 @@ describe('the browser judgement of an overlay', () => {
     // The browser flags the title whatever its text. A same-length translation: no problem, only the note.
     const same = await finish('Hallo', async () => ['title']);
     expect(same.problems).toEqual([]);
-    expect(same.issues).toEqual([{ code: 'sourceTextOverflow', clipId: 'title', message: v().sourceTextOverflow({ clip: 'Title' }) }]);
+    expect(same.issues).toEqual([{ code: 'sourceTextOverflow', clipId: 'title', message: v().sourceLayoutOverflow({ clip: 'Title' }) }]);
     // Far longer than the source: the estimate still flags it (it needs more room than the source).
     const longer = await finish('Herzlich willkommen zur brandneuen Version unserer wunderbaren Anwendung für alle', async () => ['title']);
     expect(longer.problems).toEqual([v().textOverflow({ clip: 'Title' })]);

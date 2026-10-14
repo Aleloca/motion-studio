@@ -37,8 +37,13 @@ export async function carryLocalizations(prev: VersionDir, next: VersionDir, nex
     const voiceRoots = voiceRootsOf(base, o.projectDir);
     const missingVoices: string[] = [];
     for (const [id, v] of Object.entries(overlay.voices)) if (!(await voiceFileOk(voiceRoots, v.src))) missingVoices.push(id);
+    // The previous row's source notes (its source already overflows, N1) go along for clips whose source text is unchanged
+    // (`finishOverlay` drops them for a stale entry): the source-relative estimate keeps judging them. A changed source loses
+    // its note, and the render measures it again (fix round 2).
+    const sourceOverflow = (row.issues ?? []).filter((i) => i.code === 'sourceTextOverflow' && i.clipId !== undefined && Object.hasOwn(overlay.texts, i.clipId)).map((i) => i.clipId!);
     const done = await finishOverlay({
       overlay, base, voice: row.voice, chooseFit: new Set(), uiLocale: o.uiLocale, projectDir: o.projectDir, voiceRoots, extraStale: missingVoices,
+      ...(sourceOverflow.length ? { sourceOverflow } : {}),
     });
     const hash = await writeOverlay(next.creativeDir, next.n, done.overlay);
     // Ruling L: the hashes of the files the kept entries still use go along.

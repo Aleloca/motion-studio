@@ -619,6 +619,7 @@ export const en = {
     localizationMissing: (p: { list: string }) => `No translation to render for: ${p.list}`,
     localeStale: (p: { count: number }) => `${p.count} outdated`,
     textOverflowMeasured: (p: { clip: string; fit: number }) => `The translation of "${p.clip}" overflows its box in the render, at ${p.fit}% size`,
+    sourceLayoutOverflow: (p: { clip: string }) => `The original text of "${p.clip}" already overflows here (its box, the frame or the safe zone): fix it in the original`,
     sourceTextOverflow: (p: { clip: string }) => `The original text of "${p.clip}" overflows its box in the render: it shows untranslated or outdated, so it is the original's to fix`,
     renderCheckFailed: (p: { file: string }) => `${p.file} was rendered but could not be checked`,
     assetChanged: (p: { file: string }) => `${p.file} changed since Motion Studio made or attached it for this translation: translate again (or restore the file) before rendering`,

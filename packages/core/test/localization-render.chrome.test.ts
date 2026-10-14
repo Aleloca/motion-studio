@@ -176,7 +176,7 @@ describe.skipIf(!tools.ok)('localized renders in real Chrome', () => {
       payload: { texts: { title: 'Willkommen zur neuen Version unserer App für jedes Gerät, ganz einfach' } } });
     expect(put.statusCode, put.body).toBe(200);
     expect(put.json().problems).toEqual([]);
-    expect(put.json().issues).toEqual([{ code: 'sourceTextOverflow', clipId: 'title', message: messages(currentLocale()).variants.sourceTextOverflow({ clip: 'Title' }) }]);
+    expect(put.json().issues).toEqual([{ code: 'sourceTextOverflow', clipId: 'title', message: messages(currentLocale()).variants.sourceLayoutOverflow({ clip: 'Title' }) }]);
     // The localized render needs no force for it, and keeps it a note.
     const r = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/render`, headers: H, payload: { formats: [format], locales: ['de'] } });
     expect(r.statusCode, r.body).toBe(202);
