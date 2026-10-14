@@ -173,3 +173,72 @@ describe('stored domains', () => {
     expect(JSON.parse(await readFile(file, 'utf8'))).not.toHaveProperty('droppedDomains');
   });
 });
+
+// Final wave P9: an agent run without the sandbox can write .studio/settings.json; the core holds the settings for the run
+// and undoes any change after it.
+describe('WorkspaceStore settings guard (sandbox off)', () => {
+  const file = (root: string) => join(root, '.studio', 'settings.json');
+  const agentWrites = async (root: string) => {
+    const cur = JSON.parse(await readFile(file(root), 'utf8'));
+    await writeFile(file(root), JSON.stringify({ ...cur, sandboxMode: 'off', confirmPaidProviders: false, agentLiveInput: true }));
+  };
+
+  it('during the run the settings are those it started with; after it, an agent write is undone byte for byte and reported', async () => {
+    const root = join(base, 'ws');
+    const ws = await WorkspaceStore.open(root, new Git());
+    await ws.updateSettings({ expertMode: true });
+    const before = await readFile(file(root), 'utf8');
+    const release = await ws.guardSettings();
+    await agentWrites(root);
+    expect(await ws.readSettings()).toMatchObject({ sandboxMode: 'auto', confirmPaidProviders: true, agentLiveInput: false, expertMode: true });
+    expect(await release()).toEqual({ changed: true, reverted: true });
+    expect(await readFile(file(root), 'utf8')).toBe(before);
+    expect(await ws.readSettings()).toMatchObject({ sandboxMode: 'auto', confirmPaidProviders: true });
+    // Released twice: nothing more happens.
+    expect(await release()).toEqual({ changed: false, reverted: false });
+  });
+
+  it('no change: nothing is reported; a user save during the run is kept', async () => {
+    const root = join(base, 'ws2');
+    const ws = await WorkspaceStore.open(root, new Git());
+    const release = await ws.guardSettings();
+    await ws.updateSettings({ theme: 'dark' });
+    expect(await ws.readSettings()).toMatchObject({ theme: 'dark' });
+    expect(await release()).toEqual({ changed: false, reverted: false });
+    expect(JSON.parse(await readFile(file(root), 'utf8')).theme).toBe('dark');
+  });
+
+  it('two overlapping runs: the settings are held until both end', async () => {
+    const root = join(base, 'ws3');
+    const ws = await WorkspaceStore.open(root, new Git());
+    const a = await ws.guardSettings();
+    const b = await ws.guardSettings();
+    await agentWrites(root);
+    expect(await a()).toEqual({ changed: true, reverted: true });
+    await agentWrites(root);
+    expect((await ws.readSettings()).sandboxMode).toBe('auto');
+    expect(await b()).toEqual({ changed: true, reverted: true });
+    expect(JSON.parse(await readFile(file(root), 'utf8')).sandboxMode).toBe('auto');
+  });
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('a change that cannot be undone is reported, and the changed fields are not applied until the user saves', async () => {
+    const root = join(base, 'ws4');
+    const ws = await WorkspaceStore.open(root, new Git());
+    const release = await ws.guardSettings();
+    await agentWrites(root);
+    await chmod(join(root, '.studio'), 0o500); // the folder refuses the temp file: no undo possible
+    try {
+      expect(await release()).toEqual({ changed: true, reverted: false });
+      expect(JSON.parse(await readFile(file(root), 'utf8')).sandboxMode).toBe('off');
+      // Still the settings from before the run: no sandbox off, no paid call without confirmation, no opt-in.
+      expect(await ws.readSettings()).toMatchObject({ sandboxMode: 'auto', confirmPaidProviders: true, agentLiveInput: false });
+    } finally {
+      await chmod(join(root, '.studio'), 0o700);
+    }
+    // The user saves the settings (their confirmation): from the trusted values, written to the file.
+    await ws.updateSettings({ theme: 'light' });
+    expect(JSON.parse(await readFile(file(root), 'utf8'))).toMatchObject({ sandboxMode: 'auto', confirmPaidProviders: true, theme: 'light' });
+    await writeFile(file(root), JSON.stringify({ ...JSON.parse(await readFile(file(root), 'utf8')), theme: 'dark' }));
+    expect((await ws.readSettings()).theme).toBe('dark'); // served from the file again
+  });
+});

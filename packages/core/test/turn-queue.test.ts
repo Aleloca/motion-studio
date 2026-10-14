@@ -364,3 +364,21 @@ describe('pins of a queued request refer to the version they were placed on (fin
     await s.waitIdle();
   });
 });
+
+describe('workspace settings written by an agent with the sandbox off (final wave P9)', () => {
+  it('are held for the run, put back after it, and the chat says so', async () => {
+    s = await liveApp(); // no sandbox here: the run is unsandboxed
+    const file = join(s.base, 'ws', '.studio', 'settings.json');
+    const before = await readFile(file, 'utf8');
+    await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Primo' } });
+    const run = await s.runner.next(0);
+    // The agent (e.g. through node) turns the sandbox and the paid confirmations off, and opts in to live input.
+    await writeFile(file, JSON.stringify({ ...JSON.parse(before), sandboxMode: 'off', confirmPaidProviders: false, agentLiveInput: true }));
+    const during = (await s.app.inject('/api/workspace')).json().settings;
+    expect(during).toMatchObject({ sandboxMode: 'auto', confirmPaidProviders: true, agentLiveInput: false });
+    run.finish();
+    await s.waitIdle();
+    expect(await readFile(file, 'utf8')).toBe(before);
+    expect((await s.conversation()).some((e) => e.type === 'system' && e.level === 'warning' && e.text === messages('it').jobs.workspaceSettingsReverted)).toBe(true);
+  });
+});

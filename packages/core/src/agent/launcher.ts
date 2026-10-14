@@ -68,6 +68,12 @@ export interface LauncherDeps {
    * which keeps live input and interrupt off whatever the settings say (agent-capabilities.ts, decisions log 610).
    */
   claudeVersion?: () => Promise<string | null>;
+  /**
+   * Final wave P9: holds the workspace settings for a run without the sandbox (WorkspaceStore.guardSettings); the returned
+   * function, called once the run is over, says whether the agent changed them and whether that was undone. Absent or null:
+   * no workspace (nothing to guard).
+   */
+  guardSettings?: () => Promise<(() => Promise<{ changed: boolean; reverted: boolean }>) | null>;
 }
 
 /** Phase 13: the jobs whose turns can take messages or an interrupt while they run (spec §2; never brand analysis, describe, localize). */
@@ -227,7 +233,12 @@ export class AgentLauncher {
       if (first) await Promise.all([configFile, tokenFile].map((f) => (f ? rm(f, { force: true }).catch(() => {}) : undefined)));
     };
     let mcp: Pick<AgentTurnRequest, 'mcpConfigPath' | 'permissionPromptTool'> = {};
+    // Final wave P9: without the sandbox the agent can write the workspace settings: they are held for the run and any
+    // change is undone (or, if it cannot be, ignored until the user saves them) and reported after it.
+    let settingsGuard: (() => Promise<{ changed: boolean; reverted: boolean }>) | null = null;
+    const releaseSettings = () => (settingsGuard ? settingsGuard().catch(() => null) : Promise.resolve(null));
     try {
+      if (!sandbox) settingsGuard = await this.deps.guardSettings?.().catch(() => null) ?? null;
       if (mcpOn && mcpCommand) {
         token = bridge.register({
           jobId: i.jobId, kind: i.kind, projectSlug: i.projectSlug, projectDir: i.projectDir, creativeSlug: i.creativeSlug ?? null,
@@ -313,6 +324,8 @@ export class AgentLauncher {
         // turns are the exception (decisions log 141): the user's own agent may leave a dev server or preview running on
         // purpose, so their group is left alone; the detach and the tripwire still run.
         if (i.kind !== 'console') run.killGroup?.();
+        const settingsCheck = await releaseSettings();
+        if (settingsCheck?.changed) await warn(settingsCheck.reverted ? t().jobs.workspaceSettingsReverted : t().jobs.workspaceSettingsNotReverted);
         await detachLinks();
         // The check fails closed: if it cannot run, the project is quarantined against the pre-run state.
         const tw = await tripwire.check().catch(() => null);
@@ -342,7 +355,7 @@ export class AgentLauncher {
         return { ...r, usage: record };
       });
       return {
-        done: done.finally(release),
+        done: done.finally(async () => { await releaseSettings(); await release(); }),
         // Revoked before the process is told to stop: it may keep calling the bridge until it exits.
         cancel: () => { void release(); run.cancel(); },
         killGroup: () => run.killGroup?.(),
@@ -354,6 +367,7 @@ export class AgentLauncher {
         capabilities: capabilities ?? { liveInput: false, interrupt: false },
       };
     } catch (err) {
+      await releaseSettings();
       await release();
       throw err;
     }

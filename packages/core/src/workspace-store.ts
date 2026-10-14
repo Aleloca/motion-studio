@@ -1,5 +1,6 @@
 import { assertNotRealUserData } from './app-config.ts';
-import { access, constants, mkdir, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { access, constants, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
@@ -107,9 +108,34 @@ export function slugify(name: string): string {
   return s || 'project';
 }
 
+/** What an unsandboxed agent run did to the workspace settings (final wave P9). */
+export interface SettingsCheck { changed: boolean; reverted: boolean }
+
+/** Puts back exactly `text` at `path`, through a temp file and a rename (never a half-written settings file). */
+async function writeThroughAtomic(path: string, text: string): Promise<void> {
+  const tmp = `${path}.${randomBytes(6).toString('hex')}.tmp`;
+  try {
+    await writeFile(tmp, text, 'utf8');
+    await rename(tmp, path);
+  } catch (err) {
+    await rm(tmp, { force: true }).catch(() => {});
+    throw err;
+  }
+}
+
 export class WorkspaceStore {
   private readonly createLock = new KeyedMutex();
   private readonly projectLock = new KeyedMutex();
+  /**
+   * Final wave P9: `.studio/settings.json` is protected by the sandbox only; an agent run with the sandbox off can write it
+   * (e.g. through `Bash(node:*)`). While such runs are going (`guardSettings`), the settings are served from the content
+   * they had when the first one started, and after each one any change is undone. If undoing fails, the trusted content
+   * keeps being served (no changed sandbox mode, opt-in or paid-provider field applies) until the user saves the settings.
+   */
+  private guarded = 0;
+  private trusted: { raw: string | null; settings: WorkspaceSettingsView | null } | null = null;
+  private untrusted = false;
+  private readonly settingsLock = new KeyedMutex();
   private constructor(public readonly root: string, private readonly git: Git) {}
 
   /** `create: false` (used at startup) refuses to recreate a workspace folder that disappeared. */
@@ -135,16 +161,61 @@ export class WorkspaceStore {
   private settingsPath() { return join(this.root, '.studio', 'settings.json'); }
 
   /** Never rewrites the file: invalid stored domains are skipped and listed in `droppedDomains`. */
-  readSettings(): Promise<WorkspaceSettingsView> {
+  async readSettings(): Promise<WorkspaceSettingsView> {
+    const held = this.trusted?.settings;
+    if (held && (this.guarded > 0 || this.untrusted)) return structuredClone(held);
     return readJsonFile<WorkspaceSettingsView>(this.settingsPath(), storedWorkspaceSettingsSchema);
   }
 
   async updateSettings(patch: Partial<Omit<WorkspaceSettings, 'schemaVersion'>>): Promise<WorkspaceSettings> {
-    const { droppedDomains: _dropped, ...current } = await this.readSettings();
-    const parsed = workspaceSettingsSchema.safeParse({ ...current, ...patch, schemaVersion: 1 });
-    if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidSettings({ fields: parsed.error.issues.map((i) => i.path.join('.')).join(', ') }));
-    await writeJsonFileAtomic(this.settingsPath(), parsed.data);
-    return parsed.data;
+    return this.settingsLock.run('settings', async () => {
+      const { droppedDomains: _dropped, ...current } = await this.readSettings();
+      const parsed = workspaceSettingsSchema.safeParse({ ...current, ...patch, schemaVersion: 1 });
+      if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidSettings({ fields: parsed.error.issues.map((i) => i.path.join('.')).join(', ') }));
+      await writeJsonFileAtomic(this.settingsPath(), parsed.data);
+      // The user's own save: it is the trusted content from now on (and confirms it after a change that could not be undone).
+      if (this.trusted) this.trusted = { raw: await readFile(this.settingsPath(), 'utf8').catch(() => null), settings: structuredClone(parsed.data) };
+      this.untrusted = false;
+      if (this.guarded === 0) this.trusted = null;
+      return parsed.data;
+    });
+  }
+
+  /**
+   * Final wave P9: call before an agent run without the sandbox; call the returned function once the run is over. It says
+   * whether the settings file changed meanwhile and whether the change was undone.
+   */
+  async guardSettings(): Promise<() => Promise<SettingsCheck>> {
+    await this.settingsLock.run('settings', async () => {
+      if (this.guarded === 0 && !this.untrusted) {
+        const raw = await readFile(this.settingsPath(), 'utf8').catch(() => null);
+        const settings = await readJsonFile<WorkspaceSettingsView>(this.settingsPath(), storedWorkspaceSettingsSchema).catch(() => null);
+        this.trusted = { raw, settings };
+      }
+      this.guarded++;
+    });
+    let released = false;
+    return () => this.settingsLock.run('settings', async (): Promise<SettingsCheck> => {
+      if (released) return { changed: false, reverted: false };
+      released = true;
+      this.guarded--;
+      const want = this.trusted;
+      const now = await readFile(this.settingsPath(), 'utf8').catch(() => null);
+      let out: SettingsCheck = { changed: false, reverted: false };
+      if (want && now !== want.raw) {
+        try {
+          if (want.raw === null) await rm(this.settingsPath(), { force: true });
+          else await writeThroughAtomic(this.settingsPath(), want.raw);
+          out = { changed: true, reverted: true };
+        } catch {
+          // Not undone: the trusted content stays in force until the user saves the settings.
+          this.untrusted = true;
+          out = { changed: true, reverted: false };
+        }
+      }
+      if (this.guarded === 0 && !this.untrusted) this.trusted = null;
+      return out;
+    });
   }
 
   projectDir(slug: string): string {

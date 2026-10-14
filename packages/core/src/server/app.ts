@@ -333,6 +333,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     mcpCommand: deps.mcpCommand ?? null,
     ...(deps.mcpEnv ? { mcpEnv: deps.mcpEnv } : {}),
     claudeVersion,
+    // Final wave P9: the workspace settings are held while an agent runs without the sandbox.
+    guardSettings: async () => (workspace ? workspace.guardSettings() : null),
   });
 
   const vault = deps.vault ?? new MemoryVault();
