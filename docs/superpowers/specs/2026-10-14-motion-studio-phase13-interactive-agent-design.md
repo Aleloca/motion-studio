@@ -53,6 +53,11 @@ Oggi, mentre l'agente lavora:
   Il doctor riporta quale percorso è attivo ("Live messages: supported / queued only").
 - **Conversazione.** I messaggi durante il lavoro sono voci `user` di `conversation.jsonl` con `jobId`, `mode: 'live' | 'queued' | 'redirect'` e `deliveredAt`. Nuovi eventi del job: `user_message_delivered` e `interrupted`.
 
+**Aggiornamento 2026-10-14 (decisione: orchestratore).** La prova dal vivo del Task 0 è stata fermata dal classificatore di sicurezza prima di partire: costo zero, nessun processo avviato. Non viene rieseguita né aggirata. La fase procede così:
+- i percorsi di ripiego (coda, ferma e riprendi) sono quelli attivi;
+- consegna a metà turno e interruzione sono implementate dietro capacità spente, provate solo con il finto `claude`;
+- si potranno accendere dopo una prova eseguita dall'utente.
+
 ## 5. Fuori perimetro
 
 - Modificare un messaggio già consegnato.
