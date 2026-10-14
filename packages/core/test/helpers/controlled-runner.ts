@@ -44,6 +44,8 @@ export class ControlledRunner implements AgentRunner {
    * messages written with `send` are recorded; a run that fails before its session event records nothing.
    */
   readonly transcripts = new Map<string, string[]>();
+  /** Final wave P3: runs that start without reporting their session (as a CLI cut before it read its prompt). */
+  quietStart: ((req: AgentTurnRequest) => boolean) | null = null;
   private waiters: Array<(r: ControlledRun) => void> = [];
   private counter = 0;
 
@@ -103,6 +105,8 @@ export class ControlledRunner implements AgentRunner {
       });
     } else if (req.resumeSessionId && this.missingSessions.has(req.resumeSessionId)) {
       queueMicrotask(() => finishWith({ status: 'failed', error: `No conversation found with session ID: ${req.resumeSessionId}` }));
+    } else if (this.quietStart?.(req)) {
+      // Started, but no session event yet: the test cuts it or emits one itself.
     } else {
       const parent = req.resumeSessionId ? this.transcripts.get(req.resumeSessionId) ?? [] : [];
       const transcript = req.resumeSessionId && !req.forkSession ? parent : [...parent];

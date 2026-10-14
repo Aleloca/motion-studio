@@ -88,8 +88,23 @@ export class LiveSession {
   pending(): LiveMessage[] { return this.messages.filter((m) => m.state === 'pending'); }
   /** The user's words of the turn for a prompt: every message not moved to the queue, in order. */
   words(): LiveMessage[] { return this.messages.filter((m) => m.state !== 'queued'); }
-  /** A message written to a run, or given in a run's prompt: delivered. */
-  given(m: LiveMessage, state: 'sent' | 'prompt'): void { m.state = state; m.settle('delivered'); }
+  /**
+   * A message written to a run (`sent`: delivered now), or put in the prompt of the run about to start (`prompt`: delivered
+   * only once that run is attached, `confirmPrompt`; final wave P2/P3: a prompt whose run never starts delivers nothing).
+   */
+  given(m: LiveMessage, state: 'sent' | 'prompt'): void { m.state = state; if (state === 'sent') m.settle('delivered'); }
+
+  /** The run that took the prompt is attached: its prompt's messages are delivered. Returns those to announce now. */
+  confirmPrompt(): LiveMessage[] {
+    const out = this.messages.filter((m) => m.state === 'prompt' && !m.announced);
+    for (const m of out) { m.announced = true; m.settle('delivered'); }
+    return out;
+  }
+
+  /** The prompt's run never started (or was cancelled before it was attached): its messages wait again, nothing was delivered. */
+  unconfirmPrompt(): void {
+    for (const m of this.messages) if (m.state === 'prompt' && !m.announced) m.state = 'pending';
+  }
 }
 
 /**

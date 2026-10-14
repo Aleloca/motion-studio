@@ -704,9 +704,16 @@ export class CreativeTurnService {
           lastWrite.catch(() => {}); // observed here; the same rejection is rethrown by the await below
         };
         live.emit = emit;
+        /**
+         * Final wave P3: messages given to a run that was cut (for a newer redirect) before it reported its session, so before
+         * it read its prompt: the next prompt carries them again, so no redirect is lost or replaced unseen.
+         */
+        let carry: LiveMessage[] = [];
         for (;;) {
           sawSession = false;
           sawOutput = false;
+          /** Messages put in this attempt's prompt (delivered once its run is attached). */
+          const givenNow: LiveMessage[] = [];
           // Phase 13: a redirect waiting for this attempt (the fallback: the last run was cancelled) is its prompt.
           const redirect = await live.serial(async () => { const r = live.redirect; live.redirect = null; return r; });
           if (signal.aborted) return await this.cancelled(ref, store, previous, versions.length > 0, this.stoppedOf(jobId));
@@ -717,22 +724,30 @@ export class CreativeTurnService {
           // A repair turn carries every message the user sent while the agent worked, after their request (F4).
           const liveWords = (kind === 'fix' && !redirect) || fresh ? await live.serial(async () => {
             const words = live.words();
-            for (const m of words) if (m.state === 'pending') live.given(m, 'prompt');
+            for (const m of words) if (m.state === 'pending') { live.given(m, 'prompt'); givenNow.push(m); }
             return words.map((m) => ({ text: m.text, pins: m.pins }));
+          }) : undefined;
+          // Earlier redirects no run has read (one replaced before its attempt began, or carried from a cut run): they go
+          // before the newest one, which wins where they disagree (final wave P3, N4).
+          const earlierWords = redirect && !fresh ? await live.serial(async () => {
+            const ms = live.messages.filter((m) => m !== redirect && (carry.includes(m) || (m.mode === 'redirect' && m.state === 'pending')));
+            for (const m of ms) { if (m.state === 'pending') live.given(m, 'prompt'); givenNow.push(m); }
+            return ms.map((m) => ({ text: m.text, pins: m.pins }));
           }) : undefined;
           if (redirect && !fresh) {
             live.given(redirect, 'prompt');
+            givenNow.push(redirect);
             // The live session goes on (not a fork): the agent keeps what it did so far.
             resumeSessionId = live.sessionId; forkSession = false; remembered = 'redirect';
           }
           const resumed = redirect && !fresh ? redirect : null;
-          if (fresh) live.given(redirect!, 'prompt');
+          if (fresh && redirect!.state === 'pending') { live.given(redirect!, 'prompt'); givenNow.push(redirect!); }
           const prompt = buildCreativePrompt({
             slug, creative, presets, version: n, kind: resumed ? 'redirect' : kind, formats: targets,
             userText: kind === 'fix' || resumed ? undefined : request,
             // A repair turn carries the user's own words (F4): only what they wrote, never a request the core made up.
             userWords: resumed ? resumed.text : kind === 'fix' ? message?.text || undefined : undefined,
-            liveMessages: liveWords,
+            liveMessages: resumed ? (earlierWords?.length ? earlierWords : undefined) : liveWords,
             stoppedNote: Boolean(stopped) && !resumed && kind !== 'fix',
             pins: resumed ? resumed.pins : kind === 'iteration' ? message?.pins : undefined,
             attachments: kind === 'iteration' && !resumed ? attachments : undefined,
@@ -749,6 +764,7 @@ export class CreativeTurnService {
             const text = snap.unavailable === 'not-git' ? t().jobs.codebaseNotRepo({ path: p }) : t().jobs.codebaseCheckFailed({ path: p });
             await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text });
           }
+          const sessionBefore = live.sessionId;
           const run = await this.deps.launcher.start({
             kind: 'creative', jobId, projectSlug: ref.projectSlug, projectDir: ref.projectDir, creativeSlug: slug, codebases: existing,
             protectedDirs: earlier.map((d) => join(creativeDir, 'outputs', d)),
@@ -780,11 +796,10 @@ export class CreativeTurnService {
             live.phase = 'agent';
             live.lastAttempt = attempt >= this.maxAttempts;
             if (run.capabilities) live.caps = run.capabilities;
-            // A redirect that came while this run was being started: it stops now and the next attempt takes it.
-            if (live.redirect) { run.cancel(); return; }
-            for (const m of live.messages) {
-              if (m.state === 'prompt' && !m.announced) { m.announced = true; emit({ kind: 'user_message_delivered', clientId: m.clientId }); }
-            }
+            // A redirect that came while this run was being started: it stops now and the next attempt takes it, with this
+            // prompt's messages (never read: nothing is delivered).
+            if (live.redirect) { live.unconfirmPrompt(); run.cancel(); return; }
+            for (const m of live.confirmPrompt()) emit({ kind: 'user_message_delivered', clientId: m.clientId });
             for (const m of live.pending()) {
               if ((await run.send?.({ text: liveMessageText(m.text, m.pins, pinLine), clientId: m.clientId })) === 'written') live.given(m, 'sent');
             }
@@ -806,8 +821,15 @@ export class CreativeTurnService {
               await store.appendConversation(slug, { type: 'system', at: now(), level: 'error', text: t().jobs.codebaseChanged({ path: p }) });
             }
           }
-          // Phase 13: the run was cancelled for a redirect (not the job): the next attempt of the same number resumes it.
-          if (outcome.status !== 'succeeded' && live.redirect && !signal.aborted) continue;
+          // Phase 13: the run was cancelled for a redirect (not the job): the next attempt of the same number resumes it. A run
+          // cut before it reported its session never read its prompt (final wave P3): its session is not taken, and what the
+          // prompt carried goes with the next one.
+          if (outcome.status !== 'succeeded' && live.redirect && !signal.aborted) {
+            if (!sawSession) { live.sessionId = sessionBefore; carry = [...carry, ...givenNow.filter((m) => !carry.includes(m))]; }
+            else carry = [];
+            continue;
+          }
+          if (sawSession) carry = [];
           // Phase 13 (Review Focus 4, Ruling V): a remembered session Claude Code no longer has falls back to the base
           // version's session, with a note: never a failed turn. Once per turn, and the restart counts as an attempt (C1).
           const resumeError = outcome.status === 'failed' && remembered && !resumeFallbackUsed && !signal.aborted
@@ -831,6 +853,11 @@ export class CreativeTurnService {
             attempt++;
             await live.serial(async () => { live.lastAttempt = attempt >= this.maxAttempts; });
             continue;
+          }
+          // Final wave P3 (N5): a run that failed or was stopped before it reported its session (e.g. a resume that failed)
+          // never read its prompt: the messages it carried wait again, and the turn's end queues them as the next request.
+          if (outcome.status !== 'succeeded' && !sawSession) {
+            await live.serial(async () => { for (const m of [...givenNow, ...carry]) if (m.state === 'prompt') m.state = 'pending'; });
           }
           if (outcome.status === 'cancelled') return await this.cancelled(ref, store, previous, versions.length > 0, this.stoppedOf(jobId));
           if (outcome.status === 'failed') throw new AgentFailure(outcome.error ?? t().errors.turnFailed);

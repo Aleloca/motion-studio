@@ -315,6 +315,17 @@ describe('old conversations and idle composer', () => {
     expect(within(screen.getByText('Was queued').closest('article')!).getByText('Sent')).toBeTruthy();
   });
 
+  it('a redirect given to a run that never read it and moved back to the queue shows Queued, not Sent (final wave P3)', () => {
+    const entries: ConversationEntry[] = [
+      { type: 'user', at: at(1), text: 'Go another way', pins: [], attachments: [], jobId: 'j1', mode: 'redirect', clientId: CID },
+      agent(2, { kind: 'user_message_delivered', clientId: CID }),
+    ];
+    render(view({ entries, job: { ...running, state: 'failed', finishedAt: at(3) }, queued: [q(CID, 'Go another way')] }));
+    const bubble = screen.getAllByText('Go another way').map((el) => el.closest('article')).find((a) => a !== null)!;
+    expect(within(bubble).getByText('Queued')).toBeTruthy();
+    expect(within(bubble).queryByText('Sent')).toBeNull();
+  });
+
   it('a message still in the queue shows as Queued in the list, not as a second bubble', () => {
     render(view({ entries: [], job: running, queued: [q(CID, 'Later one')] }));
     expect(screen.getAllByText('Later one')).toHaveLength(1);

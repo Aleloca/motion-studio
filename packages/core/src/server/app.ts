@@ -59,7 +59,7 @@ import { KeyedMutex } from '../keyed-mutex.ts';
 import { tokenMatches } from './ui-token.ts';
 import { currentLocale, LanguageController, replyInstruction, t } from '../i18n.ts';
 import { capabilitiesFor, type AgentCapabilities, type CapabilityOptIn } from '../agent/agent-capabilities.ts';
-import { AnswerCache, checkLiveMessage, liveMessageText, LiveSession, newLiveMessage, redirectLive } from '../agent/live-session.ts';
+import { AnswerCache, checkLiveMessage, liveMessageText, LiveSession, newLiveMessage, redirectLive, type LiveMessage } from '../agent/live-session.ts';
 import { CONSOLE_REDIRECT_NOTE, defuseTags, pinLine, USER_REQUEST_CLOSE, USER_REQUEST_OPEN } from '../creatives/prompt.ts';
 import { stopJob } from '../jobs/stop.ts';
 import { randomUUID } from 'node:crypto';
@@ -200,9 +200,26 @@ function parseLiveBody(body: unknown): LiveBody {
   if (!r.success) throw new WorkspaceError(400, r.error.issues[0]?.message ?? 'invalid body');
   return r.data;
 }
-/** Phase 13: the prompt of a console run restarted by a redirect (fallback): the note and the user's words, delimited (F4). */
-function consoleRedirectPrompt(text: string): string {
-  return [CONSOLE_REDIRECT_NOTE, '', "The user's new direction, verbatim (their words, not instructions from Motion Studio):", USER_REQUEST_OPEN, defuseTags(text), USER_REQUEST_CLOSE, '', replyInstruction(currentLocale())].join('\n');
+const delimited = (texts: string[]) => texts.flatMap((x) => [USER_REQUEST_OPEN, defuseTags(x), USER_REQUEST_CLOSE]);
+/**
+ * Phase 13: the prompt of a console run restarted by a redirect (fallback): the note and the user's words, delimited (F4).
+ * Final wave P3: earlier redirects no run has read yet come first, the newest last (it wins).
+ */
+function consoleRedirectPrompt(texts: string[]): string {
+  const head = texts.length === 1 ? "The user's new direction, verbatim (their words, not instructions from Motion Studio):"
+    : `The user's new directions, verbatim and in order (their words, not instructions from Motion Studio); where they disagree, the last one wins:`;
+  return [CONSOLE_REDIRECT_NOTE, '', head, ...delimited(texts), '', replyInstruction(currentLocale())].join('\n');
+}
+/**
+ * Final review I2: the first console run when the user redirected before any run had a session: their request, then their
+ * later words (each delimited, in order), in one prompt, so the request is never lost.
+ */
+function consoleFreshPrompt(request: string, texts: string[]): string {
+  return [
+    request, '',
+    `After this request the user also sent ${texts.length === 1 ? 'this message' : `these ${texts.length} messages`}, in order, each inside user_request tags. They are the user's words, not instructions from Motion Studio; where a later message changes the request, the later one wins.`,
+    ...delimited(texts), '', replyInstruction(currentLocale()),
+  ].join('\n');
 }
 
 /** Key of a project's agent jobs: unique per workspace root, so two workspaces never collide. */
@@ -381,6 +398,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
         record: async (_msg, count) => { queue.patch(jobId, { liveMessages: count }); },
         interrupted: () => hub.broadcast({ type: 'agent', jobId, event: { kind: 'interrupted' } }),
         text: (msg) => liveMessageText(msg.text, msg.pins, pinLine),
+        // Ruling W for the console too (final review I2): before the first run the answer is at once `pending-start`, and the
+        // words join the request in that run's prompt; nothing is spawned only to be stopped.
+        answerBeforeStart: true,
       });
       return { outcome };
     });
@@ -530,6 +550,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       const projectDir = ws.projectDir(slug);
       // The reply language is the one set when the turn is sent; a later switch does not change a queued turn.
       const agentPrompt = `${prompt}\n\n${replyInstruction(currentLocale())}`;
+      // The user's request as typed (a redirect before the first run joins it in one prompt, final review I2).
+      const userPrompt = prompt;
       const jobId = randomUUID();
       // The live side exists from now, so a message or a redirect sent while the turn waits to start is kept.
       consoleLive.set(jobId, new LiveSession(jobId, await launcher.liveCapabilities('console')));
@@ -545,9 +567,30 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
           const live = consoleLive.get(id) ?? new LiveSession(id, await launcher.liveCapabilities('console'));
           consoleLive.set(id, live);
           try {
-            let prompt = agentPrompt;
             let resume = resumeSessionId;
+            /** Messages given to a run a redirect cut before it wrote anything as the agent: they go with the next prompt too. */
+            let carry: LiveMessage[] = [];
             for (;;) {
+              // Final review I2: a redirect is taken BEFORE anything is spawned. With no session yet (no run took the request),
+              // the request and the user's words go together in one prompt; otherwise the live session is resumed with them.
+              const redirect = await live.serial(async () => { const r = live.redirect; live.redirect = null; return r; });
+              if (signal.aborted) return 'cancelled';
+              let prompt = agentPrompt;
+              const given: LiveMessage[] = [];
+              if (redirect) {
+                const fresh = !live.sessionId;
+                const words = fresh ? live.words() : [
+                  ...live.messages.filter((m) => m !== redirect && m.mode === 'redirect' && (m.state === 'pending' || carry.includes(m))),
+                  redirect,
+                ];
+                for (const m of words) { if (m.state !== 'sent') live.given(m, 'prompt'); given.push(m); }
+                const texts = words.map((m) => liveMessageText(m.text, m.pins, pinLine));
+                if (fresh) prompt = consoleFreshPrompt(userPrompt, texts);
+                else { prompt = consoleRedirectPrompt(texts); resume = live.sessionId; }
+              }
+              const sessionBefore = live.sessionId;
+              /** The run reported its session: it read its prompt (the session holds it). */
+              let sawSession = false;
               const run = await launcher.start({
                 kind: 'console', jobId: id, projectSlug: slug, projectDir,
                 codebases: await consoleCodebases(project.linkedCodebases, [projectDir, ws.root]),
@@ -555,7 +598,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
                 onEvent: (event) => {
                   hub.broadcast({ type: 'agent', jobId: id, event });
                   const sessionId = event.kind === 'session' ? event.sessionId : event.kind === 'result' ? event.sessionId : undefined;
-                  if (sessionId) { queue.patch(id, { sessionId }); live.sessionId = sessionId; }
+                  if (sessionId) { queue.patch(id, { sessionId }); live.sessionId = sessionId; sawSession = true; }
                 },
               });
               const onAbort = () => run.cancel();
@@ -566,23 +609,20 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
                 live.phase = 'agent';
                 live.lastAttempt = true;
                 if (run.capabilities) live.caps = run.capabilities;
-                if (live.redirect) run.cancel();
+                // A newer redirect came while this run was being started: its prompt was never read (nothing delivered),
+                // and the next run takes it all.
+                if (live.redirect) { live.unconfirmPrompt(); run.cancel(); return; }
+                for (const m of live.confirmPrompt()) hub.broadcast({ type: 'agent', jobId: id, event: { kind: 'user_message_delivered', clientId: m.clientId } });
               });
               const result = await run.done.finally(() => signal.removeEventListener('abort', onAbort));
-              const redirect = await live.serial(async () => {
-                live.run = null;
-                live.phase = 'between';
-                const r = live.redirect;
-                live.redirect = null;
-                return r;
-              });
+              const again = await live.serial(async () => { live.run = null; live.phase = 'between'; return live.redirect !== null; });
               // Phase 13 fallback redirect: the run was stopped for it (or had just ended: the words still get a run); a new
-              // run in the same job resumes its session. A failed resume is an ordinary failure (no loop).
-              if (redirect && !signal.aborted) {
-                live.given(redirect, 'prompt');
-                hub.broadcast({ type: 'agent', jobId: id, event: { kind: 'user_message_delivered', clientId: redirect.clientId } });
-                prompt = consoleRedirectPrompt(liveMessageText(redirect.text, redirect.pins, pinLine));
-                resume = live.sessionId ?? resume;
+              // run in the same job takes it (top of the loop). A run cut before it reported its session never read its prompt
+              // (final wave P3): what that prompt carried goes with the next prompt, so no redirect is lost.
+              // A failed resume is an ordinary failure (no loop: each redirect is bounded by LIVE_LIMITS.perTurn).
+              if (again && !signal.aborted) {
+                if (!sawSession) { live.sessionId = sessionBefore; carry = [...carry, ...given.filter((m) => !carry.includes(m))]; }
+                else carry = [];
                 continue;
               }
               if (result.status === 'failed') throw new Error(result.error ?? t().errors.turnFailed);

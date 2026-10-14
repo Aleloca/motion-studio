@@ -517,6 +517,75 @@ describe('resume-error detection (Ruling V)', () => {
   });
 });
 
+describe('two fast redirects and runs that never read their prompt (final wave P3: N4, N5)', () => {
+  it('two redirects in a row both reach the agent, in order; the first never becomes an extra queued turn', async () => {
+    s = await liveApp();
+    const job = (await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Primo' } })).json();
+    const run = await s.runner.next(0);
+    await vi.waitFor(async () => expect((await s.jobs()).find((j) => j.id === job.id)?.sessionId).toBe(run.sessionId));
+    const redirect = (text: string) => s.app.inject({ method: 'POST', url: `/api/jobs/${job.id}/redirect`, payload: { clientId: cid(), text } });
+    const [a, b] = await Promise.all([redirect('PRIMA-DIREZIONE'), redirect('SECONDA-DIREZIONE')]);
+    expect(a.json()).toEqual({ outcome: 'restarted' });
+    expect(b.json()).toEqual({ outcome: 'restarted' });
+    await vi.waitFor(() => expect(s.runner.runs.at(-1)!.cancelled).toBe(false));
+    const last = s.runner.runs.at(-1)!;
+    expect(last.req.prompt).toContain('PRIMA-DIREZIONE');
+    expect(last.req.prompt).toContain('SECONDA-DIREZIONE');
+    expect(last.req.prompt.indexOf('PRIMA-DIREZIONE')).toBeLessThan(last.req.prompt.indexOf('SECONDA-DIREZIONE'));
+    last.finish();
+    await s.waitIdle();
+    expect((await s.jobs()).find((j) => j.id === job.id)?.state).toBe('succeeded');
+    expect((await s.creative()).queued ?? []).toEqual([]);
+    expect(s.runner.runs.filter((r) => !r.cancelled)).toHaveLength(1);
+  });
+
+  it('a redirect whose run is cut by a newer one before it reported its session is carried into the next prompt', async () => {
+    s = await liveApp();
+    const job = (await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Primo' } })).json();
+    const run = await s.runner.next(0);
+    await vi.waitFor(async () => expect((await s.jobs()).find((j) => j.id === job.id)?.sessionId).toBe(run.sessionId));
+    // The run that takes the first redirect has not reported its session (it has not read its prompt) when the second comes.
+    s.runner.quietStart = (req) => req.prompt.includes('UNO-NON-LETTO') && !req.prompt.includes('DUE-DOPO');
+    const first = await s.app.inject({ method: 'POST', url: `/api/jobs/${job.id}/redirect`, payload: { clientId: cid(), text: 'UNO-NON-LETTO' } });
+    expect(first.json()).toEqual({ outcome: 'restarted' });
+    const cut = await s.runner.next(1);
+    expect(cut.req.resumeSessionId).toBe(run.sessionId);
+    const second = await s.app.inject({ method: 'POST', url: `/api/jobs/${job.id}/redirect`, payload: { clientId: cid(), text: 'DUE-DOPO' } });
+    expect(second.json()).toEqual({ outcome: 'restarted' });
+    expect(cut.cancelled).toBe(true);
+    const next = await s.runner.next(2);
+    // Same live session as before (the cut run's never counted), with both directions in order.
+    expect(next.req.resumeSessionId).toBe(run.sessionId);
+    expect(next.req.prompt).toContain('UNO-NON-LETTO');
+    expect(next.req.prompt.indexOf('UNO-NON-LETTO')).toBeLessThan(next.req.prompt.indexOf('DUE-DOPO'));
+    next.finish();
+    await s.waitIdle();
+    expect((await s.jobs()).find((j) => j.id === job.id)?.state).toBe('succeeded');
+    expect((await s.creative()).queued ?? []).toEqual([]);
+  });
+
+  it('a redirect handed to runs that fail before reading it (a resume that fails) becomes the next request, shown as queued', async () => {
+    s = await liveApp();
+    await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Primo' } });
+    (await s.runner.next(0)).finish();
+    await s.waitIdle();
+    const job = (await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Secondo' } })).json();
+    const run = await s.runner.next(1);
+    await vi.waitFor(async () => expect((await s.jobs()).find((j) => j.id === job.id)?.sessionId).toBe(run.sessionId));
+    // Every later run fails before it reports a session (the resume, then the fresh fallback from the base).
+    s.runner.failStart = () => ({ error: 'exit code 1' });
+    const clientId = cid();
+    await s.app.inject({ method: 'POST', url: `/api/jobs/${job.id}/redirect`, payload: { clientId, text: 'UNO-NON-LETTO' } });
+    await s.waitIdle();
+    expect((await s.jobs()).find((j) => j.id === job.id)?.state).toBe('failed');
+    expect(s.runner.runs.length).toBeLessThanOrEqual(4);
+    // Not lost and not shown as read: it waits in the queue (Ruling U: for Run next) under the same id.
+    expect((await s.creative()).queued).toEqual([expect.objectContaining({ clientId, text: 'UNO-NON-LETTO' })]);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(s.runner.runs.length).toBeLessThanOrEqual(4);
+  });
+});
+
 describe('a redirect before the job starts (Ruling W)', () => {
   it('answers pending-start at once; the words join the first prompt and are marked delivered when it starts', async () => {
     await setupService();

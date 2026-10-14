@@ -242,8 +242,9 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
     for (const e of entries) if (e.type === 'user' && e.clientId) known.add(e.clientId);
     const stateOf = (e: Extract<ConversationEntry, { type: 'user' }>): MessageState | undefined => {
       if (!e.clientId || !e.mode) return undefined;
-      if (delivered.has(e.clientId) || e.deliveredAt) return 'sent';
+      // Still in the queue wins (final wave P3): a message given to a run that never read it goes back to the queue.
       if (queuedIds.has(e.clientId)) return 'queued';
+      if (delivered.has(e.clientId) || e.deliveredAt) return 'sent';
       if (e.jobId && e.jobId === job?.id && working) return job?.state === 'queued' && e.mode === 'redirect' ? 'pendingStart' : 'pending';
       return undefined;
     };

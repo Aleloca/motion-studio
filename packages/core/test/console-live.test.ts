@@ -112,3 +112,51 @@ describe('console redirect at the edge of the run (fix round 1, I1)', () => {
     expect(s.runner.runs).toHaveLength(1);
   });
 });
+
+describe('console redirect before the first run (final review I2)', () => {
+  it('while the job waits for a slot: answered pending-start, nothing spawned to be killed, one run with the request and the redirect', async () => {
+    s = await liveApp();
+    await s.app.inject({ method: 'PUT', url: '/api/settings', payload: { maxConcurrentJobs: 1 } });
+    // A creative turn holds the only slot: the console job waits.
+    await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Primo' } });
+    const busy = await s.runner.next(0);
+    const job = await startConsole();
+    expect((await s.jobs()).find((j) => j.id === job.id)?.state).toBe('queued');
+    const res = await s.app.inject({ method: 'POST', url: `/api/jobs/${job.id}/redirect`, payload: { clientId: cid(), text: 'Solo i file .ts' } });
+    expect(res.json()).toEqual({ outcome: 'pending-start' });
+    expect(s.runner.runs).toHaveLength(1);
+    busy.finish();
+    const run = await s.runner.next(1);
+    // The user's original request and the redirect, in that order, in the one prompt (the words are the user's).
+    expect(run.req.prompt).toContain('Elenca i file');
+    expect(run.req.prompt).toContain('Solo i file .ts');
+    expect(run.req.prompt.indexOf('Elenca i file')).toBeLessThan(run.req.prompt.indexOf('Solo i file .ts'));
+    expect(run.req.prompt).not.toContain(CONSOLE_REDIRECT_NOTE);
+    expect(run.cancelled).toBe(false);
+    run.finish({ write: false });
+    await s.waitIdle();
+    expect(s.runner.runs).toHaveLength(2);
+    expect((await s.jobs()).find((j) => j.id === job.id)?.state).toBe('succeeded');
+  });
+
+  it('two fast redirects: both reach the agent, and each answer is what happened', async () => {
+    s = await liveApp();
+    const job = await startConsole();
+    const run = await s.runner.next(0);
+    await vi.waitFor(async () => expect((await s.jobs()).find((j) => j.id === job.id)?.sessionId).toBe(run.sessionId));
+    const redirect = (text: string) => s.app.inject({ method: 'POST', url: `/api/jobs/${job.id}/redirect`, payload: { clientId: cid(), text } });
+    const [a, b] = await Promise.all([redirect('PRIMA-DIREZIONE'), redirect('SECONDA-DIREZIONE')]);
+    expect(a.json()).toEqual({ outcome: 'restarted' });
+    expect(b.json()).toEqual({ outcome: 'restarted' });
+    await vi.waitFor(() => expect(s.runner.runs.at(-1)!.cancelled).toBe(false));
+    const last = s.runner.runs.at(-1)!;
+    // The run that goes on carries both, in order (a run cut before it wrote anything never counts as having read them).
+    expect(last.req.prompt).toContain('PRIMA-DIREZIONE');
+    expect(last.req.prompt).toContain('SECONDA-DIREZIONE');
+    expect(last.req.prompt.indexOf('PRIMA-DIREZIONE')).toBeLessThan(last.req.prompt.indexOf('SECONDA-DIREZIONE'));
+    expect(last.req.resumeSessionId).toBe(run.sessionId);
+    last.finish({ write: false });
+    await s.waitIdle();
+    expect((await s.jobs()).find((j) => j.id === job.id)?.state).toBe('succeeded');
+  });
+});
