@@ -1,7 +1,7 @@
 // Brief form of a creative ("Edit the brief" in the canvas panel), built from ui/ controls only: no native select,
 // checkbox or number field, no textarea resize. Saves it, or saves and starts a new generation.
 import { channelName, INSTANCE_ID_RE, legacyTurnKind, linksAfterBriefSave, nextInstanceId, presetOf, type Brief, type BriefServices, type CreativeDetail, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
-import { useId, useMemo, useState, type DragEvent } from 'react';
+import { useId, useMemo, useRef, useState, type DragEvent } from 'react';
 import { api } from '../api.ts';
 import { instanceName, presetFor, presetNameOf } from '../instances.ts';
 import { useLocale, useT } from '../i18n.tsx';
@@ -15,6 +15,18 @@ import { message } from '../errors.ts';
 const LENGTHS = ['none', '6', '15', '30', '60', 'custom'] as const;
 type LengthChoice = (typeof LENGTHS)[number];
 const lengthChoice = (sec: number | null): LengthChoice => (sec === null ? 'none' : (LENGTHS as readonly string[]).includes(String(sec)) ? (String(sec) as LengthChoice) : 'custom');
+
+/** The draft's formats with the saved ones back as the server has them (order and removals); unsaved ones stay after the neighbour they had. */
+function rollbackFormats(draft: readonly string[], saved: readonly string[]): string[] {
+  const out = [...saved];
+  draft.forEach((f, i) => {
+    if (saved.includes(f)) return;
+    let at = 0;
+    for (let j = i - 1; j >= 0; j--) { const k = out.indexOf(draft[j]!); if (k >= 0) { at = k + 1; break; } }
+    out.splice(at, 0, f);
+  });
+  return out;
+}
 
 export function BriefEditor({ slug, detail, presets, disabled, onChanged, onRefresh }: {
   slug: string; detail: CreativeDetail; presets: FormatPreset[]; disabled: boolean; onChanged(): void;
@@ -30,7 +42,10 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged, onRefr
   const [title, setTitle] = useState(c.title);
   const [brief, setBrief] = useState<Brief>(c.brief);
   // The brief as the server has it: partial saves (labels, order, removal) move it without touching the rest of the draft.
-  const [stored, setStored] = useState<Brief>(c.brief);
+  const [stored, setStoredState] = useState<Brief>(c.brief);
+  // The latest stored brief for async code: a save that fails rolls back to what the server has NOW, not to a closure's copy.
+  const storedRef = useRef<Brief>(c.brief);
+  const setStored = (b: Brief) => { storedRef.current = b; setStoredState(b); };
   const [length, setLength] = useState<LengthChoice>(() => lengthChoice(c.brief.durationSec));
   const [custom, setCustom] = useState(() => (lengthChoice(c.brief.durationSec) === 'custom' ? String(c.brief.durationSec) : ''));
   const [assets, setAssets] = useState(c.brief.assets.join(', '));
@@ -70,10 +85,18 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged, onRefr
       setStored(saved.brief);
       onRefresh?.();
     } catch (e) {
-      // The draft goes back to what the server has, so the list never shows an order or a label that was not saved.
+      // Only the failed change is undone, against the latest stored brief: unsaved "Add another" rows and the other typed labels stay.
+      const now = storedRef.current;
       setBrief((b) => {
-        const { formatLabels: _l, ...rest } = b;
-        return { ...rest, formats: stored.formats, ...(stored.formatLabels ? { formatLabels: stored.formatLabels } : {}) };
+        const { formatLabels: old, ...rest } = b;
+        const formats = patch.formats ? rollbackFormats(b.formats, now.formats) : b.formats;
+        const labels = { ...(old ?? {}) };
+        for (const k of Object.keys(patch.formatLabels ?? {})) {
+          const was = now.formatLabels?.[k];
+          if (was) labels[k] = was; else delete labels[k];
+        }
+        const kept = labelsFor(formats, labels);
+        return { ...rest, formats, ...(kept ? { formatLabels: kept } : {}) };
       });
       setError(t.web.instances.saveFailed({ detail: message(e) }));
     }

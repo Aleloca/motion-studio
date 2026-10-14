@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DEFAULT_FORMATS, workspaceSettingsSchema, type Brief, type CreativeDetail, type JobSummary, type VersionEntry } from '@motion-studio/shared';
 import type { ReactNode } from 'react';
@@ -218,6 +218,45 @@ describe('format instances · brief editor', () => {
     expect((await screen.findByRole('alert')).textContent).toBe("Couldn't save the formats: Wait for the generation");
     // The list goes back to what the server has.
     expect(names()).toEqual(['Post 1:1', 'Post 1:1 #2', 'Banner 300×250']);
+  });
+
+  it('a failed partial save keeps the unsaved "Add another" rows (Q4)', async () => {
+    mount();
+    await userEvent.click(screen.getByRole('button', { name: 'Add another Banner 300×250' }));
+    expect(names()).toEqual(['Post 1:1', 'Post 1:1 #2', 'Banner 300×250', 'Banner 300×250 #2']);
+    api.updateCreative.mockRejectedValueOnce(new ApiError(409, 'Wait for the generation'));
+    await userEvent.click(screen.getByRole('button', { name: 'Move Post 1:1 down' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Wait for the generation');
+    // Only the failed move is undone: the saved order is back and the new instance is still there.
+    expect(names()).toEqual(['Post 1:1', 'Post 1:1 #2', 'Banner 300×250', 'Banner 300×250 #2']);
+  });
+
+  it('a failed label save undoes that label only and keeps other typed labels (Q4)', async () => {
+    mount();
+    const boxes = () => screen.getAllByRole('textbox', { name: /label/i }) as HTMLInputElement[];
+    const first = boxes()[1]!, second = boxes()[2]!;
+    fireEvent.change(second, { target: { value: 'Typed not saved' } });
+    api.updateCreative.mockRejectedValueOnce(new ApiError(409, 'Wait for the generation'));
+    await userEvent.type(first, 'Promo{Enter}');
+    await screen.findByRole('alert');
+    expect(boxes()[1]!.value).toBe('');
+    expect(boxes()[2]!.value).toBe('Typed not saved');
+  });
+
+  it('a failed partial save goes back to the latest stored brief, not the one captured earlier (Q4)', async () => {
+    mount();
+    let release: (v: unknown) => void = () => {};
+    let fail: (e: unknown) => void = () => {};
+    api.updateCreative
+      .mockImplementationOnce(() => new Promise((res) => { release = res; }) as never)
+      .mockImplementationOnce(() => new Promise((_r, rej) => { fail = rej; }) as never);
+    await userEvent.click(screen.getByRole('button', { name: 'Move Post 1:1 down' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Move Banner 300×250 up' }));
+    expect(names()).toEqual(['Post 1:1 #2', 'Banner 300×250', 'Post 1:1']);
+    await act(async () => { release({ brief: { ...serverBrief, formats: [POST2, POST, BANNER] } }); });
+    await act(async () => { fail(new ApiError(409, 'Wait for the generation')); });
+    await screen.findByRole('alert');
+    expect(names()).toEqual(['Post 1:1 #2', 'Post 1:1', 'Banner 300×250']);
   });
 
   it('a legacy brief with an odd format id says which one on save, and removing it fixes the brief', async () => {
