@@ -398,7 +398,7 @@ describe('localize: repair loop', { timeout: 120_000 }, () => {
     await finished(await start(slug, 1, { locales: ['de'], text: 'Formal' }));
     expect(env.agentRuns()).toBe(runs + 2);
     const fix = env.promptTexts().at(-1)!;
-    expect(fix).toContain(`### German (de) · test-wide\n- ${v().textOverflow({ clip: 'Title' })}`);
+    expect(fix).toContain(`### German (de) · test-wide\n- ${v().textOverflow({ clip: 'Title', fit: 70 })}`);
     expect(fix).toContain('<user_request>\nFormal\n</user_request>');
     expect((await rowOf(slug, 1, 'de', 'test-wide'))!.problems).toBeUndefined();
   });

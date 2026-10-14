@@ -604,7 +604,7 @@ export const it: Messages = {
     localizationInvalid: (p) => `Impossibile salvare la traduzione: ${p.detail}`,
     localizationMismatch: (p) => `"${p.entry}" non è un testo traducibile di questo formato`,
     localizationUnusable: (p) => `La traduzione ${p.locale} di ${p.format} non corrisponde più alla sua composizione`,
-    textOverflow: (p) => `La traduzione di "${p.clip}" esce dal suo riquadro, anche al 70% della dimensione`,
+    textOverflow: (p) => `La traduzione di "${p.clip}" esce dal suo riquadro, anche al ${p.fit}% della dimensione`,
     fallbackFontUnavailable: (p) => `Font di ripiego non disponibile: impossibile scaricare ${p.family}, alcuni caratteri potrebbero apparire in un font di sistema`,
     tooManyFonts: 'La traduzione richiede più file di font di quanti una composizione ne possa avere',
     voiceFileInvalid: (p) => `La voce tradotta di "${p.clip}" non è un file di questa versione`,

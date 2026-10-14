@@ -63,9 +63,9 @@ describe('finishOverlay issues', () => {
     expect(done.stale).toEqual(['h2']);
     expect(done.issues).toEqual([
       { code: 'stale', clipId: 'h2', message: v().staleEntry({ clip: 'Headline' }) },
-      { code: 'textOverflow', clipId: 'h1', message: v().textOverflow({ clip: 'Headline' }) },
+      { code: 'textOverflow', clipId: 'h1', message: v().textOverflow({ clip: 'Headline', fit: 70 }) },
     ]);
-    expect(done.problems).toEqual([v().textOverflow({ clip: 'Headline' })]);
+    expect(done.problems).toEqual([v().textOverflow({ clip: 'Headline', fit: 70 })]);
     expect(issueFields(done.issues).problems).toEqual(done.problems);
   });
 });

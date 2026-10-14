@@ -693,7 +693,7 @@ export class LocalizeService {
       const missing = this.missing(pair, cur?.overlay ?? null, cur?.row.stale ?? []);
       fixable.push(...missing.map((id) => va.notTranslated({ clip: clipLabel(comp, id) })));
       if (cur) {
-        const estimates = new Map(Object.keys(cur.overlay.texts).map((id) => [va.textOverflow({ clip: clipLabel(comp, id) }), id] as const));
+        const estimates = new Map(Object.keys(cur.overlay.texts).map((id) => [va.textOverflow({ clip: clipLabel(comp, id), fit: Math.round((cur.overlay.fit[id] ?? 1) * 100) }), id] as const));
         let measured: string[] | null = null;
         const previews = this.deps.previews;
         if (previews && Object.keys(cur.overlay.texts).length > 0 && !signal.aborted) {

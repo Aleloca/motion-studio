@@ -611,7 +611,7 @@ export const en = {
     localizationInvalid: (p: { detail: string }) => `The translation cannot be saved: ${p.detail}`,
     localizationMismatch: (p: { entry: string }) => `"${p.entry}" is not a translatable text of this format`,
     localizationUnusable: (p: { locale: string; format: string }) => `The ${p.locale} translation of ${p.format} no longer fits its composition`,
-    textOverflow: (p: { clip: string }) => `The translation of "${p.clip}" does not fit its box, even at 70% size`,
+    textOverflow: (p: { clip: string; fit: number }) => `The translation of "${p.clip}" does not fit its box, even at ${p.fit}% size`,
     fallbackFontUnavailable: (p: { family: string }) => `Fallback font unavailable: ${p.family} could not be downloaded, so some characters may show in a system font`,
     tooManyFonts: 'The translation needs more font files than a composition may have',
     voiceFileInvalid: (p: { clip: string }) => `The translated voice of "${p.clip}" is not a file of this version`,

@@ -52,6 +52,17 @@ describe('the browser judgement of an overlay', () => {
     expect(sizes.length).toBeLessThanOrEqual(4);
   });
 
+  it('the estimate\'s sentence names the fit the text actually has, not always 70% (live F2)', async () => {
+    const long = 'Herzlich willkommen zur brandneuen Version unserer wunderbaren Anwendung für alle Geräte';
+    const done = await finishOverlay({
+      overlay: { ...emptyOverlay('de', 'test-wide'), texts: { title: { source: 'Hello', text: long } }, fit: { title: 0.85 } }, base: await ic(), voice: 'original',
+      chooseFit: new Set(), uiLocale: currentLocale(), projectDir: base, voiceRoots: [base],
+    });
+    expect(done.problems).toEqual([v().textOverflow({ clip: 'Title', fit: 85 })]);
+    expect(done.problems[0]).toContain('85%');
+    expect(done.problems[0]).not.toContain('70%');
+  });
+
   it('past the overall deadline the estimate decides (a measure that hangs never holds the lock)', async () => {
     const t0 = Date.now();
     const done = await finish('Hallo', (_c, signal) => new Promise((resolve) => { signal.addEventListener('abort', () => resolve(null), { once: true }); }), 50);
@@ -68,7 +79,7 @@ describe('the browser judgement of an overlay', () => {
     expect(same.issues).toEqual([{ code: 'sourceTextOverflow', clipId: 'title', message: v().sourceLayoutOverflow({ clip: 'Title' }) }]);
     // Far longer than the source: the estimate still flags it (it needs more room than the source).
     const longer = await finish('Herzlich willkommen zur brandneuen Version unserer wunderbaren Anwendung für alle', async () => ['title']);
-    expect(longer.problems).toEqual([v().textOverflow({ clip: 'Title' })]);
+    expect(longer.problems).toEqual([v().textOverflow({ clip: 'Title', fit: 70 })]);
   });
 });
 

@@ -88,8 +88,7 @@ export function legacyOverflowOf(problems: readonly string[], label: string): st
   const texts = new Set<string>();
   for (const l of ['en', 'it'] as const) {
     const v = messages(l).variants;
-    texts.add(v.textOverflow({ clip: label }));
-    for (let fit = 70; fit <= 100; fit++) texts.add(v.textOverflowMeasured({ clip: label, fit }));
+    for (let fit = 70; fit <= 100; fit++) { texts.add(v.textOverflow({ clip: label, fit })); texts.add(v.textOverflowMeasured({ clip: label, fit })); }
   }
   return problems.filter((p) => texts.has(p));
 }

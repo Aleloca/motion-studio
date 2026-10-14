@@ -416,7 +416,7 @@ export async function finishOverlay(o: {
   const judgedByBrowser = (id: string) => browser !== null && measuredByBrowser(o.base.composition, id) && !(noted ?? []).includes(id);
   for (const id of fitted.overflowing) {
     if (judgedByBrowser(id)) continue; // the browser decides for it
-    add('textOverflow', v.textOverflow({ clip: clipLabel(o.base.composition, id) }), id);
+    add('textOverflow', v.textOverflow({ clip: clipLabel(o.base.composition, id), fit: Math.round((overlay.fit[id] ?? 1) * 100) }), id);
   }
   for (const id of browser?.overflowing ?? []) {
     add('textOverflowMeasured', v.textOverflowMeasured({ clip: clipLabel(o.base.composition, id), fit: Math.round((overlay.fit[id] ?? 1) * 100) }), id);
