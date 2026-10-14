@@ -273,6 +273,38 @@ let s: LiveApp;
 afterEach(async () => { await s?.app.close(); });
 
 describe('remembered session (routes)', () => {
+  it('the remembered session is the base version\'s id, and it holds the stopped turn\'s messages (final wave P4)', async () => {
+    s = await liveApp();
+    await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'PRIMO-TURNO' } });
+    const v1 = await s.runner.next(0);
+    v1.finish();
+    await s.waitIdle();
+    const job = (await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'TURNO-FERMATO' } })).json();
+    const stoppedRun = await s.runner.next(1);
+    // An iteration resumes the base session without a fork: Claude Code appends to it, the id stays (as the live check saw).
+    expect(stoppedRun.req).toMatchObject({ resumeSessionId: v1.sessionId });
+    expect(stoppedRun.req.forkSession).toBeFalsy();
+    await vi.waitFor(async () => expect((await s.jobs()).find((j) => j.id === job.id)?.sessionId).toBe(stoppedRun.sessionId));
+    await s.app.inject({ method: 'POST', url: `/api/jobs/${job.id}/stop` });
+    await s.waitIdle();
+    const remembered = (await s.creative()).stoppedSession!;
+    expect(remembered.sessionId).toBe(v1.sessionId);
+    // That session holds the base turn's messages and then the stopped turn's.
+    const held = s.runner.transcripts.get(remembered.sessionId)!.join('\n');
+    expect(held).toContain('PRIMO-TURNO');
+    expect(held).toContain('TURNO-FERMATO');
+    expect(held.indexOf('PRIMO-TURNO')).toBeLessThan(held.indexOf('TURNO-FERMATO'));
+    // The next turn forks it: the agent continues from the stopped turn's messages, in a new session.
+    await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'DOPO-LO-STOP' } });
+    const next = await s.runner.next(2);
+    expect(next.req).toMatchObject({ resumeSessionId: v1.sessionId, forkSession: true });
+    expect(next.sessionId).not.toBe(v1.sessionId);
+    const forked = s.runner.transcripts.get(next.sessionId)!.join('\n');
+    for (const w of ['PRIMO-TURNO', 'TURNO-FERMATO', 'DOPO-LO-STOP']) expect(forked).toContain(w);
+    next.finish();
+    await s.waitIdle();
+  });
+
   it('Stop stores the session; the next turn resumes it as a fork with the note; a saved version clears it', async () => {
     s = await liveApp();
     let job = (await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Primo' } })).json();

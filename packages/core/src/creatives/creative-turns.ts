@@ -1548,7 +1548,15 @@ export class CreativeTurnService {
     });
   }
 
-  /** Phase 13: the session a stopped turn leaves to the next one (the one its agent reported), with the job. */
+  /**
+   * Phase 13: the session a stopped turn leaves to the next one (the one its agent reported), with the job.
+   *
+   * Final wave P4 (Task 4 live check): this is usually the BASE version's session id. An iteration turn resumes the base
+   * session without a fork, and Claude Code then appends the turn to that same session (the id stays). So the remembered
+   * id equals the base version's, yet the session it names holds the stopped turn's messages after the base's. The next
+   * turn resumes it as a fork, so it continues from the stopped turn's messages (plus whatever partial files it left,
+   * which the prompt's note mentions) while the base version's own record is never changed.
+   */
   private stoppedOf(jobId: string): CreativeFile['stoppedSession'] {
     const sessionId = this.deps.queue.list().find((j) => j.id === jobId)?.sessionId;
     return sessionId ? { sessionId, at: now(), jobId } : undefined;

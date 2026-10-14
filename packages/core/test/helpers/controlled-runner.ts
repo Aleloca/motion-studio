@@ -38,6 +38,12 @@ export class ControlledRunner implements AgentRunner {
    * the agent; `session`: it first reports its session; `startFailed`: the CLI could not even start.
    */
   failStart: ((req: AgentTurnRequest) => { error: string; startFailed?: boolean; output?: boolean; session?: boolean } | null) | null = null;
+  /**
+   * Each session's messages, as Claude Code keeps them (final wave P4): a resume without a fork appends to the same session
+   * (the id stays), a fork copies the parent's messages into a new session, no resume starts a new one. Prompts and the
+   * messages written with `send` are recorded; a run that fails before its session event records nothing.
+   */
+  readonly transcripts = new Map<string, string[]>();
   private waiters: Array<(r: ControlledRun) => void> = [];
   private counter = 0;
 
@@ -98,6 +104,10 @@ export class ControlledRunner implements AgentRunner {
     } else if (req.resumeSessionId && this.missingSessions.has(req.resumeSessionId)) {
       queueMicrotask(() => finishWith({ status: 'failed', error: `No conversation found with session ID: ${req.resumeSessionId}` }));
     } else {
+      const parent = req.resumeSessionId ? this.transcripts.get(req.resumeSessionId) ?? [] : [];
+      const transcript = req.resumeSessionId && !req.forkSession ? parent : [...parent];
+      transcript.push(req.prompt);
+      this.transcripts.set(sessionId, transcript);
       queueMicrotask(() => onEvent({ kind: 'session', sessionId }));
     }
     const waiters = this.waiters;
@@ -110,6 +120,7 @@ export class ControlledRunner implements AgentRunner {
       send: async (m) => {
         if (!caps.liveInput || run.inputClosed || ended) return 'closed';
         run.sent.push(m);
+        this.transcripts.get(sessionId)?.push(m.text);
         onEvent({ kind: 'user_message_delivered', clientId: m.clientId });
         return 'written';
       },
