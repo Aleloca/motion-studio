@@ -130,10 +130,12 @@ describe('scanCss · hostile input', () => {
     ['font shorthands with long unclosed functions', fill(`h1{font:bold ${'min( '.repeat(200)}x}`)],
     ['one huge declaration', `p{font-family:${fill('A,')}}`],
     ['a mix', fill('@media x{@supports y{.a{font:700 1em/1 "Q",serif;--font-x:"R";font-family:var(--font-x)}}}/**/"\'}')],
-  ])('scans 5 MB of %s in under 200 ms', (_name, css) => {
+  ])('scans 5 MB of %s in under 1 s of CPU', (_name, css) => {
     // CPU time of this worker process (vitest forks one per file), not wall time: the full suite saturates the machine and
-    // would make a linear scan look slow. A quadratic case costs seconds of CPU and still fails. Best of three runs.
+    // would make a linear scan look slow. Best of three runs. The bound is 1 s, not 200 ms: a slow shared CI runner
+    // measured 234 ms for a linear scan (about 45 ns/byte), while the quadratic regression this guards costs 21.8 s
+    // and any quadratic case costs seconds to minutes at 5 MB, so it still fails by a wide margin.
     const times = [0, 1, 2].map(() => { const t0 = process.cpuUsage(); scanCss(css, base, newScanBudget()); const d = process.cpuUsage(t0); return (d.user + d.system) / 1000; });
-    expect(Math.min(...times)).toBeLessThan(200);
+    expect(Math.min(...times)).toBeLessThan(1000);
   });
 });
