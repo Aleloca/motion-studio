@@ -49,7 +49,7 @@ export const en = {
     codebaseHome: 'Link a specific folder, not your whole home folder',
     codebaseOverlap: 'A linked folder cannot contain the project or sit inside it',
     codebaseUnsafePath: 'The folder path contains control characters: rename the folder or choose another one',
-    codebaseGlobChars: 'The folder path contains ( ) [ ] { } * ? or \\, which the agent\'s file rules cannot match safely: rename the folder (or a parent folder), or link it through a symbolic link whose real path has none of them',
+    codebaseGlobChars: 'The folder path contains ( ) [ ] { } * ? or \\, which the agent\'s file rules cannot match safely: rename the folder (or the parent folder that has them). A symbolic link does not help: the folder\'s real path is checked too',
     codebaseSourceMissing: (p: { path: string }) => `Folder not found: ${p.path}`,
     codebaseSourceDuplicate: (p: { path: string }) => `This folder is already a brand source: ${p.path}`,
     codebaseSourceLimit: (p: { max: number }) => `At most ${p.max} codebase sources per brand`,

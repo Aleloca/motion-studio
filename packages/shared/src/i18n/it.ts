@@ -47,7 +47,7 @@ export const it: Messages = {
     codebaseHome: 'Collega una cartella specifica, non l\'intera home',
     codebaseOverlap: 'La cartella collegata non può contenere il progetto né trovarsi al suo interno',
     codebaseUnsafePath: 'Il percorso della cartella contiene caratteri di controllo: rinomina la cartella o scegline un\'altra',
-    codebaseGlobChars: 'Il percorso della cartella contiene ( ) [ ] { } * ? o \\, che le regole sui file dell\'agente non riescono a confrontare in modo sicuro: rinomina la cartella (o una cartella che la contiene), oppure collegala con un collegamento simbolico il cui percorso reale non ne contenga',
+    codebaseGlobChars: 'Il percorso della cartella contiene ( ) [ ] { } * ? o \\, che le regole sui file dell\'agente non riescono a confrontare in modo sicuro: rinomina la cartella (o la cartella che la contiene e ha quei caratteri). Un collegamento simbolico non basta: si controlla anche il percorso reale della cartella',
     codebaseSourceMissing: (p) => `Cartella non trovata: ${p.path}`,
     codebaseSourceDuplicate: (p) => `Questa cartella è già una fonte del brand: ${p.path}`,
     codebaseSourceLimit: (p) => `Al massimo ${p.max} fonti codebase per brand`,

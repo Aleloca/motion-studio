@@ -105,6 +105,14 @@ Prompt (each probe): call `Read` once per listed absolute path, never repeat fil
 4. **Two primary logos.** After B3 the kit has two logos with `variant: primary` (the codebase one and the new one). Expected by design (the action adds, it does not replace), worth a look in the UI.
 5. **`report_progress` misuse by haiku.** In both creative turns the agent first called `report_progress` with invalid arguments ("Invalid progress message"), then corrected itself.
 
+## Follow-up (final wave, decisions 781-787)
+- Finding 1: codebase paths whose path or real path has `( ) [ ] { } * ?` or `\` are now refused at every route that links a codebase (code `codebase-glob-chars`), and stored ones are left out with a note (decision 781). The web hint "never opens secret files" holds again.
+- Finding 2: the codebase checks run git with `--no-optional-locks` and `GIT_OPTIONAL_LOCKS=0`, and the diff uses `diff-index`/`diff-files`: the porcelain `git diff` rewrote `.git/index` even without optional locks (decision 782).
+- Finding 3: a listed asset that an import already registered keeps its tags and adds the list's (decision 783).
+- Finding 4: "Use as brand logo" demotes the logo already holding the chosen variant (decision 784).
+- Deviation B2: the create route now expands the concepts of a logo from scratch (decision 786).
+- Full suite: `theme.test` (tokens renamed) and the `FormatView.test` ready wait (decision 785).
+
 ## Cost
 App runs: analysis $0.0166, favicon $0.0117, logo concepts $0.0177, the stopped job not summed. Direct probes: 21 runs, about $0.066 in total. Doctor's `claude --version`/auth checks: no model call.
 
@@ -125,3 +133,9 @@ The Electron main process (one recorded PID, its command line checked) got SIGTE
 | `~/MotionStudio` | 1792004787 | 1792004787 | 1792004787 |
 | `~/Library/Application Support/Motion Studio Electron` | 1792006312 | 1792006312 | 1792006312 |
 | `~/Library/Application Support/Electron` | absent | absent | absent |
+
+## For future live checks
+- **Electron environment.** The Electron launch must strip the calling session's `CLAUDE*` and `ANTHROPIC*` variables from Electron's own environment, the same way the claude wrapper does before every `claude` run (the BSD `sed` of this run had no `\|`: use `env -u` per variable, or a list built with `grep -E`). Otherwise the app and anything it spawns inherit the session's variables.
+- **No downloads by shims.** A shim must never download a binary on the fly. If the Electron binary is missing from `node_modules`, stop and report instead of letting `electron` (or `npx`) fetch it.
+- **The download already made.** The one Electron download this run's npm shim made into its own cache is acknowledged and left alone: it is not removed, and it is not a reason to download again.
+
