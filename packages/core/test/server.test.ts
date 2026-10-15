@@ -255,6 +255,9 @@ describe('turns over WebSocket', () => {
     expect(args.filter((a, i) => args[i - 1] === '--add-dir')).toEqual([codebase]);
     expect(args).toContain(`Edit(/${codebase}/**)`);
     expect(args).not.toContain('--allowedTools'); // the console has no default tools
+    // Decision 792: the overlapping stored folder is left out with a progress line that names it.
+    const skipped = messages.flatMap((m) => (m.type === 'agent' && m.jobId === id && m.event.kind === 'progress' ? [m.event.text] : []));
+    expect(skipped.some((l) => l.includes(base))).toBe(true);
     expect(args).toContain(`Edit(/${join(base, 'Spazio di lavoro', 'acme', '.studio')}/**)`);
     ws.close();
   });

@@ -147,7 +147,8 @@ describe('updateProject', () => {
     for (const path of [dir, `${dir}/`, join(dir, 'assets'), ws.root, base, join(ws.root, 'altro'), join(dir, '..', slug, 'brand')]) {
       const err = await ws.updateProject(slug, { linkedCodebases: [{ path }] }).catch((e) => e);
       expect(err.status, path).toBe(400);
-      expect(err.message, path).toBe('La cartella collegata non può contenere il progetto né trovarsi al suo interno');
+      expect(err.message, path).toContain('La cartella collegata ');
+      expect(err.message, path).toContain('né trovarsi al loro interno');
     }
     // A sibling whose name only shares the prefix is fine.
     expect((await ws.updateProject(slug, { linkedCodebases: [{ path: join(base, 'ws-sibling') }] })).linkedCodebases).toEqual([{ path: join(base, 'ws-sibling') }]);

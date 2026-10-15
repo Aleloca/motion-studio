@@ -31,7 +31,7 @@ import { importCodebaseTool } from '../bridge/import-codebase-tool.ts';
 import { providerTools, voiceAvailability, voiceBatch } from '../bridge/provider-tools.ts';
 import { LocalizeService, ProjectActivity } from '../localization/localize-turn.ts';
 import type { LookupFn, Transport } from '../providers/safe-fetch.ts';
-import { checkCodebases, codebaseGlobCharsMessage, codebaseHasGlobChars, codebaseOverlaps, normalizeCodebaseList } from '../codebases.ts';
+import { checkCodebases, codebaseGlobCharsMessage, codebaseHasGlobChars, codebaseOverlapMessage, codebaseOverlaps, normalizeCodebaseList } from '../codebases.ts';
 import type { Git } from '../git.ts';
 import { JobConflictError, JobQueue } from '../jobs/job-queue.ts';
 import { JsonFileError } from '../json-file.ts';
@@ -193,7 +193,8 @@ async function consoleCodebases(list: LinkedCodebase[], forbidden: string[]): Pr
     try {
       const [n] = normalizeCodebaseList([c]);
       if (n && await codebaseHasGlobChars(n.path)) ignored.push(t().jobs.codebaseIgnored({ path: n.path, reason: codebaseGlobCharsMessage(n.path) }));
-      else if (n && !(await codebaseOverlaps(n.path, forbidden))) kept.push(n);
+      else if (n && await codebaseOverlaps(n.path, forbidden)) ignored.push(t().jobs.codebaseIgnored({ path: n.path, reason: codebaseOverlapMessage() }));
+      else if (n) kept.push(n);
     } catch { /* an invalid entry is skipped */ }
   }
   return { paths: (await checkCodebases(normalizeCodebaseList(kept))).filter((c) => c.exists).map((c) => c.path), ignored };

@@ -73,6 +73,8 @@ export function normalizeCodebaseList(list: LinkedCodebase[]): LinkedCodebase[] 
 }
 
 export const codebaseOverlapMessage = (): string => t().errors.codebaseOverlap;
+/** The refusal of a new overlapping path: names it (decision 792). */
+export const codebaseOverlapNamedMessage = (path: string): string => t().errors.codebaseOverlapNamed({ path });
 
 const isWithin = (inner: string, outer: string) => inner === outer || inner.startsWith(outer.endsWith(sep) ? outer : outer + sep);
 /** The normalised path, plus its real path when it exists and differs (symlinks). */
@@ -172,14 +174,20 @@ export async function assertAgentFolders(projectDir: string | null, workspaceRoo
   if (hit !== null) throw folderGlobCharsError(hit);
 }
 
+/** The stored codebase paths in their normalised form (an invalid stored entry is not a pass). */
+function storedKnown(stored: LinkedCodebase[]): Set<string> {
+  const known = new Set<string>();
+  for (const c of stored) { try { known.add(normalizeCodebasePath(c.path)); } catch { /* not a pass */ } }
+  return known;
+}
+
 /**
  * Refuses (400, `codebase-glob-chars`, naming the path) a linked folder whose path or real path holds a glob metacharacter.
  * `stored`: the list already saved; its paths (normalised) pass unchanged (decision 788): a creative or project that holds
  * a legacy one can still save its other edits, and the folder stays left out at run time with a note.
  */
 export async function assertCodebasesLiteral(list: LinkedCodebase[], stored: LinkedCodebase[] = []): Promise<void> {
-  const known = new Set<string>();
-  for (const c of stored) { try { known.add(normalizeCodebasePath(c.path)); } catch { /* an invalid stored entry is not a pass */ } }
+  const known = storedKnown(stored);
   for (const c of list) {
     if (known.has(c.path)) continue;
     if (await codebaseHasGlobChars(c.path)) throw new CodedError(400, codebaseGlobCharsMessage(c.path), 'codebase-glob-chars');
@@ -193,7 +201,12 @@ export async function assertCodebasesLiteral(list: LinkedCodebase[], stored: Lin
  */
 export async function assertCodebasesOutside(list: LinkedCodebase[], protectedDirs: string[], stored: LinkedCodebase[] = []): Promise<void> {
   await assertCodebasesLiteral(list, stored);
-  for (const c of list) if (await codebaseOverlaps(c.path, protectedDirs)) throw new WorkspaceError(400, codebaseOverlapMessage());
+  // Decision 792: like the glob check, only paths new or changed (normalised) are tested; a stored overlapping one stays and is skipped at run time with a note.
+  const known = storedKnown(stored);
+  for (const c of list) {
+    if (known.has(c.path)) continue;
+    if (await codebaseOverlaps(c.path, protectedDirs)) throw new WorkspaceError(400, codebaseOverlapNamedMessage(c.path));
+  }
 }
 
 /** A project folder's name (its slug); exported for the doctor's scan of the workspace. */

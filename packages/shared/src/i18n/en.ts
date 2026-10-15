@@ -48,6 +48,7 @@ export const en = {
     codebaseDiskRoot: 'You can\'t link the disk root',
     codebaseHome: 'Link a specific folder, not your whole home folder',
     codebaseOverlap: 'A linked folder cannot contain the project or sit inside it',
+    codebaseOverlapNamed: (p: { path: string }) => `The linked folder ${p.path} cannot contain the project or the workspace, nor sit inside them`,
     codebaseUnsafePath: 'The folder path contains control characters: rename the folder or choose another one',
     codebaseGlobChars: (p: { path: string }) => `The folder path ${p.path} contains ( ) [ ] { } * ? or \\, which the agent\'s file rules cannot match safely: rename the folder (or the parent folder that has them). A symbolic link does not help: the folder's real path is checked too`,
     folderGlobChars: (p: { path: string }) => `The path ${p.path} of the workspace or project folder contains ( ) [ ] { } * ? or \\, which the agent\'s rules protecting Motion Studio\'s files cannot match safely, so the agent does not run there: rename the folder (or the parent folder that has them), then choose the workspace again`,

@@ -46,6 +46,7 @@ export const it: Messages = {
     codebaseDiskRoot: 'Non puoi collegare la radice del disco',
     codebaseHome: 'Collega una cartella specifica, non l\'intera home',
     codebaseOverlap: 'La cartella collegata non può contenere il progetto né trovarsi al suo interno',
+    codebaseOverlapNamed: (p) => `La cartella collegata ${p.path} non può contenere il progetto né l'area di lavoro, né trovarsi al loro interno`,
     codebaseUnsafePath: 'Il percorso della cartella contiene caratteri di controllo: rinomina la cartella o scegline un\'altra',
     codebaseGlobChars: (p) => `Il percorso della cartella ${p.path} contiene ( ) [ ] { } * ? o \\, che le regole sui file dell'agente non riescono a confrontare in modo sicuro: rinomina la cartella (o la cartella che la contiene e ha quei caratteri). Un collegamento simbolico non basta: si controlla anche il percorso reale della cartella`,
     folderGlobChars: (p) => `Il percorso ${p.path} della cartella di lavoro o del progetto contiene ( ) [ ] { } * ? o \\, che le regole dell\'agente a protezione dei file di Motion Studio non riescono a confrontare in modo sicuro, quindi l\'agente non lavora lì: rinomina la cartella (o la cartella che la contiene e ha quei caratteri), poi scegli di nuovo la cartella di lavoro`,
