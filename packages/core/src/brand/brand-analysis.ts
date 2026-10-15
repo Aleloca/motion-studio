@@ -21,7 +21,10 @@ import { noteCoreChange } from '../core-changes.ts';
 
 export interface ProjectRef { root: string; projectSlug: string; projectDir: string }
 export const brandJobKey = (root: string, slug: string) => `brand:${root}:${slug}`;
-export interface BrandServiceDeps { queue: JobQueue; launcher: AgentLauncher; git: Git; media: MediaTools; model: () => Promise<string | null>; broadcast: (m: ServerMessage) => void }
+export interface BrandServiceDeps { queue: JobQueue; launcher: AgentLauncher; git: Git; media: MediaTools; model: () => Promise<string | null>; broadcast: (m: ServerMessage) => void;
+  /** Motion Studio's config folder: never inside or around a codebase source (Phase 14). */
+  configDir?: string;
+}
 
 const listedAsset = z.object({ file: relativeFileSchema, sourceUrl: webUrlSchema.nullish(), description: z.string().max(2000).optional(), tags: z.array(z.string().min(1).max(40)).max(30).optional() });
 const describedAsset = z.object({ file: relativeFileSchema, description: z.string().max(2000), tags: z.array(z.string().min(1).max(40)).max(30).optional() });
@@ -81,12 +84,12 @@ export class BrandService {
    * Runs one agent turn with the live metadata files denied to the editing tools; whatever the outcome, files the agent
    * still managed to change (e.g. through an interpreter) are restored. `tampered` receives one note per file the agent changed, in `locale`.
    */
-  private async runAgent(ref: ProjectRef, kind: 'brand-analysis' | 'describe', prompt: string, logFile: string | null, signal: AbortSignal, jobId: string, tampered: string[], locale: Locale, sandboxed: boolean, addNotes?: (lines: string[]) => void, codebases?: string[]): Promise<{ status: 'ok' | 'cancelled'; usage: UsageSummary | undefined }> {
+  private async runAgent(ref: ProjectRef, kind: 'brand-analysis' | 'describe', prompt: string, logFile: string | null, signal: AbortSignal, jobId: string, tampered: string[], locale: Locale, sandboxed: boolean, addNotes?: (lines: string[]) => void, codebases?: string[], brandWebsite = false): Promise<{ status: 'ok' | 'cancelled'; usage: UsageSummary | undefined }> {
     const guard = await snapshotGuarded(ref.projectDir);
     try {
       const run = await this.deps.launcher.start({
         kind, jobId, projectSlug: ref.projectSlug, projectDir: ref.projectDir, sandboxed, locale, ...(addNotes ? { addNotes } : {}),
-        ...(codebases?.length ? { codebases } : {}),
+        ...(codebases?.length ? { codebases, brandWebsite } : {}),
         // The running proposal's log is passed explicitly: it may not exist yet at launch (it is created by the first event), so the launcher's directory scan could miss it.
         protectedFiles: [...(await guardedPaths(ref.projectDir)), ...(logFile ? [logFile] : [])],
         request: { prompt, model: (await this.deps.model()) ?? undefined },
@@ -126,7 +129,7 @@ export class BrandService {
     const sources: typeof allSources = [];
     for (const s of allSources) {
       if (s.kind !== 'codebase') { sources.push(s); continue; }
-      const cb = await resolveBrandCodebase(s.path ?? '', [ref.projectDir, ref.root]);
+      const cb = await resolveBrandCodebase(s.path ?? '', [ref.projectDir, ref.root], { ...(this.deps.configDir ? { configDir: this.deps.configDir } : {}), others: codebases.map((c) => c.cb.real) });
       if ('problem' in cb) { note(m.jobs.brandCodebaseSkipped({ path: s.path ?? '', reason: codebaseProblemText(cb.problem, s.path ?? '', locale) })); continue; }
       codebases.push({ source: s.id, cb });
       sources.push(s);
@@ -170,23 +173,36 @@ export class BrandService {
       let turn: Awaited<ReturnType<BrandService['runAgent']>> | null = null;
       let turnError: unknown = null;
       try {
-        turn = await this.runAgent(ref, 'brand-analysis', buildBrandPrompt(block, locale, sandboxed), join(dir, 'log.jsonl'), signal, jobId, tampered, locale, sandboxed, addNotes, codebases.flatMap((c) => codebaseSpellings(c.cb)));
+        turn = await this.runAgent(ref, 'brand-analysis', buildBrandPrompt(block, locale, sandboxed), join(dir, 'log.jsonl'), signal, jobId, tampered, locale, sandboxed, addNotes, codebases.flatMap((c) => codebaseSpellings(c.cb)), sources.some((s) => s.kind === 'website'));
       } catch (e) { turnError = e; }
       // Whatever the outcome (also a cancelled or failed turn), a changed codebase fails the job and discards the proposal.
-      const changed: string[] = [];
+      // Fail closed (fix round 1): a codebase that was checkable before and cannot be checked after counts as changed, and
+      // so does any difference in the per-file states (which also hash the content of ignored files).
+      const failures: string[] = [];
       for (const [k, { cb }] of codebases.entries()) {
         const b = snapsBefore[k]!;
         const after = await codebaseSnapshot(cb.real);
-        // A repository that appears during the turn (git init) counts as a change too.
-        if (!('value' in b.snap ? 'value' in after && after.value !== b.snap.value : 'value' in after)) continue;
-        changed.push(cb.path);
-        const files = changedCodebaseFiles(b.files, 'value' in b.snap ? await codebaseFileStates(cb.real) : null);
+        if (!('value' in b.snap)) {
+          // A repository that appears during the turn (git init) counts as a change too.
+          if ('value' in after) failures.push(t().jobs.brandCodebaseChanged({ path: cb.path }));
+          continue;
+        }
+        if (!('value' in after)) {
+          note(m.jobs.brandCodebaseCheckFailedAfter({ path: cb.path }));
+          failures.push(t().jobs.brandCodebaseCheckFailedAfter({ path: cb.path }));
+          continue;
+        }
+        const afterFiles = await codebaseFileStates(cb.real);
+        const files = changedCodebaseFiles(b.files, afterFiles);
+        const statesLost = b.files !== null && afterFiles === null;
+        if (after.value === b.snap.value && files.length === 0 && !statesLost) continue;
         const extra = files.length - CHANGED_FILES_SHOWN;
         note(files.length
           ? m.jobs.brandCodebaseChangedFiles({ path: cb.path, list: [...files.slice(0, CHANGED_FILES_SHOWN), ...(extra > 0 ? [m.brand.droppedMore({ count: extra })] : [])].join(', ') })
           : m.jobs.brandCodebaseChangedUnknown({ path: cb.path }));
+        failures.push(t().jobs.brandCodebaseChanged({ path: cb.path }));
       }
-      if (changed.length > 0) throw new JobFailedError(changed.map((path) => t().jobs.brandCodebaseChanged({ path })).join(' '));
+      if (failures.length > 0) throw new JobFailedError(failures.join(' '));
       if (turnError !== null || turn === null) throw turnError;
       if (turn.status === 'cancelled') {
         await rm(dir, { recursive: true, force: true });

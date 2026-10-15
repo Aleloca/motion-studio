@@ -1,10 +1,13 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRunner, AgentTurnRequest } from '../src/agent/runner.ts';
 import { BrandService, type ProjectRef } from '../src/brand/brand-analysis.ts';
 import { BrandStore } from '../src/brand/brand-store.ts';
+import { AgentBridge } from '../src/bridge/bridge.ts';
+import { importCodebaseTool } from '../src/bridge/import-codebase-tool.ts';
+import { LibraryStore } from '../src/library/library-store.ts';
 import { Git } from '../src/git.ts';
 import { JobQueue } from '../src/jobs/job-queue.ts';
 import { NoMediaTools } from '../src/media/media-tools.ts';
@@ -21,7 +24,7 @@ let queue: JobQueue;
 let brand: BrandStore;
 let requests: AgentTurnRequest[];
 /** What the fake agent does besides writing its proposal (e.g. touch the codebase). */
-let sideEffect: (() => Promise<void>) | null;
+let sideEffect: ((req: AgentTurnRequest) => Promise<void>) | null;
 
 /**
  * The fake agent: never a real `claude`. It reads the prompt's block, writes a proposal with one color from the codebase
@@ -38,7 +41,7 @@ const fakeRunner: AgentRunner = {
       kit.colors.push({ id: 'navy', name: 'Navy', hex: '#1E3A5F', role: 'primary', source: { kind: 'website', ref: 'https://acme.example' } });
       await writeFile(join(req.cwd, block.kitFile), JSON.stringify(kit));
       await writeFile(join(req.cwd, block.summaryFile), 'Colors from the theme and the site.');
-      if (sideEffect) await sideEffect();
+      if (sideEffect) await sideEffect(req);
       return { status: 'succeeded' as const };
     })();
     return { done, cancel: () => {} };
@@ -60,7 +63,7 @@ beforeEach(async () => {
 });
 afterEach(async () => { for (const d of cleanup.splice(0)) await rm(d, { recursive: true, force: true }); });
 
-const service = () => new BrandService({ queue, git: new Git(), media: NoMediaTools, launcher: testLauncher(fakeRunner), model: async () => null, broadcast: () => {} });
+const service = (launcher = testLauncher(fakeRunner)) => new BrandService({ queue, git: new Git(), media: NoMediaTools, launcher, model: async () => null, broadcast: () => {} });
 const finished = async (id: string) => { await queue.whenIdle(); return queue.list().find((j) => j.id === id)!; };
 const addCodebase = async (git = true) => {
   const cb = await fixtureCodebase({ git });
@@ -88,6 +91,13 @@ describe('a brand analysis of a site and a codebase', () => {
       { id: 's-2', kind: 'codebase', url: null, file: null, path: cb, note: 'web app' },
     ]);
     expect(requests[0]!.addDirs).toEqual([cb]);
+    // A website source keeps WebFetch; the codebase gets scoped reads only, and no Bash or Grep (fix round 1).
+    expect(requests[0]!.allowedTools).toEqual(expect.arrayContaining(['WebFetch', `Read(/${cb}/**)`, `Glob(/${cb}/**)`]));
+    expect(requests[0]!.allowedTools!.filter((r) => /^(Read|Glob|Grep|Bash)(\(|$)/.test(r) && !r.includes(cb) && !r.includes('[')))
+      .toEqual([]);
+    expect(requests[0]!.disallowedTools).toEqual(expect.arrayContaining(['Bash', 'Grep']));
+    expect(requests[0]!.disallowedTools).not.toContain('WebFetch');
+    expect(prompt).not.toContain('Grep');
     expect(requests[0]!.disallowedTools).toContain(`Read(/${cb}/**/.env*)`);
     const [p] = await brand.listProposals();
     expect(p).toMatchObject({ status: 'open', sourceIds: ['s-1', 's-2'] });
@@ -103,6 +113,41 @@ describe('a brand analysis of a site and a codebase', () => {
     expect(requests[0]!.prompt).not.toContain('## Codebases');
     expect(requests[0]!.addDirs).toEqual([]);
     expect(requests[0]!.allowedTools).not.toContain('Read');
+  });
+});
+
+describe('a codebase-only analysis', () => {
+  it('has no WebFetch at all (neither allowed nor reachable)', async () => {
+    const cb = await addCodebase();
+    const job = await service().analyze(ref);
+    expect((await finished(job.id)).state).toBe('succeeded');
+    expect(requests[0]!.allowedTools).not.toContain('WebFetch');
+    expect(requests[0]!.disallowedTools).toEqual(expect.arrayContaining(['WebFetch', 'Bash', 'Grep']));
+    expect(requests[0]!.allowedTools).toEqual(expect.arrayContaining([`Read(/${cb}/**)`]));
+  });
+  it('M4: a refused import mid-run is a tool error and the analysis still succeeds; a good one lands in the library', async () => {
+    const cb = await addCodebase();
+    const bridge = new AgentBridge();
+    bridge.setOrigin('http://127.0.0.1:9');
+    const tool = importCodebaseTool({ media: NoMediaTools, broadcast: () => {} });
+    const outcomes: string[] = [];
+    sideEffect = async (req) => {
+      // The fake agent calls the tool through the job's own bridge context, found with the token the launcher wrote.
+      const config = JSON.parse(await readFile(req.mcpConfigPath!, 'utf8'));
+      const ctx = bridge.resolve((await readFile(config.mcpServers.studio.env.MOTION_STUDIO_BRIDGE_TOKEN_FILE, 'utf8')).trim())!;
+      expect(ctx.codebases).toEqual([cb]);
+      try { await tool(ctx, { source: 'config/.env.production', dest: 'assets/brand/x.png' }); outcomes.push('copied'); }
+      catch (e) { outcomes.push((e as Error).message.split(':')[0]!); }
+      outcomes.push(JSON.stringify(await tool(ctx, { source: 'public/logo.svg', dest: 'assets/brand/logo.svg' })));
+    };
+    const job = await service(testLauncher(fakeRunner, { bridge, mcpCommand: ['node', '/never/started/server.mjs'] })).analyze(ref);
+    const end = await finished(job.id);
+    expect(end.state, end.error).toBe('succeeded');
+    expect(outcomes).toEqual(['secret', JSON.stringify({ file: 'assets/brand/logo.svg' })]);
+    expect(requests[0]!.allowedTools).toContain('mcp__studio__import_codebase_file');
+    const [p] = await brand.listProposals();
+    expect(p!.assetsAdded).toEqual([]); // registered by the tool itself, not by the proposal's list
+    expect((await new LibraryStore(ref.projectDir, NoMediaTools).listAssets()).find((a) => a.file === 'brand/logo.svg')).toMatchObject({ origin: 'codebase', tags: ['brand'] });
   });
 });
 
@@ -132,6 +177,42 @@ describe('Review Focus 2: the agent writes into the codebase anyway', () => {
     expect(end.state, end.error).toBe('succeeded');
     expect(end.notes).toContainEqual(`Codebase ${cb} cannot be checked (not a git repository): a change by the analysis would go unnoticed`);
     expect(await brand.listProposals()).toHaveLength(1);
+  });
+});
+
+describe('I3: the read-only check fails closed', () => {
+  const discarded = async (jobId: string) => {
+    const end = await finished(jobId);
+    expect(end.state).toBe('failed');
+    expect(await brand.listProposals()).toEqual([]);
+    return end;
+  };
+  it('git broken by the turn: the check after fails and the proposal is discarded', async () => {
+    const cb = await addCodebase();
+    sideEffect = async () => { await writeFile(join(cb, '.git', 'HEAD'), 'garbage\n'); };
+    const end = await discarded((await service().analyze(ref)).id);
+    expect(end.error).toContain(`The check of the codebase ${cb} after the analysis failed`);
+  });
+  it('an edit to an ignored file\'s content is caught', async () => {
+    const cb = await addCodebase();
+    await writeFile(join(cb, '.gitignore'), 'dist/\n');
+    await mkdir(join(cb, 'dist'));
+    await writeFile(join(cb, 'dist', 'app.css'), 'a{}\n');
+    sideEffect = async () => { await writeFile(join(cb, 'dist', 'app.css'), 'b{}\n'); };
+    const end = await discarded((await service().analyze(ref)).id);
+    expect(end.error).toContain(cb);
+    expect(end.notes!.find((n) => n.startsWith(`Files changed in ${cb}`))).toContain('dist/app.css');
+  });
+  it('a new git hook is caught', async () => {
+    const cb = await addCodebase();
+    sideEffect = async () => { await writeFile(join(cb, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 0\n', { mode: 0o755 }); };
+    const end = await discarded((await service().analyze(ref)).id);
+    expect(end.error).toMatch(/proposal was discarded/);
+  });
+  it('git config changed by the turn is caught', async () => {
+    const cb = await addCodebase();
+    sideEffect = async () => { await appendFile(join(cb, '.git', 'config'), '[core]\n\tfsmonitor = /tmp/evil\n'); };
+    await discarded((await service().analyze(ref)).id);
   });
 });
 

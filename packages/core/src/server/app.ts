@@ -434,7 +434,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const brandService = new BrandService({
     queue, launcher, git: deps.git, media,
     model: async () => (await requireWorkspace().readSettings()).model,
-    broadcast: (msg) => hub.broadcast(msg),
+    broadcast: (msg) => hub.broadcast(msg), configDir,
   });
 
   app.setErrorHandler(errorReply);
@@ -740,7 +740,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   registerCreativeRoutes(app, { requireWorkspace, turns, edits, renders, previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m) });
   registerStorePackRoutes(app, { requireWorkspace, turns, renders, media });
 
-  const routeCtx = { requireWorkspace, brand: brandService, media, git: deps.git, broadcast: (m: ServerMessage) => hub.broadcast(m) };
+  const routeCtx = { requireWorkspace, brand: brandService, media, git: deps.git, broadcast: (m: ServerMessage) => hub.broadcast(m), configDir };
   registerBrandRoutes(app, routeCtx);
   registerLibraryRoutes(app, routeCtx);
   const fontsHttp = deps.fontsHttp ?? { fetch: globalThis.fetch };

@@ -1,12 +1,13 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readdir, realpath, stat } from 'node:fs/promises';
+import { lstat, readdir, readFile, readlink, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, isAbsolute, join, normalize, parse, relative } from 'node:path';
 import { isSecretPath, SECRET_PATTERNS, type LinkedCodebase } from '@motion-studio/shared';
 import { messages, type Locale } from '@motion-studio/shared';
 import { codebaseOverlaps, expandHome, normalizeCodebasePath } from './workspace-store.ts';
 import { currentLocale } from './i18n.ts';
+import { sensitiveHomeEntries } from './agent/sandbox.ts';
 
 // Defined next to WorkspaceStore (which needs it) to avoid an import cycle.
 export { assertCodebasesOutside, codebaseOverlapMessage, codebaseOverlaps, normalizeCodebasePath, normalizeCodebaseList } from './workspace-store.ts';
@@ -99,7 +100,7 @@ export const untrackedContentHash = (path: string, timeoutMs = 30_000) => (): Pr
  * ignored directories collapsed), of the content diff against HEAD (editing an already-modified file changes it) and of
  * the untracked files' contents.
  */
-export async function codebaseSnapshot(path: string, run: HashedExec = gitHashed(path), untracked: () => Promise<HashedRun> = untrackedContentHash(path)): Promise<Snapshot> {
+export async function codebaseSnapshot(path: string, run: HashedExec = gitHashed(path), untracked: () => Promise<HashedRun> = untrackedContentHash(path), meta: () => Promise<string | null> = () => gitMetaHash(path)): Promise<Snapshot> {
   const status = await run(['status', '--porcelain=v1', '-uall', '--ignored=traditional', '--', '.']);
   if (status.timedOut) return { unavailable: 'failed' };
   if (status.code !== 0) return { unavailable: /not a git repository/i.test(status.stderr) ? 'not-git' : 'failed' };
@@ -108,7 +109,10 @@ export async function codebaseSnapshot(path: string, run: HashedExec = gitHashed
   if (diff.timedOut || diff.code !== 0) return { unavailable: 'failed' };
   const extra = await untracked();
   if (extra.timedOut || extra.code !== 0) return { unavailable: 'failed' };
-  return { value: `${status.hash}:${diff.hash}:${extra.hash}` };
+  // Phase 14 fix round 1: the repository's own config, HEAD and hooks (git never lists them in a status).
+  const repo = await meta();
+  if (repo === null) return { unavailable: 'failed' };
+  return { value: `${status.hash}:${diff.hash}:${extra.hash}:${repo}` };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -125,20 +129,17 @@ export const hasUnsafePathChars = (p: string): boolean => CONTROL_CHARS.test(p);
  */
 export const caseFoldGlob = (glob: string): string => glob.replace(/[A-Za-z]/g, (c) => `[${c.toLowerCase()}${c.toUpperCase()}]`);
 
-/** Patterns that also name folders (a prefix wildcard like `secrets*`, and `.git`): their contents are denied with `/**`. */
-const folderLike = (p: string) => p.endsWith('*') || p.endsWith('/**');
-
 /**
- * Glob suffixes (after `<root>/**` + `/`) for every SECRET_PATTERNS entry: the pattern as written and, when it can name a
- * folder, `<pattern>/**`. `exact` keeps the case, `folded` matches any case (decision 742).
+ * Glob suffixes (after `<root>/**` + `/`) for every SECRET_PATTERNS entry: the pattern as written and `<pattern>/**`, since
+ * any of them can name a folder (`isSecretPath` checks every segment: a folder `keys.key/` or `secrets/` is secret).
+ * `exact` keeps the case, `folded` matches any case (decision 742).
  */
 function secretSuffixes(fold: boolean): string[] {
   const out: string[] = [];
   for (const raw of SECRET_PATTERNS) {
     const base = raw.replace(/\/\*\*$/, '');
     const name = fold ? caseFoldGlob(base) : base;
-    out.push(name);
-    if (folderLike(raw)) out.push(`${name}/**`);
+    out.push(name, `${name}/**`);
   }
   return out;
 }
@@ -150,7 +151,7 @@ const FOLDED_SUFFIXES = secretSuffixes(true);
  * for each SECRET_PATTERNS entry, in the exact case and again with every letter (of the folder and of the pattern) as a
  * case class, so a case-sensitive matcher still denies `.ENV` or `/USERS/me/app/.env` on a case-insensitive disk. Glob
  * characters of the folder are escaped (escapeGlob); a folder with control characters gets no rules: callers refuse it.
- * Claude Code applies a Read rule to Grep and Glob too (verified for folder rules, decisions log), so no Grep/Glob forms.
+ * No Grep/Glob forms: Grep is denied outright to these jobs, and Glob only lists names (fix round 1, decisions log).
  */
 export function secretReadRules(path: string): string[] {
   if (hasUnsafePathChars(path)) return [];
@@ -225,7 +226,7 @@ export async function findCodebaseSecrets(root: string): Promise<CodebaseSecrets
   return out;
 }
 
-export type BrandCodebaseProblem = 'unsafe-path' | 'not-absolute' | 'disk-root' | 'home' | 'missing' | 'overlap';
+export type BrandCodebaseProblem = 'unsafe-path' | 'not-absolute' | 'disk-root' | 'home' | 'missing' | 'overlap' | 'nested' | 'config' | 'sensitive';
 /** Why a codebase folder is refused, in `locale` (the route's error, the analysis's note). */
 export function codebaseProblemText(problem: BrandCodebaseProblem, path: string, locale: Locale = currentLocale()): string {
   const e = messages(locale).errors;
@@ -236,6 +237,9 @@ export function codebaseProblemText(problem: BrandCodebaseProblem, path: string,
     case 'home': return e.codebaseHome;
     case 'missing': return e.codebaseSourceMissing({ path });
     case 'overlap': return e.codebaseOverlapBrand;
+    case 'nested': return e.codebaseNestedBrand;
+    case 'config': return e.codebaseConfigBrand;
+    case 'sensitive': return e.codebaseSensitiveBrand;
   }
 }
 /** A brand codebase source ready for use: the normalised spelling and its real path (equal when no link is involved). */
@@ -246,7 +250,17 @@ export interface BrandCodebase { path: string; real: string }
  * `~`, never the disk root or the home, also after resolving links), an existing folder, outside `protectedDirs` (the
  * project and the workspace) under both spellings.
  */
-export async function resolveBrandCodebase(raw: string, protectedDirs: string[]): Promise<BrandCodebase | { problem: BrandCodebaseProblem }> {
+/** Home folders a brand codebase may neither be, sit in, nor contain (fix round 1): credentials, keychains, app data. */
+export const sensitiveCodebaseDirs = (home: string): string[] => [...sensitiveHomeEntries(home).dirs, ...sensitiveHomeEntries(home).files, join(home, 'Library'), join(home, '.config')];
+
+export interface BrandCodebaseChecks {
+  /** Motion Studio's config folder (tokens): never inside or around a codebase. */
+  configDir?: string;
+  /** The analysis's other codebases (already accepted): a codebase inside or around one of them is refused (`nested`). */
+  others?: string[];
+}
+
+export async function resolveBrandCodebase(raw: string, protectedDirs: string[], checks: BrandCodebaseChecks = {}): Promise<BrandCodebase | { problem: BrandCodebaseProblem }> {
   if (hasUnsafePathChars(raw)) return { problem: 'unsafe-path' };
   const home = homedir().replace(/\/+$/, '');
   const expanded = normalize(expandHome(raw.trim()));
@@ -263,6 +277,9 @@ export async function resolveBrandCodebase(raw: string, protectedDirs: string[])
   if (real === parse(real).root) return { problem: 'disk-root' };
   if (real === home || real === await realpath(home).catch(() => home)) return { problem: 'home' };
   if (await codebaseOverlaps(path, protectedDirs)) return { problem: 'overlap' };
+  if (checks.configDir && await codebaseOverlaps(path, [checks.configDir])) return { problem: 'config' };
+  if (await codebaseOverlaps(path, sensitiveCodebaseDirs(home))) return { problem: 'sensitive' };
+  if (checks.others?.length && await codebaseOverlaps(path, checks.others)) return { problem: 'nested' };
   return { path, real };
 }
 
@@ -273,7 +290,7 @@ export const codebaseSpellings = (c: BrandCodebase): string[] => (c.path === c.r
  * The working-tree entries git reports as changed under the folder (status line and content hash of each), for listing what
  * an agent changed. Capped; null when git cannot tell (not a repository, failure).
  */
-export async function codebaseFileStates(path: string, timeoutMs = 30_000, cap = 2000): Promise<Map<string, string> | null> {
+export async function codebaseFileStates(path: string, timeoutMs = 30_000, cap = 5000): Promise<Map<string, string> | null> {
   const status = await gitText(path, ['status', '--porcelain=v1', '-z', '-uall', '--ignored=traditional', '--', '.'], timeoutMs);
   if (status === null) return null;
   const states = new Map<string, string>();
@@ -304,6 +321,31 @@ export function changedCodebaseFiles(before: Map<string, string> | null, after: 
   for (const [f, s] of after) if (before.get(f) !== s) out.add(f);
   for (const f of before.keys()) if (!after.has(f)) out.add(f);
   return [...out].sort();
+}
+
+/**
+ * Hash of the repository's `config`, `HEAD` and `hooks/` (each entry: kind, link target or content), found with
+ * `git rev-parse --absolute-git-dir`: files git runs or obeys that a status never shows. Null when git cannot tell.
+ */
+export async function gitMetaHash(path: string, timeoutMs = 30_000): Promise<string | null> {
+  const out = await gitText(path, ['rev-parse', '--absolute-git-dir'], timeoutMs);
+  const gitDir = out?.trim();
+  if (!gitDir) return null;
+  const hash = createHash('sha256');
+  const entry = async (abs: string, name: string) => {
+    const st = await lstat(abs).catch(() => null);
+    hash.update(`\0${name}\0`);
+    if (!st) { hash.update('absent'); return; }
+    if (st.isSymbolicLink()) { hash.update(`link:${await readlink(abs).catch(() => '?')}`); return; }
+    if (st.isFile()) { hash.update(`file:${st.mode}:`); hash.update(st.size <= 4 * 1024 * 1024 ? await readFile(abs).catch(() => Buffer.from('?')) : `big:${st.size}:${st.mtimeMs}`); return; }
+    hash.update(`${st.isDirectory() ? 'dir' : 'other'}:${st.mode}`);
+  };
+  await entry(join(gitDir, 'config'), 'config');
+  await entry(join(gitDir, 'HEAD'), 'HEAD');
+  await entry(join(gitDir, 'hooks'), 'hooks');
+  const hooks = (await readdir(join(gitDir, 'hooks')).catch(() => [] as string[])).sort();
+  for (const h of hooks.slice(0, 500)) await entry(join(gitDir, 'hooks', h), `hooks/${h}`);
+  return hash.digest('hex');
 }
 
 /** git's stdout as text (capped at 4 MB), or null on a non-zero exit, a timeout or a spawn error. Same safe options as gitHashed. */

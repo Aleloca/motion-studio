@@ -16,7 +16,7 @@ export const CODEBASE_SKIP = ['node_modules', 'dist', 'build', 'out', 'Pods', '.
 export function codebaseSection(): string[] {
   return [
     '', '## Codebases (read-only)',
-    'Each codebase source is a folder of the user\'s app or site code. Read it with Read, Glob and Grep only: it is read-only, never create, change, move or delete anything in it (any change discards the whole analysis), and never run commands in it.',
+    'Each codebase source is a folder of the user\'s app or site code. It is read-only: never create, change, move or delete anything in it (any change discards the whole analysis). You cannot run commands or search file contents in this analysis: list files with Glob (e.g. `**/tailwind.config.*`, `public/**/*.svg`) and open the candidate files by name with Read.',
     `Never open these secret files, whatever the folder (also with other letter case): ${SECRET_PATTERNS.map((p) => `\`${p}\``).join(', ')}. They are blocked anyway; do not try other ways to read them.`,
     `Skip generated and third-party folders: ${CODEBASE_SKIP.map((d) => `\`${d}\``).join(', ')}, and any other build output.`,
     'Look, in this order:',

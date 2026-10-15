@@ -6,7 +6,7 @@ import {
 } from '@motion-studio/shared';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
 import { fileLock } from '../file-locks.ts';
-import { CodedError, WorkspaceError } from '../workspace-store.ts';
+import { CodedError, codebaseOverlaps, WorkspaceError } from '../workspace-store.ts';
 import { currentLocale, t } from '../i18n.ts';
 import { noteCoreChange } from '../core-changes.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
@@ -267,6 +267,8 @@ export class BrandStore {
           const real = await realpath(x.path!).catch(() => x.path!);
           if (x.path === input.path || real === input.real || x.path === input.real) throw new CodedError(409, t().errors.codebaseSourceDuplicate({ path: input.path }), 'codebase-duplicate');
         }
+        // Nested or around another codebase source (fix round 1): one would hand the other's files twice, with other rules.
+        if (await codebaseOverlaps(input.real, listed.map((x) => x.path!))) throw new CodedError(400, t().errors.codebaseNestedBrand, 'codebase-nested');
         if (listed.length >= BRAND_KIT_LIMITS.codebaseSources) throw new CodedError(400, t().errors.codebaseSourceLimit({ max: BRAND_KIT_LIMITS.codebaseSources }), 'codebase-limit');
       }
       const note = input.kind === 'codebase' ? input.note?.trim() : undefined;

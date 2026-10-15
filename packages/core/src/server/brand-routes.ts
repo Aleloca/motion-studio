@@ -13,7 +13,10 @@ import { CodedError, WorkspaceError, type WorkspaceStore } from '../workspace-st
 import { codebaseProblemText, resolveBrandCodebase, type BrandCodebaseProblem } from '../codebases.ts';
 import { t } from '../i18n.ts';
 
-export interface BrandRoutesContext { requireWorkspace: () => WorkspaceStore; brand: BrandService; media: MediaTools; git: Git; broadcast: (m: ServerMessage) => void }
+export interface BrandRoutesContext { requireWorkspace: () => WorkspaceStore; brand: BrandService; media: MediaTools; git: Git; broadcast: (m: ServerMessage) => void;
+  /** Motion Studio's config folder: never inside or around a codebase source (Phase 14). */
+  configDir?: string;
+}
 
 const sourceBody = z.union([
   z.object({ kind: z.literal('website'), url: z.string() }),
@@ -68,7 +71,7 @@ export function registerBrandRoutes(app: FastifyInstance, ctx: BrandRoutesContex
     if (body.kind === 'codebase') {
       // Validated, normalised and resolved before anything else (spec §2.1): the same checks as a creative's codebases, plus
       // the real path (a link to the home or around the project is refused too). Duplicates and the limit: in the store.
-      const cb = await resolveBrandCodebase(body.path, [projectDir, ws.root]);
+      const cb = await resolveBrandCodebase(body.path, [projectDir, ws.root], { ...(ctx.configDir ? { configDir: ctx.configDir } : {}) });
       if ('problem' in cb) throw codebaseProblemError(cb.problem, body.path);
       const source = await store.addSource({ kind: 'codebase', path: cb.path, real: cb.real, ...(body.note !== undefined ? { note: body.note } : {}) });
       await done(projectDir, req.params.slug, t().jobs.addSourceCommit);

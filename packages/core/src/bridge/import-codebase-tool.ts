@@ -17,7 +17,8 @@ export const CODEBASE_IMPORT_CALLS_PER_JOB = 40;
 export const CODEBASE_IMPORT_MAX_BYTES = 50 * 1024 * 1024;
 /** Same extensions as `download_file` (spec §2.2): logos, images, icons and fonts. */
 const EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'ico', 'avif', 'woff', 'woff2', 'ttf', 'otf']);
-const DIRS = { brand: ['brand'], fonts: ['font'] } as const;
+/** Destination folders. Every copy is tagged `brand` (spec §2.2), fonts included: the kind is already in the asset entry. */
+const DIRS = { brand: 'brand', fonts: 'fonts' } as const;
 const MAX_SOURCE = 4096;
 
 export type CodebaseImportError = 'outside' | 'secret' | 'not-file' | 'too-big' | 'extension' | 'dest' | 'limit' | 'missing';
@@ -63,7 +64,8 @@ function locate(source: string, codebases: readonly string[]): Array<{ root: str
  * 6. the entry exists in one of the candidate codebases (`missing`);
  * 7. its real path inside that codebase's real path: a link (or a linked folder) that leads out is refused (`outside`);
  * 8. the secret patterns on the real relative path too (`secret`), and the real file's extension (`extension`);
- * 9. opened without following a last link and without blocking; a regular file (`not-file`);
+ * 9. opened without following a last link and without blocking; a regular file, and still the same file (dev/ino) at the
+ *    real path after the open (`not-file`);
  * 10. the size from the open handle, before reading (`too-big`), and a read capped one byte past it (`not-file` if it grew).
  * The copy is written to a temporary name and claimed atomically (saveGeneratedFile); a failed registration removes it.
  */
@@ -95,6 +97,10 @@ export async function importCodebaseFile(ctx: CodebaseImportContext, args: { sou
   try {
     const fst = await handle.stat();
     if (!fst.isFile()) return { error: 'not-file' };
+    // The file opened must still be the one at the checked real path (fix round 1): a swap between the checks and the open
+    // (another file moved in its place) is refused.
+    const now = await lstat(real).catch(() => null);
+    if (!now || !now.isFile() || now.ino !== fst.ino || now.dev !== fst.dev) return { error: 'not-file' };
     if (fst.size > CODEBASE_IMPORT_MAX_BYTES) return { error: 'too-big' };
     // Read through the handle into a buffer one byte larger than the size checked: more bytes than that means the file
     // changed while it was read, and it is refused rather than copied in part.
@@ -113,7 +119,7 @@ export async function importCodebaseFile(ctx: CodebaseImportContext, args: { sou
 
   const file = await saveGeneratedFile(ctx.projectDir, dest.dir, dest.name, bytes);
   try {
-    await ctx.library.registerAssets([{ file, origin: 'codebase', sourceUrl: null, description: '', tags: [...DIRS[dest.dir]] }]);
+    await ctx.library.registerAssets([{ file, origin: 'codebase', sourceUrl: null, description: '', tags: ['brand'] }]);
   } catch (e) {
     await rm(join(ctx.projectDir, 'assets', ...file.split('/')), { force: true }).catch(() => {});
     throw e;

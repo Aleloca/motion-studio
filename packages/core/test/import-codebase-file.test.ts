@@ -53,6 +53,8 @@ describe('importCodebaseFile: a good copy', () => {
     // Absolute inside the codebase works too, and a font goes to assets/fonts.
     await writeFile(join(cb, 'src', 'Inter.woff2'), 'font');
     expect(await importCodebaseFile(ctx(), { source: join(cb, 'src', 'Inter.woff2'), dest: 'assets/fonts/Inter.woff2' })).toEqual({ file: 'assets/fonts/Inter.woff2' });
+    // Spec §2.2: every copy is tagged `brand`, fonts too (fix round 1, M3).
+    expect((await library.listAssets()).find((a) => a.file === 'fonts/Inter.woff2')).toMatchObject({ origin: 'codebase', tags: ['brand'] });
     // A link that stays inside the codebase and is no secret is fine.
     await symlink(join(cb, 'public', 'logo.svg'), join(cb, 'public', 'mark.svg'));
     expect(await importCodebaseFile(ctx(), { source: 'public/mark.svg', dest: 'assets/brand/mark.svg' })).toEqual({ file: 'assets/brand/mark.svg' });

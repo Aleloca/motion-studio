@@ -13,6 +13,7 @@ import { Git } from '../src/git.ts';
 import { buildServer } from '../src/server/app.ts';
 import { fixtureCodebase } from './helpers/brand-codebase.ts';
 import { testLauncher } from './helpers/launcher.ts';
+import { legacyPolicy } from './helpers/legacy-policy.ts';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
@@ -41,7 +42,8 @@ describe('secretReadRules', () => {
   it('also denies the contents of patterns that name folders', () => {
     const rules = secretReadRules('/a/app');
     for (const r of ['Read(//a/app/**/credentials*/**)', 'Read(//a/app/**/secrets*/**)', 'Read(//a/app/**/.git/**)', 'Read(//a/app/**/.env*/**)']) expect(rules).toContain(r);
-    expect(rules).not.toContain('Read(//a/app/**/*.pem/**)');
+    // Fix round 1 (M5): every pattern can name a folder.
+    expect(rules).toContain('Read(//a/app/**/*.key/**)');
   });
   it('escapes the folder\'s glob characters and refuses control characters', () => {
     const rules = secretReadRules('/a/My App [x] {y} (z)*?');
@@ -60,12 +62,16 @@ describe('buildAgentPolicy for a brand analysis of codebases', () => {
     autoApproveSandboxed: false, codebaseSecrets: { files: ['/Users/me/dev/app/.ENV'], dirs: ['/Users/me/dev/app/.git'] },
   };
   type Sb = { sandbox: { filesystem: { denyRead: string[]; denyWrite: string[] } } };
-  it('read-only, secrets denied by pattern and by exact path, Read/Glob/Grep allowed', () => {
+  const bare = (list: string[]) => list.filter((r) => ['Read', 'Glob', 'Grep', 'Bash', 'WebFetch'].includes(r));
+  const scoped = ['Read(//Users/me/dev/app/**)', 'Glob(//Users/me/dev/app/**)', 'Read(//[uU][sS][eE][rR][sS]/[mM][eE]/[dD][eE][vV]/[aA][pP][pP]/**)', 'Glob(//[uU][sS][eE][rR][sS]/[mM][eE]/[dD][eE][vV]/[aA][pP][pP]/**)'];
+  it('read-only, secrets denied by pattern and by exact path, reads scoped to the codebase', () => {
     const p = buildAgentPolicy(base);
     for (const t of ['Edit', 'Write', 'MultiEdit', 'NotebookEdit']) expect(p.disallowedTools).toContain(`${t}(//Users/me/dev/app/**)`);
     expect(p.disallowedTools).toEqual(expect.arrayContaining(secretReadRules('/Users/me/dev/app')));
     expect(p.disallowedTools).toEqual(expect.arrayContaining(['Read(//Users/me/dev/app/.ENV)', 'Read(//Users/me/dev/app/.git/**)', 'Read(//Users/me/dev/app/.git)']));
-    expect(p.allowedTools).toEqual(expect.arrayContaining(['Read', 'Glob', 'Grep']));
+    // C1/I1/I2: only scoped reads; no bare Read/Glob/Grep, no Bash, no WebFetch without a website, Grep and Bash denied.
+    expect(p.allowedTools).toEqual(scoped);
+    expect(bare(p.disallowedTools)).toEqual(['Bash', 'Grep', 'WebFetch']);
     expect(p.addDirs).toEqual(['/Users/me/dev/app']);
     const fs = (p.settings as Sb).sandbox.filesystem;
     expect(fs.denyWrite).toContain('/Users/me/dev/app');
@@ -73,16 +79,34 @@ describe('buildAgentPolicy for a brand analysis of codebases', () => {
     expect(fs.denyRead).toContain('/Users/me/dev/app/**/.env*');
     expect(fs.denyRead).toContain('/Users/me/dev/app/**/.[eE][nN][vV]*');
   });
-  it('without codebases the brand tools stay as they were', () => {
-    const p = buildAgentPolicy({ ...base, codebases: [], codebaseSecrets: undefined });
-    expect(p.allowedTools).not.toContain('Read');
-    expect(p.disallowedTools.some((r) => r.includes('.env'))).toBe(false);
+  it('with a website source WebFetch stays allowed, Bash(mkdir/ffprobe) are still gone', () => {
+    for (const sandbox of [true, false]) {
+      const p = buildAgentPolicy({ ...base, sandbox, brandWebsite: true, mcpTools: ['mcp__studio__download_file'] });
+      expect(p.allowedTools).toEqual(['WebFetch', ...scoped, 'mcp__studio__download_file']);
+      expect(bare(p.disallowedTools)).toEqual(['Bash', 'Grep']);
+    }
   });
-  it('without the sandbox the tool rules are the same', () => {
+  it('without the sandbox the tool rules are the same and no command is pre-allowed', () => {
     const p = buildAgentPolicy({ ...base, sandbox: false });
     expect(p.settings).toBeNull();
     expect(p.disallowedTools).toEqual(expect.arrayContaining(secretReadRules('/Users/me/dev/app')));
-    expect(p.allowedTools).toEqual(expect.arrayContaining(['Read', 'Glob', 'Grep']));
+    expect(p.allowedTools).toEqual(scoped);
+    expect(p.allowedTools.some((r) => r.startsWith('Bash'))).toBe(false);
+    expect(bare(p.disallowedTools)).toEqual(['Bash', 'Grep', 'WebFetch']);
+  });
+  it('C1: jobs without brand codebases match the pre-Phase 14 policy exactly', () => {
+    const cases: PolicyInput[] = [
+      { ...base, codebases: [], codebaseSecrets: undefined },
+      { ...base, codebases: [], codebaseSecrets: undefined, sandbox: false, brandWebsite: true, mcpTools: ['mcp__studio__download_file'] },
+      { ...base, kind: 'creative', codebaseSecrets: undefined },
+      { ...base, kind: 'creative', sandbox: false, codebaseSecrets: undefined, autoApproveSandboxed: true },
+      { ...base, kind: 'describe', codebases: [], codebaseSecrets: undefined },
+      { ...base, kind: 'localize', codebases: [], codebaseSecrets: undefined },
+    ];
+    for (const c of cases) {
+      const { codebaseSecrets: _s, brandWebsite: _w, ...legacyInput } = c;
+      expect(buildAgentPolicy(c), `${c.kind} sandbox=${c.sandbox}`).toEqual(legacyPolicy({ ...legacyInput }));
+    }
   });
   it('a creative keeps its codebase rules unchanged (no secret rules, Edit only)', () => {
     const p = buildAgentPolicy({ ...base, kind: 'creative' });
@@ -125,7 +149,12 @@ describe('the launcher with a brand analysis of a codebase', () => {
     expect(disallowed).toContain(`Read(/${cb}/.env)`);
     expect(disallowed).toContain(`Read(/${cb}/config/.env.production)`);
     expect(disallowed).toContain(`Read(/${cb}/.git/**)`);
-    expect(requests[0]!.allowedTools).toEqual(expect.arrayContaining(['Read', 'Glob', 'Grep']));
+    const allowed = requests[0]!.allowedTools!;
+    expect(allowed).toEqual(expect.arrayContaining([`Read(/${cb}/**)`, `Glob(/${cb}/**)`]));
+    expect(allowed.filter((r) => ['Read', 'Glob', 'Grep', 'WebFetch'].includes(r) || r.startsWith('Grep') || r.startsWith('Bash'))).toEqual([]);
+    expect(disallowed).toEqual(expect.arrayContaining(['Bash', 'Grep', 'WebFetch']));
+    const args2 = buildClaudeArgs(requests[0]!);
+    expect(args2.slice(args2.indexOf('--allowedTools') + 1).filter((a) => a === 'Read' || a === 'Glob' || a === 'Grep')).toEqual([]);
     const again = await launcher.start({ kind: 'brand-analysis', jobId: 'j2', projectSlug: 'acme', projectDir: project, codebases: [], request: { prompt: 'x' }, onEvent: () => {} });
     await again.done;
     expect(requests[1]!.allowedTools).not.toContain('Read');
@@ -177,6 +206,24 @@ describe('resolveBrandCodebase', () => {
   });
 });
 
+describe('resolveBrandCodebase: M2 (fix round 1)', () => {
+  it('refuses folders nested in or around another codebase, the config folder, and private home folders', async () => {
+    const project = await temp('ms-proj-');
+    const cb = await codebase(false);
+    await mkdir(join(cb, 'packages', 'web'), { recursive: true });
+    expect(await resolveBrandCodebase(join(cb, 'packages', 'web'), [project], { others: [cb] })).toEqual({ problem: 'nested' });
+    expect(await resolveBrandCodebase(dirname(cb), [project], { others: [cb] })).toEqual({ problem: 'nested' });
+    const config = join(await temp('ms-holder-'), 'cfg');
+    await mkdir(join(config, 'inner'), { recursive: true });
+    expect(await resolveBrandCodebase(join(config, 'inner'), [project], { configDir: config })).toEqual({ problem: 'config' });
+    expect(await resolveBrandCodebase(dirname(config), [project], { configDir: config })).toEqual({ problem: 'config' });
+    // The test home (isolate-user-data.ts), never the user's.
+    for (const d of ['.ssh', 'Library/Keychains', 'Library/Mail', '.config/gh', 'dev/app']) await mkdir(join(homedir(), d), { recursive: true });
+    for (const d of ['.ssh', 'Library', 'Library/Mail', '.config', '.config/gh']) expect(await resolveBrandCodebase(join(homedir(), d), [project]), d).toEqual({ problem: 'sensitive' });
+    expect(await resolveBrandCodebase(join(homedir(), 'dev', 'app'), [project])).toEqual({ path: join(homedir(), 'dev', 'app'), real: await realpath(join(homedir(), 'dev', 'app')) });
+  });
+});
+
 describe('POST /brand/sources with a codebase', () => {
   let app: FastifyInstance;
   let base: string;
@@ -204,6 +251,21 @@ describe('POST /brand/sources with a codebase', () => {
       expect(r.statusCode, again).toBe(409);
       expect(r.json().code).toBe('codebase-duplicate');
     }
+  });
+  it('refuses a folder nested in or around another codebase source, and the config folder', async () => {
+    const cb = await codebase(false);
+    await mkdir(join(cb, 'src', 'inner'), { recursive: true });
+    expect((await add({ kind: 'codebase', path: cb })).statusCode).toBe(201);
+    for (const path of [join(cb, 'src', 'inner'), dirname(cb)]) {
+      const r = await add({ kind: 'codebase', path });
+      expect(r.statusCode, path).toBe(400);
+      expect(r.json().code, path).toBe('codebase-nested');
+    }
+    await mkdir(join(base, 'config', 'x'), { recursive: true });
+    const r = await add({ kind: 'codebase', path: join(base, 'config', 'x') });
+    expect(r.json().code).toBe('codebase-config');
+    await mkdir(join(homedir(), '.ssh'), { recursive: true });
+    expect((await add({ kind: 'codebase', path: join(homedir(), '.ssh') })).json().code).toBe('codebase-sensitive');
   });
   it('refuses a sixth codebase', async () => {
     const parent = await temp('ms-many-');

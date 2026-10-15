@@ -81,6 +81,8 @@ const LIVE_JOB_KINDS: ReadonlySet<AgentJobKind> = new Set(['creative', 'console'
 export interface LaunchInput {
   kind: AgentJobKind; jobId: string; projectSlug: string; projectDir: string; creativeSlug?: string | null;
   codebases?: string[]; protectedFiles?: string[];
+  /** Brand analysis of codebases: the analysis also has a website source (WebFetch stays); see PolicyInput.brandWebsite. */
+  brandWebsite?: boolean;
   /** Extra folders the agent must never write (e.g. a creative's earlier `outputs/v*` folders); both spellings are protected. */
   protectedDirs?: string[];
   request: Pick<AgentTurnRequest, 'prompt' | 'resumeSessionId' | 'forkSession' | 'model'>;
@@ -219,6 +221,7 @@ export class AgentLauncher {
       kind: i.kind, sandbox, projectDir: i.projectDir, home, configDir,
       codebases, protectedFiles, protectedDirs, protectedGlobs: logGlobs, sandboxGlobs,
       ...(secretsScan ? { codebaseSecrets: { files: secretsScan.files, dirs: secretsScan.dirs } } : {}),
+      brandWebsite: i.brandWebsite === true,
       extraDomains: settings.extraAllowedDomains, projectAllowRules: rules,
       mcpTools: mcpOn ? MCP_TOOLS[i.kind].map((t) => `mcp__${MCP_SERVER}__${t}`) : [],
       autoApproveSandboxed: autoApproveAtStart,

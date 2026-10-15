@@ -1,6 +1,6 @@
 import { join } from 'node:path';
-import { dirDenyRules, fileDenyRules, globDenyRules, readOnlyRules, secretReadRules, secretSandboxGlobs } from '../codebases.ts';
-import { AGENT_ALLOWED_TOOLS, BRAND_ANALYSIS_TOOLS, BRAND_CODEBASE_TOOLS, DESCRIBE_TOOLS, LOCALIZE_TOOLS } from './runner.ts';
+import { caseFoldGlob, dirDenyRules, escapeGlob, fileDenyRules, globDenyRules, readOnlyRules, secretReadRules, secretSandboxGlobs } from '../codebases.ts';
+import { AGENT_ALLOWED_TOOLS, BRAND_ANALYSIS_TOOLS, BRAND_CODEBASE_DENIED_TOOLS, BRAND_CODEBASE_SCOPED_TOOLS, DESCRIBE_TOOLS, LOCALIZE_TOOLS } from './runner.ts';
 import { DEFAULT_ALLOWED_DOMAINS, sensitiveHomeEntries, sensitiveHomePaths } from './sandbox.ts';
 
 /** `localize` (Phase 12): a translation turn on an existing version; it writes only through `submit_localization`. */
@@ -22,7 +22,22 @@ export interface PolicyInput {
    * spelling; see findCodebaseSecrets). Denied to Read by exact path and, with the sandbox, listed in denyRead.
    */
   codebaseSecrets?: { files: string[]; dirs: string[] };
+  /**
+   * Brand analysis of codebases (Phase 14, fix round 1): whether the analysis also has a website source. Without one,
+   * WebFetch is neither allowed nor reachable (denied): nothing read in a codebase can be sent out. Ignored otherwise.
+   */
+  brandWebsite?: boolean;
 }
+
+/**
+ * The only reads a brand analysis of codebases gets without asking: `Read`/`Glob` scoped to each codebase spelling, in the
+ * exact case and case-folded (escaped like the deny rules). The project stays readable as the working folder; anything
+ * else reaches an approval card, as before Phase 14.
+ */
+export const codebaseReadAllowRules = (codebases: string[]): string[] => codebases.flatMap((c) => {
+  const root = escapeGlob(c);
+  return [...new Set([root, caseFoldGlob(root)])].flatMap((r) => BRAND_CODEBASE_SCOPED_TOOLS.map((t) => `${t}(/${r}/**)`));
+});
 export interface AgentPolicy { settings: Record<string, unknown> | null; allowedTools: string[]; disallowedTools: string[]; addDirs: string[];
   /** Extra environment of the agent process: package caches inside the project, only for sandboxed jobs. */
   env: Record<string, string>;
@@ -86,13 +101,18 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
     ...(i.protectedFiles.length ? fileDenyRules(EDIT_TOOLS, i.protectedFiles) : []),
     ...dirDenyRules(EDIT_TOOLS, i.protectedDirs),
     ...globDenyRules(EDIT_TOOLS, i.protectedGlobs ?? []),
+    // Brand analysis of codebases (fix round 1): no Bash (no file dump through an interpreter or ffprobe, no approval card
+    // for `cat`), no Grep (a content search could cross a secret file), and no WebFetch without a website source.
+    ...(brandCodebases ? [...BRAND_CODEBASE_DENIED_TOOLS, ...(i.brandWebsite ? [] : ['WebFetch'])] : []),
     // A localize turn writes only through `submit_localization` (Phase 12): the editing tools and Bash are denied everywhere,
     // whatever `autoApproveSandboxed` says (fix I1).
     ...(i.kind === 'localize' ? [...EDIT_TOOLS, 'Bash'] : []),
   ];
-  const extra = [...(brandCodebases ? BRAND_CODEBASE_TOOLS : []), ...i.projectAllowRules, ...i.mcpTools];
+  const extra = [...(brandCodebases ? codebaseReadAllowRules(i.codebases) : []), ...i.projectAllowRules, ...i.mcpTools];
+  // With codebases the brand tools keep only WebFetch, and only with a website source: Bash(mkdir/ffprobe) are dropped.
+  const kindTools = (list: readonly string[]) => (brandCodebases ? (i.brandWebsite ? list.filter((t) => t === 'WebFetch') : []) : list);
   if (!i.sandbox) {
-    return { settings: null, allowedTools: unique([...LEGACY_TOOLS[i.kind], ...extra]), disallowedTools, addDirs: [...i.codebases], env: {} };
+    return { settings: null, allowedTools: unique([...kindTools(LEGACY_TOOLS[i.kind]), ...extra]), disallowedTools, addDirs: [...i.codebases], env: {} };
   }
   // Only creative/console jobs get sandbox network. Brand analysis reads pages with WebFetch (a tool, not Bash)
   // and downloads files through the Motion Studio `download_file` MCP tool.
@@ -117,5 +137,5 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
       ...(network ? { network } : {}),
     },
   };
-  return { settings, allowedTools: unique([...SANDBOXED_TOOLS[i.kind], ...extra]), disallowedTools, addDirs: [...i.codebases], env: i.projectDir ? sandboxCacheEnv(i.projectDir) : {} };
+  return { settings, allowedTools: unique([...kindTools(SANDBOXED_TOOLS[i.kind]), ...extra]), disallowedTools, addDirs: [...i.codebases], env: i.projectDir ? sandboxCacheEnv(i.projectDir) : {} };
 }
