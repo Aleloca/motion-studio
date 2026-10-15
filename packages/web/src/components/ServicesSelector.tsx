@@ -7,7 +7,7 @@ import { api } from '../api.ts';
 import { href } from '../routes.ts';
 import { message } from '../errors.ts';
 import { useT } from '../i18n.tsx';
-import { Button, Icon, Popover, Segmented } from '../ui/index.ts';
+import { Button, Icon, Popover, Segmented, Tooltip } from '../ui/index.ts';
 import './services.css';
 
 type Choice = (typeof SERVICE_CHOICES)[ServiceKind][number];
@@ -174,10 +174,12 @@ export function ServicesChip({ slug, creative, brief, busy, onSaved }: { slug: s
   };
   return (
     <>
+      <Tooltip label={busy ? `${sv.chipAria({ summary })} · ${sv.busy}` : sv.chipAria({ summary })} whenHidden=".ms-services-chip-label">
       <Button ref={anchor} size="sm" variant="ghost" className="ms-services-chip" aria-haspopup="dialog" aria-expanded={open}
-        aria-label={sv.chipAria({ summary })} title={busy ? sv.busy : `${sv.chip}: ${summary}`} onClick={() => setOpen((o) => !o)}>
+        aria-label={sv.chipAria({ summary })} onClick={() => setOpen((o) => !o)}>
         <Icon name="key" size={12} /><span className="ms-services-chip-label">{sv.chip}</span><span className="ms-services-chip-sum">{summary}</span>
       </Button>
+      </Tooltip>
       <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="top-start" width={420} label={sv.title}>
         <div className="ms-services-pop">
           <b>{sv.title}</b>

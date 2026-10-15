@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRunner, AgentTurnRequest } from '../src/agent/runner.ts';
 import { BrandService, type ProjectRef } from '../src/brand/brand-analysis.ts';
 import { BrandStore } from '../src/brand/brand-store.ts';
+import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { AgentBridge } from '../src/bridge/bridge.ts';
 import { importCodebaseTool } from '../src/bridge/import-codebase-tool.ts';
 import { LibraryStore } from '../src/library/library-store.ts';
@@ -283,5 +284,183 @@ describe('codebase sources that no longer pass', () => {
       `Codebase left out of the analysis (${join(holder, 'alias')}): ${messages('en').errors.codebaseGlobChars({ path: join(holder, 'alias') })}`,
     ]);
     expect(requests).toEqual([]);
+  });
+});
+
+describe('imports of a discarded run (follow-up batch 2, task 3)', () => {
+  const lib = () => new LibraryStore(ref.projectDir, NoMediaTools);
+  const files = async () => (await lib().listAssets()).map((a) => a.file).sort();
+  const onDisk = async () => (await readdir(join(ref.projectDir, 'assets', 'brand')).catch(() => [] as string[])).filter((f) => f.endsWith('.svg')).sort();
+  /** Before the run: a registered file, a kit logo and a creative brief that point at files the run will import. */
+  const prepare = async () => {
+    const cb = await addCodebase();
+    await mkdir(join(ref.projectDir, 'assets', 'brand'), { recursive: true });
+    await writeFile(join(ref.projectDir, 'assets', 'brand', 'pre.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+    await lib().registerAssets([{ file: 'brand/pre.svg', origin: 'codebase', sourceUrl: null, description: '', tags: ['brand'] }]);
+    await brand.writeKit({ ...(await brand.readKit()), logos: [{ id: 'main', file: 'assets/brand/kit.svg', variant: 'primary', background: 'any', source: { kind: 'codebase', ref: 'public/logo.svg' } }] });
+    await new CreativeStore(ref.projectDir).create({ title: 'Lancio', brief: { goal: 'g', message: '', formats: ['instagram-post-1x1'], durationSec: 10, assets: ['assets/brand/ad.svg'], notes: '' } });
+    return cb;
+  };
+  const importer = (after?: () => Promise<void>, status: 'succeeded' | 'cancelled' = 'succeeded') => {
+    const bridge = new AgentBridge();
+    bridge.setOrigin('http://127.0.0.1:9');
+    const tool = importCodebaseTool({ media: NoMediaTools, broadcast: () => {} });
+    sideEffect = async (req) => {
+      const config = JSON.parse(await readFile(req.mcpConfigPath!, 'utf8'));
+      const ctx = bridge.resolve((await readFile(config.mcpServers.studio.env.MOTION_STUDIO_BRIDGE_TOKEN_FILE, 'utf8')).trim())!;
+      for (const dest of ['kit', 'ad', 'loose']) await tool(ctx, { source: 'public/logo.svg', dest: `assets/brand/${dest}.svg` });
+      // A re-import of a file that was already registered lands under a new name; the registered one is untouched.
+      await tool(ctx, { source: 'public/logo.svg', dest: 'assets/brand/pre.svg' });
+      await after?.();
+    };
+    const runner: AgentRunner = { start: (req, on) => { const r = fakeRunner.start(req, on); return { cancel: r.cancel, done: r.done.then((o) => ({ ...o, status })) }; } };
+    return service(testLauncher(runner, { bridge, mcpCommand: ['node', '/never/started/server.mjs'] }));
+  };
+  /** The run registers four imports; the kit and the creative use two; the fifth file is the one registered before. */
+  const kept = ['brand/ad.svg', 'brand/kit.svg', 'brand/pre.svg'];
+
+  it('snapshot change: the unreferenced imports are unregistered and removed; referenced and earlier files stay', async () => {
+    const cb = await prepare();
+    const svc = importer(async () => { await writeFile(join(cb, 'src', 'injected.ts'), 'export {};\n'); });
+    const end = await finished((await svc.analyze(ref)).id);
+    expect(end.state).toBe('failed');
+    expect(await files()).toEqual(kept);
+    expect(await onDisk()).toEqual(kept.map((f) => f.slice(6)));
+  });
+  it('a failed job (unusable proposal): same cleanup', async () => {
+    await prepare();
+    const bad: AgentRunner = { start: (req, on) => { const r = fakeRunner.start(req, on); return { cancel: r.cancel, done: r.done.then(async (o) => { await writeFile(join(req.cwd, JSON.parse(/```motion-studio-brand\n(.*)\n```/s.exec(req.prompt)![1]!).kitFile), 'not json'); return o; }) }; } };
+    const bridge = new AgentBridge();
+    bridge.setOrigin('http://127.0.0.1:9');
+    const tool = importCodebaseTool({ media: NoMediaTools, broadcast: () => {} });
+    let during: string[] = [];
+    sideEffect = async (req) => {
+      const config = JSON.parse(await readFile(req.mcpConfigPath!, 'utf8'));
+      const ctx = bridge.resolve((await readFile(config.mcpServers.studio.env.MOTION_STUDIO_BRIDGE_TOKEN_FILE, 'utf8')).trim())!;
+      for (const dest of ['kit', 'ad', 'loose']) await tool(ctx, { source: 'public/logo.svg', dest: `assets/brand/${dest}.svg` });
+      during = await onDisk();
+    };
+    const end = await finished((await service(testLauncher(bad, { bridge, mcpCommand: ['node', '/never/started/server.mjs'] })).analyze(ref)).id);
+    expect(end.state).toBe('failed');
+    expect(during).toEqual(['ad.svg', 'kit.svg', 'loose.svg', 'pre.svg']); // present during the run, so removed by the cleanup
+    expect(await files()).toEqual(kept);
+    expect(await onDisk()).toEqual(kept.map((f) => f.slice(6)));
+  });
+  it('a corrupt brand kit at discard time: nothing can be checked, so the files stay', async () => {
+    await prepare();
+    const svc = importer();
+    const end = await finished((await svc.analyze(ref)).id);
+    expect(end.state, end.error).toBe('succeeded');
+    const all = await files();
+    const [p] = await brand.listProposals();
+    await writeFile(join(ref.projectDir, 'brand', 'brand-kit.json'), 'not json');
+    await svc.discardProposal(ref, p!.id);
+    expect(await files()).toEqual(all);
+  });
+  it('a proposal superseded by a newer run is cleaned like a discarded one', async () => {
+    await prepare();
+    const svc = importer();
+    expect((await finished((await svc.analyze(ref)).id)).state).toBe('succeeded');
+    const first = (await brand.listProposals())[0]!;
+    const afterFirst = await files();
+    expect(first.importedFiles).toHaveLength(4);
+    // The second run imports nothing of its own that matches; it only supersedes the first.
+    sideEffect = null;
+    expect((await finished((await service().analyze(ref)).id)).state).toBe('succeeded');
+    expect((await brand.listProposals()).find((x) => x.id === first.id)!.status).toBe('discarded');
+    const after = await files();
+    expect(after).toEqual(expect.arrayContaining(kept));
+    for (const f of first.importedFiles!) expect(after.includes(f)).toBe(kept.includes(f));
+    expect(afterFirst.length).toBeGreaterThan(after.length);
+  });
+  it('a file another job registers during the run survives the discard', async () => {
+    const cb = await prepare();
+    const svc = importer(async () => {
+      await writeFile(join(ref.projectDir, 'assets', 'brand', 'other.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+      await lib().registerAssets([{ file: 'brand/other.svg', origin: 'website', sourceUrl: 'https://x.example/o.svg', description: '', tags: ['brand'] }]);
+      await writeFile(join(cb, 'src', 'injected.ts'), 'export {};\n');
+    });
+    const end = await finished((await svc.analyze(ref)).id);
+    expect(end.state).toBe('failed');
+    expect(await files()).toEqual([...kept, 'brand/other.svg'].sort());
+    expect(await onDisk()).toEqual([...kept, 'brand/other.svg'].map((f) => f.slice(6)).sort());
+  });
+  /**
+   * Final wave I1: during the run another route registers brand/other.svg (as a generated or stock file would; the agent tools refuse non-brand jobs) and the user uploads
+   * brand/up.svg; the agent lists both in its asset list, next to a file of its own it left unregistered (brand/listed.svg).
+   */
+  const othersListed = async (req: AgentTurnRequest) => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"/>';
+    for (const f of ['other', 'up', 'listed']) await writeFile(join(ref.projectDir, 'assets', 'brand', `${f}.svg`), svg);
+    await lib().registerAssets([{ file: 'brand/other.svg', origin: 'website', sourceUrl: 'https://x.example/o.svg', description: '', tags: ['brand'] }]);
+    await lib().registerAssets([{ file: 'brand/up.svg', origin: 'upload' }]);
+    const block = JSON.parse(/```motion-studio-brand\n(.*)\n```/s.exec(req.prompt)![1]!) as { assetsListFile: string };
+    await writeFile(join(req.cwd, block.assetsListFile), JSON.stringify(['other', 'up', 'listed'].map((f) => ({ file: `brand/${f}.svg`, description: f }))));
+  };
+  const others = ['brand/other.svg', 'brand/up.svg'];
+  it('I1: a failed run whose asset list names another job\'s file and an upload leaves both registered and on disk', async () => {
+    await prepare();
+    const bridge = new AgentBridge();
+    bridge.setOrigin('http://127.0.0.1:9');
+    const tool = importCodebaseTool({ media: NoMediaTools, broadcast: () => {} });
+    const bad: AgentRunner = { start: (req, on) => { const r = fakeRunner.start(req, on); return { cancel: r.cancel, done: r.done.then(async (o) => { await writeFile(join(req.cwd, JSON.parse(/```motion-studio-brand\n(.*)\n```/s.exec(req.prompt)![1]!).kitFile), 'not json'); return o; }) }; } };
+    sideEffect = async (req) => {
+      const config = JSON.parse(await readFile(req.mcpConfigPath!, 'utf8'));
+      const ctx = bridge.resolve((await readFile(config.mcpServers.studio.env.MOTION_STUDIO_BRIDGE_TOKEN_FILE, 'utf8')).trim())!;
+      for (const dest of ['kit', 'ad', 'loose']) await tool(ctx, { source: 'public/logo.svg', dest: `assets/brand/${dest}.svg` });
+      await othersListed(req);
+    };
+    const end = await finished((await service(testLauncher(bad, { bridge, mcpCommand: ['node', '/never/started/server.mjs'] })).analyze(ref)).id);
+    expect(end.state).toBe('failed');
+    // The run's own listed file was registered by the failure path and removed with the run's other imports.
+    expect(await files()).toEqual([...kept, ...others].sort());
+    expect(await onDisk()).toEqual([...kept, ...others].map((f) => f.slice(6)).sort());
+    expect((await lib().listAssets()).find((a) => a.file === 'brand/up.svg')).toMatchObject({ origin: 'upload' });
+  });
+  it('I1: a user discard leaves another job\'s file and an upload the agent listed; the run\'s own listed file goes', async () => {
+    await prepare();
+    const svc = importer(async () => { await othersListed(requests.at(-1)!); });
+    const end = await finished((await svc.analyze(ref)).id);
+    expect(end.state, end.error).toBe('succeeded');
+    const [p] = await brand.listProposals();
+    expect(p!.importedFiles).toContain('brand/listed.svg');
+    for (const f of others) expect(p!.importedFiles).not.toContain(f);
+    await svc.discardProposal(ref, p!.id);
+    expect(await files()).toEqual([...kept, ...others].sort());
+    expect(await onDisk()).toEqual([...kept, ...others].map((f) => f.slice(6)).sort());
+  });
+  it('a cancelled job: same cleanup', async () => {
+    await prepare();
+    const end = await finished((await importer(undefined, 'cancelled').analyze(ref)).id);
+    expect(end.state).toBe('cancelled');
+    expect(await files()).toEqual(kept);
+    expect(await onDisk()).toEqual(kept.map((f) => f.slice(6)));
+  });
+  it('the user discards the proposal: the same cleanup; accepting keeps every import', async () => {
+    await prepare();
+    const svc = importer();
+    const end = await finished((await svc.analyze(ref)).id);
+    expect(end.state, end.error).toBe('succeeded');
+    const all = await files();
+    expect(all).toEqual(expect.arrayContaining(['brand/ad.svg', 'brand/kit.svg', 'brand/loose.svg', 'brand/pre.svg']));
+    expect(all).toHaveLength(5); // + the re-import of pre.svg under its new name
+    const [p] = await brand.listProposals();
+    expect(p!.importedFiles).toHaveLength(4);
+    expect((await svc.applyProposal(ref, p!.id, [], false)).proposal.status).toBe('applied');
+    expect(await files()).toEqual(all);
+
+    // A second proposal, discarded by the user.
+    const second = await finished((await svc.analyze(ref)).id);
+    expect(second.state, second.error).toBe('succeeded');
+    const open = (await brand.listProposals()).find((x) => x.status === 'open')!;
+    const before = await files();
+    expect((await svc.discardProposal(ref, open.id)).status).toBe('discarded');
+    const after = await files();
+    // Everything the second run added is gone (its names are new, so none is the one the kit or the creative uses).
+    expect(after.filter((f) => !before.includes(f))).toEqual([]);
+    expect(open.importedFiles).toHaveLength(4);
+    for (const f of open.importedFiles ?? []) expect(after).not.toContain(f);
+    expect(after).toEqual(expect.arrayContaining(kept));
+    expect(await onDisk()).toHaveLength(after.length);
   });
 });

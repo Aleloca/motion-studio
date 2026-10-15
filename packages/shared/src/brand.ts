@@ -158,6 +158,8 @@ export const brandProposalSchema = z.object({
   status: z.enum(['open', 'applied', 'discarded']), summary: z.string().max(5000),
   changes: z.array(brandChangeSchema).max(500), guidelines: z.object({ current: z.string().max(200_000), proposed: z.string().max(200_000) }).nullable(),
   assetsAdded: z.array(relativeFileSchema).max(1000),
+  /** Files (relative to assets/) this run brought in through download_file or import_codebase_file: removed again if the proposal is discarded and nothing references them. */
+  importedFiles: z.array(relativeFileSchema).max(1000).optional(),
   usage: usageSummarySchema.optional(),
 });
 export type BrandProposal = z.infer<typeof brandProposalSchema>;

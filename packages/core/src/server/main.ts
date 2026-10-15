@@ -12,6 +12,7 @@ import { ClaudeCodeRunner, claudeCommandFromEnv } from '../agent/claude-code-run
 import { cachedSandboxDetection } from '../agent/sandbox.ts';
 import { AppConfigStore, defaultConfigDir } from '../app-config.ts';
 import { AgentBridge } from '../bridge/bridge.ts';
+import { homedir } from 'node:os';
 import { readBilling, runDoctor, type ShellPathOrigin } from '../doctor.ts';
 import { parseClaudeVersion } from '../agent/agent-capabilities.ts';
 import { LanguageController, detectSystemLocales, t } from '../i18n.ts';
@@ -167,7 +168,7 @@ async function startLocked(configDir: string, opts: StartServerOptions) {
     git: new Git(),
     runner: new ClaudeCodeRunner(claudeCommand),
     bridge, mcpCommand, sandbox, ...(opts.mcpEnv ? { mcpEnv: opts.mcpEnv } : {}),
-    doctor: (extra) => runDoctor({ exec: execCommand, claudeCommand, sandbox: extra.sandbox, workspacePath: extra.workspacePath ?? null, ...(opts.shellPath ? { shellPath: opts.shellPath } : {}), ffmpegInfo: () => findFfmpeg(), ...(extra.agentOptIn ? { agentOptIn: extra.agentOptIn } : {}) }),
+    doctor: (extra) => runDoctor({ exec: execCommand, claudeCommand, sandbox: extra.sandbox, workspacePath: extra.workspacePath ?? null, configDir, home: homedir(), ...(opts.shellPath ? { shellPath: opts.shellPath } : {}), ffmpegInfo: () => findFfmpeg(), ...(extra.agentOptIn ? { agentOptIn: extra.agentOptIn } : {}) }),
     // Phase 13: `claude --version` for the capability table (cached by the server).
     claudeVersion: async () => {
       const [bin, ...prefix] = claudeCommand;

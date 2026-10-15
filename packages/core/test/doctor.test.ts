@@ -1,5 +1,10 @@
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { realpath } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { hasBlockingFailure, runDoctor } from '../src/doctor.ts';
+import { t } from '../src/i18n.ts';
 import type { CommandExec, CommandResult } from '../src/exec.ts';
 
 const ok = (stdout: string): CommandResult => ({ code: 0, stdout, stderr: '', notFound: false });
@@ -105,13 +110,61 @@ describe('runDoctor', () => {
     });
     expect(hasBlockingFailure(fallback)).toBe(false);
   });
-  it('flags a workspace path with glob characters as an optional failed check (decisions log 141)', async () => {
+  it('flags a workspace path with glob characters as an optional failed check that names it (decisions 141, 790)', async () => {
     const base = { exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0' };
-    for (const p of [null, '/Users/me/Motion Studio', '/Users/me/a (1)']) expect((await runDoctor({ ...base, workspacePath: p })).some((c) => c.id === 'workspace-path')).toBe(false);
-    for (const p of ['/Users/me/ws [x]', '/Users/me/a*b', '/Users/me/what?']) {
+    for (const p of [null, '/Users/me/Motion Studio']) expect((await runDoctor({ ...base, workspacePath: p })).some((c) => c.id === 'workspace-path')).toBe(false);
+    for (const p of ['/Users/me/ws [x]', '/Users/me/a*b', '/Users/me/what?', '/Users/me/a (1)', '/Users/me/p (x) [y]', '/Users/me/{z}', '/Users/me/a\\b']) {
       const checks = await runDoctor({ ...base, workspacePath: p });
-      expect(checks.find((c) => c.id === 'workspace-path')).toMatchObject({ required: false, ok: false, label: 'Percorso della cartella di lavoro' });
+      expect(checks.find((c) => c.id === 'workspace-path'), p).toEqual({
+        id: 'workspace-path', label: 'Percorso della cartella di lavoro', required: false, ok: false,
+        message: t().doctor.folderGlobChars({ path: p }), fix: t().doctor.folderGlobFix,
+      });
+      expect(checks.find((c) => c.id === 'workspace-path')!.message).toContain(p);
       expect(hasBlockingFailure(checks)).toBe(false);
+    }
+  });
+  it('decision 790: names the real path of a clean-named workspace link, or of a project folder that is a link to such a folder', async () => {
+    const base = { exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0' };
+    const holder = mkdtempSync(join(tmpdir(), 'ms-doctor-glob-'));
+    try {
+      const bad = join(holder, 'p (x) [y]');
+      mkdirSync(join(bad, 'acme'), { recursive: true });
+      symlinkSync(bad, join(holder, 'clean-ws'));
+      const realBad = await realpath(bad);
+      const viaLink = (await runDoctor({ ...base, workspacePath: join(holder, 'clean-ws') })).find((c) => c.id === 'workspace-path');
+      expect(viaLink?.message).toBe(t().doctor.folderGlobChars({ path: realBad }));
+      // A clean workspace with a project folder linked into the glob-named one: the project's real path is named.
+      const ws = join(holder, 'ws');
+      mkdirSync(join(ws, 'plain'), { recursive: true });
+      expect((await runDoctor({ ...base, workspacePath: ws })).some((c) => c.id === 'workspace-path')).toBe(false);
+      symlinkSync(join(bad, 'acme'), join(ws, 'acme'));
+      const viaProject = (await runDoctor({ ...base, workspacePath: ws })).find((c) => c.id === 'workspace-path');
+      expect(viaProject?.message).toBe(t().doctor.folderGlobChars({ path: join(realBad, 'acme') }));
+    } finally {
+      rmSync(holder, { recursive: true, force: true });
+    }
+  });
+  it('decision 791: a home or config folder with glob characters is a warning naming the path, never a refusal', async () => {
+    const base = { exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0' };
+    const holder = mkdtempSync(join(tmpdir(), 'ms-doctor-deny-'));
+    try {
+      const clean = join(holder, 'home');
+      mkdirSync(clean);
+      expect((await runDoctor({ ...base, home: clean, configDir: join(clean, 'cfg') })).some((c) => c.id === 'agent-deny-paths')).toBe(false);
+      const badHome = join(holder, 'h (x) [y]');
+      const badConfig = join(holder, 'cfg {z}');
+      const row = (await runDoctor({ ...base, home: badHome, configDir: badConfig })).find((c) => c.id === 'agent-deny-paths');
+      expect(row).toEqual({ id: 'agent-deny-paths', label: t().doctor.denyPathsLabel, required: false, ok: false, message: t().doctor.denyPathsGlob({ paths: `${badHome}, ${badConfig}`, count: 2 }) });
+      expect(row!.message).toContain(badHome);
+      expect(row!.message.startsWith(`The paths `) || row!.message.startsWith(`I percorsi `)).toBe(true);
+      // A clean-named link to such a folder: its real path is named.
+      mkdirSync(badConfig);
+      symlinkSync(badConfig, join(holder, 'cfg-link'));
+      const viaLink = (await runDoctor({ ...base, home: clean, configDir: join(holder, 'cfg-link') })).find((c) => c.id === 'agent-deny-paths');
+      expect(viaLink?.message).toBe(t().doctor.denyPathsGlob({ paths: await realpath(badConfig), count: 1 }));
+      expect(hasBlockingFailure(await runDoctor({ ...base, home: badHome, configDir: badConfig }))).toBe(false);
+    } finally {
+      rmSync(holder, { recursive: true, force: true });
     }
   });
 });

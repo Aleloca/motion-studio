@@ -5,12 +5,12 @@ import { homedir } from 'node:os';
 import { basename, isAbsolute, join, normalize, parse, relative } from 'node:path';
 import { isSecretPath, SECRET_PATTERNS, type LinkedCodebase } from '@motion-studio/shared';
 import { messages, type Locale } from '@motion-studio/shared';
-import { codebaseOverlaps, expandHome, GLOB_PATH_CHARS, normalizeCodebasePath } from './workspace-store.ts';
+import { codebaseOverlaps, expandHome, normalizeCodebasePath, pathHasGlobChars } from './workspace-store.ts';
 import { currentLocale } from './i18n.ts';
 import { sensitiveHomeEntries } from './agent/sandbox.ts';
 
 // Defined next to WorkspaceStore (which needs it) to avoid an import cycle.
-export { assertCodebasesLiteral, assertCodebasesOutside, codebaseGlobCharsMessage, codebaseHasGlobChars, codebaseOverlapMessage, codebaseOverlaps, GLOB_PATH_CHARS, normalizeCodebasePath, normalizeCodebaseList } from './workspace-store.ts';
+export { assertCodebasesLiteral, assertCodebasesOutside, codebaseGlobCharsMessage, codebaseHasGlobChars, codebaseOverlapMessage, codebaseOverlaps, GLOB_PATH_CHARS, normalizeCodebasePath, normalizeCodebaseList, pathHasGlobChars } from './workspace-store.ts';
 
 export interface CodebaseCheck { path: string; note?: string; exists: boolean }
 
@@ -275,14 +275,14 @@ export async function resolveBrandCodebase(raw: string, protectedDirs: string[],
   if (expanded.replace(/\/+$/, '') === home) return { problem: 'home' };
   const path = normalizeCodebasePath(raw);
   // Decision 781: the agent's rules cannot match a path with glob characters (decision 780), under either spelling.
-  if (GLOB_PATH_CHARS.test(path)) return { problem: 'glob-chars' };
+  if (pathHasGlobChars(path)) return { problem: 'glob-chars' };
   const st = await stat(path).catch(() => null);
   if (!st?.isDirectory()) return { problem: 'missing' };
   const real = await realpath(path).catch(() => null);
   if (real === null) return { problem: 'missing' };
   // A link to the disk root or to the home folder is the disk root or the home folder.
   if (hasUnsafePathChars(real)) return { problem: 'unsafe-path' };
-  if (GLOB_PATH_CHARS.test(real)) return { problem: 'glob-chars' };
+  if (pathHasGlobChars(real)) return { problem: 'glob-chars' };
   if (real === parse(real).root) return { problem: 'disk-root' };
   if (real === home || real === await realpath(home).catch(() => home)) return { problem: 'home' };
   if (await codebaseOverlaps(path, protectedDirs)) return { problem: 'overlap' };

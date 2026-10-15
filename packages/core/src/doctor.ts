@@ -2,7 +2,10 @@ import type { DoctorCheck, UsageBilling } from '@motion-studio/shared';
 import type { BinaryArch } from './render/arch.ts';
 import type { SandboxSupport } from './agent/sandbox.ts';
 import type { CommandExec, CommandResult } from './exec.ts';
+import { readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { t } from './i18n.ts';
+import { folderWithGlobChars, SLUG_RE } from './workspace-store.ts';
 import { execFfVia } from './media/ffmpeg-exec.ts';
 import { capabilitiesFor, parseClaudeVersion, type CapabilityOptIn } from './agent/agent-capabilities.ts';
 
@@ -20,8 +23,14 @@ export interface ShellPathOrigin { source: 'login-shell' | 'fallback'; error?: s
 
 export async function runDoctor(opts: {
   exec: CommandExec; claudeCommand: string[]; nodeVersion?: string; sandbox?: () => Promise<SandboxSupport>; shellPath?: ShellPathOrigin;
-  /** The chosen workspace folder: a path with `[ ] * ?` weakens the sandbox's protection of the records (decisions log 141). */
+  /** The chosen workspace folder: a path (or a project folder's real path) with glob characters gets a warning row (decision 790). */
   workspacePath?: string | null;
+  /**
+   * Decision 791: Motion Studio's config folder and the home folder. They are not refused when their path holds glob
+   * characters, but the agent's deny rules on them (tokens, secrets) may not apply: one warning row names them.
+   */
+  configDir?: string;
+  home?: string;
   /**
    * The ffmpeg build's architecture (render/encode.ts `findFfmpeg`): shown next to its version, and an x86_64 build under
    * Rosetta on Apple Silicon is named (it renders, slower). Absent or failing: the plain version.
@@ -121,10 +130,40 @@ export async function runDoctor(opts: {
         fix: d.shellPathFix,
       });
   }
-  if (opts.workspacePath && /[[\]*?]/.test(opts.workspacePath)) {
+  const globFolder = opts.workspacePath ? await agentFolderWithGlobChars(opts.workspacePath) : null;
+  if (globFolder) {
+    // Decision 790: every agent run there is refused; the row names the path to rename.
+    checks.push({ id: 'workspace-path', label: d.workspacePathLabel, required: false, ok: false, message: d.folderGlobChars({ path: globFolder }), fix: d.folderGlobFix });
+  } else if (opts.workspacePath && /[[\]*?]/.test(opts.workspacePath)) {
+    // Decisions log 141 (unreachable while GLOB_PATH_CHARS holds these characters; kept for the day the refused set shrinks).
     checks.push({ id: 'workspace-path', label: d.workspacePathLabel, required: false, ok: false, message: d.workspacePathGlob, fix: d.workspacePathFix });
   }
+  const denyPaths: string[] = [];
+  for (const p of [opts.home, opts.configDir]) {
+    if (!p) continue;
+    const hit = await folderWithGlobChars([p]).catch(() => null);
+    if (hit && !denyPaths.includes(hit)) denyPaths.push(hit);
+  }
+  if (denyPaths.length > 0) {
+    checks.push({ id: 'agent-deny-paths', label: d.denyPathsLabel, required: false, ok: false, message: d.denyPathsGlob({ paths: denyPaths.join(', '), count: denyPaths.length }) });
+  }
   return checks;
+}
+
+/**
+ * Decision 790: the workspace folder, or a project folder in it (a project folder may be a link elsewhere), whose path or
+ * real path holds a glob metacharacter: the first such spelling, or null. Never throws (an unreadable folder: null).
+ */
+export async function agentFolderWithGlobChars(workspacePath: string): Promise<string | null> {
+  const root = await folderWithGlobChars([workspacePath]).catch(() => null);
+  if (root) return root;
+  const entries = await readdir(workspacePath, { withFileTypes: true }).catch(() => []);
+  for (const e of entries) {
+    if (!SLUG_RE.test(e.name) || !(e.isDirectory() || e.isSymbolicLink())) continue;
+    const hit = await folderWithGlobChars([join(workspacePath, e.name)]).catch(() => null);
+    if (hit) return hit;
+  }
+  return null;
 }
 
 export const hasBlockingFailure = (checks: DoctorCheck[]) => checks.some((c) => c.required && !c.ok);

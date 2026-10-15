@@ -48,8 +48,10 @@ export const en = {
     codebaseDiskRoot: 'You can\'t link the disk root',
     codebaseHome: 'Link a specific folder, not your whole home folder',
     codebaseOverlap: 'A linked folder cannot contain the project or sit inside it',
+    codebaseOverlapNamed: (p: { path: string }) => `The linked folder ${p.path} cannot contain the project or the workspace, nor sit inside them`,
     codebaseUnsafePath: 'The folder path contains control characters: rename the folder or choose another one',
     codebaseGlobChars: (p: { path: string }) => `The folder path ${p.path} contains ( ) [ ] { } * ? or \\, which the agent\'s file rules cannot match safely: rename the folder (or the parent folder that has them). A symbolic link does not help: the folder's real path is checked too`,
+    folderGlobChars: (p: { path: string }) => `The path ${p.path} of the workspace or project folder contains ( ) [ ] { } * ? or \\, which the agent\'s rules protecting Motion Studio\'s files cannot match safely, so the agent does not run there: rename the folder (or the parent folder that has them), then choose the workspace again`,
     codebaseSourceMissing: (p: { path: string }) => `Folder not found: ${p.path}`,
     codebaseSourceDuplicate: (p: { path: string }) => `This folder is already a brand source: ${p.path}`,
     codebaseSourceLimit: (p: { max: number }) => `At most ${p.max} codebase sources per brand`,
@@ -258,6 +260,12 @@ export const en = {
     workspaceSettingsLabel: 'Workspace settings',
     workspacePathGlob: 'The path contains [ ] * or ?: the sandbox protects Motion Studio\'s records less well (macOS) or not at all (Linux)',
     workspacePathFix: 'Move the workspace to a folder whose path has none of these characters, then choose it again',
+    folderGlobChars: (p: { path: string }) => `The path ${p.path} contains ( ) [ ] { } * ? or \\: the agent\'s rules protecting Motion Studio\'s files cannot match it safely, so every agent run there is refused (browsing and exporting still work)`,
+    folderGlobFix: 'Rename the folder that has these characters (for a project folder that is a link: rename its target, then link it again), then choose the workspace again',
+    denyPathsLabel: 'Home and config folder paths',
+    denyPathsGlob: (p: { paths: string; count: number }) => p.count === 1
+      ? `The path ${p.paths} contains ( ) [ ] { } * ? or \\: the agent\'s deny rules for it (tokens, secret files) may not apply`
+      : `The paths ${p.paths} contain ( ) [ ] { } * ? or \\: the agent\'s deny rules for them (tokens, secret files) may not apply`,
     shellPathFix: 'If programs are missing, start Motion Studio from the terminal or check your shell startup files',
     sandboxAvailableReason: 'Available',
     sandboxExecMissing: 'sandbox-exec not found: the macOS sandbox is not available',

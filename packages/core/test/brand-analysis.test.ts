@@ -214,9 +214,10 @@ describe('analyze', () => {
     expect(job.state).toBe('failed');
     expect(job.error).toContain('Proposta non valida');
     expect(await brand.listProposals()).toEqual([]);
-    // The downloads of a failed turn are still registered, not left orphaned under assets/.
+    // The file the agent listed is the run's and goes with it (nothing references it). The one it left unlisted cannot be
+    // tied to the run: it is registered, not orphaned, as before.
     const lib = new LibraryStore(ref.projectDir, NoMediaTools);
-    expect((await lib.listAssets()).map((a) => a.file)).toEqual(['brand/logo.svg', 'brand/unlisted.png']);
+    expect((await lib.listAssets()).map((a) => a.file)).toEqual(['brand/unlisted.png']);
     expect(await lib.unregisteredAssets()).toEqual([]);
   });
   it('keeps the valid items of a partly invalid kit and lists the others', T, async () => {

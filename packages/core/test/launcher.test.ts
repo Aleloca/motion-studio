@@ -1,5 +1,5 @@
 import { existsSync, linkSync, readFileSync } from 'node:fs';
-import { appendFile, chmod, link, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, link, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,7 @@ import { ApprovalBroker } from '../src/approvals/broker.ts';
 import { PermissionsStore } from '../src/approvals/permissions-store.ts';
 import { AgentBridge } from '../src/bridge/bridge.ts';
 import { escapeGlob } from '../src/codebases.ts';
+import { t } from '../src/i18n.ts';
 import { PROVIDER_ENV } from '../src/secrets/vault.ts';
 import { testLauncher } from './helpers/launcher.ts';
 
@@ -496,24 +497,43 @@ describe('AgentLauncher', () => {
   });
 });
 
-describe('AgentLauncher protected files under a root with glob characters (decisions log 141)', () => {
-  it('sends the sandbox the escaped roots: concrete entries and the log globs both match the real paths', { timeout: 90_000 }, async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'ms-launch [x] *? '));
-    cleanup.push(dir);
-    await mkdir(join(dir, 'creatives', 'c1'), { recursive: true });
-    const { args } = await launch({ sandbox: async () => ({ available: true, reason: 'x' }) }, 'console', dir);
-    const deny: string[] = JSON.parse(args[args.indexOf('--settings') + 1]!).sandbox.filesystem.denyWrite;
-    // Claude Code's glob → regex (see policy.test.ts): `[` must not survive as an open class.
-    const toRe = (g: string) => new RegExp(`^${g.replace(/[.^$+{}()|\\]/g, '\\$&').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]')}(/.*)?$`);
-    const covered = (f: string) => deny.some((d) => (/[*?[\]]/.test(d) ? toRe(d).test(f) : f === d || f.startsWith(`${d}/`)));
-    const realDir = await realpath(dir);
-    for (const root of [dir, realDir]) {
-      for (const f of [join(root, '.studio', 'usage.jsonl'), join(root, 'creatives', 'c1', 'conversation.jsonl'), join(root, 'creatives', 'made-later', 'versions.json'), join(root, 'brand', 'proposals', 'p', 'log.jsonl')]) {
-        expect(covered(f), f).toBe(true);
+describe('AgentLauncher refuses a project or workspace folder with glob characters (decision 790, last line)', () => {
+  // Before decision 790 a root with `[ ] * ?` ran with escaped sandbox roots and a weak-root warning (decisions log 141); a
+  // path with `( )` and `[ ]` or `{ }` voids the Edit/Write/Read rules (decision 780), so the launcher now refuses them all.
+  const counting = () => {
+    const calls: unknown[] = [];
+    const runner: AgentRunner = { start: (r) => { calls.push(r); return { done: Promise.resolve({ status: 'succeeded' as const }), cancel: () => {} }; } };
+    return { runner, calls };
+  };
+  it('the project folder or the workspace, plain or through a clean-named link (real path), is refused before the runner starts', { timeout: 90_000 }, async () => {
+    const holder = await mkdtemp(join(tmpdir(), 'ms-launch-glob-'));
+    cleanup.push(holder);
+    const ws = join(holder, 'p (x) [y]');
+    await mkdir(join(ws, 'acme', 'creatives', 'c1'), { recursive: true });
+    await symlink(ws, join(holder, 'clean-ws'));
+    await mkdir(join(holder, 'ok-ws'));
+    await symlink(join(ws, 'acme'), join(holder, 'ok-ws', 'acme'));
+    const real = await realpath(ws);
+    const { runner, calls } = counting();
+    const launcher = testLauncher(runner);
+    const cases: Array<[string, string]> = [
+      [join(ws, 'acme'), ws],
+      [join(holder, 'clean-ws', 'acme'), real],
+      // A clean workspace whose project folder is a link into the glob-named one.
+      [join(holder, 'ok-ws', 'acme'), join(real, 'acme')],
+      [join(holder, 'q [x] *?', 'acme'), join(holder, 'q [x] *?')],
+    ];
+    for (const kind of ['creative', 'console', 'brand-analysis', 'describe', 'localize'] as const) {
+      for (const [projectDir, named] of cases) {
+        await expect(launcher.start({ kind, jobId: `j-${kind}`, projectSlug: 'acme', projectDir, creativeSlug: 'c1', request: { prompt: 'x' }, onEvent: () => {} }), `${kind} ${projectDir}`)
+          .rejects.toMatchObject({ apiCode: 'folder-glob-chars', message: t().errors.folderGlobChars({ path: named }) });
       }
-      expect(covered(join(root, 'creatives', 'c1', 'work', 'a.txt'))).toBe(false);
     }
-    expect(deny.some((d) => d.includes('[x]'))).toBe(false);
+    expect(calls).toEqual([]);
+    // The same layout with clean names runs.
+    const clean = await newProject();
+    await (await launcher.start({ kind: 'console', jobId: 'j-ok', projectSlug: 'acme', projectDir: clean, request: { prompt: 'x' }, onEvent: () => {} })).done;
+    expect(calls).toHaveLength(1);
   });
 });
 
@@ -576,42 +596,6 @@ describe('AgentLauncher after-run checks (review of decisions log 141)', () => {
     await run.done;
     expect(order).toEqual(['kill', 'detached']);
     expect((await stat(join(dir, '.studio', 'usage.jsonl'))).nlink).toBe(1);
-  });
-  it('under a path with glob characters: one warning per job, and a creative moved out and back during the run is reported', { timeout: 90_000 }, async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'ms-launch [x] '));
-    cleanup.push(dir);
-    const c = join(dir, 'creatives', 'c1');
-    await mkdir(c, { recursive: true });
-    await writeFile(join(c, 'conversation.jsonl'), '{"a":1}\n');
-    let move = true;
-    const runner: AgentRunner = {
-      start: () => ({
-        done: (async () => {
-          await new Promise((r) => setTimeout(r, 15));
-          if (move) {
-            await rename(c, join(dir, 'out'));
-            await writeFile(join(dir, 'out', 'conversation.jsonl'), '{"forged":1}\n');
-            await rename(join(dir, 'out'), c);
-          }
-          return { status: 'succeeded' as const };
-        })(),
-        cancel: () => {},
-      }),
-    };
-    const launcher = testLauncher(runner);
-    const warnings: string[] = [];
-    const start = (jobId: string) => launcher.start({ kind: 'creative', jobId, projectSlug: 'acme', projectDir: dir, creativeSlug: 'c1', request: { prompt: 'x' }, onEvent: () => {}, onWarning: (w) => { warnings.push(w); } });
-    await (await start('j1')).done;
-    expect(warnings).toHaveLength(3);
-    expect(warnings[0]).toContain('[ ] * o ?');
-    expect(warnings[1]).toContain(join('creatives', 'c1'));
-    expect(warnings[2]).toContain(join('creatives', 'c1', 'conversation.jsonl'));
-    move = false;
-    warnings.length = 0;
-    await (await start('j1')).done; // second attempt of the same job: no repeat, nothing moved
-    expect(warnings).toEqual([]);
-    await (await start('j2')).done;
-    expect(warnings).toHaveLength(1);
   });
 });
 

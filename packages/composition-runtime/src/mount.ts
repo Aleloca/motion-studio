@@ -1,4 +1,5 @@
 import type { Clip, Composition, Track } from '@motion-studio/shared';
+import { clipPathHasNoArea } from './clip-path.ts';
 import { compileAnimations, compileKenBurns, REGISTERED_PROPERTIES, type CompiledAnimation } from './animations.ts';
 import type { Natives, VirtualClock } from './clock.ts';
 import { FrameTimeoutError, twoFrames, withTimeout } from './frames.ts';
@@ -582,6 +583,10 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     return !(Math.min(r.right, right) > Math.max(r.left, left) && Math.min(r.bottom, bottom) > Math.max(r.top, top));
   };
 
+  /** Render mode (decision 794): whether the element's own computed `clip-path` leaves it no visible area (see `clipPathHasNoArea`). */
+  const clippedAway = (el: HTMLElement): boolean =>
+    clipPathHasNoArea(doc.defaultView?.getComputedStyle(el).clipPath ?? '', el.offsetWidth, el.offsetHeight);
+
   const doSeek = async (t: number) => {
     if (destroyed) return;
     time = clampT(t);
@@ -593,7 +598,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     for (const m of mounted) {
       if (!isClipVisible(m.clip, time, c.duration)) continue;
       if (m.video) work.push(seekVideo(m, time));
-      if (m.layer && !(opts.mode === 'render' && outOfFrame(m.content))) {
+      if (m.layer && !(opts.mode === 'render' && (outOfFrame(m.content) || clippedAway(m.content)))) {
         work.push(m.layer.seek(time - m.clip.start).catch((e: unknown) => {
           if (e instanceof LayerRequestError && e.code === 'frameTimeout') {
             report('frameTimeout', `html layer painted no frame after seeking to ${time}: ${e.message}`, m.clip.id);

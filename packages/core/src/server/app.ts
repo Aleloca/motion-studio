@@ -31,7 +31,7 @@ import { importCodebaseTool } from '../bridge/import-codebase-tool.ts';
 import { providerTools, voiceAvailability, voiceBatch } from '../bridge/provider-tools.ts';
 import { LocalizeService, ProjectActivity } from '../localization/localize-turn.ts';
 import type { LookupFn, Transport } from '../providers/safe-fetch.ts';
-import { checkCodebases, codebaseGlobCharsMessage, codebaseHasGlobChars, codebaseOverlaps, normalizeCodebaseList } from '../codebases.ts';
+import { checkCodebases, codebaseGlobCharsMessage, codebaseHasGlobChars, codebaseOverlapMessage, codebaseOverlaps, normalizeCodebaseList } from '../codebases.ts';
 import type { Git } from '../git.ts';
 import { JobConflictError, JobQueue } from '../jobs/job-queue.ts';
 import { JsonFileError } from '../json-file.ts';
@@ -39,7 +39,7 @@ import { MemoryVault, type SecretsVault } from '../secrets/vault.ts';
 import { ApprovalBroker } from '../approvals/broker.ts';
 import { registerSettingsRoutes } from './settings-routes.ts';
 import { defaultChromeInstaller, registerRenderEngineRoutes, type ChromeInstaller } from './render-engine-routes.ts';
-import { CodedError, expandHome, WorkspaceError, WorkspaceStore } from '../workspace-store.ts';
+import { assertAgentFolders, CodedError, expandHome, WorkspaceError, WorkspaceStore } from '../workspace-store.ts';
 import { recoverWorkspace, registerCreativeRoutes, type RecoverOptions } from './creative-routes.ts';
 import { registerFontsRoutes } from './fonts-routes.ts';
 import { registerGenerateRoutes } from './generate-routes.ts';
@@ -193,7 +193,8 @@ async function consoleCodebases(list: LinkedCodebase[], forbidden: string[]): Pr
     try {
       const [n] = normalizeCodebaseList([c]);
       if (n && await codebaseHasGlobChars(n.path)) ignored.push(t().jobs.codebaseIgnored({ path: n.path, reason: codebaseGlobCharsMessage(n.path) }));
-      else if (n && !(await codebaseOverlaps(n.path, forbidden))) kept.push(n);
+      else if (n && await codebaseOverlaps(n.path, forbidden)) ignored.push(t().jobs.codebaseIgnored({ path: n.path, reason: codebaseOverlapMessage() }));
+      else if (n) kept.push(n);
     } catch { /* an invalid entry is skipped */ }
   }
   return { paths: (await checkCodebases(normalizeCodebaseList(kept))).filter((c) => c.exists).map((c) => c.path), ignored };
@@ -513,6 +514,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const raw = req.body?.path;
     const path = typeof raw === 'string' ? expandHome(raw.trim()) : '';
     if (!isAbsolute(path)) throw new WorkspaceError(400, t().errors.workspacePathAbsolute);
+    // Decision 790: a workspace whose path (or real path, also of a folder not made yet) has glob characters is refused
+    // before anything is created in it: the agent's protected-file rules would not match under it.
+    await assertAgentFolders(null, path);
     const ws = await WorkspaceStore.open(path, deps.git);
     await ws.attachSettingsHold(settingsHold);
     const settings = await ws.readSettings(); // corrupt settings → 422 before the choice is persisted
@@ -604,6 +608,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
             const ignoredSaid = new Set<string>();
             /** A failure: when the user's words reached no run, the job's error says so first (fix round 1, M3 and Ruling Z). */
             const failure = (detail: string) => new Error(undeliveredAtEnd(live).length > 0 ? `${t().live.wordsNotDelivered} ${detail}` : detail);
+            // Decision 790: a project or workspace folder with glob characters runs no agent (said as the console's error line).
+            try { await assertAgentFolders(projectDir, ws.root); } catch (err) { throw failure(err instanceof Error ? err.message : String(err)); }
             for (;;) {
               // Final review I2: a redirect is taken BEFORE anything is spawned. With no session yet (no run took the request),
               // the request and the user's words go together in one prompt; otherwise the live session is resumed with them.

@@ -8,6 +8,7 @@ import type { MediaTools } from '../media/media-tools.ts';
 import { saveGeneratedFile } from '../providers/files.ts';
 import { ProviderError } from '../providers/http.ts';
 import { t } from '../i18n.ts';
+import { recordRunImport } from './run-imports.ts';
 import type { BridgeContext } from './bridge.ts';
 import type { BridgeHandler } from './bridge-routes.ts';
 
@@ -152,6 +153,7 @@ export function importCodebaseTool(deps: { media: MediaTools; broadcast(m: Serve
     calls.set(c.signal, callsSoFar + 1);
     const out = await importCodebaseFile({ projectDir: c.projectDir, codebases: c.codebases ?? [], callsSoFar, library: new LibraryStore(c.projectDir, deps.media) }, { source: a.source, dest: a.dest });
     if ('error' in out) throw new ProviderError(STATUS[out.error], codebaseImportMessage(out.error));
+    if (c.kind === 'brand-analysis') recordRunImport(c.jobId, out.file.slice('assets/'.length));
     deps.broadcast({ type: 'library', project: c.projectSlug });
     return out;
   };

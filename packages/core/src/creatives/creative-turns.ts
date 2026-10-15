@@ -21,7 +21,7 @@ import { availableTools } from '../bridge/provider-tools.ts';
 import type { KeyCheckCache } from '../providers/key-check.ts';
 import type { SecretsVault } from '../secrets/vault.ts';
 import { compositionSchemaFile, CONTEXT_MD } from '../project-template.ts';
-import { CodedError, WorkspaceError } from '../workspace-store.ts';
+import { assertAgentFolders, CodedError, WorkspaceError } from '../workspace-store.ts';
 import { CreativeStore } from './creative-store.ts';
 import { CreativeSideStateStore } from './creative-side-state.ts';
 import { validateOutputs, type ValidationResult } from './output-contract.ts';
@@ -572,6 +572,9 @@ export class CreativeTurnService {
     const live = this.live.get(jobId) ?? new LiveTurn(jobId, NO_LIVE, ref);
     this.live.set(jobId, live);
     try {
+      // Decision 790: a project or workspace folder with glob characters runs no agent; refused before anything is written
+      // (the chat gets the error line).
+      await assertAgentFolders(ref.projectDir, ref.root);
       await writeFile(join(ref.projectDir, '.studio', 'context.md'), CONTEXT_MD);
       const contract = this.deps.agentContract ?? 'compositions';
       // The full JSON Schema of composition.json, which the prompt and context.md point to (too long to inline).

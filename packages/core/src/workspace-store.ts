@@ -3,7 +3,8 @@ import { randomBytes } from 'node:crypto';
 import { access, chmod, constants, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { HELD_FIELDS, heldOf, SettingsHoldError, tightenHeld, type HeldSettings, type SettingsHoldStore } from './settings-hold.ts';
 import { homedir } from 'node:os';
-import { isAbsolute, join, normalize, resolve, sep } from 'node:path';
+import * as platformPath from 'node:path';
+import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
   type WorkspaceProblemCode,
   projectFileSchema,
@@ -72,6 +73,8 @@ export function normalizeCodebaseList(list: LinkedCodebase[]): LinkedCodebase[] 
 }
 
 export const codebaseOverlapMessage = (): string => t().errors.codebaseOverlap;
+/** The refusal of a new overlapping path: names it (decision 792). */
+export const codebaseOverlapNamedMessage = (path: string): string => t().errors.codebaseOverlapNamed({ path });
 
 const isWithin = (inner: string, outer: string) => inner === outer || inner.startsWith(outer.endsWith(sep) ? outer : outer + sep);
 /** The normalised path, plus its real path when it exists and differs (symlinks). */
@@ -93,18 +96,90 @@ export async function codebaseOverlaps(path: string, protectedDirs: string[]): P
 /**
  * Glob metacharacters a codebase path may not hold (Phase 14 final wave, decision 781). With Claude Code 2.1.300 a path that
  * mixes `( )` with `[ ]` or `{ }` stops every permission rule on it from matching (decision 780), whatever the escaping; the
- * backslash is in the set because its escaping was never verified live. Re-exported by codebases.ts.
+ * backslash is in the set because its escaping was never verified live. POSIX only: never test a path against it directly,
+ * use `pathHasGlobChars` (on Windows `\` is the separator, decision 791). Re-exported by codebases.ts.
  */
 export const GLOB_PATH_CHARS = /[()[\]{}*?\\]/;
+/** Decision 791: the same set without the backslash, checked on each name of a Windows path. */
+const WIN_GLOB_NAME_CHARS = /[()[\]{}*?]/;
 
-/** True when the path, or its real path (a link), holds a glob metacharacter (`GLOB_PATH_CHARS`). */
+/** The parts of a platform path module the glob check needs (injectable: tests pass `path.win32`). */
+export type GlobPathModule = Pick<typeof platformPath.win32, 'sep' | 'parse'>;
+
+/**
+ * Decision 791: whether `p` holds a glob metacharacter, for the platform of `pathModule` (default: this platform's).
+ * POSIX: `GLOB_PATH_CHARS` on the whole path, `\` included. Windows (`path.win32`): `( ) [ ] { } * ?` in any name; the `\`
+ * and `/` separators, the drive colon (`C:`) and the prefixes `\\?\`, `\\.\` and `\\?\UNC\` are syntax, not names. The
+ * server and share names of a UNC path are names (checked).
+ */
+export function pathHasGlobChars(p: string, pathModule: GlobPathModule = platformPath): boolean {
+  if (pathModule.sep !== '\\') return GLOB_PATH_CHARS.test(p);
+  const { root } = pathModule.parse(p);
+  const rootNames = root.replace(/^[\\/]{2}[?.][\\/](?:UNC[\\/])?/i, '').split(/[\\/]+/).filter((n) => n !== '' && !/^[A-Za-z]:$/.test(n));
+  return [...rootNames, ...p.slice(root.length).split(/[\\/]+/)].some((n) => WIN_GLOB_NAME_CHARS.test(n));
+}
+
+/** True when the path, or its real path (a link), holds a glob metacharacter (`pathHasGlobChars`). */
 export async function codebaseHasGlobChars(path: string): Promise<boolean> {
-  if (GLOB_PATH_CHARS.test(path)) return true;
+  if (pathHasGlobChars(path)) return true;
   const real = await realpath(path).catch(() => null);
-  return real !== null && GLOB_PATH_CHARS.test(real);
+  return real !== null && pathHasGlobChars(real);
 }
 
 export const codebaseGlobCharsMessage = (path: string): string => t().errors.codebaseGlobChars({ path });
+
+/**
+ * The real path of `path`, or, when it does not exist yet, the real path of its nearest existing ancestor joined with the
+ * rest (a workspace folder chosen before it exists, under a link). Null when nothing on the way resolves.
+ */
+async function realpathOrAncestor(path: string): Promise<string | null> {
+  let head = resolve(path);
+  const rest: string[] = [];
+  for (;;) {
+    const real = await realpath(head).catch(() => null);
+    if (real !== null) return rest.length ? join(real, ...rest.reverse()) : real;
+    const up = dirname(head);
+    if (up === head) return null;
+    rest.push(basename(head));
+    head = up;
+  }
+}
+
+/**
+ * Decision 790: the first spelling, among `paths` and their real paths, that holds a glob metacharacter (`pathHasGlobChars`),
+ * or null. The plain paths are checked first; a real path is returned as is (it is where the characters are).
+ */
+export async function folderWithGlobChars(paths: string[]): Promise<string | null> {
+  for (const p of paths) if (pathHasGlobChars(p)) return p;
+  for (const p of paths) {
+    const real = await realpathOrAncestor(p);
+    if (real !== null && pathHasGlobChars(real)) return real;
+  }
+  return null;
+}
+
+/** The stable code of a workspace or project folder whose path (or real path) has glob characters (decision 790). */
+export const FOLDER_GLOB_CHARS_CODE = 'folder-glob-chars';
+export const folderGlobCharsError = (path: string): CodedError => new CodedError(400, t().errors.folderGlobChars({ path }), FOLDER_GLOB_CHARS_CODE);
+
+/**
+ * Decision 790: refuses (400, `folder-glob-chars`, naming the path) when the project folder or the workspace folder, plain or
+ * real, holds a glob metacharacter. With such a path the agent's protected-file rules (CLAUDE.md, .mcp.json, .claude, .studio,
+ * the logs) stop matching (decision 780), so no agent may run there and no such workspace or project may be created.
+ * `workspaceRoot` defaults to the project folder's parent (projects live directly in the workspace).
+ */
+export async function assertAgentFolders(projectDir: string | null, workspaceRoot?: string): Promise<void> {
+  const root = workspaceRoot ?? (projectDir ? dirname(projectDir) : null);
+  const hit = await folderWithGlobChars([...(root ? [root] : []), ...(projectDir ? [projectDir] : [])]);
+  if (hit !== null) throw folderGlobCharsError(hit);
+}
+
+/** The stored codebase paths in their normalised form (an invalid stored entry is not a pass). */
+function storedKnown(stored: LinkedCodebase[]): Set<string> {
+  const known = new Set<string>();
+  for (const c of stored) { try { known.add(normalizeCodebasePath(c.path)); } catch { /* not a pass */ } }
+  return known;
+}
 
 /**
  * Refuses (400, `codebase-glob-chars`, naming the path) a linked folder whose path or real path holds a glob metacharacter.
@@ -112,8 +187,7 @@ export const codebaseGlobCharsMessage = (path: string): string => t().errors.cod
  * a legacy one can still save its other edits, and the folder stays left out at run time with a note.
  */
 export async function assertCodebasesLiteral(list: LinkedCodebase[], stored: LinkedCodebase[] = []): Promise<void> {
-  const known = new Set<string>();
-  for (const c of stored) { try { known.add(normalizeCodebasePath(c.path)); } catch { /* an invalid stored entry is not a pass */ } }
+  const known = storedKnown(stored);
   for (const c of list) {
     if (known.has(c.path)) continue;
     if (await codebaseHasGlobChars(c.path)) throw new CodedError(400, codebaseGlobCharsMessage(c.path), 'codebase-glob-chars');
@@ -127,10 +201,16 @@ export async function assertCodebasesLiteral(list: LinkedCodebase[], stored: Lin
  */
 export async function assertCodebasesOutside(list: LinkedCodebase[], protectedDirs: string[], stored: LinkedCodebase[] = []): Promise<void> {
   await assertCodebasesLiteral(list, stored);
-  for (const c of list) if (await codebaseOverlaps(c.path, protectedDirs)) throw new WorkspaceError(400, codebaseOverlapMessage());
+  // Decision 792: like the glob check, only paths new or changed (normalised) are tested; a stored overlapping one stays and is skipped at run time with a note.
+  const known = storedKnown(stored);
+  for (const c of list) {
+    if (known.has(c.path)) continue;
+    if (await codebaseOverlaps(c.path, protectedDirs)) throw new WorkspaceError(400, codebaseOverlapNamedMessage(c.path));
+  }
 }
 
-const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+/** A project folder's name (its slug); exported for the doctor's scan of the workspace. */
+export const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 export function slugify(name: string): string {
   const s = name
@@ -421,6 +501,8 @@ export class WorkspaceStore {
   async createProject(input: { name: string; description?: string }): Promise<{ slug: string; project: ProjectFile }> {
     const name = input.name.trim();
     if (!name) throw new WorkspaceError(400, t().errors.projectNameRequired);
+    // Decision 790: a project in a workspace whose path (or real path) has glob characters could never run the agent safely.
+    await assertAgentFolders(null, this.root);
     const { slug, dir } = await this.createLock.run('create', async () => {
       const base = slugify(name);
       for (let n = 1; ; n++) {

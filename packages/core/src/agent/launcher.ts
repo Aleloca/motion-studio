@@ -9,6 +9,7 @@ import type { ApprovalBroker } from '../approvals/broker.ts';
 import { isAllowedRule, PermissionsStore } from '../approvals/permissions-store.ts';
 import type { AgentBridge, BridgeContext } from '../bridge/bridge.ts';
 import { codebaseHasGlobChars, escapeGlob, findCodebaseSecrets, hasUnsafePathChars } from '../codebases.ts';
+import { assertAgentFolders } from '../workspace-store.ts';
 import { t } from '../i18n.ts';
 import { buildAgentPolicy, sandboxPath, type AgentJobKind } from './policy.ts';
 import { CREATIVE_CORE_FILES, detachProtectedLinks, PROPOSAL_LOG } from './protected-links.ts';
@@ -157,6 +158,9 @@ export class AgentLauncher {
   }
 
   async start(i: LaunchInput): Promise<AgentRun> {
+    // Decision 790, last line: every caller refuses a project or workspace folder whose path (or real path) has glob
+    // characters before it gets here; with one, the protected-file rules below would not match (decision 780).
+    await assertAgentFolders(i.projectDir, dirname(i.projectDir));
     // A quarantined project gets no agent (its .claude/.mcp.json/CLAUDE.md may be tampered); it clears by itself once
     // the protected files match the recorded state again.
     await this.integrity.assertUsable(i.projectDir);
@@ -314,7 +318,8 @@ export class AgentLauncher {
       await detachLinks();
       if (secretsScan?.truncated) await warn(t().jobs.codebaseSecretScanTruncated);
       // Under a path with `[ ] * ?` the sandbox cannot pin the record folders (decisions log 141): said once per job,
-      // and the logs' history is checked too.
+      // and the logs' history is checked too. Since decision 790 such a root is refused above (GLOB_PATH_CHARS holds these
+      // characters), so this stays only for the day the refused set shrinks.
       const weakRoot = roots.some((d) => GLOB_CHARS.test(d));
       if (weakRoot && !this.weakRootWarned.has(i.jobId)) {
         if (this.weakRootWarned.size > 200) this.weakRootWarned.clear();

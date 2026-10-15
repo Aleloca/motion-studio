@@ -347,11 +347,11 @@ describe('creative linked codebases', { timeout: 90_000 }, () => {
     const ws = join(base, 'ws');
     const res = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'C', brief, linkedCodebases: [{ path: join(ws, 'acme') }] } });
     expect(res.statusCode).toBe(400);
-    expect(res.json().error).toBe('La cartella collegata non può contenere il progetto né trovarsi al suo interno');
+    expect(res.json().error).toContain(join(ws, 'acme'));
     const ok = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'C', brief } });
     const edit = await app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${ok.json().slug}`, payload: { linkedCodebases: [{ path: base }] } });
     expect(edit.statusCode).toBe(400);
-    expect(edit.json().error).toBe('La cartella collegata non può contenere il progetto né trovarsi al suo interno');
+    expect(edit.json().error).toContain(base);
   });
   it('decision 781: refuses folders with glob characters, and a plain-named link to one, on every linking route', async () => {
     const holder = join(base, 'holder');
@@ -410,6 +410,36 @@ describe('creative linked codebases', { timeout: 90_000 }, () => {
     // Creative create checks every path: the legacy one is new there.
     const again = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'C', brief, linkedCodebases: [{ path: legacy }] } });
     expect(again.json().code).toBe('codebase-glob-chars');
+    expect(again.json().error).toContain(legacy);
+  });
+});
+
+describe('decision 792: overlap check only on new or changed codebase paths', { timeout: 60_000 }, () => {
+  it('a stored overlapping entry does not block the brief or project saves; a new one is refused naming it', async () => {
+    const created = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'C', brief } });
+    const slug = created.json().slug as string;
+    const ws = join(base, 'ws', 'acme');
+    const legacy = join(ws, 'assets');
+    const clean = join(base, 'plain792');
+    await mkdir(clean, { recursive: true });
+    await new CreativeStore(ws).update(slug, { linkedCodebases: [{ path: legacy }] });
+    const pj = JSON.parse(await readFile(join(ws, 'project.json'), 'utf8'));
+    await writeFile(join(ws, 'project.json'), JSON.stringify({ ...pj, linkedCodebases: [{ path: legacy }] }));
+    const goal = await app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}`, payload: { brief: { ...brief, goal: 'Altro' }, linkedCodebases: [{ path: `${legacy}/` }] } });
+    expect(goal.statusCode, goal.body).toBe(200);
+    const proj = await app.inject({ method: 'PUT', url: '/api/projects/acme', payload: { linkedCodebases: [{ path: legacy }, { path: clean }] } });
+    expect(proj.statusCode, proj.body).toBe(200);
+    const fresh = join(ws, 'brand');
+    for (const r of [
+      await app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}`, payload: { linkedCodebases: [{ path: legacy }, { path: fresh }] } }),
+      await app.inject({ method: 'PUT', url: '/api/projects/acme', payload: { linkedCodebases: [{ path: legacy }, { path: clean }, { path: fresh }] } }),
+    ]) {
+      expect(r.statusCode).toBe(400);
+      expect(r.json().error).toContain(fresh);
+    }
+    // Creating a creative checks everything: the legacy entry is new there.
+    const again = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'C', brief, linkedCodebases: [{ path: legacy }] } });
+    expect(again.statusCode).toBe(400);
     expect(again.json().error).toContain(legacy);
   });
 });

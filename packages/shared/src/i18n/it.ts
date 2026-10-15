@@ -46,8 +46,10 @@ export const it: Messages = {
     codebaseDiskRoot: 'Non puoi collegare la radice del disco',
     codebaseHome: 'Collega una cartella specifica, non l\'intera home',
     codebaseOverlap: 'La cartella collegata non può contenere il progetto né trovarsi al suo interno',
+    codebaseOverlapNamed: (p) => `La cartella collegata ${p.path} non può contenere il progetto né l'area di lavoro, né trovarsi al loro interno`,
     codebaseUnsafePath: 'Il percorso della cartella contiene caratteri di controllo: rinomina la cartella o scegline un\'altra',
     codebaseGlobChars: (p) => `Il percorso della cartella ${p.path} contiene ( ) [ ] { } * ? o \\, che le regole sui file dell'agente non riescono a confrontare in modo sicuro: rinomina la cartella (o la cartella che la contiene e ha quei caratteri). Un collegamento simbolico non basta: si controlla anche il percorso reale della cartella`,
+    folderGlobChars: (p) => `Il percorso ${p.path} della cartella di lavoro o del progetto contiene ( ) [ ] { } * ? o \\, che le regole dell\'agente a protezione dei file di Motion Studio non riescono a confrontare in modo sicuro, quindi l\'agente non lavora lì: rinomina la cartella (o la cartella che la contiene e ha quei caratteri), poi scegli di nuovo la cartella di lavoro`,
     codebaseSourceMissing: (p) => `Cartella non trovata: ${p.path}`,
     codebaseSourceDuplicate: (p) => `Questa cartella è già una fonte del brand: ${p.path}`,
     codebaseSourceLimit: (p) => `Al massimo ${p.max} fonti codebase per brand`,
@@ -256,6 +258,12 @@ export const it: Messages = {
     workspaceSettingsLabel: "Impostazioni dell'area di lavoro",
     workspacePathGlob: 'Il percorso contiene [ ] * o ?: la sandbox protegge meno i registri di Motion Studio (macOS) o non li protegge affatto (Linux)',
     workspacePathFix: 'Sposta la cartella di lavoro in un percorso senza questi caratteri, poi sceglila di nuovo',
+    folderGlobChars: (p) => `Il percorso ${p.path} contiene ( ) [ ] { } * ? o \\: le regole dell\'agente a protezione dei file di Motion Studio non riescono a confrontarlo in modo sicuro, quindi ogni esecuzione dell\'agente lì è rifiutata (sfogliare ed esportare funzionano ancora)`,
+    folderGlobFix: 'Rinomina la cartella con questi caratteri (per una cartella di progetto che è un collegamento: rinomina la destinazione, poi ricrea il collegamento), poi scegli di nuovo la cartella di lavoro',
+    denyPathsLabel: 'Percorsi della cartella home e di configurazione',
+    denyPathsGlob: (p) => p.count === 1
+      ? `Il percorso ${p.paths} contiene ( ) [ ] { } * ? o \\: le regole che negano all\'agente l\'accesso (token, file segreti) potrebbero non valere lì`
+      : `I percorsi ${p.paths} contengono ( ) [ ] { } * ? o \\: le regole che negano all\'agente l\'accesso (token, file segreti) potrebbero non valere lì`,
     shellPathFix: 'Se mancano programmi, avvia Motion Studio dal terminale o controlla i file di avvio della shell',
     sandboxAvailableReason: 'Disponibile',
     sandboxExecMissing: 'sandbox-exec non trovato: la sandbox di macOS non è disponibile',
