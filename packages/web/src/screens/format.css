@@ -31,6 +31,12 @@
 .ms-fv-sb-text b { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-fv-sb-text span { font-size: 11px; color: var(--faint); font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .ms-fv-sb-note { margin: 12px; font-size: 12px; color: var(--muted); }
+/* A scene row's thumbnail box (SceneThumb): at most 64 px either way, the same box loading, loaded or without a frame. */
+.ms-fv-sb-thumb { flex: none; border-radius: 4px; background: var(--field); overflow: hidden; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+.ms-fv-sb-item .ms-fv-sb-thumb img { width: 100%; height: 100%; max-height: none; object-fit: contain; border-radius: 0; background: transparent; }
+.ms-fv-sb-thumb.ms-loading { animation: ms-sb-skel 1.4s var(--e-std) infinite alternate; }
+@keyframes ms-sb-skel { from { opacity: 1; } to { opacity: .5; } }
+@media (prefers-reduced-motion: reduce) { .ms-fv-sb-thumb.ms-loading { animation: none; } }
 .ms-fv-media .ms-fv-poster { position: absolute; inset: 0; }
 .ms-fv-panel { border-left: 1px solid var(--line); }
 .ms-fv-tabs { flex: none; }
@@ -86,6 +92,8 @@
 
 /* Transport: play/pause, timecode, frame by frame, scrub bar with comment markers. */
 .ms-fv-transport { position: relative; z-index: 4; flex: none; display: flex; flex-direction: column; background: var(--panel); border-top: 1px solid var(--line); }
+/* A band is shown: its Comment bubble rises above the overlays of the player (the comment hint, z 5, which the page also hides). */
+.ms-fv-transport.ms-banded { z-index: 6; }
 .ms-fv-controls { display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-bottom: 1px solid var(--line2); min-width: 0; }
 .ms-fv-play {
   width: 32px; height: 32px; min-height: 0; padding: 0; margin: 0; border: 0; border-radius: 50%; flex: none; background: var(--ink); color: var(--inkText);
@@ -101,7 +109,7 @@
 .ms-fv-scrub { position: relative; height: 40px; cursor: ew-resize; touch-action: none; user-select: none; outline: none; border-radius: 6px; }
 .ms-fv-scrub.ms-off { cursor: default; opacity: .5; }
 .ms-fv-scrub:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
-.ms-fv-ruler { position: absolute; left: 0; right: 0; top: 0; height: 18px; }
+.ms-fv-ruler { touch-action: none; position: absolute; left: 0; right: 0; top: 0; height: 18px; }
 .ms-fv-ruler span {
   position: absolute; top: 2px; padding-left: 4px; border-left: 1px solid var(--line); font-family: var(--mono); font-size: 10px; line-height: 14px; color: var(--faint); white-space: nowrap;
 }
@@ -144,5 +152,46 @@
 .ms-fv-spans { position: absolute; left: 16px; right: 16px; top: 4px; height: 40px; pointer-events: none; }
 .ms-fv-span { position: absolute; top: 0; bottom: 0; background: var(--accent); opacity: .18; border-inline: 2px solid var(--accent); box-sizing: border-box; }
 .ms-fv-span.ms-picking { opacity: .32; }
-.ms-fv-clippick { display: inline-flex; margin: 4px 0 0 8px; }
-.ms-fv-rangebtn { margin: 4px 0 0 8px; }
+.ms-fv-clippick { display: inline-flex; flex: none; }
+/* Icon-only: the select keeps its name (aria-label) and list; the value text and the chevron go (the icon is the whole button). */
+.ms-fv-clippick .ms-select-value, .ms-fv-clippick .ms-select-chev { display: none; }
+.ms-fv-clippick .ms-select { min-width: 0; padding-inline: 8px; gap: 0; }
+.ms-fv-rangebubble {
+  position: absolute; bottom: calc(100% + 6px); transform: translateX(-50%); z-index: 3; display: flex; align-items: center; gap: 8px; white-space: nowrap;
+  padding: 4px 4px 4px 10px; border-radius: 8px; background: var(--panel); color: var(--text); box-shadow: 0 0 0 1px var(--line2), 0 4px 14px rgb(0 0 0 / .18);
+}
+.ms-fv-rangebubble.ms-live { pointer-events: none; padding-inline-end: 10px; }
+.ms-fv-rangetc { font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+.ms-fv-rangeesc { font-size: 12px; color: var(--muted); padding-inline-end: 6px; }
+
+/* Render status (UX feedback 1, task 3): the pill, a thin progress bar while rendering, and the actions, in the bar by the version. */
+.ms-fv-render { display: inline-flex; align-items: center; gap: 6px; flex: none; min-width: 0; }
+.ms-fv-render-bar { width: 56px; flex: none; }
+@media (max-width: 760px) { .ms-fv-render-bar { display: none; } }
+.ms-fv-render-short { display: none; }
+
+/* The format view's bar, narrow (final wave I2, decision 713). Only the bar the format view claimed (`.ms-bar-fv`, set by
+   TopBars.tsx) is a size container and folds: the creative board, the editor and every other bar are unchanged. The steps
+   read the bar's content width, so the macOS title bar's 80 px count. Measured in Italian, the longest, with everything
+   the bar carries (topbar-render-layout.test.tsx): the actions fold to their icons in three steps, each keeping its name
+   (aria-label) and a tooltip (title); the format's name keeps room. Esporta, the primary action, keeps its label; so does
+   "Render video" (live preview, failed render) down to the last step. */
+.ms-topbar.ms-bar-fv { container: ms-topbar / inline-size; }
+@container ms-topbar (max-width: 1760px) {
+  .ms-bar-fv .ms-fold-1 > .ms-bar-label, .ms-bar-fv .ms-fv-render-long { display: none; }
+  .ms-bar-fv .ms-fv-render-short { display: inline; }
+  .ms-bar-fv .ms-btn.ms-fold-1 { width: 28px; padding: 0; gap: 0; }
+}
+@container ms-topbar (max-width: 1500px) {
+  .ms-bar-fv .ms-fold-2 > .ms-bar-label, .ms-bar-fv .ms-cv-vbtn > .ms-bar-label, .ms-bar-fv .ms-fv-meta { display: none; }
+  .ms-bar-fv .ms-btn.ms-fold-2 { width: 32px; padding: 0; gap: 0; }
+}
+@container ms-topbar (max-width: 1100px) {
+  .ms-bar-fv .ms-fold-3 > .ms-bar-label { display: none; }
+  .ms-bar-fv .ms-btn.ms-fold-3 { width: 32px; padding: 0; gap: 0; }
+  .ms-bar-fv .ms-btn.ms-sm.ms-fold-3 { width: 28px; }
+  /* The project and creative crumbs give way before the format's name. */
+  .ms-bar-fv .ms-crumbs > .ms-crumb:not(.ms-last) { flex-shrink: 8; }
+}
+/* While one of them is busy its spinner sits next to the icon. */
+.ms-bar-fv .ms-btn.ms-busy:is(.ms-fold-1, .ms-fold-2, .ms-fold-3) { width: auto; padding-inline: 6px; }

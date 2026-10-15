@@ -1,6 +1,6 @@
 import { act, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { DEFAULT_FORMATS, type CreativeDetail, type OutputFileInfo, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, renderJobKeyOf, type CreativeDetail, type OutputFileInfo, type VersionEntry } from '@motion-studio/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
 import type { Route } from '../src/routes.ts';
@@ -31,6 +31,9 @@ const api = {
   sendCreativeTurn: vi.fn(async () => ({ id: 'j9', key: 'k', kind: 'creative', label: 'x', state: 'queued', createdAt: at })),
   restoreVersion: vi.fn(async () => detail.creative),
   revealVersion: vi.fn(async () => ({ ok: true })),
+  // UX feedback 1, Task 3: the render status.
+  fileBytes: vi.fn(async (..._a: unknown[]): Promise<number | null> => 12_400_000),
+  renderVersion: vi.fn(async (..._a: unknown[]) => ({ id: 'r1', key: 'k', kind: 'render', label: 'x', state: 'queued', createdAt: at })),
   exportPicks: vi.fn(async () => ({ destination: '/d', files: [], skipped: [] })),
   cancelJob: vi.fn(async () => ({ cancelled: true })),
   setExportPick: vi.fn(async (..._a: unknown[]) => detail),
@@ -40,6 +43,14 @@ const api = {
   previewSession: vi.fn(async (_s: string, _c: string, n: number, format: string, _o: string) => ({
     url: `http://127.0.0.1:61234/tok-${format}-v${n}/runtime/index.html?mode=preview&parentOrigin=x`, token: `tok-${format}-v${n}`, origin: 'http://127.0.0.1:61234',
     expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(), format, hash: 'b'.repeat(64), width: 1080, height: 1920, duration: 8, fps: 30,
+  })),
+  // UX feedback 1, Task 2: the Scenes column lists the composition's scenes at once (one named, one numbered).
+  getEditorComposition: vi.fn(async (_s: string, _c: string, n: number, format: string) => ({
+    n, format, primaryFormat: format, hash: 'b'.repeat(64), files: [], fonts: [],
+    composition: {
+      $schema: 'motion-studio/composition@1', width: 1080, height: 1920, fps: 30, duration: 8, background: '#000000', fonts: [],
+      scenes: [{ id: 'offerta', start: 3.5, duration: 4.5 }, { id: 'intro', name: 'Intro', start: 0, duration: 3.5 }], tracks: [],
+    },
   })),
   getStoryboard: vi.fn(async (_s: string, _c: string, n: number, format: string) => ({
     format, hash: 'b'.repeat(64), width: 270, expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
@@ -64,12 +75,14 @@ const { __resetPreviewSessions, RELEASE_GRACE_MS } = await import('../src/compon
 const { TopBar } = await import('../src/shell/TopBars.tsx');
 const { ShellContext } = await import('../src/shell/ShellContext.tsx');
 const { __resetPendingPins, pinsKey, usePendingPins } = await import('../src/screens/pendingPins.ts');
+const { __resetToasts, getToasts } = await import('../src/ui/toast.tsx');
 const { setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } = await import('../src/shell/intents.ts');
 const { D } = await import('../src/motion/motion.ts');
 const { I18nProvider } = await import('../src/i18n.tsx');
 
 let jobsNow: Record<string, unknown> = {};
-const emptyLive = (): EventsState => ({ approvals: {}, jobs: jobsNow, events: {}, creativeTicks: {}, projectTicks: {} } as unknown as EventsState);
+let ticksNow = 0;
+const emptyLive = (): EventsState => ({ approvals: {}, jobs: jobsNow, events: {}, creativeTicks: { 'acme/lancio': ticksNow }, projectTicks: {} } as unknown as EventsState);
 const VIDEO = 'tiktok-9x16';
 const IMAGE = 'instagram-post-1x1';
 
@@ -120,6 +133,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   detail = makeDetail([version(1)]);
   jobsNow = {};
+  ticksNow = 0;
   __resetPendingPins();
   location.hash = '#/p/acme/c/lancio/f/tiktok-9x16';
   play = vi.fn(() => Promise.resolve());
@@ -596,9 +610,98 @@ describe('FormatView · live composition player (Task 8)', () => {
     const { posted } = await readyPlayer();
     const strip = await screen.findByRole('list', { name: 'Storyboard' }, { timeout: 20_000 });
     const scenes = within(strip).getAllByRole('button');
-    expect(scenes.map((b) => b.getAttribute('aria-label'))).toEqual(['intro, a 00:00.00', 'offerta, a 00:03.50']);
+    // From the composition, in time order: a scene's name, else its number (UX feedback 1, Task 2).
+    expect(scenes.map((b) => b.getAttribute('aria-label'))).toEqual(['Intro, a 00:00.00', 'Scena 2, a 00:03.50']);
+    expect(scenes[1]!.textContent).toContain('4,5 s');
+    await waitFor(() => expect(strip.querySelectorAll('img')).toHaveLength(2));
     await userEvent.click(scenes[1]!);
     expect(posted).toHaveBeenLastCalledWith({ type: 'seek', t: 3.5 }, '*');
+  }, 60_000);
+
+  it('the scenes never wait for the storyboard: a skeleton per row until it arrives, then the thumbnails', async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    const real = api.getStoryboard.getMockImplementation()!;
+    api.getStoryboard.mockImplementationOnce(async (...a: Parameters<typeof real>) => { await gate; return real(...a); });
+    detail = makeDetail([v2(1)]);
+    render(<Harness format={VIDEO} />);
+    const strip = await screen.findByRole('list', { name: 'Storyboard' });
+    expect(within(strip).getAllByRole('listitem')).toHaveLength(2);
+    expect([...strip.querySelectorAll('[data-thumb]')].map((x) => x.getAttribute('data-thumb'))).toEqual(['loading', 'loading']);
+    expect(strip.querySelector('img')).toBeNull();
+    expect(screen.getByText('Preparo lo storyboard…').className).toBe('ms-sr');
+    await waitFor(() => expect(api.getStoryboard).toHaveBeenCalled());
+    await act(async () => { release(); });
+    await waitFor(() => expect([...strip.querySelectorAll('[data-thumb]')].map((x) => x.getAttribute('data-thumb'))).toEqual(['frame', 'frame']));
+    await frame();
+  });
+
+  it('a composition that cannot be read says so (not "no storyboard")', async () => {
+    api.getEditorComposition.mockRejectedValueOnce(new ApiError(500, 'broken'));
+    detail = makeDetail([v2(1)]);
+    render(<Harness format={VIDEO} />);
+    expect(await screen.findByText('Non riesco a leggere le scene di questa versione')).toBeTruthy();
+    expect(screen.queryByText('Nessuno storyboard per questa versione')).toBeNull();
+    expect(screen.queryByRole('list', { name: 'Storyboard' })).toBeNull();
+    await frame();
+  });
+
+  it('another version never shows the previous version’s scenes while its own are read', async () => {
+    const base = api.getEditorComposition.getMockImplementation()!;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    api.getEditorComposition.mockImplementation(async (...a: Parameters<typeof base>) => {
+      const v = await base(...a);
+      if (a[2] === 2) await gate;
+      return { ...v, composition: { ...v.composition, scenes: [{ id: `only${a[2]}`, name: `Scena della v${a[2]}`, start: 0, duration: 8 }] } };
+    });
+    try {
+      // v2 changed this format (another composition hash), so it is a version of it of its own.
+      detail = makeDetail([v2(1), { ...v2(2), compositions: [{ format: VIDEO, dir: `compositions/${VIDEO}`, hash: 'c'.repeat(64) }] }]);
+      setShownVersions('acme/lancio', { [VIDEO]: 1 });
+      render(<Harness format={VIDEO} />);
+      const strip = await screen.findByRole('list', { name: 'Storyboard' });
+      expect(within(strip).getByText('Scena della v1')).toBeTruthy();
+      const bar = document.querySelector('.ms-topbar') as HTMLElement;
+      await userEvent.click(await within(bar).findByRole('button', { name: /Apri le sue versioni$/ }));
+      const pop = await screen.findByRole('dialog', { name: /^Versioni di / });
+      await userEvent.click(within(pop).getByRole('button', { name: /^Guarda la v2 / }));
+      // Right after the switch (no waiting): v2's own scenes are still being read, v1's are gone.
+      expect(screen.queryByText('Scena della v1')).toBeNull();
+      expect(screen.getByText('Carico le scene…')).toBeTruthy();
+      await act(async () => { release(); });
+      expect(await screen.findByText('Scena della v2')).toBeTruthy();
+    } finally {
+      api.getEditorComposition.mockImplementation(base);
+    }
+  }, 60_000);
+
+  it('no storyboard: the rows stay, each with a placeholder', async () => {
+    api.getStoryboard.mockRejectedValueOnce(new ApiError(404, 'none', 'storyboard-unavailable'));
+    detail = makeDetail([v2(1)]);
+    render(<Harness format={VIDEO} />);
+    const strip = await screen.findByRole('list', { name: 'Storyboard' });
+    await waitFor(() => expect([...strip.querySelectorAll('[data-thumb]')].map((x) => x.getAttribute('data-thumb'))).toEqual(['none', 'none']));
+    expect(within(strip).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Intro, a 00:00.00', 'Scena 2, a 00:03.50']);
+    await frame();
+  });
+
+  it('a composition without scenes shows one "Whole video" row with the poster; a click goes to the start', async () => {
+    const base = api.getEditorComposition.getMockImplementation()!;
+    api.getEditorComposition.mockImplementation(async (...a: Parameters<typeof base>) => { const v = await base(...a); return { ...v, composition: { ...v.composition, scenes: [] } }; });
+    try {
+      detail = makeDetail([v2(1)]);
+      render(<Harness format={VIDEO} />);
+      const { posted } = await readyPlayer();
+      const strip = await screen.findByRole('list', { name: 'Storyboard' });
+      const rows = within(strip).getAllByRole('button');
+      expect(rows.map((b) => b.getAttribute('aria-label'))).toEqual(['Tutto il video, a 00:00.00']);
+      await waitFor(() => expect(strip.querySelector('img')?.getAttribute('src')).toBe('/sb/tiktok-9x16/v1/f-2.jpg?s=1'));
+      await userEvent.click(rows[0]!);
+      expect(posted).toHaveBeenLastCalledWith({ type: 'seek', t: 0 }, '*');
+    } finally {
+      api.getEditorComposition.mockImplementation(base);
+    }
   }, 60_000);
 
   it('frame comments work on the paused live picture, at the current time', async () => {
@@ -658,5 +761,150 @@ describe('FormatView · Edit button', () => {
     render(<Harness format={VIDEO} />);
     await waitFor(() => expect(document.querySelector('.ms-cv-export')).not.toBeNull());
     expect(editButton()).toBeNull();
+  });
+});
+
+describe('FormatView · render status (UX feedback 1, Task 3)', () => {
+  const H1 = 'b'.repeat(64), H2 = 'c'.repeat(64);
+  const comp = (n: number, hash = H1, rendered: string | null = null): VersionEntry => ({
+    ...version(n),
+    outputs: [out('instagram-post-1x1', 'post.png'), ...(rendered ? [{ ...out(VIDEO, 'tiktok.mp4', 8), sha256: 'd'.repeat(64), fromComposition: rendered }] : [])],
+    compositions: [{ format: VIDEO, dir: `compositions/${VIDEO}`, hash }],
+  });
+  const bar = () => document.querySelector('.ms-topbar') as HTMLElement;
+  const pill = async (text: string | RegExp) => waitFor(() => expect(within(bar()).getAllByText(text).length).toBeGreaterThan(0));
+  const renderJob = (over: Record<string, unknown>) => ({ id: 'r1', key: renderJobKeyOf('creative:/w:acme:lancio', 1)!, kind: 'render', label: 'x', state: 'running', createdAt: at, formats: [VIDEO], ...over });
+
+  it('a version without a render is the live preview, and Render video starts the render of this format', async () => {
+    detail = makeDetail([comp(1)]);
+    render(<Harness format={VIDEO} />);
+    await pill('Anteprima dal vivo');
+    await userEvent.click(within(bar()).getByRole('button', { name: /Fai il render del video di/ }));
+    expect(api.renderVersion).toHaveBeenCalledWith('acme', 'lancio', 1, [VIDEO]);
+  });
+
+  it('while rendering: the percent on the pill, a progress bar, and a calm announcement without the percent', async () => {
+    detail = makeDetail([comp(1)]);
+    jobsNow = { r1: renderJob({ progress: { format: VIDEO, phase: 'frames', done: 42, total: 100 } }) };
+    render(<Harness format={VIDEO} />);
+    await pill('Render 42%');
+    expect(within(bar()).getByRole('progressbar').getAttribute('aria-valuenow')).toBe('42');
+    const live = bar().querySelector('.ms-fv-render [role="status"]') as HTMLElement;
+    expect(live.getAttribute('aria-live')).toBe('polite');
+    expect(live.textContent).toBe('Render del video in corso');
+    expect(within(bar()).queryByRole('button', { name: /Fai il render del video di/ })).toBeNull();
+  });
+
+  it('a current render: "Video pronto" with its size, a download in the browser, and no live-preview label', async () => {
+    detail = makeDetail([comp(1, H1, H1)]);
+    render(<Harness format={VIDEO} />);
+    await pill('Video pronto · 12,4 MB');
+    expect(api.fileBytes).toHaveBeenCalledWith('/f/acme/lancio/outputs/v1/tiktok.mp4');
+    expect(within(bar()).queryByText('Anteprima dal vivo')).toBeNull();
+    expect(within(bar()).getByRole('button', { name: /Scarica il video di/ })).not.toBeNull();
+    expect(within(bar()).getByRole('button', { name: /Fai il render del video di/ })).not.toBeNull();
+  });
+
+  it('in the desktop app: show in folder instead of a download', async () => {
+    (window as unknown as { motionStudio: unknown }).motionStudio = { isDesktop: true, platform: 'linux', pickFolder: async () => null, revealPath: async () => {} };
+    try {
+      detail = makeDetail([comp(1, H1, H1)]);
+      render(<Harness format={VIDEO} />);
+      await pill(/Video pronto/);
+      await userEvent.click(within(bar()).getByRole('button', { name: /Mostra nella cartella|Mostra nel Finder/ }));
+      expect(api.revealVersion).toHaveBeenCalledWith('acme', 'lancio', 1);
+      expect(within(bar()).queryByRole('button', { name: /Scarica il video di/ })).toBeNull();
+    } finally { delete (window as unknown as { motionStudio?: unknown }).motionStudio; }
+  });
+
+  it('a render of an older composition is out of date: back to the live preview', async () => {
+    detail = makeDetail([comp(1, H2, H1)]);
+    render(<Harness format={VIDEO} />);
+    await pill('Anteprima dal vivo');
+    expect(within(bar()).queryByText(/Video pronto/)).toBeNull();
+  });
+
+  it('a new version (or an editor save) returns the pill to the live preview; the old version keeps its video', async () => {
+    detail = makeDetail([comp(1, H1, H1)]);
+    const { rerender } = render(<Harness format={VIDEO} />);
+    await pill(/Video pronto/);
+    // The agent (or an editor save) makes v2 with another composition hash: the page reads the creative again.
+    detail = makeDetail([comp(1, H1, H1), comp(2, H2)]);
+    ticksNow = 1;
+    rerender(<Harness format={VIDEO} />);
+    await pill('Anteprima dal vivo');
+    expect(within(bar()).queryByText(/Video pronto/)).toBeNull();
+  });
+
+  it('the old version, viewed again, still has its video', async () => {
+    detail = makeDetail([comp(1, H1, H1), comp(2, H2)]);
+    setShownVersions('acme/lancio', { [VIDEO]: 1 });
+    render(<Harness format={VIDEO} />);
+    await pill(/Video pronto/);
+  });
+
+  it('Render video is disabled while the agent works', async () => {
+    detail = makeDetail([comp(1)]);
+    jobsNow = { j1: { id: 'j1', key: 'creative:/w:acme:lancio', kind: 'creative', label: 'x', state: 'running', createdAt: at } };
+    render(<Harness format={VIDEO} />);
+    await pill('Anteprima dal vivo');
+    const btn = within(bar()).getByRole('button', { name: /Fai il render del video di/ }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+  });
+
+  it('a render that cannot start says so in a toast and the button is usable again', async () => {
+    __resetToasts();
+    api.renderVersion.mockRejectedValueOnce(new Error('Chrome mancante'));
+    detail = makeDetail([comp(1)]);
+    render(<Harness format={VIDEO} />);
+    await pill('Anteprima dal vivo');
+    await userEvent.click(within(bar()).getByRole('button', { name: /Fai il render del video di/ }));
+    await waitFor(() => expect(getToasts().some((x) => x.text.includes('Chrome mancante'))).toBe(true));
+    await waitFor(() => expect((within(bar()).getByRole('button', { name: /Fai il render del video di/ }) as HTMLButtonElement).disabled).toBe(false));
+  });
+
+  it('no toast when another format is on screen by the time the start fails', async () => {
+    __resetToasts();
+    let fail!: (e: Error) => void;
+    api.renderVersion.mockImplementationOnce(() => new Promise((_res, rej) => { fail = rej; }));
+    detail = makeDetail([comp(1)]);
+    const { rerender } = render(<Harness format={VIDEO} />);
+    await pill('Anteprima dal vivo');
+    await userEvent.click(within(bar()).getByRole('button', { name: /Fai il render del video di/ }));
+    // The user moves to another format (the status goes away) before the start fails.
+    rerender(<Harness format={IMAGE} />);
+    await waitFor(() => expect(bar().querySelector('.ms-fv-render')).toBeNull());
+    await act(async () => { fail(new Error('tardi')); });
+    expect(getToasts().some((x) => x.text.includes('tardi'))).toBe(false);
+  });
+
+  it('size unknown (HEAD gives null or fails): plain "Video pronto"', async () => {
+    api.fileBytes.mockResolvedValueOnce(null);
+    detail = makeDetail([comp(1, H1, H1)]);
+    render(<Harness format={VIDEO} />);
+    await pill('Video pronto');
+    await waitFor(() => expect(api.fileBytes).toHaveBeenCalled());
+    expect(within(bar()).queryByText(/MB/)).toBeNull();
+  });
+
+  it('the announcement is "Video pronto" without the size; the size is only visual', async () => {
+    detail = makeDetail([comp(1, H1, H1)]);
+    render(<Harness format={VIDEO} />);
+    await pill('Video pronto · 12,4 MB');
+    expect((bar().querySelector('.ms-fv-render [role="status"]') as HTMLElement).textContent).toBe('Video pronto');
+  });
+
+  it('a legacy version (no composition) has no status', async () => {
+    detail = makeDetail([version(1)]);
+    render(<Harness format={VIDEO} />);
+    await screen.findByLabelText('TikTok · Video 9:16 v1', { selector: 'video' });
+    expect(bar().querySelector('.ms-fv-render')).toBeNull();
+  });
+
+  it('an image format has no video status', async () => {
+    detail = makeDetail([comp(1)]);
+    render(<Harness format={IMAGE} />);
+    await waitFor(() => expect(document.querySelector('.ms-cv-export')).not.toBeNull());
+    expect(bar().querySelector('.ms-fv-render')).toBeNull();
   });
 });

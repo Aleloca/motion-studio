@@ -383,9 +383,40 @@ describe('scenes column', () => {
     await waitFor(() => expect(document.querySelector('img[src="https://sb.example/intro.jpg"]')).not.toBeNull());
     expect(document.querySelector('img[src="https://sb.example/photo.jpg"]')).not.toBeNull();
     const photo = document.querySelector('[data-scene="photo"]') as HTMLElement;
-    expect(within(photo).getByText('2 s')).toBeTruthy();
+    expect(within(photo).getByText('00:02.00 · 2 s')).toBeTruthy();
     fireEvent.click(within(photo).getByRole('button', { name: /Foto, at/ }));
     expect(controls.seek).toHaveBeenCalledWith(2);
+  });
+
+  it('the cards never wait for the storyboard: a skeleton while it loads, a placeholder for a scene it has no frame of', async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    // Its own answer (afterEach's restoreAllMocks drops the mock's default implementation after the first test).
+    api.getStoryboard.mockImplementationOnce(async () => {
+      await gate;
+      return { format: REEL, hash: 'h', width: 320, expiresAt: '2099-01-01T00:00:00.000Z', frames: [
+        { t: 0.5, kind: 'scene', scene: 'intro', width: 90, height: 160, url: 'https://sb.example/intro.jpg' },
+        { t: 2.5, kind: 'scene', scene: 'photo', width: 90, height: 160, url: 'https://sb.example/photo.jpg' },
+      ] };
+    });
+    await mountScenes();
+    const thumbs = () => [...document.querySelectorAll('.ms-sc-card [data-thumb]')].map((x) => x.getAttribute('data-thumb'));
+    expect(names()).toEqual(['intro', 'photo', 'outro']);
+    expect(thumbs()).toEqual(['loading', 'loading', 'loading']);
+    await act(async () => { release(); });
+    // The storyboard has no frame of `outro`: its card keeps a placeholder.
+    await waitFor(() => expect(thumbs()).toEqual(['frame', 'frame', 'none']));
+  });
+
+  it('a composition without scenes has one "Whole video" card: a click goes to the start, nothing to reorder', async () => {
+    const none = structuredClone(spike);
+    none.scenes = [];
+    render(<Harness comp={none} initial={null}><ScenesColumn /></Harness>);
+    const list = await screen.findByRole('list', { name: 'Scenes of this composition' });
+    const row = within(list).getByRole('button', { name: /^Whole video, at/ });
+    expect(within(list).queryByRole('button', { name: /^Reorder/ })).toBeNull();
+    fireEvent.click(row);
+    expect(controls.seek).toHaveBeenCalledWith(0);
   });
 
   it('"In this scene" lists the clips overlapping the scene under the playhead; a click selects', async () => {

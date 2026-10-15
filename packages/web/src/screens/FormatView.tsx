@@ -11,7 +11,7 @@
 // (Transport.tsx, shared with Compare), the comment layer and the hint read, so the page (bar, chat) does not
 // re-render while the video plays.
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
-import { channelName, isDurationOffBrief, pinClipName, DEFAULT_EXPORT_NAME_PATTERN, DEFAULT_FORMATS, type Composition, type FormatPreset, type Pin, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
+import { channelName, isDurationOffBrief, pinClipName, DEFAULT_EXPORT_NAME_PATTERN, DEFAULT_FORMATS, type Composition, type FormatPreset, type Pin, type StoryboardView, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import {
   useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type CSSProperties, type MouseEvent,
@@ -19,7 +19,8 @@ import {
 import { createPortal } from 'react-dom';
 import { api } from '../api.ts';
 import { CompositionPlayer, type CompositionMedia } from '../components/CompositionPlayer.tsx';
-import { posterOf, usePreviewSession, useStoryboard } from '../components/compositionPreview.ts';
+import { posterOf, usePreviewSession, useStoryboard, type StoryboardState } from '../components/compositionPreview.ts';
+import { frameFor, rowAt, sceneRows, SceneThumb } from '../components/SceneThumb.tsx';
 import { Conversation } from '../components/Conversation.tsx';
 import type { EventsState } from '../eventsReducer.ts';
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
@@ -44,6 +45,7 @@ import { LocaleOutline, LocaleSwitcher } from './creative/LocaleSwitcher.tsx';
 import { localePreviewSource, useLocalePreview } from './creative/useLocalePreview.ts';
 import { RangeDialog } from './editor/RangeDialog.tsx';
 import { clipLabel, clipPin, clipsAt, rangePin, rangeTimes } from './pinModel.ts';
+import { RenderStatus } from './RenderStatus.tsx';
 import { FollowerChip, FormatBadge, useNewVersionNotice, useVersionActions, VersionTimeline } from './FormatVersions.tsx';
 import { boardSource, entryAt, followersOf, formatStates, isRendering, renderingOf, shownOf, type FormatState } from './versionModel.ts';
 import { compositionOf } from './renderModel.ts';
@@ -164,20 +166,29 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   const pins = useMemo(() => sourcePins.map((p) => p.pin), [sourcePins]);
   const marks = useMemo<Mark[]>(() => pins.map((pin, i) => ({ pin, number: i + 1 })).filter((m) => m.pin.format === format), [pins, format]);
   const [draft, setDraft] = useState<FDraft | null>(null);
+  /** A band is shown on the transport: the comment hint, which can sit over its Comment bubble, steps aside. */
+  const [bandShown, setBandShown] = useState(false);
   useEffect(() => { if (!canComment) setDraft(null); }, [canComment]);
   useEffect(() => { setDraft(null); }, [pinSource]);
 
-  // The composition's clips (Phase 10b): the picker of "Comment on clip" lists those playing at the playhead. A version without
-  // an editable composition (a legacy one) simply has no picker.
-  const clipsOf = livePlayer && canComment && version ? version.n : null;
-  const [clipComp, setClipComp] = useState<Composition | null>(null);
+  // The version's composition (Phase 10b; UX feedback 1, Task 2): the Scenes column lists its scenes at once (the storyboard's
+  // thumbnails fill in later), and the picker of "Comment on clip" lists the clips playing at the playhead (on the pin source
+  // only). A version without an editable composition (a legacy one) simply has neither.
+  const compOf = livePlayer && version ? version.n : null;
+  // Keyed by what it was read for: another version (or format) shows nothing of the previous one, from its first render.
+  const compKey = compOf === null ? null : `${slug}/${creative}/${compOf}/${source.format}`;
+  const [readComp, setReadComp] = useState<{ key: string; comp: Composition | 'failed' } | null>(null);
   useEffect(() => {
-    setClipComp(null);
-    if (clipsOf === null) return;
+    if (compOf === null || compKey === null) return;
     let alive = true;
-    Promise.resolve().then(() => api.getEditorComposition(slug, creative, clipsOf, source.format)).then((v) => { if (alive) setClipComp(v.composition); }).catch(() => {});
+    Promise.resolve().then(() => api.getEditorComposition(slug, creative, compOf, source.format)).then(
+      (v) => { if (alive) setReadComp({ key: compKey, comp: v.composition }); },
+      () => { if (alive) setReadComp({ key: compKey, comp: 'failed' }); });
     return () => { alive = false; };
-  }, [slug, creative, clipsOf, source.format]);
+  }, [slug, creative, compOf, source.format, compKey]);
+  const viewComp = readComp && readComp.key === compKey ? readComp.comp : null;
+  const loadedComp = viewComp === 'failed' ? null : viewComp;
+  const clipComp = canComment ? loadedComp : null;
 
   // Playback (video). jsdom and some codecs never fire `play`: the state follows the call and the media events.
   const [clock] = useState(createClock);
@@ -487,7 +498,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
     );
   }
 
-  const backButton = <Button className="ms-back" onClick={back}><Icon name="back" size={16} strokeWidth={1.5} />{t.web.shell.backAllFormats}</Button>;
+  const backButton = <Button className="ms-back ms-fold-3" aria-label={t.web.shell.backAllFormats} title={t.web.shell.backAllFormats} onClick={back}><Icon name="back" size={16} strokeWidth={1.5} /><span className="ms-bar-label">{t.web.shell.backAllFormats}</span></Button>;
   if (!loading && !known) {
     return (
       <div ref={root} className="ms-cv-state">
@@ -552,15 +563,18 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
           {versions.length && cr ? (
             <VersionTimeline slug={slug} creative={creative} versions={versions} resumeFrom={cr.resumeFrom?.version ?? null} actions={actions} buttonRef={versionButton} />
           ) : null}
+          {video && cr && detail ? (
+            <RenderStatus slug={slug} creative={creative} version={version} format={source.format} label={label} jobs={Object.values(live.jobs)} jobKey={detail.jobKey} busy={working} />
+          ) : null}
           <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} />
           {comp !== null && !working ? (
-            <Button variant="outline" className="ms-fv-duplicate" title={t.web.instances.duplicateHint({ label })} loading={duplicating} onClick={() => void duplicate()}>
-              <Icon name="copy" size={13} strokeWidth={1.7} />{t.web.instances.duplicate}
+            <Button variant="outline" className="ms-fv-duplicate ms-fold-2" aria-label={t.web.instances.duplicate} title={t.web.instances.duplicateHint({ label })} loading={duplicating} onClick={() => void duplicate()}>
+              <Icon name="copy" size={13} strokeWidth={1.7} /><span className="ms-bar-label">{t.web.instances.duplicate}</span>
             </Button>
           ) : null}
           {comp !== null && !working && preview.state.kind !== 'legacy' ? (
-            <Button variant="outline" className="ms-cv-edit" aria-label={t.web.editor.editOf({ label })} onClick={openEditor}>
-              <Icon name="edit" size={13} strokeWidth={1.7} />{t.web.editor.edit}
+            <Button variant="outline" className="ms-cv-edit ms-fold-2" aria-label={t.web.editor.editOf({ label })} title={t.web.editor.edit} onClick={openEditor}>
+              <Icon name="edit" size={13} strokeWidth={1.7} /><span className="ms-bar-label">{t.web.editor.edit}</span>
             </Button>
           ) : null}
           <Button variant="ink" className="ms-cv-export" disabled={!latest} onClick={() => { if (latest) setExporting({ open: true, snapshot: { versions, states } }); }}>
@@ -574,7 +588,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
         <aside className="ms-fv-side ms-fv-scenes" aria-label={f.scenes} data-part="l">
           <div className="ms-fv-side-head"><b>{f.scenes}</b>{duration ? <span>{c.seconds({ n: formatNumber(locale, duration, { maximumFractionDigits: 1 }) })}</span> : null}</div>
           {livePlayer ? (
-            <Storyboard frames={storyboard?.frames.filter((x) => x.kind === 'scene') ?? []} state={storyboardState} clock={clock}
+            <Storyboard comp={viewComp} storyboard={storyboard} state={storyboardState} clock={clock}
               onSeek={(time) => { if (playing) pause(); seek(time); }} disabled={!ready} />
           ) : (
             <div className="ms-fv-soon">
@@ -660,11 +674,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
             ) : null}
           </div>
         </section>
-        {canComment && ready && !draft && (!video || !playing) ? <CommentHint clock={clock} video={video} /> : null}
-        {video && canComment && ready && clipComp ? <ClipPicker clock={clock} comp={clipComp} onPick={commentClip} /> : null}
-        {video && canComment && ready && duration > 0 ? (
-          <Button size="sm" variant="outline" className="ms-fv-rangebtn" aria-keyshortcuts="R" disabled={draft !== null} onClick={() => { if (playing) pause(); setRangeOpen(true); }}><Icon name="comment" size={13} />{t.web.conversation.rangeComment}</Button>
-        ) : null}
+        {canComment && ready && !draft && !bandShown && (!video || !playing) ? <CommentHint clock={clock} video={video} /> : null}
         {rangeOpen ? <RangeDialog open playhead={media.current?.currentTime ?? clock.get().time} duration={duration} onSubmit={(r) => { setRangeOpen(false); commentRange(r); }} onCancel={() => setRangeOpen(false)} /> : null}
         {lock ? <div className="ms-cv-hint ms-lock ms-fv-hint" id="ms-fv-comment-lock" role="status">{c.versions.commentsOn({ n: pinSource })}</div> : null}
         {preset?.safeZone && (out || livePlayer) ? (
@@ -682,7 +692,16 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
         ) : null}
         {livePlayer && cr ? <LocaleSwitcher brief={cr.brief} preview={localePreview} className="ms-fv-locales" /> : null}
         {video ? (
-          <Transport clock={clock} duration={duration} playing={playing} disabled={!ready} marks={canComment ? marks : []} onRange={canComment ? commentRange : undefined} hint={canComment ? f.keys : f.keysLocked}
+          <Transport clock={clock} duration={duration} playing={playing} disabled={!ready} marks={canComment ? marks : []} onRange={canComment ? commentRange : undefined} onBand={setBandShown} blocked={rangeOpen || draft !== null} hint={canComment ? f.keys : f.keysLocked}
+            extra={canComment && ready ? (
+              <>
+                {clipComp ? <ClipPicker clock={clock} comp={clipComp} onPick={commentClip} /> : null}
+                {duration > 0 ? (
+                  <Button size="sm" variant="outline" icon className="ms-fv-rangebtn" aria-label={t.web.conversation.rangeComment} title={t.web.conversation.rangeTip({ keys: 'R' })} aria-keyshortcuts="R" disabled={draft !== null}
+                    onClick={() => { if (playing) pause(); setRangeOpen(true); }}><Icon name="comment" size={13} /></Button>
+                ) : null}
+              </>
+            ) : undefined}
             onToggle={toggle} onStep={stepFrame} onSeek={seek} onPause={pause} onResume={play}
             loop={loop} onLoop={setLoop} speed={rate} onSpeed={setRate} />
         ) : null}
@@ -743,7 +762,7 @@ function ClipPicker({ clock, comp, onPick }: { clock: Clock; comp: Composition; 
   const clips = clipsAt(comp, settled);
   return (
     <span className="ms-fv-clippick" data-part="clip-picker">
-      <Select<string> variant="pill" label={cv.clipPick} value="" display={clips.length ? cv.clipPick : cv.clipPickNone} disabled={clips.length === 0}
+      <Select<string> variant="pill" icon="comment" label={cv.clipPick} value="" display={clips.length ? cv.clipPick : cv.clipPickNone} disabled={clips.length === 0}
         options={[{ value: '', label: cv.clipPick, disabled: true }, ...[...clips].reverse().map((x) => ({ value: x.id, label: clipLabel(x) }))]}
         onChange={(id) => { if (id) onPick(id); }} />
     </span>
@@ -757,33 +776,37 @@ function CommentHint({ clock, video }: { clock: Clock; video: boolean }) {
 }
 
 /**
- * The storyboard strip of a v2 version (Task 8): one frame per scene start, in time order; a click seeks there. The scene
- * the playhead is in is marked.
+ * The Scenes column of a v2 version (Task 8; UX feedback 1, Task 2): one row per scene of the composition, in time order (a
+ * composition without scenes: one "Whole video" row), built from the composition at once; a click seeks there and the
+ * scene the playhead is in is marked. The storyboard's thumbnails fill the rows in when they arrive (a skeleton until then,
+ * a placeholder when there is none): the list never waits for them.
  */
-function Storyboard({ frames, state, clock, onSeek, disabled }: {
-  frames: Array<{ t: number; scene?: string; url: string; width: number; height: number }>; state: string; clock: Clock; onSeek(t: number): void; disabled: boolean;
+function Storyboard({ comp, storyboard, state, clock, onSeek, disabled }: {
+  comp: Composition | 'failed' | null; storyboard: StoryboardView | null; state: StoryboardState; clock: Clock; onSeek(t: number): void; disabled: boolean;
 }) {
   const t = useT();
   const r = t.web.render;
+  const locale = useLocale();
   const { time } = useClock(clock);
-  if (!frames.length) {
-    return <p className="ms-fv-sb-note" role="status">{state === 'loading' || state === 'busy' ? r.storyboardLoading : r.storyboardNone}</p>;
-  }
-  const current = frames.reduce((at, f, i) => (f.t <= time + 1e-6 ? i : at), 0);
+  const rows = useMemo(() => (comp && comp !== 'failed' ? sceneRows(comp, r) : []), [comp, r]);
+  if (comp === null) return <p className="ms-fv-sb-note" role="status">{r.scenesLoading}</p>;
+  if (comp === 'failed') return <p className="ms-fv-sb-note" role="status">{r.scenesUnavailable}</p>;
+  const current = rowAt(rows, time);
+  const waiting = state === 'loading' || state === 'busy';
   return (
-    <ol className="ms-fv-sb" aria-label={r.storyboard}>
-      {frames.map((f, i) => {
-        const name = f.scene ?? r.scene({ n: i + 1 });
-        return (
-          <li key={`${f.t}-${i}`}>
+    <>
+      <ol className="ms-fv-sb" aria-label={r.storyboard}>
+        {rows.map((row, i) => (
+          <li key={row.id ?? 'whole'}>
             <button type="button" className={cx('ms-fv-sb-item', i === current && 'ms-on')} aria-current={i === current || undefined} disabled={disabled}
-              aria-label={r.sceneAt({ name, time: timecode(f.t) })} onClick={() => onSeek(f.t)}>
-              <img src={f.url} alt="" draggable={false} style={{ aspectRatio: `${f.width} / ${f.height}` }} />
-              <span className="ms-fv-sb-text"><b>{name}</b><span>{timecode(f.t)}</span></span>
+              aria-label={r.sceneAt({ name: row.name, time: timecode(row.start) })} onClick={() => onSeek(row.start)}>
+              <SceneThumb frame={frameFor(storyboard, row)} state={state} width={comp.width} height={comp.height} />
+              <span className="ms-fv-sb-text"><b>{row.name}</b><span>{timecode(row.start)} · {t.web.editor.sceneLength({ seconds: formatNumber(locale, row.duration, { maximumFractionDigits: 2 }) })}</span></span>
             </button>
           </li>
-        );
-      })}
-    </ol>
+        ))}
+      </ol>
+      <span className="ms-sr" role="status" aria-live="polite">{waiting ? r.storyboardLoading : ''}</span>
+    </>
   );
 }

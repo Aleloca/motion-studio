@@ -516,25 +516,229 @@ describe('the format view', () => {
     expect((screen.getByRole('button', { name: 'Comment on range' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it('Shift + drag on the transport makes a range comment with a span; a plain drag only seeks', async () => {
-    render(<Page kind="format" />);
-    await ready();
+  const dragBand = (from: number, to: number, opts: { ruler?: boolean; shift?: boolean } = {}) => {
     const scrub = document.querySelector('.ms-fv-scrub') as HTMLElement;
     stubRect(scrub);
-    fireEvent.pointerDown(scrub, { clientX: 100, pointerId: 1, button: 0, shiftKey: true });
-    fireEvent.pointerMove(scrub, { clientX: 350, pointerId: 1, shiftKey: true });
+    const target = opts.ruler ? (scrub.querySelector('.ms-fv-ruler') as HTMLElement) : scrub;
+    const sh = { shiftKey: Boolean(opts.shift) };
+    fireEvent.pointerDown(target, { clientX: from, pointerId: 1, button: 0, ...sh });
+    fireEvent.pointerMove(scrub, { clientX: to, pointerId: 1, ...sh });
+    return { scrub, release: () => fireEvent.pointerUp(scrub, { clientX: to, pointerId: 1, ...sh }) };
+  };
+
+  it('dragging on the ruler picks a band with its timecodes; releasing opens a Comment bubble that starts the usual comment', async () => {
+    render(<Page kind="format" />);
+    await ready();
+    expect(screen.queryByRole('button', { name: 'Comment on range' })?.textContent).toBe('');
+    const { release } = dragBand(100, 350, { ruler: true });
     expect(document.querySelector('.ms-fv-span.ms-picking')).not.toBeNull();
-    fireEvent.pointerUp(scrub, { clientX: 350, pointerId: 1, shiftKey: true });
+    expect(document.querySelector('.ms-fv-rangetc')?.textContent).toBe('00:01.00 – 00:03.50');
+    expect(media.currentTime).toBe(0);
+    release();
+    const pick = await screen.findByRole('group', { name: 'Range selection' });
+    expect(within(pick).getByText('00:01.00 – 00:03.50')).toBeTruthy();
+    expect(document.activeElement).toBe(within(pick).getByRole('button', { name: 'Comment' }));
+    expect(document.querySelector('.ms-fv-span.ms-picking')).not.toBeNull();
+    await userEvent.keyboard('{Enter}');
     const bubble = await screen.findByRole('group', { name: /Comment 1/ });
+    expect(screen.queryByRole('group', { name: 'Range selection' })).toBeNull();
     expect(within(bubble).getByText('Comment on 1.0–3.5 s')).toBeTruthy();
     await userEvent.type(within(bubble).getByRole('textbox'), 'ritmo');
     await userEvent.click(within(bubble).getByRole('button', { name: 'Comment' }));
+    // The range crosses the scene boundary at 2 s and keeps the exact start and end.
     expect(pending()[0]!.pin).toMatchObject({ timeSec: 1, range: { start: 1, end: 3.5 }, note: 'ritmo' });
+    expect(Object.keys(pending()[0]!.pin.range!).sort()).toEqual(['end', 'start']);
     const span = await screen.findByRole('img', { name: 'Comment on 1.0–3.5 s: ritmo' });
     expect(span.style.left).toBeTruthy();
-    // The marker on the picture shows through the whole range.
     media.currentTime = 3;
     media.emit('timeupdate');
     await waitFor(() => expect(document.querySelector('.ms-cv-pin')).not.toBeNull());
+  });
+
+  it('Shift + drag on the track picks the same band; a backwards drag keeps the order; two scenes are crossed with the exact ends', async () => {
+    render(<Page kind="format" />);
+    await ready();
+    dragBand(450, 150, { shift: true }).release();
+    await screen.findByRole('group', { name: 'Range selection' });
+    await userEvent.click(screen.getByRole('button', { name: 'Comment' }));
+    const bubble = await screen.findByRole('group', { name: /Comment 1/ });
+    expect(within(bubble).getByText('Comment on 1.5–4.5 s')).toBeTruthy();
+    await userEvent.type(within(bubble).getByRole('textbox'), 'due scene');
+    await userEvent.click(within(bubble).getByRole('button', { name: 'Comment' }));
+    expect(pending()[0]!.pin).toMatchObject({ timeSec: 1.5, range: { start: 1.5, end: 4.5 } });
+  });
+
+  it('Esc cancels the band, while dragging and after releasing; nothing is commented', async () => {
+    render(<Page kind="format" />);
+    await ready();
+    const first = dragBand(100, 300, { ruler: true });
+    key({ key: 'Escape' });
+    expect(document.querySelector('.ms-fv-span.ms-picking')).toBeNull();
+    first.release();
+    expect(screen.queryByRole('group', { name: 'Range selection' })).toBeNull();
+    dragBand(100, 300, { ruler: true }).release();
+    await screen.findByRole('group', { name: 'Range selection' });
+    key({ key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'Range selection' })).toBeNull());
+    expect(document.querySelector('.ms-fv-span.ms-picking')).toBeNull();
+    expect(screen.queryByRole('group', { name: /Comment 1/ })).toBeNull();
+    expect(pending()).toHaveLength(0);
+  });
+
+  it('a range under two frames is ignored, a short press on the ruler seeks, a plain drag on the track seeks', async () => {
+    render(<Page kind="format" />);
+    await ready();
+    // 100 px per second: 5 px is 0.05 s, under MIN_RANGE (0.1 s).
+    dragBand(100, 105, { ruler: true }).release();
+    expect(screen.queryByRole('group', { name: 'Range selection' })).toBeNull();
+    expect(document.querySelector('.ms-fv-span.ms-picking')).toBeNull();
+    // A drag of 3 px or more that is too short for a range falls back to a seek, like a click.
+    expect(media.currentTime).toBeCloseTo(1.05, 2);
+    dragBand(100, 105, { shift: true }).release();
+    expect(screen.queryByRole('group', { name: 'Range selection' })).toBeNull();
+    const scrub = document.querySelector('.ms-fv-scrub') as HTMLElement;
+    const ruler = scrub.querySelector('.ms-fv-ruler') as HTMLElement;
+    fireEvent.pointerDown(ruler, { clientX: 200, pointerId: 1, button: 0 });
+    fireEvent.pointerUp(scrub, { clientX: 201, pointerId: 1 });
+    expect(media.currentTime).toBeCloseTo(2, 1);
+    fireEvent.pointerDown(scrub, { clientX: 300, pointerId: 1, button: 0 });
+    fireEvent.pointerMove(scrub, { clientX: 400, pointerId: 1 });
+    fireEvent.pointerUp(scrub, { clientX: 400, pointerId: 1 });
+    expect(media.currentTime).toBeCloseTo(4, 1);
+    expect(screen.queryByRole('group', { name: 'Range selection' })).toBeNull();
+    expect(pending()).toHaveLength(0);
+  });
+
+  it('Esc after the bubble opened returns the focus to the position slider', async () => {
+    render(<Page kind="format" />);
+    await ready();
+    dragBand(100, 300, { ruler: true }).release();
+    const pick = await screen.findByRole('group', { name: 'Range selection' });
+    expect(document.activeElement).toBe(within(pick).getByRole('button', { name: 'Comment' }));
+    key({ key: 'Escape' }, document.activeElement as Element);
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'Range selection' })).toBeNull());
+    expect(document.activeElement).toBe(document.querySelector('.ms-fv-scrub'));
+  });
+
+  it('R with a band selected leaves the dialog alone: no band, no bubble; Esc in the dialog closes it', async () => {
+    render(<Page kind="format" />);
+    await ready();
+    dragBand(100, 300, { ruler: true }).release();
+    await screen.findByRole('group', { name: 'Range selection' });
+    key({ key: 'r' });
+    const d = await dialog();
+    expect(screen.queryByRole('group', { name: 'Range selection' })).toBeNull();
+    expect(document.querySelector('.ms-fv-span.ms-picking')).toBeNull();
+    key({ key: 'Escape' }, d);
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.queryByRole('group', { name: 'Range selection' })).toBeNull();
+    expect(document.querySelector('.ms-fv-span.ms-picking')).toBeNull();
+  });
+
+  it('Esc typed in a text field or a dialog does not drop the band; a comment draft clears it', async () => {
+    render(<Page kind="format" />);
+    await ready();
+    dragBand(100, 300, { ruler: true }).release();
+    await screen.findByRole('group', { name: 'Range selection' });
+    const field = document.createElement('input');
+    document.body.appendChild(field);
+    key({ key: 'Escape' }, field);
+    const dlg = document.createElement('div');
+    dlg.setAttribute('role', 'dialog');
+    document.body.appendChild(dlg);
+    key({ key: 'Escape' }, dlg);
+    const handled = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    handled.preventDefault();
+    window.dispatchEvent(handled);
+    expect(screen.queryByRole('group', { name: 'Range selection' })).not.toBeNull();
+    field.remove(); dlg.remove();
+    // A draft started elsewhere (a clip comment) takes the band away.
+    media.currentTime = 1;
+    media.emit('timeupdate');
+    await userEvent.click(await screen.findByRole('button', { name: /Comment on a clip/ }));
+    await userEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'title' }));
+    await screen.findByRole('group', { name: /Comment 1/ });
+    expect(screen.queryByRole('group', { name: 'Range selection' })).toBeNull();
+  });
+
+  it('the comment hint steps aside while a band is shown, so it cannot cover the Comment bubble; it is back once the band goes', async () => {
+    render(<Page kind="format" />);
+    await ready();
+    await waitFor(() => expect(document.querySelector('.ms-fv-hint')).not.toBeNull());
+    const drag = dragBand(100, 300, { ruler: true });
+    await waitFor(() => expect(document.querySelector('.ms-fv-hint')).toBeNull());
+    drag.release();
+    await screen.findByRole('group', { name: 'Range selection' });
+    expect(document.querySelector('.ms-fv-hint')).toBeNull();
+    key({ key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'Range selection' })).toBeNull());
+    await waitFor(() => expect(document.querySelector('.ms-fv-hint')).not.toBeNull());
+  });
+
+  it('a press on the ruler or with Shift while playing pauses; a seek or a Shift press too short for a band resumes, a picked band stays paused', async () => {
+    render(<Page kind="format" />);
+    await ready();
+    const playNow = async () => {
+      await userEvent.click(document.querySelector('.ms-fv-play') as HTMLElement);
+      await waitFor(() => expect(media.paused).toBe(false));
+      media.play.mockClear(); media.pause.mockClear();
+    };
+    await playNow();
+    // A short press on the ruler: pause while pressed, seek, resume.
+    const scrub = document.querySelector('.ms-fv-scrub') as HTMLElement;
+    stubRect(scrub);
+    act(() => { fireEvent.pointerDown(scrub.querySelector('.ms-fv-ruler') as HTMLElement, { clientX: 200, pointerId: 1, button: 0 }); });
+    expect(media.pause).toHaveBeenCalledTimes(1);
+    act(() => { fireEvent.pointerUp(scrub, { clientX: 201, pointerId: 1 }); });
+    expect(media.currentTime).toBeCloseTo(2, 1);
+    await waitFor(() => expect(media.play).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(media.paused).toBe(false));
+    // A Shift press too short for a band: nothing happens and playback goes on.
+    media.play.mockClear(); media.pause.mockClear();
+    act(() => { dragBand(100, 105, { shift: true }).release(); });
+    expect(media.pause).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(media.play).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(media.paused).toBe(false));
+    // A band: paused, and it stays paused for its comment.
+    media.play.mockClear(); media.pause.mockClear();
+    act(() => { dragBand(100, 300, { ruler: true }).release(); });
+    await screen.findByRole('group', { name: 'Range selection' });
+    expect(media.pause).toHaveBeenCalledTimes(1);
+    expect(media.play).not.toHaveBeenCalled();
+    expect(media.paused).toBe(true);
+  });
+
+  it('Esc in an open kit Select (the speed list) closes the list and leaves the band alone', async () => {
+    render(<Page kind="format" />);
+    await ready();
+    dragBand(100, 300, { ruler: true }).release();
+    await screen.findByRole('group', { name: 'Range selection' });
+    await userEvent.click(document.querySelector('.ms-fv-speed') as HTMLElement);
+    const list = await screen.findByRole('listbox');
+    expect(list.closest('.ms-pop')).not.toBeNull();
+    key({ key: 'Escape' }, list);
+    await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
+    expect(screen.queryByRole('group', { name: 'Range selection' })).not.toBeNull();
+    // The kit's layer stack already claims that Esc; a popover or modal surface that does not (the same guard as keys.ts inOverlay) is left alone too.
+    for (const cls of ['ms-pop', 'ms-modal']) {
+      const el = document.createElement('div');
+      el.className = cls;
+      const inner = document.createElement('span');
+      el.appendChild(inner);
+      document.body.appendChild(el);
+      key({ key: 'Escape' }, inner);
+      el.remove();
+      expect(screen.queryByRole('group', { name: 'Range selection' }), cls).not.toBeNull();
+    }
+  });
+
+  it('the compact buttons next to the timecode: the clip picker is an icon select and the range button carries the R hint', async () => {
+    render(<Page kind="format" />);
+    await ready();
+    const range = screen.getByRole('button', { name: 'Comment on range' });
+    expect(range.getAttribute('title')).toContain('R');
+    expect(range.getAttribute('aria-keyshortcuts')).toBe('R');
+    expect(range.closest('.ms-fv-controls')).not.toBeNull();
+    expect(screen.getByRole('button', { name: /Comment on a clip/ }).closest('.ms-fv-controls')).not.toBeNull();
   });
 });

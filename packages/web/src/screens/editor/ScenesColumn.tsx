@@ -1,10 +1,12 @@
 // The editor's scenes column (Phase 10b, Task 6): a card per scene (storyboard thumbnail of the opened version, name,
-// duration), a click seeks to the scene's start, "In this scene" lists the clips that overlap the scene under the playhead
+// start and duration; the thumbnail fills in when the storyboard arrives, a composition without scenes has one "Whole video"
+// card), a click seeks to the scene's start, "In this scene" lists the clips that overlap the scene under the playhead
 // (a click selects one), and the cards reorder - by dragging the grip or with ↑ ↓ on it - through `sceneOrder` when
 // `sceneOrderAllowed` says every clip lies in one scene; otherwise the grip is disabled and says why.
 import { compositionProblem, editProblemText, sceneOrderAllowed, type Clip, type Scene } from '@motion-studio/shared';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { useStoryboard } from '../../components/compositionPreview.ts';
+import { frameFor, rowAt, sceneRows, SceneThumb } from '../../components/SceneThumb.tsx';
 import { formatNumber, useLocale, useT } from '../../i18n.tsx';
 import { Icon, cx } from '../../ui/index.ts';
 import { useClock } from '../../ui/clock.ts';
@@ -18,9 +20,9 @@ export function clipsOverlapping(tracks: Array<{ clips: Clip[] }>, scene: Scene)
   return tracks.flatMap((t) => t.clips).filter((c) => c.start < scene.start + scene.duration - EPS && c.start + c.duration > scene.start + EPS);
 }
 
-/** The scene under time `t` (the last one at the very end). */
+/** The scene the playhead is in (`scenes` in time order): the last one starting at or before `t`, else the first. */
 export function sceneAt(scenes: Scene[], t: number): Scene | undefined {
-  return scenes.find((s) => t >= s.start - EPS && t < s.start + s.duration - EPS) ?? scenes.at(-1);
+  return scenes[rowAt(scenes, t)];
 }
 
 export function ScenesColumn() {
@@ -38,14 +40,14 @@ export function ScenesColumn() {
   const blocking = allowed.ok ? null : comp.tracks.flatMap((tr) => tr.clips).find((c) => c.id === allowed.clipId);
   const reason = allowed.ok ? null : editProblemText(compositionProblem('editor.sceneOrderBlocked', { clip: blocking?.name ?? allowed.clipId }), locale);
 
-  // Thumbnails: the opened version's storyboard (edits are not rendered into it; the card follows the scene by id).
+  // Thumbnails: the opened version's storyboard (edits are not rendered into it; the card follows the scene by id). The
+  // cards never wait for it (UX feedback 1, Task 2): a skeleton per card until it arrives, a placeholder when there is none.
   const { storyboard, state } = useStoryboard({ slug, creative, n: draft.base.n, format: primary, hash: draft.base.hash, enabled: true });
-  const frameOf = (s: Scene) => {
-    const frames = storyboard?.frames ?? [];
-    return frames.find((f) => f.kind === 'scene' && (f.scene === s.id || f.scene === s.name)) ?? null;
-  };
+  const waiting = state === 'loading' || state === 'busy';
 
-  const nameOf = (s: Scene) => s.name ?? r.scene({ n: scenes.indexOf(s) + 1 });
+  // The names (a scene's own, else its number) come from the shared rows, as in the format view.
+  const rows = useMemo(() => sceneRows(comp, r), [comp, r]);
+  const nameOf = (s: Scene) => rows.find((row) => row.id === s.id)?.name ?? s.id;
   const [said, setSaid] = useState('');
   const [over, setOver] = useState<number | null>(null);
   const list = useRef<HTMLOListElement>(null);
@@ -116,18 +118,26 @@ export function ScenesColumn() {
   return (
     <div className="ms-sc">
       {scenes.length === 0 ? (
-        <p className="ms-fv-sb-note" role="status">{state === 'loading' || state === 'busy' ? r.storyboardLoading : e.scenesSoon}</p>
+        // No scenes: the whole video is the one row (a click goes to its start; nothing to reorder).
+        <ol className="ms-fv-sb ms-sc-list" aria-label={e.scenesAria}>
+          <li className="ms-sc-card ms-on" data-scene="">
+            <button type="button" className="ms-fv-sb-item ms-on" aria-current disabled={!controls.ready}
+              aria-label={r.sceneAt({ name: r.wholeVideo, time: timecode(0) })} onClick={() => controls.seek(0)}>
+              <SceneThumb frame={frameFor(storyboard, { id: null, name: r.wholeVideo })} state={state} width={comp.width} height={comp.height} />
+              <span className="ms-fv-sb-text"><b>{r.wholeVideo}</b><span>{timecode(0)} · {e.sceneLength({ seconds: formatNumber(locale, comp.duration, { maximumFractionDigits: 2 }) })}</span></span>
+            </button>
+          </li>
+        </ol>
       ) : (
         <ol ref={list} className="ms-fv-sb ms-sc-list" aria-label={e.scenesAria}>
           {scenes.map((s, i) => {
-            const f = frameOf(s);
             const name = nameOf(s);
             return (
               <li key={s.id} className={cx('ms-sc-card', over === i && 'ms-over', s.id === current?.id && 'ms-on')} data-scene={s.id}>
                 <button type="button" className={cx('ms-fv-sb-item', s.id === current?.id && 'ms-on')} aria-current={s.id === current?.id || undefined}
                   disabled={!controls.ready} aria-label={r.sceneAt({ name, time: timecode(s.start) })} onClick={() => controls.seek(s.start)}>
-                  {f ? <img src={f.url} alt="" draggable={false} style={{ aspectRatio: `${f.width} / ${f.height}` }} /> : <span className="ms-sc-thumb" aria-hidden="true" />}
-                  <span className="ms-fv-sb-text"><b>{name}</b><span>{e.sceneLength({ seconds: formatNumber(locale, s.duration, { maximumFractionDigits: 2 }) })}</span></span>
+                  <SceneThumb frame={frameFor(storyboard, { id: s.id, name })} state={state} width={comp.width} height={comp.height} />
+                  <span className="ms-fv-sb-text"><b>{name}</b><span>{timecode(s.start)} · {e.sceneLength({ seconds: formatNumber(locale, s.duration, { maximumFractionDigits: 2 }) })}</span></span>
                 </button>
                 <span className="ms-sc-grip-wrap" title={reason ?? undefined}>
                   <button type="button" className="ms-sc-grip" disabled={!allowed.ok} aria-label={e.reorderScene({ name })} title={reason ?? undefined}
@@ -139,7 +149,7 @@ export function ScenesColumn() {
         </ol>
       )}
       {reason ? <p className="ms-sc-why" role="note">{reason}</p> : null}
-      <span className="ms-sr" role="status" aria-live="polite">{said}</span>
+      <span className="ms-sr" role="status" aria-live="polite">{said || (waiting ? r.storyboardLoading : '')}</span>
       {current ? (
         <section className="ms-sc-in" aria-label={e.inThisScene}>
           <h3>{e.inThisScene}</h3>

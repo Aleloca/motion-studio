@@ -1,7 +1,7 @@
 // The video transport under a player (format view, Compare): play/pause (Space), the timecode, frame by frame (←/→,
 // 1/30 s), loop and speed (visual test point 39), and the scrub bar with a ruler and the comment markers.
 import type { Pin } from '@motion-studio/shared';
-import { useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent } from 'react';
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { useClock, type Clock } from '../ui/clock.ts';
 import { Button, Icon, Select, cx } from '../ui/index.ts';
@@ -24,6 +24,11 @@ export function timecode(s: number): string {
 }
 
 
+/** The bubble's centre (px) for a band centred at `frac` of the bar: on the band, kept 8 px inside the bar. Pure, so the Chrome layout test runs the same function. */
+export function bubbleLeft(total: number, width: number, frac: number): number {
+  return Math.min(total - 8 - width / 2, Math.max(8 + width / 2, 16 + (total - 32) * frac));
+}
+
 /** A pending comment of this format with its number among the comments that go out (the chips use the same). */
 export interface Mark { pin: Pin; number: number }
 
@@ -35,10 +40,16 @@ export interface Mark { pin: Pin; number: number }
 export const SPEEDS = ['0.5', '1', '1.5', '2'] as const;
 export type Speed = (typeof SPEEDS)[number];
 
-export function Transport({ clock, duration, playing, disabled, marks = [], onRange, hint, onToggle, onStep, onSeek, onPause, onResume, loop, onLoop, speed, onSpeed }: {
+export function Transport({ clock, duration, playing, disabled, marks = [], onRange, onBand, blocked, extra, hint, onToggle, onStep, onSeek, onPause, onResume, loop, onLoop, speed, onSpeed }: {
   clock: Clock; duration: number; playing: boolean; disabled: boolean; marks?: Mark[];
-  /** A Shift + drag on the bar ended on this range (seconds): a range comment (Phase 10b). Absent: Shift + drag scrubs. */
+  /** The band picked with a drag on the ruler (or Shift + drag on the track) was confirmed with the bubble's Comment (seconds): a range comment. Absent: no band can be picked; Shift + drag scrubs. */
   onRange?(r: { start: number; end: number }): void;
+  /** A band (being dragged, or released with its Comment bubble) is shown, or no longer: the page hides what would cover the bubble (its comment hint). */
+  onBand?(shown: boolean): void;
+  /** Another overlay (the range dialog, a comment draft) is open: a picked band is dropped and none can be started. */
+  blocked?: boolean;
+  /** Compact controls next to the timecode (the clip and range comment buttons in the format view). */
+  extra?: ReactNode;
   /** The keys line at the end of the controls. */
   hint: string;
   onToggle(): void; onStep(dir: 1 | -1): void; onSeek(t: number): void; onPause(): void; onResume(): void;
@@ -49,10 +60,32 @@ export function Transport({ clock, duration, playing, disabled, marks = [], onRa
   const locale = useLocale();
   const { time, settled } = useClock(clock);
   const track = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ resume: boolean; from?: number } | null>(null);
+  const drag = useRef<{ resume: boolean; from?: number; px?: number; ruler?: boolean } | null>(null);
   /** The range being picked with Shift + drag. */
   const [picking, setPicking] = useState<{ a: number; b: number } | null>(null);
+  /** The band picked and released: it stays, with a Comment bubble, until it is used, replaced or cancelled (Esc). */
+  const [sel, setSel] = useState<{ start: number; end: number } | null>(null);
+  const bubbleBtn = useRef<HTMLButtonElement>(null);
+  const bubbleEl = useRef<HTMLDivElement>(null);
+  const section = useRef<HTMLElement>(null);
   const cv = t.web.conversation;
+  const cancelRange = () => { drag.current = null; setPicking(null); setSel(null); };
+  useEffect(() => { if (disabled || !onRange || blocked) { setPicking(null); setSel(null); } }, [disabled, onRange, blocked]);
+  useEffect(() => {
+    if (!picking && !sel) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      // Esc belongs to a dialog or a text field when it is typed there.
+      const el = e.target instanceof Element ? e.target : null;
+      if (el?.closest('[role="dialog"], [aria-modal="true"], dialog, .ms-pop, .ms-modal, input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
+      const focusTrack = sel !== null && document.activeElement === bubbleBtn.current;
+      cancelRange();
+      if (focusTrack) track.current?.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [picking, sel]);
+  useEffect(() => { if (sel) bubbleBtn.current?.focus(); }, [sel]);
   const pct = (s: number) => (duration ? Math.min(100, Math.max(0, (s / duration) * 100)) : 0);
   const at = (clientX: number) => {
     const r = track.current?.getBoundingClientRect();
@@ -60,12 +93,17 @@ export function Transport({ clock, duration, playing, disabled, marks = [], onRa
     return Math.min(duration, Math.max(0, ((clientX - r.left) / r.width) * duration));
   };
   const down = (e: PointerEvent<HTMLDivElement>) => {
-    if (disabled || e.button !== 0) return;
+    if (disabled || blocked || e.button !== 0) return;
     e.currentTarget.setPointerCapture?.(e.pointerId);
-    if (e.shiftKey && onRange) {
+    setSel(null);
+    // A drag on the ruler, or Shift + drag anywhere on the bar, picks a band; a short press on the ruler still seeks.
+    const ruler = Boolean((e.target as Element).closest?.('.ms-fv-ruler'));
+    if (onRange && (e.shiftKey || ruler)) {
       const a = at(e.clientX);
       if (a === null) return;
-      drag.current = { resume: false, from: a };
+      // Like the scrub: playback pauses while the press lasts (it resumes unless a band is picked).
+      drag.current = { resume: playing, from: a, px: e.clientX, ruler: ruler && !e.shiftKey };
+      if (playing) onPause();
       setPicking({ a, b: a });
       return;
     }
@@ -86,7 +124,12 @@ export function Transport({ clock, duration, playing, disabled, marks = [], onRa
     if (d?.from !== undefined) {
       const b = e.type === 'pointerup' ? at(e.clientX) ?? d.from : d.from;
       setPicking(null);
-      if (e.type === 'pointerup' && Math.abs(b - d.from) >= MIN_RANGE) onRange?.({ start: Math.min(b, d.from), end: Math.max(b, d.from) });
+      if (e.type !== 'pointerup') { if (d.resume) onResume(); return; }
+      // A press, or a drag too short to be a range, on the ruler seeks like a click.
+      if (d.ruler && (Math.abs(e.clientX - (d.px ?? e.clientX)) < 3 || Math.abs(b - d.from) < MIN_RANGE)) { onSeek(b); if (d.resume) onResume(); return; }
+      // A band stays paused, for its comment; a Shift press too short for a band changes nothing and playback goes on.
+      if (Math.abs(b - d.from) >= MIN_RANGE) setSel({ start: Math.min(b, d.from), end: Math.max(b, d.from) });
+      else if (d.resume) onResume();
       return;
     }
     if (d?.resume) onResume();
@@ -97,11 +140,30 @@ export function Transport({ clock, duration, playing, disabled, marks = [], onRa
     if (e.key === 'End') { e.preventDefault(); onSeek(duration); }
     if (e.key === 'PageUp' || e.key === 'PageDown') { e.preventDefault(); onSeek(clock.get().time + (e.key === 'PageUp' ? 1 : -1)); }
   };
+  /** The band shown: the one being dragged, else the released one. */
+  const bandKey = picking ? `${picking.a}:${picking.b}` : sel ? `${sel.start}:${sel.end}` : '';
+  const band = picking ? { start: Math.min(picking.a, picking.b), end: Math.max(picking.a, picking.b) } : sel;
+  const bandShown = band !== null;
+  const onBandRef = useRef(onBand);
+  onBandRef.current = onBand;
+  useEffect(() => {
+    if (!bandShown) return;
+    onBandRef.current?.(true);
+    return () => onBandRef.current?.(false);
+  }, [bandShown]);
+  // The bubble is centred on the band and kept inside the bar, whatever its width.
+  useLayoutEffect(() => {
+    const el = bubbleEl.current; const sec = section.current;
+    if (!el || !sec || !band) return;
+    const w = el.offsetWidth; const total = sec.clientWidth;
+    if (!w || !total) return;
+    el.style.left = `${bubbleLeft(total, w, pct((band.start + band.end) / 2) / 100)}px`;
+  }, [bandKey, sel !== null]); // eslint-disable-line react-hooks/exhaustive-deps
   // Ruler: at most ~10 labels; the last one would be cut by the end of the bar.
   const every = [1, 2, 5, 10, 15, 30, 60, 120, 300].find((s) => duration / s <= 10) ?? 600;
   const ticks = duration ? Array.from({ length: Math.floor(duration / every + 1e-6) + 1 }, (_, i) => i * every).filter((s) => s / duration <= 0.94) : [];
   return (
-    <section className="ms-fv-transport" aria-label={f.transport} data-part="b">
+    <section ref={section} className={cx('ms-fv-transport', bandShown && 'ms-banded')} aria-label={f.transport} data-part="b">
       <div className="ms-fv-controls">
         <button type="button" className="ms-fv-play" aria-label={playing ? f.pause : f.play} aria-keyshortcuts="Space" disabled={disabled} onClick={onToggle}>
           <Icon name={playing ? 'pause' : 'play'} size={13} fill={!playing} strokeWidth={playing ? 2 : 1.4} />
@@ -113,6 +175,7 @@ export function Transport({ clock, duration, playing, disabled, marks = [], onRa
         <Button size="sm" variant="outline" icon className={cx('ms-fv-loop', loop && 'ms-on')} aria-label={f.loop} title={f.loop} aria-pressed={loop} onClick={() => onLoop(!loop)}><Icon name="refresh" size={13} /></Button>
         <Select className="ms-fv-speed" variant="pill" label={f.speed} value={speed} onChange={onSpeed}
           options={SPEEDS.map((v) => ({ value: v, label: f.speedValue({ n: formatNumber(locale, Number(v)) }) }))} />
+        {extra}
         <span className="ms-grow" />
         <span className="ms-fv-keys">{hint}</span>
       </div>
@@ -127,7 +190,7 @@ export function Transport({ clock, duration, playing, disabled, marks = [], onRa
           <span className="ms-fv-head" style={{ left: `${pct(time)}%` }} aria-hidden="true" />
         </div>
         <div className="ms-fv-spans">
-          {picking ? <span className="ms-fv-span ms-picking" aria-hidden="true" style={{ left: `${pct(Math.min(picking.a, picking.b))}%`, width: `${pct(Math.abs(picking.b - picking.a))}%` }} /> : null}
+          {band ? <span className="ms-fv-span ms-picking" aria-hidden="true" style={{ left: `${pct(band.start)}%`, width: `${pct(band.end - band.start)}%` }} /> : null}
           {marks.filter((m) => m.pin.range).map(({ pin, number }) => {
             const { a, b } = rangeTimes(locale, pin.range!);
             return <span key={number} className="ms-fv-span" role="img" aria-label={cv.rangeSpan({ a, b, note: pin.note ?? '' })}
@@ -143,6 +206,19 @@ export function Transport({ clock, duration, playing, disabled, marks = [], onRa
           ))}
         </div>
       </div>
+        {band ? (
+          sel ? (
+            <div ref={bubbleEl} className="ms-fv-rangebubble" role="group" aria-label={cv.rangeBubble} style={{ left: `calc(16px + (100% - 32px) * ${pct((band.start + band.end) / 2) / 100})` }}>
+              <span className="ms-fv-rangetc">{timecode(band.start)} – {timecode(band.end)}</span>
+              <Button ref={bubbleBtn} size="sm" variant="ink" onClick={() => { const r = sel; setSel(null); onRange?.(r); }}><Icon name="comment" size={12} />{cv.rangeBubbleAction}</Button>
+              <span className="ms-fv-rangeesc">{cv.rangeBubbleEsc}</span>
+            </div>
+          ) : (
+            <div ref={bubbleEl} className="ms-fv-rangebubble ms-live" aria-hidden="true" style={{ left: `calc(16px + (100% - 32px) * ${pct((band.start + band.end) / 2) / 100})` }}>
+              <span className="ms-fv-rangetc">{timecode(band.start)} – {timecode(band.end)}</span>
+            </div>
+          )
+        ) : null}
     </section>
   );
 }

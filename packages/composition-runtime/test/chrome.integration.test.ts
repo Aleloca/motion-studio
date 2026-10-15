@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { runtimeBuildOptions } from '../tsup.config.ts';
 import { sourceFrameIndex, videoSourceTime } from '../src/timing.ts';
 import { findChrome, launchChrome, Page, type Browser } from './support/chrome.ts';
-import { COMP_PATH, findFfmpeg, H, LAYER, VIDEO, W, writeFixture } from './support/fixture.ts';
+import { CLOCK_PATH, COMP_PATH, findFfmpeg, H, LAYER, VIDEO, W, writeClockFixture, writeFixture } from './support/fixture.ts';
 import { decodePng, diffRatio, meanGrey, type Image } from './support/png.ts';
 import { startCompositionServer, startUiServer, type TestServer } from './support/server.ts';
 
@@ -366,4 +366,38 @@ describe.skipIf(!chrome)('runtime in headless Chrome', () => {
       await srv.close();
     }
   }, 240_000);
+
+  // UX feedback 1, task 2b (decision 709): before, each such layer held the render until the 60 s layer timeout (63 s
+  // measured for a storyboard). The test timeout is below that timeout, so waiting it out fails the test.
+  it('render: a layer whose msReady or msSeek waits on a timer fails fast with a diagnostic, not on the 60 s layer timeout', async () => {
+    const site = join(work, 'site-clock');
+    writeClockFixture(site);
+    const srv = await startCompositionServer({ distDir: join(work, 'dist'), root: site, compPath: CLOCK_PATH });
+    const page = await browser.newPage(W, H);
+    try {
+      await page.goto(srv.pageUrl('mode=render'));
+      const info = await page.eval<{ errors: Array<{ code: string; clipId?: string; message: string }> }>('window.__ms.ready()');
+      const readyErr = info.errors.filter((e) => e.clipId === 'ready-clock');
+      expect(readyErr.map((e) => e.code)).toEqual(['layerTimeout']);
+      expect(readyErr[0]!.message).toMatch(/msReady waited .* for a timer .* render clock never fires: .*setTimeout, setInterval, Date or performance\.now/);
+      // Ruling AF: a perpetual requestAnimationFrame loop (a ticker) does not keep the watchdog off. The stall diagnostic, not
+      // the runtime's 60 s layer timeout message, proves it failed on the 5 s watchdog (the test's own limit is 40 s).
+      const rafErr = info.errors.filter((e) => e.clipId === 'raf-clock');
+      expect(rafErr.map((e) => e.code)).toEqual(['layerTimeout']);
+      expect(rafErr[0]!.message).toMatch(/msReady waited 5 s for a timer \(due in 300 ms\) that the render clock never fires/);
+      for (const t of [0.5, 1]) await page.eval(`window.__ms.seek(${t})`);
+      const errors = await page.eval<Array<{ code: string; clipId?: string; message: string }>>('window.__ms.errors');
+      // ready() shows t = 0, so the seek-clock layer is seeked three times: the first waits, the others fail at once.
+      const seeks = errors.filter((e) => e.clipId === 'seek-clock');
+      expect(seeks.map((e) => e.code)).toEqual(['layerError', 'layerError', 'layerError']);
+      expect(seeks[0]!.message).toMatch(/msSeek waited .* for a timer .* render clock never fires/);
+      for (const e of seeks.slice(1)) expect(e.message).toMatch(/msSeek not called again: msSeek waited/);
+      // The layers whose msReady failed still answer their seeks: only the seek-clock layer reports seek errors.
+      expect(errors.filter((e) => e.clipId === 'ready-clock')).toHaveLength(1);
+      expect(errors.filter((e) => e.clipId === 'raf-clock')).toHaveLength(1);
+    } finally {
+      await page.close();
+      await srv.close();
+    }
+  }, 40_000);
 });

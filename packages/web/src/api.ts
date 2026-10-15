@@ -299,4 +299,11 @@ export const api = {
   /** Starts the download the user agreed to: `sizeBytes` is the size shown to them. */
   downloadChrome: (sizeBytes: number) => request<RenderEngineStatus>('POST', '/api/render-engine/download', { consent: true, sizeBytes }),
   fileUrl: (slug: string, creative: string, rel: string) => `${c(slug, creative)}/files/${rel.split('/').map(encodeURIComponent).join('/')}`,
+  /** The size of a creative's file (a HEAD of its files URL: the record of a render has no size); null when unknown. */
+  fileBytes: async (url: string): Promise<number | null> => {
+    const res = await fetch(url, { method: 'HEAD' }).catch(() => null);
+    const raw = res?.ok ? res.headers.get('content-length') : null;
+    const n = raw === null || raw === '' ? NaN : Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  },
 };

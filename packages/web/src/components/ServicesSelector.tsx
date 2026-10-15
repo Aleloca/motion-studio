@@ -175,8 +175,8 @@ export function ServicesChip({ slug, creative, brief, busy, onSaved }: { slug: s
   return (
     <>
       <Button ref={anchor} size="sm" variant="ghost" className="ms-services-chip" aria-haspopup="dialog" aria-expanded={open}
-        aria-label={sv.chipAria({ summary })} title={busy ? sv.busy : undefined} onClick={() => setOpen((o) => !o)}>
-        <Icon name="key" size={12} /><span>{sv.chip}</span><span className="ms-services-chip-sum">{summary}</span>
+        aria-label={sv.chipAria({ summary })} title={busy ? sv.busy : `${sv.chip}: ${summary}`} onClick={() => setOpen((o) => !o)}>
+        <Icon name="key" size={12} /><span className="ms-services-chip-label">{sv.chip}</span><span className="ms-services-chip-sum">{summary}</span>
       </Button>
       <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="top-start" width={420} label={sv.title}>
         <div className="ms-services-pop">

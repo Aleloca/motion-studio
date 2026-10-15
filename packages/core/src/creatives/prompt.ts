@@ -228,7 +228,7 @@ export const COMPOSITION_SECTION = [
   '  - animations (times relative to the clip): `{ preset: fadeIn|fadeOut|slideUp|slideDown|slideLeft|slideRight|popIn|scaleIn|wipe, duration, start?, ease? }`, `{ prop, from, to, duration, start?, ease? }` or `{ prop, keyframes: [{ t: 0..1, v }], duration }`; props: opacity, x, y, scale, rotation, color, blur;',
   '  - paths are relative, under `assets/` or `layers/`, without `..`, schemes or absolute paths;',
   '  - `assets/lib/` is reserved for the files Motion Studio\'s editor adds (library assets and brand fonts the user picked): keep them and their names as they are, never put your own files there.',
-  '- html layers (`layers/*.html`) are for effects the clips cannot express: pure in time (CSS/WAAPI animations, or `window.msSeek = (t) => …` / `window.msTimeline`), signal loading with `window.msReady` (a promise), read `window.msParams`; no network, no Worker, no AudioContext, no media playing on its own.',
+  '- html layers (`layers/*.html`) are for effects the clips cannot express: pure in time (CSS/WAAPI animations, or `window.msSeek = (t) => …` / `window.msTimeline`), signal loading with `window.msReady` (a promise), read `window.msParams`; `msReady` and `msSeek` never wait on time (no setTimeout, setInterval, Date or performance.now waits: time does not pass while a frame is rendered); no network, no Worker, no AudioContext, no media playing on its own.',
   '- Minimal example (a 1080×1920, 6 s video):',
   '```json',
   '{ "$schema": "motion-studio/composition@1", "width": 1080, "height": 1920, "fps": 30, "duration": 6, "background": "#101828",',
