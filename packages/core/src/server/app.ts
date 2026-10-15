@@ -517,8 +517,6 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // before anything is created in it: the agent's protected-file rules would not match under it.
     await assertAgentFolders(null, path);
     const ws = await WorkspaceStore.open(path, deps.git);
-    // Again on the folder as opened (a link made meanwhile): nothing is persisted when it fails.
-    await assertAgentFolders(null, ws.root);
     await ws.attachSettingsHold(settingsHold);
     const settings = await ws.readSettings(); // corrupt settings → 422 before the choice is persisted
     await deps.appConfig.setWorkspacePath(path);

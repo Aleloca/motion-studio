@@ -144,6 +144,28 @@ describe('runDoctor', () => {
       rmSync(holder, { recursive: true, force: true });
     }
   });
+  it('decision 791: a home or config folder with glob characters is a warning naming the path, never a refusal', async () => {
+    const base = { exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0' };
+    const holder = mkdtempSync(join(tmpdir(), 'ms-doctor-deny-'));
+    try {
+      const clean = join(holder, 'home');
+      mkdirSync(clean);
+      expect((await runDoctor({ ...base, home: clean, configDir: join(clean, 'cfg') })).some((c) => c.id === 'agent-deny-paths')).toBe(false);
+      const badHome = join(holder, 'h (x) [y]');
+      const badConfig = join(holder, 'cfg {z}');
+      const row = (await runDoctor({ ...base, home: badHome, configDir: badConfig })).find((c) => c.id === 'agent-deny-paths');
+      expect(row).toEqual({ id: 'agent-deny-paths', label: t().doctor.denyPathsLabel, required: false, ok: false, message: t().doctor.denyPathsGlob({ paths: `${badHome}, ${badConfig}` }) });
+      expect(row!.message).toContain(badHome);
+      // A clean-named link to such a folder: its real path is named.
+      mkdirSync(badConfig);
+      symlinkSync(badConfig, join(holder, 'cfg-link'));
+      const viaLink = (await runDoctor({ ...base, home: clean, configDir: join(holder, 'cfg-link') })).find((c) => c.id === 'agent-deny-paths');
+      expect(viaLink?.message).toBe(t().doctor.denyPathsGlob({ paths: await realpath(badConfig) }));
+      expect(hasBlockingFailure(await runDoctor({ ...base, home: badHome, configDir: badConfig }))).toBe(false);
+    } finally {
+      rmSync(holder, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('billing', () => {

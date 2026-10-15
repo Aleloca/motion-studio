@@ -112,6 +112,7 @@ Prompt (each probe): call `Read` once per listed absolute path, never repeat fil
 - Finding 4: "Use as brand logo" demotes the logo already holding the chosen variant (decision 784).
 - Deviation B2: the create route now expands the concepts of a logo from scratch (decision 786).
 - Full suite: `theme.test` (tokens renamed) and the `FormatView.test` ready wait (decision 785).
+- Windows rule-escaping probe: not verified on Windows. The probes above ran on macOS only; on Windows `\` is the path separator, so the glob check skips it and checks `( ) [ ] { } * ?` in each folder name (decision 791), but whether the CLI's Read/Edit deny rules match escaped Windows paths has never been measured.
 
 ## Cost
 App runs: analysis $0.0166, favicon $0.0117, logo concepts $0.0177, the stopped job not summed. Direct probes: 21 runs, about $0.066 in total. Doctor's `claude --version`/auth checks: no model call.

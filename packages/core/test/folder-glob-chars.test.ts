@@ -8,7 +8,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, posix, win32 } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { JobSummary, StorePack } from '@motion-studio/shared';
@@ -19,7 +19,7 @@ import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { Git } from '../src/git.ts';
 import { t } from '../src/i18n.ts';
 import { buildServer } from '../src/server/app.ts';
-import { assertAgentFolders, folderWithGlobChars } from '../src/workspace-store.ts';
+import { assertAgentFolders, folderWithGlobChars, pathHasGlobChars } from '../src/workspace-store.ts';
 import { H, TOKEN, UI_ORIGIN, startInstanceEnv, type InstanceEnv } from './helpers/instance-server.ts';
 
 const GLOB_NAME = 'p (x) [y]';
@@ -43,6 +43,19 @@ describe('folderWithGlobChars / assertAgentFolders', () => {
     for (const c of ['(', ')', '[', ']', '{', '}', '*', '?', '\\']) expect(await folderWithGlobChars([join(base, `a${c}b`)])).not.toBeNull();
     await expect(assertAgentFolders(join(base, 'clean-link', 'acme'))).rejects.toMatchObject({ apiCode: 'folder-glob-chars', status: 400, message: message(real) });
     await expect(assertAgentFolders(join(base, 'plain', 'acme'))).resolves.toBeUndefined();
+  });
+});
+
+describe('pathHasGlobChars per platform (decision 791)', () => {
+  it('POSIX: the whole set, backslash included', () => {
+    expect(pathHasGlobChars('/Users/a/proj', posix)).toBe(false);
+    for (const c of ['(', ')', '[', ']', '{', '}', '*', '?', '\\']) expect(pathHasGlobChars(`/Users/a/p${c}q`, posix), c).toBe(true);
+  });
+  it('Windows (path.win32): separators, the drive colon and the UNC and device prefixes are syntax; names are checked', () => {
+    const clean = ['C:\\Users\\a\\proj', 'C:/Users/a/proj', 'D:\\', '\\\\server\\share\\proj', '\\\\server\\share\\a\\b', '\\\\?\\C:\\Users\\a\\proj', '\\\\.\\C:\\x', '\\\\?\\UNC\\server\\share\\proj'];
+    for (const p of clean) expect(pathHasGlobChars(p, win32), p).toBe(false);
+    const bad = ['C:\\Users\\a\\p (x) [y]', 'C:\\Users\\a\\p[1]', 'C:/x/{z}', 'C:\\a*b', 'C:\\what?\\x', '\\\\server\\share\\p[1]', '\\\\server\\sh[a]re\\x', '\\\\?\\UNC\\server\\share\\a (b)', '\\\\?\\C:\\p [y]'];
+    for (const p of bad) expect(pathHasGlobChars(p, win32), p).toBe(true);
   });
 });
 

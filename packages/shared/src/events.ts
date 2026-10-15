@@ -139,7 +139,7 @@ export type ServerMessage =
   | { type: 'project'; project: string };
 
 export interface DoctorCheck {
-  id: 'node' | 'git' | 'ffmpeg' | 'claude' | 'claude-auth' | 'sandbox' | 'shell-path' | 'workspace-path' | 'live-messages' | 'interrupt' | 'workspace-settings';
+  id: 'node' | 'git' | 'ffmpeg' | 'claude' | 'claude-auth' | 'sandbox' | 'shell-path' | 'workspace-path' | 'agent-deny-paths' | 'live-messages' | 'interrupt' | 'workspace-settings';
   label: string;
   ok: boolean;
   required: boolean;

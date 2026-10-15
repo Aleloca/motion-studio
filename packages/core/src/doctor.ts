@@ -5,7 +5,7 @@ import type { CommandExec, CommandResult } from './exec.ts';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { t } from './i18n.ts';
-import { folderWithGlobChars } from './workspace-store.ts';
+import { folderWithGlobChars, SLUG_RE } from './workspace-store.ts';
 import { execFfVia } from './media/ffmpeg-exec.ts';
 import { capabilitiesFor, parseClaudeVersion, type CapabilityOptIn } from './agent/agent-capabilities.ts';
 
@@ -25,6 +25,12 @@ export async function runDoctor(opts: {
   exec: CommandExec; claudeCommand: string[]; nodeVersion?: string; sandbox?: () => Promise<SandboxSupport>; shellPath?: ShellPathOrigin;
   /** The chosen workspace folder: a path (or a project folder's real path) with glob characters gets a warning row (decision 790). */
   workspacePath?: string | null;
+  /**
+   * Decision 791: Motion Studio's config folder and the home folder. They are not refused when their path holds glob
+   * characters, but the agent's deny rules on them (tokens, secrets) may not apply: one warning row names them.
+   */
+  configDir?: string;
+  home?: string;
   /**
    * The ffmpeg build's architecture (render/encode.ts `findFfmpeg`): shown next to its version, and an x86_64 build under
    * Rosetta on Apple Silicon is named (it renders, slower). Absent or failing: the plain version.
@@ -132,6 +138,15 @@ export async function runDoctor(opts: {
     // Decisions log 141 (unreachable while GLOB_PATH_CHARS holds these characters; kept for the day the refused set shrinks).
     checks.push({ id: 'workspace-path', label: d.workspacePathLabel, required: false, ok: false, message: d.workspacePathGlob, fix: d.workspacePathFix });
   }
+  const denyPaths: string[] = [];
+  for (const p of [opts.home, opts.configDir]) {
+    if (!p) continue;
+    const hit = await folderWithGlobChars([p]).catch(() => null);
+    if (hit && !denyPaths.includes(hit)) denyPaths.push(hit);
+  }
+  if (denyPaths.length > 0) {
+    checks.push({ id: 'agent-deny-paths', label: d.denyPathsLabel, required: false, ok: false, message: d.denyPathsGlob({ paths: denyPaths.join(', ') }) });
+  }
   return checks;
 }
 
@@ -144,7 +159,7 @@ export async function agentFolderWithGlobChars(workspacePath: string): Promise<s
   if (root) return root;
   const entries = await readdir(workspacePath, { withFileTypes: true }).catch(() => []);
   for (const e of entries) {
-    if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(e.name) || !(e.isDirectory() || e.isSymbolicLink())) continue;
+    if (!SLUG_RE.test(e.name) || !(e.isDirectory() || e.isSymbolicLink())) continue;
     const hit = await folderWithGlobChars([join(workspacePath, e.name)]).catch(() => null);
     if (hit) return hit;
   }
