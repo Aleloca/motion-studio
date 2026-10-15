@@ -371,11 +371,46 @@ describe('creative linked codebases', { timeout: 90_000 }, () => {
         expect(r.statusCode, path).toBe(400);
         expect(r.json().code, path).toBe('codebase-glob-chars');
         expect(r.json().error, path).toContain('( ) [ ] { } * ?');
+        expect(r.json().error, path).toContain(path);
       }
     }
     // Nothing was stored, and a clean folder still links.
     expect((await app.inject('/api/projects/acme')).json().project.linkedCodebases).toEqual([]);
     expect((await app.inject({ method: 'PUT', url: '/api/projects/acme', payload: { linkedCodebases: [{ path: join(holder, 'plain') }] } })).statusCode).toBe(200);
+  });
+  it('decision 788: a legacy glob path already stored does not block other edits; a new one is refused naming it', async () => {
+    const holder = join(base, 'legacy');
+    for (const name of ['old (x) [y]', 'new [z]', 'clean']) await mkdir(join(holder, name), { recursive: true });
+    const legacy = join(holder, 'old (x) [y]');
+    const fresh = join(holder, 'new [z]');
+    const clean = join(holder, 'clean');
+    // Stored before the check existed, behind the API's back.
+    const created = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'C', brief } });
+    const slug = created.json().slug as string;
+    const ws = join(base, 'ws', 'acme');
+    await new CreativeStore(ws).update(slug, { linkedCodebases: [{ path: legacy }] });
+    const pj = JSON.parse(await readFile(join(ws, 'project.json'), 'utf8'));
+    await writeFile(join(ws, 'project.json'), JSON.stringify({ ...pj, linkedCodebases: [{ path: legacy }] }));
+    // The brief (goal only) and the codebases list as the UI sends it back (also another spelling of the stored path).
+    const goal = await app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}`, payload: { brief: { ...brief, goal: 'Nuovo obiettivo' }, linkedCodebases: [{ path: `${legacy}/` }] } });
+    expect(goal.statusCode, goal.body).toBe(200);
+    expect(goal.json().brief.goal).toBe('Nuovo obiettivo');
+    const proj = await app.inject({ method: 'PUT', url: '/api/projects/acme', payload: { linkedCodebases: [{ path: legacy }, { path: clean }] } });
+    expect(proj.statusCode, proj.body).toBe(200);
+    expect((await app.inject('/api/projects/acme')).json().project.linkedCodebases).toEqual([{ path: legacy }, { path: clean }]);
+    // A new glob path is refused on both, and the message names it.
+    for (const r of [
+      await app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}`, payload: { linkedCodebases: [{ path: legacy }, { path: fresh }] } }),
+      await app.inject({ method: 'PUT', url: '/api/projects/acme', payload: { linkedCodebases: [{ path: legacy }, { path: clean }, { path: fresh }] } }),
+    ]) {
+      expect(r.statusCode).toBe(400);
+      expect(r.json().code).toBe('codebase-glob-chars');
+      expect(r.json().error).toContain(fresh);
+    }
+    // Creative create checks every path: the legacy one is new there.
+    const again = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'C', brief, linkedCodebases: [{ path: legacy }] } });
+    expect(again.json().code).toBe('codebase-glob-chars');
+    expect(again.json().error).toContain(legacy);
   });
 });
 

@@ -218,7 +218,7 @@ export class AgentLauncher {
     if (codebases.some(hasUnsafePathChars)) throw new Error(t().errors.codebaseUnsafePath);
     // Decision 781, defence in depth: every route refuses such folders and every job leaves stored ones out with a note, so
     // this never fires; a codebase whose path or real path has glob characters would void its Edit/Write/Read rules.
-    for (const c of codebases) if (await codebaseHasGlobChars(c)) throw new Error(t().errors.codebaseGlobChars);
+    for (const c of codebases) if (await codebaseHasGlobChars(c)) throw new Error(t().errors.codebaseGlobChars({ path: c }));
     const secretsScan = i.kind === 'brand-analysis' && codebases.length > 0 ? await codebaseSecrets(codebases) : null;
     const policy = buildAgentPolicy({
       kind: i.kind, sandbox, projectDir: i.projectDir, home, configDir,

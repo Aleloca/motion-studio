@@ -320,6 +320,7 @@ describe('POST /brand/sources with a codebase', () => {
       const r = await add({ kind: 'codebase', path });
       expect(r.statusCode, path).toBe(400);
       expect(r.json().code, path).toBe('codebase-glob-chars');
+      expect(r.json().error, path).toContain(path);
     }
     expect((await app.inject(`${P}/brand`)).json().sources).toEqual([]);
   });

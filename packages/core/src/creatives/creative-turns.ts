@@ -249,7 +249,8 @@ export class CreativeTurnService {
       if (this.isActive(key)) throw new WorkspaceError(409, t().errors.waitBeforeBrief);
       const store = new CreativeStore(ref.projectDir);
       const linkedCodebases = patch.linkedCodebases ? normalizeCodebaseList(patch.linkedCodebases) : null;
-      if (linkedCodebases) await assertCodebasesOutside(linkedCodebases, [ref.projectDir, ref.root]);
+      // Decision 788: only new or changed paths get the glob check; a legacy one already stored passes (skipped at run time).
+      if (linkedCodebases) await assertCodebasesOutside(linkedCodebases, [ref.projectDir, ref.root], (await store.get(ref.creativeSlug)).linkedCodebases ?? []);
       // Links change only through setLink (validated): a brief save keeps the stored ones, whatever it carries. Formats the
       // save adds get the default links against the primaries already there (and each other), with the duration unknown
       // (`undefined`): it is checked on the real file when the follower is materialized (spec §2.4).
@@ -1342,7 +1343,7 @@ export class CreativeTurnService {
       try {
         const [n] = normalizeCodebaseList([c]);
         // Decision 781: a stored folder whose path (or real path) has glob characters is left out, said in the chat.
-        if (n && await codebaseHasGlobChars(n.path)) await note(t().jobs.codebaseIgnored({ path: n.path, reason: codebaseGlobCharsMessage() }));
+        if (n && await codebaseHasGlobChars(n.path)) await note(t().jobs.codebaseIgnored({ path: n.path, reason: codebaseGlobCharsMessage(n.path) }));
         else if (n && await codebaseOverlaps(n.path, [ref.projectDir, ref.root])) await note(t().jobs.codebaseIgnored({ path: n.path, reason: codebaseOverlapMessage() }));
         else if (n) normalized.push(n);
       } catch (e) { await note(t().jobs.codebaseIgnored({ path: c.path, reason: (e as Error).message })); }

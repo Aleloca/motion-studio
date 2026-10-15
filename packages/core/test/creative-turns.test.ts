@@ -680,8 +680,8 @@ describe('brand and codebases in creative turns', { timeout: 90_000 }, () => {
     expect(args.filter((a, i) => args[i - 1] === '--add-dir')).toEqual([ok]);
     expect(args.join('\n')).not.toContain('(x)');
     const texts = (await sys()).map((e) => e.text);
-    expect(texts).toContain(`Codebase ignorata (${bad}): ${uiMessages('it').errors.codebaseGlobChars}`);
-    expect(texts).toContain(`Codebase ignorata (${join(holder, 'alias')}): ${uiMessages('it').errors.codebaseGlobChars}`);
+    expect(texts).toContain(`Codebase ignorata (${bad}): ${uiMessages('it').errors.codebaseGlobChars({ path: bad })}`);
+    expect(texts).toContain(`Codebase ignorata (${join(holder, 'alias')}): ${uiMessages('it').errors.codebaseGlobChars({ path: join(holder, 'alias') })}`);
     await rm(holder, { recursive: true, force: true });
   });
   it('keeps working with a corrupt brand kit', async () => {

@@ -237,7 +237,7 @@ export function codebaseProblemText(problem: BrandCodebaseProblem, path: string,
   const e = messages(locale).errors;
   switch (problem) {
     case 'unsafe-path': return e.codebaseUnsafePath;
-    case 'glob-chars': return e.codebaseGlobChars;
+    case 'glob-chars': return e.codebaseGlobChars({ path });
     case 'not-absolute': return e.codebaseNotAbsolute({ path });
     case 'disk-root': return e.codebaseDiskRoot;
     case 'home': return e.codebaseHome;

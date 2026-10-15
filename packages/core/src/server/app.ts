@@ -192,7 +192,7 @@ async function consoleCodebases(list: LinkedCodebase[], forbidden: string[]): Pr
   for (const c of list) {
     try {
       const [n] = normalizeCodebaseList([c]);
-      if (n && await codebaseHasGlobChars(n.path)) ignored.push(t().jobs.codebaseIgnored({ path: n.path, reason: codebaseGlobCharsMessage() }));
+      if (n && await codebaseHasGlobChars(n.path)) ignored.push(t().jobs.codebaseIgnored({ path: n.path, reason: codebaseGlobCharsMessage(n.path) }));
       else if (n && !(await codebaseOverlaps(n.path, forbidden))) kept.push(n);
     } catch { /* an invalid entry is skipped */ }
   }

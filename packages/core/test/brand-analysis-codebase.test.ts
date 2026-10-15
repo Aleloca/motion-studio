@@ -279,8 +279,8 @@ describe('codebase sources that no longer pass', () => {
     expect(end.state).toBe('failed');
     expect(end.error).toMatch(/None of the sources can be analyzed/);
     expect(end.notes).toEqual([
-      `Codebase left out of the analysis (${bad}): ${messages('en').errors.codebaseGlobChars}`,
-      `Codebase left out of the analysis (${join(holder, 'alias')}): ${messages('en').errors.codebaseGlobChars}`,
+      `Codebase left out of the analysis (${bad}): ${messages('en').errors.codebaseGlobChars({ path: bad })}`,
+      `Codebase left out of the analysis (${join(holder, 'alias')}): ${messages('en').errors.codebaseGlobChars({ path: join(holder, 'alias') })}`,
     ]);
     expect(requests).toEqual([]);
   });
