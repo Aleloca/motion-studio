@@ -5,12 +5,12 @@ import { homedir } from 'node:os';
 import { basename, isAbsolute, join, normalize, parse, relative } from 'node:path';
 import { isSecretPath, SECRET_PATTERNS, type LinkedCodebase } from '@motion-studio/shared';
 import { messages, type Locale } from '@motion-studio/shared';
-import { codebaseOverlaps, expandHome, normalizeCodebasePath } from './workspace-store.ts';
+import { codebaseOverlaps, expandHome, GLOB_PATH_CHARS, normalizeCodebasePath } from './workspace-store.ts';
 import { currentLocale } from './i18n.ts';
 import { sensitiveHomeEntries } from './agent/sandbox.ts';
 
 // Defined next to WorkspaceStore (which needs it) to avoid an import cycle.
-export { assertCodebasesOutside, codebaseOverlapMessage, codebaseOverlaps, normalizeCodebasePath, normalizeCodebaseList } from './workspace-store.ts';
+export { assertCodebasesLiteral, assertCodebasesOutside, codebaseGlobCharsMessage, codebaseHasGlobChars, codebaseOverlapMessage, codebaseOverlaps, GLOB_PATH_CHARS, normalizeCodebasePath, normalizeCodebaseList } from './workspace-store.ts';
 
 export interface CodebaseCheck { path: string; note?: string; exists: boolean }
 
@@ -41,10 +41,13 @@ export type Snapshot = { value: string } | { unavailable: 'not-git' | 'failed' }
 export interface HashedRun { code: number; hash: string; stderr: string; timedOut: boolean }
 export type HashedExec = (args: string[]) => Promise<HashedRun>;
 
-/** Hooks and an fsmonitor command configured in a linked repository must never run from Motion Studio; nor an external diff, a textconv or a clean filter (`--no-ext-diff --no-textconv`, `--no-filters`, decisions log 141). */
-const GIT_SAFE = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
-// Stable, untranslated git output whatever the user's locale.
-const GIT_ENV = () => ({ ...process.env, GIT_EXTERNAL_DIFF: undefined, LC_ALL: 'C' });
+/**
+ * Hooks and an fsmonitor command configured in a linked repository must never run from Motion Studio; nor an external diff, a textconv or a clean filter (`--no-ext-diff --no-textconv`, `--no-filters`, decisions log 141).
+ * `--no-optional-locks` (and `GIT_OPTIONAL_LOCKS=0` in GIT_ENV): a status never refreshes the user's `.git/index` nor takes its lock (decision 782).
+ */
+export const GIT_SAFE = ['--no-optional-locks', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
+// Stable, untranslated git output whatever the user's locale; no optional locks in the user's repository.
+export const GIT_ENV = () => ({ ...process.env, GIT_EXTERNAL_DIFF: undefined, LC_ALL: 'C', GIT_OPTIONAL_LOCKS: '0' });
 
 /** Runs git without a shell, streaming stdout into a sha256 (no size limit); killed after the timeout. */
 export const gitHashed = (path: string, timeoutMs = 30_000): HashedExec => (args) => new Promise((resolve) => {
@@ -104,8 +107,10 @@ export async function codebaseSnapshot(path: string, run: HashedExec = gitHashed
   const status = await run(['status', '--porcelain=v1', '-uall', '--ignored=traditional', '--', '.']);
   if (status.timedOut) return { unavailable: 'failed' };
   if (status.code !== 0) return { unavailable: /not a git repository/i.test(status.stderr) ? 'not-git' : 'failed' };
-  let diff = await run(['diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--binary', '--', '.']);
-  if (!diff.timedOut && diff.code !== 0) diff = await run(['diff', '--no-ext-diff', '--no-textconv', '--binary', '--', '.']); // repository without commits
+  // Plumbing (decision 782): the porcelain `git diff` refreshes and rewrites the user's `.git/index` even without optional
+  // locks; `diff-index -p` / `diff-files -p` give the same patch and never write it.
+  let diff = await run(['diff-index', '-p', '--no-ext-diff', '--no-textconv', '--binary', 'HEAD', '--', '.']);
+  if (!diff.timedOut && diff.code !== 0) diff = await run(['diff-files', '-p', '--no-ext-diff', '--no-textconv', '--binary', '--', '.']); // repository without commits
   if (diff.timedOut || diff.code !== 0) return { unavailable: 'failed' };
   const extra = await untracked();
   if (extra.timedOut || extra.code !== 0) return { unavailable: 'failed' };
@@ -226,12 +231,13 @@ export async function findCodebaseSecrets(root: string): Promise<CodebaseSecrets
   return out;
 }
 
-export type BrandCodebaseProblem = 'unsafe-path' | 'not-absolute' | 'disk-root' | 'home' | 'missing' | 'overlap' | 'nested' | 'config' | 'sensitive';
+export type BrandCodebaseProblem = 'unsafe-path' | 'glob-chars' | 'not-absolute' | 'disk-root' | 'home' | 'missing' | 'overlap' | 'nested' | 'config' | 'sensitive';
 /** Why a codebase folder is refused, in `locale` (the route's error, the analysis's note). */
 export function codebaseProblemText(problem: BrandCodebaseProblem, path: string, locale: Locale = currentLocale()): string {
   const e = messages(locale).errors;
   switch (problem) {
     case 'unsafe-path': return e.codebaseUnsafePath;
+    case 'glob-chars': return e.codebaseGlobChars;
     case 'not-absolute': return e.codebaseNotAbsolute({ path });
     case 'disk-root': return e.codebaseDiskRoot;
     case 'home': return e.codebaseHome;
@@ -268,12 +274,15 @@ export async function resolveBrandCodebase(raw: string, protectedDirs: string[],
   if (expanded.replace(/\/+$/, '') === '') return { problem: 'disk-root' };
   if (expanded.replace(/\/+$/, '') === home) return { problem: 'home' };
   const path = normalizeCodebasePath(raw);
+  // Decision 781: the agent's rules cannot match a path with glob characters (decision 780), under either spelling.
+  if (GLOB_PATH_CHARS.test(path)) return { problem: 'glob-chars' };
   const st = await stat(path).catch(() => null);
   if (!st?.isDirectory()) return { problem: 'missing' };
   const real = await realpath(path).catch(() => null);
   if (real === null) return { problem: 'missing' };
   // A link to the disk root or to the home folder is the disk root or the home folder.
   if (hasUnsafePathChars(real)) return { problem: 'unsafe-path' };
+  if (GLOB_PATH_CHARS.test(real)) return { problem: 'glob-chars' };
   if (real === parse(real).root) return { problem: 'disk-root' };
   if (real === home || real === await realpath(home).catch(() => home)) return { problem: 'home' };
   if (await codebaseOverlaps(path, protectedDirs)) return { problem: 'overlap' };

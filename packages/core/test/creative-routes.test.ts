@@ -335,6 +335,30 @@ describe('creative linked codebases', { timeout: 90_000 }, () => {
     expect(edit.statusCode).toBe(400);
     expect(edit.json().error).toBe('La cartella collegata non può contenere il progetto né trovarsi al suo interno');
   });
+  it('decision 781: refuses folders with glob characters, and a plain-named link to one, on every linking route', async () => {
+    const holder = join(base, 'holder');
+    await mkdir(holder, { recursive: true });
+    for (const name of ['cb (x) [y]', 'a[1]', 'b{c}', 'star*', 'q?', 'back\\slash', 'p (x)']) await mkdir(join(holder, name));
+    await symlink(join(holder, 'cb (x) [y]'), join(holder, 'alias'));
+    await mkdir(join(holder, 'plain'));
+    const bad = [...['cb (x) [y]', 'a[1]', 'b{c}', 'star*', 'q?', 'back\\slash', 'p (x)'].map((n) => join(holder, n)), join(holder, 'alias'), join(holder, 'missing (old)')];
+    const ok = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'C', brief } });
+    for (const path of bad) {
+      const routes = [
+        app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'C', brief, linkedCodebases: [{ path: join(holder, 'plain') }, { path }] } }),
+        app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${ok.json().slug}`, payload: { linkedCodebases: [{ path }] } }),
+        app.inject({ method: 'PUT', url: '/api/projects/acme', payload: { linkedCodebases: [{ path }] } }),
+      ];
+      for (const r of await Promise.all(routes)) {
+        expect(r.statusCode, path).toBe(400);
+        expect(r.json().code, path).toBe('codebase-glob-chars');
+        expect(r.json().error, path).toContain('( ) [ ] { } * ?');
+      }
+    }
+    // Nothing was stored, and a clean folder still links.
+    expect((await app.inject('/api/projects/acme')).json().project.linkedCodebases).toEqual([]);
+    expect((await app.inject({ method: 'PUT', url: '/api/projects/acme', payload: { linkedCodebases: [{ path: join(holder, 'plain') }] } })).statusCode).toBe(200);
+  });
 });
 
 describe('creative export', { timeout: 90_000 }, () => {

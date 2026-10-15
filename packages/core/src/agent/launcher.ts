@@ -8,7 +8,7 @@ import { PROVIDER_ENV } from '../secrets/vault.ts';
 import type { ApprovalBroker } from '../approvals/broker.ts';
 import { isAllowedRule, PermissionsStore } from '../approvals/permissions-store.ts';
 import type { AgentBridge, BridgeContext } from '../bridge/bridge.ts';
-import { escapeGlob, findCodebaseSecrets, hasUnsafePathChars } from '../codebases.ts';
+import { codebaseHasGlobChars, escapeGlob, findCodebaseSecrets, hasUnsafePathChars } from '../codebases.ts';
 import { t } from '../i18n.ts';
 import { buildAgentPolicy, sandboxPath, type AgentJobKind } from './policy.ts';
 import { CREATIVE_CORE_FILES, detachProtectedLinks, PROPOSAL_LOG } from './protected-links.ts';
@@ -216,6 +216,9 @@ export class AgentLauncher {
     // Phase 14: a brand analysis of codebases gets their secret files denied by exact path too (any case, every platform).
     const codebases = i.codebases ?? [];
     if (codebases.some(hasUnsafePathChars)) throw new Error(t().errors.codebaseUnsafePath);
+    // Decision 781, defence in depth: every route refuses such folders and every job leaves stored ones out with a note, so
+    // this never fires; a codebase whose path or real path has glob characters would void its Edit/Write/Read rules.
+    for (const c of codebases) if (await codebaseHasGlobChars(c)) throw new Error(t().errors.codebaseGlobChars);
     const secretsScan = i.kind === 'brand-analysis' && codebases.length > 0 ? await codebaseSecrets(codebases) : null;
     const policy = buildAgentPolicy({
       kind: i.kind, sandbox, projectDir: i.projectDir, home, configDir,

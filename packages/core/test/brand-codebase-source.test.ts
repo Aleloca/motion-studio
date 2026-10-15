@@ -186,6 +186,22 @@ describe('the launcher with a brand analysis of a codebase', () => {
   });
 });
 
+describe('decision 781: the launcher refuses codebases with glob characters (defence in depth)', () => {
+  it('throws before anything starts, for the path and for a plain link whose real path has them', async () => {
+    const project = await temp('ms-proj-');
+    const holder = await temp('ms-glob-');
+    await mkdir(join(holder, 'cb (x) [y]'));
+    await symlink(join(holder, 'cb (x) [y]'), join(holder, 'alias'));
+    for (const kind of ['brand-analysis', 'creative', 'console'] as const) {
+      for (const cb of [join(holder, 'cb (x) [y]'), join(holder, 'alias'), '/tmp/a*b', '/tmp/a\\b']) {
+        const { runner, requests } = recordingRunner();
+        await expect(testLauncher(runner).start({ kind, jobId: 'j1', projectSlug: 'acme', projectDir: project, codebases: [cb], request: { prompt: 'x' }, onEvent: () => {} }), `${kind} ${cb}`).rejects.toThrow(/\( \) \[ \] \{ \}/);
+        expect(requests).toEqual([]);
+      }
+    }
+  });
+});
+
 describe('resolveBrandCodebase', () => {
   it('normalises the spelling and resolves the real path', async () => {
     const cb = await codebase(false);
@@ -211,6 +227,27 @@ describe('resolveBrandCodebase', () => {
       [join(project, 'missing'), 'missing'], [join(project, 'inner'), 'overlap'], [dirname(project), 'overlap'],
     ];
     for (const [raw, problem] of cases) expect(await resolveBrandCodebase(raw, [project]), raw).toEqual({ problem });
+  });
+});
+
+describe('resolveBrandCodebase: glob characters (decision 781)', () => {
+  it('refuses a path or a real path with ( ) [ ] { } * ? or a backslash; a clean link to such a folder too', async () => {
+    const project = await temp('ms-proj-');
+    const holder = await temp('ms-glob-');
+    const names = ['cb (x) [y]', 'cb (x)', 'cb [y]', 'cb {z}', 'star*', 'q?', 'back\\slash'];
+    for (const n of names) {
+      await mkdir(join(holder, n));
+      expect(await resolveBrandCodebase(join(holder, n), [project]), n).toEqual({ problem: 'glob-chars' });
+    }
+    await symlink(join(holder, 'cb (x) [y]'), join(holder, 'alias'));
+    expect(await resolveBrandCodebase(join(holder, 'alias'), [project])).toEqual({ problem: 'glob-chars' });
+    // Missing or not: the spelling alone is refused.
+    expect(await resolveBrandCodebase(join(holder, 'gone (old)'), [project])).toEqual({ problem: 'glob-chars' });
+    // A link with a glob character to a clean folder: the spelling the rules carry has it, refused too.
+    await mkdir(join(holder, 'clean'));
+    await symlink(join(holder, 'clean'), join(holder, 'link [v2]'));
+    expect(await resolveBrandCodebase(join(holder, 'link [v2]'), [project])).toEqual({ problem: 'glob-chars' });
+    expect(await resolveBrandCodebase(join(holder, 'clean'), [project])).toEqual({ path: join(holder, 'clean'), real: join(holder, 'clean') });
   });
 });
 
@@ -274,6 +311,17 @@ describe('POST /brand/sources with a codebase', () => {
     expect(r.json().code).toBe('codebase-config');
     await mkdir(join(homedir(), '.ssh'), { recursive: true });
     expect((await add({ kind: 'codebase', path: join(homedir(), '.ssh') })).json().code).toBe('codebase-sensitive');
+  });
+  it('decision 781: refuses a folder with glob characters and a plain-named link to one (codebase-glob-chars)', async () => {
+    const holder = await temp('ms-glob-');
+    await mkdir(join(holder, 'cb (x) [y]'));
+    await symlink(join(holder, 'cb (x) [y]'), join(holder, 'alias'));
+    for (const path of [join(holder, 'cb (x) [y]'), join(holder, 'alias')]) {
+      const r = await add({ kind: 'codebase', path });
+      expect(r.statusCode, path).toBe(400);
+      expect(r.json().code, path).toBe('codebase-glob-chars');
+    }
+    expect((await app.inject(`${P}/brand`)).json().sources).toEqual([]);
   });
   it('refuses a sixth codebase', async () => {
     const parent = await temp('ms-many-');

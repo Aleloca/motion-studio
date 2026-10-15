@@ -1,4 +1,5 @@
-import { appendFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { messages } from '@motion-studio/shared';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -151,6 +152,25 @@ describe('a codebase-only analysis', () => {
   });
 });
 
+describe('decision 783: an imported logo keeps its brand tag', () => {
+  it('the agent\'s list adds its tags to the import\'s instead of replacing them', async () => {
+    await addCodebase();
+    const bridge = new AgentBridge();
+    bridge.setOrigin('http://127.0.0.1:9');
+    const tool = importCodebaseTool({ media: NoMediaTools, broadcast: () => {} });
+    sideEffect = async (req) => {
+      const config = JSON.parse(await readFile(req.mcpConfigPath!, 'utf8'));
+      const ctx = bridge.resolve((await readFile(config.mcpServers.studio.env.MOTION_STUDIO_BRIDGE_TOKEN_FILE, 'utf8')).trim())!;
+      await tool(ctx, { source: 'public/logo.svg', dest: 'assets/brand/logo.svg' });
+      const block = JSON.parse(/```motion-studio-brand\n(.*)\n```/s.exec(req.prompt)![1]!) as { assetsListFile: string };
+      await writeFile(join(req.cwd, block.assetsListFile), JSON.stringify([{ file: 'brand/logo.svg', description: 'Main logo', tags: ['logo'] }]));
+    };
+    const end = await finished((await service(testLauncher(fakeRunner, { bridge, mcpCommand: ['node', '/never/started/server.mjs'] })).analyze(ref)).id);
+    expect(end.state, end.error).toBe('succeeded');
+    expect((await new LibraryStore(ref.projectDir, NoMediaTools).listAssets()).find((a) => a.file === 'brand/logo.svg')).toMatchObject({ origin: 'codebase', description: 'Main logo', tags: ['brand', 'logo'] });
+  });
+});
+
 describe('Review Focus 2: the agent writes into the codebase anyway', () => {
   it('discards the proposal, fails the job naming the folder and lists the changed files', async () => {
     const cb = await addCodebase();
@@ -243,5 +263,25 @@ describe('codebase sources that no longer pass', () => {
     const failed = await finished(second.id);
     expect(failed.state).toBe('failed');
     expect(failed.error).toMatch(/None of the sources can be analyzed/);
+  });
+  it('decision 781: a stored folder with glob characters (or a plain link to one) is left out with a note, never launched', async () => {
+    const holder = await mkdtemp(join(tmpdir(), 'ms-glob-'));
+    cleanup.push(holder);
+    const bad = join(holder, 'cb (x) [y]');
+    await mkdir(bad);
+    await mkdir(join(holder, 'other {z}'));
+    await symlink(join(holder, 'other {z}'), join(holder, 'alias'));
+    // Stored before the check existed (the route refuses them now).
+    await brand.addSource({ kind: 'codebase', path: bad, real: bad });
+    await brand.addSource({ kind: 'codebase', path: join(holder, 'alias'), real: join(holder, 'other {z}') });
+    const job = await service().analyze(ref);
+    const end = await finished(job.id);
+    expect(end.state).toBe('failed');
+    expect(end.error).toMatch(/None of the sources can be analyzed/);
+    expect(end.notes).toEqual([
+      `Codebase left out of the analysis (${bad}): ${messages('en').errors.codebaseGlobChars}`,
+      `Codebase left out of the analysis (${join(holder, 'alias')}): ${messages('en').errors.codebaseGlobChars}`,
+    ]);
+    expect(requests).toEqual([]);
   });
 });

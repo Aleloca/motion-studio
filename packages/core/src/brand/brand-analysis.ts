@@ -316,13 +316,14 @@ export class BrandService {
       catch (e) { if (!(e instanceof WorkspaceError)) throw e; dropped.push(m.brand.droppedNotRegistered({ file: a.file })); }
     }
     const appeared = (await library.unregisteredAssets()).filter((f) => !before.has(f) && !existingListed.some((a) => a.file === f));
-    // Files download_file already registered keep their origin and source URL; the list only adds description and tags.
+    // Files download_file or import_codebase_file already registered keep their origin, source URL and tags (`brand`); the
+    // list only adds a description and more tags (decision 783; 30 = the asset tag limit).
     const known = new Map((await library.listAssets()).map((a) => [a.file, a]));
     const registered: AssetEntry[] = [];
     for (const item of [
       ...existingListed.map((a) => {
         const k = known.get(a.file);
-        return k ? { file: a.file, origin: k.origin, sourceUrl: k.sourceUrl, description: a.description, tags: a.tags }
+        return k ? { file: a.file, origin: k.origin, sourceUrl: k.sourceUrl, description: a.description, tags: [...new Set([...k.tags, ...(a.tags ?? [])])].slice(0, 30) }
           : { file: a.file, origin: 'website' as const, sourceUrl: a.sourceUrl ?? null, description: a.description, tags: a.tags };
       }),
       ...appeared.map((file) => ({ file, origin: 'website' as const, sourceUrl: null })),

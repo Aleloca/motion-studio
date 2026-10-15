@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_FORMATS, type Brief, type ServerMessage } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, messages as uiMessages, type Brief, type ServerMessage } from '@motion-studio/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { testLauncher } from './helpers/launcher.ts';
@@ -662,6 +662,27 @@ describe('brand and codebases in creative turns', { timeout: 90_000 }, () => {
     const texts = (await sys()).map((e) => e.text);
     expect(texts).toContain(`Codebase ignorata (${ref.root}): La cartella collegata non può contenere il progetto né trovarsi al suo interno`);
     expect(texts).toContain(`Codebase ignorata (${join(ref.projectDir, 'assets')}): La cartella collegata non può contenere il progetto né trovarsi al suo interno`);
+  });
+  it('decision 781: skips stored folders whose path or real path has glob characters, with a chat line', async () => {
+    const holder = await mkdtemp(join(tmpdir(), 'ms-cb-glob-'));
+    const bad = join(holder, 'cb (x) [y]');
+    const ok = join(holder, 'plain');
+    await mkdir(bad);
+    await mkdir(ok);
+    await symlink(bad, join(holder, 'alias'));
+    // Stored behind the API's back (linked before the check existed): the turn must leave them out, never pass them on.
+    const pj = JSON.parse(await readFile(join(ref.projectDir, 'project.json'), 'utf8'));
+    pj.linkedCodebases = [{ path: bad }, { path: ok }];
+    await writeFile(join(ref.projectDir, 'project.json'), JSON.stringify(pj));
+    await new CreativeStore(ref.projectDir).update(ref.creativeSlug, { linkedCodebases: [{ path: join(holder, 'alias') }] });
+    expect(await finalState((await service.start(ref)).id)).toBe('succeeded');
+    const { args } = (await prompts())[0]!;
+    expect(args.filter((a, i) => args[i - 1] === '--add-dir')).toEqual([ok]);
+    expect(args.join('\n')).not.toContain('(x)');
+    const texts = (await sys()).map((e) => e.text);
+    expect(texts).toContain(`Codebase ignorata (${bad}): ${uiMessages('it').errors.codebaseGlobChars}`);
+    expect(texts).toContain(`Codebase ignorata (${join(holder, 'alias')}): ${uiMessages('it').errors.codebaseGlobChars}`);
+    await rm(holder, { recursive: true, force: true });
   });
   it('keeps working with a corrupt brand kit', async () => {
     await mkdir(join(ref.projectDir, 'brand'), { recursive: true });

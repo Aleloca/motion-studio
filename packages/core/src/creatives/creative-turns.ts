@@ -9,7 +9,7 @@ import type { AgentLauncher } from '../agent/launcher.ts';
 import { detachLinksUnder } from '../agent/protected-links.ts';
 import { noteCoreChange } from '../core-changes.ts';
 import { BrandStore } from '../brand/brand-store.ts';
-import { assertCodebasesOutside, checkCodebases, codebaseOverlaps, codebaseOverlapMessage, codebaseSnapshot, normalizeCodebaseList } from '../codebases.ts';
+import { assertCodebasesOutside, checkCodebases, codebaseGlobCharsMessage, codebaseHasGlobChars, codebaseOverlaps, codebaseOverlapMessage, codebaseSnapshot, normalizeCodebaseList } from '../codebases.ts';
 import { readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
 import { findPreset } from '../formats/format-catalog.ts';
 import { LibraryStore } from '../library/library-store.ts';
@@ -1341,7 +1341,9 @@ export class CreativeTurnService {
     for (const c of [...project.linkedCodebases, ...creativeCodebases]) {
       try {
         const [n] = normalizeCodebaseList([c]);
-        if (n && await codebaseOverlaps(n.path, [ref.projectDir, ref.root])) await note(t().jobs.codebaseIgnored({ path: n.path, reason: codebaseOverlapMessage() }));
+        // Decision 781: a stored folder whose path (or real path) has glob characters is left out, said in the chat.
+        if (n && await codebaseHasGlobChars(n.path)) await note(t().jobs.codebaseIgnored({ path: n.path, reason: codebaseGlobCharsMessage() }));
+        else if (n && await codebaseOverlaps(n.path, [ref.projectDir, ref.root])) await note(t().jobs.codebaseIgnored({ path: n.path, reason: codebaseOverlapMessage() }));
         else if (n) normalized.push(n);
       } catch (e) { await note(t().jobs.codebaseIgnored({ path: c.path, reason: (e as Error).message })); }
     }
