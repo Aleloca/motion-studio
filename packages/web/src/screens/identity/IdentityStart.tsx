@@ -35,7 +35,10 @@ export function conceptIds(presetId: string, identity: IdentityBrief): string[] 
   return Array.from({ length: n }, (_, i) => instanceIdOf(presetId, i + 1));
 }
 
-/** Whether the project's brand kit has a logo, and whether the first one comes from a codebase. Unknown until it loads. */
+/** The brand's logo a creative starts from: the primary one, else the first (final wave M9). */
+export const primaryLogoOf = (logos: BrandKit['logos']): BrandKit['logos'][number] | undefined => logos.find((l) => l.variant === 'primary') ?? logos[0];
+
+/** Whether the project's brand kit has a logo, and whether its primary one comes from a codebase. Unknown until it loads. */
 export function useBrandLogo(slug: string, enabled = true): { loaded: boolean; hasLogo: boolean; fromCodebase: boolean } {
   const [kit, setKit] = useState<BrandKit | null | 'failed'>(null);
   useEffect(() => {
@@ -45,14 +48,14 @@ export function useBrandLogo(slug: string, enabled = true): { loaded: boolean; h
     return () => { alive = false; };
   }, [slug, enabled]);
   const logos = kit && kit !== 'failed' ? kit.logos : [];
-  return { loaded: kit !== null, hasLogo: logos.length > 0, fromCodebase: logos[0]?.source.kind === 'codebase' };
+  return { loaded: kit !== null, hasLogo: logos.length > 0, fromCodebase: primaryLogoOf(logos)?.source.kind === 'codebase' };
 }
 
 export interface IdentityStartProps {
   value: IdentityBrief;
   onChange(next: IdentityBrief): void;
   hasBrandLogo: boolean;
-  /** The first brand logo comes from a codebase: said next to "from the brand's logo". */
+  /** The primary brand logo (else the first) comes from a codebase: said next to "from the brand's logo". */
   fromCodebase?: boolean;
   /** A logo format is in the brief: the number of concepts is asked (from scratch only). */
   withConcepts: boolean;

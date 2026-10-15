@@ -381,7 +381,7 @@ export class RenderJobService {
         });
       if (preset.identity) {
         try {
-          const set = await this.identitySet({ ref, n, format, kind: preset.identity, compDir, composition, signal });
+          const set = await this.identitySet({ ref, n, format, kind: preset.identity, compDir, composition, signal, locale: o.locale });
           info = { ...info, identitySet: set };
           for (const w of set.warnings) await o.note(w).catch(() => {});
         } catch (e) {
@@ -506,7 +506,7 @@ export class RenderJobService {
    * into the version through a temp name, noted as the core's write, and renamed. Every folder of the way must be a real
    * folder of the creative (never through a link the agent left).
    */
-  private async identitySet(o: { ref: CreativeRef; n: number; format: string; kind: 'logo' | 'favicon' | 'app-icon'; compDir: string; composition: Composition; signal: AbortSignal }): Promise<IdentitySetInfo> {
+  private async identitySet(o: { ref: CreativeRef; n: number; format: string; kind: 'logo' | 'favicon' | 'app-icon'; compDir: string; composition: Composition; signal: AbortSignal; locale: Locale }): Promise<IdentitySetInfo> {
     const store = new CreativeStore(o.ref.projectDir);
     const creativeDir = store.dir(o.ref.creativeSlug);
     const v = checkVectorComposition(o.composition);
@@ -528,7 +528,7 @@ export class RenderJobService {
       const outDir = join(work, 'set');
       const built = await buildIdentitySet(o.kind, {
         master, ...(small ? { small } : {}), outDir, ...(brand ? { brand } : {}),
-        name: creative.brief.identity?.name ?? creative.title, background: o.composition.background, label: o.format, signal: o.signal,
+        name: creative.brief.identity?.name ?? creative.title, background: o.composition.background, label: o.format, signal: o.signal, locale: o.locale,
         raster: { provider: () => engine.provider(), ...(this.deps.renderOptions?.distDir ? { distDir: this.deps.renderOptions.distDir } : {}), ...(this.deps.renderOptions?.tempDir ? { tempDir: this.deps.renderOptions.tempDir } : {}) },
       });
       const vRel = `outputs/v${o.n}`;

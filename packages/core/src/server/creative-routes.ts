@@ -4,7 +4,7 @@ import { lstat, readdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, join, sep } from 'node:path';
 import { changedAssets, overlayAssetPaths, readOverlay } from '../localization/store.ts';
 import type { FastifyInstance } from 'fastify';
-import { messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow } from '@motion-studio/shared';
+import { messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, nextInstanceId, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
@@ -238,6 +238,31 @@ export const localeAssetsCheck = (projectDir: string, creativeDir: string) => as
   return (await changedAssets([join(creativeDir, 'outputs', `v${n}`, ...dir.split('/')), projectDir], row, overlayAssetPaths(read.overlay, row))).length === 0;
 };
 
+/**
+ * A logo from scratch is one instance per concept (`identity-logo`, `identity-logo@2`…, final wave M3, decision 786): the
+ * create route adds the missing instances of each logo preset in the brief up to `identity.concepts`, within MAX_INSTANCES
+ * (`nextInstanceId`). Idempotent: a body that already lists them (the UI's) is left as it is; never removes an instance.
+ */
+export function expandLogoConcepts<B extends Pick<Brief, 'formats' | 'identity'>>(brief: B, presets: readonly FormatPreset[]): B {
+  if (brief.identity?.start !== 'scratch') return brief;
+  const want = Math.min(5, Math.max(1, brief.identity.concepts ?? 3));
+  const formats = [...brief.formats];
+  const logoPresets = [...new Set(formats.map(presetOf))].filter((id) => presets.find((p) => p.id === id)?.identity === 'logo');
+  for (const preset of logoPresets) {
+    let have = formats.filter((f) => presetOf(f) === preset).length;
+    while (have < want) {
+      const id = nextInstanceId(preset, formats);
+      if (id === null) break;
+      // Right after the preset's last instance, so the concepts stay together.
+      let at = -1;
+      formats.forEach((f, i) => { if (presetOf(f) === preset) at = i; });
+      formats.splice(at + 1, 0, id);
+      have++;
+    }
+  }
+  return formats.length === brief.formats.length ? brief : { ...brief, formats };
+}
+
 export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutesContext): void {
   const catalog = () => new FormatCatalog(ctx.requireWorkspace().root);
   const refOf = async (slug: string, creativeSlug: string): Promise<CreativeRef & { store: CreativeStore }> => {
@@ -305,6 +330,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
         brief = { ...brief, storePack: { ...pack, instances: slots } };
       }
     }
+    brief = expandLogoConcepts(brief, presets);
     const links = initialLinks(brief, presets);
     const created = await store.create({ title: body.title, brief: { ...brief, links } });
     const slug = created.slug;
@@ -836,14 +862,22 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const library = new LibraryStore(ref.projectDir, ctx.media);
     const store = new BrandStore(ref.projectDir);
     let logoId = '';
+    /** The logos this call demoted (ids): put back if the registration fails below. */
+    let demotedIds: string[] = [];
+    const undo = <L extends { id: string }>(logos: L[]): L[] => logos.map((l) => (demotedIds.includes(l.id) ? { ...l, variant: body.data.variant } : l));
     try {
       await store.updateReadableKit((kit) => {
+        demotedIds = kit.logos.filter((l) => l.variant === body.data.variant).map((l) => l.id);
         const taken = new Set(kit.logos.map((l) => l.id));
         const stem = `logo-${ref.creativeSlug}-v${n}`.slice(0, 56).replace(/-+$/, '');
         let id = stem;
         for (let k = 2; taken.has(id); k++) id = `${stem}-${k}`;
         logoId = id;
-        return { ...kit, logos: [...kit.logos, { id, file, variant: body.data.variant, background: 'any', source }] };
+        // Decision 784: the new logo takes the chosen variant; one already holding it steps down (primary → secondary,
+        // icon → other), so the kit never has two primary logos or two icons.
+        const demoted = body.data.variant === 'primary' ? 'secondary' as const : 'other' as const;
+        const logos = kit.logos.map((l) => (l.variant === body.data.variant ? { ...l, variant: demoted } : l));
+        return { ...kit, logos: [...logos, { id, file, variant: body.data.variant, background: 'any', source }] };
       });
     } catch (err) {
       // The kit refused (full, unreadable): nothing is left half done, the copy goes.
@@ -853,7 +887,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     try {
       await library.registerAssets([{ file: file.slice('assets/'.length), origin: 'generated', sourceUrl: null, description: '', tags: ['brand', 'logo'] }]);
     } catch (err) {
-      await store.updateReadableKit((kit) => ({ ...kit, logos: kit.logos.filter((l) => l.id !== logoId) })).catch(() => {});
+      await store.updateReadableKit((kit) => ({ ...kit, logos: undo(kit.logos.filter((l) => l.id !== logoId)) })).catch(() => {});
       await rm(join(ref.projectDir, ...file.split('/')), { force: true }).catch(() => {});
       throw err;
     }

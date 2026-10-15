@@ -14,7 +14,7 @@ import { channelOf } from './creativeState.ts';
 import './newcreative.css';
 import { message as errText } from './common.tsx';
 import { isVideoFile } from '../media.ts';
-import { conceptIds, IdentityStart, identityForBrief, resolveIdentity } from './identity/IdentityStart.tsx';
+import { conceptIds, IdentityStart, identityForBrief, primaryLogoOf, resolveIdentity } from './identity/IdentityStart.tsx';
 import { StorePackWizard } from './new-creative/StorePackWizard.tsx';
 import { packParts } from './new-creative/storePackModel.ts';
 import './new-creative/storepack.css';
@@ -447,7 +447,7 @@ export function NewCreative({ slug }: { slug: string }) {
 
           {identityOn ? (
             <section className="ms-nc-sec" data-enter>
-              <IdentityStart value={identityNow} onChange={setIdentity} hasBrandLogo={hasBrandLogo} fromCodebase={kit?.logos[0]?.source.kind === 'codebase'}
+              <IdentityStart value={identityNow} onChange={setIdentity} hasBrandLogo={hasBrandLogo} fromCodebase={primaryLogoOf(kit?.logos ?? [])?.source.kind === 'codebase'}
                 withConcepts={chosen.some((p) => p.identity === 'logo')} />
             </section>
           ) : null}

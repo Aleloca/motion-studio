@@ -82,6 +82,23 @@ describe('use as brand logo (Phase 14, decision 733)', () => {
     expect(new Set(ids).size).toBe(2);
   });
 
+  it('decision 784: the new logo takes the variant and the one holding it steps down (primary → secondary, icon → other)', async () => {
+    await seed({ svg: GOOD });
+    const first = (await post({ variant: 'primary' })).json().file as string;
+    const icon = (await post({ variant: 'icon' })).json().file as string;
+    const second = (await post({ variant: 'primary' })).json().file as string;
+    const third = (await post({ variant: 'icon' })).json().file as string;
+    const variants = Object.fromEntries((await kit()).logos.map((l: { file: string; variant: string }) => [l.file, l.variant]));
+    expect(variants).toEqual({ [first]: 'secondary', [icon]: 'other', [second]: 'primary', [third]: 'icon' });
+  });
+  it('decision 784: a failed registration puts the demoted logo back', async () => {
+    await seed({ svg: GOOD });
+    const first = (await post({ variant: 'primary' })).json().file as string;
+    await writeFile(join(projectDir, 'assets', 'assets.json'), '{ not json');
+    expect((await post({ variant: 'primary' })).statusCode).toBeGreaterThanOrEqual(400);
+    expect((await kit()).logos.map((l: { file: string; variant: string }) => [l.file, l.variant])).toEqual([[first, 'primary']]);
+  });
+
   it('refuses an SVG that no longer passes the check, leaving nothing behind', async () => {
     await seed({ svg: BAD });
     const r = await post({ variant: 'primary' });

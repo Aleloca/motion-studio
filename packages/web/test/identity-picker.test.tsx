@@ -126,6 +126,22 @@ describe('NewCreative · identity formats', () => {
     expect(within(start()).queryByLabelText('Nome o sigla')).toBeNull();
   });
 
+  it('M9: "from codebase" follows the primary logo, not the first one in the kit', async () => {
+    const codebasePrimary = withLogo('codebase').logos[0]!;
+    const manualIcon = { ...withLogo().logos[0]!, id: 'icon', variant: 'icon' as const };
+    api.getBrand.mockImplementation(async () => overview({ ...EMPTY_BRAND_KIT, logos: [manualIcon, codebasePrimary] }));
+    await open();
+    await pick(/^Logo/);
+    await waitFor(() => expect(within(start()).getByRole('radio', { name: 'Dal logo del brand · da codebase' })).not.toBeNull());
+  });
+  it('M9: a manual primary after a codebase icon is not "from codebase"', async () => {
+    const codebaseIcon = { ...withLogo('codebase').logos[0]!, id: 'icon', variant: 'icon' as const };
+    api.getBrand.mockImplementation(async () => overview({ ...EMPTY_BRAND_KIT, logos: [codebaseIcon, withLogo().logos[0]!] }));
+    await open();
+    await pick(/^Logo/);
+    await waitFor(() => expect(within(start()).getByRole('radio', { name: 'Dal logo del brand' }).getAttribute('aria-checked')).toBe('true'));
+  });
+
   it('the favicon has no concepts', async () => {
     await open();
     await pick(/Favicon/, 'Favicon');

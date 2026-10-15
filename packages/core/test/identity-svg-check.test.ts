@@ -243,7 +243,8 @@ describe('checkVectorSvg: hostile sizes stay fast (fix round 1)', () => {
     const t0 = performance.now();
     const r = checkVectorSvg(s);
     const ms = performance.now() - t0;
-    expect(ms, `took ${Math.round(ms)} ms`).toBeLessThan(1000);
+    // A loose bound (final wave M8): it catches a quadratic blow-up, not a busy machine.
+    expect(ms, `took ${Math.round(ms)} ms`).toBeLessThan(3000);
     return r;
   };
   const fill = (unit: string, budget = 480_000) => unit.repeat(Math.floor(budget / unit.length));

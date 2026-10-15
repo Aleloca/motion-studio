@@ -1,10 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { FAVICON_ICO_SIZES, IDENTITY_SETS, type BrandKit, type IdentityOutputFile, type IdentitySetFile } from '@motion-studio/shared';
+import { FAVICON_ICO_SIZES, IDENTITY_SETS, messages, type BrandKit, type IdentityOutputFile, type IdentitySetFile, type Locale } from '@motion-studio/shared';
 import { findFfmpeg, type FfmpegInfo } from '../render/encode.ts';
 import { backgroundRgb, flattenPng } from '../store-pack/flatten.ts';
-import { t } from '../i18n.ts';
+import { currentLocale } from '../i18n.ts';
 import { readIco, writeIco } from './ico.ts';
 import { decodePng, pngSize, solidPng } from './png.ts';
 import { rasterizeSvgJobs, readCheckedSvg, type RasterJob, type RasterizeOptions } from './rasterize.ts';
@@ -50,6 +50,8 @@ export interface IdentitySetInput {
   signal?: AbortSignal;
   /** Replaces `rasterizeSvgJobs` (tests without a browser). It receives only checked SVGs. */
   rasterize?: typeof rasterizeSvgJobs;
+  /** The render job's language for the warnings (final wave M6); default the current one. */
+  locale?: Locale;
 }
 
 export type IdentityKind = keyof typeof IDENTITY_SETS;
@@ -158,7 +160,7 @@ async function writeAtomic(path: string, data: Buffer | string): Promise<void> {
 export async function buildIdentitySet(kind: IdentityKind, input: IdentitySetInput): Promise<{ files: IdentityOutputFile[]; warnings: string[] }> {
   const set = IDENTITY_SETS[kind];
   const label = input.label ?? kind;
-  const msg = t().render;
+  const msg = messages(input.locale ?? currentLocale()).render;
   // Both SVGs are checked before anything is rasterised or written.
   const master = await readCheckedSvg(input.master);
   const small = input.small !== undefined ? await readCheckedSvg(input.small) : null;

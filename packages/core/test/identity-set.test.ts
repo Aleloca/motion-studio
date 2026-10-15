@@ -10,7 +10,8 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { EMPTY_BRAND_KIT, FAVICON_ICO_SIZES, IDENTITY_SETS, type BrandKit } from '@motion-studio/shared';
+import { EMPTY_BRAND_KIT, FAVICON_ICO_SIZES, IDENTITY_SETS, messages, type BrandKit } from '@motion-studio/shared';
+import { currentLocale, setLocale } from '../src/i18n.ts';
 import { findFfmpeg } from '../src/render/encode.ts';
 import { readIco } from '../src/identity/ico.ts';
 import {
@@ -173,6 +174,18 @@ describe.skipIf(!ff)('buildIdentitySet (stand-in rasteriser, real ffmpeg)', () =
     const b = await buildIdentitySet('app-icon', { master: svgFile(), outDir: join(work, 'brand-bg'), name: 'Acme', background: '#00000000', brand: brand('#00AA00'), rasterize: fakeRasterize([]), ffmpeg: ff! });
     expect([...decodePng(readFileSync(join(work, 'brand-bg', 'AppIcon-1024.png'))).rgba.subarray(0, 3)]).toEqual([0, 0xaa, 0]);
     expect(b.warnings).toEqual([]);
+  });
+
+  it('M6: the warnings are in the job\'s language, whatever the current one', async () => {
+    const before = currentLocale();
+    setLocale('it');
+    try {
+      const r = await buildIdentitySet('app-icon', { master: svgFile(), outDir: join(work, 'white-en'), name: 'Acme', background: '#00000000', rasterize: fakeRasterize([]), ffmpeg: ff!, locale: 'en' });
+      expect(r.warnings).toContain(messages('en').render.identityOpaqueWhite({ format: 'app-icon' }));
+      setLocale('en');
+      const i = await buildIdentitySet('app-icon', { master: svgFile(), outDir: join(work, 'white-it'), name: 'Acme', background: '#00000000', rasterize: fakeRasterize([]), ffmpeg: ff!, locale: 'it' });
+      expect(i.warnings).toContain(messages('it').render.identityOpaqueWhite({ format: 'app-icon' }));
+    } finally { setLocale(before); }
   });
 
   it('the manifest theme colour is the brand primary, else the background', async () => {

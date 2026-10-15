@@ -318,6 +318,24 @@ describe('recoverWorkspace', { timeout: 90_000 }, () => {
   });
 });
 
+describe('M3: logo concepts on create (decision 786)', { timeout: 90_000 }, () => {
+  const create = (formats: string[], identity?: unknown) => app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'L', brief: { ...brief, formats, ...(identity ? { identity } : {}) } } });
+  it('a logo from scratch gets one instance per concept; the UI body (already expanded) is left as it is', async () => {
+    const a = await create(['identity-logo', 'identity-favicon'], { start: 'scratch', name: 'Acme', concepts: 3 });
+    expect(a.statusCode).toBe(201);
+    expect(a.json().creative.brief.formats).toEqual(['identity-logo', 'identity-logo@2', 'identity-logo@3', 'identity-favicon']);
+    const b = await create(['identity-logo', 'identity-logo@2', 'identity-logo@3', 'identity-favicon'], { start: 'scratch', name: 'Acme', concepts: 3 });
+    expect(b.json().creative.brief.formats).toEqual(['identity-logo', 'identity-logo@2', 'identity-logo@3', 'identity-favicon']);
+    // The default is 3 concepts; a gap is filled first.
+    const c = await create(['identity-logo@3'], { start: 'scratch', name: 'Acme' });
+    expect(c.json().creative.brief.formats).toEqual(['identity-logo@3', 'identity-logo', 'identity-logo@2']);
+  });
+  it('from the brand logo, or without a logo format, nothing is added', async () => {
+    expect((await create(['identity-logo'], { start: 'brand' })).json().creative.brief.formats).toEqual(['identity-logo']);
+    expect((await create(['identity-favicon'], { start: 'scratch', name: 'Acme', concepts: 4 })).json().creative.brief.formats).toEqual(['identity-favicon']);
+  });
+});
+
 describe('creative linked codebases', { timeout: 90_000 }, () => {
   it('accepts and normalizes linkedCodebases on create and edit', async () => {
     const res = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'C', brief, linkedCodebases: [{ path: '/tmp/app/' }] } });
