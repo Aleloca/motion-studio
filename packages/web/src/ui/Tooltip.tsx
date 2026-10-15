@@ -10,7 +10,8 @@ export interface TooltipProps {
   label: string;
   /**
    * CSS selector of a descendant that carries the visible text. When given, the tooltip only shows while that
-   * descendant is not rendered (the button has folded to an icon): a button that still shows its word needs no hint.
+   * descendant is not rendered (the button has folded to an icon): a button that still shows its word needs no hint,
+   * unless `label` says more than the trigger's `aria-label` (a hint after the name), which shows in every layout.
    */
   whenHidden?: string;
   /** The one trigger element: a button or anything focusable. Its own handlers keep working. */
@@ -33,10 +34,16 @@ function isFolded(el: HTMLElement, sel: string | undefined): boolean {
 }
 
 /**
- * Hint for an icon-only control (decision 703 update). Shows on hover and on keyboard focus, hides on blur, mouse leave
- * and Esc (without consuming the Esc: a dialog or the range band under it still gets it). While shown the trigger is
- * `aria-describedby` the `role="tooltip"` bubble; the bubble is portalled into document.body and fixed-positioned, so no
- * `overflow: hidden` bar clips it, and it is out of layout (never counted as overflow). Not rendered while hidden.
+ * Hint for an icon-only control (decisions 703, 795, 798). Two parts, both portalled into document.body:
+ * - a static, visually hidden `role="tooltip"` description (`.ms-sr`), always mounted while the hint applies (folded, or
+ *   `label` says more than `aria-label`) and wired with `aria-describedby` only when `label` differs from the trigger's
+ *   `aria-label` (the name is never announced twice);
+ * - the visible bubble, `aria-hidden`, fixed-positioned (no `overflow: hidden` bar clips it, never counted as layout
+ *   overflow): shows on hover and on keyboard focus (`:focus-visible` only), hides on blur, Esc (not consumed: a dialog
+ *   or the range band under it still gets it), scroll and resize; leaving the trigger or the bubble hides it after a
+ *   150 ms grace so the pointer can travel onto it (WCAG 1.4.13 hoverable). Hidden while the trigger is
+ *   `aria-expanded="true"` (its popover sits under the bubble's z-index).
+ * A disabled or loading trigger gets no mouse events, so while the hint applies it carries `label` as a native `title`.
  */
 export function Tooltip({ label, whenHidden, children }: TooltipProps) {
   const id = useId();
@@ -52,7 +59,14 @@ export function Tooltip({ label, whenHidden, children }: TooltipProps) {
   const hideSoon = useCallback(() => { cancelGrace(); grace.current = setTimeout(() => { grace.current = null; setEl(null); }, GRACE_MS); }, [cancelGrace]);
   const hideNow = useCallback(() => { cancelGrace(); setEl(null); }, [cancelGrace]);
   useEffect(() => cancelGrace, [cancelGrace]);
-  const show = useCallback((t: HTMLElement) => { if (isFolded(t, whenHidden)) { cancelGrace(); setEl(t); } }, [whenHidden, cancelGrace]);
+  const name = typeof props['aria-label'] === 'string' ? props['aria-label'] : undefined;
+  /** The label carries more than the accessible name (a hint after it): shown even while the visible text is there. */
+  const extra = name !== undefined && label !== name;
+  const expanded = props['aria-expanded'] === true || props['aria-expanded'] === 'true';
+  const show = useCallback((t: HTMLElement) => {
+    if (t.getAttribute('aria-expanded') === 'true') return;
+    if (extra || isFolded(t, whenHidden)) { cancelGrace(); setEl(t); }
+  }, [whenHidden, cancelGrace, extra]);
 
   // The always-mounted, visually hidden description is the announced text. It lives in document.body, not beside the
   // trigger, so it never disturbs sibling selectors; the trigger is found through a ref composed with the child's own.
@@ -69,14 +83,17 @@ export function Tooltip({ label, whenHidden, children }: TooltipProps) {
     const check = () => {
       const f = isFolded(trig, whenHidden);
       setFolded(f);
-      if (!f) hideNow();
+      if (!f && !extra) hideNow();
     };
     check();
     if (typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(check);
     ro.observe(trig);
     return () => ro.disconnect();
-  }, [trig, whenHidden, hideNow]);
+  }, [trig, whenHidden, hideNow, extra]);
+
+  // An open popover of the trigger sits under the bubble (z 70 vs 75): the bubble goes while it is open.
+  useEffect(() => { if (expanded) hideNow(); }, [expanded, hideNow]);
 
   useEffect(() => {
     if (!el) return;
@@ -110,9 +127,12 @@ export function Tooltip({ label, whenHidden, children }: TooltipProps) {
     if (typeof own === 'function') (own as (e: E) => void)(e);
     fn(e);
   };
+  const applies = folded || extra;
+  const describe = applies && label !== name;
   const trigger = cloneElement(children, {
     ref: setRef,
-    'aria-describedby': folded ? [props['aria-describedby'], id].filter(Boolean).join(' ') : props['aria-describedby'],
+    'aria-describedby': describe ? [props['aria-describedby'], id].filter(Boolean).join(' ') : props['aria-describedby'],
+    title: (props.disabled || props.loading) && applies ? label : props.title,
     onMouseEnter: on(props.onMouseEnter, (e: MouseEvent<HTMLElement>) => show(e.currentTarget)),
     onMouseLeave: on(props.onMouseLeave, hideSoon),
     onFocus: on(props.onFocus, (e: FocusEvent<HTMLElement>) => { if (focusVisible(e.currentTarget)) show(e.currentTarget); }),
@@ -121,7 +141,7 @@ export function Tooltip({ label, whenHidden, children }: TooltipProps) {
   return (
     <>
       {trigger}
-      {folded ? createPortal(<span id={id} role="tooltip" className="ms-sr-only">{label}</span>, document.body) : null}
+      {describe ? createPortal(<span id={id} role="tooltip" className="ms-sr">{label}</span>, document.body) : null}
       {el ? createPortal(<div ref={tip} className="ms-tooltip" aria-hidden="true" style={style} onMouseEnter={cancelGrace} onMouseLeave={hideSoon}>{label}</div>, document.body) : null}
     </>
   );

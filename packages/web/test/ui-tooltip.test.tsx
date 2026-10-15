@@ -9,19 +9,56 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('Tooltip', () => {
   const setup = () => render(<Tooltip label="Send"><Button aria-label="Send">x</Button></Tooltip>);
-  it('keeps a static description wired by aria-describedby; the bubble shows on hover and hides on leave', () => {
+  it('the bubble shows on hover and hides on leave; a label equal to the name adds no description (M4)', () => {
     vi.useFakeTimers();
     setup();
     const b = screen.getByRole('button');
-    const desc = screen.getByRole('tooltip');
-    expect(desc.textContent).toBe('Send');
-    expect(b.getAttribute('aria-describedby')).toBe(desc.id);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    expect(b.hasAttribute('aria-describedby')).toBe(false);
     expect(bubble()).toBeNull();
     fireEvent.mouseEnter(b);
     expect(bubble()?.textContent).toBe('Send');
+    expect(bubble()!.getAttribute('aria-hidden')).toBe('true');
     fireEvent.mouseLeave(b);
     expect(bubble()).not.toBeNull(); // grace period
     act(() => { vi.advanceTimersByTime(200); });
+    expect(bubble()).toBeNull();
+  });
+  it('a label that says more than the name is a static .ms-sr description wired by aria-describedby', () => {
+    render(<Tooltip label="Send · now"><Button aria-label="Send">x</Button></Tooltip>);
+    const b = screen.getByRole('button');
+    const desc = screen.getByRole('tooltip');
+    expect(desc.textContent).toBe('Send · now');
+    expect(desc.className).toBe('ms-sr');
+    expect(b.getAttribute('aria-describedby')).toBe(desc.id);
+  });
+  it('I3: a disabled or loading trigger keeps the hint as a native title while folded; enabled it has none', () => {
+    const { rerender } = render(<Tooltip label="Send"><Button aria-label="Send" disabled>x</Button></Tooltip>);
+    expect(screen.getByRole('button').getAttribute('title')).toBe('Send');
+    rerender(<Tooltip label="Send"><Button aria-label="Send" loading>x</Button></Tooltip>);
+    expect(screen.getByRole('button').getAttribute('title')).toBe('Send');
+    rerender(<Tooltip label="Send"><Button aria-label="Send">x</Button></Tooltip>);
+    expect(screen.getByRole('button').hasAttribute('title')).toBe(false);
+  });
+  it('I3: a disabled trigger whose word is visible gets no title', () => {
+    render(<Tooltip label="Send" whenHidden=".txt"><Button aria-label="Send" disabled><span className="txt">Send</span></Button></Tooltip>);
+    expect(screen.getByRole('button').hasAttribute('title')).toBe(false);
+  });
+  it('M6: a hint after the name shows, and is described, even while the word is visible', () => {
+    render(<Tooltip label="Duplicate · copies this format" whenHidden=".txt"><Button aria-label="Duplicate"><span className="txt">Duplicate</span></Button></Tooltip>);
+    const b = screen.getByRole('button', { name: 'Duplicate' });
+    expect(b.getAttribute('aria-describedby')).toBe(screen.getByRole('tooltip').id);
+    fireEvent.mouseEnter(b);
+    expect(bubble()?.textContent).toBe('Duplicate · copies this format');
+  });
+  it('M11: no bubble while the trigger has its popover open, and an open popover hides it', () => {
+    const { rerender } = render(<Tooltip label="Services"><Button aria-label="Services" aria-expanded={false}>x</Button></Tooltip>);
+    const b = screen.getByRole('button');
+    fireEvent.mouseEnter(b);
+    expect(bubble()).not.toBeNull();
+    rerender(<Tooltip label="Services"><Button aria-label="Services" aria-expanded={true}>x</Button></Tooltip>);
+    expect(bubble()).toBeNull();
+    fireEvent.mouseEnter(b);
     expect(bubble()).toBeNull();
   });
   it('is hoverable: the pointer can move onto the bubble, and leaving both hides it', () => {
@@ -61,7 +98,7 @@ describe('Tooltip', () => {
     expect(bubble()).toBeNull();
     txt.style.display = 'none';
     act(() => fire());
-    expect(screen.getByRole('tooltip')).toBeTruthy();
+    expect(screen.queryByRole('tooltip')).toBeNull(); // the label equals the name: nothing to describe (M4)
     fireEvent.mouseEnter(b);
     expect(bubble()).not.toBeNull();
     txt.style.display = '';

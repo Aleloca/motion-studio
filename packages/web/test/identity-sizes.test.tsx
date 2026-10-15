@@ -199,12 +199,13 @@ describe('FormatView · identity formats', () => {
   });
 
   it('the favicon\'s SVG can be used as the brand logo; a set without SVG offers nothing', async () => {
-    render(<Harness format={FAV} />);
+    const first = render(<Harness format={FAV} />);
     await screen.findByRole('button', { name: /Usa .* come logo del brand/ });
     const set: IdentitySetInfo = { dir: 'identity-app-icon', files: [{ path: 'AppIcon-1024.png', width: 1024, height: 1024, alpha: false, role: 'opaque' }], warnings: [] };
     detail = detailOf(['identity-app-icon'], [version(1, [out('identity-app-icon', set)])]);
     location.hash = '#/p/acme/c/lancio/f/identity-app-icon';
-    document.body.innerHTML = '';
+    // Unmounted through React: the Tooltip's description is portalled into body, so wiping body would orphan it.
+    first.unmount();
     render(<Harness format="identity-app-icon" />);
     await screen.findByRole('radio', { name: 'Dimensioni' });
     expect(screen.queryByRole('button', { name: /come logo del brand/ })).toBeNull();
