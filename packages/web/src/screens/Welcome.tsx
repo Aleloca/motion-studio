@@ -122,9 +122,10 @@ export function Welcome(props: WelcomeProps) {
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
-  const passed = checks?.filter((c) => c.ok).length ?? 0;
+  const counted = checks?.filter((c) => !c.info) ?? [];
+  const passed = counted.filter((c) => c.ok).length;
   const steps: Array<[string, string]> = [
-    [w.checkTitle, loadError ? w.serverUnreachableShort : checks ? w.checksPassed({ ok: passed, total: checks.length }) : w.checking],
+    [w.checkTitle, loadError ? w.serverUnreachableShort : checks ? w.checksPassed({ ok: passed, total: counted.length }) : w.checking],
     [w.workspaceTitle, w.workspaceSub],
     [w.projectTitle, w.projectSub],
   ];
@@ -319,7 +320,7 @@ function CheckRow({ check: c, onRecheck }: { check: DoctorCheck; onRecheck(): vo
   if (c.ok) {
     return (
       <li className="ms-syscheck">
-        <span ref={mark} className="ms-syscheck-mark ms-ok" aria-hidden="true"><Icon name="check" size={10} strokeWidth={2.4} /></span>
+        <span ref={mark} className={cx('ms-syscheck-mark', c.info ? 'ms-note' : 'ms-ok')} aria-hidden="true"><Icon name={c.info ? 'minus' : 'check'} size={10} strokeWidth={2.4} /></span>
         <span className="ms-syscheck-label">{c.label}</span>
         <span className="ms-syscheck-value">{c.version ?? c.message}</span>
       </li>
@@ -448,15 +449,16 @@ function ChecksSummary({ checks, onRecheck }: { checks: DoctorCheck[]; onRecheck
   const t = useT();
   const w = t.web.welcome;
   const [open, setOpen] = useState(false);
-  const passed = checks.filter((c) => c.ok).length;
-  const notes = passed < checks.length;
+  const counted = checks.filter((c) => !c.info);
+  const passed = counted.filter((c) => c.ok).length;
+  const notes = passed < counted.length;
   return (
     <div className="ms-ws-checks">
       <div className="ms-ws-checks-head">
         <button type="button" className="ms-ws-checks-toggle" aria-expanded={open} aria-controls="ms-ws-checks-list" onClick={() => setOpen((o) => !o)}>
           <span className={cx('ms-syscheck-mark', notes ? 'ms-note' : 'ms-ok')} aria-hidden="true"><Icon name={notes ? 'minus' : 'check'} size={10} strokeWidth={2.4} /></span>
           <b>{notes ? w.systemNotes : w.systemReady}</b>
-          <span className="ms-muted">· {w.checksPassed({ ok: passed, total: checks.length })}</span>
+          <span className="ms-muted">· {w.checksPassed({ ok: passed, total: counted.length })}</span>
           <Icon name="chevron" size={12} className={cx('ms-ws-chev', open && 'ms-open')} />
         </button>
         <Button size="sm" variant="ghost" onClick={onRecheck}>{w.recheck}</Button>
@@ -465,7 +467,7 @@ function ChecksSummary({ checks, onRecheck }: { checks: DoctorCheck[]; onRecheck
         <ul id="ms-ws-checks-list" className="ms-ws-checks-list">
           {checks.map((c) => (
             <li key={c.id}>
-              <span className={cx('ms-ws-dot', c.ok ? 'ms-ok' : 'ms-note')} aria-hidden="true" />
+              <span className={cx('ms-ws-dot', c.ok && !c.info ? 'ms-ok' : 'ms-note')} aria-hidden="true" />
               <span className="ms-syscheck-label">{c.label}</span>
               <span className="ms-syscheck-value">{c.ok ? (c.version ?? c.message) : w.recommended}</span>
             </li>

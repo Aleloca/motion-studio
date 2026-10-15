@@ -29,6 +29,7 @@ const api = {
   }),
   checkSecret: vi.fn(async (provider: SecretStatus['provider']): Promise<KeyCheckResult> => checks[provider] ?? { provider, checkedAt: 'x', capabilities: [{ capability: 'key', status: 'ok' }] }),
   getKeyChecks: vi.fn(async () => structuredClone(checks)),
+  getUpdatesState: vi.fn(async (): Promise<{ state: 'active' | 'off' | 'unknown' }> => ({ state: 'active' })),
   setLanguage: vi.fn(),
   updateSettings: vi.fn(),
   getRenderEngine: vi.fn(async (): Promise<RenderEngineStatus> => electron),
@@ -422,15 +423,51 @@ describe('App settings · notifications and updates', () => {
     } finally { vi.unstubAllGlobals(); }
   });
 
-  it('in the desktop app: the version and how updates arrive, never claiming it is up to date, with no fake buttons', () => {
+  it('in the desktop app: the version and how updates arrive, never claiming it is up to date, with no fake buttons', async () => {
     (window as unknown as { motionStudio: object }).motionStudio = { isDesktop: true, platform: 'darwin', pickFolder: vi.fn(), revealPath: vi.fn() };
     try {
       en(page('updates'));
       expect(screen.getByText(`Motion Studio ${__APP_VERSION__}`)).toBeTruthy();
-      expect(screen.getByText('The desktop app downloads updates automatically and asks you to restart.')).toBeTruthy();
+      expect(await screen.findByText('The desktop app downloads updates automatically and asks you to restart.')).toBeTruthy();
       expect(screen.queryByText(/up to date/i)).toBeNull();
       const main = screen.getByRole('main');
       expect(within(main).queryAllByRole('button')).toHaveLength(0);
+    } finally { delete (window as unknown as { motionStudio?: object }).motionStudio; }
+  });
+
+  it('decision 802: a dev or unsigned desktop build says automatic updates are not active, no dialog and no button', async () => {
+    (window as unknown as { motionStudio: object }).motionStudio = { isDesktop: true, platform: 'darwin', pickFolder: vi.fn(), revealPath: vi.fn() };
+    api.getUpdatesState.mockResolvedValueOnce({ state: 'off' });
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    try {
+      en(page('updates'));
+      expect(await screen.findByText('Automatic updates are not active in this version')).toBeTruthy();
+      expect(screen.queryByText(/downloads updates automatically/)).toBeNull();
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(alert).not.toHaveBeenCalled();
+      expect(within(screen.getByRole('main')).queryAllByRole('button')).toHaveLength(0);
+    } finally { alert.mockRestore(); delete (window as unknown as { motionStudio?: object }).motionStudio; }
+  });
+
+  it('decision 802: the state unknown (or unreachable) claims nothing either way', async () => {
+    (window as unknown as { motionStudio: object }).motionStudio = { isDesktop: true, platform: 'darwin', pickFolder: vi.fn(), revealPath: vi.fn() };
+    api.getUpdatesState.mockRejectedValueOnce(new Error('down')).mockResolvedValueOnce({ state: 'unknown' });
+    try {
+      en(page('updates'));
+      await waitFor(() => expect(api.getUpdatesState).toHaveBeenCalledTimes(2), { timeout: 3000 });
+      expect(screen.getByText(`Motion Studio ${__APP_VERSION__}`)).toBeTruthy();
+      expect(screen.queryByText(/automatically|not active|non attivi/i)).toBeNull();
+    } finally { delete (window as unknown as { motionStudio?: object }).motionStudio; }
+  });
+
+  it('decision 802: an unknown state is read once more a second later and then shows the off line', async () => {
+    (window as unknown as { motionStudio: object }).motionStudio = { isDesktop: true, platform: 'darwin', pickFolder: vi.fn(), revealPath: vi.fn() };
+    api.getUpdatesState.mockResolvedValueOnce({ state: 'unknown' }).mockResolvedValueOnce({ state: 'off' });
+    try {
+      en(page('updates'));
+      expect(await screen.findByText('Automatic updates are not active in this version', {}, { timeout: 3000 })).toBeTruthy();
+      expect(api.getUpdatesState).toHaveBeenCalledTimes(2);
     } finally { delete (window as unknown as { motionStudio?: object }).motionStudio; }
   });
 
@@ -438,6 +475,7 @@ describe('App settings · notifications and updates', () => {
     en(page('updates'));
     expect(screen.getByText(`Motion Studio ${__APP_VERSION__}`)).toBeTruthy();
     expect(screen.queryByText(/desktop app/i)).toBeNull();
+    expect(api.getUpdatesState).not.toHaveBeenCalled();
   });
 });
 

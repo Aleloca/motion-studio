@@ -138,14 +138,19 @@ export type ServerMessage =
   /** The project's metadata (name, description, linked codebases) changed. */
   | { type: 'project'; project: string };
 
+/** Whether the desktop app updates itself: 'off' in a development run or an unsigned build, 'unknown' where there is no updater (browser, CLI) or before it has settled. */
+export type UpdatesState = 'active' | 'off' | 'unknown';
+
 export interface DoctorCheck {
-  id: 'node' | 'git' | 'ffmpeg' | 'claude' | 'claude-auth' | 'sandbox' | 'shell-path' | 'workspace-path' | 'agent-deny-paths' | 'live-messages' | 'interrupt' | 'workspace-settings';
+  id: 'node' | 'git' | 'ffmpeg' | 'claude' | 'claude-auth' | 'sandbox' | 'shell-path' | 'workspace-path' | 'agent-deny-paths' | 'live-messages' | 'interrupt' | 'workspace-settings' | 'updates';
   label: string;
   ok: boolean;
   required: boolean;
   version?: string;
   message: string;
   fix?: string;
+  /** Informational only: shown with a neutral mark and left out of the passed count (the updates row). */
+  info?: true;
 }
 
 export type ProjectListItem =

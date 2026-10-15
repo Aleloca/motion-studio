@@ -41,6 +41,8 @@ export async function runDoctor(opts: {
    * is active: the fallback (queued only, stop and resume) for every version unless opted in (decisions log 610).
    */
   agentOptIn?: CapabilityOptIn;
+  /** Decision 802: the desktop's updater is off (development run, unsigned build): one informational row (ok, so it neither counts as a recommendation nor blocks). */
+  updatesOff?: boolean;
 }): Promise<DoctorCheck[]> {
   const { exec } = opts;
   const [claudeBin, ...claudePrefix] = opts.claudeCommand;
@@ -147,6 +149,7 @@ export async function runDoctor(opts: {
   if (denyPaths.length > 0) {
     checks.push({ id: 'agent-deny-paths', label: d.denyPathsLabel, required: false, ok: false, message: d.denyPathsGlob({ paths: denyPaths.join(', '), count: denyPaths.length }) });
   }
+  if (opts.updatesOff) checks.push({ id: 'updates', label: d.updatesLabel, required: false, ok: true, info: true, message: d.updatesOff });
   return checks;
 }
 

@@ -3,7 +3,7 @@ import { findFfmpeg } from '../render/encode.ts';
 import type { ChromiumProviderFactory } from '../render/chromium-provider.ts';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { LanguageSetting, Locale } from '@motion-studio/shared';
+import type { LanguageSetting, Locale, UpdatesState } from '@motion-studio/shared';
 import type { FastifyInstance } from 'fastify';
 import open from 'open';
 import { sweepRunDir } from '../agent/launcher.ts';
@@ -66,6 +66,8 @@ export interface StartServerOptions {
   vault?: SecretsVault;
   /** Where PATH came from (desktop): adds the optional `shell-path` Doctor check. */
   shellPath?: ShellPathOrigin;
+  /** Desktop (decision 802): whether automatic updates are on; read per request by Settings → Updates and the Doctor. */
+  updatesState?: () => UpdatesState;
   /** How long a live instance recorded in run/server.json gets to answer /api/health. Default 3 s. */
   healthTimeoutMs?: number;
   /** How long to wait for another boot holding run/boot.lock. Default 5 s. */
@@ -168,7 +170,8 @@ async function startLocked(configDir: string, opts: StartServerOptions) {
     git: new Git(),
     runner: new ClaudeCodeRunner(claudeCommand),
     bridge, mcpCommand, sandbox, ...(opts.mcpEnv ? { mcpEnv: opts.mcpEnv } : {}),
-    doctor: (extra) => runDoctor({ exec: execCommand, claudeCommand, sandbox: extra.sandbox, workspacePath: extra.workspacePath ?? null, configDir, home: homedir(), ...(opts.shellPath ? { shellPath: opts.shellPath } : {}), ffmpegInfo: () => findFfmpeg(), ...(extra.agentOptIn ? { agentOptIn: extra.agentOptIn } : {}) }),
+    ...(opts.updatesState ? { updatesState: opts.updatesState } : {}),
+    doctor: (extra) => runDoctor({ updatesOff: opts.updatesState?.() === 'off', exec: execCommand, claudeCommand, sandbox: extra.sandbox, workspacePath: extra.workspacePath ?? null, configDir, home: homedir(), ...(opts.shellPath ? { shellPath: opts.shellPath } : {}), ffmpegInfo: () => findFfmpeg(), ...(extra.agentOptIn ? { agentOptIn: extra.agentOptIn } : {}) }),
     // Phase 13: `claude --version` for the capability table (cached by the server).
     claudeVersion: async () => {
       const [bin, ...prefix] = claudeCommand;

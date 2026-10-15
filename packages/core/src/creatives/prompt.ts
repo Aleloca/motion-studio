@@ -367,7 +367,7 @@ function redirectSection(text: string, pins: Pin[] | undefined): string[] {
 
 /**
  * The series section of an App store pack (Phase 12, spec §4.1): the screenshots are one listing read in order, so the agent
- * keeps one grid and style, puts the caption at the top and the app screen inside a generic device frame drawn in HTML/CSS,
+ * keeps one grid and style, puts the caption at the top and the app screen directly on the background, with no device frame (decision 803),
  * and never uses Apple or Google logos or device artwork. Store devices differ in size, so nothing is linked (Ruling D): the
  * iPad and Google Play screenshot N adapt the iPhone screenshot N. User text (app name, tagline, captions) is quoted as data.
  */
@@ -389,16 +389,16 @@ export function storePackPromptSection(p: StorePack): string[] {
     `- These formats are the store listing of the app ${q(p.app.name, 60)}${p.app.tagline ? ` (tagline ${q(p.app.tagline, 120)})` : ''}: a series of ${n} screenshot${n === 1 ? '' : 's'} per device, read in order.`,
     '- Instances: `<preset>` is screenshot 1 and `<preset>@k` is screenshot k (their labels read "k · caption"). If the creative has other instances of the same preset, the number in the label is the screenshot number, not the one after the @.',
     ...p.screenshots.map((s, i) => `- Screenshot ${i + 1}: caption ${q(s.caption, 80)}; ${s.screen ? `app screen ${q(s.screen, 300)} (project path: copy it into the composition's assets/)` : 'no app screen given: design a simple, plausible screen for this caption'}.`),
-    '- Keep the same grid and style across the whole series: the same background treatment, type scale, caption position, frame size and spacing on every screenshot of a device.',
+    '- Keep the same grid and style across the whole series: the same background treatment, type scale, caption position, canvas size and spacing on every screenshot of a device.',
     '- Put the caption at the top of each screenshot, large and legible at store thumbnail size; the app screen goes below it.',
-    '- Show the app screen inside a generic device frame drawn with HTML/CSS: a rounded rectangle with a plain bezel, no notch or camera shapes, no buttons, no logos, no brand marks.',
+    '- Show the app screen only: the screenshot itself, with at most rounded corners and a soft shadow, placed on the background below the caption. Do not draw a device frame: no phone or tablet body, bezel, notch, camera, buttons or status-bar mockup, no logos, no brand marks.',
     '- Never use Apple or Google logos, product names as artwork, device artwork or photos of real devices (no iPhone, iPad or Pixel renderings).',
     `- The story progresses from screenshot 1 to ${n}: each one shows the next step or benefit; screenshot 1 is the strongest.`,
     ...(adapted.length > 0 ? [`- ${adapted.join(', ')}: each screenshot adapts the ${lead} screenshot of the same number: same caption, same story beat, re-laid-out for its own size (never a crop or a scaled copy).`] : []),
     '- Opaque backgrounds only: store screenshots and the feature graphic must have no transparency.',
     ...(p.preview && p.stores.includes('appstore') ? ['- App Store preview (appstore-preview): 15 to 30 seconds, `"fps": 30` in its composition (Apple accepts 30 fps only; Motion Studio renders it at 30 fps in any case), the app in use in the same style as the screenshots; Motion Studio adds a silent audio track when it has no sound.'] : []),
     ...(p.preview && p.stores.includes('playstore') ? ['- Google Play promo video (playstore-promo-16x9): 16:9, for YouTube; the first 30 seconds matter most.'] : []),
-    ...(has('playstore', 'feature') ? [`- Google Play feature graphic (playstore-feature, 1024×500): the app name and tagline in the series style, no device frame needed, nothing important near the edges.`] : []),
+    ...(has('playstore', 'feature') ? [`- Google Play feature graphic (playstore-feature, 1024×500): the app name and tagline in the series style, no device frame, nothing important near the edges.`] : []),
   ];
   return lines;
 }

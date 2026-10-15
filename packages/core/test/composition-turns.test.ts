@@ -635,6 +635,24 @@ describe('units', () => {
     expect(acceptedDurationsOf(undefined, ['test-wide'], PRESETS, 4).size).toBe(0);
   });
 
+  it('an old store composition with an HTML/CSS device frame layer still validates (decision 803)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ms-test-comp-'));
+    try {
+      // The frame layer is a real clip of a visual track, so the check reads and validates it (not an orphan file).
+      mkdirSync(join(dir, 'layers'));
+      writeFileSync(join(dir, 'layers', 'device-frame.html'), '<!doctype html><html><body><div style="border-radius:40px;border:12px solid #222;width:160px;height:300px"></div></body></html>');
+      const frame = { id: 'frame', type: 'html', src: 'layers/device-frame.html', start: 0, duration: 2, props: { x: 0, y: 0, width: 320, height: 180 } };
+      writeFileSync(join(dir, 'composition.json'), JSON.stringify({ $schema: 'motion-studio/composition@1', width: 320, height: 180, fps: 30, duration: 2, background: '#000000', fonts: [], scenes: [], tracks: [{ id: 'visual', kind: 'visual', clips: [frame] }] }));
+      await writeNormalized(dir);
+      expect(JSON.parse(readFileSync(join(dir, 'composition.json'), 'utf8')).tracks[0].clips.map((c: { src?: string }) => c.src)).toEqual(['layers/device-frame.html']);
+      const r = await checkComposition(dir, 'test-wide', PRESETS[0]!, 2);
+      expect(r.problems).toEqual([]);
+      expect(r.ok).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('names equal after NFC are a clear problem; links are refused; the json is normalised after the agent', async () => {
     expect(folderProblem(new CompositionFolderError('ambiguous', 'assets/é.png')).key).toBe('composition.ambiguousNames');
     const dir = mkdtempSync(join(tmpdir(), 'ms-test-comp-'));

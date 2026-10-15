@@ -51,6 +51,16 @@ describe('Welcome · step 1 (system check)', () => {
     expect(screen.getAllByText('2 of 2 checks passed').length).toBeGreaterThan(0);
   });
 
+  it('an informational check (updates) is shown with a neutral mark and is not counted as passed', () => {
+    vi.useFakeTimers();
+    const withInfo: DoctorCheck[] = [...okChecks, { id: 'updates', label: 'Automatic updates', ok: true, info: true, required: false, message: 'Not active in this version' }];
+    setup({ checks: withInfo });
+    act(() => { vi.advanceTimersByTime(280 * 4); });
+    expect(screen.getAllByText('2 of 2 checks passed').length).toBeGreaterThan(0);
+    expect(screen.queryByText('3 of 3 checks passed')).toBeNull();
+    expect(screen.getByText('Not active in this version').previousElementSibling?.previousElementSibling?.className).toContain('ms-note');
+  });
+
   it('a failed required check blocks Continue and shows its remedy with Check again', () => {
     vi.useFakeTimers();
     const failing: DoctorCheck[] = [okChecks[0]!, { id: 'git', label: 'Git', ok: false, required: true, message: 'Not found', fix: 'brew install git' }];

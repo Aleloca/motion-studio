@@ -1,4 +1,4 @@
-import { KEY_CAPABILITIES, KEY_PERMISSIONS, LOCALES, shownTotal, type ChromeDownloadOffer, type KeyCheckResult, type RenderEngineStatus, type DoctorCheck, type LanguageSetting, type Locale, type ProviderId, type SecretStatus, type UsageReport, type WorkspaceSettings, type WorkspaceSettingsView } from '@motion-studio/shared';
+import { KEY_CAPABILITIES, KEY_PERMISSIONS, LOCALES, shownTotal, type ChromeDownloadOffer, type KeyCheckResult, type RenderEngineStatus, type DoctorCheck, type LanguageSetting, type Locale, type ProviderId, type SecretStatus, type UpdatesState, type UsageReport, type WorkspaceSettings, type WorkspaceSettingsView } from '@motion-studio/shared';
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { api } from '../api.ts';
 import { formatDate, formatNumber, useLocale, useT, type LanguageState } from '../i18n.tsx';
@@ -166,7 +166,7 @@ function StatusCard({ checks, checking, loadError, onRecheck }: Pick<AppSettings
   const notes = checks?.filter((c) => !c.ok && !c.required) ?? [];
   const busy = checking || (!checks && !loadError);
   const title = busy ? st.checking : loadError ? t.web.welcome.serverUnreachable({ detail: loadError }) : problems.length ? st.problems({ count: problems.length }) : notes.length ? st.notes({ count: notes.length }) : st.ok;
-  const line = (checks ?? []).map((c) => (c.ok ? `${c.label}${c.version ? ` ${c.version}` : ''}` : null)).filter(Boolean).join(' · ');
+  const line = (checks ?? []).map((c) => (c.ok && c.id !== 'updates' ? `${c.label}${c.version ? ` ${c.version}` : ''}` : null)).filter(Boolean).join(' · ');
   return (
     <Card className="ms-status" data-enter>
       <div className="ms-status-head">
@@ -541,12 +541,26 @@ function Notifications() {
 function Updates() {
   const t = useT();
   const u = t.web.appSettings.updates;
+  // Decision 802: a development run or an unsigned build says so once, here; where the core reports nothing, no claim either way.
+  const [state, setState] = useState<UpdatesState>('unknown');
+  useEffect(() => {
+    if (!desktop()) return;
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // 'unknown' right after boot (the updater has not decided yet) or an unreachable core: one more look after a second.
+    const load = (retry: boolean) => {
+      Promise.resolve().then(() => api.getUpdatesState()).then((r) => { if (alive) { setState(r.state); if (r.state === 'unknown' && retry) timer = setTimeout(() => load(false), 1000); } })
+        .catch(() => { if (alive && retry) timer = setTimeout(() => load(false), 1000); });
+    };
+    load(true);
+    return () => { alive = false; if (timer) clearTimeout(timer); };
+  }, []);
   return (
     <div className="ms-set-narrow">
       <Head title={u.title} />
       <Card className="ms-set-card" data-enter>
         {/* How updates arrive is a desktop fact; in a browser the page shows only the version. */}
-        <Row title={u.version({ version: __APP_VERSION__ })} sub={desktop() ? u.automatic : undefined} />
+        <Row title={u.version({ version: __APP_VERSION__ })} sub={!desktop() ? undefined : state === 'off' ? u.off : state === 'active' ? u.automatic : undefined} />
       </Card>
     </div>
   );

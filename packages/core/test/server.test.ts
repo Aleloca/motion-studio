@@ -132,6 +132,18 @@ describe('doctor', () => {
   });
 });
 
+describe('automatic updates state (decision 802)', () => {
+  it('GET /api/updates reports the desktop state, unknown without one', async () => {
+    expect((await app.inject('/api/updates')).json()).toEqual({ state: 'unknown' });
+    let state: 'active' | 'off' | 'unknown' = 'off';
+    const other = await buildWith({ updatesState: () => state });
+    expect((await other.inject('/api/updates')).json()).toEqual({ state: 'off' });
+    state = 'active';
+    expect((await other.inject('/api/updates')).json()).toEqual({ state: 'active' });
+    await other.close();
+  });
+});
+
 describe('doctor and the sandbox setting', () => {
   it('reports the sandbox as off when the workspace disabled it, whatever the system supports', async () => {
     const exec = async () => ({ code: 0, stdout: '1.0.0', stderr: '', notFound: false });
