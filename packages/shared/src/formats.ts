@@ -28,6 +28,12 @@ export type FormatPreset = z.infer<typeof formatPresetSchema>;
 export const formatsFileSchema = z.object({
   schemaVersion: z.literal(1),
   presets: z.array(formatPresetSchema).min(1),
+  /**
+   * The built-in preset ids this file has already been offered (Phase 14, ruling AK): a default preset not in this list is
+   * new and gets appended on load; one in it that the file lacks was deleted by the user and stays deleted. Absent in files
+   * written before Phase 14 (the core reads it as the defaults of that time).
+   */
+  seenDefaults: z.array(z.string().min(1).max(200)).max(1000).optional(),
 }).refine((f) => new Set(f.presets.map((p) => p.id)).size === f.presets.length, { message: 'issue.duplicatePresetIds', path: ['presets'] });
 export type FormatsFile = z.infer<typeof formatsFileSchema>;
 
