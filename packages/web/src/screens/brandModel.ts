@@ -257,3 +257,9 @@ export function canonicalGenre(genre: string): string {
   const k = genreKeyOf(genre);
   return k ? GENRE_CANONICAL[k] : genre.trim();
 }
+
+/** The folder name of a codebase path ("/Users/me/dev/app/" → "app"); the path itself when it has no segment. */
+export function folderName(path: string): string {
+  const parts = path.split(/[\\/]+/).filter(Boolean);
+  return parts[parts.length - 1] ?? path;
+}

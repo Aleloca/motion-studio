@@ -8,17 +8,30 @@ import { commandLog, webExplainContext, WorkspacePathContext } from '../componen
 import type { EventsState } from '../eventsReducer.ts';
 import { formatWhen, relativeTime, useLocale, useT } from '../i18n.tsx';
 import { enter } from '../motion/index.ts';
-import { Button, cx, Icon, Input, Popover, Spinner, toast, Typing } from '../ui/index.ts';
-import { analysisPhases, analysisSteps, healthChecks, hostOf, normalizeUrl, type HealthId, type PhaseState } from './brandModel.ts';
+import { Button, cx, Icon, Input, Popover, Segmented, Spinner, toast, Typing } from '../ui/index.ts';
+import { analysisPhases, analysisSteps, folderName, healthChecks, hostOf, normalizeUrl, type HealthId, type PhaseState } from './brandModel.ts';
 import { KEEPALIVE, deferRemoval, flushDeferred, isPendingRemoval, removalKey, usePendingRemovals } from './deferred.ts';
 import { isActive, useBrand, useAppear, type SectionId } from './brandContext.tsx';
 import { message } from './common.tsx';
+import { CodebaseSourceForm } from './brand/CodebaseSourceForm.tsx';
 import { formatTokens, TokenCount } from '../shell/Tokens.tsx';
 import { jobLiveTokens, jobUsagePartial } from '../usageLive.ts';
 
 /** An analysis' tokens from its proposal; null for proposals from before usage tracking. */
 const proposalTokens = (p: BrandProposal) => (p.usage ? shownTotal(p.usage.tokens) : null);
 /* ---------- side column: analysis, sources, health, history ---------- */
+
+/** Notes the core attached to an analysis job (no sandbox, codebases left out or changed…), already localized. */
+export function AnalysisNotes({ job }: { job: JobSummary | undefined }) {
+  const c = useT().web.brand.codebase;
+  if (!job || job.kind !== 'brand-analysis' || !job.notes?.length) return null;
+  return (
+    <section className="ms-bsources" aria-label={c.notesTitle}>
+      <span className="ms-cap">{c.notesTitle}</span>
+      <ul className="ms-bnotes ms-bsmall-text">{job.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
+    </section>
+  );
+}
 
 /**
  * "N commands ran in the sandbox · M approved by you · Details" for one analysis (brand transparency, count work): every
@@ -162,13 +175,14 @@ export function AnalysisFailure({ job, proposals, onRetry }: { job: JobSummary |
   );
 }
 
-export function Sources({ overview, job, reload }: { overview: BrandOverview; job: JobSummary | undefined; reload(): void }) {
+export function Sources({ overview, job, reload, codebases = [] }: { overview: BrandOverview; job: JobSummary | undefined; reload(): void; codebases?: string[] }) {
   const t = useT();
   const s = t.web.brand.sources;
   const locale = useLocale();
   const { slug } = useBrand();
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [url, setUrl] = useState('');
+  const [kind, setKind] = useState<'site' | 'code'>('site');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<'add' | 'analyze' | null>(null);
   const active = isActive(job);
@@ -182,11 +196,16 @@ export function Sources({ overview, job, reload }: { overview: BrandOverview; jo
     setHidden((h) => new Set([...h, ...gone]));
     reload();
   });
-  const sites = overview.sources.filter((x) => x.kind === 'website' && !hidden.has(x.id) && !isPendingRemoval(removalKey('brand-source', slug, x.id)));
+  const sites = overview.sources.filter((x) => (x.kind === 'website' || x.kind === 'codebase') && !hidden.has(x.id) && !isPendingRemoval(removalKey('brand-source', slug, x.id)));
   const images = overview.sources.filter((x) => x.kind === 'image').length;
   const usable = sites.length + images > 0;
   const analyzedOnce = overview.sources.some((x) => x.lastAnalyzedAt);
 
+  const addCodebase = async (path: string, note: string) => {
+    await api.addBrandSource(slug, { kind: 'codebase', path, ...(note ? { note } : {}) });
+    toast.show(t.web.brand.codebase.added, { tone: 'ok' });
+    reload();
+  };
   const add = async (e: FormEvent) => {
     e.preventDefault();
     const u = normalizeUrl(url);
@@ -209,10 +228,10 @@ export function Sources({ overview, job, reload }: { overview: BrandOverview; jo
     } catch (err) { setError(message(err)); } finally { setBusy(null); }
   };
   const remove = (src: BrandSource) => {
-    const host = hostOf(src.url);
+    const name = src.kind === 'codebase' ? folderName(src.path ?? '') : hostOf(src.url);
     setHidden((h) => new Set(h).add(src.id));
     deferRemoval({
-      text: s.removed({ host }), undoLabel: t.web.brand.undo,
+      text: src.kind === 'codebase' ? t.web.brand.codebase.removed({ name }) : s.removed({ host: name }), undoLabel: t.web.brand.undo,
       keys: [removalKey('brand-source', slug, src.id)],
       commit: () => api.removeBrandSource(slug, src.id, KEEPALIVE).then(reload),
       restore: () => setHidden((h) => { const n = new Set(h); n.delete(src.id); return n; }),
@@ -228,10 +247,14 @@ export function Sources({ overview, job, reload }: { overview: BrandOverview; jo
           meta={analyzing ? s.inProgress : src.lastAnalyzedAt ? s.analyzedAt({ when: relativeTime(locale, src.lastAnalyzedAt) }) : s.never} live={analyzing} />
       ))}
       {!sites.length ? <span className="ms-muted ms-bsmall-text">{s.empty}</span> : null}
-      <form className="ms-brow ms-bnowrap" onSubmit={(e) => void add(e)}>
-        <Input className="ms-grow ms-bsmall" value={url} aria-label={s.addLabel} placeholder={s.addPlaceholder} onChange={(e) => { setUrl(e.target.value); setError(null); }} />
-        <Button type="submit" variant="ink" size="sm" loading={busy === 'add'} disabled={!url.trim()}>{s.add}</Button>
-      </form>
+      <Segmented label={t.web.brand.codebase.kindAria} value={kind} onChange={(k) => { setKind(k); setError(null); }}
+        options={[{ value: 'site', label: t.web.brand.codebase.kindSite, icon: 'globe' }, { value: 'code', label: t.web.brand.codebase.kindCode, icon: 'code' }]} />
+      {kind === 'site' ? (
+        <form className="ms-brow ms-bnowrap" onSubmit={(e) => void add(e)}>
+          <Input className="ms-grow ms-bsmall" value={url} aria-label={s.addLabel} placeholder={s.addPlaceholder} onChange={(e) => { setUrl(e.target.value); setError(null); }} />
+          <Button type="submit" variant="ink" size="sm" loading={busy === 'add'} disabled={!url.trim()}>{s.add}</Button>
+        </form>
+      ) : <CodebaseSourceForm suggestions={codebases} taken={overview.sources.flatMap((x) => (x.path ? [x.path] : []))} submitLabel={t.web.brand.codebase.add} onSubmit={addCodebase} />}
       {error ? <span className="ms-bwarn" role="alert">{error}</span> : null}
       <span className="ms-muted ms-bsmall-text">{images ? s.images({ count: images }) : s.noImages}</span>
       <Button className="ms-bwide" loading={busy === 'analyze'} disabled={active || !usable} onClick={() => void analyze()}>
@@ -249,14 +272,17 @@ function SourceRow({ src, meta, live, onRemove }: { src: BrandSource; meta: stri
   const more = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   useAppear(ref);
-  const host = hostOf(src.url);
+  const code = src.kind === 'codebase';
+  const host = code ? folderName(src.path ?? '') : hostOf(src.url);
   return (
     <div className="ms-bsource" ref={ref}>
       <div className="ms-brow ms-bnowrap">
-        <span className="ms-bsource-icon" aria-hidden="true"><Icon name="globe" size={12} /></span>
-        <b className="ms-ell" title={src.url ?? undefined}>{host}</b>
-        <Button ref={more} variant="ghost" size="sm" icon className="ms-bpush" aria-label={s.actions({ host })} aria-expanded={open} onClick={() => setOpen(!open)}><Icon name="more" size={14} /></Button>
+        <span className="ms-bsource-icon" aria-hidden="true"><Icon name={code ? 'code' : 'globe'} size={12} /></span>
+        <b className="ms-ell" title={(code ? src.path : src.url) ?? undefined}>{host}</b>
+        <Button ref={more} variant="ghost" size="sm" icon className="ms-bpush" aria-label={code ? t.web.brand.codebase.actions({ name: host }) : s.actions({ host })} aria-expanded={open} onClick={() => setOpen(!open)}><Icon name="more" size={14} /></Button>
       </div>
+      {code ? <span className="ms-bsmall-text ms-muted ms-bsource-path">{src.path}</span> : null}
+      {code && src.note ? <span className="ms-bsmall-text ms-muted">{src.note}</span> : null}
       <span className={cx('ms-bsmall-text', live ? 'ms-baccent' : 'ms-muted')}>{live ? <Spinner decorative size={10} /> : null}{meta}</span>
       <Popover open={open} onClose={() => setOpen(false)} anchor={more} width={180} placement="bottom-end">
         <div className="ms-bpop">

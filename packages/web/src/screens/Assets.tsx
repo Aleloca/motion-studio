@@ -20,7 +20,7 @@ import './library.css';
 
 export { baseName, mergeTags };
 
-const ORIGINS: AssetOrigin[] = ['website', 'upload', 'generated', 'stock'];
+const ORIGINS: AssetOrigin[] = ['website', 'upload', 'generated', 'stock', 'google-fonts', 'codebase'];
 
 type Listing = { assets: AssetEntry[]; error: string | null; unregistered: string[] };
 const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
