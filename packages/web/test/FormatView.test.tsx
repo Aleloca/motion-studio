@@ -568,11 +568,23 @@ describe('FormatView · live composition player (Task 8)', () => {
     Object.defineProperty(ev, 'source', { value: f.contentWindow });
     act(() => { window.dispatchEvent(ev); });
   };
+  /**
+   * The runtime's ready, then Play enabled (final wave, decision 785). Condition-based: the frame can be in the DOM before its
+   * passive effect has attached the message listener (the session arrives outside act), so a ready sent in that gap is lost;
+   * a real runtime only sends it once the frame has loaded, after the effect. Until Play is enabled, the ready is sent again
+   * to the frame shown now (a replaced frame gets a new spy).
+   */
   const readyPlayer = async () => {
-    const f = await frame();
-    const posted = vi.spyOn(f.contentWindow!, 'postMessage');
-    fromRuntime(f, READY);
-    await waitFor(() => expect((document.querySelector('.ms-fv-play') as HTMLButtonElement).disabled).toBe(false));
+    let f = await frame();
+    let posted = vi.spyOn(f.contentWindow!, 'postMessage');
+    await waitFor(() => {
+      const now = document.querySelector('.ms-fv-media iframe') as HTMLIFrameElement | null;
+      expect(now).not.toBeNull();
+      if (now !== f) { f = now!; posted = vi.spyOn(f.contentWindow!, 'postMessage'); }
+      const play = document.querySelector('.ms-fv-play') as HTMLButtonElement;
+      if (play.disabled) fromRuntime(f, READY);
+      expect(play.disabled).toBe(false);
+    }, { timeout: 10_000 });
     return { f, posted };
   };
 

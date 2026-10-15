@@ -11,8 +11,8 @@
 /* Logo on light and on dark, side by side (inside the format view's frame). */
 .ms-fv-media .ms-idn-split { position: absolute; inset: 0; display: grid; grid-template-columns: 1fr 1fr; }
 .ms-idn-side { position: relative; display: flex; align-items: center; justify-content: center; min-width: 0; padding: 8%; }
-.ms-idn-side.ms-idn-light { background: var(--surfaceLight); }
-.ms-idn-side.ms-idn-dark { background: var(--surfaceDark); }
+.ms-idn-side.ms-idn-light { background: var(--logoOnLight); }
+.ms-idn-side.ms-idn-dark { background: var(--logoOnDark); }
 .ms-fv-media .ms-idn-split img { width: 100%; height: 100%; object-fit: contain; background: transparent; }
 .ms-idn-sidelbl { position: absolute; left: 8px; bottom: 6px; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; background: var(--panel); color: var(--text); box-shadow: inset 0 0 0 1px var(--line); }
 
