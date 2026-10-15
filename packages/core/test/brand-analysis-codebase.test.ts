@@ -203,6 +203,16 @@ describe('I3: the read-only check fails closed', () => {
     expect(end.error).toContain(cb);
     expect(end.notes!.find((n) => n.startsWith(`Files changed in ${cb}`))).toContain('dist/app.css');
   });
+  it('N2: a check that failed before and works after fails closed as a failed check, not a change', async () => {
+    const cb = await addCodebase();
+    // A corrupt index makes git status fail before the turn; the fake agent removes it, so git works again after.
+    await writeFile(join(cb, '.git', 'index'), 'not an index');
+    sideEffect = async () => { await rm(join(cb, '.git', 'index')); };
+    const end = await discarded((await service().analyze(ref)).id);
+    expect(end.error).toContain(`The codebase ${cb} could not be checked before the analysis but can be now`);
+    expect(end.error).not.toMatch(/changed the codebase/);
+    expect(end.notes).toContainEqual(`Codebase ${cb}: the change check failed, a change by the analysis would go unnoticed`);
+  });
   it('a new git hook is caught', async () => {
     const cb = await addCodebase();
     sideEffect = async () => { await writeFile(join(cb, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 0\n', { mode: 0o755 }); };

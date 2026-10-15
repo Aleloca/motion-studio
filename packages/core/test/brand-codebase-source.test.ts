@@ -63,7 +63,8 @@ describe('buildAgentPolicy for a brand analysis of codebases', () => {
   };
   type Sb = { sandbox: { filesystem: { denyRead: string[]; denyWrite: string[] } } };
   const bare = (list: string[]) => list.filter((r) => ['Read', 'Glob', 'Grep', 'Bash', 'WebFetch'].includes(r));
-  const scoped = ['Read(//Users/me/dev/app/**)', 'Glob(//Users/me/dev/app/**)', 'Read(//[uU][sS][eE][rR][sS]/[mM][eE]/[dD][eE][vV]/[aA][pP][pP]/**)', 'Glob(//[uU][sS][eE][rR][sS]/[mM][eE]/[dD][eE][vV]/[aA][pP][pP]/**)'];
+  // Exact case only (fix round 2, N1): a folded allow would open other folders on a case-sensitive disk.
+  const scoped = ['Read(//Users/me/dev/app/**)', 'Glob(//Users/me/dev/app/**)'];
   it('read-only, secrets denied by pattern and by exact path, reads scoped to the codebase', () => {
     const p = buildAgentPolicy(base);
     for (const t of ['Edit', 'Write', 'MultiEdit', 'NotebookEdit']) expect(p.disallowedTools).toContain(`${t}(//Users/me/dev/app/**)`);
@@ -78,6 +79,13 @@ describe('buildAgentPolicy for a brand analysis of codebases', () => {
     expect(fs.denyRead).toEqual(expect.arrayContaining(['/Users/me/dev/app/.ENV', '/Users/me/dev/app/.git', ...secretSandboxGlobs('/Users/me/dev/app', (x) => x)]));
     expect(fs.denyRead).toContain('/Users/me/dev/app/**/.env*');
     expect(fs.denyRead).toContain('/Users/me/dev/app/**/.[eE][nN][vV]*');
+  });
+  it('N1: allows are exact-case, for the given and the real spelling; only deny rules are case-folded', () => {
+    const p = buildAgentPolicy({ ...base, codebases: ['/Users/me/link-app', '/Users/me/dev/app'] });
+    expect(p.allowedTools).toEqual(['Read(//Users/me/link-app/**)', 'Glob(//Users/me/link-app/**)', ...scoped]);
+    expect(p.allowedTools.some((r) => r.includes('['))).toBe(false);
+    expect(p.disallowedTools).toContain('Read(//[uU][sS][eE][rR][sS]/[mM][eE]/[dD][eE][vV]/[aA][pP][pP]/**/.[eE][nN][vV]*)');
+    expect(buildAgentPolicy({ ...base, codebases: ['/a/App [x]'] }).allowedTools).toEqual(['Read(//a/App \\[x\\]/**)', 'Glob(//a/App \\[x\\]/**)']);
   });
   it('with a website source WebFetch stays allowed, Bash(mkdir/ffprobe) are still gone', () => {
     for (const sandbox of [true, false]) {

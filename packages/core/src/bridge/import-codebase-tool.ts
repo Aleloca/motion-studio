@@ -65,7 +65,7 @@ function locate(source: string, codebases: readonly string[]): Array<{ root: str
  * 7. its real path inside that codebase's real path: a link (or a linked folder) that leads out is refused (`outside`);
  * 8. the secret patterns on the real relative path too (`secret`), and the real file's extension (`extension`);
  * 9. opened without following a last link and without blocking; a regular file, and still the same file (dev/ino) at the
- *    real path after the open (`not-file`);
+ *    real path after the open: `realpath` again equal to it, and the same dev/ino (`not-file`);
  * 10. the size from the open handle, before reading (`too-big`), and a read capped one byte past it (`not-file` if it grew).
  * The copy is written to a temporary name and claimed atomically (saveGeneratedFile); a failed registration removes it.
  */
@@ -99,6 +99,9 @@ export async function importCodebaseFile(ctx: CodebaseImportContext, args: { sou
     if (!fst.isFile()) return { error: 'not-file' };
     // The file opened must still be the one at the checked real path (fix round 1): a swap between the checks and the open
     // (another file moved in its place) is refused.
+    // The real path is resolved again (no folder on the way was swapped for a link) and must be the same file.
+    const again = await realpath(real).catch(() => null);
+    if (again !== real) return { error: 'not-file' };
     const now = await lstat(real).catch(() => null);
     if (!now || !now.isFile() || now.ino !== fst.ino || now.dev !== fst.dev) return { error: 'not-file' };
     if (fst.size > CODEBASE_IMPORT_MAX_BYTES) return { error: 'too-big' };

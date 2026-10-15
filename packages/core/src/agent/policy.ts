@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { caseFoldGlob, dirDenyRules, escapeGlob, fileDenyRules, globDenyRules, readOnlyRules, secretReadRules, secretSandboxGlobs } from '../codebases.ts';
+import { dirDenyRules, escapeGlob, fileDenyRules, globDenyRules, readOnlyRules, secretReadRules, secretSandboxGlobs } from '../codebases.ts';
 import { AGENT_ALLOWED_TOOLS, BRAND_ANALYSIS_TOOLS, BRAND_CODEBASE_DENIED_TOOLS, BRAND_CODEBASE_SCOPED_TOOLS, DESCRIBE_TOOLS, LOCALIZE_TOOLS } from './runner.ts';
 import { DEFAULT_ALLOWED_DOMAINS, sensitiveHomeEntries, sensitiveHomePaths } from './sandbox.ts';
 
@@ -30,14 +30,13 @@ export interface PolicyInput {
 }
 
 /**
- * The only reads a brand analysis of codebases gets without asking: `Read`/`Glob` scoped to each codebase spelling, in the
- * exact case and case-folded (escaped like the deny rules). The project stays readable as the working folder; anything
- * else reaches an approval card, as before Phase 14.
+ * The only reads a brand analysis of codebases gets without asking: `Read`/`Glob` scoped to each codebase spelling (the
+ * given one and the real one), in the exact case only, escaped like the deny rules. A case-folded allow would also open
+ * folders that differ only in case, which on a case-sensitive disk are other, unvalidated folders (fix round 2): the
+ * folded forms are for the deny rules only. The project stays readable as the working folder; anything else reaches an
+ * approval card, as before Phase 14.
  */
-export const codebaseReadAllowRules = (codebases: string[]): string[] => codebases.flatMap((c) => {
-  const root = escapeGlob(c);
-  return [...new Set([root, caseFoldGlob(root)])].flatMap((r) => BRAND_CODEBASE_SCOPED_TOOLS.map((t) => `${t}(/${r}/**)`));
-});
+export const codebaseReadAllowRules = (codebases: string[]): string[] => codebases.flatMap((c) => BRAND_CODEBASE_SCOPED_TOOLS.map((t) => `${t}(/${escapeGlob(c)}/**)`));
 export interface AgentPolicy { settings: Record<string, unknown> | null; allowedTools: string[]; disallowedTools: string[]; addDirs: string[];
   /** Extra environment of the agent process: package caches inside the project, only for sandboxed jobs. */
   env: Record<string, string>;

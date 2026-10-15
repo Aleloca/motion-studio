@@ -183,8 +183,15 @@ export class BrandService {
         const b = snapsBefore[k]!;
         const after = await codebaseSnapshot(cb.real);
         if (!('value' in b.snap)) {
-          // A repository that appears during the turn (git init) counts as a change too.
-          if ('value' in after) failures.push(t().jobs.brandCodebaseChanged({ path: cb.path }));
+          if ('value' in after) {
+            // A repository that appears during the turn (git init) is a change. A check that failed before and works after
+            // cannot be compared: it fails closed too, worded as a failed check rather than a change (fix round 2).
+            if (b.snap.unavailable === 'not-git') failures.push(t().jobs.brandCodebaseChanged({ path: cb.path }));
+            else {
+              note(m.jobs.brandCodebaseCheckFailedBefore({ path: cb.path }));
+              failures.push(t().jobs.brandCodebaseCheckFailedBefore({ path: cb.path }));
+            }
+          }
           continue;
         }
         if (!('value' in after)) {
