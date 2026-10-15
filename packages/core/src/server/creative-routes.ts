@@ -1,10 +1,10 @@
 import type { Git } from '../git.ts';
 import { recoverRenameJournal } from '../library/rename-recovery.ts';
-import { lstat, readdir, realpath } from 'node:fs/promises';
+import { lstat, readdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, join, sep } from 'node:path';
 import { changedAssets, overlayAssetPaths, readOverlay } from '../localization/store.ts';
 import type { FastifyInstance } from 'fastify';
-import { messages, type JobSummary, INSTANCE_FOLDER_RE, briefSchema, briefWriteSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow } from '@motion-studio/shared';
+import { messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
@@ -32,6 +32,11 @@ import { CodedError, expandHome, WorkspaceError, type WorkspaceStore } from '../
 import { sendConfinedFile } from './serve-file.ts';
 import { localizedCompositionView } from './localization-routes.ts';
 import { currentLocale, t } from '../i18n.ts';
+import { BrandStore } from '../brand/brand-store.ts';
+import { readConfinedFile } from '../brand/agent-guard.ts';
+import { LibraryStore } from '../library/library-store.ts';
+import { saveGeneratedFile } from '../providers/files.ts';
+import { checkVectorSvg, MAX_VECTOR_SVG_BYTES } from '../identity/svg-check.ts';
 
 export interface CreativeRoutesContext {
   requireWorkspace: () => WorkspaceStore;
@@ -49,6 +54,8 @@ export interface CreativeRoutesContext {
   previews: PreviewService;
   /** Signs the storyboard image URLs (fix I4). */
   signer: UrlSigner;
+  /** Commits the brand kit change of "Use as brand logo" (Phase 14); absent: the change is written and not committed. */
+  git?: Git;
 }
 
 const isInsideDir = (p: string, base: string | null) => Boolean(base && p.startsWith(base.endsWith(sep) ? base : base + sep));
@@ -102,6 +109,7 @@ const exportBody = z.object({
   /** "Render anyway" for translations rendered first that have open problems or outdated entries. */
   force: z.boolean().optional(),
 });
+const useAsLogoBody = z.object({ variant: z.enum(['primary', 'icon']) }).strict();
 const linkBody = z.object({ follower: z.string().min(1).max(200), primary: z.string().min(1).max(200).nullable() });
 /** A render request (Task 5): `formats` to render (a follower stands for its primary); absent or empty: every primary. */
 const renderBody = z.object({
@@ -755,6 +763,67 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const rel = pinFramesRel(ref.creativeSlug, n);
     if ((await isRealDirChain(ref.projectDir, rel)) !== 'ok') return notFound();
     return sendConfinedFile(reply, join(ref.projectDir, ...rel), req.params.file, [`${n}-`]);
+  });
+
+  /**
+   * "Use as brand logo" (Phase 14, decision 733): copies the SVG an identity format's render checked into `assets/brand/` and
+   * adds it to the brand kit. The file is read again from the version's set folder (confined, no links) and checked again
+   * with `checkVectorSvg`, so only an SVG that passes now is ever copied. Stable codes: `bad-variant`, `not-identity`,
+   * `logo-not-checked` (no render, or a set without an SVG), `logo-missing`, `logo-refused`.
+   */
+  app.post<{ Params: { slug: string; c: string; n: string; f: string } }>('/api/projects/:slug/creatives/:c/versions/:n/formats/:f/use-as-brand-logo', async (req) => {
+    const e = t().errors;
+    const ref = await refOf(req.params.slug, req.params.c);
+    const n = /^\d{1,6}$/.test(req.params.n) ? Number(req.params.n) : 0;
+    if (n < 1) throw new CodedError(404, e.versionNotFound, 'version-not-found');
+    const body = useAsLogoBody.safeParse(req.body);
+    if (!body.success) throw new CodedError(400, e.useAsLogoBadVariant, 'bad-variant');
+    const format = req.params.f;
+    if (!INSTANCE_ID_RE.test(format)) throw new CodedError(400, e.invalidRequest, 'bad-format');
+    const version = (await ref.store.readVersions(ref.creativeSlug)).find((v) => v.n === n);
+    if (!version) throw new CodedError(404, e.versionNotFound, 'version-not-found');
+    const out = version.outputs.find((o) => o.format === format);
+    const set = out?.identitySet;
+    const svgEntry = set?.files.find((f) => f.role === 'vector' && f.path.toLowerCase().endsWith('.svg'));
+    if (!out || !set || !svgEntry) throw new CodedError(409, set ? e.useAsLogoNoSvg : e.useAsLogoNotChecked, set ? 'logo-no-svg' : 'logo-not-checked');
+    // The set folder is `outputs/vN/<dir>`; the read refuses links, hard links and anything outside the creative.
+    const base = join(ref.store.dir(ref.creativeSlug), 'outputs', `v${n}`);
+    const read = await readConfinedFile(base, `${set.dir}/${svgEntry.path}`, MAX_VECTOR_SVG_BYTES).catch(() => ({ skipped: 'outside' as const }));
+    if (read === null) throw new CodedError(404, e.useAsLogoMissing, 'logo-missing');
+    if ('skipped' in read) throw new CodedError(422, e.useAsLogoRefused, 'logo-refused');
+    if (!checkVectorSvg(read.text).ok) throw new CodedError(422, e.useAsLogoRefused, 'logo-refused');
+
+    const name = `${ref.creativeSlug}-v${n}-${format.replace(/[^a-z0-9]+/gi, '-')}.svg`;
+    const file = `assets/${await saveGeneratedFile(ref.projectDir, 'brand', name, Buffer.from(read.text, 'utf8'))}`;
+    const source = { kind: 'manual' as const, ref: `creative:${ref.creativeSlug}/v${n}` };
+    const library = new LibraryStore(ref.projectDir, ctx.media);
+    const store = new BrandStore(ref.projectDir);
+    let logoId = '';
+    try {
+      await store.updateReadableKit((kit) => {
+        const taken = new Set(kit.logos.map((l) => l.id));
+        const stem = `logo-${ref.creativeSlug}-v${n}`.slice(0, 56).replace(/-+$/, '');
+        let id = stem;
+        for (let k = 2; taken.has(id); k++) id = `${stem}-${k}`;
+        logoId = id;
+        return { ...kit, logos: [...kit.logos, { id, file, variant: body.data.variant, background: 'any', source }] };
+      });
+    } catch (err) {
+      // The kit refused (full, unreadable): nothing is left half done, the copy goes.
+      await rm(join(ref.projectDir, ...file.split('/')), { force: true }).catch(() => {});
+      throw err;
+    }
+    try {
+      await library.registerAssets([{ file: file.slice('assets/'.length), origin: 'generated', sourceUrl: null, description: '', tags: ['brand', 'logo'] }]);
+    } catch (err) {
+      await store.updateReadableKit((kit) => ({ ...kit, logos: kit.logos.filter((l) => l.id !== logoId) })).catch(() => {});
+      await rm(join(ref.projectDir, ...file.split('/')), { force: true }).catch(() => {});
+      throw err;
+    }
+    if (ctx.git) await ctx.git.commitAll(ref.projectDir, t().jobs.brandKitCommit);
+    ctx.broadcast?.({ type: 'library', project: ref.projectSlug });
+    ctx.broadcast?.({ type: 'brand', project: ref.projectSlug });
+    return { file, variant: body.data.variant };
   });
 
   app.get<{ Params: { slug: string; c: string; '*': string } }>('/api/projects/:slug/creatives/:c/files/*', async (req, reply) => {

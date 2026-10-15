@@ -29,7 +29,7 @@ import { href, routeKey } from '../routes.ts';
 import { useBarClaim } from '../shell/barSlots.ts';
 import { setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } from '../shell/intents.ts';
 import { go, ShellContext } from '../shell/ShellContext.tsx';
-import { Button, ChannelMark, Empty, Icon, Pill, Select, Spinner, Toggle, cx, toast } from '../ui/index.ts';
+import { Button, ChannelMark, Empty, Icon, Pill, Segmented, Select, Spinner, Toggle, cx, toast } from '../ui/index.ts';
 import { useCreative } from '../useCreative.ts';
 import { boardLabel, PinBubble, SafeZoneBands, type Draft } from './CanvasBoard.tsx';
 import { instanceName, presetFor } from '../instances.ts';
@@ -46,11 +46,14 @@ import { localePreviewSource, useLocalePreview } from './creative/useLocalePrevi
 import { RangeDialog } from './editor/RangeDialog.tsx';
 import { clipLabel, clipPin, clipsAt, rangePin, rangeTimes } from './pinModel.ts';
 import { RenderStatus } from './RenderStatus.tsx';
+import { IdentitySizes } from './identity/IdentitySizes.tsx';
+import { UseAsBrandLogo } from './identity/UseAsBrandLogo.tsx';
 import { FollowerChip, FormatBadge, useNewVersionNotice, useVersionActions, VersionTimeline } from './FormatVersions.tsx';
 import { boardSource, entryAt, followersOf, formatStates, isRendering, renderingOf, shownOf, type FormatState } from './versionModel.ts';
 import { compositionOf } from './renderModel.ts';
 import './canvas.css';
 import './format.css';
+import './identity/identity.css';
 import { message } from './common.tsx';
 import { isVideoFile } from '../media.ts';
 import { createClock, useClock, type Clock } from '../ui/clock.ts';
@@ -141,6 +144,11 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   const preset = presetFor(presets, format) ?? (presetsLoaded ? null : presetFor(DEFAULT_FORMATS, format));
   const labels = detail?.creative.brief.formatLabels;
   const out = version?.outputs.find((o) => o.format === source.format) ?? null;
+  // Identity formats (Phase 14): the picture or the sizes grid of the set it rendered; the logo shows on light and on dark.
+  const idKind = preset?.identity ?? null;
+  const idSet = idKind && out?.identitySet ? out.identitySet : null;
+  const [idView, setIdView] = useState<'image' | 'sizes'>('image');
+  const sizesView = idSet !== null && idView === 'sizes';
   const known = Boolean(detail && (detail.creative.brief.formats.includes(format) || versions.some((v) => v.outputs.some((o) => o.format === format))));
   // A v2 version (Task 8): the live player replaces the <video>; a legacy version (no session, 404) keeps its media.
   const comp = compositionOf(version, source.format);
@@ -563,8 +571,8 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
           {versions.length && cr ? (
             <VersionTimeline slug={slug} creative={creative} versions={versions} resumeFrom={cr.resumeFrom?.version ?? null} actions={actions} buttonRef={versionButton} />
           ) : null}
-          {video && cr && detail ? (
-            <RenderStatus slug={slug} creative={creative} version={version} format={source.format} label={label} jobs={Object.values(live.jobs)} jobKey={detail.jobKey} busy={working} />
+          {(video || comp !== null) && cr && detail ? (
+            <RenderStatus slug={slug} creative={creative} version={version} format={source.format} label={label} jobs={Object.values(live.jobs)} jobKey={detail.jobKey} busy={working} image={!video} />
           ) : null}
           <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} />
           {comp !== null && !working ? (
@@ -606,6 +614,15 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
           {cr?.resumeFrom ? <p className="ms-cv-note ms-info">{t.web.creative.resumeNote({ n: cr.resumeFrom.version })}</p> : null}
           {cr && (cr.status === 'error' || cr.status === 'interrupted') && cr.error && !working ? <p role="alert" className="ms-cv-note ms-err">{cr.error}</p> : null}
           {actionError ? <p role="alert" className="ms-cv-note ms-err">{actionError}</p> : null}
+          {idSet && idKind && n !== null ? (
+            <div className="ms-idn-bar">
+              <Segmented<'image' | 'sizes'> label={t.web.identity.view} value={idView} onChange={setIdView}
+                options={[{ value: 'image', label: t.web.identity.viewImage, icon: 'image' }, { value: 'sizes', label: t.web.identity.viewSizes, icon: 'grid' }]} />
+              {idSet.files.some((x) => x.role === 'vector') ? (
+                <UseAsBrandLogo slug={slug} creative={creative} n={n} format={source.format} label={label} kind={idKind} disabled={working} />
+              ) : null}
+            </div>
+          ) : null}
           {working && step ? (
             <div className="ms-cv-note ms-info ms-fv-gen">
               <div className="ms-progress ms-indet" role="progressbar" aria-label={t.web.ui.progress}><i /></div>
@@ -613,6 +630,11 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
             </div>
           ) : null}
         </div>
+        {sizesView && idSet && idKind && n !== null ? (
+          <section className="ms-fv-stage ms-idn-stage" aria-label={t.web.identity.sizesTitle}>
+            <IdentitySizes slug={slug} creative={creative} n={n} set={idSet} kind={idKind} />
+          </section>
+        ) : (
         <section className="ms-fv-stage" aria-label={f.stage({ label })}>
           <div ref={frame} className="ms-fv-frame" style={frameStyle}>
             <div className={cx('ms-fv-media', !loading && !out && !livePlayer && 'ms-empty-frame')} onClick={() => { if (video && (out || livePlayer) && !canComment) toggle(); else if (video && playing) pause(); }}>
@@ -648,7 +670,12 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
                   onDurationChange={(e) => { if (Number.isFinite(e.currentTarget.duration) && e.currentTarget.duration > 0) setMetaDuration(e.currentTarget.duration); }}
                   onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} onError={() => { setFailed(true); setPlaying(false); }} />
               ) : src && n !== null ? (
-                <img key={src} src={src} alt={`${label} v${n}`} draggable={false} />
+                idKind === 'logo' ? (
+                  <div className="ms-idn-split" role="img" aria-label={t.web.identity.logoSides({ label: `${label} v${n}` })}>
+                    <span className="ms-idn-side ms-idn-light"><img key={src} src={src} alt="" draggable={false} /><span className="ms-idn-sidelbl">{t.web.identity.onLight}</span></span>
+                    <span className="ms-idn-side ms-idn-dark"><img key={src} src={src} alt="" draggable={false} /><span className="ms-idn-sidelbl">{t.web.identity.onDark}</span></span>
+                  </div>
+                ) : <img key={src} src={src} alt={`${label} v${n}`} draggable={false} />
               ) : (
                 <span className="ms-cv-frame-note">{n !== null ? t.web.formatUi.missingIn({ n }) : latest ? t.web.formatUi.missingIn({ n: latest.n }) : c.notGenerated}</span>
               )}
@@ -674,13 +701,14 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
             ) : null}
           </div>
         </section>
-        {canComment && ready && !draft && !bandShown && (!video || !playing) ? <CommentHint clock={clock} video={video} /> : null}
+        )}
+        {canComment && ready && !sizesView && !draft && !bandShown && (!video || !playing) ? <CommentHint clock={clock} video={video} /> : null}
         {rangeOpen ? <RangeDialog open playhead={media.current?.currentTime ?? clock.get().time} duration={duration} onSubmit={(r) => { setRangeOpen(false); commentRange(r); }} onCancel={() => setRangeOpen(false)} /> : null}
         {lock ? <div className="ms-cv-hint ms-lock ms-fv-hint" id="ms-fv-comment-lock" role="status">{c.versions.commentsOn({ n: pinSource })}</div> : null}
-        {preset?.safeZone && (out || livePlayer) ? (
+        {preset?.safeZone && (out || livePlayer) && !sizesView ? (
           <span className="ms-fv-safe-toggle"><Toggle size="sm" on={safe} onChange={setSafe} label={c.safeZones} /><span aria-hidden="true">{c.safeZones}</span></span>
         ) : null}
-        {!video && (out || livePlayer) ? (
+        {!video && (out || livePlayer) && !sizesView ? (
           <div className="ms-cv-toolbar ms-fv-zoom" role="toolbar" aria-label={f.zoom}>
             <button type="button" className="ms-cv-tool ms-sm" aria-label={c.zoomOut} disabled={scale > 0 && scale <= ZOOMS[0]! + 1e-3} onClick={() => zoomBy(-1)}><Icon name="minus" size={13} /></button>
             <span className="ms-fv-zoom-pct" role="status">{scale ? `${formatNumber(locale, Math.round(scale * 100))}%` : '—'}</span>

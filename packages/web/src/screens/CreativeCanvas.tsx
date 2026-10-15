@@ -3,6 +3,7 @@
 // safe zones with a legend, V/C/H tools), Figma-style comments that become chips of the composer, the Chat · Comments ·
 // Brief panel, the version history with Compare, and Export. Replaces the interim CreativePage. A board opens in the
 // format view (screens/FormatView.tsx) with T3.
+import { ProblemList } from '../components/ProblemList.tsx';
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
 import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, outputWarningText, shownTotal, type ConversationEntry, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
@@ -506,7 +507,7 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
           {version?.status === 'incomplete' ? (
             <div className="ms-cv-note">
               <b>{t.web.creative.versionIncomplete({ n: version.n })}</b>
-              <ul>{version.problems.map((p) => <li key={p}>{p}</li>)}</ul>
+              <ProblemList problems={version.problems} />
             </div>
           ) : null}
           {actionError ? <p role="alert" className="ms-cv-note ms-err">{actionError}</p> : null}

@@ -1,4 +1,4 @@
-import { canFollow, channelName, formatLabel, formatName, type AssetEntry, type FollowCheck, type Locale, type BrandKit, type BriefServices, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
+import { canFollow, channelName, formatLabel, formatName, type AssetEntry, type FollowCheck, type IdentityBrief, type Locale, type BrandKit, type BriefServices, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { api } from '../api.ts';
 import { CodebaseList } from '../components/CodebaseList.tsx';
@@ -14,6 +14,7 @@ import { channelOf } from './creativeState.ts';
 import './newcreative.css';
 import { message as errText } from './common.tsx';
 import { isVideoFile } from '../media.ts';
+import { conceptIds, IdentityStart, identityForBrief, resolveIdentity } from './identity/IdentityStart.tsx';
 import { StorePackWizard } from './new-creative/StorePackWizard.tsx';
 import './new-creative/storepack.css';
 
@@ -170,6 +171,8 @@ export function NewCreative({ slug }: { slug: string }) {
   const [brand, setBrand] = useState<Loaded<BrandKit>>({ value: null, error: null });
   const [pickerOpen, setPickerOpen] = useState(false);
   const [packOpen, setPackOpen] = useState(false);
+  // "Partenza" of the identity formats (Phase 14): untouched (undefined) follows the brand: from its logo when it has one.
+  const [identity, setIdentity] = useState<IdentityBrief | undefined>(undefined);
   // Token totals of the workspace's earlier first generations: the estimate line, absent until there are 3.
   const [history, setHistory] = useState<number[]>([]);
 
@@ -280,9 +283,12 @@ export function NewCreative({ slug }: { slug: string }) {
       const created = await api.createCreative(slug, {
         title,
         brief: {
-          goal: goal.trim(), message: message.trim(), formats: chosen.map((p) => p.id),
+          goal: goal.trim(), message: message.trim(),
+          // A logo from scratch is one instance per concept (`identity-logo`, `identity-logo@2`…).
+          formats: chosen.flatMap((p) => (p.identity === 'logo' ? conceptIds(p.id, identityNow) : [p.id])),
           durationSec: videos.length > 0 ? durationSec : null, assets: picked, notes: notes.trim(), links: plan.links,
           ...(services ? { services } : {}),
+          ...(identityOn ? { identity: identityForBrief(identity, hasBrandLogo) } : {}),
         },
         generate,
         linkedCodebases: codebases,
@@ -302,6 +308,9 @@ export function NewCreative({ slug }: { slug: string }) {
   usePageShortcut(root, isSubmitChord, () => { void submit(true); });
 
   const kit = brand.value;
+  const hasBrandLogo = (kit?.logos.length ?? 0) > 0;
+  const identityOn = chosen.some((p) => p.identity);
+  const identityNow = resolveIdentity(identity, hasBrandLogo);
   const hasBrand = !!kit && (kit.colors.length > 0 || kit.fonts.length > 0 || kit.logos.length > 0 || kit.tone !== null);
   // The brand in one line, as on the board: heading font · main colour · tone.
   const brandLine = kit ? [kit.fonts[0]?.family, kit.colors[0]?.name, kit.tone?.text].filter(Boolean).join(' · ') : '';
@@ -430,6 +439,13 @@ export function NewCreative({ slug }: { slug: string }) {
               </div>
             )}
           </section>
+
+          {identityOn ? (
+            <section className="ms-nc-sec" data-enter>
+              <IdentityStart value={identityNow} onChange={setIdentity} hasBrandLogo={hasBrandLogo} fromCodebase={kit?.logos[0]?.source.kind === 'codebase'}
+                withConcepts={chosen.some((p) => p.identity === 'logo')} />
+            </section>
+          ) : null}
 
           <section className="ms-nc-sec ms-nc-options" data-enter>
             <button type="button" className="ms-nc-disclose" aria-expanded={options} aria-controls="ms-nc-options" onClick={() => setOptions((o) => !o)}>

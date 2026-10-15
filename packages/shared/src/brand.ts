@@ -5,11 +5,14 @@ import { relativeFileSchema, webUrlSchema } from './library.ts';
 import { usageSummarySchema } from './usage.ts';
 import type { AgentEvent } from './events.ts';
 
+/** `creative:<slug>/v<n>`: the version of a creative a manual brand item comes from. */
+export const CREATIVE_SOURCE_RE = /^creative:[a-z0-9][a-z0-9-]{0,79}\/v[1-9]\d{0,5}$/;
 const id = z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/, 'issue.id');
 
 export const sourceRefSchema = z.object({ kind: z.enum(['manual', 'website', 'image', 'codebase']), ref: z.string().nullable() })
   .superRefine((s, ctx) => {
-    if (s.kind === 'manual' && s.ref !== null) {
+    // A manual source has no ref, except a logo taken from a creative's identity format ("Use as brand logo", Phase 14).
+    if (s.kind === 'manual' && s.ref !== null && !CREATIVE_SOURCE_RE.test(s.ref)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'issue.manualRef', path: ['ref'] });
     }
     if (s.kind === 'website') {

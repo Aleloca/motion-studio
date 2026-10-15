@@ -6,6 +6,7 @@ import { api } from '../api.ts';
 import { instanceName, presetFor, presetNameOf } from '../instances.ts';
 import { useLocale, useT } from '../i18n.tsx';
 import { Button, ChannelMark, Chip, channelOf, cx, Icon, Input, Modal, Segmented, Textarea } from '../ui/index.ts';
+import { IdentityStart, identityForBrief, resolveIdentity, useBrandLogo } from '../screens/identity/IdentityStart.tsx';
 import { CodebaseList } from './CodebaseList.tsx';
 import { BriefLanguages } from '../screens/creative/BriefLanguages.tsx';
 import { ServicesSelector, useConfiguredProviders, useKeyChecks } from './ServicesSelector.tsx';
@@ -144,6 +145,9 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged, onRefr
     if (dragging && dragging !== target) move(dragging, brief.formats.indexOf(target));
     setDragging(null);
   };
+  // The identity formats' "Partenza" (Phase 14): shown while the brief has one of those formats.
+  const identityOn = brief.formats.some((f) => presetFor(presets, f)?.identity);
+  const brandLogo = useBrandLogo(slug, identityOn);
   const groups = useMemo(() => {
     const m = new Map<string, FormatPreset[]>();
     for (const p of presets) m.set(p.channel, [...(m.get(p.channel) ?? []), p]);
@@ -175,9 +179,10 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged, onRefr
     let saved = false;
     try {
       const chosen = services ?? c.brief.services;
-      const { services: _draft, formatLabels: _labels, ...rest } = brief;
+      const { services: _draft, formatLabels: _labels, identity: _identity, ...rest } = brief;
       const labels = labelsFor(brief.formats, brief.formatLabels);
-      await api.updateCreative(slug, detail.slug, { title, brief: { ...rest, ...(labels ? { formatLabels: labels } : {}), durationSec: sec, assets: assets.split(',').map((a) => a.trim()).filter(Boolean), ...(chosen ? { services: chosen } : {}) }, linkedCodebases: codebases });
+      const identity = identityOn && brief.identity ? { identity: identityForBrief(brief.identity, brandLogo.hasLogo) } : {};
+      await api.updateCreative(slug, detail.slug, { title, brief: { ...rest, ...identity, ...(labels ? { formatLabels: labels } : {}), durationSec: sec, assets: assets.split(',').map((a) => a.trim()).filter(Boolean), ...(chosen ? { services: chosen } : {}) }, linkedCodebases: codebases });
       saved = true;
       if (regenerate) await api.sendCreativeTurn(slug, detail.slug, {});
     } catch (e) { setError(message(e)); }
@@ -271,6 +276,10 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged, onRefr
           </div>
         </div>
       </Modal>
+      {identityOn ? (
+        <IdentityStart value={resolveIdentity(brief.identity, brandLogo.hasLogo)} onChange={(v) => set('identity', v)} hasBrandLogo={brandLogo.hasLogo}
+          fromCodebase={brandLogo.fromCodebase} withConcepts={false} disabled={disabled} />
+      ) : null}
       <BriefLanguages value={brief.locales} disabled={disabled}
         onChange={(next) => setBrief((b) => { const { locales: _l, ...rest } = b; return next ? { ...rest, locales: next } : rest; })} />
       <span className="ms-brief-lbl">{t.web.services.title}</span>

@@ -5,6 +5,7 @@
 // Zoom: only the frame (media, safe zones) is zoomed. The label above it, "Open editor", the comment markers and the
 // bubble are screen-sized at any zoom (as in Figma): they sit in the frame's box, sized in screen pixels, at the
 // world point × zoom, so nothing scales them and the bubble's text field stays crisp.
+import { ProblemList } from '../components/ProblemList.tsx';
 import { channelName, outputWarningText, type FormatPreset, type OutputWarning, type Pin } from '@motion-studio/shared';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode, type SyntheticEvent } from 'react';
 import { CompositionPlayer } from '../components/CompositionPlayer.tsx';
@@ -241,7 +242,7 @@ export function RenderProblemChip({ problems, label, onRender }: { problems: str
       <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="bottom-start" width={320} label={r.problemTitle}>
         <div className="ms-cv-large-pop">
           <b>{r.problemTitle}</b>
-          <ul className="ms-cv-problem-list">{problems.map((p, i) => <li key={i}>{p}</li>)}</ul>
+          <ProblemList className="ms-cv-problem-list" problems={problems} />
           <p>{r.problemHint}</p>
           <Button variant="outline" aria-label={r.renderAgainOf({ label })} onClick={(e) => { e.stopPropagation(); setOpen(false); onRender(); }}>{r.renderAgain}</Button>
         </div>
