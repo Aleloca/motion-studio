@@ -7,7 +7,7 @@ import type { AgentEvent } from './events.ts';
 
 const id = z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/, 'issue.id');
 
-export const sourceRefSchema = z.object({ kind: z.enum(['manual', 'website', 'image']), ref: z.string().nullable() })
+export const sourceRefSchema = z.object({ kind: z.enum(['manual', 'website', 'image', 'codebase']), ref: z.string().nullable() })
   .superRefine((s, ctx) => {
     if (s.kind === 'manual' && s.ref !== null) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'issue.manualRef', path: ['ref'] });
@@ -28,8 +28,15 @@ export const sourceRefSchema = z.object({ kind: z.enum(['manual', 'website', 'im
         if (!fileResult.success) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'issue.imageRefInvalid', path: ['ref'] });
       }
     }
+    if (s.kind === 'codebase') {
+      if (s.ref === null) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'issue.codebaseRefRequired', path: ['ref'] });
+      } else if (!relativeFileSchema.safeParse(s.ref).success) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'issue.codebaseRefInvalid', path: ['ref'] });
+      }
+    }
   });
-export type SourceKind = 'manual' | 'website' | 'image';
+export type SourceKind = 'manual' | 'website' | 'image' | 'codebase';
 export type SourceRef = z.infer<typeof sourceRefSchema>;
 
 const WEIGHTS = 'issue.weights';
@@ -63,7 +70,7 @@ export type BrandSound = z.infer<typeof brandSoundSchema>;
 export const EMPTY_BRAND_SOUND: BrandSound = { genre: '', energy: null, instruments: [], avoid: [], voice: null };
 
 /** Maximum number of items per list in a brand kit. */
-export const BRAND_KIT_LIMITS = { colors: 40, fonts: 20, logos: 30, dos: 50, donts: 50 } as const;
+export const BRAND_KIT_LIMITS = { colors: 40, fonts: 20, logos: 30, dos: 50, donts: 50, codebaseSources: 5 } as const;
 
 const uniqueIds = (items: Array<{ id: string }>) => new Set(items.map((i) => i.id)).size === items.length;
 
@@ -98,8 +105,19 @@ export type BrandLogo = BrandKit['logos'][number];
 export type BrandNote = BrandKit['dos'][number];
 export const EMPTY_BRAND_KIT: BrandKit = { schemaVersion: 1, colors: [], fonts: [], logos: [], tone: null, dos: [], donts: [], photoStyle: null };
 
+/** An absolute folder (POSIX or Windows drive), not a disk root, without `..` or NUL; `~` is expanded by the core before this. */
+function isAbsoluteCodebasePath(p: string): boolean {
+  if (p.includes('\0') || p.split(/[\\/]/).includes('..')) return false;
+  const posix = p.startsWith('/') ? p.replace(/\/+$/, '') : null;
+  if (posix !== null) return posix !== '';
+  const win = /^[A-Za-z]:[\\/]/.test(p) ? p.slice(3).replace(/[\\/]+$/, '') : null;
+  return win !== null && win !== '';
+}
+
 export const brandSourceSchema = z.object({
-  id, kind: z.enum(['website', 'image']), url: webUrlSchema.nullable(), file: relativeFileSchema.nullable(),
+  id, kind: z.enum(['website', 'image', 'codebase']), url: webUrlSchema.nullable(), file: relativeFileSchema.nullable(),
+  /** `codebase` only (Phase 14): the folder, absolute once normalised by the core. */
+  path: z.string().min(1).max(4096).optional(), note: z.string().max(500).optional(),
   addedAt: z.iso.datetime(), lastAnalyzedAt: z.iso.datetime().nullable(),
 }).superRefine((s, ctx) => {
   if (s.kind === 'website') {
@@ -110,10 +128,19 @@ export const brandSourceSchema = z.object({
     if (s.file === null) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'issue.imageSourceFile', path: ['file'] });
     if (s.url !== null) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'issue.imageSourceUrl', path: ['url'] });
   }
+  if (s.kind === 'codebase') {
+    if (s.path === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'issue.codebaseSourcePath', path: ['path'] });
+    else if (!isAbsoluteCodebasePath(s.path)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'issue.codebaseSourcePathInvalid', path: ['path'] });
+    if (s.url !== null) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'issue.codebaseSourceUrl', path: ['url'] });
+    if (s.file !== null) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'issue.codebaseSourceFile', path: ['file'] });
+  } else if (s.path !== undefined || s.note !== undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'issue.pathOnlyCodebase', path: ['path'] });
+  }
 });
 export type BrandSource = z.infer<typeof brandSourceSchema>;
 export const brandSourcesFileSchema = z.object({ schemaVersion: z.literal(1), sources: z.array(brandSourceSchema).default([]) })
-  .refine((f) => uniqueIds(f.sources), { message: 'issue.duplicateSourceIds', path: ['sources'] });
+  .refine((f) => uniqueIds(f.sources), { message: 'issue.duplicateSourceIds', path: ['sources'] })
+  .refine((f) => f.sources.filter((s) => s.kind === 'codebase').length <= BRAND_KIT_LIMITS.codebaseSources, { message: 'issue.maxCodebaseSources', path: ['sources'] });
 export type BrandSourcesFile = z.infer<typeof brandSourcesFileSchema>;
 
 export const brandFieldSchema = z.enum(['colors', 'fonts', 'logos', 'dos', 'donts', 'tone', 'photoStyle']);

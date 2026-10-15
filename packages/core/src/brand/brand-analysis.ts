@@ -130,7 +130,8 @@ export class BrandService {
       const block = {
         proposalDir: rel(dir), kitFile: rel(join(dir, 'brand-kit.json')), guidelinesFile: rel(join(dir, 'guidelines.md')),
         assetsListFile: rel(join(dir, 'assets.json')), summaryFile: rel(join(dir, 'summary.md')),
-        sources: sources.map((s) => ({ id: s.id, kind: s.kind, url: s.url, file: s.file })),
+        // Codebase sources are handed to the agent by a later Phase 14 task; until then they are not part of the prompt block.
+        sources: sources.flatMap((s) => (s.kind === 'codebase' ? [] : [{ id: s.id, kind: s.kind, url: s.url, file: s.file }])),
       };
       const tampered: string[] = [];
       // Notes of the agent's tools (inspect_site_fonts: what it refused or cut), in the job's language, once each.

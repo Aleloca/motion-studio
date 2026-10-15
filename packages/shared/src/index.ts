@@ -9,6 +9,7 @@ export * from './store-pack.ts';
 export * from './localization/index.ts';
 export * from './brand.ts';
 export * from './library.ts';
+export * from './identity.ts';
 export * from './permissions.ts';
 export * from './services.ts';
 export * from './i18n/index.ts';

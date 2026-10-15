@@ -2,7 +2,7 @@ import { BRAND_KIT_LIMITS, issueText, messages, brandColorSchema, brandFontSchem
 import type { z } from 'zod';
 import { currentLocale, t } from '../i18n.ts';
 
-type ListField = keyof typeof BRAND_KIT_LIMITS;
+type ListField = Exclude<keyof typeof BRAND_KIT_LIMITS, 'codebaseSources'>;
 type NoteField = 'tone' | 'photoStyle';
 const ITEM_SCHEMAS: Record<ListField, z.ZodType> = { colors: brandColorSchema, fonts: brandFontSchema, logos: brandLogoSchema, dos: brandNoteSchema, donts: brandNoteSchema };
 const NOTE_FIELDS = new Set<string>(['dos', 'donts', 'tone', 'photoStyle']);
@@ -50,7 +50,7 @@ export function parseProposedKit(json: unknown, current: BrandKit, source: Sourc
   const dropped: string[] = [];
   const kit: BrandKit = { schemaVersion: 1, colors: [], fonts: [], logos: [], tone: null, dos: [], donts: [], photoStyle: null };
 
-  for (const field of Object.keys(BRAND_KIT_LIMITS) as ListField[]) {
+  for (const field of (Object.keys(BRAND_KIT_LIMITS) as Array<keyof typeof BRAND_KIT_LIMITS>).filter((k): k is ListField => k !== 'codebaseSources')) {
     const label = (m.brandFields as Record<string, string>)[field]!;
     const raw = own(json, field);
     const currentItems = current[field] as Array<{ id: string }>;

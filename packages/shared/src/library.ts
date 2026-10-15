@@ -8,7 +8,7 @@ export const relativeFileSchema = z.string().min(1).max(300).refine(
 export const webUrlSchema = z.string().url().refine((u) => /^https?:\/\//i.test(u), 'issue.httpOnly');
 
 export type AssetKind = 'image' | 'video' | 'svg' | 'font' | 'audio' | 'other';
-export type AssetOrigin = 'upload' | 'website' | 'generated' | 'stock' | 'google-fonts';
+export type AssetOrigin = 'upload' | 'website' | 'generated' | 'stock' | 'google-fonts' | 'codebase';
 
 const EXT: Record<string, AssetKind> = {
   png: 'image', jpg: 'image', jpeg: 'image', webp: 'image', gif: 'image', avif: 'image', heic: 'image',
@@ -23,7 +23,7 @@ export function assetKindOf(file: string): AssetKind {
 export const assetEntrySchema = z.object({
   file: relativeFileSchema,
   kind: z.enum(['image', 'video', 'svg', 'font', 'audio', 'other']),
-  origin: z.enum(['upload', 'website', 'generated', 'stock', 'google-fonts']),
+  origin: z.enum(['upload', 'website', 'generated', 'stock', 'google-fonts', 'codebase']),
   sourceUrl: webUrlSchema.nullable(),
   description: z.string().max(2000),
   tags: z.array(z.string().min(1).max(40)).max(30),
