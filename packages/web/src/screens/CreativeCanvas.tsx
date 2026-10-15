@@ -3,8 +3,9 @@
 // safe zones with a legend, V/C/H tools), Figma-style comments that become chips of the composer, the Chat · Comments ·
 // Brief panel, the version history with Compare, and Export. Replaces the interim CreativePage. A board opens in the
 // format view (screens/FormatView.tsx) with T3.
+import { ProblemList } from '../components/ProblemList.tsx';
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
-import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, outputWarningText, shownTotal, type ConversationEntry, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
+import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, outputWarningText, shownTotal, packInstancesOf, type ConversationEntry, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../api.ts';
@@ -276,6 +277,9 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
   };
   const [exporting, setExporting] = useState<{ open: boolean; snapshot: ExportSnapshot } | null>(null);
   const [packExport, setPackExport] = useState(false);
+  // Phase 14: the instances of the creative's store pack (`storePackFormats`); a store preset picked by hand is not one of them.
+  const storePack = detail?.creative.brief.storePack;
+  const packIds = useMemo(() => new Set(storePack ? packInstancesOf(storePack) : []), [storePack]);
 
   // Open a board in the format view (T3): its rect goes along for the shared-element transition.
   const openEditor = (id: string, frame: HTMLElement) => {
@@ -388,6 +392,9 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
     primaries: primaries.map((id) => ({ id, label: formatLabel(id), followers: followersOf(states, id).map(formatLabel) })),
     followerOf: (id: string) => states[id]?.follows ?? null,
   } : undefined;
+  // The pack's group is there whenever the creative has a pack, even if its instances were all taken out by hand: the export stays reachable.
+  const columnGroups = groupByChannel(boards, packIds);
+  if (storePack && !columnGroups.some(([ch]) => ch === PACK_GROUP)) columnGroups.push([PACK_GROUP, []]);
   const tall = boards.filter(isTall);
   const rest = boards.filter((b) => !isTall(b));
   const zones = boards.some((b) => b.preset?.safeZone);
@@ -458,11 +465,6 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
             </Button>
           ) : null}
           <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} />
-          {cr.brief.storePack ? (
-            <Button variant="outline" className="ms-cv-pack-export" disabled={!version} onClick={() => setPackExport(true)}>
-              <Icon name="download" size={13} strokeWidth={1.7} />{t.web.storePack.export.action}
-            </Button>
-          ) : null}
           <Button variant="ink" className="ms-cv-export" disabled={!version} onClick={() => { if (version) setExporting({ open: true, snapshot: { versions, states } }); }}>
             <Icon name="download" size={13} strokeWidth={1.7} />{c.export}
           </Button>
@@ -472,28 +474,53 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
 
       <aside className="ms-cv-side ms-cv-formats" aria-label={c.formatsAria}>
         <div className="ms-cv-formats-head"><b>{c.formats}</b><span>{boards.length}</span></div>
-        {groupByChannel(boards).map(([channel, items]) => (
-          <div key={channel} className="ms-cv-group">
-            <div className="ms-cap ms-cv-group-head">{channel !== '' ? <ChannelMark channel={channelOf(channel)} /> : null}{channel !== '' ? channelName(channel, locale) : t.web.formatUi.other}</div>
-            {items.map((b) => (
-              <button key={b.id} type="button" className={cx('ms-navitem ms-cv-fmt', sel === b.id && 'ms-on', followsOf(b.id) && 'ms-follower')} aria-pressed={sel === b.id}
-                onClick={() => { setSel(b.id); reveal(b.id); }}>
-                <Icon name={b.preset?.kind === 'image' ? 'image' : 'video'} size={14} />
-                {followsOf(b.id) ? (
-                  <span className="ms-cv-fmt-text">
-                    <span className="ms-navitem-label">{boardName(b, locale)}</span>
-                    <span className="ms-cv-fmt-follows"><Icon name="link" size={11} />{followsOf(b.id)}</span>
-                  </span>
-                ) : (
-                  <>
-                    <span className="ms-navitem-label">{boardName(b, locale)}</span>
-                    <span className="ms-cv-fmt-side">{formatSide(b.id, b.preset)}</span>
-                  </>
-                )}
-              </button>
-            ))}
-          </div>
-        ))}
+        {columnGroups.map(([channel, items]) => {
+          const fmt = (b: BoardModel & { n: number | null }) => (
+            <button key={b.id} type="button" className={cx('ms-navitem ms-cv-fmt', sel === b.id && 'ms-on', followsOf(b.id) && 'ms-follower')} aria-pressed={sel === b.id}
+              onClick={() => { setSel(b.id); reveal(b.id); }}>
+              <Icon name={b.preset?.kind === 'image' ? 'image' : 'video'} size={14} />
+              {followsOf(b.id) ? (
+                <span className="ms-cv-fmt-text">
+                  <span className="ms-navitem-label">{boardName(b, locale)}</span>
+                  <span className="ms-cv-fmt-follows"><Icon name="link" size={11} />{followsOf(b.id)}</span>
+                </span>
+              ) : (
+                <>
+                  <span className="ms-navitem-label">{boardName(b, locale)}</span>
+                  <span className="ms-cv-fmt-side">{formatSide(b.id, b.preset)}</span>
+                </>
+              )}
+            </button>
+          );
+          if (channel === PACK_GROUP) {
+            // Phase 14: the store pack's instances are one group, with App Store and Google Play as sub-groups and the export in its header.
+            const stores = groupByChannel(items, new Set()).map(([ch, list]) => [ch, list] as const);
+            return (
+              <div key={channel} className="ms-cv-group ms-cv-pack" role="group" aria-label={t.web.storePack.groupTitle}>
+                <div className="ms-cap ms-cv-group-head ms-cv-pack-head">
+                  <span className="ms-cv-pack-marks" aria-hidden="true"><ChannelMark channel="appstore" /><ChannelMark channel="googleplay" /></span>
+                  <span className="ms-cv-pack-title">{t.web.storePack.groupTitle}</span>
+                  <Button size="sm" variant="outline" className="ms-cv-pack-export" disabled={!version} title={t.web.storePack.groupExportAria}
+                    onClick={() => setPackExport(true)}>
+                    <Icon name="download" size={12} strokeWidth={1.7} />{t.web.storePack.groupExport}
+                  </Button>
+                </div>
+                {stores.map(([ch, list]) => (
+                  <div key={ch} className="ms-cv-subgroup" role="group" aria-label={ch !== '' ? channelName(ch, locale) : t.web.formatUi.other}>
+                    <div className="ms-cap ms-cv-subhead">{ch !== '' ? <ChannelMark channel={channelOf(ch)} /> : null}{ch !== '' ? channelName(ch, locale) : t.web.formatUi.other}</div>
+                    {list.map(fmt)}
+                  </div>
+                ))}
+              </div>
+            );
+          }
+          return (
+            <div key={channel} className="ms-cv-group" role="group" aria-label={channel !== '' ? channelName(channel, locale) : t.web.formatUi.other}>
+              <div className="ms-cap ms-cv-group-head">{channel !== '' ? <ChannelMark channel={channelOf(channel)} /> : null}{channel !== '' ? channelName(channel, locale) : t.web.formatUi.other}</div>
+              {items.map(fmt)}
+            </div>
+          );
+        })}
       </aside>
 
       <main className="ms-cv-main" aria-label={c.canvasAria}>
@@ -506,7 +533,7 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
           {version?.status === 'incomplete' ? (
             <div className="ms-cv-note">
               <b>{t.web.creative.versionIncomplete({ n: version.n })}</b>
-              <ul>{version.problems.map((p) => <li key={p}>{p}</li>)}</ul>
+              <ProblemList problems={version.problems} />
             </div>
           ) : null}
           {actionError ? <p role="alert" className="ms-cv-note ms-err">{actionError}</p> : null}
@@ -597,7 +624,7 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
         title={title} snapshot={exporting?.snapshot ?? null} presets={presets} labels={cr.brief.formatLabels} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings} jobs={live.jobs}
         {...(creativeLocales(cr.brief) ? { locales: creativeLocales(cr.brief)! } : {})} />
       {cr.brief.storePack && version ? (() => {
-        const packGaps = packLanguageGaps(cr.brief.formats, version, creativeLocales(cr.brief)?.extra ?? []);
+        const packGaps = packLanguageGaps(cr.brief.formats.filter((f) => packIds.has(f)), version, creativeLocales(cr.brief)?.extra ?? []);
         return (
         <StorePackExport open={packExport} onClose={() => setPackExport(false)} slug={slug} creative={creative} title={title} version={version.n}
           untranslated={packGaps.untranslated} needsReview={packGaps.review}
@@ -624,10 +651,14 @@ function OutputWarnings({ outputs, formatLabel }: { outputs: VersionEntry['outpu
   );
 }
 
-function groupByChannel(boards: BoardModel[]): Array<[string, BoardModel[]]> {
-  const m = new Map<string, BoardModel[]>();
+/** The key of the store pack's group in the formats column (no channel is called this). */
+const PACK_GROUP = '\u0000store-pack';
+
+/** The formats column's groups, in the order of first appearance; `pack`: the ids of the store pack, which form one group. */
+function groupByChannel<B extends BoardModel>(boards: B[], pack: ReadonlySet<string>): Array<[string, B[]]> {
+  const m = new Map<string, B[]>();
   for (const b of boards) {
-    const ch = b.preset?.channel ?? '';
+    const ch = pack.has(b.id) ? PACK_GROUP : b.preset?.channel ?? '';
     m.set(ch, [...(m.get(ch) ?? []), b]);
   }
   return [...m.entries()];

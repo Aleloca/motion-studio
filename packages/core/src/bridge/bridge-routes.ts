@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { EMPTY_BRAND_KIT, brandKitSchema, type BrandPhase } from '@motion-studio/shared';
 import { MCP_SERVER, MCP_TOOLS } from '../agent/launcher.ts';
+import { BRAND_CODEBASE_DENIED_TOOLS } from '../agent/runner.ts';
 import type { ApprovalBroker } from '../approvals/broker.ts';
 import { readConfinedFile } from '../brand/agent-guard.ts';
 import { ProviderError } from '../providers/http.ts';
@@ -97,6 +98,9 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
       if (toolName.startsWith('provider:') || toolName.startsWith(`mcp__${MCP_SERVER}__`)) return { behavior: 'deny', message: t().approvals.invalidRequest };
       // A translation turn only reads (Phase 12, fix I1): Bash and every tool that could write are refused without a card.
       if (c.kind === 'localize' && !LOCALIZE_READ_TOOLS.has(toolName)) return { behavior: 'deny', message: t().approvals.readOnlyTurn };
+      // A brand analysis of codebases (Phase 14, fix round 1) never runs commands nor searches file contents: Bash and Grep
+      // are refused without a card, whatever the sandbox (they are also denied by the job's rules).
+      if (c.kind === 'brand-analysis' && (c.codebases?.length ?? 0) > 0 && BRAND_CODEBASE_DENIED_TOOLS.includes(toolName)) return { behavior: 'deny', message: t().approvals.brandCodebaseToolDenied };
       // Motion Studio's config folder (tokens) is never opened, whatever the tool, whoever would answer: denied before any
       // auto-approval or card. Bash is not parsed here: its pre-allowed commands never reach this prompt (see the README).
       if (await namesProtectedPath(toolName, input, ctx.protectedRoots ?? [], c.projectDir).catch(() => true)) {

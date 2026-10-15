@@ -2,7 +2,7 @@
 // formats (one instance per screenshot and device) they stand for.
 import { z } from 'zod';
 import { DEFAULT_FORMATS, type FormatPreset } from './formats.ts';
-import { instanceIdOf, presetOf } from './format-instance.ts';
+import { INSTANCE_ID_RE, instanceIdOf, nextInstanceId, presetOf } from './format-instance.ts';
 import { assetFilePath } from './localization/schema.ts';
 
 export type StoreId = 'appstore' | 'playstore';
@@ -11,6 +11,9 @@ export const APPSTORE_DEVICES = ['iphone-69', 'ipad-13'] as const;
 export const PLAYSTORE_DEVICES = ['phone', 'tablet', 'feature'] as const;
 /** Screenshots per store (spec §4.1); when both stores are chosen, the narrower range applies. */
 export const STORE_SCREENSHOTS = { appstore: { min: 1, max: 10 }, playstore: { min: 2, max: 8 } } as const;
+
+/** Length of the pack's preview video, in seconds: inside the App Store's 15–30 s with the brief tolerance on both sides. */
+export const STORE_PREVIEW_SECONDS = 20;
 
 /** Catalog preset of each device. */
 export const STORE_DEVICE_PRESET = {
@@ -36,6 +39,12 @@ export const storePackSchema = z.object({
   /** One per screenshot, in order: its caption and the app screen (a file under `assets/` of the project) it shows, or null. */
   screenshots: z.array(z.object({ caption: z.string().trim().min(1).max(80), screen: assetFilePath.nullable() }).strict()).min(1).max(10),
   preview: z.boolean(),
+  /**
+   * The format instances this pack created, in the order of `storePackFormats` (Phase 14): the core sets it. The pack owns exactly
+   * these; a hand-picked instance of the same preset is never taken over, so a new slot gets the next free id. Absent in packs
+   * made before: then the pack owns `storePackFormats(pack).formats`.
+   */
+  instances: z.array(z.string().regex(INSTANCE_ID_RE)).max(80).optional(),
 }).strict().superRefine((p, ctx) => {
   const issue = (message: string, path: (string | number)[]) => ctx.addIssue({ code: 'custom', message, path });
   const has = (s: StoreId) => p.stores.includes(s);
@@ -93,4 +102,46 @@ export function storePackFormats(p: StorePack, presets: readonly SizedPreset[] =
     addVideo(store);
   }
   return { formats, formatLabels, links };
+}
+
+/** The ids of the pack's slots (`storePackFormats`) and the instances that stand for them: `instances`, else the same ids. */
+export function packInstancesOf(p: StorePack, presets: readonly SizedPreset[] = DEFAULT_FORMATS): string[] {
+  const slots = storePackFormats(p, presets).formats;
+  return p.instances && p.instances.length === slots.length ? [...p.instances] : slots;
+}
+
+/** Instance → its slot (the canonical id `storePackFormats` gives; captions, labels and export numbers follow the slot). */
+export function packSlotOf(p: StorePack, presets: readonly SizedPreset[] = DEFAULT_FORMATS): Map<string, string> {
+  const slots = storePackFormats(p, presets).formats;
+  return new Map(packInstancesOf(p, presets).map((id, i) => [id, slots[i]!]));
+}
+
+/**
+ * The instances for `next`'s slots (Phase 14): a slot the pack already had (`current`: slot → instance) keeps its instance; a
+ * new one takes its own id when free, else the next free instance of its preset (never an id in `taken`). `taken`: every id the
+ * brief has now, without the ones being removed. `full`: the preset with no free instance left (20 are the most).
+ */
+export function allocatePackInstances(next: StorePack, current: ReadonlyMap<string, string>, taken: readonly string[], presets: readonly SizedPreset[] = DEFAULT_FORMATS):
+  { instances: string[]; added: string[]; formatLabels: Record<string, string>; links: Record<string, string> } | { full: string } {
+  const f = storePackFormats(next, presets);
+  const used = [...taken];
+  const instances: string[] = [];
+  const added: string[] = [];
+  const actual = new Map<string, string>();
+  for (const slot of f.formats) {
+    let id = current.get(slot);
+    if (id === undefined) {
+      id = used.includes(slot) ? nextInstanceId(presetOf(slot), used) ?? undefined : slot;
+      if (id === undefined) return { full: presetOf(slot) };
+      used.push(id);
+      added.push(id);
+    }
+    actual.set(slot, id);
+    instances.push(id);
+  }
+  const formatLabels: Record<string, string> = {};
+  for (const [slot, label] of Object.entries(f.formatLabels)) formatLabels[actual.get(slot)!] = label;
+  const links: Record<string, string> = {};
+  for (const [a, b] of Object.entries(f.links)) links[actual.get(a)!] = actual.get(b)!;
+  return { instances, added, formatLabels, links };
 }

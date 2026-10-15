@@ -49,7 +49,7 @@ describe('video target bitrates', () => {
       expect(f.targetBitrateKbps, f.id).toBe(videoTargetBitrateKbps(f.width, f.height));
     }
     const withLimit = DEFAULT_FORMATS.filter((f) => f.maxFileMB !== undefined).map((f) => f.id).sort();
-    expect(withLimit).toEqual(['appstore-preview', 'x-16x9', 'x-1x1', 'youtube-thumbnail']);
+    expect(withLimit).toEqual(['appstore-preview', 'og-image-1200x630', 'x-16x9', 'x-1x1', 'youtube-thumbnail']);
   });
 });
 

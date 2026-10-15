@@ -90,8 +90,43 @@ export async function codebaseOverlaps(path: string, protectedDirs: string[]): P
   return false;
 }
 
-/** Refuses (400) linked folders overlapping the project or the workspace: they would hand the project to --add-dir. */
-export async function assertCodebasesOutside(list: LinkedCodebase[], protectedDirs: string[]): Promise<void> {
+/**
+ * Glob metacharacters a codebase path may not hold (Phase 14 final wave, decision 781). With Claude Code 2.1.300 a path that
+ * mixes `( )` with `[ ]` or `{ }` stops every permission rule on it from matching (decision 780), whatever the escaping; the
+ * backslash is in the set because its escaping was never verified live. Re-exported by codebases.ts.
+ */
+export const GLOB_PATH_CHARS = /[()[\]{}*?\\]/;
+
+/** True when the path, or its real path (a link), holds a glob metacharacter (`GLOB_PATH_CHARS`). */
+export async function codebaseHasGlobChars(path: string): Promise<boolean> {
+  if (GLOB_PATH_CHARS.test(path)) return true;
+  const real = await realpath(path).catch(() => null);
+  return real !== null && GLOB_PATH_CHARS.test(real);
+}
+
+export const codebaseGlobCharsMessage = (path: string): string => t().errors.codebaseGlobChars({ path });
+
+/**
+ * Refuses (400, `codebase-glob-chars`, naming the path) a linked folder whose path or real path holds a glob metacharacter.
+ * `stored`: the list already saved; its paths (normalised) pass unchanged (decision 788): a creative or project that holds
+ * a legacy one can still save its other edits, and the folder stays left out at run time with a note.
+ */
+export async function assertCodebasesLiteral(list: LinkedCodebase[], stored: LinkedCodebase[] = []): Promise<void> {
+  const known = new Set<string>();
+  for (const c of stored) { try { known.add(normalizeCodebasePath(c.path)); } catch { /* an invalid stored entry is not a pass */ } }
+  for (const c of list) {
+    if (known.has(c.path)) continue;
+    if (await codebaseHasGlobChars(c.path)) throw new CodedError(400, codebaseGlobCharsMessage(c.path), 'codebase-glob-chars');
+  }
+}
+
+/**
+ * Refuses (400) linked folders the agent's rules cannot hold: a path with glob metacharacters (`codebase-glob-chars`, first),
+ * and folders overlapping the project or the workspace (they would hand the project to --add-dir). Every route that links a
+ * creative or project codebase goes through here.
+ */
+export async function assertCodebasesOutside(list: LinkedCodebase[], protectedDirs: string[], stored: LinkedCodebase[] = []): Promise<void> {
+  await assertCodebasesLiteral(list, stored);
   for (const c of list) if (await codebaseOverlaps(c.path, protectedDirs)) throw new WorkspaceError(400, codebaseOverlapMessage());
 }
 
@@ -431,7 +466,7 @@ export class WorkspaceStore {
       const linkedCodebases = patch.linkedCodebases
         ? normalizeCodebaseList(patch.linkedCodebases)
         : current.linkedCodebases;
-      if (patch.linkedCodebases) await assertCodebasesOutside(linkedCodebases, [this.projectDir(slug), this.root]);
+      if (patch.linkedCodebases) await assertCodebasesOutside(linkedCodebases, [this.projectDir(slug), this.root], current.linkedCodebases);
       const parsed = projectFileSchema.safeParse({ ...current, ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)), linkedCodebases, updatedAt: new Date().toISOString() });
       if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidProject({ fields: parsed.error.issues.map((i) => i.path.join('.')).join(', ') }));
       const dir = this.projectDir(slug);

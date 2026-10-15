@@ -1,12 +1,15 @@
 // Brief form of a creative ("Edit the brief" in the canvas panel), built from ui/ controls only: no native select,
 // checkbox or number field, no textarea resize. Saves it, or saves and starts a new generation.
-import { channelName, INSTANCE_ID_RE, legacyTurnKind, linksAfterBriefSave, nextInstanceId, presetOf, type Brief, type BriefServices, type CreativeDetail, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
+import { channelName, INSTANCE_ID_RE, legacyTurnKind, linksAfterBriefSave, nextInstanceId, packInstancesOf, presetOf, type StorePack, type Brief, type BriefServices, type CreativeDetail, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
 import { useId, useMemo, useRef, useState, type DragEvent } from 'react';
 import { api } from '../api.ts';
 import { instanceName, presetFor, presetNameOf } from '../instances.ts';
 import { useLocale, useT } from '../i18n.tsx';
 import { Button, ChannelMark, Chip, channelOf, cx, Icon, Input, Modal, Segmented, Textarea } from '../ui/index.ts';
+import { IdentityStart, identityForBrief, resolveIdentity, useBrandLogo } from '../screens/identity/IdentityStart.tsx';
 import { CodebaseList } from './CodebaseList.tsx';
+import { StorePackWizard } from '../screens/new-creative/StorePackWizard.tsx';
+import { packChannel } from '../screens/new-creative/storePackModel.ts';
 import { BriefLanguages } from '../screens/creative/BriefLanguages.tsx';
 import { ServicesSelector, useConfiguredProviders, useKeyChecks } from './ServicesSelector.tsx';
 import './brief.css';
@@ -75,6 +78,38 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged, onRefr
     remove(mine);
   };
   const [confirm, setConfirm] = useState<string[] | null>(null);
+  // The store pack entry (Phase 14): the wizard in a dialog, and the confirmation before the pack is taken out.
+  const [packOpen, setPackOpen] = useState(false);
+  const [packRemove, setPackRemove] = useState(false);
+  const [packBusy, setPackBusy] = useState(false);
+  const packNow = stored.storePack;
+  /**
+   * Saves the pack at once, as a partial save (like order and removal): the core recomputes only the pack's instances. The
+   * draft follows: the pack's instances and labels as the server has them, everything else the user typed stays.
+   */
+  const savePack = async (next: StorePack | null) => {
+    setError(null);
+    const before = storedRef.current;
+    const saved = await api.updateCreative(slug, detail.slug, { storePack: next });
+    const mine = new Set([...(before.storePack ? packInstancesOf(before.storePack) : []), ...(saved.brief.storePack ? packInstancesOf(saved.brief.storePack) : [])]);
+    setStored(saved.brief);
+    setBrief((b) => {
+      // Unsaved additions stay; saved formats the pack no longer owns go; the server's order wins for the rest.
+      const kept = b.formats.filter((f) => !before.formats.includes(f) || saved.brief.formats.includes(f));
+      const formats = rollbackFormats(kept, saved.brief.formats);
+      const labels = { ...(b.formatLabels ?? {}) };
+      for (const k of mine) { delete labels[k]; if (saved.brief.formatLabels?.[k]) labels[k] = saved.brief.formatLabels[k]!; }
+      const { formatLabels: _l, storePack: _p, ...rest } = b;
+      const kl = labelsFor(formats, labels);
+      return { ...rest, formats, ...(kl ? { formatLabels: kl } : {}), ...(saved.brief.storePack ? { storePack: saved.brief.storePack } : {}) };
+    });
+    onRefresh?.();
+  };
+  const removePack = async () => {
+    setPackBusy(true);
+    try { await savePack(null); setPackRemove(false); } catch (e) { setPackRemove(false); setError(t.web.storePack.saveFailed({ detail: message(e) })); }
+    setPackBusy(false);
+  };
   const [dragging, setDragging] = useState<string | null>(null);
   const nameOf = (fid: string) => instanceName(presetFor(presets, fid), fid, locale, brief.formatLabels);
   /** Order and removal are saved at once, as a partial save merged into the stored brief under the lock (Phase 12). */
@@ -144,6 +179,10 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged, onRefr
     if (dragging && dragging !== target) move(dragging, brief.formats.indexOf(target));
     setDragging(null);
   };
+  // The identity formats' "Partenza" (Phase 14): shown while the brief has one of those formats.
+  const identityOn = brief.formats.some((f) => presetFor(presets, f)?.identity);
+  const brandLogo = useBrandLogo(slug, identityOn);
+  const packGroup = useMemo(() => packChannel(presets), [presets]);
   const groups = useMemo(() => {
     const m = new Map<string, FormatPreset[]>();
     for (const p of presets) m.set(p.channel, [...(m.get(p.channel) ?? []), p]);
@@ -175,9 +214,11 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged, onRefr
     let saved = false;
     try {
       const chosen = services ?? c.brief.services;
-      const { services: _draft, formatLabels: _labels, ...rest } = brief;
+      // The pack changes only through its own entry (`storePack`), never with the rest of the brief.
+      const { services: _draft, formatLabels: _labels, identity: _identity, storePack: _pack, ...rest } = brief;
       const labels = labelsFor(brief.formats, brief.formatLabels);
-      await api.updateCreative(slug, detail.slug, { title, brief: { ...rest, ...(labels ? { formatLabels: labels } : {}), durationSec: sec, assets: assets.split(',').map((a) => a.trim()).filter(Boolean), ...(chosen ? { services: chosen } : {}) }, linkedCodebases: codebases });
+      const identity = identityOn && brief.identity ? { identity: identityForBrief(brief.identity, brandLogo.hasLogo) } : {};
+      await api.updateCreative(slug, detail.slug, { title, brief: { ...rest, ...identity, ...(labels ? { formatLabels: labels } : {}), durationSec: sec, assets: assets.split(',').map((a) => a.trim()).filter(Boolean), ...(chosen ? { services: chosen } : {}) }, linkedCodebases: codebases });
       saved = true;
       if (regenerate) await api.sendCreativeTurn(slug, detail.slug, {});
     } catch (e) { setError(message(e)); }
@@ -215,10 +256,35 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged, onRefr
                 <Chip key={p.id} on={brief.formats.some((f) => presetOf(f) === p.id)} onClick={() => toggle(p.id)} icon={p.kind === 'video' ? 'video' : 'image'}
                   title={`${p.width}×${p.height}`}>{presetNameOf(p, locale)}</Chip>
               ))}
+              {channel === packGroup ? (
+                <span className="ms-brief-pack">
+                  <Chip on={packNow !== undefined} onClick={() => setPackOpen(true)} icon="image" disabled={disabled}
+                    title={packNow ? t.web.storePack.entryAria({ count: packNow.screenshots.length }) : t.web.storePack.entryAdd}>
+                    {packNow ? t.web.storePack.entryOn({ count: packNow.screenshots.length }) : t.web.storePack.entryTitle}
+                  </Chip>
+                  {packNow ? (
+                    <>
+                      <Button size="sm" variant="ghost" disabled={disabled} onClick={() => setPackOpen(true)}>{t.web.storePack.entryEdit}</Button>
+                      <Button size="sm" variant="ghost" aria-label={t.web.storePack.entryRemoveAria} disabled={disabled} onClick={() => setPackRemove(true)}>{t.web.storePack.entryRemove}</Button>
+                    </>
+                  ) : null}
+                </span>
+              ) : null}
             </div>
           </div>
         ))}
       </div>
+      <StorePackWizard open={packOpen} onClose={() => setPackOpen(false)} slug={slug} {...(packNow ? { initial: packNow } : {})} onConfirm={savePack} />
+      <Modal open={packRemove} onClose={() => { if (!packBusy) setPackRemove(false); }} label={t.web.storePack.removeTitle} width={420}>
+        <div className="ms-brief-confirm">
+          <h3>{t.web.storePack.removeTitle}</h3>
+          <p>{t.web.storePack.removeBody}</p>
+          <div className="ms-brief-actions">
+            <Button variant="danger" loading={packBusy} disabled={packBusy} onClick={() => void removePack()}>{t.web.storePack.removeConfirm}</Button>
+            <Button variant="outline" disabled={packBusy} onClick={() => setPackRemove(false)}>{t.common.cancel}</Button>
+          </div>
+        </div>
+      </Modal>
       {brief.formats.length > 0 ? (
         <>
           <span className="ms-brief-lbl" id={`${id}-inst`}>{t.web.instances.title}</span>
@@ -271,6 +337,10 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged, onRefr
           </div>
         </div>
       </Modal>
+      {identityOn ? (
+        <IdentityStart value={resolveIdentity(brief.identity, brandLogo.hasLogo)} onChange={(v) => set('identity', v)} hasBrandLogo={brandLogo.hasLogo}
+          fromCodebase={brandLogo.fromCodebase} withConcepts={false} disabled={disabled} />
+      ) : null}
       <BriefLanguages value={brief.locales} disabled={disabled}
         onChange={(next) => setBrief((b) => { const { locales: _l, ...rest } = b; return next ? { ...rest, locales: next } : rest; })} />
       <span className="ms-brief-lbl">{t.web.services.title}</span>

@@ -340,7 +340,8 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
         const lh = layer;
         prepare = lh.ready().then(
           (warnings) => { for (const m of warnings) report('fontLoadFailed', `layer: ${m}`, clip.id); },
-          (e: unknown) => report('layerTimeout', `html layer ${clip.src}: ${String(e instanceof Error ? e.message : e)}`, clip.id),
+          // `layerStalled` (decision 709): msReady waited on the frozen render clock; anything else is the layer not answering.
+          (e: unknown) => report(e instanceof LayerRequestError && e.code === 'layerStalled' ? 'layerStalled' : 'layerTimeout', `html layer ${clip.src}: ${String(e instanceof Error ? e.message : e)}`, clip.id),
         );
         break;
       }
@@ -564,6 +565,23 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     m.video.style.display = show === 'canvas' ? 'none' : 'block';
   };
 
+  /**
+   * Render mode (Phase 14 task 0, decision 740): whether a mounted clip's content has no visible area in the frame (the stage,
+   * within the viewport) at the time just applied. Chrome throttles a sandboxed (cross-origin) iframe with no visible area
+   * and runs no animation frames in it, so a layer seek there would wait for frames until `frameTimeout`. Such a layer
+   * shows nothing, so its seek is skipped; it is seeked again, and painted, at the first seek that brings it into view.
+   * Measured on the bounding box (position, size, `translate`/`scale`/`rotate` animations); never true without a layout.
+   */
+  const outOfFrame = (el: Element): boolean => {
+    const s = stage.getBoundingClientRect();
+    if (!(s.width > 0 && s.height > 0)) return false;
+    const view = doc.documentElement;
+    const left = Math.max(s.left, 0); const top = Math.max(s.top, 0);
+    const right = Math.min(s.right, view.clientWidth || s.right); const bottom = Math.min(s.bottom, view.clientHeight || s.bottom);
+    const r = el.getBoundingClientRect();
+    return !(Math.min(r.right, right) > Math.max(r.left, left) && Math.min(r.bottom, bottom) > Math.max(r.top, top));
+  };
+
   const doSeek = async (t: number) => {
     if (destroyed) return;
     time = clampT(t);
@@ -575,7 +593,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     for (const m of mounted) {
       if (!isClipVisible(m.clip, time, c.duration)) continue;
       if (m.video) work.push(seekVideo(m, time));
-      if (m.layer) {
+      if (m.layer && !(opts.mode === 'render' && outOfFrame(m.content))) {
         work.push(m.layer.seek(time - m.clip.start).catch((e: unknown) => {
           if (e instanceof LayerRequestError && e.code === 'frameTimeout') {
             report('frameTimeout', `html layer painted no frame after seeking to ${time}: ${e.message}`, m.clip.id);
@@ -583,7 +601,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
           }
           // Not thrown, deliberately (C8): the report fails the render at its end (the renderer refuses any runtime error but
           // the ignored ones), while a layer that navigated away or never answered must not stop the frames of the others.
-          report('layerError', `layer seek: ${String(e instanceof Error ? e.message : e)}`, m.clip.id);
+          report(e instanceof LayerRequestError && e.code === 'layerStalled' ? 'layerStalled' : 'layerError', `layer seek: ${String(e instanceof Error ? e.message : e)}`, m.clip.id);
         }));
       }
     }

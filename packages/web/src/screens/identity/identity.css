@@ -1,0 +1,50 @@
+/* Identity formats (Phase 14): the "Partenza" form, the size grid, the logo on light and dark. Tokens only. */
+
+/* Partenza */
+.ms-idstart { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 12px 14px; border-radius: 12px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
+.ms-idstart-lbl { font-size: 12px; font-weight: 600; color: var(--muted); }
+.ms-idstart-fields { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ms-idstart .ms-seg { align-self: flex-start; max-width: 100%; flex-wrap: wrap; }
+.ms-idstart-note { margin: 0; display: flex; align-items: flex-start; gap: 6px; font-size: 12.5px; line-height: 1.4; color: var(--muted); overflow-wrap: anywhere; }
+.ms-idstart-note svg { flex: none; margin-top: 2px; }
+
+/* Logo on light and on dark, side by side (inside the format view's frame). */
+.ms-fv-media .ms-idn-split { position: absolute; inset: 0; display: grid; grid-template-columns: 1fr 1fr; }
+.ms-idn-side { position: relative; display: flex; align-items: center; justify-content: center; min-width: 0; padding: 8%; }
+.ms-idn-side.ms-idn-light { background: var(--logoOnLight); }
+.ms-idn-side.ms-idn-dark { background: var(--logoOnDark); }
+.ms-fv-media .ms-idn-split img { width: 100%; height: 100%; object-fit: contain; background: transparent; }
+.ms-idn-sidelbl { position: absolute; left: 8px; bottom: 6px; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; background: var(--panel); color: var(--text); box-shadow: inset 0 0 0 1px var(--line); }
+
+/* The sizes view replaces the picture in the stage. */
+.ms-fv-stage.ms-idn-stage { display: block; padding: 60px 32px 32px; }
+.ms-idn-sizes { display: flex; flex-direction: column; gap: 12px; max-width: 980px; margin: 0 auto; padding: 18px 20px 22px; border-radius: 12px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line), 0 12px 30px var(--shadow); color: var(--text); }
+.ms-idn-head { display: flex; align-items: center; gap: 12px; }
+.ms-idn-head h3 { margin: 0; flex: 1; font-size: 15px; }
+.ms-idn-zoom { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+.ms-idn-intro { margin: 0; font-size: 12.5px; color: var(--muted); }
+.ms-idn-warn { padding: 10px 12px; border-radius: 10px; background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); color: var(--warn); font-size: 12.5px; }
+.ms-idn-warn b { display: inline-flex; align-items: center; gap: 6px; }
+.ms-idn-warn ul { margin: 6px 0 0; padding-left: 18px; overflow-wrap: anywhere; }
+.ms-idn-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 14px; }
+.ms-idn-tile { display: flex; flex-direction: column; align-items: center; gap: 8px; min-width: 0; padding: 12px 8px; border-radius: 10px; background: var(--field); }
+.ms-idn-pic { display: inline-flex; max-width: 100%; border-radius: 4px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; }
+.ms-idn-pic img { width: 100%; height: 100%; display: block; object-fit: contain; image-rendering: pixelated; }
+.ms-idn-cap { display: flex; flex-direction: column; align-items: center; gap: 1px; max-width: 100%; text-align: center; font-size: 12px; color: var(--muted); }
+.ms-idn-cap b { max-width: 100%; color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-idn-others { margin: 0; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.ms-idn-sub { margin: 6px 0 0; font-size: 13px; }
+.ms-idn-ctx { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+.ms-idn-fig { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: 200px; text-align: center; font-size: 12px; color: var(--muted); }
+.ms-idn-fig figcaption { overflow-wrap: anywhere; }
+.ms-idn-safenote { margin: 0; font-size: 11.5px; line-height: 1.4; overflow-wrap: anywhere; }
+.ms-idn-tab { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 8px 8px 0 0; background: var(--field); box-shadow: inset 0 0 0 1px var(--line); }
+.ms-idn-tabtitle { width: 56px; height: 8px; border-radius: 4px; background: var(--line); }
+.ms-idn-tab32 { margin-left: 6px; }
+.ms-idn-mask { position: relative; display: block; width: 120px; height: 120px; overflow: hidden; background: var(--field); box-shadow: inset 0 0 0 1px var(--line); }
+.ms-idn-mask img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.ms-idn-mask .ms-idn-layer { position: absolute; inset: 0; }
+.ms-idn-ios { border-radius: 22.37%; }
+.ms-idn-circle { border-radius: 50%; }
+.ms-idn-safe { position: absolute; border-radius: 50%; border: 1.5px dashed var(--accentText); pointer-events: none; }
+.ms-idn-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

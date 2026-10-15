@@ -84,8 +84,10 @@ export interface PackExportOptions {
   probe: (file: string) => Promise<MediaInfo | null>;
   /** The export day (README), `YYYY-MM-DD`. */
   date: string;
+  /** Store instances of the brief that are not the pack's (picked by hand): not exported, listed in the result and the README. */
+  notInPack?: string[];
 }
-export interface PackExportResult { folder: string; written: string[]; failed: Array<{ file: string; reason: string }> }
+export interface PackExportResult { folder: string; written: string[]; failed: Array<{ file: string; reason: string }>; notInPack?: string[] }
 
 const extOf = (file: string) => /\.([a-z0-9]{2,5})$/i.exec(file)?.[1]?.toLowerCase() ?? 'bin';
 
@@ -161,13 +163,13 @@ export async function exportStorePack(o: PackExportOptions): Promise<PackExportR
     }
     written.push(rel);
   }
-  await writeFile(join(folder, 'README.txt'), readmeText({ storePack: o.storePack, presets: o.presets, date: o.date, n: o.n, failed }), { flag: 'wx', mode: 0o644 })
+  await writeFile(join(folder, 'README.txt'), readmeText({ storePack: o.storePack, presets: o.presets, date: o.date, n: o.n, failed, ...(o.notInPack?.length ? { notInPack: o.notInPack } : {}) }), { flag: 'wx', mode: 0o644 })
     .catch(async (e: unknown) => { failed.push({ file: 'README.txt', reason: c.copyFailed({ reason: reasonOf(e) }) }); });
-  return { folder, written, failed };
+  return { folder, written, failed, ...(o.notInPack?.length ? { notInPack: o.notInPack } : {}) };
 }
 
 /** The pack's README (UI language): the verified limits and their date, the sources, the upload order, the Play video note. */
-export function readmeText(o: { storePack: StorePack; presets: readonly FormatPreset[]; date: string; n: number; failed: PackExportResult['failed'] }): string {
+export function readmeText(o: { storePack: StorePack; presets: readonly FormatPreset[]; date: string; n: number; failed: PackExportResult['failed']; notInPack?: string[] }): string {
   const r = t().variants.storePack.readme;
   const p = o.storePack;
   const sizeOf = (id: string) => { const f = o.presets.find((x) => x.id === id); return f ? `${f.width}×${f.height}` : null; };
@@ -191,6 +193,7 @@ export function readmeText(o: { storePack: StorePack; presets: readonly FormatPr
   lines.push(...order.map((x, i) => `${i + 1}. ${x}`));
   if (p.stores.includes('playstore') && p.preview) lines.push('', r.playVideoTitle, r.playVideo);
   if (o.failed.length > 0) lines.push('', r.failedTitle, ...o.failed.map((f) => `- ${f.file}: ${f.reason}`));
+  if (o.notInPack?.length) lines.push('', r.notInPackTitle, ...o.notInPack.map((f) => `- ${f}`));
   return lines.join('\n') + '\n';
 }
 

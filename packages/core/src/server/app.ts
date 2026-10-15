@@ -27,10 +27,11 @@ import { defaultConfigDir, type AppConfigStore } from '../app-config.ts';
 import { AgentBridge } from '../bridge/bridge.ts';
 import { registerBridgeRoutes } from '../bridge/bridge-routes.ts';
 import { downloadTool } from '../bridge/download-tool.ts';
+import { importCodebaseTool } from '../bridge/import-codebase-tool.ts';
 import { providerTools, voiceAvailability, voiceBatch } from '../bridge/provider-tools.ts';
 import { LocalizeService, ProjectActivity } from '../localization/localize-turn.ts';
 import type { LookupFn, Transport } from '../providers/safe-fetch.ts';
-import { checkCodebases, codebaseOverlaps, normalizeCodebaseList } from '../codebases.ts';
+import { checkCodebases, codebaseGlobCharsMessage, codebaseHasGlobChars, codebaseOverlaps, normalizeCodebaseList } from '../codebases.ts';
 import type { Git } from '../git.ts';
 import { JobConflictError, JobQueue } from '../jobs/job-queue.ts';
 import { JsonFileError } from '../json-file.ts';
@@ -181,16 +182,21 @@ function describeWorkspaceProblem(err: unknown): WorkspaceProblem {
   return { code: 'invalid', message: err instanceof Error ? err.message : String(err) };
 }
 
-/** The project's linked codebases the console may read: existing folders that do not overlap the project or the workspace. */
-async function consoleCodebases(list: LinkedCodebase[], forbidden: string[]): Promise<string[]> {
+/**
+ * The project's linked codebases the console may read: existing folders that do not overlap the project or the workspace and
+ * whose path has no glob characters (decision 781). `ignored`: one line per folder left out for a reason the user can fix.
+ */
+async function consoleCodebases(list: LinkedCodebase[], forbidden: string[]): Promise<{ paths: string[]; ignored: string[] }> {
   const kept: LinkedCodebase[] = [];
+  const ignored: string[] = [];
   for (const c of list) {
     try {
       const [n] = normalizeCodebaseList([c]);
-      if (n && !(await codebaseOverlaps(n.path, forbidden))) kept.push(n);
+      if (n && await codebaseHasGlobChars(n.path)) ignored.push(t().jobs.codebaseIgnored({ path: n.path, reason: codebaseGlobCharsMessage(n.path) }));
+      else if (n && !(await codebaseOverlaps(n.path, forbidden))) kept.push(n);
     } catch { /* an invalid entry is skipped */ }
   }
-  return (await checkCodebases(normalizeCodebaseList(kept))).filter((c) => c.exists).map((c) => c.path);
+  return { paths: (await checkCodebases(normalizeCodebaseList(kept))).filter((c) => c.exists).map((c) => c.path), ignored };
 }
 
 /** Phase 13: a console message or a redirect (the text limit is the core's translated 409; this cap bounds the request). */
@@ -433,7 +439,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const brandService = new BrandService({
     queue, launcher, git: deps.git, media,
     model: async () => (await requireWorkspace().readSettings()).model,
-    broadcast: (msg) => hub.broadcast(msg),
+    broadcast: (msg) => hub.broadcast(msg), configDir,
   });
 
   app.setErrorHandler(errorReply);
@@ -594,6 +600,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
             let carry: LiveMessage[] = [];
             /** Ruling Z: the one fresh retry of a redirect whose resumed run failed before taking it (once per turn). */
             let freshRetryUsed = false;
+            /** Codebase lines already said in this turn (decision 781). */
+            const ignoredSaid = new Set<string>();
             /** A failure: when the user's words reached no run, the job's error says so first (fix round 1, M3 and Ruling Z). */
             const failure = (detail: string) => new Error(undeliveredAtEnd(live).length > 0 ? `${t().live.wordsNotDelivered} ${detail}` : detail);
             for (;;) {
@@ -620,9 +628,16 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
               let sawSession = false;
               let run: Awaited<ReturnType<typeof launcher.start>>;
               try {
+                const codebases = await consoleCodebases(project.linkedCodebases, [projectDir, ws.root]);
+                // Decision 781: a folder left out is said in the console, once per turn.
+                for (const line of codebases.ignored) {
+                  if (ignoredSaid.has(line)) continue;
+                  ignoredSaid.add(line);
+                  hub.broadcast({ type: 'agent', jobId: id, event: { kind: 'progress', text: line } });
+                }
                 run = await launcher.start({
                   kind: 'console', jobId: id, projectSlug: slug, projectDir,
-                  codebases: await consoleCodebases(project.linkedCodebases, [projectDir, ws.root]),
+                  codebases: codebases.paths,
                   request: { prompt, resumeSessionId: resume, model: settings.model ?? undefined },
                   onEvent: (event) => {
                     hub.broadcast({ type: 'agent', jobId: id, event });
@@ -736,10 +751,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // The live preview's composition server origin (Task 8 frames it; started on first use).
   app.get('/api/preview/origin', async () => ({ origin: (await previews.compositionServer()).origin, uiOrigins: [...(deps.uiOrigins?.() ?? [])] }));
 
-  registerCreativeRoutes(app, { requireWorkspace, turns, edits, renders, previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m) });
+  registerCreativeRoutes(app, { requireWorkspace, turns, edits, renders, previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m), git: deps.git });
   registerStorePackRoutes(app, { requireWorkspace, turns, renders, media });
 
-  const routeCtx = { requireWorkspace, brand: brandService, media, git: deps.git, broadcast: (m: ServerMessage) => hub.broadcast(m) };
+  const routeCtx = { requireWorkspace, brand: brandService, media, git: deps.git, broadcast: (m: ServerMessage) => hub.broadcast(m), configDir };
   registerBrandRoutes(app, routeCtx);
   registerLibraryRoutes(app, routeCtx);
   const fontsHttp = deps.fontsHttp ?? { fetch: globalThis.fetch };
@@ -772,6 +787,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     extraTools: {
       ...providerTools({ vault, approvals, media, keyChecks, settings: () => requireWorkspace().readSettings(), broadcast: (m) => hub.broadcast(m) }),
       download_file: downloadTool({ media, broadcast: (m) => hub.broadcast(m) }),
+      import_codebase_file: importCodebaseTool({ media, broadcast: (m) => hub.broadcast(m) }),
     },
   });
   registerSettingsRoutes(app, { vault, approvals, requireWorkspace, keyChecks, keyCheckHttp: deps.keyCheckHttp ?? { fetch: globalThis.fetch } });

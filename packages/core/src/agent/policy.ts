@@ -1,6 +1,6 @@
 import { join } from 'node:path';
-import { dirDenyRules, fileDenyRules, globDenyRules, readOnlyRules } from '../codebases.ts';
-import { AGENT_ALLOWED_TOOLS, BRAND_ANALYSIS_TOOLS, DESCRIBE_TOOLS, LOCALIZE_TOOLS } from './runner.ts';
+import { dirDenyRules, escapeGlob, fileDenyRules, globDenyRules, readOnlyRules, secretReadRules, secretSandboxGlobs } from '../codebases.ts';
+import { AGENT_ALLOWED_TOOLS, BRAND_ANALYSIS_TOOLS, BRAND_CODEBASE_DENIED_TOOLS, BRAND_CODEBASE_SCOPED_TOOLS, DESCRIBE_TOOLS, LOCALIZE_TOOLS } from './runner.ts';
 import { DEFAULT_ALLOWED_DOMAINS, sensitiveHomeEntries, sensitiveHomePaths } from './sandbox.ts';
 
 /** `localize` (Phase 12): a translation turn on an existing version; it writes only through `submit_localization`. */
@@ -17,7 +17,26 @@ export interface PolicyInput {
   extraDomains: string[]; projectAllowRules: string[]; mcpTools: string[];
   /** Workspace setting: sandboxed Bash runs without asking (only meaningful with `sandbox`). */
   autoApproveSandboxed: boolean;
+  /**
+   * Brand analysis of codebases (Phase 14): the secret files and folders found in them when the job starts (absolute, every
+   * spelling; see findCodebaseSecrets). Denied to Read by exact path and, with the sandbox, listed in denyRead.
+   */
+  codebaseSecrets?: { files: string[]; dirs: string[] };
+  /**
+   * Brand analysis of codebases (Phase 14, fix round 1): whether the analysis also has a website source. Without one,
+   * WebFetch is neither allowed nor reachable (denied): nothing read in a codebase can be sent out. Ignored otherwise.
+   */
+  brandWebsite?: boolean;
 }
+
+/**
+ * The only reads a brand analysis of codebases gets without asking: `Read`/`Glob` scoped to each codebase spelling (the
+ * given one and the real one), in the exact case only, escaped like the deny rules. A case-folded allow would also open
+ * folders that differ only in case, which on a case-sensitive disk are other, unvalidated folders (fix round 2): the
+ * folded forms are for the deny rules only. The project stays readable as the working folder; anything else reaches an
+ * approval card, as before Phase 14.
+ */
+export const codebaseReadAllowRules = (codebases: string[]): string[] => codebases.flatMap((c) => BRAND_CODEBASE_SCOPED_TOOLS.map((t) => `${t}(/${escapeGlob(c)}/**)`));
 export interface AgentPolicy { settings: Record<string, unknown> | null; allowedTools: string[]; disallowedTools: string[]; addDirs: string[];
   /** Extra environment of the agent process: package caches inside the project, only for sandboxed jobs. */
   env: Record<string, string>;
@@ -58,8 +77,19 @@ const unique = (xs: string[]) => [...new Set(xs)];
 export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
   // The sandbox denyRead only covers Bash: the Read tool needs its own deny rules.
   const sensitive = sensitiveHomeEntries(i.home);
+  // Phase 14 (spec §2.2): a brand analysis reads its codebases whole, read-only, never their secret files. Every editing tool
+  // is denied there (not only Edit), and Read is denied on the secret patterns (both cases) and on the secrets found now.
+  const brandCodebases = i.kind === 'brand-analysis' && i.codebases.length > 0;
+  const secretFiles = brandCodebases ? i.codebaseSecrets?.files ?? [] : [];
+  const secretDirs = brandCodebases ? i.codebaseSecrets?.dirs ?? [] : [];
   const disallowedTools = [
     ...readOnlyRules(i.codebases),
+    ...(brandCodebases ? [
+      ...dirDenyRules(EDIT_TOOLS.filter((t) => t !== 'Edit'), i.codebases),
+      ...i.codebases.flatMap(secretReadRules),
+      ...dirDenyRules(['Read'], secretDirs),
+      ...fileDenyRules(['Read'], [...secretFiles, ...secretDirs]),
+    ] : []),
     ...dirDenyRules(['Read'], [...sensitive.dirs, i.configDir]),
     // Motion Studio's config folder holds the UI token and every live job's bridge token. Verified live with Claude Code
     // 2.1.296 (decisions log): the Read rule above already denies Grep and Glob there, also a recursive search started from
@@ -70,13 +100,18 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
     ...(i.protectedFiles.length ? fileDenyRules(EDIT_TOOLS, i.protectedFiles) : []),
     ...dirDenyRules(EDIT_TOOLS, i.protectedDirs),
     ...globDenyRules(EDIT_TOOLS, i.protectedGlobs ?? []),
+    // Brand analysis of codebases (fix round 1): no Bash (no file dump through an interpreter or ffprobe, no approval card
+    // for `cat`), no Grep (a content search could cross a secret file), and no WebFetch without a website source.
+    ...(brandCodebases ? [...BRAND_CODEBASE_DENIED_TOOLS, ...(i.brandWebsite ? [] : ['WebFetch'])] : []),
     // A localize turn writes only through `submit_localization` (Phase 12): the editing tools and Bash are denied everywhere,
     // whatever `autoApproveSandboxed` says (fix I1).
     ...(i.kind === 'localize' ? [...EDIT_TOOLS, 'Bash'] : []),
   ];
-  const extra = [...i.projectAllowRules, ...i.mcpTools];
+  const extra = [...(brandCodebases ? codebaseReadAllowRules(i.codebases) : []), ...i.projectAllowRules, ...i.mcpTools];
+  // With codebases the brand tools keep only WebFetch, and only with a website source: Bash(mkdir/ffprobe) are dropped.
+  const kindTools = (list: readonly string[]) => (brandCodebases ? (i.brandWebsite ? list.filter((t) => t === 'WebFetch') : []) : list);
   if (!i.sandbox) {
-    return { settings: null, allowedTools: unique([...LEGACY_TOOLS[i.kind], ...extra]), disallowedTools, addDirs: [...i.codebases], env: {} };
+    return { settings: null, allowedTools: unique([...kindTools(LEGACY_TOOLS[i.kind]), ...extra]), disallowedTools, addDirs: [...i.codebases], env: {} };
   }
   // Only creative/console jobs get sandbox network. Brand analysis reads pages with WebFetch (a tool, not Bash)
   // and downloads files through the Motion Studio `download_file` MCP tool.
@@ -92,9 +127,14 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
       // AUTO_BASH table is gone. Every kind follows the workspace setting `autoApproveSandboxed`: brand and describe jobs
       // too, since their sandbox has no network, writes stay in the project and the configuration files are protected.
       autoAllowBashIfSandboxed: i.kind === 'localize' ? false : i.autoApproveSandboxed,
-      filesystem: { denyRead: [...sensitiveHomePaths(i.home), i.configDir].map(sandboxPath), denyWrite: [...[...i.codebases, ...i.protectedFiles, ...i.protectedDirs].map(sandboxPath), ...(i.sandboxGlobs ?? [])] },
+      filesystem: {
+        denyRead: [
+          ...[...sensitiveHomePaths(i.home), i.configDir].map(sandboxPath),
+          ...(brandCodebases ? [...[...secretDirs, ...secretFiles].map(sandboxPath), ...i.codebases.flatMap((c) => secretSandboxGlobs(c, sandboxPath))] : []),
+        ],
+        denyWrite: [...[...i.codebases, ...i.protectedFiles, ...i.protectedDirs].map(sandboxPath), ...(i.sandboxGlobs ?? [])] },
       ...(network ? { network } : {}),
     },
   };
-  return { settings, allowedTools: unique([...SANDBOXED_TOOLS[i.kind], ...extra]), disallowedTools, addDirs: [...i.codebases], env: i.projectDir ? sandboxCacheEnv(i.projectDir) : {} };
+  return { settings, allowedTools: unique([...kindTools(SANDBOXED_TOOLS[i.kind]), ...extra]), disallowedTools, addDirs: [...i.codebases], env: i.projectDir ? sandboxCacheEnv(i.projectDir) : {} };
 }

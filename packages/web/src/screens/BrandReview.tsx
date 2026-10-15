@@ -215,7 +215,9 @@ function GroupGlyph({ g, proposal, slug }: { g: GroupId; proposal: BrandProposal
 function SourceLine({ source }: { source: SourceRef | undefined }) {
   const t = useT();
   if (!source || source.kind === 'manual' || !source.ref) return null;
-  const text = source.kind === 'website' ? t.web.source.website({ host: hostOf(source.ref) }) : t.web.source.image({ name: source.ref.split('/').pop() ?? '' });
+  const text = source.kind === 'website' ? t.web.source.website({ host: hostOf(source.ref) })
+    : source.kind === 'codebase' ? `${t.web.identity.sourceCodebase} · ${source.ref}`
+    : t.web.source.image({ name: source.ref.split('/').pop() ?? '' });
   return <span className="ms-faint ms-bsmall-text ms-ell" title={source.ref}>{text}</span>;
 }
 

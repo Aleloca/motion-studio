@@ -73,6 +73,11 @@ export interface OpenPageOptions {
    * a shared window budget (the desktop's) keeps a slot for `frames`, so they never wait behind a render.
    */
   purpose?: 'render' | 'frames';
+  /**
+   * The page's default background is fully transparent instead of white (Phase 14: the identity sets' PNGs keep their
+   * alpha), with `Emulation.setDefaultBackgroundColorOverride`. A PNG capture then has the alpha the composition leaves.
+   */
+  transparentBackground?: boolean;
 }
 
 export interface ChromiumProvider {
@@ -159,6 +164,7 @@ export async function openCdpRenderPage(client: CdpClient, o: OpenPageOptions & 
   try {
     await o.afterSecure?.();
     await client.send('Emulation.setDeviceMetricsOverride', { width: o.width, height: o.height, deviceScaleFactor: 1, mobile: false }, { sessionId: sid, timeoutMs: t.callMs });
+    if (o.transparentBackground) await client.send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } }, { sessionId: sid, timeoutMs: t.callMs });
     const loaded = waitForEvent(client, 'Page.loadEventFired', { sessionId: sid, timeoutMs: t.loadMs, signal: o.signal });
     loaded.catch(() => {});
     const nav = await client.send<{ errorText?: string }>('Page.navigate', { url: o.url }, { sessionId: sid, timeoutMs: t.loadMs });

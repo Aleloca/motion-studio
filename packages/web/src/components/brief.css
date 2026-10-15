@@ -8,6 +8,8 @@
 .ms-brief-ghead { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .ms-brief-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .ms-brief-chips .ms-chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The store pack entry (Phase 14): its chip, then Edit and Remove once the pack is set. */
+.ms-brief-pack { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; max-width: 100%; }
 .ms-brief-hint { margin: 0 0 4px; font-size: 12px; line-height: 1.4; color: var(--muted); }
 .ms-brief-error { margin: 4px 0 0; font-size: 12px; color: var(--warn); overflow-wrap: anywhere; }
 .ms-brief-notice {

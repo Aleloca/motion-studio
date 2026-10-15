@@ -1,10 +1,10 @@
 import type { Git } from '../git.ts';
 import { recoverRenameJournal } from '../library/rename-recovery.ts';
-import { lstat, readdir, realpath } from 'node:fs/promises';
+import { lstat, readdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, join, sep } from 'node:path';
 import { changedAssets, overlayAssetPaths, readOverlay } from '../localization/store.ts';
 import type { FastifyInstance } from 'fastify';
-import { messages, type JobSummary, INSTANCE_FOLDER_RE, briefSchema, briefWriteSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow } from '@motion-studio/shared';
+import { messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, nextInstanceId, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
@@ -26,12 +26,18 @@ import { editorCompositionView } from '../creatives/editor-staging.ts';
 import { directEditBodySchema, type DirectEditService } from '../creatives/direct-edit.ts';
 import { sweepProjectRenders } from '../render/render-sweep.ts';
 import { FormatCatalog, findPreset } from '../formats/format-catalog.ts';
+import { mergeStorePack, verifyScreens } from '../store-pack/brief.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { completeGitignore, sweepProject } from '../project-maintenance.ts';
 import { CodedError, expandHome, WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
 import { sendConfinedFile } from './serve-file.ts';
 import { localizedCompositionView } from './localization-routes.ts';
 import { currentLocale, t } from '../i18n.ts';
+import { BrandStore } from '../brand/brand-store.ts';
+import { readConfinedFile } from '../brand/agent-guard.ts';
+import { LibraryStore } from '../library/library-store.ts';
+import { saveGeneratedFile } from '../providers/files.ts';
+import { checkVectorSvg, MAX_VECTOR_SVG_BYTES } from '../identity/svg-check.ts';
 
 export interface CreativeRoutesContext {
   requireWorkspace: () => WorkspaceStore;
@@ -49,6 +55,8 @@ export interface CreativeRoutesContext {
   previews: PreviewService;
   /** Signs the storyboard image URLs (fix I4). */
   signer: UrlSigner;
+  /** Commits the brand kit change of "Use as brand logo" (Phase 14); absent: the change is written and not committed. */
+  git?: Git;
 }
 
 const isInsideDir = (p: string, base: string | null) => Boolean(base && p.startsWith(base.endsWith(sep) ? base : base + sep));
@@ -62,8 +70,11 @@ const createBody = z.object({ title: z.string(), brief: briefWriteSchema, genera
 // `formats` is checked against the stored ones by the core (only reorder or remove), so a legacy odd id can be taken out.
 const editBody = z.object({ title: z.string().optional(), brief: briefWriteSchema.optional(), services: briefSchema.shape.services,
   formatLabels: z.record(z.string(), z.union([z.string().trim().max(60), z.null()])).optional(),
-  formats: z.array(z.string().min(1).max(200)).min(1).max(100).optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() })
-  .refine((b) => !b.brief || (b.formats === undefined && b.formatLabels === undefined), { message: 'issue.briefWithPartial' });
+  formats: z.array(z.string().min(1).max(200)).min(1).max(100).optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional(),
+  /** Phase 14: sets, changes (a pack) or takes out (`null`) the store pack; alone, or with the title and services only. */
+  storePack: z.union([storePackSchema, z.null()]).optional() })
+  .refine((b) => !b.brief || (b.formats === undefined && b.formatLabels === undefined), { message: 'issue.briefWithPartial' })
+  .refine((b) => b.storePack === undefined || (!b.brief && b.formats === undefined && b.formatLabels === undefined), { message: 'issue.briefWithPartial' });
 /** Ruling H: a full brief save whose `formatLabels` name formats it no longer has drops those labels (no 400). */
 function pruneLabelsOfRemovedFormats(raw: unknown): unknown {
   const b = (raw as { brief?: { formats?: unknown; formatLabels?: unknown } } | null)?.brief;
@@ -102,6 +113,7 @@ const exportBody = z.object({
   /** "Render anyway" for translations rendered first that have open problems or outdated entries. */
   force: z.boolean().optional(),
 });
+const useAsLogoBody = z.object({ variant: z.enum(['primary', 'icon']) }).strict();
 const linkBody = z.object({ follower: z.string().min(1).max(200), primary: z.string().min(1).max(200).nullable() });
 /** A render request (Task 5): `formats` to render (a follower stands for its primary); absent or empty: every primary. */
 const renderBody = z.object({
@@ -226,6 +238,31 @@ export const localeAssetsCheck = (projectDir: string, creativeDir: string) => as
   return (await changedAssets([join(creativeDir, 'outputs', `v${n}`, ...dir.split('/')), projectDir], row, overlayAssetPaths(read.overlay, row))).length === 0;
 };
 
+/**
+ * A logo from scratch is one instance per concept (`identity-logo`, `identity-logo@2`…, final wave M3, decision 786): the
+ * create route adds the missing instances of each logo preset in the brief up to `identity.concepts`, within MAX_INSTANCES
+ * (`nextInstanceId`). Idempotent: a body that already lists them (the UI's) is left as it is; never removes an instance.
+ */
+export function expandLogoConcepts<B extends Pick<Brief, 'formats' | 'identity'>>(brief: B, presets: readonly FormatPreset[]): B {
+  if (brief.identity?.start !== 'scratch') return brief;
+  const want = Math.min(5, Math.max(1, brief.identity.concepts ?? 3));
+  const formats = [...brief.formats];
+  const logoPresets = [...new Set(formats.map(presetOf))].filter((id) => presets.find((p) => p.id === id)?.identity === 'logo');
+  for (const preset of logoPresets) {
+    let have = formats.filter((f) => presetOf(f) === preset).length;
+    while (have < want) {
+      const id = nextInstanceId(preset, formats);
+      if (id === null) break;
+      // Right after the preset's last instance, so the concepts stay together.
+      let at = -1;
+      formats.forEach((f, i) => { if (presetOf(f) === preset) at = i; });
+      formats.splice(at + 1, 0, id);
+      have++;
+    }
+  }
+  return formats.length === brief.formats.length ? brief : { ...brief, formats };
+}
+
 export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutesContext): void {
   const catalog = () => new FormatCatalog(ctx.requireWorkspace().root);
   const refOf = async (slug: string, creativeSlug: string): Promise<CreativeRef & { store: CreativeStore }> => {
@@ -273,8 +310,29 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const linkedCodebases = body.linkedCodebases ? normalizeCodebaseList(body.linkedCodebases) : null;
     if (linkedCodebases) await assertCodebasesOutside(linkedCodebases, [ws.projectDir(req.params.slug), ws.root]);
     const store = new CreativeStore(ws.projectDir(req.params.slug));
-    const links = initialLinks(body.brief, (await catalog().load()).presets);
-    const created = await store.create({ title: body.title, brief: { ...body.brief, links } });
+    // Phase 14: the store pack goes through this route as part of the brief; its screens get the same check as the pack route.
+    if (body.brief.storePack) await verifyScreens(ws.projectDir(req.params.slug), ctx.media, body.brief.storePack);
+    const presets = (await catalog().load()).presets;
+    let brief = body.brief;
+    if (brief.storePack) {
+      const pack = brief.storePack;
+      const slots = storePackFormats(pack, presets).formats;
+      if (pack.instances) {
+        // The client chose the instances (a hand-picked one of the same preset can sit beside them): they must match the slots.
+        const ok = pack.instances.length === slots.length && new Set(pack.instances).size === slots.length
+          && pack.instances.every((id, i) => presetOf(id) === presetOf(slots[i]!) && brief.formats.includes(id));
+        if (!ok) throw new CodedError(400, t().variants.storePack.badInstances, 'store-pack-instances');
+      } else if (slots.some((f) => !brief.formats.includes(f))) {
+        // No instances given: the pack's slots are the instances; a pack whose instances the brief lacks gets them (and their labels).
+        const { storePack: _p, ...bare } = brief;
+        brief = mergeStorePack({ ...bare, formats: brief.formats.filter((f) => !slots.includes(f)) }, pack, presets).brief;
+      } else {
+        brief = { ...brief, storePack: { ...pack, instances: slots } };
+      }
+    }
+    brief = expandLogoConcepts(brief, presets);
+    const links = initialLinks(brief, presets);
+    const created = await store.create({ title: body.title, brief: { ...brief, links } });
     const slug = created.slug;
     // Fix round 1 (M2): its side record exists from the start (nothing written into its creative.json later is trusted).
     await ctx.turns.side.read(ws.projectDir(req.params.slug), slug);
@@ -755,6 +813,90 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const rel = pinFramesRel(ref.creativeSlug, n);
     if ((await isRealDirChain(ref.projectDir, rel)) !== 'ok') return notFound();
     return sendConfinedFile(reply, join(ref.projectDir, ...rel), req.params.file, [`${n}-`]);
+  });
+
+  /**
+   * "Use as brand logo" (Phase 14, decision 733): copies the SVG an identity format's render checked into `assets/brand/` and
+   * adds it to the brand kit. The file is read again from the version's set folder (confined, no links) and checked again
+   * with `checkVectorSvg`, so only an SVG that passes now is ever copied. Stable codes: `bad-variant`, `not-identity`,
+   * `logo-not-checked` (no render, or a set without an SVG), `logo-missing`, `logo-refused`.
+   */
+  app.post<{ Params: { slug: string; c: string; n: string; f: string } }>('/api/projects/:slug/creatives/:c/versions/:n/formats/:f/use-as-brand-logo', async (req) => {
+    const e = t().errors;
+    const ref = await refOf(req.params.slug, req.params.c);
+    const n = /^\d{1,6}$/.test(req.params.n) ? Number(req.params.n) : 0;
+    if (n < 1) throw new CodedError(404, e.versionNotFound, 'version-not-found');
+    const body = useAsLogoBody.safeParse(req.body);
+    if (!body.success) throw new CodedError(400, e.useAsLogoBadVariant, 'bad-variant');
+    const format = req.params.f;
+    if (!INSTANCE_ID_RE.test(format)) throw new CodedError(400, e.invalidRequest, 'bad-format');
+    const version = (await ref.store.readVersions(ref.creativeSlug)).find((v) => v.n === n);
+    if (!version) throw new CodedError(404, e.versionNotFound, 'version-not-found');
+    const out = version.outputs.find((o) => o.format === format);
+    const set = out?.identitySet;
+    const svgEntry = set?.files.find((f) => f.role === 'vector' && f.path.toLowerCase().endsWith('.svg'));
+    const preset = findPreset(await catalog().load().then((c) => c.presets).catch(() => []), format.replace(/@\d+$/, ''));
+    if (!preset?.identity) throw new CodedError(409, e.useAsLogoNotIdentity, 'not-identity');
+    if (!out || !set || !svgEntry) throw new CodedError(409, set ? e.useAsLogoNoSvg : e.useAsLogoNotChecked, set ? 'logo-no-svg' : 'logo-not-checked');
+    // Confinement: `set.dir` and the file's path are plain relative segments (no `..`, `.`, empty, backslash or control
+    // character); every folder from the creative down to the file's folder is a real folder (no link: `isRealDirChain`);
+    // the file is opened without following a link, must be a regular single-linked file, and its real path must be exactly
+    // `<real set folder>/<path>` (`readConfinedFile` in exact mode).
+    const plain = (p: string) => p.split('/').every((x) => x !== '' && x !== '.' && x !== '..' && !/[\\\u0000-\u001f\u007f]/.test(x));
+    if (!plain(set.dir) || !plain(svgEntry.path)) throw new CodedError(422, e.useAsLogoRefused, 'logo-refused');
+    const fileParts = svgEntry.path.split('/');
+    const fileName = fileParts.pop()!;
+    const dirParts = ['outputs', `v${n}`, ...set.dir.split('/'), ...fileParts];
+    const creativeDir = ref.store.dir(ref.creativeSlug);
+    const chain = await isRealDirChain(creativeDir, dirParts);
+    if (chain === 'missing') throw new CodedError(404, e.useAsLogoMissing, 'logo-missing');
+    if (chain === 'unsafe') throw new CodedError(422, e.useAsLogoRefused, 'logo-refused');
+    const read = await readConfinedFile(join(creativeDir, ...dirParts), fileName, MAX_VECTOR_SVG_BYTES, true).catch(() => ({ skipped: 'outside' as const }));
+    if (read === null) throw new CodedError(404, e.useAsLogoMissing, 'logo-missing');
+    if ('skipped' in read) throw new CodedError(422, e.useAsLogoRefused, 'logo-refused');
+    if (!checkVectorSvg(read.text).ok) throw new CodedError(422, e.useAsLogoRefused, 'logo-refused');
+
+    const name = `${ref.creativeSlug}-v${n}-${format.replace(/[^a-z0-9]+/gi, '-')}.svg`;
+    const file = `assets/${await saveGeneratedFile(ref.projectDir, 'brand', name, Buffer.from(read.text, 'utf8'))}`;
+    const source = { kind: 'manual' as const, ref: `creative:${ref.creativeSlug}/v${n}` };
+    const library = new LibraryStore(ref.projectDir, ctx.media);
+    const store = new BrandStore(ref.projectDir);
+    let logoId = '';
+    /** The logos this call demoted (ids): put back if the registration fails below. */
+    let demotedIds: string[] = [];
+    const undo = <L extends { id: string }>(logos: L[]): L[] => logos.map((l) => (demotedIds.includes(l.id) ? { ...l, variant: body.data.variant } : l));
+    try {
+      await store.updateReadableKit((kit) => {
+        demotedIds = kit.logos.filter((l) => l.variant === body.data.variant).map((l) => l.id);
+        const taken = new Set(kit.logos.map((l) => l.id));
+        const stem = `logo-${ref.creativeSlug}-v${n}`.slice(0, 56).replace(/-+$/, '');
+        let id = stem;
+        for (let k = 2; taken.has(id); k++) id = `${stem}-${k}`;
+        logoId = id;
+        // Decision 784: the new logo takes the chosen variant; one already holding it steps down (primary → secondary,
+        // icon → other), so the kit never has two primary logos or two icons.
+        const demoted = body.data.variant === 'primary' ? 'secondary' as const : 'other' as const;
+        const logos = kit.logos.map((l) => (l.variant === body.data.variant ? { ...l, variant: demoted } : l));
+        return { ...kit, logos: [...logos, { id, file, variant: body.data.variant, background: 'any', source }] };
+      });
+    } catch (err) {
+      // The kit refused (full, unreadable): nothing is left half done, the copy goes.
+      await rm(join(ref.projectDir, ...file.split('/')), { force: true }).catch(() => {});
+      throw err;
+    }
+    try {
+      await library.registerAssets([{ file: file.slice('assets/'.length), origin: 'generated', sourceUrl: null, description: '', tags: ['brand', 'logo'] }]);
+    } catch (err) {
+      await store.updateReadableKit((kit) => ({ ...kit, logos: undo(kit.logos.filter((l) => l.id !== logoId)) })).catch(() => {});
+      await rm(join(ref.projectDir, ...file.split('/')), { force: true }).catch(() => {});
+      throw err;
+    }
+    // The kit and the file are written either way; a commit that fails is reported, not undone (the next kit change commits it).
+    let committed = true;
+    if (ctx.git) committed = await ctx.git.commitAll(ref.projectDir, t().jobs.brandKitCommit).then(() => true, () => false);
+    ctx.broadcast?.({ type: 'library', project: ref.projectSlug });
+    ctx.broadcast?.({ type: 'brand', project: ref.projectSlug });
+    return { file, variant: body.data.variant, committed };
   });
 
   app.get<{ Params: { slug: string; c: string; '*': string } }>('/api/projects/:slug/creatives/:c/files/*', async (req, reply) => {

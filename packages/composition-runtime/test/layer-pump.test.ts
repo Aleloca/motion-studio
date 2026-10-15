@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { installVirtualClock } from '../src/clock.ts';
-import { ClockStallError, pumpUntilDone, PUMP_FRAME_EVERY } from '../src/layer-agent.ts';
+import { ClockStallError, pumpUntilDone, PUMP_FRAME_EVERY, startLayerAgent } from '../src/layer-agent.ts';
+import { encodeLayerConfig } from '../src/layer-protocol.ts';
 
 const freshWindow = () => new JSDOM('<!doctype html><p>x</p>', { pretendToBeVisual: true }).window as unknown as Window & typeof globalThis;
 
@@ -114,5 +115,55 @@ describe('pumpUntilDone stall (render mode)', () => {
     expect((err as Error).message).toMatch(/^msReady waited 0\.04 s for a timer \(due in 300 ms\)/);
     expect(ticks).toBeGreaterThan(0); // the loop did run on the pumped frames
     expect(performance.now() - t0).toBeLessThan(5_000);
+  });
+});
+
+// Phase 14, task 0 (UX 1 follow-up 2): a stall has its own reply code, `layerStalled`, so the runtime reports it as such and
+// not as `layerTimeout` (msReady) or `layerError` (msSeek).
+describe('layer.js replies to a stall with code layerStalled', () => {
+  /** A render-mode layer window running layer.js, connected to a fake port; returns a request function. */
+  function renderLayer(layerCode: (w: Window & typeof globalThis) => void) {
+    const w = freshWindow();
+    w.name = encodeLayerConfig({ v: 1, mode: 'render', clipId: 'l', params: {}, fonts: [] });
+    Object.defineProperty(w.document, 'fonts', { value: [], configurable: true }); // jsdom has no FontFaceSet
+    Object.defineProperty(w.document, 'getAnimations', { value: () => [], configurable: true });
+    startLayerAgent(w, { stallMs: 40 });
+    layerCode(w); // after layer.js, as in a real layer: its timers are on the virtual clock
+    const replies = new Map<number, (r: Record<string, unknown>) => void>();
+    const port = { onmessage: null as ((m: { data: unknown }) => void) | null, close() {},
+      postMessage(m: { id?: number }) { if (typeof m.id === 'number') replies.get(m.id)?.(m as Record<string, unknown>); } };
+    const connect = new w.Event('message');
+    Object.defineProperties(connect, { source: { value: w.parent }, ports: { value: [port] }, data: { value: { type: 'ms-layer-connect', v: 1 } } });
+    w.dispatchEvent(connect);
+    let id = 0;
+    return (req: { op: 'ready' } | { op: 'seek'; t: number }) => new Promise<Record<string, unknown>>((resolve) => {
+      replies.set(++id, resolve);
+      port.onmessage!({ data: { id, ...req } });
+    });
+  }
+
+  it('msReady waiting on a timer: layerStalled with the diagnostic', async () => {
+    const request = renderLayer((w) => { (w as unknown as { msReady: unknown }).msReady = new Promise((r) => w.setTimeout(r, 300)); });
+    const r = await request({ op: 'ready' });
+    expect(r).toMatchObject({ ok: false, code: 'layerStalled' });
+    expect(r.error).toMatch(/^msReady waited 0\.04 s for a timer \(due in 300 ms\) that the render clock never fires/);
+  });
+
+  it('msSeek waiting on a timer: layerStalled, and so is every later seek, refused at once', async () => {
+    let calls = 0;
+    const request = renderLayer((w) => { (w as unknown as { msSeek: unknown }).msSeek = () => { calls++; return new Promise((r) => w.setTimeout(r, 50)); }; });
+    const first = await request({ op: 'seek', t: 0.5 });
+    expect(first).toMatchObject({ ok: false, code: 'layerStalled' });
+    expect(first.error).toMatch(/^msSeek waited 0\.04 s for a timer/);
+    const second = await request({ op: 'seek', t: 1 });
+    expect(second).toMatchObject({ ok: false, code: 'layerStalled' });
+    expect(second.error).toMatch(/^msSeek not called again: msSeek waited/);
+    expect(calls).toBe(1);
+  });
+
+  it('any other failure carries no code (the runtime keeps layerTimeout or layerError)', async () => {
+    const request = renderLayer((w) => { (w as unknown as { msReady: unknown }).msReady = Promise.reject(new Error('boom')); });
+    const r = await request({ op: 'ready' });
+    expect(r).toEqual({ id: 1, ok: false, error: 'boom' });
   });
 });

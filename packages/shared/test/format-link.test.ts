@@ -29,6 +29,9 @@ describe('canFollow', () => {
     ['primary without safe zone, follower with all-zero insets', custom({ safeZone: undefined }), custom({ id: 'zero', safeZone: { top: 0, bottom: 0, left: 0, right: 0 } }), 30, { ok: true }],
     ['missing safe zone data: size check only', REEL, custom({ safeZone: undefined }), 30, { ok: true }],
     ['images: no duration involved', IMAGE, { ...IMAGE, id: 'other-image' }, null, { ok: true }],
+    ['identity formats never share a render (Phase 14): favicon → app icon', preset('identity-favicon'), preset('identity-app-icon'), null, { ok: false, reason: 'kind' }],
+    ['identity formats never share a render: App Store icon → logo', preset('appstore-icon'), preset('identity-logo'), null, { ok: false, reason: 'kind' }],
+    ['identity formats never share a render: app icon → App Store icon', preset('identity-app-icon'), preset('appstore-icon'), null, { ok: false, reason: 'kind' }],
   ] as const)('%s', (_name, primary, follower, duration, expected) => {
     expect(canFollow(primary, follower, duration)).toEqual(expected);
   });

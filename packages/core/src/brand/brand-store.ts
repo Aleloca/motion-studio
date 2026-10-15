@@ -1,12 +1,12 @@
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  brandKitIssues, issuesText, brandKitSchema, brandProposalSchema, brandSourcesFileSchema, brandSourceSchema, EMPTY_BRAND_KIT,
+  BRAND_KIT_LIMITS, brandKitIssues, issuesText, brandKitSchema, brandProposalSchema, brandSourcesFileSchema, brandSourceSchema, EMPTY_BRAND_KIT,
   type BrandKit, type BrandProposal, type BrandSource,
 } from '@motion-studio/shared';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
 import { fileLock } from '../file-locks.ts';
-import { WorkspaceError } from '../workspace-store.ts';
+import { CodedError, codebaseOverlaps, WorkspaceError } from '../workspace-store.ts';
 import { currentLocale, t } from '../i18n.ts';
 import { noteCoreChange } from '../core-changes.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
@@ -240,7 +240,12 @@ export class BrandStore {
     catch (e) { if (e instanceof JsonFileError && e.reason === 'missing') return []; throw e; }
   }
 
-  addSource(input: { kind: 'website'; url: string } | { kind: 'image'; file: string }): Promise<BrandSource> {
+  /**
+   * Codebase sources (Phase 14) arrive already validated and normalised by the caller (resolveBrandCodebase): `path` is the
+   * normalised spelling, `real` its real path. Here, under the sources lock: a folder already listed (same spelling or same
+   * real path) is refused (409 `codebase-duplicate`), and so is a sixth codebase (400 `codebase-limit`).
+   */
+  addSource(input: { kind: 'website'; url: string } | { kind: 'image'; file: string } | { kind: 'codebase'; path: string; real: string; note?: string }): Promise<BrandSource> {
     return this.lock.run('sources.json', async () => {
       const sources = await this.readSources();
       const n = Math.max(0, ...sources.map((s) => Number(s.id.slice(2)) || 0)) + 1;
@@ -256,9 +261,21 @@ export class BrandStore {
         if (isPrivateHost(url.hostname)) throw new WorkspaceError(400, t().errors.privateSourceUrl);
       }
 
+      if (input.kind === 'codebase') {
+        const listed = sources.filter((x) => x.kind === 'codebase' && x.path !== undefined);
+        for (const x of listed) {
+          const real = await realpath(x.path!).catch(() => x.path!);
+          if (x.path === input.path || real === input.real || x.path === input.real) throw new CodedError(409, t().errors.codebaseSourceDuplicate({ path: input.path }), 'codebase-duplicate');
+        }
+        // Nested or around another codebase source (fix round 1): one would hand the other's files twice, with other rules.
+        if (await codebaseOverlaps(input.real, listed.map((x) => x.path!))) throw new CodedError(400, t().errors.codebaseNestedBrand, 'codebase-nested');
+        if (listed.length >= BRAND_KIT_LIMITS.codebaseSources) throw new CodedError(400, t().errors.codebaseSourceLimit({ max: BRAND_KIT_LIMITS.codebaseSources }), 'codebase-limit');
+      }
+      const note = input.kind === 'codebase' ? input.note?.trim() : undefined;
       const parsed = brandSourceSchema.safeParse({
         id: `s-${n}`, kind: input.kind, url: input.kind === 'website' ? input.url.trim() : null,
         file: input.kind === 'image' ? input.file : null, addedAt: new Date().toISOString(), lastAnalyzedAt: null,
+        ...(input.kind === 'codebase' ? { path: input.path, ...(note ? { note } : {}) } : {}),
       });
       if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidSource({ detail: issuesText(parsed.error, currentLocale()) }));
       const s = parsed.data;

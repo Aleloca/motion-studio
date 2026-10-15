@@ -119,7 +119,8 @@ describe('buildAgentPolicy protected folders', () => {
 
 describe('buildAgentPolicy without sandbox', () => {
   it('brand analysis keeps its narrow tools without curl', () => {
-    const p = buildAgentPolicy({ ...base, kind: 'brand-analysis', sandbox: false, projectAllowRules: [], mcpTools: [] });
+    // Without codebase sources (Phase 14: with them, Read/Glob/Grep are added, see brand-codebase-source.test.ts).
+    const p = buildAgentPolicy({ ...base, kind: 'brand-analysis', sandbox: false, codebases: [], projectAllowRules: [], mcpTools: [] });
     expect(p.allowedTools).toEqual([...BRAND_ANALYSIS_TOOLS]);
     expect(p.allowedTools).not.toContain('Bash(curl:*)');
   });

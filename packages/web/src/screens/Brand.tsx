@@ -5,16 +5,17 @@ import { api } from '../api.ts';
 import type { EventsState } from '../eventsReducer.ts';
 import { useT } from '../i18n.tsx';
 import { D, enter, isActivePage, useEnter } from '../motion/index.ts';
-import { anyLayerOpen, Button, Empty, Icon, Input, NavItem, Pill, Spinner, toast } from '../ui/index.ts';
+import { anyLayerOpen, Button, Empty, Icon, Input, NavItem, Pill, Segmented, Spinner, toast } from '../ui/index.ts';
 import { applyChanges, brandIsEmpty, latestBrandJob, undoChanges, MANUAL, nextId, normalizeUrl } from './brandModel.ts';
 import { useBrandSaver, type BrandSaver } from './brandSave.ts';
 import { isActive, BrandCtx, type SectionId, type Ctx } from './brandContext.tsx';
 import { BrandReview, type AppliedProposal } from './BrandReview.tsx';
 import { Colors, Typography, Logos, Sound } from './BrandKitSections.tsx';
 import { Overview, Voice, PhotoStyle, Guidelines } from './BrandTextSections.tsx';
-import { ProposalReady, AnalysisCard, AnalysisFailure, Sources, Health, History } from './BrandSide.tsx';
+import { ProposalReady, AnalysisCard, AnalysisFailure, AnalysisNotes, Sources, Health, History } from './BrandSide.tsx';
 import './brand.css';
 import { message } from './common.tsx';
+import { CodebaseSourceForm } from './brand/CodebaseSourceForm.tsx';
 
 /**
  * Project · Brand (spec §6.2 #8), ported from the prototype's BrandPage / Colors / Typography / Logos / Voice /
@@ -32,6 +33,7 @@ export function Brand({ slug, live }: { slug: string; live: EventsState }) {
   const [assets, setAssets] = useState<AssetEntry[]>([]);
   const [references, setReferences] = useState<ReferenceEntry[]>([]);
   const [projectName, setProjectName] = useState<string | null>(null);
+  const [codebases, setCodebases] = useState<string[]>([]);
   const reload = useCallback(() => setNonce((n) => n + 1), []);
 
   useEffect(() => {
@@ -45,7 +47,7 @@ export function Brand({ slug, live }: { slug: string; live: EventsState }) {
   }, [slug, tick, nonce]);
   useEffect(() => {
     let alive = true;
-    Promise.resolve().then(() => api.getProject(slug)).then((p) => { if (alive) setProjectName(p.project.name); }).catch(() => { /* the slug stands in */ });
+    Promise.resolve().then(() => api.getProject(slug)).then((p) => { if (alive) { setProjectName(p.project.name); setCodebases((p.project.linkedCodebases ?? []).map((c) => c.path)); } }).catch(() => { /* the slug stands in */ });
     return () => { alive = false; };
   }, [slug]);
 
@@ -61,20 +63,20 @@ export function Brand({ slug, live }: { slug: string; live: EventsState }) {
     );
   }
   if (!overview || !saver.kit) return <div className="ms-brand-center"><Spinner size={20} /></div>;
-  if (!manual && brandIsEmpty(overview, job)) return <EmptyBrand slug={slug} onManual={() => setManual(true)} onStarted={reload} />;
+  if (!manual && brandIsEmpty(overview, job)) return <EmptyBrand slug={slug} codebases={codebases} onManual={() => setManual(true)} onStarted={reload} />;
   return (
     <BrandPageBody slug={slug} live={live} overview={overview} setOverview={setOverview} kit={saver.kit} saver={saver} job={job}
-      assets={assets} setAssets={setAssets} references={references} projectName={projectName} reload={reload} />
+      assets={assets} setAssets={setAssets} references={references} projectName={projectName} codebases={codebases} reload={reload} />
   );
 }
 
 interface BodyProps {
   slug: string; live: EventsState; overview: BrandOverview; setOverview(f: (o: BrandOverview | null) => BrandOverview | null): void;
   kit: BrandKit; saver: BrandSaver; job: JobSummary | undefined; assets: AssetEntry[]; setAssets(a: AssetEntry[]): void;
-  references: ReferenceEntry[]; projectName: string | null; reload(): void;
+  references: ReferenceEntry[]; projectName: string | null; codebases: string[]; reload(): void;
 }
 
-function BrandPageBody({ slug, live, overview, setOverview, kit, saver, job, assets, setAssets, references, projectName, reload }: BodyProps) {
+function BrandPageBody({ slug, live, overview, setOverview, kit, saver, job, assets, setAssets, references, projectName, codebases, reload }: BodyProps) {
   const t = useT();
   const integrity = useIntegrity(slug, live);
   const b = t.web.brand;
@@ -215,7 +217,8 @@ function BrandPageBody({ slug, live, overview, setOverview, kit, saver, job, ass
           {openProposal ? <ProposalReady project={slug} proposal={openProposal} onReview={() => setReviewOpen(true)} /> : null}
           {analysis && isActive(analysis) ? <AnalysisCard job={analysis} live={live} /> : null}
           <AnalysisFailure job={job} proposals={overview.proposals} onRetry={reload} />
-          <Sources overview={overview} job={job} reload={reload} />
+          <AnalysisNotes job={job} />
+          <Sources overview={overview} job={job} reload={reload} codebases={codebases} />
           <Health />
           <History project={slug} proposals={overview.proposals} undone={undone} />
         </aside>
@@ -259,10 +262,12 @@ function SavePill({ saver }: { saver: BrandSaver }) {
 
 /* ---------- empty project ---------- */
 
-function EmptyBrand({ slug, onManual, onStarted }: { slug: string; onManual(): void; onStarted(): void }) {
+function EmptyBrand({ slug, codebases, onManual, onStarted }: { slug: string; codebases: string[]; onManual(): void; onStarted(): void }) {
   const t = useT();
   const e = t.web.brand.empty;
+  const c = t.web.brand.codebase;
   const root = useEnter<HTMLDivElement>([]);
+  const [kind, setKind] = useState<'site' | 'code'>('site');
   const [url, setUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -282,19 +287,38 @@ function EmptyBrand({ slug, onManual, onStarted }: { slug: string; onManual(): v
       onStarted();
     } catch (err) { setError(message(err)); setBusy(false); }
   };
+  // The codebase source added by an earlier attempt: reused only while the path and the note are the same; otherwise it
+  // is removed first, so the changed attempt does not leave it orphaned.
+  const addedCode = useRef<{ id: string; path: string; note: string } | null>(null);
+  const analyzeCodebase = async (path: string, note: string) => {
+    const prev = addedCode.current;
+    if (!prev || prev.path !== path || prev.note !== note) {
+      if (prev) { await api.removeBrandSource(slug, prev.id); addedCode.current = null; }
+      const src = await api.addBrandSource(slug, { kind: 'codebase', path, ...(note ? { note } : {}) });
+      addedCode.current = { id: src.id, path, note };
+    }
+    await api.analyzeBrand(slug);
+    onStarted();
+  };
   return (
     <div className="ms-brand-empty" ref={root}>
-      <form className="ms-card ms-brand-empty-card" onSubmit={(ev) => void analyze(ev)} data-enter>
+      <div className="ms-card ms-brand-empty-card" data-enter>
         <span className="ms-bready-icon" aria-hidden="true"><Icon name="sparkle" size={16} /></span>
         <h1>{e.title}</h1>
-        <p>{e.sub}</p>
-        <div className="ms-brow ms-bnowrap">
-          <Input className="ms-grow" value={url} aria-label={e.website} placeholder={e.placeholder} autoFocus onChange={(ev) => { setUrl(ev.target.value); setError(null); }} />
-          <Button type="submit" variant="ink" loading={busy} disabled={!url.trim()}>{e.analyze}</Button>
-        </div>
-        {error ? <span className="ms-bwarn" role="alert">{error}</span> : null}
+        <p>{kind === 'site' ? e.sub : c.emptySub}</p>
+        <Segmented label={c.kindAria} value={kind} onChange={(k) => { setKind(k); setError(null); }}
+          options={[{ value: 'site', label: c.kindSite, icon: 'globe' }, { value: 'code', label: c.kindCode, icon: 'code' }]} />
+        {kind === 'site' ? (
+          <form className="ms-brand-empty-form" onSubmit={(ev) => void analyze(ev)}>
+            <div className="ms-brow ms-bnowrap">
+              <Input className="ms-grow" value={url} aria-label={e.website} placeholder={e.placeholder} autoFocus onChange={(ev) => { setUrl(ev.target.value); setError(null); }} />
+              <Button type="submit" variant="ink" loading={busy} disabled={!url.trim()}>{e.analyze}</Button>
+            </div>
+            {error ? <span className="ms-bwarn" role="alert">{error}</span> : null}
+          </form>
+        ) : <CodebaseSourceForm suggestions={codebases} taken={[]} submitLabel={c.addAndAnalyze} autoFocus onSubmit={analyzeCodebase} />}
         <button type="button" className="ms-blink-btn ms-bstart" onClick={onManual}>{e.manual}</button>
-      </form>
+      </div>
     </div>
   );
 }

@@ -30,13 +30,20 @@ export interface LayerConfig {
 }
 
 export type LayerRequest = { id: number; op: 'ready' } | { id: number; op: 'seek'; t: number } | { op: 'tick'; t: number };
-export interface LayerResult { id: number; ok: boolean; error?: string; /** `frameTimeout` when no frame was painted. */ code?: 'frameTimeout'; warnings?: string[] }
+/**
+ * A failed request's cause, when it has one: `frameTimeout` when no frame was painted after a render seek; `layerStalled`
+ * when `msReady` or `msSeek` waited on a timer the frozen render clock never fires (decision 709; its own code from
+ * Phase 14 task 0). Additive: an older runtime ignores a reply with an unknown code and times the request out.
+ */
+export type LayerFailureCode = 'frameTimeout' | 'layerStalled';
+const LAYER_FAILURE_CODES: ReadonlySet<unknown> = new Set<LayerFailureCode>(['frameTimeout', 'layerStalled']);
+export interface LayerResult { id: number; ok: boolean; error?: string; code?: LayerFailureCode; warnings?: string[] }
 
 /** Caps on what a layer may send back (a layer is untrusted code). */
 export const LAYER_REPLY_LIMITS = { warnings: 20, text: 300 } as const;
 
 /**
- * Validates a reply from a layer: a hello, or `{ id, ok: boolean, error?: string, code?: 'frameTimeout', warnings?: string[] }`.
+ * Validates a reply from a layer: a hello, or `{ id, ok: boolean, error?: string, code?: LayerFailureCode, warnings?: string[] }`.
  * Strings are cut to `LAYER_REPLY_LIMITS.text`; more than `LAYER_REPLY_LIMITS.warnings` warnings, a wrong type or an
  * unknown shape gives null (the reply is ignored and the request times out like an unanswered one).
  */
@@ -46,13 +53,13 @@ export function parseLayerReply(d: unknown): LayerReply | null {
   if (o.type === 'hello') return typeof o.v === 'number' ? { type: 'hello', v: o.v } : null;
   if (typeof o.id !== 'number' || !Number.isInteger(o.id) || typeof o.ok !== 'boolean') return null;
   if (o.error !== undefined && typeof o.error !== 'string') return null;
-  if (o.code !== undefined && o.code !== 'frameTimeout') return null;
+  if (o.code !== undefined && !LAYER_FAILURE_CODES.has(o.code)) return null;
   if (o.warnings !== undefined && !(Array.isArray(o.warnings) && o.warnings.length <= LAYER_REPLY_LIMITS.warnings && o.warnings.every((w) => typeof w === 'string'))) return null;
   const cut = (s: string) => s.slice(0, LAYER_REPLY_LIMITS.text);
   return {
     id: o.id, ok: o.ok,
     ...(typeof o.error === 'string' ? { error: cut(o.error) } : {}),
-    ...(o.code === 'frameTimeout' ? { code: 'frameTimeout' as const } : {}),
+    ...(o.code !== undefined ? { code: o.code as LayerFailureCode } : {}),
     ...(Array.isArray(o.warnings) ? { warnings: (o.warnings as string[]).map(cut) } : {}),
   };
 }

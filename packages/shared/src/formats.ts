@@ -20,12 +20,20 @@ export const formatPresetSchema = z.object({
   maxFileMB: z.number().positive().optional(),
   /** Target H.264 bitrate (kbps, 30 fps) the agent aims for; a file whose effective bitrate exceeds 1.5x of it only gets a warning. */
   targetBitrateKbps: z.number().positive().optional(),
+  /** Phase 14: an identity format (a vector composition that writes a whole file set, see `IDENTITY_SETS`). */
+  identity: z.enum(['logo', 'favicon', 'app-icon']).optional(),
 });
 export type FormatPreset = z.infer<typeof formatPresetSchema>;
 
 export const formatsFileSchema = z.object({
   schemaVersion: z.literal(1),
   presets: z.array(formatPresetSchema).min(1),
+  /**
+   * The built-in preset ids this file has already been offered (Phase 14, ruling AK): a default preset not in this list is
+   * new and gets appended on load; one in it that the file lacks was deleted by the user and stays deleted. Absent in files
+   * written before Phase 14 (the core reads it as the defaults of that time).
+   */
+  seenDefaults: z.array(z.string().min(1).max(200)).max(1000).optional(),
 }).refine((f) => new Set(f.presets.map((p) => p.id)).size === f.presets.length, { message: 'issue.duplicatePresetIds', path: ['presets'] });
 export type FormatsFile = z.infer<typeof formatsFileSchema>;
 
@@ -120,6 +128,12 @@ export const DEFAULT_FORMATS: FormatPreset[] = [
   i('web-banner-300x250', 'Web', 'Banner 300×250', 300, 250),
   i('web-banner-728x90', 'Web', 'Banner 728×90', 728, 90),
   i('web-banner-160x600', 'Web', 'Banner 160×600', 160, 600),
+  // Open Graph preview: 1200x630 is the size sites and networks recommend; 5 MB is the cap Facebook documents for og:image.
+  i('og-image-1200x630', 'Web', 'Social preview (Open Graph)', 1200, 630, { extensions: ['png', 'jpg', 'jpeg'], maxFileMB: 5 }),
+  // Identity (Phase 14, spec §4.1): vector compositions that write a whole set of files.
+  i('identity-logo', 'Identity', 'Logo', 1024, 1024, { extensions: ['png'], identity: 'logo' }),
+  i('identity-favicon', 'Identity', 'Website favicon', 1024, 1024, { extensions: ['png'], identity: 'favicon' }),
+  i('identity-app-icon', 'Identity', 'App icon', 1024, 1024, { extensions: ['png'], identity: 'app-icon' }),
   // App Store and Google Play (Phase 12, Task 6 Step 0): sizes and limits re-checked on 2026-10-14 against the public pages
   // below (read only, no API): every shipped value still matches, nothing changed. The limits the store pack checks are in
   // `STORE_LIMITS` (end of this file).

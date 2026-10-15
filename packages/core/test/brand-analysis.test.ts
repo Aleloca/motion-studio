@@ -195,7 +195,7 @@ describe('analyze', () => {
     expect(p!.assetsAdded).toContain('brand/logo.svg');
     expect(p!.summary).not.toContain('brand/logo.svg (non registrato)');
     const logos = (await lib.listAssets()).filter((a) => a.file === 'brand/logo.svg');
-    expect(logos).toEqual([expect.objectContaining({ origin: 'website', sourceUrl: 'https://cdn.acme.example/original-logo.svg', description: 'Logo principale', tags: ['logo'] })]);
+    expect(logos).toEqual([expect.objectContaining({ origin: 'website', sourceUrl: 'https://cdn.acme.example/original-logo.svg', description: 'Logo principale', tags: ['brand', 'logo'] })]);
   });
   it('never rewrites assets registered before the turn nor lists them as added', T, async () => {
     const lib = new LibraryStore(ref.projectDir, NoMediaTools);

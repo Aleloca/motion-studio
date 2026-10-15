@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { SERVICE_CHOICES } from './services.ts';
 import type { AgentEvent } from './events.ts';
 import { linkedCodebaseSchema } from './schemas.ts';
+import { identityBriefSchema, identitySetInfoSchema } from './identity.ts';
 import { usageSummarySchema } from './usage.ts';
 import { INSTANCE_FOLDER_SOURCE, INSTANCE_ID_RE } from './format-instance.ts';
 import { storePackSchema } from './store-pack.ts';
@@ -41,6 +42,8 @@ const makeBriefSchema = (formats: z.ZodType<string[]>) => z.object({
   }).refine((l) => new Set(l.extra).size === l.extra.length && !l.extra.includes(l.primary), 'issue.badLocales').optional(),
   /** The App Store / Google Play pack choices (Phase 12). */
   storePack: storePackSchema.optional(),
+  /** The identity formats' choices (Phase 14): they apply to every identity format of the brief. Absent in older briefs. */
+  identity: identityBriefSchema.optional(),
 }).refine((b) => Object.keys(b.formatLabels ?? {}).every((k) => b.formats.includes(k)), { message: 'issue.labelNotInFormats', path: ['formatLabels'] });
 
 /**
@@ -168,6 +171,8 @@ export const outputFileInfoSchema = z.object({
    * it equals the version's composition hash for the format (`renderState`). Absent on legacy files (their media is the result).
    */
   fromComposition: z.string().regex(HEX64).optional(),
+  /** An identity format's render (Phase 14): the file set written next to the main image, in `outputs/vN/<dir>/`. */
+  identitySet: identitySetInfoSchema.optional(),
 });
 export type OutputFileInfo = z.infer<typeof outputFileInfoSchema>;
 

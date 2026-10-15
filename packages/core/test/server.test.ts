@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -257,6 +257,29 @@ describe('turns over WebSocket', () => {
     expect(args).not.toContain('--allowedTools'); // the console has no default tools
     expect(args).toContain(`Edit(/${join(base, 'Spazio di lavoro', 'acme', '.studio')}/**)`);
     ws.close();
+  });
+  it('decision 781: leaves out a stored console codebase with glob characters, said as a progress line', async () => {
+    process.env.FAKE_CLAUDE_ARGS_FILE = join(base, 'args.json');
+    await setWorkspace();
+    await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Acme' } });
+    const holder = await mkdtemp(join(tmpdir(), 'ms-cb-'));
+    const bad = join(holder, 'cb (x) [y]');
+    await mkdir(bad);
+    const plain = join(holder, 'plain');
+    await mkdir(plain);
+    const projectJson = join(base, 'Spazio di lavoro', 'acme', 'project.json');
+    const project = JSON.parse(await readFile(projectJson, 'utf8'));
+    await writeFile(projectJson, JSON.stringify({ ...project, linkedCodebases: [{ path: bad }, { path: plain }] }));
+    const { messages, ws } = await connect();
+    const id = (await app.inject({ method: 'POST', url: '/api/projects/acme/turns', payload: { prompt: 'x' } })).json().id;
+    await waitFor(() => messages.some((m) => m.type === 'job' && m.job.id === id && m.job.state === 'succeeded'));
+    const args = JSON.parse(await readFile(join(base, 'args.json'), 'utf8')).args as string[];
+    expect(args.filter((a, i) => args[i - 1] === '--add-dir')).toEqual([plain]);
+    expect(args.join('\n')).not.toContain('(x)');
+    const lines = messages.flatMap((m) => (m.type === 'agent' && m.jobId === id && m.event.kind === 'progress' ? [m.event.text] : []));
+    expect(lines).toEqual([expect.stringContaining(bad)]);
+    ws.close();
+    await rm(holder, { recursive: true, force: true });
   });
   it('rejects a second concurrent turn on the same project, and cancels a hanging one', async () => {
     process.env.FAKE_CLAUDE_SCENARIO = 'hang';

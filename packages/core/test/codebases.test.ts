@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, stat, utimes, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { checkCodebases, codebaseSnapshot, normalizeCodebaseList, normalizeCodebasePath, readOnlyRules } from '../src/codebases.ts';
+import { checkCodebases, codebaseFileStates, codebaseSnapshot, GIT_ENV, GIT_SAFE, normalizeCodebaseList, normalizeCodebasePath, readOnlyRules } from '../src/codebases.ts';
 import { execCommand } from '../src/exec.ts';
 
 describe('normalizeCodebasePath', () => {
@@ -77,6 +77,23 @@ describe('codebaseSnapshot', () => {
     await writeFile(join(repo, 'new.txt'), 'x');
     expect(val(await codebaseSnapshot(repo))).not.toBe(empty);
     expect(await codebaseSnapshot(await mkdtemp(join(tmpdir(), 'ms-cb-plain-')))).toEqual({ unavailable: 'not-git' });
+  });
+  it('decision 782: git runs without optional locks and never rewrites the user\'s index', { timeout: 20_000 }, async () => {
+    expect(GIT_SAFE[0]).toBe('--no-optional-locks');
+    expect(GIT_ENV().GIT_OPTIONAL_LOCKS).toBe('0');
+    const repo = await mkdtemp(join(tmpdir(), 'ms-cb-git-'));
+    await git(repo, 'init', '-q');
+    await writeFile(join(repo, 'a.txt'), '1');
+    await git(repo, 'add', '-A');
+    await git(repo, 'commit', '-q', '-m', 'init');
+    // A stat-only change: a plain `git status` would refresh the index and write it back.
+    await utimes(join(repo, 'a.txt'), new Date(Date.now() + 60_000), new Date(Date.now() + 60_000));
+    const before = await readFile(join(repo, '.git', 'index'));
+    const mtime = (await stat(join(repo, '.git', 'index'))).mtimeMs;
+    expect(val(await codebaseSnapshot(repo))).not.toBeNull();
+    expect(await codebaseFileStates(repo)).not.toBeNull();
+    expect(await readFile(join(repo, '.git', 'index'))).toEqual(before);
+    expect((await stat(join(repo, '.git', 'index'))).mtimeMs).toBe(mtime);
   });
   it('detects ignored files and a tracked file modified again', { timeout: 20_000 }, async () => {
     const repo = await mkdtemp(join(tmpdir(), 'ms-cb-git-'));

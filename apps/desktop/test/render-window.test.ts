@@ -42,6 +42,16 @@ describe('render window options', () => {
   it('refuses a persistent partition', () => {
     expect(() => renderWindowOptions('persist:ms-render-x', 10, 10)).toThrow();
   });
+
+  it('is transparent only when asked (Phase 14 identity PNGs); otherwise Electron\'s opaque default', () => {
+    const plain = renderWindowOptions(`${RENDER_PARTITION_PREFIX}x2`, 64, 64);
+    expect(plain.transparent).toBeUndefined();
+    expect(plain.backgroundColor).toBeUndefined();
+    const t = renderWindowOptions(`${RENDER_PARTITION_PREFIX}x3`, 64, 64, { transparent: true });
+    expect(t).toMatchObject({ transparent: true, backgroundColor: '#00000000', show: false });
+    // Everything else (isolation) is the same.
+    expect(t.webPreferences).toEqual(renderWindowOptions(`${RENDER_PARTITION_PREFIX}x3`, 64, 64).webPreferences);
+  });
 });
 
 describe('render session lockdown', () => {
@@ -282,6 +292,15 @@ describe('ElectronProvider', () => {
     await expect(provider.open({ width: 320, height: 180, url, signal })).rejects.toThrow(/at most 2/);
     expect(created).toHaveLength(2);
     expect(created[0]).toMatchObject({ prefix: PREFIX, width: 320, height: 180 });
+    expect((created[0] as { transparent?: boolean }).transparent).toBeUndefined();
+  });
+
+  it('a page with transparentBackground gets a transparent window', async () => {
+    const created: Array<{ transparent?: boolean }> = [];
+    const provider = new ElectronProvider({ maxWindows: 2, limits: { timeLimitMs: 60_000 }, createWindow: (o) => { created.push(o); return new Promise(() => {}); } });
+    void provider.open({ width: 64, height: 64, url: `${PREFIX}runtime/index.html?mode=render`, signal: new AbortController().signal, transparentBackground: true }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+    expect(created[0]).toMatchObject({ transparent: true });
   });
 
   it('close() waits for a window still being created, and that window is closed (M6)', async () => {

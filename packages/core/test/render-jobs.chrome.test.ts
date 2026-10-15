@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { renderState, type FormatPreset, type JobSummary, type ManifestV2 } from '@motion-studio/shared';
+import { IDENTITY_SETS, renderState, type FormatPreset, type JobSummary, type ManifestV2 } from '@motion-studio/shared';
 import { AppConfigStore } from '../src/app-config.ts';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { readCompositionFolder } from '../src/compositions/composition-files.ts';
@@ -28,6 +28,8 @@ import { countVideoFrames } from '../src/render/encode.ts';
 import { createRenderEngine } from '../src/render/renderer.ts';
 import { liveGroupCount } from '../src/render/watchdog.ts';
 import { buildServer } from '../src/server/app.ts';
+import { readIco } from '../src/identity/ico.ts';
+import { decodePng } from '../src/identity/png.ts';
 import { buildRuntime, decodeStrips, frameCodedVideo, framePts, leftovers, readCode, renderTools } from './helpers/render-env.ts';
 
 const tools = await renderTools('render job tests');
@@ -170,6 +172,52 @@ describe.skipIf(!tools.ok)('render jobs in real Chrome', () => {
     const v = (await store.readVersions(slug))[0]!;
     expect(v.outputs[0]).toMatchObject({ format: 'test-wide@2', file: 'test-wide@2.mp4', preview: '.previews/test-wide@2.mp4.jpg', fromComposition: hash });
     expect(renderState(v, 'test-wide@2')).toBe('rendered');
+  }, 900_000);
+
+  it('an identity format renders its image and writes its file set into outputs/vN/<format>/ (Phase 14)', async () => {
+    const ICON: FormatPreset = { id: 'test-favicon', channel: 'Test', name: 'Favicon', width: 64, height: 64, kind: 'image', extensions: ['png'], identity: 'favicon' };
+    expect((await app.inject({ method: 'PUT', url: '/api/formats', headers: H, payload: { presets: [PRESET, ICON] } })).statusCode).toBe(200);
+    const c = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', headers: H, payload: {
+      title: 'Icon', generate: false, brief: { goal: 'g', message: '', formats: [ICON.id], durationSec: null, assets: [], notes: '' },
+    } });
+    expect(c.statusCode, c.body).toBe(201);
+    const slug = c.json().slug as string;
+    const store = new CreativeStore(join(ws, 'acme'));
+    const vdir = store.outputsDir(slug, 1);
+    const dir = join(vdir, 'compositions', ICON.id);
+    mkdirSync(join(dir, 'assets'), { recursive: true });
+    // A wide mark (4:1): the main image must show it whole (fit contain), never cropped to the square (fix round 1).
+    writeFileSync(join(dir, 'assets', 'mark.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 100"><rect width="400" height="100" fill="#e01010"/></svg>');
+    writeFileSync(join(dir, 'assets', 'small.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#1030e0"/></svg>');
+    writeFileSync(join(dir, 'composition.json'), JSON.stringify({
+      $schema: 'motion-studio/composition@1', width: 64, height: 64, fps: 30, duration: 0, background: '#123456', fonts: [], scenes: [],
+      tracks: [{ id: 't', kind: 'visual', clips: [
+        { id: 'mark', type: 'svg', src: 'assets/mark.svg', start: 0, duration: 0, props: { fit: 'contain' } },
+        { id: 'small', type: 'svg', src: 'assets/small.svg', start: 0, duration: 0, hidden: true, props: { fit: 'contain' } },
+      ] }],
+    }));
+    const compositions = [{ format: ICON.id, dir: `compositions/${ICON.id}`, hash: (await readCompositionFolder(dir)).hash, problems: [] }];
+    writeFileSync(join(vdir, 'manifest.json'), JSON.stringify({ schemaVersion: 2, compositions, renders: [] } satisfies ManifestV2));
+    await store.appendVersion(slug, { n: 1, commit: null, sessionId: null, status: 'complete', createdAt: new Date().toISOString(), request: 'r', outputs: [], problems: [], tools: [], renderCommand: null, basedOn: null, compositions });
+    const r = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/render`, headers: H, payload: {} });
+    expect(r.statusCode, r.body).toBe(202);
+    const job = await waitJob(r.json().id);
+    expect(job.state, job.error).toBe('succeeded');
+    const v = (await store.readVersions(slug))[0]!;
+    expect(v.outputs[0]).toMatchObject({ format: ICON.id, file: `${ICON.id}.png`, width: 64, height: 64 });
+    expect(v.outputs[0]!.identitySet?.dir).toBe(ICON.id);
+    const main = decodePng(readFileSync(join(vdir, `${ICON.id}.png`)));
+    const px = (x: number, y: number) => [...main.rgba.subarray((y * 64 + x) * 4, (y * 64 + x) * 4 + 3)];
+    expect(px(0, 0)).toEqual([0x12, 0x34, 0x56]); // above the band: the background, not cropped red
+    expect(px(0, 32)).toEqual([0xe0, 0x10, 0x10]); // the band reaches both sides: the whole width is shown
+    expect(px(63, 32)).toEqual([0xe0, 0x10, 0x10]);
+    expect(v.outputs[0]!.identitySet!.files.map((f) => f.path)).toEqual(IDENTITY_SETS.favicon.files.map((f) => f.path));
+    for (const f of IDENTITY_SETS.favicon.files) expect(readFileSync(join(vdir, ICON.id, f.path)).length, f.path).toBeGreaterThan(0);
+    expect(readIco(readFileSync(join(vdir, ICON.id, 'favicon.ico'))).map((e) => e.width)).toEqual([16, 32, 48]);
+    expect(JSON.parse(readFileSync(join(vdir, ICON.id, 'site.webmanifest'), 'utf8')).theme_color).toBe('#123456');
+    expect(readdirSync(join(vdir, ICON.id)).filter((f) => f.startsWith('.'))).toEqual([]);
+    expect(readdirSync(renderTemp)).toEqual([]);
+    expect(await leftovers({ pgids: providers.map((p) => p.pgid!).filter(Boolean), markers: [renderTemp] })).toEqual([]);
   }, 900_000);
 
   it('an app quit during a render leaves no process and no partial output; a retry starts clean', async () => {

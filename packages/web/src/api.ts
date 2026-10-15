@@ -88,7 +88,7 @@ export interface LocalizeRequest { locales: string[]; formats?: string[]; voice?
 /** The localized composition of a format (preview): the editor view with the overlay applied, plus the language's state. */
 export type LocalizedCompositionView = EditorCompositionView & { localization: { locale: LocaleTag; stale: string[]; problems: string[]; issues?: LocalizationIssue[]; voice: LocalizationRow['voice'] } };
 /** What a pack export did (Phase 12 §4.3): paths relative to the pack folder; `rendered` lists what was rendered first. */
-export interface StorePackExportResult { folder: string; written: string[]; failed: Array<{ file: string; reason: string }>; rendered?: Array<{ version: number; formats: string[]; locale?: string }> }
+export interface StorePackExportResult { folder: string; written: string[]; failed: Array<{ file: string; reason: string }>; notInPack?: string[]; rendered?: Array<{ version: number; formats: string[]; locale?: string }> }
 /** "Render anyway" and the languages of a render or an export (Phase 12 §3.5). */
 export interface LocaleOptions { locales?: string[]; force?: boolean }
 
@@ -157,7 +157,7 @@ export const api = {
   getBrand: (slug: string) => request<BrandOverview>('GET', `${p(slug)}/brand`),
   saveBrandKit: (slug: string, kit: BrandKit) => request<BrandKit>('PUT', `${p(slug)}/brand/kit`, { kit }),
   saveGuidelines: (slug: string, text: string) => request<{ ok: true }>('PUT', `${p(slug)}/brand/guidelines`, { text }),
-  addBrandSource: (slug: string, body: { kind: 'website'; url: string } | { kind: 'image'; file: string }) => request<BrandSource>('POST', `${p(slug)}/brand/sources`, body),
+  addBrandSource: (slug: string, body: { kind: 'website'; url: string } | { kind: 'image'; file: string } | { kind: 'codebase'; path: string; note?: string }) => request<BrandSource>('POST', `${p(slug)}/brand/sources`, body),
   removeBrandSource: (slug: string, id: string, opts?: RequestOptions) => request<{ ok: true }>('DELETE', `${p(slug)}/brand/sources/${encodeURIComponent(id)}`, undefined, opts),
   analyzeBrand: (slug: string, sourceIds?: string[]) => request<JobSummary>('POST', `${p(slug)}/brand/analyze`, { sourceIds }),
   applyProposal: (slug: string, id: string, acceptedIds: string[], applyGuidelines: boolean) =>
@@ -214,6 +214,8 @@ export const api = {
     title?: string; brief?: Brief; services?: Brief['services']; linkedCodebases?: LinkedCodebase[];
     /** Alone, each merges into the stored brief under the creative's lock: labels per key (`''` or null clears one), order and removal of formats. */
     formatLabels?: Record<string, string | null>; formats?: string[];
+    /** Phase 14: sets or changes (a pack) or takes out (`null`) the store pack: the core recomputes only the pack's instances. Sent alone. */
+    storePack?: StorePack | null;
   }) => request<CreativeFile>('PUT', c(slug, creative), body),
   /** Duplicates a format of version n as the next free instance and saves a new version; the new instance's id comes back. */
   duplicateFormat: (slug: string, creative: string, n: number, body: { instanceId: string; label?: string }) =>
@@ -253,6 +255,9 @@ export const api = {
   /** Renders a v2 version's compositions (all its primaries, or `formats`; a follower stands for its primary). 202 with the job. */
   renderVersion: (slug: string, creative: string, n: number, formats?: string[], opts: LocaleOptions = {}) =>
     request<JobSummary>('POST', `${c(slug, creative)}/versions/${n}/render`, { ...(formats ? { formats } : {}), ...(opts.locales?.length ? { locales: opts.locales } : {}), ...(opts.force ? { force: true } : {}) }),
+  /** "Use as brand logo" (Phase 14): the checked SVG of an identity format goes into the brand kit. Codes: `logo-not-checked`, `logo-no-svg`, `logo-missing`, `logo-refused`. */
+  useAsBrandLogo: (slug: string, creative: string, n: number, format: string, variant: 'primary' | 'icon') =>
+    request<{ file: string; variant: 'primary' | 'icon'; committed: boolean }>('POST', `${c(slug, creative)}/versions/${n}/formats/${encodeURIComponent(format)}/use-as-brand-logo`, { variant }),
   /** The translations of version n (rows) and the creative's extra languages. */
   getLocalizations: (slug: string, creative: string, n: number) =>
     request<{ entries: LocalizationRow[]; available: LocaleTag[] }>('GET', `${c(slug, creative)}/versions/${n}/localizations`),

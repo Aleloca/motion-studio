@@ -42,6 +42,14 @@ export const AGENT_ALLOWED_TOOLS: readonly string[] = [
 /** Brand analysis: read the sites with WebFetch; files are downloaded with the `download_file` MCP tool; no interpreters or package managers. */
 export const BRAND_ANALYSIS_TOOLS: readonly string[] = ['WebFetch', 'Bash(mkdir:*)', 'Bash(ffprobe:*)'];
 
+/**
+ * Phase 14: a brand analysis with at least one codebase source reads the codebases with these tools, each scoped to the
+ * codebase folders (`Read(//<cb>/**)`, never bare: policy.ts). Grep is not among them (fix round 1, decision log).
+ */
+export const BRAND_CODEBASE_SCOPED_TOOLS: readonly string[] = ['Read', 'Glob'];
+/** Denied to a brand analysis of codebases in every mode, and auto-denied by `approve`: no card ever offers them. */
+export const BRAND_CODEBASE_DENIED_TOOLS: readonly string[] = ['Bash', 'Grep'];
+
 /** Localize turns (Phase 12): read the project, nothing else (they write only through `submit_localization`). */
 export const LOCALIZE_TOOLS: readonly string[] = ['Read', 'Glob', 'Grep'];
 

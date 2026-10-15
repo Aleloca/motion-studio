@@ -1,4 +1,4 @@
-import { canFollow, channelName, formatLabel, formatName, type AssetEntry, type FollowCheck, type Locale, type BrandKit, type BriefServices, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
+import { canFollow, channelName, formatLabel, formatName, type StorePack, type AssetEntry, type FollowCheck, type IdentityBrief, type Locale, type BrandKit, type BriefServices, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { api } from '../api.ts';
 import { CodebaseList } from '../components/CodebaseList.tsx';
@@ -14,7 +14,9 @@ import { channelOf } from './creativeState.ts';
 import './newcreative.css';
 import { message as errText } from './common.tsx';
 import { isVideoFile } from '../media.ts';
+import { conceptIds, IdentityStart, identityForBrief, primaryLogoOf, resolveIdentity } from './identity/IdentityStart.tsx';
 import { StorePackWizard } from './new-creative/StorePackWizard.tsx';
+import { packParts } from './new-creative/storePackModel.ts';
 import './new-creative/storepack.css';
 
 
@@ -170,6 +172,10 @@ export function NewCreative({ slug }: { slug: string }) {
   const [brand, setBrand] = useState<Loaded<BrandKit>>({ value: null, error: null });
   const [pickerOpen, setPickerOpen] = useState(false);
   const [packOpen, setPackOpen] = useState(false);
+  // The store pack of the new creative (Phase 14): an entry of the formats list, set from the wizard in a dialog.
+  const [pack, setPack] = useState<StorePack | null>(null);
+  // "Partenza" of the identity formats (Phase 14): untouched (undefined) follows the brand: from its logo when it has one.
+  const [identity, setIdentity] = useState<IdentityBrief | undefined>(undefined);
   // Token totals of the workspace's earlier first generations: the estimate line, absent until there are 3.
   const [history, setHistory] = useState<number[]>([]);
 
@@ -216,7 +222,6 @@ export function NewCreative({ slug }: { slug: string }) {
   const presets = catalog.value ?? [];
   const chosen = useMemo(() => selected.flatMap((id) => presets.filter((p) => p.id === id)), [selected, presets]);
   const videos = chosen.filter((p) => p.kind === 'video');
-  const images = chosen.filter((p) => p.kind === 'image');
 
   const durationSec = length === 'custom' ? Number(customSec) : Number(length);
   const durationValid = Number.isInteger(durationSec) && durationSec >= 1 && durationSec <= 600;
@@ -234,6 +239,8 @@ export function NewCreative({ slug }: { slug: string }) {
     && (!q || `${channelName(p.channel, locale)} ${formatName(p, locale)} ${p.channel} ${p.name}`.toLocaleLowerCase().includes(q));
   const groups = useMemo(() => [...new Set(presets.map((p) => p.channel))], [presets]);
   const primary = groups.some((g) => PRIMARY.includes(g)) ? groups.filter((g) => PRIMARY.includes(g)) : groups.slice(0, 3);
+  // The "Store pack" entry sits in the first store group, with the formats; a search by its name finds it too.
+  const packShown = (!q || `${t.web.storePack.entryTitle} ${t.web.storePack.entryHint} ${t.web.storePack.title}`.toLocaleLowerCase().includes(q));
   const open = (g: string) => q !== '' || primary.includes(g) || more.has(g) || presets.some((p) => p.channel === g && selected.includes(p.id));
   const visibleGroups = groups.map((g) => ({ g, items: presets.filter((p) => p.channel === g && shown(p)) })).filter(({ g, items }) => open(g) && items.length > 0);
   const hiddenGroups = q ? [] : groups.filter((g) => !open(g));
@@ -261,13 +268,15 @@ export function NewCreative({ slug }: { slug: string }) {
   const inFlight = useRef(false);
   const submit = async (generate: boolean) => {
     if (inFlight.current) return;
+    // The start mode defaults to the brand's logo when it has one: wait for the brand before sending an identity brief.
+    if (identityPending) return;
     if (!goal.trim()) {
       setGoalError(true);
       goalRef.current?.focus();
       void flash(goalBox.current);
       return;
     }
-    if (chosen.length === 0) {
+    if (chosen.length === 0 && !pack) {
       setFormatError(true);
       void flash(boardHead.current);
       return;
@@ -280,9 +289,14 @@ export function NewCreative({ slug }: { slug: string }) {
       const created = await api.createCreative(slug, {
         title,
         brief: {
-          goal: goal.trim(), message: message.trim(), formats: chosen.map((p) => p.id),
-          durationSec: videos.length > 0 ? durationSec : null, assets: picked, notes: notes.trim(), links: plan.links,
+          goal: goal.trim(), message: message.trim(),
+          // A logo from scratch is one instance per concept (`identity-logo`, `identity-logo@2`…).
+          formats: [...handIds, ...parts.formats],
+          durationSec: videos.length > 0 ? durationSec : parts.durationSec, assets: [...picked, ...parts.assets.filter((a) => !picked.includes(a))], notes: notes.trim(), links: plan.links,
+          ...(Object.keys(parts.formatLabels).length > 0 ? { formatLabels: parts.formatLabels } : {}),
+          ...(pack ? { storePack: parts.pack! } : {}),
           ...(services ? { services } : {}),
+          ...(identityOn ? { identity: identityForBrief(identity, hasBrandLogo) } : {}),
         },
         generate,
         linkedCodebases: codebases,
@@ -302,6 +316,17 @@ export function NewCreative({ slug }: { slug: string }) {
   usePageShortcut(root, isSubmitChord, () => { void submit(true); });
 
   const kit = brand.value;
+  const hasBrandLogo = (kit?.logos.length ?? 0) > 0;
+  const identityOn = chosen.some((p) => p.identity);
+  const identityPending = identityOn && identity === undefined && brand.value === null && brand.error === null;
+  const identityNow = resolveIdentity(identity, hasBrandLogo);
+  // The pack never takes a picked tile over (Phase 14): its instances take the next free ids beside the chosen ones.
+  const handPicked = chosen;
+  const handIds = handPicked.flatMap((p) => (p.identity === 'logo' ? conceptIds(p.id, identityNow) : [p.id]));
+  const parts = packParts(pack, presets, handIds);
+  const packExtra = parts.formats.length;
+  const allVideos = handPicked.filter((p) => p.kind === 'video').length + parts.videos;
+  const allImages = handPicked.filter((p) => p.kind === 'image').length + parts.images;
   const hasBrand = !!kit && (kit.colors.length > 0 || kit.fonts.length > 0 || kit.logos.length > 0 || kit.tone !== null);
   // The brand in one line, as on the board: heading font · main colour · tone.
   const brandLine = kit ? [kit.fonts[0]?.family, kit.colors[0]?.name, kit.tone?.text].filter(Boolean).join(' · ') : '';
@@ -339,17 +364,6 @@ export function NewCreative({ slug }: { slug: string }) {
             <div className="ms-nc-try">
               <span className="ms-nc-faint">{n.tryLabel}</span>
               {SUGGESTIONS.map((k) => <Chip key={k} onClick={() => suggest(k)}>{n.suggestions[k].label}</Chip>)}
-            </div>
-          </section>
-
-          <section className="ms-nc-sec" data-enter>
-            <div className="ms-nc-pack">
-              <span className="ms-nc-pack-marks"><ChannelMark channel="appstore" size={20} /><ChannelMark channel="googleplay" size={20} /></span>
-              <div className="ms-nc-pack-text">
-                <b>{t.web.storePack.cardTitle}</b>
-                <span>{t.web.storePack.cardBody}</span>
-              </div>
-              <Button variant="outline" aria-label={`${t.web.storePack.cardTitle}: ${t.web.storePack.cardAction}`} onClick={() => setPackOpen(true)}>{t.web.storePack.cardAction}</Button>
             </div>
           </section>
 
@@ -431,6 +445,13 @@ export function NewCreative({ slug }: { slug: string }) {
             )}
           </section>
 
+          {identityOn ? (
+            <section className="ms-nc-sec" data-enter>
+              <IdentityStart value={identityNow} onChange={setIdentity} hasBrandLogo={hasBrandLogo} fromCodebase={primaryLogoOf(kit?.logos ?? [])?.source.kind === 'codebase'}
+                withConcepts={chosen.some((p) => p.identity === 'logo')} />
+            </section>
+          ) : null}
+
           <section className="ms-nc-sec ms-nc-options" data-enter>
             <button type="button" className="ms-nc-disclose" aria-expanded={options} aria-controls="ms-nc-options" onClick={() => setOptions((o) => !o)}>
               <Icon name={options ? 'chevron' : 'forward'} size={13} />{n.moreOptions}
@@ -483,7 +504,14 @@ export function NewCreative({ slug }: { slug: string }) {
             </div>
           ) : null}
 
-          {catalog.value !== null && visibleGroups.length === 0 ? (
+          {/* The store pack entry is always here, whatever the state of the channel groups below (a search that does not name it hides it). */}
+          {packShown ? (
+            <div className="ms-nc-group ms-nc-packrow" role="group" aria-label={t.web.storePack.entryTitle}>
+              <div className="ms-nc-tiles ms-nc-packtiles"><PackTile pack={pack} onOpen={() => setPackOpen(true)} onRemove={() => setPack(null)} /></div>
+            </div>
+          ) : null}
+
+          {catalog.value !== null && visibleGroups.length === 0 && !packShown ? (
             <Empty icon="search" title={n.noMatch} sub={n.noMatchBody} action={<Button size="sm" variant="outline" onClick={() => { setQuery(''); setKind('all'); }}>{n.showAllFormats}</Button>} />
           ) : null}
 
@@ -539,8 +567,8 @@ export function NewCreative({ slug }: { slug: string }) {
           })}
         </div>
         <div className="ms-nc-sum">
-          {chosen.length ? (
-            <b>{n.summary({ formats: chosen.length, videos: videos.length, images: images.length })}</b>
+          {chosen.length + packExtra ? (
+            <b>{n.summary({ formats: handPicked.length + packExtra, videos: allVideos, images: allImages })}</b>
           ) : (
             <b className={cx(formatError && 'ms-nc-warn')}>{n.pickFormat}</b>
           )}
@@ -548,13 +576,13 @@ export function NewCreative({ slug }: { slug: string }) {
           {similar ? <span className="ms-nc-muted ms-nc-small ms-nc-estimate">{n.similar({ range: similar })}</span> : null}
         </div>
         <div className="ms-grow" />
-        <Button size="lg" variant="ghost" loading={busy === 'draft'} disabled={busy !== null} onClick={() => void submit(false)}>{n.saveDraft}</Button>
-        <Button size="lg" variant="accent" aria-label={n.generate} loading={busy === 'generate'} disabled={busy !== null} onClick={() => void submit(true)}>
+        <Button size="lg" variant="ghost" loading={busy === 'draft'} disabled={busy !== null || identityPending} onClick={() => void submit(false)}>{n.saveDraft}</Button>
+        <Button size="lg" variant="accent" aria-label={n.generate} loading={busy === 'generate'} disabled={busy !== null || identityPending} onClick={() => void submit(true)}>
           <Icon name="sparkle" size={14} />{n.generate}<kbd className="ms-nc-kbd" aria-hidden="true">{isMac() ? '⌘↵' : 'Ctrl ↵'}</kbd>
         </Button>
       </footer>
 
-      <StorePackWizard open={packOpen} onClose={() => setPackOpen(false)} slug={slug} />
+      <StorePackWizard open={packOpen} onClose={() => setPackOpen(false)} slug={slug} {...(pack ? { initial: pack } : {})} onConfirm={(p) => { setPack(p); setFormatError(false); }} />
 
       <Popover open={pickerOpen} onClose={() => setPickerOpen(false)} anchor={pickerAnchor} placement="bottom-end" width={360}>
         <div role="dialog" aria-label={n.libraryTitle({ project: projectName })} className="ms-nc-picker">
@@ -603,6 +631,33 @@ function AssetFace({ slug, path, entry, small }: { slug: string; path: string; e
   }
   if (small) return <span className="ms-nc-face ms-sm ms-nc-face-file" aria-hidden="true"><Icon name="folder" size={10} /></span>;
   return <span className="ms-nc-face ms-nc-face-file" aria-hidden="true"><Icon name={kind === 'audio' ? 'play' : 'folder'} size={14} /><span>{baseName(path)}</span></span>;
+}
+
+/**
+ * The store pack as an entry of the board (Phase 14): a tile that opens the wizard in a dialog; once set it is selected, a click
+ * edits it, and a sibling button takes it out.
+ */
+function PackTile({ pack, onOpen, onRemove }: { pack: StorePack | null; onOpen(): void; onRemove(): void }) {
+  const s = useT().web.storePack;
+  const text = pack ? s.entryOn({ count: pack.screenshots.length }) : s.entryHint;
+  return (
+    <div className="ms-nc-tile-wrap">
+      <button type="button" className={cx('ms-nc-tile', pack && 'ms-on')} aria-pressed={pack !== null} title={text}
+        aria-label={pack ? s.entryAria({ count: pack.screenshots.length }) : s.entryAdd} onClick={onOpen}>
+        <span className="ms-nc-tile-top">
+          <span className="ms-nc-frame" aria-hidden="true"><Icon name="image" size={12} /></span>
+        </span>
+        <span className="ms-nc-tile-text">
+          <b className="ms-nc-ell">{s.entryTitle}</b>
+          <span className="ms-nc-tile-meta ms-nc-ell">{text}</span>
+        </span>
+        {pack ? <span className="ms-nc-tick" aria-hidden="true"><Icon name="check" size={10} strokeWidth={2.4} /></span> : null}
+      </button>
+      {pack ? (
+        <button type="button" className="ms-nc-link ms-nc-pack-remove" aria-label={s.entryRemoveAria} title={s.entryRemoveAria} onClick={onRemove}><Icon name="close" size={13} /></button>
+      ) : null}
+    </div>
+  );
 }
 
 /**

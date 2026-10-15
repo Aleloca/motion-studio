@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Natives } from '../src/clock.ts';
-import { connectLayer } from '../src/layer-host.ts';
+import { connectLayer, LayerRequestError } from '../src/layer-host.ts';
 import { LAYER_PROTOCOL_VERSION } from '../src/layer-protocol.ts';
 
-/** A fake layer frame: it answers the connect handshake, and seeks only when `answers` is true. */
-function fakeFrame(answers: () => boolean) {
+/** A fake layer frame: it answers the connect handshake, and seeks only when `answers` is true (with `reply`, if given). */
+function fakeFrame(answers: () => boolean, reply: Record<string, unknown> = { ok: true }) {
   const ports: MessagePort[] = [];
   let onLoad: (() => void) | null = null;
   let seeks = 0;
@@ -16,7 +16,7 @@ function fakeFrame(answers: () => boolean) {
         ports.push(port);
         port.onmessage = (m: MessageEvent) => {
           const d = m.data as { id: number; op: string };
-          if (d.op === 'seek') { seeks++; if (answers()) port.postMessage({ id: d.id, ok: true }); }
+          if (d.op === 'seek') { seeks++; if (answers()) port.postMessage({ id: d.id, ...reply }); }
         };
         port.postMessage({ type: 'hello', v: LAYER_PROTOCOL_VERSION });
       },
@@ -53,5 +53,18 @@ describe('layer host: a layer that never answers (M3)', () => {
     answer = true;
     await expect(host.seek(1)).resolves.toBeUndefined();
     expect(f.seeks()).toBe(2);
+  });
+});
+
+describe('layer host: failure codes', () => {
+  it('a stalled layer rejects with a LayerRequestError whose code is layerStalled (the mount reports it as such)', async () => {
+    const f = fakeFrame(() => true, { ok: false, error: 'msSeek waited 5 s for a timer', code: 'layerStalled' });
+    const host = connectLayer(f.frame, natives, 200, { failFast: true });
+    f.load();
+    await host.connected;
+    const err = await host.seek(0).catch((e: unknown) => e);
+    f.close();
+    expect(err).toBeInstanceOf(LayerRequestError);
+    expect(err).toMatchObject({ code: 'layerStalled', message: 'msSeek waited 5 s for a timer' });
   });
 });

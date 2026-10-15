@@ -40,6 +40,11 @@ export interface BridgeContext {
    * (other jobs, old briefs read before Phase 11): every kind `auto`. Frozen with the context: the agent never changes it.
    */
   readonly services?: Readonly<Required<BriefServices>>;
+  /**
+   * Brand analysis (Phase 14): the codebase folders of the analysis, every spelling (the stored one and the real path), the
+   * only places `import_codebase_file` copies from. Frozen with the context.
+   */
+  readonly codebases?: readonly string[];
 }
 
 /** Per-job tokens that let the `studio` MCP server call back into the core on behalf of one agent job. */
@@ -53,6 +58,7 @@ export class AgentBridge {
     this.contexts.set(t, Object.freeze({
       ...ctx, sandboxed: ctx.sandboxed === true, autoApproveAtStart: ctx.autoApproveAtStart === true,
       ...(ctx.services ? { services: Object.freeze({ ...ctx.services }) } : {}),
+      ...(ctx.codebases ? { codebases: Object.freeze([...ctx.codebases]) } : {}),
     }));
     return t;
   }

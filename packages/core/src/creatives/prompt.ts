@@ -1,4 +1,4 @@
-import type { CreativeFile, FormatPreset, Pin, StorePack } from '@motion-studio/shared';
+import type { CreativeFile, FormatPreset, IdentityBrief, Pin, StorePack } from '@motion-studio/shared';
 import { formatDisplayName, presetOf, videoTargetBitrateKbps, type BrandKit, type BriefServices, type Locale } from '@motion-studio/shared';
 import { replyInstruction } from '../i18n.ts';
 import { findPreset } from '../formats/format-catalog.ts';
@@ -387,7 +387,7 @@ export function storePackPromptSection(p: StorePack): string[] {
   const lines = [
     '## App store series',
     `- These formats are the store listing of the app ${q(p.app.name, 60)}${p.app.tagline ? ` (tagline ${q(p.app.tagline, 120)})` : ''}: a series of ${n} screenshot${n === 1 ? '' : 's'} per device, read in order.`,
-    '- Instances: `<preset>` is screenshot 1 and `<preset>@k` is screenshot k (their labels read "k · caption").',
+    '- Instances: `<preset>` is screenshot 1 and `<preset>@k` is screenshot k (their labels read "k · caption"). If the creative has other instances of the same preset, the number in the label is the screenshot number, not the one after the @.',
     ...p.screenshots.map((s, i) => `- Screenshot ${i + 1}: caption ${q(s.caption, 80)}; ${s.screen ? `app screen ${q(s.screen, 300)} (project path: copy it into the composition's assets/)` : 'no app screen given: design a simple, plausible screen for this caption'}.`),
     '- Keep the same grid and style across the whole series: the same background treatment, type scale, caption position, frame size and spacing on every screenshot of a device.',
     '- Put the caption at the top of each screenshot, large and legible at store thumbnail size; the app screen goes below it.',
@@ -400,6 +400,48 @@ export function storePackPromptSection(p: StorePack): string[] {
     ...(p.preview && p.stores.includes('playstore') ? ['- Google Play promo video (playstore-promo-16x9): 16:9, for YouTube; the first 30 seconds matter most.'] : []),
     ...(has('playstore', 'feature') ? [`- Google Play feature graphic (playstore-feature, 1024×500): the app name and tagline in the series style, no device frame needed, nothing important near the edges.`] : []),
   ];
+  return lines;
+}
+
+/**
+ * The identity section (Phase 14, spec §4.2–4.3, decisions 726–732): vector mode (one full-frame SVG clip in a still), the
+ * SVG rules the core checks, the optional `small` variant, the safe zones and the start mode (from the brand's logo, or from
+ * scratch with the user's name, keywords and colours, quoted as data). `kinds`: the identity kinds among the turn's formats.
+ */
+export function identityPromptSection(kinds: ReadonlySet<'logo' | 'favicon' | 'app-icon'>, identity: IdentityBrief | undefined, hasBrandLogo: boolean, logoIds: readonly string[]): string[] {
+  const q = (s: string, max: number) => quotePromptString(oneLine(s, max));
+  const icons = kinds.has('favicon') || kinds.has('app-icon');
+  const start = identity?.start ?? (hasBrandLogo ? 'brand' : 'scratch');
+  const lines = [
+    '## Identity formats (logo, favicon, app icon): vector mode',
+    '- Each of these compositions is a still (`"duration": 0`) with exactly ONE `svg` clip that fills the frame (x 0, y 0, the composition\'s width and height, or no box at all) with `"fit": "contain"` in its props (required: the default would crop a drawing that is not square), and no other clip, track content, animation, Ken Burns, rotation, scale or opacity. Put everything in the SVG.',
+    '- The SVG lives in the composition\'s `assets/` (e.g. `assets/logo.svg`). Motion Studio exports it as the vector file and draws every PNG from it at its exact size, so it must scale: the root `<svg xmlns="http://www.w3.org/2000/svg">` needs a `viewBox`.',
+    '- Motion Studio refuses the SVG, and sends you back to fix it, if it has: `<script>`, `on*` attributes, `<foreignObject>`, `<image>` (embedded or linked), links or `href`/`xlink:href` other than a local `#id`, `url(…)` other than a local `#id`, `@import` or any other `@` rule in `<style>`, CSS escapes, animation elements, `<!DOCTYPE>`/entities, or more than 512 KB. Keep it plain, well-formed XML: paths, shapes, gradients, clip paths, masks, filters, local `<use>`.',
+    '- Convert text to paths. `<text>` is accepted only with a warning, because it looks different where the font is not installed.',
+    ...(kinds.has('logo') ? ['- Logo: draw the logo itself on a transparent background; the SVG\'s `viewBox` sets its proportions (a wide logo has a wide viewBox): `logo.png` is 1024 px on its long side.'] : []),
+    ...(icons ? [
+      '- Favicon and app icon: an optional simplified variant for the sizes up to 48 px (the 16/32/48 px favicon and the 48 px Android icon): a second `svg` clip with `"id": "small"`, `"hidden": true`, full frame, `"fit": "contain"`, with its own file (e.g. `assets/small.svg`). Use it when the main drawing would not read at 16 px; without it the main drawing is used.',
+      '- The composition `background` is the background of the icons that must be opaque (apple-touch-icon, iOS 1024, Google Play 512): set an opaque colour that suits the mark. Without one Motion Studio uses the brand\'s primary colour, else white.',
+      '- Keep the important part of the mark inside the central circle: 80% of the side for the maskable web icon, and 66/108 (about 61%) for the Android adaptive icon foreground. Content outside may be cut by the platform\'s mask (Motion Studio warns).',
+    ] : []),
+    '- Never use paid image generation for these formats: draw the SVG yourself.',
+  ];
+  if (start === 'brand') {
+    lines.push(
+      '- Start: from the brand\'s logo (see the Brand section). Adapt it, never redesign it: margins, proportions and, for favicon and app icon, a simplified small variant.',
+      ...(icons ? ['- For favicon and app icon prefer the brand logo whose variant is `icon`, when there is one.'] : []),
+      '- If the brand logo is a raster image (PNG, JPEG, WebP), redraw it as a faithful SVG and say so in your reply.',
+    );
+    if (!hasBrandLogo) lines.push('- The brand has no logo yet: draw one from scratch in the brand\'s style, and say so in your reply.');
+  } else {
+    lines.push(
+      '- Start: from scratch.',
+      ...(identity?.name ? [`- Name or initials to draw: ${q(identity.name, 80)}`] : []),
+      ...(identity?.keywords ? [`- Style keywords: ${q(identity.keywords, 300)}`] : []),
+      `- Colours: ${identity?.colors === 'free' ? 'free (choose a palette that fits the name and keywords)' : 'from the brand kit'}.`,
+    );
+    if (logoIds.length > 1) lines.push(`- ${logoIds.join(', ')}: ${logoIds.length} distinct logo concepts, one per instance, each a different idea (not variations of one).`);
+  }
   return lines;
 }
 
@@ -424,6 +466,7 @@ export function buildCreativePrompt(i: PromptInput): string {
   // Instances of one preset in the same turn are separate designs, said once per preset (Phase 12).
   const byPreset = new Map<string, string[]>();
   for (const [id, p] of known) if (p) byPreset.set(presetOf(id), [...(byPreset.get(presetOf(id)) ?? []), id]);
+  const identityKinds = new Set(known.flatMap(([, p]) => (p?.identity ? [p.identity] : [])));
   const sameSize = [...byPreset.values()].filter((ids) => ids.length > 1).map((ids) => `- ${ids.join(', ')}: ${SAME_SIZE_NOTE}.`);
   const block: StudioBlock = {
     outputDir, workDir: `${base}/work`, durationSec: brief.durationSec,
@@ -471,13 +514,15 @@ export function buildCreativePrompt(i: PromptInput): string {
   } else if (contract === 'compositions') {
     parts.push(
       `The compositions of version ${i.version} do not meet the contract. Fix these problems in the same folders (${outputDir}/compositions/<format-id>/), then call validate_composition again:`,
-      ...(i.problems ?? []).map((p) => `- ${p}`),
+      // One line each: a problem may quote the agent's own files (an SVG refusal), never a way to start a new line.
+      ...(i.problems ?? []).map((p) => `- ${oneLine(p, 2000)}`),
       '', ...repairRequestSection(i.userWords, i.liveMessages),
     );
   } else {
     parts.push(
       `The outputs of version ${i.version} do not meet the contract. Fix these problems and deliver again in the same folder (${outputDir}/), updating manifest.json:`,
-      ...(i.problems ?? []).map((p) => `- ${p}`),
+      // One line each: a problem may quote the agent's own files (an SVG refusal), never a way to start a new line.
+      ...(i.problems ?? []).map((p) => `- ${oneLine(p, 2000)}`),
       '', ...repairRequestSection(i.userWords, i.liveMessages),
     );
   }
@@ -497,6 +542,7 @@ export function buildCreativePrompt(i: PromptInput): string {
     parts.push(
       '', '## Required formats', ...compositionLines, ...sameSize,
       ...(brief.storePack && i.kind !== 'fix' && i.kind !== 'redirect' ? ['', ...storePackPromptSection(brief.storePack)] : []),
+      ...(identityKinds.size > 0 ? ['', ...identityPromptSection(identityKinds, brief.identity, (i.context?.kit.logos.length ?? 0) > 0, known.filter(([, p]) => p?.identity === 'logo').map(([id]) => id))] : []),
       '', ...COMPOSITION_SECTION,
       ...(i.sandboxed ? ['', ...SANDBOX_SECTION_COMPOSITIONS] : []),
       '', '## Where to work',

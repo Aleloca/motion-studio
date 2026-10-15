@@ -4,7 +4,8 @@ import { brandProposalSchema, issuesText, messages, relativeFileSchema, webUrlSc
 import { z } from 'zod';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import type { Git } from '../git.ts';
-import type { JobQueue } from '../jobs/job-queue.ts';
+import { JobFailedError, type JobQueue } from '../jobs/job-queue.ts';
+import { changedCodebaseFiles, codebaseFileStates, codebaseProblemText, codebaseSnapshot, codebaseSpellings, resolveBrandCodebase, type BrandCodebase, type Snapshot } from '../codebases.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
 import { LibraryStore } from '../library/library-store.ts';
 import type { MediaTools } from '../media/media-tools.ts';
@@ -20,7 +21,10 @@ import { noteCoreChange } from '../core-changes.ts';
 
 export interface ProjectRef { root: string; projectSlug: string; projectDir: string }
 export const brandJobKey = (root: string, slug: string) => `brand:${root}:${slug}`;
-export interface BrandServiceDeps { queue: JobQueue; launcher: AgentLauncher; git: Git; media: MediaTools; model: () => Promise<string | null>; broadcast: (m: ServerMessage) => void }
+export interface BrandServiceDeps { queue: JobQueue; launcher: AgentLauncher; git: Git; media: MediaTools; model: () => Promise<string | null>; broadcast: (m: ServerMessage) => void;
+  /** Motion Studio's config folder: never inside or around a codebase source (Phase 14). */
+  configDir?: string;
+}
 
 const listedAsset = z.object({ file: relativeFileSchema, sourceUrl: webUrlSchema.nullish(), description: z.string().max(2000).optional(), tags: z.array(z.string().min(1).max(40)).max(30).optional() });
 const describedAsset = z.object({ file: relativeFileSchema, description: z.string().max(2000), tags: z.array(z.string().min(1).max(40)).max(30).optional() });
@@ -29,6 +33,8 @@ const MAX_DROPPED_SHOWN = 20;
 const MAX_SUMMARY = 5000;
 const MAX_SITE_NOTES = 40;
 const SITE_NOTES_SHOWN = 3;
+/** Changed files of a codebase named in the job's notes (the rest is counted). */
+const CHANGED_FILES_SHOWN = 50;
 
 
 /** Valid items of a JSON array the agent wrote; `skipped` explains a file that was not read (symlink, too large). */
@@ -78,11 +84,12 @@ export class BrandService {
    * Runs one agent turn with the live metadata files denied to the editing tools; whatever the outcome, files the agent
    * still managed to change (e.g. through an interpreter) are restored. `tampered` receives one note per file the agent changed, in `locale`.
    */
-  private async runAgent(ref: ProjectRef, kind: 'brand-analysis' | 'describe', prompt: string, logFile: string | null, signal: AbortSignal, jobId: string, tampered: string[], locale: Locale, sandboxed: boolean, addNotes?: (lines: string[]) => void): Promise<{ status: 'ok' | 'cancelled'; usage: UsageSummary | undefined }> {
+  private async runAgent(ref: ProjectRef, kind: 'brand-analysis' | 'describe', prompt: string, logFile: string | null, signal: AbortSignal, jobId: string, tampered: string[], locale: Locale, sandboxed: boolean, addNotes?: (lines: string[]) => void, codebases?: string[], brandWebsite = false): Promise<{ status: 'ok' | 'cancelled'; usage: UsageSummary | undefined }> {
     const guard = await snapshotGuarded(ref.projectDir);
     try {
       const run = await this.deps.launcher.start({
         kind, jobId, projectSlug: ref.projectSlug, projectDir: ref.projectDir, sandboxed, locale, ...(addNotes ? { addNotes } : {}),
+        ...(codebases?.length ? { codebases, brandWebsite } : {}),
         // The running proposal's log is passed explicitly: it may not exist yet at launch (it is created by the first event), so the launcher's directory scan could miss it.
         protectedFiles: [...(await guardedPaths(ref.projectDir)), ...(logFile ? [logFile] : [])],
         request: { prompt, model: (await this.deps.model()) ?? undefined },
@@ -108,12 +115,26 @@ export class BrandService {
   /** A phase marker of the core (no text): the UI's stepper starts at `queued` and ends at `done`. */
   private phase(jobId: string, phase: BrandPhase) { this.deps.broadcast({ type: 'agent', jobId, event: { kind: 'progress', text: '', phase } }); }
 
-  private async runAnalysis(ref: ProjectRef, store: BrandStore, sources: Awaited<ReturnType<BrandStore['readSources']>>, signal: AbortSignal, jobId: string): Promise<void | 'cancelled'> {
+  private async runAnalysis(ref: ProjectRef, store: BrandStore, allSources: Awaited<ReturnType<BrandStore['readSources']>>, signal: AbortSignal, jobId: string): Promise<void | 'cancelled'> {
     this.phase(jobId, 'queued');
     // The job's language is fixed when it starts: the prompt and every line stored in the proposal use it, whatever
     // the setting becomes meanwhile. Errors that fail the job are shown live and use the current language.
     const locale = currentLocale();
     const m = messages(locale);
+    // Phase 14 (spec §2.2): codebase sources are validated again now (the folder may have moved or become a link) and used
+    // by their normalised and real paths; a folder that no longer passes is left out with a note.
+    const jobNotes: string[] = [];
+    const note = (text: string) => { jobNotes.push(text); this.deps.queue.patch(jobId, { notes: [...jobNotes] }); };
+    const codebases: Array<{ source: string; cb: BrandCodebase }> = [];
+    const sources: typeof allSources = [];
+    for (const s of allSources) {
+      if (s.kind !== 'codebase') { sources.push(s); continue; }
+      const cb = await resolveBrandCodebase(s.path ?? '', [ref.projectDir, ref.root], { ...(this.deps.configDir ? { configDir: this.deps.configDir } : {}), others: codebases.map((c) => c.cb.real) });
+      if ('problem' in cb) { note(m.jobs.brandCodebaseSkipped({ path: s.path ?? '', reason: codebaseProblemText(cb.problem, s.path ?? '', locale) })); continue; }
+      codebases.push({ source: s.id, cb });
+      sources.push(s);
+    }
+    if (sources.length === 0) throw new Error(t().errors.noUsableCodebase);
     const library = new LibraryStore(ref.projectDir, this.deps.media);
     const id = await store.newProposalId();
     const dir = store.proposalDir(id);
@@ -130,14 +151,66 @@ export class BrandService {
       const block = {
         proposalDir: rel(dir), kitFile: rel(join(dir, 'brand-kit.json')), guidelinesFile: rel(join(dir, 'guidelines.md')),
         assetsListFile: rel(join(dir, 'assets.json')), summaryFile: rel(join(dir, 'summary.md')),
-        sources: sources.map((s) => ({ id: s.id, kind: s.kind, url: s.url, file: s.file })),
+        sources: sources.map((s) => (s.kind === 'codebase'
+          ? { id: s.id, kind: s.kind, url: null, file: null, path: codebases.find((c) => c.source === s.id)!.cb.path, ...(s.note ? { note: s.note } : {}) }
+          : { id: s.id, kind: s.kind, url: s.url, file: s.file })),
       };
       const tampered: string[] = [];
       // Notes of the agent's tools (inspect_site_fonts: what it refused or cut), in the job's language, once each.
       const siteNotes = new Set<string>();
       const addNotes = (lines: string[]) => { for (const l of lines) if (siteNotes.size < MAX_SITE_NOTES) siteNotes.add(l); };
       const sandboxed = await this.deps.launcher.sandboxed();
-      const turn = await this.runAgent(ref, 'brand-analysis', buildBrandPrompt(block, locale, sandboxed), join(dir, 'log.jsonl'), signal, jobId, tampered, locale, sandboxed, addNotes);
+      // Without the sandbox the secret files are kept from the agent by its tool rules only (spec §2.2): said in the job.
+      if (codebases.length > 0 && !sandboxed) note(m.jobs.brandSecretsToolRulesOnly);
+      // Read-only check (decision 722): a fingerprint of each codebase before and after the turn, and the changed entries
+      // to name them. A folder git cannot check is analysed anyway, with a note.
+      const snapsBefore: Array<{ snap: Snapshot; files: Map<string, string> | null }> = [];
+      for (const { cb } of codebases) {
+        const snap = await codebaseSnapshot(cb.real);
+        snapsBefore.push({ snap, files: 'value' in snap ? await codebaseFileStates(cb.real) : null });
+        if (!('value' in snap)) note(snap.unavailable === 'not-git' ? m.jobs.brandCodebaseNotCheckable({ path: cb.path }) : m.jobs.brandCodebaseCheckFailed({ path: cb.path }));
+      }
+      let turn: Awaited<ReturnType<BrandService['runAgent']>> | null = null;
+      let turnError: unknown = null;
+      try {
+        turn = await this.runAgent(ref, 'brand-analysis', buildBrandPrompt(block, locale, sandboxed), join(dir, 'log.jsonl'), signal, jobId, tampered, locale, sandboxed, addNotes, codebases.flatMap((c) => codebaseSpellings(c.cb)), sources.some((s) => s.kind === 'website'));
+      } catch (e) { turnError = e; }
+      // Whatever the outcome (also a cancelled or failed turn), a changed codebase fails the job and discards the proposal.
+      // Fail closed (fix round 1): a codebase that was checkable before and cannot be checked after counts as changed, and
+      // so does any difference in the per-file states (which also hash the content of ignored files).
+      const failures: string[] = [];
+      for (const [k, { cb }] of codebases.entries()) {
+        const b = snapsBefore[k]!;
+        const after = await codebaseSnapshot(cb.real);
+        if (!('value' in b.snap)) {
+          if ('value' in after) {
+            // A repository that appears during the turn (git init) is a change. A check that failed before and works after
+            // cannot be compared: it fails closed too, worded as a failed check rather than a change (fix round 2).
+            if (b.snap.unavailable === 'not-git') failures.push(t().jobs.brandCodebaseChanged({ path: cb.path }));
+            else {
+              note(m.jobs.brandCodebaseCheckFailedBefore({ path: cb.path }));
+              failures.push(t().jobs.brandCodebaseCheckFailedBefore({ path: cb.path }));
+            }
+          }
+          continue;
+        }
+        if (!('value' in after)) {
+          note(m.jobs.brandCodebaseCheckFailedAfter({ path: cb.path }));
+          failures.push(t().jobs.brandCodebaseCheckFailedAfter({ path: cb.path }));
+          continue;
+        }
+        const afterFiles = await codebaseFileStates(cb.real);
+        const files = changedCodebaseFiles(b.files, afterFiles);
+        const statesLost = b.files !== null && afterFiles === null;
+        if (after.value === b.snap.value && files.length === 0 && !statesLost) continue;
+        const extra = files.length - CHANGED_FILES_SHOWN;
+        note(files.length
+          ? m.jobs.brandCodebaseChangedFiles({ path: cb.path, list: [...files.slice(0, CHANGED_FILES_SHOWN), ...(extra > 0 ? [m.brand.droppedMore({ count: extra })] : [])].join(', ') })
+          : m.jobs.brandCodebaseChangedUnknown({ path: cb.path }));
+        failures.push(t().jobs.brandCodebaseChanged({ path: cb.path }));
+      }
+      if (failures.length > 0) throw new JobFailedError(failures.join(' '));
+      if (turnError !== null || turn === null) throw turnError;
       if (turn.status === 'cancelled') {
         await rm(dir, { recursive: true, force: true });
         await noteCoreChange(join(ref.projectDir, 'brand', 'proposals'));
@@ -243,13 +316,14 @@ export class BrandService {
       catch (e) { if (!(e instanceof WorkspaceError)) throw e; dropped.push(m.brand.droppedNotRegistered({ file: a.file })); }
     }
     const appeared = (await library.unregisteredAssets()).filter((f) => !before.has(f) && !existingListed.some((a) => a.file === f));
-    // Files download_file already registered keep their origin and source URL; the list only adds description and tags.
+    // Files download_file or import_codebase_file already registered keep their origin, source URL and tags (`brand`); the
+    // list only adds a description and more tags (decision 783; 30 = the asset tag limit).
     const known = new Map((await library.listAssets()).map((a) => [a.file, a]));
     const registered: AssetEntry[] = [];
     for (const item of [
       ...existingListed.map((a) => {
         const k = known.get(a.file);
-        return k ? { file: a.file, origin: k.origin, sourceUrl: k.sourceUrl, description: a.description, tags: a.tags }
+        return k ? { file: a.file, origin: k.origin, sourceUrl: k.sourceUrl, description: a.description, tags: [...new Set([...k.tags, ...(a.tags ?? [])])].slice(0, 30) }
           : { file: a.file, origin: 'website' as const, sourceUrl: a.sourceUrl ?? null, description: a.description, tags: a.tags };
       }),
       ...appeared.map((file) => ({ file, origin: 'website' as const, sourceUrl: null })),

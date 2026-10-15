@@ -379,3 +379,24 @@ describe('the config folder is never opened through a permission prompt (bridge 
     expect(await namesProtectedPath('Read', { file_path: join(configDir, 'run') }, [], projectDir, home)).toBe(false);
   });
 });
+
+describe('approve for a brand analysis of codebases (Phase 14, fix round 1)', () => {
+  const brandToken = (codebases?: string[]) => bridge.register({ jobId: 'jb', kind: 'brand-analysis', projectSlug: 'acme', projectDir, creativeSlug: null, sandboxed: false, autoApproveAtStart: false, emit: (e) => events.push(e), signal: new AbortController().signal, ...(codebases ? { codebases } : {}) });
+  it('denies Bash and Grep without a card, whatever the input', async () => {
+    const t = brandToken(['/tmp/some-codebase']);
+    for (const [tool_name, input] of [['Bash', { command: 'cat /tmp/some-codebase/.env' }], ['Bash', { command: 'ffprobe -f data -show_data x' }], ['Grep', { pattern: 'KEY', path: '/tmp/some-codebase' }]] as const) {
+      const r = (await call('approve', { tool_name, input }, t)).json();
+      expect(r.behavior, tool_name).toBe('deny');
+      expect(r.message).toMatch(/codebase/);
+    }
+    expect(approvals.pending()).toEqual([]);
+  });
+  it('a brand analysis without codebases still asks for Bash (unchanged)', async () => {
+    const t = brandToken();
+    const pending = call('approve', { tool_name: 'Bash', input: { command: 'ls' } }, t);
+    for (let i = 0; i < 100 && approvals.pending().length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    expect(approvals.pending()).toHaveLength(1);
+    await approvals.decide(approvals.pending()[0]!.id, 'deny');
+    expect((await pending).json().behavior).toBe('deny');
+  });
+});

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
-  briefSchema, briefWriteSchema, issuesText, renderProblems, storePackSchema, type JobSummary, type VersionEntry,
+  briefSchema, briefWriteSchema, issuesText, isStorePackFormat, packSlotOf, renderProblems, storePackSchema, type JobSummary, type VersionEntry,
 } from '@motion-studio/shared';
 import { CreativeStore } from '../creatives/creative-store.ts';
 import type { CreativeRef, CreativeTurnService } from '../creatives/creative-turns.ts';
@@ -59,7 +59,9 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
     await ws.getProject(req.params.slug);
     const projectDir = ws.projectDir(req.params.slug);
     await verifyScreens(projectDir, ctx.media, body.storePack);
-    const brief = parse(briefWriteSchema, storePackBrief(body.storePack, { locale: currentLocale(), presets: await presets(), ...(body.locales ? { locales: body.locales } : {}) }));
+    const made = storePackBrief(body.storePack, { locale: currentLocale(), presets: await presets(), ...(body.locales ? { locales: body.locales } : {}) });
+    // Phase 14: the pack records the instances it created (here the slots' own ids).
+    const brief = parse(briefWriteSchema, { ...made, storePack: { ...body.storePack, instances: made.formats } });
     const store = new CreativeStore(projectDir);
     const { slug, creative } = await store.create({ title: body.title, brief });
     const ref = { root: ws.root, projectSlug: req.params.slug, projectDir, creativeSlug: slug };
@@ -99,7 +101,14 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
     const base = (await readVersion())!;
     const inVersion = (v: VersionEntry, f: string) => v.outputs.some((o) => o.format === f) || v.compositions?.some((x) => x.format === f) === true;
     // A pack format of the brief that this version lacks (the brief changed after it) is listed, never dropped silently (I1).
-    const packFormats = creative.brief.formats.filter((f) => packEntry(pack, f, undefined) !== null);
+    // Phase 14: the pack's own instances only (`storePackFormats`); a store preset picked by hand in the same creative is not exported.
+    // The pack owns its `instances` (the slots' ids in a pack made before); captions, numbers and folders follow the slot.
+    const slotOf = packSlotOf(pack, catalog);
+    const owned = new Set(slotOf.keys());
+    const packFormats = creative.brief.formats.filter((f) => owned.has(f) && packEntry(pack, slotOf.get(f)!, undefined) !== null);
+    // Store instances of the brief that are not the pack's (picked by hand): not exported, and said so.
+    const notInPack = creative.brief.formats.filter((f) => !owned.has(f) && isStorePackFormat(f))
+      .map((f) => { const label = creative.brief.formatLabels?.[f]; return label ? `${f} (${label})` : f; });
     const formats = packFormats.filter((f) => inVersion(base, f));
     const absent = packFormats.filter((f) => !inVersion(base, f));
     const sizeOf = (f: string) => { const p = findPreset(catalog, f); return { width: p?.width ?? 0, height: p?.height ?? 0 }; };
@@ -175,8 +184,10 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
 
     // The checks always use the format's size from the catalog (the store's size), never the size the render recorded.
     for (const f of files) Object.assign(f, sizeOf(f.format));
+    // From here the pack's code names a file by its slot (caption, number, folder): translate the instances.
+    for (const f of files) f.format = slotOf.get(f.format) ?? f.format;
     const result = await exportStorePack({
-      creativeDir, n, destination, title: creative.title, storePack: pack, presets: catalog, files, order: creative.brief.formats,
+      creativeDir, n, destination, title: creative.title, storePack: pack, presets: catalog, files, order: creative.brief.formats.filter((f) => owned.has(f)).map((f) => slotOf.get(f)!), notInPack,
       probe: (file) => (ctx.media.available ? ctx.media.probe(file) : Promise.resolve(null)), date: localDay(),
     });
     return rendered.length > 0 ? { ...result, rendered } : result;

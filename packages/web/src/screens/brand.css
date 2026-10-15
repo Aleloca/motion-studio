@@ -371,3 +371,10 @@
 .ms-vp-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ms-vp-nop { font-size: 11px; padding-right: 10px; }
 .ms-vp-nokey a { color: var(--accent); }
+
+/* Codebase as a source (Phase 14). */
+.ms-bcb-sugg { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.ms-bsource-path { font-family: var(--mono); overflow-wrap: anywhere; }
+.ms-bnotes { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 4px; }
+.ms-bnotes li { overflow-wrap: anywhere; }
+.ms-brand-empty-form { display: flex; flex-direction: column; gap: 8px; min-width: 0; }

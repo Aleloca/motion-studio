@@ -21,9 +21,11 @@ export interface RenderStatusProps {
   jobs: JobSummary[]; jobKey: string;
   /** An agent turn is at work: the composition is about to change, so no render is offered. */
   busy: boolean;
+  /** An image format (Phase 14): "Image ready" / "Set ready · N files" instead of the video's texts. Default: a video. */
+  image?: boolean;
 }
 
-export function RenderStatus({ slug, creative, version, format, label, jobs, jobKey, busy }: RenderStatusProps) {
+export function RenderStatus({ slug, creative, version, format, label, jobs, jobKey, busy, image = false }: RenderStatusProps) {
   const t = useT();
   const locale = useLocale();
   const r = t.web.render;
@@ -31,9 +33,11 @@ export function RenderStatus({ slug, creative, version, format, label, jobs, job
   const out = version?.outputs.find((o) => o.format === format) ?? null;
   const url = version && out ? outputUrl(slug, creative, version.n, out.file) : null;
   const done = state?.kind === 'rendered' || state?.kind === 'problem';
+  // An identity format's render is a set of files: the pill says how many.
+  const setCount = image ? out?.identitySet?.files.length ?? null : null;
 
   // The file's size, read once per render (its hash tells a new file of the same version from the old one).
-  const sizeKey = done && url ? `${url}|${out?.sha256 ?? ''}` : null;
+  const sizeKey = !image && done && url ? `${url}|${out?.sha256 ?? ''}` : null;
   const [size, setSize] = useState<{ key: string; bytes: number | null } | null>(null);
   useEffect(() => {
     if (sizeKey === null || !url) return;
@@ -68,25 +72,26 @@ export function RenderStatus({ slug, creative, version, format, label, jobs, job
   // What shows, and what a screen reader hears: the pill ticks every percent, the announcement does not.
   const shown = state.kind === 'rendering' ? r.rendering({ pct: state.pct })
     : state.kind === 'queued' ? (state.ahead ? r.queuedAhead({ count: state.ahead }) : r.queued)
-    : state.kind === 'rendered' ? r.videoReady({ size: sizeText })
-    : state.kind === 'problem' ? r.videoProblems
+    : state.kind === 'rendered' ? (image ? (setCount !== null && setCount > 0 ? r.setReady({ count: setCount }) : r.imageReady) : r.videoReady({ size: sizeText }))
+    : state.kind === 'problem' ? (image ? r.imageProblems : r.videoProblems)
     : state.kind === 'failed' ? r.failedState
     : r.livePreview;
   // The announcement is the state alone: no percent while rendering, no size when ready (the size is for the eyes).
-  const spoken = state.kind === 'rendering' ? r.renderingVideoSr : state.kind === 'rendered' ? r.videoReady({ size: null }) : shown;
+  const renderingSr = image ? r.renderingImageSr : r.renderingVideoSr;
+  const spoken = state.kind === 'rendering' ? renderingSr : state.kind === 'rendered' ? (image ? shown : r.videoReady({ size: null })) : shown;
   const tone = state.kind === 'rendered' ? 'ok' : state.kind === 'problem' || state.kind === 'failed' ? 'warn' : working ? 'accent' : 'neutral';
 
   return (
     <span className="ms-fv-render">
       <Pill tone={tone} spinner={working} dot={!working && state.kind !== 'rendered'} className="ms-fv-render-pill">
-        <span aria-hidden="true" title={state.kind === 'none' ? r.livePreviewHint : undefined}>
-          {state.kind === 'rendered' && sizeText !== null
+        <span aria-hidden="true" title={state.kind === 'none' && !image ? r.livePreviewHint : undefined}>
+          {!image && state.kind === 'rendered' && sizeText !== null
             // A narrow bar drops the size (format.css, the bar's container query): the long and the short text, one shown.
             ? <><span className="ms-fv-render-long">{shown}</span><span className="ms-fv-render-short">{r.videoReady({ size: null })}</span></>
             : shown}
         </span>
       </Pill>
-      {state.kind === 'rendering' ? <ProgressBar value={state.pct} label={r.renderingVideoSr} className="ms-fv-render-bar" /> : null}
+      {state.kind === 'rendering' ? <ProgressBar value={state.pct} label={renderingSr} className="ms-fv-render-bar" /> : null}
       <span className="ms-sr" role="status" aria-live="polite">{spoken}</span>
       {done ? (
         bridge ? (
@@ -94,14 +99,14 @@ export function RenderStatus({ slug, creative, version, format, label, jobs, job
             <Icon name="folder" size={13} /><span className="ms-bar-label">{reveal}</span>
           </Button>
         ) : url ? (
-          <Button size="sm" variant="outline" className="ms-fold-1" aria-label={r.downloadVideoOf({ label })} title={r.downloadVideo} onClick={() => download(url, out?.file ?? 'video.mp4')}>
+          <Button size="sm" variant="outline" className="ms-fold-1" aria-label={image ? r.downloadImageOf({ label }) : r.downloadVideoOf({ label })} title={r.downloadVideo} onClick={() => download(url, out?.file ?? (image ? 'image.png' : 'video.mp4'))}>
             <Icon name="download" size={13} /><span className="ms-bar-label">{r.downloadVideo}</span>
           </Button>
         ) : null
       ) : null}
       {!working ? (
-        <Button size="sm" variant={done ? 'ghost' : 'outline'} className={done ? 'ms-fold-1' : 'ms-fold-3'} disabled={busy} loading={starting} aria-label={r.renderVideoOf({ label })} title={done ? r.renderAgain : r.renderVideo} onClick={() => void start()}>
-          <Icon name="video" size={13} /><span className="ms-bar-label">{done ? r.renderAgain : r.renderVideo}</span>
+        <Button size="sm" variant={done ? 'ghost' : 'outline'} className={done ? 'ms-fold-1' : 'ms-fold-3'} disabled={busy} loading={starting} aria-label={image ? r.renderImageOf({ label }) : r.renderVideoOf({ label })} title={done ? r.renderAgain : image ? r.renderImage : r.renderVideo} onClick={() => void start()}>
+          <Icon name={image ? 'image' : 'video'} size={13} /><span className="ms-bar-label">{done ? r.renderAgain : image ? r.renderImage : r.renderVideo}</span>
         </Button>
       ) : null}
     </span>

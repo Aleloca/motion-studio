@@ -24,6 +24,8 @@ export function canFollow(primary: FormatPreset, follower: FormatPreset, primary
 
 function check(primary: FormatPreset, follower: FormatPreset, durationSec: number | null, checkDuration: boolean): FollowCheck {
   if (primary.kind !== follower.kind) return { ok: false, reason: 'kind' };
+  // An identity format renders a whole file set of its own (Phase 14): it never shares another format's render.
+  if (primary.identity !== undefined || follower.identity !== undefined) return { ok: false, reason: 'kind' };
   if (primary.width !== follower.width || primary.height !== follower.height) return { ok: false, reason: 'size' };
   if (!primary.extensions.every((e) => follower.extensions.includes(e))) return { ok: false, reason: 'extension' };
   if (checkDuration && follower.kind === 'video' && follower.maxDurationSec !== undefined

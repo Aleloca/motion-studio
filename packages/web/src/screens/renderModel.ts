@@ -2,6 +2,7 @@
 // "Queued · 2 renders ahead", "Rendering 42%", "Rendered", "Render problem · Render again", "Render failed · Retry", from the version's records and the live
 // render jobs; and what "Render ★" renders.
 import { renderJobKeyOf, renderProblems, renderState, type Locale, type Messages, type OutputIssue, type JobSummary, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
+import { summarizeProblems } from './svgRefusals.ts';
 import type { FormatState } from './versionModel.ts';
 
 export type BoardRender =
@@ -99,6 +100,7 @@ export function shortProblems(o: { problems?: string[]; issues?: OutputIssue[] }
       }
     }).filter(Boolean);
   }
-  return (o?.problems ?? []).map((p) => p.replace(/^[^:]{1,200}:\s*/, ''));
+  // An SVG refusal is summarised before the colon strip, which would leave only its English reason.
+  return summarizeProblems(o?.problems ?? [], m, (p) => p.replace(/^[^:]{1,200}:\s*/, ''));
 }
 const formatNumberIn = (locale: Locale, v: number) => new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(v);
