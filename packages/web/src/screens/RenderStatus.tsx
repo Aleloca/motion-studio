@@ -10,7 +10,7 @@ import { desktop } from '../desktop.ts';
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { message } from '../errors.ts';
 import { isMac } from '../platform.ts';
-import { Button, Icon, Pill, ProgressBar, toast } from '../ui/index.ts';
+import { Button, Icon, Pill, ProgressBar, Tooltip, toast } from '../ui/index.ts';
 import { outputUrl } from './canvasModel.ts';
 import { boardRender } from './renderModel.ts';
 
@@ -95,19 +95,19 @@ export function RenderStatus({ slug, creative, version, format, label, jobs, job
       <span className="ms-sr" role="status" aria-live="polite">{spoken}</span>
       {done ? (
         bridge ? (
-          <Button size="sm" variant="outline" className="ms-fold-1" aria-label={reveal} title={reveal} onClick={() => { void api.revealVersion(slug, creative, version.n).catch((e: unknown) => toast.show(t.web.canvas.versions.actionFailed({ detail: message(e) }))); }}>
+          <Tooltip label={reveal} whenHidden=".ms-bar-label"><Button size="sm" variant="outline" className="ms-fold-1" aria-label={reveal} onClick={() => { void api.revealVersion(slug, creative, version.n).catch((e: unknown) => toast.show(t.web.canvas.versions.actionFailed({ detail: message(e) }))); }}>
             <Icon name="folder" size={13} /><span className="ms-bar-label">{reveal}</span>
-          </Button>
+          </Button></Tooltip>
         ) : url ? (
-          <Button size="sm" variant="outline" className="ms-fold-1" aria-label={image ? r.downloadImageOf({ label }) : r.downloadVideoOf({ label })} title={r.downloadVideo} onClick={() => download(url, out?.file ?? (image ? 'image.png' : 'video.mp4'))}>
+          <Tooltip label={r.downloadVideo} whenHidden=".ms-bar-label"><Button size="sm" variant="outline" className="ms-fold-1" aria-label={image ? r.downloadImageOf({ label }) : r.downloadVideoOf({ label })} onClick={() => download(url, out?.file ?? (image ? 'image.png' : 'video.mp4'))}>
             <Icon name="download" size={13} /><span className="ms-bar-label">{r.downloadVideo}</span>
-          </Button>
+          </Button></Tooltip>
         ) : null
       ) : null}
       {!working ? (
-        <Button size="sm" variant={done ? 'ghost' : 'outline'} className={done ? 'ms-fold-1' : 'ms-fold-3'} disabled={busy} loading={starting} aria-label={image ? r.renderImageOf({ label }) : r.renderVideoOf({ label })} title={done ? r.renderAgain : image ? r.renderImage : r.renderVideo} onClick={() => void start()}>
+        <Tooltip label={done ? r.renderAgain : image ? r.renderImage : r.renderVideo} whenHidden=".ms-bar-label"><Button size="sm" variant={done ? 'ghost' : 'outline'} className={done ? 'ms-fold-1' : 'ms-fold-3'} disabled={busy} loading={starting} aria-label={image ? r.renderImageOf({ label }) : r.renderVideoOf({ label })} onClick={() => void start()}>
           <Icon name={image ? 'image' : 'video'} size={13} /><span className="ms-bar-label">{done ? r.renderAgain : image ? r.renderImage : r.renderVideo}</span>
-        </Button>
+        </Button></Tooltip>
       ) : null}
     </span>
   );

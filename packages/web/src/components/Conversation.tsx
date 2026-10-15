@@ -5,7 +5,7 @@ import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.
 import { enter, isSubmitChord } from '../motion/index.ts';
 import { isMac } from '../platform.ts';
 import { clipRangeChip } from '../screens/pinModel.ts';
-import { Button, Chip, Empty, Icon, Markdown, Textarea, Typing, cx, type IconName } from '../ui/index.ts';
+import { Button, Chip, Empty, Icon, Markdown, Textarea, Tooltip, Typing, cx, type IconName } from '../ui/index.ts';
 import { liveErrorText, newClientId } from './liveErrors.ts';
 import { QueuedRequests } from './QueuedRequests.tsx';
 import { SplitAction } from './SplitAction.tsx';
@@ -806,19 +806,19 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, latestJobId, sn
           )}
           {working && redirect && (
             <>
-              <Button size="sm" variant="ghost" className="ms-composer-act" aria-label={u.cancelRedirect} title={u.cancelRedirect} onClick={() => setRedirect(false)}><Icon name="close" size={12} /><span className="ms-composer-text">{u.cancelRedirect}</span></Button>
-              <Button type="submit" size="sm" variant="accent" className="ms-composer-act" aria-label={u.redirect} title={u.redirect} disabled={!canSend}><Icon name="forward" size={13} /><span className="ms-composer-text">{u.redirect}</span></Button>
+              <Tooltip label={u.cancelRedirect} whenHidden=".ms-composer-text"><Button size="sm" variant="ghost" className="ms-composer-act" aria-label={u.cancelRedirect} onClick={() => setRedirect(false)}><Icon name="close" size={12} /><span className="ms-composer-text">{u.cancelRedirect}</span></Button></Tooltip>
+              <Tooltip label={u.redirect} whenHidden=".ms-composer-text"><Button type="submit" size="sm" variant="accent" className="ms-composer-act" aria-label={u.redirect} disabled={!canSend}><Icon name="forward" size={13} /><span className="ms-composer-text">{u.redirect}</span></Button></Tooltip>
             </>
           )}
           {working && !redirect && capsNow === null && (
-            <Button type="submit" size="sm" variant="accent" className="ms-composer-act" aria-label={u.send} title={u.send} loading disabled><Icon name="upload" size={13} strokeWidth={1.8} /><span className="ms-composer-text">{u.send}</span></Button>
+            <Tooltip label={u.send} whenHidden=".ms-composer-text"><Button type="submit" size="sm" variant="accent" className="ms-composer-act" aria-label={u.send} loading disabled><Icon name="upload" size={13} strokeWidth={1.8} /><span className="ms-composer-text">{u.send}</span></Button></Tooltip>
           )}
           {working && !redirect && capsNow && !caps.liveInput && (
-            <Button type="submit" size="sm" variant="accent" className="ms-composer-act" aria-label={u.queue} title={u.queue} disabled={!canSend}><Icon name="upload" size={13} strokeWidth={1.8} /><span className="ms-composer-text">{u.queue}</span></Button>
+            <Tooltip label={u.queue} whenHidden=".ms-composer-text"><Button type="submit" size="sm" variant="accent" className="ms-composer-act" aria-label={u.queue} disabled={!canSend}><Icon name="upload" size={13} strokeWidth={1.8} /><span className="ms-composer-text">{u.queue}</span></Button></Tooltip>
           )}
           {working && !redirect && capsNow && caps.liveInput && (
             <SplitAction variant="accent" menuLabel={u.sendMore} groupLabel={u.send} disabled={!canSend}
-              primary={<Button type="submit" size="sm" variant="accent" className="ms-composer-act" aria-label={u.send} title={u.send} disabled={!canSend}><Icon name="upload" size={13} strokeWidth={1.8} /><span className="ms-composer-text">{u.send}</span></Button>}
+              primary={<Tooltip label={u.send} whenHidden=".ms-composer-text"><Button type="submit" size="sm" variant="accent" className="ms-composer-act" aria-label={u.send} disabled={!canSend}><Icon name="upload" size={13} strokeWidth={1.8} /><span className="ms-composer-text">{u.send}</span></Button></Tooltip>}
               items={[{ key: 'queue', label: u.queue, onSelect: () => void sendWhileWorking('queued') }]} />
           )}
         </div>

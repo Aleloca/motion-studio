@@ -29,7 +29,7 @@ import { href, routeKey } from '../routes.ts';
 import { useBarClaim } from '../shell/barSlots.ts';
 import { setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } from '../shell/intents.ts';
 import { go, ShellContext } from '../shell/ShellContext.tsx';
-import { Button, ChannelMark, Empty, Icon, Pill, Segmented, Select, Spinner, Toggle, cx, toast } from '../ui/index.ts';
+import { Button, ChannelMark, Empty, Icon, Pill, Segmented, Select, Spinner, Toggle, Tooltip, cx, toast } from '../ui/index.ts';
 import { useCreative } from '../useCreative.ts';
 import { boardLabel, PinBubble, SafeZoneBands, type Draft } from './CanvasBoard.tsx';
 import { instanceName, presetFor } from '../instances.ts';
@@ -507,7 +507,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
     );
   }
 
-  const backButton = <Button className="ms-back ms-fold-3" aria-label={t.web.shell.backAllFormats} title={t.web.shell.backAllFormats} onClick={back}><Icon name="back" size={16} strokeWidth={1.5} /><span className="ms-bar-label">{t.web.shell.backAllFormats}</span></Button>;
+  const backButton = <Tooltip label={t.web.shell.backAllFormats} whenHidden=".ms-bar-label"><Button className="ms-back ms-fold-3" aria-label={t.web.shell.backAllFormats} onClick={back}><Icon name="back" size={16} strokeWidth={1.5} /><span className="ms-bar-label">{t.web.shell.backAllFormats}</span></Button></Tooltip>;
   if (!loading && !known) {
     return (
       <div ref={root} className="ms-cv-state">
@@ -577,14 +577,14 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
           ) : null}
           <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} />
           {comp !== null && !working ? (
-            <Button variant="outline" className="ms-fv-duplicate ms-fold-2" aria-label={t.web.instances.duplicate} title={t.web.instances.duplicateHint({ label })} loading={duplicating} onClick={() => void duplicate()}>
+            <Tooltip label={t.web.instances.duplicateHint({ label })} whenHidden=".ms-bar-label"><Button variant="outline" className="ms-fv-duplicate ms-fold-2" aria-label={t.web.instances.duplicate} loading={duplicating} onClick={() => void duplicate()}>
               <Icon name="copy" size={13} strokeWidth={1.7} /><span className="ms-bar-label">{t.web.instances.duplicate}</span>
-            </Button>
+            </Button></Tooltip>
           ) : null}
           {comp !== null && !working && preview.state.kind !== 'legacy' ? (
-            <Button variant="outline" className="ms-cv-edit ms-fold-2" aria-label={t.web.editor.editOf({ label })} title={t.web.editor.edit} onClick={openEditor}>
+            <Tooltip label={t.web.editor.edit} whenHidden=".ms-bar-label"><Button variant="outline" className="ms-cv-edit ms-fold-2" aria-label={t.web.editor.editOf({ label })} onClick={openEditor}>
               <Icon name="edit" size={13} strokeWidth={1.7} /><span className="ms-bar-label">{t.web.editor.edit}</span>
-            </Button>
+            </Button></Tooltip>
           ) : null}
           <Button variant="ink" className="ms-cv-export" disabled={!latest} onClick={() => { if (latest) setExporting({ open: true, snapshot: { versions, states } }); }}>
             <Icon name="download" size={13} strokeWidth={1.7} />{c.export}
