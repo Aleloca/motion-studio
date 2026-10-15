@@ -9,7 +9,8 @@ import type { Git } from '../git.ts';
 import { JsonFileError } from '../json-file.ts';
 import { LibraryStore } from '../library/library-store.ts';
 import type { MediaTools } from '../media/media-tools.ts';
-import { WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
+import { CodedError, WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
+import { codebaseProblemText, resolveBrandCodebase, type BrandCodebaseProblem } from '../codebases.ts';
 import { t } from '../i18n.ts';
 
 export interface BrandRoutesContext { requireWorkspace: () => WorkspaceStore; brand: BrandService; media: MediaTools; git: Git; broadcast: (m: ServerMessage) => void }
@@ -17,9 +18,12 @@ export interface BrandRoutesContext { requireWorkspace: () => WorkspaceStore; br
 const sourceBody = z.union([
   z.object({ kind: z.literal('website'), url: z.string() }),
   z.object({ kind: z.literal('image'), file: z.string() }),
+  z.object({ kind: z.literal('codebase'), path: z.string().min(1).max(4096), note: z.string().max(500).optional() }),
 ]);
 const applyBody = z.object({ acceptedIds: z.array(z.string()).max(500), applyGuidelines: z.boolean() });
 const analyzeBody = z.object({ sourceIds: z.array(z.string()).optional() });
+/** The refusal of a codebase folder: a stable `code` (`codebase-<problem>`) for the UI, and the reason in the current language. */
+export const codebaseProblemError = (problem: BrandCodebaseProblem, path: string): CodedError => new CodedError(400, codebaseProblemText(problem, path), `codebase-${problem}`);
 const parse = <T>(s: z.ZodType<T>, b: unknown): T => { const r = s.safeParse(b ?? {}); if (!r.success) throw new WorkspaceError(400, t().errors.invalidRequest); return r.data; };
 
 export function registerBrandRoutes(app: FastifyInstance, ctx: BrandRoutesContext) {
@@ -60,7 +64,16 @@ export function registerBrandRoutes(app: FastifyInstance, ctx: BrandRoutesContex
 
   app.post<{ Params: { slug: string } }>('/api/projects/:slug/brand/sources', async (req, reply) => {
     const body = parse(sourceBody, req.body);
-    const { store, projectDir } = await project(req.params.slug);
+    const { ws, store, projectDir } = await project(req.params.slug);
+    if (body.kind === 'codebase') {
+      // Validated, normalised and resolved before anything else (spec §2.1): the same checks as a creative's codebases, plus
+      // the real path (a link to the home or around the project is refused too). Duplicates and the limit: in the store.
+      const cb = await resolveBrandCodebase(body.path, [projectDir, ws.root]);
+      if ('problem' in cb) throw codebaseProblemError(cb.problem, body.path);
+      const source = await store.addSource({ kind: 'codebase', path: cb.path, real: cb.real, ...(body.note !== undefined ? { note: body.note } : {}) });
+      await done(projectDir, req.params.slug, t().jobs.addSourceCommit);
+      return reply.status(201).send(source);
+    }
     if (body.kind === 'image') {
       if (!body.file.startsWith('references/')) throw new WorkspaceError(400, t().errors.imageMustBeReference);
       await new LibraryStore(projectDir, ctx.media).existingFile('references', body.file.slice('references/'.length));

@@ -42,6 +42,12 @@ export const AGENT_ALLOWED_TOOLS: readonly string[] = [
 /** Brand analysis: read the sites with WebFetch; files are downloaded with the `download_file` MCP tool; no interpreters or package managers. */
 export const BRAND_ANALYSIS_TOOLS: readonly string[] = ['WebFetch', 'Bash(mkdir:*)', 'Bash(ffprobe:*)'];
 
+/**
+ * Phase 14: what a brand analysis with at least one codebase source adds, to read the codebases (passed with --add-dir,
+ * read-only, secret files denied by the policy). Without codebase sources the brand tools stay as above.
+ */
+export const BRAND_CODEBASE_TOOLS: readonly string[] = ['Read', 'Glob', 'Grep'];
+
 /** Localize turns (Phase 12): read the project, nothing else (they write only through `submit_localization`). */
 export const LOCALIZE_TOOLS: readonly string[] = ['Read', 'Glob', 'Grep'];
 

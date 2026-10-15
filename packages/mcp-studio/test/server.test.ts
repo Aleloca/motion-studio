@@ -89,6 +89,17 @@ describe('mcp-studio server', () => {
     await rpc(4, 'tools/call', { name: 'inspect_site_fonts', arguments: { url: 'https://acme.example' } });
     expect(calls.at(-1)).toMatchObject({ url: '/api/bridge/inspect_site_fonts', body: { url: 'https://acme.example' } });
   });
+  it('lists import_codebase_file for brand analysis with source and dest required, and forwards it', async () => {
+    child.kill();
+    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,download_file,import_codebase_file' });
+    const tools = (await rpc(3, 'tools/list')).result.tools as Array<{ name: string; description: string; inputSchema: { required: string[]; properties: Record<string, { type: string }> } }>;
+    const imp = tools.find((t) => t.name === 'import_codebase_file')!;
+    expect(imp.inputSchema.required).toEqual(['source', 'dest']);
+    expect(imp.inputSchema.properties.source!.type).toBe('string');
+    expect(imp.description).toMatch(/secret files, files outside the codebase and files over 50 MB are refused/);
+    await rpc(4, 'tools/call', { name: 'import_codebase_file', arguments: { source: 'public/logo.svg', dest: 'assets/brand/logo.svg' } });
+    expect(calls.at(-1)).toMatchObject({ url: '/api/bridge/import_codebase_file', body: { source: 'public/logo.svg', dest: 'assets/brand/logo.svg' } });
+  });
   it('describes every tool in English', async () => {
     child.kill();
     startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,validate_composition,preview_frames,read_brand_kit,generate_image,tts,stock_search,stock_download,fonts_fetch,download_file,inspect_site_fonts' });

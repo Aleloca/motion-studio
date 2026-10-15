@@ -2,13 +2,13 @@ import { randomBytes } from 'node:crypto';
 import type { Stats } from 'node:fs';
 import { chmod, lstat, mkdir, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import type { AgentEvent, WorkspaceSettings } from '@motion-studio/shared';
 import { PROVIDER_ENV } from '../secrets/vault.ts';
 import type { ApprovalBroker } from '../approvals/broker.ts';
 import { isAllowedRule, PermissionsStore } from '../approvals/permissions-store.ts';
 import type { AgentBridge, BridgeContext } from '../bridge/bridge.ts';
-import { escapeGlob } from '../codebases.ts';
+import { escapeGlob, findCodebaseSecrets, hasUnsafePathChars } from '../codebases.ts';
 import { t } from '../i18n.ts';
 import { buildAgentPolicy, sandboxPath, type AgentJobKind } from './policy.ts';
 import { CREATIVE_CORE_FILES, detachProtectedLinks, PROPOSAL_LOG } from './protected-links.ts';
@@ -25,7 +25,7 @@ export const MCP_SERVER = 'studio';
 export const MCP_TOOLS: Record<AgentJobKind, string[]> = {
   creative: ['report_progress', 'validate_composition', 'preview_frames', 'read_brand_kit', 'generate_image', 'tts', 'sound_effect', 'music', 'list_voices', 'stock_search', 'stock_download', 'fonts_fetch'],
   console: ['report_progress', 'read_brand_kit', 'generate_image', 'tts', 'sound_effect', 'music', 'list_voices', 'stock_search', 'stock_download', 'fonts_fetch'],
-  'brand-analysis': ['report_progress', 'read_brand_kit', 'fonts_fetch', 'download_file', 'inspect_site_fonts'],
+  'brand-analysis': ['report_progress', 'read_brand_kit', 'fonts_fetch', 'download_file', 'inspect_site_fonts', 'import_codebase_file'],
   describe: ['report_progress'],
   // Phase 12: the translation turn. No composition-writing tool, no paid provider tool: the core makes the voices.
   localize: ['report_progress', 'submit_localization', 'preview_frames', 'read_brand_kit'],
@@ -211,9 +211,14 @@ export class AgentLauncher {
     let tools = new AbortController();
     let toolSignal = AbortSignal.any([abort.signal, tools.signal]);
     const abortTools = () => { tools.abort(); tools = new AbortController(); toolSignal = AbortSignal.any([abort.signal, tools.signal]); };
+    // Phase 14: a brand analysis of codebases gets their secret files denied by exact path too (any case, every platform).
+    const codebases = i.codebases ?? [];
+    if (codebases.some(hasUnsafePathChars)) throw new Error(t().errors.codebaseUnsafePath);
+    const secretsScan = i.kind === 'brand-analysis' && codebases.length > 0 ? await codebaseSecrets(codebases) : null;
     const policy = buildAgentPolicy({
       kind: i.kind, sandbox, projectDir: i.projectDir, home, configDir,
-      codebases: i.codebases ?? [], protectedFiles, protectedDirs, protectedGlobs: logGlobs, sandboxGlobs,
+      codebases, protectedFiles, protectedDirs, protectedGlobs: logGlobs, sandboxGlobs,
+      ...(secretsScan ? { codebaseSecrets: { files: secretsScan.files, dirs: secretsScan.dirs } } : {}),
       extraDomains: settings.extraAllowedDomains, projectAllowRules: rules,
       mcpTools: mcpOn ? MCP_TOOLS[i.kind].map((t) => `mcp__${MCP_SERVER}__${t}`) : [],
       autoApproveSandboxed: autoApproveAtStart,
@@ -257,6 +262,7 @@ export class AgentLauncher {
           ...(i.submitLocalization ? { submitLocalization: i.submitLocalization } : {}),
           ...(i.locale ? { locale: i.locale } : {}), ...(i.addNotes ? { addNotes: i.addNotes } : {}),
           ...(i.services ? { services: i.services } : {}),
+          ...(i.kind === 'brand-analysis' && codebases.length > 0 ? { codebases } : {}),
         });
         // The paths are recorded before writing, so release() also removes a half-written pair.
         const files = await prepareRunFiles(configDir, i.jobId);
@@ -300,6 +306,7 @@ export class AgentLauncher {
         if (found.length > 0) await warn(t().jobs.protectedLinksDetached({ list: list(found) }));
       };
       await detachLinks();
+      if (secretsScan?.truncated) await warn(t().jobs.codebaseSecretScanTruncated);
       // Under a path with `[ ] * ?` the sandbox cannot pin the record folders (decisions log 141): said once per job,
       // and the logs' history is checked too.
       const weakRoot = roots.some((d) => GLOB_CHARS.test(d));
@@ -380,6 +387,29 @@ export class AgentLauncher {
       throw err;
     }
   }
+}
+
+/**
+ * The secret files and folders of each codebase (findCodebaseSecrets), walked once per real folder and listed under every
+ * spelling the job was given (a linked folder and its target), so the exact-path rules hold whichever path the agent uses.
+ */
+async function codebaseSecrets(codebases: string[]): Promise<{ files: string[]; dirs: string[]; truncated: boolean }> {
+  const byReal = new Map<string, Set<string>>();
+  for (const c of codebases) {
+    const real = await realpath(c).catch(() => c);
+    byReal.set(real, (byReal.get(real) ?? new Set([real])).add(c));
+  }
+  const files = new Set<string>();
+  const dirs = new Set<string>();
+  let truncated = false;
+  for (const [real, names] of byReal) {
+    const found = await findCodebaseSecrets(real);
+    truncated ||= found.truncated;
+    for (const [list, into] of [[found.files, files], [found.dirs, dirs]] as const) {
+      for (const p of list) for (const n of names) into.add(join(n, relative(real, p)));
+    }
+  }
+  return { files: [...files], dirs: [...dirs], truncated };
 }
 
 /** Private paths for one job's MCP config and token file (same base name; the folder is 0700). */

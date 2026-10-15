@@ -4,7 +4,8 @@ import { brandProposalSchema, issuesText, messages, relativeFileSchema, webUrlSc
 import { z } from 'zod';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import type { Git } from '../git.ts';
-import type { JobQueue } from '../jobs/job-queue.ts';
+import { JobFailedError, type JobQueue } from '../jobs/job-queue.ts';
+import { changedCodebaseFiles, codebaseFileStates, codebaseProblemText, codebaseSnapshot, codebaseSpellings, resolveBrandCodebase, type BrandCodebase, type Snapshot } from '../codebases.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
 import { LibraryStore } from '../library/library-store.ts';
 import type { MediaTools } from '../media/media-tools.ts';
@@ -29,6 +30,8 @@ const MAX_DROPPED_SHOWN = 20;
 const MAX_SUMMARY = 5000;
 const MAX_SITE_NOTES = 40;
 const SITE_NOTES_SHOWN = 3;
+/** Changed files of a codebase named in the job's notes (the rest is counted). */
+const CHANGED_FILES_SHOWN = 50;
 
 
 /** Valid items of a JSON array the agent wrote; `skipped` explains a file that was not read (symlink, too large). */
@@ -78,11 +81,12 @@ export class BrandService {
    * Runs one agent turn with the live metadata files denied to the editing tools; whatever the outcome, files the agent
    * still managed to change (e.g. through an interpreter) are restored. `tampered` receives one note per file the agent changed, in `locale`.
    */
-  private async runAgent(ref: ProjectRef, kind: 'brand-analysis' | 'describe', prompt: string, logFile: string | null, signal: AbortSignal, jobId: string, tampered: string[], locale: Locale, sandboxed: boolean, addNotes?: (lines: string[]) => void): Promise<{ status: 'ok' | 'cancelled'; usage: UsageSummary | undefined }> {
+  private async runAgent(ref: ProjectRef, kind: 'brand-analysis' | 'describe', prompt: string, logFile: string | null, signal: AbortSignal, jobId: string, tampered: string[], locale: Locale, sandboxed: boolean, addNotes?: (lines: string[]) => void, codebases?: string[]): Promise<{ status: 'ok' | 'cancelled'; usage: UsageSummary | undefined }> {
     const guard = await snapshotGuarded(ref.projectDir);
     try {
       const run = await this.deps.launcher.start({
         kind, jobId, projectSlug: ref.projectSlug, projectDir: ref.projectDir, sandboxed, locale, ...(addNotes ? { addNotes } : {}),
+        ...(codebases?.length ? { codebases } : {}),
         // The running proposal's log is passed explicitly: it may not exist yet at launch (it is created by the first event), so the launcher's directory scan could miss it.
         protectedFiles: [...(await guardedPaths(ref.projectDir)), ...(logFile ? [logFile] : [])],
         request: { prompt, model: (await this.deps.model()) ?? undefined },
@@ -108,12 +112,26 @@ export class BrandService {
   /** A phase marker of the core (no text): the UI's stepper starts at `queued` and ends at `done`. */
   private phase(jobId: string, phase: BrandPhase) { this.deps.broadcast({ type: 'agent', jobId, event: { kind: 'progress', text: '', phase } }); }
 
-  private async runAnalysis(ref: ProjectRef, store: BrandStore, sources: Awaited<ReturnType<BrandStore['readSources']>>, signal: AbortSignal, jobId: string): Promise<void | 'cancelled'> {
+  private async runAnalysis(ref: ProjectRef, store: BrandStore, allSources: Awaited<ReturnType<BrandStore['readSources']>>, signal: AbortSignal, jobId: string): Promise<void | 'cancelled'> {
     this.phase(jobId, 'queued');
     // The job's language is fixed when it starts: the prompt and every line stored in the proposal use it, whatever
     // the setting becomes meanwhile. Errors that fail the job are shown live and use the current language.
     const locale = currentLocale();
     const m = messages(locale);
+    // Phase 14 (spec §2.2): codebase sources are validated again now (the folder may have moved or become a link) and used
+    // by their normalised and real paths; a folder that no longer passes is left out with a note.
+    const jobNotes: string[] = [];
+    const note = (text: string) => { jobNotes.push(text); this.deps.queue.patch(jobId, { notes: [...jobNotes] }); };
+    const codebases: Array<{ source: string; cb: BrandCodebase }> = [];
+    const sources: typeof allSources = [];
+    for (const s of allSources) {
+      if (s.kind !== 'codebase') { sources.push(s); continue; }
+      const cb = await resolveBrandCodebase(s.path ?? '', [ref.projectDir, ref.root]);
+      if ('problem' in cb) { note(m.jobs.brandCodebaseSkipped({ path: s.path ?? '', reason: codebaseProblemText(cb.problem, s.path ?? '', locale) })); continue; }
+      codebases.push({ source: s.id, cb });
+      sources.push(s);
+    }
+    if (sources.length === 0) throw new Error(t().errors.noUsableCodebase);
     const library = new LibraryStore(ref.projectDir, this.deps.media);
     const id = await store.newProposalId();
     const dir = store.proposalDir(id);
@@ -130,15 +148,46 @@ export class BrandService {
       const block = {
         proposalDir: rel(dir), kitFile: rel(join(dir, 'brand-kit.json')), guidelinesFile: rel(join(dir, 'guidelines.md')),
         assetsListFile: rel(join(dir, 'assets.json')), summaryFile: rel(join(dir, 'summary.md')),
-        // Codebase sources are handed to the agent by a later Phase 14 task; until then they are not part of the prompt block.
-        sources: sources.flatMap((s) => (s.kind === 'codebase' ? [] : [{ id: s.id, kind: s.kind, url: s.url, file: s.file }])),
+        sources: sources.map((s) => (s.kind === 'codebase'
+          ? { id: s.id, kind: s.kind, url: null, file: null, path: codebases.find((c) => c.source === s.id)!.cb.path, ...(s.note ? { note: s.note } : {}) }
+          : { id: s.id, kind: s.kind, url: s.url, file: s.file })),
       };
       const tampered: string[] = [];
       // Notes of the agent's tools (inspect_site_fonts: what it refused or cut), in the job's language, once each.
       const siteNotes = new Set<string>();
       const addNotes = (lines: string[]) => { for (const l of lines) if (siteNotes.size < MAX_SITE_NOTES) siteNotes.add(l); };
       const sandboxed = await this.deps.launcher.sandboxed();
-      const turn = await this.runAgent(ref, 'brand-analysis', buildBrandPrompt(block, locale, sandboxed), join(dir, 'log.jsonl'), signal, jobId, tampered, locale, sandboxed, addNotes);
+      // Without the sandbox the secret files are kept from the agent by its tool rules only (spec §2.2): said in the job.
+      if (codebases.length > 0 && !sandboxed) note(m.jobs.brandSecretsToolRulesOnly);
+      // Read-only check (decision 722): a fingerprint of each codebase before and after the turn, and the changed entries
+      // to name them. A folder git cannot check is analysed anyway, with a note.
+      const snapsBefore: Array<{ snap: Snapshot; files: Map<string, string> | null }> = [];
+      for (const { cb } of codebases) {
+        const snap = await codebaseSnapshot(cb.real);
+        snapsBefore.push({ snap, files: 'value' in snap ? await codebaseFileStates(cb.real) : null });
+        if (!('value' in snap)) note(snap.unavailable === 'not-git' ? m.jobs.brandCodebaseNotCheckable({ path: cb.path }) : m.jobs.brandCodebaseCheckFailed({ path: cb.path }));
+      }
+      let turn: Awaited<ReturnType<BrandService['runAgent']>> | null = null;
+      let turnError: unknown = null;
+      try {
+        turn = await this.runAgent(ref, 'brand-analysis', buildBrandPrompt(block, locale, sandboxed), join(dir, 'log.jsonl'), signal, jobId, tampered, locale, sandboxed, addNotes, codebases.flatMap((c) => codebaseSpellings(c.cb)));
+      } catch (e) { turnError = e; }
+      // Whatever the outcome (also a cancelled or failed turn), a changed codebase fails the job and discards the proposal.
+      const changed: string[] = [];
+      for (const [k, { cb }] of codebases.entries()) {
+        const b = snapsBefore[k]!;
+        const after = await codebaseSnapshot(cb.real);
+        // A repository that appears during the turn (git init) counts as a change too.
+        if (!('value' in b.snap ? 'value' in after && after.value !== b.snap.value : 'value' in after)) continue;
+        changed.push(cb.path);
+        const files = changedCodebaseFiles(b.files, 'value' in b.snap ? await codebaseFileStates(cb.real) : null);
+        const extra = files.length - CHANGED_FILES_SHOWN;
+        note(files.length
+          ? m.jobs.brandCodebaseChangedFiles({ path: cb.path, list: [...files.slice(0, CHANGED_FILES_SHOWN), ...(extra > 0 ? [m.brand.droppedMore({ count: extra })] : [])].join(', ') })
+          : m.jobs.brandCodebaseChangedUnknown({ path: cb.path }));
+      }
+      if (changed.length > 0) throw new JobFailedError(changed.map((path) => t().jobs.brandCodebaseChanged({ path })).join(' '));
+      if (turnError !== null || turn === null) throw turnError;
       if (turn.status === 'cancelled') {
         await rm(dir, { recursive: true, force: true });
         await noteCoreChange(join(ref.projectDir, 'brand', 'proposals'));

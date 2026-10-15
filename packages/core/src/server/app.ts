@@ -27,6 +27,7 @@ import { defaultConfigDir, type AppConfigStore } from '../app-config.ts';
 import { AgentBridge } from '../bridge/bridge.ts';
 import { registerBridgeRoutes } from '../bridge/bridge-routes.ts';
 import { downloadTool } from '../bridge/download-tool.ts';
+import { importCodebaseTool } from '../bridge/import-codebase-tool.ts';
 import { providerTools, voiceAvailability, voiceBatch } from '../bridge/provider-tools.ts';
 import { LocalizeService, ProjectActivity } from '../localization/localize-turn.ts';
 import type { LookupFn, Transport } from '../providers/safe-fetch.ts';
@@ -772,6 +773,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     extraTools: {
       ...providerTools({ vault, approvals, media, keyChecks, settings: () => requireWorkspace().readSettings(), broadcast: (m) => hub.broadcast(m) }),
       download_file: downloadTool({ media, broadcast: (m) => hub.broadcast(m) }),
+      import_codebase_file: importCodebaseTool({ media, broadcast: (m) => hub.broadcast(m) }),
     },
   });
   registerSettingsRoutes(app, { vault, approvals, requireWorkspace, keyChecks, keyCheckHttp: deps.keyCheckHttp ?? { fetch: globalThis.fetch } });
