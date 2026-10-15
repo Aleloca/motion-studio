@@ -99,10 +99,10 @@ run('busy composer: real Chrome layout', () => {
   beforeAll(async () => { dir = mkdtempSync(join(tmpdir(), 'ms-composer-layout-')); browser = await launchChrome(chrome!); }, 120_000);
   afterAll(async () => { await browser?.close(); rmSync(dir, { recursive: true, force: true }); }, 60_000);
 
-  async function measure(html: string, width: number, name: string) {
+  async function measure(html: string, width: number, name: string, wide = false) {
     const page = `<!doctype html><html lang="en"><head><meta charset="utf-8"><style>${CSS}
-      body{margin:0} #w{width:${width}px;box-sizing:border-box}</style></head><body><div id="w">${html}</div></body></html>`;
-    const file = join(dir, `${name}-${width}.html`);
+      body{margin:0}${wide ? ' #w *{letter-spacing:.07em !important}' : ''} #w{width:${width}px;box-sizing:border-box}</style></head><body><div id="w">${html}</div></body></html>`;
+    const file = join(dir, `${name}-${width}${wide ? '-wide' : ''}.html`);
     writeFileSync(file, page);
     const tab = await browser.newPage(width, 900);
     try {
@@ -127,6 +127,17 @@ run('busy composer: real Chrome layout', () => {
             expect(r.stop, `Stop present @${width}`).not.toBeNull();
             expect(r.send, `send present @${width}`).not.toBeNull();
           }
+        }
+      }, 120_000);
+
+      // Linux Chrome falls back to wider fonts (CI #540); letter-spacing reproduces that on any machine. The row must never
+      // overflow whatever the text metrics: items wrap to a second line before they leave the row.
+      it(`${locale} ${mode}: wide text metrics never push an item out of the row`, async () => {
+        const html = await markup(mode, locale);
+        for (const width of [320, 360, 480, 540, 600, 640, 760]) {
+          const r = await measure(html, width, `${locale}-${mode}`, true);
+          expect(r.problems, `${locale} ${mode} wide @${width}`).toEqual([]);
+          expect(r.chip, 'the Services chip stays').toBe(true);
         }
       }, 120_000);
 
