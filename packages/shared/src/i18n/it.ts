@@ -261,7 +261,7 @@ export const it: Messages = {
     folderGlobChars: (p) => `Il percorso ${p.path} contiene ( ) [ ] { } * ? o \\: le regole dell\'agente a protezione dei file di Motion Studio non riescono a confrontarlo in modo sicuro, quindi ogni esecuzione dell\'agente lì è rifiutata (sfogliare ed esportare funzionano ancora)`,
     folderGlobFix: 'Rinomina la cartella con questi caratteri (per una cartella di progetto che è un collegamento: rinomina la destinazione, poi ricrea il collegamento), poi scegli di nuovo la cartella di lavoro',
     updatesLabel: 'Aggiornamenti automatici',
-    updatesOff: 'Aggiornamenti automatici non attivi in questa versione',
+    updatesOff: 'Non attivi in questa versione',
     denyPathsLabel: 'Percorsi della cartella home e di configurazione',
     denyPathsGlob: (p) => p.count === 1
       ? `Il percorso ${p.paths} contiene ( ) [ ] { } * ? o \\: le regole che negano all\'agente l\'accesso (token, file segreti) potrebbero non valere lì`

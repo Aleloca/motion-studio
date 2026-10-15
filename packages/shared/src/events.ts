@@ -149,6 +149,8 @@ export interface DoctorCheck {
   version?: string;
   message: string;
   fix?: string;
+  /** Informational only: shown with a neutral mark and left out of the passed count (the updates row). */
+  info?: true;
 }
 
 export type ProjectListItem =

@@ -45,6 +45,7 @@ describe('startServer with the desktop updater state (decision 802)', () => {
       const token = await loadOrCreateUiToken(configDir);
       const get = async (path: string) => (await fetch(`${s.url}${path}`, { headers: { 'x-motion-studio-ui': token } })).json() as Promise<any>;
       const rowOf = async () => ((await get('/api/doctor')) as Array<{ id: string; ok: boolean; required: boolean; message: string }>).find((c) => c.id === 'updates');
+      expect((await fetch(`${s.url}/api/updates`)).status).toBe(401);
       expect((await get('/api/updates')).state).toBe('unknown');
       expect(await rowOf()).toBeUndefined();
       state = 'off';

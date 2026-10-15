@@ -638,7 +638,7 @@ describe('units', () => {
   it('an old store composition with an HTML/CSS device frame layer still validates (decision 803)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ms-test-comp-'));
     try {
-      writeFileSync(join(dir, 'composition.json'), JSON.stringify({ $schema: 'motion-studio/composition@1', width: 320, height: 180, fps: 30, duration: 2, background: '#000000', fonts: [], scenes: [], tracks: [] }));
+      writeFileSync(join(dir, 'composition.json'), JSON.stringify({ $schema: 'motion-studio/composition@1', width: 320, height: 180, fps: 30, duration: 2, background: '#000000', fonts: [], scenes: [], tracks: [{ id: 'frame', type: 'html', src: 'layers/device-frame.html', start: 0, duration: 2, props: { x: 0, y: 0, width: 320, height: 180 } }] }));
       await writeNormalized(dir);
       mkdirSync(join(dir, 'layers'));
       writeFileSync(join(dir, 'layers', 'device-frame.html'), '<div style="border-radius:40px;border:12px solid #222;width:160px;height:300px"></div>');

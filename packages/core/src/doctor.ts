@@ -149,7 +149,7 @@ export async function runDoctor(opts: {
   if (denyPaths.length > 0) {
     checks.push({ id: 'agent-deny-paths', label: d.denyPathsLabel, required: false, ok: false, message: d.denyPathsGlob({ paths: denyPaths.join(', '), count: denyPaths.length }) });
   }
-  if (opts.updatesOff) checks.push({ id: 'updates', label: d.updatesLabel, required: false, ok: true, message: d.updatesOff });
+  if (opts.updatesOff) checks.push({ id: 'updates', label: d.updatesLabel, required: false, ok: true, info: true, message: d.updatesOff });
   return checks;
 }
 
