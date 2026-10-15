@@ -90,6 +90,8 @@ describe('series prompt section', () => {
     expect(s).toMatch(/do not draw a device frame/i);
     expect(s).toMatch(/never use Apple or Google logos/i);
     expect(s).toMatch(/device artwork/i);
+    expect(s).toMatch(/Google Play feature graphic[^\n]*no device frame/);
+    expect(s).toMatch(/at most rounded corners and a soft shadow/i);
   });
 
   it('Ruling D: iPad and Play screenshot N adapt the iPhone screenshot N (same caption, same beat, re-laid-out)', () => {
