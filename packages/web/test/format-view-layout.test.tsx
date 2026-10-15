@@ -3,8 +3,10 @@
  * jsdom (the live player replaced by a stand-in that reports itself ready), in English and Italian, in three states: the
  * live preview, a render at 42% and a ready video with its size. The markup, given the app's real stylesheets and fonts
  * in the app's own grid (bar over page), is measured in real Chrome at 1024 and 1280 px, in the desktop title bar: the
- * page does not scroll sideways, no element leaves its panel, no text is clipped mid-word (a deliberate ellipsis is not),
- * and no interactive control of the bar or the transport overlaps another. The Tooltip (hidden at rest) does not count.
+ * page does not scroll sideways, no element leaves its panel, no text is clipped mid-word, an ellipsis still shows a
+ * meaningful part (at least 48 px and a quarter of the text, unless allow-listed) and only where one is known, and no
+ * interactive control of the bar or the transport overlaps another. No Tooltip bubble is up at rest (checked in jsdom,
+ * where it is portalled). The keys hint is hidden at 1024 px (decision 799) and allow-listed, ellipsized, at 1280 px.
  * Chrome only on request (MS_LAYOUT_CHROME=1 or MS_REQUIRE_CHROME=1), through the repo's driver (mock keychain, basic
  * password store).
  */
@@ -116,6 +118,7 @@ const PILL: Record<'en' | 'it', Record<State, RegExp>> = {
 /** The app (bar, then page) as the shell lays it out, in the desktop title bar. */
 async function appMarkup(locale: 'en' | 'it', state: State): Promise<string> {
   rendered = state === 'ready';
+  const hashBefore = location.hash;
   location.hash = `#/p/acme/c/lancio/f/${VIDEO}`;
   const platform = vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
   (window as unknown as { motionStudio: unknown }).motionStudio = { isDesktop: true, platform: 'darwin', pickFolder: async () => null, revealPath: async () => {} };
@@ -128,20 +131,35 @@ async function appMarkup(locale: 'en' | 'it', state: State): Promise<string> {
     await waitFor(() => expect(container.querySelector('.ms-fv-hint')).not.toBeNull());
     await waitFor(() => expect(container.querySelectorAll('.ms-fv-sb-item').length).toBe(3));
     // The safe zone overlay on, so its bands are measured too.
-    const toggle = container.querySelector('.ms-fv-safe-toggle [role="switch"], .ms-fv-safe-toggle button, .ms-fv-safe-toggle input') as HTMLElement | null;
-    if (toggle) await userEvent.click(toggle);
-    await waitFor(() => expect(container.querySelector('.ms-safe, [class*="safe-band"], [class*="ms-sz"]')).not.toBeNull()).catch(() => {});
+    const toggle = container.querySelector<HTMLElement>('.ms-fv-safe-toggle [role="switch"]');
+    expect(toggle).not.toBeNull();
+    await userEvent.click(toggle!);
+    await waitFor(() => expect(container.querySelector('.ms-fv-frame .ms-cv-safe')).not.toBeNull());
     const app = container.querySelector('#app') as HTMLElement;
-    if (!app.querySelector('.ms-tb-mac')) bar().className = 'ms-topbar ms-bar-fv ms-titlebar ms-tb-mac';
+    // The desktop bar on macOS, as the app renders it (room for the traffic lights).
+    expect(bar().classList.contains('ms-tb-mac')).toBe(true);
+    // No Tooltip bubble at rest: bubbles are portalled into body, so this is checked here, not in the serialised #app.
+    // The static descriptions (.ms-sr) are always there and never visible.
+    expect(document.body.querySelectorAll('.ms-tooltip')).toHaveLength(0);
+    expect([...document.body.querySelectorAll('[role="tooltip"]')].filter((el) => !el.classList.contains('ms-sr'))).toEqual([]);
     return app.outerHTML;
   } finally {
     cleanup();
+    location.hash = hashBefore;
     platform.mockRestore();
     delete (window as unknown as { motionStudio?: unknown }).motionStudio;
   }
 }
 
+/**
+ * Ellipses allowed to show less than 48 px or a quarter of their text: scene names (scenes column), the crumbs (bar: at
+ * 1024 px the project and creative crumbs keep ~16-31 px, the folding of decision 713), and the keys hint, which at
+ * 1280 px shows its first keys with an ellipsis and the whole text as its title (decision 799; hidden below). They are
+ * also the only ellipses expected at all: a new one fails the test until it is reviewed and added.
+ */
+const ELLIPSIS_OK = ['ms-fv-sb-text', 'ms-crumb', 'ms-fv-keys'];
 const MEASURE = `(async () => {
+const ELLIPSIS_OK = ${JSON.stringify(ELLIPSIS_OK)};
 await document.fonts.ready;
 const vis = (el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden' && !el.closest('.ms-sr, [role="tooltip"]');
 const problems = [], notes = [];
@@ -163,9 +181,15 @@ for (const [panel, name] of panels) {
     if (r.width === 0 && r.height === 0) continue;
     if ((r.left < pr.left - 1 || r.right > pr.right + 1) && !clipsX(el, panel)) problems.push(name + ': leaves its panel: ' + label(el) + ' [' + Math.round(r.left - pr.left) + ',' + Math.round(r.right - pr.right) + ']');
     if (r.left < -1 || r.right > innerWidth + 1) { if (!clipsX(el, document.body) && !clipsX(el, panel)) problems.push(name + ': outside the window: ' + label(el)); }
-    // Text: a leaf that is wider than its box. A deliberate ellipsis is not a clip.
+    // Text: a leaf that is wider than its box is clipped. A deliberate ellipsis is not, as long as it still shows a
+    // meaningful part: at least 48 px and a quarter of the text, unless its class is allow-listed (ELLIPSIS_OK).
     if (el.children.length === 0 && el.textContent && el.textContent.trim() && el.scrollWidth > el.clientWidth + 1 && !(el instanceof SVGElement)) {
-      (cs.textOverflow === 'ellipsis' ? notes : problems).push((cs.textOverflow === 'ellipsis' ? 'ellipsis: ' : name + ': clipped: ') + label(el) + ' (' + el.scrollWidth + '>' + el.clientWidth + ')');
+      const what = label(el) + ' (' + el.scrollWidth + '>' + el.clientWidth + ')';
+      if (cs.textOverflow !== 'ellipsis') { problems.push(name + ': clipped: ' + what); continue; }
+      const key = [...el.classList].find((c) => c.startsWith('ms-')) || (el.parentElement && [...el.parentElement.classList].find((c) => c.startsWith('ms-'))) || el.tagName;
+      const ok = ELLIPSIS_OK.includes(key) || !!el.closest('[data-ms-ellipsis-ok]');
+      if (!ok && (el.clientWidth < 48 || el.clientWidth / el.scrollWidth < 0.25)) problems.push(name + ': ellipsis too short: ' + what);
+      notes.push(key);
     }
   }
 }
@@ -180,9 +204,8 @@ for (const [name, list] of groups) {
     if (a.left < b.right - 0.5 && a.right > b.left + 0.5 && a.top < b.bottom - 0.5 && a.bottom > b.top + 0.5) problems.push(name + ': overlap: ' + label(list[i]) + ' / ' + label(list[j]));
   }
 }
-const tip = [...document.querySelectorAll('[role="tooltip"]')].filter((t) => t.getClientRects().length > 0 && getComputedStyle(t).visibility !== 'hidden');
-if (tip.length) problems.push('a tooltip is visible at rest');
-const seen = { bar: groups[0][1].length, transport: groups[1][1].length, scenes: document.querySelectorAll('.ms-fv-sb-item').length, hint: !!document.querySelector('.ms-fv-hint'), clip: !!document.querySelector('.ms-fv-clippick'), range: !!document.querySelector('.ms-fv-rangebtn'), safe: document.querySelectorAll('.ms-fv-frame [class*="safe"]').length };
+const keys = document.querySelector('.ms-fv-keys');
+const seen = { bar: groups[0][1].length, transport: groups[1][1].length, scenes: document.querySelectorAll('.ms-fv-sb-item').length, hint: document.querySelectorAll('.ms-fv-hint').length, clip: document.querySelectorAll('.ms-fv-clippick').length, range: document.querySelectorAll('.ms-fv-rangebtn').length, safe: document.querySelectorAll('.ms-fv-frame [class*="safe"]').length, keys: !!keys && vis(keys) };
 return { problems, notes, seen };
 })()`;
 
@@ -209,9 +232,14 @@ run('format view: whole page in real Chrome', () => {
         const tab = await browser.newPage(width, 800);
         try {
           await tab.goto(`file://${file}`);
-          const r = await tab.eval<{ problems: string[]; notes: string[]; seen: Record<string, unknown> }>(MEASURE, 30_000);
+          const r = await tab.eval<{ problems: string[]; notes: string[]; seen: Record<string, number | boolean> }>(MEASURE, 30_000);
           console.info(`[fv-layout] ${locale} ${state} @${width}: ${JSON.stringify(r)}`);
           for (const p of r.problems) failures.push(`${locale} ${state} @${width}: ${p}`);
+          // Every ellipsis is a known one (a new one is noticed here, not only in the log).
+          for (const n of r.notes) if (!ELLIPSIS_OK.includes(n)) failures.push(`${locale} ${state} @${width}: unexpected ellipsis: ${n}`);
+          for (const k of ['safe', 'hint', 'clip', 'range'] as const) if (!(Number(r.seen[k]) > 0)) failures.push(`${locale} ${state} @${width}: ${k} not rendered`);
+          // Decision 799: the keys hint is hidden where it would be a sliver (1024 px) and shown at 1280 px.
+          if (r.seen.keys !== (width === 1280)) failures.push(`${locale} ${state} @${width}: keys hint ${r.seen.keys ? 'shown' : 'hidden'}`);
         } finally { await tab.close(); }
       }
       expect(failures).toEqual([]);

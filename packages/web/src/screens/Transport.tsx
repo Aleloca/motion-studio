@@ -177,7 +177,7 @@ export function Transport({ clock, duration, playing, disabled, marks = [], onRa
           options={SPEEDS.map((v) => ({ value: v, label: f.speedValue({ n: formatNumber(locale, Number(v)) }) }))} />
         {extra}
         <span className="ms-grow" />
-        <span className="ms-fv-keys">{hint}</span>
+        <span className="ms-fv-keys" title={hint}>{hint}</span>
       </div>
       <div className="ms-fv-scrubwrap">
         <div ref={track} className={cx('ms-fv-scrub', disabled && 'ms-off')} role="slider" tabIndex={disabled ? -1 : 0} aria-label={f.position} aria-disabled={disabled || undefined}
