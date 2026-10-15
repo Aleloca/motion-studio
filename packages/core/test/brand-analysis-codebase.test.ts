@@ -333,14 +333,57 @@ describe('imports of a discarded run (follow-up batch 2, task 3)', () => {
     const bridge = new AgentBridge();
     bridge.setOrigin('http://127.0.0.1:9');
     const tool = importCodebaseTool({ media: NoMediaTools, broadcast: () => {} });
+    let during: string[] = [];
     sideEffect = async (req) => {
       const config = JSON.parse(await readFile(req.mcpConfigPath!, 'utf8'));
       const ctx = bridge.resolve((await readFile(config.mcpServers.studio.env.MOTION_STUDIO_BRIDGE_TOKEN_FILE, 'utf8')).trim())!;
       for (const dest of ['kit', 'ad', 'loose']) await tool(ctx, { source: 'public/logo.svg', dest: `assets/brand/${dest}.svg` });
+      during = await onDisk();
     };
     const end = await finished((await service(testLauncher(bad, { bridge, mcpCommand: ['node', '/never/started/server.mjs'] })).analyze(ref)).id);
     expect(end.state).toBe('failed');
+    expect(during).toEqual(['ad.svg', 'kit.svg', 'loose.svg', 'pre.svg']); // present during the run, so removed by the cleanup
     expect(await files()).toEqual(kept);
+    expect(await onDisk()).toEqual(kept.map((f) => f.slice(6)));
+  });
+  it('a corrupt brand kit at discard time: nothing can be checked, so the files stay', async () => {
+    await prepare();
+    const svc = importer();
+    const end = await finished((await svc.analyze(ref)).id);
+    expect(end.state, end.error).toBe('succeeded');
+    const all = await files();
+    const [p] = await brand.listProposals();
+    await writeFile(join(ref.projectDir, 'brand', 'brand-kit.json'), 'not json');
+    await svc.discardProposal(ref, p!.id);
+    expect(await files()).toEqual(all);
+  });
+  it('a proposal superseded by a newer run is cleaned like a discarded one', async () => {
+    await prepare();
+    const svc = importer();
+    expect((await finished((await svc.analyze(ref)).id)).state).toBe('succeeded');
+    const first = (await brand.listProposals())[0]!;
+    const afterFirst = await files();
+    expect(first.importedFiles).toHaveLength(4);
+    // The second run imports nothing of its own that matches; it only supersedes the first.
+    sideEffect = null;
+    expect((await finished((await service().analyze(ref)).id)).state).toBe('succeeded');
+    expect((await brand.listProposals()).find((x) => x.id === first.id)!.status).toBe('discarded');
+    const after = await files();
+    expect(after).toEqual(expect.arrayContaining(kept));
+    for (const f of first.importedFiles!) expect(after.includes(f)).toBe(kept.includes(f));
+    expect(afterFirst.length).toBeGreaterThan(after.length);
+  });
+  it('a file another job registers during the run survives the discard', async () => {
+    const cb = await prepare();
+    const svc = importer(async () => {
+      await writeFile(join(ref.projectDir, 'assets', 'brand', 'other.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+      await lib().registerAssets([{ file: 'brand/other.svg', origin: 'website', sourceUrl: 'https://x.example/o.svg', description: '', tags: ['brand'] }]);
+      await writeFile(join(cb, 'src', 'injected.ts'), 'export {};\n');
+    });
+    const end = await finished((await svc.analyze(ref)).id);
+    expect(end.state).toBe('failed');
+    expect(await files()).toEqual([...kept, 'brand/other.svg'].sort());
+    expect(await onDisk()).toEqual([...kept, 'brand/other.svg'].map((f) => f.slice(6)).sort());
   });
   it('a cancelled job: same cleanup', async () => {
     await prepare();
@@ -374,5 +417,6 @@ describe('imports of a discarded run (follow-up batch 2, task 3)', () => {
     expect(open.importedFiles).toHaveLength(4);
     for (const f of open.importedFiles ?? []) expect(after).not.toContain(f);
     expect(after).toEqual(expect.arrayContaining(kept));
+    expect(await onDisk()).toHaveLength(after.length);
   });
 });

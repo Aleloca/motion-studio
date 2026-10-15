@@ -1,6 +1,7 @@
 import { rm } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { relativeFileSchema, webUrlSchema, type ServerMessage } from '@motion-studio/shared';
+import { recordRunImport } from './run-imports.ts';
 import { LibraryStore } from '../library/library-store.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { saveGeneratedFile } from '../providers/files.ts';
@@ -62,6 +63,7 @@ export function downloadTool(deps: DownloadToolDeps): BridgeHandler {
       await rm(join(c.projectDir, 'assets', ...file.split('/')), { force: true }).catch(() => {});
       throw e;
     }
+    recordRunImport(c.jobId, file);
     deps.broadcast({ type: 'library', project: c.projectSlug });
     return { file: `assets/${file}` };
   };
