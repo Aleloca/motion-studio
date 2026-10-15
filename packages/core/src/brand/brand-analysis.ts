@@ -319,14 +319,16 @@ export class BrandService {
 
   /**
    * The files this run brought in: the ones its own tools (download_file, import_codebase_file) registered, recorded by job
-   * id, plus the files its asset list claimed in registerDownloads; still registered, and not in `before` (a file registered
-   * before the run is never here). Files another job registered meanwhile (a creative turn, an upload) are not the run's.
-   * Files the agent left unlisted in assets/ cannot be tied to this run and are neither registered as its own nor removed
-   * (they stay as unregistered files, as they always did); the same goes for a cancelled run.
+   * id, plus the listed files registerDownloads itself registered (not registered when it started); still registered with
+   * origin `codebase` or `website`, and not in `before` (a file registered before the run is never here). A file another job
+   * registered meanwhile (a creative turn, an upload) is never the run's, even when the agent lists it in assets.json.
+   * Files the agent left unlisted in assets/ cannot be tied to this run: registerDownloads registers them (on success and on
+   * failure) but they are never removed; on a cancelled run they remain unregistered.
    */
   private async runImports(library: LibraryStore, before: Set<string>, jobId: string): Promise<string[]> {
     try {
-      const known = new Set((await library.listAssets()).map((a) => a.file));
+      // Only entries a brand run can produce (download_file and the asset list: `website`; import_codebase_file: `codebase`).
+      const known = new Set((await library.listAssets()).filter((a) => a.origin === 'codebase' || a.origin === 'website').map((a) => a.file));
       return runImportsOf(jobId).filter((f) => known.has(f) && !before.has(f));
     } catch { return []; }
   }
@@ -374,6 +376,9 @@ export class BrandService {
   private async registerDownloads(library: LibraryStore, listFile: string, before: Set<string>, locale: Locale, jobId: string): Promise<{ registered: AssetEntry[]; dropped: string[] }> {
     const dropped: string[] = [];
     const m = messages(locale);
+    // Registered when this step starts: the run's own tool imports (already recorded) and anything another job (a creative
+    // download_file, an upload) registered meanwhile, which a listing in assets.json never makes the run's own.
+    const known = new Map((await library.listAssets()).map((a) => [a.file, a]));
     const listedRead = await readLenient(listFile, listedAsset);
     if (listedRead.skipped) dropped.push(m.brand.ignoredAssetList({ reason: skipText(listedRead.skipped, locale) }));
     const existingListed: typeof listedRead.items = [];
@@ -385,7 +390,6 @@ export class BrandService {
     const appeared = (await library.unregisteredAssets()).filter((f) => !before.has(f) && !existingListed.some((a) => a.file === f));
     // Files download_file or import_codebase_file already registered keep their origin, source URL and tags (`brand`); the
     // list only adds a description and more tags (decision 783; 30 = the asset tag limit).
-    const known = new Map((await library.listAssets()).map((a) => [a.file, a]));
     const registered: AssetEntry[] = [];
     for (const item of [
       ...existingListed.map((a) => {
@@ -396,10 +400,12 @@ export class BrandService {
       ...appeared.map((file) => ({ file, origin: 'website' as const, sourceUrl: null })),
     ]) {
       // The store confines paths; one unusable entry (e.g. a symlink out of assets/) must not sink the whole proposal.
-      try { registered.push(...(await library.registerAssets([item]))); }
-      catch (e) { if (!(e instanceof WorkspaceError)) throw e; dropped.push(m.brand.droppedNotRegistered({ file: item.file })); }
+      try {
+        registered.push(...(await library.registerAssets([item])));
+        // Listed files this step registered are the run's; unlisted ones cannot be tied to it (decision 793).
+        if (!known.has(item.file) && existingListed.some((a) => a.file === item.file)) recordRunImport(jobId, item.file);
+      } catch (e) { if (!(e instanceof WorkspaceError)) throw e; dropped.push(m.brand.droppedNotRegistered({ file: item.file })); }
     }
-    for (const a of existingListed) recordRunImport(jobId, a.file);
     return { registered, dropped };
   }
 

@@ -385,6 +385,50 @@ describe('imports of a discarded run (follow-up batch 2, task 3)', () => {
     expect(await files()).toEqual([...kept, 'brand/other.svg'].sort());
     expect(await onDisk()).toEqual([...kept, 'brand/other.svg'].map((f) => f.slice(6)).sort());
   });
+  /**
+   * Final wave I1: during the run another job registers brand/other.svg (a creative's download_file) and the user uploads
+   * brand/up.svg; the agent lists both in its asset list, next to a file of its own it left unregistered (brand/listed.svg).
+   */
+  const othersListed = async (req: AgentTurnRequest) => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"/>';
+    for (const f of ['other', 'up', 'listed']) await writeFile(join(ref.projectDir, 'assets', 'brand', `${f}.svg`), svg);
+    await lib().registerAssets([{ file: 'brand/other.svg', origin: 'website', sourceUrl: 'https://x.example/o.svg', description: '', tags: ['brand'] }]);
+    await lib().registerAssets([{ file: 'brand/up.svg', origin: 'upload' }]);
+    const block = JSON.parse(/```motion-studio-brand\n(.*)\n```/s.exec(req.prompt)![1]!) as { assetsListFile: string };
+    await writeFile(join(req.cwd, block.assetsListFile), JSON.stringify(['other', 'up', 'listed'].map((f) => ({ file: `brand/${f}.svg`, description: f }))));
+  };
+  const others = ['brand/other.svg', 'brand/up.svg'];
+  it('I1: a failed run whose asset list names another job\'s file and an upload leaves both registered and on disk', async () => {
+    await prepare();
+    const bridge = new AgentBridge();
+    bridge.setOrigin('http://127.0.0.1:9');
+    const tool = importCodebaseTool({ media: NoMediaTools, broadcast: () => {} });
+    const bad: AgentRunner = { start: (req, on) => { const r = fakeRunner.start(req, on); return { cancel: r.cancel, done: r.done.then(async (o) => { await writeFile(join(req.cwd, JSON.parse(/```motion-studio-brand\n(.*)\n```/s.exec(req.prompt)![1]!).kitFile), 'not json'); return o; }) }; } };
+    sideEffect = async (req) => {
+      const config = JSON.parse(await readFile(req.mcpConfigPath!, 'utf8'));
+      const ctx = bridge.resolve((await readFile(config.mcpServers.studio.env.MOTION_STUDIO_BRIDGE_TOKEN_FILE, 'utf8')).trim())!;
+      for (const dest of ['kit', 'ad', 'loose']) await tool(ctx, { source: 'public/logo.svg', dest: `assets/brand/${dest}.svg` });
+      await othersListed(req);
+    };
+    const end = await finished((await service(testLauncher(bad, { bridge, mcpCommand: ['node', '/never/started/server.mjs'] })).analyze(ref)).id);
+    expect(end.state).toBe('failed');
+    // The run's own listed file was registered by the failure path and removed with the run's other imports.
+    expect(await files()).toEqual([...kept, ...others].sort());
+    expect(await onDisk()).toEqual([...kept, ...others].map((f) => f.slice(6)).sort());
+    expect((await lib().listAssets()).find((a) => a.file === 'brand/up.svg')).toMatchObject({ origin: 'upload' });
+  });
+  it('I1: a user discard leaves another job\'s file and an upload the agent listed; the run\'s own listed file goes', async () => {
+    await prepare();
+    const svc = importer(async () => { await othersListed(requests.at(-1)!); });
+    const end = await finished((await svc.analyze(ref)).id);
+    expect(end.state, end.error).toBe('succeeded');
+    const [p] = await brand.listProposals();
+    expect(p!.importedFiles).toContain('brand/listed.svg');
+    for (const f of others) expect(p!.importedFiles).not.toContain(f);
+    await svc.discardProposal(ref, p!.id);
+    expect(await files()).toEqual([...kept, ...others].sort());
+    expect(await onDisk()).toEqual([...kept, ...others].map((f) => f.slice(6)).sort());
+  });
   it('a cancelled job: same cleanup', async () => {
     await prepare();
     const end = await finished((await importer(undefined, 'cancelled').analyze(ref)).id);

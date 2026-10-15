@@ -63,7 +63,7 @@ export function downloadTool(deps: DownloadToolDeps): BridgeHandler {
       await rm(join(c.projectDir, 'assets', ...file.split('/')), { force: true }).catch(() => {});
       throw e;
     }
-    recordRunImport(c.jobId, file);
+    if (c.kind === 'brand-analysis') recordRunImport(c.jobId, file);
     deps.broadcast({ type: 'library', project: c.projectSlug });
     return { file: `assets/${file}` };
   };
