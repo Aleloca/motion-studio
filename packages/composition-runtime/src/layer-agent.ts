@@ -11,8 +11,8 @@ import { decodeLayerConfig, LAYER_PROTOCOL_VERSION, type LayerConfig, type Layer
  *   `msReady` awaited), `seek(t)` (clock to t, every animation of the document paused at t, `msTimeline` to t,
  *   `await msSeek(t)`, then two native animation frames), `tick(t)` (the same without waiting, for playback).
  * Render mode: an `msReady` or `msSeek` that waits on a timer the frozen clock never fires fails after `CLOCK_STALL_MS`
- *   with a diagnostic (and, for `msSeek`, every later seek fails at once), instead of holding the render for the 60 s
- *   layer timeout (decision 709).
+ *   with a diagnostic and the reply code `layerStalled` (and, for `msSeek`, every later seek fails at once, with the same
+ *   code), instead of holding the render for the 60 s layer timeout (decision 709).
  * The layer contract (spec §3.2): `msSeek(t)` (may be async) or a paused timeline in `msTimeline` (GSAP-style `seek(t)`,
  * or WAAPI-style `currentTime` in ms), and an optional `msReady` promise. `t` is the layer's local time in seconds.
  */
@@ -46,6 +46,9 @@ export class ClockStallError extends Error {
     this.name = 'ClockStallError';
   }
 }
+
+/** A seek refused at once because an earlier `msSeek` of the layer stalled on the clock (decision 709). */
+class SeekStalledError extends Error {}
 
 type PumpClock = Pick<VirtualClock, 'native' | 'runDueTimers' | 'runFrame' | 'now' | 'nextTimerDue' | 'pendingFrames'>;
 
@@ -88,7 +91,8 @@ export async function pumpUntilDone<T>(value: T, clock: PumpClock, maxPumps = MA
   return p;
 }
 
-export function startLayerAgent(w: Window & typeof globalThis): void {
+/** `stallMs`: the render-mode stall bound (`CLOCK_STALL_MS`; shorter only in tests). */
+export function startLayerAgent(w: Window & typeof globalThis, o: { stallMs?: number } = {}): void {
   const config: LayerConfig | null = decodeLayerConfig(w.name);
   if (!config) return; // not a Motion Studio layer frame (opened on its own): leave the page alone
   const clock: VirtualClock = installVirtualClock(w);
@@ -131,7 +135,7 @@ export function startLayerAgent(w: Window & typeof globalThis): void {
    * forever on the virtual clock. Time never moves.
    */
   const pumping = <T>(value: T, what: string): Promise<Awaited<T>> =>
-    pumpUntilDone(value, clock, MAX_PUMPS, config.mode === 'render' ? { ms: CLOCK_STALL_MS, what } : undefined);
+    pumpUntilDone(value, clock, MAX_PUMPS, config.mode === 'render' ? { ms: o.stallMs ?? CLOCK_STALL_MS, what } : undefined);
   /**
    * Render mode: set once an `msSeek` stalled on the clock; later seeks fail at once instead of waiting again. The layer
    * cannot tell a final render from a storyboard (both are `mode: 'render'`; telling them apart would change the layer
@@ -170,13 +174,14 @@ export function startLayerAgent(w: Window & typeof globalThis): void {
         port?.postMessage({ id: req.id, ok: true, warnings });
       } else if (req.op === 'seek') {
         applyTime(req.t);
-        if (seekStalled !== null) throw new Error(`msSeek not called again: ${seekStalled}`);
+        if (seekStalled !== null) throw new SeekStalledError(`msSeek not called again: ${seekStalled}`);
         await callSeek(req.t);
         await twoFrames(clock.native, frameWait);
         port?.postMessage({ id: req.id, ok: true });
       }
     } catch (err) {
-      port?.postMessage({ id: req.id, ok: false, error: err instanceof Error ? err.message : String(err), ...(err instanceof FrameTimeoutError ? { code: 'frameTimeout' } : {}) });
+      const code = err instanceof FrameTimeoutError ? 'frameTimeout' : err instanceof ClockStallError || err instanceof SeekStalledError ? 'layerStalled' : undefined;
+      port?.postMessage({ id: req.id, ok: false, error: err instanceof Error ? err.message : String(err), ...(code ? { code } : {}) });
     }
   }
 

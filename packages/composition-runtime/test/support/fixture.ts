@@ -115,3 +115,34 @@ export function writeClockFixture(root: string): void {
   };
   writeFileSync(join(dir, 'composition.json'), JSON.stringify(composition, null, 2));
 }
+
+/**
+ * Phase 14, task 0 (UX 1 follow-up 3, decision 740): html layers outside the frame. In headless Chrome a sandboxed
+ * (cross-origin) iframe with no visible area is throttled and gets no animation frames, so before the fix its seek waited
+ * for frames until `frameTimeout` (30 s). `parked` sits at x -5000 for the whole clip; `slide` is parked off the frame by
+ * an `x` animation until 1 s and slides in by 2 s (its `msSeek` paints green from t 2, blue before); `shrunk` is scaled
+ * to 0 by a `scaleIn` until 1 s (no area) and is full size from 1.5 s (yellow).
+ */
+export const OFFSCREEN_PATH = 'v1/compositions/offscreen';
+const solidLayer = (seek: string) => `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;width:100%;height:100%}</style></head><body>
+<script>window.msSeek = ${seek};</script></body></html>`;
+
+export function writeOffscreenFixture(root: string): void {
+  const dir = join(root, OFFSCREEN_PATH);
+  mkdirSync(join(dir, 'layers'), { recursive: true });
+  writeFileSync(join(dir, 'layers', 'parked.html'), solidLayer("() => { document.body.style.background = '#f00'; }"));
+  writeFileSync(join(dir, 'layers', 'slide.html'), solidLayer("(t) => { document.body.style.background = t >= 2 ? '#0f0' : '#00f'; }"));
+  writeFileSync(join(dir, 'layers', 'shrunk.html'), solidLayer("() => { document.body.style.background = '#ff0'; }"));
+  const composition = {
+    $schema: 'motion-studio/composition@1', width: W, height: H, fps: 30, duration: 3, background: '#000000', fonts: [],
+    scenes: [{ id: 'all', start: 0, duration: 3 }],
+    tracks: [{ id: 'layers', kind: 'visual', clips: [
+      { id: 'parked', type: 'html', src: 'layers/parked.html', start: 0, duration: 3, props: { x: -5000, y: 0, width: 100, height: 100 } },
+      { id: 'slide', type: 'html', src: 'layers/slide.html', start: 0, duration: 3, props: { x: 0, y: 0, width: 160, height: 180 },
+        animations: [{ prop: 'x', from: -5000, to: 0, start: 1, duration: 1, ease: 'linear' }] },
+      { id: 'shrunk', type: 'html', src: 'layers/shrunk.html', start: 0, duration: 3, props: { x: 160, y: 0, width: 160, height: 180 },
+        animations: [{ preset: 'scaleIn', start: 1, duration: 0.5, ease: 'linear' }] },
+    ] }],
+  };
+  writeFileSync(join(dir, 'composition.json'), JSON.stringify(composition, null, 2));
+}

@@ -48,6 +48,12 @@ export const RUNTIME_ERROR_CODES = [
    * renderer never fails on it; a localized render records it as a problem of that language.
    */
   'textOverflow',
+  /**
+   * Render mode (decision 709; its own code from Phase 14 task 0): an html layer's `msReady` or `msSeek` waited on a timer the
+   * frozen render clock never fires (`setTimeout`, `setInterval`, `Date`, `performance.now`), and failed after a few seconds
+   * instead of on the layer timeout. Fails the render like `layerTimeout` and `layerError`.
+   */
+  'layerStalled',
 ] as const;
 export type RuntimeErrorCode = (typeof RUNTIME_ERROR_CODES)[number];
 /** A problem the runtime met. `message` is a developer detail in English; the UI shows its own text for `code`. */

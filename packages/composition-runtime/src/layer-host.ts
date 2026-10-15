@@ -1,10 +1,13 @@
 import type { Natives } from './clock.ts';
 import { withTimeout } from './frames.ts';
-import { LAYER_PROTOCOL_VERSION, parseLayerReply, type LayerResult } from './layer-protocol.ts';
+import { LAYER_PROTOCOL_VERSION, parseLayerReply, type LayerFailureCode, type LayerResult } from './layer-protocol.ts';
 
-/** A failed layer request; `code` is `frameTimeout` when the layer painted no frame after a render-mode seek. */
+/**
+ * A failed layer request; `code` is `frameTimeout` when the layer painted no frame after a render-mode seek, `layerStalled`
+ * when its `msReady` or `msSeek` waited on the frozen render clock (decision 709).
+ */
 export class LayerRequestError extends Error {
-  constructor(message: string, readonly code?: 'frameTimeout') { super(message); this.name = 'LayerRequestError'; }
+  constructor(message: string, readonly code?: LayerFailureCode) { super(message); this.name = 'LayerRequestError'; }
 }
 
 /** The runtime side of one html layer (see layer-protocol.ts). */

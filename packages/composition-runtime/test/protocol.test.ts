@@ -245,6 +245,7 @@ describe('layer replies (untrusted)', () => {
     expect(parseLayerReply({ type: 'hello', v: 1 })).toEqual({ type: 'hello', v: 1 });
     expect(parseLayerReply({ id: 3, ok: true, warnings: ['a', 'b'.repeat(400)] })).toEqual({ id: 3, ok: true, warnings: ['a', 'b'.repeat(300)] });
     expect(parseLayerReply({ id: 4, ok: false, error: 'boom', code: 'frameTimeout', junk: 1 })).toEqual({ id: 4, ok: false, error: 'boom', code: 'frameTimeout' });
+    expect(parseLayerReply({ id: 5, ok: false, error: 'stuck', code: 'layerStalled' })).toEqual({ id: 5, ok: false, error: 'stuck', code: 'layerStalled' });
   });
   it('ignores anything else', () => {
     for (const bad of [null, 'x', [], { id: 1 }, { id: 1, ok: 'yes' }, { id: '1', ok: true }, { id: 1.5, ok: true },

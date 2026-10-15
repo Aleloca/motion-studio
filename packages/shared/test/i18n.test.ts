@@ -95,3 +95,29 @@ export function typeLevelChecks(): void {
   const ok: Messages = { ...full, common: { ...full.common, cancel: 'Annulla' } };
   void [missing, wrongParams, ok, en];
 }
+
+// Phase 14, task 0 (UX 1 follow-ups 2 and 10): a stalled html layer has its own text, and the orphaned storyboard key is gone.
+describe('render runtime texts', () => {
+  const packages = fileURLToPath(new URL('../..', import.meta.url));
+  it('every runtime error code, layerStalled included, has its own text in every catalog', () => {
+    const protocol = readFileSync(join(packages, 'composition-runtime/src/protocol.ts'), 'utf8');
+    const list = /RUNTIME_ERROR_CODES = \[([\s\S]*?)\] as const/.exec(protocol)![1]!.replace(/\/\*[\s\S]*?\*\//g, '');
+    const codes = [...list.matchAll(/'(\w+)'/g)].map((m) => m[1]!);
+    expect(codes).toContain('layerStalled');
+    for (const l of LOCALES) {
+      const texts = (messages(l).web as { render: { runtimeError: Record<string, unknown> } }).render.runtimeError;
+      expect(codes.filter((c) => typeof texts[c] !== 'string'), l).toEqual([]);
+      expect(texts.layerStalled, l).not.toBe(texts.layerTimeout);
+    }
+  });
+  it('web.render.storyboardNone is gone and no source references it', () => {
+    for (const l of LOCALES) expect('storyboardNone' in (messages(l).web as { render: object }).render, l).toBe(false);
+    const hits = readdirSync(packages, { withFileTypes: true }).filter((d) => d.isDirectory()).flatMap((d) => {
+      const src = join(packages, d.name, 'src');
+      let files: string[] = [];
+      try { files = readdirSync(src, { recursive: true, encoding: 'utf8' }).filter((f) => /\.(ts|tsx)$/.test(f)); } catch { return []; }
+      return files.filter((f) => readFileSync(join(src, f), 'utf8').includes('storyboardNone')).map((f) => `${d.name}/src/${f}`);
+    });
+    expect(hits).toEqual([]);
+  });
+});

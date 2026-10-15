@@ -149,7 +149,11 @@ Everything lives under one token prefix on the composition server's own origin (
      BT.709 when untagged (Chrome's own assumption: the result shows exactly what the render canvas showed for the
      original) and tagged BT.709 matrix and primaries, limited range, with an **sRGB transfer** (IEC 61966-2-1). With that
      tag both paths show the same values (0 difference measured);
-   - every visible layer gets `seek(t − clip.start)` (see 4).
+   - every visible layer gets `seek(t − clip.start)` (see 4). **Render mode:** except a layer whose box has no visible
+     area in the frame at `t` (parked outside it, slid out, scaled to 0): Chrome throttles such a sandboxed iframe and runs
+     no animation frames in it, so its seek would wait for frames until `frameTimeout`. It shows nothing, so it is not
+     seeked; the first seek that brings it into view seeks and paints it (decision 740). Measured on the bounding box,
+     so a layer hidden only by a `clip-path` (a `wipe` at 100 %) is still seeked.
 5. Two **native** animation frames.
    - **Render mode:** each frame may take as long as the seek timeout. If the native frame never arrives, the runtime
      reports `frameTimeout` and `seek(t)` rejects, so the renderer never captures a frame that was not painted. A layer
@@ -186,8 +190,9 @@ never hangs. Task 4 still puts its own timeout on each `Runtime.evaluate`.
   Task 4 may also inject `clock.js` with `Page.addScriptToEvaluateOnNewDocument`. Installing the clock is idempotent.
 - **The private channel.** After the iframe's `load`, the runtime posts `{ type: 'ms-layer-connect', v: 1 }` with a
   transferred `MessagePort`. `layer.js` accepts it only from `window.parent` and answers `hello`.
-  - The runtime validates every reply with `parseLayerReply`: `ok` must be a boolean, and `warnings` must hold at most 20
-    strings, each cut to 300 characters. Anything else is ignored, and the request times out like an unanswered one.
+  - The runtime validates every reply with `parseLayerReply`: `ok` must be a boolean, `code` (optional) `frameTimeout` or
+    `layerStalled`, and `warnings` must hold at most 20 strings, each cut to 300 characters. Anything else is ignored, and
+    the request times out like an unanswered one.
   - So a hostile layer can only spoil its own clip. It cannot make `__ms.ready()` reject.
 - **Ready.** Every font face of the layer (its own `@font-face` rules and the composition fonts) is `FontFace.load()`ed, then
   `msReady` is awaited.
@@ -203,6 +208,10 @@ never hangs. Task 4 still puts its own timeout on each `Runtime.evaluate`.
   - an animation frame fires only after a macrotask in which no timer fired.
 
   So layer code that awaits `setTimeout(0)` or `requestAnimationFrame` cannot deadlock, and time does not move.
+  **Render mode** (decision 709): a wait on a timer due later (`setTimeout`, `setInterval`, `Date`, `performance.now`)
+  can never end, so after 5 s of native time with no timer fired the request fails with a diagnostic and the reply code
+  `layerStalled`, which the runtime reports as the `layerStalled` error (not `layerTimeout` or `layerError`); after a
+  stalled `msSeek` every later seek of that layer fails at once, with the same code.
 - **What is deterministic:**
   - CSS animations and transitions, WAAPI animations that exist when a seek starts, `msTimeline`, and `msSeek` are set from `t` alone;
   - `Date`, `performance.now`, timers and rAF read the virtual clock;
