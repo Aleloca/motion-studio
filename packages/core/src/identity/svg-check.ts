@@ -49,12 +49,22 @@ const TEXT_ATTRIBUTES = new Set(['id', 'class', 'lang', 'role', 'tabindex']);
 const LOCAL_REF_RE = /^#[A-Za-z_][A-Za-z0-9_.:-]*$/;
 const NAME_RE = /^[A-Za-z_][A-Za-z0-9_.-]*(?::[A-Za-z_][A-Za-z0-9_.-]*)?$/;
 const MAX_DEPTH = 256;
+/** Attributes on one element, namespace declarations on one element and in the whole file (quadratic-work guards). */
+const MAX_ATTRIBUTES = 256;
+const MAX_NS_DECLS_PER_ELEMENT = 64;
+const MAX_NS_DECLS = 256;
+/** `<use>` elements in the file, and the elements they may add once expanded. */
+const MAX_USES = 256;
+const MAX_EXPANDED_ELEMENTS = 50_000;
 const MAX_REASONS = 20;
 // eslint-disable-next-line no-control-regex
 const WS_RE = /[ \t\r\n]/;
 const BAD_CHARS_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/;
 
 class Malformed extends Error {}
+
+/** Text taken from the file, in a reason: cut to 40 characters and quoted JSON-style (never a line break or a bare quote). */
+const quoteFound = (v: string) => JSON.stringify(v.slice(0, 40)).replace(/[\u2028\u2029\u0085]/g, ' ');
 
 interface RawAttr { name: string; value: string }
 type Tok =
@@ -141,6 +151,7 @@ function tokenize(src: string): { tokens: Tok[] } | { refused: string } {
     const name = nameM[0];
     j += name.length;
     const attrs: RawAttr[] = [];
+    const seen = new Set<string>();
     let selfClosing = false;
     for (;;) {
       const wsStart = j;
@@ -162,7 +173,9 @@ function tokenize(src: string): { tokens: Tok[] } | { refused: string } {
       if (close < 0) throw new Malformed(`attribute ${an[0]} of <${name}> is not closed`);
       const rawValue = src.slice(j + 1, close);
       if (rawValue.includes('<')) throw new Malformed(`"<" in attribute ${an[0]} of <${name}>`);
-      if (attrs.some((a) => a.name === an[0])) throw new Malformed(`attribute ${an[0]} appears twice in <${name}>`);
+      if (seen.has(an[0])) throw new Malformed(`attribute ${an[0]} appears twice in <${name}>`);
+      if (attrs.length >= MAX_ATTRIBUTES) throw new Malformed(`more than ${MAX_ATTRIBUTES} attributes on <${name}>`);
+      seen.add(an[0]);
       attrs.push({ name: an[0], value: decodeEntities(rawValue).replace(/[\t\n\r]/g, ' ') });
       j = close + 1;
     }
@@ -189,12 +202,14 @@ function cssProblems(css: string, where: string, o: { atRules: boolean }): strin
   for (const t of [text.toLowerCase(), css.toLowerCase()]) {
     if (/@import/.test(t)) out.push(`${where}: @import is not allowed`);
     if (!o.atRules && /@[a-z-]/.test(t)) out.push(`${where}: CSS at-rules (@…) are not allowed`);
-    const fn = /(?:^|[^a-z0-9_-])(-webkit-image-set|image-set|image|cross-fade|element|src|expression|paint)\s*\(/.exec(t);
+    // Any vendor-prefixed function (`-webkit-cross-fade(`) too: decision 757 refuses what it cannot vouch for.
+    const fn = /(?:^|[^a-z0-9_-])(-[a-z]+-[a-z-]*|image-set|image|cross-fade|element|src|expression|paint)[ \t\r\n\f]*\(/.exec(t);
     if (fn) out.push(`${where}: ${fn[1]}() is not allowed`);
-    const urlRe = /url\s*\(([^)]*)\)?/g;
+    // Bounded argument: an unclosed `url(` never makes the scan quadratic (no `)` within 2048 characters is a refusal).
+    const urlRe = /url[ \t\r\n\f]*\(([^)]{0,2048})(\)?)/g;
     for (let m = urlRe.exec(t); m; m = urlRe.exec(t)) {
       const arg = m[1]!.trim().replace(/^(["'])([\s\S]*)\1$/, '$2').trim();
-      if (!m[0].endsWith(')') || !LOCAL_REF_RE.test(arg)) out.push(`${where}: url(…) may only point to a local #id (found url(${arg.slice(0, 40)}))`);
+      if (m[2] !== ')' || !LOCAL_REF_RE.test(arg)) out.push(`${where}: url(…) may only point to a local #id (found url(${quoteFound(arg)}))`);
     }
   }
   return [...new Set(out)];
@@ -219,11 +234,28 @@ export function checkVectorSvg(svg: string): { ok: true; warnings: string[] } | 
     throw e;
   }
   const reasons: string[] = [];
-  const refuse = (r: string) => { if (reasons.length < MAX_REASONS && !reasons.includes(r)) reasons.push(r); };
+  // Reasons quote the file: line and paragraph separators (U+0085, U+2028, U+2029) and control characters become spaces.
+  const refuse = (raw: string) => {
+    const r = raw.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ');
+    if (reasons.length < MAX_REASONS && !reasons.includes(r)) reasons.push(r);
+  };
   const warnings: string[] = [];
-  const stack: Array<{ name: string; local: string; ns: Map<string, string>; style: string[] | null }> = [];
+  interface Frame { name: string; local: string; ns: Map<string, string>; style: string[] | null; id: string | null; count: number; uses: string[] }
+  const stack: Frame[] = [];
+  const rootNs = new Map([['xml', XML_NS]]);
   let roots = 0;
   let closedRoot = false;
+  let nsDecls = 0;
+  let useCount = 0;
+  /** Per `id`: the elements of its subtree and the `<use>` targets inside it (the `<use>` expansion estimate). */
+  const byId = new Map<string, { count: number; uses: string[] }>();
+  let rootInfo: { count: number; uses: string[] } | null = null;
+  const closeFrame = (f: Frame) => {
+    if (f.style) for (const r of cssProblems(f.style.join(''), '<style>', { atRules: false })) refuse(r);
+    if (f.id !== null && !byId.has(f.id)) byId.set(f.id, { count: f.count, uses: f.uses });
+    const parent = stack[stack.length - 1];
+    if (parent) { parent.count += f.count; for (const u of f.uses) parent.uses.push(u); } else rootInfo = { count: f.count, uses: f.uses };
+  };
   try {
     for (const tok of tokens) {
       if (tok.kind === 'text') {
@@ -234,7 +266,7 @@ export function checkVectorSvg(svg: string): { ok: true; warnings: string[] } | 
       if (tok.kind === 'close') {
         const top = stack.pop();
         if (!top || top.name !== tok.name) throw new Malformed(`</${tok.name}> does not close ${top ? `<${top.name}>` : 'anything'}`);
-        if (top.style) for (const r of cssProblems(top.style.join(''), '<style>', { atRules: false })) refuse(r);
+        closeFrame(top);
         if (stack.length === 0) closedRoot = true;
         continue;
       }
@@ -243,11 +275,17 @@ export function checkVectorSvg(svg: string): { ok: true; warnings: string[] } | 
         roots++;
       }
       if (stack.length >= MAX_DEPTH) throw new Malformed('elements nested too deeply');
-      // Namespaces: declarations of this element first, then the element's own prefix.
-      const ns = new Map(stack.length ? stack[stack.length - 1]!.ns : [['xml', XML_NS]]);
-      for (const a of tok.attrs) {
+      // Namespaces: declarations of this element first, then the element's own prefix. The map is the parent's own object
+      // unless this element declares something (copy on write); declarations are capped per element and per file.
+      const parentNs = stack.length ? stack[stack.length - 1]!.ns : rootNs;
+      const decls = tok.attrs.filter((a) => a.name === 'xmlns' || a.name.startsWith('xmlns:'));
+      if (decls.length > MAX_NS_DECLS_PER_ELEMENT) throw new Malformed(`more than ${MAX_NS_DECLS_PER_ELEMENT} namespace declarations on <${tok.name}>`);
+      nsDecls += decls.length;
+      if (nsDecls > MAX_NS_DECLS) throw new Malformed(`more than ${MAX_NS_DECLS} namespace declarations`);
+      const ns = decls.length > 0 ? new Map(parentNs) : parentNs;
+      for (const a of decls) {
         if (a.name === 'xmlns') ns.set('', a.value);
-        else if (a.name.startsWith('xmlns:')) {
+        else {
           const p = a.name.slice(6);
           if (p === 'xml' || p === 'xmlns' || a.value === '') throw new Malformed(`a bad namespace declaration ${a.name}`);
           ns.set(p, a.value);
@@ -273,11 +311,16 @@ export function checkVectorSvg(svg: string): { ok: true; warnings: string[] } | 
       if (elNs === SVG_NS && TEXT_ELEMENTS.has(local) && warnings.length === 0) {
         warnings.push('the SVG has <text>: convert text to paths, or it will look different where the font is not installed');
       }
+      // Expanded names (namespace + local name): `xlink:href` and `q:href` bound to the same namespace are the same attribute.
+      const expanded = new Set<string>();
       for (const a of tok.attrs) {
         if (a.name === 'xmlns' || a.name.startsWith('xmlns:')) continue;
         const c = a.name.indexOf(':');
         const ap = c < 0 ? '' : a.name.slice(0, c);
         const al = c < 0 ? a.name : a.name.slice(c + 1);
+        const key = `${ap === '' ? '' : ns.get(ap) ?? `?${ap}`} ${al}`;
+        if (expanded.has(key)) throw new Malformed(`attribute ${a.name} of ${`<${tok.name}>`} repeats another one with the same namespace and name`);
+        expanded.add(key);
         const where = `${shown} ${a.name}`;
         if (/^on/i.test(al)) { refuse(`${where}: event handler attributes are not allowed`); continue; }
         let isHref = false;
@@ -291,31 +334,75 @@ export function checkVectorSvg(svg: string): { ok: true; warnings: string[] } | 
           else { refuse(`${where}: this attribute is not allowed`); continue; }
         } else if (al === 'href') isHref = true;
         if (isHref) {
-          if (!LOCAL_REF_RE.test(a.value.trim())) refuse(`${where}: links may only point to a local #id (found "${a.value.trim().slice(0, 40)}")`);
+          if (!LOCAL_REF_RE.test(a.value.trim())) refuse(`${where}: links may only point to a local #id (found ${quoteFound(a.value.trim())})`);
           continue;
         }
         if (TEXT_ATTRIBUTES.has(al) || al.startsWith('aria-')) continue;
         for (const r of cssProblems(a.value, where, { atRules: al !== 'style' })) refuse(r);
       }
-      const frame = { name: tok.name, local, ns, style: elNs === SVG_NS && local === 'style' ? [] as string[] : null };
+      const idValue = tok.attrs.find((a) => a.name === 'id')?.value.trim() ?? null;
+      const frame: Frame = { name: tok.name, local, ns, style: elNs === SVG_NS && local === 'style' ? [] as string[] : null, id: idValue, count: 1, uses: [] };
+      if (elNs === SVG_NS && local === 'use') {
+        if (++useCount > MAX_USES) throw new Malformed(`more than ${MAX_USES} <use> elements`);
+        const href = tok.attrs.find((a) => { const c = a.name.indexOf(':'); return a.name === 'href' || (c > 0 && a.name.slice(c + 1) === 'href' && ns.get(a.name.slice(0, c)) === XLINK_NS); });
+        if (href && LOCAL_REF_RE.test(href.value.trim())) frame.uses.push(href.value.trim().slice(1));
+      }
       if (frame.style) {
         const type = tok.attrs.find((a) => a.name === 'type')?.value.trim().toLowerCase();
-        if (type !== undefined && type !== '' && type !== 'text/css') refuse(`<style type="${type.slice(0, 30)}"> is not allowed`);
+        if (type !== undefined && type !== '' && type !== 'text/css') refuse(`<style type=${quoteFound(type)}> is not allowed`);
       }
+      if (stack.length > 0 && stack[stack.length - 1]!.style) refuse('<style> may only contain CSS text');
       if (tok.selfClosing) {
+        closeFrame(frame);
         if (stack.length === 0) closedRoot = true;
         continue;
       }
-      if (stack.length > 0 && stack[stack.length - 1]!.style) refuse('<style> may only contain CSS text');
       stack.push(frame);
     }
     if (stack.length > 0) throw new Malformed(`<${stack[stack.length - 1]!.name}> is not closed`);
     if (roots === 0) throw new Malformed('there is no root element');
+    const expandedCount = useExpansion(rootInfo, byId);
+    if (expandedCount === 'cycle') refuse('<use> references form a cycle');
+    else if (expandedCount > MAX_EXPANDED_ELEMENTS) refuse(`<use> references add more than ${MAX_EXPANDED_ELEMENTS} elements once expanded: draw the shapes directly`);
   } catch (e) {
     if (e instanceof Malformed) return { ok: false, reasons: [`malformed XML: ${e.message}`] };
     throw e;
   }
   return reasons.length > 0 ? { ok: false, reasons } : { ok: true, warnings };
+}
+
+/**
+ * The elements the `<use>`s of the file add once expanded: for each `<use>`, its target's subtree (with the `<use>`s
+ * inside it, recursively). Memoised per id, capped just above the limit; a cycle is reported.
+ */
+function useExpansion(root: { count: number; uses: string[] } | null, byId: ReadonlyMap<string, { count: number; uses: string[] }>): number | 'cycle' {
+  if (!root) return 0;
+  const memo = new Map<string, number>();
+  const visiting = new Set<string>();
+  const cap = MAX_EXPANDED_ELEMENTS + 1;
+  const cost = (info: { count: number; uses: string[] }): number | 'cycle' => {
+    let total = info.count;
+    for (const id of info.uses) {
+      const c = costOf(id);
+      if (c === 'cycle') return c;
+      total = Math.min(cap, total + c);
+    }
+    return total;
+  };
+  const costOf = (id: string): number | 'cycle' => {
+    const known = memo.get(id);
+    if (known !== undefined) return known;
+    if (visiting.has(id)) return 'cycle';
+    const info = byId.get(id);
+    if (!info) return 0;
+    visiting.add(id);
+    const c = cost(info);
+    visiting.delete(id);
+    if (c !== 'cycle') memo.set(id, c);
+    return c;
+  };
+  // The root's own elements are not counted: only what the `<use>`s add.
+  return cost({ count: 0, uses: root.uses });
 }
 
 /** `[minX, minY, width, height]` of a `viewBox` value, or null when it is missing or not four numbers with a positive size. */
@@ -345,8 +432,8 @@ export const SMALL_VARIANT_CLIP_ID = 'small';
 
 /**
  * Whether `c` is a vector composition (spec §4.2, decision 726): a still (`duration` 0) made of ONE visible `svg` clip that
- * fills the frame (x, y 0 or absent; width, height the composition's or absent; no rotation, scale, opacity below 1,
- * animations or Ken Burns), and nothing else.
+ * fills the frame (x, y 0 or absent; width, height the composition's or absent; `fit: 'contain'`, explicitly; no rotation,
+ * scale, opacity below 1, animations or Ken Burns), and nothing else.
  *
  * The optional `small` variant (decision 728) is a second `svg` clip with id `small`, hidden (`hidden: true`, so the
  * composition still shows the main drawing), full frame like the main one: its file is used for the sizes up to 48 px.
@@ -372,6 +459,8 @@ export function checkVectorComposition(c: Composition): { ok: true; svgFile: str
     }
     if ((p.rotation ?? 0) !== 0 || (p.scale ?? 1) !== 1 || (p.opacity ?? 1) !== 1) return `the ${label} has no rotation, scale or opacity: put them in the SVG`;
     if (p.kenBurns || (clip.animations?.length ?? 0) > 0) return `the ${label} has no animation`;
+    // The runtime's default for an svg clip is `cover`, which crops a drawing that is not square (fix round 1).
+    if (p.fit !== 'contain') return `the ${label} needs "fit": "contain" in its props, so a drawing that is not square is never cropped`;
     if (!/\.svg$/i.test(clip.src)) return `the ${label}'s file must be an .svg file`;
     return null;
   };

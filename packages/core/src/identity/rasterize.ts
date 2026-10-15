@@ -10,7 +10,7 @@ import { RenderError, type ChromiumProvider } from '../render/chromium-provider.
 import { makeOwnedTempDir } from '../render/owner.ts';
 import { createRenderEngine } from '../render/renderer.ts';
 import { checkVectorSvg, MAX_VECTOR_SVG_BYTES, svgAspect } from './svg-check.ts';
-import { pngSize } from './png.ts';
+import { decodePng, pngSize } from './png.ts';
 
 /**
  * Rasterisation of an identity SVG (Phase 14, spec §4.2): every PNG is the SVG drawn by Chrome at its exact size, never a
@@ -25,7 +25,8 @@ import { pngSize } from './png.ts';
  * - Each size is a still composition of one full-frame `svg` clip (`fit: contain`). The runtime draws it with `<img>`, so
  *   the SVG is an image document: no script runs and it loads nothing, and the browser has no network anyway.
  * - The page background is transparent (`transparentBackground`), so the PNG keeps the SVG's alpha; `background` paints
- *   the stage instead (a composition colour).
+ *   the stage instead (a composition colour). A probe checks that the engine really keeps alpha before any job.
+ * - A job may scale the drawing (`RasterJob.scale`, centred): the padded maskable icon and Android foreground.
  * - `shape: 'square'` (default): each size is `size`×`size`, the drawing centred. `'long-side'` (the logo, spec §4.1): the
  *   longer side is `size` and the other follows the SVG's `viewBox` (at least 16 px, the composition minimum).
  * - One browser and one composition server serve every size; both are closed at the end, with the temp folder.
@@ -64,10 +65,14 @@ export function rasterDims(size: number, shape: 'square' | 'long-side', aspect: 
   return aspect.width >= aspect.height ? { width: size, height: short(aspect.height, aspect.width) } : { width: short(aspect.width, aspect.height), height: size };
 }
 
-function stillOf(width: number, height: number, background: string): Composition {
+/** A still of `src` drawn at `scale` of the frame, centred, never cropped (`fit: contain`). */
+function stillOf(width: number, height: number, background: string, src: string, scale = 1): Composition {
+  const w = Math.max(1, Math.round(width * scale));
+  const h = Math.max(1, Math.round(height * scale));
+  const box = { x: Math.round((width - w) / 2), y: Math.round((height - h) / 2), width: w, height: h, fit: 'contain' };
   return {
     $schema: COMPOSITION_SCHEMA_ID, width, height, fps: 30, duration: 0, background, fonts: [], scenes: [],
-    tracks: [{ id: 'mark', kind: 'visual', clips: [{ id: 'mark', type: 'svg', src: SVG_NAME, start: 0, duration: 0, props: { x: 0, y: 0, width, height, fit: 'contain' } }] }],
+    tracks: [{ id: 'mark', kind: 'visual', clips: [{ id: 'mark', type: 'svg', src, start: 0, duration: 0, props: box }] }],
   } as Composition;
 }
 
@@ -87,21 +92,42 @@ export async function readCheckedSvg(svgPath: string): Promise<{ text: string; w
   return { text, warnings: check.warnings };
 }
 
+/** One raster: `size` (see `shape`), the drawing scaled to `scale` of it (0 < scale ≤ 1, default 1) and centred. */
+export interface RasterJob { size: number; scale?: number }
+
 /** The SVG at `svgPath` as PNGs, one per size (see the module comment). Throws `SvgRefusedError` for a refused SVG. */
 export async function rasterizeSvg(svgPath: string, sizes: number[], opts: RasterizeOptions = {}): Promise<Map<number, Buffer>> {
-  const { text } = await readCheckedSvg(svgPath);
-  const out = new Map<number, Buffer>();
   const wanted = [...new Set(sizes)];
-  if (wanted.length === 0) return out;
-  for (const s of wanted) if (!Number.isInteger(s) || s < COMPOSITION_MIN || s > 4096) throw new RangeError(`rasterize: bad size ${s}`);
+  const pngs = await rasterizeSvgJobs(svgPath, wanted.map((size) => ({ size })), opts);
+  return new Map(wanted.map((s, k) => [s, pngs[k]!]));
+}
+
+/** A transparent 16 px SVG with an opaque centre: its corner must come out with alpha 0 (`transparentBackground` works). */
+const PROBE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect x="6" y="6" width="4" height="4" fill="#000"/></svg>';
+const PROBE_NAME = 'assets/probe.svg';
+
+/**
+ * The SVG at `svgPath` as one PNG per job, in order (see the module comment). Before the jobs, when the background is
+ * transparent, a probe checks that this browser keeps transparency (a known transparent SVG must give alpha 0 in a corner):
+ * otherwise it fails, rather than writing opaque PNGs where the sets need alpha (fix round 1: an engine, such as a desktop
+ * render window, could paint its own background).
+ */
+export async function rasterizeSvgJobs(svgPath: string, jobs: RasterJob[], opts: RasterizeOptions = {}): Promise<Buffer[]> {
+  const { text } = await readCheckedSvg(svgPath);
+  if (jobs.length === 0) return [];
+  for (const j of jobs) {
+    if (!Number.isInteger(j.size) || j.size < COMPOSITION_MIN || j.size > 4096) throw new RangeError(`rasterize: bad size ${j.size}`);
+    if (j.scale !== undefined && !(j.scale > 0 && j.scale <= 1)) throw new RangeError(`rasterize: bad scale ${j.scale}`);
+  }
   const shape = opts.shape ?? 'square';
   const aspect = svgAspect(text);
   const background = opts.background ?? '#00000000';
+  const transparent = /^#(?:[0-9a-f]{3}0|[0-9a-f]{6}00)$/i.test(background);
   const distDir = opts.distDir ?? RUNTIME_DIST_DIR;
   const ctl = new AbortController();
   const onAbort = () => ctl.abort(new RenderError('cancelled', 'cancelled'));
   if (opts.signal?.aborted) onAbort(); else opts.signal?.addEventListener('abort', onAbort, { once: true });
-  const deadline = setTimeout(() => ctl.abort(new RenderError('timeLimit', 'rasterising took too long')), opts.timeLimitMs ?? 120_000 + wanted.length * 20_000);
+  const deadline = setTimeout(() => ctl.abort(new RenderError('timeLimit', 'rasterising took too long')), opts.timeLimitMs ?? 120_000 + jobs.length * 20_000);
   const work = await makeOwnedTempDir(join(opts.tempDir ?? tmpdir(), 'ms-identity-raster-'));
   let server: CompositionServer | null = null;
   let provider: ChromiumProvider | null = null;
@@ -112,29 +138,39 @@ export async function rasterizeSvg(svgPath: string, sizes: number[], opts: Raste
     await mkdir(join(compDir, 'assets'), { recursive: true });
     // The checked bytes, never the file again.
     await writeFile(join(compDir, ...SVG_NAME.split('/')), text, { flag: 'wx', mode: 0o644 });
+    await writeFile(join(compDir, ...PROBE_NAME.split('/')), PROBE_SVG, { flag: 'wx', mode: 0o644 });
     server = await startCompositionServer({ uiOrigins: [], distDir });
     provider = await (opts.provider ?? (() => createRenderEngine().provider()))();
     if (ctl.signal.aborted) throw ctl.signal.reason;
     const clock = await readRegularFile(join(distDir, 'clock.js'), 1024 * 1024).then((r) => (r.kind === 'file' ? r.data.toString('utf8') : undefined), () => undefined);
-    for (const size of wanted) {
-      const { width, height } = rasterDims(size, shape, aspect);
-      const composition = stillOf(width, height, background);
-      const session = await server.mintSession({ creativeDir: work, versionDir: 'outputs/v1', format: FORMAT_DIR, composition, mode: 'render', ttlMs: 10 * 60_000 });
+    const capture = async (composition: Composition, width: number, height: number, what: string): Promise<Buffer> => {
+      const session = await server!.mintSession({ creativeDir: work, versionDir: 'outputs/v1', format: FORMAT_DIR, composition, mode: 'render', ttlMs: 10 * 60_000 });
       try {
-        const page = await provider.open({ width, height, url: session.url, signal: ctl.signal, purpose: 'render', transparentBackground: true, ...(clock ? { clockSource: clock } : {}) });
+        const page = await provider!.open({ width, height, url: session.url, signal: ctl.signal, purpose: 'render', transparentBackground: true, ...(clock ? { clockSource: clock } : {}) });
         try {
           const bad = [...page.info.errors, ...(await page.errors())].filter((e) => e.code !== 'textOverflow');
           if (bad.length) throw new RenderError('runtimeErrors', `the SVG could not be drawn: ${bad.map((e) => `${e.code} ${e.message}`).join('; ').slice(0, 300)}`, bad);
           const png = await captureFrame(page, 0, { format: 'png', width, height });
           const dims = pngSize(png);
-          if (!dims || dims.width !== width || dims.height !== height) throw new RenderError('badFrame', `the ${size} px capture is not a ${width}×${height} PNG`);
-          out.set(size, png);
+          if (!dims || dims.width !== width || dims.height !== height) throw new RenderError('badFrame', `the ${what} capture is not a ${width}×${height} PNG`);
+          return png;
         } finally {
           await page.close().catch(() => {});
         }
       } finally {
         session.revoke();
       }
+    };
+    if (transparent) {
+      const probe = decodePng(await capture(stillOf(16, 16, background, PROBE_NAME), 16, 16, 'transparency probe'));
+      if (probe.rgba[3] !== 0 || probe.rgba[(8 * 16 + 8) * 4 + 3] !== 255) {
+        throw new RenderError('loadFailed', 'this render engine does not keep transparency (the probe came out opaque): the identity PNGs would lose their alpha, so nothing was rasterised');
+      }
+    }
+    const out: Buffer[] = [];
+    for (const j of jobs) {
+      const { width, height } = rasterDims(j.size, shape, aspect);
+      out.push(await capture(stillOf(width, height, background, SVG_NAME, j.scale ?? 1), width, height, `${j.size} px`));
     }
     return out;
   } catch (e) {

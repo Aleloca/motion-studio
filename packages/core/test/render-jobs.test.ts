@@ -794,7 +794,7 @@ describe('identity formats (Phase 14)', { timeout: 90_000 }, () => {
     writeFileSync(join(dir, 'assets', 'mark.svg'), svg);
     writeFileSync(join(dir, 'composition.json'), JSON.stringify({
       $schema: 'motion-studio/composition@1', width: 64, height: 64, fps: 30, duration: 0, background: '#ffffff', fonts: [], scenes: [],
-      tracks: [{ id: 't', kind: 'visual', clips: [{ id: 'mark', type: 'svg', src: 'assets/mark.svg', start: 0, duration: 0, props: {} }] }],
+      tracks: [{ id: 't', kind: 'visual', clips: [{ id: 'mark', type: 'svg', src: 'assets/mark.svg', start: 0, duration: 0, props: { fit: 'contain' } }] }],
     }));
     const compositions = [{ format: ICON.id, dir: `compositions/${ICON.id}`, hash: (await readCompositionFolder(dir)).hash, problems: [] }];
     writeFileSync(join(store.outputsDir(slug, 1), 'manifest.json'), JSON.stringify({ schemaVersion: 2, compositions, renders: [] }));

@@ -172,7 +172,7 @@ describe('checkVectorComposition (decisions 726, 728)', () => {
     $schema: 'motion-studio/composition@1', width: 1024, height: 1024, fps: 30, duration: 0, background: '#00000000', fonts: [], scenes: [],
     tracks: [{ id: 't', kind: 'visual', clips }], ...extra,
   }) as unknown as Composition;
-  const mark = { id: 'mark', type: 'svg', src: 'assets/logo.svg', start: 0, duration: 0, props: {} };
+  const mark = { id: 'mark', type: 'svg', src: 'assets/logo.svg', start: 0, duration: 0, props: { fit: 'contain' } };
 
   it('one full-frame svg clip passes, with or without an explicit box', () => {
     expect(checkVectorComposition(base([mark]))).toEqual({ ok: true, svgFile: 'assets/logo.svg' });
@@ -189,11 +189,17 @@ describe('checkVectorComposition (decisions 726, 728)', () => {
     expect(checkVectorComposition(base([mark], { duration: 3 }))).toMatchObject({ ok: false, reason: expect.stringMatching(/still/) });
     expect(checkVectorComposition(base([mark, { id: 'tx', type: 'text', start: 0, duration: 0, props: { text: 'A' } }]))).toMatchObject({ ok: false });
     expect(checkVectorComposition(base([{ ...mark, type: 'image', src: 'assets/a.png' }]))).toMatchObject({ ok: false, reason: expect.stringMatching(/svg/) });
-    expect(checkVectorComposition(base([{ ...mark, props: { x: 10 } }]))).toMatchObject({ ok: false, reason: expect.stringMatching(/fill the frame/) });
-    expect(checkVectorComposition(base([{ ...mark, props: { scale: 0.8 } }]))).toMatchObject({ ok: false });
+    expect(checkVectorComposition(base([{ ...mark, props: { x: 10, fit: 'contain' } }]))).toMatchObject({ ok: false, reason: expect.stringMatching(/fill the frame/) });
+    expect(checkVectorComposition(base([{ ...mark, props: { scale: 0.8, fit: 'contain' } }]))).toMatchObject({ ok: false });
     expect(checkVectorComposition(base([{ ...mark, animations: [{ preset: 'fadeIn', start: 0, duration: 1 }] }]))).toMatchObject({ ok: false });
     expect(checkVectorComposition(base([{ ...mark, hidden: true }]))).toMatchObject({ ok: false });
     expect(checkVectorComposition(base([]))).toMatchObject({ ok: false });
+  });
+
+  it('the svg clip must say fit: contain (the runtime default, cover, crops a wide logo); so must the small clip', () => {
+    expect(checkVectorComposition(base([{ ...mark, props: {} }]))).toMatchObject({ ok: false, reason: expect.stringMatching(/"fit": "contain"/) });
+    expect(checkVectorComposition(base([{ ...mark, props: { fit: 'cover' } }]))).toMatchObject({ ok: false });
+    expect(checkVectorComposition(base([mark, { ...mark, id: 'small', src: 'assets/s.svg', hidden: true, props: { fit: 'fill' } }]))).toMatchObject({ ok: false });
   });
 });
 
@@ -209,7 +215,7 @@ describe('the turn check of an identity format (repair turn)', () => {
     writeFileSync(join(dir, 'assets', 'mark.svg'), svg);
     writeFileSync(join(dir, 'composition.json'), JSON.stringify({
       $schema: 'motion-studio/composition@1', width: 64, height: 64, fps: 30, duration: 0, background: '#ffffff', fonts: [], scenes: [],
-      tracks: [{ id: 't', kind: 'visual', clips: clips ?? [{ id: 'mark', type: 'svg', src: 'assets/mark.svg', start: 0, duration: 0, props: {} }] }],
+      tracks: [{ id: 't', kind: 'visual', clips: clips ?? [{ id: 'mark', type: 'svg', src: 'assets/mark.svg', start: 0, duration: 0, props: { fit: 'contain' } }] }],
     }));
     return vdir;
   }
@@ -227,5 +233,84 @@ describe('the turn check of an identity format (repair turn)', () => {
     expect(t.problems).toEqual([]);
     expect(t.warnings.join()).toMatch(/text/);
     expect((await check(version(svg('<rect width="1" height="1"/>')))).problems).toEqual([]);
+  });
+});
+
+describe('checkVectorSvg: hostile sizes stay fast (fix round 1)', () => {
+  const timed = (s: string) => {
+    expect(Buffer.byteLength(s)).toBeGreaterThan(400_000);
+    expect(Buffer.byteLength(s)).toBeLessThanOrEqual(512 * 1024);
+    const t0 = performance.now();
+    const r = checkVectorSvg(s);
+    const ms = performance.now() - t0;
+    expect(ms, `took ${Math.round(ms)} ms`).toBeLessThan(1000);
+    return r;
+  };
+  const fill = (unit: string, budget = 480_000) => unit.repeat(Math.floor(budget / unit.length));
+
+  it('one element with tens of thousands of attributes', () => {
+    const r = timed(`<svg ${NS} viewBox="0 0 1 1"><rect ${Array.from({ length: 40_000 }, (_, k) => `a${k}="1"`).join(' ')}/></svg>`);
+    expect(r).toMatchObject({ ok: false, reasons: [expect.stringMatching(/more than 256 attributes/)] });
+  });
+
+  it('a namespace declaration on every element', () => {
+    const r = timed(`<svg ${NS} viewBox="0 0 1 1">${fill('<g xmlns:p="urn:p"></g>')}</svg>`);
+    expect(r).toMatchObject({ ok: false, reasons: [expect.stringMatching(/namespace declarations/)] });
+    const many = `<svg ${NS} viewBox="0 0 1 1"><g ${Array.from({ length: 65 }, (_, k) => `xmlns:p${k}="urn:p"`).join(' ')}/></svg>`;
+    expect(checkVectorSvg(many)).toMatchObject({ ok: false, reasons: [expect.stringMatching(/more than 64 namespace declarations/)] });
+  });
+
+  it('many nested and sibling elements (deep chains of 250, repeated)', () => {
+    const chain = `${'<g>'.repeat(250)}<rect/>${'</g>'.repeat(250)}`;
+    expect(timed(`<svg ${NS} viewBox="0 0 1 1">${fill(chain)}</svg>`)).toMatchObject({ ok: true });
+  });
+
+  it('prefixed attributes deep in the tree resolve fast', () => {
+    const xl = 'xmlns:xlink="http://www.w3.org/1999/xlink"';
+    const deep = `${'<g>'.repeat(250)}${fill('<rect xlink:title="t" xml:space="preserve"/>', 470_000)}${'</g>'.repeat(250)}`;
+    expect(timed(`<svg ${NS} ${xl} viewBox="0 0 1 1"><rect id="r"/>${deep}</svg>`)).toMatchObject({ ok: true });
+  });
+
+  it('an unclosed url( repeated in one style attribute, and in a <style>', () => {
+    const r = timed(`<svg ${NS} viewBox="0 0 1 1"><rect style="${fill('url(')}"/></svg>`);
+    expect(r.ok).toBe(false);
+    expect(timed(`<svg ${NS} viewBox="0 0 1 1"><style>${fill('url(#a ')}</style></svg>`).ok).toBe(false);
+  });
+
+  it('many entity references, comments and text', () => {
+    expect(timed(`<svg ${NS} viewBox="0 0 1 1"><title>${fill('&#x41;&amp;')}</title></svg>`)).toMatchObject({ ok: true });
+    expect(timed(`<svg ${NS} viewBox="0 0 1 1">${fill('<!-- c -->')}</svg>`)).toMatchObject({ ok: true });
+  });
+});
+
+describe('checkVectorSvg: fix round 1 rules', () => {
+  it('two attributes with the same namespace and local name are one attribute twice (malformed)', () => {
+    const s = `<svg ${NS} xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:q="http://www.w3.org/1999/xlink" viewBox="0 0 1 1"><use xlink:href="#a" q:href="#b"/></svg>`;
+    expect(refused(s).join()).toMatch(/malformed.*same namespace/);
+  });
+
+  it('a self-closing child of <style> is refused', () => {
+    expect(refused(svg('<style><rect/></style>')).join()).toMatch(/only contain CSS/);
+  });
+
+  it('vendor-prefixed CSS functions are refused', () => {
+    expect(refused(svg('<rect width="1" height="1" style="background:-webkit-cross-fade(#a, #b, 50%)"/>')).join()).toMatch(/-webkit-cross-fade/);
+    refused(svg('<rect width="1" height="1" fill="-moz-element(#a)"/>'));
+  });
+
+  it('<use> fan-out: a reference cycle, an exponential chain and too many <use> are refused; a few uses pass', () => {
+    expect(refused(svg('<g id="a"><use href="#a"/></g>')).join()).toMatch(/cycle/);
+    // 10 levels, each using the previous one 4 times: 4^10 elements.
+    let chain = '<defs><rect id="l0" width="1" height="1"/>';
+    for (let k = 1; k <= 10; k++) chain += `<g id="l${k}">${`<use href="#l${k - 1}"/>`.repeat(4)}</g>`;
+    chain += '</defs><use href="#l10"/>';
+    expect(refused(svg(chain)).join()).toMatch(/add more than/);
+    expect(refused(svg(`<rect id="r" width="1" height="1"/>${'<use href="#r"/>'.repeat(257)}`)).join()).toMatch(/more than 256 <use>/);
+    accepted(svg(`<defs><path id="p" d="M0 0L1 1"/></defs>${'<use href="#p"/>'.repeat(20)}`));
+  });
+
+  it('line separators in a quoted reason become spaces', () => {
+    const r = refused(svg('<use href="https://x.example/\u2028a\u0085b"/>'));
+    expect(r.join()).not.toMatch(/[\u2028\u0085]/);
   });
 });

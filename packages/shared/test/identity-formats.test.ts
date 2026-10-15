@@ -72,12 +72,13 @@ describe('IDENTITY_SETS', () => {
     const f = (k: keyof typeof IDENTITY_SETS) => Object.fromEntries(IDENTITY_SETS[k].files.map((x) => [x.path, x]));
     expect(f('logo')['logo.png']).toEqual({ path: 'logo.png', size: 1024 });
     expect(f('favicon')['apple-touch-icon.png']).toEqual({ path: 'apple-touch-icon.png', size: 180, opaque: true });
-    expect(f('favicon')['icon-512-maskable.png']!.size).toBe(512);
+    expect(f('favicon')['icon-512-maskable.png']).toEqual({ path: 'icon-512-maskable.png', size: 512, opaque: true, scale: 0.72 });
+    expect(f('app-icon')['ic_launcher_foreground.png']).toEqual({ path: 'ic_launcher_foreground.png', size: 432, scale: 66 / 108 });
     expect(f('app-icon')['AppIcon-1024.png']).toEqual({ path: 'AppIcon-1024.png', size: 1024, opaque: true });
     expect(f('app-icon')['ic_launcher-playstore.png']).toEqual({ path: 'ic_launcher-playstore.png', size: 512, opaque: true });
     expect(IDENTITY_SETS['app-icon'].files.filter((x) => x.path.startsWith('mipmap-')).map((x) => x.size)).toEqual([48, 72, 96, 144, 192]);
     const opaque = Object.values(IDENTITY_SETS).flatMap((s) => s.files).filter((x) => x.opaque).map((x) => x.path);
-    expect(opaque).toEqual(['apple-touch-icon.png', 'AppIcon-1024.png', 'ic_launcher-playstore.png']);
+    expect(opaque).toEqual(['apple-touch-icon.png', 'icon-512-maskable.png', 'AppIcon-1024.png', 'ic_launcher-playstore.png']);
   });
 });
 

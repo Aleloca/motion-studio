@@ -61,9 +61,19 @@ export interface IdentitySetFile {
   size?: number;
   /** The PNG must have no alpha channel (decision 729). */
   opaque?: boolean;
+  /**
+   * The drawing scaled to this share of the side and centred, instead of filling it (decision 762): the padded maskable icon
+   * (0.72) and the Android adaptive foreground (66/108). Absent: the drawing fills the PNG.
+   */
+  scale?: number;
   /** `master` always the main drawing; `auto`: the `small` variant when there is one and `size` <= 48 (decision 728), else the master. Default `master`. */
   from?: 'master' | 'small' | 'auto';
 }
+
+/** The share of the side the drawing takes in `icon-512-maskable.png`, centred on the opaque background (decision 762). */
+export const MASKABLE_SCALE = 0.72;
+/** The share of the side the drawing takes in the Android adaptive foreground: the 66 dp safe zone of the 108 dp layer. */
+export const ADAPTIVE_FOREGROUND_SCALE = 66 / 108;
 
 /** The sizes packed in `favicon.ico`. */
 export const FAVICON_ICO_SIZES: readonly number[] = [16, 32, 48];
@@ -81,7 +91,7 @@ export const IDENTITY_SETS: Record<'logo' | 'favicon' | 'app-icon', { files: Ide
       { path: 'apple-touch-icon.png', size: 180, opaque: true },
       { path: 'icon-192.png', size: 192 },
       { path: 'icon-512.png', size: 512 },
-      { path: 'icon-512-maskable.png', size: 512 },
+      { path: 'icon-512-maskable.png', size: 512, opaque: true, scale: MASKABLE_SCALE },
       { path: 'site.webmanifest' },
       { path: 'head-snippet.html' },
     ],
@@ -91,7 +101,7 @@ export const IDENTITY_SETS: Record<'logo' | 'favicon' | 'app-icon', { files: Ide
       { path: 'AppIcon-1024.png', size: 1024, opaque: true },
       { path: 'Contents.json' },
       { path: 'ic_launcher-playstore.png', size: 512, opaque: true },
-      { path: 'ic_launcher_foreground.png', size: 432 },
+      { path: 'ic_launcher_foreground.png', size: 432, scale: ADAPTIVE_FOREGROUND_SCALE },
       { path: 'ic_launcher_background.png', size: 432 },
       { path: 'ic_launcher.xml' },
       { path: 'mipmap-mdpi/ic_launcher.png', size: 48, from: 'auto' },

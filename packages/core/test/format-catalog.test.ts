@@ -1,9 +1,9 @@
-import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEFAULT_FORMATS } from '@motion-studio/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { findPreset, FormatCatalog, LEGACY_DEFAULT_IDS } from '../src/formats/format-catalog.ts';
+import { findPreset, FormatCatalog, LEGACY_DEFAULT_IDS, seenDefaultsOf } from '../src/formats/format-catalog.ts';
 
 let root: string;
 beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'ms-fmt-')); });
@@ -112,6 +112,48 @@ describe('FormatCatalog: new default presets reach existing workspaces (ruling A
     expect(s.presets).toEqual(DEFAULT_FORMATS);
     expect(s.error).toContain('formats.json');
     expect(await readFile(file(), 'utf8')).toBe('{not json');
+  });
+
+  it('a hand-edited seenDefaults near the limit is trimmed on write, current defaults first', async () => {
+    const many = Array.from({ length: 999 }, (_, k) => `old-${k}`);
+    await writeOld(legacy(), { seenDefaults: many });
+    await new FormatCatalog(root).load();
+    const seen = JSON.parse(await readFile(file(), 'utf8')).seenDefaults as string[];
+    expect(seen).toHaveLength(1000);
+    expect(seen.slice(0, DEFAULT_FORMATS.length)).toEqual(DEFAULT_FORMATS.map((p) => p.id));
+    expect(seenDefaultsOf(['x'])).toEqual([...DEFAULT_FORMATS.map((p) => p.id), 'x']);
+  });
+
+  it('a read-only workspace gets the new presets in memory and is not rewritten on every load', async () => {
+    if (process.getuid?.() === 0) return; // root ignores permissions
+    await writeOld(legacy());
+    const dir = join(root, '.studio', 'presets');
+    await chmod(dir, 0o555);
+    try {
+      const c = new FormatCatalog(root);
+      const first = await c.load();
+      expect(first.presets.map((p) => p.id)).toContain('identity-logo');
+      const before = await readFile(file(), 'utf8');
+      const second = await c.load();
+      expect(second.presets.map((p) => p.id)).toContain('identity-logo');
+      expect(await readFile(file(), 'utf8')).toBe(before);
+    } finally {
+      await chmod(dir, 0o755);
+    }
+    // Writable again: a save clears the memory of the failure, and the file catches up.
+    const c = new FormatCatalog(root);
+    await c.resetToDefaults();
+    expect(JSON.parse(await readFile(file(), 'utf8')).seenDefaults).toEqual(DEFAULT_FORMATS.map((p) => p.id));
+  });
+
+  it('load and save on one file run one at a time', async () => {
+    await writeOld(legacy());
+    const c = new FormatCatalog(root);
+    const [loaded, saved] = await Promise.all([c.load(), c.save([DEFAULT_FORMATS[0]!])]);
+    expect(loaded.presets.length).toBeGreaterThan(1);
+    expect(saved.presets).toEqual([DEFAULT_FORMATS[0]]);
+    // The save came last: the file is the saved catalog, not the load's upgrade.
+    expect(JSON.parse(await readFile(file(), 'utf8')).presets).toEqual([DEFAULT_FORMATS[0]]);
   });
 
   it('save and resetToDefaults write seenDefaults with every current default', async () => {

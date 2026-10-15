@@ -382,6 +382,8 @@ export const it: Messages = {
     vectorShape: (p) => `Logo, favicon e icona app sono composizioni vettoriali: ${p.reason}`,
     svgRefused: (p) => `${p.file} è stato rifiutato dal controllo SVG: ${p.reason}`,
     svgText: (p) => `${p.file} contiene testo: convertilo in tracciati, altrimenti cambia aspetto dove il font non è installato`,
+    svgRefusedSummary: (p) => `${p.file} non ha passato il controllo di sicurezza degli SVG (${p.count} ${p.count === 1 ? 'motivo' : 'motivi'})`,
+    svgRefusedDetails: 'Dettagli',
   },
   editor: {
     locked: (p) => `La clip ${p.clip} è bloccata: sbloccala per modificarla`,

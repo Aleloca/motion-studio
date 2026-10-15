@@ -25,6 +25,13 @@ const ff = await findFfmpeg();
 if (!ff && process.env.MS_REQUIRE_CHROME === '1') it('identity sets: ffmpeg is required (MS_REQUIRE_CHROME=1)', () => { throw new Error('missing ffmpeg'); });
 const ffprobe = ff ? join(ff.path, '..', 'ffprobe') : '';
 const pixFmt = (file: string) => execFileSync(ffprobe, ['-v', 'error', '-show_entries', 'stream=pix_fmt', '-of', 'csv=p=0', file], { encoding: 'utf8' }).trim();
+/** Whether ffprobe reports an alpha component: a known pixel format with or without one, anything else fails the test. */
+const hasAlpha = (file: string): boolean => {
+  const f = pixFmt(file);
+  if (['rgba', 'ya8', 'rgba64be', 'ya16be'].includes(f)) return true;
+  if (['rgb24', 'gray', 'rgb48be', 'gray16be'].includes(f)) return false;
+  throw new Error(`unexpected pix_fmt ${f} for ${file}`);
+};
 
 const NS = 'xmlns="http://www.w3.org/2000/svg"';
 let seq = 0;
@@ -33,19 +40,23 @@ function svgFile(body = '<circle cx="50" cy="50" r="20"/>'): string {
   writeFileSync(p, `<svg ${NS} viewBox="0 0 100 100">${body}</svg>`);
   return p;
 }
-/** A stand-in rasteriser: a transparent PNG with a centred disc, red for files named *master*, blue for *small*. */
-function fakeRasterize(calls: Array<{ path: string; sizes: number[] }>) {
-  return async (path: string, sizes: number[]) => {
-    calls.push({ path, sizes: [...sizes].sort((a, b) => a - b) });
+/**
+ * A stand-in rasteriser: a transparent PNG with a centred disc (red for files named *master*, blue for *small*) whose
+ * diameter is `disc` of the drawing's frame; a job's `scale` shrinks the frame, as Chrome does.
+ */
+function fakeRasterize(calls: Array<{ path: string; jobs: Array<{ size: number; scale?: number }> }>, disc = 0.4) {
+  return async (path: string, jobs: Array<{ size: number; scale?: number }>) => {
+    calls.push({ path, jobs: [...jobs].sort((a, b) => a.size - b.size || (a.scale ?? 1) - (b.scale ?? 1)) });
     const colour = path.includes('small') ? [0, 0, 255] : [255, 0, 0];
-    return new Map(sizes.map((s) => {
+    return jobs.map(({ size: s, scale = 1 }) => {
       const px = new Uint8Array(s * s * 4);
+      const r = (s * scale * disc) / 2;
       for (let y = 0; y < s; y++) for (let x = 0; x < s; x++) {
         const dx = x + 0.5 - s / 2, dy = y + 0.5 - s / 2;
-        if (dx * dx + dy * dy <= (s * 0.2) ** 2) px.set([...colour, 255], (y * s + x) * 4);
+        if (dx * dx + dy * dy <= r * r) px.set([...colour, 255], (y * s + x) * 4);
       }
-      return [s, encodePng(s, s, px, 4)] as const;
-    }));
+      return encodePng(s, s, px, 4);
+    });
   };
 }
 const brand = (hex?: string): BrandKit => ({ ...EMPTY_BRAND_KIT, colors: hex ? [{ id: 'c1', name: 'Primary', hex, role: 'primary', source: { kind: 'manual' } }] as BrandKit['colors'] : [] });
@@ -107,14 +118,17 @@ describe.skipIf(!ff)('buildIdentitySet (stand-in rasteriser, real ffmpeg)', () =
   }
 
   it('favicon: the ICO has 16/32/48 PNG entries from the small variant; the bigger files and the master SVG from the master', async () => {
-    const calls: Array<{ path: string; sizes: number[] }> = [];
+    const calls: Array<{ path: string; jobs: Array<{ size: number; scale?: number }> }> = [];
     const outDir = join(work, 'favicon-small');
     const master = join(work, 'master-a.svg');
     const small = join(work, 'small-a.svg');
     writeFileSync(master, `<svg ${NS} viewBox="0 0 10 10"><rect width="10" height="10"/></svg>`);
     writeFileSync(small, `<svg ${NS} viewBox="0 0 10 10"><circle cx="5" cy="5" r="5"/></svg>`);
     await buildIdentitySet('favicon', { master, small, outDir, name: 'Acme', background: '#123456', rasterize: fakeRasterize(calls), ffmpeg: ff! });
-    expect(calls).toEqual([{ path: master, sizes: [180, 192, 512] }, { path: small, sizes: [...FAVICON_ICO_SIZES] }]);
+    expect(calls).toEqual([
+      { path: master, jobs: [{ size: 180 }, { size: 192 }, { size: 512, scale: 0.72 }, { size: 512 }] },
+      { path: small, jobs: FAVICON_ICO_SIZES.map((size) => ({ size })) },
+    ]);
     const ico = readIco(readFileSync(join(outDir, 'favicon.ico')));
     expect(ico.map((e) => e.width)).toEqual([16, 32, 48]);
     for (const e of ico) expect(centre(e.png)).toEqual([0, 0, 255, 255]);
@@ -133,13 +147,13 @@ describe.skipIf(!ff)('buildIdentitySet (stand-in rasteriser, real ffmpeg)', () =
     const app = join(work, 'opaque-app');
     const rf = await buildIdentitySet('favicon', { master: svgFile(), outDir: fav, name: 'Acme', background: '#123456', rasterize: fakeRasterize([]), ffmpeg: ff! });
     const ra = await buildIdentitySet('app-icon', { master: svgFile(), small: svgFile(), outDir: app, name: 'Acme', background: '#123456', rasterize: fakeRasterize([]), ffmpeg: ff! });
-    for (const f of [join(fav, 'apple-touch-icon.png'), join(app, 'AppIcon-1024.png'), join(app, 'ic_launcher-playstore.png')]) {
-      expect(pixFmt(f)).not.toMatch(/a/);
+    for (const f of [join(fav, 'apple-touch-icon.png'), join(fav, 'icon-512-maskable.png'), join(app, 'AppIcon-1024.png'), join(app, 'ic_launcher-playstore.png')]) {
+      expect(hasAlpha(f)).toBe(false);
       // The corner (outside the disc) is the composition background.
       expect([...decodePng(readFileSync(f)).rgba.subarray(0, 4)]).toEqual([0x12, 0x34, 0x56, 255]);
     }
-    expect(pixFmt(join(fav, 'icon-192.png'))).toMatch(/a/);
-    expect(pixFmt(join(app, 'ic_launcher_foreground.png'))).toMatch(/a/);
+    expect(hasAlpha(join(fav, 'icon-192.png'))).toBe(true);
+    expect(hasAlpha(join(app, 'ic_launcher_foreground.png'))).toBe(true);
     expect(rf.files.find((f) => f.path === 'apple-touch-icon.png')).toMatchObject({ width: 180, height: 180, alpha: false });
     expect(ra.files.find((f) => f.path === 'AppIcon-1024.png')).toMatchObject({ width: 1024, alpha: false });
     expect(ra.files.find((f) => f.path === 'ic_launcher_background.png')).toMatchObject({ width: 432, alpha: false });
@@ -153,7 +167,7 @@ describe.skipIf(!ff)('buildIdentitySet (stand-in rasteriser, real ffmpeg)', () =
     const outDir = join(work, 'white');
     const r = await buildIdentitySet('app-icon', { master: svgFile(), outDir, name: 'Acme', background: '#00000000', rasterize: fakeRasterize([]), ffmpeg: ff! });
     expect([...decodePng(readFileSync(join(outDir, 'AppIcon-1024.png'))).rgba.subarray(0, 4)]).toEqual([255, 255, 255, 255]);
-    expect(pixFmt(join(outDir, 'AppIcon-1024.png'))).not.toMatch(/a/);
+    expect(hasAlpha(join(outDir, 'AppIcon-1024.png'))).toBe(false);
     expect(r.warnings.join()).toMatch(/white|bianco/);
     // With a brand primary it is that colour instead, and no warning.
     const b = await buildIdentitySet('app-icon', { master: svgFile(), outDir: join(work, 'brand-bg'), name: 'Acme', background: '#00000000', brand: brand('#00AA00'), rasterize: fakeRasterize([]), ffmpeg: ff! });
@@ -171,16 +185,37 @@ describe.skipIf(!ff)('buildIdentitySet (stand-in rasteriser, real ffmpeg)', () =
     expect(JSON.parse(readFileSync(join(b, 'site.webmanifest'), 'utf8')).theme_color).toBe('#123456');
   });
 
-  it('a full-bleed drawing warns on the maskable icon and the adaptive foreground', async () => {
-    const full = async (_p: string, sizes: number[]) => new Map(sizes.map((s) => [s, encodePng(s, s, new Uint8Array(s * s * 4).fill(255), 4)] as const));
-    const f = await buildIdentitySet('favicon', { master: svgFile(), outDir: join(work, 'bleed-f'), name: 'A', background: '#123456', rasterize: full, ffmpeg: ff! });
+  it('padded (decision 762): a full-bleed master no longer warns; the maskable icon is opaque with the drawing at 72%, the foreground at 66/108 with alpha', async () => {
+    // A mark that touches every edge of its frame (a disc as wide as the frame): unpadded it would cross both safe circles.
+    const bleed = fakeRasterize([], 1);
+    const f = await buildIdentitySet('favicon', { master: svgFile(), outDir: join(work, 'bleed-f'), name: 'A', background: '#123456', rasterize: bleed, ffmpeg: ff! });
+    expect(f.warnings).toEqual([]);
+    const m = decodePng(readFileSync(join(work, 'bleed-f', 'icon-512-maskable.png')));
+    expect(hasAlpha(join(work, 'bleed-f', 'icon-512-maskable.png'))).toBe(false);
+    const at = (img: ReturnType<typeof decodePng>, x: number, y: number) => [...img.rgba.subarray((y * img.width + x) * 4, (y * img.width + x) * 4 + 3)];
+    expect(at(m, 256, 256)).toEqual([255, 0, 0]);
+    expect(at(m, 256, 256 - 190)).toEqual([0x12, 0x34, 0x56]); // outside the 72% disc (radius 184 px): the background
+    expect(at(m, 256, 256 - 170)).toEqual([255, 0, 0]);
+    const a = await buildIdentitySet('app-icon', { master: svgFile(), outDir: join(work, 'bleed-a'), name: 'A', background: '#123456', rasterize: bleed, ffmpeg: ff! });
+    expect(a.warnings).toEqual([]);
+    const fg = decodePng(readFileSync(join(work, 'bleed-a', 'ic_launcher_foreground.png')));
+    expect(fg.alpha).toBe(true);
+    expect(fg.rgba[3]).toBe(0);
+    expect(at(fg, 216, 216 - 140)).toEqual([0, 0, 0]); // outside the 66/108 disc (radius 132 px): transparent
+    expect(fg.rgba[((216 - 140) * 432 + 216) * 4 + 3]).toBe(0);
+    expect(at(fg, 216, 216 - 125)).toEqual([255, 0, 0]);
+  });
+
+  it('the safe-zone check stays a guard: a drawing whose content still crosses the circle once padded warns', async () => {
+    const full = async (_p: string, jobs: Array<{ size: number; scale?: number }>) => jobs.map(({ size: s }) => encodePng(s, s, new Uint8Array(s * s * 4).fill(255), 4));
+    const f = await buildIdentitySet('favicon', { master: svgFile(), outDir: join(work, 'guard-f'), name: 'A', background: '#123456', rasterize: full, ffmpeg: ff! });
     expect(f.warnings.join()).toMatch(/icon-512-maskable\.png/);
-    const a = await buildIdentitySet('app-icon', { master: svgFile(), outDir: join(work, 'bleed-a'), name: 'A', background: '#123456', rasterize: full, ffmpeg: ff! });
+    const a = await buildIdentitySet('app-icon', { master: svgFile(), outDir: join(work, 'guard-a'), name: 'A', background: '#123456', rasterize: full, ffmpeg: ff! });
     expect(a.warnings.join()).toMatch(/ic_launcher_foreground\.png/);
   });
 
   it('a refused SVG (master or small) rasterises nothing and writes nothing; <text> is a warning', async () => {
-    const calls: Array<{ path: string; sizes: number[] }> = [];
+    const calls: Array<{ path: string; jobs: Array<{ size: number; scale?: number }> }> = [];
     const outDir = join(work, 'refused');
     const bad = svgFile('<script>alert(1)</script>');
     await expect(buildIdentitySet('favicon', { master: bad, outDir, name: 'A', rasterize: fakeRasterize(calls), ffmpeg: ff! })).rejects.toBeInstanceOf(SvgRefusedError);

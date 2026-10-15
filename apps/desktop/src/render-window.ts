@@ -60,11 +60,17 @@ const CLOSE_GRACE_MS = 5_000;
 /** How long a window may take to emit `closed` after `destroy()`. */
 const CLOSED_WAIT_MS = 10_000;
 
-export function renderWindowOptions(partition: string, width: number, height: number): BrowserWindowConstructorOptions {
+/**
+ * `transparent` (Phase 14, the identity sets' PNGs): the window has no background of its own (`transparent`, fully
+ * transparent `backgroundColor`), so a capture keeps the page's alpha; `openCdpRenderPage` also sets the page's default
+ * background to transparent over CDP. Every other render window keeps Electron's opaque default.
+ */
+export function renderWindowOptions(partition: string, width: number, height: number, o: { transparent?: boolean } = {}): BrowserWindowConstructorOptions {
   if (!partition.startsWith(RENDER_PARTITION_PREFIX)) throw new Error('render window: not a render partition');
   return {
     show: false, width, height, useContentSize: true, enableLargerThanScreen: true, frame: false, skipTaskbar: true, focusable: false,
     paintWhenInitiallyHidden: true,
+    ...(o.transparent ? { transparent: true, backgroundColor: '#00000000' } : {}),
     webPreferences: {
       offscreen: true, sandbox: true, contextIsolation: true,
       nodeIntegration: false, nodeIntegrationInSubFrames: false, nodeIntegrationInWorker: false,
@@ -233,14 +239,14 @@ export interface RenderWindow {
 }
 
 /** A fresh, locked, hidden window on `about:blank` (see the module comment), within the app-wide cap. */
-export async function createRenderWindow(o: { prefix: string; width: number; height: number; signal?: AbortSignal; lane?: WindowLane }): Promise<RenderWindow> {
+export async function createRenderWindow(o: { prefix: string; width: number; height: number; signal?: AbortSignal; lane?: WindowLane; transparent?: boolean }): Promise<RenderWindow> {
   const release = await renderWindowSlots.acquire(o.signal, o.lane ?? 'render');
   let win: BrowserWindow;
   const partition = `${RENDER_PARTITION_PREFIX}${randomUUID()}`;
   const ses = session.fromPartition(partition, { cache: false });
   try {
     await lockRenderSession(ses, o.prefix);
-    win = new BrowserWindow(renderWindowOptions(partition, o.width, o.height));
+    win = new BrowserWindow(renderWindowOptions(partition, o.width, o.height, { transparent: o.transparent === true }));
   } catch (e) {
     release();
     throw e;
@@ -371,7 +377,7 @@ export interface ElectronProviderOptions {
   limits: WatchdogLimits;
   timeouts?: PageTimeouts;
   /** Tests: replaces `createRenderWindow`. */
-  createWindow?: (o: { prefix: string; width: number; height: number; signal?: AbortSignal; lane?: WindowLane }) => Promise<RenderWindow>;
+  createWindow?: (o: { prefix: string; width: number; height: number; signal?: AbortSignal; lane?: WindowLane; transparent?: boolean }) => Promise<RenderWindow>;
   /** Tests: the memory reading of the windows' pids (default: the core's sampler with `app.getAppMetrics()`). */
   sample?: (pids: number[]) => ReturnType<typeof samplePidsMemory>;
 }
@@ -456,7 +462,7 @@ export class ElectronProvider implements ChromiumProvider {
     // The open's signal, or this provider closing: a wait for an app-wide slot never outlives close().
     const signal = AbortSignal.any([o.signal, this.closeCtl.signal]);
     const lane: WindowLane = o.purpose === 'frames' ? 'preview' : 'render';
-    const creating = (this.o.createWindow ?? createRenderWindow)({ prefix, width: o.width, height: o.height, signal, lane });
+    const creating = (this.o.createWindow ?? createRenderWindow)({ prefix, width: o.width, height: o.height, signal, lane, ...(o.transparentBackground ? { transparent: true } : {}) });
     this.creating.add(creating);
     try {
       rw = await creating;

@@ -29,6 +29,7 @@ import { createRenderEngine } from '../src/render/renderer.ts';
 import { liveGroupCount } from '../src/render/watchdog.ts';
 import { buildServer } from '../src/server/app.ts';
 import { readIco } from '../src/identity/ico.ts';
+import { decodePng } from '../src/identity/png.ts';
 import { buildRuntime, decodeStrips, frameCodedVideo, framePts, leftovers, readCode, renderTools } from './helpers/render-env.ts';
 
 const tools = await renderTools('render job tests');
@@ -185,13 +186,14 @@ describe.skipIf(!tools.ok)('render jobs in real Chrome', () => {
     const vdir = store.outputsDir(slug, 1);
     const dir = join(vdir, 'compositions', ICON.id);
     mkdirSync(join(dir, 'assets'), { recursive: true });
-    writeFileSync(join(dir, 'assets', 'mark.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="20" fill="#e01010"/></svg>');
+    // A wide mark (4:1): the main image must show it whole (fit contain), never cropped to the square (fix round 1).
+    writeFileSync(join(dir, 'assets', 'mark.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 100"><rect width="400" height="100" fill="#e01010"/></svg>');
     writeFileSync(join(dir, 'assets', 'small.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#1030e0"/></svg>');
     writeFileSync(join(dir, 'composition.json'), JSON.stringify({
       $schema: 'motion-studio/composition@1', width: 64, height: 64, fps: 30, duration: 0, background: '#123456', fonts: [], scenes: [],
       tracks: [{ id: 't', kind: 'visual', clips: [
-        { id: 'mark', type: 'svg', src: 'assets/mark.svg', start: 0, duration: 0, props: {} },
-        { id: 'small', type: 'svg', src: 'assets/small.svg', start: 0, duration: 0, hidden: true, props: {} },
+        { id: 'mark', type: 'svg', src: 'assets/mark.svg', start: 0, duration: 0, props: { fit: 'contain' } },
+        { id: 'small', type: 'svg', src: 'assets/small.svg', start: 0, duration: 0, hidden: true, props: { fit: 'contain' } },
       ] }],
     }));
     const compositions = [{ format: ICON.id, dir: `compositions/${ICON.id}`, hash: (await readCompositionFolder(dir)).hash, problems: [] }];
@@ -204,6 +206,11 @@ describe.skipIf(!tools.ok)('render jobs in real Chrome', () => {
     const v = (await store.readVersions(slug))[0]!;
     expect(v.outputs[0]).toMatchObject({ format: ICON.id, file: `${ICON.id}.png`, width: 64, height: 64 });
     expect(v.outputs[0]!.identitySet?.dir).toBe(ICON.id);
+    const main = decodePng(readFileSync(join(vdir, `${ICON.id}.png`)));
+    const px = (x: number, y: number) => [...main.rgba.subarray((y * 64 + x) * 4, (y * 64 + x) * 4 + 3)];
+    expect(px(0, 0)).toEqual([0x12, 0x34, 0x56]); // above the band: the background, not cropped red
+    expect(px(0, 32)).toEqual([0xe0, 0x10, 0x10]); // the band reaches both sides: the whole width is shown
+    expect(px(63, 32)).toEqual([0xe0, 0x10, 0x10]);
     expect(v.outputs[0]!.identitySet!.files.map((f) => f.path)).toEqual(IDENTITY_SETS.favicon.files.map((f) => f.path));
     for (const f of IDENTITY_SETS.favicon.files) expect(readFileSync(join(vdir, ICON.id, f.path)).length, f.path).toBeGreaterThan(0);
     expect(readIco(readFileSync(join(vdir, ICON.id, 'favicon.ico'))).map((e) => e.width)).toEqual([16, 32, 48]);

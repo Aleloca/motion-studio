@@ -5,9 +5,9 @@ import { FAVICON_ICO_SIZES, IDENTITY_SETS, type BrandKit, type IdentityOutputFil
 import { findFfmpeg, type FfmpegInfo } from '../render/encode.ts';
 import { backgroundRgb, flattenPng } from '../store-pack/flatten.ts';
 import { t } from '../i18n.ts';
-import { writeIco } from './ico.ts';
-import { pngSize, solidPng } from './png.ts';
-import { rasterizeSvg, readCheckedSvg, type RasterizeOptions } from './rasterize.ts';
+import { readIco, writeIco } from './ico.ts';
+import { decodePng, pngSize, solidPng } from './png.ts';
+import { rasterizeSvgJobs, readCheckedSvg, type RasterJob, type RasterizeOptions } from './rasterize.ts';
 import { safeZoneCheck } from './safe-zone.ts';
 
 /**
@@ -15,12 +15,15 @@ import { safeZoneCheck } from './safe-zone.ts';
  * variant) the core writes exactly the files of `IDENTITY_SETS[kind]` into `outDir`.
  *
  * - **Vector files** (`logo.svg`, `favicon.svg`) are the checked SVG bytes.
- * - **PNGs** are rasterised at their exact size (`rasterizeSvg`); `from: 'auto'` takes the `small` variant up to 48 px
- *   when there is one (decision 728). `logo.png` is 1024 px on its long side (the SVG's `viewBox` sets the other).
- * - **Opaque PNGs** (`opaque: true`: apple-touch-icon, iOS 1024, Play 512) are flattened with the store pack's
- *   `flattenPng` (no alpha channel) onto `opaqueBackground` (decision 729).
- * - **`favicon.ico`** packs `FAVICON_ICO_SIZES` as PNG entries (`writeIco`).
- * - **Safe zone** (warning only): `icon-512-maskable.png` (80% circle) and `ic_launcher_foreground.png` (66/108).
+ * - **PNGs** are rasterised at their exact size (`rasterizeSvgJobs`); `from: 'auto'` takes the `small` variant up to
+ *   48 px when there is one (decision 728). `logo.png` is 1024 px on its long side (the SVG's `viewBox` sets the other).
+ *   A file with `scale` has the drawing scaled to that share of the side and centred (decision 762): the maskable icon at
+ *   72%, the Android foreground at 66/108.
+ * - **Opaque PNGs** (`opaque: true`: apple-touch-icon, the maskable icon, iOS 1024, Play 512) are flattened with the store
+ *   pack's `flattenPng` (no alpha channel) onto `opaqueBackground` (decision 729).
+ * - **`favicon.ico`** packs `FAVICON_ICO_SIZES` as PNG entries (`writeIco`), checked with `readIco` before it is written.
+ * - **Safe zone** (a guard, warning only): the drawing of `icon-512-maskable.png` (80% circle, measured before the
+ *   flatten) and `ic_launcher_foreground.png` (66/108).
  * - **Templates**: `site.webmanifest` (theme colour from the brand's primary colour, else the opaque background),
  *   `head-snippet.html`, the iOS `Contents.json` (single size, 1024 universal) and the Android adaptive `ic_launcher.xml`;
  *   `ic_launcher_background.png` is the opaque background colour.
@@ -45,8 +48,8 @@ export interface IdentitySetInput {
   /** ffmpeg for the flatten step; default the one found on the system. */
   ffmpeg?: FfmpegInfo;
   signal?: AbortSignal;
-  /** Replaces `rasterizeSvg` (tests without a browser). It receives only checked SVGs. */
-  rasterize?: typeof rasterizeSvg;
+  /** Replaces `rasterizeSvgJobs` (tests without a browser). It receives only checked SVGs. */
+  rasterize?: typeof rasterizeSvgJobs;
 }
 
 export type IdentityKind = keyof typeof IDENTITY_SETS;
@@ -112,7 +115,12 @@ export function iosContentsJson(): string {
   }, null, 2)}\n`;
 }
 
-/** The Android adaptive icon (`mipmap-anydpi-v26/ic_launcher.xml`): background and foreground layers. */
+/**
+ * The Android adaptive icon `ic_launcher.xml`: background and foreground layers. The set is flat (spec §4.1); in an Android
+ * project it goes in `res/mipmap-anydpi-v26/`, `ic_launcher_foreground.png` and `ic_launcher_background.png` (432 px, the
+ * xxxhdpi size of the 108 dp layers) in `res/mipmap-xxxhdpi/`, and each `mipmap-<density>/ic_launcher.png` in the
+ * `res/` folder of the same name (the legacy icon for Android before 8). The docs (Task 7) should say so.
+ */
 export function androidAdaptiveXml(): string {
   return [
     '<?xml version="1.0" encoding="utf-8"?>',
@@ -158,19 +166,26 @@ export async function buildIdentitySet(kind: IdentityKind, input: IdentitySetInp
   if (master.warnings.length > 0) warnings.push(msg.identitySvgText({ file: `${label}: ${kind === 'logo' ? 'logo.svg' : kind === 'favicon' ? 'favicon.svg' : 'master'}` }));
   if (small && small.warnings.length > 0) warnings.push(msg.identitySvgText({ file: `${label}: small` }));
 
-  // What to rasterise, per drawing.
-  const need = { master: new Set<number>(), small: new Set<number>() };
+  // What to rasterise, per drawing: one job per size and scale (one browser per drawing).
+  const keyOf = (size: number, scale?: number) => `${size}@${scale ?? 1}`;
+  const need = { master: new Map<string, RasterJob>(), small: new Map<string, RasterJob>() };
+  const add = (f: IdentitySetFile, size: number) => need[sourceOf(f, size, small !== null)].set(keyOf(size, f.scale), { size, ...(f.scale !== undefined ? { scale: f.scale } : {}) });
   for (const f of set.files) {
-    if (f.path === 'favicon.ico') for (const s of FAVICON_ICO_SIZES) need[sourceOf(f, s, small !== null)].add(s);
-    else if (f.size !== undefined && f.path !== 'ic_launcher_background.png') need[sourceOf(f, f.size, small !== null)].add(f.size);
+    if (f.path === 'favicon.ico') for (const s of FAVICON_ICO_SIZES) add(f, s);
+    else if (f.size !== undefined && f.path !== 'ic_launcher_background.png') add(f, f.size);
   }
   const shape = kind === 'logo' ? 'long-side' : 'square';
   const raster = { ...input.raster, ...(input.signal ? { signal: input.signal } : {}), shape } as const;
-  const rasterize = input.rasterize ?? rasterizeSvg;
-  const masterPngs = need.master.size > 0 ? await rasterize(input.master, [...need.master], raster) : new Map<number, Buffer>();
-  const smallPngs = need.small.size > 0 && input.small !== undefined ? await rasterize(input.small, [...need.small], raster) : new Map<number, Buffer>();
-  const png = (f: Pick<IdentitySetFile, 'from'>, size: number) => {
-    const b = (sourceOf(f, size, small !== null) === 'small' ? smallPngs : masterPngs).get(size);
+  const rasterize = input.rasterize ?? rasterizeSvgJobs;
+  const run = async (path: string | undefined, jobs: Map<string, RasterJob>) => {
+    if (jobs.size === 0 || path === undefined) return new Map<string, Buffer>();
+    const bufs = await rasterize(path, [...jobs.values()], raster);
+    return new Map([...jobs.keys()].map((k, i) => [k, bufs[i]!]));
+  };
+  const masterPngs = await run(input.master, need.master);
+  const smallPngs = await run(input.small, need.small);
+  const png = (f: IdentitySetFile, size: number) => {
+    const b = (sourceOf(f, size, small !== null) === 'small' ? smallPngs : masterPngs).get(keyOf(size, f.scale));
     if (!b) throw new Error(`identity: no ${size} px raster`);
     return b;
   };
@@ -190,7 +205,13 @@ export async function buildIdentitySet(kind: IdentityKind, input: IdentitySetInp
       continue;
     }
     if (f.path === 'favicon.ico') {
-      await writeAtomic(out, writeIco(FAVICON_ICO_SIZES.map((size) => ({ size, png: png(f, size) }))));
+      const ico = writeIco(FAVICON_ICO_SIZES.map((size) => ({ size, png: png(f, size) })));
+      // The set check (brief): the ICO reads back with exactly the sizes, each a PNG that decodes at its size.
+      const entries = readIco(ico);
+      if (entries.map((e) => e.width).join() !== FAVICON_ICO_SIZES.join() || entries.some((e) => { const d = decodePng(e.png); return d.width !== e.width || d.height !== e.height; })) {
+        throw new Error('favicon.ico did not read back with its 16, 32 and 48 px images');
+      }
+      await writeAtomic(out, ico);
       files.push({ path: f.path, role: 'favicon' });
       continue;
     }

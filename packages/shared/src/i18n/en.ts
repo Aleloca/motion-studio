@@ -385,6 +385,9 @@ export const en = {
     vectorShape: (p: { reason: string }) => `Logo, favicon and app icon are vector compositions: ${p.reason}`,
     svgRefused: (p: { file: string; reason: string }) => `${p.file} was refused by the SVG check: ${p.reason}`,
     svgText: (p: { file: string }) => `${p.file} has text: convert it to paths, or it will look different where the font is not installed`,
+    /** A short, translated summary of SVG refusals for the UI (the reasons stay English, for the agent, behind "Details"). */
+    svgRefusedSummary: (p: { file: string; count: number }) => `${p.file} did not pass the SVG safety check (${p.count} ${p.count === 1 ? 'reason' : 'reasons'})`,
+    svgRefusedDetails: 'Details',
   },
   /** Direct editing (Phase 10b): refusals of `applyEdit` (key `editor.<name>`) and the lines of an edit summary. */
   editor: {

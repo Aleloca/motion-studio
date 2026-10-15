@@ -414,13 +414,13 @@ export function identityPromptSection(kinds: ReadonlySet<'logo' | 'favicon' | 'a
   const start = identity?.start ?? (hasBrandLogo ? 'brand' : 'scratch');
   const lines = [
     '## Identity formats (logo, favicon, app icon): vector mode',
-    '- Each of these compositions is a still (`"duration": 0`) with exactly ONE `svg` clip that fills the frame (x 0, y 0, the composition\'s width and height, or no box at all) and no other clip, track content, animation, Ken Burns, rotation, scale or opacity. Put everything in the SVG.',
+    '- Each of these compositions is a still (`"duration": 0`) with exactly ONE `svg` clip that fills the frame (x 0, y 0, the composition\'s width and height, or no box at all) with `"fit": "contain"` in its props (required: the default would crop a drawing that is not square), and no other clip, track content, animation, Ken Burns, rotation, scale or opacity. Put everything in the SVG.',
     '- The SVG lives in the composition\'s `assets/` (e.g. `assets/logo.svg`). Motion Studio exports it as the vector file and draws every PNG from it at its exact size, so it must scale: the root `<svg xmlns="http://www.w3.org/2000/svg">` needs a `viewBox`.',
     '- Motion Studio refuses the SVG, and sends you back to fix it, if it has: `<script>`, `on*` attributes, `<foreignObject>`, `<image>` (embedded or linked), links or `href`/`xlink:href` other than a local `#id`, `url(…)` other than a local `#id`, `@import` or any other `@` rule in `<style>`, CSS escapes, animation elements, `<!DOCTYPE>`/entities, or more than 512 KB. Keep it plain, well-formed XML: paths, shapes, gradients, clip paths, masks, filters, local `<use>`.',
     '- Convert text to paths. `<text>` is accepted only with a warning, because it looks different where the font is not installed.',
     ...(kinds.has('logo') ? ['- Logo: draw the logo itself on a transparent background; the SVG\'s `viewBox` sets its proportions (a wide logo has a wide viewBox): `logo.png` is 1024 px on its long side.'] : []),
     ...(icons ? [
-      '- Favicon and app icon: an optional simplified variant for the sizes up to 48 px (the 16/32/48 px favicon and the 48 px Android icon): a second `svg` clip with `"id": "small"`, `"hidden": true`, full frame, with its own file (e.g. `assets/small.svg`). Use it when the main drawing would not read at 16 px; without it the main drawing is used.',
+      '- Favicon and app icon: an optional simplified variant for the sizes up to 48 px (the 16/32/48 px favicon and the 48 px Android icon): a second `svg` clip with `"id": "small"`, `"hidden": true`, full frame, `"fit": "contain"`, with its own file (e.g. `assets/small.svg`). Use it when the main drawing would not read at 16 px; without it the main drawing is used.',
       '- The composition `background` is the background of the icons that must be opaque (apple-touch-icon, iOS 1024, Google Play 512): set an opaque colour that suits the mark. Without one Motion Studio uses the brand\'s primary colour, else white.',
       '- Keep the important part of the mark inside the central circle: 80% of the side for the maskable web icon, and 66/108 (about 61%) for the Android adaptive icon foreground. Content outside may be cut by the platform\'s mask (Motion Studio warns).',
     ] : []),
@@ -514,13 +514,15 @@ export function buildCreativePrompt(i: PromptInput): string {
   } else if (contract === 'compositions') {
     parts.push(
       `The compositions of version ${i.version} do not meet the contract. Fix these problems in the same folders (${outputDir}/compositions/<format-id>/), then call validate_composition again:`,
-      ...(i.problems ?? []).map((p) => `- ${p}`),
+      // One line each: a problem may quote the agent's own files (an SVG refusal), never a way to start a new line.
+      ...(i.problems ?? []).map((p) => `- ${oneLine(p, 2000)}`),
       '', ...repairRequestSection(i.userWords, i.liveMessages),
     );
   } else {
     parts.push(
       `The outputs of version ${i.version} do not meet the contract. Fix these problems and deliver again in the same folder (${outputDir}/), updating manifest.json:`,
-      ...(i.problems ?? []).map((p) => `- ${p}`),
+      // One line each: a problem may quote the agent's own files (an SVG refusal), never a way to start a new line.
+      ...(i.problems ?? []).map((p) => `- ${oneLine(p, 2000)}`),
       '', ...repairRequestSection(i.userWords, i.liveMessages),
     );
   }

@@ -29,6 +29,13 @@ describe.skipIf(!tools.ok)('identity rasterisation (real Chrome)', { timeout: 30
   const provider = async () => { launches++; return new ChromeProvider({ exe: tools.chrome!.exe, kind: 'system', limits: { timeLimitMs: 5 * 60_000 } }); };
   const raster = () => ({ provider, distDir: dist, tempDir: work });
   const pixFmt = (file: string) => execFileSync(join(tools.ffmpeg!.path, '..', 'ffprobe'), ['-v', 'error', '-show_entries', 'stream=pix_fmt', '-of', 'csv=p=0', file], { encoding: 'utf8' }).trim();
+  /** Whether ffprobe reports an alpha component (a known format either way; anything else fails). */
+  const hasAlpha = (file: string): boolean => {
+    const f = pixFmt(file);
+    if (['rgba', 'ya8', 'rgba64be', 'ya16be'].includes(f)) return true;
+    if (['rgb24', 'gray', 'rgb48be', 'gray16be'].includes(f)) return false;
+    throw new Error(`unexpected pix_fmt ${f} for ${file}`);
+  };
   const write = (name: string, body: string, viewBox = '0 0 100 100') => {
     const p = join(work, name);
     writeFileSync(p, `<svg ${NS} viewBox="${viewBox}">${body}</svg>`);
@@ -54,6 +61,15 @@ describe.skipIf(!tools.ok)('identity rasterisation (real Chrome)', { timeout: 30
     expect([...img.rgba.subarray(c, c + 4)]).toEqual([0x10, 0x30, 0xe0, 255]);
   });
 
+  it('an engine that does not keep transparency is caught by the probe: nothing is rasterised', async () => {
+    // A provider that drops `transparentBackground` stands in for a render window with an opaque background.
+    const opaque = async () => {
+      const p = await provider();
+      return { kind: p.kind, get failure() { return p.failure; }, close: () => p.close(), open: (o: Parameters<typeof p.open>[0]) => p.open({ ...o, transparentBackground: false }) };
+    };
+    await expect(rasterizeSvg(small, [64], { ...raster(), provider: opaque })).rejects.toThrow(/does not keep transparency/);
+  });
+
   it('a refused SVG never reaches the browser', async () => {
     const before = launches;
     const bad = write('bad.svg', '<image href="https://example.com/a.png" width="10" height="10"/>');
@@ -73,8 +89,9 @@ describe.skipIf(!tools.ok)('identity rasterisation (real Chrome)', { timeout: 30
     expect(Buffer.from(decodePng(fromMaster).rgba).equals(Buffer.from(decodePng(fromSmall).rgba))).toBe(false);
     expect(Buffer.from(decodePng(ico[0]!.png).rgba).equals(Buffer.from(decodePng(fromSmall).rgba))).toBe(true);
     expect(pngSize(readFileSync(join(outDir, 'icon-512.png')))).toMatchObject({ width: 512, height: 512 });
-    expect(pixFmt(join(outDir, 'apple-touch-icon.png'))).not.toMatch(/a/);
-    expect(pixFmt(join(outDir, 'icon-512.png'))).toMatch(/a/);
+    expect(hasAlpha(join(outDir, 'apple-touch-icon.png'))).toBe(false);
+    expect(hasAlpha(join(outDir, 'icon-512-maskable.png'))).toBe(false);
+    expect(hasAlpha(join(outDir, 'icon-512.png'))).toBe(true);
     // Transparent composition, no brand: white, with the warning.
     // (x 12, y 0) of 180 px is 6.7 units of 100: between two stripes.
     const touch = decodePng(readFileSync(join(outDir, 'apple-touch-icon.png')));
@@ -86,13 +103,16 @@ describe.skipIf(!tools.ok)('identity rasterisation (real Chrome)', { timeout: 30
     const outDir = join(work, 'app');
     const r = await buildIdentitySet('app-icon', { master: small, outDir, name: 'Acme', background: '#123456', raster: raster(), ffmpeg: tools.ffmpeg! });
     expect(r.files.map((f) => f.path)).toEqual(IDENTITY_SETS['app-icon'].files.map((f) => f.path));
-    expect(pixFmt(join(outDir, 'AppIcon-1024.png'))).not.toMatch(/a/);
-    expect(pixFmt(join(outDir, 'ic_launcher-playstore.png'))).not.toMatch(/a/);
-    expect(pixFmt(join(outDir, 'ic_launcher_foreground.png'))).toMatch(/a/);
+    expect(hasAlpha(join(outDir, 'AppIcon-1024.png'))).toBe(false);
+    expect(hasAlpha(join(outDir, 'ic_launcher-playstore.png'))).toBe(false);
+    expect(hasAlpha(join(outDir, 'ic_launcher_foreground.png'))).toBe(true);
     expect(pngSize(readFileSync(join(outDir, 'AppIcon-1024.png')))).toMatchObject({ width: 1024, height: 1024 });
     expect(pngSize(readFileSync(join(outDir, 'mipmap-xxxhdpi/ic_launcher.png')))).toMatchObject({ width: 192, height: 192 });
-    // The disc (r = 0.4) is outside the adaptive circle (66/108 ≈ 0.61 diameter): a warning, not a failure.
-    expect(r.warnings.join()).toMatch(/ic_launcher_foreground\.png/);
+    // The disc fills 80% of the master's frame; padded to 66/108 (decision 762) it sits inside the safe circle: no warning.
+    expect(r.warnings).toEqual([]);
+    const fg = decodePng(readFileSync(join(outDir, 'ic_launcher_foreground.png')));
+    expect(fg.rgba[((216 - 120) * 432 + 216) * 4 + 3]).toBe(0); // 0.4 × 264 px = 106 px from the centre: outside the mark
+    expect(fg.rgba[((216 - 90) * 432 + 216) * 4 + 3]).toBe(255);
 
     const logoDir = join(work, 'logo');
     const wide = write('wide.svg', '<ellipse cx="200" cy="50" rx="150" ry="40" fill="#000"/>', '0 0 400 100');

@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { DEFAULT_FORMATS, formatsFileSchema, instancePreset, issuesText, type FormatPreset } from '@motion-studio/shared';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
 import { WorkspaceError } from '../workspace-store.ts';
+import { fileLock } from '../file-locks.ts';
 import { currentLocale, t } from '../i18n.ts';
 
 export interface CatalogState { presets: FormatPreset[]; error: string | null; path: string }
@@ -25,30 +26,45 @@ export const LEGACY_DEFAULT_IDS: readonly string[] = Object.freeze([
   'playstore-tablet', 'playstore-icon', 'playstore-promo-16x9',
 ]);
 
+/** Most `seenDefaults` ids written (the schema's limit): the current defaults first, then other ids the file had. */
+const MAX_SEEN_DEFAULTS = 1000;
+/** Catalog files whose upgrade write failed in this process (a read-only workspace): not tried again on every load. */
+const upgradeFailed = new Set<string>();
+
 export class FormatCatalog {
   private readonly path: string;
   constructor(workspaceRoot: string) { this.path = join(workspaceRoot, '.studio', 'presets', 'formats.json'); }
 
-  async load(): Promise<CatalogState> {
-    try {
-      const file = await readJsonFile(this.path, formatsFileSchema);
-      // New built-in presets reach existing workspaces (ruling AK): a default never offered to this file is appended; one
-      // offered before and missing now was deleted by the user and stays deleted. Written only when something changed.
-      const seen = new Set(file.seenDefaults ?? LEGACY_DEFAULT_IDS);
-      const have = new Set(file.presets.map((p) => p.id));
-      const added = DEFAULT_FORMATS.filter((p) => !have.has(p.id) && !seen.has(p.id));
-      const allSeen = DEFAULT_FORMATS.every((p) => seen.has(p.id));
-      if (added.length === 0 && allSeen && file.seenDefaults !== undefined) return { presets: file.presets, error: null, path: this.path };
-      const presets = [...file.presets, ...added];
-      // Best effort: a workspace that cannot be written still gets the new presets in memory, and tries again next load.
-      return await this.write(presets, [...new Set([...seen, ...DEFAULT_FORMATS.map((p) => p.id)])]).catch(() => ({ presets, error: null, path: this.path }));
-    } catch (err) {
-      if (err instanceof JsonFileError && err.reason === 'missing') return this.write(DEFAULT_FORMATS);
-      if (err instanceof JsonFileError) {
-        return { presets: DEFAULT_FORMATS, error: t().errors.formatCatalogFallback({ detail: err.message }), path: this.path };
+  /** Load, save and reset of one catalog file run one at a time (the process-wide lock of metadata files). */
+  private locked<T>(fn: () => Promise<T>): Promise<T> { return fileLock.run(this.path, fn); }
+
+  load(): Promise<CatalogState> {
+    return this.locked(async () => {
+      try {
+        const file = await readJsonFile(this.path, formatsFileSchema);
+        // New built-in presets reach existing workspaces (ruling AK): a default never offered to this file is appended; one
+        // offered before and missing now was deleted by the user and stays deleted. Written only when something changed.
+        const seen = new Set(file.seenDefaults ?? LEGACY_DEFAULT_IDS);
+        const have = new Set(file.presets.map((p) => p.id));
+        const added = DEFAULT_FORMATS.filter((p) => !have.has(p.id) && !seen.has(p.id));
+        const allSeen = DEFAULT_FORMATS.every((p) => seen.has(p.id));
+        if (added.length === 0 && allSeen && file.seenDefaults !== undefined) return { presets: file.presets, error: null, path: this.path };
+        const presets = [...file.presets, ...added];
+        // Best effort: a workspace that cannot be written still gets the new presets in memory; after one failed write the
+        // file is not written again on every load (only a save or a reset, or a new process, tries again).
+        if (upgradeFailed.has(this.path)) return { presets, error: null, path: this.path };
+        return await this.write(presets, seenDefaultsOf(seen)).catch(() => {
+          upgradeFailed.add(this.path);
+          return { presets, error: null, path: this.path };
+        });
+      } catch (err) {
+        if (err instanceof JsonFileError && err.reason === 'missing') return this.write(DEFAULT_FORMATS);
+        if (err instanceof JsonFileError) {
+          return { presets: DEFAULT_FORMATS, error: t().errors.formatCatalogFallback({ detail: err.message }), path: this.path };
+        }
+        throw err;
       }
-      throw err;
-    }
+    });
   }
 
   async save(presets: FormatPreset[]): Promise<CatalogState> {
@@ -56,10 +72,10 @@ export class FormatCatalog {
     if (!parsed.success) {
       throw new WorkspaceError(400, t().errors.formatCatalogInvalid({ detail: issuesText(parsed.error, currentLocale()) }));
     }
-    return this.write(parsed.data.presets);
+    return this.locked(() => this.write(parsed.data.presets));
   }
 
-  resetToDefaults(): Promise<CatalogState> { return this.write(DEFAULT_FORMATS); }
+  resetToDefaults(): Promise<CatalogState> { return this.locked(() => this.write(DEFAULT_FORMATS)); }
 
   /**
    * Writes the file. `seenDefaults` defaults to every current default id: after a save or a reset the user has seen them
@@ -67,6 +83,12 @@ export class FormatCatalog {
    */
   private async write(presets: FormatPreset[], seenDefaults: string[] = DEFAULT_FORMATS.map((p) => p.id)): Promise<CatalogState> {
     await writeJsonFileAtomic(this.path, { schemaVersion: 1, presets, seenDefaults });
+    upgradeFailed.delete(this.path);
     return { presets, error: null, path: this.path };
   }
+}
+
+/** The `seenDefaults` to write: every current default id first, then the other ids the file had seen, within the schema's limit. */
+export function seenDefaultsOf(seen: Iterable<string>): string[] {
+  return [...new Set([...DEFAULT_FORMATS.map((p) => p.id), ...seen])].slice(0, MAX_SEEN_DEFAULTS);
 }
