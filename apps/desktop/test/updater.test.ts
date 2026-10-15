@@ -54,6 +54,28 @@ describe('signature', () => {
   });
 });
 
+describe('setupUpdates reports its state for the notice (decision 802)', () => {
+  it('off in development and when unsigned: the state says off, nothing else is shown', async () => {
+    for (const over of [{ isPackaged: false }, { signed: async () => false }]) {
+      const state = vi.fn();
+      const { opts, notify } = base({ ...over, state });
+      await setupUpdates(opts);
+      expect(state.mock.calls).toEqual([['off']]);
+      expect(notify).not.toHaveBeenCalled();
+    }
+  });
+  it('off when electron-updater is missing; active when it starts; a throwing state callback changes nothing', async () => {
+    const state = vi.fn();
+    await setupUpdates(base({ load: async () => { throw new Error('x'); }, state }).opts);
+    expect(state.mock.calls).toEqual([['off']]);
+    const on = vi.fn();
+    await setupUpdates(base({ load: async () => ({ autoUpdater: fake() }), state: on }).opts);
+    expect(on.mock.calls).toEqual([['active']]);
+    const boom = vi.fn(() => { throw new Error('state'); });
+    await expect(setupUpdates(base({ isPackaged: false, state: boom }).opts)).resolves.toBeUndefined();
+  });
+});
+
 describe('setupUpdates turns itself off with a log line, no dialog', () => {
   it('in development, without loading electron-updater', async () => {
     const load = vi.fn(async () => ({}));

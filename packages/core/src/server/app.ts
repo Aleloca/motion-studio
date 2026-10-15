@@ -12,7 +12,7 @@ import fastifyMultipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import fastifyWebsocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
-import { isLocale, workspaceSettingsSchema, type DoctorCheck, type UsageBilling, type LinkedCodebase, type ProjectDetail, type ServerMessage, type WorkspaceInfo, type WorkspaceProblem, type WorkspaceSettings } from '@motion-studio/shared';
+import { isLocale, workspaceSettingsSchema, type DoctorCheck, type UpdatesState, type UsageBilling, type LinkedCodebase, type ProjectDetail, type ServerMessage, type WorkspaceInfo, type WorkspaceProblem, type WorkspaceSettings } from '@motion-studio/shared';
 import { BrandService } from '../brand/brand-analysis.ts';
 import { UPLOAD_LIMITS } from '../library/upload.ts';
 import { CreativeTurnService } from '../creatives/creative-turns.ts';
@@ -74,6 +74,8 @@ export interface ServerDeps {
   git: Git;
   runner: AgentRunner;
   /** Receives the server's (cached) sandbox detection, so the report includes the sandbox check. */
+  /** Decision 802: whether the desktop updater is on (absent: no updater here, 'unknown'). Read at every request. */
+  updatesState?: () => UpdatesState;
   doctor: (extra: { sandbox: () => Promise<SandboxSupport>; workspacePath?: string | null; agentOptIn?: CapabilityOptIn }) => Promise<DoctorCheck[]>;
   /**
    * Phase 13: the installed Claude Code version (`claude --version`), null when it does not answer. Cached by the server
@@ -485,6 +487,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   // pid: lets a second launch check that the recorded server.json pid is really this server (pids get reused).
   app.get('/api/health', async () => ({ ok: true, pid: process.pid }));
+  app.get('/api/updates', async (): Promise<{ state: UpdatesState }> => ({ state: deps.updatesState?.() ?? 'unknown' }));
   app.get('/api/doctor', async () => {
     const checks = await deps.doctor({ sandbox: effectiveSandbox, workspacePath: workspace?.root ?? null, agentOptIn: await agentOptIn() });
     // Fix round 1 (I-A): an agent change to the workspace settings the core could not undo, held across restarts.

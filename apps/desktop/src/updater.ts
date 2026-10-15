@@ -63,8 +63,10 @@ export async function setupUpdates(opts: {
   load(): Promise<unknown>;
   notify(message: string, onRestart: () => void): void;
   log(msg: string): void;
+  /** Decision 802: where the state is kept for Settings → Updates and the Doctor (a notice, never a dialog). */
+  state?(s: 'active' | 'off'): void;
 }): Promise<void> {
-  const off = (why: string) => opts.log(`Automatic updates off: ${why}`);
+  const off = (why: string) => { opts.log(`Automatic updates off: ${why}`); try { opts.state?.('off'); } catch { /* best effort */ } };
   const failed = (e: unknown) => opts.log(t().desktop.updateCheckFailed({ detail: detail(e) }));
   try {
     if (!opts.isPackaged) return off('development run');
@@ -83,6 +85,7 @@ export async function setupUpdates(opts: {
       try { updater.quitAndInstall(); } catch (e) { failed(e); }
     }));
     updater.autoDownload = true;
+    try { opts.state?.('active'); } catch { /* best effort */ }
     const result = (await Promise.resolve(updater.checkForUpdates())) as { downloadPromise?: Promise<unknown> | null } | null | undefined;
     // A failed download is already an `error` event (logged): its rejected promise must not go unhandled.
     void result?.downloadPromise?.catch(() => undefined);

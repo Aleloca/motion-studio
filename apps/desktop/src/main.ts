@@ -58,6 +58,9 @@ function resourcePaths() {
   };
 }
 
+/** Decision 802: set by `setupUpdates` once it has decided; read by the core (Settings → Updates, Doctor). */
+let updatesState: 'active' | 'off' | 'unknown' = 'unknown';
+
 async function boot(configDir?: string) {
   // Errors shown before the core is up (dialogs, logs) already speak the saved or system language.
   setLocale(bootLocale(await readSavedLanguage(configDir ?? defaultConfigDir()), app.getPreferredSystemLanguages()));
@@ -68,6 +71,7 @@ async function boot(configDir?: string) {
   return startServer({
     ...serverOptions({ resources, shellPath, ...(configDir ? { configDir } : {}) }),
     systemLocales: app.getPreferredSystemLanguages(),
+    updatesState: () => updatesState,
     // Electron's own Chromium renders (hidden offscreen windows), never a Chrome found on disk.
     ...desktopRenderOptions(runtimeDir),
   });
@@ -275,6 +279,7 @@ async function run() {
     signed: () => appSigned({ platform: process.platform, execPath: process.execPath, codesign: async (bundle) => (await execFileAsync('/usr/bin/codesign', ['-dv', '--verbose=2', bundle], { timeout: 5000 })).stderr }),
     load: () => import('electron-updater'),
     log: (m) => console.log(m),
+    state: (s) => { updatesState = s; },
     notify: (message, onRestart) => {
       buildMenu(onRestart);
       const n = new Notification({ title: 'Motion Studio', body: message });

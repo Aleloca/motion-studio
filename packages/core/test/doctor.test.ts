@@ -21,6 +21,19 @@ const allGood = {
   'claude auth status --json': ok(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai' })),
 };
 
+describe('runDoctor · automatic updates (decision 802)', () => {
+  const run = (updatesOff?: boolean) => runDoctor({ exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0', ...(updatesOff === undefined ? {} : { updatesOff }) });
+  it('adds one optional note row when the updater is off, and it never blocks', async () => {
+    const checks = await run(true);
+    expect(checks.find((c) => c.id === 'updates')).toEqual({ id: 'updates', label: t().doctor.updatesLabel, required: false, ok: false, message: t().doctor.updatesOff });
+    expect(hasBlockingFailure(checks)).toBe(false);
+  });
+  it('has no such row when the updater is on or there is none', async () => {
+    expect((await run(false)).some((c) => c.id === 'updates')).toBe(false);
+    expect((await run()).some((c) => c.id === 'updates')).toBe(false);
+  });
+});
+
 describe('runDoctor', () => {
   it('reports everything ok with versions', async () => {
     const checks = await runDoctor({ exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0' });

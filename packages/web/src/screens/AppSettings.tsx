@@ -1,4 +1,4 @@
-import { KEY_CAPABILITIES, KEY_PERMISSIONS, LOCALES, shownTotal, type ChromeDownloadOffer, type KeyCheckResult, type RenderEngineStatus, type DoctorCheck, type LanguageSetting, type Locale, type ProviderId, type SecretStatus, type UsageReport, type WorkspaceSettings, type WorkspaceSettingsView } from '@motion-studio/shared';
+import { KEY_CAPABILITIES, KEY_PERMISSIONS, LOCALES, shownTotal, type ChromeDownloadOffer, type KeyCheckResult, type RenderEngineStatus, type DoctorCheck, type LanguageSetting, type Locale, type ProviderId, type SecretStatus, type UpdatesState, type UsageReport, type WorkspaceSettings, type WorkspaceSettingsView } from '@motion-studio/shared';
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { api } from '../api.ts';
 import { formatDate, formatNumber, useLocale, useT, type LanguageState } from '../i18n.tsx';
@@ -541,12 +541,20 @@ function Notifications() {
 function Updates() {
   const t = useT();
   const u = t.web.appSettings.updates;
+  // Decision 802: a development run or an unsigned build says so once, here; where the core reports nothing, no claim either way.
+  const [state, setState] = useState<UpdatesState>('unknown');
+  useEffect(() => {
+    if (!desktop()) return;
+    let alive = true;
+    Promise.resolve().then(() => api.getUpdatesState()).then((r) => { if (alive) setState(r.state); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
   return (
     <div className="ms-set-narrow">
       <Head title={u.title} />
       <Card className="ms-set-card" data-enter>
         {/* How updates arrive is a desktop fact; in a browser the page shows only the version. */}
-        <Row title={u.version({ version: __APP_VERSION__ })} sub={desktop() ? u.automatic : undefined} />
+        <Row title={u.version({ version: __APP_VERSION__ })} sub={!desktop() ? undefined : state === 'off' ? u.off : state === 'active' ? u.automatic : undefined} />
       </Card>
     </div>
   );

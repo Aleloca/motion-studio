@@ -262,6 +262,8 @@ export const en = {
     workspacePathFix: 'Move the workspace to a folder whose path has none of these characters, then choose it again',
     folderGlobChars: (p: { path: string }) => `The path ${p.path} contains ( ) [ ] { } * ? or \\: the agent\'s rules protecting Motion Studio\'s files cannot match it safely, so every agent run there is refused (browsing and exporting still work)`,
     folderGlobFix: 'Rename the folder that has these characters (for a project folder that is a link: rename its target, then link it again), then choose the workspace again',
+    updatesLabel: 'Automatic updates',
+    updatesOff: 'Automatic updates are not active in this version',
     denyPathsLabel: 'Home and config folder paths',
     denyPathsGlob: (p: { paths: string; count: number }) => p.count === 1
       ? `The path ${p.paths} contains ( ) [ ] { } * ? or \\: the agent\'s deny rules for it (tokens, secret files) may not apply`
@@ -1568,6 +1570,7 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
       updates: {
         title: 'Updates',
         version: (p: { version: string }) => `Motion Studio ${p.version}`,
+        off: 'Automatic updates are not active in this version',
         automatic: 'The desktop app downloads updates automatically and asks you to restart.',
       },
     },
