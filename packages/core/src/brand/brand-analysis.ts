@@ -4,6 +4,7 @@ import { brandProposalSchema, issuesText, messages, relativeFileSchema, webUrlSc
 import { z } from 'zod';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import type { Git } from '../git.ts';
+import { CreativeStore } from '../creatives/creative-store.ts';
 import { JobFailedError, type JobQueue } from '../jobs/job-queue.ts';
 import { changedCodebaseFiles, codebaseFileStates, codebaseProblemText, codebaseSnapshot, codebaseSpellings, resolveBrandCodebase, type BrandCodebase, type Snapshot } from '../codebases.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
@@ -142,6 +143,9 @@ export class BrandService {
     const dir = store.proposalDir(id);
     // Set once the agent turn is over and until its downloads are registered.
     let pendingDownloads: (() => ReturnType<BrandService['registerDownloads']>) | null = null;
+    // Files of assets/ before the turn, and whether a proposal now exists: until then every import of the run is discarded with the run.
+    let before: Set<string> | null = null;
+    let proposalWritten = false;
     const rel = (p: string) => relative(ref.projectDir, p).split('\\').join('/');
     try {
       const currentKit = await store.readKit();
@@ -149,7 +153,7 @@ export class BrandService {
       await writeFile(join(dir, 'brand-kit.json'), JSON.stringify(currentKit, null, 2));
       await writeFile(join(dir, 'guidelines.md'), currentGuidelines);
       // Every file of assets/ that existed before the turn (registered or not): the agent's list can neither rewrite nor claim them.
-      const before = new Set([...(await library.unregisteredAssets()), ...(await library.listAssets()).map((a) => a.file)]);
+      before = new Set([...(await library.unregisteredAssets()), ...(await library.listAssets()).map((a) => a.file)]);
       const block = {
         proposalDir: rel(dir), kitFile: rel(join(dir, 'brand-kit.json')), guidelinesFile: rel(join(dir, 'guidelines.md')),
         assetsListFile: rel(join(dir, 'assets.json')), summaryFile: rel(join(dir, 'summary.md')),
@@ -216,9 +220,12 @@ export class BrandService {
       if (turn.status === 'cancelled') {
         await rm(dir, { recursive: true, force: true });
         await noteCoreChange(join(ref.projectDir, 'brand', 'proposals'));
+        await this.dropUnreferenced(ref, await this.runImports(library, before));
+        this.changed(ref, 'library');
         return 'cancelled';
       }
-      pendingDownloads = () => this.registerDownloads(library, join(dir, 'assets.json'), before, locale);
+      const beforeTurn = before;
+      pendingDownloads = () => this.registerDownloads(library, join(dir, 'assets.json'), beforeTurn, locale);
       const dropped: string[] = [...tampered];
       const kitFile = await readAgentFile(join(dir, 'brand-kit.json'));
       if (kitFile === null || 'skipped' in kitFile) throw new Error(t().errors.proposalKitFile({ reason: kitFile ? skipText(kitFile.skipped) : t().errors.proposalMissing }));
@@ -245,7 +252,7 @@ export class BrandService {
       proposed = { ...proposed, logos, fonts };
 
       pendingDownloads = null;
-      const downloads = await this.registerDownloads(library, join(dir, 'assets.json'), before, locale);
+      const downloads = await this.registerDownloads(library, join(dir, 'assets.json'), beforeTurn, locale);
       dropped.push(...downloads.dropped);
       // Last, and as one line: the kit's own refusals stay visible whatever a site produced.
       if (siteNotes.size) {
@@ -273,6 +280,7 @@ export class BrandService {
         changes: diffBrandKits(currentKit, proposed),
         guidelines: proposedGuidelines !== currentGuidelines ? { current: currentGuidelines, proposed: proposedGuidelines } : null,
         assetsAdded: registered.map((a) => a.file),
+        importedFiles: await this.runImports(library, beforeTurn),
         ...(turn.usage ? { usage: turn.usage } : {}),
       };
       // Validated before anything is superseded: an invalid proposal leaves the open one in place.
@@ -282,6 +290,7 @@ export class BrandService {
       await proposalLocks.run(applyLockKey(ref.projectDir), async () => {
         for (const old of await store.listProposals()) if (old.status === 'open' && old.id !== id) await store.writeProposal({ ...old, status: 'discarded' });
         await store.writeProposal(proposal);
+        proposalWritten = true;
       });
       await store.markAnalyzed(proposal.sourceIds, proposal.createdAt);
       await this.deps.git.commitAll(ref.projectDir, t().brand.commitAnalysis({ id }));
@@ -291,14 +300,44 @@ export class BrandService {
       // A turn that completed but produced an unusable proposal still downloaded files: register them rather than leave them orphaned.
       if (pendingDownloads) {
         const downloads = await pendingDownloads().catch(() => null);
+        if (!proposalWritten && before) await this.dropUnreferenced(ref, await this.runImports(library, before));
         if (downloads?.registered.length) await this.deps.git.commitAll(ref.projectDir, t().brand.commitAnalysisAssets({ id })).catch(() => null);
-      }
+      } else if (!proposalWritten && before) await this.dropUnreferenced(ref, await this.runImports(library, before));
       await rm(dir, { recursive: true, force: true }).catch(() => {});
       await noteCoreChange(join(ref.projectDir, 'brand', 'proposals'));
       // Assets may already be registered when a late step fails.
       this.changed(ref, 'brand', 'library');
       throw err;
     }
+  }
+
+  /**
+   * The files this run brought in with download_file or import_codebase_file (and the unlisted ones it left in assets/):
+   * what the library holds now that it did not hold before the turn, limited to the origins those tools use, so an upload
+   * made by the user meanwhile is never taken for the run's. A file registered before the run is in `before` and never here.
+   */
+  private async runImports(library: LibraryStore, before: Set<string>): Promise<string[]> {
+    try { return (await library.listAssets()).filter((a) => !before.has(a.file) && (a.origin === 'codebase' || a.origin === 'website')).map((a) => a.file); }
+    catch { return []; }
+  }
+
+  /**
+   * Removes `files` (relative to assets/) through the library's asset removal unless the brand kit's logos or fonts or a
+   * creative's brief assets use them (the checks of an asset rename). Best effort: a file that cannot be checked stays.
+   */
+  private async dropUnreferenced(ref: ProjectRef, files: string[]): Promise<string[]> {
+    const removed: string[] = [];
+    if (files.length === 0) return removed;
+    const library = new LibraryStore(ref.projectDir, this.deps.media), kit = new BrandStore(ref.projectDir), creatives = new CreativeStore(ref.projectDir);
+    for (const file of files) {
+      try {
+        const path = `assets/${file}`;
+        if (await kit.usesFile(path) || (await creatives.briefSlugsUsing(path)).length > 0) continue;
+        await library.removeAsset(file);
+        removed.push(file);
+      } catch { /* a corrupt kit, a file already gone or a failed removal: the file stays */ }
+    }
+    return removed;
   }
 
   /**
@@ -402,8 +441,9 @@ export class BrandService {
       if (proposal.status !== 'open') throw new WorkspaceError(409, t().errors.proposalClosed);
       const next: BrandProposal = { ...proposal, status: 'discarded' };
       await store.writeProposal(next);
+      const removed = await this.dropUnreferenced(ref, proposal.importedFiles ?? []);
       await this.deps.git.commitAll(ref.projectDir, t().brand.commitDiscard({ id }));
-      this.changed(ref, 'brand');
+      this.changed(ref, 'brand', ...(removed.length ? ['library' as const] : []));
       return next;
     });
   }
