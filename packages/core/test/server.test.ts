@@ -11,7 +11,7 @@ import { AppConfigStore } from '../src/app-config.ts';
 import { Git } from '../src/git.ts';
 import { runDoctor } from '../src/doctor.ts';
 import { buildServer } from '../src/server/app.ts';
-import { replyInstruction, setLocale } from '../src/i18n.ts';
+import { replyInstruction, setLocale, t } from '../src/i18n.ts';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 let app: FastifyInstance;
@@ -257,7 +257,7 @@ describe('turns over WebSocket', () => {
     expect(args).not.toContain('--allowedTools'); // the console has no default tools
     // Decision 792: the overlapping stored folder is left out with a progress line that names it.
     const skipped = messages.flatMap((m) => (m.type === 'agent' && m.jobId === id && m.event.kind === 'progress' ? [m.event.text] : []));
-    expect(skipped.some((l) => l.includes(base))).toBe(true);
+    expect(skipped).toContain(t().jobs.codebaseIgnored({ path: base, reason: t().errors.codebaseOverlap }));
     expect(args).toContain(`Edit(/${join(base, 'Spazio di lavoro', 'acme', '.studio')}/**)`);
     ws.close();
   });

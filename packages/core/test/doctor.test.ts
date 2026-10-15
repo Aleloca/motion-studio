@@ -154,13 +154,14 @@ describe('runDoctor', () => {
       const badHome = join(holder, 'h (x) [y]');
       const badConfig = join(holder, 'cfg {z}');
       const row = (await runDoctor({ ...base, home: badHome, configDir: badConfig })).find((c) => c.id === 'agent-deny-paths');
-      expect(row).toEqual({ id: 'agent-deny-paths', label: t().doctor.denyPathsLabel, required: false, ok: false, message: t().doctor.denyPathsGlob({ paths: `${badHome}, ${badConfig}` }) });
+      expect(row).toEqual({ id: 'agent-deny-paths', label: t().doctor.denyPathsLabel, required: false, ok: false, message: t().doctor.denyPathsGlob({ paths: `${badHome}, ${badConfig}`, count: 2 }) });
       expect(row!.message).toContain(badHome);
+      expect(row!.message.startsWith(`The paths `) || row!.message.startsWith(`I percorsi `)).toBe(true);
       // A clean-named link to such a folder: its real path is named.
       mkdirSync(badConfig);
       symlinkSync(badConfig, join(holder, 'cfg-link'));
       const viaLink = (await runDoctor({ ...base, home: clean, configDir: join(holder, 'cfg-link') })).find((c) => c.id === 'agent-deny-paths');
-      expect(viaLink?.message).toBe(t().doctor.denyPathsGlob({ paths: await realpath(badConfig) }));
+      expect(viaLink?.message).toBe(t().doctor.denyPathsGlob({ paths: await realpath(badConfig), count: 1 }));
       expect(hasBlockingFailure(await runDoctor({ ...base, home: badHome, configDir: badConfig }))).toBe(false);
     } finally {
       rmSync(holder, { recursive: true, force: true });

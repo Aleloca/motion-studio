@@ -263,7 +263,9 @@ export const en = {
     folderGlobChars: (p: { path: string }) => `The path ${p.path} contains ( ) [ ] { } * ? or \\: the agent\'s rules protecting Motion Studio\'s files cannot match it safely, so every agent run there is refused (browsing and exporting still work)`,
     folderGlobFix: 'Rename the folder that has these characters (for a project folder that is a link: rename its target, then link it again), then choose the workspace again',
     denyPathsLabel: 'Home and config folder paths',
-    denyPathsGlob: (p: { paths: string }) => `The path ${p.paths} contains ( ) [ ] { } * ? or \\: the agent\'s deny rules for it (tokens, secret files) may not apply`,
+    denyPathsGlob: (p: { paths: string; count: number }) => p.count === 1
+      ? `The path ${p.paths} contains ( ) [ ] { } * ? or \\: the agent\'s deny rules for it (tokens, secret files) may not apply`
+      : `The paths ${p.paths} contain ( ) [ ] { } * ? or \\: the agent\'s deny rules for them (tokens, secret files) may not apply`,
     shellPathFix: 'If programs are missing, start Motion Studio from the terminal or check your shell startup files',
     sandboxAvailableReason: 'Available',
     sandboxExecMissing: 'sandbox-exec not found: the macOS sandbox is not available',
