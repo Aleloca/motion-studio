@@ -1,14 +1,20 @@
 import { renderJobKey } from '@motion-studio/shared';
 import { randomBytes } from 'node:crypto';
 import { constants } from 'node:fs';
-import { copyFile, lstat, mkdir, rename, rm } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import {
   compositionProblemText, effectiveLinks, formatDisplayName, messages, renderProblems, renderState,
   type Brief, type Composition, type FormatPreset, type JobProgress, type JobSummary, type Locale, type LocaleTag, type Localization, type LocalizationIssue, type LocalizationRow, type ManifestV2, type OutputFileInfo,
-  type OutputIssue, type ServerMessage, type VersionComposition, type VersionEntry,
+  type IdentitySetInfo, type OutputIssue, type ServerMessage, type VersionComposition, type VersionEntry,
 } from '@motion-studio/shared';
-import { copyConfinedFile, hashConfinedFile } from '../brand/agent-guard.ts';
+import { copyConfinedFile, hashConfinedFile, readConfinedFile } from '../brand/agent-guard.ts';
+import { BrandStore } from '../brand/brand-store.ts';
+import { buildIdentitySet } from '../identity/identity-set.ts';
+import { checkVectorComposition, MAX_VECTOR_SVG_BYTES } from '../identity/svg-check.ts';
+import { makeOwnedTempDir } from '../render/owner.ts';
+import { identityProblems } from './composition-contract.ts';
 import { loadComposition, readCompositionFolder } from '../compositions/composition-files.ts';
 import { withIssues, withoutIssues } from '../localization/issues.ts';
 import { sourceOverflowOf } from '../localization/store.ts';
@@ -312,6 +318,13 @@ export class RenderJobService {
       throw new Error(m.render.compositionProblems({ format: o.label(format), list }));
     }
     if (loaded.hash !== entry.hash) throw new Error(m.render.compositionChanged({ format: o.label(format) }));
+    // An identity format (Phase 14): vector mode and the strict SVG check again, before anything is rendered or rasterised.
+    if (preset.identity) {
+      const v = await identityProblems(compDir, loaded.composition);
+      if (v.problems.length > 0) {
+        throw new Error(m.render.identitySvgRefused({ format: o.label(format), list: v.problems.slice(0, 5).map((p) => compositionProblemText(p, o.locale)).join('; ') }));
+      }
+    }
     // At the output's frame rate for the media too (the App Store preview: 30 fps, M4).
     const composition = storeComposition(format, loaded.composition);
     const prepared = await this.deps.normalizer.prepare({
@@ -350,11 +363,21 @@ export class RenderJobService {
       o.progress({ format, phase: 'finishing', done: 0, total: 1 + o.followers.length });
       await noteCoreChange(versionDir);
       if (result.warnings.length > 0) await o.note(m.render.frameWarnings({ format: o.label(format), count: result.warnings.length })).catch(() => {});
-      const info = await this.describe({ creativeDir, versionDir, n, preset, file, composition, sha256: result.sha256, hash: loaded.hash, locale: o.locale, poster: true })
+      let info = await this.describe({ creativeDir, versionDir, n, preset, file, composition, sha256: result.sha256, hash: loaded.hash, locale: o.locale, poster: true })
         .catch((e: unknown) => {
           failure = e;
           return bare;
         });
+      if (preset.identity) {
+        try {
+          const set = await this.identitySet({ ref, n, format, kind: preset.identity, compDir, composition, signal });
+          info = { ...info, identitySet: set };
+          for (const w of set.warnings) await o.note(w).catch(() => {});
+        } catch (e) {
+          if (signal.aborted) throw e;
+          failure ??= new Error(m.render.identitySetFailed({ format: o.label(format), reason: errorText(e) }));
+        }
+      }
       infos.push(info);
       for (const [i, f] of o.followers.entries()) {
         try {
@@ -462,6 +485,57 @@ export class RenderJobService {
       return { ...rest, verified: own.verified && sha256 !== undefined, preview, problems, ...(issues.length ? { issues } : {}), ...(base.sha256 ? { sha256: base.sha256 } : {}), ...(fromComposition ? { fromComposition } : {}) };
     } catch {
       return base;
+    }
+  }
+
+  /**
+   * The file set of an identity format (Phase 14, spec §4.1–4.2) into `outputs/vN/<format>/`: the SVGs are read confined
+   * from the composition folder (already checked, the composition's hash is the version's) and copied to a temp folder of the
+   * core's own, the set is built there (`buildIdentitySet`, with the render engine's browser), then every file is copied
+   * into the version through a temp name, noted as the core's write, and renamed. Every folder of the way must be a real
+   * folder of the creative (never through a link the agent left).
+   */
+  private async identitySet(o: { ref: CreativeRef; n: number; format: string; kind: 'logo' | 'favicon' | 'app-icon'; compDir: string; composition: Composition; signal: AbortSignal }): Promise<IdentitySetInfo> {
+    const store = new CreativeStore(o.ref.projectDir);
+    const creativeDir = store.dir(o.ref.creativeSlug);
+    const v = checkVectorComposition(o.composition);
+    if (!v.ok) throw new Error(v.reason);
+    const work = await makeOwnedTempDir(join(this.deps.renderOptions?.tempDir ?? tmpdir(), 'ms-identity-set-'));
+    try {
+      const copy = async (rel: string, name: string) => {
+        const r = await readConfinedFile(o.compDir, rel, MAX_VECTOR_SVG_BYTES);
+        if (!r || !('text' in r)) throw new Error(`${rel} cannot be read safely`);
+        const path = join(work, name);
+        await writeFile(path, r.text, { flag: 'wx', mode: 0o644 });
+        return path;
+      };
+      const master = await copy(v.svgFile, 'master.svg');
+      const small = v.small !== undefined ? await copy(v.small, 'small.svg') : undefined;
+      const creative = await store.get(o.ref.creativeSlug);
+      const brand = await new BrandStore(o.ref.projectDir).readKit().catch(() => undefined);
+      const engine = this.deps.engine!;
+      const outDir = join(work, 'set');
+      const built = await buildIdentitySet(o.kind, {
+        master, ...(small ? { small } : {}), outDir, ...(brand ? { brand } : {}),
+        name: creative.brief.identity?.name ?? creative.title, background: o.composition.background, label: o.format, signal: o.signal,
+        raster: { provider: () => engine.provider(), ...(this.deps.renderOptions?.distDir ? { distDir: this.deps.renderOptions.distDir } : {}), ...(this.deps.renderOptions?.tempDir ? { tempDir: this.deps.renderOptions.tempDir } : {}) },
+      });
+      const vRel = `outputs/v${o.n}`;
+      const madeDirs = new Set<string>();
+      for (const f of built.files) {
+        const parts = f.path.split('/');
+        const name = parts.pop()!;
+        const dir = await realDirChain(creativeDir, ['outputs', `v${o.n}`, o.format, ...parts]);
+        if (!dir) throw new Error(`${vRel}/${o.format}/${parts.join('/')} is not a folder of the creative`);
+        madeDirs.add([o.format, ...parts].join('/'));
+        const rel = `${vRel}/${o.format}/${f.path}`;
+        await copyInto(join(outDir, ...f.path.split('/')), dir, name, (temp) => noteCoreOutputWrite(creativeDir, rel, temp));
+      }
+      for (const d of madeDirs) await noteCoreOutputWrite(creativeDir, `${vRel}/${d}`);
+      await noteCoreChange(join(creativeDir, 'outputs', `v${o.n}`));
+      return { dir: o.format, files: built.files, warnings: built.warnings };
+    } finally {
+      await rm(work, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
     }
   }
 

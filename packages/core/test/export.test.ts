@@ -381,3 +381,42 @@ describe('export names of format instances (Phase 12, Ruling C)', () => {
     expect(e).toMatchObject({ status: 400, apiCode: 'export-name-collision' });
   });
 });
+
+describe('identity sets (Phase 14)', () => {
+  const setVersion = (): VersionEntry => ({
+    ...version, outputs: [{ format: 'identity-app-icon', file: 'identity-app-icon.png', width: 1024, height: 1024, durationSec: null, verified: true, preview: null,
+      identitySet: { dir: 'identity-app-icon', files: [{ path: 'AppIcon-1024.png', width: 1024, height: 1024, alpha: false, role: 'opaque' }, { path: 'Contents.json', role: 'ios-contents' }, { path: 'mipmap-mdpi/ic_launcher.png', width: 48, height: 48, alpha: true, role: 'android-legacy' }], warnings: [] } }],
+  });
+  const writeSet = async () => {
+    const v = join(creativeDir, 'outputs', 'v2');
+    await writeFile(join(v, 'identity-app-icon.png'), 'main');
+    await mkdir(join(v, 'identity-app-icon', 'mipmap-mdpi'), { recursive: true });
+    await writeFile(join(v, 'identity-app-icon', 'AppIcon-1024.png'), 'ios');
+    await writeFile(join(v, 'identity-app-icon', 'Contents.json'), '{}');
+    await writeFile(join(v, 'identity-app-icon', 'mipmap-mdpi', 'ic_launcher.png'), 'mdpi');
+  };
+
+  it('the set is exported as a folder named like the file, with its sub-folders, next to the image', async () => {
+    await writeSet();
+    const r = await exportVersion({ creativeDir, version: setVersion(), destination: dest, slug: 'acme' });
+    expect(r.files.map((f) => f.to.slice(dest.length + 1))).toEqual([
+      'acme-identity-app-icon-v2.png', 'acme-identity-app-icon-v2/AppIcon-1024.png', 'acme-identity-app-icon-v2/Contents.json', 'acme-identity-app-icon-v2/mipmap-mdpi/ic_launcher.png',
+    ]);
+    expect(await readFile(join(dest, 'acme-identity-app-icon-v2', 'mipmap-mdpi', 'ic_launcher.png'), 'utf8')).toBe('mdpi');
+    // Again: the next free names, never an overwrite.
+    const again = await exportVersion({ creativeDir, version: setVersion(), destination: dest, slug: 'acme' });
+    expect(again.files[1]!.to.slice(dest.length + 1)).toBe('acme-identity-app-icon-v2-2/AppIcon-1024.png');
+  });
+
+  it('a set file that is missing or a link makes the item unusable; a bad set path too', async () => {
+    await writeSet();
+    await rm(join(creativeDir, 'outputs', 'v2', 'identity-app-icon', 'Contents.json'));
+    await symlink('/etc/hosts', join(creativeDir, 'outputs', 'v2', 'identity-app-icon', 'Contents.json'));
+    const e = await exportPicks({ creativeDir, versions: [setVersion()], picks: { 'identity-app-icon': 2 }, destination: dest, slug: 'acme' }).catch((x) => x);
+    expect(e.status).toBe(409);
+    const bad = setVersion();
+    bad.outputs[0]!.identitySet!.files[0]!.path = '../escape.png';
+    expect((await exportPicks({ creativeDir, versions: [bad], picks: { 'identity-app-icon': 2 }, destination: dest, slug: 'acme' }).catch((x) => x)).status).toBe(409);
+    expect(await readdir(base)).toEqual(['creative']);
+  });
+});

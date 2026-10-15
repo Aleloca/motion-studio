@@ -10,6 +10,7 @@ import { loadComposition, readCompositionFolder, readCompositionJson, type Compo
 import { noteCoreTemp } from '../core-temps.ts';
 import { findPreset } from '../formats/format-catalog.ts';
 import { isRealDirChain } from './core-files.ts';
+import { checkVectorComposition, checkVectorSvg, MAX_VECTOR_SVG_BYTES } from '../identity/svg-check.ts';
 
 /**
  * Output contract v2 (spec §4, Task 5b): the agent delivers one composition folder per target format,
@@ -83,7 +84,36 @@ export async function checkComposition(compDir: string, format: string, preset: 
   if (preset.kind === 'video' && briefDurationSec !== null && !kept && isDurationOffBrief(c.duration, briefDurationSec)) {
     problems.push(compositionProblem('composition.durationOffBrief', { duration: Math.round(c.duration * 10) / 10, target: briefDurationSec }));
   }
+  if (preset.identity) {
+    const v = await identityProblems(compDir, c);
+    problems.push(...v.problems);
+    warnings.push(...v.warnings);
+  }
   return { format, dir, ok: problems.length === 0, hash: loaded.hash, finalHash, problems, warnings, composition: c, folder };
+}
+
+/**
+ * Vector mode of an identity format (Phase 14, spec §4.2, decisions 726–728): the composition's shape
+ * (`checkVectorComposition`) and the strict check of its SVG files (`checkVectorSvg`), as problems: they reach the agent's
+ * repair turn with their reasons (at most 5 a file). `<text>` is a warning.
+ */
+export async function identityProblems(compDir: string, c: Composition): Promise<{ problems: CompositionProblem[]; warnings: CompositionProblem[] }> {
+  const problems: CompositionProblem[] = [];
+  const warnings: CompositionProblem[] = [];
+  const v = checkVectorComposition(c);
+  if (!v.ok) return { problems: [compositionProblem('composition.vectorShape', { reason: v.reason })], warnings };
+  for (const file of v.small !== undefined ? [v.svgFile, v.small] : [v.svgFile]) {
+    const r = await readConfinedFile(compDir, file, MAX_VECTOR_SVG_BYTES).catch(() => null);
+    if (r === null) continue; // missing: the validator's assetMissing says so
+    if ('skipped' in r) {
+      problems.push(compositionProblem('composition.svgRefused', { file, reason: r.skipped === 'too-large' ? `the SVG is over ${MAX_VECTOR_SVG_BYTES / 1024} KB` : 'the file cannot be read safely' }));
+      continue;
+    }
+    const check = checkVectorSvg(r.text);
+    if (!check.ok) for (const reason of check.reasons.slice(0, 5)) problems.push(compositionProblem('composition.svgRefused', { file, reason }));
+    else if (check.warnings.length > 0) warnings.push(compositionProblem('composition.svgText', { file }));
+  }
+  return { problems, warnings };
 }
 
 /**

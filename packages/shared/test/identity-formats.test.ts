@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DEFAULT_FORMATS, IDENTITY_SETS, SECRET_PATTERNS, channelName, creativeFileSchema, formatName, formatsFileSchema, identityBriefSchema, isSecretPath,
+  DEFAULT_FORMATS, FAVICON_ICO_SIZES, IDENTITY_SETS, SECRET_PATTERNS, identitySetInfoSchema, outputFileInfoSchema, channelName, creativeFileSchema, formatName, formatsFileSchema, identityBriefSchema, isSecretPath,
 } from '../src/index.ts';
 
 describe('isSecretPath', () => {
@@ -78,6 +78,21 @@ describe('IDENTITY_SETS', () => {
     expect(IDENTITY_SETS['app-icon'].files.filter((x) => x.path.startsWith('mipmap-')).map((x) => x.size)).toEqual([48, 72, 96, 144, 192]);
     const opaque = Object.values(IDENTITY_SETS).flatMap((s) => s.files).filter((x) => x.opaque).map((x) => x.path);
     expect(opaque).toEqual(['apple-touch-icon.png', 'AppIcon-1024.png', 'ic_launcher-playstore.png']);
+  });
+});
+
+describe('FAVICON_ICO_SIZES and the set info', () => {
+  it('favicon.ico packs 16, 32 and 48 px, and takes the small variant for them (from: auto)', () => {
+    expect([...FAVICON_ICO_SIZES]).toEqual([16, 32, 48]);
+    expect(IDENTITY_SETS.favicon.files.find((f) => f.path === 'favicon.ico')).toEqual({ path: 'favicon.ico', from: 'auto' });
+    expect(Math.max(...FAVICON_ICO_SIZES)).toBeLessThanOrEqual(48);
+  });
+  it('an output entry may carry its identity set; older entries have none', () => {
+    const base = { format: 'identity-favicon', file: 'identity-favicon.png', width: 1024, height: 1024, durationSec: null, verified: true, preview: null };
+    expect(outputFileInfoSchema.parse(base).identitySet).toBeUndefined();
+    const set = { dir: 'identity-favicon', files: [{ path: 'favicon.ico', role: 'favicon' }, { path: 'icon-192.png', width: 192, height: 192, alpha: true, role: 'icon' }], warnings: ['w'] };
+    expect(outputFileInfoSchema.parse({ ...base, identitySet: set }).identitySet).toEqual(set);
+    expect(identitySetInfoSchema.safeParse({ ...set, files: [{ path: '', role: 'x' }] }).success).toBe(false);
   });
 });
 

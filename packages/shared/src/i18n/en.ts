@@ -382,6 +382,9 @@ export const en = {
     folderUnreadable: (p: { path: string }) => `The composition folder cannot be read safely (${p.path}): remove links, hard links and special files, and keep it within the limits`,
     ambiguousNames: (p: { path: string }) => `Two files of the composition folder have the same name once Unicode-normalised (${p.path}): rename one of them`,
     durationOffBrief: (p: { duration: number; target: number }) => `The composition lasts ${p.duration}s, but about ${p.target}s were requested: adjust the duration and the scenes`,
+    vectorShape: (p: { reason: string }) => `Logo, favicon and app icon are vector compositions: ${p.reason}`,
+    svgRefused: (p: { file: string; reason: string }) => `${p.file} was refused by the SVG check: ${p.reason}`,
+    svgText: (p: { file: string }) => `${p.file} has text: convert it to paths, or it will look different where the font is not installed`,
   },
   /** Direct editing (Phase 10b): refusals of `applyEdit` (key `editor.<name>`) and the lines of an edit summary. */
   editor: {
@@ -456,6 +459,11 @@ export const en = {
     hdrApproximate: (p: { format: string; src: string }) => `${p.format}: ${p.src} is an HDR source; its colours are approximate in the render and the preview`,
     frameWarnings: (p: { format: string; count: number }) => `${p.format}: ${p.count} video frames were drawn from a source whose timing could not be verified`,
     outputProblems: (p: { format: string; list: string }) => `${p.format}: the render has problems: ${p.list}. Render it again, or fix the composition`,
+    identitySvgRefused: (p: { format: string; list: string }) => `${p.format}: the SVG was refused, nothing was rasterised: ${p.list}`,
+    identityOpaqueWhite: (p: { format: string }) => `${p.format}: the composition background is transparent and the brand has no primary colour, so the icons that cannot be transparent are on white`,
+    identitySafeZone: (p: { file: string; pct: number }) => `${p.file}: ${p.pct}% of the drawing is outside the safe zone and may be cut by the mask`,
+    identitySvgText: (p: { file: string }) => `${p.file}: the SVG has text; convert it to paths, or it will look different where the font is not installed`,
+    identitySetFailed: (p: { format: string; reason: string }) => `${p.format}: the file set could not be made: ${p.reason}`,
   },
   export: {
     absoluteDestination: 'Choose a destination folder (absolute path)',

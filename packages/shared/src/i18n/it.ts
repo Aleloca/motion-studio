@@ -379,6 +379,9 @@ export const it: Messages = {
     folderUnreadable: (p) => `La cartella della composizione non si può leggere in sicurezza (${p.path}): togli link, hard link e file speciali, e resta nei limiti`,
     ambiguousNames: (p) => `Due file della cartella della composizione hanno lo stesso nome una volta normalizzato in Unicode (${p.path}): rinominane uno`,
     durationOffBrief: (p) => `La composizione dura ${p.duration}s, ma ne erano stati chiesti circa ${p.target}: correggi la durata e le scene`,
+    vectorShape: (p) => `Logo, favicon e icona app sono composizioni vettoriali: ${p.reason}`,
+    svgRefused: (p) => `${p.file} è stato rifiutato dal controllo SVG: ${p.reason}`,
+    svgText: (p) => `${p.file} contiene testo: convertilo in tracciati, altrimenti cambia aspetto dove il font non è installato`,
   },
   editor: {
     locked: (p) => `La clip ${p.clip} è bloccata: sbloccala per modificarla`,
@@ -449,6 +452,11 @@ export const it: Messages = {
     hdrApproximate: (p) => `${p.format}: ${p.src} è una sorgente HDR; i suoi colori sono approssimati nel render e nell'anteprima`,
     frameWarnings: (p) => `${p.format}: ${p.count} fotogrammi video provengono da una sorgente di cui non si è potuto verificare il timing`,
     outputProblems: (p) => `${p.format}: il render ha dei problemi: ${p.list}. Rifai il render, o correggi la composizione`,
+    identitySvgRefused: (p) => `${p.format}: l'SVG è stato rifiutato, non è stato rasterizzato nulla: ${p.list}`,
+    identityOpaqueWhite: (p) => `${p.format}: lo sfondo della composizione è trasparente e il brand non ha un colore primario, quindi le icone che non possono essere trasparenti sono su bianco`,
+    identitySafeZone: (p) => `${p.file}: il ${p.pct}% del disegno è fuori dalla zona sicura e la maschera potrebbe tagliarlo`,
+    identitySvgText: (p) => `${p.file}: l'SVG contiene testo; convertilo in tracciati, altrimenti cambia aspetto dove il font non è installato`,
+    identitySetFailed: (p) => `${p.format}: non è stato possibile creare il set di file: ${p.reason}`,
   },
   export: {
     absoluteDestination: 'Scegli una cartella di destinazione (percorso assoluto)',

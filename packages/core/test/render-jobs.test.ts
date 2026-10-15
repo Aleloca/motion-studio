@@ -778,3 +778,51 @@ describe('startup sweep', () => {
     expect(readdirSync(root).sort()).toEqual([unmarked, live, recent, ...fixtures].map((d) => basename(d)).sort());
   });
 });
+
+describe('identity formats (Phase 14)', { timeout: 90_000 }, () => {
+  const ICON: FormatPreset = { id: 'test-favicon', channel: 'Test', name: 'Favicon', width: 64, height: 64, kind: 'image', extensions: ['png'], identity: 'favicon' };
+  async function iconCreative(svg: string) {
+    expect((await app.inject({ method: 'PUT', url: '/api/formats', headers: H, payload: { presets: [...PRESETS, ICON] } })).statusCode).toBe(200);
+    const r = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', headers: H, payload: {
+      title: 'Icon', generate: false, brief: { goal: 'g', message: '', formats: [ICON.id], durationSec: null, assets: [], notes: '' },
+    } });
+    expect(r.statusCode, r.body).toBe(201);
+    const slug = r.json().slug as string;
+    const store = new CreativeStore(projectDir());
+    const dir = join(store.outputsDir(slug, 1), 'compositions', ICON.id);
+    mkdirSync(join(dir, 'assets'), { recursive: true });
+    writeFileSync(join(dir, 'assets', 'mark.svg'), svg);
+    writeFileSync(join(dir, 'composition.json'), JSON.stringify({
+      $schema: 'motion-studio/composition@1', width: 64, height: 64, fps: 30, duration: 0, background: '#ffffff', fonts: [], scenes: [],
+      tracks: [{ id: 't', kind: 'visual', clips: [{ id: 'mark', type: 'svg', src: 'assets/mark.svg', start: 0, duration: 0, props: {} }] }],
+    }));
+    const compositions = [{ format: ICON.id, dir: `compositions/${ICON.id}`, hash: (await readCompositionFolder(dir)).hash, problems: [] }];
+    writeFileSync(join(store.outputsDir(slug, 1), 'manifest.json'), JSON.stringify({ schemaVersion: 2, compositions, renders: [] }));
+    await store.appendVersion(slug, { n: 1, commit: null, sessionId: null, status: 'complete', createdAt: new Date().toISOString(), request: 'r', outputs: [], problems: [], tools: [], renderCommand: null, basedOn: null, compositions });
+    return { slug, store };
+  }
+
+  it('a refused SVG fails the format with its reasons; nothing is rendered or rasterised', async () => {
+    const { slug, store } = await iconCreative('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><script>alert(1)</script><rect width="10" height="10"/></svg>');
+    const r = await post(slug, 1);
+    expect(r.statusCode, r.body).toBe(202);
+    const job = await waitJob(r.json().id);
+    expect(job.state).toBe('failed');
+    expect(job.error).toMatch(/script/);
+    expect(fake.calls).toEqual([]);
+    expect((await versionOf(store, slug, 1)).outputs).toEqual([]);
+    expect(existsSync(join(store.outputsDir(slug, 1), ICON.id))).toBe(false);
+  });
+
+  it('a clean SVG renders the main image, then the set; a set that cannot be made fails the job and keeps the image', async () => {
+    // The fake engine has no browser (`provider` throws): the set step fails after the main render is recorded.
+    const { slug, store } = await iconCreative('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>');
+    const job = await waitJob((await post(slug, 1)).json().id);
+    expect(fake.calls.map((c) => c.format.id)).toEqual([ICON.id]);
+    expect(job.state).toBe('failed');
+    expect(job.error).toMatch(/not used/);
+    const v = await versionOf(store, slug, 1);
+    expect(v.outputs.map((o) => o.file)).toEqual([`${ICON.id}.png`]);
+    expect(v.outputs[0]!.identitySet).toBeUndefined();
+  });
+});

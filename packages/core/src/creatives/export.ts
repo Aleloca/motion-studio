@@ -42,6 +42,34 @@ export async function copyUnique(copy: CopyFn, from: string, dir: string, stem: 
   }
 }
 
+/**
+ * Copies an identity set into a new folder `<dest>/<name>` (`-2`, `-3`… when taken), keeping its sub-folders. A failure
+ * removes the folder it created.
+ */
+async function copySet(copy: CopyFn, creativeDir: string, n: number, set: { dir: string; files: string[] }, dest: string, name: string): Promise<Array<{ from: string; to: string }>> {
+  let folder = '';
+  for (let i = 1; ; i++) {
+    folder = join(dest, i === 1 ? name : `${name}-${i}`);
+    if (dirname(folder) !== dest) throw new Error('bad set folder name');
+    try { await mkdir(folder); break; } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e; }
+  }
+  const out: Array<{ from: string; to: string }> = [];
+  try {
+    for (const f of set.files) {
+      const parts = f.split('/');
+      if (parts.length > 1) await mkdir(join(folder, ...parts.slice(0, -1)), { recursive: true });
+      const from = join(creativeDir, 'outputs', `v${n}`, set.dir, ...parts);
+      const to = join(folder, ...parts);
+      await copy(from, to, constants.COPYFILE_EXCL);
+      out.push({ from, to });
+    }
+  } catch (e) {
+    await rm(folder, { recursive: true, force: true }).catch(() => undefined);
+    throw e;
+  }
+  return out;
+}
+
 /** The export's text for a failed write (disk full, permission, quota, name too long, other). */
 export function reasonOf(e: unknown): string {
   switch ((e as NodeJS.ErrnoException).code) {
@@ -78,7 +106,19 @@ export interface ExportItem { format: string; n: number; v?: number; file: strin
   /** A translated render (not the primary language's file). */
   localized?: boolean;
   /** A translated render's own problems (its checks and the browser's overflow measure, Phase 12 Rulings I and J). */
-  problems?: string[] }
+  problems?: string[];
+  /**
+   * An identity format's file set (Phase 14, spec §4.4): `dir` under `outputs/vN/`, `files` the paths inside it. Exported
+   * as a folder named like the file (without its extension), next to it.
+   */
+  set?: { dir: string; files: string[] } }
+
+/** A set path the export accepts: one or two plain segments (`favicon.ico`, `mipmap-mdpi/ic_launcher.png`). */
+const setPathOk = (p: string) => { const parts = p.split('/'); return parts.length <= 2 && parts.every(plainName); };
+
+/** The export item fields of an output's identity set, if it has one. */
+export const setOf = (o: { identitySet?: { dir: string; files: Array<{ path: string }> } }): Pick<ExportItem, 'set'> =>
+  (o.identitySet ? { set: { dir: o.identitySet.dir, files: o.identitySet.files.map((f) => f.path) } } : {});
 
 export interface ExportCommon {
   creativeDir: string;
@@ -136,7 +176,11 @@ async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refu
   const bad: ExportItem[] = [];
   const ok: ExportItem[] = [];
   for (const it of items) {
-    const usable = plainName(it.file) && (await probeConfinedFile(opts.creativeDir, `outputs/v${it.n}/${it.file}`)) === true;
+    let usable = plainName(it.file) && (await probeConfinedFile(opts.creativeDir, `outputs/v${it.n}/${it.file}`)) === true;
+    if (usable && it.set) {
+      usable = plainName(it.set.dir) && it.set.files.every(setPathOk);
+      for (const f of it.set.files) if (usable) usable = (await probeConfinedFile(opts.creativeDir, `outputs/v${it.n}/${it.set.dir}/${f}`)) === true;
+    }
     if (usable) ok.push(it); else if (missing === 'skip') skipped.push(it.file); else bad.push(it);
   }
   if (bad.length) {
@@ -170,6 +214,7 @@ async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refu
     try {
       const to = await copyUnique(copy, from, dest, it.stem, it.ext);
       if (to) files.push({ from, to }); else skipped.push(it.file);
+      if (to && it.set) files.push(...await copySet(copy, opts.creativeDir, it.n, it.set, dest, basename(to).slice(0, basename(to).length - it.ext.length)));
     } catch (e) {
       const target = (e as { target?: string }).target;
       if (target) await rm(target, { force: true }).catch(() => undefined);
@@ -284,7 +329,7 @@ export function resolveExportPicks(opts: PicksOptions): ExportItem[] {
   const itemOf = (format: string, n: number) => {
     const v = opts.versions.find((x) => x.n === n);
     const o = v?.outputs.find((x) => x.format === format);
-    if (o) return { format, n, file: o.file, width: o.width, height: o.height };
+    if (o) return { format, n, file: o.file, width: o.width, height: o.height, ...setOf(o) };
     // A v2 composition with no render yet: exported once rendered.
     return v && v.compositions?.some((c) => c.format === format) && hasFormat(v, format) ? { format, n, file: '', width: 0, height: 0 } : null;
   };
@@ -342,6 +387,6 @@ export async function exportVersion(opts: ExportCommon & { version: VersionEntry
   }
   const n = opts.version.n;
   const items = opts.version.outputs.filter((o) => !wanted || wanted.has(o.format))
-    .map((o) => ({ format: o.format, n, file: o.file, width: o.width, height: o.height }));
+    .map((o) => ({ format: o.format, n, file: o.file, width: o.width, height: o.height, ...setOf(o) }));
   return runExport(items, opts, 'skip', n);
 }

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { SERVICE_CHOICES } from './services.ts';
 import type { AgentEvent } from './events.ts';
 import { linkedCodebaseSchema } from './schemas.ts';
-import { identityBriefSchema } from './identity.ts';
+import { identityBriefSchema, identitySetInfoSchema } from './identity.ts';
 import { usageSummarySchema } from './usage.ts';
 import { INSTANCE_FOLDER_SOURCE, INSTANCE_ID_RE } from './format-instance.ts';
 import { storePackSchema } from './store-pack.ts';
@@ -171,6 +171,8 @@ export const outputFileInfoSchema = z.object({
    * it equals the version's composition hash for the format (`renderState`). Absent on legacy files (their media is the result).
    */
   fromComposition: z.string().regex(HEX64).optional(),
+  /** An identity format's render (Phase 14): the file set written next to the main image, in `outputs/vN/<dir>/`. */
+  identitySet: identitySetInfoSchema.optional(),
 });
 export type OutputFileInfo = z.infer<typeof outputFileInfoSchema>;
 

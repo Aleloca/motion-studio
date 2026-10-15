@@ -36,11 +36,28 @@ export const identityBriefSchema: z.ZodType<IdentityBrief> = z.object({
 
 /** A file an identity format wrote (composition-derived), for the outputs list. */
 export interface IdentityOutputFile { path: string; width?: number; height?: number; alpha?: boolean; role: string }
+export const identityOutputFileSchema: z.ZodType<IdentityOutputFile> = z.object({
+  path: z.string().min(1).max(200), width: z.number().int().positive().optional(), height: z.number().int().positive().optional(),
+  alpha: z.boolean().optional(), role: z.string().max(40),
+});
+
+/**
+ * The file set an identity format's render wrote (Phase 14, spec §4.4): `dir` is the set's folder relative to `outputs/vN/`
+ * (`<format>`), `files` its files (paths inside `dir`), `warnings` the set's notes (opaque background on white, safe zone,
+ * text in the SVG), in the language of the render.
+ */
+export interface IdentitySetInfo { dir: string; files: IdentityOutputFile[]; warnings: string[] }
+export const identitySetInfoSchema: z.ZodType<IdentitySetInfo> = z.object({
+  dir: z.string().min(1).max(200), files: z.array(identityOutputFileSchema).max(50), warnings: z.array(z.string().max(1000)).max(50),
+});
 
 export interface IdentitySetFile {
   /** Path inside the set's folder. */
   path: string;
-  /** Square side in pixels of a PNG; absent for text and vector files. */
+  /**
+   * Pixel size of a PNG: the side of a square icon, or for `logo.png` the LONG side (the other side follows the SVG's
+   * `viewBox`). Absent for text and vector files.
+   */
   size?: number;
   /** The PNG must have no alpha channel (decision 729). */
   opaque?: boolean;
@@ -51,7 +68,10 @@ export interface IdentitySetFile {
 /** The sizes packed in `favicon.ico`. */
 export const FAVICON_ICO_SIZES: readonly number[] = [16, 32, 48];
 
-/** The files of each identity format (spec §4.1). `identity-logo` is the only one not square-sized by its set (its long side is 1024). */
+/**
+ * The files of each identity format (spec §4.1). Every PNG is square except `logo.png`, whose `size` (1024) is its long side:
+ * a wide or tall logo keeps its proportions.
+ */
 export const IDENTITY_SETS: Record<'logo' | 'favicon' | 'app-icon', { files: IdentitySetFile[] }> = {
   logo: { files: [{ path: 'logo.svg' }, { path: 'logo.png', size: 1024 }] },
   favicon: {
