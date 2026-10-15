@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rename, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +15,8 @@ vi.setConfig({ testTimeout: 90_000, hookTimeout: 60_000 });
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const GOOD = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="#0a7"/></svg>';
 const BAD = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><script>alert(1)</script></svg>';
+const TOKEN = 'ab'.repeat(32);
+const H = { 'x-motion-studio-ui': TOKEN };
 let app: FastifyInstance;
 let base: string;
 let slug: string;
@@ -22,7 +24,7 @@ let projectDir: string;
 
 const FORMAT = 'identity-logo';
 const url = (n = 1, f = FORMAT) => `/api/projects/acme/creatives/${slug}/versions/${n}/formats/${encodeURIComponent(f)}/use-as-brand-logo`;
-const post = (payload: unknown, n = 1, f = FORMAT) => app.inject({ method: 'POST', url: url(n, f), payload: payload as object });
+const post = (payload: unknown, n = 1, f = FORMAT) => app.inject({ method: 'POST', url: url(n, f), headers: H, payload: payload as object });
 
 /** A version 1 whose logo format has a set; `svg` is written into the set folder (or not, with null). */
 const seed = async (o: { svg: string | null; set?: boolean; format?: string }) => {
@@ -41,19 +43,19 @@ const seed = async (o: { svg: string | null; set?: boolean; format?: string }) =
 
 beforeEach(async () => {
   base = await mkdtemp(join(tmpdir(), 'ms-ubl-'));
-  app = await buildServer({ agentContract: 'media', uiToken: null, sandbox: async () => ({ available: false, reason: 'test' }),
+  app = await buildServer({ agentContract: 'media', uiToken: TOKEN, sandbox: async () => ({ available: false, reason: 'test' }),
     appConfig: new AppConfigStore(join(base, 'config')), git: new Git(),
     runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }), doctor: async () => [], openPath: async () => {} });
-  await app.inject({ method: 'PUT', url: '/api/workspace', payload: { path: join(base, 'ws') } });
-  await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Acme' } });
+  await app.inject({ method: 'PUT', url: '/api/workspace', headers: H, payload: { path: join(base, 'ws') } });
+  await app.inject({ method: 'POST', url: '/api/projects', headers: H, payload: { name: 'Acme' } });
   const brief = { goal: 'Logo', message: '', formats: [FORMAT], durationSec: null, assets: [], notes: '' };
-  slug = (await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'Logo', brief, generate: false } })).json().slug;
+  slug = (await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', headers: H, payload: { title: 'Logo', brief, generate: false } })).json().slug;
   projectDir = join(base, 'ws', 'acme');
 });
 afterEach(async () => { await app.close(); });
 
 const brandFiles = async () => (await readdir(join(projectDir, 'assets', 'brand')).catch(() => [])).filter((f) => !f.startsWith('.'));
-const kit = async () => (await app.inject('/api/projects/acme/brand')).json().kit;
+const kit = async () => (await app.inject({ url: '/api/projects/acme/brand', headers: H })).json().kit;
 
 describe('use as brand logo (Phase 14, decision 733)', () => {
   it('copies the checked SVG into assets/brand, registers it and adds the logo with its source', async () => {
@@ -66,7 +68,7 @@ describe('use as brand logo (Phase 14, decision 733)', () => {
     const logos = (await kit()).logos;
     expect(logos).toHaveLength(1);
     expect(logos[0]).toMatchObject({ file, variant: 'icon', background: 'any', source: { kind: 'manual', ref: `creative:${slug}/v1` } });
-    const assets = (await app.inject('/api/projects/acme/assets')).json().assets as Array<{ file: string }>;
+    const assets = (await app.inject({ url: '/api/projects/acme/assets', headers: H })).json().assets as Array<{ file: string }>;
     expect(assets.some((a) => `assets/${a.file}` === file)).toBe(true);
   });
 
@@ -122,5 +124,58 @@ describe('use as brand logo (Phase 14, decision 733)', () => {
     expect((await post({ variant: 'primary' }, 9)).statusCode).toBe(404);
     expect((await post({ variant: 'primary' }, 1, '../x')).statusCode).toBe(400);
     expect((await post({ variant: 'primary' }, 1, 'identity-logo@2')).statusCode).toBe(409);
+  });
+
+  it('refuses without the UI token', async () => {
+    await seed({ svg: GOOD });
+    const r = await app.inject({ method: 'POST', url: url(), payload: { variant: 'primary' } });
+    expect(r.statusCode).toBe(401);
+    expect(await brandFiles()).toEqual([]);
+  });
+
+  it('refuses a symlinked version folder and a ".." in the set folder, writing nothing', async () => {
+    await seed({ svg: GOOD });
+    const store = new CreativeStore(projectDir);
+    const outputs = join(store.dir(slug), 'outputs');
+    // vN replaced by a link to a folder that holds the same files.
+    await rename(join(outputs, 'v1'), join(base, 'real-v1'));
+    await symlink(join(base, 'real-v1'), join(outputs, 'v1'));
+    const linked = await post({ variant: 'primary' });
+    expect(linked.statusCode).toBe(422);
+    expect(linked.json().code).toBe('logo-refused');
+    // A set folder that climbs out of the version.
+    await rename(join(base, 'real-v1', FORMAT), join(base, 'real-v1', 'x'));
+    await store.updateVersion(slug, 1, (v) => ({ ...v, outputs: v.outputs.map((o) => ({ ...o, identitySet: { dir: '../v1/x', files: [{ path: 'logo.svg', role: 'vector' }], warnings: [] } })) }));
+    expect((await post({ variant: 'primary' })).json().code).toBe('logo-refused');
+    await store.updateVersion(slug, 1, (v) => ({ ...v, outputs: v.outputs.map((o) => ({ ...o, identitySet: { dir: FORMAT, files: [{ path: '../logo.svg', role: 'vector' }], warnings: [] } })) }));
+    expect((await post({ variant: 'primary' })).json().code).toBe('logo-refused');
+    expect(await brandFiles()).toEqual([]);
+    expect((await kit()).logos).toEqual([]);
+  });
+
+  it('refuses a format that is not an identity format', async () => {
+    await seed({ svg: GOOD, format: 'instagram-post-1x1' });
+    const r = await post({ variant: 'primary' }, 1, 'instagram-post-1x1');
+    expect(r.statusCode).toBe(409);
+    expect(r.json().code).toBe('not-identity');
+  });
+
+  it('rolls back when the kit refuses (an unreadable kit): no copy is left', async () => {
+    await seed({ svg: GOOD });
+    await mkdir(join(projectDir, 'brand'), { recursive: true });
+    await writeFile(join(projectDir, 'brand', 'brand-kit.json'), '{ not json');
+    const r = await post({ variant: 'primary' });
+    expect(r.statusCode).toBeGreaterThanOrEqual(400);
+    expect(await brandFiles()).toEqual([]);
+  });
+
+  it('rolls back when the library registration fails: no copy and no kit entry', async () => {
+    await seed({ svg: GOOD });
+    await mkdir(join(projectDir, 'assets'), { recursive: true });
+    await writeFile(join(projectDir, 'assets', 'assets.json'), '{ not json');
+    const r = await post({ variant: 'primary' });
+    expect(r.statusCode).toBeGreaterThanOrEqual(400);
+    expect(await brandFiles()).toEqual([]);
+    expect((await kit()).logos).toEqual([]);
   });
 });

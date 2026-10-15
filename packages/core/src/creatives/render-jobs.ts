@@ -264,6 +264,8 @@ export class RenderJobService {
     const label = (id: string) => formatDisplayName(presets, id, locale);
     const store = new CreativeStore(ref.projectDir);
     const notes: string[] = [];
+    // Details for the UI behind "Details" (the English reasons of an SVG refusal): job notes only, not the chat.
+    const detail = (text: string) => { notes.push(text); this.deps.queue.patch(jobId, { notes: [...notes] }); };
     const note = async (text: string) => {
       notes.push(text);
       this.deps.queue.patch(jobId, { notes: [...notes] });
@@ -285,7 +287,7 @@ export class RenderJobService {
         if (signal.aborted) throw new RenderError('cancelled', 'cancelled');
         const followers = Object.keys(plan.followers).filter((f) => plan.followers[f] === format);
         try {
-          await this.renderFormat({ ref, n, format, followers, plan, comps, presets, locale, signal, progress, note, label });
+          await this.renderFormat({ ref, n, format, followers, plan, comps, presets, locale, signal, progress, note, detail, label });
         } catch (e) {
           if (signal.aborted || (e instanceof RenderError && e.code === 'cancelled')) throw e;
           failures.push(m.render.formatFailed({ format: label(format), reason: errorText(e) }));
@@ -299,7 +301,7 @@ export class RenderJobService {
 
   private async renderFormat(o: {
     ref: CreativeRef; n: number; format: string; followers: string[]; plan: RenderPlan; comps: VersionComposition[]; presets: FormatPreset[]; locale: Locale;
-    signal: AbortSignal; progress: (p: JobProgress) => void; note: (text: string) => Promise<void>; label: (id: string) => string;
+    signal: AbortSignal; progress: (p: JobProgress) => void; note: (text: string) => Promise<void>; detail?: (text: string) => void; label: (id: string) => string;
   }): Promise<void> {
     const { ref, n, format, signal } = o;
     const m = messages(o.locale);
@@ -322,7 +324,16 @@ export class RenderJobService {
     if (preset.identity) {
       const v = await identityProblems(compDir, loaded.composition);
       if (v.problems.length > 0) {
-        throw new Error(m.render.identitySvgRefused({ format: o.label(format), list: v.problems.slice(0, 5).map((p) => compositionProblemText(p, o.locale)).join('; ') }));
+        // The user reads one translated summary per file (decision 767); the English reasons go to the job's notes ("Details").
+        const refused = v.problems.filter((p) => p.key === 'composition.svgRefused');
+        const perFile = new Map<string, number>();
+        for (const p of refused) perFile.set(String(p.params.file), (perFile.get(String(p.params.file)) ?? 0) + 1);
+        for (const p of refused) o.detail?.(compositionProblemText(p, o.locale));
+        const list = [
+          ...[...perFile].map(([file, count]) => m.composition.svgRefusedSummary({ file, count })),
+          ...v.problems.filter((p) => p.key !== 'composition.svgRefused').slice(0, 5).map((p) => compositionProblemText(p, o.locale)),
+        ].join('; ');
+        throw new Error(m.render.identitySvgRefused({ format: o.label(format), list }));
       }
     }
     // At the output's frame rate for the media too (the App Store preview: 30 fps, M4).

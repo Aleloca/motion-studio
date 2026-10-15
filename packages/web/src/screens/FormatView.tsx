@@ -148,6 +148,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   const idKind = preset?.identity ?? null;
   const idSet = idKind && out?.identitySet ? out.identitySet : null;
   const [idView, setIdView] = useState<'image' | 'sizes'>('image');
+  useEffect(() => { setIdView('image'); }, [format]);
   const sizesView = idSet !== null && idView === 'sizes';
   const known = Boolean(detail && (detail.creative.brief.formats.includes(format) || versions.some((v) => v.outputs.some((o) => o.format === format))));
   // A v2 version (Task 8): the live player replaces the <video>; a legacy version (no session, 404) keeps its media.

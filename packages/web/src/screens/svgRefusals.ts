@@ -1,7 +1,7 @@
 // SVG refusals in the problems the user sees (Phase 14, decision 767): the core writes one problem per reason, in English
 // after the file name ("logo.svg was refused by the SVG check: <reason>"). The user sees one translated summary per file
 // ("logo.svg did not pass the SVG safety check (2 reasons)") and the reasons only behind "Details".
-import { messages, type Locale } from '@motion-studio/shared';
+import { messages, type Locale, type Messages } from '@motion-studio/shared';
 
 export type ProblemItem = { kind: 'plain'; text: string } | { kind: 'svg'; file: string; reasons: string[] };
 
@@ -37,4 +37,16 @@ export function groupProblems(problems: readonly string[]): ProblemItem[] {
     out.push(created);
   }
   return out;
+}
+
+/** Only the SVG refusals among the texts (the job notes of a failed render carry the English reasons next to other notes). */
+export const svgRefusalsOf = (texts: readonly string[]): string[] => texts.filter((x) => groupProblems([x])[0]?.kind === 'svg');
+
+/**
+ * The problems as short single-line texts, for tooltips and lists with no room for a disclosure: an SVG refusal becomes the
+ * translated summary of its file (never its reasons), the other problems stay as they are. Grouping comes first: a colon
+ * strip of the raw text would cut the refusal's sentence in half.
+ */
+export function summarizeProblems(problems: readonly string[], m: Messages, plain: (text: string) => string = (x) => x): string[] {
+  return groupProblems(problems).map((it) => (it.kind === 'plain' ? plain(it.text) : m.composition.svgRefusedSummary({ file: it.file, count: it.reasons.length })));
 }

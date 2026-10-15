@@ -5,6 +5,7 @@
 // Zoom: only the frame (media, safe zones) is zoomed. The label above it, "Open editor", the comment markers and the
 // bubble are screen-sized at any zoom (as in Figma): they sit in the frame's box, sized in screen pixels, at the
 // world point × zoom, so nothing scales them and the bubble's text field stays crisp.
+import { summarizeProblems } from './svgRefusals.ts';
 import { ProblemList } from '../components/ProblemList.tsx';
 import { channelName, outputWarningText, type FormatPreset, type OutputWarning, type Pin } from '@motion-studio/shared';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode, type SyntheticEvent } from 'react';
@@ -230,13 +231,14 @@ export function RenderState({ render, label, onRender }: { render: BoardRender; 
  * each reason (the core's text, rendered as text) and "Render again".
  */
 export function RenderProblemChip({ problems, label, onRender }: { problems: string[]; label: string; onRender(): void }) {
-  const r = useT().web.render;
+  const t = useT();
+  const r = t.web.render;
   const anchor = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   return (
     <>
       <button ref={anchor} type="button" className="ms-pill ms-warn ms-cv-large ms-cv-render-problem" aria-haspopup="dialog" aria-expanded={open}
-        aria-label={r.problemOpen({ label })} title={problems.join('\n')} onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}>
+        aria-label={r.problemOpen({ label })} title={summarizeProblems(problems, t).join('\n')} onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}>
         <Icon name="warn" size={11} />{r.problemState({ count: problems.length })}
       </button>
       <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="bottom-start" width={320} label={r.problemTitle}>

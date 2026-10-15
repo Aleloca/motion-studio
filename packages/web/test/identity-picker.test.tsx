@@ -28,7 +28,7 @@ const { ShellContext } = await import('../src/shell/ShellContext.tsx');
 
 const shell = { catalog: { projects: [{ slug: 'acme', name: 'Acme' }], creatives: {}, refresh: () => {} } } as never;
 let platform: ReturnType<typeof vi.spyOn> | null = null;
-beforeEach(() => { vi.clearAllMocks(); api.getBrand.mockImplementation(async () => overview(EMPTY_BRAND_KIT)); location.hash = ''; platform = vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel'); });
+beforeEach(() => { vi.clearAllMocks(); (api as Record<string, unknown>).updateCreative = undefined; api.getBrand.mockImplementation(async () => overview(EMPTY_BRAND_KIT)); location.hash = ''; platform = vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel'); });
 afterEach(() => { platform?.mockRestore(); });
 
 const open = async (locale: 'it' | 'en' = 'it') => {
@@ -43,6 +43,61 @@ const pick = async (name: RegExp, search = 'Logo') => {
 };
 const goal = async (text = 'Un logo per Acme') => { await userEvent.type(screen.getByLabelText('Cosa vuoi realizzare?'), text); };
 const start = () => screen.getByRole('group', { name: 'Partenza' });
+
+describe('NewCreative · identity start waits for the brand', () => {
+  it('Generate stays disabled for an identity format until the brand has loaded, then the default follows the brand', async () => {
+    let release: (v: ReturnType<typeof overview>) => void = () => {};
+    api.getBrand.mockImplementationOnce(() => new Promise((r) => { release = r; }));
+    await open();
+    await goal();
+    await pick(/^Logo/);
+    const generate = screen.getByRole('button', { name: 'Genera' }) as HTMLButtonElement;
+    expect(generate.disabled).toBe(true);
+    fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+    expect(createCreative).not.toHaveBeenCalled();
+    release(overview(withLogo()));
+    await waitFor(() => expect(generate.disabled).toBe(false));
+    expect(within(start()).getByRole('radio', { name: /Dal logo del brand/ }).getAttribute('aria-checked')).toBe('true');
+  });
+});
+
+describe('BriefEditor · identity formats', () => {
+  const brief = (formats: string[], identity?: unknown) => ({ goal: 'Logo', message: '', formats, durationSec: null, assets: [], notes: '', ...(identity ? { identity } : {}) });
+  const detail = (b: unknown) => ({ slug: 'c1', jobKey: 'k', versions: [], creative: { schemaVersion: 1, title: 'Logo', brief: b, status: 'draft', error: null, resumeFrom: null, linkedCodebases: [], createdAt: '2026-10-15T10:00:00.000Z', updatedAt: '2026-10-15T10:00:00.000Z' } });
+  const updateCreative = vi.fn(async (..._a: unknown[]) => ({ brief: {} }));
+  const mount = async (b: unknown) => {
+    Object.assign(api, { updateCreative, getKeyChecks: vi.fn(async () => ({})) });
+    const { BriefEditor } = await import('../src/components/BriefEditor.tsx');
+    render(<I18nProvider locale="it"><BriefEditor slug="acme" detail={detail(b) as never} presets={DEFAULT_FORMATS} disabled={false} onChanged={() => {}} /></I18nProvider>);
+  };
+
+  it('has no "Partenza" without an identity format', async () => {
+    await mount(brief(['instagram-post-1x1']));
+    expect(screen.queryByRole('group', { name: 'Partenza' })).toBeNull();
+  });
+
+  it('shows the saved start without concepts, and saves a changed one with the brief', async () => {
+    await mount(brief(['identity-favicon'], { start: 'scratch', name: 'Acme', colors: 'brand', concepts: 3 }));
+    const s = start();
+    expect(within(s).getByRole('radio', { name: 'Da zero' }).getAttribute('aria-checked')).toBe('true');
+    expect((within(s).getByLabelText('Nome o sigla') as HTMLInputElement).value).toBe('Acme');
+    expect(within(s).queryByText('Proposte di logo')).toBeNull();
+    await userEvent.click(within(s).getByRole('radio', { name: 'Liberi' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Salva' }));
+    await waitFor(() => expect(updateCreative).toHaveBeenCalledOnce());
+    const sent = (updateCreative.mock.calls[0]![2] as { brief: { identity: unknown } }).brief.identity;
+    expect(sent).toEqual({ start: 'scratch', name: 'Acme', colors: 'free', concepts: 3 });
+  });
+
+  it('with a brand logo and nothing saved, the default is the brand logo and nothing is sent', async () => {
+    api.getBrand.mockImplementation(async () => overview(withLogo()));
+    await mount(brief(['identity-app-icon']));
+    await waitFor(() => expect(within(start()).getByRole('radio', { name: /Dal logo del brand/ }).getAttribute('aria-checked')).toBe('true'));
+    await userEvent.click(screen.getByRole('button', { name: 'Salva' }));
+    await waitFor(() => expect(updateCreative).toHaveBeenCalledOnce());
+    expect((updateCreative.mock.calls[0]![2] as { brief: object }).brief).not.toHaveProperty('identity');
+  });
+});
 
 describe('NewCreative · identity formats', () => {
   it('a normal format shows no "Partenza"', async () => {

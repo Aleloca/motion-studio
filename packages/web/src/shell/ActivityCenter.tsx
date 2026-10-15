@@ -18,6 +18,8 @@ import { go, ShellContext, type ActivityTab } from './ShellContext.tsx';
 import { lastStep } from '../jobEvents.ts';
 import { jobFinalTokens, jobLiveTokens, jobUsagePartial, todayTokens } from '../usageLive.ts';
 import { formatTokens, TokenCount } from './Tokens.tsx';
+import { ProblemList } from '../components/ProblemList.tsx';
+import { svgRefusalsOf } from '../screens/svgRefusals.ts';
 
 /** Results kept in the Done tab (the latest of this session). */
 export const DONE_MAX = 20;
@@ -344,8 +346,10 @@ function DoneRow({ job, made, failure, tokens, partial }: { job: JobSummary; mad
     : failure ? `${state} · ${failure}`
     : ok && job.notes?.length ? job.notes[0]!
     : state;
+  // A failed render's SVG refusals: the English reasons behind "Details" (decision 767), outside the row's link.
+  const refusals = !ok ? svgRefusalsOf(job.notes ?? []) : [];
   return (
-    <Row job={job}>
+    <Row job={job} after={refusals.length > 0 ? <ProblemList className="ms-activity-details" problems={refusals} /> : undefined}>
       <span className={cx('ms-activity-mark', ok ? 'ms-ok' : 'ms-warn')}><Icon name={ok ? 'check' : 'warn'} size={11} strokeWidth={2} /></span>
       <span className="ms-activity-text ms-line">
         <b>{job.label}</b>

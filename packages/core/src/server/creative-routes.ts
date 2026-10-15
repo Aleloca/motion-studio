@@ -785,10 +785,23 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const out = version.outputs.find((o) => o.format === format);
     const set = out?.identitySet;
     const svgEntry = set?.files.find((f) => f.role === 'vector' && f.path.toLowerCase().endsWith('.svg'));
+    const preset = findPreset(await catalog().load().then((c) => c.presets).catch(() => []), format.replace(/@\d+$/, ''));
+    if (!preset?.identity) throw new CodedError(409, e.useAsLogoNotIdentity, 'not-identity');
     if (!out || !set || !svgEntry) throw new CodedError(409, set ? e.useAsLogoNoSvg : e.useAsLogoNotChecked, set ? 'logo-no-svg' : 'logo-not-checked');
-    // The set folder is `outputs/vN/<dir>`; the read refuses links, hard links and anything outside the creative.
-    const base = join(ref.store.dir(ref.creativeSlug), 'outputs', `v${n}`);
-    const read = await readConfinedFile(base, `${set.dir}/${svgEntry.path}`, MAX_VECTOR_SVG_BYTES).catch(() => ({ skipped: 'outside' as const }));
+    // Confinement: `set.dir` and the file's path are plain relative segments (no `..`, `.`, empty, backslash or control
+    // character); every folder from the creative down to the file's folder is a real folder (no link: `isRealDirChain`);
+    // the file is opened without following a link, must be a regular single-linked file, and its real path must be exactly
+    // `<real set folder>/<path>` (`readConfinedFile` in exact mode).
+    const plain = (p: string) => p.split('/').every((x) => x !== '' && x !== '.' && x !== '..' && !/[\\\u0000-\u001f\u007f]/.test(x));
+    if (!plain(set.dir) || !plain(svgEntry.path)) throw new CodedError(422, e.useAsLogoRefused, 'logo-refused');
+    const fileParts = svgEntry.path.split('/');
+    const fileName = fileParts.pop()!;
+    const dirParts = ['outputs', `v${n}`, ...set.dir.split('/'), ...fileParts];
+    const creativeDir = ref.store.dir(ref.creativeSlug);
+    const chain = await isRealDirChain(creativeDir, dirParts);
+    if (chain === 'missing') throw new CodedError(404, e.useAsLogoMissing, 'logo-missing');
+    if (chain === 'unsafe') throw new CodedError(422, e.useAsLogoRefused, 'logo-refused');
+    const read = await readConfinedFile(join(creativeDir, ...dirParts), fileName, MAX_VECTOR_SVG_BYTES, true).catch(() => ({ skipped: 'outside' as const }));
     if (read === null) throw new CodedError(404, e.useAsLogoMissing, 'logo-missing');
     if ('skipped' in read) throw new CodedError(422, e.useAsLogoRefused, 'logo-refused');
     if (!checkVectorSvg(read.text).ok) throw new CodedError(422, e.useAsLogoRefused, 'logo-refused');
@@ -820,10 +833,12 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       await rm(join(ref.projectDir, ...file.split('/')), { force: true }).catch(() => {});
       throw err;
     }
-    if (ctx.git) await ctx.git.commitAll(ref.projectDir, t().jobs.brandKitCommit);
+    // The kit and the file are written either way; a commit that fails is reported, not undone (the next kit change commits it).
+    let committed = true;
+    if (ctx.git) committed = await ctx.git.commitAll(ref.projectDir, t().jobs.brandKitCommit).then(() => true, () => false);
     ctx.broadcast?.({ type: 'library', project: ref.projectSlug });
     ctx.broadcast?.({ type: 'brand', project: ref.projectSlug });
-    return { file, variant: body.data.variant };
+    return { file, variant: body.data.variant, committed };
   });
 
   app.get<{ Params: { slug: string; c: string; '*': string } }>('/api/projects/:slug/creatives/:c/files/*', async (req, reply) => {

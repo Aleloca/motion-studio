@@ -110,8 +110,8 @@ export async function readAgentFile(path: string, maxBytes = MAX_AGENT_FILE_BYTE
  * whose real path stays inside the project, up to `maxBytes`. Opened non-blocking so a FIFO cannot hang the core.
  * null when missing; `{ skipped }` when refused.
  */
-export async function readConfinedFile(projectDir: string, rel: string, maxBytes = MAX_AGENT_FILE_BYTES): Promise<AgentFile> {
-  return withConfinedFile(projectDir, rel, false, async (fh, info) => {
+export async function readConfinedFile(projectDir: string, rel: string, maxBytes = MAX_AGENT_FILE_BYTES, exact = false): Promise<AgentFile> {
+  return withConfinedFile(projectDir, rel, exact, async (fh, info) => {
     if (info.size > maxBytes) return { skipped: 'too-large' };
     // Bounded read: the file may grow after the size check.
     const buf = Buffer.alloc(maxBytes + 1);

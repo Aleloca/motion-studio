@@ -234,4 +234,29 @@ describe('SVG refusals in the problems', () => {
     expect(btn.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByText('the SVG has a <script> element')).not.toBeNull();
   });
+
+  it('the tooltip and the short reasons give the summary, never the colon-cut English reason', async () => {
+    const { summarizeProblems } = await import('../src/screens/svgRefusals.ts');
+    const { shortProblems } = await import('../src/screens/renderModel.ts');
+    const { messages } = await import('@motion-studio/shared');
+    const m = messages('it');
+    const raw = ['identity-logo: ' + it1, it2, 'Test · Logo: il file pesa troppo'];
+    expect(summarizeProblems(raw, m)).toEqual(['logo.svg non ha passato il controllo di sicurezza degli SVG (2 motivi)', 'Test · Logo: il file pesa troppo']);
+    const short = shortProblems({ problems: raw }, m, 'it');
+    expect(short).toEqual(['logo.svg non ha passato il controllo di sicurezza degli SVG (2 motivi)', 'il file pesa troppo']);
+    expect(short.join(' ')).not.toMatch(/script|onclick/);
+    const { RenderProblemChip } = await import('../src/screens/CanvasBoard.tsx');
+    render(<I18nProvider locale="it"><RenderProblemChip problems={[it1, it2]} label="Logo" onRender={() => {}} /></I18nProvider>);
+    const chip = screen.getByRole('button', { name: /Logo/ });
+    expect(chip.getAttribute('title')).toBe('logo.svg non ha passato il controllo di sicurezza degli SVG (2 motivi)');
+    await userEvent.click(chip);
+    expect(screen.queryByText(/<script>/)).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Dettagli' }));
+    expect(screen.getByText('the SVG has a <script> element')).not.toBeNull();
+  });
+
+  it('only the SVG refusals are picked out of a failed render\'s job notes', async () => {
+    const { svgRefusalsOf } = await import('../src/screens/svgRefusals.ts');
+    expect(svgRefusalsOf(['Test: 3 avvisi di fotogramma', it1])).toEqual([it1]);
+  });
 });

@@ -264,6 +264,8 @@ export function NewCreative({ slug }: { slug: string }) {
   const inFlight = useRef(false);
   const submit = async (generate: boolean) => {
     if (inFlight.current) return;
+    // The start mode defaults to the brand's logo when it has one: wait for the brand before sending an identity brief.
+    if (identityPending) return;
     if (!goal.trim()) {
       setGoalError(true);
       goalRef.current?.focus();
@@ -310,6 +312,7 @@ export function NewCreative({ slug }: { slug: string }) {
   const kit = brand.value;
   const hasBrandLogo = (kit?.logos.length ?? 0) > 0;
   const identityOn = chosen.some((p) => p.identity);
+  const identityPending = identityOn && identity === undefined && brand.value === null && brand.error === null;
   const identityNow = resolveIdentity(identity, hasBrandLogo);
   const hasBrand = !!kit && (kit.colors.length > 0 || kit.fonts.length > 0 || kit.logos.length > 0 || kit.tone !== null);
   // The brand in one line, as on the board: heading font · main colour · tone.
@@ -564,8 +567,8 @@ export function NewCreative({ slug }: { slug: string }) {
           {similar ? <span className="ms-nc-muted ms-nc-small ms-nc-estimate">{n.similar({ range: similar })}</span> : null}
         </div>
         <div className="ms-grow" />
-        <Button size="lg" variant="ghost" loading={busy === 'draft'} disabled={busy !== null} onClick={() => void submit(false)}>{n.saveDraft}</Button>
-        <Button size="lg" variant="accent" aria-label={n.generate} loading={busy === 'generate'} disabled={busy !== null} onClick={() => void submit(true)}>
+        <Button size="lg" variant="ghost" loading={busy === 'draft'} disabled={busy !== null || identityPending} onClick={() => void submit(false)}>{n.saveDraft}</Button>
+        <Button size="lg" variant="accent" aria-label={n.generate} loading={busy === 'generate'} disabled={busy !== null || identityPending} onClick={() => void submit(true)}>
           <Icon name="sparkle" size={14} />{n.generate}<kbd className="ms-nc-kbd" aria-hidden="true">{isMac() ? '⌘↵' : 'Ctrl ↵'}</kbd>
         </Button>
       </footer>

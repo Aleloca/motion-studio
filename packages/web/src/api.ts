@@ -255,7 +255,7 @@ export const api = {
     request<JobSummary>('POST', `${c(slug, creative)}/versions/${n}/render`, { ...(formats ? { formats } : {}), ...(opts.locales?.length ? { locales: opts.locales } : {}), ...(opts.force ? { force: true } : {}) }),
   /** "Use as brand logo" (Phase 14): the checked SVG of an identity format goes into the brand kit. Codes: `logo-not-checked`, `logo-no-svg`, `logo-missing`, `logo-refused`. */
   useAsBrandLogo: (slug: string, creative: string, n: number, format: string, variant: 'primary' | 'icon') =>
-    request<{ file: string; variant: 'primary' | 'icon' }>('POST', `${c(slug, creative)}/versions/${n}/formats/${encodeURIComponent(format)}/use-as-brand-logo`, { variant }),
+    request<{ file: string; variant: 'primary' | 'icon'; committed: boolean }>('POST', `${c(slug, creative)}/versions/${n}/formats/${encodeURIComponent(format)}/use-as-brand-logo`, { variant }),
   /** The translations of version n (rows) and the creative's extra languages. */
   getLocalizations: (slug: string, creative: string, n: number) =>
     request<{ entries: LocalizationRow[]; available: LocaleTag[] }>('GET', `${c(slug, creative)}/versions/${n}/localizations`),

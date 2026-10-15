@@ -26,9 +26,9 @@ export function UseAsBrandLogo({ slug, creative, n, format, label, kind, disable
     setBusy(true);
     setError(null);
     try {
-      await api.useAsBrandLogo(slug, creative, n, format, variant);
+      const done = await api.useAsBrandLogo(slug, creative, n, format, variant);
       setOpen(false);
-      toast.show(i.useAsLogoDone, { tone: 'ok', action: { label: i.useAsLogoOpen, run: () => go(href.project(slug, 'brand')) } });
+      toast.show(done.committed === false ? i.useAsLogoNotCommitted : i.useAsLogoDone, { tone: 'ok', action: { label: i.useAsLogoOpen, run: () => go(href.project(slug, 'brand')) } });
     } catch (e) { setError(i.useAsLogoFailed({ detail: message(e) })); }
     finally { setBusy(false); }
   };

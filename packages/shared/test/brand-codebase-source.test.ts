@@ -66,3 +66,21 @@ describe('compatibility: older stored files still parse', () => {
     expect(brandSourcesFileSchema.safeParse(old).success).toBe(true);
   });
 });
+
+describe('manual sources from a creative (Phase 14, decision 733)', async () => {
+  const { sourceRefSchema, brandKitSchema } = await import('../src/brand.ts');
+  const ok = (ref: string | null) => sourceRefSchema.safeParse({ kind: 'manual', ref }).success;
+  it('accepts exactly creative:<slug>/v<n> and no ref', () => {
+    expect(ok(null)).toBe(true);
+    expect(ok('creative:lancio-estivo/v1')).toBe(true);
+    expect(ok('creative:2026-10-15-logo/v12')).toBe(true);
+  });
+  it('rejects crafted refs', () => {
+    for (const ref of ['creative:../x/v1', 'creative:a/v0', 'creative:a/v1/b', 'creative:a/v01', 'creative:/v1', 'creative:A/v1', 'creative:a/v1 ', 'creative:a/v', 'x', '', 'creative:a/v1\n']) expect(ok(ref), ref).toBe(false);
+  });
+  it('other source kinds are unchanged and an old kit still parses', () => {
+    expect(sourceRefSchema.safeParse({ kind: 'website', ref: 'creative:a/v1' }).success).toBe(false);
+    const kit = { schemaVersion: 1, colors: [], fonts: [], logos: [{ id: 'l', file: 'assets/brand/l.svg', variant: 'primary', background: 'any', source: { kind: 'manual', ref: null } }], tone: null, dos: [], donts: [], photoStyle: null };
+    expect(brandKitSchema.safeParse(kit).success).toBe(true);
+  });
+});

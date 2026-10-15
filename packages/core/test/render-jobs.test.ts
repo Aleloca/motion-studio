@@ -802,13 +802,16 @@ describe('identity formats (Phase 14)', { timeout: 90_000 }, () => {
     return { slug, store };
   }
 
-  it('a refused SVG fails the format with its reasons; nothing is rendered or rasterised', async () => {
+  it('a refused SVG fails the format with a translated summary and the reasons as notes; nothing is rendered or rasterised', async () => {
     const { slug, store } = await iconCreative('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><script>alert(1)</script><rect width="10" height="10"/></svg>');
     const r = await post(slug, 1);
     expect(r.statusCode, r.body).toBe(202);
     const job = await waitJob(r.json().id);
     expect(job.state).toBe('failed');
-    expect(job.error).toMatch(/script/);
+    // Decision 767: the error is the translated summary; the English reasons are job notes (behind "Details" in the UI).
+    expect(job.error).toMatch(/mark\.svg non ha passato il controllo di sicurezza degli SVG \(\d+ motiv/);
+    expect(job.error).not.toMatch(/script/);
+    expect((job.notes ?? []).some((n) => /mark\.svg è stato rifiutato dal controllo SVG: .*script/.test(n))).toBe(true);
     expect(fake.calls).toEqual([]);
     expect((await versionOf(store, slug, 1)).outputs).toEqual([]);
     expect(existsSync(join(store.outputsDir(slug, 1), ICON.id))).toBe(false);
