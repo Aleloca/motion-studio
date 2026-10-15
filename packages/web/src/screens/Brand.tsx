@@ -287,10 +287,15 @@ function EmptyBrand({ slug, codebases, onManual, onStarted }: { slug: string; co
       onStarted();
     } catch (err) { setError(message(err)); setBusy(false); }
   };
+  // The codebase source added by an earlier attempt: reused only while the path and the note are the same; otherwise it
+  // is removed first, so the changed attempt does not leave it orphaned.
+  const addedCode = useRef<{ id: string; path: string; note: string } | null>(null);
   const analyzeCodebase = async (path: string, note: string) => {
-    if (added.current !== path) {
-      await api.addBrandSource(slug, { kind: 'codebase', path, ...(note ? { note } : {}) });
-      added.current = path;
+    const prev = addedCode.current;
+    if (!prev || prev.path !== path || prev.note !== note) {
+      if (prev) { await api.removeBrandSource(slug, prev.id); addedCode.current = null; }
+      const src = await api.addBrandSource(slug, { kind: 'codebase', path, ...(note ? { note } : {}) });
+      addedCode.current = { id: src.id, path, note };
     }
     await api.analyzeBrand(slug);
     onStarted();

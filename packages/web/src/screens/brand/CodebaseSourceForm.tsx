@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useId, useRef, useState, type FormEvent } from 'react';
 import { desktop } from '../../desktop.ts';
 import { useT } from '../../i18n.tsx';
 import { Button, Chip, Icon, Input } from '../../ui/index.ts';
@@ -20,6 +20,8 @@ export function CodebaseSourceForm({ suggestions, taken, submitLabel, onSubmit, 
   const [note, setNote] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const running = useRef(false); // a double click or Enter while the first submit runs adds nothing twice
+  const errorId = useId();
   const bridge = desktop();
   const offered = suggestions.filter((p) => !taken.includes(p));
   const choose = async () => {
@@ -28,12 +30,13 @@ export function CodebaseSourceForm({ suggestions, taken, submitLabel, onSubmit, 
   };
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (running.current) return;
     const p = path.trim();
     if (!p) { setError(c.needPath); return; }
-    setBusy(true); setError(null);
+    running.current = true; setBusy(true); setError(null);
     try { await onSubmit(p, note.trim()); setPath(''); setNote(''); }
     catch (err) { setError(message(err)); }
-    finally { setBusy(false); }
+    finally { running.current = false; setBusy(false); }
   };
   return (
     <form className="ms-cbl" onSubmit={(e) => void submit(e)}>
@@ -44,12 +47,12 @@ export function CodebaseSourceForm({ suggestions, taken, submitLabel, onSubmit, 
         </div>
       ) : null}
       <div className="ms-cbl-add">
-        <Input className="ms-cbl-input ms-cbl-mono" aria-label={c.pathAria} placeholder={c.pathPlaceholder} value={path} autoFocus={autoFocus} onChange={(e) => { setPath(e.target.value); setError(null); }} />
+        <Input className="ms-cbl-input ms-cbl-mono" aria-label={c.pathAria} placeholder={c.pathPlaceholder} value={path} autoFocus={autoFocus} aria-invalid={error ? true : undefined} aria-describedby={error ? errorId : undefined} onChange={(e) => { setPath(e.target.value); setError(null); }} />
         {bridge ? <Button size="sm" variant="outline" onClick={() => void choose()}><Icon name="folder" size={12} />{t.web.common.chooseFolder}</Button> : null}
       </div>
       <Input className="ms-cbl-input" aria-label={c.noteAria} placeholder={c.notePlaceholder} value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} />
       <p className="ms-cbl-hint">{c.hint}</p>
-      {error ? <p role="alert" className="ms-cbl-error">{error}</p> : null}
+      {error ? <p id={errorId} role="alert" className="ms-cbl-error">{error}</p> : null}
       <Button type="submit" variant="ink" size="sm" className="ms-bstart" loading={busy} disabled={!path.trim()}>{submitLabel}</Button>
     </form>
   );

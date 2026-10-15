@@ -9,7 +9,7 @@ import { __resetToasts } from '../src/ui/toast.tsx';
 
 let overview: BrandOverview;
 let linked: Array<{ path: string; note?: string }>;
-class FakeApiError extends Error {}
+class FakeApiError extends Error { constructor(public status: number, m: string, public code?: string) { super(m); } }
 const api = {
   getBrand: vi.fn(async () => structuredClone(overview)),
   getProject: vi.fn(async () => ({ slug: 'acme', project: { name: 'Acme', linkedCodebases: linked }, jobKey: 'k' })),
@@ -17,7 +17,7 @@ const api = {
   listReferences: vi.fn(async () => ({ references: [], error: null })),
   saveBrandKit: vi.fn(),
   saveGuidelines: vi.fn(),
-  addBrandSource: vi.fn(async (..._a: unknown[]) => ({})),
+  addBrandSource: vi.fn(async (..._a: unknown[]) => ({ id: 's-new' })),
   removeBrandSource: vi.fn(async () => ({ ok: true })),
   analyzeBrand: vi.fn(async () => ({ id: 'j1' })),
   cancelJob: vi.fn(),
@@ -59,13 +59,78 @@ describe('Brand · codebase source, empty screen', () => {
   });
 
   it('shows the core\'s refusal in the field and does not analyze', async () => {
-    api.addBrandSource.mockRejectedValueOnce(new Error('The codebase cannot contain the project or the workspace, nor sit inside them'));
+    api.addBrandSource.mockRejectedValueOnce(new FakeApiError(400, 'The codebase cannot contain the project or the workspace, nor sit inside them', 'codebase-overlap'));
     show();
     await userEvent.click(await screen.findByRole('radio', { name: 'From a codebase' }));
     await userEvent.type(screen.getByLabelText('Codebase folder'), '/Users/me');
     await userEvent.click(screen.getByRole('button', { name: 'Analyze' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('cannot contain the project');
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('cannot contain the project');
+    const input = screen.getByLabelText('Codebase folder');
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(input.getAttribute('aria-describedby')).toBe(alert.id);
     expect(api.analyzeBrand).not.toHaveBeenCalled();
+  });
+
+  it('retries only the analysis when the add succeeded and the analysis failed', async () => {
+    api.analyzeBrand.mockRejectedValueOnce(new FakeApiError(500, 'Analysis failed'));
+    show();
+    await userEvent.click(await screen.findByRole('radio', { name: 'From a codebase' }));
+    await userEvent.type(screen.getByLabelText('Codebase folder'), '/Users/me/dev/shop');
+    await userEvent.click(screen.getByRole('button', { name: 'Analyze' }));
+    expect((await screen.findByRole('alert')).textContent).toBe('Analysis failed');
+    await userEvent.click(screen.getByRole('button', { name: 'Analyze' }));
+    await waitFor(() => expect(api.analyzeBrand).toHaveBeenCalledTimes(2));
+    expect(api.addBrandSource).toHaveBeenCalledTimes(1);
+    expect(api.removeBrandSource).not.toHaveBeenCalled();
+  });
+
+  it('removes the orphaned source when the path or note changed after a failed analysis', async () => {
+    api.analyzeBrand.mockRejectedValueOnce(new FakeApiError(500, 'Analysis failed'));
+    show();
+    await userEvent.click(await screen.findByRole('radio', { name: 'From a codebase' }));
+    const input = screen.getByLabelText('Codebase folder');
+    await userEvent.type(input, '/Users/me/dev/shop');
+    await userEvent.click(screen.getByRole('button', { name: 'Analyze' }));
+    await screen.findByRole('alert');
+    await userEvent.type(input, '2');
+    await userEvent.click(screen.getByRole('button', { name: 'Analyze' }));
+    await waitFor(() => expect(api.analyzeBrand).toHaveBeenCalledTimes(2));
+    expect(api.removeBrandSource).toHaveBeenCalledWith('acme', 's-new');
+    expect(api.addBrandSource).toHaveBeenCalledTimes(2);
+    expect(api.addBrandSource).toHaveBeenLastCalledWith('acme', { kind: 'codebase', path: '/Users/me/dev/shop2' });
+  });
+
+  it('adds once on a double click and on Enter', async () => {
+    let release = () => {};
+    api.addBrandSource.mockImplementationOnce(() => new Promise((r) => { release = () => r({ id: 's-new' }); }));
+    show();
+    await userEvent.click(await screen.findByRole('radio', { name: 'From a codebase' }));
+    await userEvent.type(screen.getByLabelText('Codebase folder'), '/Users/me/dev/shop');
+    await userEvent.dblClick(screen.getByRole('button', { name: 'Analyze' }));
+    await userEvent.type(screen.getByLabelText('Codebase folder'), '{Enter}');
+    expect(api.addBrandSource).toHaveBeenCalledTimes(1);
+    await act(async () => { release(); });
+    await waitFor(() => expect(api.analyzeBrand).toHaveBeenCalledTimes(1));
+  });
+
+  describe('folder picker', () => {
+    const w = window as unknown as { motionStudio?: unknown };
+    afterEach(() => { delete w.motionStudio; });
+    it('fills the path from the desktop picker', async () => {
+      const pickFolder = vi.fn(async () => '/Users/me/dev/picked');
+      w.motionStudio = { isDesktop: true, platform: 'darwin', pickFolder, revealPath: async () => {} };
+      show();
+      await userEvent.click(await screen.findByRole('radio', { name: 'From a codebase' }));
+      await userEvent.click(screen.getByRole('button', { name: 'Choose folder…' }));
+      expect(pickFolder).toHaveBeenCalled();
+      expect((screen.getByLabelText('Codebase folder') as HTMLInputElement).value).toBe('/Users/me/dev/picked');
+    });
+    it('has no picker button on the web', async () => {
+      show();
+      await userEvent.click(await screen.findByRole('radio', { name: 'From a codebase' }));
+      expect(screen.queryByRole('button', { name: 'Choose folder…' })).toBeNull();
+    });
   });
 
   it('is translated', async () => {
@@ -99,7 +164,7 @@ describe('Brand · codebase source, sources panel', () => {
 
   it('shows a server error in the field', async () => {
     kitWithCodebaseItem();
-    api.addBrandSource.mockRejectedValueOnce(new Error('Folder not found: /nope'));
+    api.addBrandSource.mockRejectedValueOnce(new FakeApiError(400, 'Folder not found: /nope', 'codebase-missing'));
     show();
     const side = await screen.findByRole('complementary', { name: 'Sources' });
     await userEvent.click(within(side).getByRole('radio', { name: 'From a codebase' }));
