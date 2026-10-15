@@ -21,7 +21,7 @@ import { sourceFrameIndex, videoSourceTime, VFR_NUDGE } from '../../composition-
 import { ChromeProvider } from '../src/render/chromium-provider.ts';
 import { renderComposition } from '../src/render/renderer.ts';
 import { checkVideotoolbox } from '../src/render/encode.ts';
-import { buildRuntime, burstWav, decodeAudio, decodeStrips, frameCodedVideo, framePts, leftovers, onset, readCode, renderTools } from './helpers/render-env.ts';
+import { buildRuntime, burstWav, decodeAudio, decodeStrips, frameCodedVideo, framePts, expectNoLeftovers, onset, readCode, renderTools } from './helpers/render-env.ts';
 
 const tools = await renderTools('renderer media tests');
 
@@ -186,12 +186,7 @@ describe.skipIf(!tools.ok)('renderer: media timing, seams, audio, still', () => 
   it('left nothing behind: no browser process, no temp output, no work folder', async () => {
     // The browser group is gone once the render returned; on a loaded machine the process table lags a moment behind, so the
     // check polls (bounded) and still ends on the very same assertion.
-    let left = await leftovers({ pgids: [provider.pgid!], markers: [provider.profileDir!, renderTemp] });
-    for (let i = 0; i < 40 && left.length > 0; i++) {
-      await new Promise((r) => setTimeout(r, 250));
-      left = await leftovers({ pgids: [provider.pgid!], markers: [provider.profileDir!, renderTemp] });
-    }
-    expect(left).toEqual([]);
+    await expectNoLeftovers({ pgids: [provider.pgid!], markers: [provider.profileDir!, renderTemp] });
     expect(readdirSync(renderTemp)).toEqual([]);
     expect(existsSync(provider.profileDir!)).toBe(false);
     expect(readdirSync(join(creative, VERSION_DIR)).sort()).toEqual(['compositions', `${FORMAT.id}.mp4`]);
@@ -276,7 +271,7 @@ describe.skipIf(!tools.ok)('renderer: media timing, seams, audio, still', () => 
     expect(decodeStrips(ff, out, BOXES.v24, 2).map(readCode)).toEqual(frames.map((i) => Math.min(i, 29) + 1));
     expect(decodeStrips(ff, out, BOXES.v25, 2).map(readCode)).toEqual(frames.map((i) => (i < 15 ? 0 : Math.min(i - 15, 29) + 1)));
     expect(r.warnings).toEqual([]);
-    expect(await leftovers({ pgids: [p.pgid!], markers: [p.profileDir!] })).toEqual([]);
+    await expectNoLeftovers({ pgids: [p.pgid!], markers: [p.profileDir!] });
     rmSync(out);
   }, 1_800_000);
 
@@ -327,6 +322,6 @@ describe.skipIf(!tools.ok)('renderer: media timing, seams, audio, still', () => 
     const near = (a: readonly number[], b: number[]) => a.every((v, i) => Math.abs(v - b[i]!) <= 2);
     expect(near(img.px(130, 70), [0xff, 0x80, 0x00])).toBe(true);
     expect(near(img.px(10, 10), [0x10, 0x20, 0x30])).toBe(true);
-    expect(await leftovers({ pgids: [p.pgid!], markers: [p.profileDir!] })).toEqual([]);
+    await expectNoLeftovers({ pgids: [p.pgid!], markers: [p.profileDir!] });
   }, 900_000);
 });

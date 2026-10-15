@@ -11,7 +11,7 @@ import { RenderError, type RenderFailure } from './errors.ts';
 
 export { RenderError, type RenderErrorCode, type RenderFailure, type RenderFailureCode } from './errors.ts';
 export { nativeLauncher } from './arch.ts';
-import { killGroup, killGroupIfMarked, scaledMemoryLimits, startWatchdog, sweepByMarker, trackGroup, type Watchdog, type WatchdogLimits } from './watchdog.ts';
+import { killGroup, killGroupIfMarked, scaledMemoryLimits, startWatchdog, sweepByMarker, trackGroup, waitGroupGone, type Watchdog, type WatchdogLimits } from './watchdog.ts';
 
 /**
  * Where the render browser comes from (spec §5.3) and the page it drives.
@@ -241,7 +241,7 @@ export const ALLOWED_EXTRA_FLAG_RE = /^--(?:disable-gpu|enable-gpu|use-angle=(?:
  * System Chrome (`--headless=new`) or chrome-headless-shell (Chrome for Testing, headless by itself). One browser per
  * render, launched on the first `open` with the network locked to that page's composition server:
  * - its own process group (`detached`), registered for the exit hook; killed as a group and swept by profile path on
- *   `close()`, on a watchdog trip and after a crash;
+ *   `close()`, on a watchdog trip and after a crash; `close()` resolves once the whole group is gone (bounded, 5 s);
  * - a temporary `--user-data-dir` under the OS temp folder, removed on close;
  * - CDP over the pipe only; every new page target is auto-attached paused, and anything that is not one of our pages
  *   (a popup) is closed before it runs.
@@ -249,6 +249,11 @@ export const ALLOWED_EXTRA_FLAG_RE = /^--(?:disable-gpu|enable-gpu|use-angle=(?:
 export class ChromeProvider implements ChromiumProvider {
   readonly kind: 'system' | 'cft';
   failure: RenderFailure | null = null;
+  /**
+   * Set by `close()` when the browser's process group still had a member after the bounded wait (diagnostics; the render's
+   * outcome does not change: every member was already sent SIGKILL).
+   */
+  closeLeftover: { pgid: number; waitedMs: number } | null = null;
   private launched: Launched | null = null;
   private launching: Promise<Launched> | null = null;
   private closing = false;
@@ -434,6 +439,16 @@ export class ChromeProvider implements ChromiumProvider {
     await Promise.race([l.exited, new Promise((r) => setTimeout(r, 10_000))]);
     await this.killBrowser(l); // helpers still in the group (checked by marker: the leader is reaped by now)
     await sweepByMarker(l.profile, { rootPid: l.proc.pid!, since: l.launchedAt }).catch(() => 0);
+    // The whole group, not only the leader (CI hotfix, decisions log 789): a helper still exiting (or a zombie not yet reaped
+    // by init, a subreaper or Chromium's PID-namespace init) keeps the group present. Wait for it, bounded; once at 2.5 s, the
+    // same guarded kill as above (a dead leader: only while ps shows our profile in the group). Never throws.
+    const t0 = Date.now();
+    if (!(await waitGroupGone(l.proc.pid!, { kill: () => this.killBrowser(l) }))) {
+      this.closeLeftover = { pgid: l.proc.pid!, waitedMs: Date.now() - t0 };
+      const note = `render: process group ${l.proc.pid} still present ${this.closeLeftover.waitedMs} ms after close\n`;
+      this.stderrTail.push(note);
+      if (process.env.MS_RENDER_DEBUG) console.warn(note.trim());
+    }
     l.cdp.close();
     l.untrack();
     rmSync(l.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });

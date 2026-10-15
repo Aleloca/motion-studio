@@ -35,7 +35,7 @@ import { BASE_FLAGS, interceptRequests, networkLockdownFlags, TargetGate } from 
 import { killGroup, sweepByMarker } from '../src/render/watchdog.ts';
 import { startCompositionServer } from '../src/compositions/composition-server.ts';
 import { hostileLayer, hostileTrack, hostileWorkerScripts, workerTransportProbe, OWN_FRAME_NAVIGATION_CASES, SELF_NAVIGATION_CASES, selfNavigationLayer, selfNavigationPath, selfNavigationTrack, writeHostileLayers } from './helpers/hostile-layers.ts';
-import { buildRuntime, leftovers, renderTools, startCanary, startUdpCanary, type Canary, type UdpCanary } from './helpers/render-env.ts';
+import { buildRuntime, expectNoLeftovers, renderTools, startCanary, startUdpCanary, type Canary, type UdpCanary } from './helpers/render-env.ts';
 
 const tools = await renderTools('renderer isolation tests');
 const W = 320, H = 180;
@@ -169,7 +169,7 @@ describe.skipIf(!tools.chrome)('render isolation in headless Chrome', () => {
       await provider.close();
       await server.close();
     }
-    expect(await leftovers({ pgids: [provider.pgid!], markers: [provider.profileDir!] })).toEqual([]);
+    await expectNoLeftovers({ pgids: [provider.pgid!], markers: [provider.profileDir!] });
   }, 900_000);
 
   it('B. interception alone (no CSP anywhere, no network flags): a control without it leaks; with it nothing but a WebSocket gets out', async () => {

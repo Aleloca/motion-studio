@@ -42,6 +42,53 @@ export function killGroup(pgid: number): void {
   try { process.kill(-pgid, 'SIGKILL'); } catch { /* empty group */ }
 }
 
+/**
+ * Whether process group `pgid` still has a member, by `kill(-pgid, 0)` (no signal is sent): ESRCH means gone; anything else,
+ * EPERM included (a member we may not signal), counts as still present. Zombie caveat: a member that has exited but is
+ * not yet reaped by its parent keeps the group present (`ps` lists it too). Once our leader is gone its helpers belong to
+ * init, a subreaper or Chromium's PID-namespace init, never to us, so we cannot reap them: we can only wait. Windows (no
+ * process groups) and a pgid ≤ 1: false.
+ */
+export function groupPresent(pgid: number, kill: (pid: number, signal: number) => void = (p, s) => { process.kill(p, s); }): boolean {
+  if (process.platform === 'win32' || !(pgid > 1)) return false;
+  try { kill(-pgid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code !== 'ESRCH'; }
+}
+
+export interface GroupWaitOptions {
+  /** The whole bound (default 5000 ms). */
+  timeoutMs?: number;
+  /** The poll interval (default 100 ms). */
+  intervalMs?: number;
+  /** When the group is still there after this long, `kill` is called once (default 2500 ms). */
+  killAtMs?: number;
+  /** The caller's own guarded kill of the group (it decides whether the group is still ours); not awaited by the wait. */
+  kill?: () => unknown;
+  /** The presence check (default `groupPresent(pgid)`; tests inject one). */
+  present?: () => boolean;
+}
+
+/**
+ * Waits, bounded, until process group `pgid` has no member left (`groupPresent`), polling; when it is still there at
+ * `killAtMs`, calls `kill` once without waiting for it (the bound holds even when a `ps` behind it is slow). True when the
+ * group is gone, false when the bound ran out. Never throws and never signals anything itself.
+ */
+export async function waitGroupGone(pgid: number, o: GroupWaitOptions = {}): Promise<boolean> {
+  const timeoutMs = o.timeoutMs ?? 5000, intervalMs = o.intervalMs ?? 100, killAtMs = o.killAtMs ?? 2500;
+  const present = o.present ?? (() => groupPresent(pgid));
+  const start = Date.now();
+  let killed = false;
+  for (;;) {
+    if (!present()) return true;
+    const waited = Date.now() - start;
+    if (waited >= timeoutMs) return false;
+    if (!killed && waited >= killAtMs) {
+      killed = true;
+      void Promise.resolve().then(() => o.kill?.()).catch(() => {});
+    }
+    await new Promise((r) => setTimeout(r, Math.max(1, Math.min(intervalMs, timeoutMs - waited))));
+  }
+}
+
 const run = (cmd: string, args: string[], timeoutMs: number, env?: NodeJS.ProcessEnv): Promise<string | null> => new Promise((resolve) => {
   execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8', ...(env ? { env } : {}) }, (err, stdout) => resolve(err ? null : stdout));
 });

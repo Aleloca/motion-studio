@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 import { createServer, type Server } from 'node:http';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { it } from 'vitest';
+import { expect, it } from 'vitest';
 import { runtimeBuildOptions } from '../../../composition-runtime/tsup.config.ts';
 import { findSystemChrome, type ChromeInstall } from '../../src/render/system-chrome.ts';
 import { findFfmpeg, type FfmpegInfo } from '../../src/render/encode.ts';
@@ -127,6 +127,21 @@ export async function leftovers(o: { pgids?: number[]; markers?: string[] }): Pr
   const rows = await listProcesses();
   return rows.filter((r) => r.pid !== process.pid && ((o.pgids ?? []).includes(r.pgid) || (o.markers ?? []).some((m) => r.command.includes(m))))
     .map((r) => `${r.pid}/${r.pgid} ${r.command.slice(0, 160)}`);
+}
+
+/**
+ * Asserts that nothing of a render is left (`leftovers` empty), polling for up to `ms` first: the provider's `close()` waits
+ * for the whole group (bounded), but on a loaded machine `ps` can still list a member the kernel is tearing down (Linux CI:
+ * `[chrome]` rows of the group, decisions log 789). A real leak never goes away, so it still fails, on the same assertion.
+ */
+export async function expectNoLeftovers(marks: { pgids?: number[]; markers?: string[] }, ms = 10_000): Promise<void> {
+  const end = Date.now() + ms;
+  let left = await leftovers(marks);
+  while (left.length > 0 && Date.now() < end) {
+    await new Promise((r) => setTimeout(r, 250));
+    left = await leftovers(marks);
+  }
+  expect(left).toEqual([]);
 }
 
 /** Writes a file, creating its folder. */

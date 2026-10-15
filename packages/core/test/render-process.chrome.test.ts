@@ -16,7 +16,7 @@ import type { Composition, FormatPreset } from '@motion-studio/shared';
 import { ChromeProvider, RenderError } from '../src/render/chromium-provider.ts';
 import { renderComposition, type RenderCompositionOptions } from '../src/render/renderer.ts';
 import { listProcesses } from '../src/render/watchdog.ts';
-import { buildRuntime, frameCodedVideo, leftovers, put, renderTools } from './helpers/render-env.ts';
+import { buildRuntime, expectNoLeftovers, frameCodedVideo, put, renderTools } from './helpers/render-env.ts';
 
 const tools = await renderTools('renderer process tests');
 const W = 320, H = 180;
@@ -106,7 +106,7 @@ describe.skipIf(!tools.ok)('renderer: processes, cancel, crash, watchdog', () =>
   async function expectClean(r: { provider: ChromeProvider; temp: string; out: string }, id: string) {
     expect(r.provider.pgid).toBeGreaterThan(1);
     // ps: nothing of the browser's group, nothing using its profile, no ffmpeg writing into this render's temp folder.
-    expect(await leftovers({ pgids: [r.provider.pgid!], markers: [r.provider.profileDir!, r.temp] })).toEqual([]);
+    await expectNoLeftovers({ pgids: [r.provider.pgid!], markers: [r.provider.profileDir!, r.temp] });
     expect(readdirSync(r.temp)).toEqual([]);
     expect(readdirSync(join(creative, VERSION_DIR)).filter((f) => f.startsWith(id) || f.startsWith(`.${id}`))).toEqual([]);
   }
@@ -176,6 +176,6 @@ describe.skipIf(!tools.ok)('renderer: processes, cancel, crash, watchdog', () =>
     const ok = await attempt('retry', composition(1));
     expect(ok.error).toBeNull();
     expect(readdirSync(join(creative, VERSION_DIR)).filter((f) => f.includes('retry'))).toEqual(['retry.mp4']);
-    expect(await leftovers({ pgids: [ok.provider.pgid!], markers: [ok.provider.profileDir!, ok.temp] })).toEqual([]);
+    await expectNoLeftovers({ pgids: [ok.provider.pgid!], markers: [ok.provider.profileDir!, ok.temp] });
   }, 900_000);
 });
