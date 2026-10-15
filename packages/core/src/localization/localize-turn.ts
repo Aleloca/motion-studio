@@ -21,7 +21,7 @@ import type { JobQueue } from '../jobs/job-queue.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import type { InstallIo } from '../providers/google-fonts.ts';
 import type { HttpDeps } from '../providers/http.ts';
-import { CodedError, WorkspaceError } from '../workspace-store.ts';
+import { assertAgentFolders, CodedError, WorkspaceError } from '../workspace-store.ts';
 import {
   emptyOverlay, finishOverlay, sourceOverflowOf, instanceComposition, knownVoiceScripts, localizedComposition, readOverlay, resolveFallbackFont, setLocalizationRow,
   attachedFontHashes, rowAssetHashes, voiceRootsOf, writeOverlay, type FallbackResult, type InstanceComposition,
@@ -256,6 +256,8 @@ export class LocalizeService {
     const say = (level: 'info' | 'warning' | 'error', text: string) => store.appendConversation(slug, { type: 'system', at: now(), level, text });
     let lastWrite: Promise<void> = Promise.resolve();
     try {
+      // Decision 790: a project or workspace folder with glob characters runs no agent (the chat gets the error line).
+      await assertAgentFolders(ref.projectDir, ref.root);
       const creative = await store.get(slug);
       const presets = await this.deps.presets();
       const version = (await store.readVersions(slug)).find((v) => v.n === n);

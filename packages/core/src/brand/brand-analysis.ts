@@ -9,7 +9,7 @@ import { changedCodebaseFiles, codebaseFileStates, codebaseProblemText, codebase
 import { KeyedMutex } from '../keyed-mutex.ts';
 import { LibraryStore } from '../library/library-store.ts';
 import type { MediaTools } from '../media/media-tools.ts';
-import { WorkspaceError } from '../workspace-store.ts';
+import { assertAgentFolders, WorkspaceError } from '../workspace-store.ts';
 import { guardedPaths, readAgentFile, restoreGuarded, skipText, snapshotGuarded, type SkipReason } from './agent-guard.ts';
 import { applyBrandChanges, diffBrandKits } from './brand-diff.ts';
 import { buildBrandPrompt, buildDescribePrompt } from './brand-prompt.ts';
@@ -121,6 +121,8 @@ export class BrandService {
     // the setting becomes meanwhile. Errors that fail the job are shown live and use the current language.
     const locale = currentLocale();
     const m = messages(locale);
+    // Decision 790: a project or workspace folder with glob characters runs no agent (the job's error says so).
+    await assertAgentFolders(ref.projectDir, ref.root);
     // Phase 14 (spec §2.2): codebase sources are validated again now (the folder may have moved or become a link) and used
     // by their normalised and real paths; a folder that no longer passes is left out with a note.
     const jobNotes: string[] = [];
@@ -351,6 +353,8 @@ export class BrandService {
           const outAbs = join(ref.projectDir, 'assets', '.describe', `${jobId}.json`);
           const notes: string[] = [];
           try {
+            // Decision 790: as for the analysis, refused before anything is written.
+            await assertAgentFolders(ref.projectDir, ref.root);
             await mkdir(join(ref.projectDir, 'assets', '.describe'), { recursive: true });
             const sandboxed = await this.deps.launcher.sandboxed();
             const prompt = buildDescribePrompt({ outFile: outRel, files: targets.map((t) => `assets/${t.file}`) }, locale, sandboxed);

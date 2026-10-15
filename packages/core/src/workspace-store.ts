@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { access, chmod, constants, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { HELD_FIELDS, heldOf, SettingsHoldError, tightenHeld, type HeldSettings, type SettingsHoldStore } from './settings-hold.ts';
 import { homedir } from 'node:os';
-import { isAbsolute, join, normalize, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
   type WorkspaceProblemCode,
   projectFileSchema,
@@ -105,6 +105,52 @@ export async function codebaseHasGlobChars(path: string): Promise<boolean> {
 }
 
 export const codebaseGlobCharsMessage = (path: string): string => t().errors.codebaseGlobChars({ path });
+
+/**
+ * The real path of `path`, or, when it does not exist yet, the real path of its nearest existing ancestor joined with the
+ * rest (a workspace folder chosen before it exists, under a link). Null when nothing on the way resolves.
+ */
+async function realpathOrAncestor(path: string): Promise<string | null> {
+  let head = resolve(path);
+  const rest: string[] = [];
+  for (;;) {
+    const real = await realpath(head).catch(() => null);
+    if (real !== null) return rest.length ? join(real, ...rest.reverse()) : real;
+    const up = dirname(head);
+    if (up === head) return null;
+    rest.push(basename(head));
+    head = up;
+  }
+}
+
+/**
+ * Decision 790: the first spelling, among `paths` and their real paths, that holds a glob metacharacter (`GLOB_PATH_CHARS`),
+ * or null. The plain paths are checked first; a real path is returned as is (it is where the characters are).
+ */
+export async function folderWithGlobChars(paths: string[]): Promise<string | null> {
+  for (const p of paths) if (GLOB_PATH_CHARS.test(p)) return p;
+  for (const p of paths) {
+    const real = await realpathOrAncestor(p);
+    if (real !== null && GLOB_PATH_CHARS.test(real)) return real;
+  }
+  return null;
+}
+
+/** The stable code of a workspace or project folder whose path (or real path) has glob characters (decision 790). */
+export const FOLDER_GLOB_CHARS_CODE = 'folder-glob-chars';
+export const folderGlobCharsError = (path: string): CodedError => new CodedError(400, t().errors.folderGlobChars({ path }), FOLDER_GLOB_CHARS_CODE);
+
+/**
+ * Decision 790: refuses (400, `folder-glob-chars`, naming the path) when the project folder or the workspace folder, plain or
+ * real, holds a glob metacharacter. With such a path the agent's protected-file rules (CLAUDE.md, .mcp.json, .claude, .studio,
+ * the logs) stop matching (decision 780), so no agent may run there and no such workspace or project may be created.
+ * `workspaceRoot` defaults to the project folder's parent (projects live directly in the workspace).
+ */
+export async function assertAgentFolders(projectDir: string | null, workspaceRoot?: string): Promise<void> {
+  const root = workspaceRoot ?? (projectDir ? dirname(projectDir) : null);
+  const hit = await folderWithGlobChars([...(root ? [root] : []), ...(projectDir ? [projectDir] : [])]);
+  if (hit !== null) throw folderGlobCharsError(hit);
+}
 
 /**
  * Refuses (400, `codebase-glob-chars`, naming the path) a linked folder whose path or real path holds a glob metacharacter.
@@ -421,6 +467,8 @@ export class WorkspaceStore {
   async createProject(input: { name: string; description?: string }): Promise<{ slug: string; project: ProjectFile }> {
     const name = input.name.trim();
     if (!name) throw new WorkspaceError(400, t().errors.projectNameRequired);
+    // Decision 790: a project in a workspace whose path (or real path) has glob characters could never run the agent safely.
+    await assertAgentFolders(null, this.root);
     const { slug, dir } = await this.createLock.run('create', async () => {
       const base = slugify(name);
       for (let n = 1; ; n++) {
