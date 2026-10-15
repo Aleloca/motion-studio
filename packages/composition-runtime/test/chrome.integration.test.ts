@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { runtimeBuildOptions } from '../tsup.config.ts';
 import { sourceFrameIndex, videoSourceTime } from '../src/timing.ts';
 import { findChrome, launchChrome, Page, type Browser } from './support/chrome.ts';
-import { CLOCK_PATH, COMP_PATH, findFfmpeg, H, LAYER, OFFSCREEN_PATH, VIDEO, W, writeClockFixture, writeFixture, writeOffscreenFixture } from './support/fixture.ts';
+import { CLIPPED_PATH, CLOCK_PATH, COMP_PATH, findFfmpeg, H, LAYER, OFFSCREEN_PATH, VIDEO, W, writeClippedFixture, writeClockFixture, writeFixture, writeOffscreenFixture } from './support/fixture.ts';
 import { decodePng, diffRatio, meanGrey, type Image } from './support/png.ts';
 import { startCompositionServer, startUiServer, type TestServer } from './support/server.ts';
 
@@ -384,6 +384,29 @@ describe.skipIf(!chrome)('runtime in headless Chrome', () => {
       expect(await at(1.5)).toEqual(['000', '110']); // slide still parked at x -2500; shrunk at full size (yellow)
       expect(await at(2.5)).toEqual(['010', '110']); // slide in view, seeked to t 2.5 (green)
       expect(await at(0.2)).toEqual(['000', '000']); // and out again
+      expect(await page.eval('window.__ms.errors')).toEqual([]);
+    } finally {
+      await page.close();
+      await srv.close();
+    }
+  }, 25_000);
+
+  // Decision 740, ruling AJ (follow-up batch 2, task 4): a layer whose own clip-path leaves no area is not seeked either.
+  it('render: html layers clipped to nothing (wipe 100%, inset, circle 0, collapsed polygon) do not hold the seek; they paint once visible', async () => {
+    const site = join(work, 'site-clipped');
+    writeClippedFixture(site);
+    const srv = await startCompositionServer({ distDir: join(work, 'dist'), root: site, compPath: CLIPPED_PATH });
+    const page = await browser.newPage(W, H);
+    const green = (img: Image, x: number, y: number) => { const [r, g, b] = img.px(x, y); return r < 128 && g > 128 && b < 128; };
+    try {
+      await page.goto(srv.pageUrl('mode=render'));
+      const info = await page.eval<{ errors: unknown[] }>('window.__ms.ready()');
+      expect(info.errors).toEqual([]);
+      const at = async (t: number) => { await page.eval(`window.__ms.seek(${t})`); const img = decodePng(await page.screenshot()); return [10, 120, 200, 280].map((x) => green(img, x, 45)); };
+      expect(await at(0.5)).toEqual([false, false, false, false]);
+      expect(await at(1.75)).toEqual([true, true, true, true]);
+      expect(await at(2.5)).toEqual([true, true, true, true]);
+      expect(await at(0.2)).toEqual([false, false, false, false]);
       expect(await page.eval('window.__ms.errors')).toEqual([]);
     } finally {
       await page.close();

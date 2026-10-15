@@ -153,7 +153,9 @@ Everything lives under one token prefix on the composition server's own origin (
      area in the frame at `t` (parked outside it, slid out, scaled to 0): Chrome throttles such a sandboxed iframe and runs
      no animation frames in it, so its seek would wait for frames until `frameTimeout`. It shows nothing, so it is not
      seeked; the first seek that brings it into view seeks and paints it (decision 740). Measured on the bounding box,
-     so a layer hidden only by a `clip-path` (a `wipe` at 100 %) is still seeked.
+     and also skipped when the layer's own `clip-path` leaves no area (`wipe` at 100 %, `inset()` whose sides meet,
+     `circle()`/`ellipse()` of radius 0, a `polygon()` collapsed to a line or point; px and % only). A layer hidden by an
+     ancestor's clip, `path()`/`url()`/`calc()` clips, is still seeked; the 5 s stall watchdog (decision 709) fails it.
 5. Two **native** animation frames.
    - **Render mode:** each frame may take as long as the seek timeout. If the native frame never arrives, the runtime
      reports `frameTimeout` and `seek(t)` rejects, so the renderer never captures a frame that was not painted. A layer

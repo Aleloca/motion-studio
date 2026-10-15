@@ -570,7 +570,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
    * within the viewport) at the time just applied. Chrome throttles a sandboxed (cross-origin) iframe with no visible area
    * and runs no animation frames in it, so a layer seek there would wait for frames until `frameTimeout`. Such a layer
    * shows nothing, so its seek is skipped; it is seeked again, and painted, at the first seek that brings it into view.
-   * Measured on the bounding box (position, size, `translate`/`scale`/`rotate` animations); never true without a layout.
+   * Measured on the bounding box (position, size, `translate`/`scale`/`rotate` animations); never true without a layout. A clip-path with no area is `clippedAway`.
    */
   const outOfFrame = (el: Element): boolean => {
     const s = stage.getBoundingClientRect();
@@ -580,6 +580,53 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     const right = Math.min(s.right, view.clientWidth || s.right); const bottom = Math.min(s.bottom, view.clientHeight || s.bottom);
     const r = el.getBoundingClientRect();
     return !(Math.min(r.right, right) > Math.max(r.left, left) && Math.min(r.bottom, bottom) > Math.max(r.top, top));
+  };
+
+  /**
+   * Render mode (decision 740, ruling AJ): whether the element's own `clip-path`, as just applied (the `wipe` preset or a
+   * `clip` animation), leaves it no visible area: `inset()` whose sides meet or cross, `circle()`/`ellipse()` of radius 0,
+   * `polygon()` collapsed to a line or a point. Read from the computed value, in px and % only; anything else (calc(), `var()`,
+   * `path()`, `url()`, an ancestor's clip) reads as visible, so the layer is seeked as before.
+   */
+  const clippedAway = (el: HTMLElement): boolean => {
+    const cp = (doc.defaultView?.getComputedStyle(el).clipPath ?? '').trim();
+    const m = /^(inset|circle|ellipse|polygon)\((.*)\)$/.exec(cp);
+    if (!m) return false;
+    const w = el.offsetWidth, h = el.offsetHeight;
+    if (!(w > 0 && h > 0)) return false;
+    const len = (tok: string, base: number): number | null => {
+      const x = /^(-?\d*\.?\d+(?:e-?\d+)?)(px|%)?$/.exec(tok);
+      if (!x) return null;
+      const v = Number(x[1]);
+      return x[2] === '%' ? (v / 100) * base : x[2] === 'px' || v === 0 ? v : null;
+    };
+    const body = m[2]!.trim();
+    if (m[1] === 'inset') {
+      const toks = body.split(/\s+round\s+/)[0]!.trim().split(/\s+/);
+      if (toks.length < 1 || toks.length > 4) return false;
+      const [t, r = t, b = t, l = r] = toks as [string, string?, string?, string?];
+      const top = len(t, h), right = len(r, w), bottom = len(b!, h), left = len(l!, w);
+      if (top === null || right === null || bottom === null || left === null) return false;
+      return left + right >= w || top + bottom >= h;
+    }
+    if (m[1] === 'circle' || m[1] === 'ellipse') {
+      const shape = body.split(/\s+at\s+/)[0]!.trim();
+      if (!shape || /closest|farthest/.test(shape)) return false;
+      const radii = shape.split(/\s+/);
+      const zero = radii.map((tok, i) => len(tok, m[1] === 'circle' ? Math.hypot(w, h) / Math.SQRT2 : i === 0 ? w : h));
+      if (zero.some((v) => v === null)) return false;
+      return m[1] === 'circle' ? zero[0] === 0 : zero[0] === 0 || zero[1] === 0;
+    }
+    const pts = body.replace(/^(?:nonzero|evenodd)\s*,\s*/, '').split(',').map((pt) => pt.trim().split(/\s+/));
+    const xs: number[] = []; const ys: number[] = [];
+    for (const [px, py, ...rest] of pts) {
+      if (px === undefined || py === undefined || rest.length) return false;
+      const x = len(px, w), y = len(py, h);
+      if (x === null || y === null) return false;
+      xs.push(x); ys.push(y);
+    }
+    if (!xs.length) return false;
+    return Math.max(...xs) - Math.min(...xs) <= 0 || Math.max(...ys) - Math.min(...ys) <= 0;
   };
 
   const doSeek = async (t: number) => {
@@ -593,7 +640,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     for (const m of mounted) {
       if (!isClipVisible(m.clip, time, c.duration)) continue;
       if (m.video) work.push(seekVideo(m, time));
-      if (m.layer && !(opts.mode === 'render' && outOfFrame(m.content))) {
+      if (m.layer && !(opts.mode === 'render' && (outOfFrame(m.content) || clippedAway(m.content)))) {
         work.push(m.layer.seek(time - m.clip.start).catch((e: unknown) => {
           if (e instanceof LayerRequestError && e.code === 'frameTimeout') {
             report('frameTimeout', `html layer painted no frame after seeking to ${time}: ${e.message}`, m.clip.id);

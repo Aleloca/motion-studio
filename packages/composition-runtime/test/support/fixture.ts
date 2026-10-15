@@ -146,3 +146,24 @@ export function writeOffscreenFixture(root: string): void {
   };
   writeFileSync(join(dir, 'composition.json'), JSON.stringify(composition, null, 2));
 }
+
+/** Decision 740, ruling AJ: layers hidden only by their own clip-path (wipe, inset, circle, polygon) until t = 1..2. */
+export const CLIPPED_PATH = 'v1/compositions/clipped';
+export function writeClippedFixture(root: string): void {
+  const dir = join(root, CLIPPED_PATH);
+  mkdirSync(join(dir, 'layers'), { recursive: true });
+  writeFileSync(join(dir, 'layers', 'paint.html'), solidLayer("() => { document.body.style.background = '#0f0'; }"));
+  const clip = (id: string, x: number, from: string, to: string) => ({ id, type: 'html', src: 'layers/paint.html', start: 0, duration: 3, props: { x, y: 0, width: 80, height: 90 },
+    animations: [{ prop: 'clip', from, to, start: 1, duration: 1, ease: 'linear' }] });
+  const composition = {
+    $schema: 'motion-studio/composition@1', width: W, height: H, fps: 30, duration: 3, background: '#000000', fonts: [],
+    scenes: [{ id: 'all', start: 0, duration: 3 }],
+    tracks: [{ id: 'layers', kind: 'visual', clips: [
+      { id: 'wipe', type: 'html', src: 'layers/paint.html', start: 0, duration: 3, props: { x: 0, y: 0, width: 80, height: 90 }, animations: [{ preset: 'wipe', start: 1, duration: 1, ease: 'linear' }] },
+      clip('inset', 80, 'inset(100% 100% 100% 100%)', 'inset(0% 0% 0% 0%)'),
+      clip('circle', 160, 'circle(0px at 50% 50%)', 'circle(150% at 50% 50%)'),
+      clip('polygon', 240, 'polygon(50% 50%, 50% 50%, 50% 50%, 50% 50%)', 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)'),
+    ] }],
+  };
+  writeFileSync(join(dir, 'composition.json'), JSON.stringify(composition, null, 2));
+}
