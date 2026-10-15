@@ -154,7 +154,7 @@
 /* The row wraps rather than overflow: with wider text metrics than the ones measured (another OS font, user font settings) an
    item that no longer fits drops to a second line whole, so nothing leaves the composer or is cut (decision 714). */
 .ms-composer-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; }
-.ms-composer-hint { font-size: 11px; color: var(--faint); flex: 1 0 auto; min-width: 0; white-space: nowrap; }
+.ms-composer-hint { font-size: 11px; color: var(--faint); flex: 1 0 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The chip is never clipped; the hint is the only part that gives way, and it disappears whole rather than being cut. */
 .ms-composer-foot > .ms-services-chip { flex: none; max-width: none; }
 .ms-composer-foot > .ms-services-chip .ms-services-chip-sum { max-width: 24ch; }
