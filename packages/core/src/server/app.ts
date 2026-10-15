@@ -73,9 +73,9 @@ export interface ServerDeps {
   appConfig: AppConfigStore;
   git: Git;
   runner: AgentRunner;
-  /** Receives the server's (cached) sandbox detection, so the report includes the sandbox check. */
   /** Decision 802: whether the desktop updater is on (absent: no updater here, 'unknown'). Read at every request. */
   updatesState?: () => UpdatesState;
+  /** Receives the server's (cached) sandbox detection, so the report includes the sandbox check. */
   doctor: (extra: { sandbox: () => Promise<SandboxSupport>; workspacePath?: string | null; agentOptIn?: CapabilityOptIn }) => Promise<DoctorCheck[]>;
   /**
    * Phase 13: the installed Claude Code version (`claude --version`), null when it does not answer. Cached by the server

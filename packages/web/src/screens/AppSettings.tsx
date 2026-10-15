@@ -166,7 +166,7 @@ function StatusCard({ checks, checking, loadError, onRecheck }: Pick<AppSettings
   const notes = checks?.filter((c) => !c.ok && !c.required) ?? [];
   const busy = checking || (!checks && !loadError);
   const title = busy ? st.checking : loadError ? t.web.welcome.serverUnreachable({ detail: loadError }) : problems.length ? st.problems({ count: problems.length }) : notes.length ? st.notes({ count: notes.length }) : st.ok;
-  const line = (checks ?? []).map((c) => (c.ok ? `${c.label}${c.version ? ` ${c.version}` : ''}` : null)).filter(Boolean).join(' · ');
+  const line = (checks ?? []).map((c) => (c.ok && c.id !== 'updates' ? `${c.label}${c.version ? ` ${c.version}` : ''}` : null)).filter(Boolean).join(' · ');
   return (
     <Card className="ms-status" data-enter>
       <div className="ms-status-head">
@@ -546,8 +546,14 @@ function Updates() {
   useEffect(() => {
     if (!desktop()) return;
     let alive = true;
-    Promise.resolve().then(() => api.getUpdatesState()).then((r) => { if (alive) setState(r.state); }).catch(() => {});
-    return () => { alive = false; };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // 'unknown' right after boot (the updater has not decided yet) or an unreachable core: one more look after a second.
+    const load = (retry: boolean) => {
+      Promise.resolve().then(() => api.getUpdatesState()).then((r) => { if (alive) { setState(r.state); if (r.state === 'unknown' && retry) timer = setTimeout(() => load(false), 1000); } })
+        .catch(() => { if (alive && retry) timer = setTimeout(() => load(false), 1000); });
+    };
+    load(true);
+    return () => { alive = false; if (timer) clearTimeout(timer); };
   }, []);
   return (
     <div className="ms-set-narrow">

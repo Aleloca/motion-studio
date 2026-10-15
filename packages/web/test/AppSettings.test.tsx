@@ -452,11 +452,22 @@ describe('App settings · notifications and updates', () => {
 
   it('decision 802: the state unknown (or unreachable) claims nothing either way', async () => {
     (window as unknown as { motionStudio: object }).motionStudio = { isDesktop: true, platform: 'darwin', pickFolder: vi.fn(), revealPath: vi.fn() };
-    api.getUpdatesState.mockRejectedValueOnce(new Error('down'));
+    api.getUpdatesState.mockRejectedValueOnce(new Error('down')).mockResolvedValueOnce({ state: 'unknown' });
     try {
       en(page('updates'));
-      await waitFor(() => expect(api.getUpdatesState).toHaveBeenCalled());
-      expect(screen.queryByText(/updates/i, { selector: '.ms-set-sub' })).toBeNull();
+      await waitFor(() => expect(api.getUpdatesState).toHaveBeenCalledTimes(2), { timeout: 3000 });
+      expect(screen.getByText(`Motion Studio ${__APP_VERSION__}`)).toBeTruthy();
+      expect(screen.queryByText(/automatically|not active|non attivi/i)).toBeNull();
+    } finally { delete (window as unknown as { motionStudio?: object }).motionStudio; }
+  });
+
+  it('decision 802: an unknown state is read once more a second later and then shows the off line', async () => {
+    (window as unknown as { motionStudio: object }).motionStudio = { isDesktop: true, platform: 'darwin', pickFolder: vi.fn(), revealPath: vi.fn() };
+    api.getUpdatesState.mockResolvedValueOnce({ state: 'unknown' }).mockResolvedValueOnce({ state: 'off' });
+    try {
+      en(page('updates'));
+      expect(await screen.findByText('Automatic updates are not active in this version', {}, { timeout: 3000 })).toBeTruthy();
+      expect(api.getUpdatesState).toHaveBeenCalledTimes(2);
     } finally { delete (window as unknown as { motionStudio?: object }).motionStudio; }
   });
 

@@ -23,9 +23,9 @@ const allGood = {
 
 describe('runDoctor · automatic updates (decision 802)', () => {
   const run = (updatesOff?: boolean) => runDoctor({ exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0', ...(updatesOff === undefined ? {} : { updatesOff }) });
-  it('adds one optional note row when the updater is off, and it never blocks', async () => {
+  it('adds one informational row (ok, not a recommendation) when the updater is off, and it never blocks', async () => {
     const checks = await run(true);
-    expect(checks.find((c) => c.id === 'updates')).toEqual({ id: 'updates', label: t().doctor.updatesLabel, required: false, ok: false, message: t().doctor.updatesOff });
+    expect(checks.find((c) => c.id === 'updates')).toEqual({ id: 'updates', label: t().doctor.updatesLabel, required: false, ok: true, message: t().doctor.updatesOff });
     expect(hasBlockingFailure(checks)).toBe(false);
   });
   it('has no such row when the updater is on or there is none', async () => {

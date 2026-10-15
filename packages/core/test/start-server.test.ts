@@ -36,6 +36,30 @@ describe('the UI origins allowed to embed live previews (C2)', () => {
   });
 });
 
+describe('startServer with the desktop updater state (decision 802)', () => {
+  it('serves /api/updates and the Doctor row from the state the desktop passes, read per request', async () => {
+    const configDir = await mkdtemp(join(tmpdir(), 'ms-ss-'));
+    let state: 'active' | 'off' | 'unknown' = 'unknown';
+    const s = await startServer({ port: 'auto', configDir, claudeCommand: ['true'], vault: new MemoryVault(), updatesState: () => state });
+    try {
+      const token = await loadOrCreateUiToken(configDir);
+      const get = async (path: string) => (await fetch(`${s.url}${path}`, { headers: { 'x-motion-studio-ui': token } })).json() as Promise<any>;
+      const rowOf = async () => ((await get('/api/doctor')) as Array<{ id: string; ok: boolean; required: boolean; message: string }>).find((c) => c.id === 'updates');
+      expect((await get('/api/updates')).state).toBe('unknown');
+      expect(await rowOf()).toBeUndefined();
+      state = 'off';
+      expect((await get('/api/updates')).state).toBe('off');
+      expect(await rowOf()).toMatchObject({ required: false, ok: true });
+      state = 'active';
+      expect((await get('/api/updates')).state).toBe('active');
+      expect(await rowOf()).toBeUndefined();
+    } finally {
+      await s.close();
+      await rm(configDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('startServer port auto', () => {
   it('uses 4318 when free and a random port when busy', async () => {
     const blocker = createServer();
