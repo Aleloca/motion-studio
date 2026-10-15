@@ -1,4 +1,4 @@
-// The "App store pack" wizard (Phase 12, spec §4.1), opened from the New creative screen. Five steps: the app, the stores and
+// The "App store pack" wizard (Phase 12, spec §4.1), a dialog opened from the formats list (Phase 14: New creative and the brief). Five steps: the app, the stores and
 // devices (the required device of a store is locked on), the screenshots (a count within the bounds of the chosen stores, a
 // caption and an app screen from the library each), the preview video, and the review. The draft lives in the wizard, so going
 // back and forth between steps (the step list or Back / Next, all reachable with the keyboard) never loses it. The core builds the
@@ -67,7 +67,29 @@ const blankShots = () => Array.from({ length: STORE_SCREENSHOTS.appstore.max }, 
 const decided = (x: Shot) => x.screen !== null || x.noScreen === true;
 const baseName = (path: string) => path.split('/').pop() ?? path;
 
-export interface StorePackWizardProps { open: boolean; onClose(): void; slug: string }
+/** The draft a pack stands for (the inverse of `buildStorePack`): a pack to edit fills the wizard with its values. */
+export function draftOfPack(p: StorePack): PackDraft {
+  const shots = blankShots().map((blank, i): Shot => {
+    const x = p.screenshots[i];
+    return x ? { caption: x.caption, screen: x.screen, noScreen: x.screen === null } : blank;
+  });
+  return {
+    name: p.app.name, tagline: p.app.tagline, stores: [...p.stores],
+    devices: { appstore: [...(p.devices.appstore ?? ['iphone-69'])], playstore: [...(p.devices.playstore ?? ['phone'])] },
+    count: p.screenshots.length, shots, preview: p.preview,
+  };
+}
+
+export interface StorePackWizardProps {
+  open: boolean; onClose(): void; slug: string;
+  /** A pack to edit: the wizard starts with its values (Phase 14). */
+  initial?: StorePack;
+  /**
+   * Phase 14: the pack is handed over (to add to a formats list or to update the creative's) instead of creating a creative
+   * with it. The wizard stays open, busy, until the promise settles; a refusal is shown in the dialog.
+   */
+  onConfirm?(pack: StorePack): void | Promise<void>;
+}
 
 export function StorePackWizard(p: StorePackWizardProps) {
   const t = useT();
@@ -80,7 +102,7 @@ export function StorePackWizard(p: StorePackWizardProps) {
   return (
     <>
       <Modal open={p.open} onClose={request} label={s.title} width={760}>
-        {p.open ? <Body slug={p.slug} onClose={request} onDone={p.onClose} dirty={dirty} /> : null}
+        {p.open ? <Body slug={p.slug} onClose={request} onDone={p.onClose} dirty={dirty} {...(p.initial ? { initial: p.initial } : {})} {...(p.onConfirm ? { onConfirm: p.onConfirm } : {})} /> : null}
       </Modal>
       <Modal open={p.open && confirm} onClose={() => setConfirm(false)} label={s.closeTitle} width={420}>
         <div className="ms-spw-close">
@@ -96,13 +118,13 @@ export function StorePackWizard(p: StorePackWizardProps) {
   );
 }
 
-function Body({ onClose, onDone, slug, dirty }: { onClose(): void; onDone(): void; slug: string; dirty: { current: boolean } }) {
+function Body({ onClose, onDone, slug, dirty, initial, onConfirm }: { onClose(): void; onDone(): void; slug: string; dirty: { current: boolean }; initial?: StorePack; onConfirm?: StorePackWizardProps['onConfirm'] }) {
   const t = useT();
   const s = t.web.storePack;
   const [step, setStep] = useState(0);
-  const [draft, setDraft] = useState<PackDraft>({
+  const [draft, setDraft] = useState<PackDraft>(() => (initial ? draftOfPack(initial) : {
     name: '', tagline: '', stores: ['appstore'], devices: { appstore: ['iphone-69'], playstore: ['phone'] }, count: 3, shots: blankShots(), preview: false,
-  });
+  }));
   const [picking, setPicking] = useState<number | null>(null);
   const [busy, setBusy] = useState<'generate' | 'draft' | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -113,7 +135,10 @@ function Body({ onClose, onDone, slug, dirty }: { onClose(): void; onDone(): voi
   const taglineId = useId();
   const hintId = useId();
 
-  dirty.current = draft.name.trim() !== '' || draft.tagline.trim() !== '' || draft.shots.some((x) => x.caption.trim() !== '' || decided(x));
+  // Editing a pack: closing asks only if something changed from it.
+  dirty.current = initial
+    ? JSON.stringify(buildStorePack({ ...draft, count: clamp(draft.count, storeBounds(draft.stores)) })) !== JSON.stringify(initial)
+    : draft.name.trim() !== '' || draft.tagline.trim() !== '' || draft.shots.some((x) => x.caption.trim() !== '' || decided(x));
   const set = (patch: Partial<PackDraft>) => setDraft((d) => ({ ...d, ...patch }));
   const bounds = storeBounds(draft.stores);
   const count = clamp(draft.count, bounds);
@@ -162,6 +187,12 @@ function Body({ onClose, onDone, slug, dirty }: { onClose(): void; onDone(): voi
     setBusy(generate ? 'generate' : 'draft');
     setError(null);
     try {
+      if (onConfirm) {
+        // The pack goes to the caller (the formats list); no creative is made here.
+        await onConfirm(parsed.data);
+        onDone();
+        return;
+      }
       const created = await api.createStorePack(slug, { title, storePack: parsed.data, generate });
       if (generate) go(href.creative(slug, created.slug));
       else {
@@ -173,7 +204,7 @@ function Body({ onClose, onDone, slug, dirty }: { onClose(): void; onDone(): voi
     } catch (e) {
       inFlight.current = false;
       setBusy(null);
-      setError(s.createFailed({ detail: message(e) }));
+      setError(onConfirm ? s.saveFailed({ detail: message(e) }) : s.createFailed({ detail: message(e) }));
     }
   };
 
@@ -325,7 +356,9 @@ function Body({ onClose, onDone, slug, dirty }: { onClose(): void; onDone(): voi
         <div className="ms-spw-actions">
           <Button variant="ghost" disabled={busy !== null} onClick={onClose}>{t.common.cancel}</Button>
           {step > 0 ? <Button variant="outline" disabled={busy !== null} onClick={() => setStep(step - 1)}>{s.back}</Button> : null}
-          {current === 'review' ? (
+          {current === 'review' && onConfirm ? (
+            <Button variant="accent" loading={busy !== null} disabled={busy !== null} onClick={() => void submit(true)}>{initial ? s.confirmUpdate : s.confirmAdd}</Button>
+          ) : current === 'review' ? (
             <>
               <Button variant="outline" loading={busy === 'draft'} disabled={busy !== null} onClick={() => void submit(false)}>{s.saveDraft}</Button>
               <Button variant="accent" loading={busy === 'generate'} disabled={busy !== null} onClick={() => void submit(true)}><Icon name="sparkle" size={14} />{s.generate}</Button>

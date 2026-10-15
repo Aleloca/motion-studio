@@ -4,7 +4,7 @@ import { lstat, readdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, join, sep } from 'node:path';
 import { changedAssets, overlayAssetPaths, readOverlay } from '../localization/store.ts';
 import type { FastifyInstance } from 'fastify';
-import { messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow } from '@motion-studio/shared';
+import { messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
@@ -26,6 +26,7 @@ import { editorCompositionView } from '../creatives/editor-staging.ts';
 import { directEditBodySchema, type DirectEditService } from '../creatives/direct-edit.ts';
 import { sweepProjectRenders } from '../render/render-sweep.ts';
 import { FormatCatalog, findPreset } from '../formats/format-catalog.ts';
+import { mergeStorePack, verifyScreens } from '../store-pack/brief.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { completeGitignore, sweepProject } from '../project-maintenance.ts';
 import { CodedError, expandHome, WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
@@ -69,8 +70,11 @@ const createBody = z.object({ title: z.string(), brief: briefWriteSchema, genera
 // `formats` is checked against the stored ones by the core (only reorder or remove), so a legacy odd id can be taken out.
 const editBody = z.object({ title: z.string().optional(), brief: briefWriteSchema.optional(), services: briefSchema.shape.services,
   formatLabels: z.record(z.string(), z.union([z.string().trim().max(60), z.null()])).optional(),
-  formats: z.array(z.string().min(1).max(200)).min(1).max(100).optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() })
-  .refine((b) => !b.brief || (b.formats === undefined && b.formatLabels === undefined), { message: 'issue.briefWithPartial' });
+  formats: z.array(z.string().min(1).max(200)).min(1).max(100).optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional(),
+  /** Phase 14: sets, changes (a pack) or takes out (`null`) the store pack; alone, or with the title and services only. */
+  storePack: z.union([storePackSchema, z.null()]).optional() })
+  .refine((b) => !b.brief || (b.formats === undefined && b.formatLabels === undefined), { message: 'issue.briefWithPartial' })
+  .refine((b) => b.storePack === undefined || (!b.brief && b.formats === undefined && b.formatLabels === undefined), { message: 'issue.briefWithPartial' });
 /** Ruling H: a full brief save whose `formatLabels` name formats it no longer has drops those labels (no 400). */
 function pruneLabelsOfRemovedFormats(raw: unknown): unknown {
   const b = (raw as { brief?: { formats?: unknown; formatLabels?: unknown } } | null)?.brief;
@@ -281,8 +285,20 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const linkedCodebases = body.linkedCodebases ? normalizeCodebaseList(body.linkedCodebases) : null;
     if (linkedCodebases) await assertCodebasesOutside(linkedCodebases, [ws.projectDir(req.params.slug), ws.root]);
     const store = new CreativeStore(ws.projectDir(req.params.slug));
-    const links = initialLinks(body.brief, (await catalog().load()).presets);
-    const created = await store.create({ title: body.title, brief: { ...body.brief, links } });
+    // Phase 14: the store pack goes through this route as part of the brief; its screens get the same check as the pack route.
+    if (body.brief.storePack) await verifyScreens(ws.projectDir(req.params.slug), ctx.media, body.brief.storePack);
+    const presets = (await catalog().load()).presets;
+    let brief = body.brief;
+    if (brief.storePack) {
+      // A pack whose instances the brief lacks gets them (and their labels), as `mergeStorePack` does for an existing creative.
+      const own = storePackFormats(brief.storePack, presets).formats;
+      if (own.some((f) => !brief.formats.includes(f))) {
+        const { storePack: pack, ...bare } = brief;
+        brief = mergeStorePack({ ...bare, formats: brief.formats.filter((f) => !own.includes(f)) }, pack, presets).brief;
+      }
+    }
+    const links = initialLinks(brief, presets);
+    const created = await store.create({ title: body.title, brief: { ...brief, links } });
     const slug = created.slug;
     // Fix round 1 (M2): its side record exists from the start (nothing written into its creative.json later is trusted).
     await ctx.turns.side.read(ws.projectDir(req.params.slug), slug);

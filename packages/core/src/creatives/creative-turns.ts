@@ -1,8 +1,10 @@
 import { creativeJobKey, isSessionId, LIVE_LIMITS, type ConversationEntry, type LiveMessageOutcome, type QueuedRequest, type RedirectOutcome } from '@motion-studio/shared';
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import { mergeStorePack, verifyScreens } from '../store-pack/brief.ts';
 import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
-import { canFollow, effectiveServices, checkLink, effectiveLinks, legacyTurnKind, linksAfterBriefSave, formatHistory, formatDisplayName, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type AgentEvent, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
+import { canFollow, effectiveServices, checkLink, effectiveLinks, legacyTurnKind, linksAfterBriefSave, formatHistory, formatDisplayName, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type AgentEvent, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type StorePack, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import { detachLinksUnder } from '../agent/protected-links.ts';
 import { noteCoreChange } from '../core-changes.ts';
@@ -239,7 +241,9 @@ export class CreativeTurnService {
   }
 
   /** Edits title and/or brief; refused while a generation is queued or running for the creative. */
-  async updateBrief(ref: CreativeRef, patch: { title?: string; brief?: Brief; services?: Brief['services']; formatLabels?: Record<string, string | null>; formats?: string[]; linkedCodebases?: LinkedCodebase[] }): Promise<CreativeFile> {
+  async updateBrief(ref: CreativeRef, patch: { title?: string; brief?: Brief; services?: Brief['services']; formatLabels?: Record<string, string | null>; formats?: string[]; storePack?: StorePack | null; linkedCodebases?: LinkedCodebase[] }): Promise<CreativeFile> {
+    // Phase 14: the pack's screens are checked before anything is locked or written (the same check as the pack create route).
+    if (patch.storePack) await verifyScreens(ref.projectDir, this.deps.media, patch.storePack);
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     return this.locks.run(key, async () => {
       if (this.isActive(key)) throw new WorkspaceError(409, t().errors.waitBeforeBrief);
@@ -260,9 +264,13 @@ export class CreativeTurnService {
         freed = withFreedInstances(stored.freedInstances, ids, latest);
       };
       if (patch.brief) {
-        const { links: _ignored, ...rest } = patch.brief;
+        const { links: _ignored, storePack: sentPack, ...sent } = patch.brief;
         const stored = await store.get(ref.creativeSlug);
         const current = stored.brief;
+        // Phase 14: the store pack changes only through `storePack` (it recomputes the pack's instances); a full save keeps it.
+        // A pack other than the stored one (a second pack, or a changed one) is refused: one pack per creative, edited on its own.
+        if (sentPack !== undefined && !isDeepStrictEqual(sentPack, current.storePack)) throw new CodedError(409, t().variants.storePack.second, 'store-pack-second');
+        const rest = current.storePack ? { ...sent, storePack: current.storePack } : sent;
         const added = rest.formats.filter((f) => !current.formats.includes(f));
         // Shared with the web, which tells before "Save and regenerate" whether a legacy creative converts (I4).
         let links = added.length > 0 ? linksAfterBriefSave(current, rest.formats, await this.deps.presets()) : current.links;
@@ -276,11 +284,23 @@ export class CreativeTurnService {
         }
         await markFreed(stored, [...gone, ...added]);
         brief = links ? { ...rest, links } : rest;
-      } else if (patch.services || patch.formatLabels || patch.formats) {
+      } else if (patch.services || patch.formatLabels || patch.formats || patch.storePack !== undefined) {
         // A partial save (services chip, inline labels, reorder, removal): everything else comes from the brief stored now,
         // never from the caller's copy.
         const stored = await store.get(ref.creativeSlug);
-        const next: Brief = { ...stored.brief };
+        let next: Brief = { ...stored.brief };
+        if (patch.storePack !== undefined) {
+          // Phase 14: the pack's instances are recomputed from the new pack (set, changed, or `null` to take it out); the
+          // rest of the brief is untouched. Instances that go leave no link and no manual pick; added ones start clean.
+          const m = mergeStorePack(next, patch.storePack, await this.deps.presets());
+          next = m.brief;
+          const gone = new Set(m.removed);
+          if (gone.size > 0) {
+            const pruned = withoutFormatState(next.links, stored.exportPicks, gone);
+            exportPicks = { exportPicks: pruned.exportPicks };
+          }
+          await markFreed(stored, [...m.removed, ...m.added]);
+        }
         if (patch.services) next.services = patch.services;
         if (patch.formats) {
           const f = patch.formats;

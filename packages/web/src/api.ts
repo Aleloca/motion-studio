@@ -214,6 +214,8 @@ export const api = {
     title?: string; brief?: Brief; services?: Brief['services']; linkedCodebases?: LinkedCodebase[];
     /** Alone, each merges into the stored brief under the creative's lock: labels per key (`''` or null clears one), order and removal of formats. */
     formatLabels?: Record<string, string | null>; formats?: string[];
+    /** Phase 14: sets or changes (a pack) or takes out (`null`) the store pack: the core recomputes only the pack's instances. Sent alone. */
+    storePack?: StorePack | null;
   }) => request<CreativeFile>('PUT', c(slug, creative), body),
   /** Duplicates a format of version n as the next free instance and saves a new version; the new instance's id comes back. */
   duplicateFormat: (slug: string, creative: string, n: number, body: { instanceId: string; label?: string }) =>

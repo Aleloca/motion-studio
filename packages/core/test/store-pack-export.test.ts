@@ -118,6 +118,19 @@ describe('store pack export', { timeout: 120_000 }, () => {
     expect([ipad.readUInt32BE(16), ipad.readUInt32BE(20), ipad[25]]).toEqual([104, 138, 2]);
   });
 
+  it('Phase 14: a store preset picked by hand in the same creative is not part of the pack export', async () => {
+    const slug = await createPack(pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false }));
+    const got = await env.app.inject({ url: `/api/projects/acme/creatives/${slug}`, headers: H });
+    const brief = (got.json() as { creative: { brief: Record<string, unknown> & { formats: string[] } } }).creative.brief;
+    const put = await env.app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}`, headers: H, payload: { brief: { ...brief, links: undefined, formats: [...brief.formats, 'playstore-tablet'] } } });
+    expect(put.statusCode, put.body).toBe(200);
+    const r = await exportPack(slug);
+    expect(r.statusCode, r.body).toBe(200);
+    const body = r.json() as { folder: string; written: string[]; failed: unknown[] };
+    expect([...body.written].sort()).toEqual(['AppStore/iPhone-6.9/01-all-your-tasks.png', 'AppStore/iPhone-6.9/02-share-with-your-team.png']);
+    expect(body.failed).toEqual([]);
+  });
+
   it('with languages: one folder per language from the localized renders; a language without a translation is listed, the rest exported', async () => {
     const slug = await createPack(pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false }), { locales: { primary: 'en', extra: ['de'] } });
     // Only the first screenshot is translated.
@@ -184,22 +197,21 @@ describe('store pack export', { timeout: 120_000 }, () => {
 
   it('I1: a pack format of the brief that the version lacks is listed as "not in version N" (and in the README)', async () => {
     const slug = await createPack(pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false }), { locales: { primary: 'en', extra: ['de'] } });
-    // The brief gained a third screenshot instance after v1 (a brief edit): v1 does not have it.
-    const creativeFile = join(env.store().dir(slug), 'creative.json');
-    const cf = JSON.parse(readFileSync(creativeFile, 'utf8')) as { brief: { formats: string[] } };
-    cf.brief.formats.push('appstore-iphone-69@3');
-    writeFileSync(creativeFile, JSON.stringify(cf));
+    // The pack gained a third screenshot after v1 (Phase 14: edited in the brief): v1 does not have its instance.
+    const edited = await env.app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}`, headers: H,
+      payload: { storePack: pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false, screenshots: [...pack().screenshots, { caption: 'Third', screen: null }] }) } });
+    expect(edited.statusCode, edited.body).toBe(200);
     for (const inst of ['appstore-iphone-69', 'appstore-iphone-69@2']) {
       await env.app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}/versions/1/localizations/de/${encodeURIComponent(inst)}`, headers: H, payload: { texts: { title: 'Hallo' } } });
     }
     const body = (await exportPack(slug)).json() as { folder: string; written: string[]; failed: Array<{ file: string; reason: string }> };
     expect(body.written).toHaveLength(4);
     expect(body.failed).toEqual([
-      { file: 'AppStore/en/iPhone-6.9/03-screenshot.png', reason: c().notInVersion({ n: 1 }) },
-      { file: 'AppStore/de/iPhone-6.9/03-screenshot.png', reason: c().notInVersion({ n: 1 }) },
+      { file: 'AppStore/en/iPhone-6.9/03-third.png', reason: c().notInVersion({ n: 1 }) },
+      { file: 'AppStore/de/iPhone-6.9/03-third.png', reason: c().notInVersion({ n: 1 }) },
     ]);
     const readme = readFileSync(join(body.folder, 'README.txt'), 'utf8');
-    expect(readme).toContain(`AppStore/en/iPhone-6.9/03-screenshot.png: ${c().notInVersion({ n: 1 })}`);
+    expect(readme).toContain(`AppStore/en/iPhone-6.9/03-third.png: ${c().notInVersion({ n: 1 })}`);
   });
 
   const editBrief = (slug: string, f: (b: { formats: string[] }) => void) => {
@@ -230,11 +242,7 @@ describe('store pack export', { timeout: 120_000 }, () => {
     editBrief(slug, (b) => { b.formats = ['playstore-phone-9x16']; });
     const few = (await exportPack(slug)).json() as { failed: Array<{ file: string; reason: string }> };
     expect(few.failed).toEqual([{ file: 'GooglePlay/Phone', reason: c().tooFewScreenshots({ count: 1, min: 2 }) }]);
-    editBrief(slug, (b) => { b.formats = ['playstore-phone-9x16', ...Array.from({ length: 8 }, (_, i) => `playstore-phone-9x16@${i + 2}`)]; });
-    const many = (await exportPack(slug)).json() as { written: string[]; failed: Array<{ file: string; reason: string }> };
-    expect(many.written).toHaveLength(2);
-    expect(many.failed.find((f) => f.file === 'GooglePlay/Phone/09-screenshot.png')?.reason).toBe(c().tooManyScreenshots({ count: 9, max: 8 }));
-    expect(many.failed.find((f) => f.file === 'GooglePlay/Phone/08-screenshot.png')?.reason).toBe(c().notInVersion({ n: 1 }));
+    // More screenshots than a store takes cannot come from a pack any more (its schema stops at 8): the check stays in `exportStorePack`.
   });
 
   it('a preview without an audio track is refused at export (the render adds one: store-flatten)', async () => {

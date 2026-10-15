@@ -12,6 +12,9 @@ export const PLAYSTORE_DEVICES = ['phone', 'tablet', 'feature'] as const;
 /** Screenshots per store (spec §4.1); when both stores are chosen, the narrower range applies. */
 export const STORE_SCREENSHOTS = { appstore: { min: 1, max: 10 }, playstore: { min: 2, max: 8 } } as const;
 
+/** Length of the pack's preview video, in seconds: inside the App Store's 15–30 s with the brief tolerance on both sides. */
+export const STORE_PREVIEW_SECONDS = 20;
+
 /** Catalog preset of each device. */
 export const STORE_DEVICE_PRESET = {
   appstore: { 'iphone-69': 'appstore-iphone-69', 'ipad-13': 'appstore-ipad-13' },

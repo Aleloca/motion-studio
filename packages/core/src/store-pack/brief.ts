@@ -1,7 +1,7 @@
 import { lstat, open, realpath } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join, sep } from 'node:path';
-import { messages, storePackFormats, type Brief, type FormatPreset, type Locale, type StorePack } from '@motion-studio/shared';
+import { messages, STORE_PREVIEW_SECONDS, storePackFormats, type Brief, type FormatPreset, type Locale, type StorePack } from '@motion-studio/shared';
 import { LibraryStore } from '../library/library-store.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { CodedError } from '../workspace-store.ts';
@@ -17,7 +17,7 @@ export { storePackPromptSection } from '../creatives/prompt.ts';
  * - `message`: the app name and tagline, then the captions in order; `goal` names the app (UI language);
  * - `durationSec`: 20 s when a preview is asked (inside the App Store's 15–30 s with the brief tolerance on both sides).
  */
-export const STORE_PREVIEW_SECONDS = 20;
+export { STORE_PREVIEW_SECONDS };
 
 export function storePackBrief(p: StorePack, o: { locale: Locale; presets?: readonly Pick<FormatPreset, 'id' | 'width' | 'height'>[]; locales?: Brief['locales'] }): Brief {
   const { formats, formatLabels, links } = storePackFormats(p, o.presets);
@@ -31,6 +31,41 @@ export function storePackBrief(p: StorePack, o: { locale: Locale; presets?: read
     ...(o.locales ? { locales: o.locales } : {}),
     storePack: p,
   };
+}
+
+/**
+ * Sets, changes or takes out (`null`) the store pack of a brief (Phase 14, spec §3), touching only the pack's instances:
+ * - an instance belongs to the pack iff `storePackFormats(brief.storePack).formats` includes it; a store preset picked by hand
+ *   never does (and one the pack would now need is refused, `store-pack-collision`: the same id cannot be two things);
+ * - the instances the new pack no longer needs go (`removed`) with their labels and links; the new ones come in (`added`), after
+ *   the last pack instance that stays, or at the end; labels follow the captions, links are those of `storePackFormats`;
+ * - formats, labels and links outside the pack are left as they are. The versions of removed instances stay in the history.
+ */
+export function mergeStorePack(brief: Brief, next: StorePack | null, presets?: readonly Pick<FormatPreset, 'id' | 'width' | 'height'>[]): { brief: Brief; added: string[]; removed: string[] } {
+  const owned = new Set(brief.storePack ? storePackFormats(brief.storePack, presets).formats : []);
+  const want = next ? storePackFormats(next, presets) : { formats: [] as string[], formatLabels: {} as Record<string, string>, links: {} as Record<string, string> };
+  const wanted = new Set(want.formats);
+  const clash = want.formats.filter((f) => brief.formats.includes(f) && !owned.has(f));
+  if (clash.length > 0) throw new CodedError(409, t().variants.storePack.collision({ list: clash.join(', ') }), 'store-pack-collision');
+  const removed = brief.formats.filter((f) => owned.has(f) && !wanted.has(f));
+  const added = want.formats.filter((f) => !brief.formats.includes(f));
+  const formats = brief.formats.filter((f) => !removed.includes(f));
+  if (formats.length + added.length === 0) throw new CodedError(409, t().variants.storePack.lastFormats, 'store-pack-last-format');
+  const lastKept = formats.reduce((k, f, i) => (wanted.has(f) ? i : k), -1);
+  formats.splice(lastKept >= 0 ? lastKept + 1 : formats.length, 0, ...added);
+
+  const { storePack: _old, formatLabels: oldLabels, links: oldLinks, ...rest } = brief;
+  const labels = Object.fromEntries(Object.entries(oldLabels ?? {}).filter(([k]) => !removed.includes(k)));
+  for (const [k, v] of Object.entries(want.formatLabels)) labels[k] = v;
+  let links: Record<string, string> | undefined = oldLinks === undefined ? undefined : Object.fromEntries(Object.entries(oldLinks).filter(([f, p]) => !removed.includes(f) && !removed.includes(p)));
+  for (const [f, p] of Object.entries(want.links)) if (added.includes(f) && formats.includes(p)) (links ??= {})[f] = p;
+  const merged: Brief = {
+    ...rest, formats,
+    ...(Object.keys(labels).length > 0 ? { formatLabels: labels } : {}),
+    ...(links ? { links } : {}),
+    ...(next ? { storePack: next } : {}),
+  };
+  return { brief: merged, added, removed };
 }
 
 const IMAGE_MAGIC: Array<(b: Buffer) => boolean> = [

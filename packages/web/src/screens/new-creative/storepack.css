@@ -1,11 +1,4 @@
-/* App store pack (Phase 12, spec §4): the card on New creative, the wizard, the app screen picker and the pack export result. Tokens only. */
-
-/* Card on the New creative screen */
-.ms-nc-pack { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); min-width: 0; }
-.ms-nc-pack-marks { display: flex; gap: 4px; flex: none; }
-.ms-nc-pack-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.ms-nc-pack-text b { font-size: 13.5px; color: var(--text); }
-.ms-nc-pack-text span { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+/* App store pack (Phase 12, spec §4): the wizard, the app screen picker and the pack export result. Tokens only. */
 
 /* Wizard */
 .ms-spw { display: flex; flex-direction: column; max-height: min(780px, 90vh); min-width: 0; }

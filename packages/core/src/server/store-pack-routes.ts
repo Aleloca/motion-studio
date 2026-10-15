@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
-  briefSchema, briefWriteSchema, issuesText, renderProblems, storePackSchema, type JobSummary, type VersionEntry,
+  briefSchema, briefWriteSchema, issuesText, renderProblems, storePackFormats, storePackSchema, type JobSummary, type VersionEntry,
 } from '@motion-studio/shared';
 import { CreativeStore } from '../creatives/creative-store.ts';
 import type { CreativeRef, CreativeTurnService } from '../creatives/creative-turns.ts';
@@ -99,7 +99,9 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
     const base = (await readVersion())!;
     const inVersion = (v: VersionEntry, f: string) => v.outputs.some((o) => o.format === f) || v.compositions?.some((x) => x.format === f) === true;
     // A pack format of the brief that this version lacks (the brief changed after it) is listed, never dropped silently (I1).
-    const packFormats = creative.brief.formats.filter((f) => packEntry(pack, f, undefined) !== null);
+    // Phase 14: the pack's own instances only (`storePackFormats`); a store preset picked by hand in the same creative is not exported.
+    const owned = new Set(storePackFormats(pack, catalog).formats);
+    const packFormats = creative.brief.formats.filter((f) => owned.has(f) && packEntry(pack, f, undefined) !== null);
     const formats = packFormats.filter((f) => inVersion(base, f));
     const absent = packFormats.filter((f) => !inVersion(base, f));
     const sizeOf = (f: string) => { const p = findPreset(catalog, f); return { width: p?.width ?? 0, height: p?.height ?? 0 }; };
@@ -176,7 +178,7 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
     // The checks always use the format's size from the catalog (the store's size), never the size the render recorded.
     for (const f of files) Object.assign(f, sizeOf(f.format));
     const result = await exportStorePack({
-      creativeDir, n, destination, title: creative.title, storePack: pack, presets: catalog, files, order: creative.brief.formats,
+      creativeDir, n, destination, title: creative.title, storePack: pack, presets: catalog, files, order: creative.brief.formats.filter((f) => owned.has(f)),
       probe: (file) => (ctx.media.available ? ctx.media.probe(file) : Promise.resolve(null)), date: localDay(),
     });
     return rendered.length > 0 ? { ...result, rendered } : result;
