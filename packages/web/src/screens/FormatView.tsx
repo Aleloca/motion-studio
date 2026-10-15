@@ -577,12 +577,12 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
           ) : null}
           <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} />
           {comp !== null && !working ? (
-            <Tooltip label={t.web.instances.duplicateHint({ label })} whenHidden=".ms-bar-label"><Button variant="outline" className="ms-fv-duplicate ms-fold-2" aria-label={t.web.instances.duplicate} loading={duplicating} onClick={() => void duplicate()}>
+            <Tooltip label={`${t.web.instances.duplicate} · ${t.web.instances.duplicateHint({ label })}`} whenHidden=".ms-bar-label"><Button variant="outline" className="ms-fv-duplicate ms-fold-2" aria-label={t.web.instances.duplicate} loading={duplicating} onClick={() => void duplicate()}>
               <Icon name="copy" size={13} strokeWidth={1.7} /><span className="ms-bar-label">{t.web.instances.duplicate}</span>
             </Button></Tooltip>
           ) : null}
           {comp !== null && !working && preview.state.kind !== 'legacy' ? (
-            <Tooltip label={t.web.editor.edit} whenHidden=".ms-bar-label"><Button variant="outline" className="ms-cv-edit ms-fold-2" aria-label={t.web.editor.editOf({ label })} onClick={openEditor}>
+            <Tooltip label={t.web.editor.editOf({ label })} whenHidden=".ms-bar-label"><Button variant="outline" className="ms-cv-edit ms-fold-2" aria-label={t.web.editor.editOf({ label })} onClick={openEditor}>
               <Icon name="edit" size={13} strokeWidth={1.7} /><span className="ms-bar-label">{t.web.editor.edit}</span>
             </Button></Tooltip>
           ) : null}

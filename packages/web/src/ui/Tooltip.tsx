@@ -1,9 +1,12 @@
-import { cloneElement, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type FocusEvent, type MouseEvent, type ReactElement } from 'react';
+import { cloneElement, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type MutableRefObject, type Ref, type FocusEvent, type MouseEvent, type ReactElement } from 'react';
 import { createPortal } from 'react-dom';
 import { D, enter } from '../motion/index.ts';
 
 export interface TooltipProps {
-  /** The tooltip text (the same words as the trigger's `aria-label`, which stays its accessible name). */
+  /**
+   * The tooltip text. It starts with, or equals, the trigger's accessible name (`aria-label`, which stays the name); a
+   * longer hint may follow it ("Duplicate · copies this format").
+   */
   label: string;
   /**
    * CSS selector of a descendant that carries the visible text. When given, the tooltip only shows while that
@@ -14,6 +17,7 @@ export interface TooltipProps {
   children: ReactElement<Record<string, unknown>>;
 }
 
+const GRACE_MS = 150;
 const GAP = 6;
 const MARGIN = 8;
 
@@ -22,7 +26,7 @@ function focusVisible(el: HTMLElement): boolean {
   try { return el.matches(':focus-visible'); } catch { return true; }
 }
 
-function folded(el: HTMLElement, sel: string | undefined): boolean {
+function isFolded(el: HTMLElement, sel: string | undefined): boolean {
   if (!sel) return true;
   const t = el.querySelector<HTMLElement>(sel);
   return !t || getComputedStyle(t).display === 'none';
@@ -41,24 +45,54 @@ export function Tooltip({ label, whenHidden, children }: TooltipProps) {
   const tip = useRef<HTMLDivElement>(null);
   const props = children.props;
 
-  const show = useCallback((t: HTMLElement) => { if (folded(t, whenHidden)) setEl(t); }, [whenHidden]);
   const hide = useCallback(() => setEl(null), []);
+  const grace = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelGrace = useCallback(() => { if (grace.current) { clearTimeout(grace.current); grace.current = null; } }, []);
+  /** Pointer left the trigger or the bubble: a short grace lets it travel from one to the other (WCAG 1.4.13 hoverable). */
+  const hideSoon = useCallback(() => { cancelGrace(); grace.current = setTimeout(() => { grace.current = null; setEl(null); }, GRACE_MS); }, [cancelGrace]);
+  const hideNow = useCallback(() => { cancelGrace(); setEl(null); }, [cancelGrace]);
+  useEffect(() => cancelGrace, [cancelGrace]);
+  const show = useCallback((t: HTMLElement) => { if (isFolded(t, whenHidden)) { cancelGrace(); setEl(t); } }, [whenHidden, cancelGrace]);
+
+  // The always-mounted, visually hidden description is the announced text. It lives in document.body, not beside the
+  // trigger, so it never disturbs sibling selectors; the trigger is found through a ref composed with the child's own.
+  const [trig, setTrig] = useState<HTMLElement | null>(null);
+  const childRef = props.ref as Ref<HTMLElement> | undefined;
+  const setRef = useCallback((n: HTMLElement | null) => {
+    setTrig(n);
+    if (typeof childRef === 'function') childRef(n);
+    else if (childRef) (childRef as MutableRefObject<HTMLElement | null>).current = n;
+  }, [childRef]);
+  const [folded, setFolded] = useState(!whenHidden);
+  useLayoutEffect(() => {
+    if (!trig || !whenHidden) { setFolded(true); return; }
+    const check = () => {
+      const f = isFolded(trig, whenHidden);
+      setFolded(f);
+      if (!f) hideNow();
+    };
+    check();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(check);
+    ro.observe(trig);
+    return () => ro.disconnect();
+  }, [trig, whenHidden, hideNow]);
 
   useEffect(() => {
     if (!el) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') hide(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') hideNow(); };
     document.addEventListener('keydown', onKey, true);
-    window.addEventListener('scroll', hide, true);
-    window.addEventListener('resize', hide);
+    window.addEventListener('scroll', hideNow, true);
+    window.addEventListener('resize', hideNow);
     return () => {
       document.removeEventListener('keydown', onKey, true);
-      window.removeEventListener('scroll', hide, true);
-      window.removeEventListener('resize', hide);
+      window.removeEventListener('scroll', hideNow, true);
+      window.removeEventListener('resize', hideNow);
     };
-  }, [el, hide]);
+  }, [el, hideNow]);
 
   // The trigger going away (or turning disabled) while the hint is up must not leave it behind.
-  useEffect(() => { if (el && !el.isConnected) hide(); });
+  useEffect(() => { if (el && !el.isConnected) hideNow(); });
 
   useLayoutEffect(() => {
     const t = tip.current;
@@ -77,16 +111,18 @@ export function Tooltip({ label, whenHidden, children }: TooltipProps) {
     fn(e);
   };
   const trigger = cloneElement(children, {
-    'aria-describedby': el ? [props['aria-describedby'], id].filter(Boolean).join(' ') : props['aria-describedby'],
+    ref: setRef,
+    'aria-describedby': folded ? [props['aria-describedby'], id].filter(Boolean).join(' ') : props['aria-describedby'],
     onMouseEnter: on(props.onMouseEnter, (e: MouseEvent<HTMLElement>) => show(e.currentTarget)),
-    onMouseLeave: on(props.onMouseLeave, hide),
+    onMouseLeave: on(props.onMouseLeave, hideSoon),
     onFocus: on(props.onFocus, (e: FocusEvent<HTMLElement>) => { if (focusVisible(e.currentTarget)) show(e.currentTarget); }),
-    onBlur: on(props.onBlur, hide),
+    onBlur: on(props.onBlur, hideNow),
   });
   return (
     <>
       {trigger}
-      {el ? createPortal(<div ref={tip} id={id} role="tooltip" className="ms-tooltip" style={style}>{label}</div>, document.body) : null}
+      {folded ? createPortal(<span id={id} role="tooltip" className="ms-sr-only">{label}</span>, document.body) : null}
+      {el ? createPortal(<div ref={tip} className="ms-tooltip" aria-hidden="true" style={style} onMouseEnter={cancelGrace} onMouseLeave={hideSoon}>{label}</div>, document.body) : null}
     </>
   );
 }

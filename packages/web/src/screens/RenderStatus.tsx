@@ -99,13 +99,13 @@ export function RenderStatus({ slug, creative, version, format, label, jobs, job
             <Icon name="folder" size={13} /><span className="ms-bar-label">{reveal}</span>
           </Button></Tooltip>
         ) : url ? (
-          <Tooltip label={r.downloadVideo} whenHidden=".ms-bar-label"><Button size="sm" variant="outline" className="ms-fold-1" aria-label={image ? r.downloadImageOf({ label }) : r.downloadVideoOf({ label })} onClick={() => download(url, out?.file ?? (image ? 'image.png' : 'video.mp4'))}>
+          <Tooltip label={image ? r.downloadImageOf({ label }) : r.downloadVideoOf({ label })} whenHidden=".ms-bar-label"><Button size="sm" variant="outline" className="ms-fold-1" aria-label={image ? r.downloadImageOf({ label }) : r.downloadVideoOf({ label })} onClick={() => download(url, out?.file ?? (image ? 'image.png' : 'video.mp4'))}>
             <Icon name="download" size={13} /><span className="ms-bar-label">{r.downloadVideo}</span>
           </Button></Tooltip>
         ) : null
       ) : null}
       {!working ? (
-        <Tooltip label={done ? r.renderAgain : image ? r.renderImage : r.renderVideo} whenHidden=".ms-bar-label"><Button size="sm" variant={done ? 'ghost' : 'outline'} className={done ? 'ms-fold-1' : 'ms-fold-3'} disabled={busy} loading={starting} aria-label={image ? r.renderImageOf({ label }) : r.renderVideoOf({ label })} onClick={() => void start()}>
+        <Tooltip label={image ? r.renderImageOf({ label }) : r.renderVideoOf({ label })} whenHidden=".ms-bar-label"><Button size="sm" variant={done ? 'ghost' : 'outline'} className={done ? 'ms-fold-1' : 'ms-fold-3'} disabled={busy} loading={starting} aria-label={image ? r.renderImageOf({ label }) : r.renderVideoOf({ label })} onClick={() => void start()}>
           <Icon name={image ? 'image' : 'video'} size={13} /><span className="ms-bar-label">{done ? r.renderAgain : image ? r.renderImage : r.renderVideo}</span>
         </Button></Tooltip>
       ) : null}
