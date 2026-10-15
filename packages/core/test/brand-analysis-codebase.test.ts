@@ -386,7 +386,7 @@ describe('imports of a discarded run (follow-up batch 2, task 3)', () => {
     expect(await onDisk()).toEqual([...kept, 'brand/other.svg'].map((f) => f.slice(6)).sort());
   });
   /**
-   * Final wave I1: during the run another job registers brand/other.svg (a creative's download_file) and the user uploads
+   * Final wave I1: during the run another route registers brand/other.svg (as a generated or stock file would; the agent tools refuse non-brand jobs) and the user uploads
    * brand/up.svg; the agent lists both in its asset list, next to a file of its own it left unregistered (brand/listed.svg).
    */
   const othersListed = async (req: AgentTurnRequest) => {
