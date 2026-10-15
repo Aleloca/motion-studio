@@ -7,9 +7,9 @@
  * text is clipped and the format's name keeps room. Chrome only on request (MS_LAYOUT_CHROME=1 or MS_REQUIRE_CHROME=1),
  * through the repo's driver (mock keychain, basic password store).
  */
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { DEFAULT_FORMATS, type CreativeDetail, type OutputFileInfo, type VersionEntry } from '@motion-studio/shared';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -18,6 +18,7 @@ import type { Route } from '../src/routes.ts';
 import type { Shell } from '../src/shell/ShellContext.tsx';
 // The repo's proven Chrome driver (CDP over a pipe; it passes --use-mock-keychain and --password-store=basic, as BASE_FLAGS does).
 import { findChrome, launchChrome, type Browser } from '../../composition-runtime/test/support/chrome.ts';
+import { ALL_CSS, FONTS, src } from './support/layoutAssets.ts';
 
 vi.setConfig({ testTimeout: 120_000, hookTimeout: 120_000 });
 
@@ -104,21 +105,6 @@ async function barMarkup(desktopApp: boolean, state: 'ready' | 'live' = 'ready')
     delete (window as unknown as { motionStudio?: unknown }).motionStudio;
   }
 }
-
-const src = (p: string) => readFileSync(join(import.meta.dirname, '../src', p), 'utf8');
-// The app's stylesheets: the base first, then every other one (the bar shows pieces styled by several of them).
-const cssFiles = (dir: string): string[] => readdirSync(join(import.meta.dirname, '../src', dir), { withFileTypes: true })
-  .flatMap((e) => (e.isDirectory() ? cssFiles(join(dir, e.name)) : e.name.endsWith('.css') ? [join(dir, e.name)] : []));
-const ALL_CSS = () => {
-  const rest = cssFiles('').filter((f) => f !== 'theme.css' && f !== join('ui', 'ui.css')).sort();
-  return ['theme.css', join('ui', 'ui.css'), ...rest].map(src).join('\n');
-};
-/** The app's fonts (fontsource), with their files loaded from disk. */
-const FONTS = () => ['schibsted-grotesk/400.css', 'schibsted-grotesk/500.css', 'schibsted-grotesk/600.css', 'schibsted-grotesk/700.css', 'jetbrains-mono/400.css', 'jetbrains-mono/500.css']
-  .map((f) => {
-    const file = join(import.meta.dirname, '../node_modules/@fontsource', f);
-    return readFileSync(file, 'utf8').replaceAll('url(./', `url(file://${dirname(file)}/`);
-  }).join('\n');
 
 const MEASURE = `(async () => {
 await document.fonts.ready;
