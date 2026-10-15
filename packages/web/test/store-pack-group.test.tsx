@@ -101,4 +101,24 @@ describe('CreativeCanvas · the store pack is one group', () => {
     // A store preset picked by hand stays in its own channel group.
     expect(within(column()).getByRole('group', { name: 'App Store' })).toBeTruthy();
   });
+
+  it('with every pack instance taken out the group is still there, empty, and the export stays', async () => {
+    detail = makeDetail({ formats: ['instagram-post-1x1', 'appstore-ipad-13'], formatLabels: undefined });
+    render(<Harness />);
+    await ready();
+    const group = within(column()).getByRole('group', { name: 'Pacchetto store' });
+    expect(items(group)).toHaveLength(0);
+    expect((within(group).getByRole('button', { name: 'Esporta pacchetto' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('follows the pack\'s own instances, not the ids a pack would have: a pack grown over a hand-picked @3 owns @4', async () => {
+    const owned = { ...pack, screenshots: [...pack.screenshots, { caption: 'Tre', screen: null }], stores: ['appstore' as const], devices: { appstore: ['iphone-69' as const] }, instances: ['appstore-iphone-69', 'appstore-iphone-69@2', 'appstore-iphone-69@4'] };
+    detail = makeDetail({ storePack: owned, formats: ['instagram-post-1x1', 'appstore-iphone-69', 'appstore-iphone-69@2', 'appstore-iphone-69@3', 'appstore-iphone-69@4'], formatLabels: undefined });
+    render(<Harness />);
+    await ready();
+    const group = within(column()).getByRole('group', { name: 'Pacchetto store' });
+    expect(items(group)).toHaveLength(3);
+    const outside = within(column()).getAllByRole('group', { name: 'App Store' }).filter((g) => !group.contains(g));
+    expect(items(outside[0]!)).toHaveLength(1);
+  });
 });

@@ -134,6 +134,14 @@ function Body({ onClose, slug, creative, version, locales, untranslated = [], ne
               </ul>
             </div>
           ) : null}
+          {result.notInPack?.length ? (
+            <div className="ms-sp-failed">
+              <b>{x.notInPack({ count: result.notInPack.length })}</b>
+              <ul className="ms-sp-files" aria-label={x.notInPack({ count: result.notInPack.length })}>
+                {result.notInPack.map((f) => <li key={f}>{f}</li>)}
+              </ul>
+            </div>
+          ) : null}
           <div className="ms-exp-done-actions">
             {bridge ? (
               <Button variant="outline" onClick={() => { bridge.revealPath(result.folder).catch((e: unknown) => setError(message(e))); }}>

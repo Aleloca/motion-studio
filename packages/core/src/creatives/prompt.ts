@@ -387,7 +387,7 @@ export function storePackPromptSection(p: StorePack): string[] {
   const lines = [
     '## App store series',
     `- These formats are the store listing of the app ${q(p.app.name, 60)}${p.app.tagline ? ` (tagline ${q(p.app.tagline, 120)})` : ''}: a series of ${n} screenshot${n === 1 ? '' : 's'} per device, read in order.`,
-    '- Instances: `<preset>` is screenshot 1 and `<preset>@k` is screenshot k (their labels read "k · caption").',
+    '- Instances: `<preset>` is screenshot 1 and `<preset>@k` is screenshot k (their labels read "k · caption"). If the creative has other instances of the same preset, the number in the label is the screenshot number, not the one after the @.',
     ...p.screenshots.map((s, i) => `- Screenshot ${i + 1}: caption ${q(s.caption, 80)}; ${s.screen ? `app screen ${q(s.screen, 300)} (project path: copy it into the composition's assets/)` : 'no app screen given: design a simple, plausible screen for this caption'}.`),
     '- Keep the same grid and style across the whole series: the same background treatment, type scale, caption position, frame size and spacing on every screenshot of a device.',
     '- Put the caption at the top of each screenshot, large and legible at store thumbnail size; the app screen goes below it.',

@@ -88,7 +88,7 @@ export interface LocalizeRequest { locales: string[]; formats?: string[]; voice?
 /** The localized composition of a format (preview): the editor view with the overlay applied, plus the language's state. */
 export type LocalizedCompositionView = EditorCompositionView & { localization: { locale: LocaleTag; stale: string[]; problems: string[]; issues?: LocalizationIssue[]; voice: LocalizationRow['voice'] } };
 /** What a pack export did (Phase 12 §4.3): paths relative to the pack folder; `rendered` lists what was rendered first. */
-export interface StorePackExportResult { folder: string; written: string[]; failed: Array<{ file: string; reason: string }>; rendered?: Array<{ version: number; formats: string[]; locale?: string }> }
+export interface StorePackExportResult { folder: string; written: string[]; failed: Array<{ file: string; reason: string }>; notInPack?: string[]; rendered?: Array<{ version: number; formats: string[]; locale?: string }> }
 /** "Render anyway" and the languages of a render or an export (Phase 12 §3.5). */
 export interface LocaleOptions { locales?: string[]; force?: boolean }
 

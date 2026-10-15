@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { mergeStorePack, verifyScreens } from '../store-pack/brief.ts';
 import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
-import { canFollow, effectiveServices, checkLink, effectiveLinks, legacyTurnKind, linksAfterBriefSave, formatHistory, formatDisplayName, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type AgentEvent, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type StorePack, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
+import { canFollow, effectiveServices, checkLink, effectiveLinks, legacyTurnKind, linksAfterBriefSave, formatHistory, formatDisplayName, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type AgentEvent, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type StorePack, storePackSchema, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import { detachLinksUnder } from '../agent/protected-links.ts';
 import { noteCoreChange } from '../core-changes.ts';
@@ -269,7 +269,13 @@ export class CreativeTurnService {
         const current = stored.brief;
         // Phase 14: the store pack changes only through `storePack` (it recomputes the pack's instances); a full save keeps it.
         // A pack other than the stored one (a second pack, or a changed one) is refused: one pack per creative, edited on its own.
-        if (sentPack !== undefined && !isDeepStrictEqual(sentPack, current.storePack)) throw new CodedError(409, t().variants.storePack.second, 'store-pack-second');
+        // Both sides go through the schema first, so a missing optional or a different key order is not a difference.
+        if (sentPack !== undefined) {
+          const parsed = (p: unknown) => (p === undefined ? undefined : storePackSchema.safeParse(p).data);
+          if (!isDeepStrictEqual(parsed(sentPack), parsed(current.storePack))) {
+            throw new CodedError(409, current.storePack ? t().variants.storePack.second : t().variants.storePack.useEntry, 'store-pack-second');
+          }
+        }
         const rest = current.storePack ? { ...sent, storePack: current.storePack } : sent;
         const added = rest.formats.filter((f) => !current.formats.includes(f));
         // Shared with the web, which tells before "Save and regenerate" whether a legacy creative converts (I4).

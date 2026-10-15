@@ -159,7 +159,8 @@ describe('POST /api/projects/:slug/creatives/store-pack', { timeout: 60_000 }, (
     expect(creative.brief.formats).toEqual(storePackBrief(pack, { locale: 'en' }).formats);
     expect(creative.brief.formatLabels!['appstore-iphone-69@2']).toBe('2 · Share with your team');
     expect(creative.brief.links).toEqual({});
-    expect(creative.brief.storePack).toEqual(pack);
+    // Phase 14: the pack records the instances it created.
+    expect(creative.brief.storePack).toEqual({ ...pack, instances: creative.brief.formats });
     expect(creative.brief.assets).toEqual(['assets/screens/home.png', 'assets/screens/share.png']);
     // No agent run unless asked.
     expect(env.agentRuns()).toBe(0);

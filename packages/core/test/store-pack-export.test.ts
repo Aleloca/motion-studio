@@ -129,6 +129,29 @@ describe('store pack export', { timeout: 120_000 }, () => {
     const body = r.json() as { folder: string; written: string[]; failed: unknown[] };
     expect([...body.written].sort()).toEqual(['AppStore/iPhone-6.9/01-all-your-tasks.png', 'AppStore/iPhone-6.9/02-share-with-your-team.png']);
     expect(body.failed).toEqual([]);
+    // The hand-picked store format is said, in the result and in the README.
+    expect((body as { notInPack?: string[] }).notInPack).toEqual(['playstore-tablet']);
+    expect(readFileSync(join(body.folder, 'README.txt'), 'utf8')).toContain('- playstore-tablet');
+  });
+
+  it('Phase 14: a pack grown over a hand-picked instance takes the next free id; the hand-picked one is not exported and keeps its place', async () => {
+    const slug = await createPack(pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false }));
+    const got = await env.app.inject({ url: `/api/projects/acme/creatives/${slug}`, headers: H });
+    const brief = (got.json() as { creative: { brief: Record<string, unknown> & { formats: string[] } } }).creative.brief;
+    const picked = await env.app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}`, headers: H,
+      payload: { brief: { ...brief, links: undefined, formats: [...brief.formats, 'appstore-iphone-69@3'] } } });
+    expect(picked.statusCode, picked.body).toBe(200);
+    const grown = await env.app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}`, headers: H,
+      payload: { storePack: pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false, screenshots: [...pack().screenshots, { caption: 'Third', screen: null }] }) } });
+    expect(grown.statusCode, grown.body).toBe(200);
+    const stored = (grown.json() as { brief: { formats: string[]; storePack: { instances: string[] } } }).brief;
+    expect(stored.storePack.instances).toEqual(['appstore-iphone-69', 'appstore-iphone-69@2', 'appstore-iphone-69@4']);
+    expect(stored.formats).toContain('appstore-iphone-69@3');
+    const body = (await exportPack(slug)).json() as { written: string[]; failed: Array<{ file: string; reason: string }>; notInPack?: string[] };
+    expect(body.notInPack).toEqual(['appstore-iphone-69@3']);
+    // The pack's third screenshot (instance @4) is not in v1; nothing of the hand-picked @3 is exported under the pack's names.
+    expect(body.failed).toEqual([{ file: 'AppStore/iPhone-6.9/03-third.png', reason: c().notInVersion({ n: 1 }) }]);
+    expect([...body.written].sort()).toEqual(['AppStore/iPhone-6.9/01-all-your-tasks.png', 'AppStore/iPhone-6.9/02-share-with-your-team.png']);
   });
 
   it('with languages: one folder per language from the localized renders; a language without a translation is listed, the rest exported', async () => {

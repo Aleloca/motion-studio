@@ -34,7 +34,7 @@ describe('mergeStorePack (Review Focus 4)', () => {
     expect(r.added).toEqual([]);
     expect(r.brief.formats).toEqual([YT, HAND, PHONE(1), PHONE(2), PHONE(3)]);
     expect(r.brief.formatLabels).toEqual({ [HAND]: 'My own', [YT]: 'Teaser', [PHONE(1)]: '1 · Caption 1', [PHONE(2)]: '2 · Caption 2', [PHONE(3)]: '3 · Caption 3' });
-    expect(r.brief.storePack).toEqual(pack(3));
+    expect(r.brief.storePack).toEqual({ ...pack(3), instances: [1, 2, 3].map(PHONE) });
   });
 
   it('growing adds instances after the last pack instance and relabels the captions that changed', () => {
@@ -65,11 +65,61 @@ describe('mergeStorePack (Review Focus 4)', () => {
     expect(r.brief.formatLabels).toEqual({ [HAND]: 'My own', [PHONE(1)]: '1 · Caption 1', [PHONE(2)]: '2 · Caption 2' });
   });
 
-  it('a hand-picked instance the pack would need is refused, never taken over; the last format cannot go', () => {
-    const b: Brief = { ...mixed(), storePack: undefined, formats: [YT, PHONE(2)], formatLabels: {} };
-    expect(() => mergeStorePack(b, pack(3))).toThrowError(/playstore-phone-9x16@2/);
+  it('never adopts: an old pack (no instances) grown over a hand-picked @6 gets the next free ids; shrinking and removing touch only owned ids', () => {
+    const b: Brief = { ...mixed(), formats: [...mixed().formats, PHONE(6)], formatLabels: { ...mixed().formatLabels, [PHONE(6)]: 'Mine' } };
+    const grown = mergeStorePack(b, pack(7));
+    expect(grown.added).toEqual([PHONE(7), PHONE(8)]);
+    expect(grown.brief.storePack!.instances).toEqual([1, 2, 3, 4, 5, 7, 8].map(PHONE));
+    expect(grown.brief.formatLabels![PHONE(6)]).toBe('Mine');
+    expect(grown.brief.formatLabels![PHONE(7)]).toBe('6 · Caption 6');
+    expect(grown.brief.formatLabels![PHONE(8)]).toBe('7 · Caption 7');
+    // Shrink to 3: the owned @4 @5 @7 @8 go, the hand-picked @6 stays with its label.
+    const shrunk = mergeStorePack(grown.brief, pack(3));
+    expect(shrunk.removed).toEqual([PHONE(4), PHONE(5), PHONE(7), PHONE(8)]);
+    expect(shrunk.brief.formats).toEqual([YT, HAND, PHONE(1), PHONE(2), PHONE(3), PHONE(6)]);
+    expect(shrunk.brief.formatLabels![PHONE(6)]).toBe('Mine');
+    const gone = mergeStorePack(shrunk.brief, null);
+    expect(gone.removed).toEqual([1, 2, 3].map(PHONE));
+    expect(gone.brief.formats).toEqual([YT, HAND, PHONE(6)]);
+    expect(gone.brief.formatLabels).toEqual({ [HAND]: 'My own', [YT]: 'Teaser', [PHONE(6)]: 'Mine' });
+  });
+
+  it('refuses only a real impossibility: a preset with no free instance left, and the last format', () => {
+    const full: Brief = { ...mixed(), storePack: undefined, formats: [YT, ...Array.from({ length: 20 }, (_, i) => PHONE(i + 1))], formatLabels: {} };
+    expect(() => mergeStorePack(full, pack(2))).toThrowError(expect.objectContaining({ apiCode: 'store-pack-collision', message: expect.stringContaining('playstore-phone-9x16') }));
     const only = storePackBrief(pack(2), { locale: 'en' });
-    expect(() => mergeStorePack(only, null)).toThrowError();
+    expect(() => mergeStorePack(only, null)).toThrowError(expect.objectContaining({ apiCode: 'store-pack-last-format' }));
+  });
+
+  it('recomputes what the pack derived: assets, the preview length, goal and message (only while the user has not changed them)', () => {
+    const old = pack(2, { screenshots: [{ caption: 'A', screen: 'assets/a.png' }, { caption: 'B', screen: 'assets/b.png' }] });
+    const made = storePackBrief(old, { locale: 'en' });
+    const b: Brief = { ...made, assets: [...made.assets, 'assets/mine.png'] };
+    const next = pack(2, { preview: true, screenshots: [{ caption: 'A2', screen: 'assets/a.png' }, { caption: 'B', screen: 'assets/c.png' }] });
+    const r = mergeStorePack(b, next, undefined, 'en');
+    expect(r.brief.durationSec).toBe(20);
+    expect(r.brief.assets).toEqual(['assets/mine.png', 'assets/a.png', 'assets/c.png']);
+    expect(r.brief.message).toBe(storePackBrief(next, { locale: 'en' }).message);
+    expect(r.kept).toEqual([]);
+    // Preview off again: the pack's 20 s goes; a manual message is kept and named.
+    const edited = mergeStorePack({ ...r.brief, message: 'My own message' }, pack(2), undefined, 'en');
+    expect(edited.brief.durationSec).toBeNull();
+    expect(edited.brief.message).toBe('My own message');
+    expect(edited.kept).toContain('message');
+    // A length the user set (not null) is not replaced by the preview's.
+    const own = mergeStorePack({ ...b, durationSec: 12 }, next, undefined, 'en');
+    expect(own.brief.durationSec).toBe(12);
+    expect(own.kept).toContain('durationSec');
+  });
+
+  it('switching a pack from the App Store to Google Play removes the App Store instances and adds the Play ones', () => {
+    const apple = pack(2, { stores: ['appstore'], devices: { appstore: ['iphone-69'] } });
+    const b: Brief = { ...storePackBrief(apple, { locale: 'en' }), formats: [YT, ...storePackFormats(apple).formats] };
+    const r = mergeStorePack(b, pack(2));
+    expect(r.removed).toEqual(['appstore-iphone-69', 'appstore-iphone-69@2']);
+    expect(r.added).toEqual([PHONE(1), PHONE(2)]);
+    expect(r.brief.formats).toEqual([YT, PHONE(1), PHONE(2)]);
+    expect(r.brief.formatLabels).toEqual({ [PHONE(1)]: '1 · Caption 1', [PHONE(2)]: '2 · Caption 2' });
   });
 
   it('a legacy store-pack brief (made by the old route) is edited the same way', () => {
@@ -97,7 +147,15 @@ describe('the routes', { timeout: 60_000 }, () => {
     const { creative } = r.json() as { creative: CreativeFile };
     expect(creative.brief.formats).toEqual([YT, PHONE(1), PHONE(2)]);
     expect(creative.brief.formatLabels).toEqual({ [PHONE(1)]: '1 · Caption 1', [PHONE(2)]: '2 · Caption 2' });
-    expect(creative.brief.storePack).toEqual(pack(2));
+    expect(creative.brief.storePack).toEqual({ ...pack(2), instances: [PHONE(1), PHONE(2)] });
+
+    // With explicit instances (a picked PHONE(1) sits beside the pack's), they must match the slots.
+    const mine = await create({ ...pack(2), instances: [PHONE(2), PHONE(3)] }, [YT, PHONE(1), PHONE(2), PHONE(3)]);
+    expect(mine.statusCode, mine.body).toBe(201);
+    expect((mine.json() as { creative: CreativeFile }).creative.brief.storePack!.instances).toEqual([PHONE(2), PHONE(3)]);
+    const wrong = await create({ ...pack(2), instances: [PHONE(2), 'instagram-post-1x1'] }, [YT, PHONE(2), 'instagram-post-1x1']);
+    expect(wrong.statusCode).toBe(400);
+    expect(wrong.json().code).toBe('store-pack-instances');
   });
 
   it('edit and remove through PUT { storePack }; versions of removed instances stay; a second pack is refused', async () => {
@@ -121,10 +179,12 @@ describe('the routes', { timeout: 60_000 }, () => {
 
     // A full brief save with another pack is a second pack: refused. The same pack (an editor's save) is kept.
     const sent = { ...after.brief, links: undefined };
-    expect((await put(slug, { brief: { ...sent, storePack: pack(2) } })).statusCode).toBe(409);
+    const second = await put(slug, { brief: { ...sent, storePack: pack(2) } });
+    expect(second.statusCode).toBe(409);
+    expect(second.json().code).toBe('store-pack-second');
     const same = await put(slug, { brief: { ...sent, goal: 'new goal' } });
     expect(same.statusCode, same.body).toBe(200);
-    expect((same.json() as CreativeFile).brief.storePack).toEqual(pack(3));
+    expect((same.json() as CreativeFile).brief.storePack).toEqual({ ...pack(3), instances: [1, 2, 3].map(PHONE) });
 
     // A screen that is not in the library is refused before anything changes.
     const badScreen = await put(slug, { storePack: pack(3, { screenshots: [{ caption: 'A', screen: 'assets/missing.png' }, ...shots(2)] }) });
@@ -136,6 +196,18 @@ describe('the routes', { timeout: 60_000 }, () => {
     expect(final.brief.formats).toEqual([YT, HAND]);
     expect(final.brief.storePack).toBeUndefined();
     expect(final.brief.formatLabels).toEqual({ [HAND]: 'My own' });
+    // The last format cannot go; a pack sent with a whole brief on a creative without one says to use the entry.
+    const lone = await env.app.inject({ method: 'POST', url: '/api/projects/acme/creatives/store-pack', headers: H, payload: { title: 'Lone', storePack: pack(2) } });
+    expect(lone.statusCode).toBe(201);
+    const loneSlug = (lone.json() as { slug: string }).slug;
+    const last = await put(loneSlug, { storePack: null });
+    expect(last.statusCode).toBe(409);
+    expect(last.json().code).toBe('store-pack-last-format');
+    const plain = await create(pack(2), [YT]).then((r) => (r.json() as { slug: string }).slug);
+    await put(plain, { storePack: null });
+    const nopack = await put(plain, { brief: { goal: 'g', message: '', formats: [YT], durationSec: null, assets: [], notes: '', storePack: pack(2) } });
+    expect(nopack.statusCode).toBe(409);
+    expect(nopack.json().message ?? nopack.json().error).toMatch(/storePack/);
     // The partial field does not mix with a full brief.
     expect((await put(slug, { storePack: pack(2), formats: [YT] })).statusCode).toBe(400);
   });

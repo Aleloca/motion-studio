@@ -1,6 +1,6 @@
 // Brief form of a creative ("Edit the brief" in the canvas panel), built from ui/ controls only: no native select,
 // checkbox or number field, no textarea resize. Saves it, or saves and starts a new generation.
-import { channelName, INSTANCE_ID_RE, legacyTurnKind, linksAfterBriefSave, nextInstanceId, presetOf, storePackFormats, type StorePack, type Brief, type BriefServices, type CreativeDetail, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
+import { channelName, INSTANCE_ID_RE, legacyTurnKind, linksAfterBriefSave, nextInstanceId, packInstancesOf, presetOf, type StorePack, type Brief, type BriefServices, type CreativeDetail, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
 import { useId, useMemo, useRef, useState, type DragEvent } from 'react';
 import { api } from '../api.ts';
 import { instanceName, presetFor, presetNameOf } from '../instances.ts';
@@ -91,7 +91,7 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged, onRefr
     setError(null);
     const before = storedRef.current;
     const saved = await api.updateCreative(slug, detail.slug, { storePack: next });
-    const mine = new Set([...(before.storePack ? storePackFormats(before.storePack).formats : []), ...(saved.brief.storePack ? storePackFormats(saved.brief.storePack).formats : [])]);
+    const mine = new Set([...(before.storePack ? packInstancesOf(before.storePack) : []), ...(saved.brief.storePack ? packInstancesOf(saved.brief.storePack) : [])]);
     setStored(saved.brief);
     setBrief((b) => {
       // Unsaved additions stay; saved formats the pack no longer owns go; the server's order wins for the rest.

@@ -50,13 +50,19 @@ describe('New creative · the store pack is an entry of the formats list', () =>
     await waitFor(() => screen.getByRole('group', { name: 'Instagram' }));
   };
 
-  it('has no separate card; the entry is a tile of the App Store group and opens the wizard in a dialog', async () => {
+  it('has no separate card; the entry is visible without searching or opening any group, and a search by name still finds it', async () => {
     await open();
+    expect(screen.queryByRole('group', { name: 'App Store' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Aggiungi il pacchetto store ai formati' })).toBeTruthy();
+    await userEvent.type(screen.getByRole('searchbox'), 'zzz');
+    expect(screen.queryByRole('button', { name: 'Aggiungi il pacchetto store ai formati' })).toBeNull();
+    await userEvent.clear(screen.getByRole('searchbox'));
+    await userEvent.type(screen.getByRole('searchbox'), 'pacchetto');
+    expect(screen.getByRole('button', { name: 'Aggiungi il pacchetto store ai formati' })).toBeTruthy();
+    await userEvent.clear(screen.getByRole('searchbox'));
     expect(screen.queryByText('Prepara il pacchetto')).toBeNull();
     expect(screen.queryByText('Pacchetto App Store', { selector: 'b' })).toBeNull();
-    await userEvent.type(screen.getByRole('searchbox'), 'pacchetto');
-    const group = await screen.findByRole('group', { name: 'App Store' });
-    await userEvent.click(within(group).getByRole('button', { name: 'Aggiungi il pacchetto store ai formati' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Aggiungi il pacchetto store ai formati' }));
     const dialog = await screen.findByRole('dialog', { name: 'Pacchetto App Store' });
     expect(within(dialog).getByLabelText("Nome dell'app")).toBeTruthy();
   });
@@ -65,16 +71,14 @@ describe('New creative · the store pack is an entry of the formats list', () =>
     await open();
     await userEvent.type(screen.getByLabelText('Cosa vuoi realizzare?'), 'Lancio di Tasky');
     await userEvent.click(within(screen.getByRole('group', { name: 'Instagram' })).getAllByRole('button')[0]!);
-    await userEvent.type(screen.getByRole('searchbox'), 'pacchetto');
-    const group = await screen.findByRole('group', { name: 'App Store' });
-    await userEvent.click(within(group).getByRole('button', { name: 'Aggiungi il pacchetto store ai formati' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Aggiungi il pacchetto store ai formati' }));
     const dialog = await screen.findByRole('dialog', { name: 'Pacchetto App Store' });
     await fillWizard(dialog);
     await userEvent.click(within(dialog).getByRole('button', { name: 'Aggiungi ai formati' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Pacchetto App Store' })).toBeNull());
     expect(createStorePack).not.toHaveBeenCalled();
     // The tile is on and says how many screenshots.
-    expect(within(await screen.findByRole('group', { name: 'App Store' })).getByRole('button', { name: 'Pacchetto store, 3 screenshot: modifica' }).getAttribute('aria-pressed')).toBe('true');
+    expect((await screen.findByRole('button', { name: 'Pacchetto store, 3 screenshot: modifica' })).getAttribute('aria-pressed')).toBe('true');
     await userEvent.click(screen.getByRole('button', { name: 'Salva bozza' }));
     await waitFor(() => expect(createCreative).toHaveBeenCalledOnce());
     const body = createCreative.mock.calls[0]![1] as { brief: { formats: string[]; storePack: StorePack; formatLabels: Record<string, string> } };
@@ -88,11 +92,27 @@ describe('New creative · the store pack is an entry of the formats list', () =>
     expect(body.brief.formatLabels['appstore-iphone-69@2']).toBe('2 · Didascalia 2');
   });
 
+  it('a picked tile of the same format is never taken over: the pack gets the next free instances and records them', async () => {
+    await open();
+    await userEvent.type(screen.getByLabelText('Cosa vuoi realizzare?'), 'Lancio di Tasky');
+    await userEvent.type(screen.getByRole('searchbox'), 'iPhone 6');
+    await userEvent.click(within(await screen.findByRole('group', { name: 'App Store' })).getByRole('button', { name: /iPhone 6\.9/ }));
+    await userEvent.clear(screen.getByRole('searchbox'));
+    await userEvent.click(screen.getByRole('button', { name: 'Aggiungi il pacchetto store ai formati' }));
+    await fillWizard(await screen.findByRole('dialog', { name: 'Pacchetto App Store' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Aggiungi ai formati' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Salva bozza' }));
+    await waitFor(() => expect(createCreative).toHaveBeenCalledOnce());
+    const body = createCreative.mock.calls[0]![1] as { brief: { formats: string[]; storePack: StorePack; formatLabels: Record<string, string> } };
+    expect(body.brief.formats).toEqual(['appstore-iphone-69', 'appstore-iphone-69@2', 'appstore-iphone-69@3', 'appstore-iphone-69@4']);
+    expect(body.brief.storePack.instances).toEqual(['appstore-iphone-69@2', 'appstore-iphone-69@3', 'appstore-iphone-69@4']);
+    expect(body.brief.formatLabels['appstore-iphone-69@2']).toBe('1 · Didascalia 1');
+    expect(body.brief.formatLabels['appstore-iphone-69']).toBeUndefined();
+  });
+
   it('a pack alone is enough to create; taking it out brings back the "pick a format" state', async () => {
     await open();
-    await userEvent.type(screen.getByRole('searchbox'), 'pacchetto');
-    const group = await screen.findByRole('group', { name: 'App Store' });
-    await userEvent.click(within(group).getByRole('button', { name: 'Aggiungi il pacchetto store ai formati' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Aggiungi il pacchetto store ai formati' }));
     await fillWizard(await screen.findByRole('dialog', { name: 'Pacchetto App Store' }));
     await userEvent.click(screen.getByRole('button', { name: 'Aggiungi ai formati' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Rimuovi il pacchetto store' }));

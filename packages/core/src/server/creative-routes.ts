@@ -4,7 +4,7 @@ import { lstat, readdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, join, sep } from 'node:path';
 import { changedAssets, overlayAssetPaths, readOverlay } from '../localization/store.ts';
 import type { FastifyInstance } from 'fastify';
-import { messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow } from '@motion-studio/shared';
+import { messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
@@ -290,11 +290,19 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const presets = (await catalog().load()).presets;
     let brief = body.brief;
     if (brief.storePack) {
-      // A pack whose instances the brief lacks gets them (and their labels), as `mergeStorePack` does for an existing creative.
-      const own = storePackFormats(brief.storePack, presets).formats;
-      if (own.some((f) => !brief.formats.includes(f))) {
-        const { storePack: pack, ...bare } = brief;
-        brief = mergeStorePack({ ...bare, formats: brief.formats.filter((f) => !own.includes(f)) }, pack, presets).brief;
+      const pack = brief.storePack;
+      const slots = storePackFormats(pack, presets).formats;
+      if (pack.instances) {
+        // The client chose the instances (a hand-picked one of the same preset can sit beside them): they must match the slots.
+        const ok = pack.instances.length === slots.length && new Set(pack.instances).size === slots.length
+          && pack.instances.every((id, i) => presetOf(id) === presetOf(slots[i]!) && brief.formats.includes(id));
+        if (!ok) throw new CodedError(400, t().variants.storePack.badInstances, 'store-pack-instances');
+      } else if (slots.some((f) => !brief.formats.includes(f))) {
+        // No instances given: the pack's slots are the instances; a pack whose instances the brief lacks gets them (and their labels).
+        const { storePack: _p, ...bare } = brief;
+        brief = mergeStorePack({ ...bare, formats: brief.formats.filter((f) => !slots.includes(f)) }, pack, presets).brief;
+      } else {
+        brief = { ...brief, storePack: { ...pack, instances: slots } };
       }
     }
     const links = initialLinks(brief, presets);

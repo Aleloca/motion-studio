@@ -16,7 +16,7 @@ import { message as errText } from './common.tsx';
 import { isVideoFile } from '../media.ts';
 import { conceptIds, IdentityStart, identityForBrief, resolveIdentity } from './identity/IdentityStart.tsx';
 import { StorePackWizard } from './new-creative/StorePackWizard.tsx';
-import { packChannel, packParts } from './new-creative/storePackModel.ts';
+import { packParts } from './new-creative/storePackModel.ts';
 import './new-creative/storepack.css';
 
 
@@ -221,14 +221,7 @@ export function NewCreative({ slug }: { slug: string }) {
 
   const presets = catalog.value ?? [];
   const chosen = useMemo(() => selected.flatMap((id) => presets.filter((p) => p.id === id)), [selected, presets]);
-  const parts = useMemo(() => packParts(pack, presets), [pack, presets]);
-  // A hand-picked tile the pack also needs becomes the pack's (the instance is one).
-  const handPicked = chosen.filter((p) => !parts.formats.includes(p.id));
   const videos = chosen.filter((p) => p.kind === 'video');
-  const packExtra = parts.formats.length;
-  const allVideos = handPicked.filter((p) => p.kind === 'video').length + parts.videos;
-  const allImages = handPicked.filter((p) => p.kind === 'image').length + parts.images;
-  const packGroup = packChannel(presets);
 
   const durationSec = length === 'custom' ? Number(customSec) : Number(length);
   const durationValid = Number.isInteger(durationSec) && durationSec >= 1 && durationSec <= 600;
@@ -247,9 +240,9 @@ export function NewCreative({ slug }: { slug: string }) {
   const groups = useMemo(() => [...new Set(presets.map((p) => p.channel))], [presets]);
   const primary = groups.some((g) => PRIMARY.includes(g)) ? groups.filter((g) => PRIMARY.includes(g)) : groups.slice(0, 3);
   // The "Store pack" entry sits in the first store group, with the formats; a search by its name finds it too.
-  const packShown = packGroup !== null && kind === 'all' && (!q || `${t.web.storePack.entryTitle} ${t.web.storePack.entryHint} ${t.web.storePack.title}`.toLocaleLowerCase().includes(q));
-  const open = (g: string) => q !== '' || primary.includes(g) || more.has(g) || presets.some((p) => p.channel === g && selected.includes(p.id)) || (g === packGroup && pack !== null);
-  const visibleGroups = groups.map((g) => ({ g, items: presets.filter((p) => p.channel === g && shown(p)) })).filter(({ g, items }) => open(g) && (items.length > 0 || (g === packGroup && packShown)));
+  const packShown = (!q || `${t.web.storePack.entryTitle} ${t.web.storePack.entryHint} ${t.web.storePack.title}`.toLocaleLowerCase().includes(q));
+  const open = (g: string) => q !== '' || primary.includes(g) || more.has(g) || presets.some((p) => p.channel === g && selected.includes(p.id));
+  const visibleGroups = groups.map((g) => ({ g, items: presets.filter((p) => p.channel === g && shown(p)) })).filter(({ g, items }) => open(g) && items.length > 0);
   const hiddenGroups = q ? [] : groups.filter((g) => !open(g));
 
   const root = useEnter<HTMLDivElement>([catalog.value !== null]);
@@ -298,10 +291,10 @@ export function NewCreative({ slug }: { slug: string }) {
         brief: {
           goal: goal.trim(), message: message.trim(),
           // A logo from scratch is one instance per concept (`identity-logo`, `identity-logo@2`…).
-          formats: [...handPicked.flatMap((p) => (p.identity === 'logo' ? conceptIds(p.id, identityNow) : [p.id])), ...parts.formats],
+          formats: [...handIds, ...parts.formats],
           durationSec: videos.length > 0 ? durationSec : parts.durationSec, assets: [...picked, ...parts.assets.filter((a) => !picked.includes(a))], notes: notes.trim(), links: plan.links,
           ...(Object.keys(parts.formatLabels).length > 0 ? { formatLabels: parts.formatLabels } : {}),
-          ...(pack ? { storePack: pack } : {}),
+          ...(pack ? { storePack: parts.pack! } : {}),
           ...(services ? { services } : {}),
           ...(identityOn ? { identity: identityForBrief(identity, hasBrandLogo) } : {}),
         },
@@ -327,6 +320,13 @@ export function NewCreative({ slug }: { slug: string }) {
   const identityOn = chosen.some((p) => p.identity);
   const identityPending = identityOn && identity === undefined && brand.value === null && brand.error === null;
   const identityNow = resolveIdentity(identity, hasBrandLogo);
+  // The pack never takes a picked tile over (Phase 14): its instances take the next free ids beside the chosen ones.
+  const handPicked = chosen;
+  const handIds = handPicked.flatMap((p) => (p.identity === 'logo' ? conceptIds(p.id, identityNow) : [p.id]));
+  const parts = packParts(pack, presets, handIds);
+  const packExtra = parts.formats.length;
+  const allVideos = handPicked.filter((p) => p.kind === 'video').length + parts.videos;
+  const allImages = handPicked.filter((p) => p.kind === 'image').length + parts.images;
   const hasBrand = !!kit && (kit.colors.length > 0 || kit.fonts.length > 0 || kit.logos.length > 0 || kit.tone !== null);
   // The brand in one line, as on the board: heading font · main colour · tone.
   const brandLine = kit ? [kit.fonts[0]?.family, kit.colors[0]?.name, kit.tone?.text].filter(Boolean).join(' · ') : '';
@@ -504,7 +504,14 @@ export function NewCreative({ slug }: { slug: string }) {
             </div>
           ) : null}
 
-          {catalog.value !== null && visibleGroups.length === 0 ? (
+          {/* The store pack entry is always here, whatever the state of the channel groups below (a search that does not name it hides it). */}
+          {packShown ? (
+            <div className="ms-nc-group ms-nc-packrow" role="group" aria-label={t.web.storePack.entryTitle}>
+              <div className="ms-nc-tiles ms-nc-packtiles"><PackTile pack={pack} onOpen={() => setPackOpen(true)} onRemove={() => setPack(null)} /></div>
+            </div>
+          ) : null}
+
+          {catalog.value !== null && visibleGroups.length === 0 && !packShown ? (
             <Empty icon="search" title={n.noMatch} sub={n.noMatchBody} action={<Button size="sm" variant="outline" onClick={() => { setQuery(''); setKind('all'); }}>{n.showAllFormats}</Button>} />
           ) : null}
 
@@ -513,11 +520,11 @@ export function NewCreative({ slug }: { slug: string }) {
             const count = items.filter((p) => selected.includes(p.id)).length;
             const name = channelName(g, locale);
             return (
-              <div key={g} className="ms-nc-group" role="group" aria-label={name} data-enter style={{ '--cols': Math.min(items.length + (g === packGroup && packShown ? 1 : 0), TILE_COLUMNS) } as CSSProperties}>
+              <div key={g} className="ms-nc-group" role="group" aria-label={name} data-enter style={{ '--cols': Math.min(items.length, TILE_COLUMNS) } as CSSProperties}>
                 <div className="ms-nc-ghead">
                   <ChannelMark channel={channelOf(g)} size={20} />
                   <b className="ms-nc-ell">{name}</b>
-                  {count + (g === packGroup && pack ? 1 : 0) ? <span className="ms-nc-faint ms-nc-small">{n.selectedCount({ n: count + (g === packGroup && pack ? 1 : 0) })}</span> : null}
+                  {count ? <span className="ms-nc-faint ms-nc-small">{n.selectedCount({ n: count })}</span> : null}
                 </div>
                 <div className="ms-nc-tiles">
                   {items.map((p) => (
@@ -525,7 +532,6 @@ export function NewCreative({ slug }: { slug: string }) {
                       link={selected.includes(p.id) && plan.candidates[p.id] ? { primary: presetLabel(plan.candidates[p.id]!), on: !linkOff.has(p.id), onToggle: () => toggleLink(p.id) } : null}
                       blocked={selected.includes(p.id) && plan.blocked[p.id] ? { primary: presetLabel(plan.blocked[p.id]!.primary), reason: t.errors.followReason[plan.blocked[p.id]!.reason] } : null} />
                   ))}
-                  {g === packGroup && packShown ? <PackTile pack={pack} onOpen={() => setPackOpen(true)} onRemove={() => setPack(null)} /> : null}
                 </div>
               </div>
             );

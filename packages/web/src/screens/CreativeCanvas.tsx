@@ -5,7 +5,7 @@
 // format view (screens/FormatView.tsx) with T3.
 import { ProblemList } from '../components/ProblemList.tsx';
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
-import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, outputWarningText, shownTotal, storePackFormats, type ConversationEntry, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
+import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, outputWarningText, shownTotal, packInstancesOf, type ConversationEntry, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../api.ts';
@@ -279,7 +279,7 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
   const [packExport, setPackExport] = useState(false);
   // Phase 14: the instances of the creative's store pack (`storePackFormats`); a store preset picked by hand is not one of them.
   const storePack = detail?.creative.brief.storePack;
-  const packIds = useMemo(() => new Set(storePack ? storePackFormats(storePack).formats : []), [storePack]);
+  const packIds = useMemo(() => new Set(storePack ? packInstancesOf(storePack) : []), [storePack]);
 
   // Open a board in the format view (T3): its rect goes along for the shared-element transition.
   const openEditor = (id: string, frame: HTMLElement) => {
@@ -624,7 +624,7 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
         title={title} snapshot={exporting?.snapshot ?? null} presets={presets} labels={cr.brief.formatLabels} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings} jobs={live.jobs}
         {...(creativeLocales(cr.brief) ? { locales: creativeLocales(cr.brief)! } : {})} />
       {cr.brief.storePack && version ? (() => {
-        const packGaps = packLanguageGaps(cr.brief.formats, version, creativeLocales(cr.brief)?.extra ?? []);
+        const packGaps = packLanguageGaps(cr.brief.formats.filter((f) => packIds.has(f)), version, creativeLocales(cr.brief)?.extra ?? []);
         return (
         <StorePackExport open={packExport} onClose={() => setPackExport(false)} slug={slug} creative={creative} title={title} version={version.n}
           untranslated={packGaps.untranslated} needsReview={packGaps.review}
