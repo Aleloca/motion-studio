@@ -2,7 +2,7 @@
 /**
  * App store pack (Phase 12, Task 6, spec §4.1): the brief built from the guided choices (instances, labels "N · caption",
  * links `{}` per Ruling D, the app screens as assets, the message), the series section of the agent prompt (same grid and
- * style, caption on top, a generic HTML/CSS device frame, never Apple or Google artwork or logos, the story from 1 to N, iPad
+ * style, caption on top, the app screen only with no device frame, never Apple or Google artwork or logos, the story from 1 to N, iPad
  * and Play screenshot N adapting iPhone screenshot N), and the create route that checks every screen is an image of the
  * project library.
  */
@@ -82,10 +82,12 @@ describe('series prompt section', () => {
     expect(s).toContain('assets/screens/home.png');
   });
 
-  it('asks for a generic device frame in HTML/CSS and forbids Apple and Google artwork and logos', () => {
+  it('asks for the app screen only, forbids drawing device frames, and forbids Apple and Google artwork and logos (decision 803)', () => {
     const s = section();
-    expect(s).toMatch(/generic device frame drawn with HTML\/CSS/i);
-    expect(s).toMatch(/rounded rectangle/i);
+    expect(s).not.toMatch(/generic device frame/i);
+    expect(s).not.toMatch(/inside a .*frame/i);
+    expect(s).toMatch(/app screen only/i);
+    expect(s).toMatch(/do not draw a device frame/i);
     expect(s).toMatch(/never use Apple or Google logos/i);
     expect(s).toMatch(/device artwork/i);
   });
