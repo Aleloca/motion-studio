@@ -57,7 +57,7 @@
   - all text is real HTML that reads without JS.
 - **No product changes:** nothing under `packages/` or `apps/` changes. If the runtime cannot be embedded without a change, stop and ask the orchestrator (claude-motion-graphics-77).
 - **Working rules:**
-  - work in `/Users/aleloca/git/claude-motion-graphics-site`, branch `feat/github-page`;
+  - work in the worktree `../claude-motion-graphics-site`, branch `feat/github-page`;
   - never push, open PRs or touch repo settings;
   - no stash, reset, restore, clean, amend or rebase;
   - kill only PIDs you started;
@@ -66,7 +66,7 @@
 - **Commit trailers, exactly:**
   `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`
   `Claude-Session: https://claude.ai/code/session_01KxKL6zuy8dbnJieqN1eCNg`
-- **No local paths:** no `/Users/aleloca` or `it@farmakom` anywhere in the diff.
+- **No local paths:** no local home path and no user e-mail anywhere in the diff.
 
 ## Review Focus
 
@@ -349,6 +349,6 @@ The showcase (Task 5) reuses `hero-*`, `brand`, `identity` and `languages`.
 
 - [ ] **Step 1: Write** `pages.yml` and validate its YAML with `node -e` plus a tiny YAML check, or by reading it carefully. No repo setting changes and no push.
 - [ ] **Step 2: Run** `node site/scripts/check.mjs --out <scratchpad>/site-check`. Expected: every assertion passes. Look at the 360px and 1440px screenshots and fix anything that looks off: clipping, overlaps, contrast.
-- [ ] **Step 3: Run** `node --test site/test` and `git diff main --stat`, then grep the diff: `git diff main | grep -nE '/Users/aleloca|it@farmakom'` must print nothing. Confirm nothing under `packages/` or `apps/` changed.
+- [ ] **Step 3: Run** `node --test site/test` and `git diff main --stat`, then grep the diff for the local home path and the user's e-mail: it must find nothing. Confirm nothing under `packages/` or `apps/` changed.
 - [ ] **Step 4: Commit** `ci: GitHub Pages workflow for the site; site checks`.
 - [ ] **Step 5: Report** the branch HEAD to claude-motion-graphics-77, with the note that block 9 presents phase 15 variants as available, so the merge should go with or after phase 15.

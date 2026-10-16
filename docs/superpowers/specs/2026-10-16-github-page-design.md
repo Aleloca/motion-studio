@@ -205,7 +205,7 @@ Repository, README, `docs/`, licenza MIT, il logo. Nessun tracker.
 - **Test:** niente suite pesanti, perché la fase 15 è in corso in parallelo. Solo la validazione delle composizioni e controlli mirati.
 - **Fine lavoro:**
   - trailer dei commit come nel brief;
-  - prima della consegna, grep del diff per `/Users/aleloca` e `it@farmakom`: nessun risultato ammesso.
+  - prima della consegna, grep del diff per il percorso della home locale e l'e-mail dell'utente: nessun risultato ammesso.
 - **Nota per l'orchestratore:** il blocco 9 (varianti) descrive una funzione della fase 15 non ancora rilasciata, e la pagina la presenta come disponibile per scelta esplicita dell'utente. Il merge del sito andrebbe fatto insieme o dopo la fase 15.
 
 ## 9. Lasciato al builder
