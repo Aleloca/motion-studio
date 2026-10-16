@@ -312,7 +312,7 @@ export function NewCreative({ slug }: { slug: string }) {
         generate: generate && (!grouped || (coreGroup && !typed)),
         linkedCodebases: codebases,
       });
-      let problem: string | null = created.startError ? vg.startFailed({ detail: created.startError }) : null;
+      let problem: string | null = created.groupError ? vg.groupFailed({ detail: created.groupError }) : created.startError ? vg.startFailed({ detail: created.startError }) : null;
       if (grouped && !(coreGroup && !typed)) {
         try {
           if (coreGroup) {

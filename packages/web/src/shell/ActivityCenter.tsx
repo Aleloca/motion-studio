@@ -41,8 +41,11 @@ export function activityLists(live: EventsState) {
  * Where a job belongs, from its key. The core's keys are `creative:<root>:<project>:<creative>`,
  * `render:<root>:<project>:<creative>:v<n>` (a follow-up: `…:v<n>:<k>`), `brand:<root>:<project>` (analysis and asset descriptions) and
  * `project:<root>:<project>` and `generate:<id>:<project>` (Assets Generate); the root may contain ':' (Windows), slugs never do.
+ * Phase 15: a group's directions turn is `variant-directions:creative:<root>:<project>:<host>`, the host's creative key behind
+ * a prefix: it belongs to the host (its link and its variant tag).
  */
 export function jobPlace(job: JobSummary): { project: string; creative: string | null } | null {
+  if (job.key.startsWith('variant-directions:')) return jobPlace({ ...job, key: job.key.slice('variant-directions:'.length) });
   const parts = job.key.split(':');
   const kind = parts[0];
   if (kind === 'creative' && parts.length >= 4) return { project: parts.at(-2)!, creative: parts.at(-1)! };

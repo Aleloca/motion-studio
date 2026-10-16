@@ -387,7 +387,13 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     // Phase 15: an identity creative with several concepts is a group of that many variants (the host is A), made here and
     // started like any grouped creative's first generation (`ctx.variantRuns`, the same orchestration as `…/variants/run`).
     if (groupSize > 1) {
-      await new VariantGroupService({ store, turns: ctx.turns }).addVariants(ref, Array.from({ length: groupSize - 1 }, () => ({ direction: null })), { hostDirection: null });
+      // Final wave M4 (as decisions log 847): the creative exists from here, so a group that cannot be made must not lose the
+      // slug either: 201 with `groupError`, nothing started (addVariants leaves no sister behind); the canvas can add variants.
+      try {
+        await new VariantGroupService({ store, turns: ctx.turns }).addVariants(ref, Array.from({ length: groupSize - 1 }, () => ({ direction: null })), { hostDirection: null });
+      } catch (err) {
+        return reply.status(201).send({ slug, creative: await store.get(slug), job: null, groupError: err instanceof Error ? err.message : String(err) });
+      }
       // The group exists from here: a start that throws must not lose the slug (the client opens the creative and can retry).
       let variantRun: Awaited<ReturnType<typeof ctx.variantRuns.run>> | null = null;
       let startError: string | null = null;

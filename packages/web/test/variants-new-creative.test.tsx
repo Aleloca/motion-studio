@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.setConfig({ testTimeout: 45_000, hookTimeout: 45_000 });
 
-const created = { slug: '2026-10-16-lancio', creative: {}, job: null } as { slug: string; creative: object; job: null; variantRun?: unknown; startError?: string };
+const created = { slug: '2026-10-16-lancio', creative: {}, job: null } as { slug: string; creative: object; job: null; variantRun?: unknown; startError?: string; groupError?: string };
 const createCreative = vi.fn(async (_slug: string, _body: unknown) => ({ ...created }));
 const addVariants = vi.fn(async (..._a: unknown[]) => ({}));
 const runVariants = vi.fn(async (..._a: unknown[]) => ({ jobs: {}, queued: [], skipped: [], failed: {} }));
@@ -208,6 +208,16 @@ describe('a logo from scratch (the core makes the group, decision 845)', () => {
     fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
     await waitFor(() => expect(location.hash).toBe(`#/p/acme/c/${created.slug}`));
     expect(getToasts().some((x) => x.text === 'La creatività è stata creata, ma le varianti non sono partite: start boom')).toBe(true);
+  });
+
+  it('final wave M4: a group the core could not make after the creative existed is reported, and the slug is not lost', async () => {
+    createCreative.mockImplementationOnce(async () => ({ ...created, job: null, groupError: 'group boom' }));
+    await open();
+    await userEvent.type(screen.getByLabelText('Cosa vuoi realizzare?'), 'Un logo per Acme');
+    await pick(/^Logo/);
+    fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(location.hash).toBe(`#/p/acme/c/${created.slug}`));
+    expect(getToasts().some((x) => x.text === 'La creatività è stata creata, ma non è stato possibile creare le varianti: group boom')).toBe(true);
   });
 
   it('typed directions are set before anything starts, and the start is then one fan-out', async () => {

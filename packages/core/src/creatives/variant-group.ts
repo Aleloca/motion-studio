@@ -12,7 +12,7 @@ import { CodedError } from '../workspace-store.ts';
 import { copyVerified, versionDirReady } from './carry-over.ts';
 import { compositionDirOf } from './composition-contract.ts';
 import { alignEditorCopies } from './composition-turn.ts';
-import { CREATIVE_SLUG_RE, groupTiedTo, isRealSister, type CreativeStore } from './creative-store.ts';
+import { CREATIVE_SLUG_RE, groupTiedTo, isRealSister, memberPresent, type CreativeStore } from './creative-store.ts';
 import type { BriefPatch, CreativeRef, CreativeTurnService, SharedBrief } from './creative-turns.ts';
 
 /**
@@ -46,6 +46,9 @@ export interface GroupSelectionItem { slug: string; version: number; source: 'pi
 export const MAX_DIRECTION_CHARS = 140;
 
 const now = () => new Date().toISOString();
+
+/** The ref of the group member `slug`, in `host`'s project (the one helper of the variant services). */
+export const memberRef = (host: CreativeRef, slug: string): CreativeRef => ({ root: host.root, projectSlug: host.projectSlug, projectDir: host.projectDir, creativeSlug: slug });
 const letterIndex = (l: VariantLetter) => VARIANT_LETTERS.indexOf(l);
 const byLetter = (a: VariantMember, b: VariantMember) => letterIndex(a.letter) - letterIndex(b.letter);
 const upper = (l: VariantLetter) => l.toUpperCase();
@@ -53,12 +56,11 @@ const upper = (l: VariantLetter) => l.toUpperCase();
 export class VariantGroupService {
   constructor(private readonly deps: VariantGroupDeps) {}
 
-  private refFor(host: CreativeRef, slug: string): CreativeRef { return { root: host.root, projectSlug: host.projectSlug, projectDir: host.projectDir, creativeSlug: slug }; }
-
   /**
    * Where `ref` stands. A host: its group (null for a creative outside any group, an old one included). A real sister
    * (`isRealSister`): its host and the group. Any other sister-shaped creative is an orphan (spec §7): it is its own host,
-   * with no group. `missing`: members whose folder has no readable creative.json that names this host (shown "mancante").
+   * with no group. `missing`: members whose folder has no readable creative.json that names this host (shown "mancante"; the
+   * list uses the same rule, `memberPresent`).
    */
   async resolve(ref: CreativeRef): Promise<{ host: CreativeRef; group: VariantGroup | null; missing: string[]; orphan: boolean }> {
     const { store } = this.deps;
@@ -70,7 +72,7 @@ export class VariantGroupService {
       return { host: ref, group: g, missing: await this.missingOf(ref, g), orphan: false };
     }
     if (!(await isRealSister(ref.projectDir, slug))) return { host: ref, group: null, missing: [], orphan: true };
-    const hostRef = this.refFor(ref, slug.slice(0, slug.indexOf('~')));
+    const hostRef = memberRef(ref, slug.slice(0, slug.indexOf('~')));
     const g = (await store.get(hostRef.creativeSlug)).variantGroup!;
     return { host: hostRef, group: g, missing: await this.missingOf(hostRef, g), orphan: false };
   }
@@ -79,8 +81,7 @@ export class VariantGroupService {
     const out: string[] = [];
     for (const m of g.members) {
       if (m.letter === 'a') continue;
-      const ok = await this.deps.store.get(m.slug).then((c) => c.variantOf === host.creativeSlug, () => false);
-      if (!ok) out.push(m.slug);
+      if (!(await this.present(host, m))) out.push(m.slug);
     }
     return out;
   }
@@ -179,7 +180,7 @@ export class VariantGroupService {
           g = { ...g, members: [...g.members, { slug, letter, direction: d, directionSource: d ? 'user' : null, status: 'active', createdAt: at }] };
           if (s.baseFrom) {
             const baseLetter = g.members.find((m) => m.slug === s.baseFrom!.slug)!.letter;
-            const sisterRef = this.refFor(host, slug);
+            const sisterRef = memberRef(host, slug);
             // Lock order (decisions log 823): the host's, held, then this sister's.
             await turns.runLocked(sisterRef, () => this.seed(sisterRef, s.baseFrom!, baseLetter));
           }
@@ -258,16 +259,23 @@ export class VariantGroupService {
     return this.withGroup(ref, async (host, _f, g) => {
       const e = t().errors;
       const m = this.memberOf(g, letter);
-      const running = this.deps.turns.turnActive(this.refFor(host, m.slug));
-      const c = canDiscard(g, letter, running);
-      if (!c.ok) {
-        if (c.reason === 'running') throw new CodedError(409, e.variantRunning({ letter: upper(letter) }), 'variant-running');
-        if (c.reason === 'last-active') throw new CodedError(409, e.variantLastActive({ letter: upper(letter) }), 'variant-last-active');
-        throw new CodedError(404, e.variantUnknown({ letter: upper(letter) }), 'variant-unknown');
-      }
-      if (m.status === 'discarded') return g;
-      const picks = Object.fromEntries(Object.entries(g.picks).filter(([, p]) => p.slug !== m.slug));
-      return this.writeGroup(host, { ...g, members: g.members.map((x) => (x.letter === letter ? { ...x, status: 'discarded' } : x)), picks });
+      const mref = memberRef(host, m.slug);
+      // Final wave M3: the check and the write hold the member's own lock too (lock order: the host's, held, then this
+      // member's; member a's IS the host's), the lock a turn's start holds until its job is enqueued. A start and a discard
+      // of the same variant are thus serialized: the turn is queued and the discard refused, or the discard is written and
+      // the start sees it.
+      const locked = <T>(fn: () => Promise<T>) => (m.letter === 'a' ? fn() : this.deps.turns.runLocked(mref, fn));
+      return locked(async () => {
+        const c = canDiscard(g, letter, this.deps.turns.turnActive(mref));
+        if (!c.ok) {
+          if (c.reason === 'running') throw new CodedError(409, e.variantRunning({ letter: upper(letter) }), 'variant-running');
+          if (c.reason === 'last-active') throw new CodedError(409, e.variantLastActive({ letter: upper(letter) }), 'variant-last-active');
+          throw new CodedError(404, e.variantUnknown({ letter: upper(letter) }), 'variant-unknown');
+        }
+        if (m.status === 'discarded') return g;
+        const picks = Object.fromEntries(Object.entries(g.picks).filter(([, p]) => p.slug !== m.slug));
+        return this.writeGroup(host, { ...g, members: g.members.map((x) => (x.letter === letter ? { ...x, status: 'discarded' } : x)), picks });
+      });
     });
   }
 
@@ -284,7 +292,7 @@ export class VariantGroupService {
       const applied: string[] = [];
       const deferred: string[] = [];
       if (await this.present(host, m)) {
-        const mref = this.refFor(host, m.slug);
+        const mref = memberRef(host, m.slug);
         if (m.letter === 'a') await this.syncLocked(mref, target, applied, deferred);
         else await this.deps.turns.runLocked(mref, () => this.syncLocked(mref, target, applied, deferred));
       }
@@ -355,14 +363,6 @@ export class VariantGroupService {
     });
   }
 
-  /** Writes `brief` (the group's new shared brief) to every active member; a working one gets it at its next turn. */
-  propagateBrief(ref: CreativeRef, brief: CreativeFile['brief']): Promise<{ applied: string[]; deferred: string[] }> {
-    return this.withGroup(ref, async (host, hostFile, g) => {
-      const shared = await this.canonical(host, hostFile);
-      return this.propagateLocked(host, g, { ...shared, brief });
-    });
-  }
-
   /**
    * A brief edit (PUT …/creatives/:c) on a creative of a group: computed on the group's brief now (`canonical`) with the
    * same rules as a single creative's save, then propagated. Answers the edited creative as stored. 409 `variant-discarded`
@@ -408,7 +408,7 @@ export class VariantGroupService {
         const presets = await this.deps.turns.presetList();
         throw new CodedError(409, t().variants.instancesFull({ format: formatDisplayName(presets, presetOf(source), currentLocale()), max: MAX_INSTANCES }), 'format-instances-full');
       }
-      const member = this.refFor(host, ref.creativeSlug);
+      const member = memberRef(host, ref.creativeSlug);
       const result = member.creativeSlug === host.creativeSlug ? await run(instanceId) : await this.deps.turns.runLocked(member, () => run(instanceId));
       const formats = [...shared.brief.formats];
       const at = formats.indexOf(source);
@@ -427,7 +427,7 @@ export class VariantGroupService {
     // a discard hides a variant without freezing the brief the group computes on.
     for (const m of g.members.filter((x) => x.status === 'active' || x.letter === 'a').sort(byLetter)) {
       if (!(await this.present(host, m))) continue; // "mancante": nothing to write
-      const mref = this.refFor(host, m.slug);
+      const mref = memberRef(host, m.slug);
       if (m.letter === 'a') await this.syncLocked(mref, target, applied, deferred);
       else await this.deps.turns.runLocked(mref, () => this.syncLocked(mref, target, applied, deferred));
     }
@@ -458,7 +458,7 @@ export class VariantGroupService {
   /** Whether member `m`'s folder is there (member a always is: it is the host). */
   private async present(host: CreativeRef, m: VariantMember): Promise<boolean> {
     if (m.letter === 'a') return true;
-    return this.deps.store.get(m.slug).then((c) => c.variantOf === host.creativeSlug, () => false);
+    return this.deps.store.get(m.slug).then((c) => memberPresent(host.creativeSlug, c), () => false);
   }
 
   private async memberData(slug: string): Promise<{ creative: CreativeFile; versions: VersionEntry[]; links: Record<string, string> } | null> {

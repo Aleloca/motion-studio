@@ -4,7 +4,7 @@
  */
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { DEFAULT_FORMATS, type ConversationEntry, type JobSummary, type VariantGroup, type VariantLetter, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, type ConversationEntry, type JobSummary, type Pin, type VariantGroup, type VariantLetter, type VersionEntry } from '@motion-studio/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
 import type { Shell } from '../src/shell/ShellContext.tsx';
@@ -40,9 +40,10 @@ const { I18nProvider } = await import('../src/i18n.tsx');
 const { __resetPendingPins } = await import('../src/screens/pendingPins.ts');
 
 const job = (over: Partial<JobSummary> = {}): JobSummary => ({ id: 'j1', key: 'creative:/w:acme:lancio', kind: 'creative', label: 'Lancio', state: 'running', createdAt: at, ...over });
-const panel = (o: { all?: boolean; current?: 'a' | 'b' | 'c'; onSelect?: (t: string) => void; job?: JobSummary; g?: VariantGroup; missing?: Array<'a' | 'b' | 'c' | 'd' | 'e'> } = {}) => (
+const panel = (o: { all?: boolean; current?: 'a' | 'b' | 'c'; onSelect?: (t: string) => void; job?: JobSummary; g?: VariantGroup; missing?: Array<'a' | 'b' | 'c' | 'd' | 'e'>; pins?: Pin[]; appliesTo?: Parameters<typeof Conversation>[0]['appliesTo']; onSent?: (s: { pins: Pin[] }) => void } = {}) => (
   <I18nProvider locale="it">
-    <Conversation slug="acme" creative={o.current && o.current !== 'a' ? `${HOST}~${o.current}` : HOST} entries={[]} approvals={[]} job={o.job} onSent={vi.fn()}
+    <Conversation slug="acme" creative={o.current && o.current !== 'a' ? `${HOST}~${o.current}` : HOST} entries={[]} approvals={[]} job={o.job} onSent={o.onSent ?? vi.fn()}
+      {...(o.pins ? { pins: o.pins } : {})} {...(o.appliesTo ? { appliesTo: o.appliesTo } : {})}
       variants={{ group: o.g ?? group, current: o.current ?? 'a', all: o.all ?? false, missing: o.missing ?? [], onSelect: (o.onSelect ?? vi.fn()) as never, runAll: run }} />
   </I18nProvider>
 );
@@ -103,6 +104,26 @@ describe('chat selector', () => {
     await waitFor(() => expect(run).toHaveBeenCalledWith({ text: 'Più colore', pins: [] }));
     expect(api.sendCreativeTurn).not.toHaveBeenCalled();
     expect((await screen.findAllByRole('status')).some((s) => s.textContent === 'Richiesta inviata a 3 varianti')).toBe(true);
+  });
+
+  it('final wave M2: "Tutte" never sends the open variant\'s comments, nor the formats they chose; a format chosen by hand still goes', async () => {
+    const pin: Pin = { format: 'instagram-post-1x1', x: 0.5, y: 0.5, timeSec: null, note: 'n' };
+    const appliesTo = { primaries: [{ id: 'instagram-post-1x1', label: 'Post', followers: [] }, { id: 'tiktok-9x16', label: 'Video', followers: [] }], followerOf: () => null };
+    const onSent = vi.fn();
+    const { unmount } = render(panel({ all: true, pins: [pin], appliesTo, onSent }));
+    await say('Più colore');
+    await userEvent.click(screen.getByRole('button', { name: 'Invia' }));
+    await waitFor(() => expect(run).toHaveBeenCalledWith({ text: 'Più colore', pins: [] }));
+    // The comments stay with the open variant (none was sent).
+    expect(onSent).toHaveBeenCalledWith({ pins: [] });
+    unmount();
+    run.mockClear();
+    render(panel({ all: true, pins: [pin], appliesTo }));
+    const chips = screen.getByRole('group', { name: /Si applica a|Applies to/ });
+    await userEvent.click(within(chips).getByRole('button', { name: 'Video' }));
+    await say('Solo il video');
+    await userEvent.click(screen.getByRole('button', { name: 'Invia' }));
+    await waitFor(() => expect(run).toHaveBeenCalledWith({ text: 'Solo il video', pins: [], formats: ['tiktok-9x16'] }));
   });
 
   it('"Tutte" names the variants that did not start, with the reason', async () => {

@@ -586,6 +586,8 @@ export class CreativeTurnService {
     // Same check the queue does, but before touching the creative's files.
     if (this.isActive(key)) throw new WorkspaceError(409, t().errors.generationRunning);
     // Phase 15: a discarded variant stays inert until it is restored; a grouped member's turn takes one of the group's slots.
+    // Final wave M3: this read cannot go stale before the enqueue below: a discard writes the status holding this creative's
+    // lock (held here until the job is enqueued), so a start and a discard of the same variant are serialized.
     const member = await this.memberOf(ref);
     if (member?.self.status === 'discarded') throw new CodedError(409, t().errors.variantDiscardedTurn, 'variant-discarded');
     // Phase 15: a variant that was working when the group's brief changed takes it now, before its next turn is planned.

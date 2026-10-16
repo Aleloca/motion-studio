@@ -1,12 +1,12 @@
 // The header of a variant's row (Phase 15, spec §5): "B · <direction>", the state of its work (waiting reasons included),
 // "Riprova" after a failure or a stop, and the ⋯ menu: use for all formats, discard (disabled with its reason while it works
 // or when it is the last active one), export this variant, edit the direction. A discarded row offers "Ripristina".
-import type { VariantMember } from '@motion-studio/shared';
+import { directionLine, type VariantMember } from '@motion-studio/shared';
 import { useId, useRef, useState, type KeyboardEvent } from 'react';
 import { useT } from '../../i18n.tsx';
 import { Button, Icon, NavItem, Pill, Popover, cx } from '../../ui/index.ts';
 import { rovingIndex } from '../../ui/roving.ts';
-import { rowTitle, type RowState } from './variantModel.ts';
+import type { RowState } from './variantModel.ts';
 
 export interface VariantRowActions {
   onFocus(): void;
@@ -79,7 +79,7 @@ export function VariantRowHeader({ member, state, focused, discardBlock, hasVers
     <div className={cx('ms-vrow-head', discarded && 'ms-discarded', missing && 'ms-missing')} data-variant={member.letter}>
       <button type="button" className={cx('ms-vrow-title', focused && 'ms-on')} aria-pressed={focused} aria-label={`${vg.letterLabel({ letter })}${member.direction ? ` · ${member.direction}` : ''}`}
         title={member.direction ?? vg.noDirection} disabled={missing} onClick={actions.onFocus}>
-        <span className="ms-vrow-dir">{rowTitle(member)}</span>
+        <span className="ms-vrow-dir">{directionLine(member)}</span>
       </button>
       <Pill tone={tone} spinner={state.kind === 'working'} className="ms-vrow-state"><span aria-label={vg.stateLabel({ letter })}>{text(state)}</span></Pill>
       {state.kind === 'failed' || state.kind === 'stopped' ? (

@@ -104,11 +104,6 @@ export class VariantDirections {
   private readonly results = new Map<string, string[]>();
   constructor(private readonly deps: VariantDirectionsDeps) {}
 
-  /** Runs the turn for `missing` (host ref) and answers their directions, by letter. 422 when no valid set came. */
-  async runDirectionsTurn(host: CreativeRef, missing: VariantLetter[], given: Partial<Record<VariantLetter, string>>): Promise<Partial<Record<VariantLetter, string>>> {
-    return (await this.begin(host, missing, given)).result;
-  }
-
   /**
    * Enqueues the turn and answers at once with its job id; `result` settles with the directions by letter, or rejects (409
    * `variant-directions-cancelled` after a Stop, 422 `variant-directions-failed` after the repairs: the job keeps the error).

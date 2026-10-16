@@ -220,7 +220,7 @@ export const api = {
   recentCreatives: (limit?: number) => request<RecentCreative[]>('GET', `/api/recent-creatives${limit === undefined ? '' : `?limit=${limit}`}`),
   listCreatives: (slug: string) => request<CreativeListItem[]>('GET', `${p(slug)}/creatives`),
   createCreative: (slug: string, body: { title: string; brief: Brief; generate: boolean; linkedCodebases?: LinkedCodebase[] }) =>
-    request<{ slug: string; creative: CreativeFile; job: JobSummary | null; /** Phase 15: an identity creative with concepts > 1 starts its variants (no single job). */ variantRun?: VariantRunResult; /** The start failed after the group existed: the slug is still good. */ startError?: string }>('POST', `${p(slug)}/creatives`, body),
+    request<{ slug: string; creative: CreativeFile; job: JobSummary | null; /** Phase 15: an identity creative with concepts > 1 starts its variants (no single job). */ variantRun?: VariantRunResult; /** The start failed after the group existed: the slug is still good. */ startError?: string; /** The group could not be made after the creative existed (nothing started): the slug is still good. */ groupError?: string }>('POST', `${p(slug)}/creatives`, body),
   /** Phase 15: creates sisters (no turn starts). With no group, `count` is the whole group size, A included (2..5), and `directions[0]` is A's. */
   addVariants: (slug: string, creative: string, body: { count?: number; directions?: Array<string | null>; baseFrom?: VariantPick }) =>
     request<CreativeDetail>('POST', `${c(slug, creative)}/variants`, body),

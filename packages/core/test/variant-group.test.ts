@@ -238,8 +238,9 @@ describe('Review Focus 2: a format removed while its ★ points to variant C', {
       'instagram-post-1x1': { slug: host.creativeSlug, version: 1, source: 'default' },
       'web-banner-300x250': { slug: sis('c'), version: 1, source: 'pick' },
     });
-    const r = await svc.propagateBrief(host, { ...brief, formats: ['instagram-post-1x1'] });
-    expect(r).toEqual({ applied: [host.creativeSlug, sis('b'), sis('c')], deferred: [] });
+    // The real path of a brief edit (final wave M5: the test-only propagateBrief is gone).
+    await svc.updateGroupBrief(host, { brief: { ...brief, formats: ['instagram-post-1x1'] } }, host);
+    for (const s of [host.creativeSlug, sis('b'), sis('c')]) expect((await json(s)).brief.formats).toEqual(['instagram-post-1x1']);
     expect((await json(host.creativeSlug)).variantGroup!.picks).toEqual({});
     expect((await store.readVersions(sis('c')))[0]!.compositions!.map((c) => c.format)).toEqual(OLD);
     expect(await svc.groupSelection(host)).toEqual({ 'instagram-post-1x1': { slug: host.creativeSlug, version: 1, source: 'default' } });
@@ -307,7 +308,8 @@ describe('Review Focus 5: the host deleted by hand, or a sister folder missing',
     const list = await store.list();
     expect(list).toHaveLength(1);
     expect(list[0]).toMatchObject({ slug: host.creativeSlug, variants: { count: 3, active: 3, missing: ['c'] } });
-    expect(await svc.propagateBrief(host, { ...brief, goal: 'X' })).toEqual({ applied: [host.creativeSlug, sis('b')], deferred: [] });
+    await svc.updateGroupBrief(host, { brief: { ...brief, goal: 'X' } }, host);
+    for (const s of [host.creativeSlug, sis('b')]) expect((await json(s)).brief.goal).toBe('X');
     expect(Object.keys(await svc.groupSelection(host))).toEqual(OLD);
     expect(existsSync(join(projectDir, 'creatives', sis('c')))).toBe(false);
   });
@@ -341,9 +343,9 @@ describe('lock ordering', { timeout: 60_000 }, () => {
     const running = await turns.start(refOf(sis('c')));
     await runner.next(0);
     const all = Promise.allSettled([
-      slow.propagateBrief(host, { ...brief, goal: 'Uno' }),
+      slow.updateGroupBrief(host, { brief: { ...brief, goal: 'Uno' } }, host),
       slow.discard(host, 'b'),
-      slow.propagateBrief(refOf(sis('d')), { ...brief, goal: 'Due' }),
+      slow.updateGroupBrief(refOf(sis('d')), { brief: { ...brief, goal: 'Due' } }, refOf(sis('d'))),
       slow.discard(refOf(sis('d')), 'c'), // running: refused
       turns.updateBrief(refOf(sis('b')), { services: { music: 'none' } }),
       slow.setPick(host, 'instagram-post-1x1', null),
@@ -353,7 +355,9 @@ describe('lock ordering', { timeout: 60_000 }, () => {
     expect(settled).not.toBe('deadlock');
     const results = settled as PromiseSettledResult<unknown>[];
     expect(results[3]).toMatchObject({ status: 'rejected', reason: { apiCode: 'variant-running' } });
-    expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1);
+    // Final wave I2: B's own brief save may land while B is discarded (it races B's discard and restore): then it is refused.
+    if (results[4]!.status === 'rejected') expect(results[4]).toMatchObject({ reason: { apiCode: 'variant-discarded' } });
+    expect(results.filter((r, i) => r.status === 'rejected' && i !== 4)).toHaveLength(1);
     queue.cancel(running.id);
     await queue.whenIdle();
     // Every idle active member has the group's brief; the running one has it pending.
@@ -617,5 +621,34 @@ describe('final wave I2: a discarded variant is read-only for every write', { ti
     expect(applied).toEqual([sis('b')]);
     expect((await json(sis('b'))).brief.goal).toBe('Lasciato in sospeso');
     expect(await side.pendingBrief(projectDir, sis('b'))).toBeNull();
+  });
+});
+
+describe('final wave M3: discard and start of the same variant never both win', { timeout: 60_000 }, () => {
+  it('started and discarded at once: either the turn runs and the discard is refused (variant-running), or the discard wins and the start is refused', async () => {
+    await svc.addVariants(host, [{}, {}]);
+    for (const letter of ['b', 'c'] as const) {
+      const ref = refOf(sis(letter));
+      const [start, discard] = await Promise.allSettled([turns.start(ref), svc.discard(host, letter)]);
+      const discarded = (await json(host.creativeSlug)).variantGroup!.members.find((m) => m.letter === letter)!.status === 'discarded';
+      const running = turns.turnActive(ref);
+      // Never a discarded variant with a turn of it queued or running.
+      expect(discarded && running).toBe(false);
+      if (start.status === 'fulfilled') expect(discard).toMatchObject({ status: 'rejected', reason: { apiCode: 'variant-running' } });
+      else expect(start.reason).toMatchObject({ apiCode: 'variant-discarded' });
+      for (const j of queue.list()) if (j.state === 'queued' || j.state === 'running') queue.cancel(j.id);
+      await queue.whenIdle();
+    }
+  });
+});
+
+describe('final wave M7: one "mancante" rule for the list and the detail', { timeout: 60_000 }, () => {
+  it('a sister whose creative.json is readable but names another host is missing in both', async () => {
+    await svc.addVariants(host, [{}, {}]);
+    const file = join(projectDir, 'creatives', sis('c'), 'creative.json');
+    await writeFile(file, JSON.stringify({ ...(await json(sis('c'))), variantOf: 'someone-else' }));
+    expect((await svc.resolve(host)).missing).toEqual([sis('c')]);
+    const [row] = await store.list();
+    expect(row).toMatchObject({ slug: host.creativeSlug, variants: { missing: ['c'] } });
   });
 });

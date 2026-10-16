@@ -84,7 +84,8 @@ export const canDiscard = (g: VariantGroup, letter: VariantLetter, running: bool
   return { ok: true };
 };
 
-export const directionLine = (m: VariantMember): string => {
+/** "B · direction", or just "B" without one (the title of a variant's row). */
+export const directionLine = (m: Pick<VariantMember, 'letter' | 'direction'>): string => {
   const L = m.letter.toUpperCase();
   return m.direction ? `${L} · ${m.direction}` : L;
 };

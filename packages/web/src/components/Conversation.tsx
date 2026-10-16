@@ -687,7 +687,9 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, fanout, latestJ
   const [choice, setChoice] = useState<string[] | null | undefined>(undefined);
   const primaryIds = appliesTo?.primaries.map((p) => p.id) ?? [];
   const primaryOf = (id: string) => appliesTo?.followerOf(id) ?? id;
-  const fromPins = appliesTo ? (pins.length ? defaultTargets(pins.map((p) => p.format), primaryOf, primaryIds) : appliesTo.fallback?.filter((id) => primaryIds.includes(id)) ?? null) : null;
+  // Phase 15 (final wave M2): the comments are the open variant's own; "Tutte" never sends them, nor the formats they chose.
+  const sentPins = fanout ? [] : pins;
+  const fromPins = appliesTo ? (sentPins.length ? defaultTargets(sentPins.map((p) => p.format), primaryOf, primaryIds) : appliesTo.fallback?.filter((id) => primaryIds.includes(id)) ?? null) : null;
   // A chosen format that is no longer a primary of the brief (removed, or now linked) is dropped; nothing left: the default.
   const kept = Array.isArray(choice) ? choice.filter((id) => primaryIds.includes(id)) : choice;
   const targets = appliesTo ? (kept === undefined || (Array.isArray(kept) && kept.length === 0) ? (fromPins?.length ? fromPins : null) : kept) : null;
@@ -775,7 +777,7 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, fanout, latestJ
   const submit = () => {
     if (!canSend) return;
     if (working) void sendWhileWorking(mainKind);
-    else void send({ text: text.trim(), pins, ...(targets ? { formats: targets } : {}) });
+    else void send({ text: text.trim(), pins: sentPins, ...(targets ? { formats: targets } : {}) });
   };
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     // The app-wide submit chord: ⌘↵ on macOS, Ctrl+↵ elsewhere (a held key does not send twice).

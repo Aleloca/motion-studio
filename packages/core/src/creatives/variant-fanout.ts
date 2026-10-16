@@ -13,7 +13,7 @@ import { CodedError } from '../workspace-store.ts';
 import { CreativeStore } from './creative-store.ts';
 import type { CreativeRef, CreativeTurnService } from './creative-turns.ts';
 import type { VariantDirections } from './variant-directions.ts';
-import { VariantGroupService } from './variant-group.ts';
+import { memberRef, VariantGroupService } from './variant-group.ts';
 
 /** What a variant run asks of each target: the same body as `POST …/turns` (text, pins, formats). */
 export interface UserRequest { text?: string; pins?: Pin[]; formats?: string[] }
@@ -69,8 +69,6 @@ type DirectionsRun = Awaited<ReturnType<VariantDirections['begin']>>;
 export class VariantFanout {
   constructor(private readonly deps: VariantFanoutDeps) {}
 
-  private refFor(host: CreativeRef, slug: string): CreativeRef { return { root: host.root, projectSlug: host.projectSlug, projectDir: host.projectDir, creativeSlug: slug }; }
-
   /** The group of `ref` and the target members: discarded and missing ones set aside. 409 outside a group or with nothing to start. */
   private async targetsOf(ref: CreativeRef, targets: VariantLetter[] | 'all-active'): Promise<{ host: CreativeRef; group: VariantGroup; members: VariantMember[]; skipped: VariantLetter[] }> {
     const e = t().errors;
@@ -93,9 +91,6 @@ export class VariantFanout {
     return { host: r.host, group: g, members, skipped };
   }
 
-  /** The brief's interface name: the same as `run`. */
-  start(ref: CreativeRef, targets: VariantLetter[] | 'all-active', request: UserRequest | null): Promise<FanoutResult> { return this.run(ref, targets, request); }
-
   /** `POST …/variants/run` (ruling R3): the targets' turns and queued requests are made now (held); the rest goes on in the background. */
   async run(ref: CreativeRef, targets: VariantLetter[] | 'all-active', request: UserRequest | null): Promise<FanoutResult> {
     const { host, group, members, skipped } = await this.targetsOf(ref, targets);
@@ -109,7 +104,7 @@ export class VariantFanout {
     const idle: VariantMember[] = [];
     const busy: VariantMember[] = [];
     for (const m of members) {
-      if (!turns.turnActive(this.refFor(host, m.slug))) idle.push(m);
+      if (!turns.turnActive(memberRef(host, m.slug))) idle.push(m);
       else if (!message) out.skipped.push(m.letter);
       // A queued request has no formats of its own: refused, with the reason, rather than widened to every format.
       else if (formats) out.failed[m.letter] = t().errors.variantBusyFormats({ letter: upper(m.letter) });
@@ -122,7 +117,7 @@ export class VariantFanout {
     const entries: Entry[] = [];
     let error: unknown = null;
     for (const m of candidates) {
-      const mref = this.refFor(host, m.slug);
+      const mref = memberRef(host, m.slug);
       try {
         if (idle.includes(m)) {
           const job = await turns.start(mref, message, { ...(formats ? { formats } : {}), ...(first ? { hold: first } : {}) });

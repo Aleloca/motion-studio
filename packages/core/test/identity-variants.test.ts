@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_FORMATS, EMPTY_BRAND_KIT, type CreativeDetail, type CreativeFile } from '@motion-studio/shared';
 import { VariantFanout } from '../src/creatives/variant-fanout.ts';
+import { VariantGroupService } from '../src/creatives/variant-group.ts';
 import { buildCreativePrompt } from '../src/creatives/prompt.ts';
 import { variantApp, type VariantApp } from './helpers/variant-app.ts';
 
@@ -72,6 +73,22 @@ describe('identity concepts are variants', () => {
       expect(body.startError).toBe('start boom');
       expect(body.variantRun).toBeUndefined();
       expect((await v.detail(body.slug)).creative.variantGroup!.members).toHaveLength(3);
+    } finally { spy.mockRestore(); }
+  });
+
+  it('final wave M4: a group that cannot be made after the creative exists still answers 201 with the slug and the failure', async () => {
+    v = await variantApp();
+    const spy = vi.spyOn(VariantGroupService.prototype, 'addVariants').mockRejectedValueOnce(new Error('group boom'));
+    try {
+      const res = await create(identityBrief(3), true);
+      expect(res.statusCode, res.body).toBe(201);
+      const body = res.json() as { slug: string; job: unknown; variantRun?: unknown; groupError?: string };
+      expect(body.groupError).toBe('group boom');
+      expect(body.job).toBeNull();
+      expect(body.variantRun).toBeUndefined();
+      // The creative is there (no group, nothing started): the user opens it and can add the variants from the canvas.
+      expect((await v.detail(body.slug)).creative.variantGroup).toBeUndefined();
+      expect(await v.jobs()).toEqual([]);
     } finally { spy.mockRestore(); }
   });
 

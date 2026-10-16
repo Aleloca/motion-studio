@@ -1,7 +1,7 @@
 // Pure helpers of the variant UI (Phase 15): defaults of the New creative field, the "Selezione finale" rows, the state of a
 // member's row, which job belongs to which variant, and the width a grouped canvas needs. No React here.
 import {
-  activeMembers, canDiscard, hostOf, presetOf, sisterSlug, VARIANT_LETTERS,
+  canDiscard, letterOfSlug, presetOf,
   type CreativeDetail, type CreativeSummary, type JobSummary, type VariantGroup, type VariantLetter, type VariantMember,
 } from '@motion-studio/shared';
 import type { EventsState } from '../../eventsReducer.ts';
@@ -27,13 +27,6 @@ export function directionsFor(count: number, typed: readonly string[]): Array<st
 }
 
 export const upper = (l: VariantLetter): string => l.toUpperCase();
-export const letterOfSlug = (slug: string): VariantLetter => (slug.includes('~') ? (slug.slice(-1) as VariantLetter) : 'a');
-
-/** The creative slug of a letter in the group of `host`. */
-export const slugOf = (host: string, letter: VariantLetter): string => sisterSlug(host, letter);
-
-/** "B · direction", or just "B" without one. */
-export const rowTitle = (m: Pick<VariantMember, 'letter' | 'direction'>): string => (m.direction ? `${upper(m.letter)} · ${m.direction}` : upper(m.letter));
 
 /** The members to draw: the active ones, plus the discarded ones when asked for, in letter order. */
 export function shownMembers(group: VariantGroup, showDiscarded: boolean): VariantMember[] {
@@ -141,7 +134,3 @@ export function fitGrouped(rows: BoardModel[][], rowKind: 'world' | 'line', view
   while (z > min + 1e-9 && rows.some((r) => widthAt(r, z) > viewWidth + 1e-6)) z = Math.max(min, Math.round((z - 0.05) * 20) / 20);
   return z;
 }
-
-/** Letters in order, for the selector. */
-export const LETTERS = VARIANT_LETTERS;
-export { hostOf };

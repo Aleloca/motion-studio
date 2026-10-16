@@ -32,6 +32,14 @@ export function groupTiedTo(hostSlug: string, group: VariantGroup): boolean {
 }
 
 /** The member of the host's group that `slug` is, when it is a real one (see `groupTiedTo`); never member a. */
+/**
+ * Phase 15 (spec §7, final wave M7): whether a sister member of `hostSlug`'s group is there: its folder has a readable
+ * creative.json that names that host. The one rule of "mancante" for the list and the group service.
+ */
+export function memberPresent(hostSlug: string, sister: CreativeFile | null | undefined): boolean {
+  return sister?.variantOf === hostSlug;
+}
+
 export function sisterIn(hostSlug: string, host: CreativeFile | null, slug: string): { letter: VariantLetter } | null {
   const g = host?.variantGroup;
   if (!g || !SISTER_SLUG_RE.test(slug) || hostOf(slug) !== hostSlug || !groupTiedTo(hostSlug, g)) return null;
@@ -199,8 +207,8 @@ export class CreativeStore {
       if (CREATIVE_SLUG_RE.test(name)) {
         const g = r.creative?.variantGroup;
         if (r.item.ok && g && groupTiedTo(name, g)) {
-          // A member whose folder has no readable creative.json of its own is "mancante" (spec §7).
-          const missing = g.members.filter((m) => m.letter !== 'a' && read.get(m.slug)?.creative == null).map((m) => m.letter);
+          // A member whose folder has no readable creative.json naming this host is "mancante" (spec §7, `memberPresent`).
+          const missing = g.members.filter((m) => m.letter !== 'a' && !memberPresent(name, read.get(m.slug)?.creative)).map((m) => m.letter);
           const variants: VariantListInfo = { count: g.members.length, active: activeMembers(g).length, missing };
           out.push({ kind: 'plain', item: { ...r.item, variants } });
         } else out.push({ kind: 'plain', item: r.item });

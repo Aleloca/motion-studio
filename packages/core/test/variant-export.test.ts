@@ -100,7 +100,7 @@ describe('planGroupExport and exportGroup', () => {
   it('a removed format is absent', async () => {
     await render(host.creativeSlug, 1);
     await render(sis('b'), 1);
-    await svc.propagateBrief(host, { ...brief, formats: [POST] });
+    await svc.updateGroupBrief(host, { brief: { ...brief, formats: [POST] } }, host);
     const plan = await planGroupExport(svc, store, host);
     expect(plan.map((p) => p.format)).toEqual([POST]);
     await exportGroup(plan, common());
