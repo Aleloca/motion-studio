@@ -79,7 +79,7 @@ export interface ServerDeps {
   doctor: (extra: { sandbox: () => Promise<SandboxSupport>; workspacePath?: string | null; agentOptIn?: CapabilityOptIn }) => Promise<DoctorCheck[]>;
   /**
    * Phase 13: the installed Claude Code version (`claude --version`), null when it does not answer. Cached by the server
-   * for a minute; absent = unknown, so live input and interrupt stay off (agent-capabilities.ts, decisions log 610).
+   * for a minute; absent = unknown, so live input and interrupt stay off (agent-capabilities.ts, decision 804).
    */
   claudeVersion?: () => Promise<string | null>;
   webDir?: string;
@@ -324,7 +324,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const sandbox = deps.sandbox ?? cachedSandboxDetection();
   const bridge = deps.bridge ?? new AgentBridge();
   const currentSettings = async () => (workspace ? workspace.readSettings() : workspaceSettingsSchema.parse({ schemaVersion: 1 }));
-  // Phase 13: the opt-in of the workspace (unreadable settings = no opt-in) and the CLI version, cached for a minute.
+  // Phase 13: the workspace settings (default on; unreadable settings = off, decision 804) and the CLI version, cached for a minute.
   const agentOptIn = async (): Promise<CapabilityOptIn> => currentSettings().then(
     (s) => ({ liveInput: s.agentLiveInput, interrupt: s.agentInterrupt }), () => ({}));
   let versionCache: { at: number; value: Promise<string | null> } | null = null;

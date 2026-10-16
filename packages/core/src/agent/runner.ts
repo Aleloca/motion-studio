@@ -25,7 +25,7 @@ export interface AgentTurnRequest {
   /**
    * Phase 13: the effective capabilities for this turn (agent-capabilities.ts). Absent or both false: the prompt is
    * written and stdin closed at once, exactly as before. `liveInput` keeps stdin open until the final result, so `send`
-   * can write; `interrupt` (only with `liveInput`) lets `interrupt` write a control request. Unverified live (decisions log 610).
+   * can write; `interrupt` (only with `liveInput`) lets `interrupt` write a control request. Verified live on 2.1.301 (decision 804).
    */
   capabilities?: { liveInput: boolean; interrupt: boolean };
 }

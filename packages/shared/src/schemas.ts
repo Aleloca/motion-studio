@@ -39,12 +39,22 @@ export const workspaceSettingsSchema = z.object({
   /** File name pattern of exports; tokens `{title} {channel} {format} {ratio} {v} {date}`. Absent in an old settings.json: the default. */
   exportNamePattern: z.string().min(1).max(200).default('{title}-{format}-v{v}'),
   /**
-   * Phase 13 opt-in (default off): write messages into the running agent session. Not verified live for any Claude Code
-   * version (decisions log 610); off means a message sent while the agent works is queued as the next request.
+   * Phase 13, default on since decision 804: write messages into the running agent session. Effective only for a Claude
+   * Code version verified live (2.1.301 and newer, measured by the user's probe); off, or an older or unknown version,
+   * means a message sent while the agent works is queued as the next request.
    */
-  agentLiveInput: z.boolean().default(false),
-  /** Phase 13 opt-in (default off, needs agentLiveInput): interrupt the current step in the same process; off means stop and resume. */
-  agentInterrupt: z.boolean().default(false),
+  agentLiveInput: z.boolean().default(true),
+  /**
+   * Phase 13, default on since decision 804 (needs agentLiveInput): interrupt the current step in the same process, for a
+   * verified Claude Code version; off, or an older or unknown version, means stop and resume.
+   */
+  agentInterrupt: z.boolean().default(true),
+  /**
+   * Decision 804 marker: the two settings above were written under the decision-804 defaults (on). A file without it
+   * predates them: its `false` values are the old default (Phase 13 had no switch for them in the app), so reading it
+   * (`storedWorkspaceSettingsSchema`) turns both on once; a later `false` saved with the marker is the user's own choice.
+   */
+  agentLiveDefaults: z.literal(804).optional(),
 });
 export type WorkspaceSettings = z.infer<typeof workspaceSettingsSchema>;
 
@@ -52,7 +62,13 @@ export type WorkspaceSettings = z.infer<typeof workspaceSettingsSchema>;
  * Reading the settings file: a domain typed by hand that is no longer valid (e.g. `printer.local`) is left out, one by
  * one, and reported in `droppedDomains` instead of making the whole workspace unreadable. Writes use the strict schema.
  */
-export const storedWorkspaceSettingsSchema = workspaceSettingsSchema
+/** Decision 804: a settings file written before the marker gets live input and interrupt on (see `agentLiveDefaults`). */
+const withLiveDefaults = (raw: unknown): unknown => (
+  raw !== null && typeof raw === 'object' && !Array.isArray(raw) && (raw as Record<string, unknown>).agentLiveDefaults === undefined
+    ? { ...raw, agentLiveInput: true, agentInterrupt: true, agentLiveDefaults: 804 }
+    : raw
+);
+export const storedWorkspaceSettingsSchema = z.preprocess(withLiveDefaults, workspaceSettingsSchema
   .extend({ extraAllowedDomains: z.array(z.unknown()).max(100).default([]) })
   .transform(({ extraAllowedDomains, ...rest }) => {
     const kept: string[] = [];
@@ -63,7 +79,7 @@ export const storedWorkspaceSettingsSchema = workspaceSettingsSchema
       else if (!kept.includes(r.data)) kept.push(r.data);
     }
     return { ...rest, extraAllowedDomains: kept, ...(dropped.length ? { droppedDomains: dropped } : {}) };
-  });
+  }));
 /** Settings as read from disk (and returned by GET /api/workspace). */
 export type WorkspaceSettingsView = WorkspaceSettings & { droppedDomains?: string[] };
 

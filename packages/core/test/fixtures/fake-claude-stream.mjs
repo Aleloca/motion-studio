@@ -17,7 +17,11 @@
 // stderr: `fake-pid: <pid>` at start; `child-pid: <pid>` in child-ignores-term.
 // The "tool step" lasts FAKE_STREAM_TOOL_MS (default 400) and is announced with a tool_use event.
 // FAKE_STREAM_ACK_GAP_MS (interrupt-ack): delay between the control_response and the interrupted turn's result (default 0).
-// A user message whose text starts with `fail:` ends its turn with an error result (error_max_turns).
+// A user message whose text starts with `fail:` ends its turn with an error result (error_max_turns); one starting with
+// `abort:` ends it with error_during_execution (the interrupted shape, but nobody interrupted it).
+// FAKE_STREAM_INTERRUPTED_EXIT (decision 804): the exit code at EOF when the last result was error_during_execution
+// (Claude Code 2.1.301 exits with 1 after an interrupt; default 0).
+// FAKE_STREAM_ACK_ID: the control_response echoes this request_id instead of the one received (an ack that is not ours).
 import { spawn } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
@@ -25,6 +29,9 @@ import { createInterface } from 'node:readline';
 const mode = process.env.FAKE_STREAM_MODE ?? 'mid-turn';
 const toolMs = Number(process.env.FAKE_STREAM_TOOL_MS ?? 400);
 const ackGapMs = Number(process.env.FAKE_STREAM_ACK_GAP_MS ?? 0);
+const interruptedExit = Number(process.env.FAKE_STREAM_INTERRUPTED_EXIT ?? 0);
+const ackId = (c) => process.env.FAKE_STREAM_ACK_ID || c.request_id;
+let lastInterruptedShape = false;
 const log = (o) => { if (process.env.FAKE_STREAM_LOG) appendFileSync(process.env.FAKE_STREAM_LOG, `${JSON.stringify({ at: Date.now(), ...o })}\n`); };
 const out = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -32,7 +39,7 @@ const SESSION = 'fake-stream-session';
 process.stderr.write(`fake-pid: ${process.pid}\n`);
 
 const textOf = (m) => (typeof m.message?.content === 'string' ? m.message.content : '');
-const result = (ok, text) => out({ type: 'result', subtype: ok ? 'success' : 'error_during_execution', is_error: !ok, session_id: SESSION, result: text });
+const result = (ok, text) => { lastInterruptedShape = !ok; out({ type: 'result', subtype: ok ? 'success' : 'error_during_execution', is_error: !ok, session_id: SESSION, result: text }); };
 
 let eof = false;
 const userQueue = [];
@@ -67,10 +74,10 @@ async function turn(first) {
         out({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'ok' }] } });
         result(false, 'interrupted');
         await sleep(150); // a separate read for the runner: the result is handled (and closes stdin) before the ack
-        out({ type: 'control_response', response: { subtype: 'success', request_id: c.request_id, response: { still_queued: [] } } });
+        out({ type: 'control_response', response: { subtype: 'success', request_id: ackId(c), response: { still_queued: [] } } });
         return;
       }
-      if (mode === 'interrupt-ack') { out({ type: 'control_response', response: { subtype: 'success', request_id: c.request_id, response: { still_queued: [] } } }); interrupted = true; break; }
+      if (mode === 'interrupt-ack') { out({ type: 'control_response', response: { subtype: 'success', request_id: ackId(c), response: { still_queued: [] } } }); interrupted = true; break; }
       if (mode === 'interrupt-error') out({ type: 'control_response', response: { subtype: 'error', request_id: c.request_id, error: 'interrupt not supported' } });
       // Never answers and never ends the turn: only a kill stops it.
       if (mode === 'interrupt-no-ack') { setInterval(() => {}, 1000); await new Promise(() => {}); }
@@ -84,7 +91,8 @@ async function turn(first) {
   }
   out({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'ok' }] } });
   if (interrupted) { if (ackGapMs > 0) await sleep(ackGapMs); result(false, 'interrupted'); }
-  else if (textOf(first).startsWith('fail:')) out({ type: 'result', subtype: 'error_max_turns', is_error: true, session_id: SESSION, result: `failed: ${textOf(first)}` });
+  else if (textOf(first).startsWith('fail:')) { lastInterruptedShape = false; out({ type: 'result', subtype: 'error_max_turns', is_error: true, session_id: SESSION, result: `failed: ${textOf(first)}` }); }
+  else if (textOf(first).startsWith('abort:')) result(false, `aborted: ${textOf(first)}`);
   else result(true, `done: ${textOf(first)}`);
 }
 
@@ -114,6 +122,6 @@ async function main() {
     if (eof) break;
     await next();
   }
-  process.exit(0);
+  process.exit(lastInterruptedShape ? interruptedExit : 0);
 }
 void main();

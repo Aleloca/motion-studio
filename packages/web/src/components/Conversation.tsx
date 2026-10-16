@@ -85,7 +85,7 @@ export interface ConversationProps {
 /** A message sent while the agent works, until the conversation file shows it (Phase 13). */
 interface Outgoing { clientId: string; text: string; pins: Pin[]; at: string; mode: 'live' | 'redirect'; phase: 'sending' | 'pending' | 'pendingStart' }
 /** What a message bubble says about its journey; none for an ordinary message (old conversations have none). */
-type MessageState = 'sending' | 'pending' | 'pendingStart' | 'sent' | 'queued' | 'notDelivered';
+type MessageState = 'sending' | 'pending' | 'pendingStart' | 'sent' | 'delivered' | 'queued' | 'notDelivered';
 interface OutboxApi { add(o: Outgoing): void; phase(clientId: string, phase: Outgoing['phase']): void; drop(clientId: string): void }
 
 /** What a change can apply to: the primary formats (with their followers' labels) and how a format maps to its primary. */
@@ -156,7 +156,8 @@ function turnItems(interruptedText: string, jobId: string, events: { at: string;
       else if (foldAt < 0) foldAt = out.length;
     } else if (e.kind === 'result') {
       technical.push({ key, event: e });
-      if (!e.ok) out.push({ key, kind: 'error', at, text: e.error ?? '' });
+      // Decision 804: the turn the user stopped is not an error (its `interrupted` row says what happened).
+      if (!e.ok && !e.interrupted) out.push({ key, kind: 'error', at, text: e.error ?? '' });
       else if (e.text?.trim()) {
         // The final result usually repeats the last message: mark that one as the summary instead of repeating it.
         const last: Extract<Item, { kind: 'agent' }> | null = lastAgent;
@@ -232,11 +233,15 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
         return { at: seenAt.current.get(k)!, event };
       }));
     }
-    // Phase 13: a message is "sent" when its `user_message_delivered` marker is in the conversation (persisted or live): the
-    // core cannot know that the agent read it, so it is never "delivered". Still in the queue: "queued".
+    // Phase 13: a message is "sent" when its `user_message_delivered` marker is in the conversation (persisted or live): it
+    // was written to the session. "Delivered" only on the CLI's evidence, the `user_message_read` marker (decision 804: the
+    // agent's turn on it started). Still in the queue: "queued".
     const delivered = new Set<string>();
     for (const e of entries) if (e.type === 'agent' && e.event.kind === 'user_message_delivered') delivered.add(e.event.clientId);
     for (const e of live) if (e.kind === 'user_message_delivered') delivered.add(e.clientId);
+    const read = new Set<string>();
+    for (const e of entries) if (e.type === 'agent' && e.event.kind === 'user_message_read') read.add(e.event.clientId);
+    for (const e of live) if (e.kind === 'user_message_read') read.add(e.clientId);
     // Final wave Q7: the core says that no run took the words after all (the console turn ended first). It wins over "Sent".
     const notDelivered = new Set<string>();
     for (const e of entries) if (e.type === 'agent' && e.event.kind === 'user_message_not_delivered') notDelivered.add(e.event.clientId);
@@ -249,6 +254,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
       // Still in the queue wins (final wave P3): a message given to a run that never read it goes back to the queue.
       if (queuedIds.has(e.clientId)) return 'queued';
       if (notDelivered.has(e.clientId)) return 'notDelivered';
+      if (read.has(e.clientId)) return 'delivered';
       if (delivered.has(e.clientId) || e.deliveredAt) return 'sent';
       if (e.jobId && e.jobId === job?.id && working) return job?.state === 'queued' && e.mode === 'redirect' ? 'pendingStart' : 'pending';
       return undefined;
@@ -267,7 +273,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
     let lastUser: { text: string; pins: Pin[]; failed: boolean } | null = null;
     entries.forEach((e, i) => {
       if (e.type === 'agent') {
-        if (lastUser && e.event.kind === 'result' && !e.event.ok) lastUser.failed = true;
+        if (lastUser && e.event.kind === 'result' && !e.event.ok && !e.event.interrupted) lastUser.failed = true;
         if (firstIndex.get(e.jobId) === i) out.push(...turn(e.jobId));
         return;
       }
@@ -291,7 +297,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
     // Messages sent while the agent works that the conversation file does not hold yet.
     for (const o of outbox) {
       if (known.has(o.clientId)) continue;
-      out.push({ key: `out:${o.clientId}`, kind: 'user', at: o.at, text: o.text, pins: o.pins, state: notDelivered.has(o.clientId) ? 'notDelivered' : delivered.has(o.clientId) ? 'sent' : o.phase, ...(o.mode === 'redirect' ? { redirect: true } : {}) });
+      out.push({ key: `out:${o.clientId}`, kind: 'user', at: o.at, text: o.text, pins: o.pins, state: notDelivered.has(o.clientId) ? 'notDelivered' : read.has(o.clientId) ? 'delivered' : delivered.has(o.clientId) ? 'sent' : o.phase, ...(o.mode === 'redirect' ? { redirect: true } : {}) });
     }
     const waiting = shownApprovals.some((s) => !s.leaving && s.approval.jobId === job?.id);
     if (working && !waiting) out.push({ key: 'typing', kind: 'typing' });
@@ -407,7 +413,12 @@ function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetai
             <span className="ms-msg-meta">
               <b>{c.you}</b>·<When at={item.at} />
               {item.redirect && <span className="ms-pill ms-accent">{t.web.liveUi.state.redirect}</span>}
-              {item.state && <span className={cx('ms-pill', item.state === 'sent' ? 'ms-ok' : item.state === 'notDelivered' ? 'ms-warn' : 'ms-neutral')} data-state={item.state}>{t.web.liveUi.state[item.state]}</span>}
+              {item.state && (
+                <span className={cx('ms-pill', item.state === 'delivered' ? 'ms-ok' : item.state === 'notDelivered' ? 'ms-warn' : 'ms-neutral')} data-state={item.state}
+                  title={item.state === 'sent' ? t.web.liveUi.sentHint : item.state === 'delivered' ? t.web.liveUi.deliveredHint : undefined}>
+                  {t.web.liveUi.state[item.state]}
+                </span>
+              )}
             </span>
             {item.text && <div className="ms-msg-bubble">{item.text}</div>}
             {item.state === 'notDelivered' && <p className="ms-composer-note" role="status">{t.web.liveUi.notDeliveredReason}</p>}
@@ -511,8 +522,8 @@ function Details({ jobId, entries, open, onToggle }: { jobId: string; entries: D
       // `usage` and `approval_decided` are never handed to Details (see TECHNICAL); commands have their own row below.
       case 'usage': case 'auto_approved': case 'approval_decided': return ['', ''];
       // Phase 13 markers: shown by the conversation's own rows (Task 3), never as a detail line.
-      case 'user_message_delivered': case 'user_message_not_delivered': case 'interrupted': return ['', ''];
-      case 'result': return e.ok ? [k.done, e.text ?? ''] : [k.failed, e.error ?? '', true];
+      case 'user_message_delivered': case 'user_message_not_delivered': case 'user_message_read': case 'interrupted': return ['', ''];
+      case 'result': return e.ok ? [k.done, e.text ?? ''] : e.interrupted ? [k.stopped, e.text ?? ''] : [k.failed, e.error ?? '', true];
     }
   };
   return (

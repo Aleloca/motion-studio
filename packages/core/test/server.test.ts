@@ -160,23 +160,29 @@ describe('doctor and the sandbox setting', () => {
   });
 });
 
-describe('agent capabilities (Phase 13, fallback-first, decisions log 610)', () => {
-  it('GET /api/agent/capabilities: both off for a known version without the opt-in, on after opting in', async () => {
+describe('agent capabilities (Phase 13, decision 804: on from the verified 2.1.301)', () => {
+  it('GET /api/agent/capabilities: both on for 2.1.301 by default, each switched off by its setting', async () => {
     let versionCalls = 0;
-    const other = await buildWith({ claudeVersion: async () => { versionCalls++; return '2.1.299'; } });
+    const other = await buildWith({ claudeVersion: async () => { versionCalls++; return '2.1.301'; } });
     const caps = async () => (await other.inject('/api/agent/capabilities')).json() as { cliVersion: string | null; liveInput: boolean; interrupt: boolean; checkedAt: string };
-    expect(await caps()).toMatchObject({ cliVersion: '2.1.299', liveInput: false, interrupt: false });
+    expect(await caps()).toMatchObject({ cliVersion: '2.1.301', liveInput: true, interrupt: true });
     expect(Number.isNaN(Date.parse((await caps()).checkedAt))).toBe(false);
     await other.inject({ method: 'PUT', url: '/api/workspace', payload: { path: join(base, 'ws-caps') } });
-    expect(await caps()).toMatchObject({ liveInput: false, interrupt: false });
-    await other.inject({ method: 'PUT', url: '/api/settings', payload: { agentLiveInput: true } });
-    expect(await caps()).toMatchObject({ liveInput: true, interrupt: false });
-    await other.inject({ method: 'PUT', url: '/api/settings', payload: { agentInterrupt: true } });
     expect(await caps()).toMatchObject({ liveInput: true, interrupt: true });
+    await other.inject({ method: 'PUT', url: '/api/settings', payload: { agentInterrupt: false } });
+    expect(await caps()).toMatchObject({ liveInput: true, interrupt: false });
+    await other.inject({ method: 'PUT', url: '/api/settings', payload: { agentLiveInput: false, agentInterrupt: true } });
+    expect(await caps()).toMatchObject({ liveInput: false, interrupt: false });
     expect(versionCalls).toBe(1); // cached
     await other.close();
   });
-  it('an unknown version (no probe, or claude missing) is both off, even opted in', async () => {
+  it('an older version is both off, even with the settings on', async () => {
+    const other = await buildWith({ claudeVersion: async () => '2.1.299' });
+    await other.inject({ method: 'PUT', url: '/api/workspace', payload: { path: join(base, 'ws-caps-old') } });
+    expect((await other.inject('/api/agent/capabilities')).json()).toMatchObject({ cliVersion: '2.1.299', liveInput: false, interrupt: false });
+    await other.close();
+  });
+  it('an unknown version (no probe, or claude missing) is both off, even with the settings on', async () => {
     const other = await buildWith({ claudeVersion: async () => null });
     await other.inject({ method: 'PUT', url: '/api/workspace', payload: { path: join(base, 'ws-caps2') } });
     await other.inject({ method: 'PUT', url: '/api/settings', payload: { agentLiveInput: true, agentInterrupt: true } });
@@ -186,16 +192,17 @@ describe('agent capabilities (Phase 13, fallback-first, decisions log 610)', () 
     expect((await none.inject('/api/agent/capabilities')).json()).toMatchObject({ cliVersion: null, liveInput: false, interrupt: false });
     await none.close();
   });
-  it('the doctor gets the workspace opt-in and reports the active path', async () => {
-    const exec = async (cmd: string, args: string[]) => ({ code: 0, stdout: args[0] === '--version' ? '2.1.299 (Claude Code)' : '{}', stderr: '', notFound: false });
+  it('the doctor gets the workspace settings and reports the active path', async () => {
+    const exec = async (cmd: string, args: string[]) => ({ code: 0, stdout: args[0] === '--version' ? '2.1.301 (Claude Code)' : '{}', stderr: '', notFound: false });
     const other = await buildWith({ doctor: (extra) => runDoctor({ exec, claudeCommand: ['claude'], agentOptIn: extra.agentOptIn }) });
     const rows = async () => ((await other.inject('/api/doctor')).json() as Array<{ id: string; message: string }>).filter((c) => c.id === 'live-messages' || c.id === 'interrupt').map((c) => c.message);
-    expect(await rows()).toEqual(['solo in coda (non verificati per questa versione di Claude Code)', 'ferma e riprendi']);
+    expect(await rows()).toEqual(['attivi (verificati per questa versione di Claude Code)', 'attiva (verificata per questa versione di Claude Code)']);
     await other.inject({ method: 'PUT', url: '/api/workspace', payload: { path: join(base, 'ws-caps3') } });
-    await other.inject({ method: 'PUT', url: '/api/settings', payload: { agentLiveInput: true } });
-    expect(await rows()).toEqual(['attivi dal file delle impostazioni dell’area di lavoro (non verificati dal vivo)', 'ferma e riprendi']);
+    await other.inject({ method: 'PUT', url: '/api/settings', payload: { agentInterrupt: false } });
+    expect(await rows()).toEqual(['attivi (verificati per questa versione di Claude Code)', 'ferma e riprendi (disattivata nelle impostazioni dell’area di lavoro)']);
     await other.close();
   });
+
 });
 
 describe('turns over WebSocket', () => {

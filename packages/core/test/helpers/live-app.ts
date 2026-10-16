@@ -41,7 +41,8 @@ export async function liveApp(o: { live?: boolean; base?: string; runner?: Contr
     sideState: side,
     agentContract: 'media', uiToken: null, sandbox: async () => ({ available: false, reason: 'test' }),
     appConfig: new AppConfigStore(join(base, 'config')), configDir: join(base, 'config'),
-    git: new Git(), runner, doctor: async () => [], claudeVersion: async () => '2.1.0',
+    // Decision 804: live on a verified version (2.1.301); the fallback on an older one (the settings default to on).
+    git: new Git(), runner, doctor: async () => [], claudeVersion: async () => (o.live ? '2.1.301' : '2.1.0'),
   });
   let slug = o.slug ?? '';
   if (!o.base) {

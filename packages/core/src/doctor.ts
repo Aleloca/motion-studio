@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { t } from './i18n.ts';
 import { folderWithGlobChars, SLUG_RE } from './workspace-store.ts';
 import { execFfVia } from './media/ffmpeg-exec.ts';
-import { capabilitiesFor, parseClaudeVersion, type CapabilityOptIn } from './agent/agent-capabilities.ts';
+import { capabilitiesFor, parseClaudeVersion, verifiedFor, type CapabilityOptIn } from './agent/agent-capabilities.ts';
 
 const versionIn = (s: string) => s.match(/(\d+\.\d+(?:\.\d+)?)/)?.[1];
 const firstLine = (s: string) => s.split('\n').map((l) => l.trim()).find(Boolean);
@@ -37,8 +37,9 @@ export async function runDoctor(opts: {
    */
   ffmpegInfo?: () => Promise<{ arch: BinaryArch; hostArch: string; translated: boolean } | null>;
   /**
-   * Phase 13: the workspace's opt-in for live messages and interrupt. When given (even `{}`), the report says which path
-   * is active: the fallback (queued only, stop and resume) for every version unless opted in (decisions log 610).
+   * Phase 13: the workspace settings for live messages and interrupt. When given (even `{}`), the report says which path
+   * is active: live for a verified version with the settings on (decision 804), otherwise the fallback (queued only, stop
+   * and resume), saying whether the settings or the version is the reason.
    */
   agentOptIn?: CapabilityOptIn;
   /** Decision 802: the desktop's updater is off (development run, unsigned build): one informational row (ok, so it neither counts as a recommendation nor blocks). */
@@ -104,15 +105,16 @@ export async function runDoctor(opts: {
     // Informational rows (ok, optional): the fallback is a working path, not a problem.
     // Same parsing as the route and the launcher (x.y.z), so the reports cannot disagree.
     const version = claudeOk ? parseClaudeVersion(claude.stdout) : null;
+    // Decision 804: on for a verified version unless the workspace settings switch it off.
     const effective = capabilitiesFor(version, opts.agentOptIn);
-    const verified = capabilitiesFor(version);
+    const verified = verifiedFor(version);
     checks.push({
       id: 'live-messages', label: d.liveMessagesLabel, required: false, ok: true,
-      message: !effective.liveInput ? d.liveMessagesQueued : verified.liveInput ? d.liveMessagesSupported : d.liveMessagesOptIn,
+      message: effective.liveInput ? d.liveMessagesSupported : verified.liveInput ? d.liveMessagesOff : d.liveMessagesQueued,
     });
     checks.push({
       id: 'interrupt', label: d.interruptLabel, required: false, ok: true,
-      message: !effective.interrupt ? d.interruptStopResume : verified.interrupt ? d.interruptSupported : d.interruptOptIn,
+      message: effective.interrupt ? d.interruptSupported : verified.interrupt ? d.interruptOff : d.interruptStopResume,
     });
   }
   if (opts.sandbox) {

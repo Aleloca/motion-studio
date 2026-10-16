@@ -38,6 +38,8 @@ export async function startFake(
     prompt?: string;
     toolMs?: number;
     ackGapMs?: number;
+    /** Extra FAKE_STREAM_* variables (e.g. FAKE_STREAM_INTERRUPTED_EXIT, FAKE_STREAM_ACK_ID). */
+    env?: Record<string, string>;
     runner?: { killGraceMs?: number; interruptTimeoutMs?: number; redirectBackstopMs?: number };
   } = {},
 ): Promise<FakeRun> {
@@ -48,7 +50,7 @@ export async function startFake(
   const spawnSpy = ((cmd: string, args: string[], o: Parameters<typeof spawn>[2]) => {
     const child = spawn(cmd, args, {
       ...o,
-      env: { ...o?.env, FAKE_STREAM_MODE: mode, FAKE_STREAM_LOG: logFile, FAKE_STREAM_TOOL_MS: String(opts.toolMs ?? 400), FAKE_STREAM_ACK_GAP_MS: String(opts.ackGapMs ?? 0) },
+      env: { ...o?.env, FAKE_STREAM_MODE: mode, FAKE_STREAM_LOG: logFile, FAKE_STREAM_TOOL_MS: String(opts.toolMs ?? 400), FAKE_STREAM_ACK_GAP_MS: String(opts.ackGapMs ?? 0), ...opts.env },
     }) as ChildProcess;
     if (child.pid) { leader = child.pid; startedPids.set(child.pid, child.pid); }
     const stdin = child.stdin!;

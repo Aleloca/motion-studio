@@ -57,18 +57,28 @@ export const INTERRUPT_TIMEOUT_MS = 5000;
 export const REDIRECT_BACKSTOP_MS = 45_000;
 
 /*
- * Phase 13 message shapes, from the public docs and UNVERIFIED LIVE for the installed CLI (the spike was suspended,
- * decisions log 610; docs/superpowers/notes/2026-10-14-phase13-stream-input-spike.md):
+ * Phase 13 message shapes, from the public docs, measured on Claude Code 2.1.301 by the user's probe (decision 804;
+ * docs/superpowers/notes/2026-10-16-stream-input-probe.md):
  * - user message on stdin (SDKUserMessage): { type: 'user', message: { role: 'user', content }, parent_tool_use_id: null }
  *   https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode , https://code.claude.com/docs/en/agent-sdk/typescript
- * - interrupt: { type: 'control_request', request_id, request: { subtype: 'interrupt' } }, answered by a
- *   { type: 'control_response', response: { subtype: 'success' | 'error', request_id, … } } echoing request_id
- *   https://code.claude.com/docs/en/agent-sdk/typescript (the envelope; the response wrapper is the SDK's, not quoted there)
- * There is no verified evidence that the CLI consumed a written message, so `user_message_delivered` is emitted once
- * the write is flushed and means "sent".
+ *   A second message written mid-turn was accepted and answered with its own `result` (two inputs, two results).
+ * - interrupt: { type: 'control_request', request_id, request: { subtype: 'interrupt' } }, answered by
+ *   { type: 'control_response', response: { subtype: 'success', request_id, response: { still_queued: [] } } }; the turn then
+ *   ends with a `result` of subtype `error_during_execution` and the process exits with code 1.
+ * `user_message_delivered` is emitted once the write is flushed and means "sent"; `user_message_read` only on the CLI's
+ * evidence (see `user_message_read` in shared/events.ts).
  */
 const userMessageLine = (text: string) => `${JSON.stringify({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null })}\n`;
 const interruptLine = (requestId: string) => `${JSON.stringify({ type: 'control_request', request_id: requestId, request: { subtype: 'interrupt' } })}\n`;
+
+/** The `result` subtype of a turn the CLI stopped on our interrupt (measured on 2.1.301, decision 804). */
+export const INTERRUPTED_RESULT_SUBTYPE = 'error_during_execution';
+
+/** The interrupted turn's result as the core sees it: not ok, not a failure (no `error`), marked `interrupted`. */
+const asInterrupted = (e: Extract<AgentEvent, { kind: 'result' }>): AgentEvent => {
+  const { error: _error, ...rest } = e;
+  return { ...rest, ok: false, interrupted: true };
+};
 
 /** Windows: the command that force-kills `pid` and all its descendants. */
 export const treeKillCommand = (pid: number): [string, string[]] => ['taskkill', ['/PID', String(pid), '/T', '/F']];
@@ -132,10 +142,12 @@ export class ClaudeCodeRunner implements AgentRunner {
     const stdout = new LineSplitter();
     // Per run: keeps the live usage estimate (sum per message id, throttled, with a trailing flush).
     // The timer only fires after this function returned, when `emit` (declared below) exists.
-    const parser = new ClaudeStreamParser({ onLive: (e) => emit(e), onControlResponse: (r) => onControl(r) });
+    /** The raw subtype of the result line being handled (the parser reports it just before that line's events). */
+    let resultSubtype: string | null = null;
+    const parser = new ClaudeStreamParser({ onLive: (e) => emit(e), onControlResponse: (r) => onControl(r), onResult: (st) => { resultSubtype = st; } });
     const stderr = new LineSplitter();
 
-    // Phase 13 (decisions log 610): stdin stays open only with live input on; otherwise the prompt is written with end()
+    // Phase 13 (decision 804): stdin stays open only with live input on; otherwise the prompt is written with end()
     // and nothing else is ever written, exactly as before.
     const liveInput = req.capabilities?.liveInput === true;
     const canInterrupt = liveInput && req.capabilities?.interrupt === true;
@@ -148,7 +160,36 @@ export class ClaudeCodeRunner implements AgentRunner {
     let awaitingDecision = false;
     /** The next result is the interrupted turn's own: it never closes stdin (the decision, if any, follows it). */
     let interruptedResultPending = false;
+    /** The last result is an interrupted turn's (error_during_execution): with the ack, a stop, not a failure. */
+    let lastResultInterruptedShape = false;
     let backstopTimer: NodeJS.Timeout | undefined;
+    /**
+     * Decision 804: the interrupted turn's result can come before the acknowledgement. While an interrupt is pending, such
+     * a result (and every event after it) is held, and released when the interrupt is answered: marked `interrupted`
+     * on the ack, unchanged otherwise (no ack, an error ack, the process gone). The bookkeeping (stdin, outcome) is not held.
+     */
+    let held: AgentEvent[] | null = null;
+    let heldResult: AgentEvent | null = null;
+    const dispatch = (e: AgentEvent) => {
+      try {
+        onEvent(e);
+      } catch { /* a faulty listener must not crash the process nor lose the turn outcome */ }
+    };
+    const release = (interrupted: boolean) => {
+      if (!held) return;
+      const list = held;
+      const r = heldResult;
+      held = null;
+      heldResult = null;
+      for (const x of list) dispatch(x === r && interrupted && x.kind === 'result' ? asInterrupted(x) : x);
+    };
+    /**
+     * Decision 804, "read" evidence: the inputs written after the prompt (input 0), in order, with their input number.
+     * Input k is read once the k-th result came and the agent produced new output after it (its turn started).
+     */
+    const writtenInputs: { clientId: string; input: number }[] = [];
+    let inputsWritten = 1;
+    let resultsSeen = 0;
     const pendingInterrupts = new Map<string, (r: 'interrupted' | 'unsupported' | 'timeout') => void>();
     const closeStdin = () => {
       awaitingDecision = false;
@@ -161,17 +202,31 @@ export class ClaudeCodeRunner implements AgentRunner {
 
     const emit = (e: AgentEvent) => {
       if (e.kind === 'session') sessionId = e.sessionId;
-      if (e.kind === 'result') { result = e; if (e.sessionId) sessionId = e.sessionId; }
-      try {
-        onEvent(e);
-      } catch { /* a faulty listener must not crash the process nor lose the turn outcome */ }
+      let out = e;
+      let ofInterrupted = false;
+      if (e.kind === 'result') {
+        result = e;
+        if (e.sessionId) sessionId = e.sessionId;
+        resultsSeen++;
+        ofInterrupted = interruptedResultPending;
+        interruptedResultPending = false;
+        lastResultInterruptedShape = !e.ok && resultSubtype === INTERRUPTED_RESULT_SUBTYPE;
+        resultSubtype = null;
+        // The ack came first: this is the stopped turn's result. Otherwise, with an interrupt pending, wait for its answer.
+        if (lastResultInterruptedShape && ofInterrupted) out = asInterrupted(e);
+        else if (lastResultInterruptedShape && pendingInterrupts.size > 0 && !held) { held = []; heldResult = e; }
+      } else if ((e.kind === 'text' || e.kind === 'tool_use') && writtenInputs.length > 0) {
+        // New output after the k-th result: the turn of input k started, so the CLI took it (and every input before it).
+        while (writtenInputs.length > 0 && writtenInputs[0]!.input <= resultsSeen) {
+          const read: AgentEvent = { kind: 'user_message_read', clientId: writtenInputs.shift()!.clientId };
+          if (held) held.push(read); else dispatch(read);
+        }
+      }
+      if (held) held.push(out); else dispatch(out);
       // The final result closes stdin (a message written before it is already in the pipe and is still read). After an
       // acknowledged interrupt, the interrupted turn's own result never closes it, and no result does until the core
       // decides (a redirect `send`, `endInput()`, cancel) or the backstop fires: then the redirect turn's result closes it.
-      if (e.kind === 'result' && stdinOpen) {
-        if (interruptedResultPending) interruptedResultPending = false;
-        else if (!awaitingDecision) closeStdin();
-      }
+      if (e.kind === 'result' && stdinOpen && !ofInterrupted && !awaitingDecision) closeStdin();
     };
     const onControl = (r: ControlResponse) => {
       const pending = pendingInterrupts.get(r.requestId);
@@ -210,6 +265,7 @@ export class ClaudeCodeRunner implements AgentRunner {
         parser.stop();
         closeStdin();
         dropPendingInterrupts();
+        release(false);
         if (drainTimer) clearTimeout(drainTimer);
         resolve(sessionId ? { ...r, sessionId } : r);
       };
@@ -222,8 +278,10 @@ export class ClaudeCodeRunner implements AgentRunner {
         // An ok result is the real outcome even if a cancel arrived afterwards.
         if (result?.ok) return settle({ status: 'succeeded' });
         if (cancelled) return settle({ status: 'cancelled' });
-        // The user stopped the step and no redirect followed: a stop, not a failure. A redirect turn's failure is its own.
-        if (interruptAcked && !redirectWritten && result) return settle({ status: 'cancelled' });
+        // The user stopped the step and no redirect followed: the CLI acknowledged our interrupt and ended the turn with
+        // error_during_execution (2.1.301 then exits with code 1, decision 804): a stop, not a failure. Without the ack,
+        // or with any other error, the turn failed. A redirect turn's failure is its own.
+        if (interruptAcked && !redirectWritten && result && lastResultInterruptedShape) return settle({ status: 'cancelled' });
         if (result) return settle({ status: 'failed', error: result.error ?? t().errors.turnFailed });
         const tail = stderrTail.join('\n');
         settle({ status: 'failed', error: `${t().providers.claudeExited({ code: String(exited?.code ?? exited?.signal) })}${tail ? `: ${tail}` : ''}` });
@@ -279,8 +337,10 @@ export class ClaudeCodeRunner implements AgentRunner {
         } else if (interruptAcked) redirectWritten = true;
         return new Promise<'written' | 'closed'>((resolve) => {
           try {
+            const input = inputsWritten++;
             child.stdin.write(userMessageLine(text), (err) => {
               if (err) { stdinOpen = false; return resolve('closed'); }
+              writtenInputs.push({ clientId, input });
               emit({ kind: 'user_message_delivered', clientId });
               resolve('written');
             });
@@ -295,6 +355,7 @@ export class ClaudeCodeRunner implements AgentRunner {
           const answer = (r: 'interrupted' | 'unsupported' | 'timeout') => {
             if (!pendingInterrupts.delete(requestId)) return;
             clearTimeout(timer);
+            release(r === 'interrupted');
             resolve(r);
           };
           pendingInterrupts.set(requestId, answer);

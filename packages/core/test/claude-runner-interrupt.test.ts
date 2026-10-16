@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { INTERRUPT_TIMEOUT_MS, REDIRECT_BACKSTOP_MS } from '../src/agent/claude-code-runner.ts';
 import { expectNoOrphans, killStarted, startFake, waitForEvent } from './helpers/fake-stream-runner.ts';
 
-// Phase 13 Task 1: interrupt on the Claude Code runner, against the fake CLI only (decisions log 610).
+// Phase 13 Task 1: interrupt on the Claude Code runner, against the fake CLI only (never a real claude; decision 804).
 const BOTH = { liveInput: true, interrupt: true };
 const controlRequests = (lines: unknown[]) => lines.filter((l) => (l as { type?: string }).type === 'control_request') as { type: string; request_id: string; request: { subtype: string } }[];
 
@@ -28,7 +28,7 @@ describe('ClaudeCodeRunner interrupt: capability off', () => {
   });
 });
 
-describe('ClaudeCodeRunner interrupt: capability on (opt-in, unverified live)', () => {
+describe('ClaudeCodeRunner interrupt: capability on', () => {
   it('waits 5 s for the acknowledgement by default; the redirect backstop is 45 s', () => {
     expect(INTERRUPT_TIMEOUT_MS).toBe(5000);
     expect(REDIRECT_BACKSTOP_MS).toBe(45_000);
@@ -187,5 +187,75 @@ describe('ClaudeCodeRunner interrupt: capability on (opt-in, unverified live)', 
     await expect(early.handle.interrupt!()).resolves.toBe('unsupported');
     expect(early.spy.writes).toHaveLength(1); // only the prompt
     expect(early.spy.afterClose).toEqual([]);
+  });
+});
+
+// Decision 804: the shape the user's probe measured on Claude Code 2.1.301. The fake emits exactly it: control_response
+// { subtype: 'success', request_id, response: { still_queued: [] } }, then a result `error_during_execution`, then exit 1.
+describe('ClaudeCodeRunner interrupt: the 2.1.301 shape (decision 804)', () => {
+  const EXIT_1 = { FAKE_STREAM_INTERRUPTED_EXIT: '1' };
+  const resultOf = (events: unknown[]) => events.filter((e) => (e as { kind: string }).kind === 'result') as Extract<import('@motion-studio/shared').AgentEvent, { kind: 'result' }>[];
+
+  it('acknowledged, error_during_execution, exit 1, no redirect: cancelled (a stop, not a failure); the result is marked interrupted, without an error', async () => {
+    const run = await startFake('interrupt-ack', { capabilities: BOTH, toolMs: 60_000, env: EXIT_1, runner: { redirectBackstopMs: 30_000 } });
+    await waitForEvent(run.events, (e) => e.kind === 'tool_use');
+    await expect(run.handle.interrupt!()).resolves.toBe('interrupted');
+    await waitForEvent(run.events, (e) => e.kind === 'result');
+    run.handle.endInput!();
+    await expect(run.handle.done).resolves.toMatchObject({ status: 'cancelled' });
+    const [r] = resultOf(run.events);
+    expect(r).toMatchObject({ kind: 'result', ok: false, interrupted: true });
+    expect(r).not.toHaveProperty('error');
+    await expectNoOrphans(run);
+  });
+
+  it('the same through the backstop (no decision at all): cancelled', async () => {
+    const run = await startFake('interrupt-ack', { capabilities: BOTH, toolMs: 60_000, env: EXIT_1, runner: { redirectBackstopMs: 300 } });
+    await waitForEvent(run.events, (e) => e.kind === 'tool_use');
+    await expect(run.handle.interrupt!()).resolves.toBe('interrupted');
+    await expect(run.handle.done).resolves.toMatchObject({ status: 'cancelled' });
+    await expectNoOrphans(run);
+  });
+
+  it('a redirect after it still runs in the same process and its own result decides (exit 1 after an interrupted session)', async () => {
+    const run = await startFake('interrupt-ack', { capabilities: BOTH, toolMs: 300, env: EXIT_1, runner: { redirectBackstopMs: 30_000 } });
+    await waitForEvent(run.events, (e) => e.kind === 'tool_use');
+    await expect(run.handle.interrupt!()).resolves.toBe('interrupted');
+    await expect(run.handle.send!({ text: 'go left', clientId: 'r-804' })).resolves.toBe('written');
+    await expect(run.handle.done).resolves.toMatchObject({ status: 'succeeded' });
+    expect(resultOf(run.events).map((e) => [e.ok, e.interrupted ?? false])).toEqual([[false, true], [true, false]]);
+    // The redirect's turn started after the interrupted result: the CLI took it.
+    expect(run.events).toContainEqual({ kind: 'user_message_read', clientId: 'r-804' });
+    await expectNoOrphans(run);
+  });
+
+  it('without the acknowledgement the same result and exit 1 are a failure', async () => {
+    const run = await startFake('mid-turn', { capabilities: BOTH, prompt: 'abort: now', env: EXIT_1 });
+    await expect(run.handle.done).resolves.toMatchObject({ status: 'failed', error: 'aborted: abort: now' });
+    const [r] = resultOf(run.events);
+    expect(r).toMatchObject({ ok: false, error: 'aborted: abort: now' });
+    expect(r).not.toHaveProperty('interrupted');
+    await expectNoOrphans(run);
+  });
+
+  it('an acknowledgement for another request_id is not ours: the interrupt times out and the run fails', async () => {
+    const run = await startFake('interrupt-ack', { capabilities: BOTH, toolMs: 60_000, env: { ...EXIT_1, FAKE_STREAM_ACK_ID: 'someone-else' }, runner: { interruptTimeoutMs: 400 } });
+    await waitForEvent(run.events, (e) => e.kind === 'tool_use');
+    await expect(run.handle.interrupt!()).resolves.toBe('timeout');
+    expect(run.events.some((e) => e.kind === 'interrupted')).toBe(false);
+    await expect(run.handle.done).resolves.toMatchObject({ status: 'failed', error: 'interrupted' });
+    expect(resultOf(run.events)[0]).not.toHaveProperty('interrupted');
+    await expectNoOrphans(run);
+  });
+
+  it('result before the ack: the result is held until the ack, then marked interrupted, and keeps its place before the marker', async () => {
+    const run = await startFake('interrupt-result-first', { capabilities: BOTH, toolMs: 60_000, env: EXIT_1, runner: { redirectBackstopMs: 30_000 } });
+    await waitForEvent(run.events, (e) => e.kind === 'tool_use');
+    await expect(run.handle.interrupt!()).resolves.toBe('interrupted');
+    await expect(run.handle.done).resolves.toMatchObject({ status: 'cancelled' });
+    const tail = run.events.filter((e) => e.kind === 'result' || e.kind === 'interrupted');
+    expect(tail).toEqual([expect.objectContaining({ kind: 'result', ok: false, interrupted: true }), { kind: 'interrupted' }]);
+    expect(tail[0]).not.toHaveProperty('error');
+    await expectNoOrphans(run);
   });
 });

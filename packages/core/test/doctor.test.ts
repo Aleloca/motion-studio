@@ -220,7 +220,7 @@ describe('runDoctor: ffmpeg architecture (Task 8, carry 13)', () => {
   });
 });
 
-describe('runDoctor Phase 13 agent capabilities (fallback-first, decisions log 610)', () => {
+describe('runDoctor Phase 13 agent capabilities (decision 804)', () => {
   const agentChecks = (checks: Awaited<ReturnType<typeof runDoctor>>) => checks.filter((c) => c.id === 'live-messages' || c.id === 'interrupt');
 
   it('adds no capability rows unless asked (older callers keep their report)', async () => {
@@ -228,7 +228,7 @@ describe('runDoctor Phase 13 agent capabilities (fallback-first, decisions log 6
     expect(agentChecks(checks)).toEqual([]);
   });
 
-  it('reports the fallback for every version without the opt-in: queued only, stop and resume (optional, not a problem)', async () => {
+  it('reports the fallback for an unverified version: queued only, stop and resume (optional, not a problem)', async () => {
     const checks = await runDoctor({ exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0', agentOptIn: {} });
     expect(agentChecks(checks)).toEqual([
       { id: 'live-messages', label: 'Messaggi durante il lavoro', required: false, ok: true, message: 'solo in coda (non verificati per questa versione di Claude Code)' },
@@ -237,15 +237,26 @@ describe('runDoctor Phase 13 agent capabilities (fallback-first, decisions log 6
     expect(hasBlockingFailure(checks)).toBe(false);
   });
 
-  it('reports the opt-in as on but not verified', async () => {
-    const checks = await runDoctor({ exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0', agentOptIn: { liveInput: true, interrupt: true } });
-    expect(agentChecks(checks).map((c) => c.message)).toEqual([
-      'attivi dal file delle impostazioni dell’area di lavoro (non verificati dal vivo)',
-      'attiva dal file delle impostazioni dell’area di lavoro (non verificata dal vivo)',
+  it('decision 804: a verified version (2.1.301) with the settings on is live; the settings can switch it off; an older version stays on the fallback', async () => {
+    const at = (v: string) => fakeExec({ ...allGood, 'claude --version': ok(`${v} (Claude Code)`) });
+    const run = async (v: string, agentOptIn: { liveInput?: boolean; interrupt?: boolean }) =>
+      agentChecks(await runDoctor({ exec: at(v), claudeCommand: ['claude'], nodeVersion: 'v24.9.0', agentOptIn })).map((c) => c.message);
+    expect(await run('2.1.301', { liveInput: true, interrupt: true })).toEqual([
+      'attivi (verificati per questa versione di Claude Code)',
+      'attiva (verificata per questa versione di Claude Code)',
     ]);
+    expect(await run('2.1.301', { liveInput: true, interrupt: false })).toEqual([
+      'attivi (verificati per questa versione di Claude Code)',
+      'ferma e riprendi (disattivata nelle impostazioni dell’area di lavoro)',
+    ]);
+    expect(await run('2.1.301', { liveInput: false, interrupt: true })).toEqual([
+      'solo in coda (disattivati nelle impostazioni dell’area di lavoro)',
+      'ferma e riprendi (disattivata nelle impostazioni dell’area di lavoro)',
+    ]);
+    expect(await run('2.1.300', { liveInput: true, interrupt: true })).toEqual(['solo in coda (non verificati per questa versione di Claude Code)', 'ferma e riprendi']);
   });
 
-  it('a missing claude means the fallback, even with the opt-in', async () => {
+  it('a missing claude means the fallback, even with the settings on', async () => {
     const { ['claude --version']: _, ['claude auth status --json']: __, ...rest } = allGood;
     const checks = await runDoctor({ exec: fakeExec(rest), claudeCommand: ['claude'], nodeVersion: 'v24.9.0', agentOptIn: { liveInput: true, interrupt: true } });
     expect(agentChecks(checks).map((c) => c.message)).toEqual(['solo in coda (non verificati per questa versione di Claude Code)', 'ferma e riprendi']);

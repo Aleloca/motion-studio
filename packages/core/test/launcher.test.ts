@@ -722,27 +722,31 @@ describe('AgentLauncher Phase 13 capabilities (fallback-first, decisions log 610
   const start = async (runner: AgentRunner, over: Parameters<typeof testLauncher>[1], kind: 'creative' | 'console' | 'describe' | 'brand-analysis' | 'localize' = 'creative') =>
     testLauncher(runner, over).start({ kind, jobId: `j-${kind}`, projectSlug: 'acme', projectDir: await newProject(), request: { prompt: 'x' }, onEvent: () => {} });
 
-  it('without the opt-in the request carries no capabilities (today\'s request, stdin closed after the prompt)', async () => {
-    const { runner, seen } = capture();
-    await (await start(runner, { claudeVersion: async () => '2.1.299' })).done;
-    expect(seen[0]).not.toHaveProperty('capabilities');
+  it('decision 804: with the settings off, or on an older version, the request carries no capabilities (today\'s request, stdin closed after the prompt)', async () => {
+    for (const [settings, version] of [[{ agentLiveInput: false, agentInterrupt: false }, '2.1.301'], [{}, '2.1.300'], [{ agentLiveInput: true, agentInterrupt: true }, '2.1.299']] as const) {
+      const { runner, seen } = capture();
+      await (await start(runner, { settings, claudeVersion: async () => version })).done;
+      expect(seen[0], version).not.toHaveProperty('capabilities');
+    }
   });
 
-  it('with the opt-in, creative and console turns get the effective capabilities; other jobs never do', async () => {
-    const settings = { agentLiveInput: true, agentInterrupt: true };
+  it('decision 804: on 2.1.301 the default settings give creative and console turns both capabilities; other jobs never get them; interrupt can be switched off alone', async () => {
     for (const kind of ['creative', 'console'] as const) {
       const { runner, seen } = capture();
-      await (await start(runner, { settings, claudeVersion: async () => '2.1.299' }, kind)).done;
+      await (await start(runner, { claudeVersion: async () => '2.1.301' }, kind)).done;
       expect(seen[0]?.capabilities, kind).toEqual({ liveInput: true, interrupt: true });
     }
     for (const kind of ['describe', 'brand-analysis', 'localize'] as const) {
       const { runner, seen } = capture();
-      await (await start(runner, { settings, claudeVersion: async () => '2.1.299' }, kind)).done;
+      await (await start(runner, { claudeVersion: async () => '2.1.301' }, kind)).done;
       expect(seen[0], kind).not.toHaveProperty('capabilities');
     }
+    const { runner, seen } = capture();
+    await (await start(runner, { settings: { agentInterrupt: false }, claudeVersion: async () => '2.1.301' })).done;
+    expect(seen[0]?.capabilities).toEqual({ liveInput: true, interrupt: false });
   });
 
-  it('an unknown or failing version keeps both off, even with the opt-in', async () => {
+  it('an unknown or failing version keeps both off, even with the settings on', async () => {
     const settings = { agentLiveInput: true, agentInterrupt: true };
     for (const claudeVersion of [async () => null, async () => { throw new Error('no claude'); }, undefined]) {
       const { runner, seen } = capture();

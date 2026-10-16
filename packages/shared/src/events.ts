@@ -31,13 +31,22 @@ export type AgentEvent =
   /**
    * `cumulativeCostUsd` is Claude Code's `total_cost_usd`: CUMULATIVE over a resumed session, never this run's cost
    * (that is the final `usage` event, re-emitted by the core with per-run values). Older stored events may carry it as `costUsd`.
+   * `interrupted` (decision 804): the turn the user stopped (the CLI acknowledged our interrupt and ended the turn with
+   * `error_during_execution`): not ok, but not a failure either, so it carries no `error`.
    */
-  | { kind: 'result'; ok: boolean; sessionId?: string; text?: string; cumulativeCostUsd?: number; error?: string; durationMs?: number; numTurns?: number }
+  | { kind: 'result'; ok: boolean; sessionId?: string; text?: string; cumulativeCostUsd?: number; error?: string; durationMs?: number; numTurns?: number; interrupted?: boolean }
   /**
-   * Phase 13: a message sent while the agent works was written to the running session. There is no verified evidence
-   * that the CLI consumed it (spike suspended, decisions log 610), so it means "sent", not "read".
+   * Phase 13: a message sent while the agent works was written to the running session (or given with the prompt). It
+   * means "sent": the write alone does not prove the CLI read it (see `user_message_read`).
    */
   | { kind: 'user_message_delivered'; clientId: string }
+  /**
+   * Decision 804: evidence from the CLI that it took a message written into the session. Claude Code answers each input
+   * with its own `result` (measured on 2.1.301: two messages, two results), so the message written as the k-th input
+   * after the prompt is read once the k-th `result` came and the agent then produced new output (its turn started).
+   * Never emitted on a guess: a message the CLI folded into a running turn stays "sent".
+   */
+  | { kind: 'user_message_read'; clientId: string }
   /**
    * Fix round 1 (Ruling Z, M3): a message no run took after all (its run never started, or failed before reading it, and the
    * turn ended): never delivered, whatever was announced before. Console turns (creative turns queue such words instead).
@@ -48,7 +57,7 @@ export type AgentEvent =
 
 /**
  * Phase 13: what the running Claude Code can do while a turn runs (GET /api/agent/capabilities). Effective values: a
- * capability is on only for a verified version or with the explicit opt-in in Settings (decisions log 610).
+ * capability is on only for a version verified live (2.1.301+) with the workspace setting on (decision 804).
  */
 export interface AgentCapabilities {
   cliVersion: string | null;

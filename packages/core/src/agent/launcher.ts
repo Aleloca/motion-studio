@@ -66,7 +66,7 @@ export interface LauncherDeps {
   usageLedger?: UsageLedger;
   /**
    * Phase 13: the installed Claude Code version (`claude --version`), cached by the caller; null or absent = unknown,
-   * which keeps live input and interrupt off whatever the settings say (agent-capabilities.ts, decisions log 610).
+   * which keeps live input and interrupt off whatever the settings say (agent-capabilities.ts, decision 804).
    */
   claudeVersion?: () => Promise<string | null>;
   /**
@@ -148,7 +148,7 @@ export class AgentLauncher {
 
   /**
    * Phase 13: what a run of `kind` started now would get (the same computation as `start`): on only for creative and
-   * console turns, with the user's opt-in and a known Claude Code version (decisions log 610).
+   * console turns, for a Claude Code version verified live and with the workspace settings on (decision 804).
    */
   async liveCapabilities(kind: AgentJobKind, read?: WorkspaceSettings): Promise<{ liveInput: boolean; interrupt: boolean }> {
     const settings = read ?? await this.deps.settings();
@@ -168,7 +168,7 @@ export class AgentLauncher {
     const detected = settings.sandboxMode === 'auto' && (await this.deps.sandbox()).available;
     const sandbox = i.sandboxed === false ? false : detected;
     const autoApproveAtStart = settings.autoApproveSandboxed === true;
-    // Phase 13: off unless the user opted in for a known version (no version is verified live, decisions log 610).
+    // Phase 13 (decision 804): on for a verified Claude Code version (2.1.301+) unless the settings switch it off.
     // Both off: the request carries no capabilities and the runner behaves exactly as before.
     const liveCaps = await this.liveCapabilities(i.kind, settings);
     const capabilities = liveCaps.liveInput || liveCaps.interrupt ? liveCaps : null;
