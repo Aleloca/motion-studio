@@ -10,6 +10,7 @@ import { localeTag } from './localization/schema.ts';
 import { channelName, DEFAULT_FORMATS, formatDisplayName } from './formats.ts';
 import { messages, type Locale } from './i18n/index.ts';
 import type { FormatSummary } from './formats/link.ts';
+import { variantGroupSchema, creativeSlugSchema } from './variants.ts';
 
 export const creativeStatusSchema = z.enum(['draft', 'working', 'ready', 'incomplete', 'error', 'interrupted']);
 export type CreativeStatus = z.infer<typeof creativeStatusSchema>;
@@ -93,6 +94,10 @@ export const creativeFileSchema = z.object({
    * review I1); in a stored creative.json it is legacy only. Absent in old files.
    */
   stoppedSession: z.object({ sessionId: z.string().min(1), at: z.iso.datetime(), jobId: z.string().min(1) }).optional(),
+  /** Phase 15: the variant group, kept on the host creative (letter a) only. Absent in old files. */
+  variantGroup: variantGroupSchema.optional(),
+  /** Phase 15: on a sister creative (`<host>~b`..`~e`), the host's slug. Absent in old files and on hosts. */
+  variantOf: creativeSlugSchema.optional(),
 });
 export type CreativeFile = z.infer<typeof creativeFileSchema>;
 
