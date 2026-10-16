@@ -363,8 +363,13 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     // started like any grouped creative's first generation (`ctx.variantRuns`, the same orchestration as `…/variants/run`).
     if (groupSize > 1) {
       await new VariantGroupService({ store, turns: ctx.turns }).addVariants(ref, Array.from({ length: groupSize - 1 }, () => ({ direction: null })), { hostDirection: null });
-      const variantRun = body.generate ? await ctx.variantRuns.run(ref, 'all-active', null) : null;
-      return reply.status(201).send({ slug, creative: await store.get(slug), job: null, ...(variantRun ? { variantRun } : {}) });
+      // The group exists from here: a start that throws must not lose the slug (the client opens the creative and can retry).
+      let variantRun: Awaited<ReturnType<typeof ctx.variantRuns.run>> | null = null;
+      let startError: string | null = null;
+      if (body.generate) {
+        try { variantRun = await ctx.variantRuns.run(ref, 'all-active', null); } catch (err) { startError = err instanceof Error ? err.message : String(err); }
+      }
+      return reply.status(201).send({ slug, creative: await store.get(slug), job: null, ...(variantRun ? { variantRun } : {}), ...(startError ? { startError } : {}) });
     }
     const job = body.generate ? await ctx.turns.start(ref) : null;
     return reply.status(201).send({ slug, creative: job ? await store.get(slug) : creative, job });

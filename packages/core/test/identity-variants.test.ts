@@ -10,6 +10,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_FORMATS, EMPTY_BRAND_KIT, type CreativeDetail, type CreativeFile } from '@motion-studio/shared';
+import { VariantFanout } from '../src/creatives/variant-fanout.ts';
 import { buildCreativePrompt } from '../src/creatives/prompt.ts';
 import { variantApp, type VariantApp } from './helpers/variant-app.ts';
 
@@ -59,6 +60,19 @@ describe('identity concepts are variants', () => {
     expect(body.job).toBeNull();
     const first = await v.runner.next(0);
     expect(first.req.prompt).toContain('submit_variant_directions');
+  });
+
+  it('a start that throws after the group exists still answers 201 with the slug and the failure', async () => {
+    v = await variantApp();
+    const spy = vi.spyOn(VariantFanout.prototype, 'run').mockRejectedValueOnce(new Error('start boom'));
+    try {
+      const res = await create(identityBrief(3), true);
+      expect(res.statusCode, res.body).toBe(201);
+      const body = res.json() as { slug: string; job: unknown; variantRun?: unknown; startError?: string };
+      expect(body.startError).toBe('start boom');
+      expect(body.variantRun).toBeUndefined();
+      expect((await v.detail(body.slug)).creative.variantGroup!.members).toHaveLength(3);
+    } finally { spy.mockRestore(); }
   });
 
   it('an old creative with identity-logo@2/@3 loads and renders, its instances untouched', async () => {
