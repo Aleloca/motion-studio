@@ -1,1 +1,5 @@
-{ "format": "youtube-16x9", "posterTime": 3, "label": "A launch teaser for a coffee app, recomposed for a 16:9 YouTube frame." }
+{
+  "format": "youtube-16x9",
+  "posterTime": 3.2,
+  "label": "A coffee app teaser (\"Brew something bold.\"), recomposed for a 16:9 YouTube frame."
+}

@@ -1,0 +1,666 @@
+{
+  "$schema": "motion-studio/composition@1",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "duration": 8,
+  "background": "#0F0F0F",
+  "fonts": [
+    {
+      "family": "Bricolage Grotesque",
+      "src": "assets/fonts/BricolageGrotesque.woff2",
+      "weight": 800
+    },
+    {
+      "family": "Instrument Sans",
+      "src": "assets/fonts/InstrumentSans.woff2",
+      "weight": 400
+    },
+    {
+      "family": "Instrument Sans",
+      "src": "assets/fonts/InstrumentSans.woff2",
+      "weight": 500
+    },
+    {
+      "family": "JetBrains Mono",
+      "src": "assets/fonts/JetBrainsMono.woff2",
+      "weight": 400
+    }
+  ],
+  "scenes": [
+    {
+      "id": "main",
+      "start": 0,
+      "duration": 8
+    }
+  ],
+  "tracks": [
+    {
+      "id": "visual",
+      "kind": "visual",
+      "clips": [
+        {
+          "id": "card0-2",
+          "type": "shape",
+          "start": 0.5,
+          "duration": 7.5,
+          "props": {
+            "x": 110,
+            "y": 300,
+            "width": 300,
+            "height": 340,
+            "fill": "#171717",
+            "radius": 28
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.5
+            },
+            {
+              "prop": "opacity",
+              "from": 1,
+              "to": 0.28,
+              "start": 3.9000000000000004,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.65,0,.35,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "art0-4",
+          "type": "shape",
+          "start": 0.75,
+          "duration": 7.25,
+          "props": {
+            "x": 170,
+            "y": 390,
+            "width": 180,
+            "height": 180,
+            "fill": "#FF5A1F",
+            "radius": 90,
+            "rotation": 6
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.5
+            },
+            {
+              "prop": "opacity",
+              "from": 1,
+              "to": 0.28,
+              "start": 3.9000000000000004,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.65,0,.35,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "card1-5",
+          "type": "shape",
+          "start": 0.6799999999999999,
+          "duration": 7.32,
+          "props": {
+            "x": 460,
+            "y": 300,
+            "width": 300,
+            "height": 340,
+            "fill": "#171717",
+            "radius": 28
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.5
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "art1-7",
+          "type": "shape",
+          "start": 0.9299999999999999,
+          "duration": 7.07,
+          "props": {
+            "x": 500,
+            "y": 410,
+            "width": 220,
+            "height": 140,
+            "fill": "#2DD4BF",
+            "radius": 28,
+            "rotation": -6
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.5
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "card2-8",
+          "type": "shape",
+          "start": 0.86,
+          "duration": 7.14,
+          "props": {
+            "x": 810,
+            "y": 300,
+            "width": 300,
+            "height": 340,
+            "fill": "#171717",
+            "radius": 28
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.5
+            },
+            {
+              "prop": "opacity",
+              "from": 1,
+              "to": 0.28,
+              "start": 3.5400000000000005,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.65,0,.35,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "art2-10",
+          "type": "shape",
+          "start": 1.1099999999999999,
+          "duration": 6.890000000000001,
+          "props": {
+            "x": 900,
+            "y": 380,
+            "width": 120,
+            "height": 200,
+            "fill": "#A78BFA",
+            "radius": 60,
+            "rotation": 6
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.5
+            },
+            {
+              "prop": "opacity",
+              "from": 1,
+              "to": 0.28,
+              "start": 3.5400000000000005,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.65,0,.35,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "card3-11",
+          "type": "shape",
+          "start": 1.04,
+          "duration": 6.96,
+          "props": {
+            "x": 1160,
+            "y": 300,
+            "width": 300,
+            "height": 340,
+            "fill": "#171717",
+            "radius": 28
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.5
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "art3-13",
+          "type": "shape",
+          "start": 1.29,
+          "duration": 6.71,
+          "props": {
+            "x": 1210,
+            "y": 400,
+            "width": 200,
+            "height": 160,
+            "fill": "#60A5FA",
+            "radius": 80,
+            "rotation": -6
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.5
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "card4-14",
+          "type": "shape",
+          "start": 1.22,
+          "duration": 6.78,
+          "props": {
+            "x": 1510,
+            "y": 300,
+            "width": 300,
+            "height": 340,
+            "fill": "#171717",
+            "radius": 28
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.5
+            },
+            {
+              "prop": "opacity",
+              "from": 1,
+              "to": 0.28,
+              "start": 3.1800000000000006,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.65,0,.35,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "art4-16",
+          "type": "shape",
+          "start": 1.47,
+          "duration": 6.53,
+          "props": {
+            "x": 1580,
+            "y": 390,
+            "width": 160,
+            "height": 160,
+            "fill": "#FACC15",
+            "radius": 24,
+            "rotation": 6
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.5
+            },
+            {
+              "prop": "opacity",
+              "from": 1,
+              "to": 0.28,
+              "start": 3.1800000000000006,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.65,0,.35,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "text",
+      "kind": "text",
+      "clips": [
+        {
+          "id": "title-1",
+          "type": "text",
+          "start": 0,
+          "duration": 8,
+          "props": {
+            "text": "Five directions. The best one for each format.",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#F5F1EC",
+            "fontSize": 72,
+            "align": "center",
+            "x": 120,
+            "y": 110,
+            "width": 1680,
+            "height": 96
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.5599999999999999
+            },
+            {
+              "prop": "y",
+              "from": 24,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "letter0-3",
+          "type": "text",
+          "start": 0.7,
+          "duration": 7.3,
+          "props": {
+            "text": "A",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 400,
+            "color": "#A3A3A3",
+            "fontSize": 30,
+            "x": 138,
+            "y": 324,
+            "width": 80,
+            "height": 40
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "prop": "opacity",
+              "from": 1,
+              "to": 0.28,
+              "start": 3.9000000000000004,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.65,0,.35,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "letter1-6",
+          "type": "text",
+          "start": 0.8799999999999999,
+          "duration": 7.12,
+          "props": {
+            "text": "B",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 400,
+            "color": "#A3A3A3",
+            "fontSize": 30,
+            "x": 488,
+            "y": 324,
+            "width": 80,
+            "height": 40
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "letter2-9",
+          "type": "text",
+          "start": 1.06,
+          "duration": 6.9399999999999995,
+          "props": {
+            "text": "C",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 400,
+            "color": "#A3A3A3",
+            "fontSize": 30,
+            "x": 838,
+            "y": 324,
+            "width": 80,
+            "height": 40
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "prop": "opacity",
+              "from": 1,
+              "to": 0.28,
+              "start": 3.5400000000000005,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.65,0,.35,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "letter3-12",
+          "type": "text",
+          "start": 1.24,
+          "duration": 6.76,
+          "props": {
+            "text": "D",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 400,
+            "color": "#A3A3A3",
+            "fontSize": 30,
+            "x": 1188,
+            "y": 324,
+            "width": 80,
+            "height": 40
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "letter4-15",
+          "type": "text",
+          "start": 1.42,
+          "duration": 6.58,
+          "props": {
+            "text": "E",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 400,
+            "color": "#A3A3A3",
+            "fontSize": 30,
+            "x": 1538,
+            "y": 324,
+            "width": 80,
+            "height": 40
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "prop": "opacity",
+              "from": 1,
+              "to": 0.28,
+              "start": 3.1800000000000006,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.65,0,.35,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "pick0-17",
+          "type": "text",
+          "start": 3,
+          "duration": 5,
+          "props": {
+            "text": "★ Reel",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 400,
+            "color": "#FACC15",
+            "fontSize": 30,
+            "align": "center",
+            "x": 460,
+            "y": 670,
+            "width": 300,
+            "height": 40
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.5599999999999999
+            },
+            {
+              "prop": "y",
+              "from": 14,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "pick1-18",
+          "type": "text",
+          "start": 3.4,
+          "duration": 4.6,
+          "props": {
+            "text": "★ YouTube",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 400,
+            "color": "#FACC15",
+            "fontSize": 30,
+            "align": "center",
+            "x": 1160,
+            "y": 670,
+            "width": 300,
+            "height": 40
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.5599999999999999
+            },
+            {
+              "prop": "y",
+              "from": 14,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "note-19",
+          "type": "text",
+          "start": 4.8,
+          "duration": 3.2,
+          "props": {
+            "text": "Unused variants are hidden. Show discarded brings them back.",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 400,
+            "color": "#A3A3A3",
+            "fontSize": 34,
+            "align": "center",
+            "x": 160,
+            "y": 820,
+            "width": 1600,
+            "height": 50
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.5599999999999999
+            },
+            {
+              "prop": "y",
+              "from": 14,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

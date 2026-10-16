@@ -1,0 +1,110 @@
+{
+  "$schema": "motion-studio/composition@1",
+  "width": 1200,
+  "height": 630,
+  "fps": 30,
+  "duration": 0,
+  "background": "#0F0F0F",
+  "fonts": [
+    {
+      "family": "Bricolage Grotesque",
+      "src": "assets/fonts/BricolageGrotesque.woff2",
+      "weight": 800
+    },
+    {
+      "family": "Instrument Sans",
+      "src": "assets/fonts/InstrumentSans.woff2",
+      "weight": 400
+    },
+    {
+      "family": "Instrument Sans",
+      "src": "assets/fonts/InstrumentSans.woff2",
+      "weight": 500
+    },
+    {
+      "family": "JetBrains Mono",
+      "src": "assets/fonts/JetBrainsMono.woff2",
+      "weight": 400
+    }
+  ],
+  "scenes": [],
+  "tracks": [
+    {
+      "id": "visual",
+      "kind": "visual",
+      "clips": [
+        {
+          "id": "mark-1",
+          "type": "svg",
+          "src": "assets/mark.svg",
+          "start": 0,
+          "duration": 0,
+          "props": {
+            "fit": "contain",
+            "x": 70,
+            "y": 150,
+            "width": 370,
+            "height": 330
+          }
+        }
+      ]
+    },
+    {
+      "id": "text",
+      "kind": "text",
+      "clips": [
+        {
+          "id": "motion-2",
+          "type": "text",
+          "start": 0,
+          "duration": 0,
+          "props": {
+            "text": "Motion",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#F5F1EC",
+            "fontSize": 120,
+            "x": 480,
+            "y": 120,
+            "width": 660,
+            "height": 146
+          }
+        },
+        {
+          "id": "studio-3",
+          "type": "text",
+          "start": 0,
+          "duration": 0,
+          "props": {
+            "text": "Studio",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#FF5A1F",
+            "fontSize": 120,
+            "x": 480,
+            "y": 250,
+            "width": 660,
+            "height": 146
+          }
+        },
+        {
+          "id": "line-4",
+          "type": "text",
+          "start": 0,
+          "duration": 0,
+          "props": {
+            "text": "From a brief to motion for every channel, with Claude Code.",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 400,
+            "color": "#A3A3A3",
+            "fontSize": 34,
+            "x": 484,
+            "y": 420,
+            "width": 640,
+            "height": 90
+          }
+        }
+      ]
+    }
+  ]
+}

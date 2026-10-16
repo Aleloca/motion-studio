@@ -1,0 +1,729 @@
+{
+  "$schema": "motion-studio/composition@1",
+  "width": 1080,
+  "height": 1080,
+  "fps": 30,
+  "duration": 7,
+  "background": "#0F0F0F",
+  "fonts": [
+    {
+      "family": "Bricolage Grotesque",
+      "src": "assets/fonts/BricolageGrotesque.woff2",
+      "weight": 800
+    },
+    {
+      "family": "Instrument Sans",
+      "src": "assets/fonts/InstrumentSans.woff2",
+      "weight": 400
+    },
+    {
+      "family": "Instrument Sans",
+      "src": "assets/fonts/InstrumentSans.woff2",
+      "weight": 500
+    },
+    {
+      "family": "JetBrains Mono",
+      "src": "assets/fonts/JetBrainsMono.woff2",
+      "weight": 400
+    }
+  ],
+  "scenes": [
+    {
+      "id": "main",
+      "start": 0,
+      "duration": 7
+    }
+  ],
+  "tracks": [
+    {
+      "id": "visual",
+      "kind": "visual",
+      "clips": [
+        {
+          "id": "tile0-1",
+          "type": "shape",
+          "start": 0.2,
+          "duration": 6.8,
+          "props": {
+            "x": 80,
+            "y": 110,
+            "width": 920,
+            "height": 190,
+            "fill": "#171717",
+            "radius": 28
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.5599999999999999
+            },
+            {
+              "prop": "y",
+              "from": 30,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "icon0-2",
+          "type": "shape",
+          "start": 0.5,
+          "duration": 6.5,
+          "props": {
+            "x": 120,
+            "y": 165,
+            "width": 80,
+            "height": 80,
+            "fill": "#FF5A1F",
+            "radius": 20
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.4
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "ask0-5",
+          "type": "shape",
+          "start": 1.4,
+          "duration": 1.4,
+          "props": {
+            "x": 720,
+            "y": 170,
+            "width": 240,
+            "height": 70,
+            "fill": "#262626",
+            "radius": 35
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.4
+            }
+          ]
+        },
+        {
+          "id": "ok0-7",
+          "type": "shape",
+          "start": 2.8,
+          "duration": 4.2,
+          "props": {
+            "x": 720,
+            "y": 170,
+            "width": 240,
+            "height": 70,
+            "fill": "#FF5A1F",
+            "radius": 35
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.35
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "tile1-9",
+          "type": "shape",
+          "start": 0.45,
+          "duration": 6.55,
+          "props": {
+            "x": 80,
+            "y": 340,
+            "width": 920,
+            "height": 190,
+            "fill": "#171717",
+            "radius": 28
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.5599999999999999
+            },
+            {
+              "prop": "y",
+              "from": 30,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "icon1-10",
+          "type": "shape",
+          "start": 0.75,
+          "duration": 6.25,
+          "props": {
+            "x": 120,
+            "y": 395,
+            "width": 80,
+            "height": 80,
+            "fill": "#FF5A1F",
+            "radius": 40
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.4
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "ask1-13",
+          "type": "shape",
+          "start": 1.9,
+          "duration": 1.5,
+          "props": {
+            "x": 720,
+            "y": 400,
+            "width": 240,
+            "height": 70,
+            "fill": "#262626",
+            "radius": 35
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.4
+            }
+          ]
+        },
+        {
+          "id": "ok1-15",
+          "type": "shape",
+          "start": 3.4,
+          "duration": 3.6,
+          "props": {
+            "x": 720,
+            "y": 400,
+            "width": 240,
+            "height": 70,
+            "fill": "#FF5A1F",
+            "radius": 35
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.35
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "tile2-17",
+          "type": "shape",
+          "start": 0.7,
+          "duration": 6.3,
+          "props": {
+            "x": 80,
+            "y": 570,
+            "width": 920,
+            "height": 190,
+            "fill": "#171717",
+            "radius": 28
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.5599999999999999
+            },
+            {
+              "prop": "y",
+              "from": 30,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "icon2-18",
+          "type": "shape",
+          "start": 1,
+          "duration": 6,
+          "props": {
+            "x": 120,
+            "y": 625,
+            "width": 80,
+            "height": 80,
+            "fill": "#FF5A1F",
+            "radius": 20
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.4
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "ask2-21",
+          "type": "shape",
+          "start": 2.4,
+          "duration": 1.6,
+          "props": {
+            "x": 720,
+            "y": 630,
+            "width": 240,
+            "height": 70,
+            "fill": "#262626",
+            "radius": 35
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.4
+            }
+          ]
+        },
+        {
+          "id": "ok2-23",
+          "type": "shape",
+          "start": 4,
+          "duration": 3,
+          "props": {
+            "x": 720,
+            "y": 630,
+            "width": 240,
+            "height": 70,
+            "fill": "#FF5A1F",
+            "radius": 35
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.35
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "text",
+      "kind": "text",
+      "clips": [
+        {
+          "id": "kind0-3",
+          "type": "text",
+          "start": 0.55,
+          "duration": 6.45,
+          "props": {
+            "text": "Image",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#F5F1EC",
+            "fontSize": 48,
+            "x": 230,
+            "y": 152,
+            "width": 420,
+            "height": 62
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "prov0-4",
+          "type": "text",
+          "start": 0.65,
+          "duration": 6.35,
+          "props": {
+            "text": "OpenAI",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 400,
+            "color": "#A3A3A3",
+            "fontSize": 22,
+            "x": 230,
+            "y": 222,
+            "width": 420,
+            "height": 32
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "ask-label0-6",
+          "type": "text",
+          "start": 1.5,
+          "duration": 1.2999999999999998,
+          "props": {
+            "text": "Confirm?",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 500,
+            "color": "#F5F1EC",
+            "fontSize": 28,
+            "align": "center",
+            "x": 720,
+            "y": 187,
+            "width": 240,
+            "height": 36
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            }
+          ]
+        },
+        {
+          "id": "ok-label0-8",
+          "type": "text",
+          "start": 2.8499999999999996,
+          "duration": 4.15,
+          "props": {
+            "text": "Confirmed",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 500,
+            "color": "#0F0F0F",
+            "fontSize": 28,
+            "align": "center",
+            "x": 720,
+            "y": 187,
+            "width": 240,
+            "height": 36
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "kind1-11",
+          "type": "text",
+          "start": 0.8,
+          "duration": 6.2,
+          "props": {
+            "text": "Voice-over",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#F5F1EC",
+            "fontSize": 48,
+            "x": 230,
+            "y": 382,
+            "width": 420,
+            "height": 62
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "prov1-12",
+          "type": "text",
+          "start": 0.9,
+          "duration": 6.1,
+          "props": {
+            "text": "OpenAI · ElevenLabs",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 400,
+            "color": "#A3A3A3",
+            "fontSize": 22,
+            "x": 230,
+            "y": 452,
+            "width": 420,
+            "height": 32
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "ask-label1-14",
+          "type": "text",
+          "start": 2,
+          "duration": 1.4,
+          "props": {
+            "text": "Confirm?",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 500,
+            "color": "#F5F1EC",
+            "fontSize": 28,
+            "align": "center",
+            "x": 720,
+            "y": 417,
+            "width": 240,
+            "height": 36
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            }
+          ]
+        },
+        {
+          "id": "ok-label1-16",
+          "type": "text",
+          "start": 3.4499999999999997,
+          "duration": 3.5500000000000003,
+          "props": {
+            "text": "Confirmed",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 500,
+            "color": "#0F0F0F",
+            "fontSize": 28,
+            "align": "center",
+            "x": 720,
+            "y": 417,
+            "width": 240,
+            "height": 36
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "kind2-19",
+          "type": "text",
+          "start": 1.0499999999999998,
+          "duration": 5.95,
+          "props": {
+            "text": "Music",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#F5F1EC",
+            "fontSize": 48,
+            "x": 230,
+            "y": 612,
+            "width": 420,
+            "height": 62
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "prov2-20",
+          "type": "text",
+          "start": 1.15,
+          "duration": 5.85,
+          "props": {
+            "text": "ElevenLabs",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 400,
+            "color": "#A3A3A3",
+            "fontSize": 22,
+            "x": 230,
+            "y": 682,
+            "width": 420,
+            "height": 32
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "ask-label2-22",
+          "type": "text",
+          "start": 2.5,
+          "duration": 1.5,
+          "props": {
+            "text": "Confirm?",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 500,
+            "color": "#F5F1EC",
+            "fontSize": 28,
+            "align": "center",
+            "x": 720,
+            "y": 647,
+            "width": 240,
+            "height": 36
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            }
+          ]
+        },
+        {
+          "id": "ok-label2-24",
+          "type": "text",
+          "start": 4.05,
+          "duration": 2.95,
+          "props": {
+            "text": "Confirmed",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 500,
+            "color": "#0F0F0F",
+            "fontSize": 28,
+            "align": "center",
+            "x": 720,
+            "y": 647,
+            "width": 240,
+            "height": 36
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "line-25",
+          "type": "text",
+          "start": 1,
+          "duration": 6,
+          "props": {
+            "text": "Your keys stay in the system keychain. The agent never sees them.",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 400,
+            "color": "#A3A3A3",
+            "fontSize": 34,
+            "x": 80,
+            "y": 830,
+            "width": 920,
+            "height": 100
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.5599999999999999
+            },
+            {
+              "prop": "y",
+              "from": 16,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.5
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
