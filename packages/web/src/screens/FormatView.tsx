@@ -58,6 +58,7 @@ import { message } from './common.tsx';
 import { isVideoFile } from '../media.ts';
 import { createClock, useClock, type Clock } from '../ui/clock.ts';
 import { FPS, PLAYER_CONTROLS, round3, timecode, Transport, type Mark, type Speed } from './Transport.tsx';
+import { discardedSelf } from './variants/variantModel.ts';
 
 /** A comment shows on the picture within this distance of its time (point 38). */
 const PIN_WINDOW = 0.5;
@@ -477,6 +478,8 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   }, [versions, states, source.format, view]);
   const vdetail = detail?.variants;
   const group = vdetail && !vdetail.orphan ? vdetail : null;
+  // Phase 15 (final wave I2): a discarded variant is read-only until restored: no editor, duplicate or translation.
+  const readOnly = discardedSelf(vdetail).discarded ? t.web.variantGroup.discardedReadOnly : null;
   const actions = useVersionActions({ slug, creative, states, labelOf: formatLabel, resumeFrom: detail?.creative.resumeFrom?.version ?? null, onChanged: reload, onError: setActionError,
     // Phase 15: in a variant group the ★ is the group's (this variant, this version), written through the host.
     ...(group ? { groupPick: (f: string, n: number | null) => api.setVariantPick(slug, group.host, f, n === null ? null : { slug: creative, version: n }) } : {}) });
@@ -579,14 +582,16 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
           {(video || comp !== null) && cr && detail ? (
             <RenderStatus slug={slug} creative={creative} version={version} format={source.format} label={label} jobs={Object.values(live.jobs)} jobKey={detail.jobKey} busy={working} image={!video} />
           ) : null}
-          <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} />
+          <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} readOnly={readOnly} />
           {comp !== null && !working ? (
-            <Tooltip label={`${t.web.instances.duplicate} · ${t.web.instances.duplicateHint({ label })}`} whenHidden=".ms-bar-label"><Button variant="outline" className="ms-fv-duplicate ms-fold-2" aria-label={t.web.instances.duplicate} loading={duplicating} onClick={() => void duplicate()}>
+            <Tooltip label={readOnly ?? `${t.web.instances.duplicate} · ${t.web.instances.duplicateHint({ label })}`} whenHidden=".ms-bar-label"><Button variant="outline" className="ms-fv-duplicate ms-fold-2" aria-label={t.web.instances.duplicate} loading={duplicating}
+              disabled={readOnly !== null} {...(readOnly !== null ? { title: readOnly } : {})} onClick={() => void duplicate()}>
               <Icon name="copy" size={13} strokeWidth={1.7} /><span className="ms-bar-label">{t.web.instances.duplicate}</span>
             </Button></Tooltip>
           ) : null}
           {comp !== null && !working && preview.state.kind !== 'legacy' ? (
-            <Tooltip label={t.web.editor.editOf({ label })} whenHidden=".ms-bar-label"><Button variant="outline" className="ms-cv-edit ms-fold-2" aria-label={t.web.editor.editOf({ label })} onClick={openEditor}>
+            <Tooltip label={readOnly ?? t.web.editor.editOf({ label })} whenHidden=".ms-bar-label"><Button variant="outline" className="ms-cv-edit ms-fold-2" aria-label={t.web.editor.editOf({ label })}
+              disabled={readOnly !== null} {...(readOnly !== null ? { title: readOnly } : {})} onClick={openEditor}>
               <Icon name="edit" size={13} strokeWidth={1.7} /><span className="ms-bar-label">{t.web.editor.edit}</span>
             </Button></Tooltip>
           ) : null}

@@ -110,6 +110,28 @@ describe('variant routes', () => {
     for (const s of [slug, `${slug}~b`, `${slug}~c`]) expect((await detail(s)).creative).toMatchObject({ title: 'Lancio estivo', brief: { goal: 'Estate' } });
   });
 
+  it('final wave I2: a discarded variant refuses the brief, editor, duplicate, links, resume and localize routes (409 variant-discarded)', async () => {
+    const { slug } = await create();
+    await app.inject({ method: 'POST', url: `${P}/${slug}/variants`, payload: { count: 3 } });
+    expect((await app.inject({ method: 'POST', url: `${P}/${slug}/variants/b/discard` })).statusCode).toBe(200);
+    const b = `${P}/${slug}~b`;
+    const editBody = { baseVersion: 1, format: 'instagram-post-1x1', baseHash: 'a'.repeat(64), composition: {}, staged: [], ops: [], token: 'A'.repeat(43) };
+    for (const [method, url, payload] of [
+      ['PUT', b, { title: 'Da B scartata', brief: { ...brief, goal: 'Indietro' } }],
+      ['POST', `${b}/edits`, editBody],
+      ['POST', `${b}/versions/1/duplicate-format`, { instanceId: 'instagram-post-1x1' }],
+      ['PUT', `${b}/links`, { follower: 'web-banner-300x250', primary: 'instagram-post-1x1' }],
+      ['POST', `${b}/versions/1/restore`, {}],
+      ['POST', `${b}/versions/1/localize`, { locales: ['en'] }],
+    ] as const) {
+      const res = await app.inject({ method, url, payload });
+      expect(res.statusCode, `${method} ${url}: ${res.body}`).toBe(409);
+      expect(res.json()).toMatchObject({ code: 'variant-discarded', error: 'Ripristina la variante per lavorarci' });
+    }
+    // The group is untouched.
+    for (const s of [slug, `${slug}~c`]) expect((await detail(s)).creative).toMatchObject({ title: 'Lancio', brief: { goal: 'Lancio app' } });
+  });
+
   it('an old creative is unchanged by every route but POST …/variants', async () => {
     const { slug } = await create();
     const before = await creativeJson(slug);

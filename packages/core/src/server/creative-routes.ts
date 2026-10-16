@@ -216,6 +216,11 @@ export interface RecoverOptions {
   git?: Git;
   /** Phase 13: where a cut turn's session is remembered (the core's side state, out of the agent's reach). */
   sideState?: CreativeSideStateStore;
+  /**
+   * Phase 15 (deferred 51): applies a variant's pending brief (the group's brief kept while it worked) that a crash left
+   * behind, under the creative's lock (`CreativeTurnService.briefAfterJob`). Called for each creative with one and no job.
+   */
+  applyPendingBrief?: (ref: CreativeRef) => Promise<void>;
 }
 
 export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: string) => boolean = () => false, ro: RecoverOptions = {}): Promise<void> {
@@ -237,6 +242,16 @@ export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: st
     await new CreativeStore(dir).recoverInterrupted((slug) => isJobActive(creativeJobKey(ws.root, p.slug, slug)), remember).catch((err: Error) => {
       console.warn(`Motion Studio: creative recovery failed in project ${p.slug}: ${err.message}`);
     });
+    // Phase 15 (deferred 51): a group's brief kept for a variant that was working when the app stopped is applied now, not
+    // only at that variant's next job (its brief would otherwise stay behind the group's until then).
+    if (side && ro.applyPendingBrief) {
+      for (const c of await new CreativeStore(dir).listAll().catch(() => [])) {
+        if (!c.ok || isJobActive(creativeJobKey(ws.root, p.slug, c.slug))) continue;
+        if (!(await side.pendingBrief(dir, c.slug).catch(() => null))) continue;
+        await ro.applyPendingBrief({ root: ws.root, projectSlug: p.slug, projectDir: dir, creativeSlug: c.slug })
+          .catch((err: Error) => console.warn(`Motion Studio: the group's brief could not be applied to ${c.slug}: ${err.message}`));
+      }
+    }
     // Render and media temp files left by a render the app was killed during, and the media cache's garbage. This also runs
     // on a workspace switch, when renders may run: their creatives are skipped and files in use are kept.
     await sweepProjectRenders(dir, {

@@ -15,7 +15,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import { isLocale, workspaceSettingsSchema, type DoctorCheck, type UpdatesState, type UsageBilling, type LinkedCodebase, type ProjectDetail, type ServerMessage, type WorkspaceInfo, type WorkspaceProblem, type WorkspaceSettings } from '@motion-studio/shared';
 import { BrandService } from '../brand/brand-analysis.ts';
 import { UPLOAD_LIMITS } from '../library/upload.ts';
-import { CreativeTurnService } from '../creatives/creative-turns.ts';
+import { CreativeTurnService, type CreativeRef } from '../creatives/creative-turns.ts';
 import { DirectEditService } from '../creatives/direct-edit.ts';
 import { FormatCatalog } from '../formats/format-catalog.ts';
 import { NoMediaTools, type MediaTools } from '../media/media-tools.ts';
@@ -276,7 +276,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const isJobActive = (key: string) => queue.list().some((j) => j.key === key && (j.state === 'queued' || j.state === 'running'));
   // Video sources are normalised for the renderer (and, Task 5b/8, the preview); close() kills whatever still runs.
   const normalizer = new MediaNormalizer({ ffmpeg: () => findFfmpeg(), ...(deps.mediaCacheMaxBytes !== undefined ? { maxCacheBytes: deps.mediaCacheMaxBytes } : {}) });
+  // Phase 15 (deferred 51): pending briefs found by a recovery run before the turn service exists (the startup one) wait
+  // here and are applied, under each member's lock, as soon as it does.
+  let turnsRef: CreativeTurnService | null = null;
+  const leftoverBriefs: CreativeRef[] = [];
   const recoverOptions = (root: string): RecoverOptions => ({
+    applyPendingBrief: async (ref) => { if (turnsRef) await turnsRef.briefAfterJob(ref); else leftoverBriefs.push(ref); },
     renderActive: (project, creative) => queue.list().some((j) => (j.state === 'queued' || j.state === 'running') && j.key.startsWith(`render:${root}:${project}:${creative}:`)),
     mediaInUse: normalizer.inUse,
     stagingInUse: (dir) => previewsRef?.stagingInUse(dir) ?? false,
@@ -382,6 +387,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   afterOtherJob = (key, state) => { void turns.otherJobEndedByKey(key, state); };
+  turnsRef = turns;
+  for (const ref of leftoverBriefs.splice(0)) await turns.briefAfterJob(ref);
 
   // Phase 13: the console turns' live side, by job id, while they run (the same live module as creative turns, I3).
   const consoleLive = new Map<string, LiveSession>();

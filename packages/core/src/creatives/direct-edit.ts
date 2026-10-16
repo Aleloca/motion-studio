@@ -152,7 +152,10 @@ export class DirectEditService {
   async save(ref: CreativeRef, body: DirectEditBody, locale: Locale): Promise<{ version: number }> {
     const parsed = directEditBodySchema.safeParse(body);
     if (!parsed.success) throw new CodedError(400, messages(locale).errors.invalidRequestDetail({ detail: parsed.error.issues[0]?.message ?? '' }), 'editor-invalid-body');
-    return this.deps.turns.runLocked(ref, () => this.saveLocked(ref, parsed.data, locale));
+    return this.deps.turns.runLocked(ref, async () => {
+      await this.deps.turns.assertNotDiscarded(ref); // phase 15: a discarded variant is read-only until restored
+      return this.saveLocked(ref, parsed.data, locale);
+    });
   }
 
   private renderActive(ref: CreativeRef): boolean {
@@ -176,7 +179,12 @@ export class DirectEditService {
     // Phase 15 (decisions log 831): in a variant group the new instance is the group's (host lock first, then this variant's).
     const variants = new VariantGroupService({ store: new CreativeStore(ref.projectDir), turns: this.deps.turns });
     if ((await variants.resolve(ref)).group) {
-      return variants.duplicateInGroup(ref, parsed.data.instanceId, parsed.data.label, (id) => this.duplicateLocked(ref, n, parsed.data, locale, id));
+      // A discarded variant is read-only until restored (checked under the host's lock, before anything is allocated).
+      await this.deps.turns.assertNotDiscarded(ref);
+      return variants.duplicateInGroup(ref, parsed.data.instanceId, parsed.data.label, async (id) => {
+        await this.deps.turns.assertNotDiscarded(ref);
+        return this.duplicateLocked(ref, n, parsed.data, locale, id);
+      });
     }
     return this.deps.turns.runLocked(ref, () => this.duplicateLocked(ref, n, parsed.data, locale));
   }

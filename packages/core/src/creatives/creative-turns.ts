@@ -551,6 +551,7 @@ export class CreativeTurnService {
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     return this.locks.run(key, async () => {
       if (this.isActive(key)) throw new CodedError(409, t().errors.waitBeforeLinks, 'job-running');
+      await this.assertNotDiscarded(ref);
       const store = new CreativeStore(ref.projectDir);
       const creative = await store.get(ref.creativeSlug);
       const { brief } = creative;
@@ -688,13 +689,25 @@ export class CreativeTurnService {
     return r?.group && self ? { host: r.host.creativeSlug, group: r.group, self } : null;
   }
 
+  /**
+   * Phase 15 (decisions log 837, extended by the final wave's I2): a discarded variant is inert until it is restored: every
+   * write to it (an editor save, a duplicate, a translation, a link, "resume from") is refused with 409 `variant-discarded`.
+   * Its brief is the group's and is checked under the host's lock by `VariantGroupService.updateGroupBrief`.
+   */
+  async assertNotDiscarded(ref: CreativeRef): Promise<void> {
+    if ((await this.memberOf(ref))?.self.status === 'discarded') throw new CodedError(409, t().errors.variantDiscardedTurn, 'variant-discarded');
+  }
+
   /** Whether a turn of the creative is queued or running. */
   turnActive(ref: CreativeRef): boolean {
     return this.isActive(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug));
   }
 
   async restore(ref: CreativeRef, n: number): Promise<CreativeFile> {
-    return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), () => this.restoreLocked(ref, n));
+    return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), async () => {
+      await this.assertNotDiscarded(ref);
+      return this.restoreLocked(ref, n);
+    });
   }
 
   private isActive(key: string): boolean {

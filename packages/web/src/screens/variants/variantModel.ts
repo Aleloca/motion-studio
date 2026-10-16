@@ -102,6 +102,17 @@ export function finalSelection(group: VariantGroup, formats: readonly string[], 
   });
 }
 
+/**
+ * Final wave I2 (decisions log 837 extended): whether the open creative is a discarded member of its group. A discarded variant
+ * is read-only until it is restored (the core refuses every write with `variant-discarded`); its brief too, except A's (`host`
+ * true): the host always carries the group's brief, so editing it from A never rolls the group back (decisions log 830).
+ */
+export function discardedSelf(variants: CreativeDetail['variants'] | undefined): { discarded: boolean; host: boolean } {
+  if (!variants || variants.orphan) return { discarded: false, host: false };
+  const self = variants.group.members.find((m) => m.letter === variants.letter);
+  return { discarded: self?.status === 'discarded', host: variants.letter === 'a' };
+}
+
 /** The letters of members whose folder is missing, as a display list ("C, D"). */
 export const missingList = (letters: readonly VariantLetter[]): string => letters.map(upper).join(', ');
 

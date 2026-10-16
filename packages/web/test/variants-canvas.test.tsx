@@ -255,6 +255,24 @@ describe('variant canvas · discard and restore', () => {
     await waitFor(() => expect(api.restoreVariant).toHaveBeenCalledWith('acme', HOST, 'c'));
   });
 
+  it('final wave I2: a discarded sister is read-only: its Brief tab cannot be edited and says why', async () => {
+    group = groupOf(['a', 'b', 'c'], {}, { b: { status: 'discarded' } });
+    render(<Harness live={emptyLive()} creative={`${HOST}~b`} />);
+    await screen.findByRole('toolbar', { name: 'Varianti' });
+    await userEvent.click(screen.getByRole('tab', { name: 'Brief' }));
+    const edit = await screen.findByRole('button', { name: 'Modifica il brief' });
+    expect((edit as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Variante scartata: ripristinala per lavorarci')).toBeTruthy();
+  });
+
+  it('final wave I2: a discarded A keeps its Brief tab editable (the host carries the group\'s brief)', async () => {
+    group = groupOf(['a', 'b', 'c'], {}, { a: { status: 'discarded' } });
+    render(<Harness live={emptyLive()} />);
+    await screen.findByRole('toolbar', { name: 'Varianti' });
+    await userEvent.click(screen.getByRole('tab', { name: 'Brief' }));
+    expect(((await screen.findByRole('button', { name: 'Modifica il brief' })) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('a variant that works cannot be discarded: the item is disabled and says why', async () => {
     const live = emptyLive();
     live.jobs = { b: job(`${HOST}~b`, { id: 'b' }) };

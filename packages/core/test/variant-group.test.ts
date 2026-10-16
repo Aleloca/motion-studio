@@ -28,6 +28,7 @@ import { NoMediaTools } from '../src/media/media-tools.ts';
 import { sweepProjectRenders } from '../src/render/render-sweep.ts';
 import { MemoryVault } from '../src/secrets/vault.ts';
 import { WorkspaceStore } from '../src/workspace-store.ts';
+import { recoverWorkspace } from '../src/server/creative-routes.ts';
 import { parseStudioBlock } from '../src/creatives/prompt.ts';
 import { ControlledRunner } from './helpers/controlled-runner.ts';
 import { testLauncher } from './helpers/launcher.ts';
@@ -558,5 +559,63 @@ describe('fix round 1', { timeout: 120_000 }, () => {
     const swept = await sweepProjectRenders(projectDir, { minAgeMs: 1000 });
     expect(swept.some((p) => p.includes(`${sis('b')}/versions.json.`))).toBe(true);
     expect(swept.some((p) => p.includes(fake))).toBe(false);
+  });
+});
+
+describe('final wave I2: a discarded variant is read-only for every write', { timeout: 120_000 }, () => {
+  it('a brief save from a discarded B is refused (409 variant-discarded) and the group\'s brief is unchanged', async () => {
+    await svc.addVariants(host, [{}, {}]);
+    await svc.discard(host, 'b');
+    await turns.updateBrief(host, { brief: { ...brief, goal: 'Nuovo' } });
+    // B kept the old brief (not propagated to); its full-brief save would roll the group back.
+    const stale = (await json(sis('b'))).brief;
+    expect(stale.goal).toBe('Lancio app');
+    await expect(turns.updateBrief(refOf(sis('b')), { brief: stale })).rejects.toMatchObject({ status: 409, apiCode: 'variant-discarded', message: t().errors.variantDiscardedTurn });
+    await expect(turns.updateBrief(refOf(sis('b')), { title: 'Altro titolo' })).rejects.toMatchObject({ apiCode: 'variant-discarded' });
+    for (const s of [host.creativeSlug, sis('c')]) {
+      expect((await json(s)).brief.goal).toBe('Nuovo');
+      expect((await json(s)).title).toBe('Lancio');
+    }
+    // Restored, it can be edited again (and it is at the group's brief first).
+    await svc.restore(host, 'b');
+    await turns.updateBrief(refOf(sis('b')), { title: 'Lancio 3' });
+    expect((await json(host.creativeSlug)).title).toBe('Lancio 3');
+  });
+
+  it('a discarded A (the host) still edits the group\'s brief: it always carries it (decisions log 830), so nothing rolls back', async () => {
+    await svc.addVariants(host, [{}]);
+    await svc.discard(host, 'a');
+    await turns.updateBrief(refOf(sis('b')), { brief: { ...brief, goal: 'Da B' } });
+    expect((await json(host.creativeSlug)).brief.goal).toBe('Da B');
+    await turns.updateBrief(host, { title: 'Da A' });
+    expect((await json(sis('b'))).title).toBe('Da A');
+    expect((await json(sis('b'))).brief.goal).toBe('Da B');
+  });
+
+  it('editor save, duplicate, links and "resume from" on a discarded variant are refused with the same reason', async () => {
+    await svc.addVariants(host, [{}]);
+    await svc.discard(host, 'b');
+    const B = refOf(sis('b'));
+    const edits = new DirectEditService({ turns, queue, git: new Git(), presets: async () => DEFAULT_FORMATS });
+    const body = { baseVersion: 1, format: 'instagram-post-1x1', baseHash: 'a'.repeat(64), composition: {}, staged: [], ops: [], token: 'A'.repeat(43) };
+    const refused = { status: 409, apiCode: 'variant-discarded' };
+    await expect(edits.save(B, body, 'it')).rejects.toMatchObject(refused);
+    await expect(edits.duplicate(B, 1, { instanceId: 'instagram-post-1x1' }, 'it')).rejects.toMatchObject(refused);
+    await expect(turns.setLink(B, 'web-banner-300x250', 'instagram-post-1x1')).rejects.toMatchObject(refused);
+    await expect(turns.restore(B, 1)).rejects.toMatchObject(refused);
+    // Nothing reached the group: no instance was added anywhere.
+    for (const s of [host.creativeSlug, sis('b')]) expect((await json(s)).brief.formats).toEqual(OLD);
+  });
+
+  it('deferred 51: a pending brief left by a crash is applied at startup recovery, under the member\'s lock', async () => {
+    await svc.addVariants(host, [{}]);
+    const target = { brief: { ...brief, goal: 'Lasciato in sospeso' }, title: 'Lancio', linkedCodebases: [], at: new Date().toISOString() };
+    await side.setPendingBrief(projectDir, sis('b'), target);
+    const ws = await WorkspaceStore.open(host.root, new Git());
+    const applied: string[] = [];
+    await recoverWorkspace(ws, () => false, { sideState: side, applyPendingBrief: async (ref) => { applied.push(ref.creativeSlug); await turns.briefAfterJob(ref); } });
+    expect(applied).toEqual([sis('b')]);
+    expect((await json(sis('b'))).brief.goal).toBe('Lasciato in sospeso');
+    expect(await side.pendingBrief(projectDir, sis('b'))).toBeNull();
   });
 });

@@ -1069,6 +1069,7 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
       useAsLogoFailed: (p: { detail: string }) => `Could not add the logo to the brand: ${p.detail}`,
     },
     variantGroup: {
+      discardedReadOnly: 'Discarded variant: restore it to work on it',
       groupBy: 'Group by',
       variant: 'Variant',
       variants: 'Variants',

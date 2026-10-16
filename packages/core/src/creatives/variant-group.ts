@@ -365,10 +365,16 @@ export class VariantGroupService {
 
   /**
    * A brief edit (PUT …/creatives/:c) on a creative of a group: computed on the group's brief now (`canonical`) with the
-   * same rules as a single creative's save, then propagated. Answers the edited creative as stored.
+   * same rules as a single creative's save, then propagated. Answers the edited creative as stored. 409 `variant-discarded`
+   * from a discarded sister (never from A, see below).
    */
   updateGroupBrief(hostRef: CreativeRef, patch: BriefPatch, edited: CreativeRef): Promise<CreativeFile> {
     return this.withGroup(hostRef, async (host, hostFile, g) => {
+      // Final wave I2 (decisions log 837 extended): a discarded sister is inert; its brief is not propagated to, so its save
+      // would roll the group's back. A discarded A is not refused: the host always carries the group's brief (decisions log
+      // 830), so an edit from it is computed on the current one.
+      const self = g.members.find((m) => m.slug === edited.creativeSlug);
+      if (self && self.letter !== 'a' && self.status === 'discarded') throw new CodedError(409, t().errors.variantDiscardedTurn, 'variant-discarded');
       const shared = await this.canonical(host, hostFile);
       const linkedCodebases = patch.linkedCodebases ? normalizeCodebaseList(patch.linkedCodebases) : null;
       if (linkedCodebases) await assertCodebasesOutside(linkedCodebases, [host.projectDir, host.root], shared.linkedCodebases);

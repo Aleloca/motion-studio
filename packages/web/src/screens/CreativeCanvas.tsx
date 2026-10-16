@@ -50,7 +50,7 @@ import { GroupStar } from './variants/GroupStar.tsx';
 import { useVariantMembers } from './variants/useVariantMembers.ts';
 import { VariantRowHeader } from './variants/VariantRowHeader.tsx';
 import type { ChatTarget } from './variants/VariantSelector.tsx';
-import { discardBlock, finalSelection, fitGrouped, isRunning, memberLive, rowState, shownMembers, upper } from './variants/variantModel.ts';
+import { discardBlock, discardedSelf, finalSelection, fitGrouped, isRunning, memberLive, rowState, shownMembers, upper } from './variants/variantModel.ts';
 import './variants/variants.css';
 
 const ZOOM_MIN = 0.5;
@@ -430,6 +430,10 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
 
   const cr = detail.creative;
   const version = latest;
+  // Phase 15 (final wave I2): a discarded variant is read-only until restored; its Brief tab too, except A's (the host
+  // carries the group's brief, decisions log 830).
+  const self = discardedSelf(detail.variants);
+  const readOnly = self.discarded ? t.web.variantGroup.discardedReadOnly : null;
   const busyLinks = working;
   /** The format column (spec §3.1): "★ v5", or "—" before the format has a version. A follower has none (see `followsOf`). */
   const formatSide = (id: string, preset: FormatPreset | null) => {
@@ -789,7 +793,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
               {t.web.render.renderStars}
             </Button>
           ) : null}
-          <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} />
+          <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} readOnly={readOnly} />
           <Button variant="ink" className="ms-cv-export" disabled={!version && !group} onClick={() => { if (version || group) setExporting({ open: true, snapshot: { versions, states } }); }}>
             <Icon name="download" size={13} strokeWidth={1.7} />{c.export}
           </Button>
@@ -900,7 +904,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
         {tab === 'comments' ? <CommentsTab slug={slug} creative={creative} sent={sent} working={working} formatLabel={formatLabel} onStart={() => { setTool('comment'); }} /> : null}
         {/* Kept mounted while hidden, so an unsaved brief draft survives tab switches. */}
         <div className="ms-cv-brief-wrap" hidden={tab !== 'brief'}>
-          <BriefTab project={slug} detail={detail} presets={presets} disabled={working} formatLabel={formatLabel} onChanged={reload} />
+          <BriefTab project={slug} detail={detail} presets={presets} disabled={working} readOnly={self.host ? null : readOnly} formatLabel={formatLabel} onChanged={reload} />
         </div>
       </aside>
 
@@ -1168,15 +1172,16 @@ function CreativeTokens({ project, creative, versions, refresh }: { project: str
   );
 }
 
-function BriefTab({ project, detail, presets, disabled, formatLabel, onChanged }: {
-  project: string; detail: NonNullable<ReturnType<typeof useCreative>['detail']>; presets: FormatPreset[]; disabled: boolean; formatLabel(id: string): string; onChanged(): void;
+/** `readOnly`: why the brief cannot be edited here (a discarded variant, phase 15): "Modifica il brief" is disabled and says it. */
+function BriefTab({ project, detail, presets, disabled, readOnly, formatLabel, onChanged }: {
+  project: string; detail: NonNullable<ReturnType<typeof useCreative>['detail']>; presets: FormatPreset[]; disabled: boolean; readOnly: string | null; formatLabel(id: string): string; onChanged(): void;
 }) {
   const t = useT();
   const c = t.web.canvas.brief;
   const locale = useLocale();
   const [editing, setEditing] = useState(false);
   const b = detail.creative.brief;
-  if (editing) {
+  if (editing && readOnly === null) {
     return (
       <div className="ms-cv-tabbody ms-cv-brief-edit">
         <Button size="sm" variant="ghost" className="ms-cv-brief-back" onClick={() => setEditing(false)}><Icon name="back" size={13} />{c.back}</Button>
@@ -1198,7 +1203,8 @@ function BriefTab({ project, detail, presets, disabled, formatLabel, onChanged }
       {row(c.services, servicesSummary(b.services, t))}
       <CreativeTokens project={project} creative={detail.slug} versions={detail.versions}
         refresh={`${detail.versions.map((v) => `${v.n}:${v.status}`).join(',')}|${detail.creative.status}|${detail.creative.updatedAt}`} />
-      <Button variant="outline" className="ms-cv-brief-edit-btn" onClick={() => setEditing(true)}><Icon name="edit" size={13} />{c.edit}</Button>
+      {readOnly !== null ? <p className="ms-cv-note" role="note">{readOnly}</p> : null}
+      <Button variant="outline" className="ms-cv-brief-edit-btn" disabled={readOnly !== null} onClick={() => setEditing(true)}><Icon name="edit" size={13} />{c.edit}</Button>
     </div>
   );
 }

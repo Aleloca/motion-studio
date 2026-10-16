@@ -12,8 +12,12 @@ import { at, detailFor, groupOf, HOST, version } from './support/variants.ts';
 
 vi.setConfig({ testTimeout: 45_000 });
 let group: VariantGroup = groupOf(['a', 'b']);
-const vs = [version(1, 'Dal brief'), version(2, 'Più chiaro')];
-const build = (c: string) => detailFor(c, vs, group);
+let vs = [version(1, 'Dal brief'), version(2, 'Più chiaro')];
+let withLocales = false;
+const build = (c: string) => {
+  const d = detailFor(c, vs, group);
+  return withLocales ? { ...d, creative: { ...d.creative, brief: { ...d.creative.brief, locales: { primary: 'it', extra: ['en'] } } } } : d;
+};
 const api = {
   getFormats: vi.fn(async () => ({ presets: DEFAULT_FORMATS, error: null, path: '/x' })),
   getCreative: vi.fn(async (_s: string, c: string) => build(c)),
@@ -48,7 +52,7 @@ function Harness({ creative }: { creative: string }) {
     </ShellContext.Provider></I18nProvider>
   );
 }
-beforeEach(() => { vi.clearAllMocks(); group = groupOf(['a', 'b']); __resetPendingPins(); localStorage.clear(); });
+beforeEach(() => { vi.clearAllMocks(); group = groupOf(['a', 'b']); vs = [version(1, 'Dal brief'), version(2, 'Più chiaro')]; withLocales = false; __resetPendingPins(); localStorage.clear(); });
 
 describe('the ★ in the format view of a variant', () => {
   for (const [creative, letter] of [[HOST, 'a'], [`${HOST}~b`, 'b']] as const) {
@@ -70,5 +74,31 @@ describe('the ★ in the format view of a variant', () => {
     render(<Harness creative={`${HOST}~b`} />);
     const bar = document.querySelector('.ms-topbar') as HTMLElement;
     expect((await within(bar).findByRole('button', { name: /Apri le sue versioni/ })).textContent).toContain('★ v1');
+  });
+});
+
+describe('final wave I2: a discarded variant is read-only in its format view', () => {
+  const composed = () => [{ ...version(1, 'Dal brief'), compositions: [{ format: 'instagram-post-1x1', dir: 'compositions/instagram-post-1x1', hash: 'a'.repeat(64), problems: [] }] }];
+  it('"Duplica formato" and "Lingue" are disabled with the reason; an active variant keeps them', async () => {
+    vs = composed();
+    withLocales = true;
+    group = groupOf(['a', 'b'], {}, { b: { status: 'discarded' } });
+    const { unmount } = render(<Harness creative={`${HOST}~b`} />);
+    const bar = document.querySelector('.ms-topbar') as HTMLElement;
+    await waitFor(() => expect(bar.querySelector('.ms-fv-duplicate')).not.toBeNull());
+    const reason = 'Variante scartata: ripristinala per lavorarci';
+    const dup = bar.querySelector('.ms-fv-duplicate') as HTMLButtonElement;
+    expect(dup.disabled).toBe(true);
+    expect(dup.title).toBe(reason);
+    const langs = bar.querySelector('.ms-cv-languages') as HTMLButtonElement;
+    expect(langs.disabled).toBe(true);
+    expect(langs.title).toBe(reason);
+    unmount();
+    group = groupOf(['a', 'b']);
+    render(<Harness creative={`${HOST}~b`} />);
+    const bar2 = document.querySelector('.ms-topbar') as HTMLElement;
+    await waitFor(() => expect(bar2.querySelector('.ms-fv-duplicate')).not.toBeNull());
+    expect((bar2.querySelector('.ms-fv-duplicate') as HTMLButtonElement).disabled).toBe(false);
+    expect((bar2.querySelector('.ms-cv-languages') as HTMLButtonElement).disabled).toBe(false);
   });
 });
