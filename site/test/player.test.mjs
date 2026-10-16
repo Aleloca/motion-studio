@@ -90,7 +90,7 @@ test('fallback to poster on error and timeout', () => {
   b.player.update(S({ near: true }));
   b.fire();
   assert.ok(b.frame.removed && b.classes.has('is-failed'));
-  assert.equal(READY_TIMEOUT_MS, 8000);
+  assert.equal(READY_TIMEOUT_MS, 20000);
 
   const c = harness();
   c.player.update(S({ near: true }));

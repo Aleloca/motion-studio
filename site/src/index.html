@@ -22,6 +22,17 @@
 <link rel="preload" href="assets/fonts/InstrumentSans.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="css/tokens.css">
 <link rel="stylesheet" href="css/site.css">
+<script>
+  // Motion starts hidden only when it is allowed, and is undone if the page script never takes over.
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    document.documentElement.classList.add('js-motion');
+    setTimeout(function () { if (!document.documentElement.classList.contains('motion-ready')) document.documentElement.classList.remove('js-motion'); }, 4000);
+  }
+</script>
+<script defer src="vendor/gsap/gsap.min.js"></script>
+<script defer src="vendor/gsap/ScrollTrigger.min.js"></script>
+<script defer src="vendor/gsap/SplitText.min.js"></script>
+<script type="module" src="js/main.js"></script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to content</a>
@@ -59,7 +70,7 @@
 
       <svg class="frames" viewBox="-10 -10 360 320" aria-hidden="true" focusable="false">
         <rect class="frames__draft" x="0" y="0" width="200" height="200" rx="44"/>
-        <rect class="frames__comp" x="70" y="50" width="200" height="200" rx="44"/>
+        <rect class="frames__comp" x="70" y="50" width="200" height="200" rx="44" pathLength="1"/>
         <rect class="frames__video" x="140" y="100" width="200" height="200" rx="44"/>
         <path class="frames__play" d="M207.62 164Q207.62 154 216.31 158.94L279.88 195.06Q288.58 200 279.88 204.94L216.31 241.06Q207.62 246 207.62 236Z"/>
       </svg>

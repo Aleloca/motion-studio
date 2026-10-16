@@ -3,7 +3,9 @@
 // The figure keeps its poster image underneath: it shows until the runtime is ready, and for good if it fails.
 import { decide } from './player-logic.js';
 
-export const READY_TIMEOUT_MS = 8000;
+// Generous: the poster covers the frame until the runtime is ready, so a slow first load costs nothing visible. A cold
+// first composition (runtime, preview.js and fonts) took over 8 s on a slow machine.
+export const READY_TIMEOUT_MS = 20000;
 
 export class CompositionPlayer {
   /**

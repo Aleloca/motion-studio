@@ -198,3 +198,17 @@ code, pre { font-family: var(--f-mono); font-size: .9em; }
 .site-footer__links a { color: var(--c-muted); text-decoration: none; }
 .site-footer__links a:hover { color: var(--c-text); }
 .site-footer p { flex-basis: 100%; margin: 0; }
+
+/* Motion: hidden starting states, only under html.js-motion (added before first paint when motion is allowed). */
+.brief__caret { animation: caret 1s steps(1) infinite; }
+.brief__caret.is-done { animation-duration: 1.4s; }
+@keyframes caret { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .brief__caret { animation: none; } }
+.js-motion .hero__title { opacity: 0; }
+.js-motion .hero__lede, .js-motion .hero__actions, .js-motion .hero__top > .eyebrow, .js-motion .brief { opacity: 0; transform: translateY(24px); }
+.js-motion .brief__chips li, .js-motion .brief__generate { opacity: 0; transform: scale(.8); }
+.js-motion .frames { opacity: 0; }
+.js-motion .hero__formats .comp { opacity: 0; transform: translateY(60px) scale(.96); }
+.js-motion .features__head > *, .js-motion .feature__text > *, .js-motion .showcase .wrap > :not(.showcase__grid),
+.js-motion .card, .js-motion .install__head > *, .js-motion .way { opacity: 0; transform: translateY(32px); }
+.js-motion .feature .comp { opacity: 0; clip-path: inset(12% 12% 12% 12% round 20px); transform: scale(1.04); }

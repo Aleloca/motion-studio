@@ -1,0 +1,2 @@
+GSAP 3.13.0, ScrollTrigger 3.13.0 and SplitText 3.13.0, unmodified minified builds from the gsap npm package.
+Copyright 2025, GreenSock. Used under the GSAP Standard "no charge" license: https://gsap.com/standard-license

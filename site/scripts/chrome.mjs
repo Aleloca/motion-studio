@@ -21,7 +21,7 @@ export async function launchChrome() {
     '--remote-debugging-port=0', '--no-first-run', '--no-default-browser-check', '--disable-extensions',
     '--autoplay-policy=no-user-gesture-required', '--hide-scrollbars', 'about:blank',
   ], { stdio: ['ignore', 'ignore', 'pipe'] });
-  const stop = () => { if (proc.exitCode === null) proc.kill('SIGKILL'); rmSync(profile, { recursive: true, force: true }); };
+  const stop = () => { if (proc.exitCode === null) proc.kill('SIGKILL'); rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); };
   const wsUrl = await new Promise((resolve, reject) => {
     let buf = '';
     const timer = setTimeout(() => reject(new Error(`Chrome did not start: ${buf.slice(-400)}`)), 60000);
@@ -43,7 +43,7 @@ export async function launchChrome() {
     async close() {
       try { await browser.send('Browser.close'); } catch { /* already gone */ }
       await new Promise((r) => { if (proc.exitCode !== null) r(); else { proc.once('exit', r); setTimeout(() => { if (proc.exitCode === null) proc.kill('SIGKILL'); r(); }, 5000); } });
-      rmSync(profile, { recursive: true, force: true });
+      rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     },
   };
 }
