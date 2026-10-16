@@ -20,6 +20,7 @@ import { jobFinalTokens, jobLiveTokens, jobUsagePartial, todayTokens } from '../
 import { formatTokens, TokenCount } from './Tokens.tsx';
 import { ProblemList } from '../components/ProblemList.tsx';
 import { svgRefusalsOf } from '../screens/svgRefusals.ts';
+import { jobVariantLetter } from '../screens/variants/variantModel.ts';
 
 /** Results kept in the Done tab (the latest of this session). */
 export const DONE_MAX = 20;
@@ -274,8 +275,18 @@ function TodayFooter({ tokens }: { tokens: number | null }) {
   );
 }
 
+/** Phase 15: " · B" after a variant's job (a sister from its slug; the host's "A" when its creative lists a group); empty otherwise. */
+function useVariantTag(job: JobSummary): string {
+  const shell = useContext(ShellContext);
+  if (job.kind !== 'creative') return '';
+  const at = jobPlace(job);
+  const letter = at?.creative ? jobVariantLetter(at.creative, shell?.catalog.creatives[at.project]) : null;
+  return letter ? ` · ${letter.toUpperCase()}` : '';
+}
+
 function RunningRow({ job, step, tokens, partial, events }: { job: JobSummary; step: string | null; tokens: number | null; partial: boolean; events?: AgentEvent[] }) {
   const t = useT();
+  const tag = useVariantTag(job);
   const queued = job.state === 'queued';
   return (
     // Phase 13: the same Stop menu as the conversation (a creative or console turn can also be redirected; the others have Stop only).
@@ -287,8 +298,8 @@ function RunningRow({ job, step, tokens, partial, events }: { job: JobSummary; s
     )}>
       <span className={cx('ms-activity-glyph', queued && 'ms-muted')}>{queued ? <Icon name="clock" size={14} /> : <Spinner decorative />}</span>
       <span className="ms-activity-text">
-        <b>{job.label}</b>
-        <span className="ms-activity-sub">{queued ? t.web.shell.activity.queued : step ?? t.web.jobState.running}</span>
+        <b>{job.label}{tag}</b>
+        <span className="ms-activity-sub">{queued ? (job.waitReason ? t.web.variantGroup.waitReasons[job.waitReason] : t.web.shell.activity.queued) : step ?? t.web.jobState.running}</span>
       </span>
       <TokenCount tokens={tokens} live partial={partial} className="ms-activity-tokens" />
     </Row>
@@ -338,6 +349,7 @@ function ConsoleMessage({ job, events }: { job: JobSummary; events?: AgentEvent[
 /** What a finished job did: the version a generation made, the reason of a failure, its notes; else its state. */
 function DoneRow({ job, made, failure, tokens, partial }: { job: JobSummary; made: Made | null; failure: string | null; tokens: number | null; partial: boolean }) {
   const t = useT();
+  const tag = useVariantTag(job);
   const a = t.web.shell.activity;
   const locale = useLocale();
   const ok = job.state === 'succeeded';
@@ -352,7 +364,7 @@ function DoneRow({ job, made, failure, tokens, partial }: { job: JobSummary; mad
     <Row job={job} after={refusals.length > 0 ? <ProblemList className="ms-activity-details" problems={refusals} /> : undefined}>
       <span className={cx('ms-activity-mark', ok ? 'ms-ok' : 'ms-warn')}><Icon name={ok ? 'check' : 'warn'} size={11} strokeWidth={2} /></span>
       <span className="ms-activity-text ms-line">
-        <b>{job.label}</b>
+        <b>{job.label}{tag}</b>
         <span className="ms-activity-sub">{what}</span>
       </span>
       <span className="ms-activity-side">

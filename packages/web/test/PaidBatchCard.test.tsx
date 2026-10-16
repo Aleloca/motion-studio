@@ -70,3 +70,58 @@ describe('PaidBatchCard', () => {
     expect(screen.getByRole('button', { name: 'Allow' })).toBeTruthy();
   });
 });
+
+// Phase 15 (decision 843): the one confirmation of a variant run.
+describe('PaidBatchCard · a variant run', () => {
+  const run: ApprovalRequest = {
+    ...batch, id: 'v1', title: 'Paid services for 3 variants', toolName: 'provider:variant-batch', alwaysRule: null,
+    paidBatch: {
+      provider: 'elevenlabs',
+      calls: [
+        { label: 'Variant A · Voice (ElevenLabs)', chars: 120 }, { label: 'Variant B · Voice (ElevenLabs)', chars: 120 },
+        { label: 'Variant B · Music (ElevenLabs)', chars: 0 }, { label: 'Variant C · Images (OpenAI)', chars: 0 }, { label: 'Variant C · Voice (ElevenLabs)', chars: 90 },
+      ],
+      items: [
+        { variant: 'a', provider: 'elevenlabs', capability: 'voice', chars: 120, estimate: '$0.04' },
+        { variant: 'b', provider: 'elevenlabs', capability: 'voice', chars: 120 },
+        { variant: 'b', provider: 'elevenlabs', capability: 'music', seconds: 10 },
+        { variant: 'c', provider: 'openai', capability: 'images' },
+        { variant: 'c', provider: 'elevenlabs', capability: 'voice', chars: 90 },
+      ],
+      total: { variants: 3, calls: 5, providers: [{ provider: 'elevenlabs', calls: 4 }, { provider: 'openai', calls: 1 }], chars: 330, seconds: 10, estimate: '$0.50' },
+    },
+  };
+  it('a mixed-provider batch names every provider and lists the estimated calls of each variant, never a price', () => {
+    render(ui(run));
+    const card = screen.getByRole('group', { name: 'Paid services for 3 variants' });
+    expect(within(card).getByText('Motion Studio will make about 5 paid calls: ElevenLabs 4, OpenAI 1.')).toBeTruthy();
+    expect(within(card).getByText('Estimated calls (price not known)')).toBeTruthy();
+    const list = within(card).getByRole('list', { name: 'Calls per variant' });
+    expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+      'Variant A · Voice (ElevenLabs)120 characters', 'Variant B · Voice (ElevenLabs)120 characters', 'Variant B · Music (ElevenLabs)10 s',
+      'Variant C · Images (OpenAI)', 'Variant C · Voice (ElevenLabs)90 characters',
+    ]);
+    expect(within(card).getByText('ElevenLabs, OpenAI')).toBeTruthy();
+    // No price anywhere, even though an estimate sits in the data.
+    expect(card.textContent).not.toMatch(/\$|Estimate \d|€/);
+    expect(within(card).queryByText('Estimate not available')).toBeNull();
+  });
+  it('a single-provider batch says it plainly, and the approval flow is the same', async () => {
+    const one: ApprovalRequest = { ...run, paidBatch: { ...run.paidBatch!, total: { variants: 3, calls: 3, providers: [{ provider: 'elevenlabs', calls: 3 }] } } };
+    render(ui(one));
+    expect(screen.getByText('Motion Studio will make 3 paid calls to ElevenLabs.')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    expect(api.decideApproval).toHaveBeenCalledWith('v1', 'once');
+    expect(screen.queryByRole('button', { name: 'Always here' })).toBeNull();
+  });
+  it('is in Italian', () => {
+    render(<I18nProvider locale="it"><PaidBatchCard approval={run} /></I18nProvider>);
+    expect(screen.getByText('Motion Studio farà circa 5 chiamate a pagamento: ElevenLabs 4, OpenAI 1.')).toBeTruthy();
+    expect(screen.getByText('Chiamate stimate (prezzo non noto)')).toBeTruthy();
+  });
+  it('a phase 12 batch without items is exactly as before', () => {
+    render(ui());
+    expect(screen.queryByRole('list', { name: 'Calls per variant' })).toBeNull();
+    expect(screen.getByText('Estimate $0.25')).toBeTruthy();
+  });
+});

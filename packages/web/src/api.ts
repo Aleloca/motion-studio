@@ -1,4 +1,4 @@
-import type { LocaleTag, Localization, LocalizationIssue, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, AgentCapabilities, ApprovalDecision, ApprovalRequest, LiveMessageOutcome, RedirectOutcome, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, UpdatesState, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings, StorePack } from '@motion-studio/shared';
+import type { LocaleTag, Localization, LocalizationIssue, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, AgentCapabilities, ApprovalDecision, ApprovalRequest, LiveMessageOutcome, RedirectOutcome, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, UpdatesState, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings, StorePack, VariantLetter, VariantPick } from '@motion-studio/shared';
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
 
@@ -91,6 +91,12 @@ export type LocalizedCompositionView = EditorCompositionView & { localization: {
 export interface StorePackExportResult { folder: string; written: string[]; failed: Array<{ file: string; reason: string }>; notInPack?: string[]; rendered?: Array<{ version: number; formats: string[]; locale?: string }> }
 /** "Render anyway" and the languages of a render or an export (Phase 12 §3.5). */
 export interface LocaleOptions { locales?: string[]; force?: boolean }
+
+/** What `POST …/variants/run` answers (202): by variant letter; see the core's `FanoutResult`. */
+export interface VariantRunResult {
+  jobs: Partial<Record<VariantLetter, string>>; queued: VariantLetter[]; skipped: VariantLetter[]; failed: Partial<Record<VariantLetter, string>>;
+  directionsJobId?: string; batchId?: string;
+}
 
 export interface CodebaseCheck { path: string; note?: string; exists: boolean }
 const enc = (rel: string) => rel.split('/').map(encodeURIComponent).join('/');
@@ -203,7 +209,22 @@ export const api = {
   recentCreatives: (limit?: number) => request<RecentCreative[]>('GET', `/api/recent-creatives${limit === undefined ? '' : `?limit=${limit}`}`),
   listCreatives: (slug: string) => request<CreativeListItem[]>('GET', `${p(slug)}/creatives`),
   createCreative: (slug: string, body: { title: string; brief: Brief; generate: boolean; linkedCodebases?: LinkedCodebase[] }) =>
-    request<{ slug: string; creative: CreativeFile; job: JobSummary | null }>('POST', `${p(slug)}/creatives`, body),
+    request<{ slug: string; creative: CreativeFile; job: JobSummary | null; /** Phase 15: an identity creative with concepts > 1 starts its variants (no single job). */ variantRun?: VariantRunResult; /** The start failed after the group existed: the slug is still good. */ startError?: string }>('POST', `${p(slug)}/creatives`, body),
+  /** Phase 15: creates sisters (no turn starts). With no group, `count` is the whole group size, A included (2..5), and `directions[0]` is A's. */
+  addVariants: (slug: string, creative: string, body: { count?: number; directions?: Array<string | null>; baseFrom?: VariantPick }) =>
+    request<CreativeDetail>('POST', `${c(slug, creative)}/variants`, body),
+  /** Phase 15: starts the first generation (`request` null) or `request` in the target variants; answers at once (202). */
+  runVariants: (slug: string, creative: string, body: { targets: VariantLetter[] | 'all-active'; request: { text?: string; pins?: Pin[]; formats?: string[] } | null }) =>
+    request<VariantRunResult>('POST', `${c(slug, creative)}/variants/run`, body),
+  discardVariant: (slug: string, creative: string, letter: VariantLetter) => request<CreativeDetail>('POST', `${c(slug, creative)}/variants/${letter}/discard`),
+  restoreVariant: (slug: string, creative: string, letter: VariantLetter) => request<CreativeDetail>('POST', `${c(slug, creative)}/variants/${letter}/restore`),
+  useVariantForAll: (slug: string, creative: string, letter: VariantLetter) => request<CreativeDetail>('POST', `${c(slug, creative)}/variants/${letter}/use-for-all`),
+  /** The group's ★ of a format (`null` clears it). */
+  setVariantPick: (slug: string, creative: string, formatId: string, pick: VariantPick | null) =>
+    request<CreativeDetail>('PUT', `${c(slug, creative)}/variants/picks/${encodeURIComponent(formatId)}`, pick),
+  setVariantLayout: (slug: string, creative: string, layout: 'variant' | 'format') => request<CreativeDetail>('PUT', `${c(slug, creative)}/variants/layout`, { layout }),
+  setVariantDirection: (slug: string, creative: string, letter: VariantLetter, direction: string) =>
+    request<CreativeDetail>('PUT', `${c(slug, creative)}/variants/${letter}/direction`, { direction }),
   /** Creates an App store pack creative (Phase 12 §4.1): the core builds the brief from the choices and checks every app screen. */
   createStorePack: (slug: string, body: { title: string; storePack: StorePack; generate?: boolean }) =>
     request<{ slug: string; creative: CreativeFile; job: JobSummary | null }>('POST', `${p(slug)}/creatives/store-pack`, body),

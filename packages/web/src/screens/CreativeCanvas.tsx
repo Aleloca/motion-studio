@@ -5,7 +5,7 @@
 // format view (screens/FormatView.tsx) with T3.
 import { ProblemList } from '../components/ProblemList.tsx';
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
-import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, outputWarningText, shownTotal, packInstancesOf, type ConversationEntry, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
+import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, outputWarningText, shownTotal, packInstancesOf, MAX_VARIANTS, nextLetter, type ConversationEntry, type CreativeDetail, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VariantLetter, type VariantMember, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../api.ts';
@@ -20,7 +20,7 @@ import { href, routeKey } from '../routes.ts';
 import { useBarClaim } from '../shell/barSlots.ts';
 import { setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } from '../shell/intents.ts';
 import { go, ShellContext } from '../shell/ShellContext.tsx';
-import { Button, ChannelMark, Empty, Icon, Input, Pill, Spinner, Tabs, Tag, Toggle, cx, toast } from '../ui/index.ts';
+import { Button, ChannelMark, Empty, Icon, Input, Pill, Segmented, Spinner, Tabs, Tag, Toggle, cx, toast } from '../ui/index.ts';
 import { useCreative } from '../useCreative.ts';
 import { jobLiveTokens, jobUsagePartial } from '../usageLive.ts';
 import { costText, TokenCount, UsageBadge } from '../shell/Tokens.tsx';
@@ -43,6 +43,15 @@ import { message } from './common.tsx';
 import { isVideoFile } from '../media.ts';
 import { usePinFrames } from './pinFrames.ts';
 import { rangeSeconds } from './pinModel.ts';
+import { retryTurn } from './creativeState.ts';
+import { AddVariantDialog, EditDirectionDialog, type BaseChoice } from './variants/AddVariantDialog.tsx';
+import { FinalSelection } from './variants/FinalSelection.tsx';
+import { GroupStar } from './variants/GroupStar.tsx';
+import { useVariantMembers } from './variants/useVariantMembers.ts';
+import { VariantRowHeader } from './variants/VariantRowHeader.tsx';
+import type { ChatTarget } from './variants/VariantSelector.tsx';
+import { discardBlock, finalSelection, fitGrouped, isRunning, memberLive, rowState, shownMembers, upper } from './variants/variantModel.ts';
+import './variants/variants.css';
 
 const ZOOM_MIN = 0.5;
 /** T4 only while the player's rect is fresh (boards that arrive later cascade in). */
@@ -62,7 +71,24 @@ export interface CreativeCanvasProps {
   onSettings?(next: WorkspaceSettings): void;
 }
 
-export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSettings }: CreativeCanvasProps) {
+/** Phase 15: what the page remembers about a variant group while the open variant changes (the body remounts on a change). */
+interface VariantUi { route: string; focus: string | null; all: boolean; showDiscarded: boolean }
+type CanvasBodyProps = CreativeCanvasProps & { routeCreative: string; variantUi: VariantUi; onVariantUi(patch: Partial<Omit<VariantUi, 'route'>>): void };
+
+/**
+ * The canvas of a creative. Outside a variant group this is the creative's canvas and nothing else. In a group the same canvas
+ * works on the variant the user picked (chat, versions, comments, brief), and shows the other variants' boards beside it.
+ */
+export function CreativeCanvas(props: CreativeCanvasProps) {
+  const [ui, setUi] = useState<VariantUi>({ route: props.creative, focus: null, all: false, showDiscarded: false });
+  const own: VariantUi = ui.route === props.creative ? ui : { route: props.creative, focus: null, all: false, showDiscarded: false };
+  return (
+    <CanvasBody key={own.focus ?? 'route'} {...props} creative={own.focus ?? props.creative} routeCreative={props.creative} variantUi={own}
+      onVariantUi={(patch) => setUi({ ...own, ...patch })} />
+  );
+}
+
+function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, onSettings, variantUi, onVariantUi }: CanvasBodyProps) {
   const t = useT();
   const integrity = useIntegrity(slug, live);
   const c = t.web.canvas;
@@ -70,9 +96,13 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
   const shell = useContext(ShellContext);
   const root = useRef<HTMLDivElement>(null);
   const { detail, conversation, error, reload } = useCreative(slug, creative, live.creativeTicks[`${slug}/${creative}`] ?? 0);
+  // Phase 15: the variant group of this creative; null outside any group, and for an orphan sister (it opens as a single creative).
+  const vdetail = detail?.variants;
+  const group = vdetail && !vdetail.orphan ? vdetail : null;
+  const members = useVariantMembers(slug, group?.group ?? null, creative, group?.missing ?? [], live.creativeTicks);
 
   // This page owns the creative bar only while it is the route's page (a leaving page stays mounted ~200 ms).
-  const ownKey = routeKey({ name: 'creative', slug, creative });
+  const ownKey = routeKey({ name: 'creative', slug, creative: routeCreative });
   const active = !shell || routeKey(shell.route) === ownKey;
   const bar = useBarClaim(ownKey, active);
 
@@ -116,7 +146,9 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
   // T11: a new version → toast and a spring on the version badge (the frames reveal themselves on load).
   useNewVersionNotice(Boolean(detail), latest?.n ?? null, active, versionButton);
 
-  const myApprovals = useMemo(() => Object.values(live.approvals).filter((a) => a.projectSlug === slug && a.creativeSlug === creative), [live.approvals, slug, creative]);
+  // The one paid-services card of a variant run belongs to the group (it is filed under the host): every variant's chat shows it.
+  const myApprovals = useMemo(() => Object.values(live.approvals).filter((a) => a.projectSlug === slug
+    && (a.creativeSlug === creative || (a.kind === 'paid-batch' && group?.group.members.some((m) => m.slug === a.creativeSlug)))), [live.approvals, slug, creative, group]);
   const job = useMemo(() => {
     if (!detail) return undefined;
     const mine = Object.values(live.jobs).filter((j) => j.key === detail.jobKey);
@@ -244,7 +276,9 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
   // Version actions.
   const [actionError, setActionError] = useState<string | null>(null);
   const formatLabel = (id: string) => boardLabel({ id, preset: presetFor(presets, id), out: null, labels: detail?.creative.brief.formatLabels }, locale);
-  const actions = useVersionActions({ slug, creative, states, labelOf: formatLabel, resumeFrom: detail?.creative.resumeFrom?.version ?? null, onChanged: reload, onError: setActionError });
+  const actions = useVersionActions({ slug, creative, states, labelOf: formatLabel, resumeFrom: detail?.creative.resumeFrom?.version ?? null, onChanged: reload, onError: setActionError,
+    // In a variant group the ★ is the group's: variant and version, written through the host.
+    ...(group ? { groupPick: (format: string, n: number | null) => api.setVariantPick(slug, group.host, format, n === null ? null : { slug: creative, version: n }) } : {}) });
   // Renders of v2 versions (Task 8): a board's Retry and its menu's "Render vN", and the bar's "Render ★".
   const jobList = useMemo(() => Object.values(live.jobs), [live.jobs]);
   // A creative with languages asks which ones first (Phase 12); the others render at once.
@@ -277,6 +311,12 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
   };
   const [exporting, setExporting] = useState<{ open: boolean; snapshot: ExportSnapshot } | null>(null);
   const [packExport, setPackExport] = useState(false);
+  // Phase 15: variant UI state: a selected board of another variant (`<letter>:<format>`), the dialogs, a busy member.
+  const [vsel, setVsel] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [editDir, setEditDir] = useState<VariantMember | null>(null);
+  const [exportingMember, setExportingMember] = useState<{ open: boolean; detail: CreativeDetail; snapshot: ExportSnapshot } | null>(null);
+  const [vbusy, setVbusy] = useState<string | null>(null);
   // Phase 14: the instances of the creative's store pack (`storePackFormats`); a store preset picked by hand is not one of them.
   const storePack = detail?.creative.brief.storePack;
   const packIds = useMemo(() => new Set(storePack ? packInstancesOf(storePack) : []), [storePack]);
@@ -331,13 +371,27 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
   // The canvas opens fitted: every board visible in the viewport (never above 100%). Until the user zooms, it refits
   // when the viewport or the boards change size (a window resize, a format added); after that the zoom is theirs.
   const userZoomed = useRef(false);
-  const fitKey = boards.map((b) => `${b.id}:${b.preset?.width ?? 0}x${b.preset?.height ?? 0}`).join('|');
+  // Phase 15: in a variant group the boards of every shown variant share the canvas; the zoom fits the widest row.
+  const layout = group?.group.layout ?? 'variant';
+  const modelOf = (d: CreativeDetail) => {
+    const st = formatStates(d, presets);
+    return { st, bs: boardsWith(d.creative.brief.formats, presets, d.versions, (id) => boardSource(st, id, {}), d.creative.brief.formatLabels) };
+  };
+  const shownMs = group ? shownMembers(group.group, variantUi.showDiscarded).filter((m) => !group.missing.includes(m.letter)) : [];
+  const boardsOfMember = (m: VariantMember): Array<BoardModel & { n: number | null }> => (m.slug === creative ? boards : members[m.slug] ? modelOf(members[m.slug]!).bs : []);
+  const fitRows = group
+    ? layout === 'variant' ? shownMs.map(boardsOfMember).filter((r) => r.length > 0)
+      : (detail?.creative.brief.formats ?? []).map((id) => shownMs.flatMap((m) => boardsOfMember(m).filter((b) => b.id === id))).filter((r) => r.length > 0)
+    : null;
+  const fitKey = group
+    ? `g:${layout}:${shownMs.map((m) => `${m.letter}=${boardsOfMember(m).map((b) => `${b.id}:${b.preset?.width ?? 0}x${b.preset?.height ?? 0}`).join(',')}`).join('|')}`
+    : boards.map((b) => `${b.id}:${b.preset?.width ?? 0}x${b.preset?.height ?? 0}`).join('|');
   useLayoutEffect(() => {
     const v = viewport.current;
     if (!v || !boards.length) return;
     const fit = () => {
       if (userZoomed.current) return;
-      const z = fitBoards(boards, { width: v.clientWidth, height: v.clientHeight }, ZOOM_MIN);
+      const z = fitRows ? fitGrouped(fitRows, layout === 'variant' ? 'world' : 'line', v.clientWidth, ZOOM_MIN) : fitBoards(boards, { width: v.clientWidth, height: v.clientHeight }, ZOOM_MIN);
       if (z !== null) setZoom((cur) => (Math.abs(cur - z) < 1e-6 ? cur : z));
     };
     fit();
@@ -353,7 +407,9 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
   const [starting, setStarting] = useState(false);
   const generate = () => {
     setStarting(true);
-    Promise.resolve().then(() => api.sendCreativeTurn(slug, creative, {}))
+    // A group that has not started yet starts every variant (one paid-services card); otherwise only the open one.
+    const fresh = group !== null && shownMs.every((m) => m.status !== 'active' || m.slug === creative || (members[m.slug]?.versions.length ?? 0) === 0);
+    Promise.resolve().then((): Promise<unknown> => (fresh && group ? api.runVariants(slug, group.host, { targets: 'all-active', request: null }) : api.sendCreativeTurn(slug, creative, {})))
       .then(() => { setViewing({}); reload(); })
       .catch((e: unknown) => toast.show(c.generateFailed({ detail: message(e) })))
       .finally(() => setStarting(false));
@@ -416,13 +472,30 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
     const shownVersion = b.n !== null ? versions.find((v) => v.n === b.n) : undefined;
     const r = boardRender(shownVersion, b.id, jobList, detail.jobKey);
     const canRender = b.n !== null && r !== null && r.kind !== 'queued' && r.kind !== 'rendering';
-    return {
-      badge: <FormatBadge slug={slug} creative={creative} label={formatLabel(b.id)} state={s} versions={versions} shown={b.n} resumeFrom={cr.resumeFrom?.version ?? null}
+    // Phase 15: in a group the badge shows the GROUP's ★ (this variant's version when it is the chosen one), and the board has its own ★ button.
+    const own = group ? ownPick(b.id) : null;
+    const badge = (
+      <FormatBadge slug={slug} creative={creative} label={formatLabel(b.id)} state={group ? { ...s, star: { ...s.star, version: own, manual: own !== null, newer: null } } : s}
+        versions={versions} shown={b.n} resumeFrom={cr.resumeFrom?.version ?? null}
         labelOf={formatLabel} actions={actions} busy={busyLinks} onView={(v) => view(b.id, v)} onCompare={() => openCompare(b.id)}
-        render={canRender ? { n: b.n!, run: () => renderNow([[b.n!, [b.id]]]) } : null} />,
+        render={canRender ? { n: b.n!, run: () => renderNow([[b.n!, [b.id]]]) } : null} {...(group ? { unstarred: true } : {})} />
+    );
+    return {
+      badge: group && b.n !== null ? (
+        <>
+          <GroupStar label={formatLabel(b.id)} variant={upper(group.letter)} n={b.n} picked={own === b.n} pending={actions.pending(b.id)}
+            onToggle={() => { if (own === b.n) actions.resetStar(b.id); else actions.star(b.id, b.n!); }} />
+          {badge}
+        </>
+      ) : badge,
       note: null,
     };
   };
+  /** The group's ★ of `format` when it is this variant's, else null. */
+  function ownPick(format: string): number | null {
+    const p = group?.group.picks[format];
+    return p && p.slug === creative ? p.version : null;
+  }
   /** A v2 board: the composition it shows (a follower's primary's), its render state and Retry. */
   const compositionFor = (b: BoardModel & { n: number | null }) => {
     if (b.n === null) return null;
@@ -432,49 +505,18 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
     const render = boardRender(v, src, jobList, detail.jobKey);
     return comp && render ? { n: b.n, format: src, hash: comp.hash, render, onRender: () => renderNow([[b.n!, [src]]]) } : null;
   };
-  const board = (b: BoardModel & { n: number | null }) => (
-    <CanvasBoard key={b.id} slug={slug} creative={creative} board={b} n={b.n} tool={tool} zoom={zoom} selected={sel === b.id} rendering={isRendering(rendering, b.id)} safe={safe}
+  const board = (b: BoardModel & { n: number | null }, tag?: string) => (
+    <CanvasBoard key={b.id} slug={slug} creative={creative} board={b} n={b.n} {...(tag ? { tag } : {})} {...(group ? { grouped: true } : {})} tool={tool} zoom={zoom} selected={sel === b.id} rendering={isRendering(rendering, b.id)} safe={safe}
       commentable={commentable.has(b.id)} missing={b.n === null ? latest?.n ?? null : null} {...badgeOf(b)} composition={compositionFor(b)}
       pins={commentable.has(b.id) ? pinsOf(b.id) : []} draft={commentable.has(b.id) ? draft : null} nextNumber={pins.length + 1}
-      onSelect={() => setSel(b.id)} onOpen={(el) => { if (tool === 'select') openEditor(b.id, el); }} onPlace={(x, y) => place(b.id, x, y)} onEditPin={editPin}
+      onSelect={() => { setSel(b.id); setVsel(null); }} onOpen={(el) => { if (tool === 'select') openEditor(b.id, el); }} onPlace={(x, y) => place(b.id, x, y)} onEditPin={editPin}
       onDraftText={(text) => setDraft((d) => (d ? { ...d, text } : d))} onDraftCommit={commitDraft} onDraftCancel={() => setDraft(null)}
       onDraftDelete={() => { if (draft?.index !== null && draft?.index !== undefined) removePin(draft.index); }}
     />
   );
 
-  return (
-    <div ref={root} className="ms-cv">
-      {bar?.title ? createPortal(
-        <BarTitle title={title} renaming={renaming} onStart={startRename} onChange={setRenaming} onSave={(v) => void saveTitle(v)} onCancel={() => setRenaming(null)}
-          state={<>
-            <StatePill status={cr.status} needs={myApprovals.length > 0} working={working} />
-            {/* Live tokens of the job (all its runs); nothing until its first usage event, e.g. right after a reconnect. */}
-            {working && job ? <TokenCount tokens={jobLiveTokens(live, job.id)} live partial={jobUsagePartial(live, job.id)} className="ms-cv-tokens" /> : null}
-          </>} />,
-        bar.title,
-      ) : null}
-      {bar?.end ? createPortal(
-        <>
-          {versions.length ? (
-            <VersionTimeline slug={slug} creative={creative} versions={versions} resumeFrom={cr.resumeFrom?.version ?? null} actions={actions} buttonRef={versionButton} />
-          ) : null}
-          {anyComposition ? (
-            <Button variant="outline" className="ms-cv-render-stars" disabled={starPlan.size === 0} title={starPlan.size ? t.web.render.renderStarsHint : t.web.render.renderStarsNone}
-              onClick={() => renderNow([...starPlan])}>
-              {t.web.render.renderStars}
-            </Button>
-          ) : null}
-          <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} />
-          <Button variant="ink" className="ms-cv-export" disabled={!version} onClick={() => { if (version) setExporting({ open: true, snapshot: { versions, states } }); }}>
-            <Icon name="download" size={13} strokeWidth={1.7} />{c.export}
-          </Button>
-        </>,
-        bar.end,
-      ) : null}
-
-      <aside className="ms-cv-side ms-cv-formats" aria-label={c.formatsAria}>
-        <div className="ms-cv-formats-head"><b>{c.formats}</b><span>{boards.length}</span></div>
-        {columnGroups.map(([channel, items]) => {
+  /** The formats column's channel groups of the open creative (a store pack's group included). */
+  const renderColumn = (only?: 'pack') => columnGroups.filter(([ch]) => (only ? ch === PACK_GROUP : true)).map(([channel, items]) => {
           const fmt = (b: BoardModel & { n: number | null }) => (
             <button key={b.id} type="button" className={cx('ms-navitem ms-cv-fmt', sel === b.id && 'ms-on', followsOf(b.id) && 'ms-follower')} aria-pressed={sel === b.id}
               onClick={() => { setSel(b.id); reveal(b.id); }}>
@@ -520,14 +562,244 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
               {items.map(fmt)}
             </div>
           );
-        })}
+        });
+
+  // ---- Phase 15: the pieces of a variant group (never built outside one) ---------------------------------------------
+  const vg = t.web.variantGroup;
+  const hostSlug = group?.host ?? creative;
+  const failToast = (make: (p: { detail: string }) => string) => (e: unknown) => toast.show(make({ detail: message(e) }));
+  const afterGroupChange = () => { reload(); shell?.catalog.refresh(); };
+  const detailOfMember = (sl: string): CreativeDetail | null => (sl === creative ? detail : members[sl] ?? null);
+  const pickMember = (memberSlug: string, format: string, n: number | null) => {
+    Promise.resolve().then(() => api.setVariantPick(slug, hostSlug, format, n === null ? null : { slug: memberSlug, version: n })).then(afterGroupChange).catch(failToast(vg.pickFailed));
+  };
+  const focusMember = (m: VariantMember) => onVariantUi({ focus: m.slug === routeCreative ? null : m.slug, all: false });
+  const onChatSelect = (target: ChatTarget) => {
+    if (target === 'all') { onVariantUi({ all: true }); return; }
+    const m = group?.group.members.find((x) => x.letter === target);
+    if (m) focusMember(m);
+  };
+  const liveOf = (m: VariantMember) => memberLive(live, slug, m.slug);
+  const hasVersionsOf = (m: VariantMember) => (detailOfMember(m.slug)?.versions.length ?? 0) > 0;
+  const memberActions = (m: VariantMember) => ({
+    onFocus: () => focusMember(m),
+    onUseForAll: () => {
+      Promise.resolve().then(() => api.useVariantForAll(slug, hostSlug, m.letter))
+        .then(() => { toast.show(vg.usedForAll({ letter: upper(m.letter) }), { tone: 'ok' }); afterGroupChange(); }).catch(failToast(vg.useForAllFailed));
+    },
+    onDiscard: () => {
+      setVbusy(m.letter);
+      Promise.resolve().then(() => api.discardVariant(slug, hostSlug, m.letter))
+        .then(() => { afterGroupChange(); if (m.slug === creative && hostSlug !== creative) onVariantUi({ focus: hostSlug === routeCreative ? null : hostSlug }); })
+        .catch(failToast(vg.discardFailed)).finally(() => setVbusy(null));
+    },
+    onRestore: () => {
+      setVbusy(m.letter);
+      Promise.resolve().then(() => api.restoreVariant(slug, hostSlug, m.letter)).then(afterGroupChange).catch(failToast(vg.restoreFailed)).finally(() => setVbusy(null));
+    },
+    onExport: () => {
+      const d = detailOfMember(m.slug);
+      if (d) setExportingMember({ open: true, detail: d, snapshot: { versions: d.versions, states: formatStates(d, presets) } });
+    },
+    onEditDirection: () => setEditDir(m),
+    onRetry: () => {
+      setVbusy(m.letter);
+      Promise.resolve().then(async () => api.runVariants(slug, hostSlug, { targets: [m.letter], request: retryTurn(await api.getConversation(slug, m.slug)) }))
+        .then(afterGroupChange).catch(failToast(vg.sendAllFailed)).finally(() => setVbusy(null));
+    },
+  });
+  const rowHeader = (m: VariantMember) => {
+    const lv = liveOf(m);
+    return (
+      <VariantRowHeader member={m} focused={m.slug === creative} hasVersions={hasVersionsOf(m)} busy={vbusy === m.letter} actions={memberActions(m)}
+        state={rowState(m, group!.missing.includes(m.letter), lv, detailOfMember(m.slug)?.creative.status ?? null)}
+        discardBlock={discardBlock(group!.group, m.letter, isRunning(lv))} />
+    );
+  };
+  /** A board of another variant: read-only on the canvas (its tools are on its own page), with the group ★ and its version. */
+  const memberBoard = (m: VariantMember, d: CreativeDetail, st: Record<string, FormatState>, b: BoardModel & { n: number | null }, tag?: string) => {
+    const key = `${m.letter}:${b.id}`;
+    const src = boardSource(st, b.id, {}).format;
+    const v = d.versions.find((x) => x.n === b.n);
+    const comp = b.n === null ? null : compositionOf(v, src);
+    const render = comp ? boardRender(v, src, jobList, d.jobKey) : null;
+    const pick = group!.group.picks[b.id];
+    const isPick = pick?.slug === m.slug && pick.version === b.n;
+    const mjob = Object.values(live.jobs).find((j) => j.key === d.jobKey && (j.state === 'queued' || j.state === 'running'));
+    return (
+      <CanvasBoard key={key} boardKey={key} grouped {...(tag ? { tag } : {})} slug={slug} creative={m.slug} board={b} n={b.n} tool="select" zoom={zoom} selected={vsel === key}
+        rendering={isRendering(renderingOf(mjob, st), b.id)} safe={safe} commentable={false} missing={b.n === null ? d.versions.at(-1)?.n ?? null : null}
+        badge={b.n === null ? null : (
+          <>
+            {st[b.id]?.follows ? null : <GroupStar label={formatLabel(b.id)} variant={upper(m.letter)} n={b.n} picked={isPick} onToggle={() => pickMember(m.slug, b.id, isPick ? null : b.n)} />}
+            <span className="ms-vver">v{b.n}</span>
+          </>
+        )}
+        note={null} pins={[]} draft={null} nextNumber={1}
+        composition={comp && render ? { n: b.n!, format: src, hash: comp.hash, render, onRender: () => { void Promise.resolve().then(() => api.renderVersion(slug, m.slug, b.n!, [src])).catch(failToast(t.web.render.startFailed)); } } : null}
+        onSelect={() => { setSel(null); setVsel(key); }}
+        onOpen={(el) => { setFrameOrigin(`format:${slug}/${m.slug}/${b.id}`, el.getBoundingClientRect()); go(href.format(slug, m.slug, b.id)); }}
+        onPlace={() => {}} onEditPin={() => {}} onDraftText={() => {}} onDraftCommit={() => {}} onDraftCancel={() => {}} onDraftDelete={() => {}} />
+    );
+  };
+  /** Tall boards in a row, the others stacked beside them (as the single-creative canvas). */
+  const laidOut = (list: Array<BoardModel & { n: number | null }>, make: (b: BoardModel & { n: number | null }) => ReactNode) => {
+    const tl = list.filter(isTall);
+    const rs = list.filter((b) => !isTall(b));
+    return <>{tl.map((b) => make(b))}{rs.length ? <div className="ms-cv-stack">{rs.map((b) => make(b))}</div> : null}</>;
+  };
+  const makeFor = (m: VariantMember, tag?: string): ((b: BoardModel & { n: number | null }) => ReactNode) | null => {
+    if (m.slug === creative) return (b) => board(b, tag);
+    const d = members[m.slug];
+    if (!d) return null;
+    const { st } = modelOf(d);
+    return (b) => memberBoard(m, d, st, b, tag);
+  };
+  const renderGroupedWorld = () => {
+    if (!group) return null;
+    const all = shownMembers(group.group, variantUi.showDiscarded);
+    if (layout === 'variant') {
+      return all.map((m) => {
+        const make = group.missing.includes(m.letter) ? null : makeFor(m);
+        return (
+          <section key={m.letter} className={cx('ms-vrow', m.status === 'discarded' && 'ms-discarded')} aria-label={vg.letterLabel({ letter: upper(m.letter) })} data-variant={m.letter}>
+            {rowHeader(m)}
+            <div className="ms-vrow-boards">{make ? laidOut(boardsOfMember(m), make) : null}</div>
+          </section>
+        );
+      });
+    }
+    return (
+      <>
+        <div className="ms-vstrip">{all.map((m) => <div key={m.letter} className="ms-vstrip-item">{rowHeader(m)}</div>)}</div>
+        {cr.brief.formats.map((id) => (
+          <section key={id} className="ms-vgroup" role="group" aria-label={formatLabel(id)} data-format={id}>
+            <h3 className="ms-vgroup-head">{formatLabel(id)}</h3>
+            <div className="ms-vgroup-boards">
+              {shownMs.map((m) => {
+                const b = boardsOfMember(m).find((x) => x.id === id);
+                const make = b ? makeFor(m, upper(m.letter)) : null;
+                return b && make ? <div key={m.letter} className={cx('ms-vcell', m.status === 'discarded' && 'ms-discarded')}>{make(b)}</div> : null;
+              })}
+            </div>
+          </section>
+        ))}
+      </>
+    );
+  };
+  const renderGroupedColumn = () => {
+    if (!group) return null;
+    const side = (m: VariantMember, b: BoardModel & { n: number | null }) => {
+      const pick = group.group.picks[b.id];
+      return b.n === null ? '—' : pick?.slug === m.slug && pick.version === b.n ? `★ v${b.n}` : `v${b.n}`;
+    };
+    const item = (m: VariantMember, b: BoardModel & { n: number | null }, label: string) => {
+      const key = m.slug === creative ? b.id : `${m.letter}:${b.id}`;
+      const on = m.slug === creative ? sel === b.id : vsel === key;
+      return (
+        <button key={key} type="button" className={cx('ms-navitem ms-cv-fmt', on && 'ms-on')} aria-pressed={on}
+          onClick={() => { if (m.slug === creative) { setSel(b.id); setVsel(null); } else { setSel(null); setVsel(key); } reveal(key); }}>
+          <Icon name={b.preset?.kind === 'image' ? 'image' : 'video'} size={14} />
+          <span className="ms-navitem-label">{label}</span>
+          <span className="ms-cv-fmt-side">{side(m, b)}</span>
+        </button>
+      );
+    };
+    if (layout === 'variant') {
+      return shownMembers(group.group, variantUi.showDiscarded).map((m) => (
+        <div key={m.letter} className={cx('ms-cv-group', m.status === 'discarded' && 'ms-discarded')} role="group" aria-label={`${vg.letterLabel({ letter: upper(m.letter) })}${m.direction ? ` · ${m.direction}` : ''}`}>
+          <div className="ms-cap ms-cv-group-head">{m.direction ? `${upper(m.letter)} · ${m.direction}` : upper(m.letter)}{group.missing.includes(m.letter) ? ` · ${vg.missing}` : ''}</div>
+          {m.slug === creative ? renderColumn() : boardsOfMember(m).map((b) => item(m, b, boardName(b, locale)))}
+        </div>
+      ));
+    }
+    return (
+      <>
+        {cr.brief.formats.map((id) => (
+          <div key={id} className="ms-cv-group" role="group" aria-label={formatLabel(id)}>
+            <div className="ms-cap ms-cv-group-head">{formatLabel(id)}</div>
+            {shownMs.map((m) => { const b = boardsOfMember(m).find((x) => x.id === id); return b ? item(m, b, upper(m.letter)) : null; })}
+          </div>
+        ))}
+        {storePack ? renderColumn('pack') : null}
+      </>
+    );
+  };
+  const canAdd = group ? nextLetter(group.group) !== null : false;
+  const baseChoices: BaseChoice[] = group ? group.group.members.filter((m) => m.status === 'active' && !group.missing.includes(m.letter)).flatMap((m) => {
+    const n = detailOfMember(m.slug)?.versions.at(-1)?.n;
+    return n === undefined ? [] : [{ letter: m.letter, slug: m.slug, version: n }];
+  }) : [];
+  const addVariant = async (direction: string | null, baseFrom: { slug: string; version: number } | null) => {
+    if (!group) return;
+    const had = new Set(group.group.members.map((m) => m.letter));
+    const d = await api.addVariants(slug, hostSlug, { count: 1, directions: [direction], ...(baseFrom ? { baseFrom } : {}) });
+    const added = d.variants && !d.variants.orphan ? d.variants.group.members.find((m) => !had.has(m.letter)) : undefined;
+    afterGroupChange();
+    setAddOpen(false);
+    if (added) await api.runVariants(slug, hostSlug, { targets: [added.letter], request: null }).catch(failToast(vg.startFailed));
+  };
+  const selectionRows = group ? finalSelection(group.group, cr.brief.formats, group.missing, (f) => {
+    const hd = detailOfMember(hostSlug);
+    return hd ? formatStates(hd, presets)[f]?.star.version ?? null : null;
+  }) : [];
+  const variantBar = group ? (
+    <div className="ms-vbar" role="toolbar" aria-label={vg.toolbarAria}>
+      <span className="ms-vbar-group">
+        <span className="ms-vbar-lbl">{vg.groupBy}</span>
+        <Segmented<'variant' | 'format'> label={vg.groupByAria} value={layout} onChange={(next) => {
+          Promise.resolve().then(() => api.setVariantLayout(slug, hostSlug, next)).then(afterGroupChange).catch(failToast(vg.layoutFailed));
+        }} options={[{ value: 'variant', label: vg.variant }, { value: 'format', label: vg.format }]} />
+      </span>
+      <span className="ms-cv-safe-toggle ms-vbar-toggle"><Toggle size="sm" on={variantUi.showDiscarded} onChange={(on) => onVariantUi({ showDiscarded: on })} label={vg.showDiscarded} /><span aria-hidden="true">{vg.showDiscarded}</span></span>
+      <span className="ms-grow" />
+      <FinalSelection rows={selectionRows} label={formatLabel} />
+      <Button size="sm" variant="outline" disabled={!canAdd} title={canAdd ? undefined : vg.addFull} onClick={() => setAddOpen(true)}>{vg.addVariant}</Button>
+    </div>
+  ) : null;
+
+  return (
+    <div ref={root} className="ms-cv">
+      {bar?.title ? createPortal(
+        <BarTitle title={title} renaming={renaming} onStart={startRename} onChange={setRenaming} onSave={(v) => void saveTitle(v)} onCancel={() => setRenaming(null)}
+          state={<>
+            <StatePill status={cr.status} needs={myApprovals.length > 0} working={working} />
+            {/* Live tokens of the job (all its runs); nothing until its first usage event, e.g. right after a reconnect. */}
+            {working && job ? <TokenCount tokens={jobLiveTokens(live, job.id)} live partial={jobUsagePartial(live, job.id)} className="ms-cv-tokens" /> : null}
+          </>} />,
+        bar.title,
+      ) : null}
+      {bar?.end ? createPortal(
+        <>
+          {versions.length ? (
+            <VersionTimeline slug={slug} creative={creative} versions={versions} resumeFrom={cr.resumeFrom?.version ?? null} actions={actions} buttonRef={versionButton} />
+          ) : null}
+          {anyComposition ? (
+            <Button variant="outline" className="ms-cv-render-stars" disabled={starPlan.size === 0} title={starPlan.size ? t.web.render.renderStarsHint : t.web.render.renderStarsNone}
+              onClick={() => renderNow([...starPlan])}>
+              {t.web.render.renderStars}
+            </Button>
+          ) : null}
+          <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} />
+          <Button variant="ink" className="ms-cv-export" disabled={!version} onClick={() => { if (version) setExporting({ open: true, snapshot: { versions, states } }); }}>
+            <Icon name="download" size={13} strokeWidth={1.7} />{c.export}
+          </Button>
+        </>,
+        bar.end,
+      ) : null}
+
+      <aside className="ms-cv-side ms-cv-formats" aria-label={c.formatsAria}>
+        <div className="ms-cv-formats-head"><b>{c.formats}</b><span>{boards.length}</span></div>
+        {group ? renderGroupedColumn() : renderColumn()}
       </aside>
 
       <main className="ms-cv-main" aria-label={c.canvasAria}>
+        {variantBar}
         <Notes>
           {integrity.state ? <IntegrityNotice key="integrity" slug={slug} state={integrity.state} reload={integrity.reload} /> : null}
           {presetsFailure ? <p role="alert" className="ms-cv-note ms-err">{t.web.creative.formatsLoadFailed({ detail: presetsFailure })}</p> : null}
           {catalogError ? <p className="ms-cv-note">{catalogError}</p> : null}
+          {vdetail?.orphan ? <p className="ms-cv-note ms-info" role="status">{vg.orphanNotice}</p> : null}
           {cr.resumeFrom ? <p className="ms-cv-note ms-info">{t.web.creative.resumeNote({ n: cr.resumeFrom.version })}</p> : null}
           {(cr.status === 'error' || cr.status === 'interrupted') && cr.error && !working ? <p role="alert" className="ms-cv-note ms-err">{cr.error}</p> : null}
           {version?.status === 'incomplete' ? (
@@ -553,10 +825,14 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
           }}
         >
           {/* The world is not zoomed: each board scales its frame, and its spacing follows --cv-z (canvas.css). */}
-          <div className="ms-cv-world" style={{ '--cv-z': zoom } as CSSProperties}
+          <div className={cx('ms-cv-world', group && 'ms-cv-vworld')} style={{ '--cv-z': zoom } as CSSProperties}
             aria-busy={rendering === 'all' || rendering.size > 0 ? true : undefined}>
-            {tall.map(board)}
-            {rest.length ? <div className="ms-cv-stack">{rest.map(board)}</div> : null}
+            {group ? renderGroupedWorld() : (
+              <>
+                {tall.map((b) => board(b))}
+                {rest.length ? <div className="ms-cv-stack">{rest.map((b) => board(b))}</div> : null}
+              </>
+            )}
           </div>
         </div>
         {!versions.length && !working ? (
@@ -605,6 +881,8 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
             canGenerate={versions.length === 0} onSent={({ pins: sent }) => { setStored((ps) => ps.filter((p) => !sent.includes(p.pin))); setViewing({}); reload(); }}
             onSelectVersion={viewAll} snapshots={live.snapshots}
             appliesTo={appliesTo} brief={detail.creative.brief} onBriefSaved={reload} queued={detail.creative.queued} onQueueChanged={reload}
+            {...(group ? { variants: { group: group.group, current: group.letter, all: variantUi.all, missing: group.missing, onSelect: onChatSelect,
+              runAll: (body: { text?: string; pins?: Pin[]; formats?: string[] } | null) => api.runVariants(slug, hostSlug, { targets: 'all-active', request: body }) } } : {})}
             versionExtra={(n) => <UsageBadge usage={versions.find((v) => v.n === n)?.usage} billing={live.today?.billing ?? null} />}
             versionSummary={(n) => { const v = versions.find((x) => x.n === n); return v?.origin === 'editor' && v.request ? v.request : null; }}
             versionNote={(n) => <OutputWarnings outputs={versions.find((v) => v.n === n)?.outputs ?? []} formatLabel={formatLabel} />} />
@@ -616,6 +894,21 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
         </div>
       </aside>
 
+      {group ? (
+        <>
+          <AddVariantDialog open={addOpen} onClose={() => setAddOpen(false)} bases={baseChoices} onAdd={addVariant} />
+          {editDir ? (
+            <EditDirectionDialog open onClose={() => setEditDir(null)} letter={editDir.letter} initial={editDir.direction ?? ''}
+              onSave={async (text) => { await api.setVariantDirection(slug, hostSlug, editDir.letter, text); setEditDir(null); afterGroupChange(); }} />
+          ) : null}
+          {exportingMember ? (
+            <ExportDialog open={exportingMember.open} onClose={() => setExportingMember((x) => (x ? { ...x, open: false } : x))} slug={slug} creative={exportingMember.detail.slug}
+              title={exportingMember.detail.creative.title} snapshot={exportingMember.snapshot} presets={presets} labels={exportingMember.detail.creative.brief.formatLabels}
+              pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings} jobs={live.jobs}
+              {...(creativeLocales(exportingMember.detail.creative.brief) ? { locales: creativeLocales(exportingMember.detail.creative.brief)! } : {})} />
+          ) : null}
+        </>
+      ) : null}
       {compare ? (
         <CompareDialog open={compare.open} onClose={() => setCompare((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
           versions={versions} presets={presets} labels={cr.brief.formatLabels} states={states} format={compare.format} initial={compare.init} actions={actions} />

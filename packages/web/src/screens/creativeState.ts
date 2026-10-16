@@ -1,5 +1,5 @@
 import { presetFor } from '../instances.ts';
-import type { ApprovalRequest, ConversationEntry, CreativeSummary, FormatPreset, JobSummary, Pin } from '@motion-studio/shared';
+import { sisterSlug, VARIANT_LETTERS, type ApprovalRequest, type ConversationEntry, type CreativeSummary, type FormatPreset, type JobSummary, type Pin } from '@motion-studio/shared';
 import type { EventsState } from '../eventsReducer.ts';
 import { lastStep } from '../jobEvents.ts';
 import { channelOf } from '../ui/index.ts';
@@ -31,10 +31,12 @@ export function creativeJob(live: EventsState, project: string, creative: string
 export { lastStep };
 
 export function liveCreative(c: CreativeSummary, project: string, live: EventsState): LiveCreative {
+  // Phase 15: a group's row speaks for all its variants (the sisters are not listed on their own).
+  const slugs = c.variants ? [c.slug, ...VARIANT_LETTERS.slice(1).map((l) => sisterSlug(c.slug, l))] : [c.slug];
   const approval = Object.values(live.approvals)
-    .filter((a) => a.projectSlug === project && a.creativeSlug === c.slug)
+    .filter((a) => a.projectSlug === project && a.creativeSlug !== null && slugs.includes(a.creativeSlug))
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0] ?? null;
-  const job = creativeJob(live, project, c.slug);
+  const job = slugs.reduce<JobSummary | null>((found, sl) => found ?? creativeJob(live, project, sl), null);
   const step = job ? lastStep(live.events[job.id]) : null;
   const state: CardState = approval ? 'needs'
     : job || c.status === 'working' ? 'running'
