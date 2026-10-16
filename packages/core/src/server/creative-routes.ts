@@ -18,6 +18,7 @@ import { isRealDirChain } from '../creatives/core-files.ts';
 import type { UrlSigner } from './signed-urls.ts';
 import { formatSummaries } from '../creatives/format-summary.ts';
 import { MAX_DIRECTION_CHARS, VariantGroupService } from '../creatives/variant-group.ts';
+import { exportGroup, itemOfPlan, planGroupExport, resolveGroupLocalized, type GroupPlanItem } from '../creatives/variant-export.ts';
 import type { VariantFanout } from '../creatives/variant-fanout.ts';
 import { withLazyHashes } from '../creatives/output-hashes.ts';
 import { creativeJobKey, PICK_RETRY_AFTER_SEC, type CreativeRef, type CreativeTurnService } from '../creatives/creative-turns.ts';
@@ -117,6 +118,13 @@ const exportBody = z.object({
   /** "Render anyway" for translations rendered first that have open problems or outdated entries. */
   force: z.boolean().optional(),
 });
+/** Phase 15 (spec §6): `POST …/export-group`; no picks, the group selection decides. */
+const exportGroupBody = z.object({
+  destination: z.unknown().optional(), pattern: z.unknown().optional(), date: z.unknown().optional(),
+  locales: z.array(z.string().min(1).max(40)).min(1).max(11).optional(),
+  /** The formats to export (the dialog's ticked rows); absent: every format of the selection. */
+  formats: z.array(z.string().min(1).max(200)).max(MAX_EXPORT_FORMATS).optional(),
+}).strict();
 const useAsLogoBody = z.object({ variant: z.enum(['primary', 'icon']) }).strict();
 const linkBody = z.object({ follower: z.string().min(1).max(200), primary: z.string().min(1).max(200).nullable() });
 /** Phase 15: `POST …/variants` (see the route). */
@@ -680,6 +688,104 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const withProblems = excluded.length ? { ...result, excluded } : result;
     const allRendered = [...rendered, ...localeRendered];
     return allRendered.length > 0 ? { ...withProblems, rendered: allRendered } : withProblems;
+  });
+
+  /**
+   * Phase 15 (spec §6): what a group export would copy, per format of the group: the member and version the group ★ (or the
+   * default rule on variant A) names, with the file and its state. Any member of the group answers the same; 409 outside one.
+   */
+  app.get<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/export-group', async (req) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const plan = await planGroupExport(variantsOf(ref), ref.store, ref);
+    return { items: plan.map(({ creativeDir: _dir, set: _set, ...p }) => p) };
+  });
+
+  /**
+   * Phase 15 (spec §6): the group export. Each format is copied from the member and version of the group selection, named as
+   * the host would name it (host title and slug, the file's own version: never a sister's `~x`). A selected composition with no
+   * render is rendered first, in its own member. A file that is missing, a render that failed or has problems, or (with
+   * languages) a translation that is not current is NOT an error: it is left out and listed in `unavailable`, translated.
+   * Translations stay inside their variant: for each format, the localized renders of the member the selection picked, at that
+   * version; unlike a single creative's export they are never rendered here ("not current" is reported).
+   */
+  app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/export-group', async (req) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const raw = (req.body ?? {}) as { destination?: unknown };
+    if (typeof raw.destination !== 'string' || !raw.destination.trim() || raw.destination.length > 4096) {
+      throw new CodedError(400, t().export.invalidDestination, 'export-invalid-destination');
+    }
+    const r = exportGroupBody.safeParse(req.body);
+    if (!r.success) throw new CodedError(400, t().export.invalidPicks, 'export-invalid-picks');
+    const body = r.data;
+    if (body.pattern !== undefined && (typeof body.pattern !== 'string' || !body.pattern.trim() || body.pattern.length > 200)) {
+      throw new CodedError(400, t().export.invalidPattern, 'export-invalid-pattern');
+    }
+    if (body.date !== undefined && !isExportDate(body.date)) throw new CodedError(400, t().export.invalidDate, 'export-invalid-date');
+    const svc = variantsOf(ref);
+    const hostRef = (await svc.resolve(ref)).host;
+    const host = await ref.store.get(hostRef.creativeSlug);
+    const presets = (await catalog().load()).presets;
+    const label = (id: string) => formatDisplayName(presets, id, currentLocale(), host.brief.formatLabels);
+    const extraLocales = host.brief.locales?.extra ?? [];
+    const primaryLocale = extraLocales.length > 0 ? host.brief.locales?.primary : undefined;
+    const pattern = typeof body.pattern === 'string' ? body.pattern : (await ctx.requireWorkspace().readSettings()).exportNamePattern;
+    const tags = body.locales ? [...new Set(body.locales.map((x) => checkedLocale(x, currentLocale())))] : null;
+    if (tags) assertLocalesInBrief(host.brief, tags, currentLocale());
+    const briefPrimary = host.brief.locales?.primary;
+    const includeSource = tags === null || (briefPrimary !== undefined && tags.includes(briefPrimary));
+    const otherTags = tags === null ? [] : tags.filter((x) => x !== briefPrimary);
+    const common = { creativeDir: ref.store.dir(hostRef.creativeSlug), destination: expandHome(raw.destination.trim()), slug: hostRef.creativeSlug, title: host.title,
+      forbiddenRoot: ref.root, presets, pattern, ...(typeof body.date === 'string' ? { now: body.date } : {}), label };
+
+    const only = body.formats ? new Set(body.formats) : null;
+    const planOf = async () => (await planGroupExport(svc, ref.store, ref)).filter((p) => !only || only.has(p.format));
+    let plan = await planOf();
+    const key = (p: Pick<GroupPlanItem, 'slug' | 'format' | 'version'>) => `${p.slug}\0${p.format}\0${p.version}`;
+    const withProblems = new Set<string>();
+    const renderedNow = new Set<string>();
+    const pending = plan.filter((p) => p.state === 'needs-render');
+    if (includeSource && pending.length > 0) {
+      // One render job per member and version, in the member's own folder; a render that cannot run leaves its formats out.
+      const byMember = new Map<string, Map<number, string[]>>();
+      for (const p of pending) {
+        const m = byMember.get(p.slug) ?? new Map<number, string[]>();
+        m.set(p.version, [...(m.get(p.version) ?? []), p.format]);
+        byMember.set(p.slug, m);
+      }
+      for (const [slug, versions] of byMember) await ctx.renders.renderAndWait({ ...ref, creativeSlug: slug }, versions).catch(() => undefined);
+      for (const p of pending) renderedNow.add(key(p));
+      plan = await planOf();
+      // A render made now with problems is not copied (the user has not seen it), as for a single creative.
+      for (const p of plan) {
+        if (p.state !== 'ready' || !renderedNow.has(key(p))) continue;
+        const v = (await ref.store.readVersions(p.slug)).find((x) => x.n === p.version);
+        if (v && renderProblems(v, p.format).length > 0) withProblems.add(key(p));
+      }
+    }
+    const usable = plan.map((p) => (withProblems.has(key(p)) ? { ...p, state: 'missing' as const } : p));
+    const reason = (p: GroupPlanItem) => (withProblems.has(key(p)) ? t().export.groupReason.problems : p.state === 'needs-render' ? t().export.groupReason.notRendered : t().export.groupReason.missing);
+    const unavailable: Array<{ format: string; slug: string; letter: VariantLetter; version: number; locale?: string; message: string }> = (includeSource ? usable.filter((p) => p.state !== 'ready') : [])
+      .map((p) => ({ format: p.format, slug: p.slug, letter: p.letter, version: p.version,
+        message: t().export.groupSkipped({ format: label(p.format), variant: p.letter.toUpperCase(), n: p.version, reason: reason(p) }) }));
+    const items = includeSource
+      ? usable.filter((p) => p.state === 'ready').map((p) => (primaryLocale !== undefined ? { ...itemOfPlan(p), locale: primaryLocale } : itemOfPlan(p)))
+      : [];
+    if (otherTags.length > 0) {
+      const checks = {
+        matches: (slug: string, n: number, file: string, sha: string) => renderFileMatches(ref.projectDir, ref.store.dir(slug), slug, n, file, sha),
+        assetsOk: (slug: string, n: number, row: LocalizationRow) => localeAssetsCheck(ref.projectDir, ref.store.dir(slug))(n, row),
+      };
+      const loc = await resolveGroupLocalized(usable, ref.store, otherTags, checks);
+      items.push(...loc.items);
+      for (const u of loc.unavailable) {
+        unavailable.push({ format: u.plan.format, slug: u.plan.slug, letter: u.plan.letter, version: u.plan.version, locale: u.locale,
+          message: t().export.groupSkipped({ format: label(u.plan.format), variant: u.plan.letter.toUpperCase(), n: u.plan.version,
+            reason: u.state === 'no-translation' ? t().export.groupReason.noTranslation({ locale: u.locale }) : t().export.groupReason.notRendered }) });
+      }
+    }
+    const result = await exportGroup(usable, common, items);
+    const { unavailable: _plan, ...copied } = result;
+    return { ...copied, unavailable };
   });
 
   /**

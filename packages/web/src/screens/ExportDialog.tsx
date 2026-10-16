@@ -9,7 +9,7 @@ import {
   type FormatPreset, type JobSummary, type LocaleTag, type VersionEntry, type WorkspaceSettings,
 } from '@motion-studio/shared';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { api, ApiError } from '../api.ts';
+import { api, ApiError, type GroupExportPlanItem } from '../api.ts';
 import { desktop } from '../desktop.ts';
 import { useLocale, useT } from '../i18n.tsx';
 import { pop } from '../motion/index.ts';
@@ -53,6 +53,11 @@ export interface ExportDialogProps {
   jobs?: Record<string, JobSummary>;
   /** The creative's languages (Phase 12): with extra languages the dialog offers a multiselect; absent: as before. */
   locales?: { primary: LocaleTag; extra: LocaleTag[] };
+  /**
+   * Phase 15 (spec §6): the export of a variant group. The rows come from the group selection (each format from its ★, in any
+   * variant, or from the default rule on variant A) and the export is `exportGroup`; `snapshot` is not used.
+   */
+  group?: boolean;
 }
 
 /** The extension a render will have (core render-jobs `renderExtension`): the preset's first H.264 container or image type. */
@@ -81,10 +86,26 @@ export function ExportDialog(p: ExportDialogProps) {
   // While the copy runs the dialog stays: closing it would hide an export that still writes files.
   const [busy, setBusy] = useState(false);
   return (
-    <Modal open={p.open} onClose={p.onClose} label={t.web.exportUi.title({ title: p.title })} width={760} dismissible={!busy}>
-      {p.snapshot ? <ExportBody {...p} snapshot={p.snapshot} onBusy={setBusy} /> : null}
+    <Modal open={p.open} onClose={p.onClose} label={p.group ? `${t.web.exportUi.groupHeading}: ${p.title}` : t.web.exportUi.title({ title: p.title })} width={760} dismissible={!busy}>
+      {p.group ? <GroupLoader {...p} onBusy={setBusy} /> : p.snapshot ? <ExportBody {...p} snapshot={p.snapshot} onBusy={setBusy} /> : null}
     </Modal>
   );
+}
+
+const NO_SNAPSHOT: ExportSnapshot = { versions: [], states: {} };
+
+/** Reads the group selection when the dialog opens (the modal unmounts it on close), then shows the export of it. */
+function GroupLoader(p: ExportDialogProps & { onBusy(busy: boolean): void }) {
+  const t = useT();
+  const [plan, setPlan] = useState<GroupExportPlanItem[] | { error: string } | null>(null);
+  useEffect(() => {
+    let live = true;
+    api.groupExportPlan(p.slug, p.creative).then((r) => { if (live) setPlan(r.items); }, (e: unknown) => { if (live) setPlan({ error: message(e) }); });
+    return () => { live = false; };
+  }, [p.slug, p.creative]);
+  if (plan === null) return <p className="ms-exp-empty" role="status">{t.web.exportUi.groupLoading}</p>;
+  if (!Array.isArray(plan)) return <p className="ms-exp-error" role="alert">{t.web.exportUi.groupLoadFailed({ detail: plan.error })}</p>;
+  return <ExportBody {...p} snapshot={NO_SNAPSHOT} groupPlan={plan} />;
 }
 
 /** `render`: the ★ versions without a render are rendered first (their jobs, and how many formats). */
@@ -111,6 +132,8 @@ interface Row {
   /** The primary's short name, for a follower. */
   follows: string | null;
   newer: number | null;
+  /** A group export (phase 15): the member the file comes from, and the label of where it comes from ("Variante B · v3"). */
+  member?: string; sourceLabel?: string;
   /** Why the row cannot be exported (it is then unchecked and disabled); null when it can. */
   blocked: string | null;
   /**
@@ -120,13 +143,20 @@ interface Row {
   problems: string[];
 }
 
-function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels, pattern: initialPattern, onSettings, onBusy, jobs = {}, locales }: ExportDialogProps & { snapshot: ExportSnapshot; onBusy(busy: boolean): void }) {
+function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels, pattern: initialPattern, onSettings, onBusy, jobs = {}, locales, groupPlan }: ExportDialogProps & { snapshot: ExportSnapshot; onBusy(busy: boolean): void; groupPlan?: GroupExportPlanItem[] }) {
   const t = useT();
   const x = t.web.exportUi;
   const locale = useLocale();
   const bridge = desktop();
   const { versions, states } = snapshot;
-  const rows = useMemo<Row[]>(() => Object.values(states).flatMap((s): Row[] => {
+  const rows = useMemo<Row[]>(() => groupPlan ? groupPlan.map((g): Row => {
+    const preset = presetFor(presets, g.format);
+    const needsRender = g.state === 'needs-render';
+    const output = g.state === 'needs-render' || g.file === '' ? null : { format: g.format, file: g.file, width: g.width, height: g.height, durationSec: null, verified: true, preview: null } as VersionEntry['outputs'][number];
+    const sourceLabel = g.source === 'pick' ? x.groupPick({ variant: g.letter.toUpperCase(), n: g.version }) : x.groupDefault({ variant: g.letter.toUpperCase(), n: g.version });
+    return { id: g.format, preset, n: g.v ?? g.version, fileN: g.version, output, needsRender, file: output?.file ?? (needsRender ? `${g.format}${renderedExtension(preset)}` : null),
+      follows: null, newer: null, blocked: g.state === 'missing' ? x.fileMissing({ n: g.version }) : null, problems: [], member: g.slug, sourceLabel };
+  }) : Object.values(states).flatMap((s): Row[] => {
     const n = s.follows ? (states[s.follows]?.star.version ?? null) : s.star.version;
     if (n === null) return [];
     // A v2 follower without its own render yet: its file comes with the primary's render, in the primary's ★ version.
@@ -142,7 +172,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
     const file = output?.file ?? (needsRender ? `${s.id}${renderedExtension(preset)}` : null);
     const problems = version && !needsRender && renderProblems(version, s.id).length ? shortProblems(output, t, locale) : [];
     return [{ id: s.id, preset, n, fileN, output, needsRender, file, follows, newer: follows === null ? s.star.newer : null, blocked, problems }];
-  }), [states, versions, presets, labels, x, locale, t]);
+  }), [groupPlan, states, versions, presets, labels, x, locale, t]);
   const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(rows.map((r) => [r.id, r.blocked === null && r.problems.length === 0])));
   const [pattern, setPattern] = useState(initialPattern);
   const [savedPattern, setSavedPattern] = useState(initialPattern);
@@ -254,6 +284,20 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
     const follow: Record<string, number> = {};
     for (const c of chosen) { if (c.row.follows !== null) follow[c.row.id] = c.row.fileN ?? c.row.n; else picks[c.row.id] = c.row.n; }
     const signal = life.current.signal;
+    if (groupPlan) {
+      // Phase 15: the group export; the core renders what still needs a render, and leaves out what it cannot copy (listed, translated).
+      try {
+        const r = await api.exportGroup(slug, creative, { destination: dest, formats: chosen.map((c) => c.row.id), pattern, date, ...languageBody });
+        if (signal.aborted) return;
+        writeFolder(dest);
+        setPhase({ kind: 'done', destination: r.destination, count: r.files.length, skipped: r.unavailable.map((u) => u.message), excluded: [] });
+      } catch (e) {
+        if (signal.aborted) return;
+        setError(exportErrorText(e, t));
+        setPhase({ kind: 'idle' });
+      }
+      return;
+    }
     const followed = Object.keys(follow).length ? { follow } : {};
     try {
       // A ★ v2 version without a render is rendered first (Task 8): the jobs start now and show their progress here; the
@@ -293,8 +337,8 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
   const head = (
     <div className="ms-exp-head">
       <div className="ms-exp-titles">
-        <h2>{x.heading}</h2>
-        <span className="ms-exp-sub">{x.sub({ title })}</span>
+        <h2>{groupPlan ? x.groupHeading : x.heading}</h2>
+        <span className="ms-exp-sub">{groupPlan ? x.groupSub({ title }) : x.sub({ title })}</span>
       </div>
       <Button variant="ghost" icon aria-label={t.common.close} disabled={running} onClick={onClose}><Icon name="close" size={13} strokeWidth={1.6} /></Button>
     </div>
@@ -332,7 +376,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
           <div className="ms-exp-row ms-exp-cols ms-cap" aria-hidden="true"><span /><span /><span>{x.format}</span><span>{x.version}</span></div>
           {named.map(({ row: r, name }) => {
             const label = boardLabel({ id: r.id, preset: r.preset, out: r.output, labels }, locale);
-            const media = r.output && r.fileN !== null ? outputMedia(slug, creative, r.fileN, r.output) : null;
+            const media = r.output && r.fileN !== null ? outputMedia(slug, r.member ?? creative, r.fileN, r.output) : null;
             const aspect = r.preset ? r.preset.width / r.preset.height : r.output ? r.output.width / r.output.height : 1;
             const blocked = r.blocked !== null;
             return (
@@ -347,7 +391,9 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
                   {r.needsRender && !blocked ? <span className="ms-exp-render">{t.web.render.rendersFirst}</span> : null}
                   {r.problems.length && !blocked ? <span className="ms-exp-problem">{x.renderProblems({ list: r.problems.join('; ') })}</span> : null}
                 </span>
-                {r.follows !== null ? (
+                {r.sourceLabel !== undefined ? (
+                  <span className="ms-exp-ver">{r.sourceLabel}</span>
+                ) : r.follows !== null ? (
                   <span className="ms-exp-follows">{x.follows({ primary: r.follows })}<span className="ms-exp-ver">{x.star({ n: r.n })}</span></span>
                 ) : (
                   <span className="ms-exp-ver">{x.star({ n: r.n })}{r.newer !== null ? <span className="ms-exp-newer">{x.newer({ n: r.newer })}</span> : null}</span>

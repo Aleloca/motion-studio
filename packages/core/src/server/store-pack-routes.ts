@@ -4,6 +4,8 @@ import {
   briefSchema, briefWriteSchema, issuesText, isStorePackFormat, packSlotOf, renderProblems, storePackSchema, type JobSummary, type VersionEntry,
 } from '@motion-studio/shared';
 import { CreativeStore } from '../creatives/creative-store.ts';
+import { planGroupExport, resolveGroupLocalized, type GroupPlanItem } from '../creatives/variant-export.ts';
+import { VariantGroupService } from '../creatives/variant-group.ts';
 import type { CreativeRef, CreativeTurnService } from '../creatives/creative-turns.ts';
 import { checkDestination, pendingRenders, plainName, resolveLocalizedItems, type ExportItem } from '../creatives/export.ts';
 import type { RenderJobService } from '../creatives/render-jobs.ts';
@@ -189,6 +191,114 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
     for (const f of files) f.format = slotOf.get(f.format) ?? f.format;
     const result = await exportStorePack({
       creativeDir, n, destination, title: creative.title, storePack: pack, presets: catalog, files, order: creative.brief.formats.filter((f) => owned.has(f)).map((f) => slotOf.get(f)!), notInPack,
+      probe: (file) => (ctx.media.available ? ctx.media.probe(file) : Promise.resolve(null)), date: localDay(),
+    });
+    return rendered.length > 0 ? { ...result, rendered } : result;
+  });
+  /**
+   * Phase 15 (spec §6): the store pack of a variant group, `POST …/creatives/:c/store-pack/export-group` `{ destination, locales? }`.
+   * For each pack format the file comes from the member and version of the group selection (the ★, or the default rule on
+   * variant A). Translations stay inside their variant: each format's localized renders are those of the member the selection
+   * picked, at that version, and are never rendered here ("no translation" / "not rendered" are listed in `failed`, like any pack
+   * file that cannot be exported). A composition with no render is rendered first in its own member.
+   */
+  app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/store-pack/export-group', async (req) => {
+    const ws = ctx.requireWorkspace();
+    await ws.getProject(req.params.slug);
+    const projectDir = ws.projectDir(req.params.slug);
+    const store = new CreativeStore(projectDir);
+    await store.assertOpenable(req.params.c);
+    const ref: CreativeRef & { store: CreativeStore } = { root: ws.root, projectSlug: req.params.slug, projectDir, creativeSlug: req.params.c, store };
+    const raw = (req.body ?? {}) as { destination?: unknown };
+    if (typeof raw.destination !== 'string' || !raw.destination.trim()) throw new CodedError(400, t().export.invalidDestination, 'export-invalid-destination');
+    const body = parse(exportBody, req.body);
+    const svc = new VariantGroupService({ store, turns: ctx.turns });
+    let plan = await planGroupExport(svc, store, ref); // 409 outside a group
+    const hostRef = (await svc.resolve(ref)).host;
+    const creative = await store.get(hostRef.creativeSlug);
+    const pack = creative.brief.storePack;
+    if (!pack) throw new CodedError(409, t().variants.storePack.notStorePack, 'not-store-pack');
+    const destination = await checkDestination(expandHome(body.destination.trim()), ws.root);
+    const catalog = await presets();
+    const c = t().variants.storePack.check;
+
+    const locales = creative.brief.locales;
+    const tags = body.locales ? [...new Set(body.locales.map((x) => checkedLocale(x, currentLocale())))] : locales ? [locales.primary, ...locales.extra] : [];
+    const primary = locales?.primary;
+    assertLocalesInBrief(creative.brief, tags, currentLocale());
+    const includeSource = !locales || tags.includes(primary!);
+    const others = locales ? tags.filter((x) => x !== primary) : [];
+
+    const slotOf = packSlotOf(pack, catalog);
+    const owned = new Set(slotOf.keys());
+    const packFormats = creative.brief.formats.filter((f) => owned.has(f) && packEntry(pack, slotOf.get(f)!, undefined) !== null);
+    const notInPack = creative.brief.formats.filter((f) => !owned.has(f) && isStorePackFormat(f))
+      .map((f) => { const label = creative.brief.formatLabels?.[f]; return label ? `${f} (${label})` : f; });
+    const sizeOf = (f: string) => { const p = findPreset(catalog, f); return { width: p?.width ?? 0, height: p?.height ?? 0 }; };
+    const packPlan = () => plan.filter((p) => packFormats.includes(p.format));
+    const jobError = (jobs: Array<JobSummary | null>) => jobs.find((j) => j?.state === 'failed')?.error ?? null;
+
+    const files: PackFile[] = [];
+    const rendered: Array<{ version: number; formats: string[]; slug: string }> = [];
+    const errors = new Map<string, string>();
+    const withProblems = new Set<string>();
+    const key = (p: Pick<GroupPlanItem, 'slug' | 'format'>) => `${p.slug}\0${p.format}`;
+    if (includeSource) {
+      const pending = packPlan().filter((p) => p.state === 'needs-render');
+      const byMember = new Map<string, Map<number, string[]>>();
+      for (const p of pending) {
+        const m = byMember.get(p.slug) ?? new Map<number, string[]>();
+        m.set(p.version, [...(m.get(p.version) ?? []), p.format]);
+        byMember.set(p.slug, m);
+      }
+      for (const [slug, versions] of byMember) {
+        const error = await ctx.renders.renderAndWait({ ...ref, creativeSlug: slug }, versions).then(jobError, (e: unknown) => (e instanceof Error ? e.message : String(e)));
+        for (const [version, formats] of versions) {
+          rendered.push({ version, formats, slug });
+          if (error) for (const f of formats) errors.set(`${slug}\0${f}`, error);
+        }
+      }
+      if (pending.length > 0) {
+        plan = await planGroupExport(svc, store, ref);
+        const fresh = new Set(pending.map(key));
+        for (const p of packPlan()) {
+          if (p.state !== 'ready' || !fresh.has(key(p))) continue;
+          const v = (await store.readVersions(p.slug)).find((x) => x.n === p.version);
+          if (v && renderProblems(v, p.format).length > 0) withProblems.add(key(p));
+        }
+      }
+      for (const format of packFormats) {
+        const p = packPlan().find((x) => x.format === format);
+        const f: PackFile = { format, ...(primary ? { locale: primary } : {}), ...sizeOf(format) };
+        if (!p) f.failure = c.notInGroup;
+        else if (p.state !== 'ready') f.failure = errors.has(key(p)) ? c.renderFailed({ reason: errors.get(key(p))! }) : c.notRendered;
+        else if (withProblems.has(key(p))) f.failure = c.renderProblems({ list: renderProblems((await store.readVersions(p.slug)).find((x) => x.n === p.version)!, p.format).join('; ') });
+        else { f.file = p.file; f.dir = p.creativeDir; f.n = p.version; }
+        files.push(f);
+      }
+    }
+    if (others.length > 0) {
+      const matches = (slug: string, vn: number, file: string, sha: string) => renderFileMatches(projectDir, store.dir(slug), slug, vn, file, sha);
+      const r = await resolveGroupLocalized(packPlan().filter((p) => !withProblems.has(key(p))), store, others, { matches, assetsOk: (slug, vn, row) => localeAssetsCheck(projectDir, store.dir(slug))(vn, row) });
+      for (const locale of others) {
+        for (const format of packFormats) {
+          const f: PackFile = { format, locale, ...sizeOf(format) };
+          const p = packPlan().find((x) => x.format === format);
+          const item = r.items.find((x) => x.format === format && x.locale === locale);
+          const miss = r.unavailable.find((x) => x.plan.format === format && x.locale === locale);
+          if (!p) f.failure = c.notInGroup;
+          else if (miss?.state === 'no-translation') f.failure = c.noTranslation({ locale });
+          else if (!item) f.failure = c.notRendered;
+          else { f.file = item.file; f.dir = item.creativeDir ?? p.creativeDir; f.n = item.n; }
+          files.push(f);
+        }
+      }
+    }
+    for (const f of files) Object.assign(f, sizeOf(f.format));
+    for (const f of files) f.format = slotOf.get(f.format) ?? f.format;
+    const result = await exportStorePack({
+      creativeDir: store.dir(hostRef.creativeSlug), n: Math.max(0, ...packPlan().map((p) => p.version)), group: true, destination, title: creative.title, storePack: pack, presets: catalog, files,
+      order: creative.brief.formats.filter((f) => owned.has(f)).map((f) => slotOf.get(f)!), notInPack,
       probe: (file) => (ctx.media.available ? ctx.media.probe(file) : Promise.resolve(null)), date: localDay(),
     });
     return rendered.length > 0 ? { ...result, rendered } : result;

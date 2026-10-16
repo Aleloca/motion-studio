@@ -330,4 +330,19 @@ describe('store pack export', { timeout: 120_000 }, () => {
     expect(r.json().code).toBe('not-store-pack');
     expect((await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/9/store-pack/export`, headers: H, payload: { destination: dest } })).statusCode).toBe(404);
   });
+
+  it('phase 15: a group\'s pack export takes the group selection per format (here the default rule on A) and says so in the README', async () => {
+    const slug = await createPack(pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false }));
+    const made = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/variants`, headers: H, payload: { count: 2 } });
+    expect(made.statusCode, made.body).toBe(201);
+    const r = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}~b/store-pack/export-group`, headers: H, payload: { destination: dest } });
+    expect(r.statusCode, r.body).toBe(200);
+    const body = r.json() as { folder: string; written: string[]; failed: unknown[] };
+    expect(body.failed).toEqual([]);
+    expect(body.written).toEqual(['AppStore/iPhone-6.9/01-all-your-tasks.png', 'AppStore/iPhone-6.9/02-share-with-your-team.png']);
+    expect(readFileSync(join(body.folder, 'README.txt'), 'utf8')).toMatch(/final selection|selezione finale/);
+    // An ungrouped pack: 409 on the group route; its own route is untouched.
+    const solo = await createPack(pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false }));
+    expect((await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${solo}/store-pack/export-group`, headers: H, payload: { destination: dest } })).statusCode).toBe(409);
+  });
 });

@@ -69,6 +69,11 @@ export interface PackFile {
   format: string; locale?: string; width: number; height: number;
   /** The rendered file (a plain name in `outputs/v<n>/`); absent with `failure`. */
   file?: string;
+  /**
+   * A group export (phase 15): the folder and version the file comes from when they are not the options' (`creativeDir`, `n`):
+   * the member and version the group selection names for this format.
+   */
+  dir?: string; n?: number;
   /** Why this file cannot be in the pack (no translation, render failed or with problems): listed, never copied. */
   failure?: string;
 }
@@ -86,6 +91,8 @@ export interface PackExportOptions {
   date: string;
   /** Store instances of the brief that are not the pack's (picked by hand): not exported, listed in the result and the README. */
   notInPack?: string[];
+  /** A group export: the README says the files come from the group's final selection instead of one version. */
+  group?: boolean;
 }
 export interface PackExportResult { folder: string; written: string[]; failed: Array<{ file: string; reason: string }>; notInPack?: string[] }
 
@@ -145,8 +152,9 @@ export async function exportStorePack(o: PackExportOptions): Promise<PackExportR
     let to: string | null = null;
     try {
       await mkdir(dir, { recursive: true });
-      const from = join(o.creativeDir, 'outputs', `v${o.n}`, f.file);
-      to = await copyUnique((src, dst) => copyConfinedFile(o.creativeDir, relative(o.creativeDir, src).split(sep).join('/'), dst), from, dir, parts.at(-1)!, `.${extOf(f.file)}`);
+      const srcDir = f.dir ?? o.creativeDir;
+      const from = join(srcDir, 'outputs', `v${f.n ?? o.n}`, f.file);
+      to = await copyUnique((src, dst) => copyConfinedFile(srcDir, relative(srcDir, src).split(sep).join('/'), dst), from, dir, parts.at(-1)!, `.${extOf(f.file)}`);
     } catch (e) {
       const target = (e as { target?: string }).target;
       if (target) await rm(target, { force: true }).catch(() => {});
@@ -163,20 +171,20 @@ export async function exportStorePack(o: PackExportOptions): Promise<PackExportR
     }
     written.push(rel);
   }
-  await writeFile(join(folder, 'README.txt'), readmeText({ storePack: o.storePack, presets: o.presets, date: o.date, n: o.n, failed, ...(o.notInPack?.length ? { notInPack: o.notInPack } : {}) }), { flag: 'wx', mode: 0o644 })
+  await writeFile(join(folder, 'README.txt'), readmeText({ storePack: o.storePack, presets: o.presets, date: o.date, n: o.n, failed, ...(o.group ? { group: true } : {}), ...(o.notInPack?.length ? { notInPack: o.notInPack } : {}) }), { flag: 'wx', mode: 0o644 })
     .catch(async (e: unknown) => { failed.push({ file: 'README.txt', reason: c.copyFailed({ reason: reasonOf(e) }) }); });
   return { folder, written, failed, ...(o.notInPack?.length ? { notInPack: o.notInPack } : {}) };
 }
 
 /** The pack's README (UI language): the verified limits and their date, the sources, the upload order, the Play video note. */
-export function readmeText(o: { storePack: StorePack; presets: readonly FormatPreset[]; date: string; n: number; failed: PackExportResult['failed']; notInPack?: string[] }): string {
+export function readmeText(o: { storePack: StorePack; presets: readonly FormatPreset[]; date: string; n: number; failed: PackExportResult['failed']; notInPack?: string[]; group?: boolean }): string {
   const r = t().variants.storePack.readme;
   const p = o.storePack;
   const sizeOf = (id: string) => { const f = o.presets.find((x) => x.id === id); return f ? `${f.width}×${f.height}` : null; };
   const named = (pairs: Array<[string, string]>) => pairs.flatMap(([label, id]) => { const s = sizeOf(id); return s ? [`${label} ${s}`] : []; }).join(', ');
   const has = (store: StoreId, device: string) => p.stores.includes(store) && (p.devices[store] as readonly string[] | undefined)?.includes(device) === true;
   const lim = STORE_LIMITS;
-  const lines = [r.title({ app: p.app.name }), r.made({ date: o.date, version: o.n }), '', r.limits({ date: lim.checkedOn })];
+  const lines = [r.title({ app: p.app.name }), o.group ? r.madeGroup({ date: o.date }) : r.made({ date: o.date, version: o.n }), '', r.limits({ date: lim.checkedOn })];
   if (p.stores.includes('appstore')) {
     lines.push(`- ${r.appStoreShots({ ...lim.appstore.screenshots, sizes: named([['iPhone 6.9"', 'appstore-iphone-69'], ['iPad 13"', 'appstore-ipad-13']]) })}`);
     if (p.preview) lines.push(`- ${r.appStorePreview({ min: lim.appstore.preview.minSec, max: lim.appstore.preview.maxSec, fps: lim.appstore.preview.fps, maxMB: lim.appstore.preview.maxFileMB, perDevice: lim.appstore.preview.maxPerDevice })}`);

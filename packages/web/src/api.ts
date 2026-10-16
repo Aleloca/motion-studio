@@ -87,6 +87,17 @@ export interface LocalizationEdit { texts?: Record<string, string | null>; param
 export interface LocalizeRequest { locales: string[]; formats?: string[]; voice?: Record<string, 'translate' | 'original' | 'muted'>; text?: string }
 /** The localized composition of a format (preview): the editor view with the overlay applied, plus the language's state. */
 export type LocalizedCompositionView = EditorCompositionView & { localization: { locale: LocaleTag; stale: string[]; problems: string[]; issues?: LocalizationIssue[]; voice: LocalizationRow['voice'] } };
+/** One format of the group export (phase 15, spec §6): where its file comes from, and whether it can be copied now. */
+export interface GroupExportPlanItem {
+  format: string; slug: string; letter: VariantLetter; version: number; source: 'pick' | 'default';
+  /** The version the name's `{v}` shows when it is not `version` (a follower is named after its primary's). */
+  v?: number; file: string; width: number; height: number; state: 'ready' | 'needs-render' | 'missing';
+}
+export interface GroupExportResult {
+  destination: string; files: Array<{ from: string; to: string }>; skipped: string[];
+  /** The formats that were left out (a missing file, a render without a current result), each with a translated message. */
+  unavailable: Array<{ format: string; slug: string; letter: VariantLetter; version: number; locale?: string; message: string }>;
+}
 /** What a pack export did (Phase 12 §4.3): paths relative to the pack folder; `rendered` lists what was rendered first. */
 export interface StorePackExportResult { folder: string; written: string[]; failed: Array<{ file: string; reason: string }>; notInPack?: string[]; rendered?: Array<{ version: number; formats: string[]; locale?: string }> }
 /** "Render anyway" and the languages of a render or an export (Phase 12 §3.5). */
@@ -268,6 +279,14 @@ export const api = {
    */
   exportPicks: (slug: string, creative: string, body: { destination: string; picks: Record<string, number>; follow?: Record<string, number>; pattern?: string; date?: string } & LocaleOptions) =>
     request<{ destination: string; files: Array<{ from: string; to: string }>; skipped: string[]; excluded?: ExportExcluded[] }>('POST', `${c(slug, creative)}/export`, body),
+  /** Phase 15: the group export's plan (any member of the group answers the same): per format, the ★ or default member and version. */
+  groupExportPlan: (slug: string, creative: string) => request<{ items: GroupExportPlanItem[] }>('GET', `${c(slug, creative)}/export-group`),
+  /** Phase 15: exports each (chosen) format from its group selection, with today's file names. */
+  exportGroup: (slug: string, creative: string, body: { destination: string; formats?: string[]; pattern?: string; date?: string } & Pick<LocaleOptions, 'locales'>) =>
+    request<GroupExportResult>('POST', `${c(slug, creative)}/export-group`, body),
+  /** Phase 15: the store pack of a group, each format from the group selection. */
+  exportStorePackGroup: (slug: string, creative: string, body: { destination: string; locales?: string[] }) =>
+    request<StorePackExportResult>('POST', `${c(slug, creative)}/store-pack/export-group`, body),
   /**
    * What a ★ export renders first (Task 8): the same picks and followers as `exportPicks`; the jobs are started (or joined)
    * at once and the export, called next, waits for them.

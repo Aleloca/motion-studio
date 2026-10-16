@@ -542,7 +542,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
                 <div className="ms-cap ms-cv-group-head ms-cv-pack-head">
                   <span className="ms-cv-pack-marks" aria-hidden="true"><ChannelMark channel="appstore" /><ChannelMark channel="googleplay" /></span>
                   <span className="ms-cv-pack-title">{t.web.storePack.groupTitle}</span>
-                  <Button size="sm" variant="outline" className="ms-cv-pack-export" disabled={!version} title={t.web.storePack.groupExportAria}
+                  <Button size="sm" variant="outline" className="ms-cv-pack-export" disabled={!version && !group} title={t.web.storePack.groupExportAria}
                     onClick={() => setPackExport(true)}>
                     <Icon name="download" size={12} strokeWidth={1.7} />{t.web.storePack.groupExport}
                   </Button>
@@ -790,7 +790,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
             </Button>
           ) : null}
           <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} />
-          <Button variant="ink" className="ms-cv-export" disabled={!version} onClick={() => { if (version) setExporting({ open: true, snapshot: { versions, states } }); }}>
+          <Button variant="ink" className="ms-cv-export" disabled={!version && !group} onClick={() => { if (version || group) setExporting({ open: true, snapshot: { versions, states } }); }}>
             <Icon name="download" size={13} strokeWidth={1.7} />{c.export}
           </Button>
           {!group && !vdetail ? <CreativeMenu onAddVariant={() => setAddOpen(true)} /> : null}
@@ -927,14 +927,15 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
         <CompareDialog open={compare.open} onClose={() => setCompare((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
           versions={versions} presets={presets} labels={cr.brief.formatLabels} states={states} format={compare.format} initial={compare.init} actions={actions} />
       ) : null}
-      <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
-        title={title} snapshot={exporting?.snapshot ?? null} presets={presets} labels={cr.brief.formatLabels} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings} jobs={live.jobs}
+      <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={hostSlug}
+        title={title} snapshot={exporting?.snapshot ?? null} {...(group ? { group: true } : {})} presets={presets} labels={cr.brief.formatLabels} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings} jobs={live.jobs}
         {...(creativeLocales(cr.brief) ? { locales: creativeLocales(cr.brief)! } : {})} />
-      {cr.brief.storePack && version ? (() => {
-        const packGaps = packLanguageGaps(cr.brief.formats.filter((f) => packIds.has(f)), version, creativeLocales(cr.brief)?.extra ?? []);
+      {cr.brief.storePack && (version || group) ? (() => {
+        // A group's pack is made from the group selection, not from one version: no per-version language gaps to mark.
+        const packGaps = version && !group ? packLanguageGaps(cr.brief.formats.filter((f) => packIds.has(f)), version, creativeLocales(cr.brief)?.extra ?? []) : { untranslated: [], review: [] };
         return (
-        <StorePackExport open={packExport} onClose={() => setPackExport(false)} slug={slug} creative={creative} title={title} version={version.n}
-          untranslated={packGaps.untranslated} needsReview={packGaps.review}
+        <StorePackExport open={packExport} onClose={() => setPackExport(false)} slug={slug} creative={group ? hostSlug : creative} title={title} version={version?.n ?? 0}
+          {...(group ? { group: true } : {})} untranslated={packGaps.untranslated} needsReview={packGaps.review}
           {...(creativeLocales(cr.brief) ? { locales: creativeLocales(cr.brief)! } : {})} />
         );
       })() : null}
