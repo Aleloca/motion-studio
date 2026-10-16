@@ -1,0 +1,16 @@
+{
+  "$schema": "motion-studio/composition@1",
+  "width": 1920, "height": 1080, "fps": 30, "duration": 6, "background": "#0F0F0F",
+  "fonts": [{ "family": "Bricolage Grotesque", "src": "assets/fonts/BricolageGrotesque.woff2", "weight": 800 }],
+  "scenes": [{ "id": "main", "start": 0, "duration": 6 }],
+  "tracks": [
+    { "id": "shapes", "kind": "visual", "clips": [
+      { "id": "tile", "type": "shape", "start": 0, "duration": 6, "props": { "x": 760, "y": 340, "width": 400, "height": 400, "fill": "#FF5A1F", "radius": 88 },
+        "animations": [{ "preset": "popIn", "duration": 0.6 }] }
+    ] },
+    { "id": "texts", "kind": "text", "clips": [
+      { "id": "title", "type": "text", "start": 0.5, "duration": 5.5, "props": { "x": 160, "y": 800, "width": 1600, "height": 160, "text": "Brew something bold", "fontSize": 120, "fontFamily": "Bricolage Grotesque", "fontWeight": 800, "color": "#F5F1EC", "align": "center" },
+        "animations": [{ "preset": "slideUp", "duration": 0.6 }] }
+    ] }
+  ]
+}
