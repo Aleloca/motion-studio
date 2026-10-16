@@ -88,8 +88,9 @@ const setupService = async (o: { live?: boolean; contract?: 'media' | 'compositi
   service = new CreativeTurnService({
     agentContract: o.contract ?? 'media', queue, git, media: NoMediaTools, vault: new MemoryVault(), previews,
     launcher: testLauncher(runner, {
-      bridge, approvals, mcpCommand: [process.execPath, join(base, 'unused-mcp.mjs')], claudeVersion: async () => '2.1.0',
-      settings: o.live ? { agentLiveInput: true, agentInterrupt: true } : {},
+      bridge, approvals, mcpCommand: [process.execPath, join(base, 'unused-mcp.mjs')], claudeVersion: async () => '2.1.301',
+      // Decision 804: verified version; the settings switch live input and interrupt on or off.
+      settings: o.live ? { agentLiveInput: true, agentInterrupt: true } : { agentLiveInput: false, agentInterrupt: false },
     }),
     presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast,
     cancelApprovals: (id) => approvals.cancelJob(id),

@@ -285,7 +285,7 @@ export class WorkspaceStore {
     const store = new WorkspaceStore(root, git);
     const settingsPath = store.settingsPath();
     if (!(await stat(settingsPath).catch(() => null))) {
-      await writeJsonFileAtomic(settingsPath, workspaceSettingsSchema.parse({ schemaVersion: 1 }));
+      await writeJsonFileAtomic(settingsPath, workspaceSettingsSchema.parse({ schemaVersion: 1, agentLiveDefaults: 804 }));
     }
     return store;
   }

@@ -301,7 +301,7 @@ describe('a message while the version is being saved (Review Focus 1)', () => {
     const queue = new JobQueue({ concurrency: 2 });
     const service = new CreativeTurnService({
       agentContract: 'media', queue, git, media: NoMediaTools, vault: new MemoryVault(),
-      launcher: testLauncher(runner, { claudeVersion: async () => '2.1.0', settings: { agentLiveInput: true, agentInterrupt: true } }),
+      launcher: testLauncher(runner, { claudeVersion: async () => '2.1.301', settings: { agentLiveInput: true, agentInterrupt: true } }),
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
     });
     let open!: () => void;

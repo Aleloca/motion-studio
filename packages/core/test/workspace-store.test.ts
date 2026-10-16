@@ -191,7 +191,8 @@ describe('WorkspaceStore settings guard (sandbox off)', () => {
   it('during the run the settings are those it started with; after it, an agent write is undone byte for byte and reported', async () => {
     const root = join(base, 'ws');
     const ws = await WorkspaceStore.open(root, new Git());
-    await ws.updateSettings({ expertMode: true });
+    // Decision 804: live input and interrupt default on; the user switched them off, so the agent turning them on is a change.
+    await ws.updateSettings({ expertMode: true, agentLiveInput: false, agentInterrupt: false });
     const before = await readFile(file(root), 'utf8');
     const release = await ws.guardSettings();
     await agentWrites(root);
@@ -229,6 +230,7 @@ describe('WorkspaceStore settings guard (sandbox off)', () => {
   it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('a change that cannot be undone is reported, and the changed fields are not applied until the user saves', async () => {
     const root = join(base, 'ws4');
     const ws = await WorkspaceStore.open(root, new Git());
+    await ws.updateSettings({ agentLiveInput: false, agentInterrupt: false }); // decision 804: off by the user
     const release = await ws.guardSettings();
     await agentWrites(root);
     await chmod(join(root, '.studio'), 0o500); // the folder refuses the temp file: no undo possible
@@ -259,7 +261,7 @@ describe.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('Works
     const config = join(base, 'config');
     const ws = await WorkspaceStore.open(root, new Git());
     await ws.attachSettingsHold(new SettingsHoldStore(config));
-    await ws.updateSettings({ autoApproveSandboxed: false });
+    await ws.updateSettings({ autoApproveSandboxed: false, agentLiveInput: false, agentInterrupt: false });
     const before = await readFile(file(root), 'utf8');
     const release = await ws.guardSettings();
     await writeFile(file(root), JSON.stringify({ ...JSON.parse(before), ...agentValues }));
@@ -285,6 +287,7 @@ describe.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('Works
     const config = join(base, 'config2');
     const ws = await WorkspaceStore.open(root, new Git());
     await ws.attachSettingsHold(new SettingsHoldStore(config));
+    await ws.updateSettings({ agentLiveInput: false, agentInterrupt: false }); // decision 804: off by the user
     const release = await ws.guardSettings();
     // The agent replaces the file with a folder (a rename onto it fails) and leaves its values next to it.
     await rm(file(root));
@@ -337,7 +340,7 @@ describe.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('Works
     const config = join(base, `${name}-config`);
     const ws = await WorkspaceStore.open(root, new Git());
     await ws.attachSettingsHold(new SettingsHoldStore(config));
-    await ws.updateSettings({ extraAllowedDomains: ['ok.example.com'], autoApproveSandboxed: false });
+    await ws.updateSettings({ extraAllowedDomains: ['ok.example.com'], autoApproveSandboxed: false, agentLiveInput: false, agentInterrupt: false });
     return { root, config, ws, before: await readFile(file(root), 'utf8') };
   };
   const restart = async (root: string, config: string) => {
@@ -442,13 +445,14 @@ describe.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('Works
   const holdDir = (config: string) => join(config, 'settings-hold');
   const holdFile = async (config: string, root: string) => join(holdDir(config), `${createHash('sha256').update(await realpath(root)).digest('hex').slice(0, 32)}.json`);
   const evil = { sandboxMode: 'off', confirmPaidProviders: false, autoApproveSandboxed: true, agentLiveInput: true, agentInterrupt: true, extraAllowedDomains: ['ok.example.com', 'evil.example.com'], model: 'opus', maxConcurrentJobs: 8 };
-  const safe = { sandboxMode: 'auto', confirmPaidProviders: true, agentLiveInput: false, agentInterrupt: false, extraAllowedDomains: [], model: null, maxConcurrentJobs: 2 };
+  // The defaults (live input and interrupt on since decision 804: no looser than what a new workspace gets).
+  const safe = { sandboxMode: 'auto', confirmPaidProviders: true, agentLiveInput: true, agentInterrupt: true, extraAllowedDomains: [], model: null, maxConcurrentJobs: 2 };
   const setup = async (name: string) => {
     const root = join(base, name);
     const config = join(base, `${name}-config`);
     const ws = await WorkspaceStore.open(root, new Git());
     await ws.attachSettingsHold(new SettingsHoldStore(config));
-    await ws.updateSettings({ extraAllowedDomains: ['ok.example.com'], autoApproveSandboxed: false, model: 'sonnet' });
+    await ws.updateSettings({ extraAllowedDomains: ['ok.example.com'], autoApproveSandboxed: false, model: 'sonnet', agentLiveInput: false, agentInterrupt: false });
     return { root, config, ws, before: await readFile(file(root), 'utf8') };
   };
   const restart = async (root: string, config: string) => {
@@ -579,5 +583,30 @@ describe.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('Works
     await ws2.updateSettings({ extraAllowedDomains: ['ok.example.com'], model: 'sonnet', theme: 'dark' });
     expect(JSON.parse(await readFile(file(root), 'utf8'))).toMatchObject({ extraAllowedDomains: ['ok.example.com'], model: 'sonnet', theme: 'dark' });
     expect(ws2.settingsHoldBroken()).toBe(false);
+  });
+});
+
+// Decision 804: live input and interrupt on by default, also for a workspace made before it (its stored false was the old
+// default); the user's later switch-off is kept.
+describe('WorkspaceStore live settings defaults (decision 804)', () => {
+  const file = (root: string) => join(root, '.studio', 'settings.json');
+
+  it('a new workspace writes both on, with the marker', async () => {
+    const root = join(base, 'new');
+    const ws = await WorkspaceStore.open(root, new Git());
+    expect(JSON.parse(await readFile(file(root), 'utf8'))).toMatchObject({ agentLiveInput: true, agentInterrupt: true, agentLiveDefaults: 804 });
+    expect(await ws.readSettings()).toMatchObject({ agentLiveInput: true, agentInterrupt: true });
+  });
+
+  it('a settings file from before 804 (false, no marker) reads both on; a switch-off saved afterwards survives a reopen', async () => {
+    const root = join(base, 'old');
+    await mkdir(join(root, '.studio'), { recursive: true });
+    await writeFile(file(root), JSON.stringify({ schemaVersion: 1, theme: 'dark', agentLiveInput: false, agentInterrupt: false }));
+    const ws = await WorkspaceStore.open(root, new Git());
+    expect(await ws.readSettings()).toMatchObject({ theme: 'dark', agentLiveInput: true, agentInterrupt: true });
+    await ws.updateSettings({ agentInterrupt: false });
+    expect(JSON.parse(await readFile(file(root), 'utf8'))).toMatchObject({ agentLiveInput: true, agentInterrupt: false, agentLiveDefaults: 804 });
+    const again = await WorkspaceStore.open(root, new Git(), { create: false });
+    expect(await again.readSettings()).toMatchObject({ theme: 'dark', agentLiveInput: true, agentInterrupt: false });
   });
 });

@@ -355,3 +355,49 @@ describe('old conversations and idle composer', () => {
     expect(screen.getByRole('button', { name: 'Edit queued request 1' })).toBeTruthy();
   });
 });
+
+// Decision 804: the wording is honest about when the agent reads a live message, and "Delivered" needs the CLI's evidence.
+describe('live messages: honest delivery wording (decision 804)', () => {
+  beforeEach(() => { caps = { ...CAPS_OFF, cliVersion: '2.1.301', liveInput: true, interrupt: true }; });
+  const persisted: ConversationEntry = { type: 'user', at: at(5), text: 'Use blue', pins: [], attachments: [], jobId: 'j1', mode: 'live', clientId: CID };
+
+  it('the note says the agent reads it when the current step ends, never that it arrives now', async () => {
+    render(view({ entries: [], job: running }));
+    expect(await screen.findByText(/the agent reads it as soon as the current step ends/)).toBeTruthy();
+    expect(screen.queryByText(/reaches the agent now/)).toBeNull();
+  });
+
+  it('"Sent" after the write, with the same explanation; "Delivered" only once the read marker arrives', () => {
+    const { rerender } = render(view({ entries: [persisted, agent(6, { kind: 'user_message_delivered', clientId: CID })], job: running }));
+    const sent = within(article('Use blue')).getByText('Sent');
+    expect(sent.getAttribute('title')).toBe('The agent reads it as soon as the current step ends');
+    expect(within(article('Use blue')).queryByText('Delivered')).toBeNull();
+    rerender(view({ entries: [persisted, agent(6, { kind: 'user_message_delivered', clientId: CID })], job: running, live: [{ kind: 'user_message_read', clientId: CID }] }));
+    const delivered = within(article('Use blue')).getByText('Delivered');
+    expect(delivered.getAttribute('data-state')).toBe('delivered');
+    expect(within(article('Use blue')).queryByText('Sent')).toBeNull();
+  });
+
+  it('Italian: the note and the hint use the agreed words', async () => {
+    render(<I18nProvider locale="it"><Conversation {...props} entries={[persisted, agent(6, { kind: 'user_message_delivered', clientId: CID })]} job={running} /></I18nProvider>);
+    expect(await screen.findByText(/l’agente lo legge appena finisce il passo in corso/)).toBeTruthy();
+    expect(screen.getByText('Inviato').getAttribute('title')).toBe('L’agente lo legge appena finisce il passo in corso');
+  });
+
+  it('the turn the user stopped is not shown as an error, and the message before it is not "failed"', () => {
+    const stopped: AgentEvent = { kind: 'result', ok: false, interrupted: true, sessionId: 's' };
+    const user: ConversationEntry = { type: 'user', at: at(1), text: 'Make it red', pins: [], attachments: [], jobId: 'j1' };
+    const entries = (r: AgentEvent) => [user, agent(2, { kind: 'text', text: 'Working' }), agent(3, { kind: 'interrupted' }), agent(3, r), { ...user, at: at(4) }];
+    const { unmount } = render(view({ entries: entries(stopped), job: done }));
+    expect(screen.getByText('Interrupted by you')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+    // Not failed: the same words sent again are a second bubble, not a "Retried" label.
+    expect(screen.queryByText(/^Retried/)).toBeNull();
+    expect(screen.getAllByText('Make it red')).toHaveLength(2);
+    unmount();
+    // The contrast: the same result without the acknowledgement (no `interrupted`) is a failure.
+    render(view({ entries: entries({ kind: 'result', ok: false, error: 'boom', sessionId: 's' }), job: done }));
+    expect(screen.getByRole('alert').textContent).toContain('boom');
+    expect(screen.getByText(/^Retried/)).toBeTruthy();
+  });
+});

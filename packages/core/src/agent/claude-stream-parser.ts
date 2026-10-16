@@ -123,12 +123,17 @@ function eventsOf(msg: Json): AgentEvent[] {
 }
 
 /** A `control_response` line: the answer to a control request the runner wrote (Phase 13 interrupt). */
-export interface ControlResponse { requestId: string; ok: boolean; error?: string }
+/**
+ * `stillQueued` (runner review round 2): the LENGTH of `response.response.still_queued` when it is an array (2.1.301
+ * answered `[]` to an interrupt); absent when the CLI did not say. The items' shape is never read (unmeasured).
+ */
+export interface ControlResponse { requestId: string; ok: boolean; error?: string; stillQueued?: number }
 
 /**
  * Reads a `control_response` line. Shape from the public Agent SDK docs (the `{ type: "control_request", request_id,
- * request }` envelope and its `control_response` echoing `request_id`), UNVERIFIED LIVE for the installed CLI (decisions
- * log 610): https://code.claude.com/docs/en/agent-sdk/typescript . The id is read from `response.request_id`, or from a
+ * request }` envelope and its `control_response` echoing `request_id`): https://code.claude.com/docs/en/agent-sdk/typescript .
+ * Measured on Claude Code 2.1.301 by the user's probe (decision 804): `{ type: 'control_response', response: { subtype:
+ * 'success', request_id, response: { still_queued: [] } } }`. The id is read from `response.request_id`, or from a
  * top-level `request_id`. Anything else is null (and the line yields no event, as before).
  */
 export function controlResponseOf(msg: Json): ControlResponse | null {
@@ -137,7 +142,9 @@ export function controlResponseOf(msg: Json): ControlResponse | null {
   const requestId = typeof r.request_id === 'string' ? r.request_id : typeof msg.request_id === 'string' ? msg.request_id : null;
   if (!requestId) return null;
   const ok = r.subtype === 'success';
-  return ok ? { requestId, ok } : { requestId, ok, error: typeof r.error === 'string' ? r.error : String(r.subtype ?? 'error') };
+  const inner = isObj(r.response) ? r.response : null;
+  const stillQueued = inner && Array.isArray(inner.still_queued) ? { stillQueued: inner.still_queued.length } : {};
+  return ok ? { requestId, ok, ...stillQueued } : { requestId, ok, error: typeof r.error === 'string' ? r.error : String(r.subtype ?? 'error'), ...stillQueued };
 }
 
 const sameTokens = (a: TokenCounts, b: TokenCounts) => a.input === b.input && a.output === b.output && a.cacheRead === b.cacheRead && a.cacheWrite === b.cacheWrite;
@@ -162,22 +169,27 @@ export class ClaudeStreamParser {
   private readonly onLive: ((e: AgentEvent) => void) | null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private readonly onControlResponse: ((r: ControlResponse) => void) | null;
+  private readonly onResult: ((subtype: string | null) => void) | null;
 
   /**
    * `onLive`: receives a held-back estimate from the trailing timer (at most one per interval); without it, no timer.
    * `onControlResponse` (Phase 13): receives each `control_response` line (never an AgentEvent).
+   * `onResult` (decision 804): the raw `subtype` of each `result` line, before parse() returns that line's events (the
+   * runner tells an interrupted turn, `error_during_execution`, from any other error).
    */
-  constructor(opts: { now?: () => number; liveIntervalMs?: number; onLive?: (e: AgentEvent) => void; onControlResponse?: (r: ControlResponse) => void } = {}) {
+  constructor(opts: { now?: () => number; liveIntervalMs?: number; onLive?: (e: AgentEvent) => void; onControlResponse?: (r: ControlResponse) => void; onResult?: (subtype: string | null) => void } = {}) {
     this.now = opts.now ?? Date.now;
     this.interval = opts.liveIntervalMs ?? 1000;
     this.onLive = opts.onLive ?? null;
     this.onControlResponse = opts.onControlResponse ?? null;
+    this.onResult = opts.onResult ?? null;
   }
 
   parse(line: string): AgentEvent[] {
     const { events, msg } = parseLine(line);
     const control = msg ? controlResponseOf(msg) : null;
     if (control) { try { this.onControlResponse?.(control); } catch { /* a faulty listener must not break the parser */ } }
+    if (msg && msg.type === 'result') { try { this.onResult?.(typeof msg.subtype === 'string' ? msg.subtype : null); } catch { /* as above */ } }
     if (events.some((e) => e.kind === 'usage' && !e.live)) { this.final = true; this.pending = false; this.stop(); return events; }
     if (msg && msg.type === 'assistant' && isObj(msg.message) && isObj(msg.message.usage)) {
       const id = typeof msg.message.id === 'string' && msg.message.id !== '' ? msg.message.id : `#${this.anonymous++}`;

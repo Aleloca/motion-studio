@@ -110,8 +110,16 @@ describe('startServer port auto', () => {
       await call('PUT', '/api/workspace', { path: join(base, 'ws') });
       const project = await call('POST', '/api/projects', { name: 'Acme' });
       await call('POST', `/api/projects/${project.slug}/turns`, { prompt: 'ciao' });
-      for (let i = 0; i < 100 && !existsSync(argsFile); i++) await new Promise((r) => setTimeout(r, 100));
-      const { mcpConfigFile } = JSON.parse(await readFile(argsFile, 'utf8'));
+      // The fake writes the args file on every start, `claude --version` included. Since decision 804 the launcher asks
+      // for the version before a console run (live input defaults on), so wait for the agent run's own record: the one
+      // with an MCP config.
+      const agentRun = async () => (existsSync(argsFile) ? JSON.parse(await readFile(argsFile, 'utf8')) : null);
+      let record = await agentRun().catch(() => null);
+      for (let i = 0; i < 100 && !record?.mcpConfigFile; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        record = await agentRun().catch(() => null);
+      }
+      const { mcpConfigFile } = record;
       const env = JSON.parse(mcpConfigFile.content).mcpServers.studio.env;
       expect(env.ELECTRON_RUN_AS_NODE).toBe('1');
       expect(env.MOTION_STUDIO_BRIDGE_TOKEN_FILE).toMatch(/\.token$/);

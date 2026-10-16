@@ -374,6 +374,8 @@ describe('pins of a queued request refer to the version they were placed on (fin
 describe('workspace settings written by an agent with the sandbox off (final wave P9)', () => {
   it('are held for the run, put back after it, and the chat says so', async () => {
     s = await liveApp(); // no sandbox here: the run is unsandboxed
+    // Decision 804: live input defaults on; the user switched it off, so the agent turning it on is a change.
+    await s.app.inject({ method: 'PUT', url: '/api/settings', payload: { agentLiveInput: false, agentInterrupt: false } });
     const file = join(s.base, 'ws', '.studio', 'settings.json');
     const before = await readFile(file, 'utf8');
     await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Primo' } });
@@ -392,6 +394,7 @@ describe('workspace settings written by an agent with the sandbox off (final wav
 describe('an agent settings change that cannot be undone survives no restart (fix round 1, I-A)', () => {
   it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('the agent writes settings.json and makes .studio read-only; after a restart none of its values apply', async () => {
     s = await liveApp();
+    await s.app.inject({ method: 'PUT', url: '/api/settings', payload: { agentLiveInput: false, agentInterrupt: false } }); // decision 804: off by the user
     const studio = join(s.base, 'ws', '.studio');
     const file = join(studio, 'settings.json');
     const before = await readFile(file, 'utf8');

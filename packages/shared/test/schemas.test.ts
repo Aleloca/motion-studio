@@ -5,14 +5,25 @@ describe('workspaceSettingsSchema', () => {
   it('fills defaults from an empty versioned object', () => {
     expect(workspaceSettingsSchema.parse({ schemaVersion: 1 })).toEqual({
       schemaVersion: 1, maxConcurrentJobs: 2, expertMode: false, theme: 'system', model: null, sandboxMode: 'auto', extraAllowedDomains: [], confirmPaidProviders: true, autoApproveSandboxed: true,
-      exportNamePattern: '{title}-{format}-v{v}', agentLiveInput: false, agentInterrupt: false,
+      exportNamePattern: '{title}-{format}-v{v}', agentLiveInput: true, agentInterrupt: true,
     });
   });
-  it('Phase 13 opt-in: live input and interrupt default off (an old settings.json loads unchanged) and can be turned on', () => {
+  it('decision 804: live input and interrupt default on and can be switched off', () => {
     const old = workspaceSettingsSchema.parse({ schemaVersion: 1, maxConcurrentJobs: 3 });
-    expect(old).toMatchObject({ maxConcurrentJobs: 3, agentLiveInput: false, agentInterrupt: false });
-    expect(workspaceSettingsSchema.parse({ schemaVersion: 1, agentLiveInput: true, agentInterrupt: true })).toMatchObject({ agentLiveInput: true, agentInterrupt: true });
+    expect(old).toMatchObject({ maxConcurrentJobs: 3, agentLiveInput: true, agentInterrupt: true });
+    expect(workspaceSettingsSchema.parse({ schemaVersion: 1, agentLiveInput: false, agentInterrupt: false })).toMatchObject({ agentLiveInput: false, agentInterrupt: false });
     expect(workspaceSettingsSchema.safeParse({ schemaVersion: 1, agentLiveInput: 'yes' }).success).toBe(false);
+    expect(workspaceSettingsSchema.safeParse({ schemaVersion: 1, agentLiveDefaults: 803 }).success).toBe(false);
+  });
+  it('decision 804: a settings file from before the marker reads both on (its false was the old default); with the marker a false is the user\'s choice', () => {
+    const before804 = { schemaVersion: 1, maxConcurrentJobs: 3, agentLiveInput: false, agentInterrupt: false };
+    expect(storedWorkspaceSettingsSchema.parse(before804)).toMatchObject({ maxConcurrentJobs: 3, agentLiveInput: true, agentInterrupt: true, agentLiveDefaults: 804 });
+    expect(storedWorkspaceSettingsSchema.parse({ schemaVersion: 1 })).toMatchObject({ agentLiveInput: true, agentInterrupt: true, agentLiveDefaults: 804 });
+    const chosen = { ...before804, agentLiveDefaults: 804 };
+    expect(storedWorkspaceSettingsSchema.parse(chosen)).toMatchObject({ agentLiveInput: false, agentInterrupt: false, agentLiveDefaults: 804 });
+    expect(storedWorkspaceSettingsSchema.parse({ ...chosen, agentInterrupt: true })).toMatchObject({ agentLiveInput: false, agentInterrupt: true });
+    // What the app writes for a new workspace carries the marker, so a later switch-off sticks.
+    expect(workspaceSettingsSchema.parse({ schemaVersion: 1, agentLiveDefaults: 804 }).agentLiveDefaults).toBe(804);
   });
   it('autoApproveSandboxed defaults to true when absent and can be turned off', () => {
     expect(workspaceSettingsSchema.parse({ schemaVersion: 1 }).autoApproveSandboxed).toBe(true);
