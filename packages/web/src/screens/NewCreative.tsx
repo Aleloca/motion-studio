@@ -14,7 +14,7 @@ import { channelOf } from './creativeState.ts';
 import './newcreative.css';
 import { message as errText } from './common.tsx';
 import { isVideoFile } from '../media.ts';
-import { conceptIds, IdentityStart, identityForBrief, primaryLogoOf, resolveIdentity } from './identity/IdentityStart.tsx';
+import { IdentityStart, identityForBrief, primaryLogoOf, resolveIdentity } from './identity/IdentityStart.tsx';
 import { StorePackWizard } from './new-creative/StorePackWizard.tsx';
 import { packParts } from './new-creative/storePackModel.ts';
 import './new-creative/storepack.css';
@@ -290,7 +290,7 @@ export function NewCreative({ slug }: { slug: string }) {
         title,
         brief: {
           goal: goal.trim(), message: message.trim(),
-          // A logo from scratch is one instance per concept (`identity-logo`, `identity-logo@2`…).
+          // Identity concepts are variants of the group the core creates (`identity.concepts`), never `identity-logo@k` instances.
           formats: [...handIds, ...parts.formats],
           durationSec: videos.length > 0 ? durationSec : parts.durationSec, assets: [...picked, ...parts.assets.filter((a) => !picked.includes(a))], notes: notes.trim(), links: plan.links,
           ...(Object.keys(parts.formatLabels).length > 0 ? { formatLabels: parts.formatLabels } : {}),
@@ -322,7 +322,7 @@ export function NewCreative({ slug }: { slug: string }) {
   const identityNow = resolveIdentity(identity, hasBrandLogo);
   // The pack never takes a picked tile over (Phase 14): its instances take the next free ids beside the chosen ones.
   const handPicked = chosen;
-  const handIds = handPicked.flatMap((p) => (p.identity === 'logo' ? conceptIds(p.id, identityNow) : [p.id]));
+  const handIds = handPicked.map((p) => p.id);
   const parts = packParts(pack, presets, handIds);
   const packExtra = parts.formats.length;
   const allVideos = handPicked.filter((p) => p.kind === 'video').length + parts.videos;
@@ -448,7 +448,7 @@ export function NewCreative({ slug }: { slug: string }) {
           {identityOn ? (
             <section className="ms-nc-sec" data-enter>
               <IdentityStart value={identityNow} onChange={setIdentity} hasBrandLogo={hasBrandLogo} fromCodebase={primaryLogoOf(kit?.logos ?? [])?.source.kind === 'codebase'}
-                withConcepts={chosen.some((p) => p.identity === 'logo')} />
+                withConcepts />
             </section>
           ) : null}
 

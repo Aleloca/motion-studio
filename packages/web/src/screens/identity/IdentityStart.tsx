@@ -1,7 +1,7 @@
 // "Partenza" of the identity formats (Phase 14, spec §4.3, decisions 730–732): from the brand's logo (the default when the
-// brand has one) or from scratch (a name or initials, style keywords, brand or free colours and, for a logo, how many concepts).
+// brand has one) or from scratch (a name or initials, style keywords, brand or free colours and, for a logo, how many variants).
 // A controlled form: the parent keeps the choice and sends it as `brief.identity`.
-import { instanceIdOf, type BrandKit, type IdentityBrief } from '@motion-studio/shared';
+import { type BrandKit, type IdentityBrief } from '@motion-studio/shared';
 import { useEffect, useId, useState } from 'react';
 import { api } from '../../api.ts';
 import { useT } from '../../i18n.tsx';
@@ -15,7 +15,7 @@ export function resolveIdentity(value: IdentityBrief | undefined, hasBrandLogo: 
   return { start: hasBrandLogo ? 'brand' : 'scratch', colors: 'brand', concepts: DEFAULT_CONCEPTS, ...value };
 }
 
-/** The brief's `identity`, trimmed: a field left empty is not sent, the concepts only matter for a logo from scratch. */
+/** The brief's `identity`, trimmed: a field left empty is not sent, the variants only matter for a start from scratch. */
 export function identityForBrief(value: IdentityBrief | undefined, hasBrandLogo: boolean): IdentityBrief {
   const v = resolveIdentity(value, hasBrandLogo);
   const name = v.name?.trim();
@@ -27,12 +27,6 @@ export function identityForBrief(value: IdentityBrief | undefined, hasBrandLogo:
     colors: v.colors ?? 'brand',
     concepts: v.concepts ?? DEFAULT_CONCEPTS,
   };
-}
-
-/** The logo instances a new creative gets: `identity-logo`, `identity-logo@2`… for a logo from scratch, else just the one. */
-export function conceptIds(presetId: string, identity: IdentityBrief): string[] {
-  const n = identity.start === 'scratch' ? Math.min(5, Math.max(1, identity.concepts ?? DEFAULT_CONCEPTS)) : 1;
-  return Array.from({ length: n }, (_, i) => instanceIdOf(presetId, i + 1));
 }
 
 /** The brand's logo a creative starts from: the primary one, else the first (final wave M9). */
@@ -57,13 +51,15 @@ export interface IdentityStartProps {
   hasBrandLogo: boolean;
   /** The primary brand logo (else the first) comes from a codebase: said next to "from the brand's logo". */
   fromCodebase?: boolean;
-  /** A logo format is in the brief: the number of concepts is asked (from scratch only). */
+  /** The number of variants of the whole creative is asked (from scratch only; phase 15: the old logo "proposals"). */
   withConcepts: boolean;
   disabled?: boolean;
 }
 
 export function IdentityStart({ value, onChange, hasBrandLogo, fromCodebase, withConcepts, disabled }: IdentityStartProps) {
-  const i = useT().web.identity;
+  const t = useT().web;
+  const i = t.identity;
+  const vg = t.variantGroup;
   const id = useId();
   const set = (patch: Partial<IdentityBrief>) => onChange({ ...value, ...patch });
   const scratch = value.start === 'scratch';
@@ -89,11 +85,11 @@ export function IdentityStart({ value, onChange, hasBrandLogo, fromCodebase, wit
             options={[{ value: 'brand', label: i.colorsBrand }, { value: 'free', label: i.colorsFree }]} />
           {withConcepts ? (
             <>
-              <span className="ms-idstart-lbl">{i.concepts}</span>
-              <Segmented<'1' | '2' | '3' | '4' | '5'> label={i.concepts} value={String(concepts) as '1' | '2' | '3' | '4' | '5'} disabled={disabled}
+              <span className="ms-idstart-lbl">{vg.variants}</span>
+              <Segmented<'1' | '2' | '3' | '4' | '5'> label={vg.variants} value={String(concepts) as '1' | '2' | '3' | '4' | '5'} disabled={disabled}
                 onChange={(n) => set({ concepts: Number(n) })}
                 options={(['1', '2', '3', '4', '5'] as const).map((n) => ({ value: n, label: n }))} />
-              <p className="ms-idstart-note">{i.conceptsHint}</p>
+              <p className="ms-idstart-note">{vg.identityVariantsHint}</p>
             </>
           ) : null}
         </div>

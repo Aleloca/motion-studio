@@ -4,7 +4,7 @@ import { lstat, readdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, join, sep } from 'node:path';
 import { changedAssets, overlayAssetPaths, readOverlay } from '../localization/store.ts';
 import type { FastifyInstance } from 'fastify';
-import { messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, nextInstanceId, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow, hostOf, MAX_VARIANTS, VARIANT_LETTERS, type VariantDetail, type VariantLetter } from '@motion-studio/shared';
+import { messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow, hostOf, MAX_VARIANTS, VARIANT_LETTERS, type VariantDetail, type VariantLetter } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
@@ -261,28 +261,15 @@ export const localeAssetsCheck = (projectDir: string, creativeDir: string) => as
 };
 
 /**
- * A logo from scratch is one instance per concept (`identity-logo`, `identity-logo@2`…, final wave M3, decision 786): the
- * create route adds the missing instances of each logo preset in the brief up to `identity.concepts`, within MAX_INSTANCES
- * (`nextInstanceId`). Idempotent: a body that already lists them (the UI's) is left as it is; never removes an instance.
+ * Phase 15 (spec §3 "Identità", decision 845): the size of the variant group a new identity creative gets: `identity.concepts`
+ * of a logo from scratch (1..5) when it is above 1 and the brief has an identity format. A brief that already lists several
+ * instances of one identity preset (an old client's `identity-logo@2`…) is left as it is: no group.
  */
-export function expandLogoConcepts<B extends Pick<Brief, 'formats' | 'identity'>>(brief: B, presets: readonly FormatPreset[]): B {
-  if (brief.identity?.start !== 'scratch') return brief;
-  const want = Math.min(5, Math.max(1, brief.identity.concepts ?? 3));
-  const formats = [...brief.formats];
-  const logoPresets = [...new Set(formats.map(presetOf))].filter((id) => presets.find((p) => p.id === id)?.identity === 'logo');
-  for (const preset of logoPresets) {
-    let have = formats.filter((f) => presetOf(f) === preset).length;
-    while (have < want) {
-      const id = nextInstanceId(preset, formats);
-      if (id === null) break;
-      // Right after the preset's last instance, so the concepts stay together.
-      let at = -1;
-      formats.forEach((f, i) => { if (presetOf(f) === preset) at = i; });
-      formats.splice(at + 1, 0, id);
-      have++;
-    }
-  }
-  return formats.length === brief.formats.length ? brief : { ...brief, formats };
+export function identityGroupSize(brief: Pick<Brief, 'formats' | 'identity'>, presets: readonly FormatPreset[]): number {
+  if (brief.identity?.start !== 'scratch') return 1;
+  const ids = brief.formats.filter((f) => presets.find((p) => p.id === presetOf(f))?.identity);
+  if (ids.length === 0 || new Set(ids.map(presetOf)).size !== ids.length) return 1;
+  return Math.min(5, Math.max(1, brief.identity.concepts ?? 3));
 }
 
 export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutesContext): void {
@@ -364,7 +351,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
         brief = { ...brief, storePack: { ...pack, instances: slots } };
       }
     }
-    brief = expandLogoConcepts(brief, presets);
+    const groupSize = identityGroupSize(brief, presets);
     const links = initialLinks(brief, presets);
     const created = await store.create({ title: body.title, brief: { ...brief, links } });
     const slug = created.slug;
@@ -372,6 +359,13 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     await ctx.turns.side.read(ws.projectDir(req.params.slug), slug);
     const creative = linkedCodebases ? await store.update(slug, { linkedCodebases }) : created.creative;
     const ref = { root: ws.root, projectSlug: req.params.slug, projectDir: ws.projectDir(req.params.slug), creativeSlug: slug };
+    // Phase 15: an identity creative with several concepts is a group of that many variants (the host is A), made here and
+    // started like any grouped creative's first generation (`ctx.variantRuns`, the same orchestration as `…/variants/run`).
+    if (groupSize > 1) {
+      await new VariantGroupService({ store, turns: ctx.turns }).addVariants(ref, Array.from({ length: groupSize - 1 }, () => ({ direction: null })), { hostDirection: null });
+      const variantRun = body.generate ? await ctx.variantRuns.run(ref, 'all-active', null) : null;
+      return reply.status(201).send({ slug, creative: await store.get(slug), job: null, ...(variantRun ? { variantRun } : {}) });
+    }
     const job = body.generate ? await ctx.turns.start(ref) : null;
     return reply.status(201).send({ slug, creative: job ? await store.get(slug) : creative, job });
   });

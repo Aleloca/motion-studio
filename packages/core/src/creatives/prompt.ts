@@ -436,7 +436,7 @@ export function storePackPromptSection(p: StorePack): string[] {
  * SVG rules the core checks, the optional `small` variant, the safe zones and the start mode (from the brand's logo, or from
  * scratch with the user's name, keywords and colours, quoted as data). `kinds`: the identity kinds among the turn's formats.
  */
-export function identityPromptSection(kinds: ReadonlySet<'logo' | 'favicon' | 'app-icon'>, identity: IdentityBrief | undefined, hasBrandLogo: boolean, logoIds: readonly string[]): string[] {
+export function identityPromptSection(kinds: ReadonlySet<'logo' | 'favicon' | 'app-icon'>, identity: IdentityBrief | undefined, hasBrandLogo: boolean, logoIds: readonly string[], grouped = false): string[] {
   const q = (s: string, max: number) => quotePromptString(oneLine(s, max));
   const icons = kinds.has('favicon') || kinds.has('app-icon');
   const start = identity?.start ?? (hasBrandLogo ? 'brand' : 'scratch');
@@ -470,6 +470,7 @@ export function identityPromptSection(kinds: ReadonlySet<'logo' | 'favicon' | 'a
     );
     if (logoIds.length > 1) lines.push(`- ${logoIds.join(', ')}: ${logoIds.length} distinct logo concepts, one per instance, each a different idea (not variations of one).`);
   }
+  if (grouped && icons) lines.push('- This creative is one variant of a group: the favicon and app icon of this variant derive from ITS OWN logo (the same mark, simplified), never from another variant\'s logo, so logo, favicon and app icon of this variant are consistent.');
   return lines;
 }
 
@@ -571,7 +572,7 @@ export function buildCreativePrompt(i: PromptInput): string {
     parts.push(
       '', '## Required formats', ...compositionLines, ...sameSize,
       ...(brief.storePack && i.kind !== 'fix' && i.kind !== 'redirect' ? ['', ...storePackPromptSection(brief.storePack)] : []),
-      ...(identityKinds.size > 0 ? ['', ...identityPromptSection(identityKinds, brief.identity, (i.context?.kit.logos.length ?? 0) > 0, known.filter(([, p]) => p?.identity === 'logo').map(([id]) => id))] : []),
+      ...(identityKinds.size > 0 ? ['', ...identityPromptSection(identityKinds, brief.identity, (i.context?.kit.logos.length ?? 0) > 0, known.filter(([, p]) => p?.identity === 'logo').map(([id]) => id), !!i.variant)] : []),
       '', ...COMPOSITION_SECTION,
       ...(i.sandboxed ? ['', ...SANDBOX_SECTION_COMPOSITIONS] : []),
       '', '## Where to work',

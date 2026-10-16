@@ -318,21 +318,21 @@ describe('recoverWorkspace', { timeout: 90_000 }, () => {
   });
 });
 
-describe('M3: logo concepts on create (decision 786)', { timeout: 90_000 }, () => {
+describe('logo concepts on create (decision 786, superseded by 845 for new creatives)', { timeout: 90_000 }, () => {
   const create = (formats: string[], identity?: unknown) => app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'L', brief: { ...brief, formats, ...(identity ? { identity } : {}) } } });
-  it('a logo from scratch gets one instance per concept; the UI body (already expanded) is left as it is', async () => {
+  it('a logo from scratch with concepts is a variant group (see identity-variants.test.ts): no instance is added to the formats', async () => {
     const a = await create(['identity-logo', 'identity-favicon'], { start: 'scratch', name: 'Acme', concepts: 3 });
     expect(a.statusCode).toBe(201);
-    expect(a.json().creative.brief.formats).toEqual(['identity-logo', 'identity-logo@2', 'identity-logo@3', 'identity-favicon']);
+    expect(a.json().creative.brief.formats).toEqual(['identity-logo', 'identity-favicon']);
+    expect(a.json().creative.variantGroup.members).toHaveLength(3);
+    // A body that lists the instances itself (an old client) is kept as it is, with no group.
     const b = await create(['identity-logo', 'identity-logo@2', 'identity-logo@3', 'identity-favicon'], { start: 'scratch', name: 'Acme', concepts: 3 });
     expect(b.json().creative.brief.formats).toEqual(['identity-logo', 'identity-logo@2', 'identity-logo@3', 'identity-favicon']);
-    // The default is 3 concepts; a gap is filled first.
-    const c = await create(['identity-logo@3'], { start: 'scratch', name: 'Acme' });
-    expect(c.json().creative.brief.formats).toEqual(['identity-logo@3', 'identity-logo', 'identity-logo@2']);
+    expect(b.json().creative.variantGroup).toBeUndefined();
   });
   it('from the brand logo, or without a logo format, nothing is added', async () => {
     expect((await create(['identity-logo'], { start: 'brand' })).json().creative.brief.formats).toEqual(['identity-logo']);
-    expect((await create(['identity-favicon'], { start: 'scratch', name: 'Acme', concepts: 4 })).json().creative.brief.formats).toEqual(['identity-favicon']);
+    expect((await create(['identity-favicon'], { start: 'scratch', name: 'Acme', concepts: 1 })).json().creative.brief.formats).toEqual(['identity-favicon']);
   });
 });
 
