@@ -414,6 +414,26 @@ export class CreativeTurnService {
     await this.commitCreativeFile(ref, new CreativeStore(ref.projectDir), t().jobs.briefUpdatedCommit({ title: pending.title ?? (await this.titleOf(new CreativeStore(ref.projectDir), ref.creativeSlug)) }));
   }
 
+  /**
+   * Phase 15 (decisions log 832): a brief the group changed while this variant worked, applied now. For the other writers
+   * of a creative under its lock (a translation's start, an editor save, a duplicate), which hold the lock already.
+   */
+  applyPendingBrief(ref: CreativeRef): Promise<void> { return this.applyPendingBriefLocked(ref); }
+
+  /**
+   * Phase 15: after ANY job of the creative's key ends (a turn, a translation), its pending brief is applied under its
+   * lock, unless another job of it is still queued or running (still never mid-turn).
+   */
+  async briefAfterJob(ref: CreativeRef): Promise<void> {
+    const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
+    await this.locks.run(key, async () => { if (!this.isActive(key)) await this.applyPendingBriefLocked(ref); }).catch((err: Error) => {
+      console.warn(`Motion Studio: the group's brief could not be applied to ${ref.creativeSlug}: ${err.message}`);
+    });
+  }
+
+  /** Phase 15: keeps `ref` for `otherJobEndedByKey` (a variant with a pending brief, whose translation may end). */
+  rememberRef(ref: CreativeRef): void { this.refs.set(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), ref); }
+
   /** The format presets now (the variant service seeds a new variant with them). */
   presetList(): Promise<FormatPreset[]> { return this.deps.presets(); }
 
@@ -1676,6 +1696,8 @@ export class CreativeTurnService {
     if (live) live.phase = 'ended';
     this.live.delete(jobId);
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
+    // Phase 15: whatever the outcome, a brief the group changed meanwhile applies now that the turn is over.
+    await this.briefAfterJob(ref);
     if (state !== 'succeeded' || !live?.savedVersion || live.stopped) { this.paused.add(key); return; }
     await this.maybeAutoRun(ref);
   }
@@ -1688,6 +1710,8 @@ export class CreativeTurnService {
     const ref = this.refs.get(key);
     // Ruling U: a failed or cancelled translation pauses the queue like a turn would.
     if (!ref) return;
+    // Phase 15: a variant's pending brief applies once its translation is over.
+    await this.briefAfterJob(ref);
     if (state !== 'succeeded') { this.paused.add(key); return; }
     if (!this.paused.has(key)) await this.maybeAutoRun(ref);
   }

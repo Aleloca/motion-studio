@@ -82,9 +82,23 @@ export async function creativeKind(projectDir: string, slug: string): Promise<'p
   return own?.variantOf === hostOf(slug) ? 'orphan' : 'none';
 }
 
-/** Whether sweeps, approvals, usage and the rename journal treat `slug` as a creative: a plain one or a real sister. */
+/**
+ * Whether sweeps, approvals, usage and the rename journal treat `slug` as a creative: a plain one, a real sister, or an
+ * orphan sister (its own creative.json says `variantOf` its host; decisions log 833). A sister-shaped folder without that
+ * (a hand-made `x~b`) never is.
+ */
 export async function isAcceptedCreative(projectDir: string, slug: string): Promise<boolean> {
-  return CREATIVE_SLUG_RE.test(slug) || isRealSister(projectDir, slug);
+  return (await creativeKind(projectDir, slug)) !== 'none';
+}
+
+/** `isAcceptedCreative` for the synchronous callers (the approval card's explanation). The same rule, the same safe read. */
+export function isAcceptedCreativeSync(projectDir: string, slug: string): boolean {
+  if (CREATIVE_SLUG_RE.test(slug)) return true;
+  if (!SISTER_SLUG_RE.test(slug)) return false;
+  if (isRealSisterSync(projectDir, slug)) return true;
+  try {
+    return parseCreative(readRegularFileSync(join(projectDir, 'creatives', slug, 'creative.json'), CREATIVE_JSON_MAX))?.variantOf === hostOf(slug);
+  } catch { return false; }
 }
 
 const pad2 = (n: number) => String(n).padStart(2, '0');

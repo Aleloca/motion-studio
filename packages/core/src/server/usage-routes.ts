@@ -53,7 +53,7 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
     if (ws && typeof q.project === 'string' && q.project !== '') {
       const project = await ws.getProject(q.project); // 400 for a bad slug, 404 when missing
       projects = [{ slug: q.project, name: project.name, dir: ws.projectDir(q.project) }];
-      // Phase 15 (ruling R2): a sister's records only when it is a real sister of this project; a hand-made `x~b` is refused.
+      // Phase 15 (decisions log 821, 833): a sister's records when it is a real or orphan sister; a hand-made `x~b` is refused.
       if (creative !== undefined && !(await isAcceptedCreative(projects[0]!.dir, creative))) throw new WorkspaceError(400, t().errors.invalidRequest);
     } else if (ws) {
       const list = await ws.listProjects().catch(() => []);

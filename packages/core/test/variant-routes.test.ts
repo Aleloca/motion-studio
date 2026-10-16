@@ -15,6 +15,7 @@ import { AppConfigStore } from '../src/app-config.ts';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { Git } from '../src/git.ts';
 import { buildServer } from '../src/server/app.ts';
+import { H, startInstanceEnv, type InstanceEnv } from './helpers/instance-server.ts';
 
 vi.setConfig({ testTimeout: 90_000, hookTimeout: 60_000 });
 
@@ -151,6 +152,8 @@ describe('variant routes', () => {
     await app.inject({ method: 'POST', url: `${P}/${slug}/variants`, payload: { count: 2 } });
     expect((await app.inject(`/api/usage?project=acme&creative=${encodeURIComponent(`${slug}~b`)}`)).statusCode).toBe(200);
     await rm(join(projectDir(), 'creatives', slug), { recursive: true });
+    // Decisions log 833: an orphan sister is a creative for usage too.
+    expect((await app.inject(`/api/usage?project=acme&creative=${encodeURIComponent(`${slug}~b`)}`)).statusCode).toBe(200);
     const orphan = await app.inject(`${P}/${slug}~b`);
     expect(orphan.statusCode).toBe(200);
     expect((orphan.json() as CreativeDetail).variants).toEqual({ orphan: true, host: slug, letter: 'b' });
@@ -158,5 +161,32 @@ describe('variant routes', () => {
     const add = await app.inject({ method: 'POST', url: `${P}/${slug}~b/variants`, payload: {} });
     expect(add.statusCode).toBe(409);
     expect(add.json().code).toBe('variant-orphan');
+  });
+});
+
+describe('fix round 1, Important 1: a translation does not hold back the group\'s brief', () => {
+  let env: InstanceEnv;
+  afterEach(async () => { await env?.close(); });
+  it('B localizing while the group adds a language: once it ends, B has the language and translating into it works', async () => {
+    env = await startInstanceEnv('ms-test-variant-loc-');
+    const slug = await env.create(['test-wide'], { links: {}, locales: { primary: 'en', extra: ['de'] } });
+    const B = `${slug}~b`;
+    const url = (c: string) => `/api/projects/acme/creatives/${c}`;
+    expect((await env.app.inject({ method: 'POST', url: `${url(slug)}/variants`, headers: H, payload: { count: 2, baseFrom: { slug, version: 1 } } })).statusCode).toBe(201);
+    process.env.FAKE_CLAUDE_SCENARIO = 'hang';
+    const started = await env.app.inject({ method: 'POST', url: `${url(B)}/versions/1/localize`, headers: H, payload: { locales: ['de'] } });
+    expect(started.statusCode, started.body).toBe(202);
+    const jobId = (started.json() as { jobId: string }).jobId;
+    const hostBrief = (await env.app.inject({ url: url(slug), headers: H })).json().creative.brief;
+    const res = await env.app.inject({ method: 'PUT', url: url(slug), headers: H, payload: { brief: { ...hostBrief, links: undefined, locales: { primary: 'en', extra: ['de', 'fr'] } } } });
+    expect(res.statusCode, res.body).toBe(200);
+    expect((await env.app.inject({ url: url(B), headers: H })).json().creative.brief.locales.extra).toEqual(['de']);
+    await env.app.inject({ method: 'POST', url: `/api/jobs/${jobId}/cancel`, headers: H });
+    await env.waitJob(jobId);
+    process.env.FAKE_CLAUDE_SCENARIO = 'composition';
+    await vi.waitFor(async () => expect((await env.app.inject({ url: url(B), headers: H })).json().creative.brief.locales.extra).toEqual(['de', 'fr']), { timeout: 10_000 });
+    const fr = await env.app.inject({ method: 'POST', url: `${url(B)}/versions/1/localize`, headers: H, payload: { locales: ['fr'] } });
+    expect(fr.statusCode, fr.body).toBe(202);
+    await env.waitJob((fr.json() as { jobId: string }).jobId);
   });
 });

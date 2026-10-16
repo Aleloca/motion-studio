@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
-  activeMembers, canDiscard, effectiveLinks, followerVersion, formatDisplayName, hasFormat, MAX_VARIANTS, nextLetter, starOf,
+  activeMembers, canDiscard, effectiveLinks, followerVersion, formatDisplayName, hasFormat, MAX_INSTANCES, MAX_VARIANTS, nextInstanceId, nextLetter, presetOf, starOf,
   VARIANT_LETTERS, variantGroupSchema,
   type CreativeFile, type VariantGroup, type VariantLetter, type VariantMember, type VariantPick, type VersionEntry,
 } from '@motion-studio/shared';
@@ -380,11 +380,46 @@ export class VariantGroupService {
     });
   }
 
+  /**
+   * "Duplica formato" in a group (decisions log 831): the new instance id is allocated ONCE for the group, over the format ids
+   * of every member (and the group's brief), so it means the same instance everywhere. The duplicating member makes its
+   * version (`run`, under its lock, taken after the host's); then the group's brief gets the instance, with its label,
+   * right after its source, and is propagated like any brief edit: the other variants fill it at their next turn, a working
+   * one gets it then, a discarded one when it is restored.
+   */
+  duplicateInGroup<T>(ref: CreativeRef, source: string, label: string | undefined, run: (instanceId: string) => Promise<T>): Promise<T> {
+    return this.withGroup(ref, async (host, hostFile, g) => {
+      const shared = await this.canonical(host, hostFile);
+      const ids = new Set(shared.brief.formats);
+      for (const m of g.members) {
+        const c = m.letter === 'a' ? hostFile : await this.deps.store.get(m.slug).catch(() => null);
+        for (const f of c?.brief.formats ?? []) ids.add(f);
+        const pending = await this.deps.turns.side.pendingBrief(host.projectDir, m.slug).catch(() => null);
+        for (const f of pending?.brief.formats ?? []) ids.add(f);
+      }
+      const instanceId = nextInstanceId(presetOf(source), [...ids]);
+      if (instanceId === null) {
+        const presets = await this.deps.turns.presetList();
+        throw new CodedError(409, t().variants.instancesFull({ format: formatDisplayName(presets, presetOf(source), currentLocale()), max: MAX_INSTANCES }), 'format-instances-full');
+      }
+      const member = this.refFor(host, ref.creativeSlug);
+      const result = member.creativeSlug === host.creativeSlug ? await run(instanceId) : await this.deps.turns.runLocked(member, () => run(instanceId));
+      const formats = [...shared.brief.formats];
+      const at = formats.indexOf(source);
+      formats.splice(at < 0 ? formats.length : at + 1, 0, instanceId);
+      const formatLabels = label !== undefined ? { ...shared.brief.formatLabels, [instanceId]: label } : shared.brief.formatLabels;
+      await this.propagateLocked(host, g, { ...shared, brief: { ...shared.brief, formats, ...(formatLabels ? { formatLabels } : {}) } });
+      return result;
+    });
+  }
+
   /** The caller holds the host's lock. See the class comment for the lock order. */
   private async propagateLocked(host: CreativeRef, g: VariantGroup, target: Required<SharedBrief>): Promise<{ applied: string[]; deferred: string[] }> {
     const applied: string[] = [];
     const deferred: string[] = [];
-    for (const m of activeMembers(g).sort(byLetter)) {
+    // Member a always takes the brief, discarded or not (decisions log 830): the host carries the group's shared brief, and
+    // a discard hides a variant without freezing the brief the group computes on.
+    for (const m of g.members.filter((x) => x.status === 'active' || x.letter === 'a').sort(byLetter)) {
       if (!(await this.present(host, m))) continue; // "mancante": nothing to write
       const mref = this.refFor(host, m.slug);
       if (m.letter === 'a') await this.syncLocked(mref, target, applied, deferred);
@@ -404,6 +439,8 @@ export class VariantGroupService {
     if (turns.turnActive(mref)) {
       const had = await turns.side.pendingBrief(mref.projectDir, mref.creativeSlug);
       await turns.side.setPendingBrief(mref.projectDir, mref.creativeSlug, { ...target, at: now() });
+      // Any job of this creative that ends applies it (`briefAfterJob`), a translation included.
+      turns.rememberRef(mref);
       if (!had) await this.deps.store.appendConversation(mref.creativeSlug, { type: 'system', at: now(), level: 'info', text: t().jobs.variantBriefDeferred }).catch(() => {});
       deferred.push(mref.creativeSlug);
       return;

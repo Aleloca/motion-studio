@@ -53,7 +53,7 @@ export async function sweepDerivedCaches(projectDir: string, o: { now?: number; 
     for (const creative of await readdir(root).catch(() => [] as string[])) {
       const cdir = join(root, creative);
       if (!(await lstat(cdir).catch(() => null))?.isDirectory()) continue;
-      // Kept (never swept): anything but a plain creative or a real variant sister (phase 15, ruling R2), or a skipped one.
+      // Kept (never swept): anything but a plain creative or a real or orphan variant sister (phase 15, decisions log 821, 833), or a skipped one.
       const skip = (o.skipCreative?.(creative) ?? false) || !(await isAcceptedCreative(projectDir, creative));
       for (const v of await readdir(cdir).catch(() => [] as string[])) {
         if (!VERSION_RE.test(v)) continue;

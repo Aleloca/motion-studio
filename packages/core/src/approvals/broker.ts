@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { explainTool, paidBatchSchema, type ApprovalDecision, type ApprovalKind, type ApprovalRequest, type ExplainContext, type Explanation, type PaidBatch, type ServerMessage } from '@motion-studio/shared';
-import { CREATIVE_SLUG_RE, isRealSisterSync } from '../creatives/creative-store.ts';
+import { isAcceptedCreativeSync } from '../creatives/creative-store.ts';
 import { cleanAgentReason } from '../display-text.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 import { PermissionsStore, ruleFor } from './permissions-store.ts';
@@ -28,8 +28,8 @@ export { cleanAgentReason };
 
 /** Where an agent job's paths are judged: relative paths start in the project (the `claude` process cwd). */
 export function explainContext(job: { projectDir: string; creativeSlug: string | null }, env: { home?: string; tmpDir?: string } = {}): ExplainContext {
-  // A plain creative, or a real variant sister (phase 15, ruling R2: its host lists it); never a hand-made `x~b`.
-  const ok = job.creativeSlug !== null && (CREATIVE_SLUG_RE.test(job.creativeSlug) || isRealSisterSync(job.projectDir, job.creativeSlug));
+  // A plain creative, a real variant sister or an orphan one (phase 15, decisions log 821, 833); never a hand-made `x~b`.
+  const ok = job.creativeSlug !== null && isAcceptedCreativeSync(job.projectDir, job.creativeSlug);
   const workDir = ok ? join(job.projectDir, 'creatives', job.creativeSlug!, 'work') : undefined;
   return {
     projectDir: job.projectDir, cwd: job.projectDir, ...(workDir ? { workDir } : {}),

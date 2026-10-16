@@ -10,13 +10,14 @@ import { mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CREATIVE_SOURCE_RE, DEFAULT_FORMATS, type Brief, type CreativeFile, type VersionEntry } from '@motion-studio/shared';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { explainContext } from '../src/approvals/broker.ts';
 import { sweepDerivedCaches } from '../src/creatives/cache-sweep.ts';
 import { CreativeSideStateStore } from '../src/creatives/creative-side-state.ts';
-import { creativeKind, CreativeStore, isRealSister, isRealSisterSync } from '../src/creatives/creative-store.ts';
+import { creativeKind, CreativeStore, isAcceptedCreative, isRealSister, isRealSisterSync } from '../src/creatives/creative-store.ts';
+import { DirectEditService } from '../src/creatives/direct-edit.ts';
 import { CreativeTurnService, type CreativeRef } from '../src/creatives/creative-turns.ts';
 import { VariantGroupService } from '../src/creatives/variant-group.ts';
 import { Git } from '../src/git.ts';
@@ -183,9 +184,10 @@ describe('Review Focus 1: brief edited while B runs and C is queued', { timeout:
     runC.finish();
     await queue.whenIdle();
     expect(stateOf(jobB.id)).toBe('succeeded');
-    expect((await json(B.creativeSlug)).brief.formats).toEqual(OLD);
+    // Fix round 1 (Important 1): B's turn is over, so it took the group's brief when its job ended (never mid-turn).
+    await vi.waitFor(async () => expect((await json(B.creativeSlug)).brief.formats).toEqual(NEW));
 
-    // B's next turn takes the new brief before it is planned.
+    // B's next turn plans on the new brief.
     await turns.start(B, { text: 'ancora', pins: [] });
     const runB2 = await runner.next(2);
     expect(blockFormats(runB2.req.prompt)).toEqual([...NEW].sort());
@@ -355,8 +357,12 @@ describe('lock ordering', { timeout: 60_000 }, () => {
     await queue.whenIdle();
     // Every idle active member has the group's brief; the running one has it pending.
     const goal = (await json(host.creativeSlug)).brief.goal;
-    for (const s of [sis('b'), sis('d')]) expect((await json(s)).brief.goal).toBe(goal);
-    expect((await side.pendingBrief(projectDir, sis('c')))?.brief.goal).toBe(goal);
+    // Restore and discard of B race: whichever ran last decides; a discarded variant is not propagated to.
+    const g = (await json(host.creativeSlug)).variantGroup!;
+    for (const m of g.members.filter((x) => x.status === 'active' && x.letter !== 'c')) expect((await json(m.slug)).brief.goal).toBe(goal);
+    // The stopped one took it when its job ended (Important 1 of fix round 1).
+    await vi.waitFor(async () => expect((await json(sis('c'))).brief.goal).toBe(goal));
+    expect(await side.pendingBrief(projectDir, sis('c'))).toBeNull();
   });
 });
 
@@ -471,5 +477,86 @@ describe('ruling R2: the one "real sister" check and its users', { timeout: 60_0
     await store.update(sis('b'), { status: 'working' });
     expect(await store.recoverInterrupted()).toEqual([sis('b')]);
     expect((await json(sis('b'))).status).toBe('interrupted');
+  });
+});
+
+describe('fix round 1', { timeout: 120_000 }, () => {
+  it('Critical 1: with A discarded the host still carries the group\'s brief; edits never undo each other; restoring A matches', async () => {
+    await svc.addVariants(host, [{}, {}]);
+    await fakeVersion(host.creativeSlug, 1, OLD, 'a');
+    await fakeVersion(sis('b'), 1, OLD, 'b');
+    await svc.setPick(host, 'web-banner-300x250', { slug: sis('b'), version: 1 });
+    await svc.discard(host, 'a');
+    await turns.updateBrief(refOf(sis('b')), { brief: { ...brief, goal: 'Due' } });
+    await turns.updateBrief(refOf(sis('c')), { services: { voice: 'none' } });
+    await turns.updateBrief(host, { formats: ['instagram-post-1x1'] });
+    const want = { ...withoutLinks(brief), goal: 'Due', services: { voice: 'none' }, formats: ['instagram-post-1x1'] };
+    for (const s of [host.creativeSlug, sis('b'), sis('c')]) expect(withoutLinks((await json(s)).brief)).toEqual(want);
+    expect((await json(host.creativeSlug)).variantGroup!.picks).toEqual({});
+    expect(Object.keys(await svc.groupSelection(host))).toEqual(['instagram-post-1x1']);
+    await expect(svc.setPick(host, 'web-banner-300x250', { slug: sis('b'), version: 1 })).rejects.toMatchObject({ status: 422 });
+    await svc.restore(host, 'a');
+    expect(withoutLinks((await json(host.creativeSlug)).brief)).toEqual(withoutLinks((await json(sis('b'))).brief));
+  });
+
+  it('Important 1: a variant\'s pending brief applies when any job of its key ends (not only a turn)', async () => {
+    await svc.addVariants(host, [{}]);
+    const B = refOf(sis('b'));
+    // A job of B's key that is not a creative turn (a translation uses the same key).
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const job = queue.enqueue({ id: 'loc-1', key: `creative:${B.root}:${B.projectSlug}:${B.creativeSlug}`, kind: 'localize', label: 'x', run: async () => { await gate; } });
+    await turns.updateBrief(host, { brief: { ...brief, locales: { primary: 'it', extra: ['en'] } } });
+    expect((await json(B.creativeSlug)).brief.locales).toBeUndefined();
+    release();
+    const settled = await queue.whenSettled(job.id);
+    await turns.otherJobEndedByKey(job.key, settled!.state); // what the server's job hook calls for a translation
+    expect((await json(B.creativeSlug)).brief.locales).toEqual({ primary: 'it', extra: ['en'] });
+    expect(await side.pendingBrief(projectDir, B.creativeSlug)).toBeNull();
+  });
+
+  it('Important 2: "Duplica formato" in a group adds the same instance to every active variant, from A and from a sister', async () => {
+    turns = makeTurns({ contract: 'compositions', claude: true });
+    svc = new VariantGroupService({ store, turns });
+    const edits = new DirectEditService({ turns, queue, git: new Git(), presets: async () => DEFAULT_FORMATS });
+    process.env.FAKE_CLAUDE_SCENARIO = 'composition';
+    await turns.start(host);
+    await queue.whenIdle();
+    await svc.addVariants(host, [{ baseFrom: { slug: host.creativeSlug, version: 1 } }, {}]);
+    await svc.discard(host, 'c');
+    const fromA = await edits.duplicate(host, 1, { instanceId: 'instagram-post-1x1', label: 'Promo' }, 'it');
+    expect(fromA.instanceId).toBe('instagram-post-1x1@2');
+    for (const s of [host.creativeSlug, sis('b')]) {
+      expect((await json(s)).brief).toMatchObject({ formats: ['instagram-post-1x1', 'instagram-post-1x1@2', 'web-banner-300x250'], formatLabels: { 'instagram-post-1x1@2': 'Promo' } });
+    }
+    expect((await json(sis('c'))).brief.formats).toEqual(OLD); // discarded: at its restore
+    // From the sister: the id is allocated over every member's ids (@3, never a second @2).
+    const fromB = await edits.duplicate(refOf(sis('b')), 1, { instanceId: 'instagram-post-1x1' }, 'it');
+    expect(fromB.instanceId).toBe('instagram-post-1x1@3');
+    for (const s of [host.creativeSlug, sis('b')]) expect((await json(s)).brief.formats).toEqual(['instagram-post-1x1', 'instagram-post-1x1@3', 'instagram-post-1x1@2', 'web-banner-300x250']);
+    expect((await store.readVersions(sis('b'))).at(-1)!.compositions!.some((c) => c.format === 'instagram-post-1x1@3')).toBe(true);
+    await svc.restore(host, 'c');
+    expect((await json(sis('c'))).brief.formats).toEqual((await json(host.creativeSlug)).brief.formats);
+  });
+
+  it('orphan sisters are accepted creatives (approvals, sweeps); a plain x~b without variantOf is not', async () => {
+    await svc.addVariants(host, [{}]);
+    await rm(join(projectDir, 'creatives', host.creativeSlug), { recursive: true });
+    expect(await isAcceptedCreative(projectDir, sis('b'))).toBe(true);
+    expect(explainContext({ projectDir, creativeSlug: sis('b') }).workDir).toBe(join(projectDir, 'creatives', sis('b'), 'work'));
+    const fake = 'nessuno~b';
+    await mkdir(join(projectDir, 'creatives', fake), { recursive: true });
+    await writeFile(join(projectDir, 'creatives', fake, 'creative.json'), JSON.stringify({ ...(await json(sis('b'))), variantOf: undefined }));
+    expect(await isAcceptedCreative(projectDir, fake)).toBe(false);
+    expect(explainContext({ projectDir, creativeSlug: fake }).workDir).toBeUndefined();
+    const old = new Date(Date.now() - 3600_000);
+    for (const slug of [sis('b'), fake]) {
+      const tmp = join(projectDir, 'creatives', slug, 'versions.json.0123456789ab.tmp');
+      await writeFile(tmp, '{}');
+      await utimes(tmp, old, old);
+    }
+    const swept = await sweepProjectRenders(projectDir, { minAgeMs: 1000 });
+    expect(swept.some((p) => p.includes(`${sis('b')}/versions.json.`))).toBe(true);
+    expect(swept.some((p) => p.includes(fake))).toBe(false);
   });
 });

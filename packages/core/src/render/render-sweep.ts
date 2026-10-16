@@ -60,7 +60,7 @@ export async function sweepProjectRenders(projectDir: string, o: { minAgeMs?: nu
   const removed: string[] = [];
   const creatives = join(projectDir, 'creatives');
   for (const slug of await readdir(creatives).catch(() => [] as string[])) {
-    // A plain creative or a real variant sister (phase 15, ruling R2); a hand-made `x~b` is not ours to clean.
+    // A plain creative or a real or orphan variant sister (phase 15, decisions log 821, 833); a hand-made `x~b` is not ours to clean.
     if (o.skipCreative?.(slug) || !(await isAcceptedCreative(projectDir, slug))) continue;
     // A creative folder reached through a link is not ours to clean (M6).
     if (!(await lstat(join(creatives, slug)).catch(() => null))?.isDirectory()) continue;
