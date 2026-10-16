@@ -64,3 +64,7 @@ test('the light logo keeps the orange and turns Motion off-white', () => {
   assert.ok(!svg.includes('#171717'));
   assert.ok(svg.includes('#FF5A1F') && svg.includes('#F5F1EC'));
 });
+
+test('composition iframes match the runtime page colour scheme (no opaque white backdrop)', () => {
+  assert.match(read('css/site.css'), /\.comp iframe\s*\{[^}]*color-scheme:\s*normal/);
+});

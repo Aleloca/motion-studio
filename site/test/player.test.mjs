@@ -54,12 +54,12 @@ test('mounts within 1 viewport margin, pauses when hidden', () => {
   h.msg({ type: 'ready' });
   h.player.update(S({ near: true, visible: true }));
   h.player.update(S({ near: true, visible: false }));
-  assert.deepEqual(h.types(), ['setScale', 'mute', 'play', 'pause']);
+  assert.deepEqual(h.types(), ['setScale', 'mute', 'seek', 'play', 'pause']);
   assert.deepEqual(h.sent[0].m, { type: 'setScale', scale: 'fit' });
   assert.deepEqual(h.sent[1].m, { type: 'mute', muted: true });
-  assert.deepEqual(h.sent[2].m, { type: 'play', loop: true });
+  assert.deepEqual(h.sent[2].m, { type: 'seek', t: 2 });
+  assert.deepEqual(h.sent[3].m, { type: 'play', loop: true });
   assert.ok(h.sent.every((s) => s.origin === ORIGIN));
-  assert.ok(h.classes.has('is-ready'));
 });
 
 test('reduced motion seeks to posterTime and never plays', () => {
@@ -148,4 +148,41 @@ test('a player still loading that leaves the near margin cancels its load, witho
   assert.ok(!h.classes.has('is-failed'), 'the cancelled timeout never fails it');
   h.player.update(S({ near: true }));
   assert.equal(h.mounts(), 2);
+});
+
+test('the poster stays until the runtime reports a played frame', () => {
+  const h = harness();
+  h.player.update(S({ near: true, visible: true }));
+  h.msg({ type: 'ready' });
+  assert.ok(!h.classes.has('is-ready'), 'ready alone keeps the poster');
+  h.msg({ type: 'time', t: 2, playing: false });
+  assert.ok(!h.classes.has('is-ready'), 'a paused frame keeps the poster');
+  h.msg({ type: 'time', t: 2.03, playing: true });
+  assert.ok(h.classes.has('is-ready'));
+});
+
+test('on ready it starts from the poster frame, so the handoff matches the poster', () => {
+  const h = harness({ posterTime: 3.2 });
+  h.player.update(S({ near: true, visible: true }));
+  h.msg({ type: 'ready' });
+  assert.deepEqual(h.sent.map((s) => s.m), [{ type: 'setScale', scale: 'fit' }, { type: 'mute', muted: true }, { type: 'seek', t: 3.2 }, { type: 'play', loop: true }]);
+});
+
+test('a timed-out player retries once it has left and comes back; an errored one stays on its poster', () => {
+  const t = harness();
+  t.player.update(S({ near: true }));
+  t.fire();
+  assert.ok(t.classes.has('is-failed'));
+  t.player.update(S({ near: false }));
+  assert.ok(!t.classes.has('is-failed'), 'cleared once far away');
+  t.player.update(S({ near: true }));
+  assert.equal(t.mounts(), 2, 'tries again');
+
+  const e = harness();
+  e.player.update(S({ near: true }));
+  e.msg({ type: 'error', error: { code: 'compositionInvalid', message: 'x' } });
+  e.player.update(S({ near: false }));
+  e.player.update(S({ near: true }));
+  assert.equal(e.mounts(), 1);
+  assert.ok(e.classes.has('is-failed'));
 });

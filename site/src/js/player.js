@@ -20,9 +20,12 @@ export class CompositionPlayer {
     this.posterTime = Number(figure.dataset.posterTime ?? 0) || 0;
     this.frame = null;
     this.ready = false;
-    this.failed = false;
+    /** null, or why the poster is shown for good: 'error' (the runtime refused it) or 'timeout' (retried on its return). */
+    this.failed = null;
     this.playing = false;
     this.still = false;
+    /** The runtime shows the poster frame (just seeked there, not played since). */
+    this.atPoster = false;
     this.timer = null;
     this.state = { visible: false, near: false, reducedMotion: false };
   }
@@ -34,7 +37,8 @@ export class CompositionPlayer {
   /** @param {{ visible?: boolean, near?: boolean, reducedMotion?: boolean }} state */
   update(state) {
     this.state = { ...this.state, ...state };
-    const action = decide({ ...this.state, ready: this.ready, failed: this.failed });
+    if (this.failed === 'timeout' && !this.state.near) this.clearFailure();
+    const action = decide({ ...this.state, ready: this.ready, failed: this.failed !== null });
     if (action === 'mount' && !this.frame) this.mount();
     else if (action === 'unmount' || (action === 'unmounted' && this.frame)) this.unmount();
     else if (action === 'play') this.play();
@@ -44,7 +48,7 @@ export class CompositionPlayer {
 
   mount() {
     this.frame = this.deps.mount(this.src, this);
-    this.timer = this.deps.setTimeout(() => this.fail(), READY_TIMEOUT_MS);
+    this.timer = this.deps.setTimeout(() => this.fail('timeout'), READY_TIMEOUT_MS);
   }
 
   unmount() {
@@ -52,6 +56,7 @@ export class CompositionPlayer {
     this.ready = false;
     this.playing = false;
     this.still = false;
+    this.atPoster = false;
     this.figure.classList.remove('is-ready');
   }
 
@@ -64,6 +69,7 @@ export class CompositionPlayer {
     if (this.playing) return;
     this.playing = true;
     this.still = false;
+    this.atPoster = false;
     this.send({ type: 'play', loop: true });
   }
 
@@ -79,17 +85,25 @@ export class CompositionPlayer {
     if (this.still) return;
     this.pause();
     this.still = true;
-    this.seek(this.posterTime);
+    if (!this.atPoster) { this.seek(this.posterTime); this.atPoster = true; }
   }
 
-  fail() {
+  /** @param {'error' | 'timeout'} why */
+  fail(why) {
     if (this.failed) return;
-    this.failed = true;
+    this.failed = why;
+    this.figure.dataset.fail = why;
     this.deps.clearTimeout(this.timer);
     this.frame?.remove();
     this.frame = null;
     this.figure.classList.remove('is-ready');
     this.figure.classList.add('is-failed');
+  }
+
+  clearFailure() {
+    this.failed = null;
+    delete this.figure.dataset.fail;
+    this.figure.classList.remove('is-failed');
   }
 
   /** @param {{ data: unknown, origin: string, source: unknown }} ev */
@@ -102,11 +116,17 @@ export class CompositionPlayer {
       this.deps.clearTimeout(this.timer);
       this.send({ type: 'setScale', scale: 'fit' });
       this.send({ type: 'mute', muted: true });
-      this.figure.classList.add('is-ready');
+      // Start from the poster's frame: the hand-over from poster to live frame is seamless (t = 0 is an empty frame,
+      // every clip enters after it).
+      this.seek(this.posterTime);
+      this.atPoster = true;
       this.update({});
+    } else if (data.type === 'time' && data.playing === true && this.ready) {
+      // The poster goes only once the runtime is really playing frames: never a blank or unpainted frame.
+      this.figure.classList.add('is-ready');
     } else if (data.type === 'error' && !this.ready) {
       // Before ready only fatal errors are posted (no data, bad base, a composition that cannot mount).
-      this.fail();
+      this.fail('error');
     }
   }
 

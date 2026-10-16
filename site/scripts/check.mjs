@@ -42,17 +42,22 @@ export async function check({ out } = {}) {
             figures: figs.length,
             settled: figs.filter((f) => f.classList.contains('is-ready') || f.classList.contains('is-failed') || f.querySelector('.poster').complete).length,
             ready: figs.filter((f) => f.classList.contains('is-ready')).length,
-            failed: figs.filter((f) => f.classList.contains('is-failed')).map((f) => f.dataset.composition),
+            errored: figs.filter((f) => f.dataset.fail === 'error').map((f) => f.dataset.composition),
+            timedOut: figs.filter((f) => f.dataset.fail === 'timeout').map((f) => f.dataset.composition),
+            blank: figs.filter((f) => f.classList.contains('is-ready') && !f.querySelector('iframe')).length,
             played: window.__siteDebug.commands.filter((c) => c.type === 'play').length,
             hidden: [...document.querySelectorAll('h1, h2, h3, p, .btn, .card, .way')].filter((e) => getComputedStyle(e).opacity < 0.5).length,
           };
         })()`);
         if (s.scrollWidth > s.innerWidth) problems.push(`horizontal scroll: ${s.scrollWidth} > ${s.innerWidth}`);
         if (s.settled < s.figures) problems.push(`${s.figures - s.settled} figures neither live nor on their poster`);
-        if (s.failed.length) problems.push(`compositions on their poster after a failure: ${s.failed.join(', ')}`);
+        if (s.errored.length) problems.push(`compositions refused by the runtime: ${s.errored.join(', ')}`);
+        if (s.blank) problems.push(`${s.blank} figures hide their poster with no live frame`);
         if (reduced && s.played > 0) problems.push(`${s.played} play commands under reduced motion`);
         if (s.hidden > 0) problems.push(`${s.hidden} text elements still hidden after scrolling`);
-        console.log(`${tag}: ${s.ready}/${s.figures} live, ${problems.length ? problems.length + ' problem(s)' : 'ok'}`);
+        // A slow load that times out degrades to the poster by design (and retries when the figure comes back): a note only.
+        const note = s.timedOut.length ? ` (on poster after a slow load: ${s.timedOut.join(', ')})` : '';
+        console.log(`${tag}: ${s.ready}/${s.figures} live${note}, ${problems.length ? problems.length + ' problem(s)' : 'ok'}`);
         failures.push(...problems.map((p) => `${tag}: ${p}`));
         if (out) {
           await page.eval(`scrollTo({ top: 0, behavior: 'instant' })`);

@@ -76,7 +76,8 @@ code, pre { font-family: var(--f-mono); font-size: .9em; }
 .comp--9x16 .comp-stage { aspect-ratio: 9 / 16; }
 .comp .poster, .comp iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 .comp .poster { object-fit: cover; transition: opacity .4s ease .15s; }
-.comp iframe { background: transparent; }
+/* The runtime page is color-scheme normal: matching it keeps Chrome from painting an opaque white backdrop. */
+.comp iframe { background: transparent; color-scheme: normal; }
 .comp.is-ready .poster { opacity: 0; }
 .comp figcaption { margin-top: 10px; font: 400 13px/1.4 var(--f-mono); color: var(--c-muted); }
 
