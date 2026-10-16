@@ -24,6 +24,28 @@ describe('JobQueue', () => {
     await q.whenIdle();
     expect(q.list().every((j) => j.state === 'succeeded')).toBe(true);
   });
+  it('phase 15: a slot group runs at most its limit; a blocked job waits with its reason and holds no slot', async () => {
+    const q = new JobQueue({ concurrency: 3 });
+    const ds = [deferred(), deferred(), deferred(), deferred()];
+    const slot = { group: 'variants:x', limit: 2, reason: 'variant-slot' as const };
+    const jobs = ds.slice(0, 3).map((d, i) => q.enqueue({ key: `v${i}`, kind: 'creative', label: `v${i}`, slot, run: () => d.promise }));
+    // Queued after the blocked third variant, a job outside the group takes the free slot.
+    const other = q.enqueue({ key: 'other', kind: 'creative', label: 'other', run: () => ds[3]!.promise });
+    await tick();
+    const state = (id: string) => q.list().find((j) => j.id === id)!;
+    expect(jobs.map((j) => state(j.id).state)).toEqual(['running', 'running', 'queued']);
+    expect(state(jobs[2]!.id).waitReason).toBe('variant-slot');
+    expect(jobs[2]!.waitReason).toBe('variant-slot');
+    expect(state(other.id).state).toBe('running');
+    expect(state(other.id).waitReason).toBeUndefined();
+    ds[0]!.reject(new Error('boom'));
+    await tick(); await tick();
+    expect(state(jobs[2]!.id).state).toBe('running');
+    expect(state(jobs[2]!.id).waitReason).toBeUndefined();
+    ds[1]!.resolve(); ds[2]!.resolve(); ds[3]!.resolve();
+    await q.whenIdle();
+    expect(state(jobs[0]!.id).waitReason).toBeUndefined();
+  });
   it('keeps the formats a job targets in its summary', async () => {
     const q = new JobQueue({ concurrency: 1 });
     const job = q.enqueue({ key: 'f', kind: 'creative', label: 'f', formats: ['reel'], run: async () => {} });

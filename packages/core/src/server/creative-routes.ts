@@ -18,6 +18,7 @@ import { isRealDirChain } from '../creatives/core-files.ts';
 import type { UrlSigner } from './signed-urls.ts';
 import { formatSummaries } from '../creatives/format-summary.ts';
 import { MAX_DIRECTION_CHARS, VariantGroupService } from '../creatives/variant-group.ts';
+import type { VariantFanout } from '../creatives/variant-fanout.ts';
 import { withLazyHashes } from '../creatives/output-hashes.ts';
 import { creativeJobKey, PICK_RETRY_AFTER_SEC, type CreativeRef, type CreativeTurnService } from '../creatives/creative-turns.ts';
 import type { RenderJobService } from '../creatives/render-jobs.ts';
@@ -58,6 +59,8 @@ export interface CreativeRoutesContext {
   signer: UrlSigner;
   /** Commits the brand kit change of "Use as brand logo" (Phase 14); absent: the change is written and not committed. */
   git?: Git;
+  /** Phase 15: starts variants (`POST …/variants/run`): directions turn, then the fan-out. */
+  variantRuns: VariantFanout;
 }
 
 const isInsideDir = (p: string, base: string | null) => Boolean(base && p.startsWith(base.endsWith(sep) ? base : base + sep));
@@ -125,6 +128,14 @@ const addVariantsBody = z.object({
 const variantPickBody = z.object({ slug: z.string().min(1).max(100), version: z.number().int().min(1) }).strict();
 const layoutBody = z.object({ layout: z.enum(['variant', 'format']) }).strict();
 const directionBody = z.object({ direction: z.string().max(MAX_DIRECTION_CHARS) }).strict();
+/**
+ * Phase 15 (ruling R3): `POST …/variants/run`. `targets`: letters, or every active variant; `request`: the same body as
+ * `POST …/turns`, or null for the first generation.
+ */
+const variantRunBody = z.object({
+  targets: z.union([z.array(z.enum(VARIANT_LETTERS as unknown as [VariantLetter, ...VariantLetter[]])).min(1).max(MAX_VARIANTS), z.literal('all-active')]),
+  request: z.union([turnBodySchema.strict(), z.null()]),
+}).strict();
 /** A render request (Task 5): `formats` to render (a follower stands for its primary); absent or empty: every primary. */
 const renderBody = z.object({
   formats: z.array(z.string().min(1).max(200)).max(100).optional(),
@@ -472,6 +483,18 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const ref = await refOf(req.params.slug, req.params.c);
     await variantsOf(ref).setDirection(ref, letterOf(req.params.l), body.direction, 'user');
     return detailOf(ref);
+  });
+
+  /**
+   * Phase 15 (ruling R3, spec §3, §4): starts `request` (or the first generation) in the target variants. The targets without
+   * a direction get one from the directions turn first (none when every direction is typed); then each target gets a normal
+   * creative turn, two at a time, and their paid services are confirmed on one card. Discarded variants are skipped.
+   */
+  app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/variants/run', async (req, reply) => {
+    const body = parse(variantRunBody, req.body);
+    const ref = await refOf(req.params.slug, req.params.c);
+    const { store: _store, ...plain } = ref;
+    return reply.status(202).send(await ctx.variantRuns.run(plain, body.targets, body.request));
   });
 
   app.get<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/conversation', async (req) => {

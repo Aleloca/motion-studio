@@ -28,7 +28,9 @@ import { AgentBridge } from '../bridge/bridge.ts';
 import { registerBridgeRoutes } from '../bridge/bridge-routes.ts';
 import { downloadTool } from '../bridge/download-tool.ts';
 import { importCodebaseTool } from '../bridge/import-codebase-tool.ts';
-import { providerTools, voiceAvailability, voiceBatch } from '../bridge/provider-tools.ts';
+import { paidServicePlan, providerTools, voiceAvailability, voiceBatch } from '../bridge/provider-tools.ts';
+import { VariantDirections } from '../creatives/variant-directions.ts';
+import { VariantFanout } from '../creatives/variant-fanout.ts';
 import { LocalizeService, ProjectActivity } from '../localization/localize-turn.ts';
 import type { LookupFn, Transport } from '../providers/safe-fetch.ts';
 import { checkCodebases, codebaseGlobCharsMessage, codebaseHasGlobChars, codebaseOverlapMessage, codebaseOverlaps, normalizeCodebaseList } from '../codebases.ts';
@@ -104,6 +106,8 @@ export interface ServerDeps {
   voicesHttp?: HttpDeps;
   /** Network of a localize turn's translated voices (tests inject a fake fetch; default: the real one). */
   localizeHttp?: { fetch?: typeof fetch; transport?: Transport; lookup?: LookupFn };
+  /** Network of the agent's paid provider tools (tests inject a fake fetch; default: the real one). */
+  providerHttp?: { fetch?: typeof fetch; transport?: Transport; lookup?: LookupFn };
   /** What the app has learned about the provider keys (core memory only; tests inject one to read it). */
   keyChecks?: KeyCheckCache;
   /** Network of the key checks (tests inject a fake fetch; default: the real one). */
@@ -760,7 +764,16 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // The live preview's composition server origin (Task 8 frames it; started on first use).
   app.get('/api/preview/origin', async () => ({ origin: (await previews.compositionServer()).origin, uiOrigins: [...(deps.uiOrigins?.() ?? [])] }));
 
-  registerCreativeRoutes(app, { requireWorkspace, turns, edits, renders, previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m), git: deps.git });
+  // Phase 15: the directions turn and the fan-out of a variant group (`POST …/variants/run`).
+  const variantDirections = new VariantDirections({
+    queue, launcher, turns, broadcast: (msg) => hub.broadcast(msg),
+    presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
+    model: async () => (await requireWorkspace().readSettings()).model,
+  });
+  const variantRuns = new VariantFanout({
+    turns, queue, approvals, directions: variantDirections, settings: () => requireWorkspace().readSettings(), paidPlan: paidServicePlan({ vault, keyChecks }),
+  });
+  registerCreativeRoutes(app, { requireWorkspace, turns, edits, renders, previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m), git: deps.git, variantRuns });
   registerStorePackRoutes(app, { requireWorkspace, turns, renders, media });
 
   const routeCtx = { requireWorkspace, brand: brandService, media, git: deps.git, broadcast: (m: ServerMessage) => hub.broadcast(m), configDir };
@@ -794,7 +807,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // Read on every permission prompt: a setting changed mid-job applies to the next one.
     settings: () => requireWorkspace().readSettings(),
     extraTools: {
-      ...providerTools({ vault, approvals, media, keyChecks, settings: () => requireWorkspace().readSettings(), broadcast: (m) => hub.broadcast(m) }),
+      ...providerTools({ vault, approvals, media, keyChecks, settings: () => requireWorkspace().readSettings(), broadcast: (m) => hub.broadcast(m), ...deps.providerHttp }),
       download_file: downloadTool({ media, broadcast: (m) => hub.broadcast(m) }),
       import_codebase_file: importCodebaseTool({ media, broadcast: (m) => hub.broadcast(m) }),
     },

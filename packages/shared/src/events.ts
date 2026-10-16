@@ -70,7 +70,15 @@ export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelle
 
 /** What a job does: logic and the UI branch on this, never on the (localized) label. */
 /** `localize` (Phase 12): an agent turn that translates an existing version (overlays only, no new version). */
-export type JobKind = 'creative' | 'brand-analysis' | 'asset-description' | 'console' | 'render' | 'asset-generation' | 'localize';
+/** `variant-directions` (Phase 15): the short agent turn that proposes the missing directions of a variant group (no file written). */
+export type JobKind = 'creative' | 'brand-analysis' | 'asset-description' | 'console' | 'render' | 'asset-generation' | 'localize' | 'variant-directions';
+
+/**
+ * Why a queued job waits although the queue has room (Phase 15): `variant-slot`, a variant turn of a group that already has
+ * `MAX_RUNNING_VARIANTS` turns running. Absent: it waits only for a free slot of the queue, or it is not queued.
+ */
+export type JobWaitReason = 'variant-slot';
+export const JOB_WAIT_REASONS: readonly JobWaitReason[] = ['variant-slot'];
 
 /**
  * Progress of a render job (Task 5), per format: `media` while the video sources are normalised ("Preparing media…",
@@ -105,6 +113,8 @@ export interface JobSummary {
   queuePosition?: number;
   /** Phase 13: messages the user sent to this running turn (live and redirect); absent: none. */
   liveMessages?: number;
+  /** Phase 15: why this queued job waits (see `JobWaitReason`); absent once it runs. */
+  waitReason?: JobWaitReason;
 }
 
 export type ApprovalKind = 'tool' | 'provider' | 'paid-batch';

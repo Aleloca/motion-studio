@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { JobKind, JobSummary } from '@motion-studio/shared';
+import type { JobKind, JobSummary, JobWaitReason } from '@motion-studio/shared';
 import { t } from '../i18n.ts';
 
 /**
@@ -42,6 +42,13 @@ export interface JobSpec {
   lane?: string;
   /** Called when the job is cancelled while still queued (run() never starts). Errors are swallowed. The queue is pumped after it settles; a whenIdle() called after the cancel may resolve before the hook finishes. */
   onCancelledBeforeStart?: () => void | Promise<void>;
+  /**
+   * Phase 15: an extra limit shared by the jobs of one `group` (the turns of a variant group, at most two at once): a queued
+   * job starts only while fewer than `limit` jobs of its group run, whatever room the queue has, and meanwhile it carries
+   * `reason` as its `waitReason`. A blocked job never holds a slot: the jobs queued after it may start first. Absent: no
+   * extra limit (every job before phase 15).
+   */
+  slot?: { group: string; limit: number; reason: JobWaitReason };
 }
 
 interface Entry { summary: JobSummary; spec: JobSpec; controller: AbortController }
@@ -139,7 +146,25 @@ export class JobQueue {
       const running = mine.filter((e) => e.summary.state === 'running').length;
       const waiting = mine.filter((e) => e.summary.state === 'queued').reverse();
       const limit = lane === null ? this.concurrency : this.lanes[lane]!;
-      for (const entry of waiting.slice(0, Math.max(0, limit - running))) this.start(entry);
+      // Oldest first, as many as the lane has room for; a job whose group is full stays queued with its reason (phase 15).
+      let free = Math.max(0, limit - running);
+      const groups = new Map<string, number>();
+      for (const e of this.entries) if (e.spec.slot && e.summary.state === 'running') groups.set(e.spec.slot.group, (groups.get(e.spec.slot.group) ?? 0) + 1);
+      for (const entry of waiting) {
+        const slot = entry.spec.slot;
+        const blocked = slot !== undefined && (groups.get(slot.group) ?? 0) >= slot.limit;
+        if (!blocked && free > 0) {
+          free--;
+          if (slot) groups.set(slot.group, (groups.get(slot.group) ?? 0) + 1);
+          this.start(entry);
+          continue;
+        }
+        const reason = blocked ? slot!.reason : undefined;
+        if (entry.summary.waitReason === reason) continue;
+        if (reason) entry.summary.waitReason = reason;
+        else delete entry.summary.waitReason;
+        this.update(entry);
+      }
       if (lane === null) continue;
       // Queued jobs of a lane: how many of its jobs are ahead (running, or queued earlier).
       const ahead = mine.filter((e) => e.summary.state === 'running').length;
@@ -159,6 +184,7 @@ export class JobQueue {
   private start(entry: Entry): void {
     entry.summary.state = 'running';
     delete entry.summary.queuePosition;
+    delete entry.summary.waitReason;
     entry.summary.startedAt = new Date().toISOString();
     this.update(entry);
     Promise.resolve().then(() => entry.spec.run(entry.controller.signal, entry.summary.id)).then(
@@ -170,6 +196,7 @@ export class JobQueue {
   private finish(entry: Entry, state: 'succeeded' | 'failed' | 'cancelled', error?: string): void {
     entry.summary.state = state;
     delete entry.summary.queuePosition;
+    delete entry.summary.waitReason;
     entry.summary.finishedAt = new Date().toISOString();
     if (error && state === 'failed') entry.summary.error = error;
     this.update(entry);

@@ -1,4 +1,4 @@
-import type { CreativeFile, FormatPreset, IdentityBrief, Pin, StorePack } from '@motion-studio/shared';
+import type { CreativeFile, FormatPreset, IdentityBrief, Pin, StorePack, VariantLetter } from '@motion-studio/shared';
 import { formatDisplayName, presetOf, videoTargetBitrateKbps, type BrandKit, type BriefServices, type Locale } from '@motion-studio/shared';
 import { replyInstruction } from '../i18n.ts';
 import { findPreset } from '../formats/format-catalog.ts';
@@ -65,6 +65,34 @@ export interface PromptInput {
   directEdit?: { version: number; summary: string; copies: string[] };
   /** Durations far from the brief that the base keeps by the user's choice (decisions log 262), per format. */
   keptDurations?: Array<{ format: string; durationSec: number }>;
+  /**
+   * Phase 15 (spec §3): this creative is a variant of a group: its letter, how many variants are active, its own direction and
+   * the other active variants' (a reference not to copy). First and iteration turns only. Absent outside a group: the prompt
+   * is exactly what it was before phase 15.
+   */
+  variant?: PromptVariant;
+}
+/** Phase 15: what a variant's prompt says about its group (see `PromptInput.variant`). */
+export interface PromptVariant { letter: VariantLetter; count: number; direction: string | null; others: Array<{ letter: VariantLetter; direction: string | null }> }
+
+/**
+ * Phase 15 (spec §3): the "Variant" section. The directions are the user's or the agent's words: quoted, one line each. The
+ * other variants are named by their directions only (agent isolation: their folders are never pointed to).
+ */
+export function variantSection(v: PromptVariant): string[] {
+  const L = (l: VariantLetter) => l.toUpperCase();
+  const quoted = (d: string) => quotePromptString(oneLine(d, 140));
+  return [
+    '## Variant',
+    `This creative is variant ${L(v.letter)} of ${v.count} variants made from the same brief. Give it a creative direction of its own: the variants must be clearly different from each other.`,
+    v.direction
+      ? `- Your direction: ${quoted(v.direction)}`
+      : '- No direction was given for this variant: choose one that is clearly different from the directions of the other variants, and name it in your reply.',
+    ...(v.others.length > 0 ? [
+      '- The directions of the other variants, for reference only: do not copy them.',
+      ...v.others.map((o) => `- ${L(o.letter)}: ${o.direction ? quoted(o.direction) : 'no direction'}`),
+    ] : []),
+  ];
 }
 export interface StudioBlock {
   outputDir: string; workDir: string; durationSec: number | null;
@@ -526,6 +554,7 @@ export function buildCreativePrompt(i: PromptInput): string {
       '', ...repairRequestSection(i.userWords, i.liveMessages),
     );
   }
+  if (i.variant && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...variantSection(i.variant));
   if (i.context && i.kind !== 'fix' && i.kind !== 'redirect') parts.push(...contextSections(i.context, contract, brief.services));
   if (contract === 'compositions') {
     // Agent-facing: the format's own facts only (Motion Studio renders, so no extensions, bitrates or encoding flags).

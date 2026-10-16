@@ -1,4 +1,4 @@
-import { creativeJobKey, isSessionId, LIVE_LIMITS, type ConversationEntry, type LiveMessageOutcome, type QueuedRequest, type RedirectOutcome } from '@motion-studio/shared';
+import { activeMembers, creativeJobKey, isSessionId, LIVE_LIMITS, MAX_RUNNING_VARIANTS, type ConversationEntry, type LiveMessageOutcome, type QueuedRequest, type RedirectOutcome, type VariantGroup, type VariantMember } from '@motion-studio/shared';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { mergeStorePack, verifyScreens } from '../store-pack/brief.ts';
@@ -32,7 +32,7 @@ import { hashVersionOutputs, LAZY_HASH_BUDGET_MS, withLazyHashes } from './outpu
 import { legacyProblemsOf } from './legacy-problems.ts';
 import { clearReferenceFrames, conversionPlan, extractReferenceFrames } from './legacy-conversion.ts';
 import { AnswerCache, checkLiveMessage, liveMessageText, LiveSession, newLiveMessage, NO_LIVE, redirectLive, type LiveMessage, type UserMessageInput } from '../agent/live-session.ts';
-import { buildCreativePrompt, interruptedRedirectText, pinLine, REDIRECT_PARTIAL_NOTE, type AgentContract, type CreativeContext, type PromptKind } from './prompt.ts';
+import { buildCreativePrompt, interruptedRedirectText, pinLine, REDIRECT_PARTIAL_NOTE, type AgentContract, type CreativeContext, type PromptKind, type PromptVariant } from './prompt.ts';
 import { checkTargets } from './composition-contract.ts';
 import { realDirChain, writeThroughTemp } from './core-files.ts';
 import { acceptedDurationsOf, alignEditorCopies, assembleCompositions, carriableComposition, type CarriedComposition } from './composition-turn.ts';
@@ -97,6 +97,19 @@ export interface CreativeRef { root: string; projectSlug: string; projectDir: st
 
 /** Shared with the web (render keys are derived from it): @motion-studio/shared `creativeJobKey`. */
 export { creativeJobKey };
+/** Phase 15: the job queue group of a variant group's turns (`JobSpec.slot`): one per host creative. */
+export const variantSlotGroup = (ref: CreativeRef, host: string): string => `variants:${creativeJobKey(ref.root, ref.projectSlug, host)}`;
+
+/** Phase 15: what a variant's prompt says about its group (`PromptInput.variant`); undefined outside a group. */
+function promptVariant(m: { group: VariantGroup; self: VariantMember } | null): PromptVariant | undefined {
+  if (!m) return undefined;
+  const active = activeMembers(m.group);
+  return {
+    letter: m.self.letter, count: active.length, direction: m.self.direction,
+    others: active.filter((x) => x.slug !== m.self.slug).map((x) => ({ letter: x.letter, direction: x.direction })),
+  };
+}
+
 /** The render command comes from an agent-written manifest: single line, bounded, no control chars. */
 const sanitizeCommand = (cmd: string): string => cmd.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300);
 
@@ -554,6 +567,9 @@ export class CreativeTurnService {
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     // Same check the queue does, but before touching the creative's files.
     if (this.isActive(key)) throw new WorkspaceError(409, t().errors.generationRunning);
+    // Phase 15: a discarded variant stays inert until it is restored; a grouped member's turn takes one of the group's slots.
+    const member = await this.memberOf(ref);
+    if (member?.self.status === 'discarded') throw new CodedError(409, t().errors.variantDiscardedTurn, 'variant-discarded');
     // Phase 15: a variant that was working when the group's brief changed takes it now, before its next turn is planned.
     await this.applyPendingBriefLocked(ref);
     const before = await store.get(ref.creativeSlug);
@@ -596,6 +612,8 @@ export class CreativeTurnService {
         kind: 'creative',
         label: t().jobs.creativeLabel({ title: before.title }),
         ...(targets ? { formats: targets } : {}),
+        // Phase 15 (spec §3): at most MAX_RUNNING_VARIANTS turns of a variant group run at once; the others wait, with the reason.
+        ...(member ? { slot: { group: variantSlotGroup(ref, member.host), limit: MAX_RUNNING_VARIANTS, reason: 'variant-slot' as const } } : {}),
         // Final wave Q8 (Ruling U micro-race): a failed or cancelled turn pauses its queue HERE, before the job turns terminal,
         // not in `turnSettled` after it: a message arriving in between can no longer start the queue after a failure or Stop.
         run: async (signal, id) => {
@@ -630,6 +648,16 @@ export class CreativeTurnService {
    */
   runLocked<T>(ref: CreativeRef, fn: () => Promise<T>): Promise<T> {
     return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), fn);
+  }
+
+  /**
+   * Phase 15: the creative's place in a variant group (its host, the group and its own member), or null outside a group (an
+   * old creative, an orphan sister). Read without any lock: the group is written under the host's lock, never torn.
+   */
+  async memberOf(ref: CreativeRef): Promise<{ host: string; group: VariantGroup; self: VariantMember } | null> {
+    const r = await new VariantGroupService({ store: new CreativeStore(ref.projectDir), turns: this }).resolve(ref).catch(() => null);
+    const self = r?.group?.members.find((m) => m.slug === ref.creativeSlug);
+    return r?.group && self ? { host: r.host.creativeSlug, group: r.group, self } : null;
   }
 
   /** Whether a turn of the creative is queued or running. */
@@ -750,6 +778,8 @@ export class CreativeTurnService {
 
       if (!noAgent) {
         const { context, existing } = await this.buildContext(ref, store, creative.linkedCodebases, creative.brief.services);
+        // Phase 15 (spec §3): a variant's own direction and the other active variants', as they are when the turn starts.
+        const variant = promptVariant(await this.memberOf(ref));
         // Spec §7: a legacy base (rendered media, v1 manifest) makes this change a conversion to compositions. The core
         // extracts reference frames of the old media into its protected cache; the chat says it costs more tokens once.
         let conversion: { formats: Awaited<ReturnType<typeof extractReferenceFrames>>; created: string[] } | undefined;
@@ -913,6 +943,7 @@ export class CreativeTurnService {
             conversion: kind === 'iteration' ? conversion : undefined,
             directEdit: kind === 'iteration' ? directEdit : undefined,
             keptDurations: kind === 'iteration' ? keptDurations : undefined,
+            ...(variant ? { variant } : {}),
           });
           const snapshotsBefore = await Promise.all(existing.map((p) => codebaseSnapshot(p)));
           for (const [k, p] of existing.entries()) {
@@ -1503,6 +1534,8 @@ export class CreativeTurnService {
    */
   async postMessage(ref: CreativeRef, input: UserMessageInput & { mode: 'live' | 'queued' }): Promise<MessageAnswer> {
     const m = checkLiveMessage(input);
+    // Phase 15: nothing is queued for a discarded variant (it cannot be working: a working variant cannot be discarded).
+    if ((await this.memberOf(ref))?.self.status === 'discarded') throw new CodedError(409, t().errors.variantDiscardedTurn, 'variant-discarded');
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     const answer = await this.answers.once(`${key}\0${m.clientId}`, async (): Promise<MessageAnswer> => {
       const known = await this.knownAnswer(ref, m.clientId);
