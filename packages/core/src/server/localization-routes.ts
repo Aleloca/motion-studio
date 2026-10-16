@@ -137,7 +137,7 @@ export function registerLocalizationRoutes(app: FastifyInstance, ctx: Localizati
     await ws.getProject(slug);
     const projectDir = ws.projectDir(slug);
     const store = new CreativeStore(projectDir);
-    store.dir(creativeSlug);
+    await store.assertOpenable(creativeSlug); // phase 15: a real or orphan sister too, never a hand-made `x~b`
     return { root: ws.root, projectSlug: slug, projectDir, creativeSlug, store };
   };
   const base = '/api/projects/:slug/creatives/:c/versions/:n/localizations';

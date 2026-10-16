@@ -10,7 +10,7 @@ import { localeTag } from './localization/schema.ts';
 import { channelName, DEFAULT_FORMATS, formatDisplayName } from './formats.ts';
 import { messages, type Locale } from './i18n/index.ts';
 import type { FormatSummary } from './formats/link.ts';
-import { variantGroupSchema, creativeSlugSchema } from './variants.ts';
+import { variantGroupSchema, creativeSlugSchema, type VariantGroup, type VariantLetter } from './variants.ts';
 
 export const creativeStatusSchema = z.enum(['draft', 'working', 'ready', 'incomplete', 'error', 'interrupted']);
 export type CreativeStatus = z.infer<typeof creativeStatusSchema>;
@@ -395,7 +395,20 @@ export type ConversationEntry =
   /** `warning`: something the user should know that did not fail the turn (e.g. a link removed); shown like `info`. */
   | { type: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string };
 
-export interface CreativeSummary { slug: string; title: string; status: CreativeStatus; formats: string[]; /** The brief's labels of format instances (Phase 12); absent when there are none. */ formatLabels?: Record<string, string>; versions: number; updatedAt: string; cover: string | null }
+export interface CreativeSummary { slug: string; title: string; status: CreativeStatus; formats: string[]; /** The brief's labels of format instances (Phase 12); absent when there are none. */ formatLabels?: Record<string, string>; versions: number; updatedAt: string; cover: string | null;
+  /** Phase 15: on a group's host row only (its sisters are not listed): members, active ones, and members whose folder is missing. */
+  variants?: VariantListInfo;
+  /** Phase 15: a sister whose group cannot be found (host gone or not listing it): listed and opened as a single creative. */
+  orphan?: true }
+/** Phase 15: what the list says about a group (spec §2, "N varianti"). */
+export interface VariantListInfo { count: number; active: number; missing: VariantLetter[] }
+/**
+ * Phase 15: the variant side of a creative's detail. Absent for a creative outside any group (an old creative is unchanged).
+ * `orphan`: a sister whose group cannot be found (spec §7), opened as a single creative with a notice.
+ */
+export type VariantDetail =
+  | { orphan: false; host: string; letter: VariantLetter; group: VariantGroup; missing: VariantLetter[] }
+  | { orphan: true; host: string; letter: VariantLetter };
 /** A creative summary tagged with its project, for cross-project lists such as "Jump back in". */
 export type RecentCreative = CreativeSummary & { project: { slug: string; name: string } };
 export type CreativeListItem = ({ ok: true } & CreativeSummary) | { ok: false; slug: string; error: string };
@@ -403,7 +416,7 @@ export type CreativeListItem = ({ ok: true } & CreativeSummary) | { ok: false; s
  * `formats`: one summary per brief format (history, ★, linkable primaries), always sent by the core; optional in the type
  * only so older fixtures stay valid. `versions` may carry hashes the core computed lazily for old versions.
  */
-export interface CreativeDetail { slug: string; creative: CreativeFile; versions: VersionEntry[]; jobKey: string; formats?: FormatSummary[] }
+export interface CreativeDetail { slug: string; creative: CreativeFile; versions: VersionEntry[]; jobKey: string; formats?: FormatSummary[]; /** Phase 15: absent outside a group. */ variants?: VariantDetail }
 
 /** Localized text of an output warning; an unknown key, or params that are not numbers, fall back to the key itself. */
 export function outputWarningText(w: OutputWarning, locale: Locale): string {

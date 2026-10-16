@@ -4,7 +4,7 @@ import { lstat, readdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, join, sep } from 'node:path';
 import { changedAssets, overlayAssetPaths, readOverlay } from '../localization/store.ts';
 import type { FastifyInstance } from 'fastify';
-import { messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, nextInstanceId, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow } from '@motion-studio/shared';
+import { messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, nextInstanceId, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow, hostOf, MAX_VARIANTS, VARIANT_LETTERS, type VariantDetail, type VariantLetter } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
@@ -17,6 +17,7 @@ import { readJsonFile } from '../json-file.ts';
 import { isRealDirChain } from '../creatives/core-files.ts';
 import type { UrlSigner } from './signed-urls.ts';
 import { formatSummaries } from '../creatives/format-summary.ts';
+import { MAX_DIRECTION_CHARS, VariantGroupService } from '../creatives/variant-group.ts';
 import { withLazyHashes } from '../creatives/output-hashes.ts';
 import { creativeJobKey, PICK_RETRY_AFTER_SEC, type CreativeRef, type CreativeTurnService } from '../creatives/creative-turns.ts';
 import type { RenderJobService } from '../creatives/render-jobs.ts';
@@ -115,6 +116,15 @@ const exportBody = z.object({
 });
 const useAsLogoBody = z.object({ variant: z.enum(['primary', 'icon']) }).strict();
 const linkBody = z.object({ follower: z.string().min(1).max(200), primary: z.string().min(1).max(200).nullable() });
+/** Phase 15: `POST …/variants` (see the route). */
+const addVariantsBody = z.object({
+  count: z.number().int().min(1).max(MAX_VARIANTS).optional(),
+  directions: z.array(z.union([z.string().max(MAX_DIRECTION_CHARS), z.null()])).max(MAX_VARIANTS).optional(),
+  baseFrom: z.object({ slug: z.string().min(1).max(100), version: z.number().int().min(1) }).strict().optional(),
+}).strict();
+const variantPickBody = z.object({ slug: z.string().min(1).max(100), version: z.number().int().min(1) }).strict();
+const layoutBody = z.object({ layout: z.enum(['variant', 'format']) }).strict();
+const directionBody = z.object({ direction: z.string().max(MAX_DIRECTION_CHARS) }).strict();
 /** A render request (Task 5): `formats` to render (a follower stands for its primary); absent or empty: every primary. */
 const renderBody = z.object({
   formats: z.array(z.string().min(1).max(200)).max(100).optional(),
@@ -195,7 +205,8 @@ export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: st
     // Fix round 1 (M2): every creative gets its side record now, before any agent can run, so `queued`/`stoppedSession`
     // written into a creative.json later (by anyone) are never taken as the user's, even in a creative nobody opened yet.
     if (side) {
-      for (const c of await new CreativeStore(dir).list().catch(() => [])) {
+      // Phase 15: every creative, real and orphan sisters included (`listAll`): each needs its side record.
+      for (const c of await new CreativeStore(dir).listAll().catch(() => [])) {
         // A creative.json that cannot be read now is migrated on its first successful open (fix round 2).
         if (c.ok) await side.read(dir, c.slug).catch(() => {});
         else await side.markPendingMigration(dir, c.slug).catch(() => {});
@@ -270,8 +281,20 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     await ws.getProject(slug); // 404 for unknown projects
     const projectDir = ws.projectDir(slug);
     const store = new CreativeStore(projectDir);
-    store.dir(creativeSlug); // 400 for invalid slugs
+    // 400 for invalid slugs; phase 15: 404 for a sister-shaped folder that is neither a real sister nor an orphan (ruling R2).
+    await store.assertOpenable(creativeSlug);
     return { root: ws.root, projectSlug: slug, projectDir, creativeSlug, store };
+  };
+  const variantsOf = (ref: CreativeRef & { store: CreativeStore }) => new VariantGroupService({ store: ref.store, turns: ctx.turns });
+  /** Phase 15: the variant side of a creative's detail; absent outside a group (an old creative's detail is unchanged). */
+  const variantDetail = async (ref: CreativeRef & { store: CreativeStore }): Promise<VariantDetail | undefined> => {
+    const r = await variantsOf(ref).resolve(ref);
+    const slug = ref.creativeSlug;
+    if (r.orphan) return { orphan: true, host: hostOf(slug), letter: slug.slice(-1) as VariantLetter };
+    if (!r.group) return undefined;
+    const letter = r.group.members.find((m) => m.slug === slug)?.letter ?? 'a';
+    const missing = r.group.members.filter((m) => r.missing.includes(m.slug)).map((m) => m.letter);
+    return { orphan: false, host: r.host.creativeSlug, letter, group: r.group, missing };
   };
 
   app.get('/api/formats', async () => catalog().load());
@@ -360,6 +383,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       slug: ref.creativeSlug, creative: await ctx.turns.side.merged(ref.projectDir, ref.creativeSlug, creative), versions,
       jobKey: creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug),
       formats: await formatSummaries(creativeDir, creative, versions, (await catalog().load()).presets),
+      ...await variantDetail(ref).then((variants) => (variants ? { variants } : {})),
     };
   };
 
@@ -384,6 +408,70 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const body = parse(editBody, pruneLabelsOfRemovedFormats(req.body));
     const ref = await refOf(req.params.slug, req.params.c);
     return ctx.turns.updateBrief(ref, body);
+  });
+
+  // Phase 15: variant groups (spec §2, §5). Every route but POST …/variants refuses a creative outside a group (409
+  // `variant-no-group`) and writes nothing: an old creative is unchanged by them.
+  /**
+   * Creates sisters (ruling R3: no turn starts; Task 3's `…/variants/run` starts them). With no group yet, `count` is the size
+   * of the group asked for, A included (2..5), and `directions[0]` is A's; on a group, `count` is how many variants to add
+   * and `directions` are theirs. A missing or null direction is left for the directions turn. `baseFrom`: every new variant
+   * starts from that member's version (decisions log 263).
+   */
+  app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/variants', async (req, reply) => {
+    const body = parse(addVariantsBody, req.body);
+    const ref = await refOf(req.params.slug, req.params.c);
+    const svc = variantsOf(ref);
+    const r = await svc.resolve(ref);
+    if (r.orphan) throw new CodedError(409, t().errors.variantOrphan, 'variant-orphan');
+    const directions = body.directions ?? [];
+    const creating = r.group === null;
+    const total = creating ? body.count ?? Math.max(2, directions.length) : null;
+    const add = creating ? total! - 1 : body.count ?? Math.max(1, directions.length);
+    if ((creating && total! < 2) || add < 1 || directions.length > (creating ? total! : add)) {
+      throw new CodedError(400, t().errors.variantDirections, 'variant-directions');
+    }
+    const own = creating ? directions.slice(1) : directions;
+    const specs = Array.from({ length: add }, (_, i) => ({ direction: own[i] ?? null, ...(body.baseFrom ? { baseFrom: body.baseFrom } : {}) }));
+    await svc.addVariants(r.host, specs, creating ? { hostDirection: directions[0] ?? null } : {});
+    return reply.status(201).send(await detailOf({ ...r.host, store: ref.store }));
+  });
+
+  const letterOf = (l: string): VariantLetter => {
+    if (!(VARIANT_LETTERS as readonly string[]).includes(l)) throw new CodedError(404, t().errors.variantUnknown({ letter: l.slice(0, 2).toUpperCase() }), 'variant-unknown');
+    return l as VariantLetter;
+  };
+  for (const action of ['discard', 'restore', 'use-for-all'] as const) {
+    app.post<{ Params: { slug: string; c: string; l: string } }>(`/api/projects/:slug/creatives/:c/variants/:l/${action}`, async (req): Promise<CreativeDetail> => {
+      const ref = await refOf(req.params.slug, req.params.c);
+      const letter = letterOf(req.params.l);
+      const svc = variantsOf(ref);
+      if (action === 'discard') await svc.discard(ref, letter);
+      else if (action === 'restore') await svc.restore(ref, letter);
+      else await svc.useVariantForAll(ref, letter);
+      return detailOf(ref);
+    });
+  }
+
+  app.put<{ Params: { slug: string; c: string; formatId: string } }>('/api/projects/:slug/creatives/:c/variants/picks/:formatId', async (req): Promise<CreativeDetail> => {
+    const pick = req.body === null || req.body === undefined ? null : parse(variantPickBody, req.body);
+    const ref = await refOf(req.params.slug, req.params.c);
+    await variantsOf(ref).setPick(ref, req.params.formatId, pick);
+    return detailOf(ref);
+  });
+
+  app.put<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/variants/layout', async (req): Promise<CreativeDetail> => {
+    const body = parse(layoutBody, req.body);
+    const ref = await refOf(req.params.slug, req.params.c);
+    await variantsOf(ref).setLayout(ref, body.layout);
+    return detailOf(ref);
+  });
+
+  app.put<{ Params: { slug: string; c: string; l: string } }>('/api/projects/:slug/creatives/:c/variants/:l/direction', async (req): Promise<CreativeDetail> => {
+    const body = parse(directionBody, req.body);
+    const ref = await refOf(req.params.slug, req.params.c);
+    await variantsOf(ref).setDirection(ref, letterOf(req.params.l), body.direction, 'user');
+    return detailOf(ref);
   });
 
   app.get<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/conversation', async (req) => {

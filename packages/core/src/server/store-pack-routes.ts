@@ -74,6 +74,7 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
     await ws.getProject(req.params.slug);
     const projectDir = ws.projectDir(req.params.slug);
     const store = new CreativeStore(projectDir);
+    await store.assertOpenable(req.params.c); // phase 15: a real or orphan sister too, never a hand-made `x~b`
     const creativeDir = store.dir(req.params.c);
     const ref: CreativeRef & { store: CreativeStore } = { root: ws.root, projectSlug: req.params.slug, projectDir, creativeSlug: req.params.c, store };
     const raw = (req.body ?? {}) as { destination?: unknown };

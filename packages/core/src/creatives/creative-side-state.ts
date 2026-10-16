@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { mkdir, realpath, rename, unlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
-import { isSessionId, queuedRequestSchema, type CreativeFile, type QueuedRequest } from '@motion-studio/shared';
+import { briefSchema, isSessionId, linkedCodebaseSchema, queuedRequestSchema, type CreativeFile, type QueuedRequest } from '@motion-studio/shared';
 import { assertNotRealUserData } from '../app-config.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
 import { readRegularFile } from '../safe-read.ts';
@@ -20,6 +20,18 @@ export type StoppedSession = NonNullable<CreativeFile['stoppedSession']>;
 export interface CreativeSideState { queued?: QueuedRequest[]; stoppedSession?: StoppedSession }
 
 const stoppedSchema = z.object({ sessionId: z.string().min(1), at: z.iso.datetime(), jobId: z.string().min(1) });
+/**
+ * Phase 15 (spec §2, "Brief comune"): the group's brief a variant could not take because it was working (queued or running)
+ * when the brief changed. It is applied at the start of that variant's next turn, never mid-turn
+ * (`CreativeTurnService.applyPendingBrief`). The shared fields only; the variant's own links stay its own.
+ */
+const pendingBriefSchema = z.object({
+  brief: briefSchema,
+  title: z.string().trim().min(1).optional(),
+  linkedCodebases: z.array(linkedCodebaseSchema).optional(),
+  at: z.iso.datetime(),
+});
+export type PendingBrief = z.infer<typeof pendingBriefSchema>;
 const recordSchema = z.object({
   schemaVersion: z.literal(1),
   queued: z.array(queuedRequestSchema).optional(),
@@ -29,6 +41,8 @@ const recordSchema = z.object({
    * legacy fields are migrated on the first successful open, then the flag is dropped.
    */
   pendingMigration: z.literal(true).optional(),
+  /** Phase 15: see `pendingBriefSchema`. */
+  pendingBrief: pendingBriefSchema.optional(),
 });
 type SideRecord = z.infer<typeof recordSchema>;
 
@@ -149,8 +163,27 @@ export class CreativeSideStateStore {
       const stopped = Object.hasOwn(patch, 'stoppedSession') ? patch.stoppedSession : cur.stoppedSession;
       if (queued?.length) next.queued = queued.map(clean);
       if (validStopped(stopped)) next.stoppedSession = stopped;
+      if (rec.pendingBrief) next.pendingBrief = rec.pendingBrief;
       await this.save(key, next);
       return { ...(next.queued ? { queued: next.queued } : {}), ...(next.stoppedSession ? { stoppedSession: next.stoppedSession } : {}) };
+    });
+  }
+
+  /** Phase 15: the brief waiting for this variant's next turn, or null. */
+  async pendingBrief(projectDir: string, slug: string): Promise<PendingBrief | null> {
+    const key = await this.key(projectDir, slug);
+    return this.lock.run(key, async () => (await this.ensure(projectDir, slug, key)).pendingBrief ?? null);
+  }
+
+  /** Phase 15: sets (a newer one replaces it) or clears (`null`) the brief waiting for this variant's next turn. */
+  async setPendingBrief(projectDir: string, slug: string, pending: PendingBrief | null): Promise<void> {
+    const key = await this.key(projectDir, slug);
+    await this.lock.run(key, async () => {
+      const rec = await this.ensure(projectDir, slug, key);
+      const next: SideRecord = { ...rec };
+      if (pending) next.pendingBrief = pendingBriefSchema.parse(pending); else delete next.pendingBrief;
+      if (!pending && rec.pendingBrief === undefined) return;
+      await this.save(key, next);
     });
   }
 

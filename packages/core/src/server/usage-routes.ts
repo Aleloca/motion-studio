@@ -4,7 +4,7 @@ import { WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
 import type { UsageLedger } from '../usage/usage-ledger.ts';
 import { buildUsageReport, defaultUsageRange, firstGenerationTokens, rangeEndingAt, type UsageProject } from '../usage/usage-report.ts';
 import { t } from '../i18n.ts';
-import { CREATIVE_SLUG_RE } from '../creatives/creative-store.ts';
+import { isAcceptedCreative, isCreativeFolderShape } from '../creatives/creative-store.ts';
 
 /** Longest range a report may cover (one bucket per day). */
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -39,7 +39,7 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
     const to = parseDate(q.to);
     if (from === null || to === null) throw new WorkspaceError(400, t().errors.invalidRequest);
     const creative = q.creative === undefined || q.creative === '' ? undefined : q.creative;
-    if (creative !== undefined && (typeof creative !== 'string' || !CREATIVE_SLUG_RE.test(creative) || typeof q.project !== 'string' || q.project === '')) {
+    if (creative !== undefined && (typeof creative !== 'string' || !isCreativeFolderShape(creative) || typeof q.project !== 'string' || q.project === '')) {
       throw new WorkspaceError(400, t().errors.invalidRequest);
     }
     const allTime = creative !== undefined && !from && !to;
@@ -53,6 +53,8 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
     if (ws && typeof q.project === 'string' && q.project !== '') {
       const project = await ws.getProject(q.project); // 400 for a bad slug, 404 when missing
       projects = [{ slug: q.project, name: project.name, dir: ws.projectDir(q.project) }];
+      // Phase 15 (ruling R2): a sister's records only when it is a real sister of this project; a hand-made `x~b` is refused.
+      if (creative !== undefined && !(await isAcceptedCreative(projects[0]!.dir, creative))) throw new WorkspaceError(400, t().errors.invalidRequest);
     } else if (ws) {
       const list = await ws.listProjects().catch(() => []);
       // A project with an unreadable project.json still has its ledger: it is listed under its folder name.

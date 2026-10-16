@@ -1,6 +1,7 @@
 import { lstat, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { noteCoreChange } from '../core-changes.ts';
+import { isAcceptedCreative } from './creative-store.ts';
 
 /**
  * Garbage collection of the core's derived caches under `<project>/.studio/cache/<name>/<creative>/v<N>/…` (final wave
@@ -18,7 +19,6 @@ export const DERIVED_CACHES: ReadonlyArray<{ name: string; maxBytes: number }> =
 ];
 export const DERIVED_CACHE_MAX_AGE_MS = 30 * 24 * 3600 * 1000;
 export const DERIVED_CACHE_GRACE_MS = 24 * 3600 * 1000;
-const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}$/;
 const VERSION_RE = /^v\d{1,6}$/;
 /** Most entries one version folder is measured over (a folder bigger than this is measured as old only by its first entries). */
 const MAX_ENTRIES = 20_000;
@@ -53,7 +53,8 @@ export async function sweepDerivedCaches(projectDir: string, o: { now?: number; 
     for (const creative of await readdir(root).catch(() => [] as string[])) {
       const cdir = join(root, creative);
       if (!(await lstat(cdir).catch(() => null))?.isDirectory()) continue;
-      const skip = !SLUG_RE.test(creative) || (o.skipCreative?.(creative) ?? false);
+      // Kept (never swept): anything but a plain creative or a real variant sister (phase 15, ruling R2), or a skipped one.
+      const skip = (o.skipCreative?.(creative) ?? false) || !(await isAcceptedCreative(projectDir, creative));
       for (const v of await readdir(cdir).catch(() => [] as string[])) {
         if (!VERSION_RE.test(v)) continue;
         const vdir = join(cdir, v);

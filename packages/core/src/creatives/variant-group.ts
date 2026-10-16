@@ -1,0 +1,478 @@
+import { mkdir } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import {
+  activeMembers, canDiscard, effectiveLinks, followerVersion, formatDisplayName, hasFormat, MAX_VARIANTS, nextLetter, starOf,
+  VARIANT_LETTERS, variantGroupSchema,
+  type CreativeFile, type VariantGroup, type VariantLetter, type VariantMember, type VariantPick, type VersionEntry,
+} from '@motion-studio/shared';
+import { readCompositionFolder } from '../compositions/composition-files.ts';
+import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
+import { currentLocale, t } from '../i18n.ts';
+import { CodedError } from '../workspace-store.ts';
+import { copyVerified, versionDirReady } from './carry-over.ts';
+import { compositionDirOf } from './composition-contract.ts';
+import { alignEditorCopies } from './composition-turn.ts';
+import { CREATIVE_SLUG_RE, groupTiedTo, isRealSister, type CreativeStore } from './creative-store.ts';
+import type { BriefPatch, CreativeRef, CreativeTurnService, SharedBrief } from './creative-turns.ts';
+
+/**
+ * Phase 15 (spec §2, §5, §7): a creative's variant group. The group lives in the HOST's creative.json (`variantGroup`,
+ * member `a`); each other variant is a sister creative `<host>~<letter>` with `variantOf`, a normal creative in every other
+ * respect (turns, versions, editor, renders, queue, Stop). This service keeps the group: sisters, the shared brief, the ★ of
+ * each format across variants, discard and restore, layout, directions.
+ *
+ * **Locks (decisions log 823).** Every group write runs under the host's creative lock (`CreativeTurnService.runLocked` of
+ * the host, which IS member a's lock). A brief propagation keeps that lock and then takes each other member's lock, one at a
+ * time, in letter order b→e; member a is written under the lock already held, never re-taken (the mutex is not reentrant).
+ * The order is total (a before b … before e), so two writers cannot deadlock. The rule for every caller: never take the
+ * host's lock while holding a sister's lock. A turn of a sister takes only its own lock (and, at its start, applies a pending
+ * brief under it).
+ *
+ * **Working variants.** A variant whose turn is queued or running never gets the new brief mid-turn: it is kept as its
+ * `pendingBrief` (the core's side state, out of the agent's reach and out of git) and applied at the start of its next turn.
+ */
+export interface VariantGroupDeps {
+  store: CreativeStore;
+  turns: CreativeTurnService;
+}
+
+/** What a new variant starts from (`POST …/variants`): a direction, and optionally a variant's version as its base. */
+export interface VariantSpec { direction?: string | null; baseFrom?: { slug: string; version: number } }
+
+/** One format of the group's final selection: whose version it exports and why. */
+export interface GroupSelectionItem { slug: string; version: number; source: 'pick' | 'default' }
+
+/** Directions are one line: at most this many characters (the same bound as the directions tool of Task 3). */
+export const MAX_DIRECTION_CHARS = 140;
+
+const now = () => new Date().toISOString();
+const letterIndex = (l: VariantLetter) => VARIANT_LETTERS.indexOf(l);
+const byLetter = (a: VariantMember, b: VariantMember) => letterIndex(a.letter) - letterIndex(b.letter);
+const upper = (l: VariantLetter) => l.toUpperCase();
+
+export class VariantGroupService {
+  constructor(private readonly deps: VariantGroupDeps) {}
+
+  private refFor(host: CreativeRef, slug: string): CreativeRef { return { root: host.root, projectSlug: host.projectSlug, projectDir: host.projectDir, creativeSlug: slug }; }
+
+  /**
+   * Where `ref` stands. A host: its group (null for a creative outside any group, an old one included). A real sister
+   * (`isRealSister`): its host and the group. Any other sister-shaped creative is an orphan (spec §7): it is its own host,
+   * with no group. `missing`: members whose folder has no readable creative.json that names this host (shown "mancante").
+   */
+  async resolve(ref: CreativeRef): Promise<{ host: CreativeRef; group: VariantGroup | null; missing: string[]; orphan: boolean }> {
+    const { store } = this.deps;
+    const slug = ref.creativeSlug;
+    const own = await store.get(slug); // 404 for an unknown creative
+    if (CREATIVE_SLUG_RE.test(slug)) {
+      const g = own.variantGroup;
+      if (!g || !groupTiedTo(slug, g)) return { host: ref, group: null, missing: [], orphan: false };
+      return { host: ref, group: g, missing: await this.missingOf(ref, g), orphan: false };
+    }
+    if (!(await isRealSister(ref.projectDir, slug))) return { host: ref, group: null, missing: [], orphan: true };
+    const hostRef = this.refFor(ref, slug.slice(0, slug.indexOf('~')));
+    const g = (await store.get(hostRef.creativeSlug)).variantGroup!;
+    return { host: hostRef, group: g, missing: await this.missingOf(hostRef, g), orphan: false };
+  }
+
+  private async missingOf(host: CreativeRef, g: VariantGroup): Promise<string[]> {
+    const out: string[] = [];
+    for (const m of g.members) {
+      if (m.letter === 'a') continue;
+      const ok = await this.deps.store.get(m.slug).then((c) => c.variantOf === host.creativeSlug, () => false);
+      if (!ok) out.push(m.slug);
+    }
+    return out;
+  }
+
+  /** Runs `fn` under the host's lock with the group as stored now (re-read under the lock). 409 outside a group. */
+  private async withGroup<T>(ref: CreativeRef, fn: (host: CreativeRef, hostFile: CreativeFile, g: VariantGroup) => Promise<T>): Promise<T> {
+    const e = t().errors;
+    const r = await this.resolve(ref);
+    if (r.orphan) throw new CodedError(409, e.variantOrphan, 'variant-orphan');
+    if (!r.group) throw new CodedError(409, e.variantNoGroup, 'variant-no-group');
+    return this.deps.turns.runLocked(r.host, async () => {
+      const hostFile = await this.deps.store.get(r.host.creativeSlug);
+      const g = hostFile.variantGroup;
+      if (!g || !groupTiedTo(r.host.creativeSlug, g)) throw new CodedError(409, e.variantNoGroup, 'variant-no-group');
+      return fn(r.host, hostFile, g);
+    });
+  }
+
+  /** Writes the group on the host (the caller holds the host's lock); every member slug is tied to its letter (ruling R2). */
+  private async writeGroup(host: CreativeRef, g: VariantGroup, commit = true): Promise<VariantGroup> {
+    const parsed = variantGroupSchema.parse(g);
+    if (!groupTiedTo(host.creativeSlug, parsed)) throw new Error('variant group: a member slug is not its letter\'s');
+    const updated = await this.deps.store.update(host.creativeSlug, { variantGroup: parsed });
+    if (commit) await this.deps.turns.commitCreativeFiles(host, [host.creativeSlug], t().jobs.variantGroupCommit({ title: updated.title }));
+    this.deps.turns.changed(host);
+    return parsed;
+  }
+
+  /** The group's brief now: the one waiting for the host's next turn when the host was working, else the host's own. */
+  private async canonical(host: CreativeRef, hostFile: CreativeFile): Promise<Required<SharedBrief>> {
+    const pending = await this.deps.turns.side.pendingBrief(host.projectDir, host.creativeSlug);
+    return {
+      brief: pending?.brief ?? hostFile.brief,
+      title: pending?.title ?? hostFile.title,
+      linkedCodebases: pending?.linkedCodebases ?? hostFile.linkedCodebases ?? [],
+    };
+  }
+
+  private memberOf(g: VariantGroup, letter: VariantLetter): VariantMember {
+    const m = g.members.find((x) => x.letter === letter);
+    if (!m) throw new CodedError(404, t().errors.variantUnknown({ letter: upper(letter) }), 'variant-unknown');
+    return m;
+  }
+
+  /**
+   * Creates the sisters for `ref`'s group (made now when `ref` has none: `ref` becomes member a, with `hostDirection`), one
+   * per spec, in the next free letters. Each sister copies the group's brief (the host's links as its start), title and
+   * codebases; with `baseFrom` its v1 is that version's compositions (`seed`). No turn starts here. 409 `variants-full`
+   * beyond MAX_VARIANTS; nothing is left behind on a failure.
+   */
+  async addVariants(ref: CreativeRef, specs: VariantSpec[], opts: { hostDirection?: string | null } = {}): Promise<VariantGroup> {
+    const e = t().errors;
+    const r = await this.resolve(ref);
+    if (r.orphan) throw new CodedError(409, e.variantOrphan, 'variant-orphan');
+    const host = r.host;
+    const { store, turns } = this.deps;
+    return turns.runLocked(host, async () => {
+      const hostFile = await store.get(host.creativeSlug);
+      const existing = hostFile.variantGroup && groupTiedTo(host.creativeSlug, hostFile.variantGroup) ? hostFile.variantGroup : null;
+      const at = now();
+      const direction = (d: string | null | undefined) => {
+        const v = d?.trim() ?? '';
+        if (v.length > MAX_DIRECTION_CHARS) throw new CodedError(400, e.variantDirections, 'variant-directions');
+        return v || null;
+      };
+      const hostDirection = direction(opts.hostDirection);
+      let g: VariantGroup = existing ?? {
+        members: [{ slug: host.creativeSlug, letter: 'a', direction: hostDirection, directionSource: hostDirection ? 'user' : null, status: 'active', createdAt: at }],
+        picks: {}, layout: 'variant',
+      };
+      if (specs.length === 0) throw new CodedError(400, e.invalidRequest, 'invalid-request');
+      if (g.members.length + specs.length > MAX_VARIANTS) throw new CodedError(409, e.variantsFull({ max: MAX_VARIANTS }), 'variants-full');
+      for (const s of specs) {
+        direction(s.direction);
+        if (s.baseFrom && !g.members.some((m) => m.slug === s.baseFrom!.slug && m.status === 'active')) {
+          throw new CodedError(422, e.variantBaseInvalid({ detail: e.variantPickNotMember({ slug: s.baseFrom.slug }) }), 'variant-base-invalid');
+        }
+      }
+      const shared = await this.canonical(host, hostFile);
+      const created: string[] = [];
+      try {
+        for (const s of specs) {
+          const letter = nextLetter(g)! as Exclude<VariantLetter, 'a'>;
+          // The shared brief; its links start as the host's (each variant then keeps its own, like any creative).
+          const { links: _shared, ...sharedBrief } = shared.brief;
+          const hostLinks = hostFile.brief.links;
+          const sister: CreativeFile = {
+            schemaVersion: 1, title: shared.title, brief: { ...sharedBrief, ...(hostLinks ? { links: hostLinks } : {}) }, status: 'draft', error: null,
+            createdAt: at, updatedAt: at, resumeFrom: null, linkedCodebases: shared.linkedCodebases, variantOf: host.creativeSlug,
+          };
+          const slug = await store.createSister(host.creativeSlug, letter, sister);
+          created.push(slug);
+          // Fix round 1 (M2) of phase 13: its side record exists from the start (nothing written into its creative.json later is trusted).
+          await turns.side.read(host.projectDir, slug);
+          const d = direction(s.direction);
+          g = { ...g, members: [...g.members, { slug, letter, direction: d, directionSource: d ? 'user' : null, status: 'active', createdAt: at }] };
+          if (s.baseFrom) {
+            const baseLetter = g.members.find((m) => m.slug === s.baseFrom!.slug)!.letter;
+            const sisterRef = this.refFor(host, slug);
+            // Lock order (decisions log 823): the host's, held, then this sister's.
+            await turns.runLocked(sisterRef, () => this.seed(sisterRef, s.baseFrom!, baseLetter));
+          }
+        }
+        await this.writeGroup(host, g, false);
+      } catch (err) {
+        for (const slug of created.reverse()) await store.removeSisterFolder(slug).catch(() => {});
+        throw err;
+      }
+      await turns.commitCreativeFiles(host, [host.creativeSlug], t().jobs.variantsAddedCommit({ title: hostFile.title, letters: created.map((s) => upper(s.slice(-1) as VariantLetter)).join(', ') }),
+        created.map((s) => store.dir(s)));
+      return g;
+    });
+  }
+
+  /**
+   * The new sister's v1 is version `base.version` of member `base.slug` (decisions log 263, as an editor save): each of that
+   * version's own compositions of a primary the sister's brief has is copied file by file and verified against the hashes the
+   * base version recorded (`copyVerified`, never through a link), then completed as a direct save (`finishCompositions`,
+   * no agent): followers materialized, manifest v2, `origin: 'editor'`. Its `work/editor/` gets the copies, so the sister's
+   * next agent turn builds on v1 with the "Direct edits by the user" section, as after an editor save. The caller holds the
+   * sister's lock; no turn of the brand-new sister can run.
+   */
+  private async seed(sister: CreativeRef, base: { slug: string; version: number }, baseLetter: VariantLetter): Promise<void> {
+    const { store, turns } = this.deps;
+    const e = t().errors;
+    const locale = currentLocale();
+    const invalid = (detail: string) => new CodedError(422, e.variantBaseInvalid({ detail }), 'variant-base-invalid');
+    const v = (await store.readVersions(base.slug)).find((x) => x.n === base.version);
+    if (!v) throw invalid(e.versionNNotFound({ n: base.version }));
+    const creative = await store.get(sister.creativeSlug);
+    const presets = await turns.presetList();
+    const label = (id: string) => formatDisplayName(presets, id, locale, creative.brief.formatLabels);
+    const links = effectiveLinks(creative.brief.links, creative.brief.formats);
+    const root = join(sister.projectDir, 'creatives');
+    const sisterDir = store.dir(sister.creativeSlug);
+    await versionDirReady(sisterDir, 1);
+    const targets: string[] = [];
+    for (const f of creative.brief.formats.filter((x) => !Object.hasOwn(links, x))) {
+      const entry = v.compositions?.find((c) => c.format === f && c.followsFormat === undefined);
+      if (!entry) continue;
+      const srcRel = `${base.slug}/outputs/v${v.n}/${entry.dir}`;
+      const folder = await readCompositionFolder(join(root, ...srcRel.split('/'))).catch(() => null);
+      if (!folder || folder.hash !== entry.hash) throw new CodedError(409, e.variantBaseChanged({ format: label(f), n: v.n }), 'variant-base-changed');
+      const destRel = `${sister.creativeSlug}/outputs/v1/${compositionDirOf(f)}`;
+      for (const file of folder.files) {
+        await mkdir(dirname(join(root, ...destRel.split('/'), ...file.path.split('/'))), { recursive: true });
+        if ((await copyVerified(root, `${srcRel}/${file.path}`, `${destRel}/${file.path}`, file.sha256)) === null) {
+          throw new CodedError(409, e.variantBaseChanged({ format: label(f), n: v.n }), 'variant-base-changed');
+        }
+      }
+      targets.push(f);
+    }
+    if (targets.length === 0) throw invalid(e.compositionUnusable({ format: creative.brief.formats.map(label).join(', '), n: v.n }));
+    const saved = await turns.finishCompositions(sister, store, { creative, targets, carried: [], carriedComps: new Map(), links }, presets, undefined, 1, label, locale, { direct: true });
+    const status = saved.problems.length === 0 ? 'complete' : 'incomplete';
+    const entry: VersionEntry = {
+      n: 1, commit: null, sessionId: null, status, createdAt: now(), request: t().jobs.variantSeedRequest({ letter: upper(baseLetter), n: v.n }),
+      outputs: saved.outputs, problems: saved.problems, tools: [], renderCommand: null, basedOn: null, compositions: saved.compositions, origin: 'editor',
+    };
+    await alignEditorCopies(sisterDir, entry).catch(() => []);
+    // The sister's folder only (the agents of the other variants may be writing elsewhere in the project).
+    entry.commit = await turns.commitFolder(sister, [sisterDir], `${creative.title}: v1`).catch(() => null);
+    await store.appendVersion(sister.creativeSlug, entry);
+    await store.appendConversation(sister.creativeSlug, { type: 'version', at: now(), n: 1, status });
+    await store.update(sister.creativeSlug, { status: status === 'complete' ? 'ready' : 'incomplete', error: null });
+    turns.storyboardsLater(sister, store, 1);
+  }
+
+  /**
+   * Discards member `letter` (spec §5): hidden, nothing deleted, its ★s gone (back to the default rule). 404 unknown letter,
+   * 409 `variant-running` while one of its turns is queued or running, 409 `variant-last-active`. Discarding a discarded
+   * member is a no-op.
+   */
+  discard(ref: CreativeRef, letter: VariantLetter): Promise<VariantGroup> {
+    return this.withGroup(ref, async (host, _f, g) => {
+      const e = t().errors;
+      const m = this.memberOf(g, letter);
+      const running = this.deps.turns.turnActive(this.refFor(host, m.slug));
+      const c = canDiscard(g, letter, running);
+      if (!c.ok) {
+        if (c.reason === 'running') throw new CodedError(409, e.variantRunning({ letter: upper(letter) }), 'variant-running');
+        if (c.reason === 'last-active') throw new CodedError(409, e.variantLastActive({ letter: upper(letter) }), 'variant-last-active');
+        throw new CodedError(404, e.variantUnknown({ letter: upper(letter) }), 'variant-unknown');
+      }
+      if (m.status === 'discarded') return g;
+      const picks = Object.fromEntries(Object.entries(g.picks).filter(([, p]) => p.slug !== m.slug));
+      return this.writeGroup(host, { ...g, members: g.members.map((x) => (x.letter === letter ? { ...x, status: 'discarded' } : x)), picks });
+    });
+  }
+
+  /**
+   * Restores member `letter` (spec §5): active again, without its old ★s (they were cleared by the discard). It catches up
+   * with the group's brief at once (or at its next turn when it is working), since a discarded variant is not propagated to.
+   */
+  restore(ref: CreativeRef, letter: VariantLetter): Promise<VariantGroup> {
+    return this.withGroup(ref, async (host, hostFile, g) => {
+      const m = this.memberOf(g, letter);
+      if (m.status === 'active') return g;
+      const next = await this.writeGroup(host, { ...g, members: g.members.map((x) => (x.letter === letter ? { ...x, status: 'active' } : x)) });
+      const target = await this.canonical(host, hostFile);
+      const applied: string[] = [];
+      const deferred: string[] = [];
+      if (await this.present(host, m)) {
+        const mref = this.refFor(host, m.slug);
+        if (m.letter === 'a') await this.syncLocked(mref, target, applied, deferred);
+        else await this.deps.turns.runLocked(mref, () => this.syncLocked(mref, target, applied, deferred));
+      }
+      if (applied.length > 0) await this.deps.turns.commitCreativeFiles(host, applied, t().jobs.briefUpdatedCommit({ title: target.title }));
+      return next;
+    });
+  }
+
+  /**
+   * Sets (`pick`) or clears (`null`) the group's ★ of `formatId` (spec §5): the variant and version exported for it. 422
+   * `variant-pick-invalid` for a format not in the brief, a slug that is not an active member, a follower of that member, or
+   * a version without the format.
+   */
+  setPick(ref: CreativeRef, formatId: string, pick: VariantPick | null): Promise<VariantGroup> {
+    return this.withGroup(ref, async (host, hostFile, g) => {
+      const e = t().errors;
+      const shared = await this.canonical(host, hostFile);
+      const presets = await this.deps.turns.presetList();
+      const label = (id: string) => formatDisplayName(presets, id, currentLocale(), shared.brief.formatLabels);
+      const invalid = (detail: string) => new CodedError(422, e.variantPickInvalid({ detail }), 'variant-pick-invalid');
+      if (!shared.brief.formats.includes(formatId)) throw invalid(e.formatNotInBrief({ format: label(formatId) }));
+      const picks = { ...g.picks };
+      if (pick === null) delete picks[formatId];
+      else {
+        const m = g.members.find((x) => x.slug === pick.slug && x.status === 'active');
+        if (!m) throw invalid(e.variantPickNotMember({ slug: pick.slug }));
+        const data = await this.memberData(m.slug);
+        if (!data) throw invalid(e.variantPickNotMember({ slug: pick.slug }));
+        if (Object.hasOwn(data.links, formatId)) throw invalid(e.pickFollower({ format: label(formatId), primary: label(data.links[formatId]!) }));
+        const v = data.versions.find((x) => x.n === pick.version);
+        if (!v || !hasFormat(v, formatId)) throw invalid(e.variantPickNoFormat({ format: label(formatId), n: pick.version }));
+        picks[formatId] = { slug: m.slug, version: pick.version };
+      }
+      return this.writeGroup(host, { ...g, picks });
+    });
+  }
+
+  /** "Usa questa variante per tutti i formati" (spec §5): ★ = that variant's default-rule version of each format it has. */
+  useVariantForAll(ref: CreativeRef, letter: VariantLetter): Promise<VariantGroup> {
+    return this.withGroup(ref, async (host, hostFile, g) => {
+      const m = this.memberOf(g, letter);
+      if (m.status !== 'active') throw new CodedError(409, t().errors.variantDiscarded({ letter: upper(letter) }), 'variant-discarded');
+      const data = await this.memberData(m.slug);
+      if (!data) throw new CodedError(409, t().errors.variantUnknown({ letter: upper(letter) }), 'variant-missing');
+      const shared = await this.canonical(host, hostFile);
+      const picks = { ...g.picks };
+      for (const f of shared.brief.formats) {
+        if (Object.hasOwn(data.links, f)) continue; // a follower uses its primary's ★
+        const star = starOf(data.versions, f, undefined, data.links);
+        if (star.version !== null) picks[f] = { slug: m.slug, version: star.version };
+      }
+      return this.writeGroup(host, { ...g, picks });
+    });
+  }
+
+  setLayout(ref: CreativeRef, layout: 'variant' | 'format'): Promise<VariantGroup> {
+    return this.withGroup(ref, async (host, _f, g) => (g.layout === layout ? g : this.writeGroup(host, { ...g, layout })));
+  }
+
+  /** A variant's direction (spec §3): it applies from that variant's next turn. Empty clears it (the agent may propose one). */
+  setDirection(ref: CreativeRef, letter: VariantLetter, direction: string, source: 'user' | 'agent'): Promise<VariantGroup> {
+    return this.withGroup(ref, async (host, _f, g) => {
+      this.memberOf(g, letter);
+      const d = direction.trim();
+      if (d.length > MAX_DIRECTION_CHARS) throw new CodedError(400, t().errors.variantDirections, 'variant-directions');
+      const members = g.members.map((x) => (x.letter === letter ? { ...x, direction: d || null, directionSource: d ? source : null } : x));
+      return this.writeGroup(host, { ...g, members });
+    });
+  }
+
+  /** Writes `brief` (the group's new shared brief) to every active member; a working one gets it at its next turn. */
+  propagateBrief(ref: CreativeRef, brief: CreativeFile['brief']): Promise<{ applied: string[]; deferred: string[] }> {
+    return this.withGroup(ref, async (host, hostFile, g) => {
+      const shared = await this.canonical(host, hostFile);
+      return this.propagateLocked(host, g, { ...shared, brief });
+    });
+  }
+
+  /**
+   * A brief edit (PUT …/creatives/:c) on a creative of a group: computed on the group's brief now (`canonical`) with the
+   * same rules as a single creative's save, then propagated. Answers the edited creative as stored.
+   */
+  updateGroupBrief(hostRef: CreativeRef, patch: BriefPatch, edited: CreativeRef): Promise<CreativeFile> {
+    return this.withGroup(hostRef, async (host, hostFile, g) => {
+      const shared = await this.canonical(host, hostFile);
+      const linkedCodebases = patch.linkedCodebases ? normalizeCodebaseList(patch.linkedCodebases) : null;
+      if (linkedCodebases) await assertCodebasesOutside(linkedCodebases, [host.projectDir, host.root], shared.linkedCodebases);
+      const change = await this.deps.turns.briefChange(this.deps.store, host.creativeSlug, { ...hostFile, ...shared }, patch);
+      await this.propagateLocked(host, g, {
+        brief: change.brief ?? shared.brief, title: patch.title ?? shared.title, linkedCodebases: linkedCodebases ?? shared.linkedCodebases,
+      });
+      return this.deps.store.get(edited.creativeSlug);
+    });
+  }
+
+  /** The caller holds the host's lock. See the class comment for the lock order. */
+  private async propagateLocked(host: CreativeRef, g: VariantGroup, target: Required<SharedBrief>): Promise<{ applied: string[]; deferred: string[] }> {
+    const applied: string[] = [];
+    const deferred: string[] = [];
+    for (const m of activeMembers(g).sort(byLetter)) {
+      if (!(await this.present(host, m))) continue; // "mancante": nothing to write
+      const mref = this.refFor(host, m.slug);
+      if (m.letter === 'a') await this.syncLocked(mref, target, applied, deferred);
+      else await this.deps.turns.runLocked(mref, () => this.syncLocked(mref, target, applied, deferred));
+    }
+    // A format the brief no longer has loses its ★ (spec §7); the versions of each variant keep their history.
+    const picks = Object.fromEntries(Object.entries(g.picks).filter(([f]) => target.brief.formats.includes(f)));
+    if (Object.keys(picks).length !== Object.keys(g.picks).length) await this.writeGroup(host, { ...g, picks }, false);
+    const slugs = [...new Set([host.creativeSlug, ...applied])];
+    await this.deps.turns.commitCreativeFiles(host, slugs, t().jobs.briefUpdatedCommit({ title: target.title }));
+    return { applied, deferred };
+  }
+
+  /** One member, under its lock: written now, or kept for its next turn when a turn of it is queued or running. */
+  private async syncLocked(mref: CreativeRef, target: Required<SharedBrief>, applied: string[], deferred: string[]): Promise<void> {
+    const { turns } = this.deps;
+    if (turns.turnActive(mref)) {
+      const had = await turns.side.pendingBrief(mref.projectDir, mref.creativeSlug);
+      await turns.side.setPendingBrief(mref.projectDir, mref.creativeSlug, { ...target, at: now() });
+      if (!had) await this.deps.store.appendConversation(mref.creativeSlug, { type: 'system', at: now(), level: 'info', text: t().jobs.variantBriefDeferred }).catch(() => {});
+      deferred.push(mref.creativeSlug);
+      return;
+    }
+    await turns.applySharedBrief(mref, target);
+    applied.push(mref.creativeSlug);
+  }
+
+  /** Whether member `m`'s folder is there (member a always is: it is the host). */
+  private async present(host: CreativeRef, m: VariantMember): Promise<boolean> {
+    if (m.letter === 'a') return true;
+    return this.deps.store.get(m.slug).then((c) => c.variantOf === host.creativeSlug, () => false);
+  }
+
+  private async memberData(slug: string): Promise<{ creative: CreativeFile; versions: VersionEntry[]; links: Record<string, string> } | null> {
+    const creative = await this.deps.store.get(slug).catch(() => null);
+    if (!creative) return null;
+    const versions = await this.deps.store.readVersions(slug).catch(() => [] as VersionEntry[]);
+    return { creative, versions, links: effectiveLinks(creative.brief.links, creative.brief.formats) };
+  }
+
+  /**
+   * The group's final selection (spec §5, §6; Task 6 exports it), per format of the group's brief: the ★ when it is valid
+   * (an active member that is still there, a version with the format, not a follower there), else the default rule
+   * (`starOf` without manual picks) applied to variant A, or to the first active variant when A is discarded or missing. A
+   * follower takes its primary's variant, in the version that variant's follower rule gives. A format with nothing to export
+   * is absent; a discarded member is never used. Pure: nothing is written.
+   */
+  async groupSelection(ref: CreativeRef): Promise<Record<string, GroupSelectionItem>> {
+    const r = await this.resolve(ref);
+    if (!r.group) throw new CodedError(409, r.orphan ? t().errors.variantOrphan : t().errors.variantNoGroup, r.orphan ? 'variant-orphan' : 'variant-no-group');
+    const g = r.group;
+    const hostFile = await this.deps.store.get(r.host.creativeSlug);
+    const { brief } = await this.canonical(r.host, hostFile);
+    const cache = new Map<string, Awaited<ReturnType<VariantGroupService['memberData']>>>();
+    const data = async (slug: string) => {
+      if (!cache.has(slug)) cache.set(slug, await this.memberData(slug));
+      return cache.get(slug)!;
+    };
+    const active = activeMembers(g).sort(byLetter);
+    let fallback: VariantMember | undefined;
+    for (const m of active) if (!fallback && (m.letter === 'a' || await this.present(r.host, m))) fallback = m;
+    const own = async (f: string): Promise<GroupSelectionItem | null> => {
+      const pick = g.picks[f];
+      const picked = pick ? active.find((m) => m.slug === pick.slug) : undefined;
+      if (pick && picked && await this.present(r.host, picked)) {
+        const d = await data(pick.slug);
+        const v = d?.versions.find((x) => x.n === pick.version);
+        if (d && v && hasFormat(v, f) && !Object.hasOwn(d.links, f)) return { slug: pick.slug, version: pick.version, source: 'pick' };
+      }
+      if (!fallback) return null;
+      const d = await data(fallback.slug);
+      if (!d) return null;
+      const star = starOf(d.versions, f, undefined, d.links);
+      if (star.follows !== null) {
+        const p = await own(star.follows);
+        if (!p) return null;
+        const pd = await data(p.slug);
+        if (!pd) return null;
+        const n = pd.links[f] === star.follows ? followerVersion(pd.versions, f, p.version, pd.links) : starOf(pd.versions, f, undefined, pd.links).version;
+        return n === null ? null : { slug: p.slug, version: n, source: p.source };
+      }
+      return star.version === null ? null : { slug: fallback.slug, version: star.version, source: 'default' };
+    };
+    const out: Record<string, GroupSelectionItem> = {};
+    for (const f of brief.formats) {
+      const s = await own(f);
+      if (s) out[f] = s;
+    }
+    return out;
+  }
+}
