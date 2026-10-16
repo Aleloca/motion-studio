@@ -313,7 +313,8 @@ export function NewCreative({ slug }: { slug: string }) {
         linkedCodebases: codebases,
       });
       let problem: string | null = created.groupError ? vg.groupFailed({ detail: created.groupError }) : created.startError ? vg.startFailed({ detail: created.startError }) : null;
-      if (grouped && !(coreGroup && !typed)) {
+      // Residual fix (decisions log 867): no group was made, so nothing is set or started here and the toast says why.
+      if (grouped && !(coreGroup && !typed) && !created.groupError) {
         try {
           if (coreGroup) {
             // The core made the group; the typed directions are set before the first generation.

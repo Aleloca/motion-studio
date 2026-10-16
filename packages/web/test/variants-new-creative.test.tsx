@@ -220,6 +220,22 @@ describe('a logo from scratch (the core makes the group, decision 845)', () => {
     expect(getToasts().some((x) => x.text === 'La creatività è stata creata, ma non è stato possibile creare le varianti: group boom')).toBe(true);
   });
 
+  it('residual fix: after a group failure no direction is set, nothing starts, and the informative toast stays', async () => {
+    createCreative.mockImplementationOnce(async () => ({ ...created, job: null, groupError: 'group boom' }));
+    await open();
+    await userEvent.type(screen.getByLabelText('Cosa vuoi realizzare?'), 'Un logo per Acme');
+    await pick(/^Logo/);
+    await userEvent.type(screen.getByLabelText('Direzione della variante B (facoltativa)'), 'Geometrico');
+    fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(location.hash).toBe(`#/p/acme/c/${created.slug}`));
+    expect(setVariantDirection).not.toHaveBeenCalled();
+    expect(runVariants).not.toHaveBeenCalled();
+    expect(addVariants).not.toHaveBeenCalled();
+    const texts = getToasts().map((x) => x.text);
+    expect(texts).toContain('La creatività è stata creata, ma non è stato possibile creare le varianti: group boom');
+    expect(texts.filter((x) => x.startsWith('La creatività è stata creata'))).toHaveLength(1);
+  });
+
   it('typed directions are set before anything starts, and the start is then one fan-out', async () => {
     await open();
     await userEvent.type(screen.getByLabelText('Cosa vuoi realizzare?'), 'Un logo per Acme');
