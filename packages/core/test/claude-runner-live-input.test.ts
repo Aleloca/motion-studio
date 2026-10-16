@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { alive, expectNoOrphans, killStarted, startFake, waitForEvent } from './helpers/fake-stream-runner.ts';
+import { alive, expectNoOrphans, killStarted, line, scriptedRun, startFake, tick, waitForEvent } from './helpers/fake-stream-runner.ts';
 
 // Phase 13 Task 1: live input on the Claude Code runner, against the fake CLI only (never a real claude; decision 804).
 const ON = { liveInput: true, interrupt: false };
@@ -164,6 +164,54 @@ describe('ClaudeCodeRunner live input: the "read" evidence (decision 804)', () =
     await expect(run.handle.send!({ text: 'x', clientId: 'c-off' })).resolves.toBe('closed');
     await run.handle.done;
     expect(run.events.some((e) => e.kind === 'user_message_read')).toBe(false);
+  });
+});
+
+describe('ClaudeCodeRunner live input: "read" after an interrupt (review fix)', () => {
+  it('a message written before an acknowledged interrupt is never marked read; the redirect is, on its turn\'s first output', async () => {
+    const r = await scriptedRun({ liveInput: true, interrupt: true });
+    r.out(line.text('turn 0'));
+    await tick();
+    await expect(r.handle.send!({ text: 'in1', clientId: 'in1' })).resolves.toBe('written');
+    const pending = r.handle.interrupt!();
+    await tick();
+    r.out(line.ack(r.lastRequestId()));
+    await expect(pending).resolves.toBe('interrupted');
+    r.out(line.result('error_during_execution'));
+    await tick();
+    await expect(r.handle.send!({ text: 'in2', clientId: 'in2' })).resolves.toBe('written');
+    expect(r.events.some((e) => e.kind === 'user_message_read')).toBe(false);
+    r.out(line.text('redirect turn'));
+    await tick();
+    r.out(line.result('success', 'done'));
+    await tick();
+    r.exit(0);
+    r.close(0);
+    await expect(r.handle.done).resolves.toMatchObject({ status: 'succeeded' });
+    const reads = r.events.filter((e) => e.kind === 'user_message_read');
+    expect(reads).toEqual([{ kind: 'user_message_read', clientId: 'in2' }]);
+    // Right before the redirect turn's first output.
+    const i = r.events.findIndex((e) => e.kind === 'user_message_read');
+    expect(r.events[i + 1]).toEqual({ kind: 'text', text: 'redirect turn' });
+  });
+
+  it('the same when the stopped turn\'s result comes before the ack (it is held): the redirect written after counts from the next result', async () => {
+    const r = await scriptedRun({ liveInput: true, interrupt: true }, { runner: { redirectBackstopMs: 30_000 } });
+    r.out(line.text('turn 0'));
+    await tick();
+    await expect(r.handle.send!({ text: 'in1', clientId: 'in1' })).resolves.toBe('written');
+    const pending = r.handle.interrupt!();
+    await tick();
+    r.out(line.result('error_during_execution'), line.ack(r.lastRequestId()));
+    await expect(pending).resolves.toBe('interrupted');
+    // The result came first and closed stdin: no redirect can be written, and nothing was read.
+    await expect(r.handle.send!({ text: 'in2', clientId: 'in2' })).resolves.toBe('closed');
+    r.out(line.text('anything'));
+    await tick();
+    r.exit(1);
+    r.close(1);
+    await expect(r.handle.done).resolves.toMatchObject({ status: 'cancelled' });
+    expect(r.events.some((e) => e.kind === 'user_message_read')).toBe(false);
   });
 });
 

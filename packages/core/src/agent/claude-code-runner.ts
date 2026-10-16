@@ -142,7 +142,10 @@ export class ClaudeCodeRunner implements AgentRunner {
     const stdout = new LineSplitter();
     // Per run: keeps the live usage estimate (sum per message id, throttled, with a trailing flush).
     // The timer only fires after this function returned, when `emit` (declared below) exists.
-    /** The raw subtype of the result line being handled (the parser reports it just before that line's events). */
+    /**
+     * The raw subtype of the result line being handled: the parser reports it just before that line's events, and stdout
+     * is parsed and emitted line by line, so two results in one chunk never mix their subtypes.
+     */
     let resultSubtype: string | null = null;
     const parser = new ClaudeStreamParser({ onLive: (e) => emit(e), onControlResponse: (r) => onControl(r), onResult: (st) => { resultSubtype = st; } });
     const stderr = new LineSplitter();
@@ -170,10 +173,22 @@ export class ClaudeCodeRunner implements AgentRunner {
      */
     let held: AgentEvent[] | null = null;
     let heldResult: AgentEvent | null = null;
-    const dispatch = (e: AgentEvent) => {
+    // One outgoing queue, drained in order: an event emitted while a listener runs (e.g. a listener that cancels, which
+    // flushes stdout) goes after the events already on their way, never between them.
+    const outbox: AgentEvent[] = [];
+    let draining = false;
+    const dispatch = (...list: AgentEvent[]) => {
+      outbox.push(...list);
+      if (draining) return;
+      draining = true;
       try {
-        onEvent(e);
-      } catch { /* a faulty listener must not crash the process nor lose the turn outcome */ }
+        while (outbox.length > 0) {
+          const x = outbox.shift()!;
+          try {
+            onEvent(x);
+          } catch { /* a faulty listener must not crash the process nor lose the turn outcome */ }
+        }
+      } finally { draining = false; }
     };
     const release = (interrupted: boolean) => {
       if (!held) return;
@@ -181,7 +196,8 @@ export class ClaudeCodeRunner implements AgentRunner {
       const r = heldResult;
       held = null;
       heldResult = null;
-      for (const x of list) dispatch(x === r && interrupted && x.kind === 'result' ? asInterrupted(x) : x);
+      // All at once into the queue, so an event a listener causes meanwhile goes after the whole released list.
+      dispatch(...list.map((x) => (x === r && interrupted && x.kind === 'result' ? asInterrupted(x) : x)));
     };
     /**
      * Decision 804, "read" evidence: the inputs written after the prompt (input 0), in order, with their input number.
@@ -190,6 +206,8 @@ export class ClaudeCodeRunner implements AgentRunner {
     const writtenInputs: { clientId: string; input: number }[] = [];
     let inputsWritten = 1;
     let resultsSeen = 0;
+    /** Bumped by each acknowledged interrupt: a write still in flight from before it is not tracked (see onControl). */
+    let inputEpoch = 0;
     const pendingInterrupts = new Map<string, (r: 'interrupted' | 'unsupported' | 'timeout') => void>();
     const closeStdin = () => {
       awaitingDecision = false;
@@ -233,17 +251,30 @@ export class ClaudeCodeRunner implements AgentRunner {
       if (!pending) return;
       // The stop is acknowledged even when the interrupted turn's result came first and already closed stdin: that turn
       // then ends as cancelled, not failed (no redirect can follow it).
-      if (r.ok) { interruptAcked = true; redirectWritten = false; }
+      if (r.ok) {
+        interruptAcked = true;
+        redirectWritten = false;
+        // Unless the stopped turn's result already came (held, released below as interrupted), the next result is that
+        // turn's own, also when stdin was closed meanwhile (e.g. by an earlier, unrelated error result).
+        if (!heldResult) interruptedResultPending = true;
+        // "Read" evidence after a stop: whether the CLI still runs the inputs written before the interrupt is not
+        // measured (2.1.301 answered `still_queued: []`, whose items' shape is unknown), so they stop being tracked and
+        // stay "sent". Inputs written from now on count from the result after the stopped turn's.
+        writtenInputs.length = 0;
+        inputEpoch++;
+        inputsWritten = heldResult ? resultsSeen : resultsSeen + 1;
+      }
       if (r.ok && stdinOpen) {
         awaitingDecision = true;
-        interruptedResultPending = true;
         if (backstopTimer) clearTimeout(backstopTimer);
         backstopTimer = setTimeout(closeStdin, this.redirectBackstopMs);
       }
       if (r.ok) emit({ kind: 'interrupted' });
       pending(r.ok ? 'interrupted' : 'unsupported');
     };
-    child.stdout.setEncoding('utf8').on('data', (c: string) => stdout.push(c).flatMap((l) => parser.parse(l)).forEach(emit));
+    // Line by line: each line's events are emitted before the next line is parsed (the result subtype above relies on it).
+    const parseLines = (lines: string[]) => { for (const l of lines) parser.parse(l).forEach(emit); };
+    child.stdout.setEncoding('utf8').on('data', (c: string) => parseLines(stdout.push(c)));
     child.stderr.setEncoding('utf8').on('data', (c: string) => {
       for (const text of stderr.push(c)) {
         stderrTail.push(text);
@@ -272,7 +303,7 @@ export class ClaudeCodeRunner implements AgentRunner {
       // Single outcome logic for 'close', the post-exit drain timeout and a cancel after exit.
       finish = ({ abandonPipes = false } = {}) => {
         if (settled) return;
-        stdout.flush().flatMap((l) => parser.parse(l)).forEach(emit);
+        parseLines(stdout.flush());
         parser.end().forEach(emit);
         if (abandonPipes) { child.stdout.destroy(); child.stderr.destroy(); }
         // An ok result is the real outcome even if a cancel arrived afterwards.
@@ -288,9 +319,10 @@ export class ClaudeCodeRunner implements AgentRunner {
       };
       child.on('exit', (code, sig) => {
         exited = { code, signal: sig };
-        // Nothing can read stdin any more: later sends resolve 'closed', a pending interrupt 'timeout' (no ack came).
+        // Nothing can read stdin any more: later sends resolve 'closed'. A pending interrupt is NOT dropped here: its ack
+        // may still sit in the stdout pipe (stdio can outlive 'exit'); it resolves on its own timer or in settle, which
+        // comes only after stdout and the parser are flushed.
         closeStdin();
-        dropPendingInterrupts();
         // Descendants may keep the pipes open, so 'close' may never come: after a cancel resolve now,
         // otherwise give the pipes a short drain window.
         if (cancelled) return finish({ abandonPipes: true });
@@ -330,21 +362,25 @@ export class ClaudeCodeRunner implements AgentRunner {
         if (!liveInput || !stdinOpen || exited || settled || cancelled) return Promise.resolve('closed' as const);
         // After an acknowledged interrupt this is the core's decision (a redirect): the backstop is off, and the redirect
         // turn's result closes stdin as usual (live sends during that turn are still written).
+        const redirectBefore = redirectWritten;
         if (awaitingDecision) {
           awaitingDecision = false;
           redirectWritten = true;
           if (backstopTimer) { clearTimeout(backstopTimer); backstopTimer = undefined; }
         } else if (interruptAcked) redirectWritten = true;
+        // A write that failed was no redirect: the stopped turn's outcome stays a stop.
+        const failed = () => { stdinOpen = false; redirectWritten = redirectBefore; };
         return new Promise<'written' | 'closed'>((resolve) => {
           try {
             const input = inputsWritten++;
+            const epoch = inputEpoch;
             child.stdin.write(userMessageLine(text), (err) => {
-              if (err) { stdinOpen = false; return resolve('closed'); }
-              writtenInputs.push({ clientId, input });
+              if (err) { failed(); return resolve('closed'); }
+              if (epoch === inputEpoch) writtenInputs.push({ clientId, input });
               emit({ kind: 'user_message_delivered', clientId });
               resolve('written');
             });
-          } catch { stdinOpen = false; resolve('closed'); }
+          } catch { failed(); resolve('closed'); }
         });
       },
       interrupt: () => {

@@ -122,3 +122,58 @@ export function killStarted() {
   }
   startedPids.clear();
 }
+
+/**
+ * Runner review fixes: a scripted child for orderings a real process cannot be made to produce on demand (an `exit`
+ * before the last stdout lines, two results in one chunk). Nothing is spawned: the test writes the CLI's stdout lines
+ * and emits `exit`/`close` itself, and reads what the runner wrote to stdin.
+ */
+export interface ScriptedRun {
+  handle: AgentRun;
+  events: AgentEvent[];
+  /** Writes these stream-json objects (or raw text) to stdout in ONE chunk. */
+  out(...items: (object | string)[]): void;
+  /** What the runner wrote to stdin, parsed. */
+  stdin(): Array<{ type?: string; request_id?: string; message?: { content?: unknown } }>;
+  /** The request_id of the last control_request written. */
+  lastRequestId(): string;
+  exit(code: number): void;
+  close(code: number): void;
+  /** From now on every stdin write fails (EPIPE), as when the pipe breaks. */
+  breakStdin(): void;
+}
+
+export async function scriptedRun(capabilities: AgentTurnRequest['capabilities'], opts: { onEvent?: (e: AgentEvent, handle: AgentRun) => void; runner?: { interruptTimeoutMs?: number; drainMs?: number; redirectBackstopMs?: number } } = {}): Promise<ScriptedRun> {
+  const { EventEmitter } = await import('node:events');
+  const { PassThrough } = await import('node:stream');
+  const written: string[] = [];
+  const child = Object.assign(new EventEmitter(), {
+    pid: undefined, stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: () => true,
+  });
+  child.stdin.setEncoding('utf8').on('data', (c: string) => { written.push(c); });
+  const runner = new ClaudeCodeRunner(['fake-claude'], { killGraceMs: 50, drainMs: 2000, ...opts.runner, spawn: (() => child) as unknown as typeof spawn });
+  const events: AgentEvent[] = [];
+  const cwd = await mkdtemp(join(tmpdir(), 'ms-scripted-cwd-'));
+  let handle!: AgentRun;
+  handle = runner.start({ cwd, prompt: 'first', ...(capabilities ? { capabilities } : {}) }, (e) => { events.push(e); opts.onEvent?.(e, handle); });
+  const stdin = () => written.join('').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  return {
+    handle, events, stdin,
+    out: (...items) => { child.stdout.write(items.map((i) => (typeof i === 'string' ? i : `${JSON.stringify(i)}\n`)).join('')); },
+    lastRequestId: () => stdin().filter((l) => l.type === 'control_request').at(-1)!.request_id!,
+    exit: (code) => { child.emit('exit', code, null); },
+    close: (code) => { child.stdout.end(); child.stderr.end(); setImmediate(() => child.emit('close', code, null)); },
+    breakStdin: () => {
+      (child.stdin as unknown as { write: unknown }).write = (_chunk: unknown, cb?: (err?: Error) => void) => { process.nextTick(() => cb?.(new Error('EPIPE'))); return false; };
+    },
+  };
+}
+
+/** Stream-json lines of the real CLI (2.1.301 shapes) for scripted runs. */
+export const line = {
+  text: (text: string) => ({ type: 'assistant', message: { id: `m-${text}`, content: [{ type: 'text', text }] } }),
+  result: (subtype: string, text = subtype) => ({ type: 'result', subtype, is_error: subtype !== 'success', session_id: 'scripted', result: text }),
+  ack: (requestId: string) => ({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response: { still_queued: [] } } }),
+};
+/** Lets pending stream callbacks run (stdin writes, stdout data). */
+export const tick = () => new Promise((r) => setTimeout(r, 20));

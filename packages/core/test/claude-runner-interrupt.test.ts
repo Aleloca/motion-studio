@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { INTERRUPT_TIMEOUT_MS, REDIRECT_BACKSTOP_MS } from '../src/agent/claude-code-runner.ts';
-import { expectNoOrphans, killStarted, startFake, waitForEvent } from './helpers/fake-stream-runner.ts';
+import { expectNoOrphans, killStarted, line, scriptedRun, startFake, tick, waitForEvent } from './helpers/fake-stream-runner.ts';
 
 // Phase 13 Task 1: interrupt on the Claude Code runner, against the fake CLI only (never a real claude; decision 804).
 const BOTH = { liveInput: true, interrupt: true };
@@ -257,5 +257,96 @@ describe('ClaudeCodeRunner interrupt: the 2.1.301 shape (decision 804)', () => {
     expect(tail).toEqual([expect.objectContaining({ kind: 'result', ok: false, interrupted: true }), { kind: 'interrupted' }]);
     expect(tail[0]).not.toHaveProperty('error');
     await expectNoOrphans(run);
+  });
+});
+
+// Runner review fixes (scripted child: exact orderings of stdout lines, exit and close).
+describe('ClaudeCodeRunner interrupt: review fixes', () => {
+  const results = (events: unknown[]) => events.filter((e) => (e as { kind: string }).kind === 'result') as Extract<import('@motion-studio/shared').AgentEvent, { kind: 'result' }>[];
+
+  it('an ack still in the stdout pipe when `exit` comes is not lost: interrupted, marked, cancelled', async () => {
+    const r = await scriptedRun(BOTH);
+    r.out(line.text('working'));
+    await tick();
+    const pending = r.handle.interrupt!();
+    await tick();
+    r.out(line.result('error_during_execution'));
+    await tick();
+    r.exit(1);
+    r.out(line.ack(r.lastRequestId()));
+    r.close(1);
+    await expect(pending).resolves.toBe('interrupted');
+    await expect(r.handle.done).resolves.toMatchObject({ status: 'cancelled' });
+    expect(results(r.events)).toEqual([expect.objectContaining({ ok: false, interrupted: true })]);
+    expect(results(r.events)[0]).not.toHaveProperty('error');
+  });
+
+  it('every ok ack marks the next result: an unrelated error first (stdin closed), then the stopped turn\'s result is interrupted', async () => {
+    const r = await scriptedRun(BOTH);
+    r.out(line.text('working'));
+    await tick();
+    const pending = r.handle.interrupt!();
+    await tick();
+    r.out(line.result('error_max_turns', 'max turns'));
+    await tick();
+    r.out(line.ack(r.lastRequestId()));
+    await expect(pending).resolves.toBe('interrupted');
+    r.out(line.result('error_during_execution'));
+    await tick();
+    r.exit(1);
+    r.close(1);
+    await expect(r.handle.done).resolves.toMatchObject({ status: 'cancelled' });
+    expect(results(r.events).map((e) => [e.ok, e.interrupted ?? false, e.error ?? null])).toEqual([[false, false, 'max turns'], [false, true, null]]);
+  });
+
+  it('two results in one stdout chunk keep their own subtypes: the first (the stopped turn) is marked, the second is not', async () => {
+    const r = await scriptedRun(BOTH);
+    r.out(line.text('working'));
+    await tick();
+    const pending = r.handle.interrupt!();
+    await tick();
+    r.out(line.ack(r.lastRequestId()));
+    await expect(pending).resolves.toBe('interrupted');
+    await expect(r.handle.send!({ text: 'redirect', clientId: 'r1' })).resolves.toBe('written');
+    r.out(line.result('error_during_execution'), line.result('error_max_turns', 'redirect failed'));
+    await tick();
+    r.exit(1);
+    r.close(1);
+    await expect(r.handle.done).resolves.toMatchObject({ status: 'failed', error: 'redirect failed' });
+    expect(results(r.events).map((e) => e.interrupted ?? false)).toEqual([true, false]);
+  });
+
+  it('a listener that cancels while held events are released cannot reorder them', async () => {
+    const r = await scriptedRun(BOTH, { onEvent: (e, h) => { if (e.kind === 'result') h.cancel(); } });
+    r.out(line.text('working'));
+    await tick();
+    const pending = r.handle.interrupt!();
+    await tick();
+    r.out(line.result('error_during_execution'));
+    await tick();
+    r.exit(1);
+    // The ack, then a line left without its newline: the cancel inside the listener flushes it.
+    r.out(line.ack(r.lastRequestId()), JSON.stringify(line.text('late')));
+    await expect(pending).resolves.toBe('interrupted');
+    await r.handle.done;
+    const tail = r.events.filter((e) => e.kind === 'result' || e.kind === 'interrupted' || (e.kind === 'text' && e.text === 'late')).map((e) => e.kind);
+    expect(tail).toEqual(['result', 'interrupted', 'text']);
+  });
+
+  it('a redirect whose write fails is no redirect: the stopped turn stays a stop', async () => {
+    const r = await scriptedRun(BOTH);
+    r.out(line.text('working'));
+    await tick();
+    const pending = r.handle.interrupt!();
+    await tick();
+    r.out(line.ack(r.lastRequestId()));
+    await expect(pending).resolves.toBe('interrupted');
+    r.out(line.result('error_during_execution'));
+    await tick();
+    r.breakStdin(); // the pipe breaks under the write
+    await expect(r.handle.send!({ text: 'redirect', clientId: 'r2' })).resolves.toBe('closed');
+    r.exit(1);
+    r.close(1);
+    await expect(r.handle.done).resolves.toMatchObject({ status: 'cancelled' });
   });
 });
