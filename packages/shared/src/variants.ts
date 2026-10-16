@@ -60,6 +60,8 @@ export const hostOf = (slug: string): string => {
   const i = slug.indexOf('~');
   return i < 0 ? slug : slug.slice(0, i);
 };
+/** A member's letter from its slug: a sister's `~x`, else `a` (the host). */
+export const letterOfSlug = (slug: string): VariantLetter => (slug.includes('~') ? (slug.slice(-1) as VariantLetter) : 'a');
 
 /** The first unused letter, or null when the group is full. */
 export const nextLetter = (g: VariantGroup): VariantLetter | null => {

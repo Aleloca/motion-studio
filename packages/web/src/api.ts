@@ -281,8 +281,8 @@ export const api = {
     request<{ destination: string; files: Array<{ from: string; to: string }>; skipped: string[]; excluded?: ExportExcluded[] }>('POST', `${c(slug, creative)}/export`, body),
   /** Phase 15: the group export's plan (any member of the group answers the same): per format, the ★ or default member and version. */
   groupExportPlan: (slug: string, creative: string) => request<{ items: GroupExportPlanItem[] }>('GET', `${c(slug, creative)}/export-group`),
-  /** Phase 15: exports each (chosen) format from its group selection, with today's file names. */
-  exportGroup: (slug: string, creative: string, body: { destination: string; formats?: string[]; pattern?: string; date?: string } & Pick<LocaleOptions, 'locales'>) =>
+  /** Phase 15: exports each (chosen) format from its group selection, with today's file names; `force`: "Render anyway" for translations. */
+  exportGroup: (slug: string, creative: string, body: { destination: string; formats?: string[]; pattern?: string; date?: string } & LocaleOptions) =>
     request<GroupExportResult>('POST', `${c(slug, creative)}/export-group`, body),
   /** Phase 15: the store pack of a group, each format from the group selection. */
   exportStorePackGroup: (slug: string, creative: string, body: { destination: string; locales?: string[] }) =>

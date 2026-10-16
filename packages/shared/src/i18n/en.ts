@@ -541,6 +541,8 @@ export const en = {
       notRendered: 'it has no current render',
       problems: 'the render has problems',
       noTranslation: (p: { locale: string }) => `no current translation in ${p.locale}`,
+      renderFailed: (p: { reason: string }) => `the render failed: ${p.reason}`,
+      renderProblems: (p: { list: string }) => `rendered now with problems: ${p.list}`,
     },
   },
   jobs: {

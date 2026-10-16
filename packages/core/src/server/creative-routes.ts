@@ -18,7 +18,7 @@ import { isRealDirChain } from '../creatives/core-files.ts';
 import type { UrlSigner } from './signed-urls.ts';
 import { formatSummaries } from '../creatives/format-summary.ts';
 import { MAX_DIRECTION_CHARS, VariantGroupService } from '../creatives/variant-group.ts';
-import { exportGroup, itemOfPlan, planGroupExport, resolveGroupLocalized, type GroupPlanItem } from '../creatives/variant-export.ts';
+import { exportGroup, itemOfPlan, pendingByMember, planGroupExport, renderGroupLocales, resolveGroupLocalized, type GroupPlanItem } from '../creatives/variant-export.ts';
 import type { VariantFanout } from '../creatives/variant-fanout.ts';
 import { withLazyHashes } from '../creatives/output-hashes.ts';
 import { creativeJobKey, PICK_RETRY_AFTER_SEC, type CreativeRef, type CreativeTurnService } from '../creatives/creative-turns.ts';
@@ -124,6 +124,8 @@ const exportGroupBody = z.object({
   locales: z.array(z.string().min(1).max(40)).min(1).max(11).optional(),
   /** The formats to export (the dialog's ticked rows); absent: every format of the selection. */
   formats: z.array(z.string().min(1).max(200)).max(MAX_EXPORT_FORMATS).optional(),
+  /** "Render anyway" for translations rendered first that have open problems or outdated entries (as the single export). */
+  force: z.boolean().optional(),
 }).strict();
 const useAsLogoBody = z.object({ variant: z.enum(['primary', 'icon']) }).strict();
 const linkBody = z.object({ follower: z.string().min(1).max(200), primary: z.string().min(1).max(200).nullable() });
@@ -704,9 +706,11 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
    * Phase 15 (spec §6): the group export. Each format is copied from the member and version of the group selection, named as
    * the host would name it (host title and slug, the file's own version: never a sister's `~x`). A selected composition with no
    * render is rendered first, in its own member. A file that is missing, a render that failed or has problems, or (with
-   * languages) a translation that is not current is NOT an error: it is left out and listed in `unavailable`, translated.
+   * languages) a translation that cannot be rendered is NOT an error: it is left out and listed in `unavailable`, translated.
    * Translations stay inside their variant: for each format, the localized renders of the member the selection picked, at that
-   * version; unlike a single creative's export they are never rendered here ("not current" is reported).
+   * version. A translation without a current render is rendered first in that member, as a single creative's export does
+   * (decisions log 854, revised): 409 `localization-needs-force` without `force` when one has open problems or outdated
+   * entries, and one rendered now with problems is left out and listed (Ruling J).
    */
   app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/export-group', async (req) => {
     const ref = await refOf(req.params.slug, req.params.c);
@@ -741,33 +745,41 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const planOf = async () => (await planGroupExport(svc, ref.store, ref)).filter((p) => !only || only.has(p.format));
     let plan = await planOf();
     const key = (p: Pick<GroupPlanItem, 'slug' | 'format' | 'version'>) => `${p.slug}\0${p.format}\0${p.version}`;
-    const withProblems = new Set<string>();
-    const renderedNow = new Set<string>();
+    const withProblems = new Map<string, string[]>();
+    const renderErrors = new Map<string, string>();
     const pending = plan.filter((p) => p.state === 'needs-render');
     if (includeSource && pending.length > 0) {
-      // One render job per member and version, in the member's own folder; a render that cannot run leaves its formats out.
-      const byMember = new Map<string, Map<number, string[]>>();
-      for (const p of pending) {
-        const m = byMember.get(p.slug) ?? new Map<number, string[]>();
-        m.set(p.version, [...(m.get(p.version) ?? []), p.format]);
-        byMember.set(p.slug, m);
+      // One render job per member and version, in the member's own folder; a render that cannot run leaves its formats out,
+      // with the job's own error (as the pack route reports it).
+      for (const [slug, versions] of pendingByMember(pending)) {
+        const error = await ctx.renders.renderAndWait({ ...ref, creativeSlug: slug }, versions)
+          .then((jobs) => jobs.find((j) => j.state === 'failed')?.error ?? null, (e: unknown) => (e instanceof Error ? e.message : String(e)));
+        if (error) for (const [version, formats] of versions) for (const format of formats) renderErrors.set(key({ slug, format, version }), error);
       }
-      for (const [slug, versions] of byMember) await ctx.renders.renderAndWait({ ...ref, creativeSlug: slug }, versions).catch(() => undefined);
-      for (const p of pending) renderedNow.add(key(p));
+      const renderedNow = new Set(pending.map(key));
       plan = await planOf();
       // A render made now with problems is not copied (the user has not seen it), as for a single creative.
       for (const p of plan) {
         if (p.state !== 'ready' || !renderedNow.has(key(p))) continue;
         const v = (await ref.store.readVersions(p.slug)).find((x) => x.n === p.version);
-        if (v && renderProblems(v, p.format).length > 0) withProblems.add(key(p));
+        const list = v ? renderProblems(v, p.format) : [];
+        if (list.length > 0) withProblems.set(key(p), list);
       }
     }
     const usable = plan.map((p) => (withProblems.has(key(p)) ? { ...p, state: 'missing' as const } : p));
-    const reason = (p: GroupPlanItem) => (withProblems.has(key(p)) ? t().export.groupReason.problems : p.state === 'needs-render' ? t().export.groupReason.notRendered : t().export.groupReason.missing);
-    const unavailable: Array<{ format: string; slug: string; letter: VariantLetter; version: number; locale?: string; message: string }> = (includeSource ? usable.filter((p) => p.state !== 'ready') : [])
-      .map((p) => ({ format: p.format, slug: p.slug, letter: p.letter, version: p.version,
-        message: t().export.groupSkipped({ format: label(p.format), variant: p.letter.toUpperCase(), n: p.version, reason: reason(p) }) }));
-    const items = includeSource
+    const g = t().export.groupReason;
+    const reason = (p: GroupPlanItem) => {
+      const problems = withProblems.get(key(p));
+      if (problems) return g.renderProblems({ list: problems.join('; ') });
+      const error = renderErrors.get(key(p));
+      if (p.state === 'needs-render') return error ? g.renderFailed({ reason: error }) : g.notRendered;
+      return g.missing;
+    };
+    type Gap = { format: string; slug: string; letter: VariantLetter; version: number; locale?: string; message: string };
+    const gap = (p: GroupPlanItem, why: string, locale?: string): Gap => ({ format: p.format, slug: p.slug, letter: p.letter, version: p.version, ...(locale !== undefined ? { locale } : {}),
+      message: t().export.groupSkipped({ format: locale !== undefined ? `${label(p.format)} (${locale})` : label(p.format), variant: p.letter.toUpperCase(), n: p.version, reason: why }) });
+    const unavailable: Gap[] = (includeSource ? usable.filter((p) => p.state !== 'ready') : []).map((p) => gap(p, reason(p)));
+    const items: ExportItem[] = includeSource
       ? usable.filter((p) => p.state === 'ready').map((p) => (primaryLocale !== undefined ? { ...itemOfPlan(p), locale: primaryLocale } : itemOfPlan(p)))
       : [];
     if (otherTags.length > 0) {
@@ -775,12 +787,28 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
         matches: (slug: string, n: number, file: string, sha: string) => renderFileMatches(ref.projectDir, ref.store.dir(slug), slug, n, file, sha),
         assetsOk: (slug: string, n: number, row: LocalizationRow) => localeAssetsCheck(ref.projectDir, ref.store.dir(slug))(n, row),
       };
-      const loc = await resolveGroupLocalized(usable, ref.store, otherTags, checks);
-      items.push(...loc.items);
+      // A source left out above (render problems) has no translation exported either; a languages-only export resolves every
+      // item, a composition without its primary render included (as the single export does).
+      const locPlan = usable.filter((p) => !withProblems.has(key(p)));
+      let loc = await resolveGroupLocalized(locPlan, ref.store, otherTags, checks);
+      // Decision 854 (superseded part) and the orchestrator's ruling: a translation without a current render is rendered now,
+      // in its own member, exactly like a single creative's export; `localization-needs-force` asks "Renderizza comunque".
+      const done = await renderGroupLocales(ctx.renders, ref, loc.pending, body.force === true, (list) => messages(currentLocale()).variants.renderNeedsForce({ list }));
+      if (loc.pending.length > 0) loc = await resolveGroupLocalized(locPlan, ref.store, otherTags, checks);
+      const renderedNow = (it: ExportItem, slug: string) => done.rendered.some((r) => r.slug === slug && r.version === it.n && r.locale === it.locale && r.formats.includes(it.format));
+      for (const it of loc.items) {
+        const p = locPlan.find((x) => x.format === it.format)!;
+        // Ruling J: a translation rendered now with problems is not copied either: listed, with its problems.
+        if (it.problems?.length && renderedNow(it, p.slug)) { unavailable.push(gap(p, g.renderProblems({ list: it.problems.join('; ') }), it.locale)); continue; }
+        const { problems: _p, ...clean } = it;
+        items.push(clean);
+      }
       for (const u of loc.unavailable) {
-        unavailable.push({ format: u.plan.format, slug: u.plan.slug, letter: u.plan.letter, version: u.plan.version, locale: u.locale,
-          message: t().export.groupSkipped({ format: label(u.plan.format), variant: u.plan.letter.toUpperCase(), n: u.plan.version,
-            reason: u.state === 'no-translation' ? t().export.groupReason.noTranslation({ locale: u.locale }) : t().export.groupReason.notRendered }) });
+        const error = done.errors.get(`${u.plan.slug}\0${u.locale}`);
+        const why = u.state === 'no-translation' ? g.noTranslation({ locale: u.locale })
+          : u.state === 'missing' ? reason(u.plan)
+          : error ? g.renderFailed({ reason: error }) : g.notRendered;
+        unavailable.push(gap(u.plan, why, u.locale));
       }
     }
     const result = await exportGroup(usable, common, items);

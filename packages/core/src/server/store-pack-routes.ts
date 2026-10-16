@@ -1,10 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
-  briefSchema, briefWriteSchema, issuesText, isStorePackFormat, packSlotOf, renderProblems, storePackSchema, type JobSummary, type VersionEntry,
+  briefSchema, briefWriteSchema, issuesText, isStorePackFormat, packSlotOf, renderProblems, storePackSchema, type JobSummary, type LocalizationRow, type VersionEntry,
 } from '@motion-studio/shared';
 import { CreativeStore } from '../creatives/creative-store.ts';
-import { planGroupExport, resolveGroupLocalized, type GroupPlanItem } from '../creatives/variant-export.ts';
+import { pendingByMember, planGroupExport, resolveGroupLocalized, type GroupPlanItem } from '../creatives/variant-export.ts';
 import { VariantGroupService } from '../creatives/variant-group.ts';
 import type { CreativeRef, CreativeTurnService } from '../creatives/creative-turns.ts';
 import { checkDestination, pendingRenders, plainName, resolveLocalizedItems, type ExportItem } from '../creatives/export.ts';
@@ -199,8 +199,9 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
    * Phase 15 (spec §6): the store pack of a variant group, `POST …/creatives/:c/store-pack/export-group` `{ destination, locales? }`.
    * For each pack format the file comes from the member and version of the group selection (the ★, or the default rule on
    * variant A). Translations stay inside their variant: each format's localized renders are those of the member the selection
-   * picked, at that version, and are never rendered here ("no translation" / "not rendered" are listed in `failed`, like any pack
-   * file that cannot be exported). A composition with no render is rendered first in its own member.
+   * picked, at that version. As in the single pack, a composition or a translation with no current render is rendered first, in
+   * its own member (decisions log 854, revised); "no translation", a render that failed and one rendered now with problems are
+   * listed in `failed`, like any pack file that cannot be exported.
    */
   app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/store-pack/export-group', async (req) => {
     const ws = ctx.requireWorkspace();
@@ -239,19 +240,13 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
     const jobError = (jobs: Array<JobSummary | null>) => jobs.find((j) => j?.state === 'failed')?.error ?? null;
 
     const files: PackFile[] = [];
-    const rendered: Array<{ version: number; formats: string[]; slug: string }> = [];
+    const rendered: Array<{ version: number; formats: string[]; slug: string; locale?: string }> = [];
     const errors = new Map<string, string>();
     const withProblems = new Set<string>();
     const key = (p: Pick<GroupPlanItem, 'slug' | 'format'>) => `${p.slug}\0${p.format}`;
     if (includeSource) {
       const pending = packPlan().filter((p) => p.state === 'needs-render');
-      const byMember = new Map<string, Map<number, string[]>>();
-      for (const p of pending) {
-        const m = byMember.get(p.slug) ?? new Map<number, string[]>();
-        m.set(p.version, [...(m.get(p.version) ?? []), p.format]);
-        byMember.set(p.slug, m);
-      }
-      for (const [slug, versions] of byMember) {
+      for (const [slug, versions] of pendingByMember(pending)) {
         const error = await ctx.renders.renderAndWait({ ...ref, creativeSlug: slug }, versions).then(jobError, (e: unknown) => (e instanceof Error ? e.message : String(e)));
         for (const [version, formats] of versions) {
           rendered.push({ version, formats, slug });
@@ -279,16 +274,36 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
     }
     if (others.length > 0) {
       const matches = (slug: string, vn: number, file: string, sha: string) => renderFileMatches(projectDir, store.dir(slug), slug, vn, file, sha);
-      const r = await resolveGroupLocalized(packPlan().filter((p) => !withProblems.has(key(p))), store, others, { matches, assetsOk: (slug, vn, row) => localeAssetsCheck(projectDir, store.dir(slug))(vn, row) });
+      const checks = { matches, assetsOk: (slug: string, vn: number, row: LocalizationRow) => localeAssetsCheck(projectDir, store.dir(slug))(vn, row) };
+      const locPlan = () => packPlan().filter((p) => !withProblems.has(key(p)));
+      let r = await resolveGroupLocalized(locPlan(), store, others, checks);
+      // As the single pack: a translation without a current render is rendered first, in its own member, one job per member
+      // and language (never with "render anyway": one that needs it is listed with the reason, as the single pack does).
+      const localeErrors = new Map<string, string>();
+      const renderedNow: Array<{ slug: string; version: number; formats: string[]; locale: string }> = [];
+      for (const p of r.pending) {
+        try {
+          const job = await ctx.renders.renderLocalesAndWait({ ...ref, creativeSlug: p.slug }, p.n, p.formats, [p.locale], false);
+          if (job?.state === 'failed') localeErrors.set(`${p.slug}\0${p.locale}`, job.error ?? '');
+        } catch (e) {
+          localeErrors.set(`${p.slug}\0${p.locale}`, e instanceof Error ? e.message : String(e));
+        }
+        renderedNow.push({ slug: p.slug, version: p.n, formats: [...p.formats], locale: p.locale });
+        rendered.push({ version: p.n, formats: [...p.formats], slug: p.slug, locale: p.locale });
+      }
+      if (r.pending.length > 0) r = await resolveGroupLocalized(locPlan(), store, others, checks);
       for (const locale of others) {
         for (const format of packFormats) {
           const f: PackFile = { format, locale, ...sizeOf(format) };
           const p = packPlan().find((x) => x.format === format);
           const item = r.items.find((x) => x.format === format && x.locale === locale);
           const miss = r.unavailable.find((x) => x.plan.format === format && x.locale === locale);
+          const now = p !== undefined && renderedNow.some((x) => x.slug === p.slug && x.version === p.version && x.locale === locale && x.formats.includes(format));
+          const error = p !== undefined ? localeErrors.get(`${p.slug}\0${locale}`) : undefined;
           if (!p) f.failure = c.notInGroup;
           else if (miss?.state === 'no-translation') f.failure = c.noTranslation({ locale });
-          else if (!item) f.failure = c.notRendered;
+          else if (!item) f.failure = error ? c.renderFailed({ reason: error }) : c.notRendered;
+          else if (now && item.problems?.length) f.failure = c.renderProblems({ list: item.problems.join('; ') });
           else { f.file = item.file; f.dir = item.creativeDir ?? p.creativeDir; f.n = item.n; }
           files.push(f);
         }

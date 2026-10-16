@@ -285,14 +285,21 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
     for (const c of chosen) { if (c.row.follows !== null) follow[c.row.id] = c.row.fileN ?? c.row.n; else picks[c.row.id] = c.row.n; }
     const signal = life.current.signal;
     if (groupPlan) {
-      // Phase 15: the group export; the core renders what still needs a render, and leaves out what it cannot copy (listed, translated).
+      // Phase 15: the group export; the core renders what still needs a render (translations included, in their member), and
+      // leaves out what it cannot copy (listed, translated).
       try {
-        const r = await api.exportGroup(slug, creative, { destination: dest, formats: chosen.map((c) => c.row.id), pattern, date, ...languageBody });
+        const r = await api.exportGroup(slug, creative, { destination: dest, formats: chosen.map((c) => c.row.id), pattern, date, ...languageBody, ...(force ? { force: true } : {}) });
         if (signal.aborted) return;
         writeFolder(dest);
         setPhase({ kind: 'done', destination: r.destination, count: r.files.length, skipped: r.unavailable.map((u) => u.message), excluded: [] });
       } catch (e) {
         if (signal.aborted) return;
+        // The core renders the translations first, as for a single creative: one with open problems asks "Render anyway".
+        if (e instanceof ApiError && e.code === 'localization-needs-force') {
+          setRefused(e.problems?.length ? e.problems : [e.message]);
+          setPhase({ kind: 'idle' });
+          return;
+        }
         setError(exportErrorText(e, t));
         setPhase({ kind: 'idle' });
       }

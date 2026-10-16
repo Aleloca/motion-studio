@@ -533,6 +533,8 @@ export const it: Messages = {
       notRendered: 'non ha un render aggiornato',
       problems: 'il render ha dei problemi',
       noTranslation: (p) => `nessuna traduzione aggiornata in ${p.locale}`,
+      renderFailed: (p) => `il render non è riuscito: ${p.reason}`,
+      renderProblems: (p) => `renderizzato ora con problemi: ${p.list}`,
     },
   },
   jobs: {

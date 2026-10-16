@@ -17,7 +17,7 @@ const api = {
   prepareExport: vi.fn(async () => ({ renders: [] })),
   updateSettings: vi.fn(),
 };
-class ApiError extends Error { constructor(public status: number, msg: string, public code?: string) { super(msg); } }
+class ApiError extends Error { constructor(public status: number, msg: string, public code?: string, public retryAfterSec?: number, public problems?: string[]) { super(msg); } }
 vi.mock('../src/api.ts', () => ({ api, ApiError }));
 const { ExportDialog } = await import('../src/screens/ExportDialog.tsx');
 
@@ -80,6 +80,26 @@ describe('ExportDialog · group export', () => {
     api.groupExportPlan.mockRejectedValueOnce(new ApiError(409, 'no group', 'variant-no-group'));
     open();
     expect(await screen.findByRole('alert')).toBeTruthy();
+  });
+
+  it('final wave I3: a translation that needs "render anyway" shows the list, and "Render anyway" sends force to the group export', async () => {
+    api.exportGroup.mockRejectedValueOnce(new ApiError(409, 'raw', 'localization-needs-force', undefined, ['Web · Banner (de)']));
+    render(
+      <I18nProvider locale="en">
+        <ExportDialog open onClose={() => {}} slug="acme" creative="lancio" title="Lancio" snapshot={{ versions: [], states: {} }} presets={DEFAULT_FORMATS}
+          pattern="{title}-{format}-v{v}" group locales={{ primary: 'en', extra: ['de'] }} />
+      </I18nProvider>,
+    );
+    await screen.findAllByText('lancio-web-banner-300x250-v3.png');
+    await userEvent.click(screen.getByRole('checkbox', { name: 'German' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Export \d+ files?$/ }));
+    const item = await screen.findByText('Web · Banner (de)');
+    expect(item.closest('[role=alert]')!.textContent).toContain('These translations have open problems or outdated texts:');
+    await userEvent.click(screen.getByRole('button', { name: 'Render anyway' }));
+    await waitFor(() => expect(api.exportGroup).toHaveBeenCalledTimes(2));
+    expect(api.exportGroup.mock.calls[0]![2]).not.toHaveProperty('force');
+    expect(api.exportGroup.mock.calls[1]![2]).toMatchObject({ locales: ['en', 'de'], force: true });
+    expect(api.exportPicks).not.toHaveBeenCalled();
   });
 
   it('without the group flag the dialog is the per-creative one (no plan request)', () => {

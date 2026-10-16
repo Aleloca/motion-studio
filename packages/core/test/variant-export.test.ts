@@ -12,7 +12,7 @@ import { DEFAULT_FORMATS, type Brief, type StorePack, type VersionEntry } from '
 import { CreativeSideStateStore } from '../src/creatives/creative-side-state.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { CreativeTurnService, type CreativeRef } from '../src/creatives/creative-turns.ts';
-import { exportGroup, planGroupExport } from '../src/creatives/variant-export.ts';
+import { exportGroup, planGroupExport, resolveGroupLocalized } from '../src/creatives/variant-export.ts';
 import { exportPicks, exportVersion } from '../src/creatives/export.ts';
 import { VariantGroupService } from '../src/creatives/variant-group.ts';
 import { exportStorePack } from '../src/store-pack/pack-export.ts';
@@ -155,6 +155,19 @@ describe('planGroupExport and exportGroup', () => {
     await store.appendVersion(host.creativeSlug, v);
     const plan = await planGroupExport(svc, store, host);
     expect(plan.find((p) => p.format === BANNER)).toMatchObject({ version: 2, state: 'needs-render', file: '' });
+  });
+
+  it('final wave (deferred 99): with languages, a missing source is listed per language and a needs-render one is resolved, never skipped silently', async () => {
+    await render(host.creativeSlug, 1, [POST]);
+    await rm(join(projectDir, 'creatives', host.creativeSlug, 'outputs', 'v1', `${POST}.png`));
+    const v: VersionEntry = { n: 2, commit: null, sessionId: null, status: 'complete', createdAt: new Date().toISOString(), request: '', outputs: [], problems: [], tools: [], renderCommand: null, basedOn: null,
+      compositions: [{ format: BANNER, dir: `compositions/${BANNER}`, hash: 'a'.repeat(64), problems: [] }] };
+    await store.appendVersion(host.creativeSlug, v);
+    const plan = await planGroupExport(svc, store, host);
+    expect(plan.map((p) => [p.format, p.state])).toEqual([[POST, 'missing'], [BANNER, 'needs-render']]);
+    const r = await resolveGroupLocalized(plan, store, ['de']);
+    expect(r.unavailable.map((u) => [u.plan.format, u.locale, u.state])).toEqual([[POST, 'de', 'missing'], [BANNER, 'de', 'no-translation']]);
+    expect(r.items).toEqual([]);
   });
 
   it('an ungrouped creative is refused by the plan (409) and its export is exactly today\'s', async () => {

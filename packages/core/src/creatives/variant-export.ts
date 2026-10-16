@@ -1,5 +1,6 @@
-import { effectiveLinks, type VariantLetter, type VersionEntry } from '@motion-studio/shared';
+import { effectiveLinks, letterOfSlug, renderState, type JobSummary, type VariantLetter, type VersionEntry } from '@motion-studio/shared';
 import { probeConfinedFile } from '../brand/agent-guard.ts';
+import { CodedError } from '../workspace-store.ts';
 import type { CreativeRef } from './creative-turns.ts';
 import type { CreativeStore } from './creative-store.ts';
 import { checkDestination, exportResolved, plainName, resolveLocalizedItems, setOf, type ExportCommon, type ExportItem, type ExportResult } from './export.ts';
@@ -34,8 +35,6 @@ export interface GroupPlanItem {
   state: GroupPlanState;
 }
 
-const letterOf = (slug: string): VariantLetter => (slug.includes('~') ? slug.slice(-1) : 'a') as VariantLetter;
-
 /**
  * What a group export would copy, per format in the brief's order, without writing anything. `ref` may be any member. A member
  * folder that cannot be read, or a version that has vanished, gives a `missing` item (never a throw). Refused (409 from the
@@ -55,17 +54,21 @@ export async function planGroupExport(svc: VariantGroupService, store: CreativeS
   for (const [format, s] of Object.entries(selection)) {
     const creativeDir = store.dir(s.slug);
     const d = await dataOf(s.slug);
-    const base = { format, slug: s.slug, letter: letterOf(s.slug), version: s.version, source: s.source, creativeDir };
+    const base = { format, slug: s.slug, letter: letterOfSlug(s.slug), version: s.version, source: s.source, creativeDir };
     const v = d?.versions.find((x) => x.n === s.version);
     const o = v?.outputs.find((x) => x.format === format);
     // A follower is named after its primary's version, exactly as the creative's own export does.
     const primary = d?.links[format];
     const primaryV = primary !== undefined ? selection[primary]?.version : undefined;
     const named = primaryV !== undefined && primaryV !== s.version ? { v: primaryV } : {};
+    const composed = v?.compositions?.some((c) => c.format === format) === true;
     if (o) {
       const usable = plainName(o.file) && (await probeConfinedFile(creativeDir, `outputs/v${s.version}/${o.file}`)) === true;
-      out.push({ ...base, ...named, file: o.file, width: o.width, height: o.height, ...setOf(o), state: usable ? 'ready' : 'missing' });
-    } else if (v?.compositions?.some((c) => c.format === format)) {
+      // A composition's file is current only when its render is (the single export's `pendingRenders` rule): else it is
+      // rendered first, exactly as a single creative's export does.
+      const state: GroupPlanState = composed ? (usable && renderState(v!, format) === 'rendered' ? 'ready' : 'needs-render') : usable ? 'ready' : 'missing';
+      out.push({ ...base, ...named, file: o.file, width: o.width, height: o.height, ...setOf(o), state });
+    } else if (composed) {
       out.push({ ...base, ...named, file: '', width: 0, height: 0, state: 'needs-render' });
     } else {
       out.push({ ...base, ...named, file: '', width: 0, height: 0, state: 'missing' });
@@ -79,25 +82,84 @@ export const itemOfPlan = (p: GroupPlanItem): ExportItem => ({
   format: p.format, n: p.version, ...(p.v !== undefined ? { v: p.v } : {}), file: p.file, width: p.width, height: p.height, ...(p.set ? { set: p.set } : {}), creativeDir: p.creativeDir,
 });
 
+/** A translation of a plan item that cannot be exported, with why (`missing`: the source item itself is not usable). */
+export interface GroupLocaleGap { plan: GroupPlanItem; locale: string; state: 'no-translation' | 'not-rendered' | 'missing' }
+/** Translations to render first: one entry per member, version and language, with the formats it lacks there. */
+export interface GroupLocalePending { slug: string; n: number; locale: string; formats: string[] }
+
 /**
- * The translated files of the plan's `ready` items in `otherTags`: each format's localized outputs come from the member the
- * selection picked, at the version it picked (a translation stays inside its variant). A translation that is missing or has no
- * current render is not rendered here: its format is returned in `unavailable`.
+ * The translated files of the plan's items in `otherTags`: each format's localized outputs come from the member the selection
+ * picked, at the version it picked (a translation stays inside its variant). As for a single creative (`resolveLocalizedItems`),
+ * a composition's translation does not need its primary-language render: `needs-render` items are resolved too. A translation
+ * with no current render is returned in `pending` (grouped by member, version and language: the caller renders it in that
+ * member, as the single export does) and in `unavailable` as `not-rendered`; a `missing` item is listed for each language,
+ * never skipped silently.
  */
 export async function resolveGroupLocalized(plan: GroupPlanItem[], store: CreativeStore, otherTags: readonly string[],
   checks: { matches?: (slug: string, n: number, file: string, sha256: string) => Promise<boolean>; assetsOk?: (slug: string, n: number, row: NonNullable<VersionEntry['localizations']>[number]) => Promise<boolean> } = {}):
-  Promise<{ items: ExportItem[]; unavailable: Array<{ plan: GroupPlanItem; locale: string; state: 'no-translation' | 'not-rendered' }> }> {
+  Promise<{ items: ExportItem[]; unavailable: GroupLocaleGap[]; pending: GroupLocalePending[] }> {
   const items: ExportItem[] = [];
-  const unavailable: Array<{ plan: GroupPlanItem; locale: string; state: 'no-translation' | 'not-rendered' }> = [];
+  const unavailable: GroupLocaleGap[] = [];
+  const pending: GroupLocalePending[] = [];
   for (const p of plan) {
-    if (p.state !== 'ready') continue;
+    if (p.state === 'missing') {
+      for (const locale of otherTags) unavailable.push({ plan: p, locale, state: 'missing' });
+      continue;
+    }
     const r = await resolveLocalizedItems(p.creativeDir, await store.readVersions(p.slug), [itemOfPlan(p)], otherTags,
       checks.matches ? (n, file, sha) => checks.matches!(p.slug, n, file, sha) : undefined, checks.assetsOk ? (n, row) => checks.assetsOk!(p.slug, n, row) : undefined);
     items.push(...r.items.map((it) => ({ ...it, creativeDir: p.creativeDir })));
     for (const m of r.missing) unavailable.push({ plan: p, locale: m.locale, state: 'no-translation' });
-    for (const locale of new Set([...r.pending.values()].flatMap((x) => x.locales))) unavailable.push({ plan: p, locale, state: 'not-rendered' });
+    for (const locale of new Set([...r.pending.values()].flatMap((x) => x.locales))) {
+      unavailable.push({ plan: p, locale, state: 'not-rendered' });
+      const at = pending.find((x) => x.slug === p.slug && x.n === p.version && x.locale === locale);
+      if (at) { if (!at.formats.includes(p.format)) at.formats.push(p.format); } else pending.push({ slug: p.slug, n: p.version, locale, formats: [p.format] });
+    }
   }
-  return { items, unavailable };
+  return { items, unavailable, pending };
+}
+
+/**
+ * Renders the translations `pending` lists, each in its own member (the single export's on-demand render, per member and per
+ * language so one that cannot render does not stop the others). `localization-needs-force` (open problems or outdated entries,
+ * `force` not set) is collected across members and thrown at the end as one 409 with every problem, for "Renderizza comunque";
+ * any other failure is returned per member and language (`errors`, key `slug\0locale`).
+ */
+export async function renderGroupLocales(renders: { renderLocalesAndWait(ref: CreativeRef, n: number, formats: string[], locales: readonly string[], force: boolean): Promise<JobSummary | null> },
+  ref: CreativeRef, pending: GroupLocalePending[], force: boolean, needsForceMessage: (list: string) => string):
+  Promise<{ errors: Map<string, string>; rendered: Array<{ slug: string; version: number; formats: string[]; locale: string }> }> {
+  const errors = new Map<string, string>();
+  const rendered: Array<{ slug: string; version: number; formats: string[]; locale: string }> = [];
+  const needsForce: string[] = [];
+  for (const p of pending) {
+    try {
+      const job = await renders.renderLocalesAndWait({ ...ref, creativeSlug: p.slug }, p.n, p.formats, [p.locale], force);
+      if (job?.state === 'failed') errors.set(`${p.slug}\0${p.locale}`, job.error ?? '');
+    } catch (e) {
+      if (e instanceof CodedError && e.apiCode === 'localization-needs-force') { needsForce.push(...(e.problems?.length ? e.problems : [e.message])); continue; }
+      errors.set(`${p.slug}\0${p.locale}`, e instanceof Error ? e.message : String(e));
+    }
+    rendered.push({ slug: p.slug, version: p.n, formats: [...p.formats], locale: p.locale });
+  }
+  if (needsForce.length > 0) {
+    const list = [...new Set(needsForce)];
+    const err = new CodedError(409, needsForceMessage(list.slice(0, 10).join(', ')), 'localization-needs-force');
+    err.problems = list.slice(0, 50);
+    throw err;
+  }
+  return { errors, rendered };
+}
+
+/** The `needs-render` items of a plan, grouped as the render jobs take them: member → version → formats. */
+export function pendingByMember(plan: readonly GroupPlanItem[]): Map<string, Map<number, string[]>> {
+  const byMember = new Map<string, Map<number, string[]>>();
+  for (const p of plan) {
+    if (p.state !== 'needs-render') continue;
+    const m = byMember.get(p.slug) ?? new Map<number, string[]>();
+    m.set(p.version, [...(m.get(p.version) ?? []), p.format]);
+    byMember.set(p.slug, m);
+  }
+  return byMember;
 }
 
 export interface GroupExportResult extends ExportResult {
