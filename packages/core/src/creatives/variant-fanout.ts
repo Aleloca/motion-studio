@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   activeMembers, VARIANT_LETTERS,
-  type BriefServices, type PaidBatch, type Pin, type ProviderId, type VariantGroup, type VariantLetter, type VariantMember, type WorkspaceSettings,
+  type BriefServices, type JobWaitReason, type PaidBatch, type Pin, type ProviderId, type VariantGroup, type VariantLetter, type VariantMember, type WorkspaceSettings,
 } from '@motion-studio/shared';
 import type { ApprovalBroker } from '../approvals/broker.ts';
 import { isAllowedRule, PermissionsStore } from '../approvals/permissions-store.ts';
@@ -19,17 +19,20 @@ import { VariantGroupService } from './variant-group.ts';
 export interface UserRequest { text?: string; pins?: Pin[]; formats?: string[] }
 
 /**
- * What a fan-out did, by variant letter. `jobs`: the creative turn started in each member (running, or queued with the
- * reason `variant-slot`). `queued`: members that were already working; the request went into their own queue (spec §4:
- * queue and Stop are per variant). `skipped`: discarded or missing members, and working ones for a first generation (nothing
- * to queue). `failed`: members whose start was refused, with the reason. `directions`: what the directions turn proposed.
+ * What `POST …/variants/run` answers at once (202), by variant letter. `jobs`: the creative turn of each idle target, made
+ * now and held (`waitReason` `variant-directions` or `variant-confirm`) until the run's directions and card allow it, then
+ * queued with `variant-slot` while two variants already work. `queued`: targets that were working: the request waits in
+ * that variant's own queue (spec §4), held the same way. `skipped`: discarded or missing targets, and working ones for a
+ * first generation (nothing to queue). `failed`: targets refused now, with the reason. `directionsJobId`: the directions
+ * turn, when one runs. `batchId`: the `jobId` of the paid-services card, when one will be shown (after the directions).
  */
 export interface FanoutResult {
   jobs: Partial<Record<VariantLetter, string>>;
   queued: VariantLetter[];
   skipped: VariantLetter[];
   failed: Partial<Record<VariantLetter, string>>;
-  directions?: Partial<Record<VariantLetter, string>>;
+  directionsJobId?: string;
+  batchId?: string;
 }
 
 export interface VariantFanoutDeps {
@@ -44,15 +47,24 @@ const PROVIDER_LABEL: Record<ProviderId, string> = { openai: 'OpenAI', elevenlab
 const letterIndex = (l: VariantLetter) => VARIANT_LETTERS.indexOf(l);
 const upper = (l: VariantLetter) => l.toUpperCase();
 
+/** One target of a run: its held turn (`jobId`), or its queued request (`clientId`) until that becomes a turn. */
+interface Entry { letter: VariantLetter; ref: CreativeRef; jobId?: string; clientId?: string; /** Applied to the queued request's turn when it starts (the cover). */ onStart?: (jobId: string) => void }
+/** The hook of a queued request: its current hold, and what its turn gets when it starts. */
+const hookOf = (e: Entry, hold: JobWaitReason | null) => ({ hold, started: (id: string) => { e.jobId = id; e.onStart?.(id); } });
+interface PaidPlan { items: NonNullable<PaidBatch['items']>; rules: string[] }
+type DirectionsRun = Awaited<ReturnType<VariantDirections['begin']>>;
+
 /**
  * Phase 15 (spec §3 "Turni delle varianti", §4 "Tutte"): starts a request, or the first generation, in several variants of a
  * group. Each start is a normal creative turn of that member (`CreativeTurnService.start`: its own conversation, queue, Stop,
- * pending brief); the group's limit of MAX_RUNNING_VARIANTS running turns is the job queue's `slot` gate, which every turn of
- * a grouped member takes, so the next waiting variant starts when one finishes, fails or is stopped. A discarded variant is
- * skipped (it stays inert until restored). When two or more variants start, their paid services are confirmed together on
- * ONE `paid-batch` card (phase 12's mechanism): their turns' paid calls wait for that decision instead of asking each,
- * declining (or the card expiring) stops every job of the batch before anything is spent, and stopping one variant leaves the
- * others and the card alone.
+ * pending brief); the group's limit of MAX_RUNNING_VARIANTS running turns is the job queue's `slot` gate, so the next
+ * waiting variant starts when one finishes, fails or is stopped. A discarded variant is skipped (inert until restored).
+ *
+ * The run answers at once; then, in the background: the directions turn (when a target has no direction), then ONE
+ * `paid-batch` card for every target (idle or working) when their services can cause a paid call, then the start. Until
+ * then no turn of the run starts (orchestrator, fix round 1): approving starts them under the card's cover (their paid
+ * calls ask nothing more); declining, the card expiring or the directions failing cancels every turn of the run and takes
+ * its requests out of the working variants' queues, so nothing ran and nothing was spent, Claude Code tokens included.
  */
 export class VariantFanout {
   constructor(private readonly deps: VariantFanoutDeps) {}
@@ -81,85 +93,181 @@ export class VariantFanout {
     return { host: r.host, group: g, members, skipped };
   }
 
-  /**
-   * `POST …/variants/run` (ruling R3): the targets without a direction get one from the directions turn first (skipped when
-   * the user typed every one), stored with `directionSource: 'agent'`; then the fan-out. A direction the user typed while the
-   * turn ran is kept (the user's always win).
-   */
-  async run(ref: CreativeRef, targets: VariantLetter[] | 'all-active', request: UserRequest | null): Promise<FanoutResult> {
-    const { host, group, members } = await this.targetsOf(ref, targets);
-    const missing = members.filter((m) => !m.direction).map((m) => m.letter);
-    let directions: Partial<Record<VariantLetter, string>> | undefined;
-    if (missing.length > 0) {
-      const given = Object.fromEntries(group.members.filter((m) => m.direction).map((m) => [m.letter, m.direction!])) as Partial<Record<VariantLetter, string>>;
-      directions = await this.deps.directions.runDirectionsTurn(host, missing, given);
-      const svc = new VariantGroupService({ store: new CreativeStore(host.projectDir), turns: this.deps.turns });
-      const now = (await svc.resolve(host)).group;
-      for (const l of missing) {
-        if (now?.members.find((m) => m.letter === l)?.direction) continue;
-        await svc.setDirection(host, l, directions[l]!, 'agent');
-      }
-    }
-    const out = await this.start(ref, targets, request);
-    return directions ? { ...out, directions } : out;
-  }
+  /** The brief's interface name: the same as `run`. */
+  start(ref: CreativeRef, targets: VariantLetter[] | 'all-active', request: UserRequest | null): Promise<FanoutResult> { return this.run(ref, targets, request); }
 
-  /** Starts `request` (or the first generation when null) in each target member, at most MAX_RUNNING_VARIANTS at once. */
-  async start(ref: CreativeRef, targets: VariantLetter[] | 'all-active', request: UserRequest | null): Promise<FanoutResult> {
-    const { host, members, skipped } = await this.targetsOf(ref, targets);
-    const { turns, queue, approvals } = this.deps;
+  /** `POST …/variants/run` (ruling R3): the targets' turns and queued requests are made now (held); the rest goes on in the background. */
+  async run(ref: CreativeRef, targets: VariantLetter[] | 'all-active', request: UserRequest | null): Promise<FanoutResult> {
+    const { host, group, members, skipped } = await this.targetsOf(ref, targets);
+    const { turns } = this.deps;
     const out: FanoutResult = { jobs: {}, queued: [], skipped: [...skipped], failed: {} };
     const text = request?.text?.trim() ?? '';
     const pins = request?.pins ?? [];
     const message = text || pins.length ? { text, pins } : undefined;
+    const formats = request?.formats?.length ? request.formats : undefined;
+    // Who gets a turn now and who gets the request in its own queue (it is working).
     const idle: VariantMember[] = [];
+    const busy: VariantMember[] = [];
     for (const m of members) {
-      const mref = this.refFor(host, m.slug);
-      if (!turns.turnActive(mref)) { idle.push(m); continue; }
-      // Already working: the request waits in that variant's own queue (it starts after its turn, per Ruling U).
-      if (!message) { out.skipped.push(m.letter); continue; }
-      try {
-        await turns.postMessage(mref, { clientId: randomUUID(), text, pins, mode: 'queued' });
-        out.queued.push(m.letter);
-      } catch (err) { out.failed[m.letter] = err instanceof Error ? err.message : String(err); }
+      if (!turns.turnActive(this.refFor(host, m.slug))) idle.push(m);
+      else if (!message) out.skipped.push(m.letter);
+      // A queued request has no formats of its own: refused, with the reason, rather than widened to every format.
+      else if (formats) out.failed[m.letter] = t().errors.variantBusyFormats({ letter: upper(m.letter) });
+      else busy.push(m);
     }
-    const batch = idle.length >= 2 ? await this.paidBatch(host, idle) : null;
-    let first: unknown = null;
-    for (const m of idle) {
+    const candidates = [...idle, ...busy].sort((a, b) => letterIndex(a.letter) - letterIndex(b.letter));
+    const missing = candidates.filter((m) => !m.direction).map((m) => m.letter);
+    const plan = candidates.length >= 2 ? await this.paidPlan(host, candidates) : null;
+    const first: JobWaitReason | null = missing.length > 0 ? 'variant-directions' : plan ? 'variant-confirm' : null;
+    const entries: Entry[] = [];
+    let error: unknown = null;
+    for (const m of candidates) {
+      const mref = this.refFor(host, m.slug);
       try {
-        const job = await turns.start(this.refFor(host, m.slug), message, request?.formats?.length ? { formats: request.formats } : {});
-        out.jobs[m.letter] = job.id;
-        if (batch) {
-          approvals.cover(job.id, batch.rules, batch.decision);
-          void queue.whenSettled(job.id).then(() => approvals.uncover(job.id));
+        if (idle.includes(m)) {
+          const job = await turns.start(mref, message, { ...(formats ? { formats } : {}), ...(first ? { hold: first } : {}) });
+          entries.push({ letter: m.letter, ref: mref, jobId: job.id });
+          out.jobs[m.letter] = job.id;
+        } else {
+          const entry: Entry = { letter: m.letter, ref: mref, clientId: randomUUID() };
+          if (first) turns.setQueuedHook(mref, entry.clientId!, hookOf(entry, first));
+          try {
+            await turns.postMessage(mref, { clientId: entry.clientId!, text, pins, mode: 'queued' });
+          } catch (err) { turns.setQueuedHook(mref, entry.clientId!, null); throw err; }
+          entries.push(entry);
+          out.queued.push(m.letter);
         }
       } catch (err) {
-        first ??= err;
+        error ??= err;
         out.failed[m.letter] = err instanceof Error ? err.message : String(err);
       }
     }
-    const ids = Object.values(out.jobs);
-    if (batch) {
-      // Declined, expired or cancelled: every job of the batch stops before it spends anything (its covered calls are waiting).
-      void batch.decision.then((ok) => { if (!ok) for (const id of ids) stopJob({ queue, approvals }, id); });
-      // Once every job of the batch is over, an undecided card has nothing left to confirm.
-      void Promise.all(ids.map((id) => queue.whenSettled(id))).then(() => approvals.cancelJob(batch.id));
+    if (entries.length === 0 && error) throw error;
+    if (entries.length === 0 || !first) return out;
+    // The background part: directions, then the card, then the start.
+    let directions: DirectionsRun | null = null;
+    const runMissing = missing.filter((l) => entries.some((e) => e.letter === l));
+    if (runMissing.length > 0) {
+      const given = Object.fromEntries(group.members.filter((m) => m.direction).map((m) => [m.letter, m.direction!])) as Partial<Record<VariantLetter, string>>;
+      try {
+        directions = await this.deps.directions.begin(host, runMissing, given);
+      } catch (err) {
+        await this.cancelAll(entries);
+        throw err;
+      }
+      out.directionsJobId = directions.jobId;
     }
-    if (ids.length === 0 && out.queued.length === 0 && first) throw first;
+    const batchId = plan ? randomUUID() : undefined;
+    if (batchId) out.batchId = batchId;
+    void this.background(host, entries, runMissing, directions, plan, batchId).catch((err: Error) => {
+      console.warn(`Motion Studio: a variant run of ${host.creativeSlug} did not start: ${err.message}`);
+    });
     return out;
   }
 
+  /** Directions → card → start; anything that does not end in "go" cancels the whole run. */
+  private async background(host: CreativeRef, entries: Entry[], missing: VariantLetter[], directions: DirectionsRun | null, plan: PaidPlan | null, batchId: string | undefined): Promise<void> {
+    try {
+      if (directions) {
+        const found = await directions.result;
+        const svc = new VariantGroupService({ store: new CreativeStore(host.projectDir), turns: this.deps.turns });
+        const now = (await svc.resolve(host)).group;
+        for (const l of missing) {
+          // A direction the user typed meanwhile wins.
+          if (now?.members.find((m) => m.letter === l)?.direction) continue;
+          await svc.setDirection(host, l, found[l]!, 'agent');
+        }
+      }
+      if (plan && batchId) {
+        this.setHold(entries, 'variant-confirm');
+        const approved = await this.ask(host, entries, plan, batchId);
+        if (!approved) { await this.cancelAll(entries); return; }
+        this.cover(entries, plan.rules);
+      }
+      this.setHold(entries, null);
+    } catch (err) {
+      await this.cancelAll(entries);
+      throw err;
+    }
+  }
+
+  /** The current hold of every target: its held turn, or its queued request's turn when it starts. */
+  private setHold(entries: Entry[], reason: JobWaitReason | null): void {
+    for (const e of entries) {
+      if (e.jobId) { this.deps.queue.setHold(e.jobId, reason); continue; }
+      this.deps.turns.setQueuedHook(e.ref, e.clientId!, hookOf(e, reason));
+    }
+  }
+
+  /** After an approval: every turn of the run (and each queued request's, when it starts) asks nothing more for these rules. */
+  private cover(entries: Entry[], rules: string[]): void {
+    const { approvals, queue } = this.deps;
+    const apply = (id: string) => {
+      approvals.cover(id, rules, Promise.resolve(true));
+      // Looked up after the current step: a queued request's turn is told its id right BEFORE it is enqueued.
+      void Promise.resolve().then(() => queue.whenSettled(id)).then(() => approvals.uncover(id));
+    };
+    for (const e of entries) {
+      if (e.jobId) { apply(e.jobId); continue; }
+      // Keyed by member + clientId: applied when that queued request becomes a turn (right before it is enqueued).
+      e.onStart = apply;
+    }
+  }
+
+  /** Nothing of the run goes on: its held turns are cancelled (they never ran), its queued requests leave their queues. */
+  private async cancelAll(entries: Entry[]): Promise<void> {
+    const { queue, approvals, turns } = this.deps;
+    for (const e of entries) {
+      if (e.clientId && !e.jobId) {
+        turns.setQueuedHook(e.ref, e.clientId, null);
+        await turns.removeQueued(e.ref, e.clientId).catch(() => {});
+      }
+      // A held turn, or the turn a queued request became (still held: it never ran).
+      if (e.jobId) stopJob({ queue, approvals }, e.jobId);
+    }
+  }
+
+  /** Shows the card and waits for it; false when declined, expired or cancelled (every turn of the run stopped first). */
+  private async ask(host: CreativeRef, entries: Entry[], plan: PaidPlan, batchId: string): Promise<boolean> {
+    const a = t().approvals;
+    const { items } = plan;
+    const label = (i: (typeof items)[number]) => a.variantBatchItem({ letter: upper(i.variant), service: a.serviceNames[i.capability], provider: PROVIDER_LABEL[i.provider] });
+    const variants = [...new Set(items.map((i) => i.variant))];
+    const providers = [...new Set(items.map((i) => i.provider))].map((p) => ({ provider: p, calls: items.filter((i) => i.provider === p).length }));
+    const seconds = items.reduce((n, i) => n + (i.seconds ?? 0), 0);
+    const paidBatch: PaidBatch = {
+      // Today's card names one provider: the one with the most calls (`total.providers` lists them all, for Task 5).
+      provider: [...providers].sort((x, y) => y.calls - x.calls)[0]!.provider,
+      calls: items.map((i) => ({ label: label(i), chars: i.chars ?? 0 })),
+      items,
+      total: { variants: variants.length, calls: items.length, providers, ...(seconds > 0 ? { seconds } : {}) },
+    };
+    const detail = a.variantBatchDetail({
+      providers: providers.map((p) => `${PROVIDER_LABEL[p.provider]} ${p.calls}`).join(', '),
+      variants: variants.map((v) => `${upper(v)} ${items.filter((i) => i.variant === v).length}`).join(', '),
+    });
+    const pending = this.deps.approvals.request({
+      jobId: batchId, projectSlug: host.projectSlug, projectDir: host.projectDir, creativeSlug: host.creativeSlug, kind: 'paid-batch',
+      toolName: 'provider:variant-batch', input: {}, title: a.variantBatchTitle({ count: variants.length }), detail, paidBatch,
+    });
+    // Every turn of the run stopped by hand (and no queued request left): the card has nothing left to confirm.
+    const jobs = entries.filter((e) => e.jobId).map((e) => e.jobId!);
+    if (jobs.length === entries.length) void Promise.all(jobs.map((id) => this.deps.queue.whenSettled(id))).then(() => this.deps.approvals.cancelJob(batchId));
+    const o = await pending;
+    return o.decision === 'once' || o.decision === 'always';
+  }
+
   /**
-   * The one confirmation of a fan-out (spec §3): the paid services each starting variant may use, as the tools would decide
-   * them now, without those a project "Always" rule already allows. None (or the confirmation off): no card, and the turns'
-   * paid calls go as they always do.
+   * The services of the card (spec §3): per target variant, the paid services its agent may use, as the tools would decide them
+   * now (`paidServicePlan`: the brief's choices, the keys, the key checks), without those a project "Always" rule already
+   * allows. Null (no card, start at once) when the confirmation is off or nothing paid can be called.
    */
-  private async paidBatch(host: CreativeRef, members: VariantMember[]): Promise<{ id: string; rules: string[]; decision: Promise<boolean> } | null> {
+  private async paidPlan(host: CreativeRef, members: VariantMember[]): Promise<PaidPlan | null> {
     if (!(await this.deps.settings()).confirmPaidProviders) return null;
     const store = new CreativeStore(host.projectDir);
     const permissions = new PermissionsStore(host.projectDir);
     const allowed = async (rule: string) => isAllowedRule(rule) && await permissions.has(rule).catch(() => false);
-    const items: NonNullable<PaidBatch['items']> = [];
+    const items: PaidPlan['items'] = [];
     const rules = new Set<string>();
     for (const m of members) {
       const c = await store.get(m.slug);
@@ -171,24 +279,6 @@ export class VariantFanout {
         items.push({ variant: m.letter, provider: s.provider, capability: s.kind, ...(s.kind === 'music' && c.brief.durationSec ? { seconds: c.brief.durationSec } : {}) });
       }
     }
-    if (items.length === 0) return null;
-    const a = t().approvals;
-    const label = (i: (typeof items)[number]) => a.variantBatchItem({ letter: upper(i.variant), service: a.serviceNames[i.capability], provider: PROVIDER_LABEL[i.provider] });
-    const variants = new Set(items.map((i) => i.variant)).size;
-    const seconds = items.reduce((n, i) => n + (i.seconds ?? 0), 0);
-    const paidBatch: PaidBatch = {
-      provider: items[0]!.provider,
-      calls: items.map((i) => ({ label: label(i), chars: i.chars ?? 0 })),
-      items,
-      total: { variants, calls: items.length, ...(seconds > 0 ? { seconds } : {}) },
-    };
-    const id = randomUUID();
-    const list = items.slice(0, 8).map(label).join('; ') + (items.length > 8 ? '; …' : '');
-    const pending = this.deps.approvals.request({
-      jobId: id, projectSlug: host.projectSlug, projectDir: host.projectDir, creativeSlug: host.creativeSlug, kind: 'paid-batch',
-      toolName: 'provider:variant-batch', input: {}, title: a.variantBatchTitle({ count: variants }), detail: a.variantBatchDetail({ count: items.length, list }), paidBatch,
-    });
-    const decision = pending.then((o) => o.decision === 'once' || o.decision === 'always', () => false);
-    return { id, rules: [...rules], decision };
+    return items.length === 0 ? null : { items, rules: [...rules] };
   }
 }

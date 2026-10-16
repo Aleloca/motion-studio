@@ -74,11 +74,13 @@ export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelle
 export type JobKind = 'creative' | 'brand-analysis' | 'asset-description' | 'console' | 'render' | 'asset-generation' | 'localize' | 'variant-directions';
 
 /**
- * Why a queued job waits although the queue has room (Phase 15): `variant-slot`, a variant turn of a group that already has
- * `MAX_RUNNING_VARIANTS` turns running. Absent: it waits only for a free slot of the queue, or it is not queued.
+ * Why a queued job waits although the queue has room (Phase 15), for the turns of a variant run: `variant-directions`, the
+ * directions turn has not answered yet; `variant-confirm`, the run's paid-services card has not been answered yet;
+ * `variant-slot`, its group already has `MAX_RUNNING_VARIANTS` turns running. Absent: it waits only for a free slot of the
+ * queue, or it is not queued. Stable codes: the web shows them (`web.variantGroup.waitReasons`).
  */
-export type JobWaitReason = 'variant-slot';
-export const JOB_WAIT_REASONS: readonly JobWaitReason[] = ['variant-slot'];
+export type JobWaitReason = 'variant-directions' | 'variant-confirm' | 'variant-slot';
+export const JOB_WAIT_REASONS: readonly JobWaitReason[] = ['variant-directions', 'variant-confirm', 'variant-slot'];
 
 /**
  * Progress of a render job (Task 5), per format: `media` while the video sources are normalised ("Preparing media…",

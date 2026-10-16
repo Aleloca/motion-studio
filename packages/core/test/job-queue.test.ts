@@ -46,6 +46,34 @@ describe('JobQueue', () => {
     await q.whenIdle();
     expect(state(jobs[0]!.id).waitReason).toBeUndefined();
   });
+  it('phase 15: a held job stays queued with its reason, holds no slot, changes reason, starts when released, and can be cancelled', async () => {
+    const q = new JobQueue({ concurrency: 1 });
+    const ds = [deferred(), deferred()];
+    let ran = false;
+    const held = q.enqueue({ key: 'h', kind: 'creative', label: 'h', hold: 'variant-directions', run: () => { ran = true; return ds[0]!.promise; } });
+    const other = q.enqueue({ key: 'o', kind: 'creative', label: 'o', run: () => ds[1]!.promise });
+    await tick();
+    const state = (id: string) => q.list().find((j) => j.id === id)!;
+    expect(held).toMatchObject({ state: 'queued', waitReason: 'variant-directions' });
+    expect(state(other.id).state).toBe('running');
+    expect(q.setHold(held.id, 'variant-confirm')).toBe(true);
+    expect(state(held.id).waitReason).toBe('variant-confirm');
+    ds[1]!.resolve();
+    await tick(); await tick();
+    expect(state(held.id).state).toBe('queued');
+    expect(ran).toBe(false);
+    expect(q.setHold(held.id, null)).toBe(true);
+    await tick();
+    expect(state(held.id)).toMatchObject({ state: 'running' });
+    expect(state(held.id).waitReason).toBeUndefined();
+    expect(q.setHold(held.id, 'variant-confirm')).toBe(false);
+    ds[0]!.resolve();
+    await q.whenIdle();
+    const again = q.enqueue({ key: 'h2', kind: 'creative', label: 'h2', hold: 'variant-confirm', run: async () => { ran = false; } });
+    expect(q.cancel(again.id)).toBe(true);
+    expect(state(again.id).state).toBe('cancelled');
+    expect(ran).toBe(true);
+  });
   it('keeps the formats a job targets in its summary', async () => {
     const q = new JobQueue({ concurrency: 1 });
     const job = q.enqueue({ key: 'f', kind: 'creative', label: 'f', formats: ['reel'], run: async () => {} });

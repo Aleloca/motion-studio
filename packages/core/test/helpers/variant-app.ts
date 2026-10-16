@@ -27,6 +27,8 @@ export interface VariantApp {
   detail(slug: string): Promise<CreativeDetail>;
   jobs(): Promise<JobSummary[]>;
   pending(): Promise<ApprovalRequest[]>;
+  /** The job of member `slug` (host or sister) of `kind` creative, latest first. */
+  jobOf(slug: string): Promise<JobSummary | undefined>;
   /** Calls a `studio` tool for the run's job, as its MCP server would. */
   bridge(run: ControlledRun, tool: string, args: Record<string, unknown>): Promise<LightMyRequestResponse>;
   waitIdle(): Promise<void>;
@@ -36,13 +38,13 @@ export interface VariantApp {
 export const variantBrief = { goal: 'Lancio app', message: 'Scarica oggi', formats: ['instagram-post-1x1', 'web-banner-300x250'], durationSec: 10, assets: [], notes: '' };
 const P = '/api/projects/acme/creatives';
 
-export async function variantApp(o: { keys?: Record<string, string>; settings?: Record<string, unknown> } = {}): Promise<VariantApp> {
+export async function variantApp(o: { keys?: Record<string, string>; settings?: Record<string, unknown>; approvalTimeoutMs?: number } = {}): Promise<VariantApp> {
   const base = await mkdtemp(join(tmpdir(), 'ms-variants-'));
   const runner = new ControlledRunner();
   const bridge = new AgentBridge();
   // Never contacted: the controlled runner starts no MCP server; the bridge only needs an origin to hand out tokens.
   bridge.setOrigin('http://127.0.0.1:9');
-  const approvals = new ApprovalBroker({ broadcast: () => {} });
+  const approvals = new ApprovalBroker({ broadcast: () => {}, ...(o.approvalTimeoutMs ? { timeoutMs: o.approvalTimeoutMs } : {}) });
   const fetches: string[] = [];
   const fakeFetch = (async (url: string) => {
     fetches.push(String(url));
@@ -73,6 +75,7 @@ export async function variantApp(o: { keys?: Record<string, string>; settings?: 
     detail: async (slug) => (await app.inject(`${P}/${slug}`)).json() as CreativeDetail,
     jobs,
     pending: async () => (await app.inject('/api/approvals')).json() as ApprovalRequest[],
+    jobOf: async (slug) => (await jobs()).find((j) => j.kind === 'creative' && j.key.endsWith(`:${slug}`)),
     bridge: async (run, tool, args) => {
       const config = JSON.parse(await readFile(run.req.mcpConfigPath!, 'utf8')) as { mcpServers: { studio: { env: Record<string, string> } } };
       const token = (await readFile(config.mcpServers.studio.env.MOTION_STUDIO_BRIDGE_TOKEN_FILE!, 'utf8')).trim();

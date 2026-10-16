@@ -32,10 +32,14 @@ export const paidBatchSchema = z.object({
     seconds: z.number().min(0).optional(),
     estimate: z.string().max(100).optional(),
   })).min(1).max(40).optional(),
-  /** Phase 15: the batch's total: variants, items, and the summed size and estimate when known. */
+  /**
+   * Phase 15: the batch's total, an estimate of the calls (no price is known): variants, items, the calls per provider (for
+   * an intro that names every provider of a mixed batch), and the summed size and estimate when known.
+   */
   total: z.object({
     variants: z.number().int().min(1).max(5),
     calls: z.number().int().min(1).max(40),
+    providers: z.array(z.object({ provider: z.enum(PROVIDER_IDS), calls: z.number().int().min(1).max(40) })).min(1).max(4).optional(),
     chars: z.number().int().min(0).optional(),
     seconds: z.number().min(0).optional(),
     estimate: z.string().max(100).optional(),

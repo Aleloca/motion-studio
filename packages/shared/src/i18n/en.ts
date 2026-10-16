@@ -145,6 +145,7 @@ export const en = {
     variantFolderExists: (p: { slug: string }) => `A folder named ${p.slug} already exists`,
     variantDirections: 'One direction per new variant at most, each up to 140 characters',
     variantDiscardedTurn: 'Restore the variant to work on it',
+    variantBusyFormats: (p: { letter: string }) => `Variant ${p.letter} is working: a request for some formats only cannot wait in its queue. Send it to that variant when it is done`,
     variantDirectionsFailed: 'The agent did not propose valid directions for the variants: type them yourself or try again',
     generationRunning: 'A generation is already running for this creative',
     waitBeforeRestart: 'Wait for the current generation to finish before restarting from a version',
@@ -324,7 +325,7 @@ export const en = {
     voicesBatchDetail: (p: { count: number; chars: number; list: string }) => `${p.count === 1 ? '1 call' : `${p.count} calls`}, ${p.chars} characters in all: ${p.list}`,
     /** Phase 15: the one confirmation of a variant fan-out (spec §3, "Servizi a pagamento"). */
     variantBatchTitle: (p: { count: number }) => `Paid services for ${p.count} variants`,
-    variantBatchDetail: (p: { count: number; list: string }) => `The agent of each variant may use them while it works (${p.count === 1 ? '1 service' : `${p.count} services`} in all): ${p.list}`,
+    variantBatchDetail: (p: { providers: string; variants: string }) => `Estimated calls (no price known): ${p.providers}. Per variant: ${p.variants}. No variant starts before you answer.`,
     variantBatchItem: (p: { letter: string; service: string; provider: string }) => `Variant ${p.letter} · ${p.service} (${p.provider})`,
     serviceNames: { images: 'Images', voice: 'Voice', music: 'Music', sfx: 'Sound effects' },
     generateSfx: (p: { provider: string }) => `Generate a sound effect with ${p.provider}`,
@@ -1077,7 +1078,7 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
         lastActive: 'It is the last active variant: keep at least one',
       },
       /** Phase 15: why a queued variant turn waits (`JobSummary.waitReason`). */
-      waitReasons: { 'variant-slot': 'Waiting: at most 2 variants work at a time' },
+      waitReasons: { 'variant-directions': 'waiting for directions', 'variant-confirm': 'waiting for confirmation', 'variant-slot': 'queued: two variants already working' },
     },
     theme: { aria: 'Theme', system: 'System', light: 'Light', dark: 'Dark' },
     instances: {

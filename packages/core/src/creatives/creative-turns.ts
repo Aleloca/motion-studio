@@ -1,4 +1,4 @@
-import { activeMembers, creativeJobKey, isSessionId, LIVE_LIMITS, MAX_RUNNING_VARIANTS, type ConversationEntry, type LiveMessageOutcome, type QueuedRequest, type RedirectOutcome, type VariantGroup, type VariantMember } from '@motion-studio/shared';
+import { activeMembers, creativeJobKey, isSessionId, LIVE_LIMITS, MAX_RUNNING_VARIANTS, type JobWaitReason, type ConversationEntry, type LiveMessageOutcome, type QueuedRequest, type RedirectOutcome, type VariantGroup, type VariantMember } from '@motion-studio/shared';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { mergeStorePack, verifyScreens } from '../store-pack/brief.ts';
@@ -97,6 +97,9 @@ export interface CreativeRef { root: string; projectSlug: string; projectDir: st
 
 /** Shared with the web (render keys are derived from it): @motion-studio/shared `creativeJobKey`. */
 export { creativeJobKey };
+/** Phase 15: see `CreativeTurnService.setQueuedHook`. `hold`: the reason the request's turn waits with (null: none now). */
+export interface QueuedHook { hold: JobWaitReason | null; /** Called with the turn's job id right before it is enqueued. */ started?: (jobId: string) => void }
+
 /** Phase 15: the job queue group of a variant group's turns (`JobSpec.slot`): one per host creative. */
 export const variantSlotGroup = (ref: CreativeRef, host: string): string => `variants:${creativeJobKey(ref.root, ref.projectSlug, host)}`;
 
@@ -246,6 +249,8 @@ export class CreativeTurnService {
   private readonly answers = new AnswerCache(MAX_ANSWERS);
   /** Phase 13: the creatives whose queue this process changed, by job key (for `otherJobEndedByKey`). */
   private readonly refs = new Map<string, CreativeRef>();
+  /** Phase 15: hooks of queued requests of a variant run, by creative key + clientId (`setQueuedHook`). */
+  private readonly queuedHooks = new Map<string, QueuedHook>();
   constructor(private readonly deps: CreativeTurnDeps) {
     this.maxAttempts = deps.maxAttempts ?? 3;
     this.side = deps.sideState ?? new CreativeSideStateStore(null);
@@ -255,8 +260,20 @@ export class CreativeTurnService {
    * Starts a turn. `opts.formats`: the formats the request applies to (spec §2.5); formats outside the brief are dropped, a
    * follower stands for its primary, and none (or absent) means every primary. The other formats are carried unchanged.
    */
-  async start(ref: CreativeRef, message?: { text: string; pins: Pin[] }, opts: { formats?: string[] } = {}): Promise<JobSummary> {
-    return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), () => this.startLocked(ref, message, opts.formats));
+  async start(ref: CreativeRef, message?: { text: string; pins: Pin[] }, opts: { formats?: string[]; hold?: JobWaitReason } = {}): Promise<JobSummary> {
+    return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), () => this.startLocked(ref, message, opts.formats, undefined, opts.hold));
+  }
+
+  /**
+   * Phase 15 (variant runs): what happens when the queued request `clientId` of this creative becomes a turn: it is enqueued
+   * held with `hold.reason` while that is set (it waits for the run's directions or paid-services card, even when the turn
+   * before it ends first), and `started` is told its job id. The hook is read when the request starts and then dropped;
+   * `null` removes it. In memory only, like the queue's auto-start (Ruling T).
+   */
+  setQueuedHook(ref: CreativeRef, clientId: string, hook: QueuedHook | null): void {
+    const k = `${creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug)}\0${clientId}`;
+    if (hook) this.queuedHooks.set(k, hook);
+    else this.queuedHooks.delete(k);
   }
 
   /**
@@ -562,7 +579,7 @@ export class CreativeTurnService {
     });
   }
 
-  private async startLocked(ref: CreativeRef, message: { text: string; pins: Pin[]; pinsVersion?: number } | undefined, formats: string[] | undefined, queued?: { clientId: string }): Promise<JobSummary> {
+  private async startLocked(ref: CreativeRef, message: { text: string; pins: Pin[]; pinsVersion?: number } | undefined, formats: string[] | undefined, queued?: { clientId: string }, hold?: JobWaitReason): Promise<JobSummary> {
     const store = new CreativeStore(ref.projectDir);
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     // Same check the queue does, but before touching the creative's files.
@@ -576,6 +593,9 @@ export class CreativeTurnService {
     // A request for formats none of which is in the brief is a mistake, not "all formats".
     if (formats?.length && !formats.some((f) => before.brief.formats.includes(f))) throw new CodedError(400, t().errors.formatsNotInBrief, 'formats-not-in-brief');
     const jobId = randomUUID();
+    const hookKey = queued ? `${key}\0${queued.clientId}` : null;
+    const hook = hookKey ? this.queuedHooks.get(hookKey) : undefined;
+    const holdReason = hold ?? hook?.hold ?? undefined;
     if (message) {
       // A queued request starts as a user entry with `mode: 'queued'`. One that was first written as a live message (it
       // arrived when the agent had finished) is not written twice, unless it was edited in the queue meanwhile.
@@ -605,6 +625,8 @@ export class CreativeTurnService {
     this.live.set(jobId, live);
     this.paused.delete(key);
     let job: JobSummary;
+    // Phase 15: the run's hook learns the id before the turn can start (a cover must be in place before its first paid call).
+    if (hookKey && hook) { this.queuedHooks.delete(hookKey); hook.started?.(jobId); }
     try {
       job = this.deps.queue.enqueue({
         id: jobId,
@@ -614,6 +636,8 @@ export class CreativeTurnService {
         ...(targets ? { formats: targets } : {}),
         // Phase 15 (spec §3): at most MAX_RUNNING_VARIANTS turns of a variant group run at once; the others wait, with the reason.
         ...(member ? { slot: { group: variantSlotGroup(ref, member.host), limit: MAX_RUNNING_VARIANTS, reason: 'variant-slot' as const } } : {}),
+        // Phase 15: a turn of a variant run waits for the run's directions and paid-services card (`VariantFanout`).
+        ...(holdReason ? { hold: holdReason } : {}),
         // Final wave Q8 (Ruling U micro-race): a failed or cancelled turn pauses its queue HERE, before the job turns terminal,
         // not in `turnSettled` after it: a message arriving in between can no longer start the queue after a failure or Stop.
         run: async (signal, id) => {
@@ -655,7 +679,9 @@ export class CreativeTurnService {
    * old creative, an orphan sister). Read without any lock: the group is written under the host's lock, never torn.
    */
   async memberOf(ref: CreativeRef): Promise<{ host: string; group: VariantGroup; self: VariantMember } | null> {
-    const r = await new VariantGroupService({ store: new CreativeStore(ref.projectDir), turns: this }).resolve(ref).catch(() => null);
+    // Only "no such creative" means "no group" (the caller then fails on its own read); any other error is real.
+    const r = await new VariantGroupService({ store: new CreativeStore(ref.projectDir), turns: this }).resolve(ref)
+      .catch((err: unknown) => { if ((err as { status?: unknown }).status === 404) return null; throw err; });
     const self = r?.group?.members.find((m) => m.slug === ref.creativeSlug);
     return r?.group && self ? { host: r.host.creativeSlug, group: r.group, self } : null;
   }

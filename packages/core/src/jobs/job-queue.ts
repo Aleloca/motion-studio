@@ -49,9 +49,14 @@ export interface JobSpec {
    * extra limit (every job before phase 15).
    */
   slot?: { group: string; limit: number; reason: JobWaitReason };
+  /**
+   * Phase 15: the job is held: it stays queued, with this `waitReason`, until `setHold(id, null)` releases it (the turns of a
+   * variant run wait for their directions and for the paid-services card). A held job never holds a slot.
+   */
+  hold?: JobWaitReason;
 }
 
-interface Entry { summary: JobSummary; spec: JobSpec; controller: AbortController }
+interface Entry { summary: JobSummary; spec: JobSpec; controller: AbortController; hold: JobWaitReason | null }
 
 const MAX_KEPT = 100;
 const ACTIVE = new Set(['queued', 'running']);
@@ -82,6 +87,7 @@ export class JobQueue {
     if (this.entries.some((e) => e.spec.key === spec.key && ACTIVE.has(e.summary.state))) throw new JobConflictError(spec.key);
     const entry: Entry = {
       spec,
+      hold: spec.hold ?? null,
       controller: new AbortController(),
       summary: {
         id: spec.id ?? randomUUID(), key: spec.key, kind: spec.kind, label: spec.label, state: 'queued', createdAt: new Date().toISOString(),
@@ -104,6 +110,19 @@ export class JobQueue {
     } else {
       entry.controller.abort();
     }
+    return true;
+  }
+
+  /**
+   * Phase 15: holds a queued job with `reason` (it does not start, and says why), or releases it (`null`): it then starts as
+   * soon as the queue and its slot group allow. False for an unknown job or one no longer queued.
+   */
+  setHold(id: string, reason: JobWaitReason | null): boolean {
+    const entry = this.entries.find((e) => e.summary.id === id);
+    if (!entry || entry.summary.state !== 'queued') return false;
+    entry.hold = reason;
+    if (reason && entry.summary.waitReason !== reason) { entry.summary.waitReason = reason; this.update(entry); }
+    this.pump();
     return true;
   }
 
@@ -153,6 +172,10 @@ export class JobQueue {
       for (const entry of waiting) {
         const slot = entry.spec.slot;
         const blocked = slot !== undefined && (groups.get(slot.group) ?? 0) >= slot.limit;
+        if (entry.hold) {
+          if (entry.summary.waitReason !== entry.hold) { entry.summary.waitReason = entry.hold; this.update(entry); }
+          continue;
+        }
         if (!blocked && free > 0) {
           free--;
           if (slot) groups.set(slot.group, (groups.get(slot.group) ?? 0) + 1);

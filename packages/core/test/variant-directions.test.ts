@@ -10,6 +10,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MCP_TOOLS } from '../src/agent/launcher.ts';
 import { buildAgentPolicy } from '../src/agent/policy.ts';
+import { messages } from '@motion-studio/shared';
+import { currentLocale } from '../src/i18n.ts';
 import { variantApp, type VariantApp } from './helpers/variant-app.ts';
 import type { ControlledRun } from './helpers/controlled-runner.ts';
 
@@ -44,7 +46,13 @@ describe('variant directions: the turn', () => {
   it('fills only the missing directions: wrong count, duplicates and a copy of a given one are refused, then a repair turn delivers', async () => {
     v = await variantApp();
     const slug = await v.group(['Audace e notturna', null, null]);
-    const pending = runFor(slug, { targets: 'all-active', request: null });
+    // The route answers at once; every target's turn waits for the directions, held.
+    const answer = await runFor(slug, { targets: 'all-active', request: null });
+    expect(answer.statusCode, answer.body).toBe(202);
+    const { directionsJobId, jobs: ids } = answer.json() as { directionsJobId: string; jobs: Record<string, string> };
+    expect(Object.keys(ids).sort()).toEqual(['a', 'b', 'c']);
+    expect(answer.json().batchId).toBeUndefined();
+    for (const id of Object.values(ids)) expect((await v.jobs()).find((j) => j.id === id)).toMatchObject({ state: 'queued', waitReason: 'variant-directions' });
     const first = await v.runner.next(0);
     expect(isDirections(first)).toBe(true);
     // The turn's tools: the submit tool only, every editing tool and Bash denied; no write is asked of it.
@@ -53,8 +61,7 @@ describe('variant directions: the turn', () => {
     expect(first.req.prompt).toContain('submit_variant_directions');
     expect(first.req.prompt).toContain('Audace e notturna');
     expect(first.req.prompt).toMatch(/exactly 2 directions/);
-    const job = (await v.jobs()).find((j) => j.kind === 'variant-directions')!;
-    expect(job).toMatchObject({ state: 'running' });
+    expect((await v.jobs()).find((j) => j.kind === 'variant-directions')).toMatchObject({ id: directionsJobId, state: 'running' });
     // Wrong count.
     let res = await v.bridge(first, 'submit_variant_directions', { directions: ['Solo una'] });
     expect(res.statusCode).toBe(200);
@@ -79,15 +86,18 @@ describe('variant directions: the turn', () => {
     res = await v.bridge(repair, 'submit_variant_directions', { directions: ['  Minimal pastello  ', 'Retro anni 80'] });
     expect(res.json()).toEqual({ ok: true });
     repair.finish({ write: false });
-    const answer = await pending;
-    expect(answer.statusCode, answer.body).toBe(202);
+    await vi.waitFor(async () => expect((await v.jobs()).find((j) => j.id === ids.a)!.state).toBe('running'), { timeout: 10_000 });
     const g = (await v.detail(slug)).creative.variantGroup!;
     expect(g.members.map((m) => [m.letter, m.direction, m.directionSource])).toEqual([
       ['a', 'Audace e notturna', 'user'], ['b', 'Minimal pastello', 'agent'], ['c', 'Retro anni 80', 'agent'],
     ]);
-    // Then the fan-out: every variant gets a creative turn of its own.
-    expect(Object.keys(answer.json().jobs).sort()).toEqual(['a', 'b', 'c']);
+    // Then the fan-out (no paid service: no card): two run, the third waits for a slot.
+    expect((await v.jobs()).find((j) => j.id === ids.b)!.state).toBe('running');
+    expect((await v.jobs()).find((j) => j.id === ids.c)).toMatchObject({ state: 'queued', waitReason: 'variant-slot' });
     expect((await v.jobs()).find((j) => j.kind === 'variant-directions')).toMatchObject({ state: 'succeeded' });
+    // The prompts were built after the directions: B's own is there.
+    await vi.waitFor(() => expect(v.runner.runs).toHaveLength(4));
+    expect(v.runner.runs.slice(2).some((r) => r.req.prompt.includes('Your direction: "Minimal pastello"'))).toBe(true);
   });
 
   it('skips the turn when the user typed every direction of the targets', async () => {
@@ -103,20 +113,22 @@ describe('variant directions: the turn', () => {
     expect((await v.detail(slug)).creative.variantGroup!.members[2]!.direction).toBeNull();
   });
 
-  it('gives up after the bounded repair turns: no variant starts and the route says why', async () => {
+  it('gives up after the bounded repair turns: the directions job carries the error, no variant starts, nothing is left waiting', async () => {
     v = await variantApp();
     const slug = await v.group([null, null]);
-    const pending = runFor(slug, { targets: 'all-active', request: null });
+    const res = await runFor(slug, { targets: 'all-active', request: { text: 'Più luce' } });
+    expect(res.statusCode).toBe(202);
+    const { directionsJobId, jobs: ids } = res.json() as { directionsJobId: string; jobs: Record<string, string> };
     for (let i = 0; i < 3; i++) {
       const r = await v.runner.next(i);
       expect(isDirections(r)).toBe(true);
       r.finish({ write: false });
     }
-    const res = await pending;
-    expect(res.statusCode).toBe(422);
-    expect(res.json().code).toBe('variant-directions-failed');
+    await v.waitIdle();
+    const all = await v.jobs();
+    expect(all.find((j) => j.id === directionsJobId)).toMatchObject({ state: 'failed', error: messages(currentLocale()).errors.variantDirectionsFailed });
+    for (const id of Object.values(ids)) expect(all.find((j) => j.id === id)!.state).toBe('cancelled');
     expect(v.runner.runs).toHaveLength(3);
-    expect((await v.jobs()).filter((j) => j.kind === 'creative')).toEqual([]);
     expect((await v.detail(slug)).creative.variantGroup!.members.every((m) => m.direction === null)).toBe(true);
   });
 
@@ -132,7 +144,7 @@ describe('variant directions: the turn', () => {
     await v.waitIdle();
     // A directions run asking for Bash or a write is denied at once, without a card.
     const other = await v.group([null, null], 'Altra');
-    const pending = runFor(other, { targets: 'all-active', request: null });
+    expect((await runFor(other, { targets: 'all-active', request: null })).statusCode).toBe(202);
     const dir = await v.runner.next(1);
     expect(isDirections(dir)).toBe(true);
     for (const [tool, input] of [['Bash', { command: 'ls' }], ['Write', { file_path: 'x.txt', content: 'x' }]] as const) {
@@ -142,6 +154,6 @@ describe('variant directions: the turn', () => {
     expect(await v.pending()).toEqual([]);
     await v.bridge(dir, 'submit_variant_directions', { directions: ['Minimal pastello', 'Retro anni 80'] });
     dir.finish({ write: false });
-    expect((await pending).statusCode).toBe(202);
+    await v.runner.next(2);
   });
 });

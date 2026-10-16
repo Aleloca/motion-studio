@@ -106,6 +106,14 @@ export class VariantDirections {
 
   /** Runs the turn for `missing` (host ref) and answers their directions, by letter. 422 when no valid set came. */
   async runDirectionsTurn(host: CreativeRef, missing: VariantLetter[], given: Partial<Record<VariantLetter, string>>): Promise<Partial<Record<VariantLetter, string>>> {
+    return (await this.begin(host, missing, given)).result;
+  }
+
+  /**
+   * Enqueues the turn and answers at once with its job id; `result` settles with the directions by letter, or rejects (409
+   * `variant-directions-cancelled` after a Stop, 422 `variant-directions-failed` after the repairs: the job keeps the error).
+   */
+  async begin(host: CreativeRef, missing: VariantLetter[], given: Partial<Record<VariantLetter, string>>): Promise<{ jobId: string; result: Promise<Partial<Record<VariantLetter, string>>> }> {
     const store = new CreativeStore(host.projectDir);
     const creative = await store.get(host.creativeSlug);
     const job = this.deps.queue.enqueue({
@@ -114,12 +122,14 @@ export class VariantDirections {
       label: t().jobs.variantDirectionsLabel({ title: creative.title }),
       run: (signal, jobId) => this.run(host, missing, given, signal, jobId),
     });
-    const settled = await this.deps.queue.whenSettled(job.id);
-    const out = this.results.get(job.id);
-    this.results.delete(job.id);
-    if (settled?.state === 'cancelled') throw new CodedError(409, t().errors.jobCancelled, 'variant-directions-cancelled');
-    if (settled?.state !== 'succeeded' || !out) throw new CodedError(422, t().errors.variantDirectionsFailed, 'variant-directions-failed');
-    return Object.fromEntries(missing.map((l, i) => [l, out[i]!]));
+    const result = this.deps.queue.whenSettled(job.id).then((settled) => {
+      const out = this.results.get(job.id);
+      this.results.delete(job.id);
+      if (settled?.state === 'cancelled') throw new CodedError(409, t().errors.jobCancelled, 'variant-directions-cancelled');
+      if (settled?.state !== 'succeeded' || !out) throw new CodedError(422, t().errors.variantDirectionsFailed, 'variant-directions-failed');
+      return Object.fromEntries(missing.map((l, i) => [l, out[i]!])) as Partial<Record<VariantLetter, string>>;
+    });
+    return { jobId: job.id, result };
   }
 
   private async run(host: CreativeRef, missing: VariantLetter[], given: Partial<Record<VariantLetter, string>>, signal: AbortSignal, jobId: string): Promise<void | 'cancelled'> {

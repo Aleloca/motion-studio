@@ -143,6 +143,7 @@ export const it: Messages = {
     variantFolderExists: (p) => `Esiste già una cartella ${p.slug}`,
     variantDirections: 'Al massimo una direzione per ogni nuova variante, ciascuna fino a 140 caratteri',
     variantDiscardedTurn: 'Ripristina la variante per lavorarci',
+    variantBusyFormats: (p) => `La variante ${p.letter} sta lavorando: una richiesta limitata ad alcuni formati non può aspettare nella sua coda. Mandala a quella variante quando ha finito`,
     variantDirectionsFailed: 'L\'agente non ha proposto direzioni valide per le varianti: scrivile tu o riprova',
     generationRunning: 'Una generazione è già in corso per questa creatività',
     waitBeforeRestart: 'Attendi la fine della generazione in corso prima di ripartire da una versione',
@@ -322,7 +323,7 @@ export const it: Messages = {
     voicesBatchDetail: (p) => `${p.count === 1 ? '1 chiamata' : `${p.count} chiamate`}, ${p.chars} caratteri in tutto: ${p.list}`,
     /** Fase 15: l'unica conferma di un avvio di più varianti (spec §3, "Servizi a pagamento"). */
     variantBatchTitle: (p) => `Servizi a pagamento per ${p.count} varianti`,
-    variantBatchDetail: (p) => `L'agente di ogni variante può usarli mentre lavora (${p.count === 1 ? '1 servizio' : `${p.count} servizi`} in tutto): ${p.list}`,
+    variantBatchDetail: (p) => `Chiamate stimate (prezzo non noto): ${p.providers}. Per variante: ${p.variants}. Nessuna variante parte prima della tua risposta.`,
     variantBatchItem: (p) => `Variante ${p.letter} · ${p.service} (${p.provider})`,
     serviceNames: { images: 'Immagini', voice: 'Voce', music: 'Musica', sfx: 'Effetti sonori' },
     generateSfx: (p) => `Generare un effetto sonoro con ${p.provider}`,
@@ -1068,7 +1069,7 @@ Variabili: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (array JSON)`,
         lastActive: 'È l\'ultima variante attiva: tienine almeno una',
       },
       /** Fase 15: perché una variante in coda aspetta (`JobSummary.waitReason`). */
-      waitReasons: { 'variant-slot': 'In attesa: lavorano al massimo 2 varianti alla volta' },
+      waitReasons: { 'variant-directions': 'in attesa delle direzioni', 'variant-confirm': 'in attesa della conferma', 'variant-slot': 'in coda: due varianti già al lavoro' },
     },
     theme: { aria: 'Tema', system: 'Sistema', light: 'Chiaro', dark: 'Scuro' },
     instances: {
