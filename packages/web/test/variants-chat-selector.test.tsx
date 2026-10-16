@@ -126,6 +126,23 @@ describe('chat selector', () => {
     await waitFor(() => expect(run).toHaveBeenCalledWith({ text: 'Solo il video', pins: [], formats: ['tiktok-9x16'] }));
   });
 
+  it('residual fix: in "Tutte" comments alone never send (no null request); they say "non inviati a Tutte"; with text the text goes without them', async () => {
+    const pin: Pin = { format: 'instagram-post-1x1', x: 0.5, y: 0.5, timeSec: null, note: 'n' };
+    const appliesTo = { primaries: [{ id: 'instagram-post-1x1', label: 'Post', followers: [] }, { id: 'tiktok-9x16', label: 'Video', followers: [] }], followerOf: () => null };
+    render(panel({ all: true, pins: [pin], appliesTo }));
+    const send = screen.getByRole('button', { name: 'Invia' }) as HTMLButtonElement;
+    expect(send.disabled).toBe(true);
+    expect(screen.getByText('non inviati a Tutte')).toBeTruthy();
+    // ⌘↵ in the empty box does nothing either.
+    await userEvent.type(screen.getByRole('textbox', { name: /Chiedi una modifica/ }), '{Meta>}{Enter}{/Meta}');
+    expect(run).not.toHaveBeenCalled();
+    await say('Più luce');
+    expect(screen.queryByText('non inviati a Tutte')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Invia' }));
+    await waitFor(() => expect(run).toHaveBeenCalledWith({ text: 'Più luce', pins: [] }));
+    expect(run).not.toHaveBeenCalledWith(null);
+  });
+
   it('"Tutte" names the variants that did not start, with the reason', async () => {
     run.mockResolvedValueOnce({ jobs: { a: 'j1' }, queued: [], skipped: ['c'], failed: { b: 'Ferma prima la variante' } });
     render(panel({ all: true }));

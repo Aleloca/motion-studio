@@ -678,13 +678,15 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, fanout, latestJ
   // One client id per message: a double click, or a retry of the same words after a failure, is one message.
   const draftId = useRef<{ id: string; kind: string } | null>(null);
 
-  const hasContent = text.trim().length > 0 || pins.length > 0;
+  // "Applies to": the user's choice (null: All formats) or, until they choose, the comments' formats (else the fallback).
+  const [choice, setChoice] = useState<string[] | null | undefined>(undefined);
+  // Residual fix (decisions log 865): in "Tutte" the comments are never sent, so they never make a request on their own: only
+  // the text or formats chosen by hand can (else the request would be empty, the first-generation path).
+  const handFormats = Array.isArray(choice) && choice.length > 0;
+  const hasContent = text.trim().length > 0 || (fanout ? handFormats : pins.length > 0);
   const idleBusy = sending || awaiting !== null;
   const busy = working || idleBusy;
   const canSend = working ? hasContent && !sending && (capsNow !== null || redirect) : !idleBusy && hasContent;
-
-  // "Applies to": the user's choice (null: All formats) or, until they choose, the comments' formats (else the fallback).
-  const [choice, setChoice] = useState<string[] | null | undefined>(undefined);
   const primaryIds = appliesTo?.primaries.map((p) => p.id) ?? [];
   const primaryOf = (id: string) => appliesTo?.followerOf(id) ?? id;
   // Phase 15 (final wave M2): the comments are the open variant's own; "Tutte" never sends them, nor the formats they chose.
@@ -707,7 +709,8 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, fanout, latestJ
     setChoice(next.length === 0 || next.length === primaryIds.length ? null : next);
   };
 
-  const send = async (body: { text?: string; pins?: Pin[]; formats?: string[] }) => {
+  /** `first`: the first generation of a never-started group ("Genera"), the only send that may be an empty request. */
+  const send = async (body: { text?: string; pins?: Pin[]; formats?: string[] }, first = false) => {
     if (busy || inFlight.current) return;
     inFlight.current = true;
     setError(null); setNotice(null); setSending(true);
@@ -716,6 +719,8 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, fanout, latestJ
       if (fanout) {
         // "Tutte": one request for every active variant; the answer says which started, waited or were refused.
         const empty = !body.text && !body.pins?.length && !body.formats?.length;
+        // Never a `null` request from the chat (residual fix, decisions log 865): only "Genera" of a never-started group is one.
+        if (empty && !first) { inFlight.current = false; return; }
         const r = await fanout(empty ? null : body);
         inFlight.current = false;
         const refused = [...r.skipped.map((l) => l.toUpperCase()), ...Object.entries(r.failed).map(([l, why]) => `${l.toUpperCase()} (${why})`)];
@@ -799,6 +804,7 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, fanout, latestJ
       <div className="ms-composer-box">
         {pins.length > 0 && (
           <div className="ms-composer-pins">
+            {fanout && !text.trim() ? <span className="ms-composer-pins-note">{t.web.variantGroup.pinsNotSentToAll}</span> : null}
             {pins.map((p, k) => (
               <span key={k} className="ms-chip ms-on ms-composer-pin">
                 {onEditPin ? (
@@ -842,7 +848,7 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, fanout, latestJ
           <span className="ms-composer-hint">{hint}</span>
           {job && <StopMenu job={job} onError={setError} onRedirect={() => { setRedirect(true); setError(null); field.current?.focus(); }} />}
           {canGenerate && !job && (
-            <Button size="sm" variant="accent" aria-label={t.web.newCreative.generate} disabled={busy} onClick={() => void send({})}>
+            <Button size="sm" variant="accent" aria-label={t.web.newCreative.generate} disabled={busy} onClick={() => void send({}, true)}>
               <Icon name="sparkle" size={13} />{t.web.newCreative.generate}
             </Button>
           )}
