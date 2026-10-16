@@ -203,6 +203,8 @@ export function registerLocalizationRoutes(app: FastifyInstance, ctx: Localizati
     const fallback = await resolveFallbackFont({ projectDir: ref.projectDir, http: ctx.fontsHttp, media: ctx.media, ...(ctx.fontsIo ? { io: ctx.fontsIo } : {}) }, tag, signal);
     return ctx.turns.runLocked(ref, async () => {
       if (ctx.turns.turnActive(ref)) throw new CodedError(409, va.localizationBusy, 'localization-busy');
+      // Residual fix (decisions log 866): a discarded variant is read-only until restored.
+      await ctx.turns.assertNotDiscarded(ref);
       const slug = ref.creativeSlug;
       const creativeDir = ref.store.dir(slug);
       const v = await versionOf(ref.store, slug, req.params.n);

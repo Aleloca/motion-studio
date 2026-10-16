@@ -131,6 +131,7 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
       const pending = await pendingRenders(creativeDir, [version], itemsOf(version));
       let error: string | null = null;
       if (pending.size > 0) {
+        await ctx.turns.runLocked(ref, () => ctx.turns.assertNotDiscarded(ref)); // residual fix (decisions log 866)
         // A render that cannot start (no browser, …) fails these files only: what is already rendered is still exported.
         error = await ctx.renders.renderAndWait(ref, pending).then(jobError, (e: unknown) => (e instanceof Error ? e.message : String(e)));
         rendered.push({ version: n, formats: [...(pending.get(n) ?? [])] });
@@ -157,6 +158,7 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
       const errors = new Map<string, string>();
       const now = r.pending.get(n);
       if (now) {
+        await ctx.turns.runLocked(ref, () => ctx.turns.assertNotDiscarded(ref)); // residual fix (decisions log 866)
         // One job per language, so a language whose translation needs "render anyway" does not stop the others.
         for (const locale of now.locales) {
           const fs = formats.filter((f) => !r.items.some((x) => x.format === f && x.locale === locale) && !r.missing.some((x) => x.format === f && x.locale === locale));

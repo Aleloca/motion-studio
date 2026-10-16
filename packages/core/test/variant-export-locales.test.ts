@@ -104,3 +104,58 @@ describe('group export translations', { timeout: 120_000 }, () => {
     expect(body.unavailable[0]!.message).toContain('boom from the renderer');
   });
 });
+
+describe('residual fix: render-now and translation writes on a discarded variant', { timeout: 120_000 }, () => {
+  const discardedB = async () => {
+    const { host, b } = await group();
+    expect((await put(b, 'test-wide', 'Hallo')).statusCode).toBe(200);
+    const d = await env.app.inject({ method: 'POST', url: `${P}/${host}/variants/b/discard`, headers: H });
+    expect(d.statusCode, d.body).toBe(200);
+    return { host, b };
+  };
+  const refused = (r: { statusCode: number; body: string; json(): unknown }) => {
+    expect(r.statusCode, r.body).toBe(409);
+    expect(r.json()).toMatchObject({ code: 'variant-discarded' });
+  };
+
+  it('POST …/versions/:n/render is refused (409 variant-discarded)', async () => {
+    const { b } = await discardedB();
+    refused(await env.app.inject({ method: 'POST', url: `${P}/${b}/versions/1/render`, headers: H, payload: {} }));
+    expect(env.fake.renders).toEqual([]);
+  });
+
+  it('a locale render (…/render with locales) is refused', async () => {
+    const { b } = await discardedB();
+    refused(await env.app.inject({ method: 'POST', url: `${P}/${b}/versions/1/render`, headers: H, payload: { formats: ['test-wide'], locales: ['de'] } }));
+    expect(env.fake.renders).toEqual([]);
+  });
+
+  it('PUT …/localizations/:locale/:instanceId is refused', async () => {
+    const { b } = await discardedB();
+    refused(await put(b, 'test-wide', 'Tschüss'));
+  });
+
+  it('POST …/export/prepare that would render is refused', async () => {
+    const { b } = await discardedB();
+    refused(await env.app.inject({ method: 'POST', url: `${P}/${b}/export/prepare`, headers: H, payload: { picks: { 'test-wide': 1 } } }));
+  });
+
+  it('POST …/export that would render first is refused; with everything already rendered it still exports (a read)', async () => {
+    const { host, b } = await group();
+    refused(await (async () => {
+      await env.app.inject({ method: 'POST', url: `${P}/${host}/variants/b/discard`, headers: H });
+      return env.app.inject({ method: 'POST', url: `${P}/${b}/export`, headers: H, payload: { destination: dest, picks: { 'test-wide': 1 } } });
+    })());
+    expect(env.fake.renders).toEqual([]);
+    await env.app.inject({ method: 'POST', url: `${P}/${host}/variants/b/restore`, headers: H });
+    await env.render(b, 1);
+    await env.app.inject({ method: 'POST', url: `${P}/${host}/variants/b/discard`, headers: H });
+    const ok = await env.app.inject({ method: 'POST', url: `${P}/${b}/export`, headers: H, payload: { destination: dest, picks: { 'test-wide': 1 } } });
+    expect(ok.statusCode, ok.body).toBe(200);
+  });
+
+  it('POST …/export with a translation to render first is refused', async () => {
+    const { b } = await discardedB();
+    refused(await env.app.inject({ method: 'POST', url: `${P}/${b}/export`, headers: H, payload: { destination: dest, picks: { 'test-wide': 1 }, locales: ['de'] } }));
+  });
+});

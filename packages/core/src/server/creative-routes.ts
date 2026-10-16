@@ -583,7 +583,11 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const n = Number(req.params.n);
     if (!Number.isInteger(n) || n < 1) throw new WorkspaceError(404, t().errors.versionNotFound);
     const body = parse(renderBody, req.body);
-    return reply.status(202).send(await ctx.renders.start(ref, n, body.formats, { ...(body.locales ? { locales: body.locales } : {}), ...(body.force !== undefined ? { force: body.force } : {}) }));
+    // Residual fix (decisions log 866): a render writes the variant's outputs; a discarded one is read-only until restored.
+    return reply.status(202).send(await ctx.turns.runLocked(ref, async () => {
+      await ctx.turns.assertNotDiscarded(ref);
+      return ctx.renders.start(ref, n, body.formats, { ...(body.locales ? { locales: body.locales } : {}), ...(body.force !== undefined ? { force: body.force } : {}) });
+    }));
   });
 
   app.post<{ Params: { slug: string; c: string; n: string } }>('/api/projects/:slug/creatives/:c/versions/:n/reveal', async (req) => {
@@ -668,6 +672,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     // then the picks are resolved again on the new records and copied. Legacy versions export their media as they are.
     const rendered: Array<{ version: number; formats: string[] }> = [];
     if (pending.size > 0 && includeSource) {
+      await notDiscarded(ref); // residual fix (decisions log 866): what is already rendered still exports
       await ctx.renders.renderAndWait(ref, pending);
       for (const [version, formats] of pending) rendered.push({ version, formats });
       ({ items, pending } = await resolve());
@@ -843,6 +848,14 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
    * current render is rendered first (409 `localization-needs-force` when it has open problems or outdated entries and
    * `force` is not set: the dialog asks "render anyway"); a format with no translation is refused (409 `localization-missing`).
    */
+  /**
+   * Residual fix (decisions log 866): a render made now writes the creative's outputs, so a discarded variant refuses it
+   * (409 `variant-discarded`), checked under its lock like its other writes; exporting what is already rendered is a read.
+   */
+  function notDiscarded(ref: CreativeRef): Promise<void> {
+    return ctx.turns.runLocked(ref, () => ctx.turns.assertNotDiscarded(ref));
+  }
+
   async function withLocales(ref: CreativeRef & { store: CreativeStore }, creativeDir: string, items: ExportItem[],
     o: { includeSource: boolean; primaryLocale: string | undefined; otherTags: string[]; force: boolean; label: (id: string) => string }):
     Promise<{ items: ExportItem[]; rendered: Array<{ version: number; formats: string[]; locale: string }> }> {
@@ -862,6 +875,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     };
     refuseMissing();
     if (r.pending.size > 0) {
+      await notDiscarded(ref);
       for (const [n, p] of r.pending) {
         await ctx.renders.renderLocalesAndWait(ref, n, p.formats, p.locales, o.force);
         for (const locale of p.locales) rendered.push({ version: n, formats: [...p.formats], locale });
@@ -900,6 +914,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const includeSource = tags === null || (briefPrimary !== undefined && tags.includes(briefPrimary));
     const otherTags = tags === null ? [] : tags.filter((x) => x !== briefPrimary);
     const pending = includeSource ? await pendingRenders(creativeDir, versions, items) : new Map<number, string[]>();
+    if (pending.size > 0) await notDiscarded(ref); // residual fix (decisions log 866)
     const renders: Array<{ version: number; formats: string[]; job: JobSummary; covers: boolean; locales?: string[] }> = [];
     // Answers at once: an active job of that version is reused for the formats it covers and a follow-up job is queued for
     // the rest (I3), so the job returned covers them all.
@@ -916,6 +931,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
         err.problems = list.slice(0, 50);
         throw err;
       }
+      if (loc.pending.size > 0) await notDiscarded(ref);
       for (const [version, p] of loc.pending) {
         const job = await ctx.renders.start(ref, version, p.formats, { locales: p.locales, force: r.data.force === true });
         renders.push({ version, formats: p.formats, job, covers: true, locales: p.locales });

@@ -346,6 +346,17 @@ describe('store pack export', { timeout: 120_000 }, () => {
     expect((await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${solo}/store-pack/export-group`, headers: H, payload: { destination: dest } })).statusCode).toBe(409);
   });
 
+  it('residual fix: a discarded variant\'s own pack export that would render is refused (409 variant-discarded)', async () => {
+    const slug = await createPack(pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false, screenshots: [{ caption: 'One', screen: null }] }));
+    expect((await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/variants`, headers: H, payload: { count: 2, baseFrom: { slug, version: 1 } } })).statusCode).toBe(201);
+    expect((await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/variants/b/discard`, headers: H })).statusCode).toBe(200);
+    const before = env.fake.renders.length;
+    const r = await exportPack(`${slug}~b`);
+    expect(r.statusCode, r.body).toBe(409);
+    expect(r.json()).toMatchObject({ code: 'variant-discarded' });
+    expect(env.fake.renders.length).toBe(before);
+  });
+
   it('final wave I3: a group\'s pack renders a missing translation in the member the selection picked, as the single pack does', async () => {
     const slug = await createPack(pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false, screenshots: [{ caption: 'One', screen: null }] }),
       { locales: { primary: 'en', extra: ['de'] } });
