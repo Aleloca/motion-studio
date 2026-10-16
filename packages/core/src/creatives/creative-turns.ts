@@ -594,8 +594,6 @@ export class CreativeTurnService {
     if (formats?.length && !formats.some((f) => before.brief.formats.includes(f))) throw new CodedError(400, t().errors.formatsNotInBrief, 'formats-not-in-brief');
     const jobId = randomUUID();
     const hookKey = queued ? `${key}\0${queued.clientId}` : null;
-    const hook = hookKey ? this.queuedHooks.get(hookKey) : undefined;
-    const holdReason = hold ?? hook?.hold ?? undefined;
     if (message) {
       // A queued request starts as a user entry with `mode: 'queued'`. One that was first written as a live message (it
       // arrived when the agent had finished) is not written twice, unless it was edited in the queue meanwhile.
@@ -625,7 +623,11 @@ export class CreativeTurnService {
     this.live.set(jobId, live);
     this.paused.delete(key);
     let job: JobSummary;
-    // Phase 15: the run's hook learns the id before the turn can start (a cover must be in place before its first paid call).
+    // Phase 15: a variant run's hook is read HERE, with no await before the enqueue below (fix round 2): a decision that
+    // lands while this start awaited is seen, and the hook learns the id before the turn can start (a cover must be in
+    // place before its first paid call; a cancelled run records the id to stop it).
+    const hook = hookKey ? this.queuedHooks.get(hookKey) : undefined;
+    const holdReason = hold ?? hook?.hold ?? undefined;
     if (hookKey && hook) { this.queuedHooks.delete(hookKey); hook.started?.(jobId); }
     try {
       job = this.deps.queue.enqueue({
@@ -1647,10 +1649,13 @@ export class CreativeTurnService {
 
   /** DELETE …/queue/:clientId: only while it waits. */
   async removeQueued(ref: CreativeRef, clientId: string): Promise<CreativeFile> {
-    return this.editQueue(ref, (q) => {
+    const out = await this.editQueue(ref, (q) => {
       if (!q.some((x) => x.clientId === clientId)) throw new CodedError(404, t().live.notQueued, 'not-queued');
       return q.filter((x) => x.clientId !== clientId);
     });
+    // Phase 15: a removed request no longer has a variant run's hook.
+    this.queuedHooks.delete(`${creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug)}\0${clientId}`);
+    return out;
   }
 
   /** PUT …/queue/:clientId: new text and pins, only while it waits. Changed pins refer to the version on screen now. */

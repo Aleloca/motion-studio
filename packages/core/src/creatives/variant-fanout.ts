@@ -219,8 +219,12 @@ export class VariantFanout {
     const { queue, approvals, turns } = this.deps;
     for (const e of entries) {
       if (e.clientId && !e.jobId) {
-        turns.setQueuedHook(e.ref, e.clientId, null);
+        // The hook stays (held, no cover) until the removal is through: `removeQueued` takes the variant's lock, so a start of
+        // this request already in flight finishes first, enqueued held, and records its id here to be stopped below.
+        e.onStart = undefined;
+        turns.setQueuedHook(e.ref, e.clientId, hookOf(e, 'variant-confirm'));
         await turns.removeQueued(e.ref, e.clientId).catch(() => {});
+        turns.setQueuedHook(e.ref, e.clientId, null);
       }
       // A held turn, or the turn a queued request became (still held: it never ran).
       if (e.jobId) stopJob({ queue, approvals }, e.jobId);
