@@ -1,7 +1,7 @@
 // Plays one Motion Studio composition in a figure, through the product's own runtime page in preview mode
 // (runtime/<id>.html?mode=preview&parentOrigin=…) and its preview protocol: setScale, mute, play, pause, seek.
 // The figure keeps its poster image underneath: it shows until the runtime is ready, and for good if it fails.
-import { decide } from './player-logic.js';
+import { decide, isVisible, VISIBLE_RATIO } from './player-logic.js';
 
 // Generous: the poster covers the frame until the runtime is ready, so a slow first load costs nothing visible. A cold
 // first composition (runtime, preview.js and fonts) took over 8 s on a slow machine.
@@ -36,6 +36,7 @@ export class CompositionPlayer {
     this.state = { ...this.state, ...state };
     const action = decide({ ...this.state, ready: this.ready, failed: this.failed });
     if (action === 'mount' && !this.frame) this.mount();
+    else if (action === 'unmount' || (action === 'unmounted' && this.frame)) this.unmount();
     else if (action === 'play') this.play();
     else if (action === 'pause') this.pause();
     else if (action === 'still') this.showStill();
@@ -44,6 +45,14 @@ export class CompositionPlayer {
   mount() {
     this.frame = this.deps.mount(this.src, this);
     this.timer = this.deps.setTimeout(() => this.fail(), READY_TIMEOUT_MS);
+  }
+
+  unmount() {
+    this.destroy();
+    this.ready = false;
+    this.playing = false;
+    this.still = false;
+    this.figure.classList.remove('is-ready');
   }
 
   send(m) {
@@ -109,8 +118,8 @@ export class CompositionPlayer {
 }
 
 /**
- * One player per `figure[data-composition]` of the document: mounted when within one viewport of the screen, playing while
- * at least a quarter of it is visible, a still frame under prefers-reduced-motion.
+ * One player per `figure[data-composition]` of the document: mounted while within one viewport of the screen (and unmounted
+ * beyond it), playing while at least a quarter of it is visible, a still frame under prefers-reduced-motion.
  * @param {Document} doc
  */
 export function mountPlayers(doc, { log } = {}) {
@@ -140,8 +149,8 @@ export function mountPlayers(doc, { log } = {}) {
     for (const e of entries) players.get(e.target)?.update({ near: e.isIntersecting, reducedMotion: motion.matches });
   }, { rootMargin: '100% 0px' });
   const visible = new win.IntersectionObserver((entries) => {
-    for (const e of entries) players.get(e.target)?.update({ visible: e.isIntersecting, reducedMotion: motion.matches });
-  }, { threshold: 0.25 });
+    for (const e of entries) players.get(e.target)?.update({ visible: isVisible(e), reducedMotion: motion.matches });
+  }, { threshold: [0, VISIBLE_RATIO] });
   for (const figure of players.keys()) { near.observe(figure); visible.observe(figure); }
   motion.addEventListener('change', () => { for (const p of players.values()) p.update({ reducedMotion: motion.matches }); });
   return [...players.values()];

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decide } from '../src/js/player-logic.js';
+import { decide, isVisible } from '../src/js/player-logic.js';
 import { CompositionPlayer, READY_TIMEOUT_MS } from '../src/js/player.js';
 
 const S = (o) => ({ visible: false, near: false, reducedMotion: false, ready: false, failed: false, ...o });
@@ -12,7 +12,8 @@ test('decide table', () => {
   assert.equal(decide(S({ near: true, ready: true, reducedMotion: true, visible: true })), 'still');
   assert.equal(decide(S({ near: true, ready: true, visible: true })), 'play');
   assert.equal(decide(S({ near: true, ready: true })), 'pause');
-  assert.equal(decide(S({ ready: true, visible: false })), 'pause');
+  assert.equal(decide(S({ ready: true, visible: false })), 'unmount');
+  assert.equal(decide(S({ ready: true, reducedMotion: true })), 'unmount');
 });
 
 const ORIGIN = 'https://aleloca.github.io';
@@ -114,4 +115,37 @@ test('ignores messages from other sources or origins', () => {
   h.msg({ type: 'ready' }, { source: {} });
   h.msg('ready');
   assert.deepEqual(h.types(), []);
+});
+
+test('visible means at least a quarter of the figure on screen, not the first pixel', () => {
+  assert.equal(isVisible({ isIntersecting: true, intersectionRatio: 0.01 }), false);
+  assert.equal(isVisible({ isIntersecting: true, intersectionRatio: 0.25 }), true);
+  assert.equal(isVisible({ isIntersecting: false, intersectionRatio: 0 }), false);
+});
+
+test('a ready player that leaves the near margin unmounts, and mounts again on return', () => {
+  const h = harness();
+  h.player.update(S({ near: true, visible: true }));
+  h.msg({ type: 'ready' });
+  h.player.update(S({ near: false, visible: false }));
+  assert.ok(h.frame.removed, 'iframe removed when far away');
+  assert.ok(!h.classes.has('is-ready'), 'poster shown again');
+  assert.ok(!h.classes.has('is-failed'));
+  h.frame.removed = false;
+  h.player.update(S({ near: true }));
+  assert.equal(h.mounts(), 2, 'mounted again');
+  h.msg({ type: 'ready' });
+  h.player.update(S({ near: true, visible: true }));
+  assert.equal(h.types().filter((t) => t === 'play').length, 2);
+});
+
+test('a player still loading that leaves the near margin cancels its load, without failing', () => {
+  const h = harness();
+  h.player.update(S({ near: true }));
+  h.player.update(S({ near: false }));
+  assert.ok(h.frame.removed, 'loading iframe removed');
+  h.fire();
+  assert.ok(!h.classes.has('is-failed'), 'the cancelled timeout never fails it');
+  h.player.update(S({ near: true }));
+  assert.equal(h.mounts(), 2);
 });

@@ -66,3 +66,8 @@ test('no external URLs other than the repo, its pages and the Claude Code docs',
   const urls = [...html.matchAll(/(?:href|src|content)="(https?:[^"]+)"/g)].map((m) => m[1]);
   for (const u of urls) assert.ok(u.startsWith(REPO_URL) || u.startsWith('https://aleloca.github.io/motion-studio/') || u.startsWith('https://docs.claude.com/'), u);
 });
+
+test('the paid services copy says the confirmation can be turned off', () => {
+  assert.doesNotMatch(visibleText, /Every paid generation asks for confirmation first\./);
+  assert.match(visibleText, /asks for confirmation first, unless you turn it off in Settings/);
+});
