@@ -333,6 +333,25 @@ describe('ClaudeCodeRunner interrupt: review fixes', () => {
     expect(tail).toEqual(['result', 'interrupted', 'text']);
   });
 
+  it('two failing redirect writes after one ack: still a stop (review round 2)', async () => {
+    const r = await scriptedRun(BOTH);
+    r.out(line.text('working'));
+    await tick();
+    const pending = r.handle.interrupt!();
+    await tick();
+    r.out(line.ack(r.lastRequestId()));
+    await expect(pending).resolves.toBe('interrupted');
+    r.out(line.result('error_during_execution'));
+    await tick();
+    r.breakStdin();
+    const a = r.handle.send!({ text: 'one', clientId: 'f1' });
+    const b = r.handle.send!({ text: 'two', clientId: 'f2' });
+    await expect(Promise.all([a, b])).resolves.toEqual(['closed', 'closed']);
+    r.exit(1);
+    r.close(1);
+    await expect(r.handle.done).resolves.toMatchObject({ status: 'cancelled' });
+  });
+
   it('a redirect whose write fails is no redirect: the stopped turn stays a stop', async () => {
     const r = await scriptedRun(BOTH);
     r.out(line.text('working'));

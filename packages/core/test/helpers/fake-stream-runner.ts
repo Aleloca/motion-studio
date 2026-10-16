@@ -141,6 +141,8 @@ export interface ScriptedRun {
   close(code: number): void;
   /** From now on every stdin write fails (EPIPE), as when the pipe breaks. */
   breakStdin(): void;
+  /** Holds the callbacks of the next stdin writes (still written) until the returned function is called. */
+  holdStdinCallbacks(): () => void;
 }
 
 export async function scriptedRun(capabilities: AgentTurnRequest['capabilities'], opts: { onEvent?: (e: AgentEvent, handle: AgentRun) => void; runner?: { interruptTimeoutMs?: number; drainMs?: number; redirectBackstopMs?: number } } = {}): Promise<ScriptedRun> {
@@ -163,6 +165,15 @@ export async function scriptedRun(capabilities: AgentTurnRequest['capabilities']
     lastRequestId: () => stdin().filter((l) => l.type === 'control_request').at(-1)!.request_id!,
     exit: (code) => { child.emit('exit', code, null); },
     close: (code) => { child.stdout.end(); child.stderr.end(); setImmediate(() => child.emit('close', code, null)); },
+    holdStdinCallbacks: () => {
+      const original = child.stdin.write.bind(child.stdin) as (chunk: unknown, cb?: (err?: Error | null) => void) => boolean;
+      const held: Array<() => void> = [];
+      (child.stdin as unknown as { write: unknown }).write = (chunk: unknown, cb?: (err?: Error | null) => void) => original(chunk, (err) => { held.push(() => cb?.(err)); });
+      return () => {
+        (child.stdin as unknown as { write: unknown }).write = original;
+        for (const f of held.splice(0)) f();
+      };
+    },
     breakStdin: () => {
       (child.stdin as unknown as { write: unknown }).write = (_chunk: unknown, cb?: (err?: Error) => void) => { process.nextTick(() => cb?.(new Error('EPIPE'))); return false; };
     },
@@ -173,7 +184,8 @@ export async function scriptedRun(capabilities: AgentTurnRequest['capabilities']
 export const line = {
   text: (text: string) => ({ type: 'assistant', message: { id: `m-${text}`, content: [{ type: 'text', text }] } }),
   result: (subtype: string, text = subtype) => ({ type: 'result', subtype, is_error: subtype !== 'success', session_id: 'scripted', result: text }),
-  ack: (requestId: string) => ({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response: { still_queued: [] } } }),
+  /** `stillQueued` null: the ack does not say. */
+  ack: (requestId: string, stillQueued: unknown[] | null = []) => ({ type: 'control_response', response: { subtype: 'success', request_id: requestId, ...(stillQueued ? { response: { still_queued: stillQueued } } : {}) } }),
 };
 /** Lets pending stream callbacks run (stdin writes, stdout data). */
 export const tick = () => new Promise((r) => setTimeout(r, 20));

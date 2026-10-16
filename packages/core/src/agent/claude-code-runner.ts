@@ -203,8 +203,19 @@ export class ClaudeCodeRunner implements AgentRunner {
      * Decision 804, "read" evidence: the inputs written after the prompt (input 0), in order, with their input number.
      * Input k is read once the k-th result came and the agent produced new output after it (its turn started).
      */
-    const writtenInputs: { clientId: string; input: number }[] = [];
+    const writtenInputs: { clientId: string; input: number; seq: number }[] = [];
     let inputsWritten = 1;
+    /** Order of every line written to stdin (user messages and control requests share it: the pipe keeps that order). */
+    let writeSeq = 0;
+    /** The stdin order of each pending interrupt's control request. */
+    const requestSeq = new Map<string, number>();
+    /** User-message writes whose callback has not come yet. */
+    let sendsInFlight = 0;
+    /**
+     * Fail-safe (runner review round 2): once the count of inputs and results cannot be trusted after an interrupt, no
+     * message of the run is ever marked read again; they all stay "sent".
+     */
+    let readEvidenceOff = false;
     let resultsSeen = 0;
     /** Bumped by each acknowledged interrupt: a write still in flight from before it is not tracked (see onControl). */
     let inputEpoch = 0;
@@ -233,7 +244,7 @@ export class ClaudeCodeRunner implements AgentRunner {
         // The ack came first: this is the stopped turn's result. Otherwise, with an interrupt pending, wait for its answer.
         if (lastResultInterruptedShape && ofInterrupted) out = asInterrupted(e);
         else if (lastResultInterruptedShape && pendingInterrupts.size > 0 && !held) { held = []; heldResult = e; }
-      } else if ((e.kind === 'text' || e.kind === 'tool_use') && writtenInputs.length > 0) {
+      } else if ((e.kind === 'text' || e.kind === 'tool_use') && writtenInputs.length > 0 && !readEvidenceOff) {
         // New output after the k-th result: the turn of input k started, so the CLI took it (and every input before it).
         while (writtenInputs.length > 0 && writtenInputs[0]!.input <= resultsSeen) {
           const read: AgentEvent = { kind: 'user_message_read', clientId: writtenInputs.shift()!.clientId };
@@ -257,9 +268,14 @@ export class ClaudeCodeRunner implements AgentRunner {
         // Unless the stopped turn's result already came (held, released below as interrupted), the next result is that
         // turn's own, also when stdin was closed meanwhile (e.g. by an earlier, unrelated error result).
         if (!heldResult) interruptedResultPending = true;
-        // "Read" evidence after a stop: whether the CLI still runs the inputs written before the interrupt is not
-        // measured (2.1.301 answered `still_queued: []`, whose items' shape is unknown), so they stop being tracked and
-        // stay "sent". Inputs written from now on count from the result after the stopped turn's.
+        // "Read" evidence after a stop. The inputs written before the interrupt are no longer tracked (they stay "sent").
+        // Counting goes on only when it is provably right: the CLI reported `still_queued` EMPTY (only its length is used,
+        // never its items' shape), no tracked input was written after the control request (the CLI reads it after the
+        // stop and may still run it), and no message write is in flight. Then inputs written from now on count from the
+        // result after the stopped turn's. Otherwise "read" is off for the rest of the run.
+        const seq = requestSeq.get(r.requestId) ?? -1;
+        const safe = r.stillQueued === 0 && sendsInFlight === 0 && writtenInputs.every((w) => w.seq < seq);
+        if (!safe) readEvidenceOff = true;
         writtenInputs.length = 0;
         inputEpoch++;
         inputsWritten = heldResult ? resultsSeen : resultsSeen + 1;
@@ -362,25 +378,31 @@ export class ClaudeCodeRunner implements AgentRunner {
         if (!liveInput || !stdinOpen || exited || settled || cancelled) return Promise.resolve('closed' as const);
         // After an acknowledged interrupt this is the core's decision (a redirect): the backstop is off, and the redirect
         // turn's result closes stdin as usual (live sends during that turn are still written).
-        const redirectBefore = redirectWritten;
+        // The decision itself is taken now (no backstop any more); that it is a redirect counts only once the write
+        // succeeded, so a failed write leaves the stopped turn a stop. The ack epoch: a later ack resets redirectWritten.
+        const isRedirect = awaitingDecision || interruptAcked;
+        const ackEpoch = inputEpoch;
         if (awaitingDecision) {
           awaitingDecision = false;
-          redirectWritten = true;
           if (backstopTimer) { clearTimeout(backstopTimer); backstopTimer = undefined; }
-        } else if (interruptAcked) redirectWritten = true;
-        // A write that failed was no redirect: the stopped turn's outcome stays a stop.
-        const failed = () => { stdinOpen = false; redirectWritten = redirectBefore; };
+        }
         return new Promise<'written' | 'closed'>((resolve) => {
+          const input = inputsWritten++;
+          const epoch = inputEpoch;
+          const seq = writeSeq++;
+          sendsInFlight++;
+          let counted = true;
+          const landed = () => { if (counted) { counted = false; sendsInFlight--; } };
           try {
-            const input = inputsWritten++;
-            const epoch = inputEpoch;
             child.stdin.write(userMessageLine(text), (err) => {
-              if (err) { failed(); return resolve('closed'); }
-              if (epoch === inputEpoch) writtenInputs.push({ clientId, input });
+              landed();
+              if (err) { stdinOpen = false; return resolve('closed'); }
+              if (isRedirect && ackEpoch === inputEpoch) redirectWritten = true;
+              if (epoch === inputEpoch) writtenInputs.push({ clientId, input, seq });
               emit({ kind: 'user_message_delivered', clientId });
               resolve('written');
             });
-          } catch { failed(); resolve('closed'); }
+          } catch { landed(); stdinOpen = false; resolve('closed'); }
         });
       },
       interrupt: () => {
@@ -390,11 +412,13 @@ export class ClaudeCodeRunner implements AgentRunner {
           const timer = setTimeout(() => answer('timeout'), this.interruptTimeoutMs);
           const answer = (r: 'interrupted' | 'unsupported' | 'timeout') => {
             if (!pendingInterrupts.delete(requestId)) return;
+            requestSeq.delete(requestId);
             clearTimeout(timer);
             release(r === 'interrupted');
             resolve(r);
           };
           pendingInterrupts.set(requestId, answer);
+          requestSeq.set(requestId, writeSeq++);
           try {
             child.stdin.write(interruptLine(requestId), (err) => { if (err) answer('unsupported'); });
           } catch { answer('unsupported'); }

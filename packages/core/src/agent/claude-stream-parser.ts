@@ -123,7 +123,11 @@ function eventsOf(msg: Json): AgentEvent[] {
 }
 
 /** A `control_response` line: the answer to a control request the runner wrote (Phase 13 interrupt). */
-export interface ControlResponse { requestId: string; ok: boolean; error?: string }
+/**
+ * `stillQueued` (runner review round 2): the LENGTH of `response.response.still_queued` when it is an array (2.1.301
+ * answered `[]` to an interrupt); absent when the CLI did not say. The items' shape is never read (unmeasured).
+ */
+export interface ControlResponse { requestId: string; ok: boolean; error?: string; stillQueued?: number }
 
 /**
  * Reads a `control_response` line. Shape from the public Agent SDK docs (the `{ type: "control_request", request_id,
@@ -138,7 +142,9 @@ export function controlResponseOf(msg: Json): ControlResponse | null {
   const requestId = typeof r.request_id === 'string' ? r.request_id : typeof msg.request_id === 'string' ? msg.request_id : null;
   if (!requestId) return null;
   const ok = r.subtype === 'success';
-  return ok ? { requestId, ok } : { requestId, ok, error: typeof r.error === 'string' ? r.error : String(r.subtype ?? 'error') };
+  const inner = isObj(r.response) ? r.response : null;
+  const stillQueued = inner && Array.isArray(inner.still_queued) ? { stillQueued: inner.still_queued.length } : {};
+  return ok ? { requestId, ok, ...stillQueued } : { requestId, ok, error: typeof r.error === 'string' ? r.error : String(r.subtype ?? 'error'), ...stillQueued };
 }
 
 const sameTokens = (a: TokenCounts, b: TokenCounts) => a.input === b.input && a.output === b.output && a.cacheRead === b.cacheRead && a.cacheWrite === b.cacheWrite;

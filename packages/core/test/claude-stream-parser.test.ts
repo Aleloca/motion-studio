@@ -69,7 +69,10 @@ describe('control_response (Phase 13, shape unverified live)', () => {
     p.parse(JSON.stringify({ type: 'control_response', response: { subtype: 'error', request_id: 'r2', error: 'nope' } }));
     p.parse(JSON.stringify({ type: 'control_response', request_id: 'r3', response: { subtype: 'success' } }));
     p.parse(JSON.stringify({ type: 'control_response', response: { subtype: 'success' } }));
-    expect(seen).toEqual([{ requestId: 'r1', ok: true }, { requestId: 'r2', ok: false, error: 'nope' }, { requestId: 'r3', ok: true }]);
+    p.parse(JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: 'r4', response: { still_queued: ['a', { any: 'shape' }] } } }));
+    p.parse(JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: 'r5', response: { still_queued: 'not a list' } } }));
+    // stillQueued: only the length of an array (2.1.301 answered []); absent when the CLI did not say.
+    expect(seen).toEqual([{ requestId: 'r1', ok: true, stillQueued: 0 }, { requestId: 'r2', ok: false, error: 'nope' }, { requestId: 'r3', ok: true }, { requestId: 'r4', ok: true, stillQueued: 2 }, { requestId: 'r5', ok: true }]);
   });
   it('a throwing listener does not break parsing', () => {
     const p = new ClaudeStreamParser({ onControlResponse: () => { throw new Error('x'); } });

@@ -215,6 +215,52 @@ describe('ClaudeCodeRunner live input: "read" after an interrupt (review fix)', 
   });
 });
 
+describe('ClaudeCodeRunner live input: "read" is off after an unprovable stop (review round 2)', () => {
+  /** Turn 0 running with in1 written, interrupt acked with `stillQueued`, stopped result, redirect in2, then a CLI turn. */
+  const scenario = async (stillQueued: unknown[] | null, opts: { holdIn1?: boolean } = {}) => {
+    const r = await scriptedRun({ liveInput: true, interrupt: true });
+    r.out(line.text('turn 0'));
+    await tick();
+    const releaseIn1 = opts.holdIn1 ? r.holdStdinCallbacks() : null;
+    const in1 = r.handle.send!({ text: 'in1', clientId: 'in1' });
+    if (!releaseIn1) await expect(in1).resolves.toBe('written');
+    const pending = r.handle.interrupt!();
+    await tick();
+    r.out(line.ack(r.lastRequestId(), stillQueued));
+    await expect(pending).resolves.toBe('interrupted');
+    if (releaseIn1) { releaseIn1(); await expect(in1).resolves.toBe('written'); }
+    r.out(line.result('error_during_execution'));
+    await tick();
+    await expect(r.handle.send!({ text: 'in2', clientId: 'in2' })).resolves.toBe('written');
+    // The CLI may run in1's turn first, then in2's.
+    r.out(line.text('next turn'));
+    await tick();
+    r.out(line.result('success', 'one'));
+    await tick();
+    r.out(line.text('another turn'));
+    await tick();
+    r.out(line.result('success', 'two'));
+    await tick();
+    r.exit(0);
+    r.close(0);
+    await expect(r.handle.done).resolves.toMatchObject({ status: 'succeeded' });
+    return r.events.filter((e) => e.kind === 'user_message_read');
+  };
+
+  it('still_queued not empty: no message is ever marked read', async () => {
+    expect(await scenario(['x'])).toEqual([]);
+  });
+  it('still_queued empty (2.1.301) and nothing in flight: the redirect is marked', async () => {
+    expect(await scenario([])).toEqual([{ kind: 'user_message_read', clientId: 'in2' }]);
+  });
+  it('a send whose write callback comes after the ack: no read marks afterwards', async () => {
+    expect(await scenario([], { holdIn1: true })).toEqual([]);
+  });
+  it('an ack that does not say still_queued (unknown): no read marks', async () => {
+    expect(await scenario(null)).toEqual([]);
+  });
+});
+
 describe('ClaudeCodeRunner process group with an open stdin', () => {
   it('cancel kills a child that ignores SIGTERM and the leader that ignores it too: no orphan PIDs', async () => {
     const run = await startFake('child-ignores-term', { capabilities: ON });
