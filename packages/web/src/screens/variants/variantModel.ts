@@ -87,18 +87,15 @@ export type SelectionRow =
   | { format: string; source: 'default'; variant: VariantLetter | null; n: number | null };
 
 /**
- * The summary of the group's final selection, one row per format of the brief. A ★ that points to a member that is gone,
- * discarded or missing (or to a format the brief no longer has) is not shown as a pick: the format falls back to the default
- * rule, which is the host's own ★ (`defaultOf`). Nothing here throws on a stale entry.
+ * The rows of "Selezione finale" (final wave I1): the core's group export plan (`GET …/export-group`), which is the selection
+ * the export copies, one row per format of the brief in its order. Nothing is recomputed here: a format the plan does not
+ * have (nothing to export) is the default rule with no variant.
  */
-export function finalSelection(group: VariantGroup, formats: readonly string[], missing: readonly VariantLetter[], defaultOf: (format: string) => number | null): SelectionRow[] {
-  const active = new Map(activeMembers(group).filter((m) => !missing.includes(m.letter)).map((m) => [m.slug, m.letter] as const));
+export function selectionRows(formats: readonly string[], plan: ReadonlyArray<{ format: string; letter: VariantLetter; version: number; source: 'pick' | 'default' }>): SelectionRow[] {
   return formats.map((format): SelectionRow => {
-    const pick = Object.hasOwn(group.picks, format) ? group.picks[format] : undefined;
-    const letter = pick ? active.get(pick.slug) : undefined;
-    if (pick && letter) return { format, source: 'pick', variant: letter, n: pick.version };
-    const n = defaultOf(format);
-    return { format, source: 'default', variant: n === null ? null : 'a', n };
+    const p = plan.find((x) => x.format === format);
+    if (!p) return { format, source: 'default', variant: null, n: null };
+    return p.source === 'pick' ? { format, source: 'pick', variant: p.letter, n: p.version } : { format, source: 'default', variant: p.letter, n: p.version };
   });
 }
 

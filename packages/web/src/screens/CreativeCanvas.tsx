@@ -8,7 +8,7 @@ import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx
 import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, outputWarningText, shownTotal, packInstancesOf, MAX_VARIANTS, nextLetter, type ConversationEntry, type CreativeDetail, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VariantLetter, type VariantMember, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { api } from '../api.ts';
+import { api, type GroupExportPlanItem } from '../api.ts';
 import { BriefEditor } from '../components/BriefEditor.tsx';
 import { servicesSummary } from '../components/ServicesSelector.tsx';
 import { Conversation } from '../components/Conversation.tsx';
@@ -50,7 +50,7 @@ import { GroupStar } from './variants/GroupStar.tsx';
 import { useVariantMembers } from './variants/useVariantMembers.ts';
 import { VariantRowHeader } from './variants/VariantRowHeader.tsx';
 import type { ChatTarget } from './variants/VariantSelector.tsx';
-import { discardBlock, discardedSelf, finalSelection, fitGrouped, isRunning, memberLive, rowState, shownMembers, upper } from './variants/variantModel.ts';
+import { discardBlock, discardedSelf, fitGrouped, isRunning, memberLive, rowState, selectionRows, shownMembers, upper } from './variants/variantModel.ts';
 import './variants/variants.css';
 
 const ZOOM_MIN = 0.5;
@@ -100,6 +100,18 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   const vdetail = detail?.variants;
   const group = vdetail && !vdetail.orphan ? vdetail : null;
   const members = useVariantMembers(slug, group?.group ?? null, creative, group?.missing ?? [], live.creativeTicks);
+  // "Selezione finale" (final wave I1): the core's group export plan, the selection the export copies. Read again after a
+  // group change made here (`planSeq`) and whenever a member changes (its live tick).
+  const [planSeq, setPlanSeq] = useState(0);
+  const [groupPlan, setGroupPlan] = useState<GroupExportPlanItem[] | null>(null);
+  const planKey = group ? group.group.members.map((m) => `${m.slug}:${live.creativeTicks[`${slug}/${m.slug}`] ?? 0}`).join('|') : '';
+  useEffect(() => {
+    if (!group) { setGroupPlan(null); return; }
+    let alive = true;
+    Promise.resolve().then(() => api.groupExportPlan(slug, creative))
+      .then((r) => { if (alive) setGroupPlan(r.items); }, () => { if (alive) setGroupPlan([]); });
+    return () => { alive = false; };
+  }, [slug, creative, Boolean(group), planKey, planSeq]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // This page owns the creative bar only while it is the route's page (a leaving page stays mounted ~200 ms).
   const ownKey = routeKey({ name: 'creative', slug, creative: routeCreative });
@@ -572,7 +584,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   const vg = t.web.variantGroup;
   const hostSlug = group?.host ?? creative;
   const failToast = (make: (p: { detail: string }) => string) => (e: unknown) => toast.show(make({ detail: message(e) }));
-  const afterGroupChange = () => { reload(); shell?.catalog.refresh(); };
+  const afterGroupChange = () => { reload(); shell?.catalog.refresh(); setPlanSeq((n) => n + 1); };
   const detailOfMember = (sl: string): CreativeDetail | null => (sl === creative ? detail : members[sl] ?? null);
   const pickMember = (memberSlug: string, format: string, n: number | null) => {
     Promise.resolve().then(() => api.setVariantPick(slug, hostSlug, format, n === null ? null : { slug: memberSlug, version: n })).then(afterGroupChange).catch(failToast(vg.pickFailed));
@@ -752,10 +764,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     setAddOpen(false);
     if (added) await api.runVariants(slug, creative, { targets: [added.letter], request: null }).catch(failToast(vg.startFailed));
   };
-  const selectionRows = group ? finalSelection(group.group, cr.brief.formats, group.missing, (f) => {
-    const hd = detailOfMember(hostSlug);
-    return hd ? formatStates(hd, presets)[f]?.star.version ?? null : null;
-  }) : [];
+  const finalRows = group && groupPlan ? selectionRows(cr.brief.formats, groupPlan) : null;
   const variantBar = group ? (
     <div className="ms-vbar" role="toolbar" aria-label={vg.toolbarAria}>
       <span className="ms-vbar-group">
@@ -766,7 +775,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
       </span>
       <span className="ms-cv-safe-toggle ms-vbar-toggle"><Toggle size="sm" on={variantUi.showDiscarded} onChange={(on) => onVariantUi({ showDiscarded: on })} label={vg.showDiscarded} /><span aria-hidden="true">{vg.showDiscarded}</span></span>
       <span className="ms-grow" />
-      <FinalSelection rows={selectionRows} label={formatLabel} />
+      <FinalSelection rows={finalRows} label={formatLabel} />
       <Button size="sm" variant="outline" disabled={!canAdd} title={canAdd ? undefined : vg.addFull} onClick={() => setAddOpen(true)}>{vg.addVariant}</Button>
     </div>
   ) : null;
