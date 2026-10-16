@@ -475,7 +475,11 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
     const entry = entryAt(versions, states[source.format], v);
     if (entry !== null) view(source.format, entry);
   }, [versions, states, source.format, view]);
-  const actions = useVersionActions({ slug, creative, states, labelOf: formatLabel, resumeFrom: detail?.creative.resumeFrom?.version ?? null, onChanged: reload, onError: setActionError });
+  const vdetail = detail?.variants;
+  const group = vdetail && !vdetail.orphan ? vdetail : null;
+  const actions = useVersionActions({ slug, creative, states, labelOf: formatLabel, resumeFrom: detail?.creative.resumeFrom?.version ?? null, onChanged: reload, onError: setActionError,
+    // Phase 15: in a variant group the ★ is the group's (this variant, this version), written through the host.
+    ...(group ? { groupPick: (f: string, n: number | null) => api.setVariantPick(slug, group.host, f, n === null ? null : { slug: creative, version: n }) } : {}) });
   const primaries = (detail?.creative.brief.formats ?? []).filter((f) => states[f] && !states[f]!.follows);
   const appliesTo = useMemo(() => (versions.length && primaries.length > 1 ? {
     primaries: primaries.map((id) => ({ id, label: formatLabel(id), followers: followersOf(states, id).map(formatLabel) })),
@@ -565,8 +569,8 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
             </span>
           ) : state && cr ? (
             <span className="ms-fv-badge">
-              <FormatBadge slug={slug} creative={creative} label={label} state={state} versions={versions} shown={source.n} resumeFrom={cr.resumeFrom?.version ?? null}
-                labelOf={formatLabel} actions={actions} busy={working} onView={(v) => view(format, v)} onCompare={openCompare} />
+              <FormatBadge slug={slug} creative={creative} label={label} state={group ? { ...state, star: { ...state.star, version: group.group.picks[source.format]?.slug === creative ? group.group.picks[source.format]!.version : null, manual: group.group.picks[source.format]?.slug === creative, newer: null } } : state} versions={versions} shown={source.n} resumeFrom={cr.resumeFrom?.version ?? null}
+                labelOf={formatLabel} actions={actions} busy={working} onView={(v) => view(format, v)} onCompare={openCompare} {...(group ? { unstarred: true } : {})} />
             </span>
           ) : null}
           {versions.length && cr ? (

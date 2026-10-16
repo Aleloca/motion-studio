@@ -72,6 +72,11 @@ describe('chat selector', () => {
     expect(within(screen.getByRole('radiogroup', { name: 'Variante' })).getAllByRole('radio').map((r) => r.textContent)).toEqual(['A', 'B', 'Tutte']);
   });
 
+  it('"Tutte" is offered only with two variants that can really work: a missing member does not count', () => {
+    render(panel({ g: groupOf(['a', 'b']), missing: ['b'] }));
+    expect(within(screen.getByRole('radiogroup', { name: 'Variante' })).getAllByRole('radio').map((r) => r.textContent)).toEqual(['A', 'B']);
+  });
+
   it('a click on a letter, or on Tutte, tells the page', async () => {
     const onSelect = vi.fn();
     render(panel({ onSelect }));

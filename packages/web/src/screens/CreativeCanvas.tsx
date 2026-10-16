@@ -20,7 +20,7 @@ import { href, routeKey } from '../routes.ts';
 import { useBarClaim } from '../shell/barSlots.ts';
 import { setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } from '../shell/intents.ts';
 import { go, ShellContext } from '../shell/ShellContext.tsx';
-import { Button, ChannelMark, Empty, Icon, Input, Pill, Segmented, Spinner, Tabs, Tag, Toggle, cx, toast } from '../ui/index.ts';
+import { Button, ChannelMark, Empty, Icon, Input, NavItem, Pill, Popover, Segmented, Spinner, Tabs, Tag, Toggle, cx, toast } from '../ui/index.ts';
 import { useCreative } from '../useCreative.ts';
 import { jobLiveTokens, jobUsagePartial } from '../usageLive.ts';
 import { costText, TokenCount, UsageBadge } from '../shell/Tokens.tsx';
@@ -632,6 +632,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
         badge={b.n === null ? null : (
           <>
             {st[b.id]?.follows ? null : <GroupStar label={formatLabel(b.id)} variant={upper(m.letter)} n={b.n} picked={isPick} onToggle={() => pickMember(m.slug, b.id, isPick ? null : b.n)} />}
+            <button type="button" className="ms-vstar ms-vopen" aria-label={`${vg.openVariant}: ${upper(m.letter)}`} title={vg.openVariant} onClick={(e) => { e.stopPropagation(); focusMember(m); }} onDoubleClick={(e) => e.stopPropagation()}><Icon name="forward" size={13} /></button>
             <span className="ms-vver">v{b.n}</span>
           </>
         )}
@@ -739,6 +740,14 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     setAddOpen(false);
     if (added) await api.runVariants(slug, hostSlug, { targets: [added.letter], request: null }).catch(failToast(vg.startFailed));
   };
+  /** An ungrouped creative becomes variant A of a new group of two (the total count, A's direction left as it is). */
+  const addFirstVariant = async (direction: string | null, baseFrom: { slug: string; version: number } | null) => {
+    const d = await api.addVariants(slug, creative, { count: 2, directions: [null, direction], ...(baseFrom ? { baseFrom } : {}) });
+    const added = d.variants && !d.variants.orphan ? d.variants.group.members.find((m) => m.letter !== 'a') : undefined;
+    afterGroupChange();
+    setAddOpen(false);
+    if (added) await api.runVariants(slug, creative, { targets: [added.letter], request: null }).catch(failToast(vg.startFailed));
+  };
   const selectionRows = group ? finalSelection(group.group, cr.brief.formats, group.missing, (f) => {
     const hd = detailOfMember(hostSlug);
     return hd ? formatStates(hd, presets)[f]?.star.version ?? null : null;
@@ -784,6 +793,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
           <Button variant="ink" className="ms-cv-export" disabled={!version} onClick={() => { if (version) setExporting({ open: true, snapshot: { versions, states } }); }}>
             <Icon name="download" size={13} strokeWidth={1.7} />{c.export}
           </Button>
+          {!group && !vdetail ? <CreativeMenu onAddVariant={() => setAddOpen(true)} /> : null}
         </>,
         bar.end,
       ) : null}
@@ -894,6 +904,10 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
         </div>
       </aside>
 
+      {!group && !vdetail && addOpen ? (
+        <AddVariantDialog open onClose={() => setAddOpen(false)} onAdd={addFirstVariant}
+          bases={latest ? [{ letter: 'a', slug: creative, version: latest.n }] : []} />
+      ) : null}
       {group ? (
         <>
           <AddVariantDialog open={addOpen} onClose={() => setAddOpen(false)} bases={baseChoices} onAdd={addVariant} />
@@ -929,6 +943,25 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
           rowsOf={(n) => versions.find((v) => v.n === n)?.localizations ?? []} labelOf={formatLabel} />
       ) : null}
     </div>
+  );
+}
+
+/** Phase 15: the menu of a creative that has no variants yet: the only way to start its group from the canvas. */
+function CreativeMenu({ onAddVariant }: { onAddVariant(): void }) {
+  const vg = useT().web.variantGroup;
+  const [open, setOpen] = useState(false);
+  const more = useRef<HTMLButtonElement>(null);
+  return (
+    <>
+      <Button ref={more} variant="outline" icon className="ms-cv-more" aria-label={vg.creativeMenu} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <Icon name="more" size={14} />
+      </Button>
+      <Popover open={open} onClose={() => setOpen(false)} anchor={more} placement="bottom-end" width={220}>
+        <div role="menu" aria-label={vg.creativeMenu}>
+          <NavItem data-row="" role="menuitem" icon="plus" onClick={() => { setOpen(false); onAddVariant(); }}>{vg.addVariant}</NavItem>
+        </div>
+      </Popover>
+    </>
   );
 }
 

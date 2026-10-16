@@ -292,6 +292,75 @@ describe('variant canvas · discard and restore', () => {
   });
 });
 
+describe('variant canvas · every board, whichever variant is open', () => {
+  it('the ★ of a board of variant C works while A is open: the group pick is C\'s slug and version', async () => {
+    render(<Harness live={emptyLive()} />);
+    const open = await loaded();
+    expect(open.querySelector('[aria-pressed="true"].ms-vrow-title')).toBeTruthy();
+    const row = await region('Variante C');
+    const star = await within(row).findByRole('button', { name: /Post 1:1 v1 della variante C per l'esportazione/ });
+    expect((star as HTMLButtonElement).disabled).toBe(false);
+    await userEvent.click(star);
+    await waitFor(() => expect(api.setVariantPick).toHaveBeenCalledWith('acme', HOST, 'instagram-post-1x1', { slug: `${HOST}~c`, version: 1 }));
+    // The same for the other format, and A is still the open variant (no switch happened).
+    await userEvent.click(within(row).getByRole('button', { name: /Video 9:16 v1 della variante C per l'esportazione/ }));
+    await waitFor(() => expect(api.setVariantPick).toHaveBeenCalledWith('acme', HOST, 'tiktok-9x16', { slug: `${HOST}~c`, version: 1 }));
+    expect(screen.getByRole('radio', { name: 'A' }).getAttribute('aria-checked')).toBe('true');
+    expect(api.getConversation).not.toHaveBeenCalledWith('acme', `${HOST}~c`);
+  });
+
+  it('"Apri questa variante" on a board of another variant opens that variant in one click', async () => {
+    render(<Harness live={emptyLive()} />);
+    await loaded();
+    const row = await region('Variante C');
+    await userEvent.click(within(row).getAllByRole('button', { name: /^Apri questa variante: C$/ })[0]!);
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'C' }).getAttribute('aria-checked')).toBe('true'));
+    expect(api.getConversation).toHaveBeenCalledWith('acme', `${HOST}~c`);
+  });
+
+  it('is in English', async () => {
+    render(<Harness live={emptyLive()} locale="en" />);
+    const row = await screen.findByRole('region', { name: 'Variant C' });
+    expect((await within(row).findAllByRole('button', { name: 'Open this variant: C' })).length).toBe(2);
+  });
+});
+
+describe('variant canvas · a creative with no variants yet', () => {
+  it('its menu has one "+ Variante": the group is made with the total count and the new variant starts', async () => {
+    group = null;
+    api.addVariants.mockImplementationOnce(async () => { group = groupOf(['a', 'b']); return build(HOST); });
+    render(<Harness live={emptyLive()} />);
+    await screen.findByRole('img', { name: /Post 1:1 v1/ });
+    await userEvent.click(screen.getByRole('button', { name: 'Altro' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: '+ Variante' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Aggiungi una variante' });
+    await userEvent.type(within(dialog).getByLabelText('Direzione (facoltativa)'), 'Tipografica');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Aggiungi variante' }));
+    await waitFor(() => expect(api.addVariants).toHaveBeenCalledWith('acme', HOST, { count: 2, directions: [null, 'Tipografica'] }));
+    await waitFor(() => expect(api.runVariants).toHaveBeenCalledWith('acme', HOST, { targets: ['b'], request: null }));
+  });
+
+  it('can start from its own latest version', async () => {
+    group = null;
+    api.addVariants.mockImplementationOnce(async () => { group = groupOf(['a', 'b']); return build(HOST); });
+    render(<Harness live={emptyLive()} />);
+    await screen.findByRole('img', { name: /Post 1:1 v1/ });
+    await userEvent.click(screen.getByRole('button', { name: 'Altro' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: '+ Variante' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Aggiungi una variante' });
+    await userEvent.click(within(dialog).getByRole('button', { name: /Parti da/ }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Variante A, versione 1' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Aggiungi variante' }));
+    await waitFor(() => expect(api.addVariants).toHaveBeenCalledWith('acme', HOST, { count: 2, directions: [null, null], baseFrom: { slug: HOST, version: 1 } }));
+  });
+
+  it('a group has no such menu (it has "+ Variante" in its bar)', async () => {
+    render(<Harness live={emptyLive()} />);
+    await loaded();
+    expect(screen.queryByRole('button', { name: 'Altro' })).toBeNull();
+  });
+});
+
 describe('variant canvas · ⋯ menu', () => {
   it('"Modifica direzione" saves the direction of that variant', async () => {
     render(<Harness live={emptyLive()} />);
@@ -313,7 +382,9 @@ describe('variant canvas · ⋯ menu', () => {
     await userEvent.click(within(row).getByRole('button', { name: 'Opzioni della variante B' }));
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Esporta questa variante' }));
     const dialog = await screen.findByRole('dialog', { name: /Esporta|Export/ });
-    expect(dialog).toBeTruthy();
+    // It is THAT variant's export: B's newest version (v2), where A has only v1.
+    await waitFor(() => expect(within(dialog).getAllByText('lancio-estivo-instagram-post-1x1-v2.png')[0]).toBeTruthy());
+    expect(within(dialog).queryByText(/-v1\.png$/)).toBeNull();
   });
 });
 

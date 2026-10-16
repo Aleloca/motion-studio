@@ -36,7 +36,8 @@ const { TopBar } = await import('../src/shell/TopBars.tsx');
 const { ShellContext } = await import('../src/shell/ShellContext.tsx');
 const { I18nProvider } = await import('../src/i18n.tsx');
 
-const norm = (html: string) => html.replace(/:r[0-9a-z]+:|_r_[0-9a-z]+_/g, 'ID');
+// Generated ids are normalised, and so is the text of a <time> (it is the local time of the machine: the test must not depend on its zone).
+const norm = (html: string) => html.replace(/:r[0-9a-z]+:|_r_[0-9a-z]+_/g, 'ID').replace(/(<time\b[^>]*>)[^<]*(<\/time>)/g, '$1TIME$2');
 const live = (jobs: JobSummary[] = []): EventsState => ({ approvals: {}, jobs: Object.fromEntries(jobs.map((j) => [j.id, j])), events: {}, creativeTicks: {}, projectTicks: {} } as unknown as EventsState);
 const running: JobSummary = { id: 'j1', key: 'creative:/w:acme:lancio', kind: 'creative', label: 'Lancio', state: 'running', createdAt: at };
 const golden = (name: string) => readFileSync(join(import.meta.dirname, 'fixtures', `ungrouped-canvas.${name}.html`), 'utf8');

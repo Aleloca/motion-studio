@@ -21,9 +21,11 @@ export interface VariantSelectorProps {
 export function VariantSelector({ group, current, all, missing = [], onSelect }: VariantSelectorProps) {
   const vg = useT().web.variantGroup;
   const active = group.members.filter((m) => m.status === 'active');
+  // "Tutte" needs two variants that can really work: a member whose folder is missing does not count.
+  const working = active.filter((m) => !missing.includes(m.letter));
   const options = [
     ...active.map((m) => ({ value: m.letter as ChatTarget, label: upper(m.letter), disabled: missing.includes(m.letter), ...(missing.includes(m.letter) ? { title: vg.missingFolder } : {}) })),
-    ...(active.length > 1 ? [{ value: 'all' as ChatTarget, label: vg.selectorAll, title: vg.allHint }] : []),
+    ...(working.length > 1 ? [{ value: 'all' as ChatTarget, label: vg.selectorAll, title: vg.allHint }] : []),
   ];
   return (
     <div className="ms-vsel" data-variant-selector>
