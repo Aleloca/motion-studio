@@ -1,4 +1,4 @@
-// The draft pill at the top of the stage (Phase 10b): "● Draft · N edits", Save as vN and Discard (with a confirmation).
+// The draft pill in the stage's tools row (Phase 10b): "● Draft · N edits", Save as vN and Discard (with a confirmation).
 // After a save: "✓ Saved as Reel vN" for 1.8 s. Save is disabled with the reason as its description: the first problem of
 // the draft, a base that moved, or an agent / render at work.
 import { useLayoutEffect, useRef, useState } from 'react';
@@ -28,7 +28,7 @@ export function DraftPill({ edits, nextN, blocked, saving, saved, onSave, onDisc
   const [asking, setAsking] = useState(false);
   useLayoutEffect(() => { void enter(ref.current, { y: -10 }); }, []);
   useLayoutEffect(() => {
-    if (saved && ref.current) void anim(ref.current, [{ transform: 'translateX(-50%) scale(1.04)' }, { transform: 'translateX(-50%) scale(1)' }], D.m, E.spring);
+    if (saved && ref.current) void anim(ref.current, [{ transform: 'scale(1.04)' }, { transform: 'scale(1)' }], D.m, E.spring);
   }, [saved]);
   return (
     <div ref={ref} className="ms-ed-pill" role="group" aria-label={e.draft({ n: edits })} data-saved={saved ? '' : undefined}>

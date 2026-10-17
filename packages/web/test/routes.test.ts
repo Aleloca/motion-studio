@@ -23,7 +23,8 @@ describe('variant sisters (Phase 15)', () => {
   it('a sister\'s slug (`<name>~b` to `~e`) opens as a creative, its formats and its editor too', () => {
     expect(parseRoute('#/p/acme/c/lancio~b')).toEqual({ name: 'creative', slug: 'acme', creative: 'lancio~b' });
     expect(parseRoute(href.format('acme', 'lancio~e', 'instagram-post-1x1'))).toEqual({ name: 'format', slug: 'acme', creative: 'lancio~e', format: 'instagram-post-1x1' });
-    expect(parseRoute(href.edit('acme', 'lancio~c', 'tiktok-9x16'))).toEqual({ name: 'edit', slug: 'acme', creative: 'lancio~c', format: 'tiktok-9x16' });
+    // The old editor address of a sister opens its format (one screen, decision 916).
+    expect(parseRoute('#/p/acme/c/lancio~c/f/tiktok-9x16/edit')).toEqual({ name: 'format', slug: 'acme', creative: 'lancio~c', format: 'tiktok-9x16' });
   });
   it('`~a`, `~f` and a tilde anywhere else are not creatives, and a project slug never has one', () => {
     for (const h of ['#/p/acme/c/lancio~a', '#/p/acme/c/lancio~f', '#/p/acme/c/lan~cio', '#/p/acme/c/lancio~bb', '#/p/ac~b/c/lancio']) expect(parseRoute(h).name, h).not.toBe('creative');
@@ -38,6 +39,12 @@ describe('project tabs', () => {
     expect(redirectOf('#/p/acme/console')).toBe('#/p/acme');
     expect(redirectOf('#/p/acme')).toBeNull();
     expect(redirectOf('#/p/acme/brand')).toBeNull();
+  });
+  it('redirects the old editor address to the format, which is the editor now (decision 916)', () => {
+    expect(redirectOf('#/p/acme/c/lancio/f/tiktok-9x16/edit')).toBe('#/p/acme/c/lancio/f/tiktok-9x16');
+    expect(redirectOf('#/p/acme/c/lancio~b/f/instagram-post-1x1%402/edit')).toBe('#/p/acme/c/lancio~b/f/instagram-post-1x1%402');
+    expect(redirectOf('#/p/acme/c/lancio/f/tiktok-9x16')).toBeNull();
+    expect(redirectOf('#/p/acme/c/lancio/f/../edit')).toBeNull();
   });
   it('unknown tabs fall back to projects', () => {
     expect(parseRoute('#/p/acme/nope')).toEqual({ name: 'projects' });
@@ -57,7 +64,7 @@ describe('Phase 7 routes', () => {
     ['#/settings/usage', { name: 'settings', section: 'usage' }],
     ['#/settings/billing', { name: 'projects' }],
     ['#/p/acme/c/lancio/f/instagram-reel-9x16', { name: 'format', slug: 'acme', creative: 'lancio', format: 'instagram-reel-9x16' }],
-    ['#/p/acme/c/lancio/f/instagram-reel-9x16/edit', { name: 'edit', slug: 'acme', creative: 'lancio', format: 'instagram-reel-9x16' }],
+    ['#/p/acme/c/lancio/f/instagram-reel-9x16/edit', { name: 'format', slug: 'acme', creative: 'lancio', format: 'instagram-reel-9x16' }],
     ['#/p/acme/c/lancio/f/', { name: 'projects' }],
     ['#/p/acme/c/lancio/f/../x', { name: 'projects' }],
   ])('%s', (hash, route) => { expect(parseRoute(hash)).toEqual(route); });
@@ -71,8 +78,7 @@ describe('Phase 7 routes', () => {
     expect(href.settings()).toBe('#/settings/general');
     expect(href.format('acme', 'c-1', 'tiktok-9x16')).toBe('#/p/acme/c/c-1/f/tiktok-9x16');
     expect(parseRoute(href.format('acme', 'c-1', 'tiktok-9x16'))).toEqual({ name: 'format', slug: 'acme', creative: 'c-1', format: 'tiktok-9x16' });
-    expect(href.edit('acme', 'c-1', 'tiktok-9x16')).toBe('#/p/acme/c/c-1/f/tiktok-9x16/edit');
-    expect(parseRoute(href.edit('acme', 'c-1', 'tiktok-9x16'))).toEqual({ name: 'edit', slug: 'acme', creative: 'c-1', format: 'tiktok-9x16' });
+    expect('edit' in href).toBe(false);
   });
 
   it('orders pages by depth (drives the T1 direction)', () => {

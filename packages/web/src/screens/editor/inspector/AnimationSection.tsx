@@ -1,8 +1,11 @@
 // The IN and OUT animations of a clip: a preset and its duration. A slot holding a custom animation (a tween or keyframes
-// the agent wrote) is shown as such and left alone: only the agent changes it.
+// the agent wrote) is shown as such and left alone: only the agent changes it, and "Ask the agent" puts a reference to it in
+// the chat (user test item 10: a comment chip on the clip about that animation, through the editor's `askAnimation`).
 import { ANIMATION_PRESETS, type AnimationPreset, type Clip } from '@motion-studio/shared';
 import { useT } from '../../../i18n.tsx';
-import { NumberField, Select } from '../../../ui/index.ts';
+import { Button, Icon, NumberField, Select } from '../../../ui/index.ts';
+import { useEditor } from '../editorContext.ts';
+import { clipLabel } from '../LayersPanel.tsx';
 import { Row, Section, type Ctl } from './common.tsx';
 
 type Anim = NonNullable<Extract<Clip, { animations?: unknown }>['animations']>[number];
@@ -20,6 +23,7 @@ export function slotOf(clip: Exclude<Clip, { type: 'audio' }>, slot: 'in' | 'out
 
 export function AnimationSection({ ctl }: { ctl: Ctl }) {
   const e = useT().web.editor;
+  const { draft, askAnimation } = useEditor();
   const clip = ctl.clip as Exclude<Clip, { type: 'audio' }>;
   const names: Record<AnimationPreset, string> = {
     fadeIn: e.presetFadeIn, fadeOut: e.presetFadeOut, slideUp: e.presetSlideUp, slideDown: e.presetSlideDown, slideLeft: e.presetSlideLeft,
@@ -35,7 +39,18 @@ export function AnimationSection({ ctl }: { ctl: Ctl }) {
         const { preset, custom } = slotOf(clip, slot);
         const field = `anim-${slot}`;
         if (custom) {
-          return <Row key={slot} ctl={ctl} field={field}><div className="ms-insp-slot"><b>{label}</b><p className="ms-insp-note">{e.animCustom}</p></div></Row>;
+          return (
+            <Row key={slot} ctl={ctl} field={field}>
+              <div className="ms-insp-slot">
+                <b>{label}</b>
+                <p className="ms-insp-note">{e.animCustom}</p>
+                {askAnimation ? (
+                  <Button size="sm" variant="outline" className="ms-insp-ask" title={e.animAskTip({ slot: label.toLowerCase(), name: clipLabel(clip, draft.composition, e) })}
+                    onClick={() => askAnimation(clip.id, slot)}><Icon name="comment" size={13} />{e.animAsk}</Button>
+                ) : null}
+              </div>
+            </Row>
+          );
         }
         return (
           <Row key={slot} ctl={ctl} field={field}>

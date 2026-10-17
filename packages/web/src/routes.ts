@@ -11,8 +11,7 @@ export type Route =
   | { name: 'project'; slug: string; tab: ProjectTab }
   | { name: 'new-creative'; slug: string }
   | { name: 'creative'; slug: string; creative: string }
-  | { name: 'format'; slug: string; creative: string; format: string }
-  | { name: 'edit'; slug: string; creative: string; format: string };
+  | { name: 'format'; slug: string; creative: string; format: string };
 
 const SLUG = '[a-z0-9][a-z0-9-]*';
 /** A creative segment: a slug, or a variant sister's `<slug>~b`…`~e` (Phase 15; `~` is reserved for sisters). */
@@ -22,10 +21,18 @@ const FORMAT_SEG = '[a-z0-9][a-z0-9-]{0,62}(?:(?:@|%40)(?:[2-9]|1[0-9]|20))?';
 /** The old project "Agent console" tab: its technical events now live in the conversation's Activity details. */
 const LEGACY_CONSOLE = new RegExp(`^#/p/(${SLUG})/console$`);
 
-/** An old link that now lives elsewhere: the hash to show instead (the console opens the project's creatives). */
+/** The old address of a format's editor: the format page is the editor now (one screen, decision 916). */
+const LEGACY_EDIT = new RegExp(`^(#/p/${SLUG}/c/${CSLUG}/f/${FORMAT_SEG})/edit$`);
+
+/**
+ * An old link that now lives elsewhere: the hash to show instead (the console opens the project's creatives, a format's
+ * editor opens its format).
+ */
 export function redirectOf(hash: string): string | null {
   const m = hash.match(LEGACY_CONSOLE);
-  return m ? `#/p/${m[1]}` : null;
+  if (m) return `#/p/${m[1]}`;
+  const e = hash.match(LEGACY_EDIT);
+  return e ? e[1]! : null;
 }
 
 export function parseRoute(hash: string): Route {
@@ -38,9 +45,8 @@ export function parseRoute(hash: string): Route {
   if (hash === '#/welcome') return { name: 'welcome' };
   m = hash.match(/^#\/welcome\/([123])$/);
   if (m) return { name: 'welcome', step: Number(m[1]) as WelcomeStep };
-  m = hash.match(new RegExp(`^#/p/(${SLUG})/c/(${CSLUG})/f/(${FORMAT_SEG})/edit$`));
-  if (m) return { name: 'edit', slug: m[1]!, creative: m[2]!, format: formatOfSeg(m[3]!) };
-  m = hash.match(new RegExp(`^#/p/(${SLUG})/c/(${CSLUG})/f/(${FORMAT_SEG})$`));
+  // The old editor address (redirected by `redirectOf`) is the format page too.
+  m = hash.match(new RegExp(`^#/p/(${SLUG})/c/(${CSLUG})/f/(${FORMAT_SEG})(?:/edit)?$`));
   if (m) return { name: 'format', slug: m[1]!, creative: m[2]!, format: formatOfSeg(m[3]!) };
   m = hash.match(new RegExp(`^#/p/(${SLUG})/c/(${CSLUG})$`));
   if (m) return { name: 'creative', slug: m[1]!, creative: m[2]! };
@@ -67,9 +73,8 @@ export const href = {
   project: (slug: string, tab: ProjectTab = 'creatives') => (tab === 'creatives' ? `#/p/${slug}` : `#/p/${slug}/${tab}`),
   newCreative: (slug: string) => `#/p/${slug}/new`,
   creative: (slug: string, c: string) => `#/p/${slug}/c/${c}`,
+  /** A format's page: the direct editor (one screen with the chat, versions, render and export; decision 916). */
   format: (slug: string, c: string, format: string) => `#/p/${slug}/c/${c}/f/${format}`,
-  /** The direct editor of a format (Phase 10b). */
-  edit: (slug: string, c: string, format: string) => `#/p/${slug}/c/${c}/f/${format}/edit`,
 };
 
 /** Route depth: drives the direction of the page transition (T1): deeper slides in from the right. */
@@ -80,7 +85,6 @@ export function depthOf(r: Route): number {
     case 'settings': case 'project': return 2;
     case 'new-creative': case 'creative': return 3;
     case 'format': return 4;
-    case 'edit': return 5;
   }
 }
 
@@ -92,11 +96,10 @@ export function routeKey(r: Route): string {
     case 'new-creative': return `new:${r.slug}`;
     case 'creative': return `creative:${r.slug}/${r.creative}`;
     case 'format': return `format:${r.slug}/${r.creative}/${r.format}`;
-    case 'edit': return `edit:${r.slug}/${r.creative}/${r.format}`;
   }
 }
 
 /** The project a route belongs to, if any. */
 export function projectOf(r: Route): string | null {
-  return r.name === 'project' || r.name === 'new-creative' || r.name === 'creative' || r.name === 'format' || r.name === 'edit' ? r.slug : null;
+  return r.name === 'project' || r.name === 'new-creative' || r.name === 'creative' || r.name === 'format' ? r.slug : null;
 }

@@ -120,7 +120,7 @@ const emptyLive = (): EventsState => ({ approvals: {}, jobs: {}, events: {}, cre
 let live = emptyLive();
 
 function Harness({ format = REEL }: { format?: string }) {
-  const route: Route = { name: 'edit', slug: 'acme', creative: 'lancio', format };
+  const route: Route = { name: 'format', slug: 'acme', creative: 'lancio', format };
   const shell = {
     route, live,
     catalog: { projects: [{ slug: 'acme', name: 'Acme' }], creatives: {}, refresh: () => {} },
@@ -177,7 +177,7 @@ beforeEach(() => {
   media.applied = null;
   detail = makeDetail([v2(1), v2(2)]);
   live = emptyLive();
-  location.hash = `#/p/acme/c/lancio/f/${REEL}/edit`;
+  location.hash = `#/p/acme/c/lancio/f/${REEL}`;
 });
 afterEach(() => { vi.useRealTimers(); });
 
@@ -189,16 +189,19 @@ describe('EditorScreen · shell', () => {
     expect(api.previewSession).toHaveBeenCalledWith('acme', 'lancio', 2, REEL, location.origin);
     expect(screen.getByRole('complementary', { name: 'Scenes' })).toBeTruthy();
     expect(screen.getByRole('region', { name: 'Timeline' })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'Inspector' }).getAttribute('aria-selected')).toBe('true');
-    expect(screen.getByRole('tab', { name: 'Chat' })).toBeTruthy();
+    // One screen (decision 916): the chat is the default tab, the inspector is next to it.
+    expect(screen.getByRole('tab', { name: 'Chat' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: 'Inspector' })).toBeTruthy();
     expect(screen.queryByText(/Draft ·/)).toBeNull();
     // Nothing is sent to the player until there is a draft to show.
     expect(media.setComposition).not.toHaveBeenCalled();
-    // The bar: the format, the facts of the composition, the version.
+    // The bar: the format, the facts of the composition, the ★ badge of the version, and the way back to the canvas.
     const bar = document.querySelector('.ms-topbar') as HTMLElement;
     expect(within(bar).getByText('1080×1920 · 6 s · 30 fps')).toBeTruthy();
-    expect(within(bar).getByText('v2')).toBeTruthy();
-    expect(within(bar).getByRole('button', { name: 'Back to the preview' })).toBeTruthy();
+    expect(within(bar).getByRole('button', { name: /v2 is used for export/ }).textContent).toContain('v2');
+    expect(within(bar).getByRole('button', { name: 'All formats' })).toBeTruthy();
+    // No "Edit" button: the page is the editor.
+    expect(within(bar).queryByRole('button', { name: /directly$/ })).toBeNull();
   });
 
   it('the stage and the scenes column are wired: the selection reaches the runtime, the magnet is shared and not saved', async () => {
@@ -217,6 +220,10 @@ describe('EditorScreen · shell', () => {
     await userEvent.click(within(screen.getByRole('region', { name: 'In this scene' })).getByRole('button', { name: 'title' }));
     expect(media.select).toHaveBeenLastCalledWith('title');
     expect(probe.ctx?.selection).toBe('title');
+    // ...and shows it (user test item 8): the playhead goes to its start when it is outside the clip.
+    expect(media.currentTime).toBeCloseTo(0.2, 5);
+    await userEvent.click(within(screen.getByRole('region', { name: 'In this scene' })).getByRole('button', { name: 'card' }));
+    expect(media.currentTime).toBeCloseTo(0.2, 5);
   });
 
   it('the real timeline fills the slot: play, frame step and a clip bar work against the editor context', async () => {
@@ -251,10 +258,14 @@ describe('EditorScreen · shell', () => {
     expect(document.querySelector('.ms-ed-image')).not.toBeNull();
   });
 
-  it('a legacy version has no editor: it says so and offers the way back', async () => {
+  it('a legacy version (no composition) shows the viewer in the same page, without an Edit button', async () => {
     detail = makeDetail([legacy(1)]);
     render(<Harness />);
-    expect(await screen.findByText(/no composition to edit/)).toBeTruthy();
+    await waitFor(() => expect(document.querySelector('.ms-fv')).not.toBeNull());
+    expect(document.querySelector('.ms-ed')).toBeNull();
+    const bar = document.querySelector('.ms-topbar') as HTMLElement;
+    await waitFor(() => expect(within(bar).getByRole('button', { name: 'All formats' })).toBeTruthy());
+    expect(within(bar).queryByRole('button', { name: /directly$/ })).toBeNull();
     expect(api.getEditorComposition).not.toHaveBeenCalled();
   });
 
@@ -265,7 +276,8 @@ describe('EditorScreen · shell', () => {
     expect(api.getEditorComposition).toHaveBeenCalledWith('acme', 'lancio', 1, REEL);
     const note = await screen.findByText(/^Editing .* · also used by /);
     expect(note.textContent).toContain('TikTok');
-    expect(screen.getAllByText(/Also used by .*TikTok/).length).toBeGreaterThan(0);
+    // The bar has the follower's chip (what it follows, Unlink), as the format view had.
+    expect((document.querySelector('.ms-topbar .ms-fv-follows') as HTMLElement).textContent).toMatch(/Reel/);
     // The draft belongs to the primary.
     expect(peekDraft(draftKey('acme', 'lancio', REEL))).not.toBeNull();
   });
@@ -377,7 +389,9 @@ describe('EditorScreen · save', () => {
     expect(await screen.findByText(/^✓ Saved as .* v3$/)).toBeTruthy();
     // The editor reopens on the new version and the draft is gone.
     await waitFor(() => expect(api.getEditorComposition).toHaveBeenCalledWith('acme', 'lancio', 3, REEL));
-    await waitFor(() => expect(within(document.querySelector('.ms-topbar') as HTMLElement).getByText('v3')).toBeTruthy());
+    await waitFor(() => expect(within(document.querySelector('.ms-topbar') as HTMLElement).getByRole('button', { name: /v3 is used for export/ })).toBeTruthy());
+    // Still the editor (the new version is the editable one), not a read-only view.
+    expect(document.querySelector('.ms-ed-readonly')).toBeNull();
     expect(peekDraft(KEY)!.ops).toHaveLength(0);
     // ...and the confirmation goes after 1.8 s.
     expect(SAVED_MS).toBe(1800);
@@ -577,6 +591,8 @@ describe('EditorScreen · leave guard', () => {
     await opened();
     expect(leaveRefused(OTHER)).toBe(false);
     store().apply(move(1));
+    expect(leaveRefused(`#/p/acme/c/lancio/f/${REEL}`)).toBe(false);
+    // The old editor address is the same page.
     expect(leaveRefused(`#/p/acme/c/lancio/f/${REEL}/edit`)).toBe(false);
   });
 
@@ -620,11 +636,11 @@ describe('EditorScreen · leave guard', () => {
     await waitFor(() => expect(location.hash).toBe(OTHER));
   });
 
-  it('the back button goes through the same guard', async () => {
+  it('the back button ("All formats") goes through the same guard', async () => {
     await dirty();
-    await userEvent.click(within(document.querySelector('.ms-topbar') as HTMLElement).getByRole('button', { name: 'Back to the preview' }));
+    await userEvent.click(within(document.querySelector('.ms-topbar') as HTMLElement).getByRole('button', { name: 'All formats' }));
     // The router (App) would refuse the hash change and ask; here the move happened: ask as the router does.
-    expect(location.hash).toBe(`#/p/acme/c/lancio/f/${REEL}`);
+    expect(location.hash).toBe('#/p/acme/c/lancio');
     act(() => { leaveRefused(location.hash); });
     expect(await screen.findByRole('dialog', { name: 'Save your edits first?' })).toBeTruthy();
   });
@@ -664,17 +680,19 @@ describe('the router asks the guard (App useHashRoute)', () => {
     return <output data-testid="hash">{hash}</output>;
   }
   it('a refused move puts the address back and does not change the page; an allowed one does', async () => {
+    // The old editor address is the format's page now (decision 916): it is replaced in place.
     location.hash = '#/p/acme/c/lancio/f/a/edit';
     const asked: string[] = [];
     const { registerLeaveGuard } = await import('../src/screens/editor/leaveGuard.ts');
     let blocking = true;
     const off = registerLeaveGuard({ blocks: () => blocking, ask: (h) => { asked.push(h); } });
     render(<Router />);
-    expect(screen.getByTestId('hash').textContent).toBe('#/p/acme/c/lancio/f/a/edit');
+    expect(screen.getByTestId('hash').textContent).toBe('#/p/acme/c/lancio/f/a');
+    expect(location.hash).toBe('#/p/acme/c/lancio/f/a');
     act(() => { location.hash = '#/settings'; window.dispatchEvent(new HashChangeEvent('hashchange')); });
     expect(asked).toEqual(['#/settings']);
-    expect(screen.getByTestId('hash').textContent).toBe('#/p/acme/c/lancio/f/a/edit');
-    expect(location.hash).toBe('#/p/acme/c/lancio/f/a/edit');
+    expect(screen.getByTestId('hash').textContent).toBe('#/p/acme/c/lancio/f/a');
+    expect(location.hash).toBe('#/p/acme/c/lancio/f/a');
     blocking = false;
     act(() => { location.hash = '#/settings'; window.dispatchEvent(new HashChangeEvent('hashchange')); });
     expect(screen.getByTestId('hash').textContent).toBe('#/settings');
@@ -1006,5 +1024,157 @@ describe('EditorScreen · staging and session renewal', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Save as v3' }));
     await waitFor(() => expect(api.saveEdits).toHaveBeenCalled());
     expect(api.saveEdits.mock.calls[0]![2]).toMatchObject({ token: 'tok-b', staged: [asset.path] });
+  });
+});
+
+// One screen (decision 916): the format's page is the editor, with what the format view had and its read-only cases.
+describe('EditorScreen · one screen with the format view (decision 916)', () => {
+  const badge = async (n: number) => within(document.querySelector('.ms-topbar') as HTMLElement).findByRole('button', { name: new RegExp(`v${n} is used for export`) });
+  const viewRow = async (n: number) => {
+    await userEvent.click(await badge(2));
+    await userEvent.click(await screen.findByRole('button', { name: new RegExp(`^View v${n} ·`) }));
+  };
+
+  it('the bar has the Versions timeline, the render status, Duplicate and Export; the chat is next to the inspector', async () => {
+    render(<Harness />);
+    await opened();
+    const bar = document.querySelector('.ms-topbar') as HTMLElement;
+    await waitFor(() => expect(bar.querySelector('.ms-cv-vbtn')).not.toBeNull());
+    expect(bar.querySelector('.ms-fv-render')).not.toBeNull();
+    expect(within(bar).getByRole('button', { name: 'Duplicate format' })).toBeTruthy();
+    expect(bar.querySelector('.ms-cv-export')).not.toBeNull();
+    // Chat first; selecting a clip shows its inspector.
+    expect(screen.getByLabelText('Request a change')).toBeTruthy();
+    await userEvent.click(within(screen.getByRole('region', { name: 'In this scene' })).getByRole('button', { name: 'title' }));
+    expect(screen.getByRole('tab', { name: 'Inspector' }).getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('an older version from the ★ badge opens read-only with the reason; "Edit v2" goes back to the draft, kept', async () => {
+    render(<Harness />);
+    await opened();
+    store().apply(move(111));
+    await screen.findByText('Draft · 1 edit');
+    await viewRow(1);
+    await waitFor(() => expect(api.getEditorComposition).toHaveBeenCalledWith('acme', 'lancio', 1, REEL));
+    const note = await screen.findByText(/You are looking at v1, an earlier version: only the latest one \(v2\) can be edited/);
+    expect(note).toBeTruthy();
+    // The editable draft is kept as it was; the older version has its own draft.
+    expect(peekDraft(KEY)!.ops).toHaveLength(1);
+    await waitFor(() => expect(peekDraft(`${KEY}#v1`)).not.toBeNull());
+    // Edits are refused at the source, the inspector says why and its fields are disabled.
+    const ctx = probe.ctx as unknown as { readOnly: string | null; actions: { apply(op: unknown): { ok: boolean } } };
+    await waitFor(() => expect((probe.ctx as unknown as { readOnly: string | null }).readOnly).toMatch(/v1/));
+    expect((probe.ctx as unknown as typeof ctx).actions.apply(move(5)).ok).toBe(false);
+    await userEvent.click(within(screen.getByRole('region', { name: 'In this scene' })).getByRole('button', { name: 'title' }));
+    const fields = document.querySelector('.ms-insp-fieldset') as HTMLFieldSetElement;
+    expect(fields.disabled).toBe(true);
+    expect(within(screen.getByRole('tabpanel')).getByText(/You are looking at v1/)).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(true);
+    await userEvent.click(screen.getByRole('button', { name: 'Edit v2' }));
+    await waitFor(() => expect(screen.queryByText(/You are looking at v1/)).toBeNull());
+    expect(await screen.findByText('Draft · 1 edit')).toBeTruthy();
+    expect(peekDraft(KEY)!.ops).toHaveLength(1);
+    await waitFor(() => expect(peekDraft(`${KEY}#v1`)).toBeNull());
+  });
+
+  it('"View vN" on a chat version card opens that version read-only', async () => {
+    api.getConversation.mockImplementation(async () => [
+      { type: 'version', at, n: 1, status: 'complete' }, { type: 'version', at, n: 2, status: 'complete' },
+    ] as never);
+    render(<Harness />);
+    await opened();
+    await userEvent.click(await screen.findByRole('button', { name: 'View v1' }));
+    expect(await screen.findByText(/You are looking at v1/)).toBeTruthy();
+  });
+
+  it('an agent turn at work makes the editor read-only with the reason; the draft is kept and Save waits', async () => {
+    live = { ...emptyLive(), jobs: { j1: { id: 'j1', key: 'creative:/w:acme:lancio', kind: 'creative', label: 'x', state: 'running', createdAt: at } } } as unknown as EventsState;
+    render(<Harness />);
+    await opened();
+    expect(await screen.findByText(/The agent or a render is working on this creative: direct edits are available again/)).toBeTruthy();
+    expect((probe.ctx as unknown as { actions: { apply(op: unknown): { ok: boolean } } }).actions.apply(move(5)).ok).toBe(false);
+  });
+
+  it('a discarded variant is read-only and says so', async () => {
+    detail = { ...makeDetail([v2(1), v2(2)]), variants: {
+      orphan: false, letter: 'b', host: 'lancio',
+      group: { members: [{ letter: 'a', slug: 'lancio', status: 'active' }, { letter: 'b', slug: 'lancio~b', status: 'discarded' }], picks: {} },
+    } } as unknown as CreativeDetail;
+    render(<Harness />);
+    await opened();
+    await waitFor(() => expect(document.querySelector('.ms-ed-readonly')?.textContent).toBe('Discarded variant: restore it to work on it'));
+    expect((probe.ctx as unknown as { actions: { apply(op: unknown): { ok: boolean } } }).actions.apply(move(5)).ok).toBe(false);
+  });
+
+  it('"Comment a spot" (or P), then a click on the frame: the note dialog, then a chip with the time; its marker shows on the picture', async () => {
+    render(<Harness />);
+    await opened();
+    const spot = screen.getByRole('button', { name: 'Comment a spot' });
+    await userEvent.click(spot);
+    expect(spot.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByText(/Click the spot of the frame at/)).toBeTruthy();
+    const hit = await screen.findByRole('button', { name: /^Comment on the frame at/ });
+    vi.spyOn(hit, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, right: 100, bottom: 200, width: 100, height: 200, x: 0, y: 0, toJSON() {} });
+    fireEvent.click(hit, { clientX: 25, clientY: 50, detail: 1 });
+    const dialog = await screen.findByRole('dialog', { name: /^Comment on the frame at/ });
+    await userEvent.type(within(dialog).getByLabelText('Your comment'), 'Più grande');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add comment' }));
+    const { result } = renderHook(() => usePendingPins(pinsKey('acme', 'lancio')));
+    expect(result.current[0]).toEqual([{ version: 2, pin: { format: REEL, x: 0.25, y: 0.25, timeSec: 0, note: 'Più grande' } }]);
+    expect(screen.getByRole('tab', { name: 'Chat' }).getAttribute('aria-selected')).toBe('true');
+    expect(document.querySelectorAll('.ms-ed-stage .ms-cv-pin')).toHaveLength(1);
+    // P toggles the mode from the keyboard; Esc leaves it.
+    fireEvent.keyDown(window, { key: 'p' });
+    expect(screen.getByRole('button', { name: 'Comment a spot' }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.getByRole('button', { name: 'Comment a spot' }).getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('"Ask the agent" on a custom animation: a chip on the clip about its animation, the chat, the composer focused (item 10)', async () => {
+    const custom = structuredClone(spike);
+    (custom.tracks.flatMap((t) => t.clips).find((k) => k.id === 'title') as { animations?: unknown }).animations = [{ prop: 'opacity', from: 0, to: 1, duration: 0.5 }];
+    api.getEditorComposition.mockImplementation(async (_s, _c, n) => view(n, { composition: structuredClone(custom) }));
+    render(<Harness />);
+    await opened();
+    await userEvent.click(within(screen.getByRole('region', { name: 'In this scene' })).getByRole('button', { name: 'title' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Ask the agent' }));
+    const { result } = renderHook(() => usePendingPins(pinsKey('acme', 'lancio')));
+    expect(result.current[0]).toEqual([{ version: 2, pin: expect.objectContaining({ format: REEL, clipId: 'title', clipName: 'title', timeSec: 0.2, note: 'About its custom in animation' }) }]);
+    expect(screen.getByRole('tab', { name: 'Chat' }).getAttribute('aria-selected')).toBe('true');
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Request a change')));
+  });
+
+  it('an identity format: the editor first, then the rendered logo on light and dark, and the sizes grid (identity bar)', async () => {
+    const LOGO = 'identity-logo';
+    const set = { dir: LOGO, files: [{ path: 'logo.svg', role: 'vector' }, { path: 'logo.png', width: 1024, height: 400, alpha: true, role: 'raster' }, { path: 'logo-dark.png', width: 1024, height: 400, alpha: true, role: 'raster-dark' }], warnings: [] };
+    detail = makeDetail([{ ...v2(1), outputs: [{ format: LOGO, file: 'identity-logo.png', width: 1024, height: 1024, durationSec: null, verified: true, preview: null, identitySet: set }],
+      compositions: [{ format: LOGO, dir: `compositions/${LOGO}`, hash: hashOf(1) }] } as unknown as VersionEntry], { formats: [LOGO] });
+    api.getEditorComposition.mockImplementation(async (_s, _c, n) => view(n, { format: LOGO, primaryFormat: LOGO, composition: { ...structuredClone(spike), width: 1024, height: 1024, duration: 0, scenes: [], tracks: [] } as Composition }));
+    render(<Harness format={LOGO} />);
+    await screen.findByTestId('player');
+    await waitFor(() => expect(peekDraft(draftKey('acme', 'lancio', LOGO))).not.toBeNull());
+    const views = await screen.findByRole('radiogroup', { name: 'View' });
+    expect(within(views).getByRole('radio', { name: 'Edit' }).getAttribute('aria-checked')).toBe('true');
+    expect(document.querySelector('.ms-ed-stage')!.hasAttribute('hidden')).toBe(false);
+    await userEvent.click(within(views).getByRole('radio', { name: 'Image' }));
+    expect(screen.getByRole('img', { name: /on a light and on a dark background/ })).toBeTruthy();
+    expect(document.querySelector('.ms-idn-dark img')!.getAttribute('src')).toContain('identity-logo/logo-dark.png');
+    expect(document.querySelector('.ms-ed-stage')!.hasAttribute('hidden')).toBe(true);
+    await userEvent.click(within(views).getByRole('radio', { name: 'Sizes' }));
+    expect(screen.getByRole('region', { name: 'Sizes' })).toBeTruthy();
+  });
+
+  it('a legacy older version picked in the viewer is the viewer; a version with a composition picked there is the editor again', async () => {
+    detail = makeDetail([{ ...legacy(1), outputs: [{ format: REEL, file: 'reel.mp4', width: 1080, height: 1920, durationSec: 6, verified: true, preview: null }] }, v2(2)]);
+    render(<Harness />);
+    await opened();
+    await viewRow(1);
+    await waitFor(() => expect(document.querySelector('.ms-fv')).not.toBeNull());
+    expect(document.querySelector('.ms-ed')).toBeNull();
+    // The viewer's own badge: back to v2, the editor.
+    await userEvent.click(await within(document.querySelector('.ms-topbar') as HTMLElement).findByRole('button', { name: /v2 is used for export/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /^View v2 ·/ }));
+    await waitFor(() => expect(document.querySelector('.ms-ed')).not.toBeNull());
+    expect(screen.queryByText(/You are looking at/)).toBeNull();
   });
 });

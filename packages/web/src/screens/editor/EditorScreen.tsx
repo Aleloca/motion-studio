@@ -1,7 +1,18 @@
-// The direct editor's shell (Phase 10b, Task 5): the layout of the prototype's VideoEditor / ImageEditor with a slot for each
-// panel the next tasks fill (scenes column and stage handles: Task 6, timeline: Task 7, inspector: 8, layers: 9, comments: 10).
-// What lives here: the draft (draftStore.ts) opened on the format's composition, the stage player showing the live draft,
-// the "Draft · Save as vN" pill, saving through `POST …/edits`, the leave guard and the keyboard map.
+// A format's page (decision 916: one screen): the direct editor (Phase 10b) with everything the format view had. The layout
+// of the prototype's VideoEditor / ImageEditor: scenes (or layers) left, the stage centre, the timeline under a video, and the
+// tabs Chat | Inspector right; the bar has "← All formats" (T4), the format, its ★ badge with its versions, the Versions
+// timeline, the render status, Languages, Duplicate and Export. What lives here: the draft (draftStore.ts) opened on the
+// format's composition, the stage player showing the live draft, the "Draft · Save as vN" pill, saving through
+// `POST …/edits`, the leave guard, the keyboard map, comments (a spot of the frame, a clip, a range) and the read-only states.
+//
+// The version on screen (one screen, decision 916):
+// - The editable version is the format's latest composition (the history entry at the latest version). Any other version
+//   (from the ★ badge, a chat card's "View vN", the canvas, or a manual ★ on an older one) opens read-only in a throw-away
+//   draft of its own: the editable draft, unsaved edits included, is never replaced and is there again on the way back.
+// - Read-only also for a discarded variant and while an agent turn or a render works on the creative. The reason is said
+//   on the stage and in the inspector; edits are refused at the source (the context's draft actions refuse).
+// - A version without a composition (a legacy one), no version yet, or a format outside the creative: the viewer
+//   (FormatView) is shown inside the same route, its version choice owned here.
 //
 // Concerns carried from the earlier tasks:
 // - Save sends the PRIMARY format, base version + hash, the draft's composition, the staged paths it uses, the ops and the
@@ -17,9 +28,10 @@
 // - The draft goes to the player with `setComposition` (coalesced per animation frame); a draft the runtime refuses is
 //   shown as a problem, never ignored.
 import {
-  channelName, compositionProblemText, EDITOR_SAVE_STAGED_MAX, type Composition, type EditorCompositionView, type FormatPreset, type Pin, type StagedAsset, type StagedSvgEdit, type StageRequest,
+  channelName, compositionProblem, compositionProblemText, EDITOR_SAVE_STAGED_MAX, isDurationOffBrief, type Composition, type EditorCompositionView, type EditResult, type FormatPreset, type Pin,
+  type StagedAsset, type StagedSvgEdit, type StageRequest,
 } from '@motion-studio/shared';
-import { useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { api, ApiError, type SvgEditFrom } from '../../api.ts';
 import { CompositionPlayer, type CompositionMedia } from '../../components/CompositionPlayer.tsx';
@@ -33,12 +45,12 @@ import { IntegrityNotice, useIntegrity } from '../../components/IntegrityNotice.
 import type { EventsState } from '../../eventsReducer.ts';
 import { message } from '../../errors.ts';
 import { formatNumber, useLocale, useT } from '../../i18n.tsx';
-import { D, enter } from '../../motion/index.ts';
+import { D, enter, flip } from '../../motion/index.ts';
 import { href, parseRoute, routeKey } from '../../routes.ts';
 import { useBarClaim } from '../../shell/barSlots.ts';
-import { setShownVersions, takeShownVersions } from '../../shell/intents.ts';
+import { setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } from '../../shell/intents.ts';
 import { go, ShellContext } from '../../shell/ShellContext.tsx';
-import { Button, Empty, Icon, Modal, Pill, Spinner, Tabs, cx, toast } from '../../ui/index.ts';
+import { Button, ChannelMark, Empty, Icon, Modal, Pill, Segmented, Spinner, Tabs, Toggle, Tooltip, cx, toast } from '../../ui/index.ts';
 import { useCreative } from '../../useCreative.ts';
 import { pinsKey, usePendingPins } from '../pendingPins.ts';
 import { clipPin, findClipById, rangePin, rangeTimes } from '../pinModel.ts';
@@ -46,15 +58,27 @@ import { PinNoteDialog } from './PinNoteDialog.tsx';
 import { RangeSpans } from './RangeSpans.tsx';
 import { RangeDialog } from './RangeDialog.tsx';
 import { instanceName, presetFor } from '../../instances.ts';
-import { boardLabel } from '../CanvasBoard.tsx';
+import { boardLabel, SafeZoneBands } from '../CanvasBoard.tsx';
+import { outputUrl, pointIn } from '../canvasModel.ts';
+import { CompareDialog } from '../CompareDialog.tsx';
+import { channelOf, lastStep } from '../creativeState.ts';
 import { ExportDialog, type ExportSnapshot } from '../ExportDialog.tsx';
+import { CommentHint, HitArea, PinLayer } from '../framePins.tsx';
+import { FollowerChip, FormatBadge, useNewVersionNotice, useVersionActions, VersionTimeline } from '../FormatVersions.tsx';
+import { FormatView } from '../FormatView.tsx';
+import { IdentitySizes } from '../identity/IdentitySizes.tsx';
+import { UseAsBrandLogo } from '../identity/UseAsBrandLogo.tsx';
 import { compositionOf } from '../renderModel.ts';
-import { FPS as DEFAULT_FPS, type Mark, type Speed } from '../Transport.tsx';
-import { boardSource, entryAt, followersOf, formatStates } from '../versionModel.ts';
+import { RenderStatus } from '../RenderStatus.tsx';
+import { FPS as DEFAULT_FPS, round3, timecode, type Mark, type Speed } from '../Transport.tsx';
+import { entryAt, followersOf, formatStates, shownOf } from '../versionModel.ts';
 import { discardedSelf } from '../variants/variantModel.ts';
+import '../canvas.css';
+import '../format.css';
+import '../identity/identity.css';
 import { compactOps } from './opsCompact.ts';
 import { DraftPill, SAVED_MS } from './DraftPill.tsx';
-import { draftKey, isDirty, peekDraft, useDraft, type Draft } from './draftStore.ts';
+import { draftKey, isDirty, peekDraft, useDraft, type Draft, type DraftActions } from './draftStore.ts';
 import { EditorContext, type EditorState } from './editorContext.ts';
 import { registerLeaveGuard } from './leaveGuard.ts';
 import { ScenesColumn } from './ScenesColumn.tsx';
@@ -66,7 +90,7 @@ import { ZoomBar, zoomFrame } from './ImageEditor.tsx';
 import { LayersPanel } from './LayersPanel.tsx';
 import { useEditorKeys, useNudgeKeys } from './useEditorKeys.ts';
 import { usePlayerControls } from './usePlayerControls.ts';
-import { DEFAULT_EXPORT_NAME_PATTERN, editProblemText } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_NAME_PATTERN, DEFAULT_FORMATS, editProblemText } from '@motion-studio/shared';
 import './editor.css';
 
 export interface EditorScreenProps {
@@ -90,10 +114,16 @@ function usedStaged(d: Draft): string[] {
   return d.staged.map((s) => s.path).filter((p) => json.includes(JSON.stringify(p).slice(1, -1)));
 }
 
+/** A draft refused because nothing may be written from this screen now (`EditorState.readOnly` says why). */
+const READ_ONLY_EDIT: EditResult = { ok: false, problem: compositionProblem('editor.readOnly') };
+/** T3 only while the board's rect is fresh: a frame that shows up later than this simply appears. */
+const FLIP_WINDOW_MS = 400;
+
 export function EditorScreen({ slug, creative, format, live, exportNamePattern, onSettings }: EditorScreenProps) {
   const t = useT();
   const e = t.web.editor;
   const c = t.web.canvas;
+  const f = t.web.formatView;
   const locale = useLocale();
   const shell = useContext(ShellContext);
   const root = useRef<HTMLDivElement>(null);
@@ -101,17 +131,23 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   const integrity = useIntegrity(slug, live);
   const { detail, conversation, error, reload } = useCreative(slug, creative, live.creativeTicks[`${slug}/${creative}`] ?? 0);
 
-  // The bar belongs to this page only while it is the route's page.
-  const ownKey = routeKey({ name: 'edit', slug, creative, format });
+  // The bar belongs to this page only while it is the route's page (a leaving page stays mounted ~200 ms), and to the viewer
+  // instead while that is shown (below).
+  const ownKey = routeKey({ name: 'format', slug, creative, format });
   const active = !shell || routeKey(shell.route) === ownKey;
-  const bar = useBarClaim(ownKey, active);
+  // T3: the rect of the board this page grows from, taken once, and when the page mounted.
+  const [origin] = useState(() => takeFrameOrigin(`format:${slug}/${creative}/${format}`));
+  const [mountedAt] = useState(() => performance.now());
 
   // Catalog, versions and the format's state.
   const [presets, setPresets] = useState<FormatPreset[]>([]);
   const [presetsLoaded, setPresetsLoaded] = useState(false);
+  const [presetsFailure, setPresetsFailure] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
-    Promise.resolve().then(() => api.getFormats()).then((s) => { if (alive) { setPresets(s.presets); setPresetsLoaded(true); } }).catch(() => { if (alive) setPresetsLoaded(true); });
+    Promise.resolve().then(() => api.getFormats())
+      .then((s) => { if (alive) { setPresets(s.presets); setPresetsLoaded(true); } })
+      .catch((err: unknown) => { if (alive) { setPresetsFailure(message(err)); setPresetsLoaded(true); } });
     return () => { alive = false; };
   }, []);
   const versions = useMemo(() => detail?.versions ?? [], [detail]);
@@ -120,21 +156,54 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   const primary = states[format]?.follows ?? format;
   const followers = useMemo(() => followersOf(states, primary), [states, primary]);
   const preset = presetFor(presets, primary) ?? undefined;
+  /** The format of the route (a follower's own preset: its channel and name in the bar). */
+  const ownPreset = presetFor(presets, format) ?? (presetsLoaded ? null : presetFor(DEFAULT_FORMATS, format));
   const labels = detail?.creative.brief.formatLabels;
   const labelOf = useCallback((id: string) => boardLabel({ id, preset: presetFor(presets, id), out: null, labels }, locale), [presets, locale, labels]);
 
-  // The draft of (creative, primary format): a module store, found again after a route change.
-  const key = draftKey(slug, creative, primary);
-  const [draft, actions] = useDraft(key);
-  const [viewing] = useState(() => takeShownVersions(`${slug}/${creative}`));
+  // The version on screen. `viewN`: a version chosen here (read-only unless it is the editable one), null for the editable
+  // one, undefined for what the canvas showed (its viewed version, else the ★).
+  const [intent] = useState(() => takeShownVersions(`${slug}/${creative}`));
+  const [viewN, setViewN] = useState<number | null | undefined>(undefined);
+  const editN = latest && compositionOf(latest, primary) ? entryAt(versions, states[primary], latest.n) : null;
+  const compAt = (n: number | null) => (n === null ? null : compositionOf(versions.find((v) => v.n === n), primary));
+  const editHash = compAt(editN)?.hash ?? null;
+  /** Version `v` shows the editable composition (the latest entry, or an older one with the same composition). */
+  const isEditable = useCallback((v: number) => v === editN || (editHash !== null && compAt(v)?.hash === editHash), [editN, editHash, versions, primary]); // eslint-disable-line react-hooks/exhaustive-deps
+  const wanted = viewN === null ? null : viewN ?? intent[primary];
+
+  // The editable draft of (creative, primary format): a module store, found again after a route change.
+  const editKey = draftKey(slug, creative, primary);
+  const [editDraft, editActions] = useDraft(editKey);
+  const editDirty = editDraft !== null && isDirty(editDraft);
   const [openN, setOpenN] = useState<number | null>(null);
   /** Bumped to load the view again for the same version (a reopen after a discard). */
   const [reload1, setReload1] = useState(0);
-  const sourceN = boardSource(states, format, viewing).n;
-  const n = openN ?? draft?.base.n ?? sourceN;
+  // What the canvas showed (the ★ by default) opens read-only when it is not the editable composition, unless a draft with
+  // edits waits; a version chosen here is shown as asked (a version not in the history yet: the one a save just made).
+  const shownDefault = wanted === null ? null : shownOf(states[primary], wanted);
+  const viewOnly = shownDefault !== null && !isEditable(shownDefault) && !(wanted === undefined && editDirty)
+    && (wanted === undefined || (wanted !== null && Boolean(states[primary]?.history.includes(wanted))));
+  const n = viewOnly ? shownDefault : openN ?? editDraft?.base.n ?? editN;
+  /** An older version opens in a draft of its own, never in the editable one. */
+  const key = viewOnly ? `${editKey}#v${n}` : editKey;
+  const [ownDraft, ownActions] = useDraft(key);
+  const draft = viewOnly ? ownDraft : editDraft;
+  const actions = viewOnly ? ownActions : editActions;
   const version = n !== null ? versions.find((v) => v.n === n) ?? null : null;
   const comp = compositionOf(version, primary);
   const latestComp = compositionOf(latest, primary);
+  // No composition to edit (a legacy version, no version yet, a format outside the creative): the viewer. A version not in
+  // the list yet (the one a save just made, until the reload) is not one.
+  const loadingAll = !detail || !presetsLoaded;
+  const known = Boolean(detail && (detail.creative.brief.formats.includes(format)
+    || versions.some((v) => v.outputs.some((o) => o.format === format) || v.compositions?.some((x) => x.format === format))));
+  const viewer = !loadingAll && (!known || n === null || (version !== null && comp === null));
+  const bar = useBarClaim(ownKey, active && !viewer);
+  // A read-only view's draft goes when another version is shown (it never has edits).
+  useEffect(() => (viewOnly ? () => { ownActions.discard(); } : undefined), [viewOnly, ownActions]);
+  /** Shows version `v` of the format: the editable one in the editor, another one read-only. */
+  const onView = useCallback((v: number) => setViewN(isEditable(v) ? null : v), [isEditable]);
 
   // The editor's view of the composition → the draft.
   const [view, setView] = useState<EditorCompositionView | null>(null);
@@ -150,7 +219,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
       actions.open(v, preset);
     }).catch((err: unknown) => { if (alive) setLoadError(message(err)); });
     return () => { alive = false; };
-  }, [slug, creative, n, primary, hasComp, presetsLoaded, reload1]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [slug, creative, n, primary, hasComp, presetsLoaded, reload1, key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A job (agent turn or render) at work on this creative.
   const job = useMemo(() => {
@@ -159,6 +228,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     return mine.find((j) => j.state === 'queued' || j.state === 'running') ?? mine.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   }, [live.jobs, detail]);
   const working = job?.state === 'queued' || job?.state === 'running';
+  const step = job && working ? (job.state === 'queued' ? t.web.creatives.queued : lastStep(live.events[job.id]) ?? t.web.creatives.working) : null;
   // A render of any version of this creative also stops a save (the core answers 409 `editor-busy`): final review M2.
   const renderPrefix = detail && detail.jobKey.startsWith('creative:') ? `render:${detail.jobKey.slice('creative:'.length)}:v` : null;
   const rendering = renderPrefix !== null && Object.values(live.jobs).some((j) => j.key.startsWith(renderPrefix) && (j.state === 'queued' || j.state === 'running'));
@@ -166,7 +236,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   // The base moved under the draft: another version changed the format.
   const dirty = draft !== null && isDirty(draft);
   // (a draft saved a moment ago may be newer than the version list still loading: not stale)
-  const stale = Boolean(draft && latestComp && latest && draft.base.n < latest.n && draft.base.hash !== latestComp.hash);
+  const stale = !viewOnly && Boolean(draft && latestComp && latest && draft.base.n < latest.n && draft.base.hash !== latestComp.hash);
   const [conflict, setConflict] = useState(false);
   /** The core said the base moved (409), whatever the version list says yet. */
   const [moved, setMoved] = useState(false);
@@ -358,6 +428,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
       actions.discard();
       setView(null);
       setOpenN(res.version);
+      setViewN(null);
       setConflict(false);
       setMoved(false);
       reload();
@@ -390,14 +461,14 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   // The leave guard (Review Focus 3): back, a format or version switch, the browser's back button, a link, a chat message.
   const [leave, setLeave] = useState<Leave | null>(null);
   useEffect(() => registerLeaveGuard({
-    blocks: (hash) => { const d = peekDraft(key); return d !== null && isDirty(d) && routeKey(parseRoute(hash)) !== ownKey; },
+    blocks: (hash) => { const d = peekDraft(editKey); return d !== null && isDirty(d) && routeKey(parseRoute(hash)) !== ownKey; },
     ask: (hash) => setLeave({ mode: 'route', target: hash }),
-  }), [key, ownKey]);
+  }), [editKey, ownKey]);
   const beforeSend = useCallback(() => new Promise<boolean>((resolve) => {
-    const d = peekDraft(key);
+    const d = peekDraft(editKey);
     if (!d || !isDirty(d)) { resolve(true); return; }
     setLeave({ mode: 'chat', resolve });
-  }), [key]);
+  }), [editKey]);
   const settle = (ok: boolean) => {
     const l = leave;
     setLeave(null);
@@ -405,12 +476,16 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     if (l.mode === 'chat') l.resolve(ok); else if (ok) go(l.target);
   };
   const leaveSave = async () => { settle(await save()); };
-  const leaveDiscard = () => { discardDraft(); settle(true); };
+  // An older version on screen: the editable draft goes without touching the player (it shows the older version).
+  const leaveDiscard = () => { if (viewOnly) editActions.discard(); else discardDraft(); settle(true); };
   // A dialog closed any other way (Esc, the scrim) is "Keep editing".
   const leaveKeep = () => settle(false);
 
-  // Selection (set by the stage handles, the timeline, the layers and the scenes: Tasks 6 to 9).
+  // Selection (set by the stage handles, the timeline, the layers and the scenes: Tasks 6 to 9). Selecting a clip shows its
+  // inspector; a comment shows the chat (the right column's tabs, decision 930).
   const [selection, setSelection] = useState<string | null>(null);
+  const [tab, setTab] = useState<'chat' | 'inspector'>('chat');
+  const select = useCallback((id: string | null) => { setSelection(id); if (id !== null) setTab('inspector'); }, []);
   // The magnet (stage guides now, the timeline's edges in Task 7): per editor, not saved.
   const [snap, setSnap] = useState(true);
   /** The image editor's zoom: null is Fit, otherwise 50 to 400 %. Not saved. */
@@ -419,17 +494,19 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   // The SVG element chosen belongs to the selected clip.
   const [svgElement, setSvgElement] = useState<string | null>(null);
   useEffect(() => { setSvgElement(null); }, [selection]);
-  // The conversation's pins on the version being edited, as markers on the timeline ruler (numbered as in the format view).
-  const [storedPins, setStoredPins] = usePendingPins(pinsKey(slug, creative));
-  const marks = useMemo<Mark[]>(() => storedPins.filter((p) => p.version === n).map((p, i) => ({ pin: p.pin, number: i + 1 }))
-    .filter((m) => m.pin.format === format || m.pin.format === primary), [storedPins, n, format, primary]);
+  const video = draft ? draft.composition.duration > 0 : preset?.kind !== 'image';
 
-  // Comments on clips and ranges (Task 10). Like the format view's, they go on the pin source (the version resumed from, else
-  // the latest) and become chips in the conversation; the note is asked in a small dialog. The version edited is the format's
-  // history entry: a pin source that carried the format unchanged (another format changed) has the same composition.
+  // Comments (Task 10, and the format view's spot of the frame). Like the format view's, they go on the pin source (the version
+  // resumed from, else the latest) and become chips in the conversation; the note is asked in a small dialog. The version
+  // edited is the format's history entry: a pin source that carried the format unchanged (another format changed) has the
+  // same composition.
+  const [storedPins, setStoredPins] = usePendingPins(pinsKey(slug, creative));
   const pinSource = detail ? detail.creative.resumeFrom?.version ?? latest?.n ?? null : null;
   const canComment = n !== null && entryAt(versions, states[primary], pinSource) === n;
   const sourcePins = useMemo(() => storedPins.flatMap((p, i) => (p.version === pinSource ? [{ pin: p.pin, at: i }] : [])), [storedPins, pinSource]);
+  // The pending comments as markers on the ruler and the picture, numbered as the chips (only on the version they apply to).
+  const marks = useMemo<Mark[]>(() => (canComment ? sourcePins.map((p, i) => ({ pin: p.pin, number: i + 1 })) : [])
+    .filter((m) => m.pin.format === format || m.pin.format === primary), [canComment, sourcePins, format, primary]);
   retargetPins.current = (base, to) => setStoredPins((ps) => (ps.some((p) => p.version === base || p.version === pinSource)
     ? ps.map((p) => (p.version === base || p.version === pinSource ? { ...p, version: to } : p)) : ps));
   const [rangeOpen, setRangeOpen] = useState(false);
@@ -453,6 +530,34 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     if (!draft) return;
     const pin = rangePin({ format: primary, start: r.start, end: r.end, duration: draft.composition.duration });
     if (pin) startComment(pin);
+  };
+  // A spot of the frame (the format view's click on the paused picture): "Comment a spot" or `P`, then a click on the frame.
+  const [spotMode, setSpotMode] = useState(false);
+  useEffect(() => { if (!canComment) setSpotMode(false); }, [canComment]);
+  const toggleSpot = () => {
+    if (!canComment) { toast.show(t.web.conversation.onlyOnVersion({ n: pinSource ?? 0 })); return; }
+    if (controls.playing) controls.pause();
+    setSpotMode((m) => !m);
+  };
+  const placeSpot = (ev: ReactMouseEvent<HTMLButtonElement>) => {
+    ev.stopPropagation();
+    const pt = pointIn(ev.currentTarget.getBoundingClientRect(), ev);
+    setSpotMode(false);
+    startComment({ format, x: pt.x, y: pt.y, timeSec: video ? round3(controls.clock.get().time) : null });
+  };
+  // The composer takes the focus once the chat is on screen (an effect: after the tab has rendered).
+  const [focusChat, setFocusChat] = useState(0);
+  useEffect(() => { if (focusChat) root.current?.querySelector<HTMLTextAreaElement>('.ms-composer textarea')?.focus(); }, [focusChat]);
+  /** "Ask the agent" on a custom animation (user test item 10): a clip comment chip about it, then the composer. */
+  const askAnimation = (clipId: string, slot: 'in' | 'out') => {
+    const clip = draft ? findClipById(draft.composition, clipId) : null;
+    if (!draft || !clip || pinSource === null) return;
+    if (!canComment) { toast.show(t.web.conversation.onlyOnVersion({ n: pinSource })); return; }
+    const time = slot === 'in' ? clip.start : Math.max(clip.start, clip.start + clip.duration - 1 / draft.composition.fps);
+    const pin = clipPin({ format: primary, comp: draft.composition, clip, time, note: slot === 'in' ? e.animAskNoteIn : e.animAskNoteOut });
+    setStoredPins((ps) => [...ps, { pin: commentVideo ? pin : { ...pin, timeSec: null }, version: pinSource }]);
+    setTab('chat');
+    setFocusChat((x) => x + 1);
   };
   const submitNote = (note: string) => {
     const open = noteFor;
@@ -479,17 +584,28 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   const pinsSent = useCallback(({ pins: sentPins }: { pins: Pin[] }) => { setStoredPins((ps) => ps.filter((p) => !sentPins.includes(p.pin))); }, [setStoredPins]);
   const noteTitle = noteFor ? (noteFor.pin.clipId && !noteFor.pin.range
     ? t.web.conversation.noteTitleClip({ name: noteFor.pin.clipName ?? noteFor.pin.clipId })
-    : noteFor.pin.range ? t.web.conversation.noteTitleRange(rangeTimes(locale, noteFor.pin.range)) : t.web.conversation.clipComment) : '';
+    : noteFor.pin.range ? t.web.conversation.noteTitleRange(rangeTimes(locale, noteFor.pin.range))
+      : noteFor.pin.timeSec !== null ? f.commentFrame({ time: timecode(noteFor.pin.timeSec) }) : c.commentOn({ label: labelOf(format) })) : '';
+
+  // Read-only (decision 916): a discarded variant, an older version on screen, an agent turn or a render at work. The draft
+  // actions refuse and the panels disable their controls; the reason is said on the stage and in the inspector.
+  const discarded = discardedSelf(detail?.variants).discarded;
+  const readOnly = discarded ? t.web.variantGroup.discardedReadOnly
+    : viewOnly && n !== null && editN !== null ? e.olderVersion({ n, latest: editN })
+      : working || rendering ? e.busyAgent : null;
+  const safeActions = useMemo<DraftActions>(() => (readOnly === null ? actions
+    : { ...actions, apply: () => READ_ONLY_EDIT, applyAll: () => READ_ONLY_EDIT, undo: () => {}, redo: () => {} }), [actions, readOnly]);
 
   // Keys.
   useEditorKeys(root, Boolean(draft) && active && leave === null, {
     commentClip,
     commentRange: askRange,
-    undo: () => actions.undo(),
-    redo: () => actions.redo(),
+    commentSpot: toggleSpot,
+    undo: () => safeActions.undo(),
+    redo: () => safeActions.redo(),
     toggle: controls.toggle,
     step: controls.step,
-    deselect: () => setSelection(null),
+    deselect: () => { if (spotMode) setSpotMode(false); else setSelection(null); },
     remove: () => toast.show(e.keysDeleteClip),
   });
 
@@ -499,21 +615,29 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     nudge: (dx, dy) => {
       const fresh = peekDraft(key) ?? draft; // the store now: two presses in one tick must not start from the same x
       if (!fresh) return;
-      const r = nudgeClip(fresh, actions, selection, dx, dy);
+      const r = nudgeClip(fresh, safeActions, selection, dx, dy);
       if (r.ok) return;
       if (r.reason === 'locked') toast.show(e.locked);
       else if (r.reason === 'refused') toast.show(editProblemText(r.result.problem, locale));
     },
   });
 
-  // Back to the format view (the version stays the one edited).
+  // T4: back to the canvas (the board grows back from the stage), showing there the version that was on screen.
   const back = () => {
     controls.pause();
+    if (frame.current) setFrameOrigin(`canvas:${slug}/${creative}/${format}`, frame.current.getBoundingClientRect());
     if (n !== null) setShownVersions(`${slug}/${creative}`, { [primary]: n });
-    go(href.format(slug, creative, format));
+    go(href.creative(slug, creative));
   };
 
-  // T3-like arrival of the side panels.
+  // T3: the board grows into the stage's frame, there from the first render (sized from the catalog); then the side panels.
+  const flipped = useRef(false);
+  useLayoutEffect(() => {
+    if (flipped.current || !frame.current) return;
+    flipped.current = true;
+    const fresh = origin && performance.now() - mountedAt <= FLIP_WINDOW_MS ? origin : null;
+    if (fresh) void flip(frame.current, fresh, D.l);
+  });
   const appeared = useRef(false);
   const ready = Boolean(draft) && !loadError;
   useEffect(() => {
@@ -525,21 +649,72 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     });
   }, [ready]);
 
-  const [tab, setTab] = useState<'chat' | 'inspector'>('inspector');
   const [exporting, setExporting] = useState<{ open: boolean; snapshot: ExportSnapshot } | null>(null);
   const myApprovals = useMemo(() => Object.values(live.approvals).filter((a) => a.projectSlug === slug && a.creativeSlug === creative), [live.approvals, slug, creative]);
   const chatLive = useMemo(() => (job ? live.events[job.id] ?? [] : []), [job, live.events]);
-  const primaries = (detail?.creative.brief.formats ?? []).filter((f) => states[f] && !states[f]!.follows);
+  const primaries = (detail?.creative.brief.formats ?? []).filter((id) => states[id] && !states[id]!.follows);
   const appliesTo = useMemo(() => (versions.length && primaries.length > 1 ? {
     primaries: primaries.map((id) => ({ id, label: labelOf(id), followers: followersOf(states, id).map(labelOf) })),
     followerOf: (id: string) => states[id]?.follows ?? null,
     fallback: [primary],
   } : undefined), [versions.length, primaries.join(','), states, labelOf, primary]); // eslint-disable-line react-hooks/exhaustive-deps
-  const onSent = useCallback((sent: { pins: Pin[] }) => { pinsSent(sent); reload(); }, [reload, pinsSent]);
+  // After a message the page shows what the canvas would (the ★ or the version being edited).
+  const onSent = useCallback((sent: { pins: Pin[] }) => { pinsSent(sent); setViewN(undefined); reload(); }, [reload, pinsSent]);
+  // "View vN" of a version card: this format as it was in vN (read-only unless it is the editable composition).
+  const onSelectVersion = useCallback((v: number) => {
+    const entry = entryAt(versions, states[primary], v);
+    if (entry !== null) onView(entry);
+  }, [versions, states, primary, onView]);
+
+  // Versions, render, duplicate, compare (what the format view's bar had).
+  const [actionError, setActionError] = useState<string | null>(null);
+  const vdetail = detail?.variants;
+  const group = vdetail && !vdetail.orphan ? vdetail : null;
+  const versionActions = useVersionActions({ slug, creative, states, labelOf, resumeFrom: detail?.creative.resumeFrom?.version ?? null, onChanged: reload, onError: setActionError,
+    // Phase 15: in a variant group the ★ is the group's (this variant, this version), written through the host.
+    ...(group ? { groupPick: (id: string, v: number | null) => api.setVariantPick(slug, group.host, id, v === null ? null : { slug: creative, version: v }) } : {}) });
+  const versionButton = useRef<HTMLButtonElement>(null);
+  // The viewer announces new versions itself while it is shown.
+  useNewVersionNotice(Boolean(detail) && !viewer, latest?.n ?? null, active && !viewer, versionButton);
+  const [compare, setCompare] = useState<{ open: boolean; init: [number, number] } | null>(null);
+  /** Compare (the badge): the version on screen against the entry before it in the format's history. */
+  const openCompare = () => {
+    const s = states[primary];
+    if (!s || n === null || s.history.length < 2) return;
+    const i = s.history.indexOf(n);
+    const other = s.history[i - 1] ?? s.history[i + 1]!;
+    setCompare({ open: true, init: other < n ? [other, n] : [n, other] });
+  };
+  // Duplicate format (Phase 12): the next free instance of this format, copied from the version on screen; opens the new one.
+  const [duplicating, setDuplicating] = useState(false);
+  const duplicate = async () => {
+    if (!version || duplicating) return;
+    setDuplicating(true);
+    setActionError(null);
+    try {
+      const r = await api.duplicateFormat(slug, creative, version.n, { instanceId: format });
+      controls.pause();
+      reload();
+      toast.show(t.web.instances.duplicated({ label: instanceName(ownPreset ?? null, r.instanceId, locale, labels) }), { tone: 'ok' });
+      go(href.format(slug, creative, r.instanceId));
+    } catch (err) {
+      setActionError(t.web.instances.duplicateFailed({ detail: message(err) }));
+    }
+    setDuplicating(false);
+  };
+  // Identity formats (Phase 14): the editor, the rendered picture (a logo on light and on dark) or the sizes grid of its set.
+  const out = version?.outputs.find((o) => o.format === primary) ?? null;
+  const idKind = ownPreset?.identity ?? null;
+  const idSet = idKind && out?.identitySet ? out.identitySet : null;
+  const darkLogo = idKind === 'logo' && idSet ? idSet.files.find((x) => x.path === 'logo-dark.png') ?? null : null;
+  const [idView, setIdView] = useState<'edit' | 'image' | 'sizes'>('edit');
+  const [safe, setSafe] = useState(false);
 
   const ctx: EditorState | null = draft ? {
-    slug, creative, format, primary, draft, actions, player, controls, selection, select: setSelection, snap, setSnap, token, stageAsset, staging,
-    stageSvg, readOnly: discardedSelf(detail?.variants).discarded ? t.web.variantGroup.discardedReadOnly : null, svgElement, selectSvgElement: setSvgElement,
+    slug, creative, format, primary, draft, actions: safeActions, player, controls, selection, select, snap, setSnap, token, staging,
+    stageAsset: readOnly === null ? stageAsset : async () => null,
+    stageSvg: readOnly === null ? stageSvg : async () => { throw new Error(readOnly); },
+    readOnly, svgElement, selectSvgElement: setSvgElement, askAnimation,
   } : null;
 
   // ---- states without an editor
@@ -551,35 +726,52 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
       </div>
     );
   }
-  const backButton = <Button className="ms-back" onClick={back}><Icon name="back" size={16} strokeWidth={1.5} />{e.back}</Button>;
-  const loadingAll = !detail || !presetsLoaded;
-  if (!loadingAll && ((version && !comp) || n === null)) {
+  if (viewer) {
+    // No composition to edit: the viewer, inside this route, with the version choice kept here.
+    const viewing = wanted !== undefined && wanted !== null ? { [primary]: wanted } : {};
     return (
-      <div ref={root} className="ms-cv-state">
-        {bar?.start ? createPortal(backButton, bar.start) : null}
-        <Empty icon="grid" title={e.edit} sub={e.legacy} action={<Button variant="ink" onClick={back}><Icon name="back" size={13} />{e.back}</Button>} />
-      </div>
+      <FormatView slug={slug} creative={creative} format={format} live={live} exportNamePattern={exportNamePattern} onSettings={onSettings} origin={origin}
+        viewing={viewing} onViewing={(u) => {
+          const next = typeof u === 'function' ? u(viewing) : u;
+          const v = next[primary];
+          setViewN(v === undefined ? undefined : isEditable(v) ? null : v);
+        }} />
     );
   }
 
-  const video = draft ? draft.composition.duration > 0 : preset?.kind !== 'image';
   const width = draft?.composition.width ?? preset?.width ?? 1080;
   const height = draft?.composition.height ?? preset?.height ?? 1920;
   const label = labelOf(primary);
+  const ownLabel = labelOf(format);
+  // The version's duration against the brief's (decisions log 262): a discreet note, never a change of the brief.
+  const briefSec = detail?.creative.brief.durationSec ?? null;
+  const offBrief = draft && video && briefSec !== null && isDurationOffBrief(draft.composition.duration, briefSec)
+    ? (version?.origin === 'editor' ? f.briefDurationEdited : f.briefDuration)({ n: formatNumber(locale, briefSec, { maximumFractionDigits: 1 }) })
+    : null;
   const meta = draft
-    ? (video
+    ? [video
       ? e.meta({ size: `${width}×${height}`, seconds: formatNumber(locale, draft.composition.duration, { maximumFractionDigits: 1 }), fps: draft.composition.fps })
-      : e.metaImage({ size: `${width}×${height}` }))
+      : e.metaImage({ size: `${width}×${height}` }), offBrief].filter(Boolean).join(' · ')
     : '';
   const frameStyle: CSSProperties = zoomFrame(width, height, video ? null : zoom);
   const alsoList = followers.map(labelOf).join(', ');
   const blocked = !draft ? null
-    : working || rendering ? e.busyAgent
-      : baseMoved ? e.baseChangedTitle
-        // A file being staged (a video converting) or staged again in a new session: the save would wait on it (M3).
-        // So are the SVG changes not applied yet (SVG inner editor): the save would miss the last one.
-        : staging || restaging || draft.svgPending.size > 0 ? e.saveWhileStaging
-          : draft.problems.length > 0 ? compositionProblemText(draft.problems[0]!, locale) : null;
+    : viewOnly ? e.saveFromLatest
+      : working || rendering ? e.busyAgent
+        : baseMoved ? e.baseChangedTitle
+          // A file being staged (a video converting) or staged again in a new session: the save would wait on it (M3).
+          // So are the SVG changes not applied yet (SVG inner editor): the save would miss the last one.
+          : staging || restaging || draft.svgPending.size > 0 ? e.saveWhileStaging
+            : draft.problems.length > 0 ? compositionProblemText(draft.problems[0]!, locale) : null;
+  const cr = detail?.creative ?? null;
+  const state = states[format];
+  const primaryLabel = state?.follows ? labelOf(state.follows) : null;
+  const primaryStar = state?.follows ? states[state.follows]?.star.version ?? null : null;
+  const otherView = idSet !== null && idView !== 'edit';
+  const imgSrc = out && version ? outputUrl(slug, creative, version.n, out.file) : null;
+  const darkSrc = darkLogo && idSet && version ? outputUrl(slug, creative, version.n, `${idSet.dir}/${darkLogo.path}`) : null;
+  const pickedBy = group?.group.picks[primary];
+  const backButton = <Tooltip label={t.web.shell.backAllFormats} whenHidden=".ms-bar-label"><Button className="ms-back ms-fold-3" aria-label={t.web.shell.backAllFormats} onClick={back}><Icon name="back" size={16} strokeWidth={1.5} /><span className="ms-bar-label">{t.web.shell.backAllFormats}</span></Button></Tooltip>;
 
   const page = (
     <div ref={root} className={cx('ms-ed', video ? 'ms-ed-video' : 'ms-ed-image')} aria-busy={!draft || undefined}>
@@ -588,17 +780,43 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
         <>
           <span className="ms-crumb ms-last ms-fv-crumb">
             <span className="ms-faint" aria-hidden="true">/</span>
-            <b aria-current="page" title={preset ? channelName(preset.channel, locale) : undefined}>{reelName}</b>
+            {ownPreset ? <ChannelMark channel={channelOf(ownPreset.channel)} /> : null}
+            <b aria-current="page" title={ownPreset ? channelName(ownPreset.channel, locale) : undefined}>{instanceName(ownPreset ?? null, format, locale, labels)}</b>
           </span>
           {meta ? <span className="ms-fv-meta">{meta}</span> : null}
+          {out && !out.verified ? <Pill tone="warn" className="ms-cv-state-pill">{t.web.formatUi.unverified}</Pill> : null}
         </>,
         bar.title,
       ) : null}
       {bar?.end ? createPortal(
         <>
-          {followers.length > 0 ? <Pill tone="neutral" className="ms-ed-also">{e.alsoUsedBy({ list: alsoList })}</Pill> : null}
-          {n !== null ? <Pill tone="neutral" className="ms-ed-version">{e.version({ n })}</Pill> : null}
-          <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} />
+          {state && cr && state.follows && primaryLabel ? (
+            <span className="ms-fv-badge">
+              <FollowerChip label={ownLabel} primary={primaryLabel} primaryStar={primaryStar} follower={format} actions={versionActions} busy={working} />
+              <span className="ms-fv-follows">{primaryStar !== null ? t.web.formatVersions.followsStar({ primary: primaryLabel, n: primaryStar }) : t.web.formatVersions.follows({ primary: primaryLabel })}</span>
+            </span>
+          ) : state && cr ? (
+            <span className="ms-fv-badge">
+              <FormatBadge slug={slug} creative={creative} label={ownLabel} versions={versions} shown={n} resumeFrom={cr.resumeFrom?.version ?? null}
+                state={group ? { ...state, star: { ...state.star, version: pickedBy?.slug === creative ? pickedBy.version : null, manual: pickedBy?.slug === creative, newer: null } } : state}
+                labelOf={labelOf} actions={versionActions} busy={working} onView={onView} onCompare={openCompare} {...(group ? { unstarred: true } : {})} />
+            </span>
+          ) : null}
+          {versions.length && cr ? (
+            <VersionTimeline slug={slug} creative={creative} versions={versions} resumeFrom={cr.resumeFrom?.version ?? null} actions={versionActions} buttonRef={versionButton} />
+          ) : null}
+          {comp !== null && cr && detail ? (
+            <RenderStatus slug={slug} creative={creative} version={version} format={primary} label={label} jobs={Object.values(live.jobs)} jobKey={detail.jobKey} busy={working} image={!video} />
+          ) : null}
+          <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} readOnly={discarded ? t.web.variantGroup.discardedReadOnly : null} />
+          {comp !== null && !working ? (
+            <Tooltip label={discarded ? t.web.variantGroup.discardedReadOnly : `${t.web.instances.duplicate} · ${t.web.instances.duplicateHint({ label: ownLabel })}`} whenHidden=".ms-bar-label">
+              <Button variant="outline" className="ms-fv-duplicate ms-fold-2" aria-label={t.web.instances.duplicate} loading={duplicating}
+                disabled={discarded} {...(discarded ? { title: t.web.variantGroup.discardedReadOnly } : {})} onClick={() => void duplicate()}>
+                <Icon name="copy" size={13} strokeWidth={1.7} /><span className="ms-bar-label">{t.web.instances.duplicate}</span>
+              </Button>
+            </Tooltip>
+          ) : null}
           <Button variant="ink" className="ms-cv-export" disabled={!latest} onClick={() => { if (latest) setExporting({ open: true, snapshot: { versions, states } }); }}>
             <Icon name="download" size={13} strokeWidth={1.7} />{c.export}
           </Button>
@@ -616,11 +834,61 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
       </aside>
 
       <main className="ms-fv-main ms-ed-main" aria-label={e.stage({ label })}>
+        <div className="ms-ed-tools">
+          <div className="ms-ed-undo" role="toolbar" aria-label={e.draft({ n: draft?.ops.length ?? 0 })}>
+            <Button size="sm" variant="ghost" icon aria-label={e.undo} title={e.undo} disabled={!draft || readOnly !== null || draft.past.length === 0} onClick={() => safeActions.undo()}><Icon name="undo" size={14} /></Button>
+            <Button size="sm" variant="ghost" icon aria-label={e.redo} title={e.redo} disabled={!draft || readOnly !== null || draft.future.length === 0} onClick={() => safeActions.redo()}><Icon name="redo" size={14} /></Button>
+            <Button size="sm" variant={spotMode ? 'outline' : 'ghost'} icon className="ms-ed-spot" aria-label={e.commentSpot} aria-pressed={spotMode} aria-keyshortcuts="P"
+              title={canComment ? e.commentSpotTip : e.commentSpotLocked({ n: pinSource ?? 0 })} disabled={!draft || !canComment} onClick={toggleSpot}><Icon name="pin" size={14} /></Button>
+            {draft && !video ? (
+              <Button size="sm" variant="outline" className="ms-ed-comment" aria-keyshortcuts="C" disabled={selection === null} title={selection === null ? t.web.conversation.clipCommentNeeds : undefined} onClick={commentClip}>
+                <Icon name="comment" size={13} />{t.web.conversation.clipComment}
+              </Button>
+            ) : null}
+            <Button size="sm" variant="ghost" icon className="ms-ed-snap" aria-label={e.snap} title={e.snap} aria-pressed={snap} onClick={() => setSnap(!snap)}><Icon name="magnet" size={14} /></Button>
+          </div>
+          <span className="ms-grow" />
+          {draft && (dirty || saved) ? (
+            <DraftPill edits={draft.ops.length} nextN={nextN} blocked={blocked} saving={saving} saved={saved} onSave={() => { void save(); }} onDiscard={discardDraft} />
+          ) : null}
+          <span className="ms-grow" />
+          {preset?.safeZone && draft && !otherView ? (
+            <span className="ms-fv-safe-toggle"><Toggle size="sm" on={safe} onChange={setSafe} label={c.safeZones} /><span aria-hidden="true">{c.safeZones}</span></span>
+          ) : null}
+        </div>
         <div className="ms-fv-notes">
           {integrity.state ? <IntegrityNotice slug={slug} state={integrity.state} reload={integrity.reload} /> : null}
-          {primary !== format ? <p className="ms-cv-note ms-info" role="status">{e.editingPrimary({ primary: labelOf(primary), also: alsoList })}</p> : null}
+          {presetsFailure ? <p role="alert" className="ms-cv-note ms-err">{t.web.creative.formatsLoadFailed({ detail: presetsFailure })}</p> : null}
+          {cr?.resumeFrom ? <p className="ms-cv-note ms-info">{t.web.creative.resumeNote({ n: cr.resumeFrom.version })}</p> : null}
+          {cr && (cr.status === 'error' || cr.status === 'interrupted') && cr.error && !working ? <p role="alert" className="ms-cv-note ms-err">{cr.error}</p> : null}
+          {actionError ? <p role="alert" className="ms-cv-note ms-err">{actionError}</p> : null}
+          {primary !== format ? <p className="ms-cv-note ms-info" role="status">{e.editingPrimary({ primary: labelOf(primary), also: alsoList })}</p>
+            : followers.length > 0 ? <p className="ms-cv-note ms-info ms-ed-also" role="status">{e.alsoUsedBy({ list: alsoList })}</p> : null}
+          {readOnly ? (
+            <p className="ms-cv-note ms-info ms-ed-readonly" role="status">
+              <Icon name="lock" size={13} /><span>{readOnly}</span>
+              {viewOnly && editN !== null ? <Button size="sm" variant="outline" onClick={() => setViewN(null)}>{e.editLatest({ n: editN })}</Button> : null}
+            </p>
+          ) : null}
+          {working && step ? (
+            <div className="ms-cv-note ms-info ms-fv-gen">
+              <div className="ms-progress ms-indet" role="progressbar" aria-label={t.web.ui.progress}><i /></div>
+              <span className="ms-cv-gen-step">{step}</span>
+            </div>
+          ) : null}
+          {idSet && idKind && n !== null ? (
+            <div className="ms-idn-bar">
+              <Segmented<'edit' | 'image' | 'sizes'> label={t.web.identity.view} value={idView} onChange={setIdView}
+                options={[{ value: 'edit', label: e.edit, icon: 'edit' }, { value: 'image', label: t.web.identity.viewImage, icon: 'image' }, { value: 'sizes', label: t.web.identity.viewSizes, icon: 'grid' }]} />
+              {idSet.files.some((x) => x.role === 'vector') ? (
+                <UseAsBrandLogo slug={slug} creative={creative} n={n} format={primary} label={label} kind={idKind} disabled={working} hasDark={darkLogo !== null} />
+              ) : null}
+              {idKind === 'logo' && darkLogo === null ? (
+                <span className="ms-idn-nodark" role="note" title={t.web.identity.noDarkLogoTip}><Icon name="refresh" size={13} />{t.web.identity.noDarkLogo}</span>
+              ) : null}
+            </div>
+          ) : null}
           {loadError ? <p role="alert" className="ms-cv-note ms-err">{e.loadFailed({ detail: loadError })}</p> : null}
-          {working ? <p className="ms-cv-note ms-info" role="status">{e.busyAgent}</p> : null}
           {baseMoved && !conflict && dirty ? (
             <p className="ms-cv-note ms-err ms-ed-stale" role="alert">
               {e.baseChangedBody({ name: labelOf(primary), n: latest?.n ?? 0 })}
@@ -632,7 +900,27 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
           {stageError ? <p role="alert" className="ms-cv-note ms-err">{stageError}</p> : null}
           {staging ? <p className="ms-cv-note ms-info ms-ed-staging" role="status"><Spinner size={13} label={e.stagingLong} />{e.stagingLong}</p> : null}
         </div>
-        <section className="ms-fv-stage ms-ed-stage" aria-label={e.stage({ label })}>
+        {otherView && idSet && idKind && n !== null ? (
+          idView === 'sizes' ? (
+            <section className="ms-fv-stage ms-idn-stage" aria-label={t.web.identity.sizesTitle}>
+              <IdentitySizes slug={slug} creative={creative} n={n} set={idSet} kind={idKind} />
+            </section>
+          ) : (
+            <section className="ms-fv-stage" aria-label={f.stage({ label })}>
+              <div className="ms-fv-frame" style={frameStyle}>
+                <div className="ms-fv-media">
+                  {imgSrc && idKind === 'logo' ? (
+                    <div className="ms-idn-split" role="img" aria-label={t.web.identity.logoSides({ label: `${label} v${n}` })}>
+                      <span className="ms-idn-side ms-idn-light"><img key={imgSrc} src={imgSrc} alt="" draggable={false} /><span className="ms-idn-sidelbl">{t.web.identity.onLight}</span></span>
+                      <span className="ms-idn-side ms-idn-dark"><img key={darkSrc ?? imgSrc} src={darkSrc ?? imgSrc} alt="" draggable={false} /><span className="ms-idn-sidelbl">{t.web.identity.onDark}</span></span>
+                    </div>
+                  ) : imgSrc ? <img key={imgSrc} src={imgSrc} alt={`${label} v${n}`} draggable={false} /> : null}
+                </div>
+              </div>
+            </section>
+          )
+        ) : null}
+        <section className="ms-fv-stage ms-ed-stage" aria-label={e.stage({ label })} hidden={otherView}>
           <div ref={frame} className="ms-fv-frame" style={frameStyle} data-slot="stage">
             <div className="ms-fv-media">
               {!draft || preview.state.kind === 'loading' || preview.state.kind === 'busy' || preview.state.kind === 'idle' ? (
@@ -648,27 +936,20 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
                   <Button size="sm" variant="outline" onClick={() => { preview.retry(); setAttempt((a) => a + 1); }}><Icon name="refresh" size={12} />{t.web.render.retry}</Button>
                 </span>
               ) : null}
+              {safe && preset ? <SafeZoneBands preset={preset} /> : null}
             </div>
             {draft && !localeActive ? <Stage /> : null}
             <LocaleOutline player={player} preview={localePreview} />
+            {canComment && ready && controls.ready && (!video || !controls.playing) ? (
+              <PinLayer clock={controls.clock} video={video} marks={marks} open={noteFor?.index ?? null} onOpen={(num) => editPin(num - 1)} />
+            ) : null}
+            {spotMode && ready ? <HitArea clock={controls.clock} video={video} label={label} onPlace={placeSpot} /> : null}
           </div>
         </section>
+        {spotMode && ready ? <CommentHint clock={controls.clock} video={video} /> : null}
         {detail ? <LocaleSwitcher brief={detail.creative.brief} preview={localePreview} className="ms-ed-locales" /> : null}
         {localeActive ? <p className="ms-cv-note ms-info" role="status">{t.web.languages.editorPreviewNote}</p> : null}
-        {draft && (dirty || saved) ? (
-          <DraftPill edits={draft.ops.length} nextN={nextN} blocked={blocked} saving={saving} saved={saved} onSave={() => { void save(); }} onDiscard={discardDraft} />
-        ) : null}
-        {draft && !video ? <ZoomBar zoom={zoom} onZoom={setZoom} /> : null}
-        <div className="ms-ed-undo" role="toolbar" aria-label={e.draft({ n: draft?.ops.length ?? 0 })}>
-          <Button size="sm" variant="ghost" icon aria-label={e.undo} title={e.undo} disabled={!draft || draft.past.length === 0} onClick={() => actions.undo()}><Icon name="undo" size={14} /></Button>
-          <Button size="sm" variant="ghost" icon aria-label={e.redo} title={e.redo} disabled={!draft || draft.future.length === 0} onClick={() => actions.redo()}><Icon name="redo" size={14} /></Button>
-          {draft && !video ? (
-            <Button size="sm" variant="outline" className="ms-ed-comment" aria-keyshortcuts="C" disabled={selection === null} title={selection === null ? t.web.conversation.clipCommentNeeds : undefined} onClick={commentClip}>
-              <Icon name="comment" size={13} />{t.web.conversation.clipComment}
-            </Button>
-          ) : null}
-          <Button size="sm" variant="ghost" icon className="ms-ed-snap" aria-label={e.snap} title={e.snap} aria-pressed={snap} onClick={() => setSnap(!snap)}><Icon name="magnet" size={14} /></Button>
-        </div>
+        {draft && !video && !otherView ? <ZoomBar zoom={zoom} onZoom={setZoom} /> : null}
       </main>
 
       <aside className="ms-ed-side ms-ed-right" aria-label={e.panelTabs} data-part="r">
@@ -678,7 +959,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
           {tab === 'chat' ? (
             detail ? (
               <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={job} live={chatLive}
-                pins={sourcePins.map((p) => p.pin)} onRemovePin={removePin} onEditPin={editPin}
+                pins={sourcePins.map((p) => p.pin)} onRemovePin={removePin} onEditPin={editPin} onSelectVersion={onSelectVersion}
                 formatName={labelOf} canGenerate={versions.length === 0} onSent={onSent} beforeSend={beforeSend} snapshots={live.snapshots}
                 versionSummary={(vn) => { const v = versions.find((x) => x.n === vn); return v?.origin === 'editor' && v.request ? v.request : null; }} appliesTo={appliesTo}
                 brief={detail.creative.brief} onBriefSaved={reload} queued={detail.creative.queued} onQueueChanged={reload} />
@@ -700,7 +981,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
       <Modal open={leave !== null} onClose={leaveKeep} label={e.leaveTitle} width={480} dismissible={!saving}>
         <div className="ms-ed-dialog">
           <h2>{e.leaveTitle}</h2>
-          <p>{e.leaveBody({ n: draft?.ops.length ?? 0 })}</p>
+          <p>{e.leaveBody({ n: editDraft?.ops.length ?? 0 })}</p>
           {leave?.mode === 'chat' ? <p>{e.leaveBodyChat}</p> : null}
           <div className="ms-ed-dialog-foot">
             <Button variant="ghost" disabled={saving} onClick={leaveKeep}>{e.leaveKeep}</Button>
@@ -737,7 +1018,11 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
           </div>
         </div>
       </Modal>
-      <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
+      {compare ? (
+        <CompareDialog open={compare.open} onClose={() => setCompare((x) => (x ? { ...x, open: false } : x))} slug={slug} creative={creative}
+          versions={versions} presets={presets} labels={labels} states={states} format={primary} initial={compare.init} actions={versionActions} />
+      ) : null}
+      <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((x) => (x ? { ...x, open: false } : x))} slug={slug} creative={creative}
         title={detail?.creative.title ?? ''} snapshot={exporting?.snapshot ?? null} presets={presets} labels={detail?.creative.brief.formatLabels} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings}
         {...(detail && creativeLocales(detail.creative.brief) ? { locales: creativeLocales(detail.creative.brief)! } : {})} />
     </div>

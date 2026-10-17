@@ -83,7 +83,7 @@ function InspectorBody({ clip, locked }: { clip: Clip; locked: boolean }) {
 
 export function Inspector() {
   const e = useT().web.editor;
-  const { draft, selection } = useEditor();
+  const { draft, selection, readOnly } = useEditor();
   const found = findClip(draft.composition.tracks, selection);
   if (!found) {
     return (
@@ -92,6 +92,14 @@ export function Inspector() {
       </div>
     );
   }
-  // A new clip is a new inspector: no refusal or half-typed value carries over.
-  return <div data-slot="inspector" className="ms-insp-wrap"><InspectorBody key={found.clip.id} clip={found.clip} locked={found.locked} /></div>;
+  // A new clip is a new inspector: no refusal or half-typed value carries over. Read-only (an older version, a discarded
+  // variant, an agent or a render at work): the reason, and every control disabled by its fieldset.
+  return (
+    <div data-slot="inspector" className="ms-insp-wrap">
+      {readOnly !== null ? <p className="ms-insp-locked ms-insp-ro" role="status"><Icon name="lock" size={13} />{readOnly}</p> : null}
+      <fieldset className="ms-insp-fieldset" disabled={readOnly !== null}>
+        <InspectorBody key={found.clip.id} clip={found.clip} locked={found.locked} />
+      </fieldset>
+    </div>
+  );
 }

@@ -1,7 +1,8 @@
 /**
- * The format view's top bar with a ready render (UX feedback batch 1, final wave I2). The real FormatView is rendered in
- * jsdom, in Italian, with everything the bar can carry at once: the version badge and Versions, the render status with a
- * ready video (pill with the size, Scarica / Mostra nel Finder, Rifai il render), Lingue, Duplica, Modifica and Esporta. The
+ * The format page's top bar with a ready render (UX feedback batch 1, final wave I2). The format page is the editor since
+ * decision 916: the real EditorScreen is rendered in jsdom, in Italian, with everything the bar can carry at once: the
+ * version badge and Versions, the render status with a ready video (pill with the size, Scarica / Mostra nel Finder, Rifai il
+ * render), Lingue, Duplica and Esporta (no "Modifica" any more: the page is the editor). The
  * bar's markup, given the app's stylesheets and its fonts, is measured in real Chrome at 1024 and 1280 px, in the browser
  * and in the macOS desktop title bar (80 px for the traffic lights): nothing leaves the bar, nothing overlaps, no control's
  * text is clipped and the format's name keeps room. Chrome only on request (MS_LAYOUT_CHROME=1 or MS_REQUIRE_CHROME=1),
@@ -60,7 +61,7 @@ const api = {
 };
 class ApiError extends Error { constructor(public status: number, message: string, public code?: string) { super(message); } }
 vi.mock('../src/api.ts', () => ({ api, ApiError }));
-const { FormatView } = await import('../src/screens/FormatView.tsx');
+const { EditorScreen } = await import('../src/screens/editor/EditorScreen.tsx');
 const { TopBar } = await import('../src/shell/TopBars.tsx');
 const { ShellContext } = await import('../src/shell/ShellContext.tsx');
 
@@ -75,7 +76,7 @@ function Harness({ route = { name: 'format', slug: 'acme', creative: 'lancio', f
   return (
     <ShellContext.Provider value={shell}>
       <TopBar />
-      {page ? <FormatView slug="acme" creative="lancio" format={VIDEO} live={live} /> : null}
+      {page ? <EditorScreen slug="acme" creative="lancio" format={VIDEO} live={live} /> : null}
     </ShellContext.Provider>
   );
 }
@@ -93,8 +94,9 @@ async function barMarkup(desktopApp: boolean, state: 'ready' | 'live' = 'ready')
     render(<Harness />);
     const bar = () => document.querySelector('.ms-topbar') as HTMLElement;
     await waitFor(() => expect(within(bar()).getAllByText(state === 'ready' ? 'Video pronto · 12,4 MB' : 'Anteprima dal vivo').length).toBeGreaterThan(0));
-    await waitFor(() => expect(bar().querySelector('.ms-cv-edit')).not.toBeNull());
-    const names = [/Fai il render del video di/, /^Lingue/, /^Duplica/, /^Modifica/, /^Esporta/, ...(state === 'ready' ? [desktopApp ? /Mostra nel Finder/ : /Scarica il video di/] : [])];
+    await waitFor(() => expect(bar().querySelector('.ms-fv-duplicate')).not.toBeNull());
+    expect(bar().querySelector('.ms-cv-edit')).toBeNull();
+    const names = [/Fai il render del video di/, /^Lingue/, /^Duplica/, /^Esporta/, ...(state === 'ready' ? [desktopApp ? /Mostra nel Finder/ : /Scarica il video di/] : [])];
     for (const name of names) expect(within(bar()).getAllByRole('button', { name }).length, String(name)).toBeGreaterThan(0);
     expect(screen.getAllByText(state === 'ready' ? 'Rifai il render' : 'Render video').length).toBeGreaterThan(0);
     expect(bar().classList.contains('ms-bar-fv')).toBe(true);
@@ -161,7 +163,7 @@ describe('format view bar: CSS rules (scoped to the format view, Ruling AG)', ()
 });
 
 describe('format view bar: what it carries, and which bars fold', () => {
-  it('ready, in Italian: the version badge, Versions, the ready pill, Scarica, Rifai il render, Lingue, Duplica, Modifica, Esporta', async () => {
+  it('ready, in Italian: the version badge, Versions, the ready pill, Scarica, Rifai il render, Lingue, Duplica, Esporta', async () => {
     const html = await barMarkup(false);
     expect(html).toContain('ms-fv-render');
     expect(html).toContain('ms-cv-languages');
@@ -174,8 +176,8 @@ describe('format view bar: what it carries, and which bars fold', () => {
     const ready = await barMarkup(true);
     expect([...ready.matchAll(/class="ms-btn [^"]*ms-fold-1"/g)]).toHaveLength(2);
   });
-  it('the creative board\'s and the editor\'s bars are not the format view\'s: no .ms-bar-fv, so no fold rule reaches them', () => {
-    for (const route of [{ name: 'creative', slug: 'acme', creative: 'lancio' }, { name: 'edit', slug: 'acme', creative: 'lancio', format: VIDEO }] as Route[]) {
+  it('the creative board\'s bar is not the format page\'s: no .ms-bar-fv, so no fold rule reaches it', () => {
+    for (const route of [{ name: 'creative', slug: 'acme', creative: 'lancio' }] as Route[]) {
       render(<Harness route={route} page={false} />);
       const bar = document.querySelector('header.ms-topbar') as HTMLElement;
       expect(bar.className, route.name).not.toContain('ms-bar-fv');

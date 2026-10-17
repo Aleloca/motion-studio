@@ -42,6 +42,7 @@ const controls = { pause: vi.fn(), seek: vi.fn(), toggle: vi.fn(), step: vi.fn()
 let snapState = false;
 let selectSpy = vi.fn();
 let playing = false;
+let readOnlyState: string | null = null;
 
 function view(c: Composition): EditorCompositionView {
   return { n: 1, format: REEL, primaryFormat: REEL, hash: 'h'.repeat(64), composition: structuredClone(c), files: [], fonts: [] };
@@ -56,7 +57,7 @@ function Harness({ children, comp = spike }: { children: ReactNode; comp?: Compo
   const ctx = {
     slug: 'acme', creative: 'lancio', format: REEL, primary: REEL, draft, actions, player: null, selection,
     select: (id: string | null) => { selectSpy(id); setSelection(id); },
-    snap, setSnap, token: 't', stageAsset: async () => null, staging: false,
+    snap, setSnap, token: 't', stageAsset: async () => null, staging: false, readOnly: readOnlyState,
     controls: { clock, playing, ready: true, duration: 6, ...controls },
   } as unknown as EditorState;
   return (
@@ -71,6 +72,7 @@ beforeEach(() => {
   clock = createClock();
   snapState = false;
   playing = false;
+  readOnlyState = null;
   selectSpy = vi.fn();
   for (const f of Object.values(controls)) f.mockClear();
 });
@@ -144,6 +146,54 @@ describe('selecting', () => {
     expect(selectSpy).toHaveBeenCalledWith('card');
     expect(ops()).toHaveLength(0);
     expect(bar('card').getAttribute('aria-pressed')).toBe('true');
+  });
+});
+
+// User test 2026-10-17, item 8: selecting a clip shows it. A plain click seeks to the clicked point (frame-snapped) when it
+// is inside the clip, else to its start; a drag or a trim does not seek; play / pause is left as it was.
+describe('selecting seeks to the clip (item 8)', () => {
+  const stubRuler = () => vi.spyOn(screen.getByRole('slider', { name: /^Timeline ruler/ }), 'getBoundingClientRect')
+    .mockReturnValue({ left: 0, top: 0, right: 600, bottom: 26, width: 600, height: 26, x: 0, y: 0, toJSON() {} });
+  it('a plain click seeks to the clicked point, on a whole frame, without pausing or playing', async () => {
+    await mount();
+    stubRuler();
+    fireEvent.pointerDown(bar('photo1'), { clientX: 311, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(window, { clientX: 311, pointerId: 1 });
+    expect(controls.seek.mock.calls).toEqual([[3.1]]);
+    expect(controls.pause).not.toHaveBeenCalled();
+    expect(controls.toggle).not.toHaveBeenCalled();
+  });
+  it('a click that lands outside the clip\'s span goes to its start', async () => {
+    await mount();
+    stubRuler();
+    fireEvent.pointerDown(bar('caption'), { clientX: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(window, { clientX: 100, pointerId: 1 });
+    expect(controls.seek.mock.calls).toEqual([[2.3]]);
+  });
+  it('a drag to move or a trim does not seek', async () => {
+    await mount();
+    stubRuler();
+    drag(bar('photo1'), 300, [330, 340]);
+    drag(edge('caption', 'end'), 400, [380]);
+    expect(controls.seek).not.toHaveBeenCalled();
+    expect(ops().length).toBeGreaterThan(0);
+  });
+  it('read-only (an older version, an agent at work): a drag only selects and seeks, nothing is edited', async () => {
+    readOnlyState = 'Read-only';
+    await mount();
+    stubRuler();
+    drag(bar('photo1'), 300, [330, 360]);
+    expect(selectSpy).toHaveBeenCalledWith('photo1');
+    expect(controls.seek.mock.calls).toEqual([[3]]);
+    expect(ops()).toHaveLength(0);
+  });
+  it('Enter on a clip outside the playhead goes to its start; one under the playhead stays', async () => {
+    await mount();
+    act(() => { clock.set(1, true); });
+    fireEvent.keyDown(bar('caption'), { key: 'Enter' });
+    expect(controls.seek.mock.calls).toEqual([[2.3]]);
+    fireEvent.keyDown(bar('card'), { key: 'Enter' });
+    expect(controls.seek).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -473,6 +523,36 @@ describe('slider zoom by pointer', () => {
     fireEvent.pointerUp(window, { pointerId: 1 });
     expect(seen).toEqual([...seen].sort((a, b) => a - b));
     expect(seen.at(-1)).toBe(20);
+  });
+});
+
+// User test 2026-10-17, item 9: the playhead has a handle on the ruler that drags (pointer capture), on whole frames.
+describe('the playhead handle (item 9)', () => {
+  const ruler = () => screen.getByRole('slider', { name: /^Timeline ruler/ });
+  it('sits on the ruler at the playhead and drags it frame by frame, with the pointer captured', async () => {
+    await mount();
+    vi.spyOn(ruler(), 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, right: 600, bottom: 26, width: 600, height: 26, x: 0, y: 0, toJSON() {} });
+    act(() => { clock.set(1.5, true); });
+    const grip = document.querySelector<HTMLElement>('.ms-tl-ruler .ms-tl-grip')!;
+    expect(grip).not.toBeNull();
+    expect(grip.style.left).toBe('150px');
+    const capture = vi.fn();
+    (grip as unknown as { setPointerCapture: unknown }).setPointerCapture = capture;
+    fireEvent.pointerDown(grip, { clientX: 151, pointerId: 7, button: 0 });
+    expect(capture).toHaveBeenCalledWith(7);
+    // 1.51 s is not a frame: the nearest is 1.5 (45 / 30).
+    expect(controls.seek.mock.calls[0]).toEqual([1.5]);
+    fireEvent.pointerMove(window, { clientX: 252, pointerId: 7 });
+    fireEvent.pointerUp(window, { clientX: 252, pointerId: 7 });
+    // 2.52 s → frame 75.6 → 76 / 30.
+    expect(controls.seek.mock.lastCall![0]).toBeCloseTo(76 / 30, 6);
+  });
+  it('a click on the ruler jumps there, on a whole frame', async () => {
+    await mount();
+    vi.spyOn(ruler(), 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, right: 600, bottom: 26, width: 600, height: 26, x: 0, y: 0, toJSON() {} });
+    fireEvent.pointerDown(ruler(), { clientX: 104, pointerId: 1, button: 0 });
+    fireEvent.pointerUp(window, { clientX: 104, pointerId: 1 });
+    expect(controls.seek.mock.calls[0]![0]).toBeCloseTo(31 / 30, 6);
   });
 });
 

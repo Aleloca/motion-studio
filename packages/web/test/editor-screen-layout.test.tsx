@@ -1,19 +1,19 @@
 /**
- * The whole format view in real Chrome (follow-up batch 2, task 6). The real FormatView and its top bar are rendered in
- * jsdom (the live player replaced by a stand-in that reports itself ready), in English and Italian, in three states: the
- * live preview, a render at 42% and a ready video with its size. The markup, given the app's real stylesheets and fonts
- * in the app's own grid (bar over page), is measured in real Chrome at 1024 and 1280 px, in the desktop title bar: the
- * page does not scroll sideways, no element leaves its panel, no text is clipped mid-word, an ellipsis still shows a
- * meaningful part (at least 48 px and a quarter of the text, unless allow-listed) and only where one is known, and no
- * interactive control of the bar or the transport overlaps another. No Tooltip bubble is up at rest (checked in jsdom,
- * where it is portalled). The keys hint is hidden at 1024 px (decision 799) and allow-listed, ellipsized, at 1280 px.
- * Chrome only on request (MS_LAYOUT_CHROME=1 or MS_REQUIRE_CHROME=1), through the repo's driver (mock keychain, basic
- * password store).
+ * The whole format page in real Chrome (follow-up batch 2, task 6; one screen since decision 916: the page is the editor).
+ * The real EditorScreen and its top bar are rendered in jsdom (the live player replaced by a stand-in that reports itself
+ * ready), in English and Italian, in three states: the live preview, a render at 42% (the editor is read-only meanwhile,
+ * with its reason) and a ready video with its size; each with the Chat tab and with the Inspector tab of a selected clip.
+ * The markup, given the app's real stylesheets and fonts in the app's own grid (bar over page), is measured in real Chrome
+ * at 1024 and 1280 px, in the desktop title bar: the page does not scroll sideways, no element leaves its panel, no text is
+ * clipped mid-word, an ellipsis still shows a meaningful part (at least 48 px and a quarter of the text, unless
+ * allow-listed) and only where one is known, and no interactive control of the bar or the timeline's transport overlaps
+ * another. No Tooltip bubble is up at rest (checked in jsdom, where it is portalled). Chrome only on request
+ * (MS_LAYOUT_CHROME=1 or MS_REQUIRE_CHROME=1), through the repo's driver (mock keychain, basic password store).
  */
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { cleanup, render, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, renderHook, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DEFAULT_FORMATS, type CreativeDetail, type JobSummary, type OutputFileInfo, type VersionEntry } from '@motion-studio/shared';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -52,7 +52,11 @@ const composition = {
     { id: 's2', name: 'Scena', start: 3, duration: 2.5 },
     { id: 's3', name: 'Chiusura e invito all’azione', start: 5.5, duration: 2.5 },
   ],
-  tracks: [{ id: 't1', name: 'Titoli', clips: [{ id: 'c1', name: 'Titolo principale del lancio', type: 'text', start: 0, duration: 8 }] }],
+  tracks: [{ id: 't1', name: 'Titoli', kind: 'text', clips: [{
+    id: 'c1', name: 'Titolo principale del lancio', type: 'text', start: 0, duration: 8,
+    props: { text: 'Lancio estivo', fontFamily: 'Inter', fontSize: 64, color: '#ffffff', x: 100, y: 200, width: 880, height: 200 },
+    animations: [{ prop: 'opacity', from: 0, to: 1, duration: 0.5 }],
+  }] }],
 };
 const api = {
   getFormats: vi.fn(async () => ({ presets: DEFAULT_FORMATS, error: null, path: '/x' })),
@@ -67,6 +71,8 @@ const api = {
   })),
   getEditorComposition: vi.fn(async (_s: string, _c: string, n: number, format: string) => ({ n, format, primaryFormat: format, hash: H, files: [], fonts: [], composition })),
   getStoryboard: vi.fn(async (_s: string, _c: string, _n: number, format: string) => ({ format, hash: H, width: 270, expiresAt: new Date(Date.now() + 600_000).toISOString(), frames: [] })),
+  getBrand: vi.fn(async () => ({ kit: { colors: [], fonts: [] } })),
+  listAssets: vi.fn(async () => ({ assets: [], error: null, unregistered: [] })),
 };
 class ApiError extends Error { constructor(public status: number, message: string, public code?: string) { super(message); } }
 vi.mock('../src/api.ts', () => ({ api, ApiError }));
@@ -84,8 +90,9 @@ vi.mock('../src/components/CompositionPlayer.tsx', async (orig) => {
     },
   };
 });
-const { FormatView } = await import('../src/screens/FormatView.tsx');
+const { EditorScreen } = await import('../src/screens/editor/EditorScreen.tsx');
 const { TopBar } = await import('../src/shell/TopBars.tsx');
+const { __resetDrafts, draftKey, useDraft } = await import('../src/screens/editor/draftStore.ts');
 const { ShellContext } = await import('../src/shell/ShellContext.tsx');
 
 const renderJob: JobSummary = {
@@ -106,7 +113,7 @@ function Harness({ live }: { live: EventsState }) {
   return (
     <ShellContext.Provider value={shell}>
       <TopBar />
-      <main className="ms-main"><FormatView slug="acme" creative="lancio" format={VIDEO} live={live} /></main>
+      <main className="ms-main"><EditorScreen slug="acme" creative="lancio" format={VIDEO} live={live} /></main>
     </ShellContext.Provider>
   );
 }
@@ -115,8 +122,9 @@ const PILL: Record<'en' | 'it', Record<State, RegExp>> = {
   en: { idle: /Live preview/, rendering: /Rendering 42%/, ready: /Video ready · 12\.4 MB/ },
   it: { idle: /Anteprima dal vivo/, rendering: /Render 42%/, ready: /Video pronto · 12,4 MB/ },
 };
-/** The app (bar, then page) as the shell lays it out, in the desktop title bar. */
-async function appMarkup(locale: 'en' | 'it', state: State): Promise<string> {
+type Tab = 'chat' | 'inspector';
+/** The app (bar, then page) as the shell lays it out, in the desktop title bar, with the chat and then the inspector tab. */
+async function appMarkup(locale: 'en' | 'it', state: State): Promise<Record<Tab, string>> {
   rendered = state === 'ready';
   const hashBefore = location.hash;
   location.hash = `#/p/acme/c/lancio/f/${VIDEO}`;
@@ -126,15 +134,23 @@ async function appMarkup(locale: 'en' | 'it', state: State): Promise<string> {
     const { container } = render(<I18nProvider locale={locale}><div className="ms-app" id="app"><Harness live={liveOf(state)} /></div></I18nProvider>);
     const bar = () => container.querySelector('.ms-topbar') as HTMLElement;
     await waitFor(() => expect(within(bar()).getAllByText(PILL[locale][state]).length).toBeGreaterThan(0));
-    await waitFor(() => expect(container.querySelector('.ms-fv-rangebtn')).not.toBeNull());
-    await waitFor(() => expect(container.querySelector('.ms-fv-clippick')).not.toBeNull());
-    await waitFor(() => expect(container.querySelector('.ms-fv-hint')).not.toBeNull());
-    await waitFor(() => expect(container.querySelectorAll('.ms-fv-sb-item').length).toBe(3));
-    // The safe zone overlay on, so its bands are measured too.
+    await waitFor(() => expect(container.querySelector('.ms-tl')).not.toBeNull());
+    await waitFor(() => expect(container.querySelectorAll('.ms-ed-left .ms-fv-sb-item').length).toBe(3));
+    await waitFor(() => expect(container.querySelector('.ms-ed-right .ms-composer')).not.toBeNull());
+    await waitFor(() => expect((container.querySelector('.ms-tl .ms-fv-play') as HTMLButtonElement | null)?.disabled).toBe(false));
+    // Read-only while the render works, and says why.
+    if (state === 'rendering') await waitFor(() => expect(container.querySelector('.ms-ed-readonly')).not.toBeNull());
+    // The safe zone overlay on, so its bands are measured too; "Comment a spot" on, so its hint is too.
     const toggle = container.querySelector<HTMLElement>('.ms-fv-safe-toggle [role="switch"]');
     expect(toggle).not.toBeNull();
     await userEvent.click(toggle!);
     await waitFor(() => expect(container.querySelector('.ms-fv-frame .ms-cv-safe')).not.toBeNull());
+    // An edit, so the draft pill ("Draft · 1 edit", Save as v3, Discard) is in the tools row too.
+    const store = renderHook(() => useDraft(draftKey('acme', 'lancio', VIDEO)));
+    act(() => { store.result.current[1].apply({ kind: 'clipProps', clipId: 'c1', props: { x: 120 } }); });
+    await waitFor(() => expect(container.querySelector('.ms-ed-tools .ms-ed-pill')).not.toBeNull());
+    await userEvent.click(container.querySelector<HTMLElement>('.ms-ed-spot')!);
+    await waitFor(() => expect(container.querySelector('.ms-ed-main > .ms-fv-hint')).not.toBeNull());
     const app = container.querySelector('#app') as HTMLElement;
     // The desktop bar on macOS, as the app renders it (room for the traffic lights).
     expect(bar().classList.contains('ms-tb-mac')).toBe(true);
@@ -142,9 +158,15 @@ async function appMarkup(locale: 'en' | 'it', state: State): Promise<string> {
     // The static descriptions (.ms-sr) are always there and never visible.
     expect(document.body.querySelectorAll('.ms-tooltip')).toHaveLength(0);
     expect([...document.body.querySelectorAll('[role="tooltip"]')].filter((el) => !el.classList.contains('ms-sr'))).toEqual([]);
-    return app.outerHTML;
+    const chat = app.outerHTML;
+    // The inspector of the title clip (selected in the timeline), with its custom animation's "Ask the agent".
+    fireEvent.keyDown(container.querySelector('[data-clip="c1"]')!, { key: 'Enter' });
+    await waitFor(() => expect(container.querySelector('.ms-ed-right .ms-insp')).not.toBeNull());
+    await waitFor(() => expect(container.querySelector('.ms-insp-ask')).not.toBeNull());
+    return { chat, inspector: app.outerHTML };
   } finally {
     cleanup();
+    __resetDrafts();
     location.hash = hashBefore;
     platform.mockRestore();
     delete (window as unknown as { motionStudio?: unknown }).motionStudio;
@@ -152,12 +174,12 @@ async function appMarkup(locale: 'en' | 'it', state: State): Promise<string> {
 }
 
 /**
- * Ellipses allowed to show less than 48 px or a quarter of their text: scene names (scenes column), the crumbs (bar: at
- * 1024 px the project and creative crumbs keep ~16-31 px, the folding of decision 713), and the keys hint, which at
- * 1280 px shows its first keys with an ellipsis and the whole text as its title (decision 799; hidden below). They are
- * also the only ellipses expected at all: a new one fails the test until it is reviewed and added.
+ * Ellipses allowed to show less than 48 px or a quarter of their text: scene names (scenes column and the timeline's scenes
+ * lane), the crumbs (bar: at 1024 px the project and creative crumbs keep ~16-31 px, the folding of decision 713), and the
+ * timeline's clip names. They are also the only ellipses expected at all: a new one fails the test until it is reviewed and
+ * added.
  */
-const ELLIPSIS_OK = ['ms-fv-sb-text', 'ms-crumb', 'ms-fv-keys'];
+const ELLIPSIS_OK = ['ms-fv-sb-text', 'ms-crumb', 'ms-tl-clip-name', 'ms-tl-scene', 'ms-tl-name'];
 const MEASURE = `(async () => {
 const ELLIPSIS_OK = ${JSON.stringify(ELLIPSIS_OK)};
 await document.fonts.ready;
@@ -166,9 +188,9 @@ const problems = [], notes = [];
 const label = (el) => (el.getAttribute('aria-label') || el.textContent || el.className || el.tagName).trim().slice(0, 30);
 if (document.documentElement.scrollWidth > innerWidth) problems.push('page overflows by ' + (document.documentElement.scrollWidth - innerWidth));
 if (document.body.scrollWidth > innerWidth) problems.push('body overflows');
-const panels = [['.ms-topbar', 'bar'], ['.ms-fv-scenes', 'scenes'], ['.ms-fv-main', 'stage'], ['.ms-fv-panel', 'panel']]
+const panels = [['.ms-topbar', 'bar'], ['.ms-ed-left', 'scenes'], ['.ms-ed-main', 'stage'], ['.ms-ed-right', 'panel'], ['.ms-ed-timeline', 'timeline']]
   .map(([sel, name]) => [document.querySelector(sel), name]).filter(([el]) => el);
-for (const [name, ok] of [['bar', panels.some(([, n]) => n === 'bar')], ['scenes', panels.some(([, n]) => n === 'scenes')], ['stage', panels.some(([, n]) => n === 'stage')], ['panel', panels.some(([, n]) => n === 'panel')]]) if (!ok) problems.push('missing ' + name);
+for (const name of ['bar', 'scenes', 'stage', 'panel', 'timeline']) if (!panels.some(([, n]) => n === name)) problems.push('missing ' + name);
 const clipsX = (el, stop) => { for (let p = el.parentElement; p && p !== stop; p = p.parentElement) { const o = getComputedStyle(p); if (o.overflowX !== 'visible') return true; } return false; };
 for (const [panel, name] of panels) {
   const pr = panel.getBoundingClientRect();
@@ -195,7 +217,10 @@ for (const [panel, name] of panels) {
 }
 // Interactive controls of the bar and the transport must not overlap each other.
 const zone = (root) => root ? [...root.querySelectorAll('button, [role="slider"], [role="switch"], input, select, a[href], .ms-pill')].filter(vis).filter((el) => !el.parentElement.closest('button, .ms-pill')) : [];
-const groups = [['bar', zone(document.querySelector('.ms-topbar'))], ['transport', zone(document.querySelector('.ms-fv-transport'))]];
+const groups = [['bar', zone(document.querySelector('.ms-topbar'))], ['transport', zone(document.querySelector('.ms-tl-bar'))], ['stage tools', zone(document.querySelector('.ms-ed-main'))]];
+// The tools row (and the pill in it) never covers a note.
+const tools = document.querySelector('.ms-ed-tools').getBoundingClientRect();
+for (const n of document.querySelectorAll('.ms-ed-main .ms-fv-notes > *')) if (vis(n) && n.getBoundingClientRect().top < tools.bottom - 0.5) problems.push('stage tools cover a note: ' + label(n));
 for (const [name, list] of groups) {
   if (list.length < 3) problems.push(name + ': only ' + list.length + ' controls found');
   for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
@@ -204,8 +229,11 @@ for (const [name, list] of groups) {
     if (a.left < b.right - 0.5 && a.right > b.left + 0.5 && a.top < b.bottom - 0.5 && a.bottom > b.top + 0.5) problems.push(name + ': overlap: ' + label(list[i]) + ' / ' + label(list[j]));
   }
 }
-const keys = document.querySelector('.ms-fv-keys');
-const seen = { bar: groups[0][1].length, transport: groups[1][1].length, scenes: document.querySelectorAll('.ms-fv-sb-item').length, hint: document.querySelectorAll('.ms-fv-hint').length, clip: document.querySelectorAll('.ms-fv-clippick').length, range: document.querySelectorAll('.ms-fv-rangebtn').length, safe: document.querySelectorAll('.ms-fv-frame [class*="safe"]').length, keys: !!keys && vis(keys) };
+const main = document.querySelector('.ms-ed-main').getBoundingClientRect();
+const stage = document.querySelector('.ms-ed-stage .ms-fv-frame').getBoundingClientRect();
+const seen = { bar: groups[0][1].length, transport: groups[1][1].length, scenes: document.querySelectorAll('.ms-ed-left .ms-fv-sb-item').length, hint: document.querySelectorAll('.ms-ed-main > .ms-fv-hint').length,
+  safe: document.querySelectorAll('.ms-fv-frame [class*="safe"]').length, grip: document.querySelectorAll('.ms-tl-grip').length, chat: document.querySelectorAll('.ms-ed-right .ms-composer').length,
+  inspector: document.querySelectorAll('.ms-ed-right .ms-insp').length, pill: document.querySelectorAll('.ms-ed-tools .ms-ed-pill').length, readOnly: document.querySelectorAll('.ms-ed-readonly').length, frame: [Math.round(stage.width), Math.round(stage.height)], main: [Math.round(main.width), Math.round(main.height)] };
 return { problems, notes, seen };
 })()`;
 
@@ -214,33 +242,38 @@ const chrome = required || process.env.MS_LAYOUT_CHROME === '1' ? findChrome() :
 const run = chrome ? describe : describe.skip;
 if (!chrome && required) it('Chrome is required (MS_REQUIRE_CHROME=1)', () => { throw new Error('missing Chrome (set CHROME_PATH)'); });
 
-run('format view: whole page in real Chrome', () => {
+run('format page (the editor): whole page in real Chrome', () => {
   let dir = '';
   let browser: Browser;
-  beforeAll(async () => { dir = mkdtempSync(join(tmpdir(), 'ms-fv-')); browser = await launchChrome(chrome!); });
+  beforeAll(async () => { dir = mkdtempSync(join(tmpdir(), 'ms-ed-')); browser = await launchChrome(chrome!); });
   afterAll(async () => { await browser?.close(); rmSync(dir, { recursive: true, force: true }); });
 
   for (const locale of ['en', 'it'] as const) for (const state of ['idle', 'rendering', 'ready'] as const) {
-    it(`${locale}, ${state}: 1024 and 1280 px, nothing overflows, is clipped or overlaps`, async () => {
-      const html = await appMarkup(locale, state);
+    it(`${locale}, ${state}: chat and inspector, 1024 and 1280 px, nothing overflows, is clipped or overlaps`, async () => {
+      const markup = await appMarkup(locale, state);
       const failures: string[] = [];
-      for (const width of [1024, 1280]) {
+      for (const tab of ['chat', 'inspector'] as const) for (const width of [1024, 1280]) {
         const page = `<!doctype html><html lang="${locale}"><head><meta charset="utf-8"><style>${FONTS()}\n${ALL_CSS()}
-          html,body{margin:0;height:100%;background:var(--bg)}</style></head><body>${html}</body></html>`;
-        const file = join(dir, `${locale}-${state}-${width}.html`);
+          html,body{margin:0;height:100%;background:var(--bg)}</style></head><body>${markup[tab]}</body></html>`;
+        const file = join(dir, `${locale}-${state}-${tab}-${width}.html`);
         writeFileSync(file, page);
-        const tab = await browser.newPage(width, 800);
+        const tabPage = await browser.newPage(width, 800);
         try {
-          await tab.goto(`file://${file}`);
-          const r = await tab.eval<{ problems: string[]; notes: string[]; seen: Record<string, number | boolean> }>(MEASURE, 30_000);
-          console.info(`[fv-layout] ${locale} ${state} @${width}: ${JSON.stringify(r)}`);
-          for (const p of r.problems) failures.push(`${locale} ${state} @${width}: ${p}`);
+          await tabPage.goto(`file://${file}`);
+          const r = await tabPage.eval<{ problems: string[]; notes: string[]; seen: Record<string, unknown> }>(MEASURE, 30_000);
+          // MS_LAYOUT_SHOTS=<folder>: a screenshot of each case, to look at.
+          if (process.env.MS_LAYOUT_SHOTS) writeFileSync(join(process.env.MS_LAYOUT_SHOTS, `editor-${locale}-${state}-${tab}-${width}.png`), await tabPage.screenshot());
+          console.info(`[ed-layout] ${locale} ${state} ${tab} @${width}: ${JSON.stringify(r)}`);
+          const at = `${locale} ${state} ${tab} @${width}`;
+          for (const p of r.problems) failures.push(`${at}: ${p}`);
           // Every ellipsis is a known one (a new one is noticed here, not only in the log).
-          for (const n of r.notes) if (!ELLIPSIS_OK.includes(n)) failures.push(`${locale} ${state} @${width}: unexpected ellipsis: ${n}`);
-          for (const k of ['safe', 'hint', 'clip', 'range'] as const) if (!(Number(r.seen[k]) > 0)) failures.push(`${locale} ${state} @${width}: ${k} not rendered`);
-          // Decision 799: the keys hint is hidden where it would be a sliver (1024 px) and shown at 1280 px.
-          if (r.seen.keys !== (width === 1280)) failures.push(`${locale} ${state} @${width}: keys hint ${r.seen.keys ? 'shown' : 'hidden'}`);
-        } finally { await tab.close(); }
+          for (const n of r.notes) if (!ELLIPSIS_OK.includes(n)) failures.push(`${at}: unexpected ellipsis: ${n}`);
+          for (const k of ['safe', 'hint', 'grip', 'pill', tab] as const) if (!(Number(r.seen[k]) > 0)) failures.push(`${at}: ${k} not rendered`);
+          if ((Number(r.seen.readOnly) > 0) !== (state === 'rendering')) failures.push(`${at}: read-only note ${r.seen.readOnly ? 'shown' : 'missing'}`);
+          // The stage keeps a usable frame next to the chat or the inspector and above the timeline.
+          const [fw, fh] = r.seen.frame as [number, number];
+          if (fw < 120 || fh < 220) failures.push(`${at}: stage frame too small (${fw}×${fh})`);
+        } finally { await tabPage.close(); }
       }
       expect(failures).toEqual([]);
     });

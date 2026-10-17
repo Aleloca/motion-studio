@@ -129,7 +129,7 @@ const emptyLive = (): EventsState => ({ approvals: {}, jobs: {}, events: {}, cre
 let live = emptyLive();
 
 function Harness() {
-  const route: Route = { name: 'edit', slug: 'acme', creative: 'post', format: IMG };
+  const route: Route = { name: 'format', slug: 'acme', creative: 'post', format: IMG };
   const shell = {
     route, live,
     catalog: { projects: [{ slug: 'acme', name: 'Acme' }], creatives: {}, refresh: () => {} },
@@ -157,7 +157,7 @@ beforeEach(() => {
   media.clipBounds = null;
   detail = makeDetail([v2(1)]);
   live = emptyLive();
-  location.hash = `#/p/acme/c/post/f/${IMG}/edit`;
+  location.hash = `#/p/acme/c/post/f/${IMG}`;
 });
 afterEach(() => { vi.useRealTimers(); });
 
@@ -226,6 +226,7 @@ describe('image editor · layers', () => {
   it('selecting a layer drives the handles and the inspector; the inspector has no timing or animation', async () => {
     render(<Harness />);
     await opened();
+    await userEvent.click(screen.getByRole('tab', { name: 'Inspector' }));
     expect(screen.getByText('Select a clip')).toBeTruthy();
     await userEvent.click(within(rowOf('card')).getByRole('button', { name: /^card/ }));
     expect(media.select).toHaveBeenLastCalledWith('card');
@@ -299,7 +300,7 @@ describe('image editor · save', () => {
     expect((body.composition as Composition).duration).toBe(0);
     expect(await screen.findByText(/^✓ Saved as .* v2$/)).toBeTruthy();
     await waitFor(() => expect(api.getEditorComposition).toHaveBeenCalledWith('acme', 'post', 2, IMG));
-    await waitFor(() => expect(within(document.querySelector('.ms-topbar') as HTMLElement).getByText('v2')).toBeTruthy());
+    await waitFor(() => expect(within(document.querySelector('.ms-topbar') as HTMLElement).getByRole('button', { name: /v2 is used for export/ })).toBeTruthy());
     expect(peekDraft(KEY)!.ops).toHaveLength(0);
     // No agent turn, no tokens.
     expect(api.sendCreativeTurn).not.toHaveBeenCalled();
