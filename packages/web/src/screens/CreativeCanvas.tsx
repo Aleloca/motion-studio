@@ -1010,7 +1010,7 @@ function CreativeMenu({ onAddVariant }: { onAddVariant(): void }) {
       </Button>
       <Popover open={open} onClose={() => setOpen(false)} anchor={more} placement="bottom-end" width={220}>
         <div role="menu" aria-label={vg.creativeMenu}>
-          <NavItem data-row="" role="menuitem" icon="plus" onClick={() => { setOpen(false); onAddVariant(); }}>{vg.addVariant}</NavItem>
+          <NavItem data-row="" role="menuitem" icon="plus" onClick={() => { setOpen(false); onAddVariant(); }}>{vg.addVariantMenu}</NavItem>
         </div>
       </Popover>
     </>
