@@ -101,7 +101,11 @@ async function askUser(ctx: BridgeRoutesContext, c: BridgeContext, input: Record
   const answered = decision === 'once' && answers !== undefined;
   const event: AgentEvent = {
     kind: 'question_answered', outcome: answered ? 'answered' : decision === 'expired' || decision === 'cancelled' ? decision : 'deny',
-    items: questions.map((q) => ({ header: q.header, question: q.question, ...(answered && answers[q.question] !== undefined ? { answer: answers[q.question] } : {}) })), ...linked,
+    // Own string values only (review fix): a question text never reads a property of Object.prototype.
+    items: questions.map((q) => {
+      const a = answered && Object.hasOwn(answers, q.question) ? answers[q.question] : undefined;
+      return { header: q.header, question: q.question, ...(typeof a === 'string' ? { answer: a } : {}) };
+    }), ...linked,
   };
   // In the conversation as the question and its answer, never as a permission.
   try { c.emit(event); } catch { /* a faulty listener must not change the answer */ }

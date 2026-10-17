@@ -453,6 +453,15 @@ describe('user note 8: the agent\'s question in the conversation', () => {
     expect(screen.queryByText(/Unknown command/)).toBeNull();
   });
 
+  it('review fix: an old line whose answer is not text (a `__proto__` question) renders without crashing', () => {
+    const bad = { kind: 'question_answered', outcome: 'answered', items: [{ header: 'H', question: '__proto__', answer: {} }, { header: 'H', question: 'Q2', answer: 7 }] } as unknown as AgentEvent;
+    render(view({ job: done, entries: [request, agent(2, asked), agent(3, bad), agent(4, { kind: 'text', text: 'After' }), agent(5, { kind: 'result', ok: true, sessionId: 's' })] }));
+    const card = screen.getByRole('article', { name: 'Question from the agent' });
+    expect(within(card).getByText('__proto__')).toBeTruthy();
+    expect(within(card).queryByText('Your answer')).toBeNull();
+    expect(screen.getByText('After')).toBeTruthy();
+  });
+
   it('an unanswered question says so', () => {
     render(view({ job: done, entries: [request, agent(2, asked), agent(3, { kind: 'question_answered', outcome: 'expired', items: [{ header: 'Length', question }] }), agent(5, { kind: 'result', ok: true, sessionId: 's' })] }));
     const card = screen.getByRole('article', { name: 'Question from the agent' });

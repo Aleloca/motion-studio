@@ -474,11 +474,12 @@ function AnsweredQuestion({ at, event }: { at: string; event: Extract<AgentEvent
       <AgentMark />
       <div className="ms-msg-body">
         <span className="ms-msg-meta"><b>{q.historyLabel}</b>·<When at={at} /></span>
-        {event.items.map((it, i) => (
+        {/* Only text is rendered (review fix): a stored line with another value (an old `__proto__` answer) shows as unanswered. */}
+        {(Array.isArray(event.items) ? event.items : []).map((it, i) => (
           <div key={i} className="ms-question-done">
-            {it.header && <Clipped className="ms-question-header" text={it.header} max={QUESTION_DISPLAY.header} />}
-            <Clipped className="ms-question-text" text={it.question} max={QUESTION_DISPLAY.question} />
-            {it.answer !== undefined
+            {typeof it.header === 'string' && it.header && <Clipped className="ms-question-header" text={it.header} max={QUESTION_DISPLAY.header} />}
+            {typeof it.question === 'string' && <Clipped className="ms-question-text" text={it.question} max={QUESTION_DISPLAY.question} />}
+            {typeof it.answer === 'string'
               ? <span className="ms-question-answer"><b>{q.yourAnswer}</b><span>{it.answer}</span></span>
               : <span className="ms-approval-note">{none}</span>}
           </div>
@@ -613,7 +614,8 @@ function Details({ jobId, entries, open, onToggle }: { jobId: string; entries: D
       case 'stderr': return [k.log, e.text, true];
       case 'parse_error': return [k.unreadable, e.line, true];
       // `usage` and `approval_decided` are never handed to Details (see TECHNICAL); commands have their own row below.
-      case 'usage': case 'auto_approved': case 'approval_decided': return ['', ''];
+      // `question_answered` (user note 8) is a conversation row of its own, never a detail line.
+      case 'usage': case 'auto_approved': case 'approval_decided': case 'question_answered': return ['', ''];
       // Phase 13 markers: shown by the conversation's own rows (Task 3), never as a detail line.
       case 'user_message_delivered': case 'user_message_not_delivered': case 'user_message_read': case 'interrupted': return ['', ''];
       case 'result': return e.ok ? [k.done, e.text ?? ''] : e.interrupted ? [k.stopped, e.text ?? ''] : [k.failed, e.error ?? '', true];

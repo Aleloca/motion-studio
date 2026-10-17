@@ -30,7 +30,7 @@ const QUESTION = {
 };
 
 /** A bare server that answers a WorkspaceError with its status, as the core's error handler does. */
-const server = () => Fastify().setErrorHandler((e, _req, reply) => reply.status((e as { status?: number }).status ?? 500).send({ error: e.message }));
+const server = () => Fastify().setErrorHandler((e, _req, reply) => reply.status((e as { status?: number }).status ?? 500).send({ error: (e as Error).message }));
 const register = (o: Partial<BridgeContext> = {}) => bridge.register({ jobId: 'j1', kind: 'creative', projectSlug: 'acme', projectDir, creativeSlug: 'c1', sandboxed: true, autoApproveAtStart: true, emit: (e) => events.push(e), signal: abort.signal, ...o });
 let token: string;
 
@@ -159,6 +159,20 @@ describe('AskUserQuestion through the permission prompt', () => {
       expect((await ask(input)).json(), JSON.stringify(input).slice(0, 80)).toEqual({ behavior: 'deny', message: 'Richiesta non valida.' });
     }
     expect(approvals.pending()).toEqual([]);
+  });
+
+  it('review fix: a question named like an Object.prototype key is refused without a card; `toString` is an ordinary text', async () => {
+    for (const text of ['__proto__', 'constructor', 'prototype']) {
+      const r = await ask({ questions: [{ question: text, header: 'H', options: [{ label: 'A', description: '' }, { label: 'B', description: '' }] }] });
+      expect(r.json(), text).toEqual({ behavior: 'deny', message: 'Richiesta non valida.' });
+    }
+    expect(approvals.pending()).toEqual([]);
+    const input = { questions: [{ question: 'toString', header: 'H', options: [{ label: 'A', description: '' }, { label: 'B', description: '' }] }] };
+    const reply = ask(input);
+    const req = await pendingQuestion();
+    await answer(req.id, [{ selected: [1] }]);
+    expect((await reply).json().updatedInput.answers).toEqual({ toString: 'B' });
+    expect(events.at(-1)).toEqual({ kind: 'question_answered', outcome: 'answered', toolUseId: 'toolu_q1', items: [{ header: 'H', question: 'toString', answer: 'B' }] });
   });
 
   it('turns that may not ask anything keep refusing it without a card', async () => {

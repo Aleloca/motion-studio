@@ -20,8 +20,13 @@ const option = z.object({
   label: z.string().min(1).max(QUESTION_LIMITS.label).refine((s) => s.trim() !== ''),
   description: z.string().max(QUESTION_LIMITS.description).optional().default(''),
 });
+/**
+ * Texts that name a property every object has: as a key of `answers` they would read or write `Object.prototype` in a
+ * careless consumer (ours or Claude Code's). Such a question is refused (review fix).
+ */
+const RESERVED_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype']);
 const question = z.object({
-  question: z.string().min(1).max(QUESTION_LIMITS.question).refine((s) => s.trim() !== ''),
+  question: z.string().min(1).max(QUESTION_LIMITS.question).refine((s) => s.trim() !== '' && !RESERVED_KEYS.has(s.trim())),
   header: z.string().max(QUESTION_LIMITS.header).optional().default(''),
   options: z.array(option).min(QUESTION_LIMITS.minOptions).max(QUESTION_LIMITS.options)
     // Two options with the same label could not be told apart in the answer.
@@ -54,7 +59,8 @@ export type QuestionAnswers = z.infer<typeof questionAnswersSchema>;
  */
 export function answersFor(questions: readonly AgentQuestion[], given: QuestionAnswers): Record<string, string> | null {
   if (given.length !== questions.length) return null;
-  const out: Record<string, string> = {};
+  // Built with `Object.fromEntries` (own data properties): a key like `__proto__` is never the prototype setter.
+  const out: Array<[string, string]> = [];
   for (const [i, q] of questions.entries()) {
     const a = given[i]!;
     if (new Set(a.selected).size !== a.selected.length || a.selected.some((k) => k >= q.options.length)) return null;
@@ -62,7 +68,7 @@ export function answersFor(questions: readonly AgentQuestion[], given: QuestionA
     const parts = [...a.selected].sort((x, y) => x - y).map((k) => q.options[k]!.label);
     if (other) parts.push(other);
     if (parts.length === 0 || (!q.multiSelect && parts.length !== 1)) return null;
-    out[q.question] = parts.join(', ');
+    out.push([q.question, parts.join(', ')]);
   }
-  return out;
+  return Object.fromEntries(out);
 }
