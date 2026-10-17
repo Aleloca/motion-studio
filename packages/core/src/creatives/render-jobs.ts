@@ -522,12 +522,14 @@ export class RenderJobService {
       };
       const master = await copy(v.svgFile, 'master.svg');
       const small = v.small !== undefined ? await copy(v.small, 'small.svg') : undefined;
+      // The logo's negative (decision 876); an older logo has none, and its set simply has no logo-dark files.
+      const dark = o.kind === 'logo' && v.dark !== undefined ? await copy(v.dark, 'dark.svg') : undefined;
       const creative = await store.get(o.ref.creativeSlug);
       const brand = await new BrandStore(o.ref.projectDir).readKit().catch(() => undefined);
       const engine = this.deps.engine!;
       const outDir = join(work, 'set');
       const built = await buildIdentitySet(o.kind, {
-        master, ...(small ? { small } : {}), outDir, ...(brand ? { brand } : {}),
+        master, ...(small ? { small } : {}), ...(dark ? { dark } : {}), outDir, ...(brand ? { brand } : {}),
         name: creative.brief.identity?.name ?? creative.title, background: o.composition.background, label: o.format, signal: o.signal, locale: o.locale,
         raster: { provider: () => engine.provider(), ...(this.deps.renderOptions?.distDir ? { distDir: this.deps.renderOptions.distDir } : {}), ...(this.deps.renderOptions?.tempDir ? { tempDir: this.deps.renderOptions.tempDir } : {}) },
       });

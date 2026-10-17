@@ -48,7 +48,7 @@ function svgFile(body = '<circle cx="50" cy="50" r="20"/>'): string {
 function fakeRasterize(calls: Array<{ path: string; jobs: Array<{ size: number; scale?: number }> }>, disc = 0.4) {
   return async (path: string, jobs: Array<{ size: number; scale?: number }>) => {
     calls.push({ path, jobs: [...jobs].sort((a, b) => a.size - b.size || (a.scale ?? 1) - (b.scale ?? 1)) });
-    const colour = path.includes('small') ? [0, 0, 255] : [255, 0, 0];
+    const colour = path.includes('small') ? [0, 0, 255] : path.includes('dark') ? [0, 255, 0] : [255, 0, 0];
     return jobs.map(({ size: s, scale = 1 }) => {
       const px = new Uint8Array(s * s * 4);
       const r = (s * scale * disc) / 2;
@@ -111,7 +111,7 @@ describe.skipIf(!ff)('buildIdentitySet (stand-in rasteriser, real ffmpeg)', () =
   for (const kind of ['logo', 'favicon', 'app-icon'] as const) {
     it(`${kind}: the files written are exactly IDENTITY_SETS.${kind}`, async () => {
       const outDir = join(work, `set-${kind}`);
-      const r = await buildIdentitySet(kind, { master: svgFile(), outDir, name: 'Acme', background: '#123456', rasterize: fakeRasterize([]), ffmpeg: ff! });
+      const r = await buildIdentitySet(kind, { master: svgFile(), ...(kind === 'logo' ? { dark: svgFile() } : {}), outDir, name: 'Acme', background: '#123456', rasterize: fakeRasterize([]), ffmpeg: ff! });
       const expected = IDENTITY_SETS[kind].files.map((f) => f.path);
       expect(r.files.map((f) => f.path)).toEqual(expected);
       expect(listFiles(outDir)).toEqual([...expected].sort());
@@ -135,6 +135,42 @@ describe.skipIf(!ff)('buildIdentitySet (stand-in rasteriser, real ffmpeg)', () =
     for (const e of ico) expect(centre(e.png)).toEqual([0, 0, 255, 255]);
     expect(centre(readFileSync(join(outDir, 'icon-192.png')))).toEqual([255, 0, 0, 255]);
     expect(readFileSync(join(outDir, 'favicon.svg'), 'utf8')).toBe(readFileSync(master, 'utf8'));
+  });
+
+  it('logo with its negative (note 9): logo-dark.svg is the dark SVG, logo-dark.png is drawn from it at the logo.png size, transparent', async () => {
+    const calls: Array<{ path: string; jobs: Array<{ size: number; scale?: number }> }> = [];
+    const outDir = join(work, 'logo-dark');
+    const master = join(work, 'master-logo.svg');
+    const dark = join(work, 'dark-logo.svg');
+    writeFileSync(master, `<svg ${NS} viewBox="0 0 20 10"><rect width="20" height="10" fill="#111111"/></svg>`);
+    writeFileSync(dark, `<svg ${NS} viewBox="0 0 20 10"><rect width="20" height="10" fill="#eeeeee"/></svg>`);
+    const r = await buildIdentitySet('logo', { master, dark, outDir, name: 'Acme', rasterize: fakeRasterize(calls), ffmpeg: ff! });
+    expect(r.files.map((f) => f.path)).toEqual(['logo.svg', 'logo.png', 'logo-dark.svg', 'logo-dark.png']);
+    expect(calls).toEqual([{ path: master, jobs: [{ size: 1024 }] }, { path: dark, jobs: [{ size: 1024 }] }]);
+    expect(readFileSync(join(outDir, 'logo.svg'), 'utf8')).toBe(readFileSync(master, 'utf8'));
+    expect(readFileSync(join(outDir, 'logo-dark.svg'), 'utf8')).toBe(readFileSync(dark, 'utf8'));
+    expect(centre(readFileSync(join(outDir, 'logo-dark.png')))).toEqual([0, 255, 0, 255]);
+    expect(centre(readFileSync(join(outDir, 'logo.png')))).toEqual([255, 0, 0, 255]);
+    expect(r.files.find((f) => f.path === 'logo-dark.png')).toMatchObject({ alpha: true, role: 'raster-dark' });
+    expect(r.files.find((f) => f.path === 'logo-dark.svg')).toMatchObject({ role: 'vector-dark' });
+    expect(r.files.find((f) => f.path === 'logo-dark.png')!.width).toBe(r.files.find((f) => f.path === 'logo.png')!.width);
+  });
+
+  it('an older logo without "dark" still builds: the set has no dark files and nothing breaks', async () => {
+    const outDir = join(work, 'logo-old');
+    const r = await buildIdentitySet('logo', { master: svgFile(), outDir, name: 'Acme', rasterize: fakeRasterize([]), ffmpeg: ff! });
+    expect(r.files.map((f) => f.path)).toEqual(['logo.svg', 'logo.png']);
+    expect(listFiles(outDir)).toEqual(['logo.png', 'logo.svg']);
+  });
+
+  it('a refused "dark" SVG rasterises nothing and writes nothing; "dark" is ignored for the icons', async () => {
+    const calls: Array<{ path: string; jobs: Array<{ size: number; scale?: number }> }> = [];
+    const outDir = join(work, 'logo-dark-refused');
+    await expect(buildIdentitySet('logo', { master: svgFile(), dark: svgFile('<script>alert(1)</script>'), outDir, name: 'A', rasterize: fakeRasterize(calls), ffmpeg: ff! })).rejects.toBeInstanceOf(SvgRefusedError);
+    expect(calls).toEqual([]);
+    expect(existsSync(outDir)).toBe(false);
+    const icon = await buildIdentitySet('app-icon', { master: svgFile(), dark: svgFile(), outDir: join(work, 'icon-dark'), name: 'A', background: '#123456', rasterize: fakeRasterize([]), ffmpeg: ff! });
+    expect(icon.files.map((f) => f.path)).toEqual(IDENTITY_SETS['app-icon'].files.map((f) => f.path));
   });
 
   it('favicon without a small variant: the ICO comes from the master', async () => {
