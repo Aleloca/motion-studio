@@ -940,9 +940,13 @@ export class CreativeTurnService {
         };
         live.emit = emit;
         live.write = (entry) => {
-          lastWrite = lastWrite.then(() => store.appendConversation(slug, entry));
+          // After every earlier write, whether it failed or not (an earlier failure is the turn's, not this message's).
+          const before = lastWrite;
+          const mine = before.catch(() => {}).then(() => store.appendConversation(slug, entry));
+          // The chain waits for it but keeps only its own earlier failure: this entry's failure is the POST's alone.
+          lastWrite = before.then(() => mine.then(() => {}, () => {}), (err: unknown) => mine.then(() => { throw err; }, () => { throw err; }));
           lastWrite.catch(() => {});
-          return lastWrite;
+          return mine;
         };
         /**
          * Final wave P3: messages given to a run that was cut (for a newer redirect) before it reported its session, so before

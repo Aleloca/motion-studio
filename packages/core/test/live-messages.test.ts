@@ -102,6 +102,71 @@ describe('live messages, capability on (opt-in, fake runner)', () => {
     expect(after).toBeGreaterThan(at);
   });
 
+  it('review fix: a redirect lands in conversation.jsonl after every agent event emitted before it', async () => {
+    s = await liveApp({ live: true });
+    const job = await startTurn();
+    const run = await s.runner.next(0);
+    for (let i = 0; i < 300; i++) run.emit({ kind: 'text', text: `prima ${i}` });
+    const clientId = cid();
+    const res = await s.app.inject({ method: 'POST', url: `/api/jobs/${job.id}/redirect`, payload: { clientId, text: 'Cambia strada' } });
+    expect(res.statusCode, res.body).toBe(200);
+    run.emit({ kind: 'text', text: 'dopo' });
+    run.finish();
+    await s.waitIdle();
+    const conv = await s.conversation();
+    const textOf = (e: Record<string, unknown>) => (e.type === 'agent' && (e.event as { kind: string }).kind === 'text' ? (e.event as { text: string }).text : null);
+    const at = conv.findIndex((e) => e.type === 'user' && e.clientId === clientId && e.mode === 'redirect');
+    expect(at).toBeGreaterThan(conv.findIndex((e) => textOf(e) === 'prima 299'));
+    expect(conv.findIndex((e) => textOf(e) === 'dopo')).toBeGreaterThan(at);
+  });
+
+  it('review fix: a failed write of the message is the POST\'s failure only; the turn and its later events go on', async () => {
+    s = await liveApp({ live: true });
+    const append = CreativeStore.prototype.appendConversation;
+    const spy = vi.spyOn(CreativeStore.prototype, 'appendConversation').mockImplementation(function (this: CreativeStore, slug, entry) {
+      if (entry.type === 'user' && entry.text === 'Non scritto') return Promise.reject(new Error('disk full'));
+      return append.call(this, slug, entry);
+    });
+    try {
+      const job = await startTurn();
+      const run = await s.runner.next(0);
+      run.emit({ kind: 'text', text: 'prima' });
+      const res = await post({ clientId: cid(), text: 'Non scritto', mode: 'live' });
+      expect(res.statusCode).toBeGreaterThanOrEqual(500);
+      expect(run.sent).toEqual([]);
+      // The next message is written, in order, and the turn saves its version.
+      const clientId = cid();
+      expect((await post({ clientId, text: 'Scritto', mode: 'live' })).json().outcome).toBe('delivered-pending');
+      run.emit({ kind: 'text', text: 'dopo' });
+      run.finish();
+      await s.waitIdle();
+      expect((await s.jobs()).find((j) => j.id === job.id)?.state).toBe('succeeded');
+      const conv = await s.conversation();
+      expect(conv.some((e) => e.text === 'Non scritto')).toBe(false);
+      const texts = conv.map((e) => (e.type === 'user' ? e.text : e.type === 'agent' && (e.event as { kind: string }).kind === 'text' ? (e.event as { text: string }).text : null)).filter((x) => x === 'prima' || x === 'Scritto' || x === 'dopo');
+      expect(texts).toEqual(['prima', 'Scritto', 'dopo']);
+    } finally { spy.mockRestore(); }
+  });
+
+  it('review fix: an agent event that failed to write does not stop the message from being written', async () => {
+    s = await liveApp({ live: true });
+    const append = CreativeStore.prototype.appendConversation;
+    const spy = vi.spyOn(CreativeStore.prototype, 'appendConversation').mockImplementation(function (this: CreativeStore, slug, entry) {
+      if (entry.type === 'agent' && entry.event.kind === 'text' && entry.event.text === 'perso') return Promise.reject(new Error('disk full'));
+      return append.call(this, slug, entry);
+    });
+    try {
+      await startTurn();
+      const run = await s.runner.next(0);
+      run.emit({ kind: 'text', text: 'perso' });
+      const clientId = cid();
+      expect((await post({ clientId, text: 'Comunque', mode: 'live' })).json().outcome).toBe('delivered-pending');
+      expect((await s.conversation()).some((e) => e.type === 'user' && e.clientId === clientId)).toBe(true);
+      run.finish();
+      await s.waitIdle();
+    } finally { spy.mockRestore(); }
+  });
+
   it('a message sent while the turn waits to start is written once the run starts', async () => {
     s = await liveApp({ live: true });
     // Two turns of two creatives, concurrency 2: hold the run of ours by not finishing; message before it starts is
