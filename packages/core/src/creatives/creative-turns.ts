@@ -772,6 +772,9 @@ export class CreativeTurnService {
       const presets = await this.deps.presets();
       const model = (await this.deps.model()) ?? undefined;
       const initial = await store.get(slug);
+      // Minor (Task 2): the brief just applied above may have dropped every format the request asked for; none left would
+      // widen the turn to every format, so it is refused like at the start.
+      if (requestedFormats?.length && !requestedFormats.some((f) => initial.brief.formats.includes(f))) throw new CodedError(400, t().errors.formatsNotInBrief, 'formats-not-in-brief');
       const creativeDir = store.dir(slug);
       // Pins, the carried files and the add-formats base refer to the version on screen: the one being resumed from, else the latest.
       const base = initial.resumeFrom ? versions.find((v) => v.n === initial.resumeFrom!.version) : latest;

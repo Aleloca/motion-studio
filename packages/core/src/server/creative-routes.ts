@@ -466,15 +466,20 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const r = await svc.resolve(ref);
     if (r.orphan) throw new CodedError(409, t().errors.variantOrphan, 'variant-orphan');
     const directions = body.directions ?? [];
-    const creating = r.group === null;
-    const total = creating ? body.count ?? Math.max(2, directions.length) : null;
-    const add = creating ? total! - 1 : body.count ?? Math.max(1, directions.length);
-    if ((creating && total! < 2) || add < 1 || directions.length > (creating ? total! : add)) {
-      throw new CodedError(400, t().errors.variantDirections, 'variant-directions');
-    }
-    const own = creating ? directions.slice(1) : directions;
-    const specs = Array.from({ length: add }, (_, i) => ({ direction: own[i] ?? null, ...(body.baseFrom ? { baseFrom: body.baseFrom } : {}) }));
-    await svc.addVariants(r.host, specs, creating ? { hostDirection: directions[0] ?? null } : {});
+    // Minor (Task 2): whether this creates the group, and how many variants that adds, is decided UNDER the host's lock
+    // (`addVariants` calls this with the group as stored then), so two requests cannot both believe they create it.
+    await svc.addVariants(r.host, (existing) => {
+      const creating = existing === null;
+      const total = creating ? body.count ?? Math.max(2, directions.length) : null;
+      const add = creating ? total! - 1 : body.count ?? Math.max(1, directions.length);
+      if (creating && total! < 2) throw new CodedError(400, t().errors.invalidRequest, 'invalid-request');
+      if (add < 1 || directions.length > (creating ? total! : add)) throw new CodedError(400, t().errors.variantDirections, 'variant-directions');
+      const own = creating ? directions.slice(1) : directions;
+      return {
+        specs: Array.from({ length: add }, (_, i) => ({ direction: own[i] ?? null, ...(body.baseFrom ? { baseFrom: body.baseFrom } : {}) })),
+        ...(creating ? { hostDirection: directions[0] ?? null } : {}),
+      };
+    });
     return reply.status(201).send(await detailOf({ ...r.host, store: ref.store }));
   });
 
@@ -495,7 +500,9 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   }
 
   app.put<{ Params: { slug: string; c: string; formatId: string } }>('/api/projects/:slug/creatives/:c/variants/picks/:formatId', async (req): Promise<CreativeDetail> => {
-    const pick = req.body === null || req.body === undefined ? null : parse(variantPickBody, req.body);
+    // Only an explicit JSON `null` clears the ★; a request without a body is a mistake, not a clear (minor, Task 2).
+    if (req.body === undefined) throw new CodedError(400, t().errors.invalidRequest, 'invalid-request');
+    const pick = req.body === null ? null : parse(variantPickBody, req.body);
     const ref = await refOf(req.params.slug, req.params.c);
     await variantsOf(ref).setPick(ref, req.params.formatId, pick);
     return detailOf(ref);

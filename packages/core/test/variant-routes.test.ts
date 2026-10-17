@@ -15,6 +15,7 @@ import { AppConfigStore } from '../src/app-config.ts';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { Git } from '../src/git.ts';
 import { buildServer } from '../src/server/app.ts';
+import { CreativeSideStateStore } from '../src/creatives/creative-side-state.ts';
 import { H, startInstanceEnv, type InstanceEnv } from './helpers/instance-server.ts';
 
 vi.setConfig({ testTimeout: 90_000, hookTimeout: 60_000 });
@@ -72,6 +73,26 @@ describe('variant routes', () => {
       expect((await app.inject({ method: 'POST', url: `${P}/${other.slug}/variants`, payload })).statusCode).toBe(400);
     }
     expect(JSON.parse(await creativeJson(other.slug)).variantGroup).toBeUndefined();
+  });
+
+  it('minor (Task 2): two concurrent POST …/variants on a creative without a group are decided one after the other under the host lock', async () => {
+    const { slug } = await create();
+    const post = () => app.inject({ method: 'POST', url: `${P}/${slug}/variants`, payload: { count: 3 } });
+    const res = await Promise.all([post(), post()]);
+    // The first makes the group of 3 (A included); the second sees it and asks to ADD 3 more: over the limit of five.
+    expect(res.map((r) => r.statusCode).sort()).toEqual([201, 409]);
+    expect(res.find((r) => r.statusCode === 409)!.json().code).toBe('variants-full');
+    expect((await detail(slug)).creative.variantGroup!.members.map((m) => m.letter)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('minor (Task 2): PUT picks with no body is refused; only an explicit null clears the ★', async () => {
+    const { slug } = await create();
+    await app.inject({ method: 'POST', url: `${P}/${slug}/variants`, payload: { count: 2 } });
+    const url = `${P}/${slug}/variants/picks/instagram-post-1x1`;
+    const none = await app.inject({ method: 'PUT', url });
+    expect(none.statusCode).toBe(400);
+    const cleared = await app.inject({ method: 'PUT', url, headers: { 'content-type': 'application/json' }, payload: 'null' });
+    expect(cleared.statusCode).toBe(200);
   });
 
   it('discard, restore, picks, use-for-all, layout and direction', async () => {
@@ -210,5 +231,25 @@ describe('fix round 1, Important 1: a translation does not hold back the group\'
     const fr = await env.app.inject({ method: 'POST', url: `${url(B)}/versions/1/localize`, headers: H, payload: { locales: ['fr'] } });
     expect(fr.statusCode, fr.body).toBe(202);
     await env.waitJob((fr.json() as { jobId: string }).jobId);
+  });
+});
+
+describe('minor (Task 2): the localization overlay edit applies the variant\'s pending brief first', () => {
+  let env: InstanceEnv;
+  afterEach(async () => { await env?.close(); });
+  it('a language only the pending brief has is accepted: the brief is applied under the lock before the check', async () => {
+    const side = new CreativeSideStateStore(null);
+    env = await startInstanceEnv('ms-test-variant-pend-', { sideState: side });
+    const slug = await env.create(['test-wide'], { links: {}, locales: { primary: 'en', extra: ['de'] } });
+    const B = `${slug}~b`;
+    const url = (c: string) => `/api/projects/acme/creatives/${c}`;
+    expect((await env.app.inject({ method: 'POST', url: `${url(slug)}/variants`, headers: H, payload: { count: 2, baseFrom: { slug, version: 1 } } })).statusCode).toBe(201);
+    // A crash left the group's newer brief (one more language) pending on B, which is idle.
+    const bBrief = (await env.app.inject({ url: url(B), headers: H })).json().creative.brief;
+    await side.setPendingBrief(env.projectDir(), B, { brief: { ...bBrief, locales: { primary: 'en', extra: ['de', 'fr'] } }, at: new Date().toISOString() });
+    const put = await env.app.inject({ method: 'PUT', url: `${url(B)}/versions/1/localizations/fr/test-wide`, headers: H, payload: { texts: { title: 'Bonjour' } } });
+    expect(put.statusCode, put.body).toBe(200);
+    expect((await env.app.inject({ url: url(B), headers: H })).json().creative.brief.locales.extra).toEqual(['de', 'fr']);
+    expect(await side.pendingBrief(env.projectDir(), B)).toBeNull();
   });
 });

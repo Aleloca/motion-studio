@@ -365,6 +365,12 @@ describe('lock ordering', { timeout: 60_000 }, () => {
     // Restore and discard of B race: whichever ran last decides; a discarded variant is not propagated to.
     const g = (await json(host.creativeSlug)).variantGroup!;
     for (const m of g.members.filter((x) => x.status === 'active' && x.letter !== 'c')) expect((await json(m.slug)).brief.goal).toBe(goal);
+    // Minor (Task 2): not only the goal. The writes were queued discard(b) before restore(b), so B ends active; no ★ was set and
+    // none points at a discarded member; the last writer's goal is one of the two that were saved.
+    expect(['Uno', 'Due']).toContain(goal);
+    expect(g.members.find((x) => x.letter === 'b')!.status).toBe('active');
+    expect(g.picks).toEqual({});
+    expect(g.members.filter((x) => x.status === 'discarded')).toEqual([]);
     // The stopped one took it when its job ended (Important 1 of fix round 1).
     await vi.waitFor(async () => expect((await json(sis('c'))).brief.goal).toBe(goal));
     expect(await side.pendingBrief(projectDir, sis('c'))).toBeNull();
@@ -405,6 +411,62 @@ describe('baseFrom (decisions log 263)', { timeout: 90_000 }, () => {
       expect(existsSync(join(projectDir, 'creatives', sis('c')))).toBe(false);
       expect((await json(host.creativeSlug)).variantGroup!.members).toHaveLength(2);
     } finally { delete process.env.FAKE_CLAUDE_PROMPT_FILE; }
+  });
+});
+
+describe('minors (Task 2): a failed add leaves nothing behind, in git too', { timeout: 90_000 }, () => {
+  it('the group write failing after a seeded sister was committed: the deletion is committed, the tree is clean', async () => {
+    turns = makeTurns({ contract: 'compositions', claude: true });
+    svc = new VariantGroupService({ store, turns });
+    process.env.FAKE_CLAUDE_SCENARIO = 'composition';
+    await turns.start(host);
+    await queue.whenIdle();
+    const real = store.update.bind(store);
+    vi.spyOn(store, 'update').mockImplementation(async (slug, patch) => {
+      if ('variantGroup' in patch) throw new Error('disk full');
+      return real(slug, patch);
+    });
+    await expect(svc.addVariants(host, [{ baseFrom: { slug: host.creativeSlug, version: 1 } }])).rejects.toThrow('disk full');
+    vi.restoreAllMocks();
+    expect(existsSync(join(projectDir, 'creatives', sis('b')))).toBe(false);
+    // Neither an uncommitted deletion nor the sister's files left in HEAD.
+    expect(execFileSync('git', ['status', '--porcelain', '--', `creatives/${sis('b')}`], { cwd: projectDir, encoding: 'utf8' })).toBe('');
+    expect(execFileSync('git', ['ls-files', '--', `creatives/${sis('b')}`], { cwd: projectDir, encoding: 'utf8' })).toBe('');
+  });
+
+  it('a sister added while the host\'s brief is pending starts from the pending brief: its links match its formats', async () => {
+    await svc.addVariants(host, [{}]);
+    // The host works (its next brief is pending): a link B->A exists for the format the pending brief removes.
+    const links = { 'web-banner-300x250': 'instagram-post-1x1' };
+    await store.update(host.creativeSlug, { brief: { ...brief, links } });
+    await turns.start(host);
+    await runner.next(0);
+    await turns.updateBrief(host, { brief: { ...brief, goal: 'Nuovo', formats: ['instagram-post-1x1'] } });
+    expect((await side.pendingBrief(projectDir, host.creativeSlug))?.brief.formats).toEqual(['instagram-post-1x1']);
+    await svc.addVariants(host, [{}]);
+    const c = await json(sis('c'));
+    expect(c.brief.formats).toEqual(['instagram-post-1x1']);
+    expect(c.brief.goal).toBe('Nuovo');
+    expect(c.brief.links ?? {}).toEqual({});
+  });
+});
+
+describe('minor (Task 2): the requested formats are checked again once the pending brief is applied', { timeout: 60_000 }, () => {
+  it('a queued request for a format the group\'s newer brief removes fails; it does not widen to every format', async () => {
+    await svc.addVariants(host, [{}]);
+    const B = refOf(sis('b'));
+    await fakeVersion(sis('b'), 1, OLD);
+    // A runs (the only slot); B's request for the banner waits behind it.
+    await turns.start(host);
+    const runA = await runner.next(0);
+    const jobB = await turns.start(B, { text: 'solo il banner', pins: [] }, { formats: ['web-banner-300x250'] });
+    expect(stateOf(jobB.id)).toBe('queued');
+    // The group's brief drops the banner meanwhile: B is waiting, so it keeps it pending until its turn.
+    await turns.updateBrief(host, { brief: { ...brief, formats: NEW } });
+    expect((await side.pendingBrief(projectDir, B.creativeSlug))?.brief.formats).toEqual(NEW);
+    runA.finish();
+    await vi.waitFor(() => expect(stateOf(jobB.id)).toBe('failed'), { timeout: 10_000 });
+    expect(runner.runs).toHaveLength(1);
   });
 });
 
