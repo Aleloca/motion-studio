@@ -59,7 +59,7 @@ describe('IDENTITY_SETS', () => {
   it('lists exactly the spec 4.1 files', () => {
     const paths = (k: keyof typeof IDENTITY_SETS) => IDENTITY_SETS[k].files.map((f) => f.path);
     expect(Object.keys(IDENTITY_SETS).sort()).toEqual(['app-icon', 'favicon', 'logo']);
-    expect(paths('logo')).toEqual(['logo.svg', 'logo.png']);
+    expect(paths('logo')).toEqual(['logo.svg', 'logo.png', 'logo-dark.svg', 'logo-dark.png']);
     expect(paths('favicon')).toEqual([
       'favicon.ico', 'favicon.svg', 'apple-touch-icon.png', 'icon-192.png', 'icon-512.png', 'icon-512-maskable.png', 'site.webmanifest', 'head-snippet.html',
     ]);
