@@ -113,6 +113,40 @@ describe('AskUserQuestion through the permission prompt', () => {
     expect(approvals.pending()).toHaveLength(1);
   });
 
+  it('review fix: the answer route refuses other cards (400) and answers that come too late (404)', async () => {
+    const dir = projectDir;
+    const tool = approvals.request({ jobId: 'j1', projectSlug: 'acme', projectDir: dir, creativeSlug: 'c1', kind: 'tool', toolName: 'Bash', input: { command: 'ls' } });
+    const batch = approvals.request({ jobId: 'j1', projectSlug: 'acme', projectDir: dir, creativeSlug: 'c1', kind: 'paid-batch', toolName: 'provider:elevenlabs', input: {}, title: 'Voci', detail: '', paidBatch: { provider: 'elevenlabs', calls: [{ label: 'de', chars: 10 }] } });
+    for (const card of approvals.pending()) {
+      expect((await answer(card.id, [{ selected: [0] }])).statusCode, card.kind).toBe(400);
+    }
+    expect(approvals.pending()).toHaveLength(2);
+    approvals.cancelJob('j1');
+    await tool; await batch;
+    // Answered once: a second answer is too late.
+    const reply = ask(QUESTION);
+    const req = await pendingQuestion();
+    expect((await answer(req.id, [{ selected: [0] }, { selected: [0] }])).statusCode).toBe(200);
+    await reply;
+    expect((await answer(req.id, [{ selected: [1] }, { selected: [1] }])).statusCode).toBe(404);
+    // Cancelled (Stop): too late.
+    const stopped = ask(QUESTION);
+    const req2 = await pendingQuestion();
+    approvals.cancelJob('j1');
+    await stopped;
+    expect((await answer(req2.id, [{ selected: [0] }, { selected: [0] }])).statusCode).toBe(404);
+    // Expired: too late.
+    await app.close();
+    approvals = new ApprovalBroker({ broadcast: () => {}, timeoutMs: 200 });
+    app = server();
+    registerBridgeRoutes(app, { bridge, approvals });
+    registerApprovalRoutes(app, approvals);
+    const expiring = ask(QUESTION);
+    const req3 = await pendingQuestion();
+    await expiring;
+    expect((await answer(req3.id, [{ selected: [0] }, { selected: [0] }])).statusCode).toBe(404);
+  });
+
   it('"Don\'t answer" denies with a message that lets the agent go on, recorded as a question', async () => {
     const reply = ask(QUESTION);
     const req = await pendingQuestion();
