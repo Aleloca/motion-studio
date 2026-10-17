@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
 import type { Shell } from '../src/shell/ShellContext.tsx';
 import { at, detailFor, groupOf, HOST, version } from './support/variants.ts';
+import { settled } from './support/settle.ts';
 
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -25,7 +26,7 @@ const item = (format: string, letter: VariantLetter, n: number, source: 'pick' |
 let plan: PlanItem[] = [];
 const build = (slug: string) => detailFor(slug, versionsBy[slug] ?? [], group);
 const api = {
-  groupExportPlan: vi.fn(async () => ({ items: plan })),
+  groupExportPlan: vi.fn(async () => ({ items: plan, formats: ['instagram-post-1x1', 'tiktok-9x16'] })),
   setVariantLayout: vi.fn(async () => build(HOST)),
   getFormats: vi.fn(async () => ({ presets: DEFAULT_FORMATS, error: null, path: '/x' })),
   getCreative: vi.fn(async (_s: string, c: string) => build(c)),
@@ -62,7 +63,7 @@ async function starred(): Promise<string[]> {
   await screen.findByRole('toolbar', { name: /^Variant/ });
   const col = document.querySelector('.ms-cv-formats') as HTMLElement;
   await waitFor(() => expect(api.groupExportPlan).toHaveBeenCalled());
-  await new Promise((r) => setTimeout(r, 50));
+  await settled(() => col.innerHTML);
   // The open variant's rows sit in channel groups nested in its own group: the head is the outermost group's.
   return [...col.querySelectorAll('.ms-cv-fmt')].map((btn) => {
     let g = btn.closest('.ms-cv-group') as HTMLElement;

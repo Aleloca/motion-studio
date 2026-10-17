@@ -17,10 +17,12 @@ describe('variantGroupSchema', () => {
     expect(variantGroupSchema.safeParse(group(['a'])).success).toBe(true);
     expect(variantGroupSchema.safeParse(group(['a', 'b', 'c', 'd', 'e'])).success).toBe(true);
   });
-  it('refuses 6 members', () => {
+  it('refuses 6 members by the cap itself (a too_big issue on members), not only by a duplicate', () => {
     const g = group(['a', 'b', 'c', 'd', 'e']);
-    g.members.push(member('a', { slug: 'promo~x' }));
-    expect(variantGroupSchema.safeParse(g).success).toBe(false);
+    g.members.push(member('e', { slug: 'promo~e' }));
+    const r = variantGroupSchema.safeParse(g);
+    expect(r.success).toBe(false);
+    expect(r.error!.issues.some((i) => i.code === 'too_big' && i.path.join('.') === 'members')).toBe(true);
   });
   it('refuses duplicate letters and duplicate slugs', () => {
     const g = group(['a', 'b']);
@@ -46,7 +48,10 @@ describe('variantGroupSchema', () => {
   it('refuses a pick to an unknown slug and accepts one to a member', () => {
     const g = group(['a', 'b']);
     expect(variantGroupSchema.safeParse({ ...g, picks: { 'instagram-post-1x1': { slug: 'promo~b', version: 2 } } }).success).toBe(true);
-    expect(variantGroupSchema.safeParse({ ...g, picks: { 'instagram-post-1x1': { slug: 'other~b', version: 2 } } }).success).toBe(false);
+    const bad = variantGroupSchema.safeParse({ ...g, picks: { 'instagram-post-1x1': { slug: 'other~b', version: 2 } } });
+    expect(bad.success).toBe(false);
+    // The issue names the pick (minor, Task 1).
+    expect(bad.error!.issues.find((i) => i.message === 'variant.unknownPick')?.path).toEqual(['picks', 'instagram-post-1x1']);
   });
   it('refuses ~ in a user slug and ~f in a sister slug', () => {
     expect(creativeSlugSchema.safeParse('promo~b').success).toBe(false);

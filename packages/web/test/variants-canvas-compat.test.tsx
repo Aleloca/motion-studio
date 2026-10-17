@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
 import type { Shell } from '../src/shell/ShellContext.tsx';
 import { at, detailFor, version } from './support/variants.ts';
+import { settled } from './support/settle.ts';
 
 vi.setConfig({ testTimeout: 60_000 });
 const detail = detailFor('lancio', [version(1, 'Dal brief'), version(2, 'Più chiaro')], null);
@@ -61,7 +62,7 @@ async function html(l: EventsState, locale: 'it' | 'en'): Promise<string> {
   const r = render(<Harness l={l} locale={locale} />);
   await screen.findByRole('img', { name: /Post 1:1 v2/ });
   await waitFor(() => expect(screen.getByRole('log')).toBeTruthy());
-  await new Promise((res) => setTimeout(res, 300));
+  await settled(() => r.container.innerHTML);
   return norm(r.container.innerHTML);
 }
 

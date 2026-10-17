@@ -610,6 +610,8 @@ export const it: Messages = {
     conflict: 'Lo stesso lavoro è già in coda o in corso. Riprova quando è finito.',
     briefUpdatedCommit: (p) => `${p.title}: brief aggiornato`,
     variantsAddedCommit: (p) => `${p.title}: varianti ${p.letters}`,
+    variantRequestWillStop: 'Questa richiesta verrà fermata appena parte (rimozione dalla coda non riuscita)',
+    variantsRolledBackCommit: (p) => `${p.title}: aggiunta di varianti annullata`,
     variantGroupCommit: (p) => `${p.title}: varianti`,
     variantSeedRequest: (p) => `Partita dalla variante ${p.letter}, versione ${p.n}`,
     variantBriefDeferred: 'Il brief è cambiato mentre questa variante lavorava: il brief nuovo vale dalla sua prossima richiesta',

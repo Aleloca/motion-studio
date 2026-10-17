@@ -198,13 +198,17 @@ export function registerLocalizationRoutes(app: FastifyInstance, ctx: Localizati
     const edit = parsed.data;
     const signal = abortOnClose(reply);
     // Checked again under the lock; first here, so no font is downloaded for a language the creative does not have.
-    if (!(await ref.store.get(ref.creativeSlug)).brief.locales?.extra.includes(tag)) throw new CodedError(409, va.localeNotInBrief({ tag }), 'locale-not-in-brief');
+    // Minor (Task 2): a brief the variant group left pending counts (it is applied under the lock below).
+    const pending = await ctx.turns.side.pendingBrief(ref.projectDir, ref.creativeSlug);
+    if (!((pending?.brief ?? (await ref.store.get(ref.creativeSlug)).brief).locales?.extra.includes(tag))) throw new CodedError(409, va.localeNotInBrief({ tag }), 'locale-not-in-brief');
     // The fallback font may be downloaded: before the creative's lock, so a turn or an edit never waits on the network.
     const fallback = await resolveFallbackFont({ projectDir: ref.projectDir, http: ctx.fontsHttp, media: ctx.media, ...(ctx.fontsIo ? { io: ctx.fontsIo } : {}) }, tag, signal);
     return ctx.turns.runLocked(ref, async () => {
       if (ctx.turns.turnActive(ref)) throw new CodedError(409, va.localizationBusy, 'localization-busy');
       // Residual fix (decisions log 866): a discarded variant is read-only until restored.
       await ctx.turns.assertNotDiscarded(ref);
+      // Phase 15: a brief the variant group changed while this variant worked applies first (its languages included).
+      await ctx.turns.applyPendingBrief(ref);
       const slug = ref.creativeSlug;
       const creativeDir = ref.store.dir(slug);
       const v = await versionOf(ref.store, slug, req.params.n);

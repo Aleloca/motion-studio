@@ -104,12 +104,14 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   // group change made here (`planSeq`) and whenever a member changes (its live tick).
   const [planSeq, setPlanSeq] = useState(0);
   const [groupPlan, setGroupPlan] = useState<GroupExportPlanItem[] | null>(null);
+  // The group's canonical formats, as the core answers them with the plan (the host's pending brief, else its own); null: not known.
+  const [planFormats, setPlanFormats] = useState<string[] | null>(null);
   const planKey = group ? group.group.members.map((m) => `${m.slug}:${live.creativeTicks[`${slug}/${m.slug}`] ?? 0}`).join('|') : '';
   useEffect(() => {
-    if (!group) { setGroupPlan(null); return; }
+    if (!group) { setGroupPlan(null); setPlanFormats(null); return; }
     let alive = true;
     Promise.resolve().then(() => api.groupExportPlan(slug, creative))
-      .then((r) => { if (alive) setGroupPlan(r.items); }, () => { if (alive) setGroupPlan([]); });
+      .then((r) => { if (alive) { setGroupPlan(r.items); setPlanFormats(r.formats ?? null); } }, () => { if (alive) { setGroupPlan([]); setPlanFormats(null); } });
     return () => { alive = false; };
   }, [slug, creative, Boolean(group), planKey, planSeq]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -419,9 +421,13 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   const [starting, setStarting] = useState(false);
   const generate = () => {
     setStarting(true);
-    // A group that has not started yet starts every variant (one paid-services card); otherwise only the open one.
-    const fresh = group !== null && shownMs.every((m) => m.status !== 'active' || m.slug === creative || (members[m.slug]?.versions.length ?? 0) === 0);
-    Promise.resolve().then((): Promise<unknown> => (fresh && group ? api.runVariants(slug, group.host, { targets: 'all-active', request: null }) : api.sendCreativeTurn(slug, creative, {})))
+    // A group starts together (one paid-services card): the open variant and every other active one that has no version yet
+    // (all of them, when the group has not started). A variant that already has versions is left alone.
+    const activeMs = shownMs.filter((m) => m.status === 'active');
+    const fresh = activeMs.filter((m) => m.slug === creative || members[m.slug]?.versions.length === 0); // a member not loaded yet is not known to be empty
+    const fanOut = group !== null && fresh.length > 0 && (fresh.length === activeMs.length || fresh.length > 1);
+    const targets = fresh.length === activeMs.length ? 'all-active' as const : fresh.map((m) => m.letter);
+    Promise.resolve().then((): Promise<unknown> => (fanOut && group ? api.runVariants(slug, group.host, { targets, request: null }) : api.sendCreativeTurn(slug, creative, {})))
       .then(() => { setViewing({}); reload(); })
       .catch((e: unknown) => toast.show(c.generateFailed({ detail: message(e) })))
       .finally(() => setStarting(false));
@@ -795,7 +801,8 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     setAddOpen(false);
     if (added) await api.runVariants(slug, creative, { targets: [added.letter], request: null }).catch(failToast(vg.startFailed));
   };
-  const finalRows = group && groupPlan ? selectionRows(cr.brief.formats, groupPlan) : null;
+  // The rows follow the group's canonical formats, which the core says (never the open sister's own brief: it can lag or be frozen).
+  const finalRows = group && groupPlan && planFormats ? selectionRows(planFormats, groupPlan) : null;
   const variantBar = group ? (
     <div className="ms-vbar" role="toolbar" aria-label={vg.toolbarAria}>
       <span className="ms-vbar-group">

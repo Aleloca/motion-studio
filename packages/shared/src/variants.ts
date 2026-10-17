@@ -51,7 +51,7 @@ export const variantGroupSchema: z.ZodType<VariantGroup> = z.object({
   if (new Set(g.members.map((m) => m.slug)).size !== g.members.length) issue('variant.duplicateSlug');
   if (!g.members.some((m) => m.status === 'active')) issue('variant.noActiveMember');
   const slugs = new Set(g.members.map((m) => m.slug));
-  for (const p of Object.values(g.picks)) if (!slugs.has(p.slug)) issue('variant.unknownPick');
+  for (const [format, p] of Object.entries(g.picks)) if (!slugs.has(p.slug)) ctx.addIssue({ code: 'custom', message: 'variant.unknownPick', path: ['picks', format] });
 });
 
 export const sisterSlug = (hostSlug: string, letter: VariantLetter): string => (letter === 'a' ? hostSlug : `${hostSlug}~${letter}`);

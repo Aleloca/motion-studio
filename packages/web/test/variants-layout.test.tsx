@@ -17,6 +17,7 @@ import type { EventsState } from '../src/eventsReducer.ts';
 import type { Shell } from '../src/shell/ShellContext.tsx';
 import { findChrome, launchChrome, type Browser } from '../../composition-runtime/test/support/chrome.ts';
 import { at, detailFor, groupOf, HOST, version } from './support/variants.ts';
+import { settled } from './support/settle.ts';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
@@ -97,7 +98,7 @@ async function markup(layout: 'variant' | 'format', locale: 'en' | 'it', page: n
     await userEvent.click(within(container).getByRole('switch', { name: /Mostra scartate|Show discarded/ }));
     await waitFor(() => expect(container.querySelectorAll('.ms-cv-board').length).toBeGreaterThanOrEqual(8));
     await userEvent.click(within(container).getByRole('radio', { name: /^(Tutte|All)$/ }));
-    await new Promise((r) => setTimeout(r, 100));
+    await settled(() => container.innerHTML);
     return (container.querySelector('.ms-cv') as HTMLElement).outerHTML;
   } finally { unmount(); size.mockRestore(); high.mockRestore(); }
 }

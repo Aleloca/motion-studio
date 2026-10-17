@@ -103,7 +103,11 @@ export interface CreativeRef { root: string; projectSlug: string; projectDir: st
 /** Shared with the web (render keys are derived from it): @motion-studio/shared `creativeJobKey`. */
 export { creativeJobKey };
 /** Phase 15: see `CreativeTurnService.setQueuedHook`. `hold`: the reason the request's turn waits with (null: none now). */
-export interface QueuedHook { hold: JobWaitReason | null; /** Called with the turn's job id right before it is enqueued. */ started?: (jobId: string) => void }
+export interface QueuedHook {
+  hold: JobWaitReason | null;
+  /** Called with the turn's job id right before it is enqueued. */ started?: (jobId: string) => void;
+  /** Called when the request is taken out of the queue by hand (`removeQueued`). */ removed?: () => void;
+}
 
 /** Phase 15: the job queue group of a variant group's turns (`JobSpec.slot`): one per host creative. */
 export const variantSlotGroup = (ref: CreativeRef, host: string): string => `variants:${creativeJobKey(ref.root, ref.projectSlug, host)}`;
@@ -772,6 +776,9 @@ export class CreativeTurnService {
       const presets = await this.deps.presets();
       const model = (await this.deps.model()) ?? undefined;
       const initial = await store.get(slug);
+      // Minor (Task 2): the brief just applied above may have dropped every format the request asked for; none left would
+      // widen the turn to every format, so it is refused like at the start.
+      if (requestedFormats?.length && !requestedFormats.some((f) => initial.brief.formats.includes(f))) throw new CodedError(400, t().errors.formatsNotInBrief, 'formats-not-in-brief');
       const creativeDir = store.dir(slug);
       // Pins, the carried files and the add-formats base refer to the version on screen: the one being resumed from, else the latest.
       const base = initial.resumeFrom ? versions.find((v) => v.n === initial.resumeFrom!.version) : latest;
@@ -1678,13 +1685,17 @@ export class CreativeTurnService {
 
   /** DELETE …/queue/:clientId: only while it waits. */
   async removeQueued(ref: CreativeRef, clientId: string): Promise<CreativeFile> {
-    const out = await this.editQueue(ref, (q) => {
+    return this.editQueue(ref, (q) => {
       if (!q.some((x) => x.clientId === clientId)) throw new CodedError(404, t().live.notQueued, 'not-queued');
       return q.filter((x) => x.clientId !== clientId);
+    }, () => {
+      // Phase 15: a removed request no longer has a variant run's hook (the run is told, so its card can go when nothing is left).
+      // As soon as the queue write is through: the later reads of the answer must not decide whether the hook is dropped.
+      const hookKey = `${creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug)}\0${clientId}`;
+      const hook = this.queuedHooks.get(hookKey);
+      this.queuedHooks.delete(hookKey);
+      hook?.removed?.();
     });
-    // Phase 15: a removed request no longer has a variant run's hook.
-    this.queuedHooks.delete(`${creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug)}\0${clientId}`);
-    return out;
   }
 
   /** PUT …/queue/:clientId: new text and pins, only while it waits. Changed pins refer to the version on screen now. */
@@ -1719,12 +1730,13 @@ export class CreativeTurnService {
     });
   }
 
-  private async editQueue(ref: CreativeRef, fn: (q: QueuedRequest[]) => QueuedRequest[]): Promise<CreativeFile> {
+  private async editQueue(ref: CreativeRef, fn: (q: QueuedRequest[]) => QueuedRequest[], written?: () => void): Promise<CreativeFile> {
     const store = new CreativeStore(ref.projectDir);
     await this.runLocked(ref, () => this.side.update(ref.projectDir, ref.creativeSlug, (c) => {
       const next = fn(c.queued ?? []);
       return { queued: next.length > 0 ? next : undefined };
     }));
+    written?.();
     this.changed(ref);
     return this.side.merged(ref.projectDir, ref.creativeSlug, await store.get(ref.creativeSlug));
   }

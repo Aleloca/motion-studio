@@ -27,8 +27,9 @@ type PlanItem = { format: string; slug: string; letter: VariantLetter; version: 
 const item = (format: string, letter: VariantLetter, n: number, source: 'pick' | 'default'): PlanItem =>
   ({ format, slug: letter === 'a' ? HOST : `${HOST}~${letter}`, letter, version: n, source, file: `${format}.png`, width: 1080, height: 1080, state: 'ready' });
 let plan: PlanItem[] = [];
+let planFormats = ['instagram-post-1x1', 'tiktok-9x16'];
 const api = {
-  groupExportPlan: vi.fn(async (_s: string, _c: string) => ({ items: plan })),
+  groupExportPlan: vi.fn(async (_s: string, _c: string) => ({ items: plan, formats: planFormats })),
   setVariantPick: vi.fn(async (..._a: unknown[]) => build(HOST)),
   setVariantLayout: vi.fn(async (..._a: unknown[]) => build(HOST)),
   getFormats: vi.fn(async () => ({ presets: DEFAULT_FORMATS, error: null, path: '/x' })),
@@ -47,9 +48,9 @@ const { I18nProvider } = await import('../src/i18n.tsx');
 const { __resetPendingPins } = await import('../src/screens/pendingPins.ts');
 
 const emptyLive = (): EventsState => ({ approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} } as unknown as EventsState);
-function Harness({ locale = 'it', live = emptyLive() }: { locale?: 'it' | 'en'; live?: EventsState }) {
+function Harness({ locale = 'it', live = emptyLive(), creative = HOST }: { locale?: 'it' | 'en'; live?: EventsState; creative?: string }) {
   const shell = {
-    route: { name: 'creative', slug: 'acme', creative: HOST }, live,
+    route: { name: 'creative', slug: 'acme', creative }, live,
     catalog: { projects: [{ slug: 'acme', name: 'Acme' }], creatives: {}, refresh: () => {} },
     activity: { open: false, tab: null, seq: 0, show: () => {}, hide: () => {}, toggle: () => {} }, openPalette: () => {},
   } as unknown as Shell;
@@ -57,7 +58,7 @@ function Harness({ locale = 'it', live = emptyLive() }: { locale?: 'it' | 'en'; 
     <I18nProvider locale={locale}>
       <ShellContext.Provider value={shell}>
         <header className="ms-topbar"><TopBar /></header>
-        <CreativeCanvas slug="acme" creative={HOST} live={live} />
+        <CreativeCanvas slug="acme" creative={creative} live={live} />
       </ShellContext.Provider>
     </I18nProvider>
   );
@@ -75,6 +76,7 @@ beforeEach(() => {
   group = groupOf(['a', 'b', 'c']);
   missing = [];
   formats = ['instagram-post-1x1', 'tiktok-9x16'];
+  planFormats = ['instagram-post-1x1', 'tiktok-9x16'];
   plan = [item('instagram-post-1x1', 'a', 2, 'default'), item('tiktok-9x16', 'a', 2, 'default')];
   __resetPendingPins();
   localStorage.clear();
@@ -118,6 +120,27 @@ describe('Selezione finale (the popover)', () => {
     await waitFor(() => expect(rows(dialog)[0]).toBe('Instagram · Post 1:1 · Variante A · v2 · regola predefinita'));
   });
 
+  it('minor (Task 5): opened on a sister whose own brief lags the group\'s, the rows still follow the group\'s formats (the host\'s)', async () => {
+    api.getCreative.mockImplementation(async (_s: string, c: string) => (c === `${HOST}~b` ? detailFor(c, versionsBy[c] ?? [], group, { missing, formats: ['instagram-post-1x1'] }) : build(c)));
+    plan = [item('instagram-post-1x1', 'a', 2, 'default'), item('tiktok-9x16', 'a', 2, 'default')];
+    render(<Harness creative={`${HOST}~b`} />);
+    const dialog = await open();
+    await waitFor(() => expect(rows(dialog)).toEqual([
+      'Instagram · Post 1:1 · Variante A · v2 · regola predefinita',
+      'TikTok · Video 9:16 · Variante A · v2 · regola predefinita',
+    ]));
+  });
+
+  it('fix wave: the rows follow the canonical formats the core answers: a format only the group\'s pending brief has gets its row', async () => {
+    // The host works: its own brief still lacks the new format; the core says the group has it.
+    planFormats = ['instagram-post-1x1', 'tiktok-9x16', 'web-banner-300x250'];
+    plan = [item('instagram-post-1x1', 'a', 2, 'default'), item('tiktok-9x16', 'a', 2, 'default')];
+    render(<Harness />);
+    const dialog = await open();
+    await waitFor(() => expect(rows(dialog)).toHaveLength(3));
+    expect(rows(dialog)[2]).toMatch(/300/);
+  });
+
   it('(b) A discarded: the default rule comes from the first active variant, as the export takes it (not "A")', async () => {
     group = groupOf(['a', 'b', 'c'], {}, { a: { status: 'discarded' } });
     plan = [item('instagram-post-1x1', 'b', 1, 'default'), item('tiktok-9x16', 'b', 1, 'default')];
@@ -146,6 +169,7 @@ describe('Selezione finale (the popover)', () => {
 
   it('a format the plan does not have reads "regola predefinita" with no variant', async () => {
     formats = ['instagram-post-1x1'];
+    planFormats = ['instagram-post-1x1'];
     plan = [];
     render(<Harness />);
     const dialog = await open();

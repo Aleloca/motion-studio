@@ -86,6 +86,13 @@ export class VariantGroupService {
     return out;
   }
 
+  /** The group's formats now: the host's pending brief when it has one, else its own (the same source as `groupSelection`). */
+  async groupFormats(ref: CreativeRef): Promise<string[]> {
+    const r = await this.resolve(ref);
+    if (!r.group) throw new CodedError(409, r.orphan ? t().errors.variantOrphan : t().errors.variantNoGroup, r.orphan ? 'variant-orphan' : 'variant-no-group');
+    return (await this.canonical(r.host, await this.deps.store.get(r.host.creativeSlug))).brief.formats;
+  }
+
   /** Runs `fn` under the host's lock with the group as stored now (re-read under the lock). 409 outside a group. */
   private async withGroup<T>(ref: CreativeRef, fn: (host: CreativeRef, hostFile: CreativeFile, g: VariantGroup) => Promise<T>): Promise<T> {
     const e = t().errors;
@@ -132,7 +139,7 @@ export class VariantGroupService {
    * codebases; with `baseFrom` its v1 is that version's compositions (`seed`). No turn starts here. 409 `variants-full`
    * beyond MAX_VARIANTS; nothing is left behind on a failure.
    */
-  async addVariants(ref: CreativeRef, specs: VariantSpec[], opts: { hostDirection?: string | null } = {}): Promise<VariantGroup> {
+  async addVariants(ref: CreativeRef, request: VariantSpec[] | ((existing: VariantGroup | null) => { specs: VariantSpec[]; hostDirection?: string | null }), opts: { hostDirection?: string | null } = {}): Promise<VariantGroup> {
     const e = t().errors;
     const r = await this.resolve(ref);
     if (r.orphan) throw new CodedError(409, e.variantOrphan, 'variant-orphan');
@@ -141,13 +148,15 @@ export class VariantGroupService {
     return turns.runLocked(host, async () => {
       const hostFile = await store.get(host.creativeSlug);
       const existing = hostFile.variantGroup && groupTiedTo(host.creativeSlug, hostFile.variantGroup) ? hostFile.variantGroup : null;
+      // A caller that must decide on the group as it is NOW (the route's count) gives a function, called under the lock.
+      const { specs, hostDirection: asked } = typeof request === 'function' ? request(existing) : { specs: request, hostDirection: opts.hostDirection };
       const at = now();
       const direction = (d: string | null | undefined) => {
         const v = d?.trim() ?? '';
         if (v.length > MAX_DIRECTION_CHARS) throw new CodedError(400, e.variantDirections, 'variant-directions');
         return v || null;
       };
-      const hostDirection = direction(opts.hostDirection);
+      const hostDirection = direction(asked);
       let g: VariantGroup = existing ?? {
         members: [{ slug: host.creativeSlug, letter: 'a', direction: hostDirection, directionSource: hostDirection ? 'user' : null, status: 'active', createdAt: at }],
         picks: {}, layout: 'variant',
@@ -161,16 +170,17 @@ export class VariantGroupService {
         }
       }
       const shared = await this.canonical(host, hostFile);
+      // Minor (Task 2): a host with a pending brief (it is working) has not applied it yet. A new sister starts as the HOST is now
+      // (its links go with its formats) and then takes the pending brief like any member, so its links follow the new formats.
+      const hostPending = await turns.side.pendingBrief(host.projectDir, host.creativeSlug);
       const created: string[] = [];
+      const committed: string[] = [];
       try {
         for (const s of specs) {
           const letter = nextLetter(g)! as Exclude<VariantLetter, 'a'>;
-          // The shared brief; its links start as the host's (each variant then keeps its own, like any creative).
-          const { links: _shared, ...sharedBrief } = shared.brief;
-          const hostLinks = hostFile.brief.links;
           const sister: CreativeFile = {
-            schemaVersion: 1, title: shared.title, brief: { ...sharedBrief, ...(hostLinks ? { links: hostLinks } : {}) }, status: 'draft', error: null,
-            createdAt: at, updatedAt: at, resumeFrom: null, linkedCodebases: shared.linkedCodebases, variantOf: host.creativeSlug,
+            schemaVersion: 1, title: hostFile.title, brief: hostFile.brief, status: 'draft', error: null,
+            createdAt: at, updatedAt: at, resumeFrom: null, linkedCodebases: hostFile.linkedCodebases ?? [], variantOf: host.creativeSlug,
           };
           const slug = await store.createSister(host.creativeSlug, letter, sister);
           created.push(slug);
@@ -178,16 +188,22 @@ export class VariantGroupService {
           await turns.side.read(host.projectDir, slug);
           const d = direction(s.direction);
           g = { ...g, members: [...g.members, { slug, letter, direction: d, directionSource: d ? 'user' : null, status: 'active', createdAt: at }] };
+          const sisterRef = memberRef(host, slug);
+          // Lock order (decisions log 823): the host's, held, then this sister's.
+          if (hostPending) await turns.runLocked(sisterRef, () => turns.applySharedBrief(sisterRef, shared));
           if (s.baseFrom) {
             const baseLetter = g.members.find((m) => m.slug === s.baseFrom!.slug)!.letter;
-            const sisterRef = memberRef(host, slug);
-            // Lock order (decisions log 823): the host's, held, then this sister's.
+            // Recorded BEFORE the seed: it commits the sister's folder first and then does more (version, conversation), any of which can fail.
+            committed.push(slug);
             await turns.runLocked(sisterRef, () => this.seed(sisterRef, s.baseFrom!, baseLetter));
           }
         }
         await this.writeGroup(host, g, false);
       } catch (err) {
         for (const slug of created.reverse()) await store.removeSisterFolder(slug).catch(() => {});
+        // Minor (Task 2): a seeded sister's folder is already in git; its removal is committed too, not left as a deletion.
+        // One by one: a sister whose seed failed before its commit has nothing to commit (git refuses the path), and must not hold back the others.
+        for (const slug of committed) await turns.commitFolder(host, [store.dir(slug)], t().jobs.variantsRolledBackCommit({ title: hostFile.title })).catch(() => null);
         throw err;
       }
       await turns.commitCreativeFiles(host, [host.creativeSlug], t().jobs.variantsAddedCommit({ title: hostFile.title, letters: created.map((s) => upper(s.slice(-1) as VariantLetter)).join(', ') }),
