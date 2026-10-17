@@ -450,8 +450,21 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   /** The format column (spec §3.1): "★ v5", or "—" before the format has a version. A follower has none (see `followsOf`). */
   const formatSide = (id: string, preset: FormatPreset | null) => {
     const s = states[id];
+    // In a group the column reads the group's plan, not this variant's own star (see `groupSide`).
+    if (group) {
+      const host = group.group.members.find((m) => m.slug === creative);
+      const n = boards.find((x) => x.id === id)?.n ?? null;
+      if (host && n !== null) return groupSide(host, id, n).text;
+    }
     if (s?.star.version != null) return `★ v${s.star.version}`;
     return versions.length ? '—' : preset ? ratioText(preset) : '';
+  };
+  /** The open variant's side text in a group also tells where its ★ comes from (`data-source`) and, for the default rule, why. */
+  const sideAttrs = (b: BoardModel & { n: number | null }) => {
+    const host = group?.group.members.find((m) => m.slug === creative);
+    if (!host || b.n === null) return {};
+    const sd = groupSide(host, b.id, b.n);
+    return { ...(sd.source ? { 'data-source': sd.source } : {}), ...(sd.title ? { title: sd.title } : {}) };
   };
   /** "follows Story/Reel 9:16": a follower's second, muted line in the format column, under its never-truncated name. */
   const followsOf = (id: string) => {
@@ -507,6 +520,25 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
       note: null,
     };
   };
+  /**
+   * What the formats column shows for variant `m`'s row of `format` (shown version `n`): the SAME source as "Selezione finale", the
+   * core's group export plan. The row is starred when the plan takes this variant for the format, with the plan's version (a pick
+   * of v1 shows "★ v1" on a row that shows v2); a default-rule choice is starred too, marked `default` (muted, tooltip says so).
+   * Until the plan is read, the group's stored picks stand in.
+   */
+  function groupSide(m: VariantMember, format: string, n: number): { text: string; source: 'pick' | 'default' | null; title?: string } {
+    const item = groupPlan?.find((x) => x.format === format);
+    if (item) {
+      if (item.letter !== m.letter) return { text: `v${n}`, source: null };
+      const title = item.source === 'default' ? vg.finalDefaultFrom({ format: formatLabel(format), variant: upper(m.letter), n: item.version }) : undefined;
+      return { text: `★ v${item.version}`, source: item.source, ...(title ? { title } : {}) };
+    }
+    if (groupPlan === null) {
+      const pick = group?.group.picks[format];
+      if (pick?.slug === m.slug && pick.version === n) return { text: `★ v${n}`, source: 'pick' };
+    }
+    return { text: `v${n}`, source: null };
+  }
   /** The group's ★ of `format` when it is this variant's, else null. */
   function ownPick(format: string): number | null {
     const p = group?.group.picks[format];
@@ -545,7 +577,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
               ) : (
                 <>
                   <span className="ms-navitem-label">{boardName(b, locale)}</span>
-                  <span className="ms-cv-fmt-side">{formatSide(b.id, b.preset)}</span>
+                  <span className="ms-cv-fmt-side" {...sideAttrs(b)}>{formatSide(b.id, b.preset)}</span>
                 </>
               )}
             </button>
@@ -706,10 +738,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   };
   const renderGroupedColumn = () => {
     if (!group) return null;
-    const side = (m: VariantMember, b: BoardModel & { n: number | null }) => {
-      const pick = group.group.picks[b.id];
-      return b.n === null ? '—' : pick?.slug === m.slug && pick.version === b.n ? `★ v${b.n}` : `v${b.n}`;
-    };
+    const side = (m: VariantMember, b: BoardModel & { n: number | null }) => (b.n === null ? { text: '—', source: null } : groupSide(m, b.id, b.n));
     const item = (m: VariantMember, b: BoardModel & { n: number | null }, label: string) => {
       const key = m.slug === creative ? b.id : `${m.letter}:${b.id}`;
       const on = m.slug === creative ? sel === b.id : vsel === key;
@@ -718,14 +747,16 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
           onClick={() => { if (m.slug === creative) { setSel(b.id); setVsel(null); } else { setSel(null); setVsel(key); } reveal(key); }}>
           <Icon name={b.preset?.kind === 'image' ? 'image' : 'video'} size={14} />
           <span className="ms-navitem-label">{label}</span>
-          <span className="ms-cv-fmt-side">{side(m, b)}</span>
+          {(() => { const sd = side(m, b); return <span className="ms-cv-fmt-side" {...(sd.source ? { 'data-source': sd.source } : {})} {...('title' in sd && sd.title ? { title: sd.title } : {})}>{sd.text}</span>; })()}
         </button>
       );
     };
     if (layout === 'variant') {
       return shownMembers(group.group, variantUi.showDiscarded).map((m) => (
         <div key={m.letter} className={cx('ms-cv-group', m.status === 'discarded' && 'ms-discarded')} role="group" aria-label={`${vg.letterLabel({ letter: upper(m.letter) })}${m.direction ? ` · ${m.direction}` : ''}`}>
-          <div className="ms-cap ms-cv-group-head">{m.direction ? `${upper(m.letter)} · ${m.direction}` : upper(m.letter)}{group.missing.includes(m.letter) ? ` · ${vg.missing}` : ''}</div>
+          <div className="ms-cap ms-cv-group-head ms-vcol-head" title={m.direction ? `${upper(m.letter)} · ${m.direction}` : undefined}>
+            <span className="ms-vcol-dir">{m.direction ? `${upper(m.letter)} · ${m.direction}` : upper(m.letter)}{group.missing.includes(m.letter) ? ` · ${vg.missing}` : ''}</span>
+          </div>
           {m.slug === creative ? renderColumn() : boardsOfMember(m).map((b) => item(m, b, boardName(b, locale)))}
         </div>
       ));

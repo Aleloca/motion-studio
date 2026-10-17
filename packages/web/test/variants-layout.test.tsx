@@ -21,7 +21,9 @@ import { at, detailFor, groupOf, HOST, version } from './support/variants.ts';
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
 const LONG = 'Direzione molto lunga: tipografia grande, molto spazio bianco, colori caldi e un tono ironico che non copia le altre varianti del gruppo';
-let group: VariantGroup = groupOf(['a', 'b', 'c', 'd', 'e'], {}, { b: { direction: LONG }, d: { status: 'discarded' } });
+// The live check's case (D1): a full-sentence direction that used to wrap over the format rows of the formats column.
+const FOTO = 'Foto calda e materica: chicchi e tostatura in primo piano, luce dorata da finestra, atmosfera artigianale';
+let group: VariantGroup = groupOf(['a', 'b', 'c', 'd', 'e'], {}, { b: { direction: LONG }, c: { direction: FOTO }, d: { status: 'discarded' } });
 const versionsBy: Record<string, VersionEntry[]> = Object.fromEntries(['', '~b', '~c', '~d', '~e'].map((s) => [`${HOST}${s}`, [version(1, 'Dal brief'), version(2, 'Più chiaro')]]));
 const api = {
   getFormats: vi.fn(async () => ({ presets: DEFAULT_FORMATS, error: null, path: '/x' })),
@@ -57,6 +59,12 @@ describe('variant canvas: CSS rules', () => {
     expect(css).toMatch(/\.ms-discarded[^{]*\{[^}]*filter:\s*grayscale/);
     expect(css).toMatch(/\.ms-discarded[^{]*\{[^}]*pointer-events:\s*none/);
   });
+  it('the formats column\'s variant header clamps the direction to two lines and grows with it (no fixed height)', () => {
+    expect(css).toMatch(/\.ms-cv-group-head\.ms-vcol-head\s*\{[^}]*height:\s*auto/);
+    expect(css).toMatch(/\.ms-vcol-dir\s*\{[^}]*-webkit-line-clamp:\s*2/);
+    expect(css).toMatch(/\.ms-vcol-dir\s*\{[^}]*overflow:\s*hidden/);
+    expect(src('screens/CreativeCanvas.tsx')).toMatch(/ms-vcol-head" title=/);
+  });
   it('uses theme tokens only (no literal colours)', () => {
     expect(css).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(/);
   });
@@ -70,7 +78,7 @@ const emptyJobs = (): Record<string, JobSummary> => ({
 
 /** The markup of the grouped canvas, with the viewport width the app would have at `page` px (the zoom fits it). */
 async function markup(layout: 'variant' | 'format', locale: 'en' | 'it', page: number): Promise<string> {
-  group = { ...groupOf(['a', 'b', 'c', 'd', 'e'], {}, { b: { direction: LONG }, d: { status: 'discarded' } }), layout };
+  group = { ...groupOf(['a', 'b', 'c', 'd', 'e'], {}, { b: { direction: LONG }, c: { direction: FOTO }, d: { status: 'discarded' } }), layout };
   const live = { approvals: {}, jobs: emptyJobs(), events: {}, creativeTicks: {}, projectTicks: {} } as unknown as EventsState;
   const viewportWidth = page - (page >= 1180 ? 252 + 368 : 200 + 340);
   const size = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('ms-cv-viewport') ? viewportWidth : 0; });
@@ -137,7 +145,20 @@ for (const line of cv.querySelectorAll('.ms-cv-board-line:not(.ms-cv-board-sub)'
   if (star) { counts.stars++; const r = box(star); if (r.width < 18 || r.height < 18) problems.push('star too small'); }
 }
 const col = cv.querySelector('.ms-cv-formats');
+counts.colHeads = 0;
 if (col && vis(col)) {
+  // D1: a variant header of the column never reaches the row below it, and shows at most two lines.
+  for (const head of col.querySelectorAll('.ms-vcol-head')) {
+    counts.colHeads++;
+    const dir = head.querySelector('.ms-vcol-dir'), hr = box(head);
+    const lh = parseFloat(getComputedStyle(dir).lineHeight) || 16;
+    if (box(dir).height > lh * 2 + 1) problems.push('column header taller than 2 lines: ' + name(head));
+    if (box(dir).bottom > hr.bottom + .5) problems.push('column header text sticks out: ' + name(head));
+    const next = head.nextElementSibling;
+    if (next) { const nr = box(next); if (nr.top < hr.bottom - .5) problems.push('column header overlaps the row below: ' + name(head)); }
+  }
+  const items = [...col.querySelectorAll('.ms-cv-fmt')].filter(vis).map(box).sort((x, y) => x.top - y.top);
+  for (let i = 1; i < items.length; i++) if (items[i].top < items[i - 1].bottom - .5) problems.push('format rows overlap');
   if (col.scrollWidth > col.clientWidth + 1) problems.push('formats column overflows horizontally');
   for (const b of col.querySelectorAll('.ms-cv-fmt')) { counts.fmts++; inside(b, col, 'format item'); }
 }
@@ -180,6 +201,7 @@ run('variant canvas: real Chrome layout', () => {
           expect(r.counts.heads, 'row headers').toBeGreaterThanOrEqual(5);
           expect(r.formatsColumn, 'formats column shown').toBe(true);
           expect(r.counts.fmts, 'format items').toBeGreaterThan(0);
+          if (layout === 'variant') expect(r.counts.colHeads, 'variant headers of the column').toBeGreaterThanOrEqual(3);
         }
       }, 180_000);
     }
