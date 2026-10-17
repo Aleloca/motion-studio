@@ -719,7 +719,7 @@ describe('refusals', { timeout: 120_000 }, () => {
     expect(existsSync(join(store().dir(slug), 'outputs', 'v2'))).toBe(false);
     expect((await store().readVersions(slug)).length).toBe(1);
     // Malformed bodies: 400 (an op that is not an edit op never reaches anything).
-    for (const bad of [{ ...body, ops: [{ kind: 'nope' }] }, { ...body, ops: ['x'] }, { ...body, extra: 1 }, { ...body, baseVersion: 0 }, { ...body, staged: Array(21).fill('a') }]) {
+    for (const bad of [{ ...body, ops: [{ kind: 'nope' }] }, { ...body, ops: ['x'] }, { ...body, extra: 1 }, { ...body, baseVersion: 0 }, { ...body, staged: Array(221).fill('a') }]) {
       expect((await save(slug, bad)).statusCode, JSON.stringify(bad).slice(0, 80)).toBe(400);
     }
   });

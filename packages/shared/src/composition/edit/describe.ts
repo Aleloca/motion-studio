@@ -46,6 +46,7 @@ export function describeEdits(ops: EditOp[], c: Composition, locale: Locale): st
       case 'animationPreset': add(t.itemAnimation({ name: clipName(op.clipId) })); break;
       case 'htmlParam': add(t.itemParam({ name: clipName(op.clipId), key: op.key })); break;
       case 'addFont': add(t.itemFont({ family: op.font.family })); break;
+      case 'svgContent': add(t.itemSvg({ name: clipName(op.clipId), colors: op.colors, texts: op.texts, hidden: op.hidden })); break;
     }
   }
   return t.summary({ items: items.slice(0, DESCRIBE_MAX_ITEMS).join(', '), more: Math.max(0, items.length - DESCRIBE_MAX_ITEMS) });

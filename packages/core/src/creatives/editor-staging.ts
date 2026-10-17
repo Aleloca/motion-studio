@@ -8,6 +8,7 @@ import {
   type Composition, type EditorCompositionView, type EditorFontOption, type FormatPreset, type Locale, type StagedAsset, type VersionEntry,
 } from '@motion-studio/shared';
 import { hashConfinedFile, withConfinedFile } from '../brand/agent-guard.ts';
+import { checkVectorSvg, MAX_VECTOR_SVG_BYTES } from '../identity/svg-check.ts';
 import { BrandStore } from '../brand/brand-store.ts';
 import { loadComposition } from '../compositions/composition-files.ts';
 import { EDITOR_STAGING, stagingIdOf } from '../compositions/composition-server.ts';
@@ -41,6 +42,10 @@ import { isRealDirChain, realDirChain } from './core-files.ts';
  * - **Probe:** images and videos through `MediaTools.probe`, audio through `MediaTools.probeAudio` (both the single
  *   ffprobe helper), SVG through `svg-size`, fonts by their signature and then their weights (`font-probe.ts`, bounded). A file that is not what its name says is refused.
  * - **Limits:** 500 MB per file (as a composition folder), 20 files per session.
+ * - **Edited SVGs** (SVG inner editor, `stageSvgEdit`): the text the editor made from a clip's SVG, checked with
+ *   `checkVectorSvg` (refused: 400 `svg-edit-refused`, the reasons as `problems`), written under
+ *   `assets/lib/<base stem>-e<sha8>.svg`, so the composition server and the save treat it as any staged file. Their own
+ *   limit, {@link STAGING_MAX_SVG_EDITS} per session: every colour change of a draft makes one.
  * - **Lifetime:** removed when the session is revoked, evicted or expires (`PreviewService`), and by the cache sweep
  *   (`sweepEditorStaging`) when older than 24 h.
  */
@@ -51,6 +56,8 @@ export const STAGING_MAX_FILE_BYTES = COMPOSITION_MAX_BYTES;
 export const STAGING_MAX_FILES = 20;
 /** The sweep removes staging folders older than this (and never one a live session uses). */
 export const STAGING_MAX_AGE_MS = 24 * 3600 * 1000;
+/** Most edited SVGs staged for one preview session (each at most 512 KB: 100 MB at worst). */
+export const STAGING_MAX_SVG_EDITS = 200;
 /** Collision candidates tried for one name. */
 const MAX_NAME_TRIES = 50;
 
@@ -60,6 +67,8 @@ export const stagingDirOf = (projectDir: string, creativeSlug: string, token: st
   join(projectDir, ...EDITOR_STAGING, creativeSlug, stagingIdOf(token));
 
 export type StageSource = { kind: 'library'; file: string } | { kind: 'brandFont'; id: string };
+/** An SVG edited in the editor: the clip, the `src` it starts from (a file of the base or staged), the whole new text. */
+export type SvgEditSource = { kind: 'svgEdit'; clipId: string; baseSrc: string; content: string };
 type StagedKind = StagedAsset['kind'];
 const STAGEABLE = new Set<string>(['image', 'svg', 'video', 'audio', 'font']);
 const FONT_EXT = new Set(['.ttf', '.otf', '.woff', '.woff2']);
@@ -182,6 +191,45 @@ async function probeStaged(file: string, kind: StagedKind, media: MediaTools): P
   }
 }
 
+/**
+ * Gives the temp copy `temp` (content `sha256`) its staged name in `libDir`: `name`, then `-2`, `-3`, … while the name holds
+ * other content (in the composition folder, which wins when serving, or already staged). The same content reuses its
+ * name. A new file is refused (409 `editor-too-many`) when `max` staged files that `counts` are there already. The temp
+ * file is always gone afterwards.
+ */
+async function placeTemp(o: {
+  compDir: string; libDir: string; temp: string; sha256: string; name: string; staged: ReadonlyMap<string, StagedAsset>;
+  max: number; counts: (a: StagedAsset) => boolean; unplaced: () => Error; locale: Locale;
+}): Promise<{ path: string; created: boolean }> {
+  const e = err(o.locale);
+  const full = (rel: string) => !o.staged.has(rel) && [...o.staged.values()].filter(o.counts).length >= o.max;
+  let created = false;
+  let path: string | null = null;
+  try {
+    for (let i = 1; i <= MAX_NAME_TRIES && path === null; i++) {
+      const cand = candidate(o.name, i);
+      const rel = `assets/lib/${cand}`;
+      if (!isCompositionPath(rel)) break;
+      // The composition folder wins when serving: a file of its own under this name must be this very content.
+      if ((await sameContent(o.compDir, rel, o.sha256)) === 'other') continue;
+      const here = await sameContent(o.libDir, cand, o.sha256);
+      if (here === 'other') continue;
+      if (here === 'missing') {
+        if (full(rel)) throw new CodedError(409, e.stageTooMany({ max: o.max }), 'editor-too-many');
+        await rename(o.temp, join(o.libDir, cand));
+        await noteCoreChange(o.libDir);
+        created = true;
+      }
+      path = rel;
+    }
+    if (path === null) throw o.unplaced();
+    if (full(path)) throw new CodedError(409, e.stageTooMany({ max: o.max }), 'editor-too-many');
+  } finally {
+    await rm(o.temp, { force: true }).catch(() => {});
+  }
+  return { path, created };
+}
+
 export interface StageFileOptions {
   projectDir: string;
   creativeSlug: string;
@@ -212,31 +260,11 @@ export async function stageFile(o: StageFileOptions): Promise<{ asset: StagedAss
     if (copy.refused === 'too-large') throw new CodedError(413, e.stageTooLarge({ file: src.label, maxMB: Math.round(STAGING_MAX_FILE_BYTES / (1024 * 1024)) }), 'editor-too-large');
     throw new CodedError(400, e.stageUnreadable({ file: src.label }), 'editor-unreadable');
   }
-  let created = false;
-  let path: string | null = null;
-  try {
-    const name = `${copy.sha256.slice(0, 8)}-${sanitizeFileName(basename(src.rel))}`;
-    for (let i = 1; i <= MAX_NAME_TRIES && path === null; i++) {
-      const cand = candidate(name, i);
-      const rel = `assets/lib/${cand}`;
-      if (!isCompositionPath(rel)) break;
-      // The composition folder wins when serving: a file of its own under this name must be this very content.
-      if ((await sameContent(o.compDir, rel, copy.sha256)) === 'other') continue;
-      const here = await sameContent(libDir, cand, copy.sha256);
-      if (here === 'other') continue;
-      if (here === 'missing') {
-        if (!o.staged.has(rel) && o.staged.size >= STAGING_MAX_FILES) throw new CodedError(409, e.stageTooMany({ max: STAGING_MAX_FILES }), 'editor-too-many');
-        await rename(copy.temp, join(libDir, cand));
-        await noteCoreChange(libDir);
-        created = true;
-      }
-      path = rel;
-    }
-    if (path === null) throw new CodedError(400, e.stageUnreadable({ file: src.label }), 'editor-unreadable');
-    if (!o.staged.has(path) && o.staged.size >= STAGING_MAX_FILES) throw new CodedError(409, e.stageTooMany({ max: STAGING_MAX_FILES }), 'editor-too-many');
-  } finally {
-    await rm(copy.temp, { force: true }).catch(() => {});
-  }
+  const name = `${copy.sha256.slice(0, 8)}-${sanitizeFileName(basename(src.rel))}`;
+  const { path, created } = await placeTemp({
+    compDir: o.compDir, libDir, temp: copy.temp, sha256: copy.sha256, name, staged: o.staged, max: STAGING_MAX_FILES,
+    counts: (a) => a.svgEdit !== true, unplaced: () => new CodedError(400, e.stageUnreadable({ file: src.label }), 'editor-unreadable'), locale: o.locale,
+  });
   const file = join(libDir, path.slice('assets/lib/'.length));
   const probed = await probeStaged(file, src.kind, o.media);
   if (!probed) {
@@ -244,6 +272,101 @@ export async function stageFile(o: StageFileOptions): Promise<{ asset: StagedAss
     throw new CodedError(400, e.stageNotMedia({ file: src.label }), 'editor-not-media');
   }
   return { asset: { path, size: copy.size, kind: src.kind, ...probed }, root, created };
+}
+
+export interface StageSvgEditOptions extends Omit<StageFileOptions, 'from' | 'media'> {
+  from: SvgEditSource;
+}
+
+/** `<stem>` of a staged edit's name: the base's file name without `.svg` and without an earlier edit's `-e<sha8>`. */
+const editStem = (baseSrc: string) => basename(baseSrc).replace(/\.svg$/i, '').replace(/-e[0-9a-f]{8}$/, '');
+
+/**
+ * Stages an SVG edited in the editor (see the module comment) for the session: checked with `checkVectorSvg` first (400
+ * `svg-edit-refused`, the reasons as `problems`); `baseSrc` must be an SVG file of the base composition folder or one
+ * already staged in this session (400 `svg-edit-bad-base`). Returns the staged asset (`svgEdit: true`), the check's
+ * warnings and the staging folder. The caller holds the session's lock.
+ */
+export async function stageSvgEdit(o: StageSvgEditOptions): Promise<{ asset: StagedAsset; warnings: string[]; root: string; created: boolean }> {
+  const m = messages(o.locale);
+  const { baseSrc, content } = o.from;
+  const check = checkVectorSvg(content);
+  if (!check.ok) {
+    const refused = new CodedError(400, m.composition.svgRefusedSummary({ file: basename(baseSrc), count: check.reasons.length }), 'svg-edit-refused');
+    refused.problems = check.reasons;
+    throw refused;
+  }
+  const badBase = () => new CodedError(400, m.editor.stageSvgBadBase({ file: baseSrc.slice(0, 300) }), 'svg-edit-bad-base');
+  if (!/\.svg$/i.test(baseSrc) || !baseSrc.startsWith('assets/') || !isCompositionPath(baseSrc)) throw badBase();
+  if (!o.staged.has(baseSrc)) {
+    const st = await lstat(join(o.compDir, ...baseSrc.split('/'))).catch(() => null);
+    if (!st?.isFile()) throw badBase();
+  }
+  const id = stagingIdOf(o.token);
+  const libDir = await realDirChain(o.projectDir, [...EDITOR_STAGING, o.creativeSlug, id, 'assets', 'lib']);
+  if (!libDir) throw new Error('editor staging: the staging folder is not a real folder of the project');
+  const root = dirname(dirname(libDir));
+  const bytes = Buffer.from(content, 'utf8');
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  const temp = join(libDir, `.stage.${randomBytes(6).toString('hex')}.tmp`);
+  noteCoreTemp(temp);
+  const fh = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW);
+  try {
+    await fh.writeFile(bytes);
+  } catch (e) {
+    await fh.close().catch(() => {});
+    await rm(temp, { force: true }).catch(() => {});
+    throw e;
+  }
+  await fh.close();
+  const name = `${sanitizeFileName(editStem(baseSrc)).slice(0, 80)}-e${sha256.slice(0, 8)}.svg`;
+  const { path, created } = await placeTemp({
+    compDir: o.compDir, libDir, temp, sha256, name, staged: o.staged, max: STAGING_MAX_SVG_EDITS,
+    counts: (a) => a.svgEdit === true, unplaced: badBase, locale: o.locale,
+  });
+  const size = await svgSize(join(libDir, path.slice('assets/lib/'.length))).catch(() => null);
+  return {
+    asset: { path, size: bytes.length, kind: 'svg', ...(size ? { width: size.width, height: size.height } : {}), svgEdit: true },
+    warnings: check.warnings, root, created,
+  };
+}
+
+/**
+ * Reads the SVG `path` a clip of the session shows, for the editor to edit (SVG inner editor): a file of the composition
+ * folder (which wins, as when serving), else one staged in this session. Read with the confined-read checks and checked
+ * with `checkVectorSvg`, so the editor only ever gets, and draws inline, text the check accepted: 400 `svg-edit-refused`
+ * with the reasons (the text itself is not sent), 400 `svg-edit-bad-base` when `path` is not such an SVG.
+ */
+export async function readSvgForEdit(o: {
+  compDir: string; stagingRoot: string | null; staged: ReadonlyMap<string, StagedAsset>; path: string; locale: Locale;
+}): Promise<{ path: string; content: string; warnings: string[] }> {
+  const m = messages(o.locale);
+  const badBase = () => new CodedError(400, m.editor.stageSvgBadBase({ file: o.path.slice(0, 300) }), 'svg-edit-bad-base');
+  if (!/\.svg$/i.test(o.path) || !o.path.startsWith('assets/') || !isCompositionPath(o.path)) throw badBase();
+  // At most one byte over the limit is read, whatever the file says or becomes meanwhile.
+  const readFrom = (base: string) => withConfinedFile(base, o.path, true, async (fh: FileHandle, info: Stats) => {
+    if (info.size > MAX_VECTOR_SVG_BYTES) return { tooLarge: true as const };
+    const buf = Buffer.alloc(MAX_VECTOR_SVG_BYTES + 1);
+    let total = 0;
+    for (;;) {
+      const { bytesRead } = await fh.read(buf, total, buf.length - total, total);
+      if (bytesRead === 0) break;
+      total += bytesRead;
+      if (total === buf.length) return { tooLarge: true as const };
+    }
+    return { text: buf.subarray(0, total).toString('utf8') };
+  });
+  let got = await readFrom(o.compDir);
+  if (got === null && o.stagingRoot && o.staged.has(o.path)) got = await readFrom(o.stagingRoot);
+  if (got === null || 'skipped' in got) throw badBase();
+  const check = 'tooLarge' in got ? { ok: false as const, reasons: [`the SVG is over ${MAX_VECTOR_SVG_BYTES / 1024} KB`] } : checkVectorSvg(got.text);
+  if (!check.ok || 'tooLarge' in got) {
+    const reasons = check.ok ? [] : check.reasons;
+    const refused = new CodedError(400, m.composition.svgRefusedSummary({ file: basename(o.path), count: reasons.length }), 'svg-edit-refused');
+    refused.problems = reasons;
+    throw refused;
+  }
+  return { path: o.path, content: got.text, warnings: check.warnings };
 }
 
 /** Removes a session's staging folder (a real folder at exactly that place; a link there is removed as an entry only). */

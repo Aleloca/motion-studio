@@ -207,6 +207,16 @@ function run(w: Composition, op: EditOp, ctx: EditContext): void {
     case 'animationPreset': return animationPreset(w, op);
     case 'htmlParam': return htmlParam(w, op, ctx);
     case 'addFont': return addFont(w, op, ctx);
+    case 'svgContent': {
+      // The summary's counts only (the file changes through clipMedia): the clip must be an editable svg clip.
+      const { clip } = locateUnlocked(w, op.clipId);
+      if (clip.type !== 'svg') refuse('editor.wrongType', { clip: clip.id, type: clip.type });
+      for (const key of ['colors', 'texts', 'hidden'] as const) {
+        const v = op[key];
+        if (!(typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 1_000_000)) refuse('editor.badValue', { clip: clip.id, key });
+      }
+      return;
+    }
     default: return refuse('editor.badOp');
   }
 }

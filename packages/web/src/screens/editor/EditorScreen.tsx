@@ -17,11 +17,11 @@
 // - The draft goes to the player with `setComposition` (coalesced per animation frame); a draft the runtime refuses is
 //   shown as a problem, never ignored.
 import {
-  channelName, compositionProblemText, type Composition, type EditorCompositionView, type FormatPreset, type Pin, type StagedAsset, type StageRequest,
+  channelName, compositionProblemText, EDITOR_SAVE_STAGED_MAX, type Composition, type EditorCompositionView, type FormatPreset, type Pin, type StagedAsset, type StagedSvgEdit, type StageRequest,
 } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { api, ApiError } from '../../api.ts';
+import { api, ApiError, type SvgEditFrom } from '../../api.ts';
 import { CompositionPlayer, type CompositionMedia } from '../../components/CompositionPlayer.tsx';
 import { LocaleOutline, LocaleSwitcher } from '../creative/LocaleSwitcher.tsx';
 import { localePreviewSource, useLocalePreview } from '../creative/useLocalePreview.ts';
@@ -51,6 +51,7 @@ import { ExportDialog, type ExportSnapshot } from '../ExportDialog.tsx';
 import { compositionOf } from '../renderModel.ts';
 import { FPS as DEFAULT_FPS, type Mark, type Speed } from '../Transport.tsx';
 import { boardSource, entryAt, followersOf, formatStates } from '../versionModel.ts';
+import { discardedSelf } from '../variants/variantModel.ts';
 import { compactOps } from './opsCompact.ts';
 import { DraftPill, SAVED_MS } from './DraftPill.tsx';
 import { draftKey, isDirty, peekDraft, useDraft, type Draft } from './draftStore.ts';
@@ -81,7 +82,7 @@ export interface EditorScreenProps {
 type Leave = { mode: 'route'; target: string } | { mode: 'chat'; resolve(ok: boolean): void };
 
 /** What the core accepts in a save body (`directEditBodySchema`); the ops are compacted (opsCompact.ts) so the body stays small. */
-const SAVE_STAGED_MAX = 20;
+const SAVE_STAGED_MAX = EDITOR_SAVE_STAGED_MAX;
 
 /** The staged files the composition names (only those go with a save). */
 function usedStaged(d: Draft): string[] {
@@ -269,6 +270,22 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     }
   }, [slug, creative, actions, player, e]);
 
+  // SVG inner editor: an edited SVG is staged like a library file, but a refusal goes back to the section that made it.
+  const stageSvg = useCallback(async (from: SvgEditFrom): Promise<StagedSvgEdit> => {
+    const used = tokenRef.current;
+    if (!used) throw new Error(e.previewBusy);
+    let asset: StagedSvgEdit;
+    try {
+      asset = await api.stageSvgEdit(slug, creative, { token: used, from });
+    } catch (err) {
+      // The session was renewed while the request was on its way: once more with the new token.
+      if (!(err instanceof ApiError && err.code === 'editor-no-session' && tokenRef.current && tokenRef.current !== used)) throw err;
+      asset = await api.stageSvgEdit(slug, creative, { token: tokenRef.current, from });
+    }
+    actions.stage(asset, { from, token: tokenRef.current ?? undefined });
+    return asset;
+  }, [slug, creative, actions, e]);
+
   // A new preview session (a renewal, or a fresh one after an expiry or an eviction): the draft's staged files must be in it
   // (decisions log 264). Those it took over come back in `session.staged`, with this session's media indices (final review
   // M1); a staged file that did not come along (used now or not: an undo may bring it back) is staged again from where it
@@ -319,6 +336,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   const save = useCallback(async (): Promise<boolean> => {
     const d = peekDraft(key);
     if (!d || saving) return false;
+    if (d.svgPending.size > 0) { setSaveError(e.saveWhileStaging); return false; }
     setSaving(true);
     setSaveError(null);
     const body = (tok: string) => ({
@@ -398,6 +416,9 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   /** The image editor's zoom: null is Fit, otherwise 50 to 400 %. Not saved. */
   const [zoom, setZoom] = useState<number | null>(null);
   useEffect(() => { setSelection(null); }, [n, primary]);
+  // The SVG element chosen belongs to the selected clip.
+  const [svgElement, setSvgElement] = useState<string | null>(null);
+  useEffect(() => { setSvgElement(null); }, [selection]);
   // The conversation's pins on the version being edited, as markers on the timeline ruler (numbered as in the format view).
   const [storedPins, setStoredPins] = usePendingPins(pinsKey(slug, creative));
   const marks = useMemo<Mark[]>(() => storedPins.filter((p) => p.version === n).map((p, i) => ({ pin: p.pin, number: i + 1 }))
@@ -518,6 +539,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
 
   const ctx: EditorState | null = draft ? {
     slug, creative, format, primary, draft, actions, player, controls, selection, select: setSelection, snap, setSnap, token, stageAsset, staging,
+    stageSvg, readOnly: discardedSelf(detail?.variants).discarded ? t.web.variantGroup.discardedReadOnly : null, svgElement, selectSvgElement: setSvgElement,
   } : null;
 
   // ---- states without an editor
@@ -555,7 +577,8 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     : working || rendering ? e.busyAgent
       : baseMoved ? e.baseChangedTitle
         // A file being staged (a video converting) or staged again in a new session: the save would wait on it (M3).
-        : staging || restaging ? e.saveWhileStaging
+        // So are the SVG changes not applied yet (SVG inner editor): the save would miss the last one.
+        : staging || restaging || draft.svgPending.size > 0 ? e.saveWhileStaging
           : draft.problems.length > 0 ? compositionProblemText(draft.problems[0]!, locale) : null;
 
   const page = (

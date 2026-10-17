@@ -10,6 +10,7 @@ import type { Shell } from '../src/shell/ShellContext.tsx';
 
 const at = '2026-10-08T10:00:00.000Z';
 const spike = spikeJson as unknown as Composition;
+const LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#ff0000"/></svg>';
 const REEL = 'instagram-reel-9x16';
 const TIKTOK = 'tiktok-9x16';
 const hashOf = (n: number) => String(n).repeat(64).slice(0, 64);
@@ -46,6 +47,11 @@ const api = {
     expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(), format, hash: hashOf(n), width: 1080, height: 1920, duration: 6, fps: 30,
   })),
   cancelJob: vi.fn(async () => ({ cancelled: true })),
+  // SVG inner editor: the logo clip's checked text, and the staging of an edit.
+  getEditorSvg: vi.fn(async (_s: string, _c: string, _t: string, path: string) => ({ path, content: LOGO_SVG, warnings: [] })),
+  stageSvgEdit: vi.fn(async (_s: string, _c: string, _b: { from: { content: string } }) => ({ path: 'assets/lib/logo-e12345678.svg', size: 10, kind: 'svg', svgEdit: true, warnings: [] }) as StagedAsset),
+  getBrand: vi.fn(async () => ({ kit: { colors: [], fonts: [] } })),
+  listAssets: vi.fn(async () => ({ assets: [], error: null, unregistered: [] })),
 };
 class ApiError extends Error {
   problems?: string[];
@@ -87,7 +93,7 @@ vi.mock('../src/components/CompositionPlayer.tsx', async () => {
   };
 });
 // The timeline slot reports the editor context (what Tasks 6 to 9 get); `probe.real` renders the real timeline in it.
-const probe = vi.hoisted(() => ({ real: false, ctx: null as null | { stageAsset(from: unknown): Promise<unknown>; token: string | null; staging: boolean; selection: string | null } }));
+const probe = vi.hoisted(() => ({ real: false, ctx: null as null | { stageAsset(from: unknown): Promise<unknown>; token: string | null; staging: boolean; selection: string | null; select(id: string | null): void } }));
 vi.mock('../src/screens/editor/Timeline.tsx', async (orig) => {
   const m = await orig<typeof import('../src/screens/editor/Timeline.tsx')>();
   const ed = await import('../src/screens/editor/editorContext.ts');
@@ -525,6 +531,40 @@ describe('EditorScreen · save', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Save as v3' }));
     expect(await screen.findByText('The agent or a render is working on this creative')).toBeTruthy();
     expect(peekDraft(KEY)!.ops).toHaveLength(1);
+  });
+});
+
+describe('EditorScreen · SVG edits and save', () => {
+  it('Save waits for an SVG change not applied yet; the saved composition has it', async () => {
+    let finish: () => void = () => {};
+    api.stageSvgEdit.mockImplementationOnce((_s, _c, b) => new Promise((r) => {
+      finish = () => r({ path: 'assets/lib/logo-e12345678.svg', size: b.from.content.length, kind: 'svg', svgEdit: true, warnings: [] } as StagedAsset);
+    }));
+    render(<Harness />);
+    await opened();
+    store().apply(move(5));
+    act(() => probe.ctx!.select('logo1'));
+    const sec = await screen.findByRole('region', { name: 'SVG content' });
+    fireEvent.click(await within(sec).findByRole('button', { name: /^#ff0000, used/ }));
+    const field = within(sec).getByRole('textbox', { name: 'New colour for #ff0000' });
+    fireEvent.focus(field);
+    fireEvent.change(field, { target: { value: '#0000ff' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    // At once: the change is pending and Save waits with the reason.
+    const save = await screen.findByRole('button', { name: 'Save as v3' }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    expect(save.getAttribute('title')).toBe('Wait for the file being added to be ready, then save.');
+    expect(peekDraft(KEY)!.svgPending.has('logo1')).toBe(true);
+    await waitFor(() => expect(api.stageSvgEdit).toHaveBeenCalledTimes(1));
+    expect((screen.getByRole('button', { name: 'Save as v3' }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => { finish(); await Promise.resolve(); });
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Save as v3' }) as HTMLButtonElement).disabled).toBe(false));
+    await userEvent.click(screen.getByRole('button', { name: 'Save as v3' }));
+    await waitFor(() => expect(api.saveEdits).toHaveBeenCalledTimes(1));
+    const body = api.saveEdits.mock.calls[0]![2] as { composition: Composition; staged: string[] };
+    const logo = body.composition.tracks.flatMap((t) => t.clips).find((k) => k.id === 'logo1') as unknown as { src: string };
+    expect(logo.src).toBe('assets/lib/logo-e12345678.svg');
+    expect(body.staged).toContain('assets/lib/logo-e12345678.svg');
   });
 });
 

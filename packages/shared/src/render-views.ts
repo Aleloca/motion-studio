@@ -71,8 +71,26 @@ export type EditorCompositionView = { n: number; format: string; primaryFormat: 
 /** A font the inspector offers. A brand font is `staged: false` here: choosing it stages its file first (`StagedAsset`). */
 export type EditorFontOption = { family: string; weights: number[]; source: 'composition' | 'brand'; brandFontId?: string; staged: boolean };
 
-/** `POST …/editor/stage`: a library asset (its `assets.json` path) or a brand font, staged for the preview session `token`. */
-export type StageRequest = { token: string; from: { kind: 'library'; file: string } | { kind: 'brandFont'; id: string } };
+/**
+ * `POST …/editor/stage`: a library asset (its `assets.json` path), a brand font, or an SVG edited in the editor (SVG inner
+ * editor: `content` is the whole edited file, `baseSrc` the clip's current `src`, a file of the base or one staged in this
+ * session), staged for the preview session `token`.
+ */
+export type StageRequest = {
+  token: string;
+  from: { kind: 'library'; file: string } | { kind: 'brandFont'; id: string } | { kind: 'svgEdit'; clipId: string; baseSrc: string; content: string };
+};
+/**
+ * The answer to an `svgEdit` staging: the staged file (`path` = `assets/lib/<base stem>-e<first 8 hex of its sha256>.svg`,
+ * the same for the same content) and the warnings of the core's SVG check (text in the SVG). A refusal is 400
+ * `svg-edit-refused` with the check's reasons as `problems` (English), or 400 `svg-edit-bad-base`.
+ */
+export type StagedSvgEdit = StagedAsset & { svgEdit: true; warnings: string[] };
+/**
+ * Most staged paths one direct save names: 20 library files and fonts plus 200 edited SVGs (the core's staging limits).
+ * The save body's schema and the editor use the same number.
+ */
+export const EDITOR_SAVE_STAGED_MAX = 220;
 
 /**
  * A staged video's normalised file in the preview session (the core's media cache, served as `media/<index>.mp4`), with the
@@ -92,4 +110,6 @@ export type StagedAsset = {
    * `OS/2` weight (`min === max`). Absent when the file could not be read that far (the editor then keeps its rule).
    */
   fontWeights?: { min: number; max: number };
+  /** An SVG edited in the editor (`StagedSvgEdit`), not a library file: it has its own count limit. */
+  svgEdit?: true;
 };

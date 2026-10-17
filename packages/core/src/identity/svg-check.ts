@@ -202,6 +202,10 @@ function cssProblems(css: string, where: string, o: { atRules: boolean }): strin
   for (const t of [text.toLowerCase(), css.toLowerCase()]) {
     if (/@import/.test(t)) out.push(`${where}: @import is not allowed`);
     if (!o.atRules && /@[a-z-]/.test(t)) out.push(`${where}: CSS at-rules (@…) are not allowed`);
+    // Shadow-tree selectors: the editor draws a checked SVG in a shadow root (SVG inner editor), where `:host` would style
+    // the host element itself (a full-window overlay); never needed by a drawing (decision 896).
+    const shadow = /::?(host-context|host|slotted|part)(?![a-z0-9_-])/.exec(t);
+    if (shadow) out.push(`${where}: the shadow-tree selector ${shadow[0]} is not allowed`);
     // Any vendor-prefixed function (`-webkit-cross-fade(`) too: decision 757 refuses what it cannot vouch for.
     const fn = /(?:^|[^a-z0-9_-])(-[a-z]+-[a-z-]*|image-set|image|cross-fade|element|src|expression|paint)[ \t\r\n\f]*\(/.exec(t);
     if (fn) out.push(`${where}: ${fn[1]}() is not allowed`);

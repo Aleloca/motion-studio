@@ -114,6 +114,18 @@ describe('checkVectorSvg: refused (Review Focus 3)', () => {
     refused(svg('<rect width="1" height="1" style="fill:url(#a" />'));
   });
 
+  it('shadow-tree selectors (:host, :host-context, ::slotted, ::part), which would style the editor overlay\'s host', () => {
+    expect(refused(svg('<style>:host{position:fixed!important;width:100vw!important;z-index:2147483647!important} svg{visibility:visible!important}</style>')).join()).toMatch(/:host/);
+    refused(svg('<style>:HOST(.x) { display: none }</style>'));
+    refused(svg('<style>:host-context(body) rect { fill: red }</style>'));
+    refused(svg('<style>::slotted(*) { fill: red }</style>'));
+    refused(svg('<style>rect::part(x) { fill: red }</style>'));
+    refused(svg('<style><![CDATA[ :host { all: initial } ]]></style>'));
+    refused(svg('<style>:/**/host { color: red }</style>'));
+    // A word that only contains them is fine.
+    accepted(svg('<style>.hostname, #part { fill: red }</style>'));
+  });
+
   it('@import in a <style>, plain, as an entity or in CDATA', () => {
     expect(refused(svg('<style>@import url(#x); rect{fill:red}</style>')).join()).toMatch(/@import/);
     refused(svg('<style>&#64;import "https://evil.example/a.css";</style>'));

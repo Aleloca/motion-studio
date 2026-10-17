@@ -20,6 +20,8 @@ const api = vi.hoisted(() => ({
   listAssets: vi.fn(),
   uploadFiles: vi.fn(),
   registerAssets: vi.fn(),
+  // The SVG content section of an svg clip reads its file (svg-content-section.test.tsx covers it): never answered here.
+  getEditorSvg: vi.fn(() => new Promise(() => {})),
 }));
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 
@@ -128,7 +130,7 @@ describe('what the inspector shows', () => {
     ['title', ['timing', 'box', 'text', 'animation']],
     ['card', ['timing', 'box', 'shape', 'animation']],
     ['photo1', ['timing', 'box', 'media', 'animation']],
-    ['logo1', ['timing', 'box', 'media', 'animation']],
+    ['logo1', ['timing', 'box', 'media', 'svg', 'animation']],
     ['bgv', ['timing', 'box', 'media', 'animation']],
     ['music', ['timing', 'audio']],
   ])('%s: only its own sections', async (id, expected) => {

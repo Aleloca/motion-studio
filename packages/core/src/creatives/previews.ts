@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { lstat, mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
-import { compositionProblemText, INSTANCE_FOLDER_SOURCE, messages, type Composition, type FormatPreset, type Locale, type PreviewSessionInfo, type StagedAsset, type VersionEntry } from '@motion-studio/shared';
+import { compositionProblemText, INSTANCE_FOLDER_SOURCE, messages, type Composition, type FormatPreset, type Locale, type PreviewSessionInfo, type StagedAsset, type StagedSvgEdit, type VersionEntry } from '@motion-studio/shared';
 import { loadComposition } from '../compositions/composition-files.ts';
 import { EDITOR_STAGING, startCompositionServer, type CompositionServer, type CompositionSession, type SessionMediaFile } from '../compositions/composition-server.ts';
 import { noteCoreChange } from '../core-changes.ts';
@@ -19,7 +19,7 @@ import { PreviewLane, PreviewLaneBusyError } from '../render/preview-lane.ts';
 import type { RenderEngine } from '../render/renderer.ts';
 import { CodedError } from '../workspace-store.ts';
 import { isRealDirChain, realDirChain } from './core-files.ts';
-import { removeStaging, stageFile, stagingDirOf, type StageSource } from './editor-staging.ts';
+import { readSvgForEdit, removeStaging, stageFile, stageSvgEdit, stagingDirOf, type StageSource, type SvgEditSource } from './editor-staging.ts';
 
 /**
  * Everything the core shows of a composition without a final render (Task 5b):
@@ -610,10 +610,11 @@ export class PreviewService {
   /**
    * Stages a library asset or a brand font for the live preview session `token` of this creative (editor-staging.ts): the
    * file is copied, probed and, for a video, normalised for the session's frame and added to its media (`media/<i>.mp4`),
-   * so a draft clip naming it plays the normalised file. 404 `editor-no-session` when the token is not a live session of
-   * this creative; the other refusals are translated `CodedError`s.
+   * so a draft clip naming it plays the normalised file. An SVG edited in the editor (`svgEdit`) is checked and written
+   * instead (`stageSvgEdit`), and answered with the check's warnings. 404 `editor-no-session` when the token is not a live
+   * session of this creative; the other refusals are translated `CodedError`s.
    */
-  async stage(ref: Pick<VersionFormatRef, 'projectDir' | 'creativeDir' | 'creativeSlug'>, token: string, from: StageSource, locale: Locale): Promise<StagedAsset> {
+  async stage(ref: Pick<VersionFormatRef, 'projectDir' | 'creativeDir' | 'creativeSlug'>, token: string, from: StageSource | SvgEditSource, locale: Locale): Promise<StagedAsset | StagedSvgEdit> {
     const e = messages(locale).editor;
     const noSession = () => new CodedError(404, e.stageNoSession, 'editor-no-session');
     const live = () => {
@@ -625,6 +626,14 @@ export class PreviewService {
       const s = live();
       if (!s) throw noSession();
       const staging = s.staging ?? { root: stagingDirOf(s.projectDir, s.creativeSlug, token), assets: new Map<string, StagedAsset>(), leases: [], media: new Map<string, SessionMediaFile>() };
+      if (from.kind === 'svgEdit') {
+        const r = await stageSvgEdit({ projectDir: s.projectDir, creativeSlug: s.creativeSlug, token, compDir: s.compDir, from, locale, staged: staging.assets });
+        if (!live()) throw noSession();
+        if (!s.staging) { await s.session.attachStaging(r.root); staging.root = r.root; s.staging = staging; }
+        const asset = staging.assets.get(r.asset.path) ?? r.asset;
+        staging.assets.set(asset.path, asset);
+        return { ...asset, svgEdit: true, warnings: r.warnings };
+      }
       const { asset, root, created } = await stageFile({
         projectDir: s.projectDir, creativeSlug: s.creativeSlug, token, compDir: s.compDir, from, media: this.deps.media ?? NoMediaTools, locale, staged: staging.assets,
       });
@@ -645,6 +654,18 @@ export class PreviewService {
       staging.assets.set(staged.path, staged);
       return staged;
     });
+  }
+
+  /**
+   * The checked text of the SVG `path` a draft clip shows in the live preview session `token` (SVG inner editor,
+   * `readSvgForEdit`): a file of the session's composition folder or one staged in it. 404 `editor-no-session`.
+   */
+  async readSvg(ref: Pick<VersionFormatRef, 'creativeDir' | 'creativeSlug'>, token: string, path: string, locale: Locale): Promise<{ path: string; content: string; warnings: string[] }> {
+    const s = this.sessions.get(token);
+    if (!s || s.creativeDir !== ref.creativeDir || s.creativeSlug !== ref.creativeSlug || !s.session.live() || s.handedOver || this.closing.signal.aborted) {
+      throw new CodedError(404, messages(locale).editor.stageNoSession, 'editor-no-session');
+    }
+    return readSvgForEdit({ compDir: s.compDir, stagingRoot: s.staging?.root ?? null, staged: s.staging?.assets ?? new Map(), path, locale });
   }
 
   /**
