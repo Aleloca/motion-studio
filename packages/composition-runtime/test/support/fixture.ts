@@ -2,12 +2,15 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-/** ffmpeg for the test video: `FFMPEG_PATH`, else the usual install places, else `ffmpeg` on PATH. */
+/** `bin -version` runs: an Intel-only build on a Mac without Rosetta throws EBADARCH (decision 920). */
+const runs = (bin: string) => { try { execFileSync(bin, ['-version'], { stdio: 'ignore' }); return true; } catch { return false; } };
+
+/** ffmpeg for the test video: `FFMPEG_PATH`, else the first usual install place whose build runs, else `ffmpeg` on PATH. */
 export function findFfmpeg(): string | null {
   const env = process.env.FFMPEG_PATH;
   if (env) return existsSync(env) ? env : null;
-  for (const p of ['/usr/local/bin/ffmpeg', '/opt/homebrew/bin/ffmpeg', '/usr/bin/ffmpeg']) if (existsSync(p)) return p;
-  try { execFileSync('ffmpeg', ['-version'], { stdio: 'ignore' }); return 'ffmpeg'; } catch { return null; }
+  for (const p of ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg']) if (existsSync(p) && runs(p)) return p;
+  return runs('ffmpeg') ? 'ffmpeg' : null;
 }
 
 export const COMP_PATH = 'v1/compositions/story';
