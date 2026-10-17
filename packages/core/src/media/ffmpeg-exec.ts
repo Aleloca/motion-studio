@@ -203,9 +203,12 @@ export function spawnFf<const A extends readonly FfArg[]>(cmd: string, args: A &
 export function execFf<const A extends readonly FfArg[]>(cmd: string, args: A & CheckedFfArgs<A>, timeoutMs = 60_000): Promise<{ code: number; stdout: string; stderr: string }> {
   const argv = ffArgv(ffKindOf(cmd), args);
   return new Promise((resolve) => {
-    execFile(cmd, argv, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, encoding: 'utf8' }, (err, stdout, stderr) => {
-      resolve({ code: err ? (typeof err.code === 'number' ? err.code : 1) : 0, stdout: stdout ?? '', stderr: stderr ?? '' });
-    });
+    // execFile may throw synchronously (EBADARCH, errno -86: an Intel binary on a Mac without Rosetta): "not usable", not a crash.
+    try {
+      execFile(cmd, argv, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, encoding: 'utf8' }, (err, stdout, stderr) => {
+        resolve({ code: err ? (typeof err.code === 'number' ? err.code : 1) : 0, stdout: stdout ?? '', stderr: stderr ?? '' });
+      });
+    } catch (e) { resolve({ code: -1, stdout: '', stderr: String((e as Error).message) }); }
   });
 }
 

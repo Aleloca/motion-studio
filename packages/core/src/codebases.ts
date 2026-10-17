@@ -55,11 +55,13 @@ export const gitHashed = (path: string, timeoutMs = 30_000): HashedExec => (args
   let stderr = '';
   let timedOut = false;
   let settled = false;
-  const child = spawn('git', [...GIT_SAFE, '-C', path, ...args], { stdio: ['ignore', 'pipe', 'pipe'], env: GIT_ENV() });
+  let child: ReturnType<typeof spawn>;
+  try { child = spawn('git', [...GIT_SAFE, '-C', path, ...args], { stdio: ['ignore', 'pipe', 'pipe'], env: GIT_ENV() }); }
+  catch { resolve({ code: -1, hash: hash.digest('hex'), stderr, timedOut }); return; } // a synchronous spawn error: git is not usable
   const done = (code: number) => { if (!settled) { settled = true; clearTimeout(timer); resolve({ code, hash: hash.digest('hex'), stderr, timedOut }); } };
   const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
-  child.stdout.on('data', (d: Buffer) => hash.update(d));
-  child.stderr.on('data', (d: Buffer) => { if (stderr.length < 2000) stderr += d.toString(); });
+  child.stdout!.on('data', (d: Buffer) => hash.update(d));
+  child.stderr!.on('data', (d: Buffer) => { if (stderr.length < 2000) stderr += d.toString(); });
   child.on('error', () => done(-1));
   child.on('close', (code) => done(code ?? -1));
 });
@@ -363,7 +365,9 @@ function gitText(path: string, args: string[], timeoutMs: number, input?: string
     const chunks: Buffer[] = [];
     let size = 0;
     let settled = false;
-    const child = spawn('git', [...GIT_SAFE, '-C', path, ...args], { stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'], env: GIT_ENV() });
+    let child: ReturnType<typeof spawn>;
+    try { child = spawn('git', [...GIT_SAFE, '-C', path, ...args], { stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'], env: GIT_ENV() }); }
+    catch { resolveText(null); return; } // a synchronous spawn error: git is not usable
     const done = (v: string | null) => { if (!settled) { settled = true; clearTimeout(timer); resolveText(v); } };
     const timer = setTimeout(() => { child.kill('SIGKILL'); done(null); }, timeoutMs);
     child.stdout!.on('data', (d: Buffer) => { if (size < 4 * 1024 * 1024) { chunks.push(d); size += d.length; } });

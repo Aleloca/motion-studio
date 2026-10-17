@@ -62,7 +62,7 @@ code, pre { font-family: var(--f-mono); font-size: .9em; }
 /* Header */
 .site-header { position: absolute; inset: 0 0 auto; z-index: 5; }
 .site-header__inner { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 88px; }
-.site-header__logo img { width: clamp(132px, 14vw, 180px); height: auto; }
+.site-header__logo img { width: clamp(150px, 16vw, 200px); height: auto; }
 .site-nav { display: flex; align-items: center; gap: clamp(12px, 2.4vw, 32px); margin: 0; padding: 0; list-style: none; font-size: 15px; }
 .site-nav a:not(.btn) { text-decoration: none; color: var(--c-muted); }
 .site-nav a:not(.btn):hover { color: var(--c-text); }

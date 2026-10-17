@@ -345,13 +345,13 @@ describe('variant canvas · every board, whichever variant is open', () => {
 });
 
 describe('variant canvas · a creative with no variants yet', () => {
-  it('its menu has one "+ Variante": the group is made with the total count and the new variant starts', async () => {
+  it('its menu has one "Aggiungi variante" (no double plus): the group is made with the total count and the new variant starts', async () => {
     group = null;
     api.addVariants.mockImplementationOnce(async () => { group = groupOf(['a', 'b']); return build(HOST); });
     render(<Harness live={emptyLive()} />);
     await screen.findByRole('img', { name: /Post 1:1 v1/ });
     await userEvent.click(screen.getByRole('button', { name: 'Altro' }));
-    await userEvent.click(await screen.findByRole('menuitem', { name: '+ Variante' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Aggiungi variante' }));
     const dialog = await screen.findByRole('dialog', { name: 'Aggiungi una variante' });
     await userEvent.type(within(dialog).getByLabelText('Direzione (facoltativa)'), 'Tipografica');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Aggiungi variante' }));
@@ -365,7 +365,7 @@ describe('variant canvas · a creative with no variants yet', () => {
     render(<Harness live={emptyLive()} />);
     await screen.findByRole('img', { name: /Post 1:1 v1/ });
     await userEvent.click(screen.getByRole('button', { name: 'Altro' }));
-    await userEvent.click(await screen.findByRole('menuitem', { name: '+ Variante' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Aggiungi variante' }));
     const dialog = await screen.findByRole('dialog', { name: 'Aggiungi una variante' });
     await userEvent.click(within(dialog).getByRole('button', { name: /Parti da/ }));
     await userEvent.click(await screen.findByRole('option', { name: 'Variante A, versione 1' }));

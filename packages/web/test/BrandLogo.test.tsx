@@ -41,3 +41,21 @@ describe('BrandLogo', () => {
     expect(screen.getByRole('img', { name: 'Motion Studio' }).getAttribute('data-variant')).toBe('light');
   });
 });
+
+describe('BrandLogo shapes', () => {
+  it('the horizontal and mark shapes follow the theme and size their width from the viewBox', async () => {
+    systemPrefers(false);
+    const { rerender } = render(<BrandLogo variant="horizontal" height={22} />);
+    const logo = screen.getByRole('img', { name: 'Motion Studio' });
+    expect(logo.getAttribute('src')).toMatch(/logo-horizontal\.svg$|1720/);
+    expect(logo.getAttribute('width')).toBe('118'); // 22 * 1720 / 322
+    await act(async () => { applyTheme('dark'); });
+    expect(logo.getAttribute('src')).toMatch(/logo-horizontal-dark\.svg$|1720/);
+    rerender(<BrandLogo variant="mark" height={24} />);
+    expect(screen.getByRole('img', { name: 'Motion Studio' }).getAttribute('width')).toBe('27'); // 24 * 362 / 322
+  });
+  it('decorative has no name', () => {
+    render(<BrandLogo variant="mark" decorative />);
+    expect(screen.queryByRole('img', { name: 'Motion Studio' })).toBeNull();
+  });
+});

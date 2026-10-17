@@ -230,7 +230,9 @@ describe('every field edits through apply', () => {
     expect(last()).toMatchObject({ props: { color: '#1B1913' } });
     fireEvent.click(screen.getByRole('radio', { name: 'Right' }));
     expect(last()).toMatchObject({ props: { align: 'right' } });
-    expect(document.querySelector('input[type="color"]')).toBeNull();
+    // The free picker (a native colour input) commits any colour, besides the swatches.
+    fireEvent.change(document.querySelector('input[type="color"]') as HTMLInputElement, { target: { value: '#336699' } });
+    expect(last()).toMatchObject({ props: { color: '#336699' } });
     expect(document.querySelector('select, input[type="range"]')).toBeNull();
   });
 

@@ -87,16 +87,53 @@ function Color({ onChange }: { onChange?: (h: string) => void }) {
 }
 
 describe('ColorField', () => {
-  it('has no native colour input; swatches are toggle buttons that choose their colour', () => {
+  it('swatches are toggle buttons that choose their colour', () => {
     const seen: string[] = [];
-    const { container } = render(<Color onChange={(h) => seen.push(h)} />);
-    expect(container.querySelector('input[type="color"]')).toBeNull();
+    render(<Color onChange={(h) => seen.push(h)} />);
     const red = screen.getByRole('button', { name: '#ff0000' });
     expect(red.getAttribute('aria-pressed')).toBe('false');
     fireEvent.click(red);
     expect(seen).toEqual(['#ff0000']);
     expect(screen.getByRole('button', { name: '#ff0000' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.queryByRole('group', { name: 'Empty' })).toBeNull();
+  });
+
+  it('has a free picker (a native colour input named "Scegli un colore"): a picked colour is committed, the same colour is not', () => {
+    const seen: string[] = [];
+    const { container } = render(<Color onChange={(h) => seen.push(h)} />);
+    const native = container.querySelector('input[type="color"]') as HTMLInputElement;
+    expect(native.getAttribute('aria-label')).toBe('Scegli un colore');
+    expect(native.value).toBe('#112233');
+    fireEvent.change(native, { target: { value: '#336699' } });
+    expect(seen).toEqual(['#336699']);
+    expect((screen.getByRole('textbox', { name: 'Hex colour' }) as HTMLInputElement).value).toBe('#336699');
+    expect(native.value).toBe('#336699');
+    fireEvent.change(native, { target: { value: '#336699' } });
+    expect(seen).toEqual(['#336699']);
+  });
+
+  it('a colour picked over a translucent one keeps its alpha; the hex field takes #rrggbbaa', () => {
+    const seen: string[] = [];
+    function Alpha() {
+      const [v, setV] = useState<string | undefined>('#11223380');
+      return <ColorField label="Hex colour" value={v} onChange={(h) => { setV(h); seen.push(h); }} />;
+    }
+    const { container } = render(<Alpha />);
+    fireEvent.change(container.querySelector('input[type="color"]') as HTMLInputElement, { target: { value: '#aabbcc' } });
+    expect(seen).toEqual(['#aabbcc80']);
+  });
+
+  it('an invalid hex typed beside the picker is refused: no commit, the colour stays', () => {
+    const seen: string[] = [];
+    const { container } = render(<Color onChange={(h) => seen.push(h)} />);
+    const input = screen.getByRole('textbox', { name: 'Hex colour' }) as HTMLInputElement;
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: '#12345' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    fireEvent.blur(input);
+    expect(seen).toEqual([]);
+    expect(input.value).toBe('#112233');
+    expect((container.querySelector('input[type="color"]') as HTMLInputElement).value).toBe('#112233');
   });
 
   it('commits a valid hex on Enter (the # is optional), rejects an invalid one and keeps the colour', () => {

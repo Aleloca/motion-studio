@@ -27,7 +27,7 @@ export interface FfmpegInfo {
   arch: BinaryArch;
   /** The machine's: `arm64` on Apple Silicon even when Node itself runs under Rosetta. */
   hostArch: string;
-  /** An x86_64-only ffmpeg on an arm64 machine (Rosetta 2): it works, slower. The doctor reports it (Task 8). */
+  /** An x86_64-only ffmpeg on an arm64 machine (Rosetta 2, which may be absent: then it is not found at all): it works, slower. The doctor reports it (Task 8). */
   translated: boolean;
   encoders: ReadonlySet<string>;
   /** Supports `-fd N -i fd:` (seekable input from an open file descriptor). */
@@ -37,20 +37,19 @@ export interface FfmpegInfo {
 }
 
 
-/** `name` on PATH (or the usual install places), or null. */
-function which(name: string, env: NodeJS.ProcessEnv): string | null {
+/** Every `name` on PATH (or the usual install places), in order: a build that cannot run here is skipped for the next. */
+function which(name: string, env: NodeJS.ProcessEnv): string[] {
   const exe = process.platform === 'win32' ? `${name}.exe` : name;
   const dirs = [...(env.PATH ?? '').split(delimiter).filter(Boolean), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin'];
-  for (const d of dirs) { const p = join(d, exe); if (existsSync(p)) return p; }
-  return null;
+  const found: string[] = [];
+  for (const d of dirs) { const p = join(d, exe); if (existsSync(p) && !found.includes(p)) found.push(p); }
+  return found;
 }
 
 const infoCache = new Map<string, Promise<FfmpegInfo | null>>();
 
-/** ffmpeg: `FFMPEG_PATH`, else PATH and the usual places. Null when missing or not answering. Cached per path. */
-export function findFfmpeg(env: NodeJS.ProcessEnv = process.env): Promise<FfmpegInfo | null> {
-  const path = env.FFMPEG_PATH ? (existsSync(env.FFMPEG_PATH) ? env.FFMPEG_PATH : null) : which('ffmpeg', env);
-  if (!path) return Promise.resolve(null);
+/** One candidate: null when it does not run (missing, wrong CPU architecture with no Rosetta, broken, spawn error). Cached per path. */
+function probeFfmpeg(path: string): Promise<FfmpegInfo | null> {
   let p = infoCache.get(path);
   if (!p) {
     p = (async () => {
@@ -69,10 +68,23 @@ export function findFfmpeg(env: NodeJS.ProcessEnv = process.env): Promise<Ffmpeg
         path, version: /ffmpeg version (\S+)/.exec(v.stdout)?.[1] ?? 'unknown', arch, hostArch: host,
         translated: host === 'arm64' && arch === 'x86_64', encoders, filters, fdProtocol: /^\s*fd\s*$/m.test(input),
       };
-    })();
+    })().catch(() => null);
     infoCache.set(path, p);
   }
   return p;
+}
+
+/**
+ * ffmpeg: `FFMPEG_PATH`, else PATH and the usual places. Null when missing or none answering (an Intel-only build on a Mac
+ * without Rosetta cannot be started: it is skipped and the next one is tried, e.g. /opt/homebrew/bin after /usr/local/bin).
+ */
+export async function findFfmpeg(env: NodeJS.ProcessEnv = process.env): Promise<FfmpegInfo | null> {
+  const paths = env.FFMPEG_PATH ? (existsSync(env.FFMPEG_PATH) ? [env.FFMPEG_PATH] : []) : which('ffmpeg', env);
+  for (const path of paths) {
+    const info = await probeFfmpeg(path);
+    if (info) return info;
+  }
+  return null;
 }
 
 export interface FfmpegProcess {
@@ -93,7 +105,11 @@ export interface FfmpegProcess {
 export function spawnFfmpeg<const A extends readonly FfArg[]>(ff: FfmpegInfo, args: A & CheckedFfArgs<A>, o: { signal?: AbortSignal; stdin?: boolean; fds?: number[] } = {}): FfmpegProcess {
   const stdio: StdioOptions = [o.stdin ? 'pipe' : 'ignore', 'ignore', 'pipe', ...(o.fds ?? [])];
   const all: readonly FfArg[] = ['-hide_banner', '-loglevel', 'error', ...(o.stdin ? [] : ['-nostdin']), '-y', ...args];
-  const proc = spawnFf(ff.path, all, { stdio, detached: true });
+  let proc: ChildProcess;
+  try { proc = spawnFf(ff.path, all, { stdio, detached: true }); } catch (e) {
+    // A synchronous spawn error (e.g. EBADARCH, errno -86, an Intel binary without Rosetta) is a failed render (a RenderError), not a crash.
+    throw new RenderError('ffmpegFailed', `ffmpeg could not start: ${(e as Error).message}`);
+  }
   const untrack = proc.pid ? trackGroup(proc.pid) : () => {};
   let tail = '';
   proc.stderr!.on('data', (d: Buffer) => { tail = (tail + d.toString('utf8')).slice(-4000); });

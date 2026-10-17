@@ -100,6 +100,16 @@ describe('Brand · overview summary', () => {
   });
 });
 
+describe('Brand · Typography header', () => {
+  it('groups its two actions together (not one pushed to each edge)', async () => {
+    en(<Brand slug="acme" live={live()} />);
+    const google = await screen.findByRole('button', { name: '+ Add from Google Fonts' });
+    const manual = screen.getByRole('button', { name: '+ Add manually' });
+    expect(google.parentElement).toBe(manual.parentElement);
+    expect(google.parentElement!.className).toContain('ms-bsection-actions');
+  });
+});
+
 describe('Brand · colors', () => {
   it('editing a color saves the kit (as a manual edit)', async () => {
     en(<Brand slug="acme" live={live()} />);
@@ -111,6 +121,16 @@ describe('Brand · colors', () => {
     await waitFor(() => expect(api.saveBrandKit).toHaveBeenCalled());
     expect(lastKit().colors[0]).toMatchObject({ id: 'ink', hex: '#112233', source: { kind: 'manual', ref: null } });
     expect(lastKit().colors).toHaveLength(2);
+  });
+
+  it('the colour popover has a free picker besides the hex field (a picked colour is saved)', async () => {
+    en(<Brand slug="acme" live={live()} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit color Ink black' }));
+    const native = screen.getByLabelText('Pick a colour') as HTMLInputElement;
+    expect(native.type).toBe('color');
+    fireEvent.change(native, { target: { value: '#336699' } });
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(lastKit().colors[0]).toMatchObject({ id: 'ink', hex: '#336699' }));
   });
 
   it('shows Saving… then Saved while the kit is saved (T12)', async () => {

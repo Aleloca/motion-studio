@@ -18,9 +18,11 @@ const BAR_TABS: ProjectTab[] = ['creatives', 'brand', 'assets', 'references', 's
 
 function Logo() {
   const t = useT();
+  // Room decides which one shows (shell.css): the whole logo on a wide window, the mark alone on a narrow one.
   return (
-    <a className="ms-logo" href={href.projects()} aria-label={t.web.shell.home}>
-      <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 2.5v7l6-3.5-6-3.5Z" /></svg>
+    <a className="ms-logo-link" href={href.projects()} aria-label={t.web.shell.home}>
+      <BrandLogo variant="horizontal" height={22} className="ms-logo-full" decorative />
+      <BrandLogo variant="mark" height={24} className="ms-logo-mark" decorative />
     </a>
   );
 }
@@ -134,7 +136,7 @@ function Status({ running = true }: { running?: boolean }) {
 export function GlobalTop({ title }: { title?: string }) {
   return (
     <>
-      <a className="ms-brand-logo" href={href.projects()}><BrandLogo height={22} /></a>
+      <a className="ms-brand-logo" href={href.projects()}><BrandLogo variant="horizontal" height={22} /></a>
       {title ? <><span className="ms-faint" aria-hidden="true">/</span><b className="ms-topbar-title">{title}</b></> : null}
       <div className="ms-topbar-center"><SearchButton /></div>
       <Status />

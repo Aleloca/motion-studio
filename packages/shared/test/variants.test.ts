@@ -131,7 +131,7 @@ describe('variant group i18n', () => {
   for (const loc of ['it', 'en'] as const) {
     it(`has the labels and reasons in ${loc}`, () => {
       const v = messages(loc).web.variantGroup;
-      for (const k of ['groupBy', 'variant', 'format', 'all', 'addVariant', 'discard', 'restore', 'showDiscarded', 'useForAllFormats', 'finalSelection', 'missing'] as const) {
+      for (const k of ['groupBy', 'variant', 'format', 'all', 'addVariant', 'addVariantMenu', 'discard', 'restore', 'showDiscarded', 'useForAllFormats', 'finalSelection', 'missing'] as const) {
         expect(v[k]).toBeTruthy();
       }
       expect(v.discardRefused.running).toBeTruthy();

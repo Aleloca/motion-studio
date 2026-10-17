@@ -16,6 +16,12 @@ html, body, #root { height: 100%; }
 .ms-logo { width: 26px; height: 26px; border-radius: 7px; background: var(--ink); display: flex; align-items: center; justify-content: center; flex: none; transition: transform var(--d-xs) var(--e-std); }
 .ms-logo:active { transform: scale(.94); }
 .ms-logo path { fill: var(--accent); }
+/* The project bar's logo link (Welcome and Pairing keep the small glyph tile above). */
+.ms-logo-link { display: flex; align-items: center; flex: none; border-radius: 7px; transition: transform var(--d-xs) var(--e-std); }
+.ms-logo-link:active { transform: scale(.94); }
+.ms-logo-mark { display: none; }
+/* The project bar carries the switcher, five tabs and the status: below 1280 px the mark alone. */
+@media (max-width: 1279px) { .ms-logo-full { display: none; } .ms-logo-mark { display: block; } }
 .ms-brand { font-weight: 700; white-space: nowrap; }
 .ms-brand-logo { display: flex; align-items: center; flex: none; }
 .ms-topbar-title { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

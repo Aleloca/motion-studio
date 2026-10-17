@@ -90,7 +90,7 @@ export async function waitGroupGone(pgid: number, o: GroupWaitOptions = {}): Pro
 }
 
 const run = (cmd: string, args: string[], timeoutMs: number, env?: NodeJS.ProcessEnv): Promise<string | null> => new Promise((resolve) => {
-  execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8', ...(env ? { env } : {}) }, (err, stdout) => resolve(err ? null : stdout));
+  try { execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8', ...(env ? { env } : {}) }, (err, stdout) => resolve(err ? null : stdout)); } catch { resolve(null); }
 });
 
 export interface ProcessRow {
