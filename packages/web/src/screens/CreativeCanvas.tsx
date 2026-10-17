@@ -419,9 +419,13 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   const [starting, setStarting] = useState(false);
   const generate = () => {
     setStarting(true);
-    // A group that has not started yet starts every variant (one paid-services card); otherwise only the open one.
-    const fresh = group !== null && shownMs.every((m) => m.status !== 'active' || m.slug === creative || (members[m.slug]?.versions.length ?? 0) === 0);
-    Promise.resolve().then((): Promise<unknown> => (fresh && group ? api.runVariants(slug, group.host, { targets: 'all-active', request: null }) : api.sendCreativeTurn(slug, creative, {})))
+    // A group starts together (one paid-services card): the open variant and every other active one that has no version yet
+    // (all of them, when the group has not started). A variant that already has versions is left alone.
+    const activeMs = shownMs.filter((m) => m.status === 'active');
+    const fresh = activeMs.filter((m) => m.slug === creative || (members[m.slug]?.versions.length ?? 0) === 0);
+    const fanOut = group !== null && fresh.length > 0 && (fresh.length === activeMs.length || fresh.length > 1);
+    const targets = fresh.length === activeMs.length ? 'all-active' as const : fresh.map((m) => m.letter);
+    Promise.resolve().then((): Promise<unknown> => (fanOut && group ? api.runVariants(slug, group.host, { targets, request: null }) : api.sendCreativeTurn(slug, creative, {})))
       .then(() => { setViewing({}); reload(); })
       .catch((e: unknown) => toast.show(c.generateFailed({ detail: message(e) })))
       .finally(() => setStarting(false));
@@ -795,7 +799,10 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     setAddOpen(false);
     if (added) await api.runVariants(slug, creative, { targets: [added.letter], request: null }).catch(failToast(vg.startFailed));
   };
-  const finalRows = group && groupPlan ? selectionRows(cr.brief.formats, groupPlan) : null;
+  // The group's formats are the host's brief (it always carries the group's, decisions log 830): the open sister's own can lag
+  // (a brief waiting for its next turn) or be frozen (discarded), and its rows would go stale.
+  const groupFormats = group && hostSlug !== creative ? members[hostSlug]?.creative.brief.formats ?? cr.brief.formats : cr.brief.formats;
+  const finalRows = group && groupPlan ? selectionRows(groupFormats, groupPlan) : null;
   const variantBar = group ? (
     <div className="ms-vbar" role="toolbar" aria-label={vg.toolbarAria}>
       <span className="ms-vbar-group">

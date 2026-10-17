@@ -47,9 +47,9 @@ const { I18nProvider } = await import('../src/i18n.tsx');
 const { __resetPendingPins } = await import('../src/screens/pendingPins.ts');
 
 const emptyLive = (): EventsState => ({ approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} } as unknown as EventsState);
-function Harness({ locale = 'it', live = emptyLive() }: { locale?: 'it' | 'en'; live?: EventsState }) {
+function Harness({ locale = 'it', live = emptyLive(), creative = HOST }: { locale?: 'it' | 'en'; live?: EventsState; creative?: string }) {
   const shell = {
-    route: { name: 'creative', slug: 'acme', creative: HOST }, live,
+    route: { name: 'creative', slug: 'acme', creative }, live,
     catalog: { projects: [{ slug: 'acme', name: 'Acme' }], creatives: {}, refresh: () => {} },
     activity: { open: false, tab: null, seq: 0, show: () => {}, hide: () => {}, toggle: () => {} }, openPalette: () => {},
   } as unknown as Shell;
@@ -57,7 +57,7 @@ function Harness({ locale = 'it', live = emptyLive() }: { locale?: 'it' | 'en'; 
     <I18nProvider locale={locale}>
       <ShellContext.Provider value={shell}>
         <header className="ms-topbar"><TopBar /></header>
-        <CreativeCanvas slug="acme" creative={HOST} live={live} />
+        <CreativeCanvas slug="acme" creative={creative} live={live} />
       </ShellContext.Provider>
     </I18nProvider>
   );
@@ -116,6 +116,17 @@ describe('Selezione finale (the popover)', () => {
     render(<Harness />);
     const dialog = await open();
     await waitFor(() => expect(rows(dialog)[0]).toBe('Instagram · Post 1:1 · Variante A · v2 · regola predefinita'));
+  });
+
+  it('minor (Task 5): opened on a sister whose own brief lags the group\'s, the rows still follow the group\'s formats (the host\'s)', async () => {
+    api.getCreative.mockImplementation(async (_s: string, c: string) => (c === `${HOST}~b` ? detailFor(c, versionsBy[c] ?? [], group, { missing, formats: ['instagram-post-1x1'] }) : build(c)));
+    plan = [item('instagram-post-1x1', 'a', 2, 'default'), item('tiktok-9x16', 'a', 2, 'default')];
+    render(<Harness creative={`${HOST}~b`} />);
+    const dialog = await open();
+    await waitFor(() => expect(rows(dialog)).toEqual([
+      'Instagram · Post 1:1 · Variante A · v2 · regola predefinita',
+      'TikTok · Video 9:16 · Variante A · v2 · regola predefinita',
+    ]));
   });
 
   it('(b) A discarded: the default rule comes from the first active variant, as the export takes it (not "A")', async () => {

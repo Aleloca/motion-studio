@@ -487,6 +487,19 @@ describe('variant canvas · the group never starts one variant alone', () => {
     versionsBy[`${HOST}~c`] = [version(1, 'Dal brief')];
   });
 
+  it('minor (Task 5): a partly started group: "Genera" starts the open variant and the other variants that have no version, not those that have', async () => {
+    versionsBy[HOST] = [];
+    versionsBy[`${HOST}~b`] = [];
+    // C has versions (the group's default fixture): it is left alone.
+    render(<Harness live={emptyLive()} />);
+    await loaded();
+    await userEvent.click(await within(screen.getByRole('main')).findByRole('button', { name: 'Genera' }));
+    await waitFor(() => expect(api.runVariants).toHaveBeenCalledWith('acme', HOST, { targets: ['a', 'b'], request: null }));
+    expect(api.sendCreativeTurn).not.toHaveBeenCalled();
+    versionsBy[HOST] = [version(1, 'Dal brief')];
+    versionsBy[`${HOST}~b`] = [version(1, 'Dal brief'), version(2, 'Più audace')];
+  });
+
   it('the paid-services card filed under the host shows in the chat of every variant', async () => {
     const live = emptyLive();
     live.approvals = {
