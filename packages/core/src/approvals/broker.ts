@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { explainTool, paidBatchSchema, type ApprovalDecision, type ApprovalKind, type ApprovalRequest, type ExplainContext, type Explanation, type PaidBatch, type ServerMessage } from '@motion-studio/shared';
-import { CREATIVE_SLUG_RE } from '../creatives/creative-store.ts';
+import { isAcceptedCreativeSync } from '../creatives/creative-store.ts';
 import { cleanAgentReason } from '../display-text.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 import { PermissionsStore, ruleFor } from './permissions-store.ts';
@@ -28,7 +28,9 @@ export { cleanAgentReason };
 
 /** Where an agent job's paths are judged: relative paths start in the project (the `claude` process cwd). */
 export function explainContext(job: { projectDir: string; creativeSlug: string | null }, env: { home?: string; tmpDir?: string } = {}): ExplainContext {
-  const workDir = job.creativeSlug && CREATIVE_SLUG_RE.test(job.creativeSlug) ? join(job.projectDir, 'creatives', job.creativeSlug, 'work') : undefined;
+  // A plain creative, a real variant sister or an orphan one (phase 15, decisions log 821, 833); never a hand-made `x~b`.
+  const ok = job.creativeSlug !== null && isAcceptedCreativeSync(job.projectDir, job.creativeSlug);
+  const workDir = ok ? join(job.projectDir, 'creatives', job.creativeSlug!, 'work') : undefined;
   return {
     projectDir: job.projectDir, cwd: job.projectDir, ...(workDir ? { workDir } : {}),
     home: env.home ?? homedir(), tmpDir: env.tmpDir ?? (process.env.TMPDIR || tmpdir()),
@@ -44,6 +46,12 @@ interface Pending { request: ApprovalRequest; alwaysLabel: string; projectDir: s
 
 export class ApprovalBroker {
   private readonly items = new Map<string, Pending>();
+  /**
+   * Phase 15 (spec §3, "Servizi a pagamento"): the jobs of a variant fan-out whose paid calls wait for the fan-out's ONE
+   * `paid-batch` decision instead of a card of their own. `rules`: the provider rules the card listed; `decision`: true once
+   * approved, false when declined, expired or cancelled. Kept until the job ends (`uncover`).
+   */
+  private readonly covers = new Map<string, { rules: ReadonlySet<string>; decision: Promise<boolean> }>();
   private readonly timeoutMs: number;
   private readonly now: () => Date;
   constructor(private readonly opts: { broadcast(m: ServerMessage): void; timeoutMs?: number; now?: () => Date; home?: string; tmpDir?: string }) {
@@ -101,6 +109,15 @@ export class ApprovalBroker {
   }
 
   cancelJob(jobId: string) { for (const [id, i] of this.items) if (i.request.jobId === jobId) this.finish(id, 'cancelled'); }
+
+  /** Phase 15: the paid calls of `jobId` under one of `rules` are decided by `decision` (a variant batch's card). */
+  cover(jobId: string, rules: Iterable<string>, decision: Promise<boolean>): void { this.covers.set(jobId, { rules: new Set(rules), decision }); }
+  uncover(jobId: string): void { this.covers.delete(jobId); }
+  /** The batch decision that covers this paid call, or null: the call asks with a card of its own, as before phase 15. */
+  coverOf(jobId: string, rule: string): Promise<boolean> | null {
+    const c = this.covers.get(jobId);
+    return c && c.rules.has(rule) ? c.decision : null;
+  }
   cancelAll() { for (const id of [...this.items.keys()]) this.finish(id, 'cancelled'); }
   pending(): ApprovalRequest[] { return [...this.items.values()].map((i) => i.request); }
 

@@ -14,6 +14,8 @@ import './creatives.css';
 import { message } from './common.tsx';
 import { CoverMedia } from '../components/MediaThumb.tsx';
 import { coverVideo } from '../media.ts';
+import { missingList } from './variants/variantModel.ts';
+import './variants/variants.css';
 
 /** Preview stage: frames up to 164 px tall in a row of at most 300 px (prototype CreativeCard). */
 const STAGE = { height: 164, maxWidth: 300, gap: 10 };
@@ -192,7 +194,9 @@ function CreativeCard({ slug, c, info, presets, index, fresh }: CardProps) {
     setBusy(true);
     try {
       const body = then === 'stay' ? retryTurn(await api.getConversation(slug, c.slug)) : {};
-      await api.sendCreativeTurn(slug, c.slug, body);
+      // A group that never started starts every variant (one paid-services card); a retry is the host's own turn.
+      if (c.variants && then === 'open') await api.runVariants(slug, c.slug, { targets: 'all-active', request: null });
+      else await api.sendCreativeTurn(slug, c.slug, body);
       if (then === 'open' && mounted.current) go(open);
     } catch (e) {
       if (!mounted.current) return;
@@ -228,6 +232,13 @@ function CreativeCard({ slug, c, info, presets, index, fresh }: CardProps) {
               </Tag>
             ))}
             {known.length > MAX_TAGS ? <Tag className="ms-ftag">{s.moreFormats({ n: known.length - MAX_TAGS })}</Tag> : null}
+          </div>
+        ) : null}
+
+        {c.variants ? (
+          <div className="ms-ccard-variants">
+            <Tag className="ms-ftag">{t.web.variantGroup.count({ count: c.variants.count })}</Tag>
+            {c.variants.missing.length ? <span className="ms-ccard-missing">{t.web.variantGroup.listMissing({ letters: missingList(c.variants.missing) })}</span> : null}
           </div>
         ) : null}
 

@@ -1,17 +1,113 @@
-import { appendFile, lstat, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { lstatSync } from 'node:fs';
+import { appendFile, lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import {
-  creativeFileSchema, isSessionId, versionsFileSchema,
-  type Brief, type ConversationEntry, type CreativeFile, type CreativeListItem, type VersionEntry,
+  activeMembers, creativeFileSchema, hostOf, isSessionId, sisterSlug, versionsFileSchema,
+  type Brief, type ConversationEntry, type CreativeFile, type CreativeListItem, type VariantGroup, type VariantLetter, type VariantListInfo, type VersionEntry,
   issuesText,
 } from '@motion-studio/shared';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
-import { slugify, WorkspaceError } from '../workspace-store.ts';
+import { CodedError, slugify, WorkspaceError } from '../workspace-store.ts';
 import { currentLocale, t } from '../i18n.ts';
 import { noteCoreChange } from '../core-changes.ts';
+import { readRegularFile, readRegularFileSync } from '../safe-read.ts';
 
+/** A creative's folder name as the user's creation makes it (never a `~`: reserved for variant sisters, phase 15). */
 export const CREATIVE_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}$/;
+/** The SHAPE of a variant sister's folder, `<host>~b`..`~e`: whether it is a real sister is `creativeKind`'s question. */
+export const SISTER_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}~[b-e]$/;
+/** Whether `name` has the shape of a creative folder (a plain one or a sister's). Shape only: see `creativeKind`. */
+export const isCreativeFolderShape = (name: string): boolean => CREATIVE_SLUG_RE.test(name) || SISTER_SLUG_RE.test(name);
+/** Most bytes of a creative.json read to tell a real sister (the host's file). */
+const CREATIVE_JSON_MAX = 4 * 1024 * 1024;
+
+/**
+ * Phase 15, ruling R2 (and its amendment): whether `group`, stored on host `hostSlug`, is well tied to its folders: member
+ * `a` is the host itself and every other member's slug is exactly `sisterSlug(host, letter)`. A group that is not (a hand
+ * edit) makes none of its sisters real.
+ */
+export function groupTiedTo(hostSlug: string, group: VariantGroup): boolean {
+  return group.members.every((m) => m.slug === sisterSlug(hostSlug, m.letter));
+}
+
+/** The member of the host's group that `slug` is, when it is a real one (see `groupTiedTo`); never member a. */
+/**
+ * Phase 15 (spec §7, final wave M7): whether a sister member of `hostSlug`'s group is there: its folder has a readable
+ * creative.json that names that host. The one rule of "mancante" for the list and the group service.
+ */
+export function memberPresent(hostSlug: string, sister: CreativeFile | null | undefined): boolean {
+  return sister?.variantOf === hostSlug;
+}
+
+export function sisterIn(hostSlug: string, host: CreativeFile | null, slug: string): { letter: VariantLetter } | null {
+  const g = host?.variantGroup;
+  if (!g || !SISTER_SLUG_RE.test(slug) || hostOf(slug) !== hostSlug || !groupTiedTo(hostSlug, g)) return null;
+  const m = g.members.find((x) => x.slug === slug && x.letter !== 'a');
+  return m ? { letter: m.letter } : null;
+}
+
+const parseCreative = (r: ReturnType<typeof readRegularFileSync>): CreativeFile | null => {
+  if (r.kind !== 'file') return null;
+  try { return creativeFileSchema.safeParse(JSON.parse(r.data.toString('utf8'))).data ?? null; } catch { return null; }
+};
+
+/**
+ * THE check of ruling R2 (amended): `slug` names a REAL variant sister of this project, that is its host folder is a real
+ * folder whose creative.json reads and has a `variantGroup` listing `slug`, tied to its letter (`groupTiedTo`). A plain
+ * `x~b` folder with no group is not one: sweeps, approvals, usage and the asset-rename journal ignore it, and the list
+ * does not show it. Never follows a link (the host's folder and file are checked as entries).
+ */
+export async function isRealSister(projectDir: string, slug: string): Promise<boolean> {
+  if (!SISTER_SLUG_RE.test(slug)) return false;
+  const host = hostOf(slug);
+  const dir = join(projectDir, 'creatives', host);
+  if (!(await lstat(dir).catch(() => null))?.isDirectory()) return false;
+  return sisterIn(host, parseCreative(await readRegularFile(join(dir, 'creative.json'), CREATIVE_JSON_MAX).catch(() => ({ kind: 'missing' as const }))), slug) !== null;
+}
+
+/** `isRealSister` for the synchronous callers (the approval card's explanation). The same rule, the same safe read. */
+export function isRealSisterSync(projectDir: string, slug: string): boolean {
+  if (!SISTER_SLUG_RE.test(slug)) return false;
+  const host = hostOf(slug);
+  const dir = join(projectDir, 'creatives', host);
+  try {
+    if (!lstatSync(dir).isDirectory()) return false;
+    return sisterIn(host, parseCreative(readRegularFileSync(join(dir, 'creative.json'), CREATIVE_JSON_MAX)), slug) !== null;
+  } catch { return false; }
+}
+
+/**
+ * What the creative folder `slug` is (phase 15): `plain` (any creative outside a group, and every group host), `sister`
+ * (`isRealSister`), `orphan` (sister-shaped, not real, but its own creative.json says `variantOf` its host: a sister whose
+ * group was lost, spec §7, opened as a single creative), `none` (anything else, a hand-made `x~b` included).
+ */
+export async function creativeKind(projectDir: string, slug: string): Promise<'plain' | 'sister' | 'orphan' | 'none'> {
+  if (CREATIVE_SLUG_RE.test(slug)) return 'plain';
+  if (!SISTER_SLUG_RE.test(slug)) return 'none';
+  if (await isRealSister(projectDir, slug)) return 'sister';
+  const own = parseCreative(await readRegularFile(join(projectDir, 'creatives', slug, 'creative.json'), CREATIVE_JSON_MAX).catch(() => ({ kind: 'missing' as const })));
+  return own?.variantOf === hostOf(slug) ? 'orphan' : 'none';
+}
+
+/**
+ * Whether sweeps, approvals, usage and the rename journal treat `slug` as a creative: a plain one, a real sister, or an
+ * orphan sister (its own creative.json says `variantOf` its host; decisions log 833). A sister-shaped folder without that
+ * (a hand-made `x~b`) never is.
+ */
+export async function isAcceptedCreative(projectDir: string, slug: string): Promise<boolean> {
+  return (await creativeKind(projectDir, slug)) !== 'none';
+}
+
+/** `isAcceptedCreative` for the synchronous callers (the approval card's explanation). The same rule, the same safe read. */
+export function isAcceptedCreativeSync(projectDir: string, slug: string): boolean {
+  if (CREATIVE_SLUG_RE.test(slug)) return true;
+  if (!SISTER_SLUG_RE.test(slug)) return false;
+  if (isRealSisterSync(projectDir, slug)) return true;
+  try {
+    return parseCreative(readRegularFileSync(join(projectDir, 'creatives', slug, 'creative.json'), CREATIVE_JSON_MAX))?.variantOf === hostOf(slug);
+  } catch { return false; }
+}
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 /**
@@ -36,8 +132,9 @@ export class CreativeStore {
 
   constructor(private readonly projectDir: string) { this.root = join(projectDir, 'creatives'); }
 
+  /** The creative's folder. Shape only (a sister's `~b` too); routes check the kind first (`assertOpenable`). */
   dir(slug: string): string {
-    if (!CREATIVE_SLUG_RE.test(slug)) throw new WorkspaceError(400, t().errors.invalidCreativeId({ slug }));
+    if (!isCreativeFolderShape(slug)) throw new WorkspaceError(400, t().errors.invalidCreativeId({ slug }));
     return join(this.root, slug);
   }
   workDir(slug: string) { return join(this.dir(slug), 'work'); }
@@ -74,25 +171,110 @@ export class CreativeStore {
     return { slug, creative };
   }
 
+  /**
+   * Every creative of the project, one row per GROUP (phase 15, spec §2): a host row carries `variants` (members, active,
+   * missing), its real sisters are not listed on their own; an orphan sister is listed as a single creative (`orphan`); a
+   * sister-shaped folder that is neither (a hand-made `x~b`) is not a creative and is left out.
+   */
   async list(): Promise<CreativeListItem[]> {
+    return (await this.scan()).filter((r) => r.kind !== 'sister').map((r) => r.item);
+  }
+
+  /** Like `list`, with the real sisters as rows of their own (recovery at startup: each sister is a creative to recover). */
+  async listAll(): Promise<CreativeListItem[]> {
+    return (await this.scan()).map((r) => r.item);
+  }
+
+  private async scan(): Promise<Array<{ item: CreativeListItem; kind: 'plain' | 'sister' | 'orphan' }>> {
     const entries = await readdir(this.root, { withFileTypes: true }).catch(() => []);
-    const items: CreativeListItem[] = [];
+    const read = new Map<string, { item: CreativeListItem; creative: CreativeFile | null }>();
     for (const e of entries) {
-      if (!e.isDirectory() || !CREATIVE_SLUG_RE.test(e.name)) continue;
+      if (!e.isDirectory() || !isCreativeFolderShape(e.name)) continue;
       try {
         const c = await readJsonFile(this.file(e.name, 'creative.json'), creativeFileSchema);
         const versions = await this.readVersions(e.name);
         const last = versions.at(-1);
         const first = last?.outputs[0];
         const cover = last && first ? `outputs/v${last.n}/${first.preview ?? first.file}` : null;
-        items.push({ ok: true, slug: e.name, title: c.title, status: c.status, formats: c.brief.formats, ...(c.brief.formatLabels ? { formatLabels: c.brief.formatLabels } : {}), versions: versions.length, updatedAt: c.updatedAt, cover });
+        read.set(e.name, { creative: c, item: { ok: true, slug: e.name, title: c.title, status: c.status, formats: c.brief.formats, ...(c.brief.formatLabels ? { formatLabels: c.brief.formatLabels } : {}), versions: versions.length, updatedAt: c.updatedAt, cover } });
       } catch (err) {
         if (err instanceof JsonFileError && err.reason === 'missing') continue;
-        items.push({ ok: false, slug: e.name, error: (err as Error).message });
+        read.set(e.name, { creative: null, item: { ok: false, slug: e.name, error: (err as Error).message } });
       }
     }
+    const out: Array<{ item: CreativeListItem; kind: 'plain' | 'sister' | 'orphan' }> = [];
+    for (const [name, r] of read) {
+      if (CREATIVE_SLUG_RE.test(name)) {
+        const g = r.creative?.variantGroup;
+        if (r.item.ok && g && groupTiedTo(name, g)) {
+          // A member whose folder has no readable creative.json naming this host is "mancante" (spec §7, `memberPresent`).
+          const missing = g.members.filter((m) => m.letter !== 'a' && !memberPresent(name, read.get(m.slug)?.creative)).map((m) => m.letter);
+          const variants: VariantListInfo = { count: g.members.length, active: activeMembers(g).length, missing };
+          out.push({ kind: 'plain', item: { ...r.item, variants } });
+        } else out.push({ kind: 'plain', item: r.item });
+        continue;
+      }
+      // Sister-shaped: real only when its host (read above, a real folder) lists it (ruling R2, as `isRealSister`).
+      const host = hostOf(name);
+      if (sisterIn(host, read.get(host)?.creative ?? null, name)) { out.push({ kind: 'sister', item: r.item }); continue; }
+      if (r.creative?.variantOf === host && r.item.ok) out.push({ kind: 'orphan', item: { ...r.item, orphan: true } });
+    }
     const key = (i: CreativeListItem) => (i.ok ? i.updatedAt : '');
-    return items.sort((a, b) => key(b).localeCompare(key(a)));
+    return out.sort((a, b) => key(b.item).localeCompare(key(a.item)));
+  }
+
+  /**
+   * Phase 15: 404 unless `slug` is a creative the routes open: a plain one (validated as today), a real sister, or an orphan
+   * sister (spec §7: it opens as a single creative). A sister-shaped folder that is none of these is not a creative.
+   */
+  async assertOpenable(slug: string): Promise<void> {
+    this.dir(slug);
+    if (CREATIVE_SLUG_RE.test(slug)) return;
+    if ((await creativeKind(this.projectDir, slug)) === 'none') throw new WorkspaceError(404, t().errors.creativeNotFound({ slug }));
+  }
+
+  /**
+   * Phase 15: makes the sister folder `<host>~<letter>` with `creative` as its creative.json, like `create` does for a new
+   * creative (an empty work/, versions and conversation). The folder must not exist (409). Only the variant service calls it,
+   * under the host's lock, BEFORE the host's group lists the sister (until then it is no creative: `isRealSister`).
+   */
+  async createSister(hostSlug: string, letter: Exclude<VariantLetter, 'a'>, creative: CreativeFile): Promise<string> {
+    const slug = sisterSlug(hostSlug, letter);
+    this.dir(slug);
+    const parsed = creativeFileSchema.safeParse(creative);
+    if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidCreative({ detail: issuesText(parsed.error, currentLocale()) }));
+    await mkdir(this.root, { recursive: true });
+    await this.lock.run('create', async () => {
+      try {
+        await mkdir(join(this.root, slug));
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'EEXIST') throw new CodedError(409, t().errors.variantFolderExists({ slug }), 'variant-folder-exists');
+        throw e;
+      }
+      await noteCoreChange(this.root);
+    });
+    try {
+      await mkdir(this.workDir(slug), { recursive: true });
+      await writeFile(join(this.workDir(slug), '.gitkeep'), '');
+      await writeJsonFileAtomic(this.file(slug, 'creative.json'), parsed.data);
+      await writeJsonFileAtomic(this.file(slug, 'versions.json'), { schemaVersion: 1, versions: [] });
+      await writeFile(this.file(slug, 'conversation.jsonl'), '');
+      await noteCoreChange(this.dir(slug));
+    } catch (err) {
+      await this.removeSisterFolder(slug);
+      throw err;
+    }
+    return slug;
+  }
+
+  /** Removes a sister folder this process just made (a failed `addVariants`); a link is removed as an entry, never followed. */
+  async removeSisterFolder(slug: string): Promise<void> {
+    if (!SISTER_SLUG_RE.test(slug)) return;
+    const p = join(this.root, slug);
+    const st = await lstat(p).catch(() => null);
+    if (!st) return;
+    await rm(p, st.isDirectory() ? { recursive: true, force: true } : { force: true });
+    await noteCoreChange(this.root).catch(() => {});
   }
 
   async get(slug: string): Promise<CreativeFile> {
@@ -104,7 +286,7 @@ export class CreativeStore {
     }
   }
 
-  update(slug: string, patch: Partial<Pick<CreativeFile, 'title' | 'brief' | 'status' | 'error' | 'resumeFrom' | 'linkedCodebases' | 'exportPicks' | 'freedInstances' | 'queued' | 'stoppedSession'>>): Promise<CreativeFile> {
+  update(slug: string, patch: Partial<Pick<CreativeFile, 'title' | 'brief' | 'status' | 'error' | 'resumeFrom' | 'linkedCodebases' | 'exportPicks' | 'freedInstances' | 'queued' | 'stoppedSession' | 'variantGroup' | 'variantOf'>>): Promise<CreativeFile> {
     return this.lock.run(`c:${slug}`, async () => {
       const current = await this.get(slug);
       const nowIso = new Date().toISOString();
@@ -120,7 +302,8 @@ export class CreativeStore {
   async briefSlugsUsing(path: string): Promise<string[]> {
     const out: string[] = [];
     for (const e of await readdir(this.root, { withFileTypes: true }).catch(() => [])) {
-      if (!e.isDirectory() || !CREATIVE_SLUG_RE.test(e.name)) continue;
+      // Phase 15: a real sister's brief is a creative's brief too (ruling R2).
+      if (!e.isDirectory() || !(await isAcceptedCreative(this.projectDir, e.name))) continue;
       const c = await readJsonFile(this.file(e.name, 'creative.json'), creativeFileSchema).catch(() => null);
       if (c?.brief.assets.includes(path)) out.push(e.name);
     }
@@ -137,7 +320,7 @@ export class CreativeStore {
     const changes: BriefAssetChange[] = [];
     try {
       for (const e of await readdir(this.root, { withFileTypes: true }).catch(() => [])) {
-        if (!e.isDirectory() || !CREATIVE_SLUG_RE.test(e.name) || (only && !only.includes(e.name))) continue;
+        if (!e.isDirectory() || (only && !only.includes(e.name)) || !(await isAcceptedCreative(this.projectDir, e.name))) continue;
         await this.lock.run(`c:${e.name}`, async () => {
           const current = await readJsonFile(this.file(e.name, 'creative.json'), creativeFileSchema).catch(() => null);
           if (!current?.brief.assets.includes(from)) return;
@@ -254,7 +437,8 @@ export class CreativeStore {
   /** `remember`: where the cut turn's session goes (the core's side state, creative-side-state.ts); absent: not remembered. */
   async recoverInterrupted(isActive: (slug: string) => boolean = () => false, remember?: (slug: string, s: NonNullable<CreativeFile['stoppedSession']>) => Promise<unknown>): Promise<string[]> {
     const recovered: string[] = [];
-    for (const item of await this.list()) {
+    // Phase 15: every creative, the real and orphan sisters included (each one's turn may have been cut).
+    for (const item of await this.listAll()) {
       if (!item.ok || item.status !== 'working' || isActive(item.slug)) continue;
       try {
         // Phase 13 (spec §5): the session of the turn the restart cut is remembered like a stopped one, so the next turn

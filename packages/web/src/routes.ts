@@ -15,6 +15,8 @@ export type Route =
   | { name: 'edit'; slug: string; creative: string; format: string };
 
 const SLUG = '[a-z0-9][a-z0-9-]*';
+/** A creative segment: a slug, or a variant sister's `<slug>~b`…`~e` (Phase 15; `~` is reserved for sisters). */
+const CSLUG = `${SLUG}(?:~[b-e])?`;
 /** A format segment: a preset id or an instance id (`x@2`; `%40` is the same `@`). */
 const FORMAT_SEG = '[a-z0-9][a-z0-9-]{0,62}(?:(?:@|%40)(?:[2-9]|1[0-9]|20))?';
 /** The old project "Agent console" tab: its technical events now live in the conversation's Activity details. */
@@ -36,11 +38,11 @@ export function parseRoute(hash: string): Route {
   if (hash === '#/welcome') return { name: 'welcome' };
   m = hash.match(/^#\/welcome\/([123])$/);
   if (m) return { name: 'welcome', step: Number(m[1]) as WelcomeStep };
-  m = hash.match(new RegExp(`^#/p/(${SLUG})/c/(${SLUG})/f/(${FORMAT_SEG})/edit$`));
+  m = hash.match(new RegExp(`^#/p/(${SLUG})/c/(${CSLUG})/f/(${FORMAT_SEG})/edit$`));
   if (m) return { name: 'edit', slug: m[1]!, creative: m[2]!, format: formatOfSeg(m[3]!) };
-  m = hash.match(new RegExp(`^#/p/(${SLUG})/c/(${SLUG})/f/(${FORMAT_SEG})$`));
+  m = hash.match(new RegExp(`^#/p/(${SLUG})/c/(${CSLUG})/f/(${FORMAT_SEG})$`));
   if (m) return { name: 'format', slug: m[1]!, creative: m[2]!, format: formatOfSeg(m[3]!) };
-  m = hash.match(new RegExp(`^#/p/(${SLUG})/c/(${SLUG})$`));
+  m = hash.match(new RegExp(`^#/p/(${SLUG})/c/(${CSLUG})$`));
   if (m) return { name: 'creative', slug: m[1]!, creative: m[2]! };
   m = hash.match(new RegExp(`^#/p/(${SLUG})/new$`));
   if (m) return { name: 'new-creative', slug: m[1]! };

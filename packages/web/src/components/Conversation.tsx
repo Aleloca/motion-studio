@@ -1,6 +1,6 @@
-import type { AgentEvent, ApprovalRequest, Brief, ConversationEntry, ExplainContext, JobSummary, LiveMessageOutcome, Pin, QueuedRequest, RedirectOutcome } from '@motion-studio/shared';
+import type { AgentEvent, ApprovalRequest, Brief, ConversationEntry, ExplainContext, JobSummary, LiveMessageOutcome, Pin, QueuedRequest, RedirectOutcome, VariantGroup, VariantLetter } from '@motion-studio/shared';
 import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { api, ApiError } from '../api.ts';
+import { api, ApiError, type VariantRunResult } from '../api.ts';
 import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
 import { enter, isSubmitChord } from '../motion/index.ts';
 import { isMac } from '../platform.ts';
@@ -11,6 +11,7 @@ import { QueuedRequests } from './QueuedRequests.tsx';
 import { SplitAction } from './SplitAction.tsx';
 import { StopMenu } from './StopMenu.tsx';
 import { defaultTargets } from '../screens/versionModel.ts';
+import { VariantSelector, type ChatTarget } from '../screens/variants/VariantSelector.tsx';
 import { errorCode, versionErrorText } from '../screens/versionErrors.ts';
 import { message } from '../errors.ts';
 import { ApprovalCard } from './ApprovalCard.tsx';
@@ -35,6 +36,22 @@ export function mergeJobEvents(persisted: AgentEvent[], live: AgentEvent[]): Age
     if (same) return [...persisted, ...live.slice(k)];
   }
   return [...persisted, ...live];
+}
+
+/**
+ * Phase 15: the chat of a creative that belongs to a variant group. The selector (A · B · C · Tutte) sits on top of the panel;
+ * "Tutte" sends the composer's request to every active variant (`runAll`), a letter shows that variant's conversation.
+ */
+export interface ConversationVariants {
+  group: VariantGroup;
+  /** The variant whose conversation is shown. */
+  current: VariantLetter;
+  /** "Tutte" is on. */
+  all: boolean;
+  missing?: readonly VariantLetter[];
+  onSelect(target: ChatTarget): void;
+  /** The same request in every active variant; `null` is the first generation. */
+  runAll(body: { text?: string; pins?: Pin[]; formats?: string[] } | null): Promise<VariantRunResult>;
 }
 
 export interface ConversationProps {
@@ -80,6 +97,8 @@ export interface ConversationProps {
   queued?: QueuedRequest[];
   /** After a message, a queue change or a Run next: the caller reloads the creative and its conversation. */
   onQueueChanged?(): void;
+  /** Phase 15: absent for a creative outside any variant group (the panel is then exactly as before). */
+  variants?: ConversationVariants;
 }
 
 /** A message sent while the agent works, until the conversation file shows it (Phase 13). */
@@ -182,7 +201,7 @@ function turnItems(interruptedText: string, jobId: string, events: { at: string;
  * only in "Activity details", the job's approvals in the flow, typing dots while the agent works (T9), and the
  * composer with the pending comment chips and ⌘↵.
  */
-export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, onSelectVersion, versionExtra, versionNote, versionSummary, snapshots, appliesTo, brief, onBriefSaved, queued, onQueueChanged }: ConversationProps) {
+export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, onSelectVersion, versionExtra, versionNote, versionSummary, snapshots, appliesTo, brief, onBriefSaved, queued, onQueueChanged, variants }: ConversationProps) {
   const t = useT();
   const c = t.web.chat;
   const working = active(job);
@@ -340,6 +359,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
   const empty = items.length === 0;
   return (
     <div className="ms-convo">
+      {variants ? <VariantSelector group={variants.group} current={variants.current} all={variants.all} missing={variants.missing ?? []} onSelect={variants.onSelect} /> : null}
       <ol ref={listRef} className="ms-convo-list" role="log" aria-label={c.label} onScroll={onScroll}>
         {empty && <li className="ms-convo-empty"><Empty icon="comment" title={c.emptyTitle} sub={c.emptySub} /></li>}
         {items.map((item) => (
@@ -348,9 +368,10 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
           </Row>
         ))}
       </ol>
+      {job?.waitReason ? <p className="ms-convo-wait" role="status"><Icon name="clock" size={12} />{t.web.variantGroup.waitReasons[job.waitReason]}</p> : null}
       {/* Always mounted (it renders nothing for an empty queue): an edit the queue overtook is kept even when the queue empties. */}
       <QueuedRequests slug={slug} creative={creative} queued={queued ?? []} working={working} onChanged={() => onQueueChanged?.()} />
-      <Composer outbox={outboxApi} onQueueChanged={onQueueChanged} slug={slug} creative={creative} job={working ? job : undefined} latestJobId={job?.id} snapshots={snapshots} pins={pins} onRemovePin={onRemovePin} onEditPin={onEditPin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} beforeSend={beforeSend} appliesTo={appliesTo} brief={brief} onBriefSaved={onBriefSaved} />
+      <Composer outbox={outboxApi} onQueueChanged={onQueueChanged} slug={slug} creative={creative} job={working && !variants?.all ? job : undefined} fanout={variants?.all ? variants.runAll : undefined} latestJobId={job?.id} snapshots={snapshots} pins={pins} onRemovePin={onRemovePin} onEditPin={onEditPin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} beforeSend={beforeSend} appliesTo={appliesTo} brief={brief} onBriefSaved={onBriefSaved} />
     </div>
   );
 }
@@ -598,9 +619,9 @@ const SEND_CODES = new Set(['formats-not-in-brief', 'job-running']);
 /** Longest wait for the job a send started before the composer unlocks anyway. */
 export const AWAIT_JOB_MS = 10_000;
 
-function Composer({ outbox, onQueueChanged, slug, creative, job, latestJobId, snapshots, pins, onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, appliesTo, brief, onBriefSaved }: {
+function Composer({ outbox, onQueueChanged, slug, creative, job, fanout, latestJobId, snapshots, pins, onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, appliesTo, brief, onBriefSaved }: {
   outbox: OutboxApi; onQueueChanged?(): void;
-  slug: string; creative: string; job: JobSummary | undefined; latestJobId: string | undefined; snapshots: number | undefined; pins: Pin[]; onRemovePin?(i: number): void; onEditPin?(i: number): void; formatName?(id: string): string; canGenerate?: boolean; onSent?(sent: { pins: Pin[] }): void; beforeSend?(): boolean | Promise<boolean>;
+  slug: string; creative: string; job: JobSummary | undefined; /** Phase 15 "Tutte": sends to every active variant instead of this creative. */ fanout?: ConversationVariants['runAll']; latestJobId: string | undefined; snapshots: number | undefined; pins: Pin[]; onRemovePin?(i: number): void; onEditPin?(i: number): void; formatName?(id: string): string; canGenerate?: boolean; onSent?(sent: { pins: Pin[] }): void; beforeSend?(): boolean | Promise<boolean>;
   appliesTo?: AppliesTo; brief?: Brief; onBriefSaved?(): void;
 }) {
   const t = useT();
@@ -657,16 +678,20 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, latestJobId, sn
   // One client id per message: a double click, or a retry of the same words after a failure, is one message.
   const draftId = useRef<{ id: string; kind: string } | null>(null);
 
-  const hasContent = text.trim().length > 0 || pins.length > 0;
+  // "Applies to": the user's choice (null: All formats) or, until they choose, the comments' formats (else the fallback).
+  const [choice, setChoice] = useState<string[] | null | undefined>(undefined);
+  // Residual fix (decisions log 865): in "Tutte" the comments are never sent, so they never make a request on their own: only
+  // the text or formats chosen by hand can (else the request would be empty, the first-generation path).
+  const handFormats = Array.isArray(choice) && choice.length > 0;
+  const hasContent = text.trim().length > 0 || (fanout ? handFormats : pins.length > 0);
   const idleBusy = sending || awaiting !== null;
   const busy = working || idleBusy;
   const canSend = working ? hasContent && !sending && (capsNow !== null || redirect) : !idleBusy && hasContent;
-
-  // "Applies to": the user's choice (null: All formats) or, until they choose, the comments' formats (else the fallback).
-  const [choice, setChoice] = useState<string[] | null | undefined>(undefined);
   const primaryIds = appliesTo?.primaries.map((p) => p.id) ?? [];
   const primaryOf = (id: string) => appliesTo?.followerOf(id) ?? id;
-  const fromPins = appliesTo ? (pins.length ? defaultTargets(pins.map((p) => p.format), primaryOf, primaryIds) : appliesTo.fallback?.filter((id) => primaryIds.includes(id)) ?? null) : null;
+  // Phase 15 (final wave M2): the comments are the open variant's own; "Tutte" never sends them, nor the formats they chose.
+  const sentPins = fanout ? [] : pins;
+  const fromPins = appliesTo ? (sentPins.length ? defaultTargets(sentPins.map((p) => p.format), primaryOf, primaryIds) : appliesTo.fallback?.filter((id) => primaryIds.includes(id)) ?? null) : null;
   // A chosen format that is no longer a primary of the brief (removed, or now linked) is dropped; nothing left: the default.
   const kept = Array.isArray(choice) ? choice.filter((id) => primaryIds.includes(id)) : choice;
   const targets = appliesTo ? (kept === undefined || (Array.isArray(kept) && kept.length === 0) ? (fromPins?.length ? fromPins : null) : kept) : null;
@@ -684,12 +709,27 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, latestJobId, sn
     setChoice(next.length === 0 || next.length === primaryIds.length ? null : next);
   };
 
-  const send = async (body: { text?: string; pins?: Pin[]; formats?: string[] }) => {
+  /** `first`: the first generation of a never-started group ("Genera"), the only send that may be an empty request. */
+  const send = async (body: { text?: string; pins?: Pin[]; formats?: string[] }, first = false) => {
     if (busy || inFlight.current) return;
     inFlight.current = true;
     setError(null); setNotice(null); setSending(true);
     try {
       if (beforeSend && !(await beforeSend())) { inFlight.current = false; return; }
+      if (fanout) {
+        // "Tutte": one request for every active variant; the answer says which started, waited or were refused.
+        const empty = !body.text && !body.pins?.length && !body.formats?.length;
+        // Never a `null` request from the chat (residual fix, decisions log 865): only "Genera" of a never-started group is one.
+        if (empty && !first) { inFlight.current = false; return; }
+        const r = await fanout(empty ? null : body);
+        inFlight.current = false;
+        const refused = [...r.skipped.map((l) => l.toUpperCase()), ...Object.entries(r.failed).map(([l, why]) => `${l.toUpperCase()} (${why})`)];
+        setText('');
+        setChoice(undefined);
+        setNotice(`${t.web.variantGroup.sentToAll({ count: Object.keys(r.jobs).length + r.queued.length })}${refused.length ? ` · ${t.web.variantGroup.sentToAllRefused({ list: refused.join(', ') })}` : ''}`);
+        onSent?.({ pins: body.pins ?? [] });
+        return;
+      }
       const started = await api.sendCreativeTurn(slug, creative, body);
       if (started && typeof started.id === 'string' && started.id !== latestJobId) setAwaiting(started.id);
       else inFlight.current = false;
@@ -699,6 +739,7 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, latestJobId, sn
     } catch (e) {
       // The text stays in the box: explain and say what to do; a 409 means a turn is already running.
       // A coded refusal (e.g. `formats-not-in-brief`) has its own clear message; a 409 means a turn is already running.
+      if (fanout) { setError(t.web.variantGroup.sendAllFailed({ detail: message(e) })); inFlight.current = false; return; }
       setError(SEND_CODES.has(errorCode(e) ?? '') ? versionErrorText(e, t, { label: '' }) : e instanceof ApiError && e.status === 409 ? c.sendBusy : c.sendFailed({ detail: message(e) }));
       inFlight.current = false;
     } finally { setSending(false); }
@@ -741,7 +782,7 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, latestJobId, sn
   const submit = () => {
     if (!canSend) return;
     if (working) void sendWhileWorking(mainKind);
-    else void send({ text: text.trim(), pins, ...(targets ? { formats: targets } : {}) });
+    else void send({ text: text.trim(), pins: sentPins, ...(targets ? { formats: targets } : {}) });
   };
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     // The app-wide submit chord: ⌘↵ on macOS, Ctrl+↵ elsewhere (a held key does not send twice).
@@ -763,6 +804,7 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, latestJobId, sn
       <div className="ms-composer-box">
         {pins.length > 0 && (
           <div className="ms-composer-pins">
+            {fanout && !text.trim() ? <span className="ms-composer-pins-note">{t.web.variantGroup.pinsNotSentToAll}</span> : null}
             {pins.map((p, k) => (
               <span key={k} className="ms-chip ms-on ms-composer-pin">
                 {onEditPin ? (
@@ -806,7 +848,7 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, latestJobId, sn
           <span className="ms-composer-hint">{hint}</span>
           {job && <StopMenu job={job} onError={setError} onRedirect={() => { setRedirect(true); setError(null); field.current?.focus(); }} />}
           {canGenerate && !job && (
-            <Button size="sm" variant="accent" aria-label={t.web.newCreative.generate} disabled={busy} onClick={() => void send({})}>
+            <Button size="sm" variant="accent" aria-label={t.web.newCreative.generate} disabled={busy} onClick={() => void send({}, true)}>
               <Icon name="sparkle" size={13} />{t.web.newCreative.generate}
             </Button>
           )}

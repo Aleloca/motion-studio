@@ -15,7 +15,7 @@ import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { instanceName } from '../instances.ts';
 import { anim, D, E, isSubmitChord } from '../motion/index.ts';
 import { Button, ChannelMark, Icon, Pill, Popover, Textarea, channelOf, cx } from '../ui/index.ts';
-import { boardFrame, LABEL_MIN, outputMedia, pointIn, ratioText, toScreen, type BoardModel } from './canvasModel.ts';
+import { boardFrame, LABEL_MIN, LABEL_MIN_GROUPED, outputMedia, pointIn, ratioText, toScreen, type BoardModel } from './canvasModel.ts';
 import type { BoardRender } from './renderModel.ts';
 
 export type Tool = 'select' | 'comment' | 'hand';
@@ -57,6 +57,12 @@ export interface BoardProps {
   onDraftCommit(): void;
   onDraftCancel(): void;
   onDraftDelete(): void;
+  /** Phase 15: the variant's letter before the name (the per-format grouping puts several variants of a format side by side). */
+  tag?: string;
+  /** Phase 15: the board belongs to a variant group (its label line has room for the group ★). */
+  grouped?: boolean;
+  /** Phase 15: this board's `data-board` when its format id alone is not unique on the canvas (several variants). */
+  boardKey?: string;
   /**
    * A v2 version on the board (Task 8): the composition shown (`format` is the source format, a follower's primary's, and
    * `hash` its composition hash), its render state and the Render action of "Render failed · Retry". Null: legacy media.
@@ -124,11 +130,12 @@ export function CanvasBoard(p: BoardProps) {
   };
 
   return (
-    <div className={cx('ms-cv-board', p.selected && 'ms-on', drafting && 'ms-drafting')} data-board={board.id}>
-      <div className="ms-cv-board-head" style={{ maxWidth: Math.max(Math.round(size.width * zoom), LABEL_MIN) }}>
+    <div className={cx('ms-cv-board', p.selected && 'ms-on', drafting && 'ms-drafting')} data-board={p.boardKey ?? board.id}>
+      <div className="ms-cv-board-head" style={{ maxWidth: Math.max(Math.round(size.width * zoom), p.boardKey !== undefined || p.tag !== undefined || p.grouped ? LABEL_MIN_GROUPED : LABEL_MIN) }}>
         <div className="ms-cv-board-line">
           {/* The format's name only, whole first; the channel is its mark (the full label is the tooltip and the accessible name). */}
           {board.preset ? <ChannelMark channel={channelOf(board.preset.channel)} /> : null}
+          {p.tag ? <span className="ms-cv-board-tag" aria-hidden="true">{p.tag}</span> : null}
           <b className="ms-cv-board-name" title={label}>{board.preset ? boardName(board, locale) : label}</b>
           {/* The version badge, or a follower's link chip. */}
           <span className="ms-cv-board-slot">{p.badge}</span>

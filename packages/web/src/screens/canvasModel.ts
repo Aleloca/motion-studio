@@ -74,6 +74,8 @@ const BOARD_HEAD = 50;
 // 176: the channel mark, a common format name ("Story/Reel 9:16", ~100 px) and its "★ vN" badge fit on the first line
 // (phase 9 live checks: 160 cut the name); a longer name is the last thing to give way (a follower's chip shrinks first).
 export const LABEL_MIN = 176;
+/** Phase 15: a board of a variant group also carries the ★ across variants (and, per format, the variant's letter): 40 px more. */
+export const LABEL_MIN_GROUPED = 216;
 
 /** The canvas world on screen at zoom `z`: tall boards in a row, the others stacked in a column next to them. */
 export function worldAt(boards: BoardModel[], z: number): { width: number; height: number } {

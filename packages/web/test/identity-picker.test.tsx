@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { DEFAULT_FORMATS, EMPTY_BRAND_KIT, type BrandKit } from '@motion-studio/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Identity formats in the New creative screen (Phase 14, Task 5): "Partenza", its defaults and the logo concepts as instances.
+// Identity formats in the New creative screen (Phase 14, Task 5): "Partenza", its defaults and the variants of the whole creative, not logo instances.
 vi.setConfig({ testTimeout: 45_000, hookTimeout: 45_000 });
 
 const createCreative = vi.fn(async (_slug: string, _body: unknown) => ({ slug: '2026-10-15-logo', creative: {}, job: null }));
@@ -81,7 +81,7 @@ describe('BriefEditor · identity formats', () => {
     const s = start();
     expect(within(s).getByRole('radio', { name: 'Da zero' }).getAttribute('aria-checked')).toBe('true');
     expect((within(s).getByLabelText('Nome o sigla') as HTMLInputElement).value).toBe('Acme');
-    expect(within(s).queryByText('Proposte di logo')).toBeNull();
+    expect(within(s).queryByText('Varianti')).toBeNull();
     await userEvent.click(within(s).getByRole('radio', { name: 'Liberi' }));
     await userEvent.click(screen.getByRole('button', { name: 'Salva' }));
     await waitFor(() => expect(updateCreative).toHaveBeenCalledOnce());
@@ -142,14 +142,16 @@ describe('NewCreative · identity formats', () => {
     await waitFor(() => expect(within(start()).getByRole('radio', { name: 'Dal logo del brand' }).getAttribute('aria-checked')).toBe('true'));
   });
 
-  it('the favicon has no concepts', async () => {
+  it('the variants count is for the whole creative: a favicon from scratch has it too, and a start from the brand does not', async () => {
     await open();
     await pick(/Favicon/, 'Favicon');
     await userEvent.click(within(start()).getByRole('radio', { name: 'Da zero' }));
-    expect(within(start()).queryByText('Proposte di logo')).toBeNull();
+    expect(within(start()).getByText('Varianti')).not.toBeNull();
+    await userEvent.click(within(start()).getByRole('radio', { name: 'Dal logo del brand' }));
+    expect(within(start()).queryByText('Varianti')).toBeNull();
   });
 
-  it('a logo from scratch with 3 concepts creates the instances identity-logo, @2 and @3 and sends the brief\'s identity', async () => {
+  it('a logo from scratch with 3 variants sends one identity-logo (no @k instances) and the brief\'s identity with concepts 3', async () => {
     await open();
     await goal();
     await pick(/^Logo/);
@@ -158,18 +160,20 @@ describe('NewCreative · identity formats', () => {
     fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
     await waitFor(() => expect(createCreative).toHaveBeenCalledOnce());
     const brief = (createCreative.mock.calls[0]![1] as { brief: { formats: string[]; identity: unknown } }).brief;
-    expect(brief.formats).toEqual(['identity-logo', 'identity-logo@2', 'identity-logo@3']);
+    expect(brief.formats).toEqual(['identity-logo']);
     expect(brief.identity).toEqual({ start: 'scratch', name: 'Acme', keywords: 'geometrico', colors: 'brand', concepts: 3 });
   });
 
-  it('the number of concepts is 1 to 5', async () => {
+  it('the number of variants is 1 to 5', async () => {
     await open();
     await goal();
     await pick(/^Logo/);
     await userEvent.click(within(start()).getByRole('radio', { name: '5' }));
     fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
     await waitFor(() => expect(createCreative).toHaveBeenCalledOnce());
-    expect((createCreative.mock.calls[0]![1] as { brief: { formats: string[] } }).brief.formats).toEqual(['identity-logo', 'identity-logo@2', 'identity-logo@3', 'identity-logo@4', 'identity-logo@5']);
+    const brief = (createCreative.mock.calls[0]![1] as { brief: { formats: string[]; identity: { concepts: number } } }).brief;
+    expect(brief.formats).toEqual(['identity-logo']);
+    expect(brief.identity.concepts).toBe(5);
   });
 
   it('from the brand logo: one logo instance, no name or keywords sent', async () => {

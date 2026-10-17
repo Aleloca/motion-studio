@@ -14,9 +14,12 @@ import { channelOf } from './creativeState.ts';
 import './newcreative.css';
 import { message as errText } from './common.tsx';
 import { isVideoFile } from '../media.ts';
-import { conceptIds, IdentityStart, identityForBrief, primaryLogoOf, resolveIdentity } from './identity/IdentityStart.tsx';
+import { IdentityStart, identityForBrief, primaryLogoOf, resolveIdentity } from './identity/IdentityStart.tsx';
 import { StorePackWizard } from './new-creative/StorePackWizard.tsx';
 import { packParts } from './new-creative/storePackModel.ts';
+import { VariantsField } from './variants/VariantsField.tsx';
+import { defaultVariantCount, directionsFor } from './variants/variantModel.ts';
+import { VARIANT_LETTERS } from '@motion-studio/shared';
 import './new-creative/storepack.css';
 
 
@@ -176,6 +179,9 @@ export function NewCreative({ slug }: { slug: string }) {
   const [pack, setPack] = useState<StorePack | null>(null);
   // "Partenza" of the identity formats (Phase 14): untouched (undefined) follows the brand: from its logo when it has one.
   const [identity, setIdentity] = useState<IdentityBrief | undefined>(undefined);
+  // Variants (Phase 15): untouched (undefined) follows the formats (3 for a logo from scratch, else 1); the directions are optional.
+  const [variantsChoice, setVariantsChoice] = useState<number | undefined>(undefined);
+  const [directions, setDirections] = useState<string[]>([]);
   // Token totals of the workspace's earlier first generations: the estimate line, absent until there are 3.
   const [history, setHistory] = useState<number[]>([]);
 
@@ -286,21 +292,42 @@ export function NewCreative({ slug }: { slug: string }) {
     setBusy(generate ? 'generate' : 'draft');
     setError(null);
     try {
+      // Phase 15: with Varianti >= 2 the creative is made first (nothing starts), then its group; a logo from scratch is grouped by
+      // the core itself (decision 845). Typed directions go in before anything starts. A start is one fan-out, never a single turn.
+      const dirs = directionsFor(variantCount, directions);
+      const typed = dirs.some((d) => d !== null);
+      const grouped = variantCount > 1;
       const created = await api.createCreative(slug, {
         title,
         brief: {
           goal: goal.trim(), message: message.trim(),
-          // A logo from scratch is one instance per concept (`identity-logo`, `identity-logo@2`…).
+          // Identity concepts are variants of the group the core creates (`identity.concepts`), never `identity-logo@k` instances.
           formats: [...handIds, ...parts.formats],
           durationSec: videos.length > 0 ? durationSec : parts.durationSec, assets: [...picked, ...parts.assets.filter((a) => !picked.includes(a))], notes: notes.trim(), links: plan.links,
           ...(Object.keys(parts.formatLabels).length > 0 ? { formatLabels: parts.formatLabels } : {}),
           ...(pack ? { storePack: parts.pack! } : {}),
           ...(services ? { services } : {}),
-          ...(identityOn ? { identity: identityForBrief(identity, hasBrandLogo) } : {}),
+          ...(identityOn ? { identity: { ...identityForBrief(identity, hasBrandLogo), concepts: variantCount } } : {}),
         },
-        generate,
+        generate: generate && (!grouped || (coreGroup && !typed)),
         linkedCodebases: codebases,
       });
+      let problem: string | null = created.groupError ? vg.groupFailed({ detail: created.groupError }) : created.startError ? vg.startFailed({ detail: created.startError }) : null;
+      // Residual fix (decisions log 867): no group was made, so nothing is set or started here and the toast says why.
+      if (grouped && !(coreGroup && !typed) && !created.groupError) {
+        try {
+          if (coreGroup) {
+            // The core made the group; the typed directions are set before the first generation.
+            for (const [i, d] of dirs.entries()) if (d !== null) await api.setVariantDirection(slug, created.slug, VARIANT_LETTERS[i]!, d);
+          } else {
+            await api.addVariants(slug, created.slug, { count: variantCount, directions: dirs });
+          }
+          if (generate) await api.runVariants(slug, created.slug, { targets: 'all-active', request: null }).catch((e: unknown) => { problem = vg.startFailed({ detail: errText(e) }); });
+        } catch (e) {
+          problem = vg.groupFailed({ detail: errText(e) });
+        }
+      }
+      if (problem) toast.show(problem, { tone: 'neutral' });
       if (generate) go(href.creative(slug, created.slug));
       else {
         toast.show(n.draftSaved({ title }), { tone: 'ok', action: { label: n.open, run: () => go(href.creative(slug, created.slug)) } });
@@ -322,9 +349,13 @@ export function NewCreative({ slug }: { slug: string }) {
   const identityNow = resolveIdentity(identity, hasBrandLogo);
   // The pack never takes a picked tile over (Phase 14): its instances take the next free ids beside the chosen ones.
   const handPicked = chosen;
-  const handIds = handPicked.flatMap((p) => (p.identity === 'logo' ? conceptIds(p.id, identityNow) : [p.id]));
+  const handIds = handPicked.map((p) => p.id);
   const parts = packParts(pack, presets, handIds);
   const packExtra = parts.formats.length;
+  // Variants: a logo from scratch asks the count inside "Partenza" and the core makes that group; any other creative has the field here.
+  const coreGroup = identityOn && identityNow.start === 'scratch';
+  const variantCount = variantsChoice ?? defaultVariantCount([...handIds, ...parts.formats], coreGroup);
+  const vg = t.web.variantGroup;
   const allVideos = handPicked.filter((p) => p.kind === 'video').length + parts.videos;
   const allImages = handPicked.filter((p) => p.kind === 'image').length + parts.images;
   const hasBrand = !!kit && (kit.colors.length > 0 || kit.fonts.length > 0 || kit.logos.length > 0 || kit.tone !== null);
@@ -447,10 +478,16 @@ export function NewCreative({ slug }: { slug: string }) {
 
           {identityOn ? (
             <section className="ms-nc-sec" data-enter>
-              <IdentityStart value={identityNow} onChange={setIdentity} hasBrandLogo={hasBrandLogo} fromCodebase={primaryLogoOf(kit?.logos ?? [])?.source.kind === 'codebase'}
-                withConcepts={chosen.some((p) => p.identity === 'logo')} />
+              <IdentityStart value={{ ...identityNow, concepts: variantCount }} onChange={(v) => { setIdentity(v); if (v.concepts !== undefined && v.concepts !== variantCount) setVariantsChoice(v.concepts); }} hasBrandLogo={hasBrandLogo} fromCodebase={primaryLogoOf(kit?.logos ?? [])?.source.kind === 'codebase'}
+                withConcepts />
             </section>
           ) : null}
+
+          {coreGroup ? (variantCount >= 2 ? (
+            <section className="ms-nc-sec" data-enter><VariantsField count={variantCount} directions={directions} onDirections={setDirections} /></section>
+          ) : null) : (
+            <section className="ms-nc-sec" data-enter><VariantsField count={variantCount} onCount={setVariantsChoice} directions={directions} onDirections={setDirections} /></section>
+          )}
 
           <section className="ms-nc-sec ms-nc-options" data-enter>
             <button type="button" className="ms-nc-disclose" aria-expanded={options} aria-controls="ms-nc-options" onClick={() => setOptions((o) => !o)}>

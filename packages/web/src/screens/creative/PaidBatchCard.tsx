@@ -74,6 +74,13 @@ export function PaidBatchCard({ approval, context, leaving = false, onGone }: Pa
   const disabled = busy || decided || leaving;
   const chars = batch.calls.reduce((n, c) => n + c.chars, 0);
   const provider = PROVIDER_NAME[batch.provider];
+  // Phase 15 (decision 843): a variant run's card lists the calls per variant, may name several providers, and never shows a
+  // price: the calls are an estimate and no price is known. A phase 12 batch (no `items`) is exactly as before.
+  const items = batch.items;
+  const providers = batch.total?.providers ?? [];
+  const intro = providers.length > 1
+    ? b.introMixed({ count: batch.total?.calls ?? batch.calls.length, list: providers.map((p) => `${PROVIDER_NAME[p.provider]} ${p.calls}`).join(', ') })
+    : b.intro({ provider: providers.length === 1 ? PROVIDER_NAME[providers[0]!.provider] : provider, count: batch.total?.calls ?? batch.calls.length });
   return (
     <div ref={ref} role="group" aria-label={approval.title} className="ms-approval ms-batch" data-approval={approval.id}>
       <div className="ms-approval-head">
@@ -82,17 +89,28 @@ export function PaidBatchCard({ approval, context, leaving = false, onGone }: Pa
         {Number.isFinite(created) && Number.isFinite(ttl) && ttl > 0 && <CountdownRing createdAt={created} ttlSec={ttl} />}
       </div>
       {context && <span className="ms-approval-context">{context}</span>}
-      <span className="ms-approval-text">{b.intro({ provider, count: batch.calls.length })}</span>
+      <span className="ms-approval-text">{items ? intro : b.intro({ provider, count: batch.calls.length })}</span>
       <div className="ms-approval-chips">
-        <Tag>{b.provider({ provider })}</Tag>
-        <Tag>{b.total({ chars: formatNumber(locale, chars) })}</Tag>
-        <Tag>{batch.estimate ? b.estimate({ estimate: batch.estimate }) : b.noEstimate}</Tag>
+        <Tag>{b.provider({ provider: items && providers.length > 0 ? providers.map((p) => PROVIDER_NAME[p.provider]).join(', ') : provider })}</Tag>
+        {!items || chars > 0 ? <Tag>{b.total({ chars: formatNumber(locale, chars) })}</Tag> : null}
+        <Tag>{items ? b.estimatedCalls : batch.estimate ? b.estimate({ estimate: batch.estimate }) : b.noEstimate}</Tag>
       </div>
-      <ul className="ms-batch-calls" aria-label={b.calls}>
-        {batch.calls.map((c, i) => (
-          <li key={`${i}-${c.label}`}><span className="ms-batch-label">{c.label}</span><span className="ms-batch-chars">{b.chars({ chars: formatNumber(locale, c.chars) })}</span></li>
-        ))}
-      </ul>
+      {items ? (
+        <ul className="ms-batch-calls ms-batch-variants" aria-label={b.variantItems}>
+          {items.map((it, i) => (
+            <li key={`${i}-${it.variant}-${it.capability}`}>
+              <span className="ms-batch-label">{batch.calls[i]?.label ?? `${it.variant.toUpperCase()} · ${it.capability}`}</span>
+              <span className="ms-batch-chars">{it.chars ? b.chars({ chars: formatNumber(locale, it.chars) }) : it.seconds ? b.itemSeconds({ seconds: formatNumber(locale, it.seconds) }) : ''}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <ul className="ms-batch-calls" aria-label={b.calls}>
+          {batch.calls.map((c, i) => (
+            <li key={`${i}-${c.label}`}><span className="ms-batch-label">{c.label}</span><span className="ms-batch-chars">{b.chars({ chars: formatNumber(locale, c.chars) })}</span></li>
+          ))}
+        </ul>
+      )}
       <div className="ms-approval-actions">
         <Button size="sm" variant="ink" className="ms-grow" disabled={disabled} onClick={() => void decide('once')}>{b.approve}</Button>
         {approval.alwaysRule && <Button size="sm" variant="outline" disabled={disabled} title={approval.alwaysRule} onClick={() => void decide('always')}>{a.alwaysHere}</Button>}

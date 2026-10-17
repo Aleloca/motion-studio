@@ -18,6 +18,7 @@ import { compositionDirOf } from './composition-contract.ts';
 import { alignEditorCopies, carriableComposition, compositionDuration, copyComposition, type CarriedComposition } from './composition-turn.ts';
 import { writeThroughTemp } from './core-files.ts';
 import { CreativeStore } from './creative-store.ts';
+import { VariantGroupService } from './variant-group.ts';
 import { withFreedInstances, withoutFormatState, type CreativeRef, type CreativeTurnService } from './creative-turns.ts';
 import type { PreviewService, StagingView } from './previews.ts';
 
@@ -151,7 +152,10 @@ export class DirectEditService {
   async save(ref: CreativeRef, body: DirectEditBody, locale: Locale): Promise<{ version: number }> {
     const parsed = directEditBodySchema.safeParse(body);
     if (!parsed.success) throw new CodedError(400, messages(locale).errors.invalidRequestDetail({ detail: parsed.error.issues[0]?.message ?? '' }), 'editor-invalid-body');
-    return this.deps.turns.runLocked(ref, () => this.saveLocked(ref, parsed.data, locale));
+    return this.deps.turns.runLocked(ref, async () => {
+      await this.deps.turns.assertNotDiscarded(ref); // phase 15: a discarded variant is read-only until restored
+      return this.saveLocked(ref, parsed.data, locale);
+    });
   }
 
   private renderActive(ref: CreativeRef): boolean {
@@ -172,13 +176,26 @@ export class DirectEditService {
   async duplicate(ref: CreativeRef, n: number, body: unknown, locale: Locale): Promise<{ version: VersionEntry; instanceId: string }> {
     const parsed = duplicateFormatBodySchema.safeParse(body ?? {});
     if (!parsed.success) throw new CodedError(400, messages(locale).errors.invalidRequestDetail({ detail: parsed.error.issues[0]?.message ?? '' }), 'duplicate-invalid-body');
+    // Phase 15 (decisions log 831): in a variant group the new instance is the group's (host lock first, then this variant's).
+    const variants = new VariantGroupService({ store: new CreativeStore(ref.projectDir), turns: this.deps.turns });
+    if ((await variants.resolve(ref)).group) {
+      // A discarded variant is read-only until restored (checked under the host's lock, before anything is allocated).
+      await this.deps.turns.assertNotDiscarded(ref);
+      return variants.duplicateInGroup(ref, parsed.data.instanceId, parsed.data.label, async (id) => {
+        await this.deps.turns.assertNotDiscarded(ref);
+        return this.duplicateLocked(ref, n, parsed.data, locale, id);
+      });
+    }
     return this.deps.turns.runLocked(ref, () => this.duplicateLocked(ref, n, parsed.data, locale));
   }
 
-  private async duplicateLocked(ref: CreativeRef, n: number, body: DuplicateFormatBody, locale: Locale): Promise<{ version: VersionEntry; instanceId: string }> {
+  /** `groupId`: the instance id the variant group allocated for this duplicate (phase 15); absent outside a group. */
+  private async duplicateLocked(ref: CreativeRef, n: number, body: DuplicateFormatBody, locale: Locale, groupId?: string): Promise<{ version: VersionEntry; instanceId: string }> {
     const m = messages(locale);
     const v = m.variants;
     if (this.deps.turns.turnActive(ref) || this.renderActive(ref)) throw new CodedError(409, v.duplicateBusy, 'duplicate-busy');
+    // Phase 15: a brief the variant group changed while this variant worked applies first.
+    await this.deps.turns.applyPendingBrief(ref);
     const slug = ref.creativeSlug;
     const store = new CreativeStore(ref.projectDir);
     const creativeDir = store.dir(slug);
@@ -195,7 +212,7 @@ export class DirectEditService {
     const srcEntry = version.compositions?.find((c) => c.format === source);
     if (!srcEntry) throw new CodedError(409, v.formatNotInVersion({ format: label(source), n }), 'format-not-in-version');
     if (!findPreset(presets, source)) throw new CodedError(409, m.errors.compositionUnusable({ format: source, n }), 'composition-unusable');
-    const instanceId = nextInstanceId(presetOf(source), formats);
+    const instanceId = groupId !== undefined && !formats.includes(groupId) ? groupId : groupId === undefined ? nextInstanceId(presetOf(source), formats) : null;
     if (instanceId === null) throw new CodedError(409, v.instancesFull({ format: label(presetOf(source)), max: MAX_INSTANCES }), 'format-instances-full');
     const carryFailed = (f: string, at: number) => new CodedError(409, m.editor.carryFailed({ format: label(f), n: at }), 'duplicate-carry-failed');
     // The source folder as it is now: still the recorded composition (a follower's entry names its primary's folder).
@@ -246,7 +263,7 @@ export class DirectEditService {
       before = { brief: stored.brief, exportPicks: stored.exportPicks, freedInstances: stored.freedInstances };
       await store.update(slug, fresh(stored));
       await alignEditorCopies(creativeDir, { n: newN, origin: 'editor', compositions: saved.compositions } as VersionEntry).catch(() => []);
-      const commit = await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${newN}`);
+      const commit = await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${newN}`, { headWhenClean: true });
       await store.appendVersion(slug, {
         n: newN, commit, sessionId: creative.resumeFrom?.sessionId ?? latest.sessionId ?? null, status, createdAt: now(),
         request: v.duplicatedRequest({ label: newLabel(instanceId) }), outputs: saved.outputs, problems: saved.problems, tools: [], renderCommand: null,
@@ -275,6 +292,8 @@ export class DirectEditService {
     const m = messages(locale);
     const e = m.editor;
     if (this.deps.turns.turnActive(ref) || this.renderActive(ref)) throw new CodedError(409, e.busy, 'editor-busy');
+    // Phase 15: a brief the variant group changed while this variant worked applies first (the save versions on it).
+    await this.deps.turns.applyPendingBrief(ref);
     const slug = ref.creativeSlug;
     const store = new CreativeStore(ref.projectDir);
     const creativeDir = store.dir(slug);
@@ -394,7 +413,7 @@ export class DirectEditService {
         // The agent's workspace gets an exact copy of this version's compositions (decisions log 263), committed with it so a
         // restart from this version finds it too. Best effort: the next prompt names the version's folders anyway.
         await alignEditorCopies(creativeDir, { n, origin: 'editor', compositions: saved.compositions } as VersionEntry).catch(() => []);
-        const commit = await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${n}`);
+        const commit = await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${n}`, { headWhenClean: true });
         const request = body.ops.length > 0 ? describeEdits(body.ops, baseLoaded.composition, locale) : e.summaryNone;
         await store.appendVersion(slug, {
           n, commit, sessionId: creative.resumeFrom?.sessionId ?? latest.sessionId ?? null, status, createdAt: now(),

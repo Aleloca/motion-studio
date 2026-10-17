@@ -19,6 +19,17 @@ describe('parseRoute', () => {
   });
 });
 
+describe('variant sisters (Phase 15)', () => {
+  it('a sister\'s slug (`<name>~b` to `~e`) opens as a creative, its formats and its editor too', () => {
+    expect(parseRoute('#/p/acme/c/lancio~b')).toEqual({ name: 'creative', slug: 'acme', creative: 'lancio~b' });
+    expect(parseRoute(href.format('acme', 'lancio~e', 'instagram-post-1x1'))).toEqual({ name: 'format', slug: 'acme', creative: 'lancio~e', format: 'instagram-post-1x1' });
+    expect(parseRoute(href.edit('acme', 'lancio~c', 'tiktok-9x16'))).toEqual({ name: 'edit', slug: 'acme', creative: 'lancio~c', format: 'tiktok-9x16' });
+  });
+  it('`~a`, `~f` and a tilde anywhere else are not creatives, and a project slug never has one', () => {
+    for (const h of ['#/p/acme/c/lancio~a', '#/p/acme/c/lancio~f', '#/p/acme/c/lan~cio', '#/p/acme/c/lancio~bb', '#/p/ac~b/c/lancio']) expect(parseRoute(h).name, h).not.toBe('creative');
+  });
+});
+
 describe('project tabs', () => {
   it.each(['brand', 'assets', 'references', 'settings'] as const)('%s', (tab) => {
     expect(parseRoute(href.project('acme', tab))).toEqual({ name: 'project', slug: 'acme', tab });

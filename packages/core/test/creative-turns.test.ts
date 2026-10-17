@@ -553,6 +553,44 @@ describe('CreativeTurnService', { timeout: 90_000 }, () => {
     expect(await clean()).toBe('');
   });
 
+  it('a concurrent creative whose commit swallows this turn\'s files still leaves a restorable version, and restoring never touches the other creative', async () => {
+    // Another creative of the project (a variant sister or any creative: maxConcurrentJobs 2) is mid-turn.
+    const other = await store.create({ title: 'Altro', brief });
+    const otherWork = store.workDir(other.slug);
+    await mkdir(otherWork, { recursive: true });
+    const git = new Git();
+    const real = git.commitAll.bind(git);
+    let swallowed: string | null = null;
+    git.commitAll = async (dir, msg, opts) => {
+      if (msg === 'Lancio: v1' && swallowed === null) {
+        // The other creative's turn ends first: its `git add -A` takes this turn's finished files and its own half-written one.
+        await writeFile(join(otherWork, 'scene.py'), 'half');
+        swallowed = await real(dir, 'Altro: v1');
+      }
+      return real(dir, msg, opts);
+    };
+    const svc = new CreativeTurnService({ agentContract: 'media',
+      queue, git, media: NoMediaTools, vault: new MemoryVault(),
+      launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
+      presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
+    });
+    expect(await finalState((await svc.start(ref)).id)).toBe('succeeded');
+    expect(swallowed).toMatch(/^[0-9a-f]{40}$/);
+    const [v1] = await store.readVersions(ref.creativeSlug);
+    // Nothing was left to commit for this turn: the version points at the commit that holds its files (it used to be null).
+    expect(v1!.commit).toBe(swallowed);
+    const work = store.workDir(ref.creativeSlug);
+    const workFiles = await readdir(work);
+    // The other creative moves on: newer, uncommitted content.
+    await writeFile(join(otherWork, 'scene.py'), 'newer');
+    await writeFile(join(otherWork, 'draft.txt'), 'untracked');
+    await writeFile(join(work, 'appunti.txt'), 'non salvato');
+    await svc.restore(ref, 1);
+    expect((await readdir(work)).sort()).toEqual([...workFiles].sort());
+    expect(await readFile(join(otherWork, 'scene.py'), 'utf8')).toBe('newer');
+    expect(await readFile(join(otherWork, 'draft.txt'), 'utf8')).toBe('untracked');
+  });
+
   it('a failing "· stato" commit does not fail a saved version', async () => {
     const git = new Git();
     const real = git.commitAll.bind(git);

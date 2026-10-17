@@ -31,6 +31,8 @@ export interface BridgeContext {
   previewFrames?: (args: { format: unknown; times: unknown; locale?: unknown }) => Promise<unknown>;
   /** Localize turns (Phase 12): validates and merges a translation into the overlay (`submit_localization`). */
   submitLocalization?: (args: Record<string, unknown>) => Promise<unknown>;
+  /** Directions turns of a variant group (Phase 15): validates and keeps the proposed directions (`submit_variant_directions`). */
+  submitVariantDirections?: (args: Record<string, unknown>) => Promise<unknown>;
   /** The language the job started with (brand analysis): tool notes that end up in its proposal use it. */
   locale?: Locale;
   /** Brand analysis: notes a tool adds to the proposal (e.g. inspect_site_fonts warnings), already in `locale`. */

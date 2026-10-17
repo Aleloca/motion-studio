@@ -30,6 +30,8 @@ export const MCP_TOOLS: Record<AgentJobKind, string[]> = {
   describe: ['report_progress'],
   // Phase 12: the translation turn. No composition-writing tool, no paid provider tool: the core makes the voices.
   localize: ['report_progress', 'submit_localization', 'preview_frames', 'read_brand_kit'],
+  // Phase 15: the directions turn of a variant group. Its only tool hands the directions over: no write, no paid tool.
+  'variant-directions': ['submit_variant_directions'],
 };
 
 /** Characters that make Claude Code's sandbox read a path as a glob. */
@@ -92,6 +94,8 @@ export interface LaunchInput {
   previewFrames?: BridgeContext['previewFrames'];
   /** Localize turns (Phase 12): the handler of `submit_localization`. */
   submitLocalization?: BridgeContext['submitLocalization'];
+  /** Directions turns (Phase 15): the handler of `submit_variant_directions`. */
+  submitVariantDirections?: BridgeContext['submitVariantDirections'];
   /** Brand analysis: the job's language and where its tools' notes go (see BridgeContext). */
   locale?: BridgeContext['locale'];
   addNotes?: BridgeContext['addNotes'];
@@ -270,6 +274,7 @@ export class AgentLauncher {
           autoApproveAtStart,
           emit: i.onEvent, signal: abort.signal, ...(live ? { toolSignal: () => toolSignal } : {}), ...(i.validateComposition ? { validateComposition: i.validateComposition } : {}), ...(i.previewFrames ? { previewFrames: i.previewFrames } : {}),
           ...(i.submitLocalization ? { submitLocalization: i.submitLocalization } : {}),
+          ...(i.kind === 'variant-directions' && i.submitVariantDirections ? { submitVariantDirections: i.submitVariantDirections } : {}),
           ...(i.locale ? { locale: i.locale } : {}), ...(i.addNotes ? { addNotes: i.addNotes } : {}),
           ...(i.services ? { services: i.services } : {}),
           ...(i.kind === 'brand-analysis' && codebases.length > 0 ? { codebases } : {}),
@@ -294,7 +299,8 @@ export class AgentLauncher {
       // Every run is metered here, whatever the job: the final usage is held back and re-emitted with per-run values.
       const tracker = new UsageTracker({
         // A translation turn is metered with the creative's turns (the usage report has no kind of its own for it).
-        projectDir: i.projectDir, jobId: i.jobId, kind: i.kind, creativeSlug: i.creativeSlug ?? null,
+        // Phase 15: a variant group's directions turn is metered with the creative's turns (the report has no kind for it).
+        projectDir: i.projectDir, jobId: i.jobId, kind: i.kind === 'variant-directions' ? 'creative' : i.kind, creativeSlug: i.creativeSlug ?? null,
         version: i.usage?.version ?? null, attempt: i.usage?.attempt ?? null,
         ...(i.request.resumeSessionId ? { resumeSessionId: i.request.resumeSessionId } : {}),
       }, this.usageLedger);

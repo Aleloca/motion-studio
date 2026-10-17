@@ -6,6 +6,7 @@ import { MEDIA_TEMP_RE, mediaCacheDir, pruneMediaCache, type PruneOptions } from
 import { RENDER_OWNER_FILE, RENDER_TEMP_DIR_RE } from './owner.ts';
 import { RENDER_TEMP_RE } from './renderer.ts';
 import { listProcesses } from './watchdog.ts';
+import { isAcceptedCreative } from '../creatives/creative-store.ts';
 
 /**
  * The startup sweep of render leftovers (Task 5): what a render or a normalisation leaves when the app is killed (a clean
@@ -27,7 +28,6 @@ export const SWEEP_MIN_AGE_MS = 10 * 60 * 1000;
 export const LOCALE_RENDER_DIR_RE = /^r-[0-9a-f]{16}$/;
 /** The private copies of the localized renders running in this process (absolute paths): never swept. */
 export const activeLocaleRenders = new Set<string>();
-const CREATIVE_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}$/;
 const VERSION_RE = /^v\d{1,6}$/;
 /** A `writeJsonFileAtomic` temp of `name` (`<name>.<12 hex>.tmp`), left by a killed app. */
 const jsonTemp = (name: string) => new RegExp(`^${name.replace(/\./g, '\\.')}\\.[0-9a-f]{12}\\.tmp$`);
@@ -60,7 +60,8 @@ export async function sweepProjectRenders(projectDir: string, o: { minAgeMs?: nu
   const removed: string[] = [];
   const creatives = join(projectDir, 'creatives');
   for (const slug of await readdir(creatives).catch(() => [] as string[])) {
-    if (!CREATIVE_SLUG_RE.test(slug) || o.skipCreative?.(slug)) continue;
+    // A plain creative or a real or orphan variant sister (phase 15, decisions log 821, 833); a hand-made `x~b` is not ours to clean.
+    if (o.skipCreative?.(slug) || !(await isAcceptedCreative(projectDir, slug))) continue;
     // A creative folder reached through a link is not ours to clean (M6).
     if (!(await lstat(join(creatives, slug)).catch(() => null))?.isDirectory()) continue;
     removed.push(...await sweepFiles(join(creatives, slug), JSON_TEMPS_CREATIVE, minAgeMs, now));
@@ -83,7 +84,7 @@ export async function sweepProjectRenders(projectDir: string, o: { minAgeMs?: nu
   if ((await lstat(stamps).catch(() => null))?.isDirectory()) {
     for (const slug of await readdir(stamps).catch(() => [] as string[])) {
       const sdir = join(stamps, slug);
-      if (CREATIVE_SLUG_RE.test(slug) && (await lstat(sdir).catch(() => null))?.isDirectory()) removed.push(...await sweepFiles(sdir, STAMP_TEMP_RE, minAgeMs, now));
+      if ((await isAcceptedCreative(projectDir, slug)) && (await lstat(sdir).catch(() => null))?.isDirectory()) removed.push(...await sweepFiles(sdir, STAMP_TEMP_RE, minAgeMs, now));
     }
   }
   // Localized renders' private copies (Phase 12): `.studio/cache/locale-render/r-<16 hex>/`, old and not in use.

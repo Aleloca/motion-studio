@@ -218,6 +218,10 @@ export class LocalizeService {
     const store = new CreativeStore(ref.projectDir);
     return this.deps.turns.runLocked(ref, async () => {
       if (this.deps.turns.turnActive(ref)) throw new WorkspaceError(409, t().errors.generationRunning);
+      // Phase 15: a discarded variant is read-only until restored (final wave I2).
+      await this.deps.turns.assertNotDiscarded(ref);
+      // Phase 15: a brief the variant group changed while this variant worked applies first (its languages included).
+      await this.deps.turns.applyPendingBrief(ref);
       const creative = await store.get(ref.creativeSlug);
       const version = n > 0 ? (await store.readVersions(ref.creativeSlug)).find((v) => v.n === n) : undefined;
       if (!version) throw new WorkspaceError(404, t().errors.versionNotFound);
