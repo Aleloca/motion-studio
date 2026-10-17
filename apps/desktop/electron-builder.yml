@@ -9,7 +9,7 @@ extraResources:
   # windows and the live preview (RUNTIME_DIST_DIR in development).
   - { from: resources/runtime, to: runtime }
 asarUnpack: ["**/node_modules/@napi-rs/keyring*/**"]
-mac: { category: public.app-category.video, target: [{ target: dmg, arch: [arm64, x64] }, { target: zip, arch: [arm64, x64] }], hardenedRuntime: true, entitlements: build/entitlements.mac.plist, entitlementsInherit: build/entitlements.mac.plist }
-win: { target: [nsis] }
-linux: { target: [AppImage], category: Video }
+mac: { icon: build/icon.icns, category: public.app-category.video, target: [{ target: dmg, arch: [arm64, x64] }, { target: zip, arch: [arm64, x64] }], hardenedRuntime: true, entitlements: build/entitlements.mac.plist, entitlementsInherit: build/entitlements.mac.plist }
+win: { icon: build/icon.ico, target: [nsis] }
+linux: { icon: build/icon.png, target: [AppImage], category: Video }
 publish: { provider: github, owner: Aleloca, repo: motion-studio, releaseType: draft }

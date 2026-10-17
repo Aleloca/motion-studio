@@ -1,3 +1,4 @@
+import { BrandLogo } from '../components/BrandLogo.tsx';
 import { useEffect, useRef, useState } from 'react';
 import { useT } from '../i18n.tsx';
 import { useEnter } from '../motion/index.ts';
@@ -51,8 +52,7 @@ export function Pairing() {
     <div className="ms-pairing">
       <div className="ms-pairing-col" ref={root}>
         <div className="ms-pairing-brand" data-enter>
-          <span className="ms-logo" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 2.5v7l6-3.5-6-3.5Z" /></svg></span>
-          <b>Motion Studio</b>
+          <BrandLogo height={26} />
         </div>
         <div className="ms-pairing-head" data-enter>
           <h1>{p.title}</h1>

@@ -1,3 +1,4 @@
+import { BrandLogo } from '../components/BrandLogo.tsx';
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useT } from '../i18n.tsx';
 import { D, enter, pop } from '../motion/index.ts';
@@ -133,8 +134,7 @@ function Status({ running = true }: { running?: boolean }) {
 export function GlobalTop({ title }: { title?: string }) {
   return (
     <>
-      <Logo />
-      <span className="ms-brand">Motion Studio</span>
+      <a className="ms-brand-logo" href={href.projects()}><BrandLogo height={22} /></a>
       {title ? <><span className="ms-faint" aria-hidden="true">/</span><b className="ms-topbar-title">{title}</b></> : null}
       <div className="ms-topbar-center"><SearchButton /></div>
       <Status />

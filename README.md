@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
+    <img src="docs/assets/logo.svg" alt="Motion Studio" height="72">
+  </picture>
+</p>
+
 # Motion Studio
 
 🇮🇹 [Italiano](README.it.md)
