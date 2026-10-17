@@ -260,4 +260,6 @@ button.ms-layer-main:focus-visible { outline: 2px solid var(--accent); outline-o
 .ms-tl-comment[disabled] { opacity: .5; }
 .ms-range-fields { display: flex; gap: 12px; margin: 12px 0; }
 /* SVG inner editor: the selected svg clip's checked SVG, under the handles; its shapes are hit-tested, the rest lets clicks through. */
-.ms-svg-overlay { position: absolute; left: 0; top: 0; transform-origin: center; pointer-events: none; overflow: hidden; }
+.ms-svg-overlay { position: absolute; left: 0; top: 0; transform-origin: center; pointer-events: none; overflow: clip; contain: strict; }
+/* The shadow host: whatever a shadow rule makes of it, the box above contains, clips and stacks it (decision 896). */
+.ms-svg-host { position: absolute; inset: 0; pointer-events: none; }

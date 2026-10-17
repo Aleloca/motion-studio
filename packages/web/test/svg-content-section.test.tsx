@@ -17,7 +17,7 @@ class FakeApiError extends Error {
 vi.mock('../src/api.ts', () => ({ api, ApiError: FakeApiError }));
 
 const { EditorContext } = await import('../src/screens/editor/editorContext.ts');
-const { __resetDrafts, draftKey, peekDraft, useDraft } = await import('../src/screens/editor/draftStore.ts');
+const { __resetDrafts, draftKey, isDirty, peekDraft, useDraft } = await import('../src/screens/editor/draftStore.ts');
 const { Inspector } = await import('../src/screens/editor/Inspector.tsx');
 const { LayersPanel } = await import('../src/screens/editor/LayersPanel.tsx');
 const { I18nProvider } = await import('../src/i18n.tsx');
@@ -78,6 +78,7 @@ async function recolour(from: string, to: string) {
   fireEvent.focus(field);
   fireEvent.change(field, { target: { value: to } });
   fireEvent.keyDown(field, { key: 'Enter' });
+  return field;
 }
 
 beforeEach(() => {
@@ -108,7 +109,7 @@ describe('the SVG content section', () => {
 
   it('a colour change stages the new text from the clip file and points the clip at it, as one undo step', async () => {
     await mount();
-    await recolour('#ff0000', '#0000ff');
+    const field = await recolour('#ff0000', '#0000ff');
     await waitFor(() => expect(stageSvg).toHaveBeenCalledTimes(1));
     const from = stageSvg.mock.calls[0]![0];
     expect(from).toMatchObject({ kind: 'svgEdit', clipId: 'logo', baseSrc: 'assets/logo.svg' });
@@ -118,6 +119,8 @@ describe('the SVG content section', () => {
     expect(draft().ops).toEqual([{ kind: 'clipMedia', clipId: 'logo', src: staged(from.content).path }, { kind: 'svgContent', clipId: 'logo', colors: 1, texts: 0, hidden: 0 }]);
     expect(draft().past).toHaveLength(1);
     expect(await within(section()).findByRole('button', { name: '#0000ff, used 2 times' })).toBeTruthy();
+    // The colour field stays the same field (not remounted by its own change): it now edits the new colour.
+    expect(within(section()).getByRole('textbox', { name: 'New colour for #0000ff' })).toBe(field);
     // The file the clip now shows is known: no second read.
     expect(api.getEditorSvg).toHaveBeenCalledTimes(1);
   });
@@ -199,6 +202,60 @@ describe('the SVG content section', () => {
     await recolour('#ff0000', '#0000ff');
     await waitFor(() => expect(clipOf('logo').src).toMatch(/^assets\/lib\//));
     expect(clipOf('dark').src).toBe('assets/logo.svg');
+  });
+
+  it('the draft says changes are pending from the change until they are applied, and a late answer for a reopened draft is dropped', async () => {
+    let finish: (a: StagedSvgEdit) => void = () => {};
+    stageSvg.mockImplementationOnce((from) => new Promise((r) => { finish = () => r(staged(from.content)); }));
+    await mount();
+    await recolour('#ff0000', '#0000ff');
+    expect(draft().svgPending.has('logo')).toBe(true);
+    // No edit applied yet, but leaving would ask (the leave guard and the close confirmation use isDirty).
+    expect(draft().ops).toEqual([]);
+    expect(isDirty(draft())).toBe(true);
+    await waitFor(() => expect(stageSvg).toHaveBeenCalledTimes(1));
+    expect(draft().svgPending.has('logo')).toBe(true);
+    // Saved (or discarded) meanwhile: a new draft opens under the same key.
+    act(() => { acts!.discard(); acts!.open(view(comp()), preset); });
+    const gen = draft().gen;
+    await act(async () => { finish(staged('x')); await Promise.resolve(); });
+    expect(draft().gen).toBe(gen);
+    expect(clipOf('logo').src).toBe('assets/logo.svg');
+    expect(draft().ops).toEqual([]);
+    expect(draft().svgPending.size).toBe(0);
+  });
+
+  it('an undo while a change is on its way drops its result', async () => {
+    await mount();
+    await recolour('#ff0000', '#0000ff');
+    await waitFor(() => expect(clipOf('logo').src).toMatch(/^assets\/lib\//));
+    let finish: () => void = () => {};
+    stageSvg.mockImplementationOnce((from) => new Promise((r) => { finish = () => r(staged(from.content)); }));
+    await recolour('#00ff00', '#123456');
+    await waitFor(() => expect(stageSvg).toHaveBeenCalledTimes(2));
+    act(() => undo());
+    expect(clipOf('logo').src).toBe('assets/logo.svg');
+    await act(async () => { finish(); await Promise.resolve(); });
+    await waitFor(() => expect(draft().svgPending.size).toBe(0));
+    expect(clipOf('logo').src).toBe('assets/logo.svg');
+    expect(draft().ops).toEqual([]);
+  });
+
+  it('a refused change keeps the changes made after it, which are staged next', async () => {
+    let refuse: () => void = () => {};
+    stageSvg.mockImplementationOnce(() => new Promise((_r, j) => { refuse = () => j(new FakeApiError(400, 'refused', 'svg-edit-refused', undefined, ['a reason'])); }));
+    await mount();
+    await recolour('#ff0000', '#0000ff');
+    await waitFor(() => expect(stageSvg).toHaveBeenCalledTimes(1));
+    const box = within(section()).getByRole('textbox', { name: 'Text 1' });
+    fireEvent.change(box, { target: { value: 'Beta' } });
+    fireEvent.blur(box);
+    await act(async () => { refuse(); await Promise.resolve(); });
+    await waitFor(() => expect(stageSvg).toHaveBeenCalledTimes(2));
+    expect(stageSvg.mock.calls[1]![0]).toMatchObject({ baseSrc: 'assets/logo.svg' });
+    expect(stageSvg.mock.calls[1]![0].content).toContain('>Beta</text>');
+    await waitFor(() => expect(clipOf('logo').src).toMatch(/^assets\/lib\//));
+    expect(draft().svgPending.size).toBe(0);
   });
 
   it('the hidden logo versions have readable layer names, and the section says they do not change with the main logo', async () => {

@@ -112,6 +112,25 @@ describe('texts', () => {
     expect(listTexts(d)[1]!.text).toBe('solo\n');
   });
 
+  it('mixed content: direct text is part of the first line, and a <title> or other child elements stay', () => {
+    const d = doc('<text><title>Brand line</title>Acme <desc>d</desc>Corp</text>'
+      + '<text>\n  Hello <tspan x="0" dy="1em">world</tspan>\n  <tspan x="0" dy="1em">again</tspan>\n</text>');
+    expect(listTexts(d)).toEqual([{ path: '0', text: 'Acme Corp' }, { path: '1', text: 'Hello world\nagain' }]);
+    setText(d, '0', 'Beta');
+    setText(d, '1', 'Ciao mondo\nancora');
+    const out = serializeSvg(d);
+    expect(out).toContain('<title>Brand line</title>');
+    expect(out).toContain('<desc>d</desc>');
+    expect(out).toContain('<tspan x="0" dy="1em">Ciao mondo</tspan>');
+    expect(out).toContain('<tspan x="0" dy="1em">ancora</tspan>');
+    expect(listTexts(d)).toEqual([{ path: '0', text: 'Beta' }, { path: '1', text: 'Ciao mondo\nancora' }]);
+    // A <text> with only a title gets its text after it.
+    const e = doc('<text><title>t</title></text>');
+    expect(listTexts(e)).toEqual([{ path: '0', text: '' }]);
+    setText(e, '0', 'New');
+    expect(serializeSvg(e)).toContain('<title>t</title>New');
+  });
+
   it('setText on a path that is not a <text> throws', () => {
     const d = doc('<rect/>');
     expect(() => setText(d, '0', 'x')).toThrow();

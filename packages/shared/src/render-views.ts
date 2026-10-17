@@ -86,6 +86,11 @@ export type StageRequest = {
  * `svg-edit-refused` with the check's reasons as `problems` (English), or 400 `svg-edit-bad-base`.
  */
 export type StagedSvgEdit = StagedAsset & { svgEdit: true; warnings: string[] };
+/**
+ * Most staged paths one direct save names: 20 library files and fonts plus 200 edited SVGs (the core's staging limits).
+ * The save body's schema and the editor use the same number.
+ */
+export const EDITOR_SAVE_STAGED_MAX = 220;
 
 /**
  * A staged video's normalised file in the preview session (the core's media cache, served as `media/<index>.mp4`), with the

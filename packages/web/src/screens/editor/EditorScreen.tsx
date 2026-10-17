@@ -17,7 +17,7 @@
 // - The draft goes to the player with `setComposition` (coalesced per animation frame); a draft the runtime refuses is
 //   shown as a problem, never ignored.
 import {
-  channelName, compositionProblemText, type Composition, type EditorCompositionView, type FormatPreset, type Pin, type StagedAsset, type StagedSvgEdit, type StageRequest,
+  channelName, compositionProblemText, EDITOR_SAVE_STAGED_MAX, type Composition, type EditorCompositionView, type FormatPreset, type Pin, type StagedAsset, type StagedSvgEdit, type StageRequest,
 } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
@@ -82,7 +82,7 @@ export interface EditorScreenProps {
 type Leave = { mode: 'route'; target: string } | { mode: 'chat'; resolve(ok: boolean): void };
 
 /** What the core accepts in a save body (`directEditBodySchema`); the ops are compacted (opsCompact.ts) so the body stays small. */
-const SAVE_STAGED_MAX = 20;
+const SAVE_STAGED_MAX = EDITOR_SAVE_STAGED_MAX;
 
 /** The staged files the composition names (only those go with a save). */
 function usedStaged(d: Draft): string[] {
@@ -336,6 +336,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   const save = useCallback(async (): Promise<boolean> => {
     const d = peekDraft(key);
     if (!d || saving) return false;
+    if (d.svgPending.size > 0) { setSaveError(e.saveWhileStaging); return false; }
     setSaving(true);
     setSaveError(null);
     const body = (tok: string) => ({
@@ -576,7 +577,8 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     : working || rendering ? e.busyAgent
       : baseMoved ? e.baseChangedTitle
         // A file being staged (a video converting) or staged again in a new session: the save would wait on it (M3).
-        : staging || restaging ? e.saveWhileStaging
+        // So are the SVG changes not applied yet (SVG inner editor): the save would miss the last one.
+        : staging || restaging || draft.svgPending.size > 0 ? e.saveWhileStaging
           : draft.problems.length > 0 ? compositionProblemText(draft.problems[0]!, locale) : null;
 
   const page = (

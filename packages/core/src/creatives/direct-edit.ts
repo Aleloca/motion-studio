@@ -3,7 +3,7 @@ import { copyFile, lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import {
-  COMPOSITION_LIMITS, compositionProblem, compositionProblemText, describeEdits, draftSizeProblem, editOpSchema, effectiveLinks, formatDisplayName, INSTANCE_ID_RE, isCompositionPath, MAX_INSTANCES, messages,
+  COMPOSITION_LIMITS, EDITOR_SAVE_STAGED_MAX, compositionProblem, compositionProblemText, describeEdits, draftSizeProblem, editOpSchema, effectiveLinks, formatDisplayName, INSTANCE_ID_RE, isCompositionPath, MAX_INSTANCES, messages,
   nextInstanceId, normalizeComposition, presetOf, renderJobKey, validateComposition,
   type Brief, type CompositionProblem, type CreativeFile, type FormatPreset, type Locale, type StagedAsset, type VersionEntry,
 } from '@motion-studio/shared';
@@ -53,7 +53,7 @@ export const directEditBodySchema = z.strictObject({
   format: z.string().min(1).max(200), // the primary format edited
   baseHash: z.string().regex(/^[0-9a-f]{64}$/), // composition hash of the base
   composition: z.unknown(), // validated in the core
-  staged: z.array(z.string().min(1).max(512)).max(20), // staged paths used by the draft
+  staged: z.array(z.string().min(1).max(512)).max(EDITOR_SAVE_STAGED_MAX), // staged paths used by the draft (library files and edited SVGs)
   ops: z.array(editOpSchema).max(OPS_MAX), // for the summary and the log only; the composition is authoritative, so the count must never fail a save
   token: z.string().regex(/^[A-Za-z0-9_-]{43}$/), // the preview session that owns the staging (as the stage and preview bodies)
 });

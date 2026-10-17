@@ -37,6 +37,13 @@ export type Draft = {
    * Not part of the history: an undo puts an older `src` back, and its text is found here again.
    */
   svgTexts: ReadonlyMap<string, string>;
+  /**
+   * SVG inner editor: the clips with SVG changes not staged and applied yet (waiting for the delay, or on their way). Save
+   * waits for them and leaving asks, as for edits (`isDirty`).
+   */
+  svgPending: ReadonlySet<string>;
+  /** Which opening of this draft it is: a late answer meant for an earlier one (saved or discarded since) is dropped. */
+  gen: number;
   ops: EditOp[];
   past: Snapshot[];
   future: Snapshot[];
@@ -66,6 +73,8 @@ export type DraftActions = {
   stagedIn(token: string): void;
   /** Records the checked text of the SVG file `path` (SVG inner editor). */
   svgText(path: string, text: string): void;
+  /** Marks the clip as having SVG changes on their way (or not any more). */
+  svgPending(clipId: string, on: boolean): void;
   /** Ends the coalescing run: the next edit is a new undo step even with the same key (the end of a drag). */
   endRun(): void;
 };
@@ -79,6 +88,8 @@ const listeners = new Set<() => void>();
 const subscribe = (l: () => void) => { listeners.add(l); return () => { listeners.delete(l); }; };
 const emit = () => { for (const l of listeners) l(); };
 let version = 0;
+/** The count of drafts opened (`Draft.gen`). */
+let opened = 0;
 const bump = () => { version += 1; emit(); };
 
 /** What the view's size and duration say about the format when the caller has no catalog entry. */
@@ -94,7 +105,7 @@ function validate(composition: Composition, files: Map<string, { size: number }>
 }
 
 const filesOf = (view: EditorCompositionView) => new Map(view.files.map((f) => [f.path, { size: f.size }] as const));
-const dirty = (d: Draft) => d.ops.length > 0;
+const dirty = (d: Draft) => d.ops.length > 0 || d.svgPending.size > 0;
 
 /**
  * The SVG texts a new draft keeps: only those of staged edits (their name holds their hash). A base file's text belongs to
@@ -118,7 +129,7 @@ function open(key: string, view: EditorCompositionView, preset: FormatPreset = p
   const composition = structuredClone(view.composition);
   store.set(key, {
     key, base: { n: view.n, format: view.primaryFormat, hash: view.hash }, baseComposition: view.composition, composition, files,
-    staged: existing?.staged ?? [], stagedIn: existing?.stagedIn ?? null, svgTexts: keptTexts(existing), ops: [], past: [], future: [], problems: validate(composition, files, preset),
+    staged: existing?.staged ?? [], stagedIn: existing?.stagedIn ?? null, svgTexts: keptTexts(existing), svgPending: new Set(), gen: ++opened, ops: [], past: [], future: [], problems: validate(composition, files, preset),
     primaryFormat: view.primaryFormat, format: view.format, fonts: view.fonts, preset,
   });
   runs.delete(key);
@@ -174,6 +185,15 @@ function svgText(key: string, path: string, text: string): void {
   bump();
 }
 
+function svgPending(key: string, clipId: string, on: boolean): void {
+  const d = store.get(key);
+  if (!d || d.svgPending.has(clipId) === on) return;
+  const next = new Set(d.svgPending);
+  if (on) next.add(clipId); else next.delete(clipId);
+  store.set(key, { ...d, svgPending: next });
+  bump();
+}
+
 function travel(key: string, dir: 'undo' | 'redo'): void {
   const d = store.get(key);
   if (!d) return;
@@ -221,6 +241,7 @@ const actionsOf = (key: string): DraftActions => ({
   apply: (op, opts) => apply(key, op, opts),
   applyAll: (ops) => applyAll(key, ops),
   svgText: (path, text) => svgText(key, path, text),
+  svgPending: (clipId, on) => svgPending(key, clipId, on),
   undo: () => travel(key, 'undo'),
   redo: () => travel(key, 'redo'),
   discard: () => discard(key),

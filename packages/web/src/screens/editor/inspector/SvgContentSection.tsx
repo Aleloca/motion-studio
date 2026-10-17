@@ -13,6 +13,7 @@ import { api } from '../../../api.ts';
 import { message } from '../../../errors.ts';
 import { useLocale, useT } from '../../../i18n.tsx';
 import { Button, ColorField, Icon, cx } from '../../../ui/index.ts';
+import { peekDraft } from '../draftStore.ts';
 import { useEditor } from '../editorContext.ts';
 import { colorGroups } from './colors.ts';
 import { Section, type Ctl } from './common.tsx';
@@ -21,8 +22,8 @@ import { Section, type Ctl } from './common.tsx';
 export const SVG_STAGE_DELAY_MS = 300;
 
 type Counts = { colors: number; texts: number; hidden: number };
-/** Changes not staged yet: the text they made from the file `src`, and how many of each kind. */
-type Working = { src: string; text: string; counts: Counts };
+/** Changes not staged yet: the text they made from the file `src`, how many of each kind, and the draft (`Draft.gen`) they belong to. */
+type Working = { src: string; text: string; counts: Counts; gen: number };
 type Failure = { text: string; reasons: string[] };
 
 const ZERO: Counts = { colors: 0, texts: 0, hidden: 0 };
@@ -84,16 +85,27 @@ export function SvgContentSection({ ctl }: { ctl: Ctl }) {
     return () => { alive = false; };
   }, [known, token, clip.src, slug, creative, actions, failedHere]);
 
-  // Changes not staged yet, and the staging (one at a time: a burst during one is staged when it is done).
+  // Changes not staged yet, and the staging (one at a time: a burst during one is staged when it is done). While there are
+  // any, the draft says so (`svgPending`): Save waits and leaving asks.
   const [working, setWorkingState] = useState<Working | null>(null);
   const workingRef = useRef<Working | null>(null);
-  const setWorking = (w: Working | null) => { workingRef.current = w; setWorkingState(w); };
   const [editFailure, setEditFailure] = useState<Failure | null>(null);
   const timer = useRef(0);
   const busy = useRef(false);
   const again = useRef(false);
-  const latest = useRef({ clipId: clip.id, src: clip.src, known, stageSvg, actions, locale });
-  latest.current = { clipId: clip.id, src: clip.src, known, stageSvg, actions, locale };
+  const latest = useRef({ clipId: clip.id, src: clip.src, known, stageSvg, actions, locale, key: draft.key, gen: draft.gen });
+  latest.current = { clipId: clip.id, src: clip.src, known, stageSvg, actions, locale, key: draft.key, gen: draft.gen };
+  /** Whether `gen` is still the draft open under this key (a save or a discard opens another one). */
+  const sameDraft = (gen: number) => peekDraft(latest.current.key)?.gen === gen;
+  const syncPending = (gen: number) => {
+    if (sameDraft(gen)) latest.current.actions.svgPending(latest.current.clipId, workingRef.current !== null || busy.current);
+  };
+  const setWorking = (w: Working | null) => {
+    const gen = workingRef.current?.gen ?? w?.gen ?? latest.current.gen;
+    workingRef.current = w;
+    setWorkingState(w);
+    syncPending(w?.gen ?? gen);
+  };
 
   const flush = async (): Promise<void> => {
     window.clearTimeout(timer.current);
@@ -105,18 +117,30 @@ export function SvgContentSection({ ctl }: { ctl: Ctl }) {
     const L = latest.current;
     try {
       const staged = await L.stageSvg({ kind: 'svgEdit', clipId: L.clipId, baseSrc: w.src, content: w.text });
+      // A draft saved, discarded or reopened meanwhile is not this one: the answer is dropped, nothing of it touched.
+      if (!sameDraft(w.gen)) { busy.current = false; workingRef.current = null; again.current = false; return; }
       L.actions.svgText(staged.path, w.text);
+      const now = workingRef.current;
+      // An undo (or a replaced file) moved the clip off the file the change started from: the result is dropped.
+      const clipNow = peekDraft(L.key)!.composition.tracks.flatMap((tr) => tr.clips).find((k) => k.id === L.clipId);
+      if (!clipNow || !('src' in clipNow) || clipNow.src !== w.src) {
+        busy.current = false;
+        setWorking(null);
+        return;
+      }
       const r = L.actions.applyAll([{ kind: 'clipMedia', clipId: L.clipId, src: staged.path }, { kind: 'svgContent', clipId: L.clipId, ...w.counts }]);
       if (!r.ok) setEditFailure({ text: editProblemText(r.problem, L.locale), reasons: [] });
-      const now = workingRef.current;
-      // Changes made while this one was on its way go on from the staged file.
-      if (now === w || !r.ok) setWorking(null);
-      else if (now) setWorking({ src: staged.path, text: now.text, counts: less(now.counts, w.counts) });
-    } catch (err) {
-      setWorking(null);
-      setEditFailure(failureOf(err));
-    } finally {
       busy.current = false;
+      // Changes made while this one was on its way go on from the staged file.
+      if (now === w || !r.ok || !now) setWorking(null);
+      else setWorking({ ...now, src: staged.path, counts: less(now.counts, w.counts) });
+    } catch (err) {
+      busy.current = false;
+      if (!sameDraft(w.gen)) { workingRef.current = null; again.current = false; return; }
+      setEditFailure(failureOf(err));
+      // Changes made after the refused one stay (they start from the same file) and are staged next.
+      const now = workingRef.current;
+      if (now && now !== w) { setWorking(now); again.current = true; } else setWorking(null);
     }
     if (again.current) { again.current = false; await flush(); }
   };
@@ -143,7 +167,7 @@ export function SvgContentSection({ ctl }: { ctl: Ctl }) {
     if (text === from) return;
     const counts = { ...(w?.counts ?? ZERO) };
     counts[kind] += 1;
-    setWorking({ src: w?.src ?? clip.src, text, counts });
+    setWorking({ src: w?.src ?? clip.src, text, counts, gen: w?.gen ?? draft.gen });
     setEditFailure(null);
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => { void flushRef.current(); }, SVG_STAGE_DELAY_MS);
@@ -156,6 +180,8 @@ export function SvgContentSection({ ctl }: { ctl: Ctl }) {
   const texts = useMemo(() => (doc ? listTexts(doc) : []), [doc]);
   const elements = useMemo(() => (doc ? listElements(doc) : []), [doc]);
   const [openColor, setOpenColor] = useState<string | null>(null);
+  // The colour field is a new one only when another entry is chosen: a change (which renames the entry) keeps it, focus included.
+  const [openKey, setOpenKey] = useState(0);
   const picked = elements.find((x) => x.path === svgElement) ?? null;
   const nameOf = (el: (typeof elements)[number]) => (el.named ? el.label : e.svgElementName({ tag: el.tag, n: el.index }));
   const groups = colorGroups(e, ctl);
@@ -183,7 +209,7 @@ export function SvgContentSection({ ctl }: { ctl: Ctl }) {
                 <li key={c.hex}>
                   <button type="button" className={cx('ms-svg-color', openColor === c.hex && 'ms-on')} aria-pressed={openColor === c.hex} disabled={disabled}
                     aria-label={e.svgColorCount({ hex: c.hex, n: c.count })} title={e.svgColorCount({ hex: c.hex, n: c.count })}
-                    onClick={() => setOpenColor((o) => (o === c.hex ? null : c.hex))}>
+                    onClick={() => { setOpenKey((k) => k + 1); setOpenColor((o) => (o === c.hex ? null : c.hex)); }}>
                     <span className="ms-svg-swatch" aria-hidden="true" style={{ background: c.hex }} />
                     <span className="ms-svg-hex">{c.hex}</span>
                     <span className="ms-svg-count" aria-hidden="true">{`×${c.count}`}</span>
@@ -193,7 +219,7 @@ export function SvgContentSection({ ctl }: { ctl: Ctl }) {
             </ul>
           )}
           {openColor !== null && colors.some((c) => c.hex === openColor) ? (
-            <ColorField key={openColor} label={e.svgColorNew({ hex: openColor })} value={openColor} disabled={disabled} groups={groups}
+            <ColorField key={openKey} label={e.svgColorNew({ hex: openColor })} value={openColor} disabled={disabled} groups={groups}
               onChange={(hex) => recolour(openColor, hex)} />
           ) : null}
         </div>

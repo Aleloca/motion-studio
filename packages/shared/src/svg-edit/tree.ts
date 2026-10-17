@@ -83,25 +83,52 @@ export interface SvgText { path: string; text: string }
 /** The line elements of a `<text>` (its direct tspans and textPaths). */
 const linesOf = (el: Element) => Array.from(el.children).filter((c) => isSvg(c) && LINE_ELEMENTS.has(c.localName));
 
-/** Every `<text>` of the document with its content: one line per direct tspan, joined by "\n". */
+/** The text nodes directly in `el` (not those of its child elements: a `<title>`, a `<desc>`, a tspan). */
+const directTexts = (el: Element): Text[] => Array.from(el.childNodes).filter((n): n is Text => n.nodeType === 3 || n.nodeType === 4) as Text[];
+/** A direct text as the SVG draws it by default: no line breaks, tabs as spaces, runs of spaces as one. */
+const drawn = (t: string) => t.replace(/[\r\n]+/g, '').replace(/\t/g, ' ').replace(/ {2,}/g, ' ');
+
+/**
+ * The lines of a `<text>`. With tspans: one per direct tspan, and the text written directly in the `<text>` (outside its
+ * tspans) belongs to the first line, in document order. Without: its direct text, never that of a `<title>` or another child.
+ */
+function linesOfText(el: Element): string[] {
+  const spans = linesOf(el);
+  if (spans.length === 0) return [directTexts(el).map((n) => n.data).join('')];
+  let first = '';
+  for (const n of Array.from(el.childNodes)) {
+    if (n === spans[0]) first += spans[0]!.textContent ?? '';
+    else if ((n.nodeType === 3 || n.nodeType === 4) && (n as Text).data.trim() !== '') first += drawn((n as Text).data);
+  }
+  return [first.trimStart(), ...spans.slice(1).map((l) => l.textContent ?? '')];
+}
+
+/** Every `<text>` of the document with its content: its lines (see `linesOfText`) joined by "\n". */
 export function listTexts(doc: SvgDoc): SvgText[] {
   const root = doc.documentElement;
-  return Array.from(doc.getElementsByTagNameNS(SVG_NS, 'text')).map((el) => {
-    const lines = linesOf(el);
-    return { path: pathOf(root, el)!, text: lines.length > 0 ? lines.map((l) => l.textContent ?? '').join('\n') : el.textContent ?? '' };
-  });
+  return Array.from(doc.getElementsByTagNameNS(SVG_NS, 'text')).map((el) => ({ path: pathOf(root, el)!, text: linesOfText(el).join('\n') }));
 }
 
 /**
- * Sets the content of the `<text>` at `path`; only the content changes (fonts, sizes and positions stay). With tspans, line
- * i goes in tspan i, the lines beyond the last tspan go in it (joined by spaces) and tspans with no line are emptied.
+ * Sets the content of the `<text>` at `path`; only the content changes (fonts, sizes and positions stay, and so do child
+ * elements such as a `<title>`). With tspans, line i goes in tspan i, the lines beyond the last tspan go in it (joined by
+ * spaces), tspans with no line are emptied, and the text written directly in the `<text>` (part of the first line) is
+ * emptied, its whitespace kept. Without tspans, the text goes in its first direct text node (one is added after the child
+ * elements when there is none) and the other direct text nodes are emptied.
  */
 export function setText(doc: SvgDoc, path: string, text: string): void {
   const el = elementOrThrow(doc, path);
   if (!isSvg(el, 'text')) throw new Error(`not a <text> at ${path.slice(0, 40)}`);
   const lines = text.split('\n');
   const spans = linesOf(el);
-  if (spans.length === 0) { el.textContent = lines.join(' '); return; }
+  const direct = directTexts(el);
+  if (spans.length === 0) {
+    const target = direct.find((n) => n.data.trim() !== '') ?? direct[0] ?? el.appendChild(doc.createTextNode(''));
+    for (const n of direct) if (n !== target) n.data = '';
+    target.data = lines.join(' ');
+    return;
+  }
+  for (const n of direct) if (n.data.trim() !== '') n.data = '';
   spans.forEach((span, i) => {
     span.textContent = i < spans.length - 1 ? lines[i] ?? '' : lines.slice(i).join(' ');
   });

@@ -5,6 +5,10 @@
 //   either read and checked or staged itself; anything else (a file it refused, changes not staged yet) is never drawn.
 // - **Confined:** the drawing lives in a shadow root (`attachShadow`): the SVG's own `<style>` applies only inside it. It is
 //   parsed with DOMParser and its root imported with `importNode`; no markup string is ever assigned to the page.
+// - **Boxed in:** a shadow `:host` rule with `!important` beats any style the page gives the host (decision 896). The core
+//   refuses such selectors, and the copy drawn here drops any `<style>` that has one; besides, the host sits inside a box
+//   of the page (`.ms-svg-overlay`: size and transform, `contain: strict`, `overflow: clip`), so whatever the host became,
+//   nothing of it is drawn or hit outside the clip's box, and it stacks below the selection box.
 // - **Invisible but for the outline:** the drawing is `visibility: hidden` (the player's frame shows the clip) while its
 //   shapes stay hit-testable (`pointer-events: painted`); the picked and hovered elements are shown with an accent stroke.
 // - **Under the handles:** the overlay sits below the selection box, which keeps moving and resizing the clip; a click that
@@ -26,6 +30,9 @@ svg.ms-svg-ov * { pointer-events: painted; }
 [data-ms-picked], [data-ms-picked] * { visibility: visible !important; fill: var(--accent, currentColor) !important; fill-opacity: .14 !important;
   stroke: var(--accent, currentColor) !important; stroke-opacity: 1 !important; stroke-width: 2px !important; stroke-dasharray: none !important; vector-effect: non-scaling-stroke; }
 `;
+
+/** A selector that reaches out of a shadow tree (the core refuses them too: `checkVectorSvg`). Comments and escapes are refused by the core. */
+const SHADOW_SELECTOR_RE = /::?(?:host-context|host|slotted|part)(?![a-z0-9_-])/i;
 
 const ASPECT: Record<'cover' | 'contain' | 'fill', string> = { contain: 'xMidYMid meet', cover: 'xMidYMid slice', fill: 'none' };
 
@@ -71,6 +78,8 @@ export function SvgOverlay({ clip, text, box, picked, hover, handle }: Props) {
     svg.setAttribute('preserveAspectRatio', ASPECT[fit]);
     svg.setAttribute('class', 'ms-svg-ov');
     svg.setAttribute('aria-hidden', 'true');
+    // Shadow-tree selectors (`:host` and the like) would style the host: such a `<style>` is not drawn here.
+    for (const st of [...svg.getElementsByTagNameNS(SVG_NS, 'style')]) if (SHADOW_SELECTOR_RE.test(st.textContent ?? '')) st.remove();
     root.replaceChildren(style, svg);
     drawn.current = svg;
   }, [text, fit]);
@@ -102,8 +111,10 @@ export function SvgOverlay({ clip, text, box, picked, hover, handle }: Props) {
   }), [listed]);
 
   return (
-    <div ref={host} className="ms-svg-overlay" data-slot="svg-overlay" data-clip={clip.id} aria-hidden="true"
-      style={{ width: box.width, height: box.height, transform: `translate(${box.cx - box.width / 2}px, ${box.cy - box.height / 2}px) rotate(${box.rotation}deg)` }} />
+    <div className="ms-svg-overlay" data-slot="svg-overlay-box" data-clip={clip.id} aria-hidden="true"
+      style={{ width: box.width, height: box.height, transform: `translate(${box.cx - box.width / 2}px, ${box.cy - box.height / 2}px) rotate(${box.rotation}deg)` }}>
+      <div ref={host} className="ms-svg-host" data-slot="svg-overlay" />
+    </div>
   );
 }
 

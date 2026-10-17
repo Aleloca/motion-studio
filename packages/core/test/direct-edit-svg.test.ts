@@ -6,7 +6,7 @@
  * not an SVG of the composition, a discarded variant (phase 15).
  */
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +19,8 @@ import { AgentBridge } from '../src/bridge/bridge.ts';
 import { readCompositionFolder } from '../src/compositions/composition-files.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { stagingIdOf } from '../src/creatives/editor-staging.ts';
+import { directEditBodySchema } from '../src/creatives/direct-edit.ts';
+import { EDITOR_SAVE_STAGED_MAX } from '@motion-studio/shared';
 import { Git } from '../src/git.ts';
 import { buildServer } from '../src/server/app.ts';
 import { variantApp, type VariantApp } from './helpers/variant-app.ts';
@@ -97,6 +99,16 @@ async function mint(slug: string, format = 'test-wide'): Promise<string> {
 const stageEdit = (slug: string, token: string, content: string, baseSrc = 'assets/logo.svg', clipId = 'logo') =>
   app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/editor/stage`, headers: H, payload: { token, from: { kind: 'svgEdit', clipId, baseSrc, content } } });
 const save = (slug: string, body: unknown) => app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/edits`, headers: H, payload: body as object });
+
+describe('the save body', () => {
+  it('names up to 220 staged paths: 20 library files and fonts plus 200 edited SVGs', () => {
+    expect(EDITOR_SAVE_STAGED_MAX).toBe(220);
+    const body = (n: number) => ({ baseVersion: 1, format: 'f', baseHash: 'a'.repeat(64), composition: {}, ops: [], token: 'A'.repeat(43),
+      staged: Array.from({ length: n }, (_, i) => `assets/lib/logo-e${String(i).padStart(8, '0')}.svg`) });
+    expect(directEditBodySchema.safeParse(body(220)).success).toBe(true);
+    expect(directEditBodySchema.safeParse(body(221)).success).toBe(false);
+  });
+});
 
 describe('staging an edited SVG', { timeout: 120_000 }, () => {
   it('answers a content-addressed path in the session staging, the same for the same content, and the check warnings', async () => {
@@ -227,6 +239,50 @@ describe('reading a clip SVG for the editor', { timeout: 120_000 }, () => {
       expect((await read(slug, token, path)).json().code, path).toBe('svg-edit-bad-base');
     }
     expect((await read(slug, 'A'.repeat(43), 'assets/logo.svg')).json().code).toBe('editor-no-session');
+  });
+});
+
+describe('reading a clip SVG: what is refused', { timeout: 180_000 }, () => {
+  const read = (slug: string, token: string, path: string) =>
+    app.inject({ url: `/api/projects/acme/creatives/${slug}/editor/svg?token=${encodeURIComponent(token)}&path=${encodeURIComponent(path)}`, headers: H });
+
+  it('the session of another creative', async () => {
+    const a = await create();
+    const b = await create();
+    const token = await mint(a);
+    writeFileSync(join(compDir(a, 1, 'test-wide'), 'assets', 'mark.svg'), GOOD);
+    expect((await read(a, token, 'assets/mark.svg')).statusCode).toBe(200);
+    const other = await read(b, token, 'assets/mark.svg');
+    expect(other.statusCode).toBe(404);
+    expect(other.json().code).toBe('editor-no-session');
+  });
+
+  it('links: a file or a folder of the composition linked elsewhere (even inside it), and a staged file swapped for a link', async () => {
+    const slug = await create();
+    const token = await mint(slug);
+    const dir = compDir(slug, 1, 'test-wide');
+    const outside = join(base, 'outside.svg');
+    writeFileSync(outside, GOOD);
+    symlinkSync(outside, join(dir, 'assets', 'out.svg'));
+    // A folder link that stays inside the composition: only the exact real path is accepted (exact = true).
+    mkdirSync(join(dir, 'assets', 'inner'));
+    writeFileSync(join(dir, 'assets', 'inner', 'mark.svg'), GOOD);
+    symlinkSync(join(dir, 'assets', 'inner'), join(dir, 'assets', 'linked'));
+    expect((await read(slug, token, 'assets/inner/mark.svg')).statusCode).toBe(200);
+    for (const path of ['assets/out.svg', 'assets/linked/mark.svg']) {
+      const r = await read(slug, token, path);
+      expect(r.statusCode, path).toBe(400);
+      expect(r.json().code, path).toBe('svg-edit-bad-base');
+    }
+    // A staged edit replaced by a link to a file outside.
+    const staged = (await stageEdit(slug, token, GOOD)).json() as { path: string };
+    expect((await read(slug, token, staged.path)).statusCode).toBe(200);
+    const file = join(stagingDir(slug, token), staged.path.slice('assets/lib/'.length));
+    unlinkSync(file);
+    symlinkSync(outside, file);
+    const r = await read(slug, token, staged.path);
+    expect(r.statusCode).toBe(400);
+    expect(r.json().code).toBe('svg-edit-bad-base');
   });
 });
 

@@ -111,7 +111,7 @@ describe('the SVG overlay on the stage', () => {
     expect(drawn().getAttribute('preserveAspectRatio')).toBe('xMidYMid meet');
     expect(drawn().querySelector('rect')).toBeTruthy();
     expect(document.querySelector('[data-slot="stage-layer"] rect')).toBeNull();
-    expect(host()!.style.width).toBe('200px');
+    expect(document.querySelector<HTMLElement>('[data-slot="svg-overlay-box"]')!.style.width).toBe('200px');
   });
 
   it('keeps the SVG <style> inside the shadow root: it does not style the page', async () => {
@@ -127,6 +127,15 @@ describe('the SVG overlay on the stage', () => {
     } finally {
       outside.remove();
     }
+  });
+
+  it('a <style> with a shadow-tree selector is not drawn (the core refuses it too)', async () => {
+    texts = { 'assets/logo.svg': SVG.replace('<style>', '<style>:host { position: fixed !important; } ') };
+    await mount();
+    await waitFor(() => expect(host()).toBeTruthy());
+    expect(host()!.shadowRoot!.innerHTML).not.toContain(':host { position');
+    expect(drawn().querySelector('style')).toBeNull();
+    expect(drawn().querySelector('rect')).toBeTruthy();
   });
 
   it('a click on a shape picks its element; a click on a tspan picks its text', async () => {

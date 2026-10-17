@@ -343,9 +343,18 @@ export async function readSvgForEdit(o: {
   const m = messages(o.locale);
   const badBase = () => new CodedError(400, m.editor.stageSvgBadBase({ file: o.path.slice(0, 300) }), 'svg-edit-bad-base');
   if (!/\.svg$/i.test(o.path) || !o.path.startsWith('assets/') || !isCompositionPath(o.path)) throw badBase();
+  // At most one byte over the limit is read, whatever the file says or becomes meanwhile.
   const readFrom = (base: string) => withConfinedFile(base, o.path, true, async (fh: FileHandle, info: Stats) => {
     if (info.size > MAX_VECTOR_SVG_BYTES) return { tooLarge: true as const };
-    return { text: (await fh.readFile()).toString('utf8') };
+    const buf = Buffer.alloc(MAX_VECTOR_SVG_BYTES + 1);
+    let total = 0;
+    for (;;) {
+      const { bytesRead } = await fh.read(buf, total, buf.length - total, total);
+      if (bytesRead === 0) break;
+      total += bytesRead;
+      if (total === buf.length) return { tooLarge: true as const };
+    }
+    return { text: buf.subarray(0, total).toString('utf8') };
   });
   let got = await readFrom(o.compDir);
   if (got === null && o.stagingRoot && o.staged.has(o.path)) got = await readFrom(o.stagingRoot);
