@@ -136,6 +136,15 @@ Nella vista di un formato, **Modifica** (o **Apri l’editor** su una tavola) ap
   - un turno su un altro formato non blocca il salvataggio.
 - **Commenti per l'agente:** oltre che su un punto del quadro, un commento può riguardare una clip (**Commenta la clip**, o `C` con una clip selezionata) o un intervallo di tempo (**Commenta un intervallo**, o `R`, o Maiusc+trascinamento sul righello), nell'editor e nella vista formato. Il chip nella chat nomina la clip o l'intervallo, e il prompt dell'agente riporta id e nome della clip o l'intervallo, con un fotogramma (due per un intervallo).
 
+#### Modificare un SVG
+Seleziona una clip `svg` (un logo, una favicon, un'icona d'app, o un'immagine vettoriale dentro un'immagine o un video): la sezione **Contenuto SVG** dell'ispettore modifica l'interno del file, senza un turno dell'agente.
+
+- **Colori:** ogni colore distinto del file (riempimenti, contorni, tappe dei gradienti, `style` e `<style>`), con quante volte è usato. Cambiarne uno sostituisce ogni occorrenza, comunque sia scritta (`#fff`, `white`, `rgb(255,255,255)`); tra i campioni c'è la palette del brand.
+- **Testi:** il contenuto di ogni `<text>`, come testo semplice (font, dimensione e posizione restano).
+- **Elementi:** i gruppi e le forme, con il nome dal loro `id` o `<title>`, altrimenti dal tipo ("Tracciato 5"). Sceglilo nell'elenco o fai clic sullo stage per evidenziarlo e cambiarne riempimento e contorno; l'occhio lo nasconde o lo mostra.
+- Ogni cambio passa dallo stesso controllo stretto degli SVG dei formati di identità, poi la clip punta al nuovo file: annulla e ripeti, la pillola della bozza e **Salva come vN** funzionano come per ogni altra modifica. Un'altra clip che usa lo stesso file tiene l'originale.
+- Un SVG che il controllo rifiuta (per esempio senza `viewBox`, o con uno script) dice perché e non si può modificare qui. La versione piccola del logo e il negativo per sfondo scuro sono livelli a parte ("Versione piccola", "Negativo per sfondo scuro"): non cambiano con il logo principale. Dopo il salvataggio di un formato di identità, **Render** rifà PNG e icone.
+
 Una durata cambiata nell'editor è una tua scelta: la versione resta completa anche se è molto diversa da quella del brief, e la vista formato mostra accanto la durata del brief ("7 s · brief 6 s (modifica diretta)"). Al turno successivo l'agente riceve l'indicazione di mantenere la durata attuale, a meno che tu non ne chieda un'altra; se vuoi che coincidano, aggiorna tu la durata del brief.
 
 Limiti attuali: le build desktop firmate dipendono dai certificati dei maintainer (vedi Rilascio). Su Ubuntu 24.04 e successive l'AppImage può non avviarsi perché il sistema limita i namespace utente non privilegiati (AppArmor, `kernel.apparmor_restrict_unprivileged_userns`), che servono alla sandbox di Chromium: serve un profilo AppArmor per l'app (o, a tuo rischio, disattivare quella restrizione); evita `--no-sandbox`, che toglie l'isolamento della finestra.

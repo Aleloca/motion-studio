@@ -153,6 +153,15 @@ In a format's view, **Edit** (or **Open editor** on a board) opens the editor on
   - a turn on another format does not block the save.
 - **Comments for the agent:** besides a spot of the frame, a comment can be on a clip (**Comment on clip**, or `C` with a clip selected) or on a time range (**Comment on range**, or `R`, or Shift+drag on the ruler), in the editor and in the format view. The chip in the chat names the clip or the range, and the agent's prompt carries the clip's id and name or the range, with a frame (two for a range).
 
+#### Editing an SVG
+Select an `svg` clip (a logo, a favicon, an app icon, or a vector image in an image or a video): the inspector's **SVG content** section edits the inside of its file, with no agent turn.
+
+- **Colours:** every distinct colour of the file (fills, strokes, gradient stops, `style` and `<style>`), with how many times it is used. Changing one replaces every occurrence, however it is written (`#fff`, `white`, `rgb(255,255,255)`); the brand palette is among the swatches.
+- **Texts:** the content of each `<text>`, as plain text (font, size and position stay).
+- **Elements:** the groups and shapes, named after their `id` or `<title>`, else after their kind ("Path 5"). Pick one in the list or click it on the stage to outline it and change its own fill and stroke; the eye hides or shows it.
+- Each change is checked by Motion Studio with the same strict SVG check as identity formats, then the clip points at the new file: undo and redo, the draft pill and **Save as vN** work as for any other edit. Another clip using the same file keeps the original.
+- An SVG the check refuses (for example one without a `viewBox`, or with a script) says why and cannot be edited here. A logo's small version and its negative for dark backgrounds are layers of their own ("Small version", "Negative for dark backgrounds"): they do not change with the main logo. After saving an identity format, **Render** rebuilds its PNGs and icons.
+
 A duration changed in the editor is your choice: the version stays complete even when it is far from the brief's duration, and the format view shows the brief's next to it ("7 s · brief 6 s (direct edit)"). The next agent turn is told to keep the current duration unless you ask for another one; update the brief's duration yourself if you want it to match.
 
 Current limits: signed desktop builds depend on the maintainers' certificates (see Release). On Ubuntu 24.04 and later the AppImage may fail to start because the system restricts unprivileged user namespaces (AppArmor, `kernel.apparmor_restrict_unprivileged_userns`), which Chromium's sandbox needs: you need an AppArmor profile for the app (or, at your own risk, disable that restriction); avoid `--no-sandbox`, which removes the window's isolation.
