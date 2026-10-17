@@ -171,6 +171,12 @@
 .ms-e-end { right: 0; } .ms-e-end::after { right: 2px; }
 .ms-tl-locked .ms-tl-edge, .ms-tl-clip.ms-locked .ms-tl-edge { cursor: not-allowed; }
 .ms-tl-playhead { position: absolute; top: 0; bottom: 0; width: 1px; margin-left: -.5px; background: var(--accent); z-index: 2; pointer-events: none; }
+/* The playhead's handle on the ruler (user test item 9): grabbed to drag the playhead; the ruler under it scrubs too. */
+.ms-tl-grip {
+  position: absolute; top: 0; bottom: 0; z-index: 3; width: 15px; margin-left: -7.5px; cursor: ew-resize; touch-action: none;
+}
+.ms-tl-grip::before { content: ''; position: absolute; left: 1.5px; top: 0; width: 12px; height: 13px; background: var(--accent); border-radius: 2px 2px 0 0; clip-path: polygon(0 0, 100% 0, 100% 58%, 50% 100%, 0 58%); }
+.ms-tl-grip::after { content: ''; position: absolute; left: 7px; top: 12px; bottom: 0; width: 1px; background: var(--accent); }
 .ms-tl-guide { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--accentText); z-index: 2; pointer-events: none; }
 .ms-tl-overlay { position: absolute; top: 26px; bottom: 0; right: 0; pointer-events: none; z-index: 1; }
 

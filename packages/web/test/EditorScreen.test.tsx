@@ -220,6 +220,10 @@ describe('EditorScreen · shell', () => {
     await userEvent.click(within(screen.getByRole('region', { name: 'In this scene' })).getByRole('button', { name: 'title' }));
     expect(media.select).toHaveBeenLastCalledWith('title');
     expect(probe.ctx?.selection).toBe('title');
+    // ...and shows it (user test item 8): the playhead goes to its start when it is outside the clip.
+    expect(media.currentTime).toBeCloseTo(0.2, 5);
+    await userEvent.click(within(screen.getByRole('region', { name: 'In this scene' })).getByRole('button', { name: 'card' }));
+    expect(media.currentTime).toBeCloseTo(0.2, 5);
   });
 
   it('the real timeline fills the slot: play, frame step and a clip bar work against the editor context', async () => {

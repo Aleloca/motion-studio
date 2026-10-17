@@ -1,7 +1,7 @@
 // The editor's scenes column (Phase 10b, Task 6): a card per scene (storyboard thumbnail of the opened version, name,
 // start and duration; the thumbnail fills in when the storyboard arrives, a composition without scenes has one "Whole video"
 // card), a click seeks to the scene's start, "In this scene" lists the clips that overlap the scene under the playhead
-// (a click selects one), and the cards reorder - by dragging the grip or with ↑ ↓ on it - through `sceneOrder` when
+// (a click selects one, and seeks to its start when the playhead is outside it), and the cards reorder - by dragging the grip or with ↑ ↓ on it - through `sceneOrder` when
 // `sceneOrderAllowed` says every clip lies in one scene; otherwise the grip is disabled and says why.
 import { compositionProblem, editProblemText, sceneOrderAllowed, type Clip, type Scene } from '@motion-studio/shared';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
@@ -30,7 +30,7 @@ export function ScenesColumn() {
   const e = t.web.editor;
   const r = t.web.render;
   const locale = useLocale();
-  const { slug, creative, primary, draft, actions, controls, selection, select } = useEditor();
+  const { slug, creative, primary, draft, actions, controls, selection, select, readOnly } = useEditor();
   const comp = draft.composition;
   const scenes = useMemo(() => [...comp.scenes].sort((a, b) => a.start - b.start), [comp.scenes]);
   const { time } = useClock(controls.clock);
@@ -115,6 +115,8 @@ export function ScenesColumn() {
   };
 
   const inScene = current ? clipsOverlapping(comp.tracks, current) : [];
+  /** Selecting a clip shows it (user test item 8): the playhead goes to its start when it is outside the clip. */
+  const reveal = (c: Clip) => { if (time < c.start - EPS || time >= c.start + c.duration - EPS) controls.seek(c.start); };
   return (
     <div className="ms-sc">
       {scenes.length === 0 ? (
@@ -140,7 +142,7 @@ export function ScenesColumn() {
                   <span className="ms-fv-sb-text"><b>{name}</b><span>{timecode(s.start)} · {e.sceneLength({ seconds: formatNumber(locale, s.duration, { maximumFractionDigits: 2 }) })}</span></span>
                 </button>
                 <span className="ms-sc-grip-wrap" title={reason ?? undefined}>
-                  <button type="button" className="ms-sc-grip" disabled={!allowed.ok} aria-label={e.reorderScene({ name })} title={reason ?? undefined}
+                  <button type="button" className="ms-sc-grip" disabled={!allowed.ok || Boolean(readOnly)} aria-label={e.reorderScene({ name })} title={readOnly || reason || undefined}
                     onPointerDown={begin(i)} onKeyDown={key(i)}><Icon name="menu" size={13} /></button>
                 </span>
               </li>
@@ -157,7 +159,7 @@ export function ScenesColumn() {
             <ul>
               {inScene.map((c) => (
                 <li key={c.id}>
-                  <button type="button" className={cx('ms-sc-clip', c.id === selection && 'ms-on')} aria-pressed={c.id === selection} onClick={() => select(c.id)}>
+                  <button type="button" className={cx('ms-sc-clip', c.id === selection && 'ms-on')} aria-pressed={c.id === selection} onClick={() => { select(c.id); reveal(c); }}>
                     <b>{c.name ?? c.id}</b>
                   </button>
                 </li>

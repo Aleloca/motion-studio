@@ -8,8 +8,12 @@
 // - Gestures read the state they STARTED with and the total pointer movement (timelineMath.ts); one is applied per
 //   animation frame with a `drag:<clip>` coalescing key and `hold` (a rest in the middle does not split it), and closed with
 //   `endRun()`: a drag is one undo step.
-// - Scrubbing the ruler sends `seek` coalesced per animation frame. The runtime can drop a seek that arrives after several
-//   follow-up seeks during a re-mount, so the LAST position is always sent when the scrub ends (and once more shortly after).
+// - Scrubbing the ruler, or the playhead's handle on it (user test item 9), sends `seek` on whole frames, coalesced per
+//   animation frame, with the pointer captured. The runtime can drop a seek that arrives after several follow-up seeks during
+//   a re-mount, so the LAST position is always sent when the scrub ends (and once more shortly after).
+// - Selecting a clip shows it (user test item 8): a plain click (no drag, no trim) seeks to the clicked point on a whole frame
+//   when it is inside the clip, else to the clip's start; Enter / Space seek to its start when the playhead is outside it.
+//   Play / pause is left as it was. Read-only (`readOnly`), a press only selects and seeks.
 // - Range comments (Task 10): the spans are drawn by the caller through `overlay`; a Shift + drag on the ruler picks a range
 //   (shown while dragging) and hands it to `onRange`; the "Comment on clip" button calls `onCommentClip`. Neither touches the draft.
 import { compositionProblem, editProblemText, snapTargets, type Clip, type Track } from '@motion-studio/shared';
@@ -91,6 +95,11 @@ function Playhead({ clock, pps }: { clock: ReturnType<typeof useEditor>['control
   const { time } = useClock(clock);
   return <span className="ms-tl-playhead" style={{ left: HEADER_W + timeToPx(time, pps) }} aria-hidden="true" />;
 }
+/** The playhead's handle on the ruler: what the pointer grabs to drag it (the ruler is the keyboard's slider). */
+function Grip({ clock, pps, label, onPointerDown }: { clock: ReturnType<typeof useEditor>['controls']['clock']; pps: number; label: string; onPointerDown(ev: ReactPointerEvent<HTMLElement>): void }) {
+  const { time } = useClock(clock);
+  return <span className="ms-tl-grip" style={{ left: timeToPx(time, pps) }} title={label} aria-hidden="true" onPointerDown={onPointerDown} />;
+}
 
 export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay, onRange, onCommentClip, onCommentRange, canCommentClip = true }: TimelineProps) {
   const t = useT();
@@ -99,7 +108,7 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay, on
   const e2 = t.web.conversation;
   const r = t.web.render;
   const locale = useLocale();
-  const { slug, creative, primary, draft, actions, controls, selection, select, snap, setSnap } = useEditor();
+  const { slug, creative, primary, draft, actions, controls, selection, select, snap, setSnap, readOnly } = useEditor();
   const comp = draft.composition;
   const fps = comp.fps;
   const scenes = useMemo(() => [...comp.scenes].sort((a, b) => a.start - b.start), [comp.scenes]);
@@ -197,10 +206,20 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay, on
   useEffect(() => () => cleanup.current(), []);
   const playheadNow = () => frameRound(live.current.controls.clock.get().time, live.current.fps);
 
+  /** Shows the clip: the time pressed when it is inside the clip (on a whole frame), else its start. */
+  const reveal = (clip: Clip, at: number | null) => {
+    const { fps: rate, controls: c } = live.current;
+    const t = at === null ? null : frameRound(at, rate);
+    const inside = (x: number) => x >= clip.start - 1e-6 && x < clip.start + clip.duration - 1e-6;
+    if (t !== null) { c.seek(inside(t) ? t : clip.start); return; }
+    if (!inside(c.clock.get().time)) c.seek(clip.start);
+  };
   const beginDrag = (clip: Clip, track: Track, mode: DragMode, ev: ReactPointerEvent<HTMLElement>) => {
     if (ev.button !== 0) return;
     select(clip.id);
-    if (clip.locked || track.locked) { refuse(lockedProblem(clip)); return; }
+    const pressedAt = timeAt(ev.clientX);
+    if (readOnly) { reveal(clip, pressedAt); return; }
+    if (clip.locked || track.locked) { refuse(lockedProblem(clip)); reveal(clip, pressedAt); return; }
     if (live.current.comp.duration === 0) return;
     cleanup.current();
     // A new gesture never joins the run of an earlier one (its edits hold the run open until the end).
@@ -252,6 +271,8 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay, on
       raf = 0;
       if (moved) { flush(); live.current.actions.endRun(); }
       cleanup.current();
+      // A plain click (no drag, no trim) shows the clip.
+      if (!moved && m.type === 'pointerup') reveal(clip, pressedAt);
     };
     cleanup.current = () => {
       window.removeEventListener('pointermove', move);
@@ -269,7 +290,7 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay, on
   const clipKey = (clip: Clip, track: Track) => (ev: ReactKeyboardEvent<HTMLElement>) => {
     if (ev.metaKey || ev.ctrlKey || ev.altKey || ev.nativeEvent.isComposing) return;
     const arrow = ev.key === 'ArrowLeft' || ev.key === 'ArrowRight';
-    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); select(clip.id); return; }
+    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); select(clip.id); reveal(clip, null); return; }
     if (!arrow && ev.key !== '[' && ev.key !== ']') return;
     // Handled here, so the editor's frame step (←/→ with no clip focused) does not also run.
     ev.preventDefault();
@@ -319,22 +340,27 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay, on
     window.addEventListener('pointerup', end);
     window.addEventListener('pointercancel', end);
   };
+  /** The time under the pointer, on a whole frame (scrubbing never lands between frames). */
+  const frameAt = (clientX: number) => Math.min(live.current.comp.duration, frameRound(timeAt(clientX), live.current.fps));
   const beginScrub = (ev: ReactPointerEvent<HTMLElement>) => {
     if (ev.button !== 0 || !controls.ready) return;
     if (ev.shiftKey && live.current.onRange) { beginRange(ev); return; }
+    ev.stopPropagation();
+    // The pointer stays with the scrub when it leaves the ruler (the window listeners below hear it either way).
+    try { ev.currentTarget.setPointerCapture?.(ev.pointerId); } catch { /* not capturable: the window listeners still get it */ }
     cleanup.current();
     const s = scrub.current;
     window.clearTimeout(s.resend);
     s.seq += 1;
     s.resume = controls.playing;
     if (controls.playing) controls.pause();
-    s.last = timeAt(ev.clientX);
+    s.last = frameAt(ev.clientX);
     s.sent = s.last;
     controls.seek(s.last);
     const send = () => { s.raf = 0; if (s.sent !== s.last) { s.sent = s.last; live.current.controls.seek(s.last); } };
-    const move = (m: PointerEvent) => { s.last = timeAt(m.clientX); if (!s.raf) s.raf = requestAnimationFrame(send); };
+    const move = (m: PointerEvent) => { s.last = frameAt(m.clientX); if (!s.raf) s.raf = requestAnimationFrame(send); };
     const end = (m: PointerEvent) => {
-      if (m.type === 'pointerup') s.last = timeAt(m.clientX);
+      if (m.type === 'pointerup') s.last = frameAt(m.clientX);
       if (s.raf) cancelAnimationFrame(s.raf);
       s.raf = 0;
       cleanup.current();
@@ -417,6 +443,7 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay, on
             <div className="ms-tl-corner" />
             <RulerRef ref={area} clock={controls.clock} duration={comp.duration} label={e.tlRuler} disabled={disabled} width={contentW} onPointerDown={beginScrub} onKeyDown={rulerKeys}>
               <Ticks pps={pps} fps={fps} t0={t0} t1={t1} seconds={seconds} />
+              {disabled ? null : <Grip clock={controls.clock} pps={pps} label={e.tlPlayhead} onPointerDown={beginScrub} />}
               {picking ? <span className="ms-tl-picking" aria-hidden="true" style={{ left: timeToPx(Math.min(picking.a, picking.b), pps), width: timeToPx(Math.abs(picking.b - picking.a), pps) }} /> : null}
               {marks.filter((m) => m.pin.timeSec !== null).map(({ pin, number }) => (
                 <button key={number} type="button" className="ms-tl-mark" style={{ left: timeToPx(pin.timeSec!, pps) }} title={pin.note} disabled={disabled}
