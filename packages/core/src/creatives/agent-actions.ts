@@ -109,7 +109,12 @@ export class AgentActionService {
 
   /** The bridge handlers, by tool name (`APP_ACTION_TOOLS`). */
   tools(): Record<string, BridgeHandler> {
-    const on = (fn: (s: Scope, args: Record<string, unknown>) => Promise<unknown>): BridgeHandler => async (c: BridgeContext, args) => fn(this.scopeOf(c), args);
+    const on = (fn: (s: Scope, args: Record<string, unknown>) => Promise<unknown>): BridgeHandler => async (c: BridgeContext, args) => {
+      const scope = this.scopeOf(c);
+      // A redirect (or the job's end) aborted this tool generation: nothing is done on its behalf.
+      if (c.signal.aborted) throw new CodedError(409, t().errors.jobCancelled, 'tool-aborted');
+      return fn(scope, args);
+    };
     return {
       update_brief: on((s, a) => this.updateBrief(s, parse(inputs.update_brief, a))),
       add_format: on((s, a) => this.addFormat(s, parse(inputs.add_format, a))),
@@ -152,7 +157,10 @@ export class AgentActionService {
     const list = this.deferred.get(s.jobId) ?? [];
     // One follow-up turn and one translation per turn: what is asked again joins them.
     const same = list.find((x) => x.kind === d.kind && (d.kind === 'followUp' || d.kind === 'localize'));
-    if (same && same.kind === 'followUp' && d.kind === 'followUp') same.formats = [...new Set([...same.formats, ...d.formats])];
+    if (same && same.kind === 'followUp' && d.kind === 'followUp') {
+      same.formats = [...new Set([...same.formats, ...d.formats])];
+      same.what = `${same.what}, ${d.what}`;
+    }
     else if (same && same.kind === 'localize' && d.kind === 'localize') {
       same.locales = [...new Set([...same.locales, ...d.locales])];
       same.formats = same.formats && d.formats ? [...new Set([...same.formats, ...d.formats])] : undefined;

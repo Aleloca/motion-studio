@@ -463,6 +463,7 @@ export class VariantGroupService {
     if (turns.turnActive(mref)) {
       const had = await turns.side.pendingBrief(mref.projectDir, mref.creativeSlug);
       await turns.side.setPendingBrief(mref.projectDir, mref.creativeSlug, { ...target, at: now() });
+      turns.pendingBriefSet(mref, target.brief.durationSec);
       // Any job of this creative that ends applies it (`briefAfterJob`), a translation included.
       turns.rememberRef(mref);
       if (!had) await this.deps.store.appendConversation(mref.creativeSlug, { type: 'system', at: now(), level: 'info', text: t().jobs.variantBriefDeferred }).catch(() => {});

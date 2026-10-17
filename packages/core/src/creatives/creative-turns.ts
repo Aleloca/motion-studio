@@ -34,7 +34,7 @@ import { clearReferenceFrames, conversionPlan, extractReferenceFrames } from './
 import { AnswerCache, checkLiveMessage, liveMessageText, LiveSession, newLiveMessage, NO_LIVE, redirectLive, type LiveMessage, type UserMessageInput } from '../agent/live-session.ts';
 import { buildCreativePrompt, interruptedRedirectText, pinLine, REDIRECT_PARTIAL_NOTE, type AgentContract, type CreativeContext, type PromptKind, type PromptVariant } from './prompt.ts';
 import { checkComposition, checkTargets, type TargetsCheck } from './composition-contract.ts';
-import { realDirChain, writeThroughTemp } from './core-files.ts';
+import { isRealDirChain, realDirChain, writeThroughTemp } from './core-files.ts';
 import { acceptedDurationsOf, alignEditorCopies, assembleCompositions, carriableComposition, type CarriedComposition } from './composition-turn.ts';
 import { checkedPreviewTimes, type PreviewService } from './previews.ts';
 import { sumUsage } from '../usage/usage-tracker.ts';
@@ -324,6 +324,9 @@ export class CreativeTurnService {
     return this.locks.run(key, async () => {
       if (this.isActive(key)) throw new WorkspaceError(409, t().errors.waitBeforeBrief);
       const store = new CreativeStore(ref.projectDir);
+      // Decision 917: a brief the agent changed during a turn that just ended (its pending brief) applies first, so this
+      // edit builds on it and is never overwritten by it afterwards.
+      await this.applyPendingBriefLocked(ref);
       const stored = await store.get(ref.creativeSlug);
       const linkedCodebases = patch.linkedCodebases ? normalizeCodebaseList(patch.linkedCodebases) : null;
       // Decision 788: only new or changed paths get the glob check; a legacy one already stored passes (skipped at run time).
@@ -402,10 +405,13 @@ export class CreativeTurnService {
         const preset = findPreset(presets, c.format);
         if (!preset) { failing.add(c.format); continue; }
         const accepted = c.userDuration && durationSec !== null && c.userDuration.briefDurationSec === durationSec ? c.userDuration.durationSec : undefined;
+        // Every folder of the path must be a real folder of the creative (as `checkTargets`): a link is never followed.
+        if ((await isRealDirChain(store.dir(slug), ['outputs', `v${latest.n}`, ...c.dir.split('/')])) !== 'ok') { failing.add(c.format); continue; }
         const check = await checkComposition(join(versionDir, ...c.dir.split('/')), c.format, preset, durationSec, accepted);
         if (check.hash === c.hash && check.problems.length === 0) passing.add(c.format); else failing.add(c.format);
       }
       if (passing.size === 0) return null;
+      // A follower's problems are copies of its primary's (`assembleCompositions`): they go with them.
       const cleared = (c: VersionComposition) => passing.has(c.format) || (c.followsFormat !== undefined && passing.has(c.followsFormat));
       const gone = new Set(latest.compositions.filter(cleared).flatMap((c) => c.problems ?? []));
       const kept = new Set(latest.compositions.filter((c) => !cleared(c)).flatMap((c) => c.problems ?? []));
@@ -435,6 +441,15 @@ export class CreativeTurnService {
   /** Decision 917: the duration this turn's output checks use from now on (its agent's `update_brief`); its brief changes when it ends. */
   setTurnDuration(jobId: string, durationSec: number | null): void {
     if (this.live.has(jobId)) this.turnDurations.set(jobId, durationSec);
+  }
+
+  /**
+   * Decision 917: a group brief reached a working member as its pending brief. When its running turn's agent had set the
+   * check duration, the check follows the brief the turn will end with (never a duration the brief no longer has).
+   */
+  pendingBriefSet(ref: CreativeRef, durationSec: number | null): void {
+    const live = this.liveOf(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug));
+    if (live && this.turnDurations.has(live.jobId)) this.turnDurations.set(live.jobId, durationSec);
   }
 
   /** Decision 917: `fn` runs when each creative turn settles, after its pending brief is applied and before its queue may go on. */
@@ -1004,6 +1019,8 @@ export class CreativeTurnService {
           }
         }
         accepted = turnContract === 'compositions' ? acceptedDurationsOf(base, targets, presets, creative.brief.durationSec) : new Map();
+        // Decision 917: the user's kept durations hold only against the brief duration they were chosen for.
+        const acceptedNow = () => (checkDuration() === creative.brief.durationSec || turnContract !== 'compositions' ? accepted : acceptedDurationsOf(base, targets, presets, checkDuration()));
         const uncheckable = new Set<string>();
         let forkSession = Boolean(creative.resumeFrom || stopped);
         /** A remembered session is resumed (stopped turn, or a redirect's live session): a resume error falls back once. */
@@ -1020,7 +1037,7 @@ export class CreativeTurnService {
         });
         const checkCompositions = (only?: string) => checkTargets({
           versionDir: store.outputsDir(slug, n), targets: only === undefined ? targets : targets.filter((f) => f === only), presets,
-          briefDurationSec: checkDuration(), locale, acceptedDurations: accepted,
+          briefDurationSec: checkDuration(), locale, acceptedDurations: acceptedNow(),
         });
         // The agent's MCP tools on its compositions (output contract v2): the same checks as after the turn, and a few frames.
         let previewCalls = 0;
@@ -1308,7 +1325,8 @@ export class CreativeTurnService {
       await live.serial(async () => { live.phase = 'finalizing'; await this.drainLive(ref, store, live); });
       let saved: { outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: string | null; compositions?: VersionComposition[]; localizations?: VersionEntry['localizations']; durationOff?: { duration: number; target: number } };
       // Decision 917: the duration the agent set for this turn, if any, is the one the version is checked against.
-      if (turnContract === 'compositions') saved = await this.finishCompositions(ref, store, { ...plan, creative: { ...plan.creative, brief: { ...plan.creative.brief, durationSec: checkDuration() } } }, presets, base, n, label, locale, { accepted });
+      if (turnContract === 'compositions') saved = await this.finishCompositions(ref, store, { ...plan, creative: { ...plan.creative, brief: { ...plan.creative.brief, durationSec: checkDuration() } } }, presets, base, n, label, locale,
+        { accepted: turnContract === 'compositions' && checkDuration() !== creative.brief.durationSec ? acceptedDurationsOf(base, targets, presets, checkDuration()) : accepted });
       else {
         const assembled = await this.assemble(ref, store, plan, presets, base, n, result, label, locale);
         // Hashed by the core from the files, after the agent is done: never taken from anything the agent wrote.

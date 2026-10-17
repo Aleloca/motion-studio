@@ -48,7 +48,8 @@ beforeEach(async () => {
 afterEach(async () => {
   for (const r of runner.runs) r.end();
   await app.close();
-  await rm(base, { recursive: true, force: true });
+  // Late writes of a settled turn (its git commit, storyboards) may still land: retried.
+  await rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 const jobs = async () => (await app.inject('/api/jobs')).json() as JobSummary[];
@@ -95,9 +96,10 @@ describe('update_brief during the turn (user note 6)', () => {
     expect(check.json().problems).toEqual([]);
     run.finish({ write: false });
     await waitIdle();
+    // The pending brief is applied once the turn settled.
+    await vi.waitFor(async () => expect((await detail(slug)).creative.brief.durationSec).toBe(60));
     const d = await detail(slug);
     expect(d.versions.map((v) => v.status)).toEqual(['complete']);
-    expect(d.creative.brief.durationSec).toBe(60);
     expect(runner.runs).toHaveLength(1);
     const a = t().agentActions;
     expect(await actionLines(slug)).toContain(`${a.briefDuration({ from: a.seconds({ n: 6 }), to: a.seconds({ n: 60 }) })} · ${a.afterTurn}`);
@@ -130,6 +132,18 @@ describe('update_brief during the turn (user note 6)', () => {
     expect(d.creative.status).toBe('ready');
     expect(runner.runs).toHaveLength(3);
     expect((await conversation(slug)).some((e) => e.type === 'system' && e.text === a.recheckComplete({ n: 1, target: a.seconds({ n: 60 }) }))).toBe(true);
+  });
+
+  it('a user edit right after the turn builds on the agent\'s pending brief, never under it', async () => {
+    const slug = await create();
+    const run = await runOf(slug);
+    writeCompositions(run, 6);
+    expect((await bridge(run, 'update_brief', { notes: 'Dal agente' })).statusCode).toBe(200);
+    run.finish({ write: false });
+    await waitIdle();
+    const res = await app.inject({ method: 'PUT', url: `${P}/${slug}`, payload: { services: { images: 'none' } } });
+    expect(res.statusCode, res.body).toBe(200);
+    await vi.waitFor(async () => expect((await detail(slug)).creative.brief).toMatchObject({ notes: 'Dal agente', services: { images: 'none' } }));
   });
 
   it('a recheck leaves a version whose composition changed on disk as it is', async () => {
@@ -174,7 +188,7 @@ describe('update_brief during the turn (user note 6)', () => {
     writeCompositions(run, 6);
     run.finish({ write: false });
     await waitIdle();
-    expect((await detail(slug)).creative.brief.notes).toBe('Chiudi con il logo');
+    await vi.waitFor(async () => expect((await detail(slug)).creative.brief.notes).toBe('Chiudi con il logo'));
   });
 });
 
@@ -196,12 +210,12 @@ describe('formats and languages', () => {
     writeCompositions(follow, 6);
     follow.finish({ write: false });
     await waitIdle();
+    // The actions after a turn run once it settled (after its pending brief): the line comes right after.
+    await vi.waitFor(async () => expect(await actionLines(slug)).toContain(t().agentActions.formatMadeNext({ formats: 'LinkedIn · Post 4:5' })));
     expect(runner.runs).toHaveLength(2);
     const d = await detail(slug);
     expect(d.creative.brief.formats).toEqual(['youtube-16x9', 'instagram-reel-9x16', 'linkedin-4x5']);
     expect(d.versions.map((v) => v.status)).toEqual(['complete', 'complete']);
-    // The actions after a turn run once it settled: the line comes right after.
-    await vi.waitFor(async () => expect(await actionLines(slug)).toContain(t().agentActions.formatMadeNext({ formats: 'LinkedIn · Post 4:5' })));
   });
 
   it('duplicate_format runs after the turn, on the version it saved', async () => {
@@ -229,7 +243,7 @@ describe('formats and languages', () => {
     writeCompositions(run, 6);
     run.finish({ write: false });
     await waitIdle();
-    expect((await detail(slug)).creative.brief.locales).toEqual({ primary: 'it', extra: ['de'] });
+    await vi.waitFor(async () => expect((await detail(slug)).creative.brief.locales).toEqual({ primary: 'it', extra: ['de'] }));
     // The translation job started on the saved version (its own turn).
     await vi.waitFor(async () => expect((await jobs()).some((j) => j.kind === 'localize')).toBe(true));
   });
