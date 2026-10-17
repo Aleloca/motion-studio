@@ -81,6 +81,27 @@ describe('live messages, capability on (opt-in, fake runner)', () => {
     expect((await s.creative()).queued ?? []).toEqual([]);
   });
 
+  it('user note 7: the message lands in conversation.jsonl after every agent event emitted before it, and before the later ones', async () => {
+    s = await liveApp({ live: true });
+    await startTurn();
+    const run = await s.runner.next(0);
+    // A burst of agent output whose writes are still queued when the message comes.
+    for (let i = 0; i < 300; i++) run.emit({ kind: 'text', text: `prima ${i}` });
+    const clientId = cid();
+    expect((await post({ clientId, text: 'In mezzo', mode: 'live' })).json().outcome).toBe('delivered-pending');
+    run.emit({ kind: 'text', text: 'dopo' });
+    run.finish();
+    await s.waitIdle();
+    const conv = await s.conversation();
+    const textOf = (e: Record<string, unknown>) => (e.type === 'agent' && (e.event as { kind: string }).kind === 'text' ? (e.event as { text: string }).text : null);
+    const at = conv.findIndex((e) => e.type === 'user' && e.clientId === clientId);
+    const lastBefore = conv.findIndex((e) => textOf(e) === 'prima 299');
+    const after = conv.findIndex((e) => textOf(e) === 'dopo');
+    expect(lastBefore).toBeGreaterThanOrEqual(0);
+    expect(at).toBeGreaterThan(lastBefore);
+    expect(after).toBeGreaterThan(at);
+  });
+
   it('a message sent while the turn waits to start is written once the run starts', async () => {
     s = await liveApp({ live: true });
     // Two turns of two creatives, concurrency 2: hold the run of ours by not finishing; message before it starts is
