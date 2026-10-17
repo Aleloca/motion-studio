@@ -100,9 +100,9 @@ Blocchi a due colonne, alternati sinistra/destra, separati da hairline. Da una p
 6. **Talk to the agent while it works**: coda, Stop, Stop and redirect, messaggi live.
 7. **Local and versioned with git**: tutto sul tuo computer, ogni versione è un commit, export con nomi file a pattern.
 8. **Paid services, only when you say so**: immagini (OpenAI), voce (OpenAI, ElevenLabs), musica ed effetti (ElevenLabs), stock (Pexels, Unsplash). Conferma prima di ogni chiamata a pagamento; chiavi nel portachiavi, mai visibili all'agente.
-9. **Creative variants**: fino a 5 direzioni creative (A–E) per ogni creatività, ognuna coerente su tutti i formati. La scelta finale si fa per formato, anche mescolando varianti diverse; le varianti scartate si nascondono ("Show discarded").
-   - **L'utente ha chiesto di presentarle come già disponibili**, anche se la fase 15 è ancora in sviluppo (vedi §8).
-   - Fonte: `docs/superpowers/specs/2026-10-16-motion-studio-phase15-variants-design.md`.
+9. **Creative variants**: fino a 5 direzioni creative (A–E) per ogni creatività, ognuna coerente su tutti i formati. La scelta finale si fa per formato, anche mescolando varianti diverse; le varianti scartate escono dalla scelta ("Discard") e tornano con "Restore".
+   - L'utente aveva chiesto di presentarle come già disponibili; la fase 15 è su main da 385f898 (vedi §8).
+   - Fonte: README "Creative variants".
 
 Tutti i testi vengono dal README, da `README.it.md`, da `docs/` e dalle spec. Niente funzioni o numeri che lì non ci sono.
 
@@ -173,7 +173,7 @@ Repository, README, `docs/`, licenza MIT, il logo. Nessun tracker.
   - I file del logo si copiano **una volta** da `branding/` del checkout principale in `site/assets/` e si committano. Nessuno script contiene percorsi assoluti.
   - I font (OFL) si scaricano una volta da Google Fonts in `site/assets/fonts/`, self-hosted, con le licenze accanto. A runtime la pagina non contatta Google.
 - **Link (mia scelta):** puntano a `https://github.com/Aleloca/motion-studio` (ref `main`) e alle ancore del README; il builder verifica che ogni ancora esista.
-- **Varianti (mia scelta):** i testi del blocco 9 vengono dalla spec della fase 15 al commit di oggi; se la fase 15 cambia, li aggiorna l'orchestratore al merge.
+- **Varianti (mia scelta):** i testi del blocco 9 vengono dalla sezione "Creative variants" del README di main dopo il merge della fase 15 (385f898).
 
 - **Struttura:**
   - `site/` con HTML, CSS e JS semplici;
@@ -206,7 +206,7 @@ Repository, README, `docs/`, licenza MIT, il logo. Nessun tracker.
 - **Fine lavoro:**
   - trailer dei commit come nel brief;
   - prima della consegna, grep del diff per il percorso della home locale e l'e-mail dell'utente: nessun risultato ammesso.
-- **Nota per l'orchestratore:** il blocco 9 (varianti) descrive una funzione della fase 15 non ancora rilasciata, e la pagina la presenta come disponibile per scelta esplicita dell'utente. Il merge del sito andrebbe fatto insieme o dopo la fase 15.
+- **Nota per l'orchestratore:** la fase 15 è su main (385f898) ed è stata unita in questo branch; il blocco 9 è allineato al README.
 
 ## 9. Lasciato al builder
 

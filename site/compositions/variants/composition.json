@@ -629,7 +629,7 @@
           "start": 4.8,
           "duration": 3.2,
           "props": {
-            "text": "Unused variants are hidden. Show discarded brings them back.",
+            "text": "Discarded variants step aside. Restore brings one back.",
             "fontFamily": "Instrument Sans",
             "fontWeight": 400,
             "color": "#A3A3A3",
