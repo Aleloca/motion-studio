@@ -1144,6 +1144,26 @@ describe('EditorScreen · one screen with the format view (decision 916)', () =>
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Request a change')));
   });
 
+  it('an identity format: the editor first, then the rendered logo on light and dark, and the sizes grid (identity bar)', async () => {
+    const LOGO = 'identity-logo';
+    const set = { dir: LOGO, files: [{ path: 'logo.svg', role: 'vector' }, { path: 'logo.png', width: 1024, height: 400, alpha: true, role: 'raster' }, { path: 'logo-dark.png', width: 1024, height: 400, alpha: true, role: 'raster-dark' }], warnings: [] };
+    detail = makeDetail([{ ...v2(1), outputs: [{ format: LOGO, file: 'identity-logo.png', width: 1024, height: 1024, durationSec: null, verified: true, preview: null, identitySet: set }],
+      compositions: [{ format: LOGO, dir: `compositions/${LOGO}`, hash: hashOf(1) }] } as unknown as VersionEntry], { formats: [LOGO] });
+    api.getEditorComposition.mockImplementation(async (_s, _c, n) => view(n, { format: LOGO, primaryFormat: LOGO, composition: { ...structuredClone(spike), width: 1024, height: 1024, duration: 0, scenes: [], tracks: [] } as Composition }));
+    render(<Harness format={LOGO} />);
+    await screen.findByTestId('player');
+    await waitFor(() => expect(peekDraft(draftKey('acme', 'lancio', LOGO))).not.toBeNull());
+    const views = await screen.findByRole('radiogroup', { name: 'View' });
+    expect(within(views).getByRole('radio', { name: 'Edit' }).getAttribute('aria-checked')).toBe('true');
+    expect(document.querySelector('.ms-ed-stage')!.hasAttribute('hidden')).toBe(false);
+    await userEvent.click(within(views).getByRole('radio', { name: 'Image' }));
+    expect(screen.getByRole('img', { name: /on a light and on a dark background/ })).toBeTruthy();
+    expect(document.querySelector('.ms-idn-dark img')!.getAttribute('src')).toContain('identity-logo/logo-dark.png');
+    expect(document.querySelector('.ms-ed-stage')!.hasAttribute('hidden')).toBe(true);
+    await userEvent.click(within(views).getByRole('radio', { name: 'Sizes' }));
+    expect(screen.getByRole('region', { name: 'Sizes' })).toBeTruthy();
+  });
+
   it('a legacy older version picked in the viewer is the viewer; a version with a composition picked there is the editor again', async () => {
     detail = makeDetail([{ ...legacy(1), outputs: [{ format: REEL, file: 'reel.mp4', width: 1080, height: 1920, durationSec: 6, verified: true, preview: null }] }, v2(2)]);
     render(<Harness />);
