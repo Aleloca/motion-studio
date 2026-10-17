@@ -88,8 +88,7 @@ export class Git {
       await this.assertSafe(dir);
       await ensureLocalExcludes(dir);
       await this.must(dir, ['add', '-A']);
-      const status = await this.must(dir, ['status', '--porcelain']);
-      if (status.trim() === '') return opts.headWhenClean ? this.head(dir) : null;
+      if (await this.nothingStaged(dir, [])) return opts.headWhenClean ? this.head(dir) : null;
       await this.must(dir, [...IDENTITY, 'commit', '-q', '-m', message]);
       return (await this.must(dir, ['rev-parse', 'HEAD'])).trim();
     });
@@ -108,8 +107,7 @@ export class Git {
       await ensureLocalExcludes(dir);
       const specs = relPaths.map((p) => `:(literal)${p}`);
       await this.must(dir, ['add', '--', ...specs]);
-      const status = await this.must(dir, ['status', '--porcelain', '--', ...specs]);
-      if (status.trim() === '') return opts.headWhenClean ? this.head(dir) : null;
+      if (await this.nothingStaged(dir, specs)) return opts.headWhenClean ? this.head(dir) : null;
       await this.must(dir, [...IDENTITY, 'commit', '-q', '--only', '-m', message, '--', ...specs]);
       return (await this.must(dir, ['rev-parse', 'HEAD'])).trim();
     });
@@ -132,6 +130,20 @@ export class Git {
       if (pending > 0) await this.must(dir, ['clean', '-f', '-d', '--', spec]);
       return pending;
     });
+  }
+
+  /**
+   * Whether the index equals HEAD (below `specs` when given). Decided on what is staged, never on `status`: another
+   * creative's agent may create or change a file between the `add` and this check, and an untracked or unstaged file
+   * would make `git commit` fail with nothing staged (decisions log 871). Index = HEAD is also exactly when HEAD holds
+   * the version (`headWhenClean`). In a repository without commits everything added is staged (exit 1).
+   */
+  private async nothingStaged(dir: string, specs: string[]): Promise<boolean> {
+    const r = await this.exec('git', [...HARDENED, 'diff', '--cached', '--quiet', '--no-ext-diff', '--no-textconv', ...(specs.length ? ['--', ...specs] : [])], { cwd: dir, env: hardenedGitEnv(dir) });
+    if (r.notFound) throw new Error(t().errors.gitNotFound);
+    if (r.code === 0) return true;
+    if (r.code === 1) return false;
+    throw new Error(t().errors.gitFailed({ command: 'diff', detail: r.stderr.trim() }));
   }
 
   /** HEAD's sha, or null in a repository without commits. */

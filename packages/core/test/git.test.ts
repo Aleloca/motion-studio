@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { execCommand, type CommandExec } from '../src/exec.ts';
 import { Git } from '../src/git.ts';
+import { HARDENED_FLAGS } from '../src/git-safety.ts';
 import { IntegrityStore, snapshotProtected } from '../src/project-integrity.ts';
 
 // Many of these tests run real git on a loaded machine: a generous timeout for this file only.
@@ -65,7 +66,8 @@ describe('Git errors and locking', () => {
   it('labels a failure with the subcommand only (no identity pairs, no commit message)', async () => {
     const exec: CommandExec = async (_cmd, args) =>
       args.includes('commit') ? { code: 1, stdout: '', stderr: 'nothing\n', notFound: false }
-        : { code: 0, stdout: args.includes('status') ? ' M a\n' : '', stderr: '', notFound: false };
+        // `diff --cached --quiet` exits 1: something is staged.
+        : { code: args.includes('diff') ? 1 : 0, stdout: args.includes('status') ? ' M a\n' : '', stderr: '', notFound: false };
     const err = await new Git(exec).commitAll('/r', 'Messaggio segreto').catch((e) => e);
     expect(err.message).toBe('git commit fallito: nothing');
   });
@@ -203,6 +205,41 @@ describe('Git version commits with two concurrent creatives (decisions log 868)'
     const other = await git.commitAll(dir, 'x: stato');
     expect(await git.commitPaths(dir, ['creatives/y'], 'y: v1')).toBeNull();
     expect(await git.commitPaths(dir, ['creatives/y'], 'y: v1', { headWhenClean: true })).toBe(other);
+  });
+
+  // Gate (no sleeps): the other creative's agent, still running, writes a file right after this commit's `git add`.
+  const gatedGit = (onAfterAdd: () => Promise<void>) => {
+    let fired = false;
+    const exec: CommandExec = async (cmd, args, opts) => {
+      const r = await execCommand(cmd, args, opts);
+      if (!fired && args[HARDENED_FLAGS.length] === 'add') { fired = true; await onAfterAdd(); }
+      return r;
+    };
+    return new Git(exec);
+  };
+
+  it('commitAll: an untracked file appearing after the add, with nothing staged, still returns HEAD (never a failed commit)', async () => {
+    const { dir, git } = await setup();
+    await writeFile(join(dir, 'creatives', 'x', 'work', 'scene.py'), 'x1');
+    const yCommit = await git.commitAll(dir, 'y: v1');
+    const gated = gatedGit(() => writeFile(join(dir, 'creatives', 'y', 'work', 'late.py'), 'y-writing'));
+    expect(await gated.commitAll(dir, 'x: v1', { headWhenClean: true })).toBe(yCommit);
+    const log = await execCommand('git', ['log', '-1', '--format=%s'], { cwd: dir });
+    expect(log.stdout.trim()).toBe('y: v1');
+  });
+
+  it('commitAll without the option: the same race gives null, not a failed commit', async () => {
+    const { dir } = await setup();
+    const gated = gatedGit(() => writeFile(join(dir, 'creatives', 'y', 'work', 'late.py'), 'y-writing'));
+    expect(await gated.commitAll(dir, 'x: stato')).toBeNull();
+  });
+
+  it('commitPaths: an untracked file appearing in the paths after the add, with nothing staged, still returns HEAD', async () => {
+    const { dir, git } = await setup();
+    await writeFile(join(dir, 'creatives', 'y', 'work', 'seed.py'), 'seed');
+    const other = await git.commitAll(dir, 'x: stato');
+    const gated = gatedGit(() => writeFile(join(dir, 'creatives', 'y', 'work', 'late.py'), 'y-writing'));
+    expect(await gated.commitPaths(dir, ['creatives/y'], 'y: v1', { headWhenClean: true })).toBe(other);
   });
 
   it('restoring X from a commit that also holds Y\'s half-written files never touches Y', async () => {
