@@ -44,6 +44,26 @@
 .ms-approval-actions .ms-grow { flex: 1 1 auto; }
 .ms-approval-error { margin: 0; color: var(--warn); font-size: 12px; overflow-wrap: anywhere; }
 
+/* ---------- question card (user note 8) ---------- */
+.ms-question-block { display: flex; flex-direction: column; gap: 6px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.ms-question-header { align-self: flex-start; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.ms-question-text { line-height: 1.5; color: var(--text); font-weight: 600; overflow-wrap: anywhere; white-space: pre-wrap; }
+.ms-question-options { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ms-question-option {
+  display: flex; align-items: flex-start; gap: 8px; min-width: 0; padding: 7px 9px; border-radius: 8px; cursor: pointer;
+  background: var(--panel); box-shadow: inset 0 0 0 1px var(--line2);
+}
+.ms-question-option:has(input:checked) { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.ms-question-option:has(input:disabled) { cursor: default; opacity: 0.7; }
+.ms-question-option input { flex: none; margin: 3px 0 0; accent-color: var(--accent); }
+.ms-question-option-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ms-question-label { color: var(--text); font-weight: 600; overflow-wrap: anywhere; }
+.ms-question-desc { color: var(--muted); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+/* The question and its answer in the conversation. */
+.ms-question-done { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 9px 11px; border-radius: 10px; background: var(--field); box-shadow: inset 0 0 0 1px var(--line); }
+.ms-question-answer { color: var(--text); overflow-wrap: anywhere; white-space: pre-wrap; }
+.ms-question-answer b { color: var(--muted); font-weight: 600; margin-right: 6px; }
+
 /* ---------- conversation ---------- */
 .ms-convo { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
 .ms-convo-list {

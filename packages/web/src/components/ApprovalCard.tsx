@@ -8,6 +8,7 @@ import { message } from '../errors.ts';
 import { explanationView, RiskChips } from './RiskChips.tsx';
 import { ruleLabel } from './ruleLabel.ts';
 import { PaidBatchCard } from '../screens/creative/PaidBatchCard.tsx';
+import { QuestionCard } from './QuestionCard.tsx';
 
 /**
  * Lengths at which the core cuts the detail, mirrored from packages/core/src/approvals/broker.ts (`describeRequest`
@@ -48,7 +49,10 @@ export interface ApprovalCardProps {
  */
 export function ApprovalCard(props: ApprovalCardProps) {
   // Several paid calls confirmed together (Phase 12): their own card, everywhere approvals are shown.
-  return props.approval.kind === 'paid-batch' && props.approval.paidBatch ? <PaidBatchCard {...props} /> : <ToolApprovalCard {...props} />;
+  if (props.approval.kind === 'paid-batch' && props.approval.paidBatch) return <PaidBatchCard {...props} />;
+  // User note 8: the agent's AskUserQuestion is a question to answer, not a permission.
+  if (props.approval.kind === 'question') return <QuestionCard {...props} />;
+  return <ToolApprovalCard {...props} />;
 }
 
 function ToolApprovalCard({ approval, context, leaving = false, onGone }: ApprovalCardProps) {

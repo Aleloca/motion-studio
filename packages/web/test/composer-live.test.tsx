@@ -431,3 +431,40 @@ describe('user note 7: a live message sits in the timeline at its send time', ()
     await waitFor(() => expect(order()).toEqual(['Make it red', 'Working on red', 'Use blue', 'Switching to blue']));
   });
 });
+
+describe('user note 8: the agent\'s question in the conversation', () => {
+  const question = 'The brief says about 30 s, the title 12 s: which length?';
+  const asked: AgentEvent = { kind: 'tool_use', id: 'toolu_q', name: 'AskUserQuestion', input: { questions: [{ question, header: 'Length', options: [{ label: '12 s', description: '' }, { label: '30 s', description: '' }], multiSelect: false }] } };
+  const request: ConversationEntry = { type: 'user', at: at(1), text: 'Make the video', pins: [], attachments: [], jobId: 'j1' };
+
+  it('an answered question shows as the question and the answer, between what came before and after', () => {
+    render(view({ job: done, entries: [request, agent(2, { kind: 'text', text: 'One doubt first' }), agent(2, asked),
+      agent(3, { kind: 'question_answered', outcome: 'answered', toolUseId: 'toolu_q', items: [{ header: 'Length', question, answer: '12 s' }] }),
+      agent(4, { kind: 'text', text: 'Going with 12 s' }), agent(5, { kind: 'result', ok: true, sessionId: 's' })] }));
+    const card = screen.getByRole('article', { name: 'Question from the agent' });
+    expect(within(card).getByText('Length')).toBeTruthy();
+    expect(within(card).getByText(question)).toBeTruthy();
+    expect(within(card).getByText('12 s')).toBeTruthy();
+    expect(within(card).getByText('Your answer')).toBeTruthy();
+    const all = [...document.querySelectorAll('article')];
+    expect(all.indexOf(card)).toBeGreaterThan(all.findIndex((a) => a.textContent?.includes('One doubt first')));
+    expect(all.indexOf(card)).toBeLessThan(all.findIndex((a) => a.textContent?.includes('Going with 12 s')));
+    expect(screen.queryByText(/AskUserQuestion/)).toBeNull();
+    expect(screen.queryByText(/Unknown command/)).toBeNull();
+  });
+
+  it('an unanswered question says so', () => {
+    render(view({ job: done, entries: [request, agent(2, asked), agent(3, { kind: 'question_answered', outcome: 'expired', items: [{ header: 'Length', question }] }), agent(5, { kind: 'result', ok: true, sessionId: 's' })] }));
+    const card = screen.getByRole('article', { name: 'Question from the agent' });
+    expect(within(card).getByText('No answer in time')).toBeTruthy();
+  });
+
+  it('a pending question (also after a reload: it comes with the snapshot) is a question card in the flow', () => {
+    const approval = { id: 'q1', jobId: 'j1', projectSlug: 'acme', creativeSlug: 'c1', kind: 'question' as const, title: 'The agent asks you a question', detail: '', toolName: 'AskUserQuestion', alwaysRule: null, explanation: null, agentReason: null, createdAt: at(2), expiresAt: '2026-10-14T10:12:00.000Z',
+      questions: [{ question, header: 'Length', multiSelect: false, options: [{ label: '12 s', description: 'As in the title' }, { label: '30 s', description: 'As in the brief' }] }] };
+    render(<I18nProvider locale="en"><Conversation {...props} approvals={[approval]} entries={[request, agent(2, asked)]} job={running} /></I18nProvider>);
+    expect(screen.getByRole('radio', { name: /12 s/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Answer' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Allow' })).toBeNull();
+  });
+});

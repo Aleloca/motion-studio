@@ -1,3 +1,4 @@
+import { QUESTION_DISPLAY } from '@motion-studio/shared';
 import type { AgentEvent, ApprovalRequest, Brief, ConversationEntry, ExplainContext, JobSummary, LiveMessageOutcome, Pin, QueuedRequest, RedirectOutcome, VariantGroup, VariantLetter } from '@motion-studio/shared';
 import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { api, ApiError, type VariantRunResult } from '../api.ts';
@@ -15,6 +16,7 @@ import { VariantSelector, type ChatTarget } from '../screens/variants/VariantSel
 import { errorCode, versionErrorText } from '../screens/versionErrors.ts';
 import { message } from '../errors.ts';
 import { ApprovalCard } from './ApprovalCard.tsx';
+import { Clipped } from './QuestionCard.tsx';
 import { ServicesChip } from './ServicesSelector.tsx';
 import { explanationView, RiskChips } from './RiskChips.tsx';
 import { useApprovalPresence, type ShownApproval } from './approvalPresence.ts';
@@ -128,7 +130,9 @@ type Item =
   | { key: string; kind: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string }
   | { key: string; kind: 'approval'; shown: ShownApproval }
   | { key: string; kind: 'typing' }
-  | { key: string; kind: 'retried'; at: string };
+  | { key: string; kind: 'retried'; at: string }
+  /** User note 8: the agent's AskUserQuestion and what became of it. */
+  | { key: string; kind: 'question'; at: string; event: Extract<AgentEvent, { kind: 'question_answered' }> };
 
 /** An Activity details row: a command (or Read) of the command log, or a raw technical event. */
 type DetailEntry = { key: string; row: CommandRow } | { key: string; event: AgentEvent };
@@ -175,6 +179,8 @@ function turnItems(interruptedText: string, jobId: string, events: { at: string;
       if (!e.text.trim()) return;
       lastAgent = { key, kind: 'agent', at, text: e.text, summary: false };
       out.push(lastAgent);
+    } else if (e.kind === 'question_answered') {
+      out.push({ key, kind: 'question', at, event: e });
     } else if (e.kind === 'interrupted') {
       out.push({ key, kind: 'system', at, level: 'info', text: interruptedText });
     } else if (e.kind === 'progress') {
@@ -458,6 +464,30 @@ function PinLabel({ pin, text }: { pin: Pin; text: string }) {
   );
 }
 
+/** User note 8: a question the agent asked, with the user's answer (plain text: the agent wrote the question). */
+function AnsweredQuestion({ at, event }: { at: string; event: Extract<AgentEvent, { kind: 'question_answered' }> }) {
+  const t = useT();
+  const q = t.web.questionUi;
+  const none = event.outcome === 'expired' ? q.expired : event.outcome === 'cancelled' ? q.cancelled : q.skipped;
+  return (
+    <article className="ms-msg" aria-label={q.historyLabel}>
+      <AgentMark />
+      <div className="ms-msg-body">
+        <span className="ms-msg-meta"><b>{q.historyLabel}</b>·<When at={at} /></span>
+        {event.items.map((it, i) => (
+          <div key={i} className="ms-question-done">
+            {it.header && <Clipped className="ms-question-header" text={it.header} max={QUESTION_DISPLAY.header} />}
+            <Clipped className="ms-question-text" text={it.question} max={QUESTION_DISPLAY.question} />
+            {it.answer !== undefined
+              ? <span className="ms-question-answer"><b>{q.yourAnswer}</b><span>{it.answer}</span></span>
+              : <span className="ms-approval-note">{none}</span>}
+          </div>
+        ))}
+      </div>
+    </article>
+  );
+}
+
 function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetails, onSelectVersion, versionExtra, versionNote, versionSummary, onGone }: {
   item: Item; formatName?(id: string): string; onToggleFold(jobId: string): void; onToggleDetails(jobId: string): void; onOpenDetails(jobId: string): void;
   onSelectVersion?(n: number): void; versionExtra?(n: number): ReactNode; versionNote?(n: number): ReactNode; versionSummary?(n: number): string | null; onGone(id: string): void;
@@ -489,6 +519,8 @@ function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetai
           </div>
         </article>
       );
+    case 'question':
+      return <AnsweredQuestion at={item.at} event={item.event} />;
     case 'retried':
       return (
         <div className="ms-convo-retried">
