@@ -47,7 +47,16 @@ export interface BridgeContext {
    * only places `import_codebase_file` copies from. Frozen with the context.
    */
   readonly codebases?: readonly string[];
+  /**
+   * Decision 917, creative turns only: what the agent's app actions (`update_brief`, `add_variant`…) act on — this turn's
+   * creative (and through it its variant group and project) and the version the turn makes. Set by the turn when it launches
+   * the agent, frozen with the context: no tool argument ever names a project, a creative or a job.
+   */
+  readonly appScope?: Readonly<AppScope>;
 }
+
+/** Decision 917: see `BridgeContext.appScope`. */
+export interface AppScope { root: string; projectSlug: string; projectDir: string; creativeSlug: string; version: number }
 
 /** Per-job tokens that let the `studio` MCP server call back into the core on behalf of one agent job. */
 export class AgentBridge {
@@ -61,6 +70,7 @@ export class AgentBridge {
       ...ctx, sandboxed: ctx.sandboxed === true, autoApproveAtStart: ctx.autoApproveAtStart === true,
       ...(ctx.services ? { services: Object.freeze({ ...ctx.services }) } : {}),
       ...(ctx.codebases ? { codebases: Object.freeze([...ctx.codebases]) } : {}),
+      ...(ctx.appScope ? { appScope: Object.freeze({ ...ctx.appScope }) } : {}),
     }));
     return t;
   }

@@ -30,6 +30,7 @@ import { downloadTool } from '../bridge/download-tool.ts';
 import { importCodebaseTool } from '../bridge/import-codebase-tool.ts';
 import { paidServicePlan, providerTools, voiceAvailability, voiceBatch } from '../bridge/provider-tools.ts';
 import { VariantDirections } from '../creatives/variant-directions.ts';
+import { AgentActionService } from '../creatives/agent-actions.ts';
 import { VariantFanout } from '../creatives/variant-fanout.ts';
 import { LocalizeService, ProjectActivity } from '../localization/localize-turn.ts';
 import type { LookupFn, Transport } from '../providers/safe-fetch.ts';
@@ -807,6 +808,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   registerGenerateRoutes(app, { requireWorkspace, vault, approvals, media, queue, keyChecks, http: deps.generateHttp ?? { fetch: globalThis.fetch }, broadcast: (m) => hub.broadcast(m) });
   registerProjectRoutes(app, { requireWorkspace, jobKeyOf: projectJobKey, broadcast: (m) => hub.broadcast(m) });
 
+  // Decision 917: the agent's actions on the app (creative turns only), through the same services as the routes above.
+  const agentActions = new AgentActionService({
+    turns, edits, renders, localize, variantRuns,
+    presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
+  });
   registerBridgeRoutes(app, {
     bridge, approvals,
     // The config folder holds the UI token and the bridge tokens: no permission prompt may open it.
@@ -817,6 +823,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       ...providerTools({ vault, approvals, media, keyChecks, settings: () => requireWorkspace().readSettings(), broadcast: (m) => hub.broadcast(m), ...deps.providerHttp }),
       download_file: downloadTool({ media, broadcast: (m) => hub.broadcast(m) }),
       import_codebase_file: importCodebaseTool({ media, broadcast: (m) => hub.broadcast(m) }),
+      ...agentActions.tools(),
     },
   });
   registerSettingsRoutes(app, { vault, approvals, requireWorkspace, keyChecks, keyCheckHttp: deps.keyCheckHttp ?? { fetch: globalThis.fetch } });
