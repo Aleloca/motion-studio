@@ -1,7 +1,7 @@
 import type { DoctorCheck, UsageBilling } from '@motion-studio/shared';
 import type { BinaryArch } from './render/arch.ts';
 import type { SandboxSupport } from './agent/sandbox.ts';
-import type { CommandExec, CommandResult } from './exec.ts';
+import { isBadArchError, type CommandExec, type CommandResult } from './exec.ts';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { t } from './i18n.ts';
@@ -35,7 +35,7 @@ export async function runDoctor(opts: {
    * The ffmpeg build's architecture (render/encode.ts `findFfmpeg`): shown next to its version, and an x86_64 build under
    * Rosetta on Apple Silicon is named (it renders, slower). Absent or failing: the plain version.
    */
-  ffmpegInfo?: () => Promise<{ arch: BinaryArch; hostArch: string; translated: boolean } | null>;
+  ffmpegInfo?: () => Promise<{ arch: BinaryArch; hostArch: string; translated: boolean; version?: string } | null>;
   /**
    * Phase 13: the workspace settings for live messages and interrupt. When given (even `{}`), the report says which path
    * is active: live for a verified version with the settings on (decision 804), otherwise the fallback (queued only, stop
@@ -66,8 +66,13 @@ export async function runDoctor(opts: {
       ? { id: 'git', label: 'Git', required: true, ok: false, message: d.gitMissing, fix: d.gitFix }
       : { id: 'git', label: 'Git', required: true, ok: false, message: brokenMessage(git) });
 
-  const ffmpeg = await execFfVia(exec, 'ffmpeg', ['-version']);
-  const arch = ffmpeg.code === 0 && opts.ffmpegInfo ? await opts.ffmpegInfo().catch(() => null) : null;
+  let ffmpeg = await execFfVia(exec, 'ffmpeg', ['-version']).catch((e): CommandResult => ({ code: -1, stdout: '', stderr: String((e as Error).message), notFound: false, badArch: isBadArchError(e) }));
+  let arch = ffmpeg.code === 0 && opts.ffmpegInfo ? await opts.ffmpegInfo().catch(() => null) : null;
+  if (ffmpeg.code !== 0 && ffmpeg.badArch && opts.ffmpegInfo) {
+    // The first ffmpeg on PATH is Intel-only and there is no Rosetta: another build (e.g. /opt/homebrew/bin) may still run.
+    const other = await opts.ffmpegInfo().catch(() => null);
+    if (other) { arch = other; ffmpeg = { code: 0, stdout: other.version ? `ffmpeg version ${other.version}` : '', stderr: '', notFound: false }; }
+  }
   const archText = arch && arch.arch !== 'unknown' ? d.ffmpegArch({ arch: arch.arch === 'universal' ? d.ffmpegUniversal : arch.arch, translated: arch.translated }) : null;
   const ffmpegVersion = versionIn(ffmpeg.stdout);
   checks.push(ffmpeg.code === 0
@@ -78,6 +83,8 @@ export async function runDoctor(opts: {
     }
     : ffmpeg.notFound
       ? { id: 'ffmpeg', label: 'FFmpeg', required: false, ok: false, message: d.ffmpegRecommended, fix: d.ffmpegFix }
+      : ffmpeg.badArch
+        ? { id: 'ffmpeg', label: 'FFmpeg', required: false, ok: false, message: d.ffmpegWrongArch, fix: d.ffmpegFix }
       : { id: 'ffmpeg', label: 'FFmpeg', required: false, ok: false, message: brokenMessage(ffmpeg) });
 
   const claude = await exec(claudeBin, [...claudePrefix, '--version']);

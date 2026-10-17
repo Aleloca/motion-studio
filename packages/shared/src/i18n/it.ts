@@ -257,6 +257,7 @@ export const it: Messages = {
     ffmpegFix: 'Installa FFmpeg da https://ffmpeg.org (macOS: brew install ffmpeg)',
     ffmpegArch: (p) => (p.translated ? `${p.arch} con Rosetta: render più lenti` : p.arch),
     ffmpegUniversal: 'universale',
+    ffmpegWrongArch: 'FFmpeg trovato ma compilato per Intel: su questo Mac non può partire. Installa la versione per Apple Silicon, es. con Homebrew in /opt/homebrew',
     ffmpegRosetta: 'Installato: una build Intel che gira con Rosetta su Apple Silicon. I render funzionano, più lentamente; una build arm64 (Homebrew in /opt/homebrew) è più veloce',
     claudeMissing: 'Claude Code non trovato',
     broken: 'Installato ma non risponde correttamente',

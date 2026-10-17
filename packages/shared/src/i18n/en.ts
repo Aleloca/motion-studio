@@ -259,6 +259,7 @@ export const en = {
     ffmpegFix: 'Install FFmpeg from https://ffmpeg.org (macOS: brew install ffmpeg)',
     ffmpegArch: (p: { arch: string; translated: boolean }) => (p.translated ? `${p.arch} under Rosetta: slower renders` : p.arch),
     ffmpegUniversal: 'universal',
+    ffmpegWrongArch: 'FFmpeg was found but is built for Intel: it cannot start on this Mac. Install the Apple Silicon version, e.g. with Homebrew in /opt/homebrew',
     ffmpegRosetta: 'Installed: an Intel build running under Rosetta on Apple Silicon. Renders work, more slowly; an arm64 build (Homebrew in /opt/homebrew) is faster',
     claudeMissing: 'Claude Code not found',
     broken: 'Installed but not responding correctly',

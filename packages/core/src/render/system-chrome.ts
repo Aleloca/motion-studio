@@ -67,9 +67,11 @@ export function chromeVersion(exe: string, timeoutMs = 60_000): Promise<string |
     } catch { return Promise.resolve(null); }
   }
   return new Promise((resolve) => {
-    execFile(exe, ['--version'], { timeout: timeoutMs, encoding: 'utf8', maxBuffer: 1024 * 1024 }, (err, stdout) => {
-      resolve(err ? null : (VERSION_RE.exec(stdout)?.[0] ?? null));
-    });
+    try {
+      execFile(exe, ['--version'], { timeout: timeoutMs, encoding: 'utf8', maxBuffer: 1024 * 1024 }, (err, stdout) => {
+        resolve(err ? null : (VERSION_RE.exec(stdout)?.[0] ?? null));
+      });
+    } catch { resolve(null); } // a synchronous spawn error (EBADARCH): not usable
   });
 }
 

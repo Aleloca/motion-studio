@@ -39,7 +39,7 @@ export function hostArch(): Promise<string> {
   hostArchCache ??= (async () => {
     if (process.platform === 'darwin') {
       const out = await new Promise<string>((resolve) => {
-        execFile('/usr/sbin/sysctl', ['-n', 'hw.optional.arm64'], { timeout: 10_000, encoding: 'utf8' }, (err, stdout) => resolve(err ? '' : stdout));
+        try { execFile('/usr/sbin/sysctl', ['-n', 'hw.optional.arm64'], { timeout: 10_000, encoding: 'utf8' }, (err, stdout) => resolve(err ? '' : stdout)); } catch { resolve(''); }
       });
       return out.trim() === '1' ? 'arm64' : 'x86_64';
     }
