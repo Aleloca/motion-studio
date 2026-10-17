@@ -101,6 +101,8 @@ async function resolveLoose(p: string): Promise<string> {
  * differs from `n`: a follower is named after its primary's version (decisions log 140), whose file is byte-identical.
  */
 export interface ExportItem { format: string; n: number; v?: number; file: string; width: number; height: number;
+  /** Phase 15 (group export): the folder of the creative the file lives in, when it is not `ExportCommon.creativeDir` (a sister). */
+  creativeDir?: string;
   /** The language of the file (Phase 12): the `{locale}` of its name; absent for a creative without extra languages. */
   locale?: string;
   /** A translated render (not the primary language's file). */
@@ -176,10 +178,11 @@ async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refu
   const bad: ExportItem[] = [];
   const ok: ExportItem[] = [];
   for (const it of items) {
-    let usable = plainName(it.file) && (await probeConfinedFile(opts.creativeDir, `outputs/v${it.n}/${it.file}`)) === true;
+    const dir = it.creativeDir ?? opts.creativeDir;
+    let usable = plainName(it.file) && (await probeConfinedFile(dir, `outputs/v${it.n}/${it.file}`)) === true;
     if (usable && it.set) {
       usable = plainName(it.set.dir) && it.set.files.every(setPathOk);
-      for (const f of it.set.files) if (usable) usable = (await probeConfinedFile(opts.creativeDir, `outputs/v${it.n}/${it.set.dir}/${f}`)) === true;
+      for (const f of it.set.files) if (usable) usable = (await probeConfinedFile(dir, `outputs/v${it.n}/${it.set.dir}/${f}`)) === true;
     }
     if (usable) ok.push(it); else if (missing === 'skip') skipped.push(it.file); else bad.push(it);
   }
@@ -207,14 +210,16 @@ async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refu
   if (collisions.length) throw new CodedError(400, t().export.nameCollision({ list: collisions.join(', ') }), 'export-name-collision');
 
   await ensureDestination(dest);
-  const copy: CopyFn = opts.copy ?? ((from, to) => copyConfinedFile(opts.creativeDir, relative(opts.creativeDir, from).split(sep).join('/'), to));
+  const copyIn = (dir: string): CopyFn => opts.copy ?? ((from, to) => copyConfinedFile(dir, relative(dir, from).split(sep).join('/'), to));
   const files: ExportResult['files'] = [];
   for (const it of named) {
-    const from = join(opts.creativeDir, 'outputs', `v${it.n}`, it.file);
+    const dir = it.creativeDir ?? opts.creativeDir;
+    const copy = copyIn(dir);
+    const from = join(dir, 'outputs', `v${it.n}`, it.file);
     try {
       const to = await copyUnique(copy, from, dest, it.stem, it.ext);
       if (to) files.push({ from, to }); else skipped.push(it.file);
-      if (to && it.set) files.push(...await copySet(copy, opts.creativeDir, it.n, it.set, dest, basename(to).slice(0, basename(to).length - it.ext.length)));
+      if (to && it.set) files.push(...await copySet(copy, dir, it.n, it.set, dest, basename(to).slice(0, basename(to).length - it.ext.length)));
     } catch (e) {
       const target = (e as { target?: string }).target;
       if (target) await rm(target, { force: true }).catch(() => undefined);

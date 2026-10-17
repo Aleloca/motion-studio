@@ -1,4 +1,4 @@
-import { creativeJobKey, isSessionId, LIVE_LIMITS, type ConversationEntry, type LiveMessageOutcome, type QueuedRequest, type RedirectOutcome } from '@motion-studio/shared';
+import { activeMembers, creativeJobKey, isSessionId, LIVE_LIMITS, MAX_RUNNING_VARIANTS, type JobWaitReason, type ConversationEntry, type LiveMessageOutcome, type QueuedRequest, type RedirectOutcome, type VariantGroup, type VariantMember } from '@motion-studio/shared';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { mergeStorePack, verifyScreens } from '../store-pack/brief.ts';
@@ -24,6 +24,7 @@ import { compositionSchemaFile, CONTEXT_MD } from '../project-template.ts';
 import { assertAgentFolders, CodedError, WorkspaceError } from '../workspace-store.ts';
 import { CreativeStore } from './creative-store.ts';
 import { CreativeSideStateStore } from './creative-side-state.ts';
+import { VariantGroupService } from './variant-group.ts';
 import { validateOutputs, type ValidationResult } from './output-contract.ts';
 import { confinedSha, copyVerified, earlierOutputDirs, followCheck, isConfinedFile, normalizeTargets, snapshotChanges, snapshotOutputs, versionDirReady, withoutCoreWrites, type FollowFailure } from './carry-over.ts';
 import { outputFileExists } from './format-summary.ts';
@@ -31,7 +32,7 @@ import { hashVersionOutputs, LAZY_HASH_BUDGET_MS, withLazyHashes } from './outpu
 import { legacyProblemsOf } from './legacy-problems.ts';
 import { clearReferenceFrames, conversionPlan, extractReferenceFrames } from './legacy-conversion.ts';
 import { AnswerCache, checkLiveMessage, liveMessageText, LiveSession, newLiveMessage, NO_LIVE, redirectLive, type LiveMessage, type UserMessageInput } from '../agent/live-session.ts';
-import { buildCreativePrompt, interruptedRedirectText, pinLine, REDIRECT_PARTIAL_NOTE, type AgentContract, type CreativeContext, type PromptKind } from './prompt.ts';
+import { buildCreativePrompt, interruptedRedirectText, pinLine, REDIRECT_PARTIAL_NOTE, type AgentContract, type CreativeContext, type PromptKind, type PromptVariant } from './prompt.ts';
 import { checkTargets } from './composition-contract.ts';
 import { realDirChain, writeThroughTemp } from './core-files.ts';
 import { acceptedDurationsOf, alignEditorCopies, assembleCompositions, carriableComposition, type CarriedComposition } from './composition-turn.ts';
@@ -70,6 +71,11 @@ export interface CreativeTurnDeps {
   sideState?: CreativeSideStateStore;
 }
 
+/** What a brief edit sends (PUT …/creatives/:c). */
+export interface BriefPatch { title?: string; brief?: Brief; services?: Brief['services']; formatLabels?: Record<string, string | null>; formats?: string[]; storePack?: StorePack | null; linkedCodebases?: LinkedCodebase[] }
+/** Phase 15: what a variant group shares and propagates (spec §2): the brief (minus each variant's links), title and codebases. */
+export interface SharedBrief { brief: Brief; title?: string; linkedCodebases?: LinkedCodebase[] }
+
 /** Phase 13: what POST …/messages answers (and answers again for the same `clientId`). */
 export interface MessageAnswer { entry: ConversationEntry; outcome: LiveMessageOutcome }
 /** Phase 13: a message sent while a turn runs (live or queued), or a redirect, as the routes pass it. */
@@ -91,6 +97,22 @@ export interface CreativeRef { root: string; projectSlug: string; projectDir: st
 
 /** Shared with the web (render keys are derived from it): @motion-studio/shared `creativeJobKey`. */
 export { creativeJobKey };
+/** Phase 15: see `CreativeTurnService.setQueuedHook`. `hold`: the reason the request's turn waits with (null: none now). */
+export interface QueuedHook { hold: JobWaitReason | null; /** Called with the turn's job id right before it is enqueued. */ started?: (jobId: string) => void }
+
+/** Phase 15: the job queue group of a variant group's turns (`JobSpec.slot`): one per host creative. */
+export const variantSlotGroup = (ref: CreativeRef, host: string): string => `variants:${creativeJobKey(ref.root, ref.projectSlug, host)}`;
+
+/** Phase 15: what a variant's prompt says about its group (`PromptInput.variant`); undefined outside a group. */
+function promptVariant(m: { group: VariantGroup; self: VariantMember } | null): PromptVariant | undefined {
+  if (!m) return undefined;
+  const active = activeMembers(m.group);
+  return {
+    letter: m.self.letter, count: active.length, direction: m.self.direction,
+    others: active.filter((x) => x.slug !== m.self.slug).map((x) => ({ letter: x.letter, direction: x.direction })),
+  };
+}
+
 /** The render command comes from an agent-written manifest: single line, bounded, no control chars. */
 const sanitizeCommand = (cmd: string): string => cmd.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300);
 
@@ -227,6 +249,8 @@ export class CreativeTurnService {
   private readonly answers = new AnswerCache(MAX_ANSWERS);
   /** Phase 13: the creatives whose queue this process changed, by job key (for `otherJobEndedByKey`). */
   private readonly refs = new Map<string, CreativeRef>();
+  /** Phase 15: hooks of queued requests of a variant run, by creative key + clientId (`setQueuedHook`). */
+  private readonly queuedHooks = new Map<string, QueuedHook>();
   constructor(private readonly deps: CreativeTurnDeps) {
     this.maxAttempts = deps.maxAttempts ?? 3;
     this.side = deps.sideState ?? new CreativeSideStateStore(null);
@@ -236,116 +260,227 @@ export class CreativeTurnService {
    * Starts a turn. `opts.formats`: the formats the request applies to (spec §2.5); formats outside the brief are dropped, a
    * follower stands for its primary, and none (or absent) means every primary. The other formats are carried unchanged.
    */
-  async start(ref: CreativeRef, message?: { text: string; pins: Pin[] }, opts: { formats?: string[] } = {}): Promise<JobSummary> {
-    return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), () => this.startLocked(ref, message, opts.formats));
+  async start(ref: CreativeRef, message?: { text: string; pins: Pin[] }, opts: { formats?: string[]; hold?: JobWaitReason } = {}): Promise<JobSummary> {
+    return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), () => this.startLocked(ref, message, opts.formats, undefined, opts.hold));
   }
 
-  /** Edits title and/or brief; refused while a generation is queued or running for the creative. */
-  async updateBrief(ref: CreativeRef, patch: { title?: string; brief?: Brief; services?: Brief['services']; formatLabels?: Record<string, string | null>; formats?: string[]; storePack?: StorePack | null; linkedCodebases?: LinkedCodebase[] }): Promise<CreativeFile> {
+  /**
+   * Phase 15 (variant runs): what happens when the queued request `clientId` of this creative becomes a turn: it is enqueued
+   * held with `hold.reason` while that is set (it waits for the run's directions or paid-services card, even when the turn
+   * before it ends first), and `started` is told its job id. The hook is read when the request starts and then dropped;
+   * `null` removes it. In memory only, like the queue's auto-start (Ruling T).
+   */
+  setQueuedHook(ref: CreativeRef, clientId: string, hook: QueuedHook | null): void {
+    const k = `${creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug)}\0${clientId}`;
+    if (hook) this.queuedHooks.set(k, hook);
+    else this.queuedHooks.delete(k);
+  }
+
+  /**
+   * Edits title and/or brief; refused while a generation is queued or running for the creative. Phase 15: on a creative of
+   * a variant group (its host or a real sister) the edit is the GROUP's: it goes through `VariantGroupService` and reaches
+   * every active variant, a working one at its next turn (spec §2, "Brief comune").
+   */
+  async updateBrief(ref: CreativeRef, patch: BriefPatch): Promise<CreativeFile> {
     // Phase 14: the pack's screens are checked before anything is locked or written (the same check as the pack create route).
     if (patch.storePack) await verifyScreens(ref.projectDir, this.deps.media, patch.storePack);
+    const variants = new VariantGroupService({ store: new CreativeStore(ref.projectDir), turns: this });
+    const resolved = await variants.resolve(ref);
+    if (resolved.group) return variants.updateGroupBrief(resolved.host, patch, ref);
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     return this.locks.run(key, async () => {
       if (this.isActive(key)) throw new WorkspaceError(409, t().errors.waitBeforeBrief);
       const store = new CreativeStore(ref.projectDir);
+      const stored = await store.get(ref.creativeSlug);
       const linkedCodebases = patch.linkedCodebases ? normalizeCodebaseList(patch.linkedCodebases) : null;
       // Decision 788: only new or changed paths get the glob check; a legacy one already stored passes (skipped at run time).
-      if (linkedCodebases) await assertCodebasesOutside(linkedCodebases, [ref.projectDir, ref.root], (await store.get(ref.creativeSlug)).linkedCodebases ?? []);
-      // Links change only through setLink (validated): a brief save keeps the stored ones, whatever it carries. Formats the
-      // save adds get the default links against the primaries already there (and each other), with the duration unknown
-      // (`undefined`): it is checked on the real file when the follower is materialized (spec §2.4).
-      let brief: Brief | undefined;
-      let exportPicks: { exportPicks: CreativeFile['exportPicks'] } | undefined;
-      let freed: { freedInstances: CreativeFile['freedInstances'] } | undefined;
-      // Ids removed or added by this save are freed (final review I1): the rows the latest version holds for them belong to
-      // the old instance and are never carried. Saved versions are not touched.
-      const markFreed = async (stored: CreativeFile, ids: string[]) => {
-        if (ids.length === 0) return;
-        const latest = (await store.readVersions(ref.creativeSlug)).at(-1)?.n ?? 0;
-        freed = withFreedInstances(stored.freedInstances, ids, latest);
-      };
-      if (patch.brief) {
-        const { links: _ignored, storePack: sentPack, ...sent } = patch.brief;
-        const stored = await store.get(ref.creativeSlug);
-        const current = stored.brief;
-        // Phase 14: the store pack changes only through `storePack` (it recomputes the pack's instances); a full save keeps it.
-        // A pack other than the stored one (a second pack, or a changed one) is refused: one pack per creative, edited on its own.
-        // Both sides go through the schema first, so a missing optional or a different key order is not a difference.
-        if (sentPack !== undefined) {
-          const parsed = (p: unknown) => (p === undefined ? undefined : storePackSchema.safeParse(p).data);
-          if (!isDeepStrictEqual(parsed(sentPack), parsed(current.storePack))) {
-            throw new CodedError(409, current.storePack ? t().variants.storePack.second : t().variants.storePack.useEntry, 'store-pack-second');
-          }
-        }
-        const rest = current.storePack ? { ...sent, storePack: current.storePack } : sent;
-        const added = rest.formats.filter((f) => !current.formats.includes(f));
-        // Shared with the web, which tells before "Save and regenerate" whether a legacy creative converts (I4).
-        let links = added.length > 0 ? linksAfterBriefSave(current, rest.formats, await this.deps.presets()) : current.links;
-        // Formats the save removes leave no link (either end) and no manual pick behind (Phase 12): a freed instance id
-        // reused later starts clean. Saved versions are not touched.
-        const gone = new Set(current.formats.filter((f) => !rest.formats.includes(f)));
-        if (gone.size > 0) {
-          const pruned = withoutFormatState(links, stored.exportPicks, gone);
-          links = pruned.links;
-          exportPicks = { exportPicks: pruned.exportPicks };
-        }
-        await markFreed(stored, [...gone, ...added]);
-        brief = links ? { ...rest, links } : rest;
-      } else if (patch.services || patch.formatLabels || patch.formats || patch.storePack !== undefined) {
-        // A partial save (services chip, inline labels, reorder, removal): everything else comes from the brief stored now,
-        // never from the caller's copy.
-        const stored = await store.get(ref.creativeSlug);
-        let next: Brief = { ...stored.brief };
-        if (patch.storePack !== undefined) {
-          // Phase 14: the pack's instances are recomputed from the new pack (set, changed, or `null` to take it out); the
-          // rest of the brief is untouched. Instances that go leave no link and no manual pick; added ones start clean.
-          const m = mergeStorePack(next, patch.storePack, await this.deps.presets());
-          next = m.brief;
-          const gone = new Set(m.removed);
-          if (gone.size > 0) {
-            const pruned = withoutFormatState(next.links, stored.exportPicks, gone);
-            exportPicks = { exportPicks: pruned.exportPicks };
-          }
-          await markFreed(stored, [...m.removed, ...m.added]);
-        }
-        if (patch.services) next.services = patch.services;
-        if (patch.formats) {
-          const f = patch.formats;
-          if (new Set(f).size !== f.length || f.some((id) => !stored.brief.formats.includes(id))) {
-            throw new CodedError(400, t().errors.formatsReorderRemoveOnly, 'formats-reorder-remove-only');
-          }
-          next.formats = f;
-          const gone = new Set(stored.brief.formats.filter((id) => !f.includes(id)));
-          if (gone.size > 0) {
-            const pruned = withoutFormatState(next.links, stored.exportPicks, gone);
-            if (pruned.links) next.links = pruned.links;
-            exportPicks = { exportPicks: pruned.exportPicks };
-            await markFreed(stored, [...gone]);
-          }
-        }
-        if (patch.formatLabels) {
-          // Per key: a key left out is kept (a newer label from another tab survives); '' or null clears the key.
-          const merged: Record<string, string> = { ...(next.formatLabels ?? {}) };
-          for (const [k, v] of Object.entries(patch.formatLabels)) { if (v === null || v === '') delete merged[k]; else merged[k] = v; }
-          next.formatLabels = merged;
-        }
-        // Ruling H: a label of a format the brief no longer has goes with it.
-        if (next.formatLabels) {
-          const kept = Object.fromEntries(Object.entries(next.formatLabels).filter(([k]) => next.formats.includes(k)));
-          if (Object.keys(kept).length > 0) next.formatLabels = kept; else delete next.formatLabels;
-        }
-        brief = next;
-      }
+      if (linkedCodebases) await assertCodebasesOutside(linkedCodebases, [ref.projectDir, ref.root], stored.linkedCodebases ?? []);
+      const change = await this.briefChange(store, ref.creativeSlug, stored, patch);
       const updated = await store.update(ref.creativeSlug, {
         ...(patch.title !== undefined ? { title: patch.title } : {}),
-        ...(brief ? { brief } : {}),
-        ...(exportPicks ?? {}),
-        ...(freed ?? {}),
+        ...(change.brief ? { brief: change.brief } : {}),
+        ...(change.exportPicks ?? {}),
+        ...(change.freed ?? {}),
         ...(linkedCodebases ? { linkedCodebases } : {}),
       });
       await this.commitState(ref, t().jobs.briefUpdatedCommit({ title: updated.title }));
       return updated;
     });
+  }
+
+  /**
+   * What a brief save makes of `stored` (one creative, or a variant group's current brief): the new brief, the export picks
+   * and the freed instances it leaves. No write. `slug` names the creative whose versions date the freed instances.
+   */
+  async briefChange(store: CreativeStore, slug: string, stored: CreativeFile, patch: BriefPatch): Promise<{ brief?: Brief; exportPicks?: { exportPicks: CreativeFile['exportPicks'] }; freed?: { freedInstances: CreativeFile['freedInstances'] } }> {
+    // Links change only through setLink (validated): a brief save keeps the stored ones, whatever it carries. Formats the
+    // save adds get the default links against the primaries already there (and each other), with the duration unknown
+    // (`undefined`): it is checked on the real file when the follower is materialized (spec §2.4).
+    let brief: Brief | undefined;
+    let exportPicks: { exportPicks: CreativeFile['exportPicks'] } | undefined;
+    let freed: { freedInstances: CreativeFile['freedInstances'] } | undefined;
+    // Ids removed or added by this save are freed (final review I1): the rows the latest version holds for them belong to
+    // the old instance and are never carried. Saved versions are not touched.
+    const markFreed = async (ids: string[]) => {
+      if (ids.length === 0) return;
+      const latest = (await store.readVersions(slug)).at(-1)?.n ?? 0;
+      freed = withFreedInstances(stored.freedInstances, ids, latest);
+    };
+    if (patch.brief) {
+      const { links: _ignored, storePack: sentPack, ...sent } = patch.brief;
+      const current = stored.brief;
+      // Phase 14: the store pack changes only through `storePack` (it recomputes the pack's instances); a full save keeps it.
+      // A pack other than the stored one (a second pack, or a changed one) is refused: one pack per creative, edited on its own.
+      // Both sides go through the schema first, so a missing optional or a different key order is not a difference.
+      if (sentPack !== undefined) {
+        const parsed = (p: unknown) => (p === undefined ? undefined : storePackSchema.safeParse(p).data);
+        if (!isDeepStrictEqual(parsed(sentPack), parsed(current.storePack))) {
+          throw new CodedError(409, current.storePack ? t().variants.storePack.second : t().variants.storePack.useEntry, 'store-pack-second');
+        }
+      }
+      const rest = current.storePack ? { ...sent, storePack: current.storePack } : sent;
+      const added = rest.formats.filter((f) => !current.formats.includes(f));
+      // Shared with the web, which tells before "Save and regenerate" whether a legacy creative converts (I4).
+      let links = added.length > 0 ? linksAfterBriefSave(current, rest.formats, await this.deps.presets()) : current.links;
+      // Formats the save removes leave no link (either end) and no manual pick behind (Phase 12): a freed instance id
+      // reused later starts clean. Saved versions are not touched.
+      const gone = new Set(current.formats.filter((f) => !rest.formats.includes(f)));
+      if (gone.size > 0) {
+        const pruned = withoutFormatState(links, stored.exportPicks, gone);
+        links = pruned.links;
+        exportPicks = { exportPicks: pruned.exportPicks };
+      }
+      await markFreed([...gone, ...added]);
+      brief = links ? { ...rest, links } : rest;
+    } else if (patch.services || patch.formatLabels || patch.formats || patch.storePack !== undefined) {
+      // A partial save (services chip, inline labels, reorder, removal): everything else comes from the brief stored now,
+      // never from the caller's copy.
+      let next: Brief = { ...stored.brief };
+      if (patch.storePack !== undefined) {
+        // Phase 14: the pack's instances are recomputed from the new pack (set, changed, or `null` to take it out); the
+        // rest of the brief is untouched. Instances that go leave no link and no manual pick; added ones start clean.
+        const m = mergeStorePack(next, patch.storePack, await this.deps.presets());
+        next = m.brief;
+        const gone = new Set(m.removed);
+        if (gone.size > 0) {
+          const pruned = withoutFormatState(next.links, stored.exportPicks, gone);
+          exportPicks = { exportPicks: pruned.exportPicks };
+        }
+        await markFreed([...m.removed, ...m.added]);
+      }
+      if (patch.services) next.services = patch.services;
+      if (patch.formats) {
+        const f = patch.formats;
+        if (new Set(f).size !== f.length || f.some((id) => !stored.brief.formats.includes(id))) {
+          throw new CodedError(400, t().errors.formatsReorderRemoveOnly, 'formats-reorder-remove-only');
+        }
+        next.formats = f;
+        const gone = new Set(stored.brief.formats.filter((id) => !f.includes(id)));
+        if (gone.size > 0) {
+          const pruned = withoutFormatState(next.links, stored.exportPicks, gone);
+          if (pruned.links) next.links = pruned.links;
+          exportPicks = { exportPicks: pruned.exportPicks };
+          await markFreed([...gone]);
+        }
+      }
+      if (patch.formatLabels) {
+        // Per key: a key left out is kept (a newer label from another tab survives); '' or null clears the key.
+        const merged: Record<string, string> = { ...(next.formatLabels ?? {}) };
+        for (const [k, v] of Object.entries(patch.formatLabels)) { if (v === null || v === '') delete merged[k]; else merged[k] = v; }
+        next.formatLabels = merged;
+      }
+      // Ruling H: a label of a format the brief no longer has goes with it.
+      if (next.formatLabels) {
+        const kept = Object.fromEntries(Object.entries(next.formatLabels).filter(([k]) => next.formats.includes(k)));
+        if (Object.keys(kept).length > 0) next.formatLabels = kept; else delete next.formatLabels;
+      }
+      brief = next;
+    }
+    return { ...(brief ? { brief } : {}), ...(exportPicks ? { exportPicks } : {}), ...(freed ? { freed } : {}) };
+  }
+
+  /**
+   * Phase 15: writes the group's shared brief `target` into one variant, as a full brief save of that variant would: its own
+   * links are kept (formats added get the default links, removed ones leave none), its export picks and freed instances
+   * follow the formats it gains or loses. The CALLER holds this variant's lock and has checked that no turn of it is queued
+   * or running. Clears a pending brief (this one is newer). Commits nothing (the caller commits the group's files at once).
+   */
+  async applySharedBrief(ref: CreativeRef, target: SharedBrief): Promise<CreativeFile> {
+    const store = new CreativeStore(ref.projectDir);
+    const stored = await store.get(ref.creativeSlug);
+    const { links: _hostLinks, ...shared } = target.brief;
+    const current = stored.brief;
+    const added = shared.formats.filter((f) => !current.formats.includes(f));
+    const gone = new Set(current.formats.filter((f) => !shared.formats.includes(f)));
+    let links = added.length > 0 ? linksAfterBriefSave(current, shared.formats, await this.deps.presets()) : current.links;
+    let exportPicks: { exportPicks: CreativeFile['exportPicks'] } | undefined;
+    if (gone.size > 0) {
+      const pruned = withoutFormatState(links, stored.exportPicks, gone);
+      links = pruned.links;
+      exportPicks = { exportPicks: pruned.exportPicks };
+    }
+    const ids = [...gone, ...added];
+    const latest = ids.length > 0 ? (await store.readVersions(ref.creativeSlug)).at(-1)?.n ?? 0 : 0;
+    const updated = await store.update(ref.creativeSlug, {
+      brief: links ? { ...shared, links } : shared,
+      ...(target.title !== undefined ? { title: target.title } : {}),
+      ...(target.linkedCodebases !== undefined ? { linkedCodebases: target.linkedCodebases } : {}),
+      ...(exportPicks ?? {}),
+      ...(ids.length > 0 ? withFreedInstances(stored.freedInstances, ids, latest) : {}),
+    });
+    await this.side.setPendingBrief(ref.projectDir, ref.creativeSlug, null);
+    this.changed(ref);
+    return updated;
+  }
+
+  /**
+   * Phase 15: a brief the group changed while this variant was working is applied now, at the start of its next turn
+   * (never mid-turn). The caller holds the variant's lock. No-op without one.
+   */
+  private async applyPendingBriefLocked(ref: CreativeRef): Promise<void> {
+    const pending = await this.side.pendingBrief(ref.projectDir, ref.creativeSlug);
+    if (!pending) return;
+    await this.applySharedBrief(ref, pending);
+    await this.commitCreativeFile(ref, new CreativeStore(ref.projectDir), t().jobs.briefUpdatedCommit({ title: pending.title ?? (await this.titleOf(new CreativeStore(ref.projectDir), ref.creativeSlug)) }));
+  }
+
+  /**
+   * Phase 15 (decisions log 832): a brief the group changed while this variant worked, applied now. For the other writers
+   * of a creative under its lock (a translation's start, an editor save, a duplicate), which hold the lock already.
+   */
+  applyPendingBrief(ref: CreativeRef): Promise<void> { return this.applyPendingBriefLocked(ref); }
+
+  /**
+   * Phase 15: after ANY job of the creative's key ends (a turn, a translation), its pending brief is applied under its
+   * lock, unless another job of it is still queued or running (still never mid-turn).
+   */
+  async briefAfterJob(ref: CreativeRef): Promise<void> {
+    const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
+    await this.locks.run(key, async () => { if (!this.isActive(key)) await this.applyPendingBriefLocked(ref); }).catch((err: Error) => {
+      console.warn(`Motion Studio: the group's brief could not be applied to ${ref.creativeSlug}: ${err.message}`);
+    });
+  }
+
+  /** Phase 15: keeps `ref` for `otherJobEndedByKey` (a variant with a pending brief, whose translation may end). */
+  rememberRef(ref: CreativeRef): void { this.refs.set(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), ref); }
+
+  /** The format presets now (the variant service seeds a new variant with them). */
+  presetList(): Promise<FormatPreset[]> { return this.deps.presets(); }
+
+  /** Commits `absPaths` (folders or files of the project) only; the commit's sha, or null when nothing changed. Throws on a git error. */
+  commitFolder(ref: CreativeRef, absPaths: readonly string[], message: string, opts: { headWhenClean?: boolean } = {}): Promise<string | null> {
+    return this.deps.git.commitPaths(ref.projectDir, absPaths.map((p) => relative(ref.projectDir, p).split(sep).join('/')), message, opts);
+  }
+
+  /**
+   * Commits the given creatives' creative.json files only (by path): safe while an agent of another variant writes
+   * elsewhere. Best effort, like `commitState`.
+   */
+  async commitCreativeFiles(ref: CreativeRef, slugs: readonly string[], message: string, extra: readonly string[] = []): Promise<void> {
+    const store = new CreativeStore(ref.projectDir);
+    const rel = (p: string) => relative(ref.projectDir, p).split(sep).join('/');
+    const paths = [...slugs.map((s) => rel(join(store.dir(s), 'creative.json'))), ...extra.map((p) => rel(p))];
+    try { await this.deps.git.commitPaths(ref.projectDir, paths, message); } catch { /* picked up by the next commit */ }
   }
 
   /**
@@ -416,6 +551,7 @@ export class CreativeTurnService {
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     return this.locks.run(key, async () => {
       if (this.isActive(key)) throw new CodedError(409, t().errors.waitBeforeLinks, 'job-running');
+      await this.assertNotDiscarded(ref);
       const store = new CreativeStore(ref.projectDir);
       const creative = await store.get(ref.creativeSlug);
       const { brief } = creative;
@@ -444,15 +580,23 @@ export class CreativeTurnService {
     });
   }
 
-  private async startLocked(ref: CreativeRef, message: { text: string; pins: Pin[]; pinsVersion?: number } | undefined, formats: string[] | undefined, queued?: { clientId: string }): Promise<JobSummary> {
+  private async startLocked(ref: CreativeRef, message: { text: string; pins: Pin[]; pinsVersion?: number } | undefined, formats: string[] | undefined, queued?: { clientId: string }, hold?: JobWaitReason): Promise<JobSummary> {
     const store = new CreativeStore(ref.projectDir);
-    const before = await store.get(ref.creativeSlug);
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     // Same check the queue does, but before touching the creative's files.
     if (this.isActive(key)) throw new WorkspaceError(409, t().errors.generationRunning);
+    // Phase 15: a discarded variant stays inert until it is restored; a grouped member's turn takes one of the group's slots.
+    // Final wave M3: this read cannot go stale before the enqueue below: a discard writes the status holding this creative's
+    // lock (held here until the job is enqueued), so a start and a discard of the same variant are serialized.
+    const member = await this.memberOf(ref);
+    if (member?.self.status === 'discarded') throw new CodedError(409, t().errors.variantDiscardedTurn, 'variant-discarded');
+    // Phase 15: a variant that was working when the group's brief changed takes it now, before its next turn is planned.
+    await this.applyPendingBriefLocked(ref);
+    const before = await store.get(ref.creativeSlug);
     // A request for formats none of which is in the brief is a mistake, not "all formats".
     if (formats?.length && !formats.some((f) => before.brief.formats.includes(f))) throw new CodedError(400, t().errors.formatsNotInBrief, 'formats-not-in-brief');
     const jobId = randomUUID();
+    const hookKey = queued ? `${key}\0${queued.clientId}` : null;
     if (message) {
       // A queued request starts as a user entry with `mode: 'queued'`. One that was first written as a live message (it
       // arrived when the agent had finished) is not written twice, unless it was edited in the queue meanwhile.
@@ -482,6 +626,12 @@ export class CreativeTurnService {
     this.live.set(jobId, live);
     this.paused.delete(key);
     let job: JobSummary;
+    // Phase 15: a variant run's hook is read HERE, with no await before the enqueue below (fix round 2): a decision that
+    // lands while this start awaited is seen, and the hook learns the id before the turn can start (a cover must be in
+    // place before its first paid call; a cancelled run records the id to stop it).
+    const hook = hookKey ? this.queuedHooks.get(hookKey) : undefined;
+    const holdReason = hold ?? hook?.hold ?? undefined;
+    if (hookKey && hook) { this.queuedHooks.delete(hookKey); hook.started?.(jobId); }
     try {
       job = this.deps.queue.enqueue({
         id: jobId,
@@ -489,6 +639,10 @@ export class CreativeTurnService {
         kind: 'creative',
         label: t().jobs.creativeLabel({ title: before.title }),
         ...(targets ? { formats: targets } : {}),
+        // Phase 15 (spec §3): at most MAX_RUNNING_VARIANTS turns of a variant group run at once; the others wait, with the reason.
+        ...(member ? { slot: { group: variantSlotGroup(ref, member.host), limit: MAX_RUNNING_VARIANTS, reason: 'variant-slot' as const } } : {}),
+        // Phase 15: a turn of a variant run waits for the run's directions and paid-services card (`VariantFanout`).
+        ...(holdReason ? { hold: holdReason } : {}),
         // Final wave Q8 (Ruling U micro-race): a failed or cancelled turn pauses its queue HERE, before the job turns terminal,
         // not in `turnSettled` after it: a message arriving in between can no longer start the queue after a failure or Stop.
         run: async (signal, id) => {
@@ -525,13 +679,37 @@ export class CreativeTurnService {
     return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), fn);
   }
 
+  /**
+   * Phase 15: the creative's place in a variant group (its host, the group and its own member), or null outside a group (an
+   * old creative, an orphan sister). Read without any lock: the group is written under the host's lock, never torn.
+   */
+  async memberOf(ref: CreativeRef): Promise<{ host: string; group: VariantGroup; self: VariantMember } | null> {
+    // Only "no such creative" means "no group" (the caller then fails on its own read); any other error is real.
+    const r = await new VariantGroupService({ store: new CreativeStore(ref.projectDir), turns: this }).resolve(ref)
+      .catch((err: unknown) => { if ((err as { status?: unknown }).status === 404) return null; throw err; });
+    const self = r?.group?.members.find((m) => m.slug === ref.creativeSlug);
+    return r?.group && self ? { host: r.host.creativeSlug, group: r.group, self } : null;
+  }
+
+  /**
+   * Phase 15 (decisions log 837, extended by the final wave's I2): a discarded variant is inert until it is restored: every
+   * write to it (an editor save, a duplicate, a translation, a link, "resume from") is refused with 409 `variant-discarded`.
+   * Its brief is the group's and is checked under the host's lock by `VariantGroupService.updateGroupBrief`.
+   */
+  async assertNotDiscarded(ref: CreativeRef): Promise<void> {
+    if ((await this.memberOf(ref))?.self.status === 'discarded') throw new CodedError(409, t().errors.variantDiscardedTurn, 'variant-discarded');
+  }
+
   /** Whether a turn of the creative is queued or running. */
   turnActive(ref: CreativeRef): boolean {
     return this.isActive(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug));
   }
 
   async restore(ref: CreativeRef, n: number): Promise<CreativeFile> {
-    return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), () => this.restoreLocked(ref, n));
+    return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), async () => {
+      await this.assertNotDiscarded(ref);
+      return this.restoreLocked(ref, n);
+    });
   }
 
   private isActive(key: string): boolean {
@@ -575,6 +753,9 @@ export class CreativeTurnService {
       // Decision 790: a project or workspace folder with glob characters runs no agent; refused before anything is written
       // (the chat gets the error line).
       await assertAgentFolders(ref.projectDir, ref.root);
+      // Phase 15: a brief the group changed while this turn waited in the queue applies now, before anything reads the brief
+      // (a turn already planned never sees a new brief mid-turn: spec §2).
+      await this.runLocked(ref, () => this.applyPendingBriefLocked(ref));
       await writeFile(join(ref.projectDir, '.studio', 'context.md'), CONTEXT_MD);
       const contract = this.deps.agentContract ?? 'compositions';
       // The full JSON Schema of composition.json, which the prompt and context.md point to (too long to inline).
@@ -640,6 +821,8 @@ export class CreativeTurnService {
 
       if (!noAgent) {
         const { context, existing } = await this.buildContext(ref, store, creative.linkedCodebases, creative.brief.services);
+        // Phase 15 (spec §3): a variant's own direction and the other active variants', as they are when the turn starts.
+        const variant = promptVariant(await this.memberOf(ref));
         // Spec §7: a legacy base (rendered media, v1 manifest) makes this change a conversion to compositions. The core
         // extracts reference frames of the old media into its protected cache; the chat says it costs more tokens once.
         let conversion: { formats: Awaited<ReturnType<typeof extractReferenceFrames>>; created: string[] } | undefined;
@@ -803,6 +986,7 @@ export class CreativeTurnService {
             conversion: kind === 'iteration' ? conversion : undefined,
             directEdit: kind === 'iteration' ? directEdit : undefined,
             keptDurations: kind === 'iteration' ? keptDurations : undefined,
+            ...(variant ? { variant } : {}),
           });
           const snapshotsBefore = await Promise.all(existing.map((p) => codebaseSnapshot(p)));
           for (const [k, p] of existing.entries()) {
@@ -969,7 +1153,7 @@ export class CreativeTurnService {
       }
       const { problems } = saved;
       const status = problems.length === 0 ? 'complete' : 'incomplete';
-      const commit = await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${n}`);
+      const commit = await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${n}`, { headWhenClean: true });
       const usage = sumUsage(attemptUsage);
       await store.appendVersion(slug, {
         n, commit, sessionId: resumeSessionId ?? null, status, createdAt: now(),
@@ -1393,6 +1577,8 @@ export class CreativeTurnService {
    */
   async postMessage(ref: CreativeRef, input: UserMessageInput & { mode: 'live' | 'queued' }): Promise<MessageAnswer> {
     const m = checkLiveMessage(input);
+    // Phase 15: nothing is queued for a discarded variant (it cannot be working: a working variant cannot be discarded).
+    if ((await this.memberOf(ref))?.self.status === 'discarded') throw new CodedError(409, t().errors.variantDiscardedTurn, 'variant-discarded');
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     const answer = await this.answers.once(`${key}\0${m.clientId}`, async (): Promise<MessageAnswer> => {
       const known = await this.knownAnswer(ref, m.clientId);
@@ -1478,10 +1664,13 @@ export class CreativeTurnService {
 
   /** DELETE …/queue/:clientId: only while it waits. */
   async removeQueued(ref: CreativeRef, clientId: string): Promise<CreativeFile> {
-    return this.editQueue(ref, (q) => {
+    const out = await this.editQueue(ref, (q) => {
       if (!q.some((x) => x.clientId === clientId)) throw new CodedError(404, t().live.notQueued, 'not-queued');
       return q.filter((x) => x.clientId !== clientId);
     });
+    // Phase 15: a removed request no longer has a variant run's hook.
+    this.queuedHooks.delete(`${creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug)}\0${clientId}`);
+    return out;
   }
 
   /** PUT …/queue/:clientId: new text and pins, only while it waits. Changed pins refer to the version on screen now. */
@@ -1586,6 +1775,8 @@ export class CreativeTurnService {
     if (live) live.phase = 'ended';
     this.live.delete(jobId);
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
+    // Phase 15: whatever the outcome, a brief the group changed meanwhile applies now that the turn is over.
+    await this.briefAfterJob(ref);
     if (state !== 'succeeded' || !live?.savedVersion || live.stopped) { this.paused.add(key); return; }
     await this.maybeAutoRun(ref);
   }
@@ -1598,6 +1789,8 @@ export class CreativeTurnService {
     const ref = this.refs.get(key);
     // Ruling U: a failed or cancelled translation pauses the queue like a turn would.
     if (!ref) return;
+    // Phase 15: a variant's pending brief applies once its translation is over.
+    await this.briefAfterJob(ref);
     if (state !== 'succeeded') { this.paused.add(key); return; }
     if (!this.paused.has(key)) await this.maybeAutoRun(ref);
   }

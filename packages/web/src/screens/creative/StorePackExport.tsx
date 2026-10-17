@@ -26,6 +26,8 @@ export interface StorePackExportProps {
   title: string;
   /** The version the pack is made from. */
   version: number;
+  /** Phase 15: the pack of a variant group: each file from the group selection (`creative` is any member), not from one version. */
+  group?: boolean;
   /** The brief's languages: with extra ones the dialog offers a multiselect; absent: the pack is exported as before. */
   locales?: { primary: LocaleTag; extra: LocaleTag[] };
   /** The extra languages the version has no (complete) translation for: marked, still selectable. */
@@ -48,7 +50,7 @@ export function StorePackExport(p: StorePackExportProps) {
   );
 }
 
-function Body({ onClose, slug, creative, version, locales, untranslated = [], needsReview = [], onBusy }: StorePackExportProps & { onBusy(busy: boolean): void }) {
+function Body({ onClose, slug, creative, version, group, locales, untranslated = [], needsReview = [], onBusy }: StorePackExportProps & { onBusy(busy: boolean): void }) {
   const t = useT();
   const x = t.web.storePack.export;
   const ui = useLocale();
@@ -82,7 +84,8 @@ function Body({ onClose, slug, creative, version, locales, untranslated = [], ne
     setError(null);
     setRunning(true);
     try {
-      const r = await api.exportStorePack(slug, creative, version, { destination: dest, ...(withLanguages ? { locales: wanted } : {}) });
+      const body = { destination: dest, ...(withLanguages ? { locales: wanted } : {}) };
+      const r = await (group ? api.exportStorePackGroup(slug, creative, body) : api.exportStorePack(slug, creative, version, body));
       if (!alive.current) return;
       writeFolder(dest);
       setResult(r);
@@ -99,7 +102,7 @@ function Body({ onClose, slug, creative, version, locales, untranslated = [], ne
     <div className="ms-exp-head">
       <div className="ms-exp-titles">
         <h2>{x.heading}</h2>
-        <span className="ms-exp-sub">{x.sub({ n: version })}</span>
+        <span className="ms-exp-sub">{group ? x.subGroup : x.sub({ n: version })}</span>
       </div>
       <Button variant="ghost" icon aria-label={t.common.close} disabled={running} onClick={onClose}><Icon name="close" size={13} strokeWidth={1.6} /></Button>
     </div>

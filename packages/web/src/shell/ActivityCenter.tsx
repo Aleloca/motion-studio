@@ -20,6 +20,7 @@ import { jobFinalTokens, jobLiveTokens, jobUsagePartial, todayTokens } from '../
 import { formatTokens, TokenCount } from './Tokens.tsx';
 import { ProblemList } from '../components/ProblemList.tsx';
 import { svgRefusalsOf } from '../screens/svgRefusals.ts';
+import { jobVariantLetter } from '../screens/variants/variantModel.ts';
 
 /** Results kept in the Done tab (the latest of this session). */
 export const DONE_MAX = 20;
@@ -40,8 +41,11 @@ export function activityLists(live: EventsState) {
  * Where a job belongs, from its key. The core's keys are `creative:<root>:<project>:<creative>`,
  * `render:<root>:<project>:<creative>:v<n>` (a follow-up: `…:v<n>:<k>`), `brand:<root>:<project>` (analysis and asset descriptions) and
  * `project:<root>:<project>` and `generate:<id>:<project>` (Assets Generate); the root may contain ':' (Windows), slugs never do.
+ * Phase 15: a group's directions turn is `variant-directions:creative:<root>:<project>:<host>`, the host's creative key behind
+ * a prefix: it belongs to the host (its link and its variant tag).
  */
 export function jobPlace(job: JobSummary): { project: string; creative: string | null } | null {
+  if (job.key.startsWith('variant-directions:')) return jobPlace({ ...job, key: job.key.slice('variant-directions:'.length) });
   const parts = job.key.split(':');
   const kind = parts[0];
   if (kind === 'creative' && parts.length >= 4) return { project: parts.at(-2)!, creative: parts.at(-1)! };
@@ -274,8 +278,18 @@ function TodayFooter({ tokens }: { tokens: number | null }) {
   );
 }
 
+/** Phase 15: " · B" after a variant's job (a sister from its slug; the host's "A" when its creative lists a group); empty otherwise. */
+function useVariantTag(job: JobSummary): string {
+  const shell = useContext(ShellContext);
+  if (job.kind !== 'creative') return '';
+  const at = jobPlace(job);
+  const letter = at?.creative ? jobVariantLetter(at.creative, shell?.catalog.creatives[at.project]) : null;
+  return letter ? ` · ${letter.toUpperCase()}` : '';
+}
+
 function RunningRow({ job, step, tokens, partial, events }: { job: JobSummary; step: string | null; tokens: number | null; partial: boolean; events?: AgentEvent[] }) {
   const t = useT();
+  const tag = useVariantTag(job);
   const queued = job.state === 'queued';
   return (
     // Phase 13: the same Stop menu as the conversation (a creative or console turn can also be redirected; the others have Stop only).
@@ -287,8 +301,8 @@ function RunningRow({ job, step, tokens, partial, events }: { job: JobSummary; s
     )}>
       <span className={cx('ms-activity-glyph', queued && 'ms-muted')}>{queued ? <Icon name="clock" size={14} /> : <Spinner decorative />}</span>
       <span className="ms-activity-text">
-        <b>{job.label}</b>
-        <span className="ms-activity-sub">{queued ? t.web.shell.activity.queued : step ?? t.web.jobState.running}</span>
+        <b>{job.label}{tag}</b>
+        <span className="ms-activity-sub">{queued ? (job.waitReason ? t.web.variantGroup.waitReasons[job.waitReason] : t.web.shell.activity.queued) : step ?? t.web.jobState.running}</span>
       </span>
       <TokenCount tokens={tokens} live partial={partial} className="ms-activity-tokens" />
     </Row>
@@ -338,6 +352,7 @@ function ConsoleMessage({ job, events }: { job: JobSummary; events?: AgentEvent[
 /** What a finished job did: the version a generation made, the reason of a failure, its notes; else its state. */
 function DoneRow({ job, made, failure, tokens, partial }: { job: JobSummary; made: Made | null; failure: string | null; tokens: number | null; partial: boolean }) {
   const t = useT();
+  const tag = useVariantTag(job);
   const a = t.web.shell.activity;
   const locale = useLocale();
   const ok = job.state === 'succeeded';
@@ -352,7 +367,7 @@ function DoneRow({ job, made, failure, tokens, partial }: { job: JobSummary; mad
     <Row job={job} after={refusals.length > 0 ? <ProblemList className="ms-activity-details" problems={refusals} /> : undefined}>
       <span className={cx('ms-activity-mark', ok ? 'ms-ok' : 'ms-warn')}><Icon name={ok ? 'check' : 'warn'} size={11} strokeWidth={2} /></span>
       <span className="ms-activity-text ms-line">
-        <b>{job.label}</b>
+        <b>{job.label}{tag}</b>
         <span className="ms-activity-sub">{what}</span>
       </span>
       <span className="ms-activity-side">

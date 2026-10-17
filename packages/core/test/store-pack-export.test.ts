@@ -330,4 +330,46 @@ describe('store pack export', { timeout: 120_000 }, () => {
     expect(r.json().code).toBe('not-store-pack');
     expect((await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/9/store-pack/export`, headers: H, payload: { destination: dest } })).statusCode).toBe(404);
   });
+
+  it('phase 15: a group\'s pack export takes the group selection per format (here the default rule on A) and says so in the README', async () => {
+    const slug = await createPack(pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false }));
+    const made = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/variants`, headers: H, payload: { count: 2 } });
+    expect(made.statusCode, made.body).toBe(201);
+    const r = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}~b/store-pack/export-group`, headers: H, payload: { destination: dest } });
+    expect(r.statusCode, r.body).toBe(200);
+    const body = r.json() as { folder: string; written: string[]; failed: unknown[] };
+    expect(body.failed).toEqual([]);
+    expect(body.written).toEqual(['AppStore/iPhone-6.9/01-all-your-tasks.png', 'AppStore/iPhone-6.9/02-share-with-your-team.png']);
+    expect(readFileSync(join(body.folder, 'README.txt'), 'utf8')).toMatch(/final selection|selezione finale/);
+    // An ungrouped pack: 409 on the group route; its own route is untouched.
+    const solo = await createPack(pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false }));
+    expect((await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${solo}/store-pack/export-group`, headers: H, payload: { destination: dest } })).statusCode).toBe(409);
+  });
+
+  it('residual fix: a discarded variant\'s own pack export that would render is refused (409 variant-discarded)', async () => {
+    const slug = await createPack(pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false, screenshots: [{ caption: 'One', screen: null }] }));
+    expect((await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/variants`, headers: H, payload: { count: 2, baseFrom: { slug, version: 1 } } })).statusCode).toBe(201);
+    expect((await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/variants/b/discard`, headers: H })).statusCode).toBe(200);
+    const before = env.fake.renders.length;
+    const r = await exportPack(`${slug}~b`);
+    expect(r.statusCode, r.body).toBe(409);
+    expect(r.json()).toMatchObject({ code: 'variant-discarded' });
+    expect(env.fake.renders.length).toBe(before);
+  });
+
+  it('final wave I3: a group\'s pack renders a missing translation in the member the selection picked, as the single pack does', async () => {
+    const slug = await createPack(pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false, screenshots: [{ caption: 'One', screen: null }] }),
+      { locales: { primary: 'en', extra: ['de'] } });
+    const made = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/variants`, headers: H, payload: { count: 2, baseFrom: { slug, version: 1 } } });
+    expect(made.statusCode, made.body).toBe(201);
+    const b = `${slug}~b`;
+    expect((await env.app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}/variants/picks/appstore-iphone-69`, headers: H, payload: { slug: b, version: 1 } })).statusCode).toBe(200);
+    expect((await env.app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${b}/versions/1/localizations/de/appstore-iphone-69`, headers: H, payload: { texts: { title: 'Hallo' } } })).statusCode).toBe(200);
+    const r = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/store-pack/export-group`, headers: H, payload: { destination: dest } });
+    expect(r.statusCode, r.body).toBe(200);
+    const body = r.json() as { written: string[]; failed: unknown[] };
+    expect(body.failed).toEqual([]);
+    expect([...body.written].sort()).toEqual(['AppStore/de/iPhone-6.9/01-one.png', 'AppStore/en/iPhone-6.9/01-one.png']);
+    expect(env.fake.renders.map((x) => x.out)).toContain(join(env.store().dir(b), 'outputs', 'v1', 'appstore-iphone-69.de.png'));
+  });
 });

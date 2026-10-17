@@ -50,8 +50,8 @@ async function autoApprovable(ctx: BridgeRoutesContext, c: BridgeContext, toolNa
 
 /** The job conditions shared by Bash and Read: sandboxed job, setting on at start and now, no request to leave the sandbox. */
 async function sameConditions(ctx: BridgeRoutesContext, c: BridgeContext, input: Record<string, unknown>): Promise<boolean> {
-  // A translation turn never gets anything approved by itself (Phase 12, fix I1).
-  if (c.kind === 'localize') return false;
+  // A translation turn never gets anything approved by itself (Phase 12, fix I1), nor a directions turn (Phase 15).
+  if (c.kind === 'localize' || c.kind === 'variant-directions') return false;
   if (c.sandboxed !== true || c.autoApproveAtStart !== true) return false;
   if (Object.hasOwn(input, 'dangerouslyDisableSandbox') && input.dangerouslyDisableSandbox !== false) return false;
   if (!ctx.settings) return false;
@@ -98,6 +98,8 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
       if (toolName.startsWith('provider:') || toolName.startsWith(`mcp__${MCP_SERVER}__`)) return { behavior: 'deny', message: t().approvals.invalidRequest };
       // A translation turn only reads (Phase 12, fix I1): Bash and every tool that could write are refused without a card.
       if (c.kind === 'localize' && !LOCALIZE_READ_TOOLS.has(toolName)) return { behavior: 'deny', message: t().approvals.readOnlyTurn };
+      // The directions turn of a variant group (Phase 15) only hands its directions over: nothing else ever reaches a card.
+      if (c.kind === 'variant-directions') return { behavior: 'deny', message: t().approvals.directionsTurnOnly };
       // A brand analysis of codebases (Phase 14, fix round 1) never runs commands nor searches file contents: Bash and Grep
       // are refused without a card, whatever the sandbox (they are also denied by the job's rules).
       if (c.kind === 'brand-analysis' && (c.codebases?.length ?? 0) > 0 && BRAND_CODEBASE_DENIED_TOOLS.includes(toolName)) return { behavior: 'deny', message: t().approvals.brandCodebaseToolDenied };
@@ -150,6 +152,11 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
     submit_localization: async (c, a) => {
       if (!c.submitLocalization) throw new WorkspaceError(400, t().errors.toolUnavailable);
       return c.submitLocalization(a);
+    },
+    // Phase 15: only a `variant-directions` job has it (MCP_TOOLS, checked below for every tool, and the handler itself).
+    submit_variant_directions: async (c, a) => {
+      if (c.kind !== 'variant-directions' || !c.submitVariantDirections) throw new WorkspaceError(403, t().errors.toolUnavailable);
+      return c.submitVariantDirections(a);
     },
     // The core is not sandboxed: never follow the agent's symlinks, never read special or huge files.
     read_brand_kit: async (c) => {

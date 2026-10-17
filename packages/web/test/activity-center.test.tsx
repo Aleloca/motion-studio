@@ -7,7 +7,8 @@ import { I18nProvider } from '../src/i18n.tsx';
 
 const api = { getConversation: vi.fn(async (): Promise<ConversationEntry[]> => []), cancelJob: vi.fn(async (_id: string) => ({ cancelled: true })) };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
-const { ActivityCenter, jobHref } = await import('../src/shell/ActivityCenter.tsx');
+const { ActivityCenter, jobHref, jobPlace } = await import('../src/shell/ActivityCenter.tsx');
+const { jobVariantLetter } = await import('../src/screens/variants/variantModel.ts');
 
 const at = '2026-10-08T10:00:00.000Z';
 const job = (over: Partial<JobSummary> & { id: string }): JobSummary =>
@@ -30,6 +31,12 @@ describe('Activity center · what happened (AC2)', () => {
     // A follow-up render job of the same version (core I3) belongs to the same creative.
     expect(jobHref(job({ id: 'h', key: 'render:C:\\Users\\me\\ws:acme:lancio:v3:2', kind: 'render' }))).toBe('#/p/acme/c/lancio');
     expect(jobHref(job({ id: 'f', key: 'something-else' }))).toBeNull();
+    // Phase 15 (final wave M1): the variant directions turn of a group links to its host.
+    expect(jobHref(job({ id: 'i', key: 'variant-directions:creative:/w:acme:lancio', kind: 'variant-directions' as never }))).toBe('#/p/acme/c/lancio');
+    expect(jobPlace(job({ id: 'j', key: 'variant-directions:creative:C:\\Users\\me\\ws:acme:lancio' }))).toEqual({ project: 'acme', creative: 'lancio' });
+    // …and carries the host's variant tag (A) when the project lists the creative as a group.
+    const summaries = [{ slug: 'lancio', variants: { count: 3, active: 3, missing: [] } }] as unknown as Parameters<typeof jobVariantLetter>[1];
+    expect(jobVariantLetter(jobPlace(job({ id: 'k', key: 'variant-directions:creative:/w:acme:lancio' }))!.creative, summaries)).toBe('a');
   });
 
   it('a finished generation says which version it made, from the conversation, and links to the creative', async () => {

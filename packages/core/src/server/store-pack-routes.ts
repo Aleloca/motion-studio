@@ -1,9 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
-  briefSchema, briefWriteSchema, issuesText, isStorePackFormat, packSlotOf, renderProblems, storePackSchema, type JobSummary, type VersionEntry,
+  briefSchema, briefWriteSchema, issuesText, isStorePackFormat, packSlotOf, renderProblems, storePackSchema, type JobSummary, type LocalizationRow, type VersionEntry,
 } from '@motion-studio/shared';
 import { CreativeStore } from '../creatives/creative-store.ts';
+import { pendingByMember, planGroupExport, resolveGroupLocalized, type GroupPlanItem } from '../creatives/variant-export.ts';
+import { VariantGroupService } from '../creatives/variant-group.ts';
 import type { CreativeRef, CreativeTurnService } from '../creatives/creative-turns.ts';
 import { checkDestination, pendingRenders, plainName, resolveLocalizedItems, type ExportItem } from '../creatives/export.ts';
 import type { RenderJobService } from '../creatives/render-jobs.ts';
@@ -74,6 +76,7 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
     await ws.getProject(req.params.slug);
     const projectDir = ws.projectDir(req.params.slug);
     const store = new CreativeStore(projectDir);
+    await store.assertOpenable(req.params.c); // phase 15: a real or orphan sister too, never a hand-made `x~b`
     const creativeDir = store.dir(req.params.c);
     const ref: CreativeRef & { store: CreativeStore } = { root: ws.root, projectSlug: req.params.slug, projectDir, creativeSlug: req.params.c, store };
     const raw = (req.body ?? {}) as { destination?: unknown };
@@ -128,6 +131,7 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
       const pending = await pendingRenders(creativeDir, [version], itemsOf(version));
       let error: string | null = null;
       if (pending.size > 0) {
+        await ctx.turns.runLocked(ref, () => ctx.turns.assertNotDiscarded(ref)); // residual fix (decisions log 866)
         // A render that cannot start (no browser, …) fails these files only: what is already rendered is still exported.
         error = await ctx.renders.renderAndWait(ref, pending).then(jobError, (e: unknown) => (e instanceof Error ? e.message : String(e)));
         rendered.push({ version: n, formats: [...(pending.get(n) ?? [])] });
@@ -154,6 +158,7 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
       const errors = new Map<string, string>();
       const now = r.pending.get(n);
       if (now) {
+        await ctx.turns.runLocked(ref, () => ctx.turns.assertNotDiscarded(ref)); // residual fix (decisions log 866)
         // One job per language, so a language whose translation needs "render anyway" does not stop the others.
         for (const locale of now.locales) {
           const fs = formats.filter((f) => !r.items.some((x) => x.format === f && x.locale === locale) && !r.missing.some((x) => x.format === f && x.locale === locale));
@@ -188,6 +193,129 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
     for (const f of files) f.format = slotOf.get(f.format) ?? f.format;
     const result = await exportStorePack({
       creativeDir, n, destination, title: creative.title, storePack: pack, presets: catalog, files, order: creative.brief.formats.filter((f) => owned.has(f)).map((f) => slotOf.get(f)!), notInPack,
+      probe: (file) => (ctx.media.available ? ctx.media.probe(file) : Promise.resolve(null)), date: localDay(),
+    });
+    return rendered.length > 0 ? { ...result, rendered } : result;
+  });
+  /**
+   * Phase 15 (spec §6): the store pack of a variant group, `POST …/creatives/:c/store-pack/export-group` `{ destination, locales? }`.
+   * For each pack format the file comes from the member and version of the group selection (the ★, or the default rule on
+   * variant A). Translations stay inside their variant: each format's localized renders are those of the member the selection
+   * picked, at that version. As in the single pack, a composition or a translation with no current render is rendered first, in
+   * its own member (decisions log 854, revised); "no translation", a render that failed and one rendered now with problems are
+   * listed in `failed`, like any pack file that cannot be exported.
+   */
+  app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/store-pack/export-group', async (req) => {
+    const ws = ctx.requireWorkspace();
+    await ws.getProject(req.params.slug);
+    const projectDir = ws.projectDir(req.params.slug);
+    const store = new CreativeStore(projectDir);
+    await store.assertOpenable(req.params.c);
+    const ref: CreativeRef & { store: CreativeStore } = { root: ws.root, projectSlug: req.params.slug, projectDir, creativeSlug: req.params.c, store };
+    const raw = (req.body ?? {}) as { destination?: unknown };
+    if (typeof raw.destination !== 'string' || !raw.destination.trim()) throw new CodedError(400, t().export.invalidDestination, 'export-invalid-destination');
+    const body = parse(exportBody, req.body);
+    const svc = new VariantGroupService({ store, turns: ctx.turns });
+    let plan = await planGroupExport(svc, store, ref); // 409 outside a group
+    const hostRef = (await svc.resolve(ref)).host;
+    const creative = await store.get(hostRef.creativeSlug);
+    const pack = creative.brief.storePack;
+    if (!pack) throw new CodedError(409, t().variants.storePack.notStorePack, 'not-store-pack');
+    const destination = await checkDestination(expandHome(body.destination.trim()), ws.root);
+    const catalog = await presets();
+    const c = t().variants.storePack.check;
+
+    const locales = creative.brief.locales;
+    const tags = body.locales ? [...new Set(body.locales.map((x) => checkedLocale(x, currentLocale())))] : locales ? [locales.primary, ...locales.extra] : [];
+    const primary = locales?.primary;
+    assertLocalesInBrief(creative.brief, tags, currentLocale());
+    const includeSource = !locales || tags.includes(primary!);
+    const others = locales ? tags.filter((x) => x !== primary) : [];
+
+    const slotOf = packSlotOf(pack, catalog);
+    const owned = new Set(slotOf.keys());
+    const packFormats = creative.brief.formats.filter((f) => owned.has(f) && packEntry(pack, slotOf.get(f)!, undefined) !== null);
+    const notInPack = creative.brief.formats.filter((f) => !owned.has(f) && isStorePackFormat(f))
+      .map((f) => { const label = creative.brief.formatLabels?.[f]; return label ? `${f} (${label})` : f; });
+    const sizeOf = (f: string) => { const p = findPreset(catalog, f); return { width: p?.width ?? 0, height: p?.height ?? 0 }; };
+    const packPlan = () => plan.filter((p) => packFormats.includes(p.format));
+    const jobError = (jobs: Array<JobSummary | null>) => jobs.find((j) => j?.state === 'failed')?.error ?? null;
+
+    const files: PackFile[] = [];
+    const rendered: Array<{ version: number; formats: string[]; slug: string; locale?: string }> = [];
+    const errors = new Map<string, string>();
+    const withProblems = new Set<string>();
+    const key = (p: Pick<GroupPlanItem, 'slug' | 'format'>) => `${p.slug}\0${p.format}`;
+    if (includeSource) {
+      const pending = packPlan().filter((p) => p.state === 'needs-render');
+      for (const [slug, versions] of pendingByMember(pending)) {
+        const error = await ctx.renders.renderAndWait({ ...ref, creativeSlug: slug }, versions).then(jobError, (e: unknown) => (e instanceof Error ? e.message : String(e)));
+        for (const [version, formats] of versions) {
+          rendered.push({ version, formats, slug });
+          if (error) for (const f of formats) errors.set(`${slug}\0${f}`, error);
+        }
+      }
+      if (pending.length > 0) {
+        plan = await planGroupExport(svc, store, ref);
+        const fresh = new Set(pending.map(key));
+        for (const p of packPlan()) {
+          if (p.state !== 'ready' || !fresh.has(key(p))) continue;
+          const v = (await store.readVersions(p.slug)).find((x) => x.n === p.version);
+          if (v && renderProblems(v, p.format).length > 0) withProblems.add(key(p));
+        }
+      }
+      for (const format of packFormats) {
+        const p = packPlan().find((x) => x.format === format);
+        const f: PackFile = { format, ...(primary ? { locale: primary } : {}), ...sizeOf(format) };
+        if (!p) f.failure = c.notInGroup;
+        else if (p.state !== 'ready') f.failure = errors.has(key(p)) ? c.renderFailed({ reason: errors.get(key(p))! }) : c.notRendered;
+        else if (withProblems.has(key(p))) f.failure = c.renderProblems({ list: renderProblems((await store.readVersions(p.slug)).find((x) => x.n === p.version)!, p.format).join('; ') });
+        else { f.file = p.file; f.dir = p.creativeDir; f.n = p.version; }
+        files.push(f);
+      }
+    }
+    if (others.length > 0) {
+      const matches = (slug: string, vn: number, file: string, sha: string) => renderFileMatches(projectDir, store.dir(slug), slug, vn, file, sha);
+      const checks = { matches, assetsOk: (slug: string, vn: number, row: LocalizationRow) => localeAssetsCheck(projectDir, store.dir(slug))(vn, row) };
+      const locPlan = () => packPlan().filter((p) => !withProblems.has(key(p)));
+      let r = await resolveGroupLocalized(locPlan(), store, others, checks);
+      // As the single pack: a translation without a current render is rendered first, in its own member, one job per member
+      // and language (never with "render anyway": one that needs it is listed with the reason, as the single pack does).
+      const localeErrors = new Map<string, string>();
+      const renderedNow: Array<{ slug: string; version: number; formats: string[]; locale: string }> = [];
+      for (const p of r.pending) {
+        try {
+          const job = await ctx.renders.renderLocalesAndWait({ ...ref, creativeSlug: p.slug }, p.n, p.formats, [p.locale], false);
+          if (job?.state === 'failed') localeErrors.set(`${p.slug}\0${p.locale}`, job.error ?? '');
+        } catch (e) {
+          localeErrors.set(`${p.slug}\0${p.locale}`, e instanceof Error ? e.message : String(e));
+        }
+        renderedNow.push({ slug: p.slug, version: p.n, formats: [...p.formats], locale: p.locale });
+        rendered.push({ version: p.n, formats: [...p.formats], slug: p.slug, locale: p.locale });
+      }
+      if (r.pending.length > 0) r = await resolveGroupLocalized(locPlan(), store, others, checks);
+      for (const locale of others) {
+        for (const format of packFormats) {
+          const f: PackFile = { format, locale, ...sizeOf(format) };
+          const p = packPlan().find((x) => x.format === format);
+          const item = r.items.find((x) => x.format === format && x.locale === locale);
+          const miss = r.unavailable.find((x) => x.plan.format === format && x.locale === locale);
+          const now = p !== undefined && renderedNow.some((x) => x.slug === p.slug && x.version === p.version && x.locale === locale && x.formats.includes(format));
+          const error = p !== undefined ? localeErrors.get(`${p.slug}\0${locale}`) : undefined;
+          if (!p) f.failure = c.notInGroup;
+          else if (miss?.state === 'no-translation') f.failure = c.noTranslation({ locale });
+          else if (!item) f.failure = error ? c.renderFailed({ reason: error }) : c.notRendered;
+          else if (now && item.problems?.length) f.failure = c.renderProblems({ list: item.problems.join('; ') });
+          else { f.file = item.file; f.dir = item.creativeDir ?? p.creativeDir; f.n = item.n; }
+          files.push(f);
+        }
+      }
+    }
+    for (const f of files) Object.assign(f, sizeOf(f.format));
+    for (const f of files) f.format = slotOf.get(f.format) ?? f.format;
+    const result = await exportStorePack({
+      creativeDir: store.dir(hostRef.creativeSlug), n: Math.max(0, ...packPlan().map((p) => p.version)), group: true, destination, title: creative.title, storePack: pack, presets: catalog, files,
+      order: creative.brief.formats.filter((f) => owned.has(f)).map((f) => slotOf.get(f)!), notInPack,
       probe: (file) => (ctx.media.available ? ctx.media.probe(file) : Promise.resolve(null)), date: localDay(),
     });
     return rendered.length > 0 ? { ...result, rendered } : result;

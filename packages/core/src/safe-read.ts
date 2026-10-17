@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { constants } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
 import { lstat, open } from 'node:fs/promises';
 
 /**
@@ -75,4 +75,36 @@ export async function hashRegularFile(path: string): Promise<{ kind: 'file'; sha
     }
     return { kind: 'file', sha: hash.digest('hex') };
   } finally { await fh.close(); }
+}
+
+/**
+ * `readRegularFile` for the few synchronous callers (the approval card's explanation, decided while the card is made):
+ * the same lstat, `O_NOFOLLOW | O_NONBLOCK` open, same-file `fstat` and size cap.
+ */
+export function readRegularFileSync(path: string, maxBytes: number): SafeFile {
+  let st;
+  try { st = lstatSync(path); } catch (e) { if (isMissing(e)) return { kind: 'missing' }; throw e; }
+  if (st.isSymbolicLink()) return { kind: 'link' };
+  if (!st.isFile()) return { kind: 'special' };
+  let fd: number;
+  try { fd = openSync(path, FLAGS); } catch (e) {
+    const c = (e as NodeJS.ErrnoException).code;
+    if (c === 'ELOOP') return { kind: 'link' };
+    if (isMissing(e)) return { kind: 'missing' };
+    throw e;
+  }
+  try {
+    const fs = fstatSync(fd);
+    if (!fs.isFile() || fs.ino !== st.ino || fs.dev !== st.dev) return { kind: 'special' };
+    if (fs.size > maxBytes) return { kind: 'too-large', size: fs.size };
+    const buf = Buffer.alloc(maxBytes + 1);
+    let n = 0;
+    while (n < buf.length) {
+      const read = readSync(fd, buf, n, buf.length - n, n);
+      if (read === 0) break;
+      n += read;
+    }
+    if (n > maxBytes) return { kind: 'too-large', size: n };
+    return { kind: 'file', data: buf.subarray(0, n) };
+  } finally { closeSync(fd); }
 }

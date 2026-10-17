@@ -75,7 +75,7 @@ async function readBrandVoice(projectDir: string) {
 }
 
 /** The helpers every paid path shares (the agent tools and the localize turn's voices): keys, services, key checks, files. */
-function paidHelpers(deps: ProviderToolsDeps) {
+function paidHelpers(deps: Pick<ProviderToolsDeps, 'vault' | 'keyChecks'>) {
   const keyOf = async (p: keyof typeof LABEL) => {
     const k = await deps.vault.get(p);
     if (!k) throw new ProviderError(400, t().providers.configureKey({ provider: LABEL[p] }));
@@ -440,6 +440,34 @@ export function voiceBatch(deps: ProviderToolsDeps): (c: VoiceBatchContext, item
     }
     deps.broadcast({ type: 'library', project: c.projectSlug });
     return { status: 'done', provider, files };
+  };
+}
+
+/** Phase 15: one paid service a turn under the brief's services may use now, and the provider rules its calls ask under. */
+export interface PaidService { kind: ServiceKind; provider: 'openai' | 'elevenlabs'; rules: string[] }
+
+/**
+ * Phase 15 (spec §3, "Servizi a pagamento"): the paid services the agent of a creative turn under `services` may use, as the
+ * tools would decide them now (the brief's choice, the keys in the vault, what the key checks know): images with gpt-image-2,
+ * voice, music, sound effects. Free tools (stock, fonts, voices list) are not listed. Voice under `auto` may use either
+ * configured TTS provider (a brand voice picks its own), so its rules are every usable one; the listed provider is the one
+ * the tool would pick without a brand voice. Nothing is called.
+ */
+export function paidServicePlan(deps: Pick<ProviderToolsDeps, 'vault' | 'keyChecks'>): (services?: BriefServices) => Promise<PaidService[]> {
+  const h = paidHelpers(deps);
+  const RULE: Record<Exclude<ServiceKind, 'voice'>, string> = { images: 'provider:openai-images', music: 'provider:music-elevenlabs', sfx: 'provider:sfx-elevenlabs' };
+  return async (services) => {
+    const configured = await h.configured();
+    const out: PaidService[] = [];
+    for (const kind of ['images', 'voice', 'music', 'sfx'] as const) {
+      const d = resolveService(services, kind, undefined, configured, h.missingFor(kind));
+      if (!d.ok || (d.provider !== 'openai' && d.provider !== 'elevenlabs') || !configured.has(d.provider)) continue;
+      if (kind !== 'voice') { out.push({ kind, provider: d.provider, rules: [RULE[kind]] }); continue; }
+      const others = effectiveServices({ services }).voice === 'auto'
+        ? (['openai', 'elevenlabs'] as const).filter((p) => p !== d.provider && configured.has(p) && !h.missingFor('voice').has(p)) : [];
+      out.push({ kind, provider: d.provider, rules: [d.provider, ...others].map((p) => `provider:tts-${p}`) });
+    }
+    return out;
   };
 }
 

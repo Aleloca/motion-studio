@@ -2,7 +2,7 @@ import { lstat, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { relativeFileSchema } from '@motion-studio/shared';
 import { z } from 'zod';
-import { CREATIVE_SLUG_RE } from '../creatives/creative-store.ts';
+import { isCreativeFolderShape } from '../creatives/creative-store.ts';
 import { realDirChain } from '../creatives/core-files.ts';
 import { writeJsonFileAtomic } from '../json-file.ts';
 
@@ -17,8 +17,11 @@ export const renameJournalSchema = z.object({
   startedAt: z.iso.datetime(),
   /** Whether a brand logo or font pointed at the file when the rename started. */
   brandRefs: z.boolean(),
-  /** The creatives whose brief listed the file when the rename started. */
-  briefSlugs: z.array(z.string().regex(CREATIVE_SLUG_RE)).max(10_000),
+  /**
+   * The creatives whose brief listed the file when the rename started. Phase 15: a variant sister's slug has the shape too;
+   * whether it is still a real sister is checked when the briefs are changed (`CreativeStore.renameBriefAsset`).
+   */
+  briefSlugs: z.array(z.string().refine(isCreativeFolderShape)).max(10_000),
 });
 export type RenameJournal = z.infer<typeof renameJournalSchema>;
 

@@ -100,6 +100,25 @@ describe('mcp-studio server', () => {
     await rpc(4, 'tools/call', { name: 'import_codebase_file', arguments: { source: 'public/logo.svg', dest: 'assets/brand/logo.svg' } });
     expect(calls.at(-1)).toMatchObject({ url: '/api/bridge/import_codebase_file', body: { source: 'public/logo.svg', dest: 'assets/brand/logo.svg' } });
   });
+  it('lists submit_variant_directions alone for a directions turn (phase 15), with directions required, and forwards it', async () => {
+    child.kill();
+    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'submit_variant_directions' });
+    const tools = (await rpc(3, 'tools/list')).result.tools as Array<{ name: string; description: string; inputSchema: { required: string[]; properties: Record<string, { type: string; items?: { maxLength: number } }> } }>;
+    expect(tools.map((t) => t.name)).toEqual(['approve', 'submit_variant_directions']);
+    const tool = tools[1]!;
+    expect(tool.inputSchema.required).toEqual(['directions']);
+    expect(tool.inputSchema.properties.directions!.type).toBe('array');
+    expect(tool.inputSchema.properties.directions!.items!.maxLength).toBe(140);
+    expect(tool.description).toMatch(/^Variant directions turns only/);
+    await rpc(4, 'tools/call', { name: 'submit_variant_directions', arguments: { directions: ['Minimal pastello', 'Retro anni 80'] } });
+    expect(calls.at(-1)).toMatchObject({ url: '/api/bridge/submit_variant_directions', body: { directions: ['Minimal pastello', 'Retro anni 80'] } });
+    // Not enabled for another job: refused without reaching the core.
+    child.kill();
+    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok' });
+    const before = calls.length;
+    expect((await rpc(5, 'tools/call', { name: 'submit_variant_directions', arguments: { directions: ['x'] } })).result.isError).toBe(true);
+    expect(calls).toHaveLength(before);
+  });
   it('describes every tool in English', async () => {
     child.kill();
     startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,validate_composition,preview_frames,read_brand_kit,generate_image,tts,stock_search,stock_download,fonts_fetch,download_file,inspect_site_fonts' });

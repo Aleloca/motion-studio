@@ -15,7 +15,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import { isLocale, workspaceSettingsSchema, type DoctorCheck, type UpdatesState, type UsageBilling, type LinkedCodebase, type ProjectDetail, type ServerMessage, type WorkspaceInfo, type WorkspaceProblem, type WorkspaceSettings } from '@motion-studio/shared';
 import { BrandService } from '../brand/brand-analysis.ts';
 import { UPLOAD_LIMITS } from '../library/upload.ts';
-import { CreativeTurnService } from '../creatives/creative-turns.ts';
+import { CreativeTurnService, type CreativeRef } from '../creatives/creative-turns.ts';
 import { DirectEditService } from '../creatives/direct-edit.ts';
 import { FormatCatalog } from '../formats/format-catalog.ts';
 import { NoMediaTools, type MediaTools } from '../media/media-tools.ts';
@@ -28,7 +28,9 @@ import { AgentBridge } from '../bridge/bridge.ts';
 import { registerBridgeRoutes } from '../bridge/bridge-routes.ts';
 import { downloadTool } from '../bridge/download-tool.ts';
 import { importCodebaseTool } from '../bridge/import-codebase-tool.ts';
-import { providerTools, voiceAvailability, voiceBatch } from '../bridge/provider-tools.ts';
+import { paidServicePlan, providerTools, voiceAvailability, voiceBatch } from '../bridge/provider-tools.ts';
+import { VariantDirections } from '../creatives/variant-directions.ts';
+import { VariantFanout } from '../creatives/variant-fanout.ts';
 import { LocalizeService, ProjectActivity } from '../localization/localize-turn.ts';
 import type { LookupFn, Transport } from '../providers/safe-fetch.ts';
 import { checkCodebases, codebaseGlobCharsMessage, codebaseHasGlobChars, codebaseOverlapMessage, codebaseOverlaps, normalizeCodebaseList } from '../codebases.ts';
@@ -104,6 +106,8 @@ export interface ServerDeps {
   voicesHttp?: HttpDeps;
   /** Network of a localize turn's translated voices (tests inject a fake fetch; default: the real one). */
   localizeHttp?: { fetch?: typeof fetch; transport?: Transport; lookup?: LookupFn };
+  /** Network of the agent's paid provider tools (tests inject a fake fetch; default: the real one). */
+  providerHttp?: { fetch?: typeof fetch; transport?: Transport; lookup?: LookupFn };
   /** What the app has learned about the provider keys (core memory only; tests inject one to read it). */
   keyChecks?: KeyCheckCache;
   /** Network of the key checks (tests inject a fake fetch; default: the real one). */
@@ -272,7 +276,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const isJobActive = (key: string) => queue.list().some((j) => j.key === key && (j.state === 'queued' || j.state === 'running'));
   // Video sources are normalised for the renderer (and, Task 5b/8, the preview); close() kills whatever still runs.
   const normalizer = new MediaNormalizer({ ffmpeg: () => findFfmpeg(), ...(deps.mediaCacheMaxBytes !== undefined ? { maxCacheBytes: deps.mediaCacheMaxBytes } : {}) });
+  // Phase 15 (deferred 51): pending briefs found by a recovery run before the turn service exists (the startup one) wait
+  // here and are applied, under each member's lock, as soon as it does.
+  let turnsRef: CreativeTurnService | null = null;
+  const leftoverBriefs: CreativeRef[] = [];
   const recoverOptions = (root: string): RecoverOptions => ({
+    applyPendingBrief: async (ref) => { if (turnsRef) await turnsRef.briefAfterJob(ref); else leftoverBriefs.push(ref); },
     renderActive: (project, creative) => queue.list().some((j) => (j.state === 'queued' || j.state === 'running') && j.key.startsWith(`render:${root}:${project}:${creative}:`)),
     mediaInUse: normalizer.inUse,
     stagingInUse: (dir) => previewsRef?.stagingInUse(dir) ?? false,
@@ -378,6 +387,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   afterOtherJob = (key, state) => { void turns.otherJobEndedByKey(key, state); };
+  turnsRef = turns;
+  for (const ref of leftoverBriefs.splice(0)) await turns.briefAfterJob(ref);
 
   // Phase 13: the console turns' live side, by job id, while they run (the same live module as creative turns, I3).
   const consoleLive = new Map<string, LiveSession>();
@@ -760,7 +771,16 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // The live preview's composition server origin (Task 8 frames it; started on first use).
   app.get('/api/preview/origin', async () => ({ origin: (await previews.compositionServer()).origin, uiOrigins: [...(deps.uiOrigins?.() ?? [])] }));
 
-  registerCreativeRoutes(app, { requireWorkspace, turns, edits, renders, previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m), git: deps.git });
+  // Phase 15: the directions turn and the fan-out of a variant group (`POST …/variants/run`).
+  const variantDirections = new VariantDirections({
+    queue, launcher, turns, broadcast: (msg) => hub.broadcast(msg),
+    presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
+    model: async () => (await requireWorkspace().readSettings()).model,
+  });
+  const variantRuns = new VariantFanout({
+    turns, queue, approvals, directions: variantDirections, settings: () => requireWorkspace().readSettings(), paidPlan: paidServicePlan({ vault, keyChecks }),
+  });
+  registerCreativeRoutes(app, { requireWorkspace, turns, edits, renders, previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m), git: deps.git, variantRuns });
   registerStorePackRoutes(app, { requireWorkspace, turns, renders, media });
 
   const routeCtx = { requireWorkspace, brand: brandService, media, git: deps.git, broadcast: (m: ServerMessage) => hub.broadcast(m), configDir };
@@ -794,7 +814,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // Read on every permission prompt: a setting changed mid-job applies to the next one.
     settings: () => requireWorkspace().readSettings(),
     extraTools: {
-      ...providerTools({ vault, approvals, media, keyChecks, settings: () => requireWorkspace().readSettings(), broadcast: (m) => hub.broadcast(m) }),
+      ...providerTools({ vault, approvals, media, keyChecks, settings: () => requireWorkspace().readSettings(), broadcast: (m) => hub.broadcast(m), ...deps.providerHttp }),
       download_file: downloadTool({ media, broadcast: (m) => hub.broadcast(m) }),
       import_codebase_file: importCodebaseTool({ media, broadcast: (m) => hub.broadcast(m) }),
     },

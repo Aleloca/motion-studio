@@ -1,4 +1,4 @@
-import type { CreativeFile, FormatPreset, IdentityBrief, Pin, StorePack } from '@motion-studio/shared';
+import type { CreativeFile, FormatPreset, IdentityBrief, Pin, StorePack, VariantLetter } from '@motion-studio/shared';
 import { formatDisplayName, presetOf, videoTargetBitrateKbps, type BrandKit, type BriefServices, type Locale } from '@motion-studio/shared';
 import { replyInstruction } from '../i18n.ts';
 import { findPreset } from '../formats/format-catalog.ts';
@@ -65,6 +65,34 @@ export interface PromptInput {
   directEdit?: { version: number; summary: string; copies: string[] };
   /** Durations far from the brief that the base keeps by the user's choice (decisions log 262), per format. */
   keptDurations?: Array<{ format: string; durationSec: number }>;
+  /**
+   * Phase 15 (spec §3): this creative is a variant of a group: its letter, how many variants are active, its own direction and
+   * the other active variants' (a reference not to copy). First and iteration turns only. Absent outside a group: the prompt
+   * is exactly what it was before phase 15.
+   */
+  variant?: PromptVariant;
+}
+/** Phase 15: what a variant's prompt says about its group (see `PromptInput.variant`). */
+export interface PromptVariant { letter: VariantLetter; count: number; direction: string | null; others: Array<{ letter: VariantLetter; direction: string | null }> }
+
+/**
+ * Phase 15 (spec §3): the "Variant" section. The directions are the user's or the agent's words: quoted, one line each. The
+ * other variants are named by their directions only (agent isolation: their folders are never pointed to).
+ */
+export function variantSection(v: PromptVariant): string[] {
+  const L = (l: VariantLetter) => l.toUpperCase();
+  const quoted = (d: string) => quotePromptString(oneLine(d, 140));
+  return [
+    '## Variant',
+    `This creative is variant ${L(v.letter)} of ${v.count} variants made from the same brief. Give it a creative direction of its own: the variants must be clearly different from each other.`,
+    v.direction
+      ? `- Your direction: ${quoted(v.direction)}`
+      : '- No direction was given for this variant: choose one that is clearly different from the directions of the other variants, and name it in your reply.',
+    ...(v.others.length > 0 ? [
+      '- The directions of the other variants, for reference only: do not copy them.',
+      ...v.others.map((o) => `- ${L(o.letter)}: ${o.direction ? quoted(o.direction) : 'no direction'}`),
+    ] : []),
+  ];
 }
 export interface StudioBlock {
   outputDir: string; workDir: string; durationSec: number | null;
@@ -408,7 +436,7 @@ export function storePackPromptSection(p: StorePack): string[] {
  * SVG rules the core checks, the optional `small` variant, the safe zones and the start mode (from the brand's logo, or from
  * scratch with the user's name, keywords and colours, quoted as data). `kinds`: the identity kinds among the turn's formats.
  */
-export function identityPromptSection(kinds: ReadonlySet<'logo' | 'favicon' | 'app-icon'>, identity: IdentityBrief | undefined, hasBrandLogo: boolean, logoIds: readonly string[]): string[] {
+export function identityPromptSection(kinds: ReadonlySet<'logo' | 'favicon' | 'app-icon'>, identity: IdentityBrief | undefined, hasBrandLogo: boolean, logoIds: readonly string[], grouped = false): string[] {
   const q = (s: string, max: number) => quotePromptString(oneLine(s, max));
   const icons = kinds.has('favicon') || kinds.has('app-icon');
   const start = identity?.start ?? (hasBrandLogo ? 'brand' : 'scratch');
@@ -442,6 +470,7 @@ export function identityPromptSection(kinds: ReadonlySet<'logo' | 'favicon' | 'a
     );
     if (logoIds.length > 1) lines.push(`- ${logoIds.join(', ')}: ${logoIds.length} distinct logo concepts, one per instance, each a different idea (not variations of one).`);
   }
+  if (grouped && icons) lines.push('- This creative is one variant of a group: the favicon and app icon of this variant derive from ITS OWN logo (the same mark, simplified), never from another variant\'s logo, so logo, favicon and app icon of this variant are consistent.');
   return lines;
 }
 
@@ -526,6 +555,7 @@ export function buildCreativePrompt(i: PromptInput): string {
       '', ...repairRequestSection(i.userWords, i.liveMessages),
     );
   }
+  if (i.variant && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...variantSection(i.variant));
   if (i.context && i.kind !== 'fix' && i.kind !== 'redirect') parts.push(...contextSections(i.context, contract, brief.services));
   if (contract === 'compositions') {
     // Agent-facing: the format's own facts only (Motion Studio renders, so no extensions, bitrates or encoding flags).
@@ -542,7 +572,7 @@ export function buildCreativePrompt(i: PromptInput): string {
     parts.push(
       '', '## Required formats', ...compositionLines, ...sameSize,
       ...(brief.storePack && i.kind !== 'fix' && i.kind !== 'redirect' ? ['', ...storePackPromptSection(brief.storePack)] : []),
-      ...(identityKinds.size > 0 ? ['', ...identityPromptSection(identityKinds, brief.identity, (i.context?.kit.logos.length ?? 0) > 0, known.filter(([, p]) => p?.identity === 'logo').map(([id]) => id))] : []),
+      ...(identityKinds.size > 0 ? ['', ...identityPromptSection(identityKinds, brief.identity, (i.context?.kit.logos.length ?? 0) > 0, known.filter(([, p]) => p?.identity === 'logo').map(([id]) => id), !!i.variant)] : []),
       '', ...COMPOSITION_SECTION,
       ...(i.sandboxed ? ['', ...SANDBOX_SECTION_COMPOSITIONS] : []),
       '', '## Where to work',

@@ -4,6 +4,7 @@ export * from './events.ts';
 export * from './formats.ts';
 export * from './formats/link.ts';
 export * from './creative.ts';
+export * from './variants.ts';
 export * from './format-instance.ts';
 export * from './store-pack.ts';
 export * from './localization/index.ts';

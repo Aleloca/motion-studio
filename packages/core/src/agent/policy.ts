@@ -3,8 +3,12 @@ import { dirDenyRules, escapeGlob, fileDenyRules, globDenyRules, readOnlyRules, 
 import { AGENT_ALLOWED_TOOLS, BRAND_ANALYSIS_TOOLS, BRAND_CODEBASE_DENIED_TOOLS, BRAND_CODEBASE_SCOPED_TOOLS, DESCRIBE_TOOLS, LOCALIZE_TOOLS } from './runner.ts';
 import { DEFAULT_ALLOWED_DOMAINS, sensitiveHomeEntries, sensitiveHomePaths } from './sandbox.ts';
 
-/** `localize` (Phase 12): a translation turn on an existing version; it writes only through `submit_localization`. */
-export type AgentJobKind = 'creative' | 'brand-analysis' | 'describe' | 'console' | 'localize';
+/**
+ * `localize` (Phase 12): a translation turn on an existing version; it writes only through `submit_localization`.
+ * `variant-directions` (Phase 15): the short turn that proposes a variant group's missing directions; it writes nothing and
+ * only hands them over through `submit_variant_directions`.
+ */
+export type AgentJobKind = 'creative' | 'brand-analysis' | 'describe' | 'console' | 'localize' | 'variant-directions';
 export interface PolicyInput {
   kind: AgentJobKind; sandbox: boolean; projectDir?: string; home: string; configDir: string;
   codebases: string[]; protectedFiles: string[];
@@ -70,8 +74,8 @@ export function sandboxCacheEnv(projectDir: string): Record<string, string> {
 export const sandboxPath = (p: string): string => p.replace(/[[*?]/g, (c) => (c === '[' ? '[[]' : '?'));
 
 const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
-const SANDBOXED_TOOLS: Record<AgentJobKind, readonly string[]> = { creative: [], console: [], 'brand-analysis': BRAND_ANALYSIS_TOOLS, describe: DESCRIBE_TOOLS, localize: LOCALIZE_TOOLS };
-const LEGACY_TOOLS: Record<AgentJobKind, readonly string[]> = { creative: AGENT_ALLOWED_TOOLS, console: [], 'brand-analysis': BRAND_ANALYSIS_TOOLS, describe: DESCRIBE_TOOLS, localize: LOCALIZE_TOOLS };
+const SANDBOXED_TOOLS: Record<AgentJobKind, readonly string[]> = { creative: [], console: [], 'brand-analysis': BRAND_ANALYSIS_TOOLS, describe: DESCRIBE_TOOLS, localize: LOCALIZE_TOOLS, 'variant-directions': [] };
+const LEGACY_TOOLS: Record<AgentJobKind, readonly string[]> = { creative: AGENT_ALLOWED_TOOLS, console: [], 'brand-analysis': BRAND_ANALYSIS_TOOLS, describe: DESCRIBE_TOOLS, localize: LOCALIZE_TOOLS, 'variant-directions': [] };
 const unique = (xs: string[]) => [...new Set(xs)];
 
 export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
@@ -106,8 +110,12 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
     // A localize turn writes only through `submit_localization` (Phase 12): the editing tools and Bash are denied everywhere,
     // whatever `autoApproveSandboxed` says (fix I1).
     ...(i.kind === 'localize' ? [...EDIT_TOOLS, 'Bash'] : []),
+    // The directions turn of a variant group (Phase 15) writes nothing and runs nothing: its only tool is
+    // `submit_variant_directions`, whatever `autoApproveSandboxed` or the project's "Always" rules say.
+    ...(i.kind === 'variant-directions' ? [...EDIT_TOOLS, 'Bash'] : []),
   ];
-  const extra = [...(brandCodebases ? codebaseReadAllowRules(i.codebases) : []), ...i.projectAllowRules, ...i.mcpTools];
+  const directions = i.kind === 'variant-directions';
+  const extra = [...(brandCodebases ? codebaseReadAllowRules(i.codebases) : []), ...(directions ? [] : i.projectAllowRules), ...i.mcpTools];
   // With codebases the brand tools keep only WebFetch, and only with a website source: Bash(mkdir/ffprobe) are dropped.
   const kindTools = (list: readonly string[]) => (brandCodebases ? (i.brandWebsite ? list.filter((t) => t === 'WebFetch') : []) : list);
   if (!i.sandbox) {
@@ -126,7 +134,7 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
       // Phase 8 (spec §3.2, docs/superpowers/specs/2026-10-09-motion-studio-phase8-approvals-usage-design.md): the per-kind
       // AUTO_BASH table is gone. Every kind follows the workspace setting `autoApproveSandboxed`: brand and describe jobs
       // too, since their sandbox has no network, writes stay in the project and the configuration files are protected.
-      autoAllowBashIfSandboxed: i.kind === 'localize' ? false : i.autoApproveSandboxed,
+      autoAllowBashIfSandboxed: i.kind === 'localize' || directions ? false : i.autoApproveSandboxed,
       filesystem: {
         denyRead: [
           ...[...sensitiveHomePaths(i.home), i.configDir].map(sandboxPath),

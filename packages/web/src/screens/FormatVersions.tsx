@@ -43,9 +43,11 @@ export interface VersionActions {
  * The version actions of a creative, with their messages: success toasts, a calm toast when the core is still hashing old
  * versions after the automatic retries, and every other refusal as a clear message through `onError` (null when one starts).
  */
-export function useVersionActions({ slug, creative, states, labelOf, resumeFrom, onChanged, onError }: {
+export function useVersionActions({ slug, creative, states, labelOf, resumeFrom, onChanged, onError, groupPick }: {
   slug: string; creative: string; states: Record<string, FormatState>; labelOf(id: string): string; resumeFrom: number | null;
   onChanged(): void; onError(text: string | null): void;
+  /** Phase 15: in a variant group the ★ is the group's (variant and version): writes it instead of the creative's own `exportPicks`. */
+  groupPick?(format: string, n: number | null): Promise<unknown>;
 }): VersionActions {
   const t = useT();
   const fv = t.web.formatVersions;
@@ -96,12 +98,12 @@ export function useVersionActions({ slug, creative, states, labelOf, resumeFrom,
     star: (format, n, opts) => {
       const label = labelOf(format);
       const follows = states[format]?.follows;
-      run(() => api.setExportPick(slug, creative, format, n), { label, n, primary: follows ? labelOf(follows) : undefined },
+      run(() => (groupPick ? groupPick(format, n) : api.setExportPick(slug, creative, format, n)), { label, n, primary: follows ? labelOf(follows) : undefined },
         () => { toast.show(fv.starToast({ n, label }), { tone: 'ok' }); opts?.done?.(); }, format, opts?.fail);
     },
     resetStar: (format) => {
       const label = labelOf(format);
-      run(() => api.setExportPick(slug, creative, format, null), { label }, () => toast.show(fv.resetToast({ label }), { tone: 'ok' }), format);
+      run(() => (groupPick ? groupPick(format, null) : api.setExportPick(slug, creative, format, null)), { label }, () => toast.show(fv.resetToast({ label }), { tone: 'ok' }), format);
     },
     pending: (format) => inFlight.current.has(format),
     link: (follower, primary) => {
@@ -150,6 +152,8 @@ export interface FormatBadgeProps {
   /** The version on screen is a v2 one that can be rendered now (Task 8): the menu offers "Render vN". */
   render?: { n: number; run(): void } | null;
   className?: string;
+  /** Phase 15: in a variant group a board that is not the group's ★ says "v5", without the star. */
+  unstarred?: boolean;
 }
 
 /**
@@ -168,7 +172,7 @@ export function FormatBadge(p: FormatBadgeProps) {
     <>
       <button ref={anchor} type="button" className={cx('ms-vbadge ms-star ms-fvb', open && 'ms-open', p.className)} aria-haspopup="dialog" aria-expanded={open}
         aria-label={fv.badge({ label: p.label, n })} onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}>
-        ★ v{n}<Icon name="chevron" size={10} />
+        {p.unstarred && star === null ? '' : '★ '}v{n}<Icon name="chevron" size={10} />
       </button>
       {p.shown !== null && p.shown !== n ? <span className="ms-fvb-viewing">{fv.viewing({ n: p.shown })}</span> : null}
       <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="bottom-start" width={320} label={fv.title({ label: p.label })}>

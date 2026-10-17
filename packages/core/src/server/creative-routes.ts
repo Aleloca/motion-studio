@@ -4,7 +4,7 @@ import { lstat, readdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, join, sep } from 'node:path';
 import { changedAssets, overlayAssetPaths, readOverlay } from '../localization/store.ts';
 import type { FastifyInstance } from 'fastify';
-import { messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, nextInstanceId, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow } from '@motion-studio/shared';
+import { messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow, hostOf, MAX_VARIANTS, VARIANT_LETTERS, type VariantDetail, type VariantLetter } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
@@ -17,6 +17,9 @@ import { readJsonFile } from '../json-file.ts';
 import { isRealDirChain } from '../creatives/core-files.ts';
 import type { UrlSigner } from './signed-urls.ts';
 import { formatSummaries } from '../creatives/format-summary.ts';
+import { MAX_DIRECTION_CHARS, VariantGroupService } from '../creatives/variant-group.ts';
+import { exportGroup, itemOfPlan, pendingByMember, planGroupExport, renderGroupLocales, resolveGroupLocalized, type GroupPlanItem } from '../creatives/variant-export.ts';
+import type { VariantFanout } from '../creatives/variant-fanout.ts';
 import { withLazyHashes } from '../creatives/output-hashes.ts';
 import { creativeJobKey, PICK_RETRY_AFTER_SEC, type CreativeRef, type CreativeTurnService } from '../creatives/creative-turns.ts';
 import type { RenderJobService } from '../creatives/render-jobs.ts';
@@ -57,6 +60,8 @@ export interface CreativeRoutesContext {
   signer: UrlSigner;
   /** Commits the brand kit change of "Use as brand logo" (Phase 14); absent: the change is written and not committed. */
   git?: Git;
+  /** Phase 15: starts variants (`POST …/variants/run`): directions turn, then the fan-out. */
+  variantRuns: VariantFanout;
 }
 
 const isInsideDir = (p: string, base: string | null) => Boolean(base && p.startsWith(base.endsWith(sep) ? base : base + sep));
@@ -113,8 +118,34 @@ const exportBody = z.object({
   /** "Render anyway" for translations rendered first that have open problems or outdated entries. */
   force: z.boolean().optional(),
 });
+/** Phase 15 (spec §6): `POST …/export-group`; no picks, the group selection decides. */
+const exportGroupBody = z.object({
+  destination: z.unknown().optional(), pattern: z.unknown().optional(), date: z.unknown().optional(),
+  locales: z.array(z.string().min(1).max(40)).min(1).max(11).optional(),
+  /** The formats to export (the dialog's ticked rows); absent: every format of the selection. */
+  formats: z.array(z.string().min(1).max(200)).max(MAX_EXPORT_FORMATS).optional(),
+  /** "Render anyway" for translations rendered first that have open problems or outdated entries (as the single export). */
+  force: z.boolean().optional(),
+}).strict();
 const useAsLogoBody = z.object({ variant: z.enum(['primary', 'icon']) }).strict();
 const linkBody = z.object({ follower: z.string().min(1).max(200), primary: z.string().min(1).max(200).nullable() });
+/** Phase 15: `POST …/variants` (see the route). */
+const addVariantsBody = z.object({
+  count: z.number().int().min(1).max(MAX_VARIANTS).optional(),
+  directions: z.array(z.union([z.string().max(MAX_DIRECTION_CHARS), z.null()])).max(MAX_VARIANTS).optional(),
+  baseFrom: z.object({ slug: z.string().min(1).max(100), version: z.number().int().min(1) }).strict().optional(),
+}).strict();
+const variantPickBody = z.object({ slug: z.string().min(1).max(100), version: z.number().int().min(1) }).strict();
+const layoutBody = z.object({ layout: z.enum(['variant', 'format']) }).strict();
+const directionBody = z.object({ direction: z.string().max(MAX_DIRECTION_CHARS) }).strict();
+/**
+ * Phase 15 (ruling R3): `POST …/variants/run`. `targets`: letters, or every active variant; `request`: the same body as
+ * `POST …/turns`, or null for the first generation.
+ */
+const variantRunBody = z.object({
+  targets: z.union([z.array(z.enum(VARIANT_LETTERS as unknown as [VariantLetter, ...VariantLetter[]])).min(1).max(MAX_VARIANTS), z.literal('all-active')]),
+  request: z.union([turnBodySchema.strict(), z.null()]),
+}).strict();
 /** A render request (Task 5): `formats` to render (a follower stands for its primary); absent or empty: every primary. */
 const renderBody = z.object({
   formats: z.array(z.string().min(1).max(200)).max(100).optional(),
@@ -185,6 +216,11 @@ export interface RecoverOptions {
   git?: Git;
   /** Phase 13: where a cut turn's session is remembered (the core's side state, out of the agent's reach). */
   sideState?: CreativeSideStateStore;
+  /**
+   * Phase 15 (deferred 51): applies a variant's pending brief (the group's brief kept while it worked) that a crash left
+   * behind, under the creative's lock (`CreativeTurnService.briefAfterJob`). Called for each creative with one and no job.
+   */
+  applyPendingBrief?: (ref: CreativeRef) => Promise<void>;
 }
 
 export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: string) => boolean = () => false, ro: RecoverOptions = {}): Promise<void> {
@@ -195,7 +231,8 @@ export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: st
     // Fix round 1 (M2): every creative gets its side record now, before any agent can run, so `queued`/`stoppedSession`
     // written into a creative.json later (by anyone) are never taken as the user's, even in a creative nobody opened yet.
     if (side) {
-      for (const c of await new CreativeStore(dir).list().catch(() => [])) {
+      // Phase 15: every creative, real and orphan sisters included (`listAll`): each needs its side record.
+      for (const c of await new CreativeStore(dir).listAll().catch(() => [])) {
         // A creative.json that cannot be read now is migrated on its first successful open (fix round 2).
         if (c.ok) await side.read(dir, c.slug).catch(() => {});
         else await side.markPendingMigration(dir, c.slug).catch(() => {});
@@ -205,6 +242,16 @@ export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: st
     await new CreativeStore(dir).recoverInterrupted((slug) => isJobActive(creativeJobKey(ws.root, p.slug, slug)), remember).catch((err: Error) => {
       console.warn(`Motion Studio: creative recovery failed in project ${p.slug}: ${err.message}`);
     });
+    // Phase 15 (deferred 51): a group's brief kept for a variant that was working when the app stopped is applied now, not
+    // only at that variant's next job (its brief would otherwise stay behind the group's until then).
+    if (side && ro.applyPendingBrief) {
+      for (const c of await new CreativeStore(dir).listAll().catch(() => [])) {
+        if (!c.ok || isJobActive(creativeJobKey(ws.root, p.slug, c.slug))) continue;
+        if (!(await side.pendingBrief(dir, c.slug).catch(() => null))) continue;
+        await ro.applyPendingBrief({ root: ws.root, projectSlug: p.slug, projectDir: dir, creativeSlug: c.slug })
+          .catch((err: Error) => console.warn(`Motion Studio: the group's brief could not be applied to ${c.slug}: ${err.message}`));
+      }
+    }
     // Render and media temp files left by a render the app was killed during, and the media cache's garbage. This also runs
     // on a workspace switch, when renders may run: their creatives are skipped and files in use are kept.
     await sweepProjectRenders(dir, {
@@ -239,28 +286,15 @@ export const localeAssetsCheck = (projectDir: string, creativeDir: string) => as
 };
 
 /**
- * A logo from scratch is one instance per concept (`identity-logo`, `identity-logo@2`…, final wave M3, decision 786): the
- * create route adds the missing instances of each logo preset in the brief up to `identity.concepts`, within MAX_INSTANCES
- * (`nextInstanceId`). Idempotent: a body that already lists them (the UI's) is left as it is; never removes an instance.
+ * Phase 15 (spec §3 "Identità", decision 845): the size of the variant group a new identity creative gets: `identity.concepts`
+ * of a logo from scratch (1..5) when it is above 1 and the brief has an identity format. A brief that already lists several
+ * instances of one identity preset (an old client's `identity-logo@2`…) is left as it is: no group.
  */
-export function expandLogoConcepts<B extends Pick<Brief, 'formats' | 'identity'>>(brief: B, presets: readonly FormatPreset[]): B {
-  if (brief.identity?.start !== 'scratch') return brief;
-  const want = Math.min(5, Math.max(1, brief.identity.concepts ?? 3));
-  const formats = [...brief.formats];
-  const logoPresets = [...new Set(formats.map(presetOf))].filter((id) => presets.find((p) => p.id === id)?.identity === 'logo');
-  for (const preset of logoPresets) {
-    let have = formats.filter((f) => presetOf(f) === preset).length;
-    while (have < want) {
-      const id = nextInstanceId(preset, formats);
-      if (id === null) break;
-      // Right after the preset's last instance, so the concepts stay together.
-      let at = -1;
-      formats.forEach((f, i) => { if (presetOf(f) === preset) at = i; });
-      formats.splice(at + 1, 0, id);
-      have++;
-    }
-  }
-  return formats.length === brief.formats.length ? brief : { ...brief, formats };
+export function identityGroupSize(brief: Pick<Brief, 'formats' | 'identity'>, presets: readonly FormatPreset[]): number {
+  if (brief.identity?.start !== 'scratch') return 1;
+  const ids = brief.formats.filter((f) => presets.find((p) => p.id === presetOf(f))?.identity);
+  if (ids.length === 0 || new Set(ids.map(presetOf)).size !== ids.length) return 1;
+  return Math.min(5, Math.max(1, brief.identity.concepts ?? 3));
 }
 
 export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutesContext): void {
@@ -270,8 +304,20 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     await ws.getProject(slug); // 404 for unknown projects
     const projectDir = ws.projectDir(slug);
     const store = new CreativeStore(projectDir);
-    store.dir(creativeSlug); // 400 for invalid slugs
+    // 400 for invalid slugs; phase 15: 404 for a sister-shaped folder that is neither a real sister nor an orphan (ruling R2).
+    await store.assertOpenable(creativeSlug);
     return { root: ws.root, projectSlug: slug, projectDir, creativeSlug, store };
+  };
+  const variantsOf = (ref: CreativeRef & { store: CreativeStore }) => new VariantGroupService({ store: ref.store, turns: ctx.turns });
+  /** Phase 15: the variant side of a creative's detail; absent outside a group (an old creative's detail is unchanged). */
+  const variantDetail = async (ref: CreativeRef & { store: CreativeStore }): Promise<VariantDetail | undefined> => {
+    const r = await variantsOf(ref).resolve(ref);
+    const slug = ref.creativeSlug;
+    if (r.orphan) return { orphan: true, host: hostOf(slug), letter: slug.slice(-1) as VariantLetter };
+    if (!r.group) return undefined;
+    const letter = r.group.members.find((m) => m.slug === slug)?.letter ?? 'a';
+    const missing = r.group.members.filter((m) => r.missing.includes(m.slug)).map((m) => m.letter);
+    return { orphan: false, host: r.host.creativeSlug, letter, group: r.group, missing };
   };
 
   app.get('/api/formats', async () => catalog().load());
@@ -330,7 +376,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
         brief = { ...brief, storePack: { ...pack, instances: slots } };
       }
     }
-    brief = expandLogoConcepts(brief, presets);
+    const groupSize = identityGroupSize(brief, presets);
     const links = initialLinks(brief, presets);
     const created = await store.create({ title: body.title, brief: { ...brief, links } });
     const slug = created.slug;
@@ -338,6 +384,24 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     await ctx.turns.side.read(ws.projectDir(req.params.slug), slug);
     const creative = linkedCodebases ? await store.update(slug, { linkedCodebases }) : created.creative;
     const ref = { root: ws.root, projectSlug: req.params.slug, projectDir: ws.projectDir(req.params.slug), creativeSlug: slug };
+    // Phase 15: an identity creative with several concepts is a group of that many variants (the host is A), made here and
+    // started like any grouped creative's first generation (`ctx.variantRuns`, the same orchestration as `…/variants/run`).
+    if (groupSize > 1) {
+      // Final wave M4 (as decisions log 847): the creative exists from here, so a group that cannot be made must not lose the
+      // slug either: 201 with `groupError`, nothing started (addVariants leaves no sister behind); the canvas can add variants.
+      try {
+        await new VariantGroupService({ store, turns: ctx.turns }).addVariants(ref, Array.from({ length: groupSize - 1 }, () => ({ direction: null })), { hostDirection: null });
+      } catch (err) {
+        return reply.status(201).send({ slug, creative: await store.get(slug), job: null, groupError: err instanceof Error ? err.message : String(err) });
+      }
+      // The group exists from here: a start that throws must not lose the slug (the client opens the creative and can retry).
+      let variantRun: Awaited<ReturnType<typeof ctx.variantRuns.run>> | null = null;
+      let startError: string | null = null;
+      if (body.generate) {
+        try { variantRun = await ctx.variantRuns.run(ref, 'all-active', null); } catch (err) { startError = err instanceof Error ? err.message : String(err); }
+      }
+      return reply.status(201).send({ slug, creative: await store.get(slug), job: null, ...(variantRun ? { variantRun } : {}), ...(startError ? { startError } : {}) });
+    }
     const job = body.generate ? await ctx.turns.start(ref) : null;
     return reply.status(201).send({ slug, creative: job ? await store.get(slug) : creative, job });
   });
@@ -360,6 +424,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       slug: ref.creativeSlug, creative: await ctx.turns.side.merged(ref.projectDir, ref.creativeSlug, creative), versions,
       jobKey: creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug),
       formats: await formatSummaries(creativeDir, creative, versions, (await catalog().load()).presets),
+      ...await variantDetail(ref).then((variants) => (variants ? { variants } : {})),
     };
   };
 
@@ -384,6 +449,82 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const body = parse(editBody, pruneLabelsOfRemovedFormats(req.body));
     const ref = await refOf(req.params.slug, req.params.c);
     return ctx.turns.updateBrief(ref, body);
+  });
+
+  // Phase 15: variant groups (spec §2, §5). Every route but POST …/variants refuses a creative outside a group (409
+  // `variant-no-group`) and writes nothing: an old creative is unchanged by them.
+  /**
+   * Creates sisters (ruling R3: no turn starts; Task 3's `…/variants/run` starts them). With no group yet, `count` is the size
+   * of the group asked for, A included (2..5), and `directions[0]` is A's; on a group, `count` is how many variants to add
+   * and `directions` are theirs. A missing or null direction is left for the directions turn. `baseFrom`: every new variant
+   * starts from that member's version (decisions log 263).
+   */
+  app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/variants', async (req, reply) => {
+    const body = parse(addVariantsBody, req.body);
+    const ref = await refOf(req.params.slug, req.params.c);
+    const svc = variantsOf(ref);
+    const r = await svc.resolve(ref);
+    if (r.orphan) throw new CodedError(409, t().errors.variantOrphan, 'variant-orphan');
+    const directions = body.directions ?? [];
+    const creating = r.group === null;
+    const total = creating ? body.count ?? Math.max(2, directions.length) : null;
+    const add = creating ? total! - 1 : body.count ?? Math.max(1, directions.length);
+    if ((creating && total! < 2) || add < 1 || directions.length > (creating ? total! : add)) {
+      throw new CodedError(400, t().errors.variantDirections, 'variant-directions');
+    }
+    const own = creating ? directions.slice(1) : directions;
+    const specs = Array.from({ length: add }, (_, i) => ({ direction: own[i] ?? null, ...(body.baseFrom ? { baseFrom: body.baseFrom } : {}) }));
+    await svc.addVariants(r.host, specs, creating ? { hostDirection: directions[0] ?? null } : {});
+    return reply.status(201).send(await detailOf({ ...r.host, store: ref.store }));
+  });
+
+  const letterOf = (l: string): VariantLetter => {
+    if (!(VARIANT_LETTERS as readonly string[]).includes(l)) throw new CodedError(404, t().errors.variantUnknown({ letter: l.slice(0, 2).toUpperCase() }), 'variant-unknown');
+    return l as VariantLetter;
+  };
+  for (const action of ['discard', 'restore', 'use-for-all'] as const) {
+    app.post<{ Params: { slug: string; c: string; l: string } }>(`/api/projects/:slug/creatives/:c/variants/:l/${action}`, async (req): Promise<CreativeDetail> => {
+      const ref = await refOf(req.params.slug, req.params.c);
+      const letter = letterOf(req.params.l);
+      const svc = variantsOf(ref);
+      if (action === 'discard') await svc.discard(ref, letter);
+      else if (action === 'restore') await svc.restore(ref, letter);
+      else await svc.useVariantForAll(ref, letter);
+      return detailOf(ref);
+    });
+  }
+
+  app.put<{ Params: { slug: string; c: string; formatId: string } }>('/api/projects/:slug/creatives/:c/variants/picks/:formatId', async (req): Promise<CreativeDetail> => {
+    const pick = req.body === null || req.body === undefined ? null : parse(variantPickBody, req.body);
+    const ref = await refOf(req.params.slug, req.params.c);
+    await variantsOf(ref).setPick(ref, req.params.formatId, pick);
+    return detailOf(ref);
+  });
+
+  app.put<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/variants/layout', async (req): Promise<CreativeDetail> => {
+    const body = parse(layoutBody, req.body);
+    const ref = await refOf(req.params.slug, req.params.c);
+    await variantsOf(ref).setLayout(ref, body.layout);
+    return detailOf(ref);
+  });
+
+  app.put<{ Params: { slug: string; c: string; l: string } }>('/api/projects/:slug/creatives/:c/variants/:l/direction', async (req): Promise<CreativeDetail> => {
+    const body = parse(directionBody, req.body);
+    const ref = await refOf(req.params.slug, req.params.c);
+    await variantsOf(ref).setDirection(ref, letterOf(req.params.l), body.direction, 'user');
+    return detailOf(ref);
+  });
+
+  /**
+   * Phase 15 (ruling R3, spec §3, §4): starts `request` (or the first generation) in the target variants. The targets without
+   * a direction get one from the directions turn first (none when every direction is typed); then each target gets a normal
+   * creative turn, two at a time, and their paid services are confirmed on one card. Discarded variants are skipped.
+   */
+  app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/variants/run', async (req, reply) => {
+    const body = parse(variantRunBody, req.body);
+    const ref = await refOf(req.params.slug, req.params.c);
+    const { store: _store, ...plain } = ref;
+    return reply.status(202).send(await ctx.variantRuns.run(plain, body.targets, body.request));
   });
 
   app.get<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/conversation', async (req) => {
@@ -442,7 +583,11 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const n = Number(req.params.n);
     if (!Number.isInteger(n) || n < 1) throw new WorkspaceError(404, t().errors.versionNotFound);
     const body = parse(renderBody, req.body);
-    return reply.status(202).send(await ctx.renders.start(ref, n, body.formats, { ...(body.locales ? { locales: body.locales } : {}), ...(body.force !== undefined ? { force: body.force } : {}) }));
+    // Residual fix (decisions log 866): a render writes the variant's outputs; a discarded one is read-only until restored.
+    return reply.status(202).send(await ctx.turns.runLocked(ref, async () => {
+      await ctx.turns.assertNotDiscarded(ref);
+      return ctx.renders.start(ref, n, body.formats, { ...(body.locales ? { locales: body.locales } : {}), ...(body.force !== undefined ? { force: body.force } : {}) });
+    }));
   });
 
   app.post<{ Params: { slug: string; c: string; n: string } }>('/api/projects/:slug/creatives/:c/versions/:n/reveal', async (req) => {
@@ -527,6 +672,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     // then the picks are resolved again on the new records and copied. Legacy versions export their media as they are.
     const rendered: Array<{ version: number; formats: string[] }> = [];
     if (pending.size > 0 && includeSource) {
+      await notDiscarded(ref); // residual fix (decisions log 866): what is already rendered still exports
       await ctx.renders.renderAndWait(ref, pending);
       for (const [version, formats] of pending) rendered.push({ version, formats });
       ({ items, pending } = await resolve());
@@ -573,11 +719,143 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   });
 
   /**
+   * Phase 15 (spec §6): what a group export would copy, per format of the group: the member and version the group ★ (or the
+   * default rule on variant A) names, with the file and its state. Any member of the group answers the same; 409 outside one.
+   */
+  app.get<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/export-group', async (req) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const plan = await planGroupExport(variantsOf(ref), ref.store, ref);
+    return { items: plan.map(({ creativeDir: _dir, set: _set, ...p }) => p) };
+  });
+
+  /**
+   * Phase 15 (spec §6): the group export. Each format is copied from the member and version of the group selection, named as
+   * the host would name it (host title and slug, the file's own version: never a sister's `~x`). A selected composition with no
+   * render is rendered first, in its own member. A file that is missing, a render that failed or has problems, or (with
+   * languages) a translation that cannot be rendered is NOT an error: it is left out and listed in `unavailable`, translated.
+   * Translations stay inside their variant: for each format, the localized renders of the member the selection picked, at that
+   * version. A translation without a current render is rendered first in that member, as a single creative's export does
+   * (decisions log 854, revised): 409 `localization-needs-force` without `force` when one has open problems or outdated
+   * entries, and one rendered now with problems is left out and listed (Ruling J).
+   */
+  app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/export-group', async (req) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const raw = (req.body ?? {}) as { destination?: unknown };
+    if (typeof raw.destination !== 'string' || !raw.destination.trim() || raw.destination.length > 4096) {
+      throw new CodedError(400, t().export.invalidDestination, 'export-invalid-destination');
+    }
+    const r = exportGroupBody.safeParse(req.body);
+    if (!r.success) throw new CodedError(400, t().export.invalidPicks, 'export-invalid-picks');
+    const body = r.data;
+    if (body.pattern !== undefined && (typeof body.pattern !== 'string' || !body.pattern.trim() || body.pattern.length > 200)) {
+      throw new CodedError(400, t().export.invalidPattern, 'export-invalid-pattern');
+    }
+    if (body.date !== undefined && !isExportDate(body.date)) throw new CodedError(400, t().export.invalidDate, 'export-invalid-date');
+    const svc = variantsOf(ref);
+    const hostRef = (await svc.resolve(ref)).host;
+    const host = await ref.store.get(hostRef.creativeSlug);
+    const presets = (await catalog().load()).presets;
+    const label = (id: string) => formatDisplayName(presets, id, currentLocale(), host.brief.formatLabels);
+    const extraLocales = host.brief.locales?.extra ?? [];
+    const primaryLocale = extraLocales.length > 0 ? host.brief.locales?.primary : undefined;
+    const pattern = typeof body.pattern === 'string' ? body.pattern : (await ctx.requireWorkspace().readSettings()).exportNamePattern;
+    const tags = body.locales ? [...new Set(body.locales.map((x) => checkedLocale(x, currentLocale())))] : null;
+    if (tags) assertLocalesInBrief(host.brief, tags, currentLocale());
+    const briefPrimary = host.brief.locales?.primary;
+    const includeSource = tags === null || (briefPrimary !== undefined && tags.includes(briefPrimary));
+    const otherTags = tags === null ? [] : tags.filter((x) => x !== briefPrimary);
+    const common = { creativeDir: ref.store.dir(hostRef.creativeSlug), destination: expandHome(raw.destination.trim()), slug: hostRef.creativeSlug, title: host.title,
+      forbiddenRoot: ref.root, presets, pattern, ...(typeof body.date === 'string' ? { now: body.date } : {}), label };
+
+    const only = body.formats ? new Set(body.formats) : null;
+    const planOf = async () => (await planGroupExport(svc, ref.store, ref)).filter((p) => !only || only.has(p.format));
+    let plan = await planOf();
+    const key = (p: Pick<GroupPlanItem, 'slug' | 'format' | 'version'>) => `${p.slug}\0${p.format}\0${p.version}`;
+    const withProblems = new Map<string, string[]>();
+    const renderErrors = new Map<string, string>();
+    const pending = plan.filter((p) => p.state === 'needs-render');
+    if (includeSource && pending.length > 0) {
+      // One render job per member and version, in the member's own folder; a render that cannot run leaves its formats out,
+      // with the job's own error (as the pack route reports it).
+      for (const [slug, versions] of pendingByMember(pending)) {
+        const error = await ctx.renders.renderAndWait({ ...ref, creativeSlug: slug }, versions)
+          .then((jobs) => jobs.find((j) => j.state === 'failed')?.error ?? null, (e: unknown) => (e instanceof Error ? e.message : String(e)));
+        if (error) for (const [version, formats] of versions) for (const format of formats) renderErrors.set(key({ slug, format, version }), error);
+      }
+      const renderedNow = new Set(pending.map(key));
+      plan = await planOf();
+      // A render made now with problems is not copied (the user has not seen it), as for a single creative.
+      for (const p of plan) {
+        if (p.state !== 'ready' || !renderedNow.has(key(p))) continue;
+        const v = (await ref.store.readVersions(p.slug)).find((x) => x.n === p.version);
+        const list = v ? renderProblems(v, p.format) : [];
+        if (list.length > 0) withProblems.set(key(p), list);
+      }
+    }
+    const usable = plan.map((p) => (withProblems.has(key(p)) ? { ...p, state: 'missing' as const } : p));
+    const g = t().export.groupReason;
+    const reason = (p: GroupPlanItem) => {
+      const problems = withProblems.get(key(p));
+      if (problems) return g.renderProblems({ list: problems.join('; ') });
+      const error = renderErrors.get(key(p));
+      if (p.state === 'needs-render') return error ? g.renderFailed({ reason: error }) : g.notRendered;
+      return g.missing;
+    };
+    type Gap = { format: string; slug: string; letter: VariantLetter; version: number; locale?: string; message: string };
+    const gap = (p: GroupPlanItem, why: string, locale?: string): Gap => ({ format: p.format, slug: p.slug, letter: p.letter, version: p.version, ...(locale !== undefined ? { locale } : {}),
+      message: t().export.groupSkipped({ format: locale !== undefined ? `${label(p.format)} (${locale})` : label(p.format), variant: p.letter.toUpperCase(), n: p.version, reason: why }) });
+    const unavailable: Gap[] = (includeSource ? usable.filter((p) => p.state !== 'ready') : []).map((p) => gap(p, reason(p)));
+    const items: ExportItem[] = includeSource
+      ? usable.filter((p) => p.state === 'ready').map((p) => (primaryLocale !== undefined ? { ...itemOfPlan(p), locale: primaryLocale } : itemOfPlan(p)))
+      : [];
+    if (otherTags.length > 0) {
+      const checks = {
+        matches: (slug: string, n: number, file: string, sha: string) => renderFileMatches(ref.projectDir, ref.store.dir(slug), slug, n, file, sha),
+        assetsOk: (slug: string, n: number, row: LocalizationRow) => localeAssetsCheck(ref.projectDir, ref.store.dir(slug))(n, row),
+      };
+      // A source left out above (render problems) has no translation exported either; a languages-only export resolves every
+      // item, a composition without its primary render included (as the single export does).
+      const locPlan = usable.filter((p) => !withProblems.has(key(p)));
+      let loc = await resolveGroupLocalized(locPlan, ref.store, otherTags, checks);
+      // Decision 854 (superseded part) and the orchestrator's ruling: a translation without a current render is rendered now,
+      // in its own member, exactly like a single creative's export; `localization-needs-force` asks "Renderizza comunque".
+      const done = await renderGroupLocales(ctx.renders, ref, loc.pending, body.force === true, (list) => messages(currentLocale()).variants.renderNeedsForce({ list }));
+      if (loc.pending.length > 0) loc = await resolveGroupLocalized(locPlan, ref.store, otherTags, checks);
+      const renderedNow = (it: ExportItem, slug: string) => done.rendered.some((r) => r.slug === slug && r.version === it.n && r.locale === it.locale && r.formats.includes(it.format));
+      for (const it of loc.items) {
+        const p = locPlan.find((x) => x.format === it.format)!;
+        // Ruling J: a translation rendered now with problems is not copied either: listed, with its problems.
+        if (it.problems?.length && renderedNow(it, p.slug)) { unavailable.push(gap(p, g.renderProblems({ list: it.problems.join('; ') }), it.locale)); continue; }
+        const { problems: _p, ...clean } = it;
+        items.push(clean);
+      }
+      for (const u of loc.unavailable) {
+        const error = done.errors.get(`${u.plan.slug}\0${u.locale}`);
+        const why = u.state === 'no-translation' ? g.noTranslation({ locale: u.locale })
+          : u.state === 'missing' ? reason(u.plan)
+          : error ? g.renderFailed({ reason: error }) : g.notRendered;
+        unavailable.push(gap(u.plan, why, u.locale));
+      }
+    }
+    const result = await exportGroup(usable, common, items);
+    const { unavailable: _plan, ...copied } = result;
+    return { ...copied, unavailable };
+  });
+
+  /**
    * The export items with their languages (Phase 12, spec §3.5): the primary-language files (when exported) carry the primary
    * tag, and each other language adds the translated renders of the same formats and versions. A translation without a
    * current render is rendered first (409 `localization-needs-force` when it has open problems or outdated entries and
    * `force` is not set: the dialog asks "render anyway"); a format with no translation is refused (409 `localization-missing`).
    */
+  /**
+   * Residual fix (decisions log 866): a render made now writes the creative's outputs, so a discarded variant refuses it
+   * (409 `variant-discarded`), checked under its lock like its other writes; exporting what is already rendered is a read.
+   */
+  function notDiscarded(ref: CreativeRef): Promise<void> {
+    return ctx.turns.runLocked(ref, () => ctx.turns.assertNotDiscarded(ref));
+  }
+
   async function withLocales(ref: CreativeRef & { store: CreativeStore }, creativeDir: string, items: ExportItem[],
     o: { includeSource: boolean; primaryLocale: string | undefined; otherTags: string[]; force: boolean; label: (id: string) => string }):
     Promise<{ items: ExportItem[]; rendered: Array<{ version: number; formats: string[]; locale: string }> }> {
@@ -597,6 +875,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     };
     refuseMissing();
     if (r.pending.size > 0) {
+      await notDiscarded(ref);
       for (const [n, p] of r.pending) {
         await ctx.renders.renderLocalesAndWait(ref, n, p.formats, p.locales, o.force);
         for (const locale of p.locales) rendered.push({ version: n, formats: [...p.formats], locale });
@@ -635,6 +914,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const includeSource = tags === null || (briefPrimary !== undefined && tags.includes(briefPrimary));
     const otherTags = tags === null ? [] : tags.filter((x) => x !== briefPrimary);
     const pending = includeSource ? await pendingRenders(creativeDir, versions, items) : new Map<number, string[]>();
+    if (pending.size > 0) await notDiscarded(ref); // residual fix (decisions log 866)
     const renders: Array<{ version: number; formats: string[]; job: JobSummary; covers: boolean; locales?: string[] }> = [];
     // Answers at once: an active job of that version is reused for the formats it covers and a follow-up job is queued for
     // the rest (I3), so the job returned covers them all.
@@ -651,6 +931,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
         err.problems = list.slice(0, 50);
         throw err;
       }
+      if (loc.pending.size > 0) await notDiscarded(ref);
       for (const [version, p] of loc.pending) {
         const job = await ctx.renders.start(ref, version, p.formats, { locales: p.locales, force: r.data.force === true });
         renders.push({ version, formats: p.formats, job, covers: true, locales: p.locales });
