@@ -309,7 +309,7 @@ describe('variant paid batch (Review Focus 4)', () => {
     await vi.waitFor(async () => expect(await v.pending()).toHaveLength(1));
     const card = (await v.pending())[0]!;
     expect([...new Set(card.paidBatch!.items!.map((i) => i.variant))].sort()).toEqual(['a', 'c']);
-    expect(card.paidBatch!.total.variants).toBe(2);
+    expect(card.paidBatch!.total?.variants).toBe(2);
     await decide(card, 'deny');
     await v.waitIdle();
   });
