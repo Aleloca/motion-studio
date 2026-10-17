@@ -59,6 +59,7 @@ function view(c: Composition): EditorCompositionView {
   return { n: 1, format: REEL, primaryFormat: REEL, hash: 'h'.repeat(64), composition: structuredClone(c), files: filesOf(c), fonts };
 }
 
+const askSpy = vi.fn();
 function Harness({ children, comp }: { children: ReactNode; comp: Composition }) {
   const [draft, actions] = useDraft(KEY);
   const [selection, setSelection] = useState<string | null>(select);
@@ -66,7 +67,7 @@ function Harness({ children, comp }: { children: ReactNode; comp: Composition })
   if (!draft) return null;
   const ctx = {
     slug: 'acme', creative: 'lancio', format: REEL, primary: REEL, draft, actions, player: null, selection, select: setSelection,
-    snap: false, setSnap: () => {}, token: 't', staging,
+    snap: false, setSnap: () => {}, token: 't', staging, askAnimation: askSpy,
     stageAsset: async (from: unknown) => {
       stageSpy(from);
       const a = await stageImpl(from);
@@ -283,6 +284,11 @@ describe('every field edits through apply', () => {
     (c.tracks.flatMap((t) => t.clips).find((k) => k.id === 'card') as { animations?: unknown }).animations = [{ prop: 'opacity', from: 0, to: 1, duration: 0.5 }];
     await mount('card', c);
     expect(screen.getByText('Custom animation · ask the agent to change it')).toBeTruthy();
+    // User test item 10: a button puts a reference to that animation in the chat.
+    askSpy.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: 'Ask the agent' }));
+    expect(askSpy).toHaveBeenCalledWith('card', 'in');
+    expect(screen.getByRole('button', { name: 'Ask the agent' }).getAttribute('title')).toBe('Adds a reference to the in animation of card to the chat');
   });
 
   it('html parameters: one field per declared param, by type', async () => {

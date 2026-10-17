@@ -1130,6 +1130,20 @@ describe('EditorScreen · one screen with the format view (decision 916)', () =>
     expect(screen.getByRole('button', { name: 'Comment a spot' }).getAttribute('aria-pressed')).toBe('false');
   });
 
+  it('"Ask the agent" on a custom animation: a chip on the clip about its animation, the chat, the composer focused (item 10)', async () => {
+    const custom = structuredClone(spike);
+    (custom.tracks.flatMap((t) => t.clips).find((k) => k.id === 'title') as { animations?: unknown }).animations = [{ prop: 'opacity', from: 0, to: 1, duration: 0.5 }];
+    api.getEditorComposition.mockImplementation(async (_s, _c, n) => view(n, { composition: structuredClone(custom) }));
+    render(<Harness />);
+    await opened();
+    await userEvent.click(within(screen.getByRole('region', { name: 'In this scene' })).getByRole('button', { name: 'title' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Ask the agent' }));
+    const { result } = renderHook(() => usePendingPins(pinsKey('acme', 'lancio')));
+    expect(result.current[0]).toEqual([{ version: 2, pin: expect.objectContaining({ format: REEL, clipId: 'title', clipName: 'title', timeSec: 0.2, note: 'About its custom in animation' }) }]);
+    expect(screen.getByRole('tab', { name: 'Chat' }).getAttribute('aria-selected')).toBe('true');
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Request a change')));
+  });
+
   it('a legacy older version picked in the viewer is the viewer; a version with a composition picked there is the editor again', async () => {
     detail = makeDetail([{ ...legacy(1), outputs: [{ format: REEL, file: 'reel.mp4', width: 1080, height: 1920, durationSec: 6, verified: true, preview: null }] }, v2(2)]);
     render(<Harness />);
