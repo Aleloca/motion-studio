@@ -3,7 +3,7 @@
 // (an MCP tool) the way the Agent SDK documents it for `canUseTool`? Motion Studio answers with
 //   { "behavior": "allow", "updatedInput": { ...original input, "answers": { "<question text>": "<label>" } } }
 // (https://code.claude.com/docs/en/agent-sdk/user-input, "Return answers to Claude"); the docs do not say the MCP prompt tool
-// path accepts it (decision 873 in docs/decisions-log.md). Prints one JSON object.
+// path accepts it (decision 874 in docs/decisions-log.md). Prints one JSON object.
 //
 // It runs ONLY when a person starts it by hand. No test, script or CI job runs it, and agents must not: it starts the
 // REAL `claude` (or CLAUDE_BIN) with model haiku in a throwaway temp folder, on the account of whoever runs it, at a cost

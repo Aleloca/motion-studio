@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Helper of ask-user-question-probe.mjs (never started on its own): a minimal stdio MCP server with one tool, `approve`,
 // used as Claude Code's --permission-prompt-tool. Each call is appended to PROBE_LOG. For AskUserQuestion it answers as
-// Motion Studio does (decision 873): `allow` with the original input plus `answers` (question text → the FIRST option's
+// Motion Studio does (decision 874): `allow` with the original input plus `answers` (question text → the FIRST option's
 // label), or `deny` when PROBE_DENY=1. Any other tool is denied.
 import { appendFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';

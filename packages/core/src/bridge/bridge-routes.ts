@@ -90,7 +90,7 @@ export const toolUseIdOf = (v: unknown): string | undefined => (typeof v === 'st
  * The answer goes back as documented for the Agent SDK's `canUseTool` (https://code.claude.com/docs/en/agent-sdk/user-input,
  * "Return answers to Claude"): `allow` with the original input plus `answers` (question text → label, several labels joined
  * with ", ", the user's own text for "Other"). That the CLI's `--permission-prompt-tool` honours the same answer is not
- * documented: see scripts/spike/ask-user-question-probe.mjs (decisions log 873).
+ * documented: see scripts/spike/ask-user-question-probe.mjs (decisions log 874).
  */
 async function askUser(ctx: BridgeRoutesContext, c: BridgeContext, input: Record<string, unknown>, linked: { toolUseId?: string }) {
   const parsed = askUserQuestionInputSchema.safeParse(input);
