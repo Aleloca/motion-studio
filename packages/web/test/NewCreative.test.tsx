@@ -316,6 +316,43 @@ describe('NewCreative · format board', () => {
   });
 });
 
+describe('NewCreative · duration stated in the text (user note 6)', () => {
+  it('warns when the brief says another duration and sets it with one click', async () => {
+    render(<NewCreative slug="acme" />);
+    await board();
+    await userEvent.click(within(screen.getByRole('group', { name: 'Instagram' })).getByRole('button', { name: /Post 1:1/ }));
+    fireEvent.change(brief(), { target: { value: 'Uno spot di 60 secondi per il lancio' } });
+    expect(screen.getByText('Il testo dice 60 s, la durata è 6 s')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Usa 60 s' }));
+    const length = screen.getByRole('radiogroup', { name: 'Durata dei video' });
+    expect(within(length).getByRole('radio', { name: '60 s' }).getAttribute('aria-checked')).toBe('true');
+    expect(screen.queryByText(/^Il testo dice/)).toBeNull();
+  });
+
+  it('a duration outside the presets goes in the custom field', async () => {
+    render(<NewCreative slug="acme" />);
+    await board();
+    await userEvent.click(within(screen.getByRole('group', { name: 'TikTok' })).getByRole('button', { name: /Video 9:16/ }));
+    fireEvent.change(brief(), { target: { value: 'A 45-second teaser' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Usa 45 s' }));
+    expect((screen.getByLabelText('Durata in secondi') as HTMLInputElement).value).toBe('45');
+    fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(createCreative).toHaveBeenCalledOnce());
+    expect((createCreative.mock.calls[0]![1] as { brief: { durationSec: number } }).brief.durationSec).toBe(45);
+  });
+
+  it('says nothing with no video format, or when the text agrees', async () => {
+    render(<NewCreative slug="acme" />);
+    await board();
+    fireEvent.change(brief(), { target: { value: 'Uno spot di 60 secondi' } });
+    expect(screen.queryByText(/^Il testo dice/)).toBeNull();
+    await userEvent.click(within(screen.getByRole('group', { name: 'Instagram' })).getByRole('button', { name: /Post 1:1/ }));
+    expect(screen.getByText(/^Il testo dice 60 s/)).toBeTruthy();
+    fireEvent.change(brief(), { target: { value: 'Uno spot di 6 secondi' } });
+    expect(screen.queryByText(/^Il testo dice/)).toBeNull();
+  });
+});
+
 describe('NewCreative · assets', () => {
   it('the picker adds the assets to the brief', async () => {
     render(<NewCreative slug="acme" />);

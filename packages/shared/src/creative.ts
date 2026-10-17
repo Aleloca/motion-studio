@@ -392,8 +392,11 @@ export type ConversationEntry =
   | { type: 'user'; at: string; text: string; pins: Pin[]; attachments: string[]; jobId?: string; mode?: 'live' | 'queued' | 'redirect'; clientId?: string; deliveredAt?: string }
   | { type: 'agent'; at: string; jobId: string; event: AgentEvent }
   | { type: 'version'; at: string; n: number; status: 'complete' | 'incomplete' }
-  /** `warning`: something the user should know that did not fail the turn (e.g. a link removed); shown like `info`. */
-  | { type: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string };
+  /**
+   * `warning`: something the user should know that did not fail the turn (e.g. a link removed); shown like `info`.
+   * `origin: 'agent'` (decision 917): the line says what the agent did in the app with its tools (absent: the core's own).
+   */
+  | { type: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string; origin?: 'agent' };
 
 export interface CreativeSummary { slug: string; title: string; status: CreativeStatus; formats: string[]; /** The brief's labels of format instances (Phase 12); absent when there are none. */ formatLabels?: Record<string, string>; versions: number; updatedAt: string; cover: string | null;
   /** Phase 15: on a group's host row only (its sisters are not listed): members, active ones, and members whose folder is missing. */

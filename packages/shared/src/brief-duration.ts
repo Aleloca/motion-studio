@@ -7,11 +7,11 @@
 const WORDS: Record<string, number> = {
   a: 1, an: 1, one: 1, un: 1, uno: 1, two: 2, due: 2, three: 3, tre: 3, four: 4, quattro: 4, five: 5, cinque: 5,
 };
-const NUM = String.raw`(\d{1,4}(?:[.,]\d)?|an?|one|uno?|two|due|three|tre|four|quattro|five|cinque)`;
+const NUM = String.raw`(\d{1,4}(?:[.,]\d)?|an?|one|uno?|two|due|three|tre|four|quattro|five|cinque)`; // i18n-ignore number words the parser reads, not UI text
 const MIN = String.raw`(?:minutes?|mins?|minut[oi])`;
 const SEC = String.raw`(?:seconds?|secs?|second[oi]|s)`;
 // Letters on both sides of a match, Latin accents included (\b is ASCII only).
-const L = String.raw`a-zà-öø-ÿ`;
+const L = String.raw`a-zà-öø-ÿ`; // i18n-ignore a character class, not UI text
 const HALF = new RegExp(String.raw`(?<![${L}\d])(?:half\s+an?|mezzo)[\s-]*${MIN}(?![${L}])`, 'giu');
 const MINUTES = new RegExp(String.raw`(?<![${L}\d])${NUM}[\s-]*${MIN}(?![${L}])(?:\s*(?:,|and|e)?\s*(\d{1,3})[\s-]*${SEC}(?![${L}]))?`, 'giu');
 const SECONDS = new RegExp(String.raw`(?<![${L}\d.,])(\d{1,4})[\s-]*${SEC}(?![${L}])`, 'giu');
