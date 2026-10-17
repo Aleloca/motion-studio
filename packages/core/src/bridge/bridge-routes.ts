@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { EMPTY_BRAND_KIT, brandKitSchema, type BrandPhase } from '@motion-studio/shared';
+import { ASK_USER_QUESTION_TOOL, EMPTY_BRAND_KIT, askUserQuestionInputSchema, brandKitSchema, type AgentEvent, type BrandPhase } from '@motion-studio/shared';
 import { MCP_SERVER, MCP_TOOLS } from '../agent/launcher.ts';
 import { BRAND_CODEBASE_DENIED_TOOLS } from '../agent/runner.ts';
 import type { ApprovalBroker } from '../approvals/broker.ts';
@@ -83,6 +83,32 @@ const capCommand = (command: string) => {
 const TOOL_USE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 export const toolUseIdOf = (v: unknown): string | undefined => (typeof v === 'string' && TOOL_USE_ID.test(v) ? v : undefined);
 
+/**
+ * User note 8: Claude Code's built-in `AskUserQuestion` (exact name), reached through the permission prompt. It runs nothing
+ * and reads nothing: the only thing it can obtain is the user's answer. An input that is not a valid question is denied
+ * without a card; otherwise a question card waits for the user, under the same timer and the same stop as any approval.
+ * The answer goes back as documented for the Agent SDK's `canUseTool` (https://code.claude.com/docs/en/agent-sdk/user-input,
+ * "Return answers to Claude"): `allow` with the original input plus `answers` (question text → label, several labels joined
+ * with ", ", the user's own text for "Other"). That the CLI's `--permission-prompt-tool` honours the same answer is not
+ * documented: see scripts/spike/ask-user-question-probe.mjs (decisions log 873).
+ */
+async function askUser(ctx: BridgeRoutesContext, c: BridgeContext, input: Record<string, unknown>, linked: { toolUseId?: string }) {
+  const parsed = askUserQuestionInputSchema.safeParse(input);
+  if (!parsed.success) return { behavior: 'deny', message: t().approvals.invalidRequest };
+  if (c.signal.aborted) return { behavior: 'deny', message: denyMessage('cancelled') };
+  const { questions } = parsed.data;
+  const { decision, answers } = await ctx.approvals.request({ jobId: c.jobId, projectSlug: c.projectSlug, projectDir: c.projectDir, creativeSlug: c.creativeSlug, kind: 'question', toolName: ASK_USER_QUESTION_TOOL, input, questions, ...linked });
+  const answered = decision === 'once' && answers !== undefined;
+  const event: AgentEvent = {
+    kind: 'question_answered', outcome: answered ? 'answered' : decision === 'expired' || decision === 'cancelled' ? decision : 'deny',
+    items: questions.map((q) => ({ header: q.header, question: q.question, ...(answered && answers[q.question] !== undefined ? { answer: answers[q.question] } : {}) })), ...linked,
+  };
+  // In the conversation as the question and its answer, never as a permission.
+  try { c.emit(event); } catch { /* a faulty listener must not change the answer */ }
+  if (answered) return { behavior: 'allow', updatedInput: { ...input, answers } };
+  return { behavior: 'deny', message: decision === 'expired' ? t().approvals.questionExpired : decision === 'cancelled' ? denyMessage('cancelled') : t().approvals.questionSkipped };
+}
+
 /** Calls from the `studio` MCP server: one per tool, authenticated by the job's bridge token. */
 export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesContext) {
   const tools: Record<string, BridgeHandler> = {
@@ -108,6 +134,8 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
       if (await namesProtectedPath(toolName, input, ctx.protectedRoots ?? [], c.projectDir).catch(() => true)) {
         return { behavior: 'deny', message: t().approvals.protectedPath };
       }
+      // Never auto-approved, never "Always": a question card (user note 8).
+      if (toolName === ASK_USER_QUESTION_TOOL) return askUser(ctx, c, input, linked);
       const auto = (await autoApprovable(ctx, c, a.tool_name, input)) ? { tool: 'Bash', shown: input.command as string }
         : (await autoApprovableRead(ctx, c, a.tool_name, input)) ? { tool: 'Read', shown: input.file_path as string }
           : null;

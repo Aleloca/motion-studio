@@ -14,7 +14,7 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { renderState, type CreativeDetail, type FormatPreset, type JobSummary, type ManifestV2, type VersionEntry } from '@motion-studio/shared';
+import { renderState, type ApprovalRequest, type CreativeDetail, type FormatPreset, type JobSummary, type ManifestV2, type VersionEntry } from '@motion-studio/shared';
 import { AppConfigStore } from '../src/app-config.ts';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AgentBridge } from '../src/bridge/bridge.ts';
@@ -449,6 +449,33 @@ describe('the agent\'s composition tools', { timeout: 120_000 }, () => {
     const agentFrames = fake.frames.filter((f) => f.imageFormat === 'png');
     expect(agentFrames).toHaveLength(10);
     expect(agentFrames.every((f) => f.width === 320 && f.versionDir === 'outputs/v1')).toBe(true);
+  });
+});
+
+describe('the agent\'s AskUserQuestion (user note 8)', { timeout: 120_000 }, () => {
+  it('waits on a question card; the answer reaches the fake CLI as allow + answers, and the conversation keeps question and answer', async () => {
+    const url = await app.listen({ port: 0, host: '127.0.0.1' });
+    bridge.setOrigin(url);
+    const log = join(base, 'bridge.jsonl');
+    const question = 'Il brief dice circa 30 s, il titolo 12 s: quale durata uso?';
+    const input = { questions: [{ question, header: 'Durata', multiSelect: false, options: [{ label: '12 s', description: 'Come nel titolo' }, { label: '30 s', description: 'Come nel brief' }] }] };
+    process.env.FAKE_CLAUDE_BRIDGE_LOG = log;
+    process.env.FAKE_CLAUDE_BRIDGE_CALLS = JSON.stringify([['approve', { tool_name: 'AskUserQuestion', input, tool_use_id: 'toolu_ask1' }]]);
+    const created = create(['test-wide']);
+    let card: ApprovalRequest | undefined;
+    for (let i = 0; i < 1500 && !card; i++) {
+      card = ((await app.inject({ url: '/api/approvals', headers: H })).json() as ApprovalRequest[])[0];
+      if (!card) await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(card).toMatchObject({ kind: 'question', toolName: 'AskUserQuestion', questions: input.questions, detail: '' });
+    const r = await app.inject({ method: 'POST', url: `/api/approvals/${card!.id}/answer`, headers: H, payload: { answers: [{ selected: [0] }] } });
+    expect(r.statusCode, r.body).toBe(200);
+    const slug = await created;
+    const [call] = readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { status: number; body: unknown });
+    expect(call).toEqual({ tool: 'approve', status: 200, body: { behavior: 'allow', updatedInput: { ...input, answers: { [question]: '12 s' } } } });
+    const events = (await store().readConversation(slug)).flatMap((e) => (e.type === 'agent' ? [e.event] : []));
+    expect(events).toContainEqual({ kind: 'question_answered', outcome: 'answered', toolUseId: 'toolu_ask1', items: [{ header: 'Durata', question, answer: '12 s' }] });
+    expect(events.some((e) => e.kind === 'approval_decided')).toBe(false);
   });
 });
 

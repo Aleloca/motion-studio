@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { PROVIDER_IDS, type KeyCheckResult, type ProviderId, type SecretStatus } from '@motion-studio/shared';
+import { PROVIDER_IDS, questionAnswersSchema, type KeyCheckResult, type ProviderId, type SecretStatus } from '@motion-studio/shared';
 import type { HttpDeps } from '../providers/http.ts';
 import { checkKey, type KeyCheckCache } from '../providers/key-check.ts';
 import type { SecretsVault } from '../secrets/vault.ts';
@@ -20,6 +20,21 @@ const providerOf = (p: string): ProviderId => {
   if (!(PROVIDER_IDS as readonly string[]).includes(p)) throw new WorkspaceError(400, t().errors.unknownProvider({ provider: p }));
   return p as ProviderId;
 };
+
+/** The pending approvals, their decisions and (user note 8) the answer to the agent's question. */
+export function registerApprovalRoutes(app: FastifyInstance, approvals: ApprovalBroker) {
+  app.get('/api/approvals', async () => approvals.pending());
+  app.post<{ Params: { id: string }; Body: { decision?: unknown } }>('/api/approvals/:id', async (req) => {
+    const d = req.body?.decision;
+    if (d !== 'once' && d !== 'always' && d !== 'deny') throw new WorkspaceError(400, t().errors.invalidDecision);
+    return approvals.decide(req.params.id, d);
+  });
+  app.post<{ Params: { id: string }; Body: { answers?: unknown } }>('/api/approvals/:id/answer', async (req) => {
+    const parsed = questionAnswersSchema.safeParse(req.body?.answers);
+    if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidAnswer);
+    return approvals.answer(req.params.id, parsed.data);
+  });
+}
 
 export function registerSettingsRoutes(app: FastifyInstance, ctx: SettingsRoutesContext) {
   const statusOf = async (p: ProviderId): Promise<SecretStatus> => (await ctx.vault.status()).find((s) => s.provider === p)!;
@@ -60,12 +75,7 @@ export function registerSettingsRoutes(app: FastifyInstance, ctx: SettingsRoutes
     ctx.keyChecks.clear(p);
     return statusOf(p);
   });
-  app.get('/api/approvals', async () => ctx.approvals.pending());
-  app.post<{ Params: { id: string }; Body: { decision?: unknown } }>('/api/approvals/:id', async (req) => {
-    const d = req.body?.decision;
-    if (d !== 'once' && d !== 'always' && d !== 'deny') throw new WorkspaceError(400, t().errors.invalidDecision);
-    return ctx.approvals.decide(req.params.id, d);
-  });
+  registerApprovalRoutes(app, ctx.approvals);
   app.get<{ Params: { slug: string } }>('/api/projects/:slug/permissions', async (req) => {
     const ws = ctx.requireWorkspace();
     await ws.getProject(req.params.slug);

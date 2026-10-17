@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { explainTool, paidBatchSchema, type ApprovalDecision, type ApprovalKind, type ApprovalRequest, type ExplainContext, type Explanation, type PaidBatch, type ServerMessage } from '@motion-studio/shared';
+import { answersFor, explainTool, paidBatchSchema, type AgentQuestion, type ApprovalDecision, type ApprovalKind, type ApprovalRequest, type ExplainContext, type Explanation, type PaidBatch, type QuestionAnswers, type ServerMessage } from '@motion-studio/shared';
 import { isAcceptedCreativeSync } from '../creatives/creative-store.ts';
 import { cleanAgentReason } from '../display-text.ts';
 import { WorkspaceError } from '../workspace-store.ts';
@@ -10,8 +10,11 @@ import { t } from '../i18n.ts';
 
 export interface ApprovalInput { jobId: string; projectSlug: string; projectDir: string; creativeSlug: string | null; kind: ApprovalKind; toolName: string; input: unknown; title?: string; detail?: string; /** Claude Code's `tool_use_id` of the call (already validated by the caller). */ toolUseId?: string;
   /** `paid-batch` requests only (Phase 12): the calls confirmed together, shown on the card. */
-  paidBatch?: PaidBatch }
-export interface ApprovalOutcome { decision: ApprovalDecision | 'expired' | 'cancelled' }
+  paidBatch?: PaidBatch;
+  /** `question` requests only (user note 8): the agent's questions, already validated (askUserQuestionInputSchema). */
+  questions?: AgentQuestion[] }
+/** `answers`: a `question` request the user answered (decision `once`): question text → answer, as Claude Code expects it. */
+export interface ApprovalOutcome { decision: ApprovalDecision | 'expired' | 'cancelled'; answers?: Record<string, string> }
 
 export function describeRequest(toolName: string, input: unknown): { title: string; detail: string } {
   const i = (input ?? {}) as Record<string, unknown>;
@@ -65,9 +68,11 @@ export class ApprovalBroker {
   }
 
   request(input: ApprovalInput): Promise<ApprovalOutcome> {
-    const described = describeRequest(input.toolName, input.input);
+    const question = input.kind === 'question';
+    // A question is shown by its own card from `questions`: no JSON detail, no "Always" rule (user note 8).
+    const described = question ? { title: t().approvals.questionTitle, detail: '' } : describeRequest(input.toolName, input.input);
     // Projects live directly in the workspace root.
-    const always = ruleFor(input.toolName, input.input, { workspaceRoot: dirname(input.projectDir) });
+    const always = question ? null : ruleFor(input.toolName, input.input, { workspaceRoot: dirname(input.projectDir) });
     const created = this.now();
     // Agent tool calls only: provider confirmations are summarized by the core itself (title/detail).
     const agentTool = input.kind === 'tool';
@@ -79,6 +84,7 @@ export class ApprovalBroker {
       alwaysRule: always?.rule ?? null, explanation, agentReason, ...(input.toolUseId ? { toolUseId: input.toolUseId } : {}),
       // Only on a batch, and only in its schema's shape: a card never carries anything else from the caller.
       ...(input.kind === 'paid-batch' && input.paidBatch ? { paidBatch: paidBatchSchema.parse(input.paidBatch) } : {}),
+      ...(question ? { questions: input.questions ?? [] } : {}),
       createdAt: created.toISOString(), expiresAt: new Date(created.getTime() + this.timeoutMs).toISOString(),
     };
     return new Promise((resolve) => {
@@ -92,6 +98,8 @@ export class ApprovalBroker {
   async decide(id: string, decision: ApprovalDecision): Promise<ApprovalRequest> {
     const item = this.items.get(id);
     if (!item) throw new WorkspaceError(404, t().errors.approvalNotFound);
+    // A question is answered with `answer`; here it can only be left unanswered.
+    if (item.request.kind === 'question' && decision !== 'deny') throw new WorkspaceError(400, t().errors.questionNeedsAnswer);
     // Claim the request synchronously, before any await: a concurrent decide() gets 404.
     this.items.delete(id);
     clearTimeout(item.timer);
@@ -105,6 +113,22 @@ export class ApprovalBroker {
       }
     }
     this.settle(item, decision);
+    return item.request;
+  }
+
+  /**
+   * User note 8: the answer to a `question` request, one item per question (option indexes and the "Other" text). The labels
+   * come from the questions the core validated, never from the browser. Answers that do not fit leave the card pending.
+   */
+  answer(id: string, given: QuestionAnswers): ApprovalRequest {
+    const item = this.items.get(id);
+    if (!item) throw new WorkspaceError(404, t().errors.approvalNotFound);
+    if (item.request.kind !== 'question') throw new WorkspaceError(400, t().errors.invalidAnswer);
+    const answers = answersFor(item.request.questions ?? [], given);
+    if (!answers) throw new WorkspaceError(400, t().errors.invalidAnswer);
+    this.items.delete(id);
+    clearTimeout(item.timer);
+    this.settle(item, 'once', answers);
     return item.request;
   }
 
@@ -129,8 +153,8 @@ export class ApprovalBroker {
     this.settle(item, decision);
   }
 
-  private settle(item: Pending, decision: ApprovalOutcome['decision']) {
-    item.resolve({ decision });
+  private settle(item: Pending, decision: ApprovalOutcome['decision'], answers?: Record<string, string>) {
+    item.resolve(answers ? { decision, answers } : { decision });
     const { toolUseId } = item.request;
     this.opts.broadcast({ type: 'approval_resolved', id: item.request.id, decision, ...(toolUseId ? { toolUseId } : {}) });
   }
