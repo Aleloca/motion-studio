@@ -22,6 +22,7 @@ import type { PreviewSessionInfo, StoryboardView } from '@motion-studio/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../api.ts';
 import { message } from '../errors.ts';
+import { MAX_TIMER_MS } from '../timers.ts';
 
 /** Ask again this long before an expiry. */
 export const REFRESH_BEFORE_MS = 60_000;
@@ -33,9 +34,11 @@ export const RELEASE_GRACE_MS = 5000;
 export const MAX_REFRESH_RETRIES = 5;
 const MIN_REFRESH_MS = 5000;
 
+/** The delay before URLs that expire at `at` (epoch ms) are asked again: never below MIN_REFRESH_MS, never above what a timer takes. */
+export const refreshDelay = (at: number, now: number = Date.now()): number => Math.min(MAX_TIMER_MS, Math.max(MIN_REFRESH_MS, at - now - REFRESH_BEFORE_MS));
 const refreshIn = (expiresAt: string) => {
   const at = Date.parse(expiresAt);
-  return Number.isFinite(at) ? Math.max(MIN_REFRESH_MS, at - Date.now() - REFRESH_BEFORE_MS) : null;
+  return Number.isFinite(at) ? refreshDelay(at) : null;
 };
 const status = (e: unknown) => (e instanceof ApiError ? e.status : (e as { status?: unknown })?.status);
 

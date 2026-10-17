@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { MAX_TIMER_MS } from '../../timers.ts';
 
 /** How long before a signed preview URL expires the list is asked again. */
 export const REFRESH_LEAD_MS = 60_000;
@@ -13,7 +14,7 @@ export function useRefreshBefore(expiresAt: number | null | undefined, now: () =
   const [tick, setTick] = useState(0);
   useEffect(() => {
     if (!expiresAt) return;
-    const wait = Math.max(MIN_WAIT_MS, expiresAt - now() - REFRESH_LEAD_MS);
+    const wait = Math.min(MAX_TIMER_MS, Math.max(MIN_WAIT_MS, expiresAt - now() - REFRESH_LEAD_MS));
     const timer = setTimeout(() => setTick((n) => n + 1), wait);
     return () => clearTimeout(timer);
   }, [expiresAt, now]);

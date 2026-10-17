@@ -3,7 +3,7 @@
 // failed read is tried again with a backoff (at most MAX_REFRESH_RETRIES times in a row); one timer per version.
 import { useEffect, useState } from 'react';
 import { api } from '../api.ts';
-import { backoffMs, MAX_REFRESH_RETRIES, REFRESH_BEFORE_MS } from '../components/compositionPreview.ts';
+import { backoffMs, MAX_REFRESH_RETRIES, refreshDelay } from '../components/compositionPreview.ts';
 
 /** version n → file → signed URL, for the versions `ns` (a version without frames maps to an empty record). */
 export function usePinFrames(slug: string, creative: string, ns: number[]): Record<number, Record<string, string>> {
@@ -22,7 +22,7 @@ export function usePinFrames(slug: string, creative: string, ns: number[]): Reco
         if (!alive) return;
         setFrames((f) => ({ ...f, [n]: Object.fromEntries(r.frames.map((x) => [x.file, x.url])) }));
         const at = r.expiresAt ? Date.parse(r.expiresAt) : Number.NaN;
-        if (Number.isFinite(at)) later(n, Math.max(5000, at - Date.now() - REFRESH_BEFORE_MS), () => load(n, 0));
+        if (Number.isFinite(at)) later(n, refreshDelay(at), () => load(n, 0));
       }, () => {
         // The comment shows without its frame meanwhile; then the frame is asked again.
         if (alive && failures < MAX_REFRESH_RETRIES) later(n, backoffMs(failures), () => load(n, failures + 1));
