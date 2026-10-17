@@ -12,8 +12,8 @@ const { UseAsBrandLogo } = await import('../src/screens/identity/UseAsBrandLogo.
 const { I18nProvider } = await import('../src/i18n.tsx');
 const { __resetToasts, getToasts } = await import('../src/ui/toast.tsx');
 
-const view = (kind: 'logo' | 'favicon' | 'app-icon' = 'logo', locale: 'it' | 'en' = 'it') => render(
-  <I18nProvider locale={locale}><UseAsBrandLogo slug="acme" creative="lancio" n={2} format="identity-logo" label="Logo #2" kind={kind} /></I18nProvider>);
+const view = (kind: 'logo' | 'favicon' | 'app-icon' = 'logo', locale: 'it' | 'en' = 'it', hasDark = false) => render(
+  <I18nProvider locale={locale}><UseAsBrandLogo slug="acme" creative="lancio" n={2} format="identity-logo" label="Logo #2" kind={kind} hasDark={hasDark} /></I18nProvider>);
 const button = () => screen.getByRole('button', { name: 'Usa Logo #2 come logo del brand' });
 
 beforeEach(() => { vi.clearAllMocks(); __resetToasts(); });
@@ -39,6 +39,20 @@ describe('UseAsBrandLogo', () => {
     await waitFor(() => expect(useAsBrandLogo).toHaveBeenCalledWith('acme', 'lancio', 2, 'identity-logo', 'primary'));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(getToasts().some((t) => t.text === 'Aggiunto al kit del brand')).toBe(true);
+  });
+
+  it('a logo with its negative says the negative is added too, for dark backgrounds (note 9)', async () => {
+    view('logo', 'it', true);
+    await userEvent.click(button());
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/versione negativa, per gli sfondi scuri/)).not.toBeNull();
+  });
+
+  it('without a negative the dialog does not mention it', async () => {
+    view();
+    await userEvent.click(button());
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByText(/versione negativa/)).toBeNull();
   });
 
   it('an icon format starts on the icon variant, and the variant can be changed', async () => {

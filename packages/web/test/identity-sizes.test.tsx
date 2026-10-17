@@ -198,6 +198,29 @@ describe('FormatView · identity formats', () => {
     expect(within(split).getByText('Su scuro')).not.toBeNull();
   });
 
+  it('a logo with its negative shows logo-dark.png on dark, and no hint (note 9)', async () => {
+    const withDark: IdentitySetInfo = { ...logoSet, files: [...logoSet.files, { path: 'logo-dark.svg', role: 'vector-dark' }, { path: 'logo-dark.png', width: 1024, height: 400, alpha: true, role: 'raster-dark' }] };
+    detail = detailOf([LOGO], [version(1, [out(LOGO, withDark)])]);
+    location.hash = '#/p/acme/c/lancio/f/identity-logo';
+    const { container } = render(<Harness format={LOGO} />);
+    const split = await waitFor(() => { const el = container.querySelector('.ms-idn-split'); expect(el).not.toBeNull(); return el as HTMLElement; });
+    const dark = split.querySelector('.ms-idn-dark img') as HTMLImageElement;
+    const light = split.querySelector('.ms-idn-light img') as HTMLImageElement;
+    expect(dark.getAttribute('src')).toContain(`${LOGO}/logo-dark.png`);
+    expect(light.getAttribute('src')).not.toContain('logo-dark');
+    expect(screen.queryByText('Rigenera per avere il logo negativo')).toBeNull();
+  });
+
+  it('an older logo without its negative shows the main logo on dark, with a hint to regenerate', async () => {
+    detail = detailOf([LOGO], [version(1, [out(LOGO, logoSet)])]);
+    location.hash = '#/p/acme/c/lancio/f/identity-logo';
+    const { container } = render(<Harness format={LOGO} />);
+    const split = await waitFor(() => { const el = container.querySelector('.ms-idn-split'); expect(el).not.toBeNull(); return el as HTMLElement; });
+    const srcs = [...split.querySelectorAll('img')].map((i) => i.getAttribute('src'));
+    expect(srcs[0]).toBe(srcs[1]);
+    expect((await screen.findByText('Rigenera per avere il logo negativo')).closest('[role="note"]')).not.toBeNull();
+  });
+
   it('the favicon\'s SVG can be used as the brand logo; a set without SVG offers nothing', async () => {
     const first = render(<Harness format={FAV} />);
     await screen.findByRole('button', { name: /Usa .* come logo del brand/ });

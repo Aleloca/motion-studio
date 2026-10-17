@@ -48,3 +48,4 @@
 .ms-idn-circle { border-radius: 50%; }
 .ms-idn-safe { position: absolute; border-radius: 50%; border: 1.5px dashed var(--accentText); pointer-events: none; }
 .ms-idn-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ms-idn-nodark { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12.5px; }

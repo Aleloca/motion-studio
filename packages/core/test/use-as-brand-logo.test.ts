@@ -27,17 +27,19 @@ const url = (n = 1, f = FORMAT) => `/api/projects/acme/creatives/${slug}/version
 const post = (payload: unknown, n = 1, f = FORMAT) => app.inject({ method: 'POST', url: url(n, f), headers: H, payload: payload as object });
 
 /** A version 1 whose logo format has a set; `svg` is written into the set folder (or not, with null). */
-const seed = async (o: { svg: string | null; set?: boolean; format?: string }) => {
+const seed = async (o: { svg: string | null; set?: boolean; format?: string; dark?: string }) => {
   const format = o.format ?? FORMAT;
   const store = new CreativeStore(projectDir);
   const dir = store.dir(slug);
   await mkdir(join(dir, 'outputs', 'v1', format), { recursive: true });
   await writeFile(join(dir, 'outputs', 'v1', `${format}.png`), 'png');
   if (o.svg !== null) await writeFile(join(dir, 'outputs', 'v1', format, 'logo.svg'), o.svg);
+  if (o.dark !== undefined) await writeFile(join(dir, 'outputs', 'v1', format, 'logo-dark.svg'), o.dark);
+  const darkFiles = o.dark !== undefined ? [{ path: 'logo-dark.svg', role: 'vector-dark' }, { path: 'logo-dark.png', width: 1024, height: 1024, alpha: true, role: 'raster-dark' }] : [];
   await store.appendVersion(slug, {
     n: 1, commit: null, sessionId: null, status: 'complete', createdAt: new Date().toISOString(), request: '', problems: [], tools: [], renderCommand: null, basedOn: null,
     outputs: [{ format, file: `${format}.png`, width: 1024, height: 1024, durationSec: null, verified: true, preview: null,
-      ...(o.set === false ? {} : { identitySet: { dir: format, files: [{ path: 'logo.svg', role: 'vector' }, { path: 'logo.png', width: 1024, height: 1024, alpha: true, role: 'raster' }], warnings: [] } }) }],
+      ...(o.set === false ? {} : { identitySet: { dir: format, files: [{ path: 'logo.svg', role: 'vector' }, { path: 'logo.png', width: 1024, height: 1024, alpha: true, role: 'raster' }, ...darkFiles], warnings: [] } }) }],
   });
 };
 
@@ -70,6 +72,34 @@ describe('use as brand logo (Phase 14, decision 733)', () => {
     expect(logos[0]).toMatchObject({ file, variant: 'icon', background: 'any', source: { kind: 'manual', ref: `creative:${slug}/v1` } });
     const assets = (await app.inject({ url: '/api/projects/acme/assets', headers: H })).json().assets as Array<{ file: string }>;
     expect(assets.some((a) => `assets/${a.file}` === file)).toBe(true);
+  });
+
+  it('a logo with its negative adds both: the main one for light backgrounds, the negative for dark ones, same variant (note 9)', async () => {
+    const DARK = GOOD.replace('#0a7', '#fff');
+    await seed({ svg: GOOD, dark: DARK });
+    const r = await post({ variant: 'primary' });
+    expect(r.statusCode, r.body).toBe(200);
+    const { file, dark } = r.json() as { file: string; dark?: string };
+    expect(dark).toMatch(/^assets\/brand\/.+-dark\.svg$/);
+    expect(await readFile(join(projectDir, file), 'utf8')).toBe(GOOD);
+    expect(await readFile(join(projectDir, dark!), 'utf8')).toBe(DARK);
+    const logos = (await kit()).logos;
+    expect(logos.map((l: { file: string; variant: string; background: string }) => [l.file, l.variant, l.background])).toEqual([[file, 'primary', 'light'], [dark, 'primary', 'dark']]);
+    const assets = (await app.inject({ url: '/api/projects/acme/assets', headers: H })).json().assets as Array<{ file: string }>;
+    expect(assets.some((a) => `assets/${a.file}` === dark)).toBe(true);
+    // A later primary pair steps both down (decision 784), so there is one primary logo per background.
+    const again = (await post({ variant: 'primary' })).json() as { file: string; dark: string };
+    const rows = (await kit()).logos.map((l: { file: string; variant: string; background: string }) => [l.file, l.variant, l.background]);
+    expect(rows).toEqual([[file, 'secondary', 'light'], [dark, 'secondary', 'dark'], [again.file, 'primary', 'light'], [again.dark, 'primary', 'dark']]);
+  });
+
+  it('a negative that no longer passes the check refuses the whole use, leaving nothing behind', async () => {
+    await seed({ svg: GOOD, dark: BAD });
+    const r = await post({ variant: 'primary' });
+    expect(r.statusCode).toBe(422);
+    expect(r.json().code).toBe('logo-refused');
+    expect(await brandFiles()).toEqual([]);
+    expect((await kit()).logos).toEqual([]);
   });
 
   it('a second use never overwrites: a new file and a new logo id', async () => {
