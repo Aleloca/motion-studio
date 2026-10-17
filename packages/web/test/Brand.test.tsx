@@ -100,6 +100,16 @@ describe('Brand · overview summary', () => {
   });
 });
 
+describe('Brand · Typography header', () => {
+  it('groups its two actions together (not one pushed to each edge)', async () => {
+    en(<Brand slug="acme" live={live()} />);
+    const google = await screen.findByRole('button', { name: '+ Add from Google Fonts' });
+    const manual = screen.getByRole('button', { name: '+ Add manually' });
+    expect(google.parentElement).toBe(manual.parentElement);
+    expect(google.parentElement!.className).toContain('ms-bsection-actions');
+  });
+});
+
 describe('Brand · colors', () => {
   it('editing a color saves the kit (as a manual edit)', async () => {
     en(<Brand slug="acme" live={live()} />);

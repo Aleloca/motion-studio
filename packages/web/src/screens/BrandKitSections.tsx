@@ -136,8 +136,10 @@ export function Typography() {
       <div className="ms-bsection-head">
         <h2 id="ms-btype">{b.nav.type}</h2>
         <span className="ms-faint">{b.fonts.hint}</span>
-        <Button variant="ghost" size="sm" className="ms-blink" disabled={locked} onClick={() => setPicker(true)}>{b.fonts.addGoogle}</Button>
-        <Button variant="ghost" size="sm" className="ms-blink" disabled={locked} onClick={add}>{b.fonts.add}</Button>
+        <span className="ms-bsection-actions">
+          <Button variant="ghost" size="sm" className="ms-blink" disabled={locked} onClick={() => setPicker(true)}>{b.fonts.addGoogle}</Button>
+          <Button variant="ghost" size="sm" className="ms-blink" disabled={locked} onClick={add}>{b.fonts.add}</Button>
+        </span>
       </div>
       <GoogleFontPicker open={picker} slug={slug} locked={locked} onClose={() => setPicker(false)} onAdded={added} />
       {kit.fonts.length ? (
