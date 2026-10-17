@@ -132,4 +132,5 @@ describe('identity prompt of a grouped creative', () => {
   });
 });
 
-const GOLDEN = { three: 'e90e11349d4c55b5916ce0df1830aeab63257005a9e79c7ba42b07ade16ea96b', instances: '3956bb9a761479924b5551bef7c3edc45375c889c95dd9b9cd5914dbbbe0816e' };
+// Decision 876 added the logo's required "dark" line to the identity section (the only change: without it the old hashes come back).
+const GOLDEN = { three: 'cff7c2094aa224e52b7c77e24023035799ba2f42f73fe95be49416d9e0df5efa', instances: '9283922eb1f35c5c209096f92ef7b0d559375551d662865e97ef1d1abb5d7047' };

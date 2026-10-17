@@ -66,8 +66,12 @@ export interface IdentitySetFile {
    * (0.72) and the Android adaptive foreground (66/108). Absent: the drawing fills the PNG.
    */
   scale?: number;
-  /** `master` always the main drawing; `auto`: the `small` variant when there is one and `size` <= 48 (decision 728), else the master. Default `master`. */
-  from?: 'master' | 'small' | 'auto';
+  /**
+   * `master` always the main drawing; `auto`: the `small` variant when there is one and `size` <= 48 (decision 728), else the
+   * master; `dark`: the logo's negative (decision 876), and the file is not written when the composition has none (an older
+   * logo). Default `master`.
+   */
+  from?: 'master' | 'small' | 'auto' | 'dark';
 }
 
 /** The share of the side the drawing takes in `icon-512-maskable.png`, centred on the opaque background (decision 762). */
@@ -83,7 +87,8 @@ export const FAVICON_ICO_SIZES: readonly number[] = [16, 32, 48];
  * a wide or tall logo keeps its proportions.
  */
 export const IDENTITY_SETS: Record<'logo' | 'favicon' | 'app-icon', { files: IdentitySetFile[] }> = {
-  logo: { files: [{ path: 'logo.svg' }, { path: 'logo.png', size: 1024 }] },
+  // `logo-dark.*`: the negative for dark backgrounds (decision 876), transparent, at the size of `logo.png`.
+  logo: { files: [{ path: 'logo.svg' }, { path: 'logo.png', size: 1024 }, { path: 'logo-dark.svg', from: 'dark' }, { path: 'logo-dark.png', size: 1024, from: 'dark' }] },
   favicon: {
     files: [
       { path: 'favicon.ico', from: 'auto' },

@@ -163,6 +163,8 @@ function contextSections(c: CreativeContext, contract: AgentContract = 'composit
     ...k.colors.map((x) => `- Color ${x.name} (${x.role}): ${x.hex}`),
     ...k.fonts.map((x) => `- Font ${x.role}: ${x.family}${x.weights.length ? ` (weights ${x.weights.join(', ')})` : ''}${x.file ? ` — file ${x.file}` : ''}`),
     ...k.logos.map((x) => `- Logo ${x.variant} (background ${x.background}): ${x.file}`),
+    // Decision 879: the negative logo "Usa come logo del brand" adds is the one to use on dark backgrounds.
+    ...(k.logos.some((x) => x.background === 'dark') ? ['- On a dark background use a logo marked "background dark" (its negative version), not the one for light backgrounds.'] : []),
     ...(k.tone ? [`- Tone: ${k.tone.text}`] : []),
     ...k.dos.map((x) => `- Do: ${x.text}`),
     ...k.donts.map((x) => `- Avoid: ${x.text}`),
@@ -433,7 +435,7 @@ export function storePackPromptSection(p: StorePack): string[] {
 
 /**
  * The identity section (Phase 14, spec §4.2–4.3, decisions 726–732): vector mode (one full-frame SVG clip in a still), the
- * SVG rules the core checks, the optional `small` variant, the safe zones and the start mode (from the brand's logo, or from
+ * SVG rules the core checks, the optional `small` variant, the logo's required `dark` negative (decision 876), the safe zones and the start mode (from the brand's logo, or from
  * scratch with the user's name, keywords and colours, quoted as data). `kinds`: the identity kinds among the turn's formats.
  */
 export function identityPromptSection(kinds: ReadonlySet<'logo' | 'favicon' | 'app-icon'>, identity: IdentityBrief | undefined, hasBrandLogo: boolean, logoIds: readonly string[], grouped = false): string[] {
@@ -446,7 +448,10 @@ export function identityPromptSection(kinds: ReadonlySet<'logo' | 'favicon' | 'a
     '- The SVG lives in the composition\'s `assets/` (e.g. `assets/logo.svg`). Motion Studio exports it as the vector file and draws every PNG from it at its exact size, so it must scale: the root `<svg xmlns="http://www.w3.org/2000/svg">` needs a `viewBox`.',
     '- Motion Studio refuses the SVG, and sends you back to fix it, if it has: `<script>`, `on*` attributes, `<foreignObject>`, `<image>` (embedded or linked), links or `href`/`xlink:href` other than a local `#id`, `url(…)` other than a local `#id`, `@import` or any other `@` rule in `<style>`, CSS escapes, animation elements, `<!DOCTYPE>`/entities, or more than 512 KB. Keep it plain, well-formed XML: paths, shapes, gradients, clip paths, masks, filters, local `<use>`.',
     '- Convert text to paths. `<text>` is accepted only with a warning, because it looks different where the font is not installed.',
-    ...(kinds.has('logo') ? ['- Logo: draw the logo itself on a transparent background; the SVG\'s `viewBox` sets its proportions (a wide logo has a wide viewBox): `logo.png` is 1024 px on its long side.'] : []),
+    ...(kinds.has('logo') ? [
+      '- Logo: draw the logo itself on a transparent background; the SVG\'s `viewBox` sets its proportions (a wide logo has a wide viewBox): `logo.png` is 1024 px on its long side.',
+      '- Logo, REQUIRED: the negative version for dark backgrounds, a second `svg` clip with `"id": "dark"`, `"hidden": true`, full frame, `"fit": "contain"`, with its own file (e.g. `assets/logo-dark.svg`), checked like the main SVG. It is the SAME design with the same `viewBox`, never a different one: only the colours change for a dark background (dark inks such as black or navy become white or a light tint, keep the brand accent colour when it reads on dark, and check the contrast of every part). Motion Studio exports it as `logo-dark.svg` and `logo-dark.png`; a logo without it is sent back to you.',
+    ] : []),
     ...(icons ? [
       '- Favicon and app icon: an optional simplified variant for the sizes up to 48 px (the 16/32/48 px favicon and the 48 px Android icon): a second `svg` clip with `"id": "small"`, `"hidden": true`, full frame, `"fit": "contain"`, with its own file (e.g. `assets/small.svg`). Use it when the main drawing would not read at 16 px; without it the main drawing is used.',
       '- The composition `background` is the background of the icons that must be opaque (apple-touch-icon, iOS 1024, Google Play 512): set an opaque colour that suits the mark. Without one Motion Studio uses the brand\'s primary colour, else white.',
