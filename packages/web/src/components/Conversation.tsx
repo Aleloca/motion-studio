@@ -1,3 +1,4 @@
+import { QUESTION_DISPLAY } from '@motion-studio/shared';
 import type { AgentEvent, ApprovalRequest, Brief, ConversationEntry, ExplainContext, JobSummary, LiveMessageOutcome, Pin, QueuedRequest, RedirectOutcome, VariantGroup, VariantLetter } from '@motion-studio/shared';
 import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { api, ApiError, type VariantRunResult } from '../api.ts';
@@ -15,6 +16,7 @@ import { VariantSelector, type ChatTarget } from '../screens/variants/VariantSel
 import { errorCode, versionErrorText } from '../screens/versionErrors.ts';
 import { message } from '../errors.ts';
 import { ApprovalCard } from './ApprovalCard.tsx';
+import { Clipped } from './QuestionCard.tsx';
 import { ServicesChip } from './ServicesSelector.tsx';
 import { explanationView, RiskChips } from './RiskChips.tsx';
 import { useApprovalPresence, type ShownApproval } from './approvalPresence.ts';
@@ -128,7 +130,9 @@ type Item =
   | { key: string; kind: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string }
   | { key: string; kind: 'approval'; shown: ShownApproval }
   | { key: string; kind: 'typing' }
-  | { key: string; kind: 'retried'; at: string };
+  | { key: string; kind: 'retried'; at: string }
+  /** User note 8: the agent's AskUserQuestion and what became of it. */
+  | { key: string; kind: 'question'; at: string; event: Extract<AgentEvent, { kind: 'question_answered' }> };
 
 /** An Activity details row: a command (or Read) of the command log, or a raw technical event. */
 type DetailEntry = { key: string; row: CommandRow } | { key: string; event: AgentEvent };
@@ -142,9 +146,18 @@ const same = (a: string, b: string) => a.trim() === b.trim();
 const samePins = (a: Pin[], b: Pin[]) => a.length === b.length
   && a.every((p, i) => { const q = b[i]!; return p.format === q.format && p.x === q.x && p.y === q.y && p.timeSec === q.timeSec && (p.note ?? '') === (q.note ?? ''); });
 
+/**
+ * User note 7: a message the user sent during the turn, placed before the turn's event number `anchor` (the number of the
+ * turn's events that came before it), so the agent's answer and everything after it come below it.
+ */
+interface TurnInsert { anchor: number; item: Item }
+
 /** One turn (the agent events of one job) as conversation items: messages, compact steps, summary, details. */
-function turnItems(interruptedText: string, jobId: string, events: { at: string; event: AgentEvent }[], running: boolean, foldOpen: boolean, detailsOpen: boolean, logOf: (jobId: string, events: AgentEvent[], finished: boolean) => CommandLog): Item[] {
+function turnItems(interruptedText: string, jobId: string, events: { at: string; event: AgentEvent }[], running: boolean, foldOpen: boolean, detailsOpen: boolean, logOf: (jobId: string, events: AgentEvent[], finished: boolean) => CommandLog, inserts: readonly TurnInsert[] = []): Item[] {
   const out: Item[] = [];
+  // Stable: two messages with the same anchor keep the order they were sent in.
+  const pending = [...inserts].sort((a, b) => a.anchor - b.anchor);
+  const flush = (upTo: number) => { while (pending.length > 0 && pending[0]!.anchor <= upTo) out.push(pending.shift()!.item); };
   const steps: Item[] = [];
   const technical: DetailEntry[] = [];
   // Every command of the turn, with its explanation and whether it ran (see commandLog.ts).
@@ -154,6 +167,7 @@ function turnItems(interruptedText: string, jobId: string, events: { at: string;
   let foldAt = -1;
   events.forEach(({ at, event: e }, i) => {
     const key = `${jobId}:${i}`;
+    flush(i);
     if (TECHNICAL.has(e.kind)) {
       const row = rowAt.get(`c${i}`);
       // An automatic approval merged into its tool_use has no row of its own.
@@ -165,6 +179,8 @@ function turnItems(interruptedText: string, jobId: string, events: { at: string;
       if (!e.text.trim()) return;
       lastAgent = { key, kind: 'agent', at, text: e.text, summary: false };
       out.push(lastAgent);
+    } else if (e.kind === 'question_answered') {
+      out.push({ key, kind: 'question', at, event: e });
     } else if (e.kind === 'interrupted') {
       out.push({ key, kind: 'system', at, level: 'info', text: interruptedText });
     } else if (e.kind === 'progress') {
@@ -185,6 +201,7 @@ function turnItems(interruptedText: string, jobId: string, events: { at: string;
       }
     }
   });
+  flush(Infinity);
   if (!running && steps.length > 0) {
     out.splice(foldAt, 0, { key: `${jobId}:fold`, kind: 'fold', jobId, count: steps.length, open: foldOpen }, ...(foldOpen ? steps : []));
   }
@@ -231,6 +248,8 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
 
   // First time each live event (not yet persisted) was seen: its time until the refetch brings the real one.
   const seenAt = useRef(new Map<string, string>());
+  // User note 7: how many events of the latest turn were shown when a message not yet in the file first appeared.
+  const outAnchor = useRef(new Map<string, number>());
   const items = useMemo(() => {
     const out: Item[] = [];
     const jobs = new Map<string, { at: string; event: AgentEvent }[]>();
@@ -278,13 +297,53 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
       if (e.jobId && e.jobId === job?.id && working) return job?.state === 'queued' && e.mode === 'redirect' ? 'pendingStart' : 'pending';
       return undefined;
     };
+    const userItem = (e: Extract<ConversationEntry, { type: 'user' }>, key: string): Item => {
+      const state = stateOf(e);
+      return { key, kind: 'user', at: e.at, text: e.text, pins: e.pins, ...(state ? { state } : {}), ...(e.mode === 'redirect' ? { redirect: true } : {}) };
+    };
+    // User note 7: a message of a job written after that job's first event was sent during the turn. It goes inside the
+    // turn, after the job's events written before it (the core writes it in the same ordered chain), not below the turn.
+    const inserts = new Map<string, TurnInsert[]>();
+    const inside = new Set<number>();
+    const counted = new Map<string, number>();
+    entries.forEach((e, i) => {
+      if (e.type === 'agent') { counted.set(e.jobId, (counted.get(e.jobId) ?? 0) + 1); return; }
+      if (e.type !== 'user' || !e.jobId || !e.mode || !counted.has(e.jobId)) return;
+      inside.add(i);
+      if (!inserts.has(e.jobId)) inserts.set(e.jobId, []);
+      inserts.get(e.jobId)!.push({ anchor: counted.get(e.jobId)!, item: userItem(e, `e${i}`) });
+    });
+    // Messages sent while the agent works that the conversation file does not hold yet: after the events shown when they
+    // were sent (remembered at their first render), in the latest job's turn when it is shown, else last.
+    const outItems: Item[] = [];
+    for (const o of outbox) {
+      if (known.has(o.clientId)) continue;
+      const item: Item = { key: `out:${o.clientId}`, kind: 'user', at: o.at, text: o.text, pins: o.pins, state: notDelivered.has(o.clientId) ? 'notDelivered' : read.has(o.clientId) ? 'delivered' : delivered.has(o.clientId) ? 'sent' : o.phase, ...(o.mode === 'redirect' ? { redirect: true } : {}) };
+      const turnJob = job && jobs.has(job.id) ? job.id : null;
+      if (!turnJob) { outItems.push(item); continue; }
+      const k = `${turnJob}\0${o.clientId}`;
+      if (!outAnchor.current.has(k)) outAnchor.current.set(k, jobs.get(turnJob)!.length);
+      if (!inserts.has(turnJob)) inserts.set(turnJob, []);
+      inserts.get(turnJob)!.push({ anchor: outAnchor.current.get(k)!, item });
+    }
     const approvalsOf = (jobId: string | null) => shownApprovals
       .filter((s) => (jobId === null ? !jobs.has(s.approval.jobId) : s.approval.jobId === jobId))
       .map((s): Item => ({ key: `ap:${s.approval.id}`, kind: 'approval', shown: s }));
-    const turn = (jobId: string) => [
-      ...turnItems(t.web.liveUi.interruptedRow, jobId, jobs.get(jobId)!, jobId === job?.id && working, unfolded.has(jobId), detailsOpen.has(jobId), logOf),
-      ...approvalsOf(jobId),
-    ];
+    const turn = (jobId: string) => {
+      const events = jobs.get(jobId)!;
+      const cards = approvalsOf(jobId);
+      // A message sent after the turn's last event and after its first open card was shown goes below the cards (review
+      // fix): it answers what is on screen. Times compare on one machine (the core's clock, or the page's for the outbox).
+      const since = shownApprovals.filter((x) => x.approval.jobId === jobId).map((x) => Date.parse(x.approval.createdAt)).filter(Number.isFinite);
+      const cardAt = since.length > 0 ? Math.min(...since) : Infinity;
+      const all = inserts.get(jobId) ?? [];
+      const below = (x: TurnInsert) => x.anchor >= events.length && 'at' in x.item && Date.parse(x.item.at) >= cardAt;
+      return [
+        ...turnItems(t.web.liveUi.interruptedRow, jobId, events, jobId === job?.id && working, unfolded.has(jobId), detailsOpen.has(jobId), logOf, all.filter((x) => !below(x))),
+        ...cards,
+        ...all.filter(below).map((x) => x.item),
+      ];
+    };
 
     // C2: a user turn sent again with the same text and comments right after its turn failed (Try again) is a compact
     // "Retried · HH:MM" label, not a second identical bubble. A turn failed when its agent result is an error or the
@@ -297,10 +356,12 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
         return;
       }
       const key = `e${i}`;
-      if (e.type === 'user') {
+      if (e.type === 'user' && inside.has(i)) {
+        // Already shown inside its turn.
+        lastUser = { text: e.text, pins: e.pins, failed: false };
+      } else if (e.type === 'user') {
         const retried = lastUser !== null && lastUser.failed && same(lastUser.text, e.text) && samePins(lastUser.pins, e.pins);
-        const state = stateOf(e);
-        out.push(retried ? { key, kind: 'retried', at: e.at } : { key, kind: 'user', at: e.at, text: e.text, pins: e.pins, ...(state ? { state } : {}), ...(e.mode === 'redirect' ? { redirect: true } : {}) });
+        out.push(retried ? { key, kind: 'retried', at: e.at } : userItem(e, key));
         lastUser = { text: e.text, pins: e.pins, failed: false };
       } else if (e.type === 'version') {
         if (lastUser) lastUser.failed = false;
@@ -313,11 +374,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
     // A job with nothing persisted yet (only live events) comes last.
     if (job && jobs.has(job.id) && !firstIndex.has(job.id)) out.push(...turn(job.id));
     out.push(...approvalsOf(null));
-    // Messages sent while the agent works that the conversation file does not hold yet.
-    for (const o of outbox) {
-      if (known.has(o.clientId)) continue;
-      out.push({ key: `out:${o.clientId}`, kind: 'user', at: o.at, text: o.text, pins: o.pins, state: notDelivered.has(o.clientId) ? 'notDelivered' : read.has(o.clientId) ? 'delivered' : delivered.has(o.clientId) ? 'sent' : o.phase, ...(o.mode === 'redirect' ? { redirect: true } : {}) });
-    }
+    out.push(...outItems);
     const waiting = shownApprovals.some((s) => !s.leaving && s.approval.jobId === job?.id);
     if (working && !waiting) out.push({ key: 'typing', kind: 'typing' });
     return out;
@@ -418,6 +475,31 @@ function PinLabel({ pin, text }: { pin: Pin; text: string }) {
   );
 }
 
+/** User note 8: a question the agent asked, with the user's answer (plain text: the agent wrote the question). */
+function AnsweredQuestion({ at, event }: { at: string; event: Extract<AgentEvent, { kind: 'question_answered' }> }) {
+  const t = useT();
+  const q = t.web.questionUi;
+  const none = event.outcome === 'expired' ? q.expired : event.outcome === 'cancelled' ? q.cancelled : q.skipped;
+  return (
+    <article className="ms-msg" aria-label={q.historyLabel}>
+      <AgentMark />
+      <div className="ms-msg-body">
+        <span className="ms-msg-meta"><b>{q.historyLabel}</b>·<When at={at} /></span>
+        {/* Only text is rendered (review fix): a stored line with another value (an old `__proto__` answer) shows as unanswered. */}
+        {(Array.isArray(event.items) ? event.items : []).map((it, i) => (
+          <div key={i} className="ms-question-done">
+            {typeof it.header === 'string' && it.header && <Clipped className="ms-question-header" text={it.header} max={QUESTION_DISPLAY.header} />}
+            {typeof it.question === 'string' && <Clipped className="ms-question-text" text={it.question} max={QUESTION_DISPLAY.question} />}
+            {typeof it.answer === 'string'
+              ? <span className="ms-question-answer"><b>{q.yourAnswer}</b><span>{it.answer}</span></span>
+              : <span className="ms-approval-note">{none}</span>}
+          </div>
+        ))}
+      </div>
+    </article>
+  );
+}
+
 function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetails, onSelectVersion, versionExtra, versionNote, versionSummary, onGone }: {
   item: Item; formatName?(id: string): string; onToggleFold(jobId: string): void; onToggleDetails(jobId: string): void; onOpenDetails(jobId: string): void;
   onSelectVersion?(n: number): void; versionExtra?(n: number): ReactNode; versionNote?(n: number): ReactNode; versionSummary?(n: number): string | null; onGone(id: string): void;
@@ -449,6 +531,8 @@ function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetai
           </div>
         </article>
       );
+    case 'question':
+      return <AnsweredQuestion at={item.at} event={item.event} />;
     case 'retried':
       return (
         <div className="ms-convo-retried">
@@ -541,7 +625,8 @@ function Details({ jobId, entries, open, onToggle }: { jobId: string; entries: D
       case 'stderr': return [k.log, e.text, true];
       case 'parse_error': return [k.unreadable, e.line, true];
       // `usage` and `approval_decided` are never handed to Details (see TECHNICAL); commands have their own row below.
-      case 'usage': case 'auto_approved': case 'approval_decided': return ['', ''];
+      // `question_answered` (user note 8) is a conversation row of its own, never a detail line.
+      case 'usage': case 'auto_approved': case 'approval_decided': case 'question_answered': return ['', ''];
       // Phase 13 markers: shown by the conversation's own rows (Task 3), never as a detail line.
       case 'user_message_delivered': case 'user_message_not_delivered': case 'user_message_read': case 'interrupted': return ['', ''];
       case 'result': return e.ok ? [k.done, e.text ?? ''] : e.interrupted ? [k.stopped, e.text ?? ''] : [k.failed, e.error ?? '', true];

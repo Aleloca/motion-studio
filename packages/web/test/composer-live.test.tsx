@@ -401,3 +401,92 @@ describe('live messages: honest delivery wording (decision 804)', () => {
     expect(screen.getByText(/^Retried/)).toBeTruthy();
   });
 });
+
+describe('user note 7: a live message sits in the timeline at its send time', () => {
+  beforeEach(() => { caps = { ...CAPS_OFF, cliVersion: '2.1.301', liveInput: true, interrupt: true }; });
+  const request: ConversationEntry = { type: 'user', at: at(1), text: 'Make it red', pins: [], attachments: [], jobId: 'j1' };
+  const liveMsg: ConversationEntry = { type: 'user', at: at(3), text: 'Use blue', pins: [], attachments: [], jobId: 'j1', mode: 'live', clientId: CID };
+  /** Texts of the chat bubbles, top to bottom. */
+  const order = () => [...document.querySelectorAll('article .ms-msg-bubble')].map((b) => b.textContent?.trim());
+
+  it('after a reload: between the agent message before it and the answer after it', () => {
+    render(view({ entries: [request, agent(2, { kind: 'text', text: 'Working on red' }), liveMsg, agent(4, { kind: 'user_message_delivered', clientId: CID }), agent(5, { kind: 'text', text: 'Switching to blue' }), agent(6, { kind: 'result', ok: true, sessionId: 's' })], job: done }));
+    expect(order()).toEqual(['Make it red', 'Working on red', 'Use blue', 'Switching to blue']);
+  });
+
+  it('live: the persisted message stays above the agent events that arrive after it over the socket', () => {
+    const persisted = [request, agent(2, { kind: 'text', text: 'Working on red' }), liveMsg];
+    render(view({ entries: persisted, job: running, live: [{ kind: 'text', text: 'Working on red' }, { kind: 'text', text: 'Switching to blue' }] }));
+    expect(order()).toEqual(['Make it red', 'Working on red', 'Use blue', 'Switching to blue']);
+  });
+
+  it('live: a message just sent (not in the file yet) stays above what the agent says next', async () => {
+    const entries = [request];
+    const { rerender } = render(view({ entries, job: running, live: [{ kind: 'text', text: 'Working on red' }] }));
+    await screen.findByRole('button', { name: 'More ways to send' });
+    await userEvent.type(box(), 'Use blue');
+    await userEvent.keyboard('{Enter}');
+    await waitFor(() => expect(api.postLiveMessage).toHaveBeenCalledTimes(1));
+    rerender(view({ entries, job: running, live: [{ kind: 'text', text: 'Working on red' }, { kind: 'text', text: 'Switching to blue' }] }));
+    await waitFor(() => expect(order()).toEqual(['Make it red', 'Working on red', 'Use blue', 'Switching to blue']));
+  });
+});
+
+describe('user note 8: the agent\'s question in the conversation', () => {
+  const question = 'The brief says about 30 s, the title 12 s: which length?';
+  const asked: AgentEvent = { kind: 'tool_use', id: 'toolu_q', name: 'AskUserQuestion', input: { questions: [{ question, header: 'Length', options: [{ label: '12 s', description: '' }, { label: '30 s', description: '' }], multiSelect: false }] } };
+  const request: ConversationEntry = { type: 'user', at: at(1), text: 'Make the video', pins: [], attachments: [], jobId: 'j1' };
+
+  it('an answered question shows as the question and the answer, between what came before and after', () => {
+    render(view({ job: done, entries: [request, agent(2, { kind: 'text', text: 'One doubt first' }), agent(2, asked),
+      agent(3, { kind: 'question_answered', outcome: 'answered', toolUseId: 'toolu_q', items: [{ header: 'Length', question, answer: '12 s' }] }),
+      agent(4, { kind: 'text', text: 'Going with 12 s' }), agent(5, { kind: 'result', ok: true, sessionId: 's' })] }));
+    const card = screen.getByRole('article', { name: 'Question from the agent' });
+    expect(within(card).getByText('Length')).toBeTruthy();
+    expect(within(card).getByText(question)).toBeTruthy();
+    expect(within(card).getByText('12 s')).toBeTruthy();
+    expect(within(card).getByText('Your answer')).toBeTruthy();
+    const all = [...document.querySelectorAll('article')];
+    expect(all.indexOf(card)).toBeGreaterThan(all.findIndex((a) => a.textContent?.includes('One doubt first')));
+    expect(all.indexOf(card)).toBeLessThan(all.findIndex((a) => a.textContent?.includes('Going with 12 s')));
+    expect(screen.queryByText(/AskUserQuestion/)).toBeNull();
+    expect(screen.queryByText(/Unknown command/)).toBeNull();
+  });
+
+  it('review fix: an old line whose answer is not text (a `__proto__` question) renders without crashing', () => {
+    const bad = { kind: 'question_answered', outcome: 'answered', items: [{ header: 'H', question: '__proto__', answer: {} }, { header: 'H', question: 'Q2', answer: 7 }] } as unknown as AgentEvent;
+    render(view({ job: done, entries: [request, agent(2, asked), agent(3, bad), agent(4, { kind: 'text', text: 'After' }), agent(5, { kind: 'result', ok: true, sessionId: 's' })] }));
+    const card = screen.getByRole('article', { name: 'Question from the agent' });
+    expect(within(card).getByText('__proto__')).toBeTruthy();
+    expect(within(card).queryByText('Your answer')).toBeNull();
+    expect(screen.getByText('After')).toBeTruthy();
+  });
+
+  it('an unanswered question says so', () => {
+    render(view({ job: done, entries: [request, agent(2, asked), agent(3, { kind: 'question_answered', outcome: 'expired', items: [{ header: 'Length', question }] }), agent(5, { kind: 'result', ok: true, sessionId: 's' })] }));
+    const card = screen.getByRole('article', { name: 'Question from the agent' });
+    expect(within(card).getByText('No answer in time')).toBeTruthy();
+  });
+
+  it('review fix: a message sent while the question card waits sits below the card; one sent before it stays above', () => {
+    const approval = { id: 'q1', jobId: 'j1', projectSlug: 'acme', creativeSlug: 'c1', kind: 'question' as const, title: 'The agent asks you a question', detail: '', toolName: 'AskUserQuestion', alwaysRule: null, explanation: null, agentReason: null, createdAt: at(3), expiresAt: '2026-10-14T10:13:00.000Z',
+      questions: [{ question, header: 'Length', multiSelect: false, options: [{ label: '12 s', description: '' }, { label: '30 s', description: '' }] }] };
+    const msg = (min: number, text: string, clientId: string): ConversationEntry => ({ type: 'user', at: at(min), text, pins: [], attachments: [], jobId: 'j1', mode: 'live', clientId });
+    const entries = [request, agent(2, { kind: 'text', text: 'One doubt first' }), agent(2, asked), msg(2, 'Before the card', '22222222-2222-4222-8222-222222222222'), msg(4, 'While it waits', '33333333-3333-4333-8333-333333333333')];
+    render(<I18nProvider locale="en"><Conversation {...props} approvals={[approval]} entries={entries} job={running} /></I18nProvider>);
+    const list = screen.getByRole('log');
+    const pos = (el: Element) => [...list.querySelectorAll('article, [data-approval]')].indexOf(el);
+    const card = list.querySelector('[data-approval="q1"]')!;
+    expect(pos(article('Before the card'))).toBeLessThan(pos(card));
+    expect(pos(article('While it waits'))).toBeGreaterThan(pos(card));
+  });
+
+  it('a pending question (also after a reload: it comes with the snapshot) is a question card in the flow', () => {
+    const approval = { id: 'q1', jobId: 'j1', projectSlug: 'acme', creativeSlug: 'c1', kind: 'question' as const, title: 'The agent asks you a question', detail: '', toolName: 'AskUserQuestion', alwaysRule: null, explanation: null, agentReason: null, createdAt: at(2), expiresAt: '2026-10-14T10:12:00.000Z',
+      questions: [{ question, header: 'Length', multiSelect: false, options: [{ label: '12 s', description: 'As in the title' }, { label: '30 s', description: 'As in the brief' }] }] };
+    render(<I18nProvider locale="en"><Conversation {...props} approvals={[approval]} entries={[request, agent(2, asked)]} job={running} /></I18nProvider>);
+    expect(screen.getByRole('radio', { name: /12 s/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Answer' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Allow' })).toBeNull();
+  });
+});

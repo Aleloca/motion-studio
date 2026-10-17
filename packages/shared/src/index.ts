@@ -12,6 +12,7 @@ export * from './brand.ts';
 export * from './library.ts';
 export * from './identity.ts';
 export * from './permissions.ts';
+export * from './questions.ts';
 export * from './services.ts';
 export * from './i18n/index.ts';
 export * from './issues.ts';

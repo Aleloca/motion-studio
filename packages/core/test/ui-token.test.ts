@@ -72,6 +72,7 @@ describe('UI token on the API', () => {
       { method: 'POST' as const, url: '/api/secrets/openai/check' },
       { method: 'GET' as const, url: '/api/secrets/checks' },
       { method: 'GET' as const, url: '/api/approvals' },
+      { method: 'POST' as const, url: '/api/approvals/some-id/answer', payload: { answers: [{ selected: [0] }] } },
       { method: 'GET' as const, url: '/api/secrets' },
       { method: 'GET' as const, url: '/api/workspace' },
       { method: 'GET' as const, url: '/api/nope' },

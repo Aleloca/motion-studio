@@ -85,6 +85,11 @@ export type { UserMessageInput };
 class LiveTurn extends LiveSession {
   /** Set by the turn once its agent runs start: the core's own markers go the same way as the agent's events. */
   emit: ((e: AgentEvent) => void) | null = null;
+  /**
+   * Set with `emit`: appends a user entry after every agent event emitted so far (user note 7). A message written outside
+   * this chain would pass agent events still waiting to be written, and land in the file above them.
+   */
+  write: ((entry: ConversationEntry) => Promise<void>) | null = null;
   /** The job was stopped or cancelled (also late, while the version was being saved): its queue waits for "Run next". */
   stopped = false;
   /** The turn saved a version (Ruling U: only then the queue goes on by itself). */
@@ -934,6 +939,15 @@ export class CreativeTurnService {
           lastWrite.catch(() => {}); // observed here; the same rejection is rethrown by the await below
         };
         live.emit = emit;
+        live.write = (entry) => {
+          // After every earlier write, whether it failed or not (an earlier failure is the turn's, not this message's).
+          const before = lastWrite;
+          const mine = before.catch(() => {}).then(() => store.appendConversation(slug, entry));
+          // The chain waits for it but keeps only its own earlier failure: this entry's failure is the POST's alone.
+          lastWrite = before.then(() => mine.then(() => {}, () => {}), (err: unknown) => mine.then(() => { throw err; }, () => { throw err; }));
+          lastWrite.catch(() => {});
+          return mine;
+        };
         /**
          * Final wave P3: messages given to a run that was cut (for a newer redirect) before it reported its session, so before
          * it read its prompt: the next prompt carries them again, so no redirect is lost or replaced unseen.
@@ -1603,7 +1617,7 @@ export class CreativeTurnService {
     if (live.phase === 'finalizing' || live.phase === 'ended') return this.queueRequest(ref, m, 'queued-after-finish');
     const store = new CreativeStore(ref.projectDir);
     const entry: ConversationEntry = { type: 'user', at: now(), text: m.text, pins: m.pins, attachments: [], jobId: live.jobId, mode: 'live', clientId: m.clientId };
-    await store.appendConversation(ref.creativeSlug, entry);
+    await (live.write ? live.write(entry) : store.appendConversation(ref.creativeSlug, entry));
     const msg = newLiveMessage(m, 'live');
     live.messages.push(msg);
     this.deps.queue.patch(live.jobId, { liveMessages: live.messages.length });
@@ -1816,7 +1830,8 @@ export class CreativeTurnService {
         cancelApprovals: () => this.deps.cancelApprovals?.(jobId),
         late: async (x) => (await this.queueRequest(ref, x, 'queued-after-finish', { limit: false })).outcome as RedirectOutcome,
         record: async (msg, count) => {
-          await store.appendConversation(ref.creativeSlug, { type: 'user', at: now(), text: msg.text, pins: msg.pins, attachments: [], jobId, mode: 'redirect', clientId: msg.clientId });
+          const entry: ConversationEntry = { type: 'user', at: now(), text: msg.text, pins: msg.pins, attachments: [], jobId, mode: 'redirect', clientId: msg.clientId };
+          await (live.write ? live.write(entry) : store.appendConversation(ref.creativeSlug, entry));
           this.deps.queue.patch(jobId, { liveMessages: count });
           this.changed(ref);
         },

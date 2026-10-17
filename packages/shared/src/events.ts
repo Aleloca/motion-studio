@@ -3,6 +3,7 @@ import type { Explanation } from './explain/index.ts';
 import type { ModelUsage, TokenCounts } from './usage.ts';
 import type { BrandPhase } from './services.ts';
 import type { PaidBatch } from './permissions.ts';
+import type { AgentQuestion } from './questions.ts';
 import type { ProjectFile, WorkspaceSettings, WorkspaceSettingsView } from './schemas.ts';
 
 /** Agent-neutral event stream produced by any AgentRunner. */
@@ -28,6 +29,11 @@ export type AgentEvent =
    * the commands you approved or denied from those that ran without asking. `toolUseId` links it to the `tool_use`.
    */
   | { kind: 'approval_decided'; toolName: string; decision: ApprovalDecision | 'expired' | 'cancelled'; toolUseId?: string }
+  /**
+   * User note 8: what became of the agent's `AskUserQuestion` (a question card, never a permission). `answered`: each item
+   * has the answer the agent received; `deny` (the user chose not to answer), `expired`, `cancelled`: no answers.
+   */
+  | { kind: 'question_answered'; outcome: 'answered' | 'deny' | 'expired' | 'cancelled'; items: Array<{ header: string; question: string; answer?: string }>; toolUseId?: string }
   /**
    * `cumulativeCostUsd` is Claude Code's `total_cost_usd`: CUMULATIVE over a resumed session, never this run's cost
    * (that is the final `usage` event, re-emitted by the core with per-run values). Older stored events may carry it as `costUsd`.
@@ -119,7 +125,8 @@ export interface JobSummary {
   waitReason?: JobWaitReason;
 }
 
-export type ApprovalKind = 'tool' | 'provider' | 'paid-batch';
+/** `question` (user note 8): the agent's `AskUserQuestion`, answered with the options or a text; never "Always". */
+export type ApprovalKind = 'tool' | 'provider' | 'paid-batch' | 'question';
 export interface ApprovalRequest {
   id: string; jobId: string; projectSlug: string; creativeSlug: string | null; kind: ApprovalKind;
   /** Display title in the language current when the request was created, e.g. "Edit a file outside the project". Logic uses `kind`/`toolName`, never this text. */
@@ -138,6 +145,8 @@ export interface ApprovalRequest {
   toolUseId?: string;
   /** `paid-batch` requests only: the calls the user confirms together. */
   paidBatch?: PaidBatch;
+  /** `question` requests only: the agent's questions, validated by the core (agent text: shown as plain text only). */
+  questions?: AgentQuestion[];
   createdAt: string; expiresAt: string;
 }
 export type ApprovalDecision = 'once' | 'always' | 'deny';
