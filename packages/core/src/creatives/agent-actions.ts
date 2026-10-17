@@ -48,7 +48,7 @@ export interface AgentActionDeps {
 /** What waits for the end of the turn, in the order it runs (`ORDER`). `what`: the chat's short name of it (already translated). */
 type Deferred =
   | { kind: 'duplicate'; format: string; label?: string; what: string }
-  | { kind: 'pick'; format: string; what: string }
+  | { kind: 'pick'; format: string; shown: string; what: string }
   | { kind: 'render'; formats?: string[]; shown: string; what: string }
   | { kind: 'export'; what: string }
   | { kind: 'followUp'; formats: string[]; what: string }
@@ -276,7 +276,7 @@ export class AgentActionService {
     if (a.version === 'current') {
       if (member && member.slug !== s.ref.creativeSlug) throw new CodedError(400, x.currentOwnOnly, 'current-own-only');
       const what = x.pickQueued({ format: label(a.format) });
-      this.defer(s, { kind: 'pick', format: a.format, what });
+      this.defer(s, { kind: 'pick', format: a.format, shown: label(a.format), what });
       await this.note(s, what);
       return { ok: true, note: 'The ★ is set on the version this turn makes, when it ends.' };
     }
@@ -366,8 +366,11 @@ export class AgentActionService {
           await say(x.duplicateDone({ format: formatDisplayName(presets, r.instanceId, currentLocale(), brief.formatLabels), n: r.version.n }));
         } else if (d.kind === 'pick') {
           const svc = new VariantGroupService({ store, turns });
-          if ((await svc.resolve(ref)).group) await svc.setPick(ref, d.format, { slug: ref.creativeSlug, version: n });
+          const r = await svc.resolve(ref);
+          if (r.group) await svc.setPick(ref, d.format, { slug: ref.creativeSlug, version: n });
           else await turns.setExportPick(ref, d.format, n);
+          const self = r.group?.members.find((m) => m.slug === ref.creativeSlug);
+          await say(x.pickSet({ format: d.shown, version: `${self ? `${upper(self.letter)} ` : ''}v${n}` }));
         } else if (d.kind === 'render') {
           await this.renderNow(ref, n, d.formats);
           await say(x.renderStarted({ n, formats: d.shown }));

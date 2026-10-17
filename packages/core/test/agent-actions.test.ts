@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ConversationEntry, CreativeDetail, CreativeFile, JobSummary } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, formatDisplayName, type ConversationEntry, type CreativeDetail, type CreativeFile, type JobSummary } from '@motion-studio/shared';
 import { AppConfigStore } from '../src/app-config.ts';
 import { ApprovalBroker } from '../src/approvals/broker.ts';
 import { AgentBridge, type BridgeContext } from '../src/bridge/bridge.ts';
@@ -18,7 +18,7 @@ import { AgentActionService, APP_ACTIONS_PER_TURN } from '../src/creatives/agent
 import type { CreativeTurnService } from '../src/creatives/creative-turns.ts';
 import { parseStudioBlock } from '../src/creatives/prompt.ts';
 import { Git } from '../src/git.ts';
-import { t } from '../src/i18n.ts';
+import { currentLocale, t } from '../src/i18n.ts';
 import { MemoryVault } from '../src/secrets/vault.ts';
 import { buildServer } from '../src/server/app.ts';
 import { ControlledRunner, type ControlledRun } from './helpers/controlled-runner.ts';
@@ -145,6 +145,24 @@ describe('update_brief during the turn (user note 6)', () => {
     expect((await detail(slug)).versions.map((v) => v.status)).toEqual(['incomplete']);
   });
 
+  it('in a variant group, the group\'s new duration checks each variant\'s latest version again', async () => {
+    const slug = await create(false);
+    expect((await app.inject({ method: 'POST', url: `${P}/${slug}/variants`, payload: { count: 2, directions: ['Calmo', 'Ironico'] } })).statusCode).toBe(201);
+    expect((await app.inject({ method: 'POST', url: `${P}/${slug}/variants/run`, payload: { targets: ['b'], request: null } })).statusCode).toBe(202);
+    const b = `${slug}~b`;
+    const first = await runOf(b);
+    writeCompositions(first, 60);
+    first.finish({ write: false });
+    for (const nth of [1, 2]) (await runOf(b, nth)).finish({ write: false });
+    await waitIdle();
+    expect((await detail(b)).versions.map((v) => v.status)).toEqual(['incomplete']);
+    // The user edits the brief on A: the group's brief reaches B, whose v1 is checked again.
+    const res = await app.inject({ method: 'PUT', url: `${P}/${slug}`, payload: { brief: { ...brief, durationSec: 60 } } });
+    expect(res.statusCode, res.body).toBe(200);
+    expect((await detail(b)).versions.map((v) => v.status)).toEqual(['complete']);
+    expect((await detail(b)).creative.status).toBe('ready');
+  });
+
   it('in a variant group it is the group\'s edit: idle variants now, the working one when its turn ends', async () => {
     const slug = await create(false);
     expect((await app.inject({ method: 'POST', url: `${P}/${slug}/variants`, payload: { count: 2, directions: ['Calmo', 'Ironico'] } })).statusCode).toBe(201);
@@ -242,11 +260,14 @@ describe('render and ★', () => {
     expect((await bridge(run, 'render_version', { version: 'current' })).statusCode).toBe(200);
     expect((await bridge(run, 'set_pick', { format: 'youtube-16x9', version: 1 })).statusCode).toBe(200);
     expect((await bridge(run, 'set_pick', { format: 'youtube-16x9', version: 1, variant: 'b' })).statusCode).toBe(409);
+    expect((await bridge(run, 'set_pick', { format: 'youtube-16x9', version: 'current' })).statusCode).toBe(200);
     writeCompositions(run, 6);
     run.finish({ write: false });
     await waitIdle();
     // The deferred render ran and got the same refusal, said in the chat.
     await vi.waitFor(async () => expect((await actionLines(slug)).some((l) => l.includes(t().render.noRenderer))).toBe(true));
+    const name = formatDisplayName(DEFAULT_FORMATS, 'youtube-16x9', currentLocale());
+    await vi.waitFor(async () => expect(await actionLines(slug)).toContain(t().agentActions.pickSet({ format: name, version: 'v2' })));
   });
 });
 
