@@ -197,6 +197,8 @@
   .ms-bar-fv .ms-btn.ms-sm.ms-fold-3 { width: 28px; }
   /* The project and creative crumbs give way before the format's name. */
   .ms-bar-fv .ms-crumbs > .ms-crumb:not(.ms-last) { flex-shrink: 8; }
+  /* Tighter crumbs: the macOS title bar's inset (94 px) leaves the format's name a few px short at 1024. */
+  .ms-bar-fv .ms-crumbs { gap: 4px; }
 }
 /* While one of them is busy its spinner sits next to the icon. */
 .ms-bar-fv .ms-btn.ms-busy:is(.ms-fold-1, .ms-fold-2, .ms-fold-3) { width: auto; padding-inline: 6px; }
