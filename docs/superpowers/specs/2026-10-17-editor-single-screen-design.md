@@ -62,7 +62,7 @@ view always showed the chat); selecting a clip (timeline, scenes column, layers,
 | Comment markers on the picture (±0.5 s) | format view stage | editor stage (above the handles) |
 | Clip comment (picker / `C`) | format view transport | editor: selected clip + **Comment clip** / `C` |
 | Range comment (Shift + drag / `R` / button) | format view transport | editor timeline (unchanged) |
-| Comments only on the pin source, lock hint "Comments go on vN" | format view | editor |
+| Comments only on the pin source, lock hint "Comments go on vN" | format view | editor: the spot button's title ("Comments go on vN") and the usual "Comments apply to vN" toast |
 | Chat panel (conversation, chips, applies to, queued, brief services, version cards) | format view right column | editor Chat tab; "View vN" opens that version read-only |
 | Notes: integrity, formats load failure, resume note, creative error, action error, agent step with progress | format view | editor notes |
 | Discarded variant read-only | format view (Edit / Duplicate disabled) | editor read-only with reason |
