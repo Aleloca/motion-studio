@@ -676,7 +676,7 @@ describe('integrated desktop title bar', () => {
 
   it('CSS: the bar drags, the left padding clears the traffic lights, the right one the overlay', () => {
     expect(regionSelector('shell/shell.css', 'drag', '.ms-titlebar')).toBe('.ms-titlebar');
-    expect(css('shell/shell.css')).toMatch(/\.ms-titlebar\.ms-tb-mac \{[^}]*padding-left: 80px/);
+    expect(css('shell/shell.css')).toMatch(/\.ms-titlebar\.ms-tb-mac \{[^}]*--ms-tb-mac-inset: 94px; padding-left: var\(--ms-tb-mac-inset\)/);
     expect(css('shell/shell.css')).toMatch(/\.ms-titlebar\.ms-tb-overlay \{[^}]*padding-right: [^;]*env\(titlebar-area-width/);
   });
 

@@ -1309,6 +1309,20 @@ describe('CreativeCanvas · compositions (Task 8)', () => {
     await waitFor(() => expect(board('tiktok-9x16').querySelector('iframe')).toBeNull());
   });
 
+  it('an image format (favicon) never starts the live player on hover and has no play control', async () => {
+    detail = makeDetail([{ ...v2(1), compositions: [{ format: 'identity-favicon', dir: 'compositions/identity-favicon', hash: 'd'.repeat(64) }] }],
+      { brief: { ...makeDetail([]).creative.brief, formats: ['identity-favicon', 'tiktok-9x16'] } });
+    render(<Harness live={emptyLive()} />);
+    await picture('identity-favicon');
+    const wrap = board('identity-favicon').querySelector('.ms-cv-frame-wrap') as HTMLElement;
+    fireEvent.pointerOver(wrap);
+    await new Promise((r) => setTimeout(r, 600));
+    expect(api.previewSession).not.toHaveBeenCalled();
+    expect(board('identity-favicon').querySelector('iframe')).toBeNull();
+    expect(wrap.classList.contains('ms-live')).toBe(false);
+    expect(within(board('identity-favicon')).queryByRole('button', { name: /^Riproduci l’anteprima dal vivo di/ })).toBeNull();
+  });
+
   it('hover sessions are ended on the core after the pointer leaves; a pinned preview keeps its own (fix round 1, I2)', async () => {
     detail = makeDetail([v2(1)]);
     render(<Harness live={emptyLive()} />);
