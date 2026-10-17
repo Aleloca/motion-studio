@@ -31,6 +31,8 @@ export interface VariantApp {
   jobOf(slug: string): Promise<JobSummary | undefined>;
   /** Calls a `studio` tool for the run's job, as its MCP server would. */
   bridge(run: ControlledRun, tool: string, args: Record<string, unknown>): Promise<LightMyRequestResponse>;
+  /** The `nth` run (0: first) of member `slug`, once it started. Concurrent starts begin in any order: pick runs by member, never by index. */
+  runOf(slug: string, nth?: number): Promise<ControlledRun>;
   waitIdle(): Promise<void>;
   close(): Promise<void>;
 }
@@ -66,6 +68,11 @@ export async function variantApp(o: { keys?: Record<string, string>; settings?: 
   return {
     app, runner, approvals, base, projectDir: join(base, 'ws', 'acme'), fetches,
     url: (slug) => `${P}/${slug}`,
+    runOf: async (s, nth = 0) => {
+      const mine = () => runner.runs.filter((r) => r.req.prompt.includes(`creatives/${s}/outputs`));
+      await vi.waitFor(() => expect(mine().length).toBeGreaterThan(nth), { timeout: 10_000 });
+      return mine()[nth]!;
+    },
     group: async (directions, title = 'Lancio') => {
       const slug = ((await app.inject({ method: 'POST', url: P, payload: { title, brief: variantBrief, generate: false } })).json() as { slug: string }).slug;
       const res = await app.inject({ method: 'POST', url: `${P}/${slug}/variants`, payload: { count: directions.length, directions } });

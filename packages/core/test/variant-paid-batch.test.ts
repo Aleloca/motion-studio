@@ -34,12 +34,7 @@ const run = (slug: string, body: unknown) => v.app.inject({ method: 'POST', url:
 const decide = (a: ApprovalRequest, decision: string) => v.app.inject({ method: 'POST', url: `/api/approvals/${a.id}`, payload: { decision } });
 const stateOf = async (id: string) => (await v.jobs()).find((j) => j.id === id)!;
 const turn = (slug: string, text: string) => v.app.inject({ method: 'POST', url: `${v.url(slug)}/turns`, payload: { text } });
-/** The `nth` run (0: first) of member `s`, once it started (runs released together start in any order). */
-const runOf = async (s: string, nth = 0) => {
-  const mine = () => v.runner.runs.filter((r) => r.req.prompt.includes(`creatives/${s}/outputs`));
-  await vi.waitFor(() => expect(mine().length).toBeGreaterThan(nth), { timeout: 10_000 });
-  return mine()[nth]!;
-};
+const runOf = (s: string, nth = 0) => v.runOf(s, nth);
 
 async function fourVariants() {
   const slug = await v.group(['Audace', 'Calma', 'Retro', 'Pop']);
@@ -123,7 +118,7 @@ describe('variant paid batch (Review Focus 4)', () => {
     const slug = await v.group(['Audace', 'Calma', 'Retro']);
     expect((await turn(`${slug}~b`, 'Prima B')).statusCode).toBe(202);
     expect((await turn(`${slug}~c`, 'Prima C')).statusCode).toBe(202);
-    const [rb0, rc0] = [await v.runner.next(0), await v.runner.next(1)];
+    const [rb0, rc0] = [await runOf(`${slug}~b`), await runOf(`${slug}~c`)];
     const res = await run(slug, { targets: 'all-active', request: { text: 'Più luce' } });
     expect(res.statusCode, res.body).toBe(202);
     const body = res.json() as { jobs: Record<string, string>; queued: string[]; batchId: string };
@@ -159,7 +154,7 @@ describe('variant paid batch (Review Focus 4)', () => {
     const slug = await v.group(['Audace', 'Calma']);
     await turn(slug, 'Prima A');
     await turn(`${slug}~b`, 'Prima B');
-    const [ra0, rb0] = [await v.runner.next(0), await v.runner.next(1)];
+    const [ra0, rb0] = [await runOf(slug), await runOf(`${slug}~b`)];
     const res = await run(slug, { targets: 'all-active', request: { text: 'Più luce' } });
     const body = res.json() as { jobs: Record<string, string>; queued: string[] };
     expect(body.jobs).toEqual({});

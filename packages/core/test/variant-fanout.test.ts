@@ -42,15 +42,16 @@ describe('variant fan-out', () => {
     }
     await vi.waitFor(() => expect(v.runner.runs).toHaveLength(2));
     // A finishes: C starts. B fails: D starts. The slot is released in every case.
-    const [ra, rb] = [await v.runner.next(0), await v.runner.next(1)];
+    // A and B start together, in any order: each run is picked by member.
+    const [ra, rb] = [await v.runOf(slug), await v.runOf(`${slug}~b`)];
     expect(ra.req.cwd).toBe(v.projectDir);
     ra.finish();
-    const rc = await v.runner.next(2);
+    const rc = await v.runOf(`${slug}~c`);
     await vi.waitFor(async () => expect((await byMember(slug))('c')!.state).toBe('running'), { timeout: 10_000 });
     expect((await byMember(slug))('c')!.waitReason).toBeUndefined();
     expect((await byMember(slug))('d')!.state).toBe('queued');
     rb.finish({ ok: false, error: 'boom' });
-    const rd = await v.runner.next(3);
+    const rd = await v.runOf(`${slug}~d`);
     await vi.waitFor(async () => expect((await byMember(slug))('d')!.state).toBe('running'), { timeout: 10_000 });
     // Stopping one leaves the other running.
     const stop = await v.app.inject({ method: 'POST', url: `/api/jobs/${ids.c}/stop` });
@@ -71,12 +72,12 @@ describe('variant fan-out', () => {
     await vi.waitFor(() => expect(v.runner.runs).toHaveLength(2));
     expect((await byMember(slug))('c')).toMatchObject({ state: 'queued', waitReason: 'variant-slot' });
     await v.app.inject({ method: 'POST', url: `/api/jobs/${ids.a}/stop` });
-    await v.runner.next(2);
+    await v.runOf(`${slug}~c`);
     await vi.waitFor(async () => expect((await byMember(slug))('c')!.state).toBe('running'), { timeout: 10_000 });
     expect((await byMember(slug))('b')!.state).toBe('running');
     // A stopped queued variant never runs and frees nothing it did not hold.
-    v.runner.runs[1]!.finish();
-    v.runner.runs[2]!.finish();
+    (await v.runOf(`${slug}~b`)).finish();
+    (await v.runOf(`${slug}~c`)).finish();
     await v.waitIdle();
   });
 
@@ -89,14 +90,14 @@ describe('variant fan-out', () => {
     expect(direct.statusCode).toBe(202);
     expect(direct.json()).toMatchObject({ kind: 'creative', state: 'queued', waitReason: 'variant-slot' });
     // An old creative (no group) is not gated by the group (the queue's global limit aside).
-    v.runner.runs[0]!.finish();
-    await v.runner.next(2);
+    (await v.runOf(slug)).finish();
+    await v.runOf(`${slug}~c`);
     const old = ((await v.app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'Vecchia', brief: { goal: 'x', message: '', formats: ['instagram-post-1x1'], durationSec: 10, assets: [], notes: '' }, generate: false } })).json() as { slug: string }).slug;
     const res = await v.app.inject({ method: 'POST', url: `${v.url(old)}/turns`, payload: {} });
     expect(res.json().waitReason).toBeUndefined();
-    v.runner.runs[1]!.finish();
-    v.runner.runs[2]!.finish();
-    await v.runner.next(3).then((r) => r.finish());
+    (await v.runOf(`${slug}~b`)).finish();
+    (await v.runOf(`${slug}~c`)).finish();
+    (await v.runOf(old)).finish();
     await v.waitIdle();
   });
 
@@ -133,7 +134,7 @@ describe('variant fan-out', () => {
     await v.waitIdle();
     const again = await v.app.inject({ method: 'POST', url: `${v.url(`${slug}~b`)}/turns`, payload: { text: 'Prova' } });
     expect(again.statusCode, again.body).toBe(202);
-    await v.runner.next(2).then((r) => r.finish());
+    (await v.runOf(`${slug}~b`)).finish();
     await v.waitIdle();
   });
 
