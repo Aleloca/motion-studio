@@ -92,3 +92,5 @@ Open:
 | 182 TimeoutOverflowWarning lines near the web Assets tests | FIX | Not Assets: the refresh delay `expiry - now` with a 2099 expiry (editor tests) exceeded 2^31 ms. Capped in product code (911). |
 | git add -A version commits can include a sister's files | LEAVE | Cosmetic since 868/871. |
 | Holds and paid-batch covers in memory only, restart | LEAVE | Queue, card and covers die together; interrupted creatives are recovered, queued requests wait for 'Run next'. Nobody is stranded (912). |
+| Double-submitted create (review) | LEAVE | The second request sees the group and adds (409 over the limit) thanks to the lock; avoiding the double submit is the button's job (913). |
+| Review wave: seed rollback, removeQueued hook timing, cover rules, request-stop line, ended entries, Selezione finale canonical formats, Genera with unloaded members | FIX | Decision 914, with tests. |
