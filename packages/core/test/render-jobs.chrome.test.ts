@@ -11,7 +11,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { FastifyInstance } from 'fastify';
@@ -218,6 +218,55 @@ describe.skipIf(!tools.ok)('render jobs in real Chrome', () => {
     expect(readdirSync(join(vdir, ICON.id)).filter((f) => f.startsWith('.'))).toEqual([]);
     expect(readdirSync(renderTemp)).toEqual([]);
     expect(await leftovers({ pgids: providers.map((p) => p.pgid!).filter(Boolean), markers: [renderTemp] })).toEqual([]);
+  }, 900_000);
+
+  it('a logo writes logo-dark.svg and logo-dark.png from its "dark" clip; an older logo without one still renders its set (note 9)', async () => {
+    const LOGO: FormatPreset = { id: 'test-logo', channel: 'Test', name: 'Logo', width: 64, height: 64, kind: 'image', extensions: ['png'], identity: 'logo' };
+    expect((await app.inject({ method: 'PUT', url: '/api/formats', headers: H, payload: { presets: [PRESET, LOGO] } })).statusCode).toBe(200);
+    const store = new CreativeStore(join(ws, 'acme'));
+    const mark = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100"><rect x="50" y="25" width="100" height="50" fill="#101010"/></svg>';
+    const negative = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100"><rect x="50" y="25" width="100" height="50" fill="#f0f0f0"/></svg>';
+    const logoCreative = async (title: string, withDark: boolean) => {
+      const c = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', headers: H, payload: {
+        title, generate: false, brief: { goal: 'g', message: '', formats: [LOGO.id], durationSec: null, assets: [], notes: '' },
+      } });
+      expect(c.statusCode, c.body).toBe(201);
+      const slug = c.json().slug as string;
+      const vdir = store.outputsDir(slug, 1);
+      const dir = join(vdir, 'compositions', LOGO.id);
+      mkdirSync(join(dir, 'assets'), { recursive: true });
+      writeFileSync(join(dir, 'assets', 'logo.svg'), mark);
+      if (withDark) writeFileSync(join(dir, 'assets', 'logo-dark.svg'), negative);
+      writeFileSync(join(dir, 'composition.json'), JSON.stringify({
+        $schema: 'motion-studio/composition@1', width: 64, height: 64, fps: 30, duration: 0, background: '#00000000', fonts: [], scenes: [],
+        tracks: [{ id: 't', kind: 'visual', clips: [
+          { id: 'mark', type: 'svg', src: 'assets/logo.svg', start: 0, duration: 0, props: { fit: 'contain' } },
+          ...(withDark ? [{ id: 'dark', type: 'svg', src: 'assets/logo-dark.svg', start: 0, duration: 0, hidden: true, props: { fit: 'contain' } }] : []),
+        ] }],
+      }));
+      const compositions = [{ format: LOGO.id, dir: `compositions/${LOGO.id}`, hash: (await readCompositionFolder(dir)).hash, problems: [] }];
+      writeFileSync(join(vdir, 'manifest.json'), JSON.stringify({ schemaVersion: 2, compositions, renders: [] } satisfies ManifestV2));
+      await store.appendVersion(slug, { n: 1, commit: null, sessionId: null, status: 'complete', createdAt: new Date().toISOString(), request: 'r', outputs: [], problems: [], tools: [], renderCommand: null, basedOn: null, compositions });
+      const r = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/render`, headers: H, payload: {} });
+      expect(r.statusCode, r.body).toBe(202);
+      const job = await waitJob(r.json().id);
+      expect(job.state, job.error).toBe('succeeded');
+      return { vdir, v: (await store.readVersions(slug))[0]! };
+    };
+    const centre = (file: string) => { const d = decodePng(readFileSync(file)); const i = (Math.floor(d.height / 2) * d.width + Math.floor(d.width / 2)) * 4; return [...d.rgba.subarray(i, i + 4)]; };
+
+    const a = await logoCreative('Logo', true);
+    expect(a.v.outputs[0]!.identitySet!.files.map((f) => f.path)).toEqual(['logo.svg', 'logo.png', 'logo-dark.svg', 'logo-dark.png']);
+    expect(readFileSync(join(a.vdir, LOGO.id, 'logo-dark.svg'), 'utf8')).toBe(negative);
+    expect(centre(join(a.vdir, LOGO.id, 'logo.png'))).toEqual([0x10, 0x10, 0x10, 255]);
+    expect(centre(join(a.vdir, LOGO.id, 'logo-dark.png'))).toEqual([0xf0, 0xf0, 0xf0, 255]);
+    const dims = (name: string) => { const d = decodePng(readFileSync(join(a.vdir, LOGO.id, name))); return [d.width, d.height]; };
+    expect(dims('logo-dark.png')).toEqual(dims('logo.png'));
+    expect(decodePng(readFileSync(join(a.vdir, LOGO.id, 'logo-dark.png'))).rgba[3]).toBe(0); // transparent outside the drawing
+
+    const old = await logoCreative('Old logo', false);
+    expect(old.v.outputs[0]!.identitySet!.files.map((f) => f.path)).toEqual(['logo.svg', 'logo.png']);
+    expect(existsSync(join(old.vdir, LOGO.id, 'logo-dark.png'))).toBe(false);
   }, 900_000);
 
   it('an app quit during a render leaves no process and no partial output; a retry starts clean', async () => {

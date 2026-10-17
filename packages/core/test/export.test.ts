@@ -408,6 +408,27 @@ describe('identity sets (Phase 14)', () => {
     expect(again.files[1]!.to.slice(dest.length + 1)).toBe('acme-identity-app-icon-v2-2/AppIcon-1024.png');
   });
 
+  it('a logo set exports logo-dark.svg and logo-dark.png next to logo.svg and logo.png; an older logo set without them exports as it is (note 9)', async () => {
+    const v = join(creativeDir, 'outputs', 'v2');
+    await writeFile(join(v, 'identity-logo.png'), 'main');
+    await mkdir(join(v, 'identity-logo'), { recursive: true });
+    for (const f of ['logo.svg', 'logo.png', 'logo-dark.svg', 'logo-dark.png']) await writeFile(join(v, 'identity-logo', f), f);
+    const logoVersion = (dark: boolean): VersionEntry => ({
+      ...version, outputs: [{ format: 'identity-logo', file: 'identity-logo.png', width: 1024, height: 1024, durationSec: null, verified: true, preview: null,
+        identitySet: { dir: 'identity-logo', warnings: [], files: [
+          { path: 'logo.svg', role: 'vector' }, { path: 'logo.png', width: 1024, height: 512, alpha: true, role: 'raster' },
+          ...(dark ? [{ path: 'logo-dark.svg', role: 'vector-dark' }, { path: 'logo-dark.png', width: 1024, height: 512, alpha: true, role: 'raster-dark' }] : []),
+        ] } }],
+    });
+    const r = await exportVersion({ creativeDir, version: logoVersion(true), destination: dest, slug: 'acme' });
+    expect(r.files.map((f) => f.to.slice(dest.length + 1))).toEqual([
+      'acme-identity-logo-v2.png', 'acme-identity-logo-v2/logo.svg', 'acme-identity-logo-v2/logo.png', 'acme-identity-logo-v2/logo-dark.svg', 'acme-identity-logo-v2/logo-dark.png',
+    ]);
+    expect(await readFile(join(dest, 'acme-identity-logo-v2', 'logo-dark.svg'), 'utf8')).toBe('logo-dark.svg');
+    const old = await exportVersion({ creativeDir, version: logoVersion(false), destination: dest, slug: 'acme' });
+    expect(old.files.map((f) => f.to.slice(dest.length + 1))).toEqual(['acme-identity-logo-v2-2.png', 'acme-identity-logo-v2-2/logo.svg', 'acme-identity-logo-v2-2/logo.png']);
+  });
+
   it('a set file that is missing or a link makes the item unusable; a bad set path too', async () => {
     await writeSet();
     await rm(join(creativeDir, 'outputs', 'v2', 'identity-app-icon', 'Contents.json'));

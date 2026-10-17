@@ -148,6 +148,8 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   // Identity formats (Phase 14): the picture or the sizes grid of the set it rendered; the logo shows on light and on dark.
   const idKind = preset?.identity ?? null;
   const idSet = idKind && out?.identitySet ? out.identitySet : null;
+  // The logo's negative (decision 876): "Su scuro" shows it; an older logo has none and shows the main one, with a hint.
+  const darkLogo = idKind === 'logo' && idSet ? idSet.files.find((f) => f.path === 'logo-dark.png') ?? null : null;
   const [idView, setIdView] = useState<'image' | 'sizes'>('image');
   useEffect(() => { setIdView('image'); }, [format]);
   const sizesView = idSet !== null && idView === 'sizes';
@@ -164,6 +166,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   const height = preset?.height ?? out?.height ?? (origin?.height ? Math.round(origin.height) : 1080);
   const label = boardLabel({ id: format, preset, out: null, labels }, locale);
   const src = out && version ? outputUrl(slug, creative, version.n, out.file) : null;
+  const darkSrc = darkLogo && idSet && version ? outputUrl(slug, creative, version.n, `${idSet.dir}/${darkLogo.path}`) : null;
   const poster = out?.preview && version ? outputUrl(slug, creative, version.n, out.preview) : undefined;
 
   // Comments: the pending pins of the creative (shared with the canvas and the composer). The core crops pin frames
@@ -629,7 +632,10 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
               <Segmented<'image' | 'sizes'> label={t.web.identity.view} value={idView} onChange={setIdView}
                 options={[{ value: 'image', label: t.web.identity.viewImage, icon: 'image' }, { value: 'sizes', label: t.web.identity.viewSizes, icon: 'grid' }]} />
               {idSet.files.some((x) => x.role === 'vector') ? (
-                <UseAsBrandLogo slug={slug} creative={creative} n={n} format={source.format} label={label} kind={idKind} disabled={working} />
+                <UseAsBrandLogo slug={slug} creative={creative} n={n} format={source.format} label={label} kind={idKind} disabled={working} hasDark={darkLogo !== null} />
+              ) : null}
+              {idKind === 'logo' && darkLogo === null ? (
+                <span className="ms-idn-nodark" role="note" title={t.web.identity.noDarkLogoTip}><Icon name="refresh" size={13} />{t.web.identity.noDarkLogo}</span>
               ) : null}
             </div>
           ) : null}
@@ -683,7 +689,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
                 idKind === 'logo' ? (
                   <div className="ms-idn-split" role="img" aria-label={t.web.identity.logoSides({ label: `${label} v${n}` })}>
                     <span className="ms-idn-side ms-idn-light"><img key={src} src={src} alt="" draggable={false} /><span className="ms-idn-sidelbl">{t.web.identity.onLight}</span></span>
-                    <span className="ms-idn-side ms-idn-dark"><img key={src} src={src} alt="" draggable={false} /><span className="ms-idn-sidelbl">{t.web.identity.onDark}</span></span>
+                    <span className="ms-idn-side ms-idn-dark"><img key={darkSrc ?? src} src={darkSrc ?? src} alt="" draggable={false} /><span className="ms-idn-sidelbl">{t.web.identity.onDark}</span></span>
                   </div>
                 ) : <img key={src} src={src} alt={`${label} v${n}`} draggable={false} />
               ) : (

@@ -1135,25 +1135,47 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     // the file is opened without following a link, must be a regular single-linked file, and its real path must be exactly
     // `<real set folder>/<path>` (`readConfinedFile` in exact mode).
     const plain = (p: string) => p.split('/').every((x) => x !== '' && x !== '.' && x !== '..' && !/[\\\u0000-\u001f\u007f]/.test(x));
-    if (!plain(set.dir) || !plain(svgEntry.path)) throw new CodedError(422, e.useAsLogoRefused, 'logo-refused');
-    const fileParts = svgEntry.path.split('/');
-    const fileName = fileParts.pop()!;
-    const dirParts = ['outputs', `v${n}`, ...set.dir.split('/'), ...fileParts];
     const creativeDir = ref.store.dir(ref.creativeSlug);
-    const chain = await isRealDirChain(creativeDir, dirParts);
-    if (chain === 'missing') throw new CodedError(404, e.useAsLogoMissing, 'logo-missing');
-    if (chain === 'unsafe') throw new CodedError(422, e.useAsLogoRefused, 'logo-refused');
-    const read = await readConfinedFile(join(creativeDir, ...dirParts), fileName, MAX_VECTOR_SVG_BYTES, true).catch(() => ({ skipped: 'outside' as const }));
-    if (read === null) throw new CodedError(404, e.useAsLogoMissing, 'logo-missing');
-    if ('skipped' in read) throw new CodedError(422, e.useAsLogoRefused, 'logo-refused');
-    if (!checkVectorSvg(read.text).ok) throw new CodedError(422, e.useAsLogoRefused, 'logo-refused');
+    const readSetSvg = async (path: string): Promise<string> => {
+      if (!plain(set.dir) || !plain(path)) throw new CodedError(422, e.useAsLogoRefused, 'logo-refused');
+      const fileParts = path.split('/');
+      const fileName = fileParts.pop()!;
+      const dirParts = ['outputs', `v${n}`, ...set.dir.split('/'), ...fileParts];
+      const chain = await isRealDirChain(creativeDir, dirParts);
+      if (chain === 'missing') throw new CodedError(404, e.useAsLogoMissing, 'logo-missing');
+      if (chain === 'unsafe') throw new CodedError(422, e.useAsLogoRefused, 'logo-refused');
+      const read = await readConfinedFile(join(creativeDir, ...dirParts), fileName, MAX_VECTOR_SVG_BYTES, true).catch(() => ({ skipped: 'outside' as const }));
+      if (read === null) throw new CodedError(404, e.useAsLogoMissing, 'logo-missing');
+      if ('skipped' in read) throw new CodedError(422, e.useAsLogoRefused, 'logo-refused');
+      if (!checkVectorSvg(read.text).ok) throw new CodedError(422, e.useAsLogoRefused, 'logo-refused');
+      return read.text;
+    };
+    const svgText = await readSetSvg(svgEntry.path);
+    // Decision 879: a logo's negative (`logo-dark.svg`, decision 876) goes into the kit with it, checked the same way; an
+    // older logo has none. Both are read before anything is written, so a refused negative leaves nothing behind.
+    const darkEntry = preset.identity === 'logo' ? set.files.find((f) => f.role === 'vector-dark' && f.path.toLowerCase().endsWith('.svg')) : undefined;
+    const darkText = darkEntry ? await readSetSvg(darkEntry.path) : null;
 
-    const name = `${ref.creativeSlug}-v${n}-${format.replace(/[^a-z0-9]+/gi, '-')}.svg`;
-    const file = `assets/${await saveGeneratedFile(ref.projectDir, 'brand', name, Buffer.from(read.text, 'utf8'))}`;
+    const stem = `${ref.creativeSlug}-v${n}-${format.replace(/[^a-z0-9]+/gi, '-')}`;
+    const written: string[] = [];
+    const removeWritten = async () => { for (const f of written) await rm(join(ref.projectDir, ...f.split('/')), { force: true }).catch(() => {}); };
+    let file = '';
+    let darkFile: string | null = null;
+    try {
+      file = `assets/${await saveGeneratedFile(ref.projectDir, 'brand', `${stem}.svg`, Buffer.from(svgText, 'utf8'))}`;
+      written.push(file);
+      if (darkText !== null) {
+        darkFile = `assets/${await saveGeneratedFile(ref.projectDir, 'brand', `${stem}-dark.svg`, Buffer.from(darkText, 'utf8'))}`;
+        written.push(darkFile);
+      }
+    } catch (err) {
+      await removeWritten();
+      throw err;
+    }
     const source = { kind: 'manual' as const, ref: `creative:${ref.creativeSlug}/v${n}` };
     const library = new LibraryStore(ref.projectDir, ctx.media);
     const store = new BrandStore(ref.projectDir);
-    let logoId = '';
+    const newIds: string[] = [];
     /** The logos this call demoted (ids): put back if the registration fails below. */
     let demotedIds: string[] = [];
     const undo = <L extends { id: string }>(logos: L[]): L[] => logos.map((l) => (demotedIds.includes(l.id) ? { ...l, variant: body.data.variant } : l));
@@ -1161,26 +1183,36 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       await store.updateReadableKit((kit) => {
         demotedIds = kit.logos.filter((l) => l.variant === body.data.variant).map((l) => l.id);
         const taken = new Set(kit.logos.map((l) => l.id));
-        const stem = `logo-${ref.creativeSlug}-v${n}`.slice(0, 56).replace(/-+$/, '');
-        let id = stem;
-        for (let k = 2; taken.has(id); k++) id = `${stem}-${k}`;
-        logoId = id;
+        const freeId = (base: string) => {
+          const idStem = base.slice(0, 56).replace(/-+$/, '');
+          let id = idStem;
+          for (let k = 2; taken.has(id); k++) id = `${idStem}-${k}`;
+          taken.add(id);
+          newIds.push(id);
+          return id;
+        };
         // Decision 784: the new logo takes the chosen variant; one already holding it steps down (primary → secondary,
-        // icon → other), so the kit never has two primary logos or two icons.
+        // icon → other), so the kit never has two primary logos or two icons (with a negative: one per background).
         const demoted = body.data.variant === 'primary' ? 'secondary' as const : 'other' as const;
         const logos = kit.logos.map((l) => (l.variant === body.data.variant ? { ...l, variant: demoted } : l));
-        return { ...kit, logos: [...logos, { id, file, variant: body.data.variant, background: 'any', source }] };
+        const added = darkFile === null
+          ? [{ id: freeId(`logo-${ref.creativeSlug}-v${n}`), file, variant: body.data.variant, background: 'any' as const, source }]
+          : [
+            { id: freeId(`logo-${ref.creativeSlug}-v${n}`), file, variant: body.data.variant, background: 'light' as const, source },
+            { id: freeId(`logo-${ref.creativeSlug}-v${n}-dark`), file: darkFile, variant: body.data.variant, background: 'dark' as const, source },
+          ];
+        return { ...kit, logos: [...logos, ...added] };
       });
     } catch (err) {
-      // The kit refused (full, unreadable): nothing is left half done, the copy goes.
-      await rm(join(ref.projectDir, ...file.split('/')), { force: true }).catch(() => {});
+      // The kit refused (full, unreadable): nothing is left half done, the copies go.
+      await removeWritten();
       throw err;
     }
     try {
-      await library.registerAssets([{ file: file.slice('assets/'.length), origin: 'generated', sourceUrl: null, description: '', tags: ['brand', 'logo'] }]);
+      await library.registerAssets(written.map((f) => ({ file: f.slice('assets/'.length), origin: 'generated' as const, sourceUrl: null, description: '', tags: ['brand', 'logo'] })));
     } catch (err) {
-      await store.updateReadableKit((kit) => ({ ...kit, logos: undo(kit.logos.filter((l) => l.id !== logoId)) })).catch(() => {});
-      await rm(join(ref.projectDir, ...file.split('/')), { force: true }).catch(() => {});
+      await store.updateReadableKit((kit) => ({ ...kit, logos: undo(kit.logos.filter((l) => !newIds.includes(l.id))) })).catch(() => {});
+      await removeWritten();
       throw err;
     }
     // The kit and the file are written either way; a commit that fails is reported, not undone (the next kit change commits it).
@@ -1188,7 +1220,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     if (ctx.git) committed = await ctx.git.commitAll(ref.projectDir, t().jobs.brandKitCommit).then(() => true, () => false);
     ctx.broadcast?.({ type: 'library', project: ref.projectSlug });
     ctx.broadcast?.({ type: 'brand', project: ref.projectSlug });
-    return { file, variant: body.data.variant, committed };
+    return { file, ...(darkFile !== null ? { dark: darkFile } : {}), variant: body.data.variant, committed };
   });
 
   app.get<{ Params: { slug: string; c: string; '*': string } }>('/api/projects/:slug/creatives/:c/files/*', async (req, reply) => {

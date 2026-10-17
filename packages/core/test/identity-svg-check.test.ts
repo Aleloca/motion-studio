@@ -3,12 +3,12 @@
  * The strict SVG check of the identity formats (Phase 14, spec §4.2, decision 727; plan Review Focus 3) and the vector
  * composition check (decision 726, 728).
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { Composition, FormatPreset } from '@motion-studio/shared';
-import { checkTargets } from '../src/creatives/composition-contract.ts';
+import { checkTargets, identityProblems } from '../src/creatives/composition-contract.ts';
 import { checkVectorComposition, checkVectorSvg, svgAspect } from '../src/identity/svg-check.ts';
 
 const NS = 'xmlns="http://www.w3.org/2000/svg"';
@@ -185,6 +185,16 @@ describe('checkVectorComposition (decisions 726, 728)', () => {
     expect(checkVectorComposition(base([mark, { ...small, hidden: false }]))).toMatchObject({ ok: false, reason: expect.stringMatching(/hidden/) });
   });
 
+  it('a hidden "dark" svg clip is the negative logo (note 9); it can sit with "small", must be hidden and full frame', () => {
+    const dark = { ...mark, id: 'dark', src: 'assets/logo-dark.svg', hidden: true };
+    const small = { ...mark, id: 'small', src: 'assets/small.svg', hidden: true };
+    expect(checkVectorComposition(base([mark, dark]))).toEqual({ ok: true, svgFile: 'assets/logo.svg', dark: 'assets/logo-dark.svg' });
+    expect(checkVectorComposition(base([mark, small, dark]))).toEqual({ ok: true, svgFile: 'assets/logo.svg', small: 'assets/small.svg', dark: 'assets/logo-dark.svg' });
+    expect(checkVectorComposition(base([mark, { ...dark, hidden: false }]))).toMatchObject({ ok: false, reason: expect.stringMatching(/"dark".*hidden/) });
+    expect(checkVectorComposition(base([mark, { ...dark, props: { fit: 'contain', x: 5 } }]))).toMatchObject({ ok: false, reason: expect.stringMatching(/fill the frame/) });
+    expect(checkVectorComposition(base([mark, dark, { ...dark, src: 'assets/d2.svg' }]))).toMatchObject({ ok: false, reason: expect.stringMatching(/at most one "dark"/) });
+  });
+
   it('refuses a video, other clips, a non-svg clip, a box that does not fill, animation and transforms', () => {
     expect(checkVectorComposition(base([mark], { duration: 3 }))).toMatchObject({ ok: false, reason: expect.stringMatching(/still/) });
     expect(checkVectorComposition(base([mark, { id: 'tx', type: 'text', start: 0, duration: 0, props: { text: 'A' } }]))).toMatchObject({ ok: false });
@@ -233,6 +243,51 @@ describe('the turn check of an identity format (repair turn)', () => {
     expect(t.problems).toEqual([]);
     expect(t.warnings.join()).toMatch(/text/);
     expect((await check(version(svg('<rect width="1" height="1"/>')))).problems).toEqual([]);
+  });
+});
+
+describe('the turn check of a logo: the negative "dark" clip is required (note 9)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'ms-test-logo-dark-'));
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+  const LOGO: FormatPreset = { id: 'test-logo', channel: 'Test', name: 'Logo', width: 64, height: 64, kind: 'image', extensions: ['png'], identity: 'logo' };
+  const ICON: FormatPreset = { id: 'test-favicon', channel: 'Test', name: 'Favicon', width: 64, height: 64, kind: 'image', extensions: ['png'], identity: 'favicon' };
+  const clip = (id: string, src: string, hidden = false) => ({ id, type: 'svg', src, start: 0, duration: 0, ...(hidden ? { hidden: true } : {}), props: { fit: 'contain' } });
+  let k = 0;
+  function version(preset: FormatPreset, files: Record<string, string>, clips: unknown[]): string {
+    const vdir = join(root, `c${k++}`, 'outputs', 'v1');
+    const dir = join(vdir, 'compositions', preset.id);
+    mkdirSync(join(dir, 'assets'), { recursive: true });
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, 'assets', name), text);
+    writeFileSync(join(dir, 'composition.json'), JSON.stringify({
+      $schema: 'motion-studio/composition@1', width: 64, height: 64, fps: 30, duration: 0, background: '#00000000', fonts: [], scenes: [],
+      tracks: [{ id: 't', kind: 'visual', clips }],
+    }));
+    return vdir;
+  }
+  const check = (vdir: string, preset: FormatPreset) => checkTargets({ versionDir: vdir, targets: [preset.id], presets: [preset], briefDurationSec: null, locale: 'en' });
+  const good = svg('<rect width="1" height="1" fill="#111111"/>');
+
+  it('a logo without "dark" is a problem the agent is told to fix', async () => {
+    const r = await check(version(LOGO, { 'logo.svg': good }, [clip('mark', 'assets/logo.svg')]), LOGO);
+    expect(r.problems).toHaveLength(1);
+    expect(r.problems[0]).toMatch(/negative.*"dark"/i);
+  });
+
+  it('a logo with a clean "dark" passes; a "dark" SVG that fails checkVectorSvg is refused like the main one', async () => {
+    const ok = await check(version(LOGO, { 'logo.svg': good, 'logo-dark.svg': svg('<rect width="1" height="1" fill="#ffffff"/>') }, [clip('mark', 'assets/logo.svg'), clip('dark', 'assets/logo-dark.svg', true)]), LOGO);
+    expect(ok.problems).toEqual([]);
+    const bad = await check(version(LOGO, { 'logo.svg': good, 'logo-dark.svg': `<svg ${NS} viewBox="0 0 1 1" onload="x()"><rect width="1" height="1"/></svg>` }, [clip('mark', 'assets/logo.svg'), clip('dark', 'assets/logo-dark.svg', true)]), LOGO);
+    expect(bad.problems.join()).toMatch(/assets\/logo-dark\.svg.*event handler/);
+  });
+
+  it('favicon and app icon never need "dark"', async () => {
+    expect((await check(version(ICON, { 'mark.svg': good }, [clip('mark', 'assets/mark.svg')]), ICON)).problems).toEqual([]);
+  });
+
+  it('the render-time check (identityProblems without the requirement) still accepts an old logo without "dark"', async () => {
+    const vdir = version(LOGO, { 'logo.svg': good }, [clip('mark', 'assets/logo.svg')]);
+    const c = JSON.parse(readFileSync(join(vdir, 'compositions', LOGO.id, 'composition.json'), 'utf8'));
+    expect((await identityProblems(join(vdir, 'compositions', LOGO.id), c)).problems).toEqual([]);
   });
 });
 

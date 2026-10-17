@@ -47,6 +47,7 @@ const PRESETS: FormatPreset[] = [
   { id: 'test-still', channel: 'Test', name: 'Still', width: 320, height: 180, kind: 'image', extensions: ['png', 'jpg'] },
   // A size limit no render meets (I2: a render with problems).
   { id: 'test-tiny', channel: 'Test', name: 'Tiny', width: 200, height: 200, kind: 'video', extensions: ['mp4'], maxFileMB: 0.00001 },
+  { id: 'test-logo', channel: 'Test', name: 'Logo', width: 256, height: 256, kind: 'image', extensions: ['png'], identity: 'logo' },
 ];
 
 /** A minimal PNG header (what `imageSize` reads): enough for a fake frame. */
@@ -105,7 +106,7 @@ let ws: string;
 let promptFile: string;
 let bridge: AgentBridge;
 
-const ENV = ['FAKE_CLAUDE_NO_SCENES', 'FAKE_CLAUDE_SYMLINKS', 'FAKE_CLAUDE_SCENARIO', 'FAKE_CLAUDE_PROMPT_FILE', 'FAKE_CLAUDE_COMP_TAG', 'FAKE_CLAUDE_STRAY', 'FAKE_CLAUDE_ALWAYS_INVALID', 'FAKE_CLAUDE_BRIDGE_CALLS', 'FAKE_CLAUDE_BRIDGE_LOG'];
+const ENV = ['FAKE_CLAUDE_VECTOR', 'FAKE_CLAUDE_VECTOR_DARK', 'FAKE_CLAUDE_NO_SCENES', 'FAKE_CLAUDE_SYMLINKS', 'FAKE_CLAUDE_SCENARIO', 'FAKE_CLAUDE_PROMPT_FILE', 'FAKE_CLAUDE_COMP_TAG', 'FAKE_CLAUDE_STRAY', 'FAKE_CLAUDE_ALWAYS_INVALID', 'FAKE_CLAUDE_BRIDGE_CALLS', 'FAKE_CLAUDE_BRIDGE_LOG'];
 
 /** The server under test; `extra` adds deps (the final-wave wiring tests). */
 async function boot(extra: Partial<Parameters<typeof buildServer>[0]> = {}) {
@@ -284,6 +285,19 @@ describe('a composition turn', { timeout: 120_000 }, () => {
     expect(all[1]!.prompt).toContain('do not meet the contract');
     expect(all[1]!.prompt).toMatch(/- compositions\/test-wide: .*fps/);
     expect(await versionOf(slug, 1)).toMatchObject({ status: 'complete', problems: [] });
+  });
+
+  it('a logo without its negative "dark" clip gets the problem and a fix attempt (note 9)', async () => {
+    process.env.FAKE_CLAUDE_VECTOR = '1';
+    process.env.FAKE_CLAUDE_VECTOR_DARK = 'fix';
+    const slug = await create(['test-logo']);
+    const all = prompts();
+    expect(all).toHaveLength(2);
+    expect(all[0]!.prompt).toMatch(/"id": "dark"/);
+    expect(all[1]!.prompt).toContain('do not meet the contract');
+    expect(all[1]!.prompt).toMatch(/- compositions\/test-logo: .*"id": "dark", "hidden": true/);
+    expect(await versionOf(slug, 1)).toMatchObject({ status: 'complete', problems: [] });
+    expect(existsSync(join(compDir(slug, 1, 'test-logo'), 'assets', 'logo-dark.svg'))).toBe(true);
   });
 
   it('the repair turn carries the user\'s words verbatim, delimited as theirs, so their constraints reach it (F4)', async () => {

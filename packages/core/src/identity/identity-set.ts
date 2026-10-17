@@ -15,6 +15,8 @@ import { safeZoneCheck } from './safe-zone.ts';
  * variant) the core writes exactly the files of `IDENTITY_SETS[kind]` into `outDir`.
  *
  * - **Vector files** (`logo.svg`, `favicon.svg`) are the checked SVG bytes.
+ * - **The logo's negative** (decision 876): `logo-dark.svg` and `logo-dark.png` (`from: 'dark'`) come from the `dark` SVG,
+ *   like `logo.svg` and `logo.png` from the master; without a `dark` SVG (an older logo) they are left out of the set.
  * - **PNGs** are rasterised at their exact size (`rasterizeSvgJobs`); `from: 'auto'` takes the `small` variant up to
  *   48 px when there is one (decision 728). `logo.png` is 1024 px on its long side (the SVG's `viewBox` sets the other).
  *   A file with `scale` has the drawing scaled to that share of the side and centred (decision 762): the maskable icon at
@@ -35,6 +37,8 @@ export interface IdentitySetInput {
   master: string;
   /** The `small` variant SVG, when the composition has one. */
   small?: string;
+  /** The logo's negative SVG for dark backgrounds (decision 876), when the composition has one; ignored for the icons. */
+  dark?: string;
   outDir: string;
   brand?: BrandKit;
   /** The app or site name (the manifest's `name`). */
@@ -134,9 +138,10 @@ export function androidAdaptiveXml(): string {
   ].join('\n');
 }
 
-/** Which drawing a file of size `size` comes from (`IdentitySetFile.from`). */
-export function sourceOf(f: Pick<IdentitySetFile, 'from'>, size: number, hasSmall: boolean): 'master' | 'small' {
+/** Which drawing a file of size `size` comes from (`IdentitySetFile.from`). A `dark` file is filtered out before, without a `dark` SVG. */
+export function sourceOf(f: Pick<IdentitySetFile, 'from'>, size: number, hasSmall: boolean): 'master' | 'small' | 'dark' {
   const from = f.from ?? 'master';
+  if (from === 'dark') return 'dark';
   if (from === 'small') return hasSmall ? 'small' : 'master';
   if (from === 'auto') return hasSmall && size <= 48 ? 'small' : 'master';
   return 'master';
@@ -158,19 +163,22 @@ async function writeAtomic(path: string, data: Buffer | string): Promise<void> {
  * is written then), a `RenderError` when Chrome fails, and an error when ffmpeg is needed and missing.
  */
 export async function buildIdentitySet(kind: IdentityKind, input: IdentitySetInput): Promise<{ files: IdentityOutputFile[]; warnings: string[] }> {
-  const set = IDENTITY_SETS[kind];
+  const dark = kind === 'logo' && input.dark !== undefined ? input.dark : undefined;
+  const set = { files: IDENTITY_SETS[kind].files.filter((f) => f.from !== 'dark' || dark !== undefined) };
   const label = input.label ?? kind;
   const msg = messages(input.locale ?? currentLocale()).render;
   // Both SVGs are checked before anything is rasterised or written.
   const master = await readCheckedSvg(input.master);
   const small = input.small !== undefined ? await readCheckedSvg(input.small) : null;
+  const darkSvg = dark !== undefined ? await readCheckedSvg(dark) : null;
   const warnings: string[] = [];
   if (master.warnings.length > 0) warnings.push(msg.identitySvgText({ file: `${label}: ${kind === 'logo' ? 'logo.svg' : kind === 'favicon' ? 'favicon.svg' : 'master'}` }));
   if (small && small.warnings.length > 0) warnings.push(msg.identitySvgText({ file: `${label}: small` }));
+  if (darkSvg && darkSvg.warnings.length > 0) warnings.push(msg.identitySvgText({ file: `${label}: logo-dark.svg` }));
 
   // What to rasterise, per drawing: one job per size and scale (one browser per drawing).
   const keyOf = (size: number, scale?: number) => `${size}@${scale ?? 1}`;
-  const need = { master: new Map<string, RasterJob>(), small: new Map<string, RasterJob>() };
+  const need = { master: new Map<string, RasterJob>(), small: new Map<string, RasterJob>(), dark: new Map<string, RasterJob>() };
   const add = (f: IdentitySetFile, size: number) => need[sourceOf(f, size, small !== null)].set(keyOf(size, f.scale), { size, ...(f.scale !== undefined ? { scale: f.scale } : {}) });
   for (const f of set.files) {
     if (f.path === 'favicon.ico') for (const s of FAVICON_ICO_SIZES) add(f, s);
@@ -186,8 +194,10 @@ export async function buildIdentitySet(kind: IdentityKind, input: IdentitySetInp
   };
   const masterPngs = await run(input.master, need.master);
   const smallPngs = await run(input.small, need.small);
+  const darkPngs = await run(dark, need.dark);
+  const pngsOf = { master: masterPngs, small: smallPngs, dark: darkPngs };
   const png = (f: IdentitySetFile, size: number) => {
-    const b = (sourceOf(f, size, small !== null) === 'small' ? smallPngs : masterPngs).get(keyOf(size, f.scale));
+    const b = pngsOf[sourceOf(f, size, small !== null)].get(keyOf(size, f.scale));
     if (!b) throw new Error(`identity: no ${size} px raster`);
     return b;
   };
@@ -202,8 +212,9 @@ export async function buildIdentitySet(kind: IdentityKind, input: IdentitySetInp
     const out = join(input.outDir, ...f.path.split('/'));
     let role = 'file';
     if (f.path.endsWith('.svg')) {
-      await writeAtomic(out, master.text);
-      files.push({ path: f.path, role: 'vector' });
+      const isDark = f.from === 'dark';
+      await writeAtomic(out, isDark ? darkSvg!.text : master.text);
+      files.push({ path: f.path, role: isDark ? 'vector-dark' : 'vector' });
       continue;
     }
     if (f.path === 'favicon.ico') {
@@ -246,7 +257,7 @@ export async function buildIdentitySet(kind: IdentityKind, input: IdentitySetInp
       role = 'opaque';
     } else {
       await writeAtomic(out, buf);
-      role = f.path.startsWith('mipmap-') ? 'android-legacy' : kind === 'logo' ? 'raster' : 'icon';
+      role = f.path.startsWith('mipmap-') ? 'android-legacy' : kind === 'logo' ? (f.from === 'dark' ? 'raster-dark' : 'raster') : 'icon';
     }
     if (f.path === 'icon-512-maskable.png' || f.path === 'ic_launcher_foreground.png') {
       role = f.path === 'icon-512-maskable.png' ? 'maskable' : 'android-foreground';

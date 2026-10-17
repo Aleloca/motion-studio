@@ -429,6 +429,9 @@ export function svgAspect(svg: string): { width: number; height: number } | null
 
 /** The id of the optional simplified variant clip of an identity composition (decision 728). */
 export const SMALL_VARIANT_CLIP_ID = 'small';
+/** The id of the logo's negative clip, for dark backgrounds (note 9, decision 876): required for the logo format. */
+export const DARK_VARIANT_CLIP_ID = 'dark';
+const VARIANT_IDS = new Set([SMALL_VARIANT_CLIP_ID, DARK_VARIANT_CLIP_ID]);
 
 /**
  * Whether `c` is a vector composition (spec §4.2, decision 726): a still (`duration` 0) made of ONE visible `svg` clip that
@@ -437,14 +440,15 @@ export const SMALL_VARIANT_CLIP_ID = 'small';
  *
  * The optional `small` variant (decision 728) is a second `svg` clip with id `small`, hidden (`hidden: true`, so the
  * composition still shows the main drawing), full frame like the main one: its file is used for the sizes up to 48 px.
- * `svgFile` and `small` are the clips' `src` (`assets/…`), relative to the composition folder. `reason` is English, for the
- * agent's repair turn.
+ * The `dark` clip (decision 876) has the same shape: the negative logo for dark backgrounds. Here it is optional for every
+ * kind, so an older logo without it still renders; the turn check requires it for the logo (`identityProblems`).
+ * `svgFile`, `small` and `dark` are the clips' `src` (`assets/…`), relative to the composition folder. `reason` is English,
+ * for the agent's repair turn.
  */
-export function checkVectorComposition(c: Composition): { ok: true; svgFile: string; small?: string } | { ok: false; reason: string } {
+export function checkVectorComposition(c: Composition): { ok: true; svgFile: string; small?: string; dark?: string } | { ok: false; reason: string } {
   if (c.duration !== 0) return { ok: false, reason: 'an identity composition is a still: set duration to 0' };
   const clips = c.tracks.flatMap((t) => t.clips.map((clip) => ({ clip, trackHidden: t.hidden === true })));
-  const mains = clips.filter(({ clip }) => clip.id !== SMALL_VARIANT_CLIP_ID);
-  const smalls = clips.filter(({ clip }) => clip.id === SMALL_VARIANT_CLIP_ID);
+  const mains = clips.filter(({ clip }) => !VARIANT_IDS.has(clip.id));
   if (mains.length !== 1) return { ok: false, reason: `an identity composition has exactly one svg clip and no other clip (found ${mains.length})` };
   const { clip: main, trackHidden } = mains[0]!;
   if (main.type !== 'svg') return { ok: false, reason: `the only clip must be an svg clip, not ${main.type}` };
@@ -466,11 +470,20 @@ export function checkVectorComposition(c: Composition): { ok: true; svgFile: str
   };
   const bad = shape(main, 'svg clip');
   if (bad) return { ok: false, reason: bad };
-  if (smalls.length > 1) return { ok: false, reason: 'there is at most one "small" clip' };
-  if (smalls.length === 0) return { ok: true, svgFile: main.src };
-  const small = smalls[0]!.clip;
-  const badSmall = shape(small, '"small" variant clip');
-  if (badSmall || small.type !== 'svg') return { ok: false, reason: badSmall ?? 'the "small" variant clip must be an svg clip' };
-  if (!small.hidden) return { ok: false, reason: 'the "small" variant clip must be hidden (hidden: true): it is used only for the sizes up to 48 px' };
-  return { ok: true, svgFile: main.src, small: small.src };
+  const out: { ok: true; svgFile: string; small?: string; dark?: string } = { ok: true, svgFile: main.src };
+  const variants = [
+    { id: SMALL_VARIANT_CLIP_ID, label: '"small" variant clip', use: 'it is used only for the sizes up to 48 px' },
+    { id: DARK_VARIANT_CLIP_ID, label: '"dark" negative clip', use: 'it is the logo for dark backgrounds, exported as logo-dark' },
+  ] as const;
+  for (const v of variants) {
+    const found = clips.filter(({ clip }) => clip.id === v.id);
+    if (found.length > 1) return { ok: false, reason: `there is at most one "${v.id}" clip` };
+    if (found.length === 0) continue;
+    const clip = found[0]!.clip;
+    const badVariant = shape(clip, v.label);
+    if (badVariant || clip.type !== 'svg') return { ok: false, reason: badVariant ?? `the ${v.label} must be an svg clip` };
+    if (!clip.hidden) return { ok: false, reason: `the ${v.label} must be hidden (hidden: true): ${v.use}` };
+    out[v.id] = clip.src;
+  }
+  return out;
 }

@@ -42,6 +42,28 @@ describe('identity prompt section', () => {
     expect(logo).toMatch(/1024 px on its long side/);
   });
 
+  it('a logo must deliver its negative "dark" clip: same design, colours for a dark background; icons are not asked for it (note 9)', () => {
+    const logo = prompt(['identity-logo']);
+    expect(logo).toMatch(/REQUIRED: the negative version for dark backgrounds, a second `svg` clip with `"id": "dark"`, `"hidden": true`/);
+    expect(logo).toMatch(/SAME design with the same `viewBox`/);
+    expect(logo).toMatch(/dark inks .* become white or a light tint, keep the brand accent/);
+    expect(logo).toMatch(/check the contrast/);
+    expect(logo).toMatch(/`logo-dark\.svg` and `logo-dark\.png`/);
+    expect(prompt(['identity-favicon', 'identity-app-icon'])).not.toMatch(/"id": "dark"/);
+  });
+
+  it('a brand kit with a logo for dark backgrounds says to use it there', () => {
+    const k: BrandKit = { ...EMPTY_BRAND_KIT, logos: [
+      { id: 'a', file: 'assets/brand/a.svg', variant: 'primary', background: 'light', source: { kind: 'manual' } },
+      { id: 'b', file: 'assets/brand/b.svg', variant: 'primary', background: 'dark', source: { kind: 'manual' } },
+    ] as BrandKit['logos'] };
+    const p = buildCreativePrompt({ slug: 's', creative: creative(['instagram-post-1x1']), presets: DEFAULT_FORMATS, version: 1, kind: 'first', locale: 'en',
+      context: { kit: k, hasGuidelines: false, assets: 0, references: 0, codebases: [], missingCodebases: [], tools: [] } });
+    expect(p).toContain('- Logo primary (background dark): assets/brand/b.svg');
+    expect(p).toMatch(/On a dark background use a logo marked "background dark"/);
+    expect(prompt(['instagram-post-1x1'], { logos: 1 })).not.toMatch(/On a dark background use/);
+  });
+
   it('start from the brand: the default when the brand has a logo; adapt, prefer the icon variant, redraw a raster logo', () => {
     const p = prompt(['identity-favicon'], { logos: 1 });
     expect(p).toMatch(/Start: from the brand's logo/);

@@ -12,9 +12,11 @@ import '../../components/brief.css';
 
 export interface UseAsBrandLogoProps {
   slug: string; creative: string; n: number; format: string; label: string; kind: IdentityKind; disabled?: boolean;
+  /** The logo's set has its negative (decision 876): the core adds it to the kit too, for dark backgrounds. */
+  hasDark?: boolean;
 }
 
-export function UseAsBrandLogo({ slug, creative, n, format, label, kind, disabled }: UseAsBrandLogoProps) {
+export function UseAsBrandLogo({ slug, creative, n, format, label, kind, disabled, hasDark }: UseAsBrandLogoProps) {
   const t = useT();
   const i = t.web.identity;
   const [open, setOpen] = useState(false);
@@ -42,6 +44,7 @@ export function UseAsBrandLogo({ slug, creative, n, format, label, kind, disable
         <div className="ms-brief-confirm">
           <h3>{i.useAsLogoTitle}</h3>
           <p>{i.useAsLogoBody}</p>
+          {hasDark ? <p>{i.useAsLogoDarkNote}</p> : null}
           <Segmented<'primary' | 'icon'> label={i.useAsLogoAs} value={variant} onChange={setVariant} disabled={busy}
             options={[{ value: 'primary', label: i.variantPrimary }, { value: 'icon', label: i.variantIcon }]} />
           {error ? <p role="alert" className="ms-brief-error">{error}</p> : null}
