@@ -112,7 +112,9 @@ export function CanvasBoard(p: BoardProps) {
   const intent = useRef(0);
   useEffect(() => () => window.clearTimeout(intent.current), []);
   useEffect(() => { if (p.tool !== 'select') { setPinned(false); setHovered(false); } }, [p.tool]);
-  const liveOn = comp !== null && p.tool === 'select' && (hovered || pinned);
+  // A still format (identity logo, favicon, app icon, any image preset) has nothing to play: it keeps its picture and has no play control.
+  const still = board.preset?.kind === 'image';
+  const liveOn = comp !== null && !still && p.tool === 'select' && (hovered || pinned);
   const preview = usePreviewSession({ slug: p.slug, creative: p.creative, n: comp?.n ?? null, format: comp?.format ?? board.id, enabled: liveOn });
   const hoverIn = () => { if (comp && p.tool === 'select') { window.clearTimeout(intent.current); intent.current = window.setTimeout(() => setHovered(true), HOVER_INTENT_MS); } };
   const hoverOut = () => { window.clearTimeout(intent.current); setHovered(false); };
@@ -183,7 +185,7 @@ export function CanvasBoard(p: BoardProps) {
         {liveOn && (preview.state.kind === 'loading' || preview.state.kind === 'busy') ? (
           <span className="ms-cplayer-state" role="status">{preview.state.kind === 'busy' ? t.web.render.busy : t.web.render.loading}</span>
         ) : null}
-        {comp && p.tool === 'select' ? (
+        {comp && !still && p.tool === 'select' ? (
           <button type="button" className={cx('ms-cv-live', pinned && 'ms-on')} aria-pressed={pinned}
             aria-label={pinned ? t.web.render.stopPreview({ label }) : t.web.render.playPreview({ label })} title={pinned ? t.web.render.stopPreview({ label }) : t.web.render.playPreview({ label })}
             onClick={(e) => { e.stopPropagation(); setPinned((x) => !x); }} onDoubleClick={(e) => e.stopPropagation()}>
