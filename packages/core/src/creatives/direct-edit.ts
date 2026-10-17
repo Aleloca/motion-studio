@@ -263,7 +263,7 @@ export class DirectEditService {
       before = { brief: stored.brief, exportPicks: stored.exportPicks, freedInstances: stored.freedInstances };
       await store.update(slug, fresh(stored));
       await alignEditorCopies(creativeDir, { n: newN, origin: 'editor', compositions: saved.compositions } as VersionEntry).catch(() => []);
-      const commit = await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${newN}`);
+      const commit = await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${newN}`, { headWhenClean: true });
       await store.appendVersion(slug, {
         n: newN, commit, sessionId: creative.resumeFrom?.sessionId ?? latest.sessionId ?? null, status, createdAt: now(),
         request: v.duplicatedRequest({ label: newLabel(instanceId) }), outputs: saved.outputs, problems: saved.problems, tools: [], renderCommand: null,
@@ -413,7 +413,7 @@ export class DirectEditService {
         // The agent's workspace gets an exact copy of this version's compositions (decisions log 263), committed with it so a
         // restart from this version finds it too. Best effort: the next prompt names the version's folders anyway.
         await alignEditorCopies(creativeDir, { n, origin: 'editor', compositions: saved.compositions } as VersionEntry).catch(() => []);
-        const commit = await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${n}`);
+        const commit = await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${n}`, { headWhenClean: true });
         const request = body.ops.length > 0 ? describeEdits(body.ops, baseLoaded.composition, locale) : e.summaryNone;
         await store.appendVersion(slug, {
           n, commit, sessionId: creative.resumeFrom?.sessionId ?? latest.sessionId ?? null, status, createdAt: now(),

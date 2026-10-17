@@ -77,13 +77,19 @@ export class Git {
     await ensureLocalExcludes(dir);
   }
 
-  commitAll(dir: string, message: string): Promise<string | null> {
+  /**
+   * Commits every change of the project (`git add -A`). Null when nothing changed, unless `headWhenClean`: a version
+   * commit asks for it, because another creative's concurrent commit (a variant sister, or any creative at
+   * maxConcurrentJobs 2) may already have committed this turn's files; the tree then equals HEAD, so HEAD holds the
+   * version exactly and a restore of it is right (decisions log 868).
+   */
+  commitAll(dir: string, message: string, opts: { headWhenClean?: boolean } = {}): Promise<string | null> {
     return this.lock.run(resolve(dir), async () => {
       await this.assertSafe(dir);
       await ensureLocalExcludes(dir);
       await this.must(dir, ['add', '-A']);
       const status = await this.must(dir, ['status', '--porcelain']);
-      if (status.trim() === '') return null;
+      if (status.trim() === '') return opts.headWhenClean ? this.head(dir) : null;
       await this.must(dir, [...IDENTITY, 'commit', '-q', '-m', message]);
       return (await this.must(dir, ['rev-parse', 'HEAD'])).trim();
     });
@@ -92,9 +98,10 @@ export class Git {
   /**
    * Commits only `relPaths` (relative to `dir`, literal pathspecs), whatever else is changed or staged in the tree: used
    * for the creative's own metadata while an agent may be writing elsewhere (its half-written sources are never
-   * committed). Returns the sha, or null when those paths have no change.
+   * committed). Returns the sha, or null when those paths have no change (with `headWhenClean`, HEAD instead: those paths
+   * then match HEAD exactly, see `commitAll`).
    */
-  commitPaths(dir: string, relPaths: string[], message: string): Promise<string | null> {
+  commitPaths(dir: string, relPaths: string[], message: string, opts: { headWhenClean?: boolean } = {}): Promise<string | null> {
     return this.lock.run(resolve(dir), async () => {
       if (relPaths.length === 0) return null;
       await this.assertSafe(dir);
@@ -102,7 +109,7 @@ export class Git {
       const specs = relPaths.map((p) => `:(literal)${p}`);
       await this.must(dir, ['add', '--', ...specs]);
       const status = await this.must(dir, ['status', '--porcelain', '--', ...specs]);
-      if (status.trim() === '') return null;
+      if (status.trim() === '') return opts.headWhenClean ? this.head(dir) : null;
       await this.must(dir, [...IDENTITY, 'commit', '-q', '--only', '-m', message, '--', ...specs]);
       return (await this.must(dir, ['rev-parse', 'HEAD'])).trim();
     });
@@ -125,6 +132,13 @@ export class Git {
       if (pending > 0) await this.must(dir, ['clean', '-f', '-d', '--', spec]);
       return pending;
     });
+  }
+
+  /** HEAD's sha, or null in a repository without commits. */
+  private async head(dir: string): Promise<string | null> {
+    const r = await this.exec('git', [...HARDENED, 'rev-parse', '-q', '--verify', 'HEAD^{commit}'], { cwd: dir, env: hardenedGitEnv(dir) });
+    if (r.notFound) throw new Error(t().errors.gitNotFound);
+    return r.code === 0 && /^[0-9a-f]{40}$/.test(r.stdout.trim()) ? r.stdout.trim() : null;
   }
 
   private async must(cwd: string, args: string[], env: NodeJS.ProcessEnv = hardenedGitEnv(cwd)): Promise<string> {

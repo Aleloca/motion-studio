@@ -243,7 +243,7 @@ export class VariantGroupService {
     };
     await alignEditorCopies(sisterDir, entry).catch(() => []);
     // The sister's folder only (the agents of the other variants may be writing elsewhere in the project).
-    entry.commit = await turns.commitFolder(sister, [sisterDir], `${creative.title}: v1`).catch(() => null);
+    entry.commit = await turns.commitFolder(sister, [sisterDir], `${creative.title}: v1`, { headWhenClean: true }).catch(() => null);
     await store.appendVersion(sister.creativeSlug, entry);
     await store.appendConversation(sister.creativeSlug, { type: 'version', at: now(), n: 1, status });
     await store.update(sister.creativeSlug, { status: status === 'complete' ? 'ready' : 'incomplete', error: null });

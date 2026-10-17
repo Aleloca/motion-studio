@@ -173,6 +173,56 @@ describe('Git.restorePath', () => {
   });
 });
 
+describe('Git version commits with two concurrent creatives (decisions log 868)', () => {
+  const setup = async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ms-two-creatives-'));
+    const git = new Git();
+    await git.init(dir);
+    for (const c of ['x', 'y']) await mkdir(join(dir, 'creatives', c, 'work'), { recursive: true });
+    await writeFile(join(dir, 'creatives', 'x', 'work', 'scene.py'), 'x0');
+    await writeFile(join(dir, 'creatives', 'y', 'work', 'scene.py'), 'y0');
+    await git.commitAll(dir, 'base');
+    return { dir, git };
+  };
+  const show = async (dir: string, rev: string) => (await execCommand('git', ['show', rev], { cwd: dir })).stdout;
+
+  it('commitAll: when a concurrent commit already took this version\'s files, headWhenClean returns that commit (null without it)', async () => {
+    const { dir, git } = await setup();
+    await writeFile(join(dir, 'creatives', 'x', 'work', 'scene.py'), 'x1');
+    await writeFile(join(dir, 'creatives', 'y', 'work', 'scene.py'), 'y-half');
+    const yCommit = await git.commitAll(dir, 'y: v1');
+    expect(await git.commitAll(dir, 'x: v1')).toBeNull();
+    const xCommit = await git.commitAll(dir, 'x: v1', { headWhenClean: true });
+    expect(xCommit).toBe(yCommit);
+    expect(await show(dir, `${xCommit}:creatives/x/work/scene.py`)).toBe('x1');
+  });
+
+  it('commitPaths: headWhenClean returns HEAD when the paths were already committed', async () => {
+    const { dir, git } = await setup();
+    await writeFile(join(dir, 'creatives', 'y', 'work', 'seed.py'), 'seed');
+    const other = await git.commitAll(dir, 'x: stato');
+    expect(await git.commitPaths(dir, ['creatives/y'], 'y: v1')).toBeNull();
+    expect(await git.commitPaths(dir, ['creatives/y'], 'y: v1', { headWhenClean: true })).toBe(other);
+  });
+
+  it('restoring X from a commit that also holds Y\'s half-written files never touches Y', async () => {
+    const { dir, git } = await setup();
+    await writeFile(join(dir, 'creatives', 'x', 'work', 'scene.py'), 'x1');
+    await writeFile(join(dir, 'creatives', 'y', 'work', 'scene.py'), 'y-half');
+    const xV1 = (await git.commitAll(dir, 'x: v1', { headWhenClean: true }))!;
+    expect(await show(dir, `${xV1}:creatives/y/work/scene.py`)).toBe('y-half');
+    await writeFile(join(dir, 'creatives', 'y', 'work', 'scene.py'), 'y-done');
+    await git.commitAll(dir, 'y: v1');
+    await writeFile(join(dir, 'creatives', 'x', 'work', 'scene.py'), 'x2');
+    await writeFile(join(dir, 'creatives', 'y', 'work', 'scene.py'), 'y-newer');
+    await writeFile(join(dir, 'creatives', 'y', 'work', 'draft.txt'), 'untracked');
+    await git.restorePath(dir, xV1, 'creatives/x/work');
+    expect(await readFile(join(dir, 'creatives', 'x', 'work', 'scene.py'), 'utf8')).toBe('x1');
+    expect(await readFile(join(dir, 'creatives', 'y', 'work', 'scene.py'), 'utf8')).toBe('y-newer');
+    expect(await readFile(join(dir, 'creatives', 'y', 'work', 'draft.txt'), 'utf8')).toBe('untracked');
+  });
+});
+
 describe('Git.commitAll and the sandbox cache', () => {
   it('never commits .cache/, even when the project .gitignore lacks it', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ms-cache-'));

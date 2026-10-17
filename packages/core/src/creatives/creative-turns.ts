@@ -468,8 +468,8 @@ export class CreativeTurnService {
   presetList(): Promise<FormatPreset[]> { return this.deps.presets(); }
 
   /** Commits `absPaths` (folders or files of the project) only; the commit's sha, or null when nothing changed. Throws on a git error. */
-  commitFolder(ref: CreativeRef, absPaths: readonly string[], message: string): Promise<string | null> {
-    return this.deps.git.commitPaths(ref.projectDir, absPaths.map((p) => relative(ref.projectDir, p).split(sep).join('/')), message);
+  commitFolder(ref: CreativeRef, absPaths: readonly string[], message: string, opts: { headWhenClean?: boolean } = {}): Promise<string | null> {
+    return this.deps.git.commitPaths(ref.projectDir, absPaths.map((p) => relative(ref.projectDir, p).split(sep).join('/')), message, opts);
   }
 
   /**
@@ -1153,7 +1153,7 @@ export class CreativeTurnService {
       }
       const { problems } = saved;
       const status = problems.length === 0 ? 'complete' : 'incomplete';
-      const commit = await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${n}`);
+      const commit = await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${n}`, { headWhenClean: true });
       const usage = sumUsage(attemptUsage);
       await store.appendVersion(slug, {
         n, commit, sessionId: resumeSessionId ?? null, status, createdAt: now(),
