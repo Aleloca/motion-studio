@@ -1,5 +1,5 @@
 import type { CreativeFile, FormatPreset, IdentityBrief, Pin, StorePack, VariantLetter } from '@motion-studio/shared';
-import { formatDisplayName, presetOf, videoTargetBitrateKbps, type BrandKit, type BriefServices, type Locale } from '@motion-studio/shared';
+import { formatDisplayName, presetOf, statedDurationSec, videoTargetBitrateKbps, type BrandKit, type BriefServices, type Locale } from '@motion-studio/shared';
 import { replyInstruction } from '../i18n.ts';
 import { findPreset } from '../formats/format-catalog.ts';
 import { servicesLine } from '../services/service-policy.ts';
@@ -52,6 +52,13 @@ export interface PromptInput {
    * rebuilds each format as a composition from the old media (and its reference frames), then applies the request.
    */
   conversion?: { formats: LegacyFormatReference[]; created?: string[] };
+  /**
+   * Decision 917: the `studio` server is active, so the agent has its app actions (`update_brief`, `add_variant`…). First and
+   * iteration prompts list them; a repair of a duration problem offers `update_brief` instead of another loop.
+   */
+  appActions?: boolean;
+  /** Fix turns (user note 6): a video composition far from the brief's duration (the first one found), in seconds. */
+  durationOff?: { duration: number; target: number };
   /**
    * The formats the agent delivers this turn (spec §2.3, §2.5): primaries only, in the brief's order. Default: every brief
    * format. When some brief formats are left out (carried over or followers), the prompt says Motion Studio handles them.
@@ -479,6 +486,35 @@ export function identityPromptSection(kinds: ReadonlySet<'logo' | 'favicon' | 'a
   return lines;
 }
 
+/**
+ * Decision 917: the app actions the agent may take itself, with no confirmation card (the chat shows each one), and when.
+ * With a brief whose text states another duration than its field (user note 6), the line that asks to settle it first.
+ */
+export function appActionsSection(brief: CreativeFile['brief']): string[] {
+  const stated = statedDurationSec([brief.goal, brief.message, brief.notes].join('\n'));
+  return [
+    '## Acting on the app (Motion Studio tools)',
+    'You can change this creative in Motion Studio yourself, with no confirmation card: the chat shows the user each action. When the user asks for one of these, do it with the tool and never tell them to click something.',
+    '- update_brief: the brief\'s duration (durationSec), goal, key message, notes and services. The brief changes when your turn ends; a new durationSec applies to this turn\'s output checks at once.',
+    '- add_format: a format of the catalog (by preset id, e.g. "youtube-shorts-9x16"); Motion Studio makes it in a turn right after this one. duplicate_format: a second instance of a format of the brief (made after this turn, from the version you are making).',
+    '- add_language: a language variant of the creative (translated after this turn).',
+    '- add_variant: a new variant with its direction (it starts its own agent turn); discard_variant and restore_variant; set_pick: the ★ (the version exported) of a format.',
+    '- render_version: renders a saved version, or "current" (the version you are making, rendered after this turn). prepare_export: renders what the ★ export needs; the user then exports.',
+    'Use them only when the user asks for it, or when the brief clearly needs it. You cannot archive or delete anything, nor change settings, keys or permissions.',
+    ...(stated !== null && brief.durationSec !== null && stated !== brief.durationSec
+      ? [`- The brief's text says about ${stated}s but its duration field says ${brief.durationSec}s. If the text is clearly what the user wants, call update_brief with durationSec ${stated} before you build; if it is unclear, ask with AskUserQuestion.`]
+      : []),
+  ];
+}
+
+/** User note 6: what a repair of a duration problem may do instead of looping (the agent cannot otherwise change the brief). */
+function durationFixLines(d: { duration: number; target: number }): string[] {
+  const duration = Math.round(d.duration);
+  return [
+    `The duration problem: the brief's duration is ${d.target}s and your composition lasts ${duration}s. If the brief text or the user's words clearly ask for ${duration}s, do not shorten the video: call update_brief with durationSec ${duration}, then validate_composition again. If it is unclear which one the user wants, ask with AskUserQuestion. Otherwise bring the duration back to ${d.target}s.`,
+  ];
+}
+
 /** Said of two or more instances of one preset in a turn (Phase 12, spec §2). */
 export const SAME_SIZE_NOTE = 'These are separate designs of the same size; keep each one distinct unless the request says otherwise';
 
@@ -550,6 +586,7 @@ export function buildCreativePrompt(i: PromptInput): string {
       `The compositions of version ${i.version} do not meet the contract. Fix these problems in the same folders (${outputDir}/compositions/<format-id>/), then call validate_composition again:`,
       // One line each: a problem may quote the agent's own files (an SVG refusal), never a way to start a new line.
       ...(i.problems ?? []).map((p) => `- ${oneLine(p, 2000)}`),
+      ...(i.appActions && i.durationOff ? ['', ...durationFixLines(i.durationOff)] : []),
       '', ...repairRequestSection(i.userWords, i.liveMessages),
     );
   } else {
@@ -562,6 +599,7 @@ export function buildCreativePrompt(i: PromptInput): string {
   }
   if (i.variant && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...variantSection(i.variant));
   if (i.context && i.kind !== 'fix' && i.kind !== 'redirect') parts.push(...contextSections(i.context, contract, brief.services));
+  if (i.appActions && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...appActionsSection(brief));
   if (contract === 'compositions') {
     // Agent-facing: the format's own facts only (Motion Studio renders, so no extensions, bitrates or encoding flags).
     const compositionLines = known.map(([id, p]) => p

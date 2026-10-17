@@ -383,3 +383,30 @@ describe('buildCreativePrompt, output contract v2 (Task 5b)', () => {
     expect(p).not.toMatch(/headless Chromium|node-canvas|Puppeteer and Playwright cannot run/);
   });
 });
+
+describe('app actions in the prompt (decision 917, user note 6)', () => {
+  const sixty = { ...creative, brief: { ...creative.brief, goal: 'Un video di 60 secondi per il lancio', durationSec: 6 } };
+  it('lists the app actions only when the studio server is active', () => {
+    const on = buildCreativePrompt({ ...v2, kind: 'first', appActions: true });
+    expect(on).toContain('## Acting on the app');
+    for (const tool of ['update_brief', 'add_format', 'duplicate_format', 'add_language', 'add_variant', 'discard_variant', 'restore_variant', 'set_pick', 'render_version', 'prepare_export']) expect(on).toContain(tool);
+    expect(on).toContain('never tell them to click');
+    expect(buildCreativePrompt({ ...v2, kind: 'first' })).not.toContain('## Acting on the app');
+    // A repair attempt keeps its prompt short: no list.
+    expect(buildCreativePrompt({ ...v2, kind: 'fix', problems: ['x'], appActions: true })).not.toContain('## Acting on the app');
+  });
+  it('says when the brief text states another duration than its field', () => {
+    const p = buildCreativePrompt({ ...v2, creative: sixty, kind: 'first', appActions: true });
+    expect(p).toContain("The brief's text says about 60s but its duration field says 6s");
+    expect(p).toContain('update_brief with durationSec 60');
+    expect(buildCreativePrompt({ ...v2, kind: 'first', appActions: true })).not.toContain("The brief's text says");
+  });
+  it('the fix prompt of a duration problem offers the brief change instead of a loop', () => {
+    const p = buildCreativePrompt({ ...v2, creative: sixty, kind: 'fix', problems: ['compositions/youtube-16x9: duration 60s'], durationOff: { duration: 60, target: 6 }, appActions: true });
+    expect(p).toContain('call update_brief with durationSec 60');
+    expect(p).toContain('AskUserQuestion');
+    expect(p).toContain('bring the duration back to 6s');
+    // Without the tools, the old repair text only.
+    expect(buildCreativePrompt({ ...v2, creative: sixty, kind: 'fix', problems: ['x'], durationOff: { duration: 60, target: 6 } })).not.toContain('update_brief');
+  });
+});

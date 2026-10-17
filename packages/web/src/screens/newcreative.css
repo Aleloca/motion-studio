@@ -36,6 +36,8 @@
 .ms-nc-err { margin: 0; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--warn); }
 .ms-nc-err svg, .ms-nc-note svg { flex: none; }
 .ms-nc-note { margin: 0; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+/* User note 6: the brief's text states another duration; its button sets it. */
+.ms-nc-stated { flex-wrap: wrap; color: var(--text); }
 .ms-nc-title { margin: 0; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .ms-nc-title b { color: var(--text); font-weight: 600; }
 .ms-nc-try { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }

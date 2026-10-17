@@ -216,6 +216,18 @@ describe('Conversation', () => {
     expect(screen.getByRole('alert').textContent).toContain('boom');
   });
 
+  it('marks what the agent did in the app as an agent action line (decision 917)', () => {
+    render(view({ entries: [
+      { type: 'system', at: at(6), level: 'info', text: 'Brief duration: 6 s → 60 s', origin: 'agent' },
+      { type: 'system', at: at(7), level: 'info', text: 'Restarted from v1' },
+    ] }));
+    const action = screen.getByText('Brief duration: 6 s → 60 s').closest('p')!;
+    expect(action.className).toContain('ms-convo-action');
+    expect(within(action).getByText('Agent action')).toBeTruthy();
+    const plain = screen.getByText('Restarted from v1').closest('p')!;
+    expect(plain.className).not.toContain('ms-convo-action');
+  });
+
   it('has a designed empty state', () => {
     render(view({ entries: [] }));
     expect(screen.getByText('No messages yet')).toBeTruthy();

@@ -1,4 +1,4 @@
-import { activeMembers, creativeJobKey, isSessionId, LIVE_LIMITS, MAX_RUNNING_VARIANTS, type JobWaitReason, type ConversationEntry, type LiveMessageOutcome, type QueuedRequest, type RedirectOutcome, type VariantGroup, type VariantMember } from '@motion-studio/shared';
+import { activeMembers, briefSchema, creativeJobKey, issuesText, isSessionId, LIVE_LIMITS, MAX_RUNNING_VARIANTS, type JobWaitReason, type ConversationEntry, type LiveMessageOutcome, type QueuedRequest, type RedirectOutcome, type VariantGroup, type VariantMember } from '@motion-studio/shared';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { mergeStorePack, verifyScreens } from '../store-pack/brief.ts';
@@ -33,8 +33,8 @@ import { legacyProblemsOf } from './legacy-problems.ts';
 import { clearReferenceFrames, conversionPlan, extractReferenceFrames } from './legacy-conversion.ts';
 import { AnswerCache, checkLiveMessage, liveMessageText, LiveSession, newLiveMessage, NO_LIVE, redirectLive, type LiveMessage, type UserMessageInput } from '../agent/live-session.ts';
 import { buildCreativePrompt, interruptedRedirectText, pinLine, REDIRECT_PARTIAL_NOTE, type AgentContract, type CreativeContext, type PromptKind, type PromptVariant } from './prompt.ts';
-import { checkTargets } from './composition-contract.ts';
-import { realDirChain, writeThroughTemp } from './core-files.ts';
+import { checkComposition, checkTargets, type TargetsCheck } from './composition-contract.ts';
+import { isRealDirChain, realDirChain, writeThroughTemp } from './core-files.ts';
 import { acceptedDurationsOf, alignEditorCopies, assembleCompositions, carriableComposition, type CarriedComposition } from './composition-turn.ts';
 import { checkedPreviewTimes, type PreviewService } from './previews.ts';
 import { sumUsage } from '../usage/usage-tracker.ts';
@@ -72,7 +72,17 @@ export interface CreativeTurnDeps {
 }
 
 /** What a brief edit sends (PUT …/creatives/:c). */
-export interface BriefPatch { title?: string; brief?: Brief; services?: Brief['services']; formatLabels?: Record<string, string | null>; formats?: string[]; storePack?: StorePack | null; linkedCodebases?: LinkedCodebase[] }
+export interface BriefPatch {
+  title?: string; brief?: Brief; services?: Brief['services']; formatLabels?: Record<string, string | null>; formats?: string[]; storePack?: StorePack | null; linkedCodebases?: LinkedCodebase[];
+  /**
+   * Decision 917 (the agent's `update_brief`, `add_language`): these fields of the brief stored now, merged like `services`
+   * (a partial save); the result is checked against the brief schema. Never sent by the routes.
+   */
+  fields?: Partial<Pick<Brief, 'goal' | 'message' | 'notes' | 'durationSec' | 'locales'>>;
+}
+/** Decision 917: how a creative turn ended, for the hooks that run when it settles (`onTurnSettled`). */
+export interface TurnSettled { state: string | undefined; savedVersion: number | null; stopped: boolean }
+export type TurnSettledHook = (ref: CreativeRef, jobId: string, outcome: TurnSettled) => Promise<void>;
 /** Phase 15: what a variant group shares and propagates (spec §2): the brief (minus each variant's links), title and codebases. */
 export interface SharedBrief { brief: Brief; title?: string; linkedCodebases?: LinkedCodebase[] }
 
@@ -94,6 +104,8 @@ class LiveTurn extends LiveSession {
   stopped = false;
   /** The turn saved a version (Ruling U: only then the queue goes on by itself). */
   savedVersion = false;
+  /** Decision 917: the number of the version it saved (the app actions kept for after the turn act on it). */
+  savedN: number | null = null;
   constructor(jobId: string, caps: LiveSession['caps'], readonly ref: CreativeRef) { super(jobId, caps); }
 }
 /** How many idempotency answers are kept (per process; older ones are found again in the conversation or the queue). */
@@ -141,6 +153,14 @@ function addFormatsRequest(added: string[], base: VersionEntry | undefined, n: n
 
 /** `TikTok and Shorts`, in the locale's own way. */
 const listText = (items: string[], locale: Locale) => new Intl.ListFormat(locale, { style: 'long', type: 'conjunction' }).format(items);
+/** User note 6: the first video composition of a check that is far from the brief's duration (seconds, as the problem says). */
+function durationOffOf(r: TargetsCheck): { duration: number; target: number } | undefined {
+  for (const c of r.checks) {
+    const p = c.problems.find((x) => x.key === 'composition.durationOffBrief');
+    if (p && typeof p.params.duration === 'number' && typeof p.params.target === 'number') return { duration: p.params.duration, target: p.params.target };
+  }
+  return undefined;
+}
 
 /** What a turn delivers (spec §2.3–2.5): the agent's targets, the primaries carried from the base, the links to materialize. */
 interface TurnPlan {
@@ -260,6 +280,10 @@ export class CreativeTurnService {
   private readonly refs = new Map<string, CreativeRef>();
   /** Phase 15: hooks of queued requests of a variant run, by creative key + clientId (`setQueuedHook`). */
   private readonly queuedHooks = new Map<string, QueuedHook>();
+  /** Decision 917: the duration a running turn's output checks use, by job id, once its agent changed the brief's. */
+  private readonly turnDurations = new Map<string, number | null>();
+  /** Decision 917: called when a creative turn settles (`onTurnSettled`). */
+  private readonly settleHooks: TurnSettledHook[] = [];
   constructor(private readonly deps: CreativeTurnDeps) {
     this.maxAttempts = deps.maxAttempts ?? 3;
     this.side = deps.sideState ?? new CreativeSideStateStore(null);
@@ -300,6 +324,9 @@ export class CreativeTurnService {
     return this.locks.run(key, async () => {
       if (this.isActive(key)) throw new WorkspaceError(409, t().errors.waitBeforeBrief);
       const store = new CreativeStore(ref.projectDir);
+      // Decision 917: a brief the agent changed during a turn that just ended (its pending brief) applies first, so this
+      // edit builds on it and is never overwritten by it afterwards.
+      await this.applyPendingBriefLocked(ref);
       const stored = await store.get(ref.creativeSlug);
       const linkedCodebases = patch.linkedCodebases ? normalizeCodebaseList(patch.linkedCodebases) : null;
       // Decision 788: only new or changed paths get the glob check; a legacy one already stored passes (skipped at run time).
@@ -313,8 +340,131 @@ export class CreativeTurnService {
         ...(linkedCodebases ? { linkedCodebases } : {}),
       });
       await this.commitState(ref, t().jobs.briefUpdatedCommit({ title: updated.title }));
+      // User note 6: a new duration is checked again on the latest version at once, with no new turn.
+      if (change.brief && change.brief.durationSec !== stored.brief.durationSec) return (await this.recheckLatest(ref, store, change.brief.durationSec)) ?? updated;
       return updated;
     });
+  }
+
+  /**
+   * Decision 917: a brief edit by the agent of the running turn of `ref` (its `update_brief`, `add_format`, `add_language`).
+   * In a variant group it is the group's edit (`updateGroupBrief`: idle variants now, working ones, this one included, at
+   * their next turn). Outside a group the brief never changes under a running turn (`updateBrief` refuses the UI with 409):
+   * the change is computed by `briefChange` on the brief as it will be (the pending one, else the stored one) and kept as the
+   * creative's pending brief, which `briefAfterJob` applies when the turn ends, whatever its outcome. `build` makes the
+   * patch from that brief, under the lock the write takes. Answers the brief before and after (for the chat line).
+   */
+  async briefFromAgent(ref: CreativeRef, build: (current: Brief) => BriefPatch): Promise<{ before: Brief; after: Brief }> {
+    const store = new CreativeStore(ref.projectDir);
+    const variants = new VariantGroupService({ store, turns: this });
+    const resolved = await variants.resolve(ref);
+    if (resolved.group) {
+      let before: Brief | null = null;
+      await variants.updateGroupBrief(resolved.host, (current) => { before = current; return build(current); }, ref);
+      const after = (await this.side.pendingBrief(ref.projectDir, ref.creativeSlug))?.brief ?? (await store.get(ref.creativeSlug)).brief;
+      return { before: before!, after };
+    }
+    const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
+    return this.locks.run(key, async () => {
+      // The bridge only answers while the turn runs: a call that comes after it is refused, nothing is written.
+      if (!this.isActive(key)) throw new CodedError(409, t().errors.toolUnavailable, 'turn-over');
+      const stored = await store.get(ref.creativeSlug);
+      const pending = await this.side.pendingBrief(ref.projectDir, ref.creativeSlug);
+      const before = pending?.brief ?? stored.brief;
+      const change = await this.briefChange(store, ref.creativeSlug, { ...stored, brief: before }, build(before));
+      const after = change.brief ?? before;
+      await this.side.setPendingBrief(ref.projectDir, ref.creativeSlug, {
+        brief: after, ...(pending?.title ? { title: pending.title } : {}), ...(pending?.linkedCodebases ? { linkedCodebases: pending.linkedCodebases } : {}), at: now(),
+      });
+      // Any job of this creative that ends applies it (`briefAfterJob`).
+      this.rememberRef(ref);
+      return { before, after };
+    });
+  }
+
+  /**
+   * User note 6: after the brief's duration changed (a brief save, a group's brief applied, a pending brief applied when a
+   * turn ended), the LATEST version is checked again when it is `incomplete`, with no agent: each primary composition with
+   * problems goes through `checkComposition` again against the new duration, on its folder as it is now (its hash must
+   * still be the recorded one; otherwise it is left as it is). A format that passes now loses its problems, and so do its
+   * followers; the version's problems that only those formats explained go. With none left the version is `complete` and
+   * the creative `ready`. `versions.json` and `creative.json` are committed by path; the chat says what changed. The caller
+   * holds the creative's lock and no turn of it runs. Never throws: the brief save stands whatever happens here.
+   */
+  async recheckLatest(ref: CreativeRef, store: CreativeStore, durationSec: number | null): Promise<CreativeFile | null> {
+    try {
+      const slug = ref.creativeSlug;
+      const latest = (await store.readVersions(slug)).at(-1);
+      if (!latest || latest.status !== 'incomplete' || !latest.compositions?.length) return null;
+      const presets = await this.deps.presets();
+      const versionDir = store.outputsDir(slug, latest.n);
+      const passing = new Set<string>();
+      const failing = new Set<string>();
+      for (const c of latest.compositions) {
+        if (c.followsFormat !== undefined || !(c.problems?.length)) continue;
+        const preset = findPreset(presets, c.format);
+        if (!preset) { failing.add(c.format); continue; }
+        const accepted = c.userDuration && durationSec !== null && c.userDuration.briefDurationSec === durationSec ? c.userDuration.durationSec : undefined;
+        // Every folder of the path must be a real folder of the creative (as `checkTargets`): a link is never followed.
+        if ((await isRealDirChain(store.dir(slug), ['outputs', `v${latest.n}`, ...c.dir.split('/')])) !== 'ok') { failing.add(c.format); continue; }
+        const check = await checkComposition(join(versionDir, ...c.dir.split('/')), c.format, preset, durationSec, accepted);
+        if (check.hash === c.hash && check.problems.length === 0) passing.add(c.format); else failing.add(c.format);
+      }
+      if (passing.size === 0) return null;
+      // A follower's problems are copies of its primary's (`assembleCompositions`): they go with them.
+      const cleared = (c: VersionComposition) => passing.has(c.format) || (c.followsFormat !== undefined && passing.has(c.followsFormat));
+      const gone = new Set(latest.compositions.filter(cleared).flatMap((c) => c.problems ?? []));
+      const kept = new Set(latest.compositions.filter((c) => !cleared(c)).flatMap((c) => c.problems ?? []));
+      const problems = latest.problems.filter((p) => !gone.has(p) || kept.has(p));
+      const complete = problems.length === 0;
+      await store.updateVersion(slug, latest.n, (v) => ({
+        ...v, problems, status: complete ? 'complete' : 'incomplete',
+        compositions: v.compositions?.map((c) => (cleared(c) ? { ...c, problems: [] } : c)),
+      }));
+      const current = await store.get(slug);
+      const updated = complete && current.status === 'incomplete' ? await store.update(slug, { status: 'ready' }) : current;
+      const a = t().agentActions;
+      const target = durationSec === null ? a.durationNone : a.seconds({ n: durationSec });
+      const label = (id: string) => formatDisplayName(presets, id, currentLocale(), current.brief.formatLabels);
+      await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: complete
+        ? a.recheckComplete({ n: latest.n, target })
+        : a.recheckPartial({ n: latest.n, target, formats: listText([...passing].map(label), currentLocale()) }) });
+      await this.commitCreativeFiles(ref, [slug], a.recheckCommit({ title: current.title, n: latest.n }), [join(store.dir(slug), 'versions.json')]);
+      this.changed(ref);
+      return updated;
+    } catch (err) {
+      console.warn(`Motion Studio: the latest version of ${ref.creativeSlug} could not be checked again: ${(err as Error).message}`);
+      return null;
+    }
+  }
+
+  /** Decision 917: the duration this turn's output checks use from now on (its agent's `update_brief`); its brief changes when it ends. */
+  setTurnDuration(jobId: string, durationSec: number | null): void {
+    if (this.live.has(jobId)) this.turnDurations.set(jobId, durationSec);
+  }
+
+  /**
+   * Decision 917: a group brief reached a working member as its pending brief. When its running turn's agent had set the
+   * check duration, the check follows the brief the turn will end with (never a duration the brief no longer has).
+   */
+  pendingBriefSet(ref: CreativeRef, durationSec: number | null): void {
+    const live = this.liveOf(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug));
+    if (live && this.turnDurations.has(live.jobId)) this.turnDurations.set(live.jobId, durationSec);
+  }
+
+  /** Decision 917: `fn` runs when each creative turn settles, after its pending brief is applied and before its queue may go on. */
+  onTurnSettled(fn: TurnSettledHook): void { this.settleHooks.push(fn); }
+
+  /**
+   * Decision 917: a chat line about the creative, from the running turn `jobId` when there is one: written after the agent's
+   * events written so far (the turn's ordered writer), so it keeps its place; else appended now. The clients are told.
+   */
+  async noteFromTurn(jobId: string, ref: CreativeRef, entry: ConversationEntry): Promise<void> {
+    const live = this.live.get(jobId);
+    const own = live && live.ref.creativeSlug === ref.creativeSlug && live.ref.projectDir === ref.projectDir ? live.write : null;
+    if (own) await own(entry);
+    else await new CreativeStore(ref.projectDir).appendConversation(ref.creativeSlug, entry);
+    this.changed(ref);
   }
 
   /**
@@ -361,7 +511,7 @@ export class CreativeTurnService {
       }
       await markFreed([...gone, ...added]);
       brief = links ? { ...rest, links } : rest;
-    } else if (patch.services || patch.formatLabels || patch.formats || patch.storePack !== undefined) {
+    } else if (patch.services || patch.formatLabels || patch.formats || patch.storePack !== undefined || patch.fields) {
       // A partial save (services chip, inline labels, reorder, removal): everything else comes from the brief stored now,
       // never from the caller's copy.
       let next: Brief = { ...stored.brief };
@@ -378,6 +528,12 @@ export class CreativeTurnService {
         await markFreed([...m.removed, ...m.added]);
       }
       if (patch.services) next.services = patch.services;
+      if (patch.fields) {
+        // Decision 917: the agent's partial edit; the result must still be a valid brief (lengths, languages).
+        next = { ...next, ...patch.fields };
+        const checked = briefSchema.safeParse(next);
+        if (!checked.success) throw new CodedError(400, t().errors.invalidRequestDetail({ detail: issuesText(checked.error, currentLocale()) }), 'invalid-request');
+      }
       if (patch.formats) {
         const f = patch.formats;
         if (new Set(f).size !== f.length || f.some((id) => !stored.brief.formats.includes(id))) {
@@ -439,6 +595,8 @@ export class CreativeTurnService {
     });
     await this.side.setPendingBrief(ref.projectDir, ref.creativeSlug, null);
     this.changed(ref);
+    // User note 6: a new duration is checked again on the latest version at once, with no new turn.
+    if (shared.durationSec !== current.durationSec) return (await this.recheckLatest(ref, store, shared.durationSec)) ?? updated;
     return updated;
   }
 
@@ -802,6 +960,10 @@ export class CreativeTurnService {
         plan = await this.planTurn(ref, store, plan.creative, presets, base, hasMessage, requestedFormats, locale, contract);
       }
       const { creative, targets } = plan;
+      // Decision 917: once the agent changed the brief's duration (`update_brief`), this turn's checks use the new one.
+      const checkDuration = () => (this.turnDurations.has(jobId) ? this.turnDurations.get(jobId)! : creative.brief.durationSec);
+      /** User note 6: the last check's first video composition far from the brief, for the repair prompt and the chat. */
+      let durationOff: { duration: number; target: number } | undefined;
       const label = (id: string) => formatDisplayName(presets, id, locale, creative.brief.formatLabels);
       const j = t().jobs;
       const noAgent = targets.length === 0;
@@ -857,6 +1019,8 @@ export class CreativeTurnService {
           }
         }
         accepted = turnContract === 'compositions' ? acceptedDurationsOf(base, targets, presets, creative.brief.durationSec) : new Map();
+        // Decision 917: the user's kept durations hold only against the brief duration they were chosen for.
+        const acceptedNow = () => (checkDuration() === creative.brief.durationSec || turnContract !== 'compositions' ? accepted : acceptedDurationsOf(base, targets, presets, checkDuration()));
         const uncheckable = new Set<string>();
         let forkSession = Boolean(creative.resumeFrom || stopped);
         /** A remembered session is resumed (stopped turn, or a redirect's live session): a resume error falls back once. */
@@ -868,12 +1032,12 @@ export class CreativeTurnService {
         let lastWrite: Promise<void> = Promise.resolve();
         // The agent delivers and is checked on its target formats only: the carried and linked ones are the core's job.
         const validateTargets = () => validateOutputs({
-          dir: store.outputsDir(slug, n), requested: targets, presets, durationSec: creative.brief.durationSec, media: this.deps.media, locale,
+          dir: store.outputsDir(slug, n), requested: targets, presets, durationSec: checkDuration(), media: this.deps.media, locale,
           reservedOwner: plan.reservedOwner,
         });
         const checkCompositions = (only?: string) => checkTargets({
           versionDir: store.outputsDir(slug, n), targets: only === undefined ? targets : targets.filter((f) => f === only), presets,
-          briefDurationSec: creative.brief.durationSec, locale, acceptedDurations: accepted,
+          briefDurationSec: checkDuration(), locale, acceptedDurations: acceptedNow(),
         });
         // The agent's MCP tools on its compositions (output contract v2): the same checks as after the turn, and a few frames.
         let previewCalls = 0;
@@ -1008,6 +1172,9 @@ export class CreativeTurnService {
             directEdit: kind === 'iteration' ? directEdit : undefined,
             keptDurations: kind === 'iteration' ? keptDurations : undefined,
             ...(variant ? { variant } : {}),
+            // Decision 917: the agent's app actions (the `studio` server's tools), and a duration problem's way out (user note 6).
+            appActions: this.deps.launcher.mcpActive(),
+            ...(kind === 'fix' && durationOff ? { durationOff } : {}),
           });
           const snapshotsBefore = await Promise.all(existing.map((p) => codebaseSnapshot(p)));
           for (const [k, p] of existing.entries()) {
@@ -1025,6 +1192,8 @@ export class CreativeTurnService {
             usage: { version: n, attempt }, sandboxed,
             // The brief as read at this turn's start (Task 7): a change from the chat applies from the next turn.
             services: effectiveServices(creative.brief),
+            // Decision 917: what the agent's app actions act on: this creative and the version this turn makes.
+            appScope: { root: ref.root, projectSlug: ref.projectSlug, projectDir: ref.projectDir, creativeSlug: slug, version: n },
             // After the agent's events written so far, so the chat keeps its order.
             onWarning: (text) => {
               lastWrite = lastWrite.then(() => store.appendConversation(slug, { type: 'system', at: now(), level: 'warning', text }));
@@ -1123,6 +1292,7 @@ export class CreativeTurnService {
             const r = await checkCompositions();
             problems = r.problems;
             unknown = r.unknownPresets.length;
+            durationOff = durationOffOf(r);
           } else {
             result = await validateTargets();
             problems = result.problems;
@@ -1153,8 +1323,10 @@ export class CreativeTurnService {
       finalizing = true;
       // Phase 13: from now on a message is the next request; those no attempt took are queued now (Review Focus 1).
       await live.serial(async () => { live.phase = 'finalizing'; await this.drainLive(ref, store, live); });
-      let saved: { outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: string | null; compositions?: VersionComposition[]; localizations?: VersionEntry['localizations'] };
-      if (turnContract === 'compositions') saved = await this.finishCompositions(ref, store, plan, presets, base, n, label, locale, { accepted });
+      let saved: { outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: string | null; compositions?: VersionComposition[]; localizations?: VersionEntry['localizations']; durationOff?: { duration: number; target: number } };
+      // Decision 917: the duration the agent set for this turn, if any, is the one the version is checked against.
+      if (turnContract === 'compositions') saved = await this.finishCompositions(ref, store, { ...plan, creative: { ...plan.creative, brief: { ...plan.creative.brief, durationSec: checkDuration() } } }, presets, base, n, label, locale,
+        { accepted: turnContract === 'compositions' && checkDuration() !== creative.brief.durationSec ? acceptedDurationsOf(base, targets, presets, checkDuration()) : accepted });
       else {
         const assembled = await this.assemble(ref, store, plan, presets, base, n, result, label, locale);
         // Hashed by the core from the files, after the agent is done: never taken from anything the agent wrote.
@@ -1186,8 +1358,17 @@ export class CreativeTurnService {
         ...(saved.localizations ? { localizations: saved.localizations } : {}),
       });
       live.savedVersion = true;
+      live.savedN = n;
       if (noAgent && request) await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: `${request} · ${j.noAgentNeeded}` });
       await store.appendConversation(slug, { type: 'version', at: now(), n, status });
+      // User note 6: an incomplete version says in plain words what is wrong and what to do.
+      if (status === 'incomplete') {
+        const off = saved.durationOff;
+        const a = t().agentActions;
+        await store.appendConversation(slug, { type: 'system', at: now(), level: 'warning', text: off
+          ? a.incompleteDuration({ n, duration: String(off.duration), target: String(off.target) })
+          : a.incompleteOther({ n, count: problems.length }) });
+      }
       // A version made without the agent after a restart keeps the restart's intent: the next agent turn still forks the
       // restored session (from this new version, which it now builds on).
       const resumeFrom = noAgent && creative.resumeFrom ? { version: n, sessionId: creative.resumeFrom.sessionId } : null;
@@ -1224,6 +1405,7 @@ export class CreativeTurnService {
       // Every message reaches a final state (I2): one that could not even be queued is answered as not delivered.
       for (const m of live.messages) m.settle('dropped');
       live.redirect?.settle('dropped');
+      this.turnDurations.delete(jobId);
     }
   }
 
@@ -1487,7 +1669,7 @@ export class CreativeTurnService {
   async finishCompositions(ref: CreativeRef, store: CreativeStore, plan: Pick<TurnPlan, 'creative' | 'targets' | 'carried' | 'carriedComps' | 'links'>, presets: FormatPreset[], base: VersionEntry | undefined, n: number,
     label: (id: string) => string, locale: Locale,
     /** `direct`: a direct edit (decisions log 262): the brief's duration is not checked. `accepted`: see `acceptedDurationsOf`. */
-    duration: { direct: true; base?: { durationSec: number | null; userDuration?: { durationSec: number } } } | { accepted: ReadonlyMap<string, number> } = { accepted: new Map() }): Promise<{ outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: null; compositions: VersionComposition[]; localizations?: VersionEntry['localizations'] }> {
+    duration: { direct: true; base?: { durationSec: number | null; userDuration?: { durationSec: number } } } | { accepted: ReadonlyMap<string, number> } = { accepted: new Map() }): Promise<{ outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: null; compositions: VersionComposition[]; localizations?: VersionEntry['localizations']; durationOff?: { duration: number; target: number } }> {
     const slug = ref.creativeSlug;
     const j = t().jobs;
     const a = await assembleCompositions({
@@ -1506,7 +1688,8 @@ export class CreativeTurnService {
     if (a.check && a.check.warnings.length > 0) await say('info', j.layerWarnings({ list: list(a.check.warnings) }));
     const exclude = base ? freedSince(plan.creative.freedInstances, base.n) : new Set<string>();
     const localizations = await this.carryLocalizations(ref, store, base, n, a.compositions, presets, locale, exclude);
-    return { outputs: a.outputs, problems: a.problems, tools: [], renderCommand: null, compositions: a.compositions, ...(localizations ? { localizations } : {}) };
+    const off = a.check ? durationOffOf(a.check) : undefined;
+    return { outputs: a.outputs, problems: a.problems, tools: [], renderCommand: null, compositions: a.compositions, ...(localizations ? { localizations } : {}), ...(off ? { durationOff: off } : {}) };
   }
 
   /**
@@ -1803,6 +1986,11 @@ export class CreativeTurnService {
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     // Phase 15: whatever the outcome, a brief the group changed meanwhile applies now that the turn is over.
     await this.briefAfterJob(ref);
+    // Decision 917: what the agent asked to do after its turn (duplicates, renders, a follow-up turn…), before the queue.
+    for (const hook of this.settleHooks) {
+      await hook(ref, jobId, { state, savedVersion: live?.savedN ?? null, stopped: live?.stopped ?? false })
+        .catch((err: Error) => console.warn(`Motion Studio: the actions after a turn of ${ref.creativeSlug} failed: ${err.message}`));
+    }
     if (state !== 'succeeded' || !live?.savedVersion || live.stopped) { this.paused.add(key); return; }
     await this.maybeAutoRun(ref);
   }

@@ -1,4 +1,4 @@
-import { canFollow, channelName, formatLabel, formatName, type StorePack, type AssetEntry, type FollowCheck, type IdentityBrief, type Locale, type BrandKit, type BriefServices, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
+import { canFollow, channelName, statedDurationSec, formatLabel, formatName, type StorePack, type AssetEntry, type FollowCheck, type IdentityBrief, type Locale, type BrandKit, type BriefServices, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { api } from '../api.ts';
 import { CodebaseList } from '../components/CodebaseList.tsx';
@@ -237,6 +237,15 @@ export function NewCreative({ slug }: { slug: string }) {
   const toggleLink = (id: string) => setLinkOff((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const presetLabel = (id: string) => { const p = presets.find((x) => x.id === id); return p ? formatLabel(p, locale) : id; };
   const tooLong = videos.find((p) => p.maxDurationSec !== undefined && durationValid && durationSec > p.maxDurationSec) ?? null;
+  // User note 6: the brief's text states another duration than the field (a pasted "60-second" brief kept the default 6 s).
+  const stated = useMemo(() => statedDurationSec([goal, message, notes].join('\n')), [goal, message, notes]);
+  const statedOther = videos.length > 0 && stated !== null && (!durationValid || stated !== durationSec) ? stated : null;
+  const applyStated = (n: number) => {
+    const preset = LENGTHS.find((v) => v !== 'custom' && Number(v) === n);
+    if (preset) setLength(preset);
+    else { setLength('custom'); setCustomSec(String(n)); }
+    setLengthError(false);
+  };
   const title = titleFromBrief(goal, n.untitled);
 
   // Board: channel groups in catalog order.
@@ -425,6 +434,13 @@ export function NewCreative({ slug }: { slug: string }) {
               />
             ) : null}
             {lengthError ? <p className="ms-nc-err"><Icon name="warn" size={13} />{n.customInvalid}</p> : null}
+            {statedOther !== null ? (
+              <p className="ms-nc-note ms-nc-stated" role="status">
+                <Icon name="clock" size={13} />
+                <span>{durationValid ? n.durationMismatch({ stated: statedOther, current: durationSec }) : n.durationMismatchUnset({ stated: statedOther })}</span>
+                <Button size="sm" variant="outline" onClick={() => applyStated(statedOther)}>{n.durationUse({ n: statedOther })}</Button>
+              </p>
+            ) : null}
             {tooLong && tooLong.maxDurationSec ? (
               <p className="ms-nc-note"><Icon name="clock" size={13} />{n.overMax({ label: formatLabel(tooLong, locale), max: maxLengthNote(tooLong.maxDurationSec) })}</p>
             ) : null}

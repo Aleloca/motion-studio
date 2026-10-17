@@ -127,7 +127,8 @@ type Item =
   | { key: string; kind: 'details'; jobId: string; entries: DetailEntry[]; open: boolean }
   | { key: string; kind: 'autoline'; jobId: string; log: CommandLog }
   | { key: string; kind: 'version'; at: string; n: number; complete: boolean }
-  | { key: string; kind: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string }
+  /** `agent`: a line about something the agent did in the app with its tools (decision 917). */
+  | { key: string; kind: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string; agent?: boolean }
   | { key: string; kind: 'approval'; shown: ShownApproval }
   | { key: string; kind: 'typing' }
   | { key: string; kind: 'retried'; at: string }
@@ -368,7 +369,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
         out.push({ key, kind: 'version', at: e.at, n: e.n, complete: e.status === 'complete' });
       } else {
         if (lastUser && e.level === 'error') lastUser.failed = true;
-        out.push({ key, kind: 'system', at: e.at, level: e.level, text: e.text });
+        out.push({ key, kind: 'system', at: e.at, level: e.level, text: e.text, ...(e.origin === 'agent' ? { agent: true } : {}) });
       }
     });
     // A job with nothing persisted yet (only live events) comes last.
@@ -589,6 +590,8 @@ function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetai
       if (item.level === 'error') return <p role="alert" className="ms-convo-system ms-error">{item.text}</p>;
       // Something to know that did not fail the turn (an unlinked follower, earlier outputs that changed): set apart.
       if (item.level === 'warning') return <p className="ms-convo-system ms-warning"><Icon name="warn" size={13} /><span>{item.text}</span></p>;
+      // Decision 917: what the agent did in the app, said apart from the core's own notes.
+      if (item.agent) return <p className="ms-convo-system ms-convo-action"><Icon name="sparkle" size={12} /><span className="ms-convo-action-tag">{t.web.conversation.agentAction}</span><span>{item.text}</span></p>;
       return <p className="ms-convo-system">{item.text}</p>;
     case 'approval':
       return (

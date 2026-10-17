@@ -23,8 +23,13 @@ import { UsageTracker } from '../usage/usage-tracker.ts';
 
 const RUN_DIR = 'run';
 export const MCP_SERVER = 'studio';
+/**
+ * Decision 917: the agent's actions on the app, creative turns only (`agent-actions.ts`), with no confirmation card. Never
+ * archive, delete, settings, keys or permissions.
+ */
+export const APP_ACTION_TOOLS = ['update_brief', 'add_format', 'duplicate_format', 'add_language', 'add_variant', 'discard_variant', 'restore_variant', 'set_pick', 'render_version', 'prepare_export'] as const;
 export const MCP_TOOLS: Record<AgentJobKind, string[]> = {
-  creative: ['report_progress', 'validate_composition', 'preview_frames', 'read_brand_kit', 'generate_image', 'tts', 'sound_effect', 'music', 'list_voices', 'stock_search', 'stock_download', 'fonts_fetch'],
+  creative: ['report_progress', 'validate_composition', 'preview_frames', 'read_brand_kit', 'generate_image', 'tts', 'sound_effect', 'music', 'list_voices', 'stock_search', 'stock_download', 'fonts_fetch', ...APP_ACTION_TOOLS],
   console: ['report_progress', 'read_brand_kit', 'generate_image', 'tts', 'sound_effect', 'music', 'list_voices', 'stock_search', 'stock_download', 'fonts_fetch'],
   'brand-analysis': ['report_progress', 'read_brand_kit', 'fonts_fetch', 'download_file', 'inspect_site_fonts', 'import_codebase_file'],
   describe: ['report_progress'],
@@ -101,6 +106,8 @@ export interface LaunchInput {
   addNotes?: BridgeContext['addNotes'];
   /** Creative turns: the brief's services read at the turn's start (see BridgeContext). */
   services?: BridgeContext['services'];
+  /** Creative turns (decision 917): what the agent's app actions act on (see BridgeContext). */
+  appScope?: BridgeContext['appScope'];
   /** What the run's ledger line is about (a creative's version and fix-loop attempt); null for other jobs. */
   usage?: { version: number | null; attempt: number | null };
   /**
@@ -278,6 +285,7 @@ export class AgentLauncher {
           ...(i.locale ? { locale: i.locale } : {}), ...(i.addNotes ? { addNotes: i.addNotes } : {}),
           ...(i.services ? { services: i.services } : {}),
           ...(i.kind === 'brand-analysis' && codebases.length > 0 ? { codebases } : {}),
+          ...(i.kind === 'creative' && i.appScope ? { appScope: i.appScope } : {}),
         });
         // The paths are recorded before writing, so release() also removes a half-written pair.
         const files = await prepareRunFiles(configDir, i.jobId);

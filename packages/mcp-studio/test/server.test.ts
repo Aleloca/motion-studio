@@ -193,6 +193,29 @@ describe('mcp-studio server', () => {
     expect((await wait('abc')).result.content[0].text).toBe('{"ok":true}');
     expect(raw.size).toBe(3); // nothing was emitted for the ignored lines
   });
+  it('lists the app actions of a creative turn with strict schemas and forwards them (decision 917)', async () => {
+    const actions = ['update_brief', 'add_format', 'duplicate_format', 'add_language', 'add_variant', 'discard_variant', 'restore_variant', 'set_pick', 'render_version', 'prepare_export'];
+    child.kill();
+    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: ['report_progress', ...actions].join(',') });
+    const tools = (await rpc(1, 'tools/list')).result.tools as Array<{ name: string; description: string; inputSchema: { additionalProperties?: boolean; required?: string[]; properties: Record<string, unknown> } }>;
+    expect(tools.map((t) => t.name)).toEqual(['approve', 'report_progress', ...actions]);
+    for (const t of tools.filter((x) => actions.includes(x.name))) {
+      // No tool takes a path, a project or a creative: the core scopes every call to the turn's creative.
+      expect(t.inputSchema.additionalProperties, t.name).toBe(false);
+      for (const key of Object.keys(t.inputSchema.properties)) expect(key, t.name).not.toMatch(/path|project|slug|dest|job/i);
+    }
+    expect(tools.find((t) => t.name === 'add_variant')!.inputSchema.required).toEqual(['direction']);
+    expect(tools.find((t) => t.name === 'update_brief')!.description).toContain('durationSec');
+    const res = await rpc(2, 'tools/call', { name: 'update_brief', arguments: { durationSec: 60 } });
+    expect(res.result.isError).toBeUndefined();
+    expect(calls.at(-1)).toMatchObject({ url: '/api/bridge/update_brief', token: 'tok', body: { durationSec: 60 } });
+    // Not enabled for this job (e.g. a brand analysis): refused by the server itself, the core is not called.
+    child.kill();
+    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress' });
+    const before = calls.length;
+    expect((await rpc(3, 'tools/call', { name: 'add_variant', arguments: { direction: 'Ironico' } })).result).toMatchObject({ isError: true });
+    expect(calls.length).toBe(before);
+  });
   it('exits on stdin close once in-flight calls are answered', async () => {
     const exited = new Promise<void>((r) => child.on('exit', () => r()));
     const out = rpc(1, 'tools/call', { name: 'report_progress', arguments: { message: 'slow' } });

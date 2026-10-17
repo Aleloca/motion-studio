@@ -417,9 +417,10 @@ export class VariantGroupService {
   /**
    * A brief edit (PUT …/creatives/:c) on a creative of a group: computed on the group's brief now (`canonical`) with the
    * same rules as a single creative's save, then propagated. Answers the edited creative as stored. 409 `variant-discarded`
-   * from a discarded sister (never from A, see below).
+   * from a discarded sister (never from A, see below). `patch` may be a function of the group's brief now (decision 917: the
+   * agent's edits are computed on it under the host's lock).
    */
-  updateGroupBrief(hostRef: CreativeRef, patch: BriefPatch, edited: CreativeRef): Promise<CreativeFile> {
+  updateGroupBrief(hostRef: CreativeRef, patchOrBuild: BriefPatch | ((current: CreativeFile['brief']) => BriefPatch), edited: CreativeRef): Promise<CreativeFile> {
     return this.withGroup(hostRef, async (host, hostFile, g) => {
       // Final wave I2 (decisions log 837 extended): a discarded sister is inert; its brief is not propagated to, so its save
       // would roll the group's back. A discarded A is not refused: the host always carries the group's brief (decisions log
@@ -427,6 +428,7 @@ export class VariantGroupService {
       const self = g.members.find((m) => m.slug === edited.creativeSlug);
       if (self && self.letter !== 'a' && self.status === 'discarded') throw new CodedError(409, t().errors.variantDiscardedTurn, 'variant-discarded');
       const shared = await this.canonical(host, hostFile);
+      const patch = typeof patchOrBuild === 'function' ? patchOrBuild(shared.brief) : patchOrBuild;
       const linkedCodebases = patch.linkedCodebases ? normalizeCodebaseList(patch.linkedCodebases) : null;
       if (linkedCodebases) await assertCodebasesOutside(linkedCodebases, [host.projectDir, host.root], shared.linkedCodebases);
       const change = await this.deps.turns.briefChange(this.deps.store, host.creativeSlug, { ...hostFile, ...shared }, patch);
@@ -496,6 +498,7 @@ export class VariantGroupService {
     if (turns.turnActive(mref)) {
       const had = await turns.side.pendingBrief(mref.projectDir, mref.creativeSlug);
       await turns.side.setPendingBrief(mref.projectDir, mref.creativeSlug, { ...target, at: now() });
+      turns.pendingBriefSet(mref, target.brief.durationSec);
       // Any job of this creative that ends applies it (`briefAfterJob`), a translation included.
       turns.rememberRef(mref);
       if (!had) await this.deps.store.appendConversation(mref.creativeSlug, { type: 'system', at: now(), level: 'info', text: t().jobs.variantBriefDeferred }).catch(() => {});

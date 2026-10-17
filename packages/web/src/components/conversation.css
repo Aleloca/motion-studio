@@ -143,6 +143,10 @@
    --warn colour (a glyph: 3:1 is enough). */
 .ms-convo-system.ms-warning { display: flex; align-items: flex-start; gap: 6px; padding: 7px 10px; border-radius: 8px; color: var(--text); background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); line-height: 1.45; }
 .ms-convo-system.ms-warning .ms-icon, .ms-convo-system.ms-warning svg { color: var(--warn); flex: none; margin-top: 2px; }
+/* Decision 917: a line about something the agent did in the app (a brief edit, a new variant, a render). */
+.ms-convo-system.ms-convo-action { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; color: var(--text); }
+.ms-convo-system.ms-convo-action svg { color: var(--accent); flex: none; align-self: center; }
+.ms-convo-action-tag { font-size: 11px; color: var(--muted); }
 .ms-convo-error { margin-left: 36px; font-size: 12.5px; padding: 8px 10px; border-radius: 8px; background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); }
 .ms-convo-approval { margin-left: 36px; }
 .ms-convo-typing .ms-msg-bubble { padding: 12px; }
