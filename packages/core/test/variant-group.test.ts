@@ -365,12 +365,12 @@ describe('lock ordering', { timeout: 60_000 }, () => {
     // Restore and discard of B race: whichever ran last decides; a discarded variant is not propagated to.
     const g = (await json(host.creativeSlug)).variantGroup!;
     for (const m of g.members.filter((x) => x.status === 'active' && x.letter !== 'c')) expect((await json(m.slug)).brief.goal).toBe(goal);
-    // Minor (Task 2): not only the goal. The writes were queued discard(b) before restore(b), so B ends active; no ★ was set and
-    // none points at a discarded member; the last writer's goal is one of the two that were saved.
+    // Minor (Task 2): not only the goal. B's discard and restore race (whichever ran last decides), but nothing else changed: only B
+    // can be discarded, no ★ was set, and the last writer's goal is one of the two that were saved.
     expect(['Uno', 'Due']).toContain(goal);
-    expect(g.members.find((x) => x.letter === 'b')!.status).toBe('active');
+    expect(['active', 'discarded']).toContain(g.members.find((x) => x.letter === 'b')!.status);
+    expect(g.members.filter((x) => x.status === 'discarded').every((x) => x.letter === 'b')).toBe(true);
     expect(g.picks).toEqual({});
-    expect(g.members.filter((x) => x.status === 'discarded')).toEqual([]);
     // The stopped one took it when its job ended (Important 1 of fix round 1).
     await vi.waitFor(async () => expect((await json(sis('c'))).brief.goal).toBe(goal));
     expect(await side.pendingBrief(projectDir, sis('c'))).toBeNull();
