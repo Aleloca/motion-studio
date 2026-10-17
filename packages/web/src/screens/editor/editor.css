@@ -1,7 +1,7 @@
 /* The direct editor's shell (Phase 10b): the prototype's VideoEditor / ImageEditor grids (224 | 1fr | 288, timeline 262;
    image 248 | 1fr | 280). Panels reuse the format view's side-column, stage and note styles (format.css). */
 .ms-ed { height: 100%; min-height: 0; display: grid; background: var(--bg); color: var(--text); }
-.ms-ed-video { grid-template-columns: 224px minmax(0, 1fr) 288px; grid-template-rows: minmax(0, 1fr) 262px; }
+.ms-ed-video { grid-template-columns: 224px minmax(0, 1fr) 288px; grid-template-rows: minmax(0, 1fr) auto; }
 .ms-ed-image { grid-template-columns: 248px minmax(0, 1fr) 280px; grid-template-rows: minmax(0, 1fr); }
 .ms-ed-side { min-height: 0; min-width: 0; display: flex; flex-direction: column; background: var(--panel); overflow: hidden; }
 .ms-ed-left { border-right: 1px solid var(--line); }
@@ -11,23 +11,32 @@
 .ms-ed-slot { margin: 12px; padding: 14px; border-radius: 10px; border: 1px dashed var(--line); background: var(--bg); }
 .ms-ed-slot p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--muted); text-wrap: pretty; overflow-wrap: anywhere; }
 .ms-ed-timeline { grid-column: 1 / 4; background: var(--panel); border-top: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+/* The timeline takes what its lanes need, up to 262 px (then it scrolls): a composition with few tracks leaves the stage more room. */
+.ms-ed-video .ms-ed-timeline { max-height: 262px; }
 .ms-ed-image .ms-ed-timeline { display: none; }
-.ms-ed-main .ms-fv-stage { padding: 64px 32px 24px; }
+.ms-ed-main .ms-fv-stage { padding: 20px 32px 24px; }
 .ms-ed-stale { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .ms-ed-staging { display: flex; align-items: center; gap: 8px; }
 .ms-ed-also, .ms-ed-version { flex: none; }
 /* One screen (decision 916): the chat shares the right column with the inspector; it gets 320 px where the window allows. */
 @media (min-width: 1200px) { .ms-ed-video { grid-template-columns: 224px minmax(0, 1fr) 320px; } .ms-ed-image { grid-template-columns: 248px minmax(0, 1fr) 320px; } }
 .ms-ed-stage[hidden] { display: none; }
+/* The stage's tools (undo, redo, comment a spot, magnet), the draft pill and the safe zones toggle: one row in the flow above
+   the notes and the stage (they floated over the notes before; a narrow stage wraps the pill to its own line). */
+.ms-ed-tools { position: relative; z-index: 4; flex: none; display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; padding: 12px 16px 0; min-width: 0; }
+.ms-ed-tools .ms-fv-safe-toggle { position: static; }
+/* A narrow stage keeps the row on one line: the safe zones toggle without its visible text (the switch keeps its name). */
+.ms-ed-main { container: ms-ed-main / inline-size; }
+@container ms-ed-main (max-width: 640px) { .ms-ed-tools .ms-fv-safe-toggle > span[aria-hidden="true"] { display: none; } }
 .ms-ed-readonly { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ms-ed-readonly > span { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
 /* "Comment a spot": the hint sits under the frame, clear of the draft pill at the top. */
 .ms-ed-main > .ms-fv-hint { top: auto; bottom: 12px; }
 .ms-insp-fieldset { display: contents; margin: 0; padding: 0; border: 0; min-width: 0; }
 
-/* The draft pill, at the top of the stage. */
+/* The draft pill, in the stage's tools row. */
 .ms-ed-pill {
-  position: absolute; left: 50%; top: 16px; transform: translateX(-50%); z-index: 4; height: 34px; padding: 0 5px 0 12px;
+  height: 34px; padding: 0 5px 0 12px; min-width: 0;
   display: flex; align-items: center; gap: 8px; border-radius: 17px; background: var(--panel); color: var(--text);
   box-shadow: 0 0 0 1px var(--line), 0 6px 20px var(--shadow); white-space: nowrap;
 }
@@ -35,7 +44,7 @@
 .ms-ed-pill-ok { display: inline-flex; align-items: center; gap: 6px; color: var(--ok); font-size: 13px; }
 .ms-ed-pill-text { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .ms-ed-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
-.ms-ed-undo { position: absolute; left: 16px; top: 16px; z-index: 3; display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--panel); box-shadow: 0 0 0 1px var(--line); }
+.ms-ed-undo { display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--panel); box-shadow: 0 0 0 1px var(--line); }
 
 /* Dialogs (leave guard, discard, base changed). */
 .ms-ed-dialog { padding: 20px 22px; display: flex; flex-direction: column; gap: 10px; }
