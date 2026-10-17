@@ -42,6 +42,11 @@ export interface EditorState {
   /** SVG inner editor: the element of the selected svg clip chosen in the list or on the stage (its path), or null. */
   svgElement: string | null;
   selectSvgElement(path: string | null): void;
+  /**
+   * "Ask the agent" on a custom animation (user test item 10): a comment chip on the clip about its `slot` animation goes to
+   * the chat, whose composer takes the focus.
+   */
+  askAnimation?(clipId: string, slot: 'in' | 'out'): void;
 }
 
 export const EditorContext = createContext<EditorState | null>(null);

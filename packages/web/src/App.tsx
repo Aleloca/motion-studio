@@ -12,7 +12,6 @@ import { CreativeCanvas } from './screens/CreativeCanvas.tsx';
 import { EditorScreen } from './screens/editor/EditorScreen.tsx';
 import { leaveRefused } from './screens/editor/leaveGuard.ts';
 import { useUnsavedDrafts } from './screens/editor/draftStore.ts';
-import { FormatView } from './screens/FormatView.tsx';
 import { NewCreative } from './screens/NewCreative.tsx';
 import { Pairing } from './screens/Pairing.tsx';
 import { ProjectCreatives } from './screens/ProjectCreatives.tsx';
@@ -258,8 +257,8 @@ function AppShell({ route, live, settings, checks, activity, setActivity, langua
       case 'project': return <ProjectHost route={r} live={live} settings={settings} checks={checks} onSettings={onSettings} />;
       case 'new-creative': return <NewCreative key={r.slug} slug={r.slug} />;
       case 'creative': return <CreativeCanvas key={`${r.slug}/${r.creative}`} slug={r.slug} creative={r.creative} live={live} exportNamePattern={settings?.exportNamePattern} onSettings={onSettings} />;
-      case 'format': return <FormatView key={`${r.slug}/${r.creative}/${r.format}`} slug={r.slug} creative={r.creative} format={r.format} live={live} exportNamePattern={settings?.exportNamePattern} onSettings={onSettings} />;
-      case 'edit': return <EditorScreen key={`${r.slug}/${r.creative}/${r.format}`} slug={r.slug} creative={r.creative} format={r.format} live={live} />;
+      // A format's page is its editor (one screen, decision 916); without a composition it shows the viewer inside.
+      case 'format': return <EditorScreen key={`${r.slug}/${r.creative}/${r.format}`} slug={r.slug} creative={r.creative} format={r.format} live={live} exportNamePattern={settings?.exportNamePattern} onSettings={onSettings} />;
       case 'settings': return settings ? (
         <AppSettings section={r.section} settings={settings} checks={checks} checking={Boolean(setup.checking)} checksRun={setup.checksRun ?? 0}
           loadError={setup.loadError ?? null} onRecheck={setup.onRecheck} language={language} systemLocale={systemLocale} onLanguage={onLanguage} onSettings={onSettings} />

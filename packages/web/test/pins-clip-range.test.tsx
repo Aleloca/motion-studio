@@ -120,7 +120,8 @@ const emptyLive = (): EventsState => ({ approvals: {}, jobs: {}, events: {}, cre
 const live = emptyLive();
 
 function Page({ kind, locale = 'en' }: { kind: 'edit' | 'format'; locale?: 'en' | 'it' }) {
-  const route: Route = kind === 'edit' ? { name: 'edit', slug: 'acme', creative: 'lancio', format: REEL } : { name: 'format', slug: 'acme', creative: 'lancio', format: REEL };
+  // The editor is the format's page (decision 916); 'format' renders the viewer component alone.
+  const route: Route = { name: 'format', slug: 'acme', creative: 'lancio', format: REEL };
   const shell = {
     route, live,
     catalog: { projects: [{ slug: 'acme', name: 'Acme' }], creatives: {}, refresh: () => {} },
@@ -156,7 +157,7 @@ beforeEach(() => {
   media.clipBounds = null;
   detail = makeDetail([v2(1), v2(2)]);
   conversation = [];
-  location.hash = `#/p/acme/c/lancio/f/${REEL}/edit`;
+  location.hash = `#/p/acme/c/lancio/f/${REEL}`;
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
@@ -440,7 +441,9 @@ describe('the editor', () => {
     key({ key: 'c' });
     await userEvent.type(within(await dialog()).getByLabelText('Your comment'), 'uno');
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Add comment' }));
-    await userEvent.click(await screen.findByRole('button', { name: /^Edit comment 1/ }));
+    // The chip in the chat (the stage shows the same comment as a marker on the picture).
+    await userEvent.click(await within(screen.getByRole('tabpanel')).findByRole('button', { name: /^Edit comment 1/ }));
+    expect(document.querySelectorAll('.ms-ed-stage .ms-cv-pin')).toHaveLength(1);
     const d = await dialog();
     expect((within(d).getByLabelText('Your comment') as HTMLTextAreaElement).value).toBe('uno');
     await userEvent.type(within(d).getByLabelText('Your comment'), ' due');

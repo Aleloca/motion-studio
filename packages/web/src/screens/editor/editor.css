@@ -16,6 +16,14 @@
 .ms-ed-stale { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .ms-ed-staging { display: flex; align-items: center; gap: 8px; }
 .ms-ed-also, .ms-ed-version { flex: none; }
+/* One screen (decision 916): the chat shares the right column with the inspector; it gets 320 px where the window allows. */
+@media (min-width: 1200px) { .ms-ed-video { grid-template-columns: 224px minmax(0, 1fr) 320px; } .ms-ed-image { grid-template-columns: 248px minmax(0, 1fr) 320px; } }
+.ms-ed-stage[hidden] { display: none; }
+.ms-ed-readonly { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ms-ed-readonly > span { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+/* "Comment a spot": the hint sits under the frame, clear of the draft pill at the top. */
+.ms-ed-main > .ms-fv-hint { top: auto; bottom: 12px; }
+.ms-insp-fieldset { display: contents; margin: 0; padding: 0; border: 0; min-width: 0; }
 
 /* The draft pill, at the top of the stage. */
 .ms-ed-pill {

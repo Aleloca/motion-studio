@@ -1,5 +1,8 @@
-// Creative · format view (spec §6.2 #7), the editor preview: ported from the prototype's VideoEditor / ImageEditor
-// and the Editor / ImageEditor boards without what belongs to Phase 10 (inspector, timeline, layers, direct edits).
+// Creative · format viewer (spec §6.2 #7). Since decision 916 the format page is the editor (editor/EditorScreen.tsx), which
+// shows this viewer inside the same route only when the version on screen has no editable composition: a legacy rendered
+// version, no version yet (the first generation), a format outside the creative. The editor then owns the version choice
+// (`viewing` / `onViewing`) and the T3 origin, so a version with a composition picked here turns the page into the editor.
+// Ported from the prototype's VideoEditor / ImageEditor and the Editor / ImageEditor boards.
 // Video: a large player with play/pause (Space), a scrub bar with the comment markers, frame by frame (←/→, 1/30 s),
 // comments on the exact frame (a click on the paused picture; markers visible only within ±0.5 s of their time,
 // point 38) and the "Scenes" column that says the timeline is coming. Image: zoom (Fit, −/+, 100%) and comments. The
@@ -14,7 +17,7 @@ import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx
 import { channelName, isDurationOffBrief, pinClipName, DEFAULT_EXPORT_NAME_PATTERN, DEFAULT_FORMATS, type Composition, type FormatPreset, type Pin, type StoryboardView, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import {
   useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState,
-  type CSSProperties, type MouseEvent,
+  type CSSProperties, type Dispatch, type MouseEvent, type SetStateAction,
 } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../api.ts';
@@ -59,9 +62,8 @@ import { isVideoFile } from '../media.ts';
 import { createClock, useClock, type Clock } from '../ui/clock.ts';
 import { FPS, PLAYER_CONTROLS, round3, timecode, Transport, type Mark, type Speed } from './Transport.tsx';
 import { discardedSelf } from './variants/variantModel.ts';
+import { CommentHint, HitArea, PinLayer } from './framePins.tsx';
 
-/** A comment shows on the picture within this distance of its time (point 38). */
-const PIN_WINDOW = 0.5;
 const ZOOMS = [0.1, 0.25, 0.33, 0.5, 0.67, 0.75, 1, 1.25, 1.5, 2, 3, 4];
 /** T3 only while the board's rect is fresh: a frame that shows up later than this simply appears. */
 const FLIP_WINDOW_MS = 400;
@@ -80,9 +82,14 @@ export interface FormatViewProps {
   exportNamePattern?: string;
   /** The workspace settings after Export's "Save as default". */
   onSettings?(next: WorkspaceSettings): void;
+  /** The version viewed per format, owned by the editor screen that shows this viewer (absent: this view owns it). */
+  viewing?: Record<string, number>;
+  onViewing?: Dispatch<SetStateAction<Record<string, number>>>;
+  /** The board rect T3 grows from, taken by the editor screen (absent: this view takes it). */
+  origin?: DOMRect | null;
 }
 
-export function FormatView({ slug, creative, format, live, exportNamePattern, onSettings }: FormatViewProps) {
+export function FormatView({ slug, creative, format, live, exportNamePattern, onSettings, viewing: ownerViewing, onViewing, origin: ownerOrigin }: FormatViewProps) {
   const t = useT();
   const integrity = useIntegrity(slug, live);
   const f = t.web.formatView;
@@ -98,7 +105,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   const active = !shell || routeKey(shell.route) === ownKey;
   const bar = useBarClaim(ownKey, active);
   // T3: the rect of the board this view grows from, taken once, and when the page mounted.
-  const [origin] = useState(() => takeFrameOrigin(`format:${slug}/${creative}/${format}`));
+  const [origin] = useState(() => (ownerOrigin !== undefined ? ownerOrigin : takeFrameOrigin(`format:${slug}/${creative}/${format}`)));
   const [mountedAt] = useState(() => performance.now());
 
   // Format catalog. Until it arrives, the built-in catalog gives the frame its proportions (T3 starts at once).
@@ -118,7 +125,9 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   const versions = useMemo(() => detail?.versions ?? [], [detail]);
   const latest = versions.at(-1) ?? null;
   const states = useMemo<Record<string, FormatState>>(() => (detail ? formatStates(detail, presets) : {}), [detail, presets]);
-  const [viewing, setViewing] = useState<Record<string, number>>(() => takeShownVersions(`${slug}/${creative}`));
+  const [ownViewing, setOwnViewing] = useState<Record<string, number>>(() => (ownerViewing ? {} : takeShownVersions(`${slug}/${creative}`)));
+  const viewing = ownerViewing ?? ownViewing;
+  const setViewing = onViewing ?? setOwnViewing;
   const source = boardSource(states, format, viewing);
   const version = source.n !== null ? versions.find((v) => v.n === source.n) ?? null : null;
   const view = useCallback((f: string, n: number) => setViewing((v) => {
@@ -361,13 +370,6 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
     go(href.creative(slug, creative));
   };
 
-  // The direct editor (Phase 10b): a v2 version with no agent or render at work. The version on screen is the one it opens.
-  const openEditor = () => {
-    pause();
-    keepVersion(viewing);
-    go(href.edit(slug, creative, format));
-  };
-
   // Duplicate format (Phase 12): the next free instance of this format, copied from the version on screen; opens the new one.
   const [duplicating, setDuplicating] = useState(false);
   const duplicate = async () => {
@@ -592,12 +594,6 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
               <Icon name="copy" size={13} strokeWidth={1.7} /><span className="ms-bar-label">{t.web.instances.duplicate}</span>
             </Button></Tooltip>
           ) : null}
-          {comp !== null && !working && preview.state.kind !== 'legacy' ? (
-            <Tooltip label={readOnly ?? t.web.editor.editOf({ label })} whenHidden=".ms-bar-label"><Button variant="outline" className="ms-cv-edit ms-fold-2" aria-label={t.web.editor.editOf({ label })}
-              disabled={readOnly !== null} {...(readOnly !== null ? { title: readOnly } : {})} onClick={openEditor}>
-              <Icon name="edit" size={13} strokeWidth={1.7} /><span className="ms-bar-label">{t.web.editor.edit}</span>
-            </Button></Tooltip>
-          ) : null}
           <Button variant="ink" className="ms-cv-export" disabled={!latest} onClick={() => { if (latest) setExporting({ open: true, snapshot: { versions, states } }); }}>
             <Icon name="download" size={13} strokeWidth={1.7} />{c.export}
           </Button>
@@ -773,32 +769,6 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   );
 }
 
-/** The paused picture takes the click that places a comment (point 38: on the frame at the current time). */
-function HitArea({ clock, video, label, onPlace }: { clock: Clock; video: boolean; label: string; onPlace(e: MouseEvent<HTMLButtonElement>): void }) {
-  const t = useT();
-  const { settled } = useClock(clock);
-  return (
-    <button type="button" className="ms-cv-hit" aria-label={video ? t.web.formatView.commentFrame({ time: timecode(settled) }) : t.web.canvas.commentOn({ label })} onClick={onPlace} />
-  );
-}
-
-/** The comment markers on the picture: on a video only within ±0.5 s of their time (point 38). */
-function PinLayer({ clock, video, marks, open, onOpen }: { clock: Clock; video: boolean; marks: Mark[]; open: number | null; onOpen(number: number): void }) {
-  const c = useT().web.canvas;
-  const { time } = useClock(clock);
-  const visible = video ? marks.filter((m) => m.pin.timeSec === null || (m.pin.range ? time >= m.pin.range.start - 1e-6 && time <= m.pin.range.end + 1e-6 : Math.abs(m.pin.timeSec - time) <= PIN_WINDOW + 1e-6)) : marks;
-  return (
-    <>
-      {visible.map(({ pin, number }) => (
-        <button key={number} type="button" className={cx('ms-cv-pin', open === number - 1 && 'ms-on')} style={{ left: `${pin.x * 100}%`, top: `${pin.y * 100}%` }}
-          aria-label={c.pin.edit({ n: number })} title={pin.note} onClick={(e) => { e.stopPropagation(); onOpen(number); }}>
-          {number}
-        </button>
-      ))}
-    </>
-  );
-}
-
 /** "Comment on a clip": the clips playing at the playhead, topmost last; choosing one starts a comment on it (`C` takes the topmost). */
 function ClipPicker({ clock, comp, onPick }: { clock: Clock; comp: Composition; onPick(id: string): void }) {
   const cv = useT().web.conversation;
@@ -811,12 +781,6 @@ function ClipPicker({ clock, comp, onPick }: { clock: Clock; comp: Composition; 
         onChange={(id) => { if (id) onPick(id); }} />
     </span>
   );
-}
-
-function CommentHint({ clock, video }: { clock: Clock; video: boolean }) {
-  const f = useT().web.formatView;
-  const { settled } = useClock(clock);
-  return <div className="ms-cv-hint ms-fv-hint" role="status">{video ? f.commentAt({ time: timecode(settled) }) : f.commentImage}</div>;
 }
 
 /**

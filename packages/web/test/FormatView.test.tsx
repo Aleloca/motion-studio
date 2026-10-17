@@ -744,22 +744,19 @@ describe('FormatView · live composition player (Task 8)', () => {
   });
 });
 
-// The Edit button (Phase 10b, Task 5): next to Export, only for a v2 version with no agent or render at work.
-describe('FormatView · Edit button', () => {
+// The Edit button is gone (decision 916): the format's page is the editor, and this view is only its viewer.
+describe('FormatView · no Edit button', () => {
   const comp = (n: number): VersionEntry => ({
     ...version(n), outputs: [out('instagram-post-1x1', 'post.png')],
     compositions: [{ format: VIDEO, dir: `compositions/${VIDEO}`, hash: 'b'.repeat(64) }],
   });
   const editButton = () => screen.queryByRole('button', { name: 'Modifica TikTok · Video 9:16 direttamente' });
-  it('shows for a version with a composition and opens the editor of the format', async () => {
+  it('is not offered for a version with a composition either', async () => {
     detail = makeDetail([comp(1)]);
     render(<Harness format={VIDEO} />);
-    const btn = await screen.findByRole('button', { name: 'Modifica TikTok · Video 9:16 direttamente' });
-    const bar = document.querySelector('.ms-topbar') as HTMLElement;
-    expect(bar.contains(btn)).toBe(true);
-    expect(bar.querySelector('.ms-cv-edit + .ms-cv-export')).not.toBeNull();
-    await userEvent.click(btn);
-    expect(location.hash).toBe(`#/p/acme/c/lancio/f/${VIDEO}/edit`);
+    await waitFor(() => expect(document.querySelector('.ms-topbar .ms-cv-export')).not.toBeNull());
+    expect(editButton()).toBeNull();
+    expect(document.querySelector('.ms-cv-edit')).toBeNull();
   });
   it('is not offered for a legacy version (no composition)', async () => {
     detail = makeDetail([version(1)]);

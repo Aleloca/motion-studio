@@ -76,7 +76,7 @@ describe('format instances · names', () => {
   it('the route reads an instance id, raw or as %40', () => {
     expect(parseRoute(href.format('acme', 'c', POST2))).toEqual({ name: 'format', slug: 'acme', creative: 'c', format: POST2 });
     expect(parseRoute('#/p/acme/c/c/f/instagram-post-1x1%402')).toMatchObject({ format: POST2 });
-    expect(parseRoute(href.edit('acme', 'c', POST2))).toMatchObject({ name: 'edit', format: POST2 });
+    expect(parseRoute(`${href.format('acme', 'c', POST2)}/edit`)).toMatchObject({ name: 'format', format: POST2 });
     // Only the instance pattern: no encoded slash, no @1 or @21.
     for (const bad of ['x%2Fy', 'x@1', 'x@21', 'x%40001']) expect(parseRoute(`#/p/acme/c/c/f/${bad}`).name).not.toBe('format');
   });
