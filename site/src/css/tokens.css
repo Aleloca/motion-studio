@@ -1,0 +1,36 @@
+/* Motion Studio site tokens. Palette sampled from the logo (branding/…identity-logo-4-v2/logo.svg). */
+:root {
+  --c-stage: #0F0F0F;
+  --c-surface: #171717;
+  --c-line: #262626;
+  --c-dash: #6B6B6B;
+  --c-text: #F5F1EC;
+  --c-muted: #A3A3A3;
+  --c-orange: #FF5A1F;
+  --c-orange-deep: #C2410C;
+
+  /* One colour per category, for labels and accents only. */
+  --c-formats: #2DD4BF;
+  --c-brand: #FF5A1F;
+  --c-store: #A78BFA;
+  --c-lang: #60A5FA;
+  --c-agent: #FACC15;
+
+  --f-display: 'Bricolage Grotesque', 'Instrument Sans', ui-sans-serif, sans-serif;
+  --f-body: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+  --f-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --hero-size: clamp(64px, 15vw, 224px);
+  --h2-size: clamp(36px, 5.2vw, 72px);
+  --h3-size: clamp(22px, 2.2vw, 28px);
+  --body-size: clamp(16px, 1.15vw, 18px);
+
+  --gutter: clamp(16px, 4vw, 48px);
+  --max: 1440px;
+  --radius: 20px;
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+}
+
+@font-face { font-family: 'Bricolage Grotesque'; src: url('../assets/fonts/BricolageGrotesque.woff2') format('woff2'); font-weight: 200 800; font-display: swap; }
+@font-face { font-family: 'Instrument Sans'; src: url('../assets/fonts/InstrumentSans.woff2') format('woff2'); font-weight: 400 700; font-display: swap; }
+@font-face { font-family: 'JetBrains Mono'; src: url('../assets/fonts/JetBrainsMono.woff2') format('woff2'); font-weight: 100 800; font-display: swap; }

@@ -11,3 +11,6 @@ apps/cli/LICENSE
 
 # subagent-driven-development workspaces
 .superpowers/sdd/
+
+# GitHub Pages site build output
+site/_site/
