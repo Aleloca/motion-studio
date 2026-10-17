@@ -47,10 +47,17 @@ const PROVIDER_LABEL: Record<ProviderId, string> = { openai: 'OpenAI', elevenlab
 const letterIndex = (l: VariantLetter) => VARIANT_LETTERS.indexOf(l);
 const upper = (l: VariantLetter) => l.toUpperCase();
 
-/** One target of a run: its held turn (`jobId`), or its queued request (`clientId`) until that becomes a turn. */
-interface Entry { letter: VariantLetter; ref: CreativeRef; jobId?: string; clientId?: string; /** Applied to the queued request's turn when it starts (the cover). */ onStart?: (jobId: string) => void }
-/** The hook of a queued request: its current hold, and what its turn gets when it starts. */
-const hookOf = (e: Entry, hold: JobWaitReason | null) => ({ hold, started: (id: string) => { e.jobId = id; e.onStart?.(id); } });
+/**
+ * One target of a run: its held turn (`jobId`), or its queued request (`clientId`) until that becomes a turn. `gone` resolves
+ * when that work is over without the run's say: the turn settled (stopped by hand), or the request was taken out of the queue.
+ */
+interface Entry {
+  letter: VariantLetter; ref: CreativeRef; jobId?: string; clientId?: string;
+  /** Applied to the queued request's turn when it starts (the cover). */ onStart?: (jobId: string) => void;
+  gone?: Promise<void>; markGone?: () => void; /** Told the turn's id when a queued request starts: `gone` follows that turn. */ watch?: (jobId: string) => void;
+}
+/** The hook of a queued request: its current hold, what its turn gets when it starts, and what happens if it is removed by hand. */
+const hookOf = (e: Entry, hold: JobWaitReason | null) => ({ hold, started: (id: string) => { e.jobId = id; e.watch?.(id); e.onStart?.(id); }, removed: () => e.markGone?.() });
 interface PaidPlan { items: NonNullable<PaidBatch['items']>; rules: string[] }
 type DirectionsRun = Awaited<ReturnType<VariantDirections['begin']>>;
 
@@ -112,8 +119,8 @@ export class VariantFanout {
     }
     const candidates = [...idle, ...busy].sort((a, b) => letterIndex(a.letter) - letterIndex(b.letter));
     const missing = candidates.filter((m) => !m.direction).map((m) => m.letter);
-    const plan = candidates.length >= 2 ? await this.paidPlan(host, candidates) : null;
-    const first: JobWaitReason | null = missing.length > 0 ? 'variant-directions' : plan ? 'variant-confirm' : null;
+    const wholePlan = candidates.length >= 2 ? await this.paidPlan(host, candidates) : null;
+    const first: JobWaitReason | null = missing.length > 0 ? 'variant-directions' : wholePlan ? 'variant-confirm' : null;
     const entries: Entry[] = [];
     let error: unknown = null;
     for (const m of candidates) {
@@ -121,10 +128,13 @@ export class VariantFanout {
       try {
         if (idle.includes(m)) {
           const job = await turns.start(mref, message, { ...(formats ? { formats } : {}), ...(first ? { hold: first } : {}) });
-          entries.push({ letter: m.letter, ref: mref, jobId: job.id });
+          entries.push({ letter: m.letter, ref: mref, jobId: job.id, gone: this.deps.queue.whenSettled(job.id).then(() => {}) });
           out.jobs[m.letter] = job.id;
         } else {
           const entry: Entry = { letter: m.letter, ref: mref, clientId: randomUUID() };
+          entry.gone = new Promise<void>((resolve) => { entry.markGone = resolve; });
+          // Looked up after the current step: the turn is told its id right BEFORE it is enqueued.
+          entry.watch = (id) => { void Promise.resolve().then(() => this.deps.queue.whenSettled(id)).then(() => entry.markGone?.()); };
           if (first) turns.setQueuedHook(mref, entry.clientId!, hookOf(entry, first));
           try {
             await turns.postMessage(mref, { clientId: entry.clientId!, text, pins, mode: 'queued' });
@@ -138,6 +148,9 @@ export class VariantFanout {
       }
     }
     if (entries.length === 0 && error) throw error;
+    // Minor (Task 3): the card lists only the targets that really started; one whose start failed has nothing to confirm.
+    const started = wholePlan ? { ...wholePlan, items: wholePlan.items.filter((i) => entries.some((e) => e.letter === i.variant)) } : null;
+    const plan = started && started.items.length > 0 ? started : null;
     if (entries.length === 0 || !first) return out;
     // The background part: directions, then the card, then the start.
     let directions: DirectionsRun | null = null;
@@ -218,8 +231,18 @@ export class VariantFanout {
         // this request already in flight finishes first, enqueued held, and records its id here to be stopped below.
         e.onStart = undefined;
         turns.setQueuedHook(e.ref, e.clientId, hookOf(e, 'variant-confirm'));
-        await turns.removeQueued(e.ref, e.clientId).catch(() => {});
-        turns.setQueuedHook(e.ref, e.clientId, null);
+        try {
+          await turns.removeQueued(e.ref, e.clientId);
+          turns.setQueuedHook(e.ref, e.clientId, null);
+        } catch (err) {
+          if ((err as { apiCode?: string }).apiCode === 'not-queued') turns.setQueuedHook(e.ref, e.clientId, null); // started meanwhile (stopped below) or gone
+          else {
+            // Still queued (the removal failed): it must not run later as if nothing was decided. The hook stays; its turn is
+            // stopped as soon as it is made, before it can run.
+            console.warn(`Motion Studio: a declined variant request of ${e.ref.creativeSlug} could not be removed from its queue: ${err instanceof Error ? err.message : String(err)}`);
+            turns.setQueuedHook(e.ref, e.clientId, { hold: 'variant-confirm', started: (id) => { void Promise.resolve().then(() => stopJob({ queue, approvals }, id)); } }); // after the step: the turn is enqueued right after this call
+          }
+        }
       }
       // A held turn, or the turn a queued request became (still held: it never ran).
       if (e.jobId) stopJob({ queue, approvals }, e.jobId);
@@ -249,9 +272,8 @@ export class VariantFanout {
       jobId: batchId, projectSlug: host.projectSlug, projectDir: host.projectDir, creativeSlug: host.creativeSlug, kind: 'paid-batch',
       toolName: 'provider:variant-batch', input: {}, title: a.variantBatchTitle({ count: variants.length }), detail, paidBatch,
     });
-    // Every turn of the run stopped by hand (and no queued request left): the card has nothing left to confirm.
-    const jobs = entries.filter((e) => e.jobId).map((e) => e.jobId!);
-    if (jobs.length === entries.length) void Promise.all(jobs.map((id) => this.deps.queue.whenSettled(id))).then(() => this.deps.approvals.cancelJob(batchId));
+    // Every target gone by hand (its turn stopped, its queued request removed): the card has nothing left to confirm.
+    void Promise.all(entries.map((e) => e.gone)).then(() => this.deps.approvals.cancelJob(batchId));
     const o = await pending;
     return o.decision === 'once' || o.decision === 'always';
   }

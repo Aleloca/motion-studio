@@ -152,6 +152,10 @@ export class JobQueue {
     return new Promise((resolve) => this.settleWaiters.push({ id, resolve }));
   }
 
+  /**
+   * Resolves when no job is queued or running. A HELD job (`hold`) is queued: it waits for its release (or a cancel), so this
+   * does not resolve while one is held. The one caller that needs to end (the server's close) cancels every job first.
+   */
   whenIdle(): Promise<void> {
     if (!this.entries.some((e) => ACTIVE.has(e.summary.state))) return Promise.resolve();
     return new Promise((r) => this.idleWaiters.push(r));

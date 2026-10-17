@@ -103,7 +103,11 @@ export interface CreativeRef { root: string; projectSlug: string; projectDir: st
 /** Shared with the web (render keys are derived from it): @motion-studio/shared `creativeJobKey`. */
 export { creativeJobKey };
 /** Phase 15: see `CreativeTurnService.setQueuedHook`. `hold`: the reason the request's turn waits with (null: none now). */
-export interface QueuedHook { hold: JobWaitReason | null; /** Called with the turn's job id right before it is enqueued. */ started?: (jobId: string) => void }
+export interface QueuedHook {
+  hold: JobWaitReason | null;
+  /** Called with the turn's job id right before it is enqueued. */ started?: (jobId: string) => void;
+  /** Called when the request is taken out of the queue by hand (`removeQueued`). */ removed?: () => void;
+}
 
 /** Phase 15: the job queue group of a variant group's turns (`JobSpec.slot`): one per host creative. */
 export const variantSlotGroup = (ref: CreativeRef, host: string): string => `variants:${creativeJobKey(ref.root, ref.projectSlug, host)}`;
@@ -1685,8 +1689,11 @@ export class CreativeTurnService {
       if (!q.some((x) => x.clientId === clientId)) throw new CodedError(404, t().live.notQueued, 'not-queued');
       return q.filter((x) => x.clientId !== clientId);
     });
-    // Phase 15: a removed request no longer has a variant run's hook.
-    this.queuedHooks.delete(`${creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug)}\0${clientId}`);
+    // Phase 15: a removed request no longer has a variant run's hook (the run is told, so its card can go when nothing is left).
+    const hookKey = `${creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug)}\0${clientId}`;
+    const hook = this.queuedHooks.get(hookKey);
+    this.queuedHooks.delete(hookKey);
+    hook?.removed?.();
     return out;
   }
 

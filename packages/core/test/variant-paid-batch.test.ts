@@ -218,12 +218,13 @@ describe('variant paid batch (Review Focus 4)', () => {
     rb0.finish();
     await g.reached;
     await decide((await v.pending())[0]!, 'deny');
-    await new Promise((r) => setTimeout(r, 100));
+    // The run's cancel has reached A (its turn is cancelled) and now waits for B's start in flight.
+    await vi.waitFor(async () => expect((await stateOf(res.json().jobs.a)).state).toBe('cancelled'));
     g.open();
     const bJobs = async () => (await v.jobs()).filter((j) => j.kind === 'creative' && j.key.endsWith(`:${slug}~b`));
     // The start in flight finishes (B's second turn exists), then the run's cancel catches it.
     await vi.waitFor(async () => expect(await bJobs()).toHaveLength(2), { timeout: 10_000 });
-    await new Promise((r) => setTimeout(r, 200));
+    await vi.waitFor(async () => expect((await bJobs()).map((j) => j.state)).toContain('cancelled'), { timeout: 10_000 });
     for (const r of v.runner.runs.slice(1)) r.finish();
     await v.waitIdle();
     // Nothing of the declined run ran: A's turn and B's request's turn are cancelled, no new agent run started.
@@ -250,6 +251,66 @@ describe('variant paid batch (Review Focus 4)', () => {
     expect((await stateOf(body.jobs.a!)).state).toBe('running');
     rb0.finish();
     await v.runner.next(1).then((r) => r.finish());
+    await v.waitIdle();
+  });
+
+  it('minor (Task 3): stopping the held turn and removing the queued requests by hand takes the card away at once (no 600 s wait)', async () => {
+    v = await variantApp({ keys: KEYS });
+    const slug = await v.group(['Audace', 'Calma']);
+    await turn(`${slug}~b`, 'Prima B');
+    const rb0 = await runOf(`${slug}~b`);
+    const res = await run(slug, { targets: 'all-active', request: { text: 'Più luce' } });
+    const body = res.json() as { jobs: Record<string, string>; queued: string[] };
+    expect(body.queued).toEqual(['b']);
+    await vi.waitFor(async () => expect(await v.pending()).toHaveLength(1));
+    // By hand: A's held turn is cancelled, B's request is taken out of its queue. Nothing is left for the card to confirm.
+    expect((await v.app.inject({ method: 'POST', url: `/api/jobs/${body.jobs.a}/cancel` })).statusCode).toBe(200);
+    expect(await v.pending()).toHaveLength(1);
+    const clientId = (await v.detail(`${slug}~b`)).creative.queued![0]!.clientId;
+    expect((await v.app.inject({ method: 'DELETE', url: `${v.url(`${slug}~b`)}/queue/${clientId}` })).statusCode).toBe(200);
+    await vi.waitFor(async () => expect(await v.pending()).toEqual([]), { timeout: 5000 });
+    rb0.finish();
+    await v.waitIdle();
+    expect(v.runner.runs).toHaveLength(1);
+  });
+
+  it('minor (Task 3): a declined request that could not be taken out of the queue never runs (its turn is stopped as it starts)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    v = await variantApp({ keys: KEYS });
+    const slug = await v.group(['Audace', 'Calma']);
+    await turn(`${slug}~b`, 'Prima B');
+    const rb0 = await v.runner.next(0);
+    const res = await run(slug, { targets: 'all-active', request: { text: 'Più luce' } });
+    expect(res.json().queued).toEqual(['b']);
+    await vi.waitFor(async () => expect(await v.pending()).toHaveLength(1));
+    vi.spyOn(CreativeTurnService.prototype, 'removeQueued').mockRejectedValueOnce(new Error('disk full'));
+    await decide((await v.pending())[0]!, 'deny');
+    await vi.waitFor(async () => expect((await stateOf(res.json().jobs.a)).state).toBe('cancelled'));
+    await vi.waitFor(async () => expect((await v.detail(`${slug}~b`)).creative.queued).toHaveLength(1));
+    // B's turn ends: the request is still in its queue, so it starts by itself; its turn is stopped before it can run.
+    rb0.finish();
+    const bJobs = async () => (await v.jobs()).filter((j) => j.kind === 'creative' && j.key.endsWith(`:${slug}~b`));
+    await vi.waitFor(async () => expect((await bJobs()).map((j) => j.state).sort()).toEqual(['cancelled', 'succeeded']), { timeout: 10_000 });
+    await v.waitIdle();
+    expect(v.runner.runs).toHaveLength(1);
+  });
+
+  it('minor (Task 3): the card lists only the variants whose start worked', async () => {
+    v = await variantApp({ keys: KEYS });
+    const slug = await v.group(['Audace', 'Calma', 'Retro']);
+    const start = CreativeTurnService.prototype.start;
+    vi.spyOn(CreativeTurnService.prototype, 'start').mockImplementation(async function (this: CreativeTurnService, ref, ...rest) {
+      if (ref.creativeSlug === `${slug}~b`) throw new Error('boom');
+      return start.call(this, ref, ...rest);
+    });
+    const res = await run(slug, { targets: 'all-active', request: { text: 'Più luce' } });
+    expect(res.statusCode, res.body).toBe(202);
+    expect(res.json().failed).toEqual({ b: 'boom' });
+    await vi.waitFor(async () => expect(await v.pending()).toHaveLength(1));
+    const card = (await v.pending())[0]!;
+    expect([...new Set(card.paidBatch!.items!.map((i) => i.variant))].sort()).toEqual(['a', 'c']);
+    expect(card.paidBatch!.total.variants).toBe(2);
+    await decide(card, 'deny');
     await v.waitIdle();
   });
 
