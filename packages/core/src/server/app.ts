@@ -43,6 +43,7 @@ import { registerSettingsRoutes } from './settings-routes.ts';
 import { defaultChromeInstaller, registerRenderEngineRoutes, type ChromeInstaller } from './render-engine-routes.ts';
 import { assertAgentFolders, CodedError, expandHome, WorkspaceError, WorkspaceStore } from '../workspace-store.ts';
 import { recoverWorkspace, registerCreativeRoutes, type RecoverOptions } from './creative-routes.ts';
+import { noTrash, type TrashFn } from '../trash.ts';
 import { registerFontsRoutes } from './fonts-routes.ts';
 import { registerGenerateRoutes } from './generate-routes.ts';
 import { registerVoicesRoutes } from './voices-routes.ts';
@@ -87,6 +88,8 @@ export interface ServerDeps {
   webDir?: string;
   media?: MediaTools;
   openPath?: (path: string) => Promise<void>;
+  /** Decision 915: moves a deleted creative's folder to the Trash. Absent (tests): deleting is refused, nothing is moved. */
+  trash?: TrashFn;
   vault?: SecretsVault;
   approvals?: ApprovalBroker;
   /** Callback channel of the `studio` MCP server; its origin is set once the server listens. */
@@ -780,7 +783,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const variantRuns = new VariantFanout({
     turns, queue, approvals, directions: variantDirections, settings: () => requireWorkspace().readSettings(), paidPlan: paidServicePlan({ vault, keyChecks }),
   });
-  registerCreativeRoutes(app, { requireWorkspace, turns, edits, renders, previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m), git: deps.git, variantRuns });
+  registerCreativeRoutes(app, { requireWorkspace, turns, edits, renders, previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m), git: deps.git, variantRuns, jobs: () => queue.list(), trash: deps.trash ?? noTrash });
   registerStorePackRoutes(app, { requireWorkspace, turns, renders, media });
 
   const routeCtx = { requireWorkspace, brand: brandService, media, git: deps.git, broadcast: (m: ServerMessage) => hub.broadcast(m), configDir };

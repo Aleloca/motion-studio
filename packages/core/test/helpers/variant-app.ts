@@ -40,7 +40,7 @@ export interface VariantApp {
 export const variantBrief = { goal: 'Lancio app', message: 'Scarica oggi', formats: ['instagram-post-1x1', 'web-banner-300x250'], durationSec: 10, assets: [], notes: '' };
 const P = '/api/projects/acme/creatives';
 
-export async function variantApp(o: { keys?: Record<string, string>; settings?: Record<string, unknown>; approvalTimeoutMs?: number } = {}): Promise<VariantApp> {
+export async function variantApp(o: { keys?: Record<string, string>; settings?: Record<string, unknown>; approvalTimeoutMs?: number; trash?: (p: string) => Promise<void> } = {}): Promise<VariantApp> {
   const base = await mkdtemp(join(tmpdir(), 'ms-variants-'));
   const runner = new ControlledRunner();
   const bridge = new AgentBridge();
@@ -59,6 +59,7 @@ export async function variantApp(o: { keys?: Record<string, string>; settings?: 
     doctor: async () => [], claudeVersion: async () => '2.1.0', bridge, approvals,
     mcpCommand: [process.execPath, join(base, 'never-started-mcp.mjs')],
     vault: new MemoryVault(o.keys ?? {}),
+    ...(o.trash ? { trash: o.trash } : {}),
     providerHttp: { fetch: fakeFetch, lookup: async () => [{ address: '93.184.216.34', family: 4 as const }] },
   });
   await app.inject({ method: 'PUT', url: '/api/workspace', payload: { path: join(base, 'ws') } });

@@ -98,6 +98,11 @@ export const creativeFileSchema = z.object({
   variantGroup: variantGroupSchema.optional(),
   /** Phase 15: on a sister creative (`<host>~b`..`~e`), the host's slug. Absent in old files and on hosts. */
   variantOf: creativeSlugSchema.optional(),
+  /**
+   * Decision 915: when the user archived the creative. An archived creative is left out of the project's lists (creatives,
+   * search, "Jump back in") and listed under "Archiviate", where it can be restored. Absent: not archived.
+   */
+  archivedAt: z.iso.datetime().optional(),
 });
 export type CreativeFile = z.infer<typeof creativeFileSchema>;
 
@@ -399,7 +404,23 @@ export interface CreativeSummary { slug: string; title: string; status: Creative
   /** Phase 15: on a group's host row only (its sisters are not listed): members, active ones, and members whose folder is missing. */
   variants?: VariantListInfo;
   /** Phase 15: a sister whose group cannot be found (host gone or not listing it): listed and opened as a single creative. */
-  orphan?: true }
+  orphan?: true;
+  /** Decision 915: the creative is archived (since then); absent otherwise. */
+  archivedAt?: string }
+/**
+ * Decision 915: whether a creative can be archived or deleted now (`GET …/creatives/:c/removal`). `role`: `host` for variant A
+ * of a group with other members (it is acted on as the whole group, `all`), `sister` for a variant B..E (acted on alone: it
+ * leaves the group), `single` otherwise. `members`: the group's size (1 outside a group). `blocked`: why not now (a turn,
+ * a queued request or a render of it, or of a member of its group), with the core's translated reason.
+ */
+export interface CreativeRemovalInfo {
+  role: 'single' | 'host' | 'sister';
+  members: number;
+  letter: VariantLetter | null;
+  title: string;
+  archived: boolean;
+  blocked: { code: string; message: string } | null;
+}
 /** Phase 15: what the list says about a group (spec §2, "N varianti"). */
 export interface VariantListInfo { count: number; active: number; missing: VariantLetter[] }
 /**
