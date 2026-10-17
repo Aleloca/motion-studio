@@ -22,3 +22,4 @@ export * from './export-name.ts';
 export * from './composition/index.ts';
 export * from './render-views.ts';
 export * from './svg-edit/index.ts';
+export * from './brief-duration.ts';
