@@ -8,7 +8,7 @@ import {
   type Composition, type EditorCompositionView, type EditorFontOption, type FormatPreset, type Locale, type StagedAsset, type VersionEntry,
 } from '@motion-studio/shared';
 import { hashConfinedFile, withConfinedFile } from '../brand/agent-guard.ts';
-import { checkVectorSvg } from '../identity/svg-check.ts';
+import { checkVectorSvg, MAX_VECTOR_SVG_BYTES } from '../identity/svg-check.ts';
 import { BrandStore } from '../brand/brand-store.ts';
 import { loadComposition } from '../compositions/composition-files.ts';
 import { EDITOR_STAGING, stagingIdOf } from '../compositions/composition-server.ts';
@@ -329,6 +329,35 @@ export async function stageSvgEdit(o: StageSvgEditOptions): Promise<{ asset: Sta
     asset: { path, size: bytes.length, kind: 'svg', ...(size ? { width: size.width, height: size.height } : {}), svgEdit: true },
     warnings: check.warnings, root, created,
   };
+}
+
+/**
+ * Reads the SVG `path` a clip of the session shows, for the editor to edit (SVG inner editor): a file of the composition
+ * folder (which wins, as when serving), else one staged in this session. Read with the confined-read checks and checked
+ * with `checkVectorSvg`, so the editor only ever gets, and draws inline, text the check accepted: 400 `svg-edit-refused`
+ * with the reasons (the text itself is not sent), 400 `svg-edit-bad-base` when `path` is not such an SVG.
+ */
+export async function readSvgForEdit(o: {
+  compDir: string; stagingRoot: string | null; staged: ReadonlyMap<string, StagedAsset>; path: string; locale: Locale;
+}): Promise<{ path: string; content: string; warnings: string[] }> {
+  const m = messages(o.locale);
+  const badBase = () => new CodedError(400, m.editor.stageSvgBadBase({ file: o.path.slice(0, 300) }), 'svg-edit-bad-base');
+  if (!/\.svg$/i.test(o.path) || !o.path.startsWith('assets/') || !isCompositionPath(o.path)) throw badBase();
+  const readFrom = (base: string) => withConfinedFile(base, o.path, true, async (fh: FileHandle, info: Stats) => {
+    if (info.size > MAX_VECTOR_SVG_BYTES) return { tooLarge: true as const };
+    return { text: (await fh.readFile()).toString('utf8') };
+  });
+  let got = await readFrom(o.compDir);
+  if (got === null && o.stagingRoot && o.staged.has(o.path)) got = await readFrom(o.stagingRoot);
+  if (got === null || 'skipped' in got) throw badBase();
+  const check = 'tooLarge' in got ? { ok: false as const, reasons: [`the SVG is over ${MAX_VECTOR_SVG_BYTES / 1024} KB`] } : checkVectorSvg(got.text);
+  if (!check.ok || 'tooLarge' in got) {
+    const reasons = check.ok ? [] : check.reasons;
+    const refused = new CodedError(400, m.composition.svgRefusedSummary({ file: basename(o.path), count: reasons.length }), 'svg-edit-refused');
+    refused.problems = reasons;
+    throw refused;
+  }
+  return { path: o.path, content: got.text, warnings: check.warnings };
 }
 
 /** Removes a session's staging folder (a real folder at exactly that place; a link there is removed as an entry only). */

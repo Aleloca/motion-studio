@@ -188,12 +188,45 @@ describe('staging an edited SVG', { timeout: 120_000 }, () => {
     const vw = await view(slug, 1, ICON.id);
     const c = structuredClone(vw.composition);
     clip(c, 'mark').src = path;
-    const s = await save(slug, { baseVersion: 1, format: ICON.id, baseHash: vw.hash, composition: c, staged: [path], ops: [{ kind: 'clipMedia', clipId: 'mark', src: path }], token });
+    const s = await save(slug, { baseVersion: 1, format: ICON.id, baseHash: vw.hash, composition: c, staged: [path], ops: [{ kind: 'clipMedia', clipId: 'mark', src: path }, { kind: 'svgContent', clipId: 'mark', colors: 1, texts: 0, hidden: 0 }], token });
     expect(s.statusCode, s.body).toBe(200);
     const v2 = (await versionOf(slug, 2))!;
     expect(v2).toMatchObject({ status: 'complete', problems: [] });
+    // The summary names the SVG change (the svgContent op of the web's section).
+    expect(v2.request).toMatch(/mark: 1 (colour changed|colore cambiato)/);
     expect(v2.compositions![0]!.problems).toEqual([]);
     expect(readFileSync(join(compDir(slug, 2, ICON.id), path), 'utf8')).toBe(recoloured);
+  });
+});
+
+describe('reading a clip SVG for the editor', { timeout: 120_000 }, () => {
+  const read = (slug: string, token: string, path: string) =>
+    app.inject({ url: `/api/projects/acme/creatives/${slug}/editor/svg?token=${encodeURIComponent(token)}&path=${encodeURIComponent(path)}`, headers: H });
+
+  it('answers the checked text of a base file or of a staged edit, and refuses what the check refuses', async () => {
+    const slug = await create();
+    const token = await mint(slug);
+    // (the fake agent's logo.svg has no viewBox, which the strict check refuses: a file of its own here)
+    const text = GOOD.replace('</svg>', '<text x="1" y="10">Acme</text></svg>');
+    writeFileSync(join(compDir(slug, 1, 'test-wide'), 'assets', 'mark.svg'), text);
+    const r = await read(slug, token, 'assets/mark.svg');
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json()).toMatchObject({ path: 'assets/mark.svg', content: text });
+    expect((r.json() as { warnings: string[] }).warnings).toHaveLength(1);
+    expect((await read(slug, token, 'assets/logo.svg')).json().code).toBe('svg-edit-refused');
+    const staged = (await stageEdit(slug, token, GOOD)).json() as { path: string };
+    expect((await read(slug, token, staged.path)).json()).toMatchObject({ path: staged.path, content: GOOD, warnings: [] });
+    // A base file the check refuses: the editor shows the reasons and never draws it inline.
+    writeFileSync(join(compDir(slug, 1, 'test-wide'), 'assets', 'bad.svg'), GOOD.replace('</svg>', '<script>alert(1)</script></svg>'));
+    const bad = await read(slug, token, 'assets/bad.svg');
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().code).toBe('svg-edit-refused');
+    expect((bad.json().problems as string[]).some((p) => /script/.test(p))).toBe(true);
+    expect(bad.body).not.toContain('alert(1)');
+    for (const path of ['assets/nope.svg', 'composition.json', '../logo.svg', 'assets/lib/never-staged.svg']) {
+      expect((await read(slug, token, path)).json().code, path).toBe('svg-edit-bad-base');
+    }
+    expect((await read(slug, 'A'.repeat(43), 'assets/logo.svg')).json().code).toBe('editor-no-session');
   });
 });
 

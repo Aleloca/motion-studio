@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DESCRIBE_MAX_ITEMS, compositionSchema, describeEdits, editOpSchema, editProblemText, pinClipName, pinSchema, snapTargets, snapTime, versionEntrySchema,
+  DESCRIBE_MAX_ITEMS, applyEdit, compositionSchema, describeEdits, editOpSchema, editProblemText, pinClipName, pinSchema, snapTargets, snapTime, versionEntrySchema,
   compositionJsonSchema, type EditOp,
 } from '../src/index.ts';
 import { readFileSync } from 'node:fs';
@@ -117,5 +117,32 @@ describe('editOpSchema', () => {
       { kind: 'animationPreset', clipId: 'a', slot: 'mid', preset: null, duration: 1 },
       { kind: 'nope' },
     ]) expect(editOpSchema.safeParse(bad).success, JSON.stringify(bad).slice(0, 80)).toBe(false);
+  });
+});
+
+describe('svgContent (SVG inner editor)', () => {
+  const op = (o: Partial<Extract<EditOp, { kind: 'svgContent' }>> = {}): EditOp => ({ kind: 'svgContent', clipId: 'logo1', colors: 2, texts: 1, hidden: 0, ...o });
+  it('only feeds the summary: the composition does not change, and only an svg clip takes it', () => {
+    const c = structuredClone(spike);
+    const r = applyEdit(c, op());
+    expect(r.ok).toBe(true);
+    // A flags op that sets nothing gives the same normalised copy: the svgContent op adds nothing to it.
+    const same = applyEdit(c, { kind: 'clipFlags', clipId: 'logo1' });
+    expect(r.ok && same.ok ? r.composition : 'x').toEqual(same.ok ? same.composition : 'y');
+    const wrong = applyEdit(c, op({ clipId: 'title' }));
+    expect(wrong.ok ? null : wrong.problem.key).toBe('editor.wrongType');
+    const bad = applyEdit(c, op({ colors: -1 }));
+    expect(bad.ok ? null : bad.problem.key).toBe('editor.badValue');
+  });
+  it('is described with its counts, in both languages', () => {
+    expect(describeEdits([op()], structuredClone(spike), 'en')).toBe('Direct edits: logo1: 2 colours changed, 1 text');
+    expect(describeEdits([op()], structuredClone(spike), 'it')).toBe('Modifiche dirette: logo1: 2 colori cambiati, 1 testo');
+    expect(describeEdits([op({ colors: 0, texts: 0, hidden: 3 })], structuredClone(spike), 'en')).toBe('Direct edits: logo1: 3 elements shown or hidden');
+    expect(describeEdits([op({ colors: 0, texts: 0 })], structuredClone(spike), 'it')).toBe('Modifiche dirette: contenuto SVG di logo1');
+  });
+  it('has a bounded wire form', () => {
+    expect(editOpSchema.safeParse(op()).success).toBe(true);
+    expect(editOpSchema.safeParse({ ...op(), colors: 1.5 }).success).toBe(false);
+    expect(editOpSchema.safeParse({ ...op(), extra: 1 }).success).toBe(false);
   });
 });

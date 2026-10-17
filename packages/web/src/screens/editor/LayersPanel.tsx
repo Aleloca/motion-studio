@@ -4,7 +4,7 @@
 // (`trackFlags`); a track with several clips is a header row with the track's flags and the clips nested under it, each with
 // its own (`clipFlags`). A flag the agent wrote on the clip itself of a one-clip layer shows too, and turning it off clears it.
 // A click selects the clip; a locked layer can be selected (its handles say it is locked). No "+": new layers stay with the agent.
-import { editProblemText, type Clip, type EditOp, type Track } from '@motion-studio/shared';
+import { editProblemText, type Clip, type Composition, type EditOp, type Track } from '@motion-studio/shared';
 import { useState } from 'react';
 import { useLocale, useT } from '../../i18n.tsx';
 import { Button, Icon, cx, type IconName } from '../../ui/index.ts';
@@ -13,6 +13,17 @@ import { useEditor } from './editorContext.ts';
 const CLIP_ICON: Record<Clip['type'], IconName> = { text: 'text', shape: 'grid', image: 'image', svg: 'image', video: 'video', html: 'code', audio: 'music' };
 
 type Flag = 'hidden' | 'locked';
+
+/**
+ * The name a clip shows in the editor: its own, else its id; the hidden versions of an identity logo (the `small` and `dark`
+ * svg clips of a still) get readable names (SVG inner editor, spec 4.3).
+ */
+export function clipLabel(clip: Clip, c: Composition, e: { layerSmall: string; layerDark: string }): string {
+  if (clip.name) return clip.name;
+  if (c.duration === 0 && clip.type === 'svg' && clip.id === 'small') return e.layerSmall;
+  if (c.duration === 0 && clip.type === 'svg' && clip.id === 'dark') return e.layerDark;
+  return clip.id;
+}
 
 interface RowProps {
   name: string;
@@ -94,7 +105,7 @@ export function LayersPanel() {
               const clip = track.clips[0]!;
               return (
                 <li key={track.id}>
-                  <LayerRow name={clip.name ?? clip.id} kind={kinds[clip.type]} icon={CLIP_ICON[clip.type]} selected={selection === clip.id}
+                  <LayerRow name={clipLabel(clip, draft.composition, e)} kind={kinds[clip.type]} icon={CLIP_ICON[clip.type]} selected={selection === clip.id}
                     hidden={Boolean(track.hidden || clip.hidden)} locked={Boolean(track.locked || clip.locked)}
                     onSelect={() => select(clip.id)} onFlag={(flag, value) => layerFlag(track, clip, flag, value)} />
                 </li>
@@ -107,7 +118,7 @@ export function LayersPanel() {
                 <ol className="ms-layers-sub">
                   {[...track.clips].reverse().map((clip) => (
                     <li key={clip.id}>
-                      <LayerRow nested name={clip.name ?? clip.id} kind={kinds[clip.type]} icon={CLIP_ICON[clip.type]} selected={selection === clip.id}
+                      <LayerRow nested name={clipLabel(clip, draft.composition, e)} kind={kinds[clip.type]} icon={CLIP_ICON[clip.type]} selected={selection === clip.id}
                         hidden={Boolean(clip.hidden)} locked={Boolean(clip.locked)}
                         onSelect={() => select(clip.id)} onFlag={(flag, value) => clipFlag(clip, flag, value)} />
                     </li>

@@ -23,6 +23,11 @@ export type EditOp =
   | { kind: 'animationPreset'; clipId: string; slot: 'in' | 'out'; preset: AnimationPreset | null; duration: number }
   | { kind: 'htmlParam'; clipId: string; key: string; value: string | number }
   /**
+   * An SVG clip's content changed in the editor (SVG inner editor): the counts of colours, texts and elements shown or
+   * hidden, for the summary only. It changes nothing in the composition; the new file reaches the clip through `clipMedia`.
+   */
+  | { kind: 'svgContent'; clipId: string; colors: number; texts: number; hidden: number }
+  /**
    * Declares a font file. `weights` (a variable font: several weights from one file) declares one entry per weight, each
    * with the same family and file, and `font.weight` is then ignored.
    */
@@ -38,6 +43,7 @@ export const ADD_FONT_MAX_WEIGHTS = 9;
 const id = z.string().min(1).max(COMPOSITION_LIMITS.id);
 const time = z.number().min(0).max(COMPOSITION_LIMITS.durationSec);
 const text = z.string().max(COMPOSITION_LIMITS.text);
+const count = z.number().int().min(0).max(1_000_000);
 const editablePropsSchema = z.strictObject({
   x: z.number().optional(), y: z.number().optional(), width: z.number().optional(), height: z.number().optional(),
   rotation: z.number().optional(), scale: z.number().optional(), opacity: z.number().optional(),
@@ -65,6 +71,7 @@ export const editOpSchema = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('animationPreset'), clipId: id, slot: z.enum(['in', 'out']), preset: z.enum(ANIMATION_PRESETS).nullable(), duration: time,
   }),
+  z.strictObject({ kind: z.literal('svgContent'), clipId: id, colors: count, texts: count, hidden: count }),
   z.strictObject({ kind: z.literal('htmlParam'), clipId: id, key: z.string().min(1).max(64), value: z.union([text, z.number()]) }),
   z.strictObject({ kind: z.literal('addFont'), font: fontRefSchema, weights: z.array(z.number().int().min(1).max(1000)).min(1).max(ADD_FONT_MAX_WEIGHTS).optional() }),
 ]);

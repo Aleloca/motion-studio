@@ -189,6 +189,23 @@
 .ms-insp-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; }
 .ms-insp-warn { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 10px; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--warn); }
 .ms-insp-warn p { margin: 0; font-size: 12px; line-height: 1.45; color: var(--text); }
+/* SVG inner editor: the content of an svg clip. Long lists scroll inside the section. */
+.ms-svg-part { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ms-svg-colors { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 4px; max-height: 168px; overflow: auto; }
+.ms-svg-color { width: 100%; display: flex; align-items: center; gap: 6px; padding: 4px 6px; border: 0; border-radius: 6px; background: var(--field); color: var(--text); font: inherit; font-size: 11.5px; cursor: pointer; min-width: 0; }
+.ms-svg-color:hover:not(:disabled), .ms-svg-color.ms-on { box-shadow: inset 0 0 0 1px var(--accent); }
+.ms-svg-color:disabled { cursor: default; opacity: .6; }
+.ms-svg-swatch { flex: none; width: 14px; height: 14px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--line); }
+.ms-svg-hex { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); text-align: left; }
+.ms-svg-count { flex: none; color: var(--muted); }
+.ms-svg-text textarea { width: 100%; min-width: 0; resize: vertical; border: 0; background: transparent; color: inherit; font: inherit; font-size: 12px; }
+.ms-svg-elements { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; max-height: 240px; overflow: auto; }
+.ms-svg-el { display: flex; align-items: center; gap: 4px; min-width: 0; border-radius: 6px; }
+.ms-svg-el.ms-sel { background: var(--field); box-shadow: inset 0 0 0 1px var(--accent); }
+.ms-svg-el.ms-dim .ms-svg-el-name { color: var(--muted); }
+.ms-svg-el-name { flex: 1; min-width: 0; padding: 4px 6px; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 12px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.ms-svg-paint { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
+.ms-svg-reasons { margin: 0; padding-left: 18px; font-size: 11.5px; line-height: 1.4; color: var(--muted); overflow-wrap: anywhere; }
 .ms-insp-slot { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .ms-insp-slot-name { font-size: 12px; }
 .ms-picker { display: flex; flex-direction: column; gap: 10px; padding: 18px 20px; min-width: 0; }

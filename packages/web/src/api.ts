@@ -1,4 +1,4 @@
-import type { LocaleTag, Localization, LocalizationIssue, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, AgentCapabilities, ApprovalDecision, ApprovalRequest, QuestionAnswers, LiveMessageOutcome, RedirectOutcome, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, UpdatesState, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings, StorePack, VariantLetter, VariantPick } from '@motion-studio/shared';
+import type { LocaleTag, Localization, LocalizationIssue, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StagedSvgEdit, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, AgentCapabilities, ApprovalDecision, ApprovalRequest, QuestionAnswers, LiveMessageOutcome, RedirectOutcome, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, UpdatesState, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings, StorePack, VariantLetter, VariantPick } from '@motion-studio/shared';
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
 
@@ -72,6 +72,9 @@ async function request<T>(method: string, url: string, body?: unknown, opts: Req
   }));
   return parse<T>(res);
 }
+
+/** What the editor stages for an SVG it edited (SVG inner editor): the clip, the `src` it started from, the whole new text. */
+export type SvgEditFrom = Extract<StageRequest['from'], { kind: 'svgEdit' }>;
 
 /** The body of a direct save (Task 4): `format` is the PRIMARY edited; `staged` the staged paths the draft uses; `token` the session that owns them. */
 export interface SaveEditsBody { baseVersion: number; format: string; baseHash: string; composition: unknown; staged: string[]; ops: EditOp[]; token: string }
@@ -330,6 +333,14 @@ export const api = {
     request<EditorCompositionView>('GET', `${c(slug, creative)}/versions/${n}/compositions/${encodeURIComponent(format)}`),
   /** Stages a library asset or a brand font for the draft of preview session `token`; a large video answers once it is normalised. */
   stageEditorAsset: (slug: string, creative: string, body: StageRequest) => request<StagedAsset>('POST', `${c(slug, creative)}/editor/stage`, body),
+  /**
+   * SVG inner editor: the text of the SVG `path` a draft clip shows in the preview session `token`, only when the core's SVG
+   * check accepts it (400 `svg-edit-refused` with the reasons as `problems`, 400 `svg-edit-bad-base`).
+   */
+  getEditorSvg: (slug: string, creative: string, token: string, path: string) =>
+    request<{ path: string; content: string; warnings: string[] }>('GET', `${c(slug, creative)}/editor/svg?token=${encodeURIComponent(token)}&path=${encodeURIComponent(path)}`),
+  /** SVG inner editor: stages an edited SVG (checked by the core: 400 `svg-edit-refused` with `problems`). */
+  stageSvgEdit: (slug: string, creative: string, body: { token: string; from: SvgEditFrom }) => request<StagedSvgEdit>('POST', `${c(slug, creative)}/editor/stage`, body),
   /** Saves a draft as a new version, with no agent. 409 `editor-busy` / `editor-base-changed` / `editor-carry-failed`, 422 with `problems`. */
   saveEdits: (slug: string, creative: string, body: SaveEditsBody) => request<{ version: number }>('POST', `${c(slug, creative)}/edits`, body),
   /** Ends a live preview session early (a hover preview no longer shown); sent with keepalive so it survives a page close. */

@@ -19,7 +19,7 @@ import { PreviewLane, PreviewLaneBusyError } from '../render/preview-lane.ts';
 import type { RenderEngine } from '../render/renderer.ts';
 import { CodedError } from '../workspace-store.ts';
 import { isRealDirChain, realDirChain } from './core-files.ts';
-import { removeStaging, stageFile, stageSvgEdit, stagingDirOf, type StageSource, type SvgEditSource } from './editor-staging.ts';
+import { readSvgForEdit, removeStaging, stageFile, stageSvgEdit, stagingDirOf, type StageSource, type SvgEditSource } from './editor-staging.ts';
 
 /**
  * Everything the core shows of a composition without a final render (Task 5b):
@@ -654,6 +654,18 @@ export class PreviewService {
       staging.assets.set(staged.path, staged);
       return staged;
     });
+  }
+
+  /**
+   * The checked text of the SVG `path` a draft clip shows in the live preview session `token` (SVG inner editor,
+   * `readSvgForEdit`): a file of the session's composition folder or one staged in it. 404 `editor-no-session`.
+   */
+  async readSvg(ref: Pick<VersionFormatRef, 'creativeDir' | 'creativeSlug'>, token: string, path: string, locale: Locale): Promise<{ path: string; content: string; warnings: string[] }> {
+    const s = this.sessions.get(token);
+    if (!s || s.creativeDir !== ref.creativeDir || s.creativeSlug !== ref.creativeSlug || !s.session.live() || s.handedOver || this.closing.signal.aborted) {
+      throw new CodedError(404, messages(locale).editor.stageNoSession, 'editor-no-session');
+    }
+    return readSvgForEdit({ compDir: s.compDir, stagingRoot: s.staging?.root ?? null, staged: s.staging?.assets ?? new Map(), path, locale });
   }
 
   /**

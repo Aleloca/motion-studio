@@ -8,6 +8,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useLocale, useT } from '../../i18n.tsx';
 import { Empty, Icon } from '../../ui/index.ts';
 import { useEditor } from './editorContext.ts';
+import { clipLabel } from './LayersPanel.tsx';
 import { findClip } from './Stage.tsx';
 import { AnimationSection } from './inspector/AnimationSection.tsx';
 import { AudioSection } from './inspector/AudioSection.tsx';
@@ -18,6 +19,7 @@ import { MediaSection } from './inspector/MediaSection.tsx';
 import { ParamsSection } from './inspector/ParamsSection.tsx';
 import { fieldProblems } from './inspector/problems.ts';
 import { ShapeSection } from './inspector/ShapeSection.tsx';
+import { SvgContentSection } from './inspector/SvgContentSection.tsx';
 import { TextSection } from './inspector/TextSection.tsx';
 import { TimingSection } from './inspector/TimingSection.tsx';
 import { useBrand } from './inspector/useBrand.ts';
@@ -62,7 +64,7 @@ function InspectorBody({ clip, locked }: { clip: Clip; locked: boolean }) {
   return (
     <div className="ms-insp" data-clip-type={clip.type}>
       <header className="ms-insp-head">
-        <b className="ms-insp-name">{clip.name ?? clip.id}</b>
+        <b className="ms-insp-name">{clipLabel(clip, comp, e)}</b>
         <span className="ms-insp-kind">{kinds[clip.type]}</span>
       </header>
       {locked ? <p className="ms-insp-locked" role="status"><Icon name="lock" size={13} />{e.inspLocked}</p> : null}
@@ -71,6 +73,7 @@ function InspectorBody({ clip, locked }: { clip: Clip; locked: boolean }) {
       {clip.type === 'text' ? <TextSection ctl={ctl} brand={brand} /> : null}
       {clip.type === 'shape' ? <ShapeSection ctl={ctl} /> : null}
       {clip.type === 'image' || clip.type === 'svg' || clip.type === 'video' ? <MediaSection ctl={ctl} /> : null}
+      {clip.type === 'svg' ? <SvgContentSection ctl={ctl} /> : null}
       {clip.type === 'audio' ? <AudioSection ctl={ctl} /> : null}
       {clip.type === 'html' ? <ParamsSection ctl={ctl} /> : null}
       {video && clip.type !== 'audio' ? <AnimationSection ctl={ctl} /> : null}
