@@ -401,3 +401,33 @@ describe('live messages: honest delivery wording (decision 804)', () => {
     expect(screen.getByText(/^Retried/)).toBeTruthy();
   });
 });
+
+describe('user note 7: a live message sits in the timeline at its send time', () => {
+  beforeEach(() => { caps = { ...CAPS_OFF, cliVersion: '2.1.301', liveInput: true, interrupt: true }; });
+  const request: ConversationEntry = { type: 'user', at: at(1), text: 'Make it red', pins: [], attachments: [], jobId: 'j1' };
+  const liveMsg: ConversationEntry = { type: 'user', at: at(3), text: 'Use blue', pins: [], attachments: [], jobId: 'j1', mode: 'live', clientId: CID };
+  /** Texts of the chat bubbles, top to bottom. */
+  const order = () => [...document.querySelectorAll('article .ms-msg-bubble')].map((b) => b.textContent?.trim());
+
+  it('after a reload: between the agent message before it and the answer after it', () => {
+    render(view({ entries: [request, agent(2, { kind: 'text', text: 'Working on red' }), liveMsg, agent(4, { kind: 'user_message_delivered', clientId: CID }), agent(5, { kind: 'text', text: 'Switching to blue' }), agent(6, { kind: 'result', ok: true, sessionId: 's' })], job: done }));
+    expect(order()).toEqual(['Make it red', 'Working on red', 'Use blue', 'Switching to blue']);
+  });
+
+  it('live: the persisted message stays above the agent events that arrive after it over the socket', () => {
+    const persisted = [request, agent(2, { kind: 'text', text: 'Working on red' }), liveMsg];
+    render(view({ entries: persisted, job: running, live: [{ kind: 'text', text: 'Working on red' }, { kind: 'text', text: 'Switching to blue' }] }));
+    expect(order()).toEqual(['Make it red', 'Working on red', 'Use blue', 'Switching to blue']);
+  });
+
+  it('live: a message just sent (not in the file yet) stays above what the agent says next', async () => {
+    const entries = [request];
+    const { rerender } = render(view({ entries, job: running, live: [{ kind: 'text', text: 'Working on red' }] }));
+    await screen.findByRole('button', { name: 'More ways to send' });
+    await userEvent.type(box(), 'Use blue');
+    await userEvent.keyboard('{Enter}');
+    await waitFor(() => expect(api.postLiveMessage).toHaveBeenCalledTimes(1));
+    rerender(view({ entries, job: running, live: [{ kind: 'text', text: 'Working on red' }, { kind: 'text', text: 'Switching to blue' }] }));
+    await waitFor(() => expect(order()).toEqual(['Make it red', 'Working on red', 'Use blue', 'Switching to blue']));
+  });
+});

@@ -142,9 +142,18 @@ const same = (a: string, b: string) => a.trim() === b.trim();
 const samePins = (a: Pin[], b: Pin[]) => a.length === b.length
   && a.every((p, i) => { const q = b[i]!; return p.format === q.format && p.x === q.x && p.y === q.y && p.timeSec === q.timeSec && (p.note ?? '') === (q.note ?? ''); });
 
+/**
+ * User note 7: a message the user sent during the turn, placed before the turn's event number `anchor` (the number of the
+ * turn's events that came before it), so the agent's answer and everything after it come below it.
+ */
+interface TurnInsert { anchor: number; item: Item }
+
 /** One turn (the agent events of one job) as conversation items: messages, compact steps, summary, details. */
-function turnItems(interruptedText: string, jobId: string, events: { at: string; event: AgentEvent }[], running: boolean, foldOpen: boolean, detailsOpen: boolean, logOf: (jobId: string, events: AgentEvent[], finished: boolean) => CommandLog): Item[] {
+function turnItems(interruptedText: string, jobId: string, events: { at: string; event: AgentEvent }[], running: boolean, foldOpen: boolean, detailsOpen: boolean, logOf: (jobId: string, events: AgentEvent[], finished: boolean) => CommandLog, inserts: readonly TurnInsert[] = []): Item[] {
   const out: Item[] = [];
+  // Stable: two messages with the same anchor keep the order they were sent in.
+  const pending = [...inserts].sort((a, b) => a.anchor - b.anchor);
+  const flush = (upTo: number) => { while (pending.length > 0 && pending[0]!.anchor <= upTo) out.push(pending.shift()!.item); };
   const steps: Item[] = [];
   const technical: DetailEntry[] = [];
   // Every command of the turn, with its explanation and whether it ran (see commandLog.ts).
@@ -154,6 +163,7 @@ function turnItems(interruptedText: string, jobId: string, events: { at: string;
   let foldAt = -1;
   events.forEach(({ at, event: e }, i) => {
     const key = `${jobId}:${i}`;
+    flush(i);
     if (TECHNICAL.has(e.kind)) {
       const row = rowAt.get(`c${i}`);
       // An automatic approval merged into its tool_use has no row of its own.
@@ -185,6 +195,7 @@ function turnItems(interruptedText: string, jobId: string, events: { at: string;
       }
     }
   });
+  flush(Infinity);
   if (!running && steps.length > 0) {
     out.splice(foldAt, 0, { key: `${jobId}:fold`, kind: 'fold', jobId, count: steps.length, open: foldOpen }, ...(foldOpen ? steps : []));
   }
@@ -231,6 +242,8 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
 
   // First time each live event (not yet persisted) was seen: its time until the refetch brings the real one.
   const seenAt = useRef(new Map<string, string>());
+  // User note 7: how many events of the latest turn were shown when a message not yet in the file first appeared.
+  const outAnchor = useRef(new Map<string, number>());
   const items = useMemo(() => {
     const out: Item[] = [];
     const jobs = new Map<string, { at: string; event: AgentEvent }[]>();
@@ -278,11 +291,40 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
       if (e.jobId && e.jobId === job?.id && working) return job?.state === 'queued' && e.mode === 'redirect' ? 'pendingStart' : 'pending';
       return undefined;
     };
+    const userItem = (e: Extract<ConversationEntry, { type: 'user' }>, key: string): Item => {
+      const state = stateOf(e);
+      return { key, kind: 'user', at: e.at, text: e.text, pins: e.pins, ...(state ? { state } : {}), ...(e.mode === 'redirect' ? { redirect: true } : {}) };
+    };
+    // User note 7: a message of a job written after that job's first event was sent during the turn. It goes inside the
+    // turn, after the job's events written before it (the core writes it in the same ordered chain), not below the turn.
+    const inserts = new Map<string, TurnInsert[]>();
+    const inside = new Set<number>();
+    const counted = new Map<string, number>();
+    entries.forEach((e, i) => {
+      if (e.type === 'agent') { counted.set(e.jobId, (counted.get(e.jobId) ?? 0) + 1); return; }
+      if (e.type !== 'user' || !e.jobId || !e.mode || !counted.has(e.jobId)) return;
+      inside.add(i);
+      if (!inserts.has(e.jobId)) inserts.set(e.jobId, []);
+      inserts.get(e.jobId)!.push({ anchor: counted.get(e.jobId)!, item: userItem(e, `e${i}`) });
+    });
+    // Messages sent while the agent works that the conversation file does not hold yet: after the events shown when they
+    // were sent (remembered at their first render), in the latest job's turn when it is shown, else last.
+    const outItems: Item[] = [];
+    for (const o of outbox) {
+      if (known.has(o.clientId)) continue;
+      const item: Item = { key: `out:${o.clientId}`, kind: 'user', at: o.at, text: o.text, pins: o.pins, state: notDelivered.has(o.clientId) ? 'notDelivered' : read.has(o.clientId) ? 'delivered' : delivered.has(o.clientId) ? 'sent' : o.phase, ...(o.mode === 'redirect' ? { redirect: true } : {}) };
+      const turnJob = job && jobs.has(job.id) ? job.id : null;
+      if (!turnJob) { outItems.push(item); continue; }
+      const k = `${turnJob}\0${o.clientId}`;
+      if (!outAnchor.current.has(k)) outAnchor.current.set(k, jobs.get(turnJob)!.length);
+      if (!inserts.has(turnJob)) inserts.set(turnJob, []);
+      inserts.get(turnJob)!.push({ anchor: outAnchor.current.get(k)!, item });
+    }
     const approvalsOf = (jobId: string | null) => shownApprovals
       .filter((s) => (jobId === null ? !jobs.has(s.approval.jobId) : s.approval.jobId === jobId))
       .map((s): Item => ({ key: `ap:${s.approval.id}`, kind: 'approval', shown: s }));
     const turn = (jobId: string) => [
-      ...turnItems(t.web.liveUi.interruptedRow, jobId, jobs.get(jobId)!, jobId === job?.id && working, unfolded.has(jobId), detailsOpen.has(jobId), logOf),
+      ...turnItems(t.web.liveUi.interruptedRow, jobId, jobs.get(jobId)!, jobId === job?.id && working, unfolded.has(jobId), detailsOpen.has(jobId), logOf, inserts.get(jobId)),
       ...approvalsOf(jobId),
     ];
 
@@ -297,10 +339,12 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
         return;
       }
       const key = `e${i}`;
-      if (e.type === 'user') {
+      if (e.type === 'user' && inside.has(i)) {
+        // Already shown inside its turn.
+        lastUser = { text: e.text, pins: e.pins, failed: false };
+      } else if (e.type === 'user') {
         const retried = lastUser !== null && lastUser.failed && same(lastUser.text, e.text) && samePins(lastUser.pins, e.pins);
-        const state = stateOf(e);
-        out.push(retried ? { key, kind: 'retried', at: e.at } : { key, kind: 'user', at: e.at, text: e.text, pins: e.pins, ...(state ? { state } : {}), ...(e.mode === 'redirect' ? { redirect: true } : {}) });
+        out.push(retried ? { key, kind: 'retried', at: e.at } : userItem(e, key));
         lastUser = { text: e.text, pins: e.pins, failed: false };
       } else if (e.type === 'version') {
         if (lastUser) lastUser.failed = false;
@@ -313,11 +357,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
     // A job with nothing persisted yet (only live events) comes last.
     if (job && jobs.has(job.id) && !firstIndex.has(job.id)) out.push(...turn(job.id));
     out.push(...approvalsOf(null));
-    // Messages sent while the agent works that the conversation file does not hold yet.
-    for (const o of outbox) {
-      if (known.has(o.clientId)) continue;
-      out.push({ key: `out:${o.clientId}`, kind: 'user', at: o.at, text: o.text, pins: o.pins, state: notDelivered.has(o.clientId) ? 'notDelivered' : read.has(o.clientId) ? 'delivered' : delivered.has(o.clientId) ? 'sent' : o.phase, ...(o.mode === 'redirect' ? { redirect: true } : {}) });
-    }
+    out.push(...outItems);
     const waiting = shownApprovals.some((s) => !s.leaving && s.approval.jobId === job?.id);
     if (working && !waiting) out.push({ key: 'typing', kind: 'typing' });
     return out;
