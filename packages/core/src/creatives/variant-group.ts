@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
-  activeMembers, canDiscard, effectiveLinks, followerVersion, formatDisplayName, hasFormat, MAX_INSTANCES, MAX_VARIANTS, nextInstanceId, nextLetter, presetOf, starOf,
+  activeMembers, canDiscard, sisterSlug, effectiveLinks, followerVersion, formatDisplayName, hasFormat, MAX_INSTANCES, MAX_VARIANTS, nextInstanceId, presetOf, starOf,
   VARIANT_LETTERS, variantGroupSchema,
   type CreativeFile, type VariantGroup, type VariantLetter, type VariantMember, type VariantPick, type VersionEntry,
 } from '@motion-studio/shared';
@@ -12,7 +12,7 @@ import { CodedError } from '../workspace-store.ts';
 import { copyVerified, versionDirReady } from './carry-over.ts';
 import { compositionDirOf } from './composition-contract.ts';
 import { alignEditorCopies } from './composition-turn.ts';
-import { CREATIVE_SLUG_RE, groupTiedTo, isRealSister, memberPresent, type CreativeStore } from './creative-store.ts';
+import { CREATIVE_SLUG_RE, creativeKind, groupTiedTo, isRealSister, memberPresent, type CreativeStore } from './creative-store.ts';
 import type { BriefPatch, CreativeRef, CreativeTurnService, SharedBrief } from './creative-turns.ts';
 
 /**
@@ -177,7 +177,7 @@ export class VariantGroupService {
       const committed: string[] = [];
       try {
         for (const s of specs) {
-          const letter = nextLetter(g)! as Exclude<VariantLetter, 'a'>;
+          const letter = await this.freeLetter(host, g);
           const sister: CreativeFile = {
             schemaVersion: 1, title: hostFile.title, brief: hostFile.brief, status: 'draft', error: null,
             createdAt: at, updatedAt: at, resumeFrom: null, linkedCodebases: hostFile.linkedCodebases ?? [], variantOf: host.creativeSlug,
@@ -264,6 +264,41 @@ export class VariantGroupService {
     await store.appendConversation(sister.creativeSlug, { type: 'version', at: now(), n: 1, status });
     await store.update(sister.creativeSlug, { status: status === 'complete' ? 'ready' : 'incomplete', error: null });
     turns.storyboardsLater(sister, store, 1);
+  }
+
+  /**
+   * The next letter for a new sister: the first one no member uses, skipping the folder of a former sister of this host
+   * (an orphan: decision 947, a sister archived on its own leaves the group and keeps its folder). Any other folder in the
+   * way is refused by `createSister` (409 `variant-folder-exists`), as before. 409 `variants-full` when none is left.
+   */
+  private async freeLetter(host: CreativeRef, g: VariantGroup): Promise<Exclude<VariantLetter, 'a'>> {
+    const used = new Set(g.members.map((m) => m.letter));
+    for (const l of VARIANT_LETTERS) {
+      if (l === 'a' || used.has(l)) continue;
+      if ((await creativeKind(host.projectDir, sisterSlug(host.creativeSlug, l))) !== 'orphan') return l;
+    }
+    throw new CodedError(409, t().errors.variantsFull({ max: MAX_VARIANTS }), 'variants-full');
+  }
+
+  /**
+   * Decision 947: takes sister `slug` out of the host's group (it is archived or deleted on its own): its ★s go back to the
+   * default rule; a group left with variant A alone is no group any more (the host is a single creative again). 409
+   * `variant-last-active` for the group's last active variant. The CALLER holds the host's lock (and the sister's) and
+   * passes the group as stored then. Returns the group written, or null when it was dropped.
+   */
+  async detachLocked(host: CreativeRef, g: VariantGroup, slug: string): Promise<VariantGroup | null> {
+    const m = g.members.find((x) => x.slug === slug && x.letter !== 'a');
+    if (!m) return g;
+    if (m.status === 'active' && activeMembers(g).length === 1) throw new CodedError(409, t().errors.variantLastActive({ letter: upper(m.letter) }), 'variant-last-active');
+    const members = g.members.filter((x) => x.slug !== slug);
+    const picks = Object.fromEntries(Object.entries(g.picks).filter(([, p]) => p.slug !== slug));
+    if (members.length === 1) {
+      const updated = await this.deps.store.update(host.creativeSlug, { variantGroup: undefined });
+      await this.deps.turns.commitCreativeFiles(host, [host.creativeSlug], t().jobs.variantGroupCommit({ title: updated.title }));
+      this.deps.turns.changed(host);
+      return null;
+    }
+    return this.writeGroup(host, { ...g, members, picks });
   }
 
   /**

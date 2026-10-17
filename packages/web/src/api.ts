@@ -1,4 +1,4 @@
-import type { LocaleTag, Localization, LocalizationIssue, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StagedSvgEdit, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, AgentCapabilities, ApprovalDecision, ApprovalRequest, QuestionAnswers, LiveMessageOutcome, RedirectOutcome, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, UpdatesState, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings, StorePack, VariantLetter, VariantPick } from '@motion-studio/shared';
+import type { LocaleTag, Localization, LocalizationIssue, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StagedSvgEdit, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, AgentCapabilities, ApprovalDecision, ApprovalRequest, QuestionAnswers, LiveMessageOutcome, RedirectOutcome, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, CreativeRemovalInfo, RecentCreative, DoctorCheck, UpdatesState, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings, StorePack, VariantLetter, VariantPick } from '@motion-studio/shared';
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
 
@@ -223,7 +223,16 @@ export const api = {
   sendConsoleMessage: (jobId: string, body: { clientId: string; text: string; pins?: Pin[] }) => request<{ outcome: LiveMessageOutcome }>('POST', `/api/console/${encodeURIComponent(jobId)}/messages`, body),
   getFormats: () => request<CatalogState>('GET', '/api/formats'),
   recentCreatives: (limit?: number) => request<RecentCreative[]>('GET', `/api/recent-creatives${limit === undefined ? '' : `?limit=${limit}`}`),
+  /** Decision 915: the archived creatives are left out (`listArchivedCreatives` lists only them). */
   listCreatives: (slug: string) => request<CreativeListItem[]>('GET', `${p(slug)}/creatives`),
+  listArchivedCreatives: (slug: string) => request<CreativeListItem[]>('GET', `${p(slug)}/creatives?archived=1`),
+  /** Decision 915: whether the creative can be archived or deleted now, and as what (single, group, variant). */
+  creativeRemoval: (slug: string, creative: string) => request<CreativeRemovalInfo>('GET', `${c(slug, creative)}/removal`),
+  /** `all`: the whole variant group, from its variant A (required there). */
+  archiveCreative: (slug: string, creative: string, all = false) => request<{ archived: string[] }>('POST', `${c(slug, creative)}/archive${all ? '?all=1' : ''}`),
+  unarchiveCreative: (slug: string, creative: string) => request<{ restored: string[] }>('POST', `${c(slug, creative)}/unarchive`),
+  /** Moves the creative's folder (every variant's with `all`) to the Trash. */
+  deleteCreative: (slug: string, creative: string, all = false) => request<{ deleted: string[] }>('DELETE', `${c(slug, creative)}${all ? '?all=1' : ''}`),
   createCreative: (slug: string, body: { title: string; brief: Brief; generate: boolean; linkedCodebases?: LinkedCodebase[] }) =>
     request<{ slug: string; creative: CreativeFile; job: JobSummary | null; /** Phase 15: an identity creative with concepts > 1 starts its variants (no single job). */ variantRun?: VariantRunResult; /** The start failed after the group existed: the slug is still good. */ startError?: string; /** The group could not be made after the creative existed (nothing started): the slug is still good. */ groupError?: string }>('POST', `${p(slug)}/creatives`, body),
   /** Phase 15: creates sisters (no turn starts). With no group, `count` is the whole group size, A included (2..5), and `directions[0]` is A's. */

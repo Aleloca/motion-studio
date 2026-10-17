@@ -187,6 +187,19 @@ export class CreativeSideStateStore {
     });
   }
 
+  /**
+   * Decision 915: forgets the record of a creative moved to the Trash, so a new creative that takes its slug later starts
+   * clean (no queue, no remembered session, no pending brief of the old one).
+   */
+  async forget(projectDir: string, slug: string): Promise<void> {
+    const key = await this.key(projectDir, slug);
+    await this.lock.run(key, async () => {
+      this.memory.delete(key);
+      const file = this.file(key);
+      if (file !== null) await unlink(file).catch((err: NodeJS.ErrnoException) => { if (err.code !== 'ENOENT') throw err; });
+    });
+  }
+
   /** `creative` as the API shows it: the creative.json fields plus this state (the web reads `queued` there). */
   async merged(projectDir: string, slug: string, creative: CreativeFile): Promise<CreativeFile> {
     const { queued: _q, stoppedSession: _s, ...rest } = creative;

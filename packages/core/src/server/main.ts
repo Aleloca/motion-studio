@@ -22,6 +22,7 @@ import { createFfmpegTools } from '../media/media-tools.ts';
 import { KeyringVault, type SecretsVault } from '../secrets/vault.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 import { buildServer } from './app.ts';
+import { moveToTrash, type TrashFn } from '../trash.ts';
 import { acquireBootLock, type BootLock } from './boot-lock.ts';
 import { findRunningInstance, type RunningInstance } from './running-instance.ts';
 import { loadOrCreateUiToken, removeServerInfo, uiUrl, writeServerInfo } from './ui-token.ts';
@@ -89,6 +90,11 @@ export interface StartServerOptions {
    * passes Vite's `http://localhost:5173` (src/server/dev.ts).
    */
   devUiOrigins?: string[];
+  /**
+   * Decision 915: where a deleted creative's folder goes. The desktop app passes Electron's `shell.trashItem`; default: the
+   * core's own `moveToTrash` (macOS `~/.Trash`, the freedesktop Trash on Linux, refused elsewhere).
+   */
+  trash?: TrashFn;
 }
 
 /**
@@ -187,6 +193,7 @@ async function startLocked(configDir: string, opts: StartServerOptions) {
     ...(opts.renderOptions ? { renderOptions: { ...opts.renderOptions } } : {}),
     onCompositionOrigin: (o) => { compositionOrigin = o; },
     openPath: revealFolder,
+    trash: opts.trash ?? ((p) => moveToTrash(p)),
     uiOrigins: () => uiOrigins,
   });
   const host = opts.host ?? '127.0.0.1';

@@ -21,6 +21,8 @@ import { MAX_DIRECTION_CHARS, VariantGroupService } from '../creatives/variant-g
 import { exportGroup, itemOfPlan, pendingByMember, planGroupExport, renderGroupLocales, resolveGroupLocalized, type GroupPlanItem } from '../creatives/variant-export.ts';
 import type { VariantFanout } from '../creatives/variant-fanout.ts';
 import { withLazyHashes } from '../creatives/output-hashes.ts';
+import { CreativeRemoval } from '../creatives/creative-removal.ts';
+import type { TrashFn } from '../trash.ts';
 import { creativeJobKey, PICK_RETRY_AFTER_SEC, type CreativeRef, type CreativeTurnService } from '../creatives/creative-turns.ts';
 import type { RenderJobService } from '../creatives/render-jobs.ts';
 import { reconcileRenders, renderFileMatches } from '../creatives/render-stamps.ts';
@@ -62,6 +64,10 @@ export interface CreativeRoutesContext {
   git?: Git;
   /** Phase 15: starts variants (`POST …/variants/run`): directions turn, then the fan-out. */
   variantRuns: VariantFanout;
+  /** Decision 915: the job queue now (archive and delete are refused while a job of the creative is queued or running). */
+  jobs: () => JobSummary[];
+  /** Decision 915: where a deleted creative's folder goes (the desktop's Electron Trash, the CLI's own; none: refused). */
+  trash: TrashFn;
 }
 
 const isInsideDir = (p: string, base: string | null) => Boolean(base && p.startsWith(base.endsWith(sep) ? base : base + sep));
@@ -334,10 +340,12 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   app.put<{ Body: { presets?: unknown } }>('/api/formats', async (req) => catalog().save((req.body?.presets ?? []) as never));
   app.post('/api/formats/reset', async () => catalog().resetToDefaults());
 
-  app.get<{ Params: { slug: string } }>('/api/projects/:slug/creatives', async (req) => {
+  // Decision 915: the archived creatives are left out; `?archived=1` lists only them (the "Archiviate" section).
+  app.get<{ Params: { slug: string }; Querystring: { archived?: string } }>('/api/projects/:slug/creatives', async (req) => {
     const ws = ctx.requireWorkspace();
     await ws.getProject(req.params.slug);
-    return new CreativeStore(ws.projectDir(req.params.slug)).list();
+    const archived = req.query.archived === '1';
+    return (await new CreativeStore(ws.projectDir(req.params.slug)).list()).filter((i) => (i.ok && i.archivedAt !== undefined) === archived);
   });
 
   // Read-only: the most recent creatives across all readable projects ("Jump back in").
@@ -350,7 +358,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       if (!p.ok) continue;
       const items = await new CreativeStore(ws.projectDir(p.slug)).list().catch(() => []);
       for (const i of items) {
-        if (!i.ok) continue;
+        if (!i.ok || i.archivedAt) continue;
         const { ok: _ok, ...summary } = i;
         all.push({ ...summary, project: { slug: p.slug, name: p.project.name } });
       }
@@ -460,6 +468,19 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const ref = await refOf(req.params.slug, req.params.c);
     return ctx.turns.updateBrief(ref, body);
   });
+
+  // Decision 915: archive, restore from the archive, and delete (to the Trash). `?all=1` acts on a whole variant group from
+  // its variant A (required there: 409 `creative-group` without it). Never reachable by the agent's tools (decision 917).
+  const removal = () => new CreativeRemoval({ turns: ctx.turns, jobs: ctx.jobs, trash: ctx.trash });
+  const plainRef = ({ store: _store, ...ref }: CreativeRef & { store: CreativeStore }): CreativeRef => ref;
+  app.get<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/removal', async (req) =>
+    removal().info(plainRef(await refOf(req.params.slug, req.params.c))));
+  app.post<{ Params: { slug: string; c: string }; Querystring: { all?: string } }>('/api/projects/:slug/creatives/:c/archive', async (req) =>
+    ({ archived: await removal().archive(plainRef(await refOf(req.params.slug, req.params.c)), req.query.all === '1') }));
+  app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/unarchive', async (req) =>
+    ({ restored: await removal().unarchive(plainRef(await refOf(req.params.slug, req.params.c))) }));
+  app.delete<{ Params: { slug: string; c: string }; Querystring: { all?: string } }>('/api/projects/:slug/creatives/:c', async (req) =>
+    ({ deleted: await removal().delete(plainRef(await refOf(req.params.slug, req.params.c)), req.query.all === '1') }));
 
   // Phase 15: variant groups (spec §2, §5). Every route but POST …/variants refuses a creative outside a group (409
   // `variant-no-group`) and writes nothing: an old creative is unchanged by them.

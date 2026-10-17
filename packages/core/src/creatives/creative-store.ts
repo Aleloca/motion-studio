@@ -196,7 +196,7 @@ export class CreativeStore {
         const last = versions.at(-1);
         const first = last?.outputs[0];
         const cover = last && first ? `outputs/v${last.n}/${first.preview ?? first.file}` : null;
-        read.set(e.name, { creative: c, item: { ok: true, slug: e.name, title: c.title, status: c.status, formats: c.brief.formats, ...(c.brief.formatLabels ? { formatLabels: c.brief.formatLabels } : {}), versions: versions.length, updatedAt: c.updatedAt, cover } });
+        read.set(e.name, { creative: c, item: { ok: true, slug: e.name, title: c.title, status: c.status, formats: c.brief.formats, ...(c.brief.formatLabels ? { formatLabels: c.brief.formatLabels } : {}), versions: versions.length, updatedAt: c.updatedAt, cover, ...(c.archivedAt ? { archivedAt: c.archivedAt } : {}) } });
       } catch (err) {
         if (err instanceof JsonFileError && err.reason === 'missing') continue;
         read.set(e.name, { creative: null, item: { ok: false, slug: e.name, error: (err as Error).message } });
@@ -286,7 +286,7 @@ export class CreativeStore {
     }
   }
 
-  update(slug: string, patch: Partial<Pick<CreativeFile, 'title' | 'brief' | 'status' | 'error' | 'resumeFrom' | 'linkedCodebases' | 'exportPicks' | 'freedInstances' | 'queued' | 'stoppedSession' | 'variantGroup' | 'variantOf'>>): Promise<CreativeFile> {
+  update(slug: string, patch: Partial<Pick<CreativeFile, 'title' | 'brief' | 'status' | 'error' | 'resumeFrom' | 'linkedCodebases' | 'exportPicks' | 'freedInstances' | 'queued' | 'stoppedSession' | 'variantGroup' | 'variantOf' | 'archivedAt'>>): Promise<CreativeFile> {
     return this.lock.run(`c:${slug}`, async () => {
       const current = await this.get(slug);
       const nowIso = new Date().toISOString();

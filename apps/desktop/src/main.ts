@@ -72,6 +72,8 @@ async function boot(configDir?: string) {
     ...serverOptions({ resources, shellPath, ...(configDir ? { configDir } : {}) }),
     systemLocales: app.getPreferredSystemLanguages(),
     updatesState: () => updatesState,
+    // Decision 915: a deleted creative goes to the system Trash through Electron (any disk, "Put Back" in the Finder).
+    trash: (p: string) => shell.trashItem(p),
     // Electron's own Chromium renders (hidden offscreen windows), never a Chrome found on disk.
     ...desktopRenderOptions(runtimeDir),
   });

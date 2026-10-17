@@ -114,3 +114,11 @@
 .ms-cempty h1 { margin: 0; font-size: 18px; font-weight: 700; text-wrap: balance; }
 .ms-cempty p { margin: 0; color: var(--muted); line-height: 1.5; text-wrap: pretty; }
 .ms-cempty-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+
+/* Decision 915: the card's "…" menu and the archived creatives. */
+.ms-ccard-more { margin: -4px -6px -4px 0; flex: none; }
+.ms-carchived-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ms-carchived-row { display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
+.ms-carchived-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.ms-carchived-text b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-carchived-text .ms-faint { font-size: 12px; }
