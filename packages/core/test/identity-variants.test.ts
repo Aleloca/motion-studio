@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_FORMATS, EMPTY_BRAND_KIT, type CreativeDetail, type CreativeFile } from '@motion-studio/shared';
 import { VariantFanout } from '../src/creatives/variant-fanout.ts';
+import { identityGroupSize } from '../src/server/creative-routes.ts';
 import { VariantGroupService } from '../src/creatives/variant-group.ts';
 import { buildCreativePrompt } from '../src/creatives/prompt.ts';
 import { variantApp, type VariantApp } from './helpers/variant-app.ts';
@@ -38,7 +39,11 @@ describe('identity concepts are variants', () => {
       const own = await v.detail(s);
       expect(own.creative.brief.formats, s).toEqual(IDENTITY);
     }
-    expect(JSON.stringify(await readFile(join(v.projectDir, 'creatives', slug, 'creative.json'), 'utf8'))).not.toContain('@');
+    // No identity-logo@k instance anywhere: the stored brief of every member lists the three presets as they are.
+    for (const s of [slug, `${slug}~b`, `${slug}~c`]) {
+      const stored = JSON.parse(await readFile(join(v.projectDir, 'creatives', s, 'creative.json'), 'utf8')) as CreativeFile;
+      expect(stored.brief.formats.filter((f) => f.includes('@')), s).toEqual([]);
+    }
     // generate: false starts nothing.
     expect(await v.jobs()).toEqual([]);
   });
@@ -49,6 +54,18 @@ describe('identity concepts are variants', () => {
       const { slug } = (await create(brief)).json() as { slug: string };
       expect((await v.detail(slug)).creative.variantGroup, JSON.stringify(brief.formats)).toBeUndefined();
     }
+  });
+
+  it('identityGroupSize: 3 concepts when none is given, a favicon alone or mixed with other formats is a group, instances and the brand start are not', () => {
+    const size = (b: Parameters<typeof identityGroupSize>[0]) => identityGroupSize(b, DEFAULT_FORMATS);
+    const scratch = (concepts?: number) => ({ start: 'scratch' as const, name: 'Acme', colors: 'brand' as const, ...(concepts !== undefined ? { concepts } : {}) });
+    expect(size({ formats: IDENTITY, identity: scratch() })).toBe(3);
+    expect(size({ formats: ['identity-favicon'], identity: scratch(4) })).toBe(4);
+    expect(size({ formats: ['identity-logo', 'instagram-post-1x1'], identity: scratch(2) })).toBe(2);
+    expect(size({ formats: IDENTITY, identity: scratch(9) })).toBe(5);
+    expect(size({ formats: ['identity-logo', 'identity-logo@2'], identity: scratch(3) })).toBe(1);
+    expect(size({ formats: IDENTITY, identity: { start: 'brand', colors: 'brand', concepts: 3 } })).toBe(1);
+    expect(size({ formats: IDENTITY })).toBe(1);
   });
 
   it('generate: true starts the group like a grouped creative: a directions turn, held turns for every variant', async () => {

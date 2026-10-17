@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
 import type { Shell } from '../src/shell/ShellContext.tsx';
 import { at, detailFor, groupOf, HOST, version } from './support/variants.ts';
+import { settled } from './support/settle.ts';
 
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -62,7 +63,7 @@ async function starred(): Promise<string[]> {
   await screen.findByRole('toolbar', { name: /^Variant/ });
   const col = document.querySelector('.ms-cv-formats') as HTMLElement;
   await waitFor(() => expect(api.groupExportPlan).toHaveBeenCalled());
-  await new Promise((r) => setTimeout(r, 50));
+  await settled(() => col.innerHTML);
   // The open variant's rows sit in channel groups nested in its own group: the head is the outermost group's.
   return [...col.querySelectorAll('.ms-cv-fmt')].map((btn) => {
     let g = btn.closest('.ms-cv-group') as HTMLElement;
