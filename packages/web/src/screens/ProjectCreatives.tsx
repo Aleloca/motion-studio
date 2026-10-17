@@ -15,6 +15,7 @@ import { message } from './common.tsx';
 import { CoverMedia } from '../components/MediaThumb.tsx';
 import { coverVideo } from '../media.ts';
 import { missingList } from './variants/variantModel.ts';
+import { CreativeActionsMenu, useCreativeRemoval } from './creative/CreativeRemoval.tsx';
 import './variants/variants.css';
 
 /** Preview stage: frames up to 164 px tall in a row of at most 300 px (prototype CreativeCard). */
@@ -42,13 +43,20 @@ export function ProjectCreatives({ slug, live }: { slug: string; live: EventsSta
   const [presets, setPresets] = useState<FormatPreset[]>([]);
   const [filter, setFilter] = useState<CreativeFilter>('all');
   const [query, setQuery] = useState('');
+  // Decision 915: the archived creatives, listed apart ("Archiviate") with Restore.
+  const [archived, setArchived] = useState<CreativeListItem[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
   const tick = useMemo(() => Object.entries(live.creativeTicks).filter(([k]) => k.startsWith(`${slug}/`)).reduce((a, [, v]) => a + v, 0), [live.creativeTicks, slug]);
 
   useEffect(() => {
     let alive = true; // a slow response for an older tick must not overwrite a newer one
+    // An archived item is never shown among the others, whatever the core answered.
     Promise.resolve().then(() => api.listCreatives(slug))
-      .then((r) => { if (alive) { setItems(r); setError(null); } })
+      .then((r) => { if (alive) { setItems(r.filter((i) => !(i.ok && i.archivedAt))); setError(null); } })
       .catch((e: unknown) => { if (alive) setError(message(e)); });
+    Promise.resolve().then(() => api.listArchivedCreatives(slug))
+      .then((r) => { if (alive) setArchived((r ?? []).filter((i) => i.ok && i.archivedAt)); })
+      .catch(() => { /* the section stays as it was */ });
     return () => { alive = false; };
   }, [slug, tick, nonce]);
   useEffect(() => {
@@ -77,6 +85,14 @@ export function ProjectCreatives({ slug, live }: { slug: string; live: EventsSta
 
   const showAll = () => { setFilter('all'); setQuery(''); };
   const retryLoad = () => { setError(null); setNonce((n) => n + 1); };
+  const reload = () => setNonce((n) => n + 1);
+  const archivedButton = archived.length > 0 ? (
+    <Button variant="ghost" size="sm" className="ms-carchived-toggle" onClick={() => setShowArchived(true)}><Icon name="folder" size={13} />{t.web.removal.archivedCount({ n: archived.length })}</Button>
+  ) : null;
+
+  if (showArchived) {
+    return <ArchivedCreatives slug={slug} items={archived} onBack={() => setShowArchived(false)} onChanged={reload} />;
+  }
 
   if (items && items.length === 0) {
     return (
@@ -90,6 +106,7 @@ export function ProjectCreatives({ slug, live }: { slug: string; live: EventsSta
             <Button variant="outline" onClick={() => go(href.project(slug, 'brand'))}>{c.setUpBrand}</Button>
             <Button variant="ink" onClick={() => go(href.newCreative(slug))}><Icon name="plus" size={13} strokeWidth={1.8} />{c.newCreative}</Button>
           </div>
+          {archivedButton}
         </section>
       </div>
     );
@@ -115,6 +132,7 @@ export function ProjectCreatives({ slug, live }: { slug: string; live: EventsSta
             <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={c.search} aria-label={c.search} />
           </label>
         ) : null}
+        {archivedButton}
         <Button variant="ink" onClick={() => go(href.newCreative(slug))}><Icon name="plus" size={13} strokeWidth={1.8} />{c.newCreative}</Button>
       </div>
 
@@ -143,7 +161,7 @@ export function ProjectCreatives({ slug, live }: { slug: string; live: EventsSta
           {shown.map((it, i) => it.ok ? (
             <CreativeCard
               key={it.slug} slug={slug} c={it} info={states.get(it.slug)!} presets={presets} index={i}
-              fresh={known.current !== null && !known.current.has(it.slug)}
+              fresh={known.current !== null && !known.current.has(it.slug)} onChanged={reload}
             />
           ) : (
             <article key={it.slug} className="ms-card ms-ccard ms-broken" data-enter data-delay={i * CASCADE_MS}>
@@ -159,9 +177,9 @@ export function ProjectCreatives({ slug, live }: { slug: string; live: EventsSta
   );
 }
 
-interface CardProps { slug: string; c: CreativeSummary; info: LiveCreative; presets: FormatPreset[]; index: number; fresh: boolean }
+interface CardProps { slug: string; c: CreativeSummary; info: LiveCreative; presets: FormatPreset[]; index: number; fresh: boolean; onChanged(): void }
 
-function CreativeCard({ slug, c, info, presets, index, fresh }: CardProps) {
+function CreativeCard({ slug, c, info, presets, index, fresh, onChanged }: CardProps) {
   const t = useT();
   const s = t.web.creatives;
   const locale = useLocale();
@@ -222,6 +240,7 @@ function CreativeCard({ slug, c, info, presets, index, fresh }: CardProps) {
         <div className="ms-ccard-head">
           <h3><a href={open} className="ms-ccard-link">{c.title}</a></h3>
           <span className="ms-ccard-when">{when}</span>
+          <CreativeActionsMenu slug={slug} creative={c.slug} label={t.web.removal.menu({ title: c.title })} onDone={onChanged} variant="ghost" size="sm" className="ms-ccard-more" />
         </div>
         {known.length ? (
           <div className="ms-ccard-tags">
@@ -318,5 +337,49 @@ function Previews({ slug, c, presets, state }: { slug: string; c: CreativeSummar
       ))}
       {c.formats.length > MAX_FRAMES ? <span className="ms-stage-more">{s.moreFormats({ n: c.formats.length - MAX_FRAMES })}</span> : null}
     </>
+  );
+}
+
+/** Decision 915: the archived creatives ("Archiviate"): each with Restore and Delete. */
+function ArchivedCreatives({ slug, items, onBack, onChanged }: { slug: string; items: CreativeListItem[]; onBack(): void; onChanged(): void }) {
+  const r = useT().web.removal;
+  return (
+    <div className="ms-creatives ms-carchived">
+      <div className="ms-creatives-head">
+        <Button variant="ghost" size="sm" onClick={onBack}><Icon name="back" size={13} />{r.backToCreatives}</Button>
+        <h1>{r.archivedTitle}</h1>
+      </div>
+      {items.length === 0 ? <Empty icon="check" title={r.archivedEmpty} /> : (
+        <ul className="ms-carchived-list" aria-label={r.archivedTitle}>
+          {items.map((it) => (it.ok ? <ArchivedRow key={it.slug} slug={slug} c={it} onChanged={onChanged} /> : null))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function ArchivedRow({ slug, c, onChanged }: { slug: string; c: CreativeSummary; onChanged(): void }) {
+  const t = useT();
+  const r = t.web.removal;
+  const locale = useLocale();
+  const removal = useCreativeRemoval(slug, c.slug, onChanged);
+  const { load } = removal;
+  useEffect(() => { load(); }, [load]);
+  const blocked = removal.info?.blocked?.message ?? null;
+  return (
+    <li className="ms-card ms-carchived-row">
+      <div className="ms-carchived-text">
+        <b>{c.title}</b>
+        <span className="ms-faint">
+          {c.archivedAt ? r.archivedOn({ when: relativeTime(locale, c.archivedAt) }) : null}
+          {c.variants ? ` · ${t.web.variantGroup.count({ count: c.variants.count })}` : null}
+        </span>
+      </div>
+      <Button size="sm" variant="outline" onClick={removal.restore}><Icon name="undo" size={13} />{r.restore}</Button>
+      <Button size="sm" variant="ghost" disabled={!removal.info || blocked !== null} title={blocked ?? undefined} onClick={removal.askDelete}>
+        <Icon name="trash" size={13} />{c.variants ? r.deleteGroup({ count: c.variants.count }) : r.delete}
+      </Button>
+      {removal.dialogs}
+    </li>
   );
 }

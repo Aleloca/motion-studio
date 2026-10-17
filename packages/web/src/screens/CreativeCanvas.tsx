@@ -21,6 +21,7 @@ import { useBarClaim } from '../shell/barSlots.ts';
 import { setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } from '../shell/intents.ts';
 import { go, ShellContext } from '../shell/ShellContext.tsx';
 import { Button, ChannelMark, Empty, Icon, Input, NavItem, Pill, Popover, Segmented, Spinner, Tabs, Tag, Toggle, cx, toast } from '../ui/index.ts';
+import { CreativeActionsMenu, type RemovalDone } from './creative/CreativeRemoval.tsx';
 import { useCreative } from '../useCreative.ts';
 import { jobLiveTokens, jobUsagePartial } from '../usageLive.ts';
 import { costText, TokenCount, UsageBadge } from '../shell/Tokens.tsx';
@@ -666,6 +667,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     const lv = liveOf(m);
     return (
       <VariantRowHeader member={m} focused={m.slug === creative} hasVersions={hasVersionsOf(m)} busy={vbusy === m.letter} actions={memberActions(m)}
+        removal={{ project: slug, onDone: (kind) => { if (kind === 'restored') return; if (m.slug === creative) go(href.creative(slug, hostSlug)); else afterGroupChange(); } }}
         state={rowState(m, group!.missing.includes(m.letter), lv, detailOfMember(m.slug)?.creative.status ?? null)}
         discardBlock={discardBlock(group!.group, m.letter, isRunning(lv))} />
     );
@@ -844,7 +846,9 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
           <Button variant="ink" className="ms-cv-export" disabled={!version && !group} onClick={() => { if (version || group) setExporting({ open: true, snapshot: { versions, states } }); }}>
             <Icon name="download" size={13} strokeWidth={1.7} />{c.export}
           </Button>
-          {!group && !vdetail ? <CreativeMenu onAddVariant={() => setAddOpen(true)} /> : null}
+          {/* Decision 915: archive and delete; a group's menu acts on the whole group (its variant A). */}
+          <CreativeMenu slug={slug} target={group ? hostSlug : creative} title={title} onAddVariant={!group && !vdetail ? () => setAddOpen(true) : null}
+            onRemoved={(kind) => { if (kind !== 'restored') go(href.project(slug)); }} />
         </>,
         bar.end,
       ) : null}
@@ -998,22 +1002,17 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   );
 }
 
-/** Phase 15: the menu of a creative that has no variants yet: the only way to start its group from the canvas. */
-function CreativeMenu({ onAddVariant }: { onAddVariant(): void }) {
+/**
+ * The creative's menu: "+ Variant" for a creative that has no variants yet (phase 15: the only way to start its group from
+ * the canvas), then Archive and Delete (decision 915) of the creative, or of the whole group from a group's canvas.
+ */
+function CreativeMenu({ slug, target, title, onAddVariant, onRemoved }: {
+  slug: string; target: string; title: string; onAddVariant: (() => void) | null; onRemoved(kind: RemovalDone): void;
+}) {
   const vg = useT().web.variantGroup;
-  const [open, setOpen] = useState(false);
-  const more = useRef<HTMLButtonElement>(null);
   return (
-    <>
-      <Button ref={more} variant="outline" icon className="ms-cv-more" aria-label={vg.creativeMenu} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        <Icon name="more" size={14} />
-      </Button>
-      <Popover open={open} onClose={() => setOpen(false)} anchor={more} placement="bottom-end" width={220}>
-        <div role="menu" aria-label={vg.creativeMenu}>
-          <NavItem data-row="" role="menuitem" icon="plus" onClick={() => { setOpen(false); onAddVariant(); }}>{vg.addVariant}</NavItem>
-        </div>
-      </Popover>
-    </>
+    <CreativeActionsMenu slug={slug} creative={target} label={vg.creativeMenu} className="ms-cv-more" onDone={onRemoved}
+      extra={onAddVariant ? (close) => <NavItem data-row="" role="menuitem" icon="plus" onClick={() => { close(); onAddVariant(); }}>{vg.addVariant}</NavItem> : undefined} />
   );
 }
 

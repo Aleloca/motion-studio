@@ -2,11 +2,12 @@
 // "Riprova" after a failure or a stop, and the ⋯ menu: use for all formats, discard (disabled with its reason while it works
 // or when it is the last active one), export this variant, edit the direction. A discarded row offers "Ripristina".
 import { directionLine, type VariantMember } from '@motion-studio/shared';
-import { useId, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { useT } from '../../i18n.tsx';
 import { Button, Icon, NavItem, Pill, Popover, cx } from '../../ui/index.ts';
 import { rovingIndex } from '../../ui/roving.ts';
 import type { RowState } from './variantModel.ts';
+import { RemovalMenuItems, useCreativeRemoval, type RemovalDone } from '../creative/CreativeRemoval.tsx';
 
 export interface VariantRowActions {
   onFocus(): void;
@@ -30,6 +31,8 @@ export interface VariantRowHeaderProps {
   /** Which busy action is in flight. */
   busy?: boolean;
   actions: VariantRowActions;
+  /** Decision 915: archive and delete of this variant alone (B..E: it leaves the group); `project` is the project's slug. */
+  removal?: { project: string; onDone(kind: RemovalDone): void };
 }
 
 /** The words of a row state (the waiting reasons are the core's stable codes). */
@@ -53,13 +56,17 @@ export function useStateText(): (s: RowState) => string {
   };
 }
 
-export function VariantRowHeader({ member, state, focused, discardBlock, hasVersions, busy, actions }: VariantRowHeaderProps) {
+export function VariantRowHeader({ member, state, focused, discardBlock, hasVersions, busy, actions, removal }: VariantRowHeaderProps) {
   const t = useT();
   const vg = t.web.variantGroup;
   const text = useStateText();
   const [open, setOpen] = useState(false);
   const more = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
+  const removable = removal !== undefined && member.letter !== 'a';
+  const removing = useCreativeRemoval(removal?.project ?? '', member.slug, removal?.onDone);
+  const { load } = removing;
+  useEffect(() => { if (open && removable) load(); }, [open, removable, load]);
   const why = useId();
   const letter = member.letter.toUpperCase();
   const reason = discardBlock === 'running' ? vg.discardRefused.running : discardBlock === 'last-active' ? vg.discardRefused.lastActive : null;
@@ -100,8 +107,10 @@ export function VariantRowHeader({ member, state, focused, discardBlock, hasVers
               <NavItem data-row="" role="menuitem" icon="edit" onClick={pick(actions.onEditDirection)}>{vg.editDirection}</NavItem>
               <NavItem data-row="" role="menuitem" icon="trash" aria-disabled={reason ? true : undefined} aria-describedby={reason ? why : undefined} onClick={reason ? undefined : pick(actions.onDiscard)}>{vg.discard}</NavItem>
               {reason ? <p id={why} className="ms-vmenu-why" role="note">{reason}</p> : null}
+              {removable ? <RemovalMenuItems removal={removing} close={() => setOpen(false)} /> : null}
             </div>
           </Popover>
+          {removable ? removing.dialogs : null}
         </>
       )}
     </div>

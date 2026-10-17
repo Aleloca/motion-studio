@@ -31,6 +31,9 @@ const build = (slug: string) => {
 };
 const reply = (slug = HOST) => build(slug);
 const api = {
+  archiveCreative: vi.fn(async (_s: string, c: string) => ({ archived: [c] })),
+  deleteCreative: vi.fn(async (_s: string, c: string) => ({ deleted: [c] })),
+  creativeRemoval: vi.fn(async (_s: string, c: string) => ({ role: c.includes('~') ? 'sister' : 'host', members: 3, letter: c.includes('~') ? c.slice(-1) : 'a', title: 'Lancio', archived: false, blocked: null })),
   getFormats: vi.fn(async () => ({ presets: DEFAULT_FORMATS, error: null, path: '/x' })),
   getCreative: vi.fn(async (_s: string, c: string) => build(c)),
   getConversation: vi.fn(async (_s: string, c: string) => conversations[c] ?? []),
@@ -240,6 +243,24 @@ describe('variant canvas · discard and restore', () => {
     await waitFor(() => expect(api.discardVariant).toHaveBeenCalledWith('acme', HOST, 'c'));
   });
 
+  it('decision 915: a variant B..E is archived or deleted alone from its row menu (A has no such items)', async () => {
+    render(<Harness live={emptyLive()} />);
+    const row = await region('Variante C');
+    await userEvent.click(within(row).getByRole('button', { name: 'Opzioni della variante C' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Archivia la variante C' }));
+    await waitFor(() => expect(api.archiveCreative).toHaveBeenCalledWith('acme', `${HOST}~c`, false));
+    await userEvent.click(within(row).getByRole('button', { name: 'Opzioni della variante C' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Elimina la variante C…' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.textContent).toContain('La variante C esce dal gruppo');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Sposta nel Cestino' }));
+    await waitFor(() => expect(api.deleteCreative).toHaveBeenCalledWith('acme', `${HOST}~c`, false));
+    const a = await region('Variante A');
+    await userEvent.click(within(a).getByRole('button', { name: 'Opzioni della variante A' }));
+    await screen.findByRole('menuitem', { name: 'Modifica direzione' });
+    expect(screen.queryByRole('menuitem', { name: /Archivia la variante/ })).toBeNull();
+  });
+
   it('a discarded variant is hidden; "Mostra scartate" shows it grey with "Ripristina", which restores it', async () => {
     group = groupOf(['a', 'b', 'c'], {}, { c: { status: 'discarded' } });
     render(<Harness live={emptyLive()} />);
@@ -373,10 +394,15 @@ describe('variant canvas · a creative with no variants yet', () => {
     await waitFor(() => expect(api.addVariants).toHaveBeenCalledWith('acme', HOST, { count: 2, directions: [null, null], baseFrom: { slug: HOST, version: 1 } }));
   });
 
-  it('a group has no such menu (it has "+ Variante" in its bar)', async () => {
+  it('a group\'s menu has no "+ Variante" (it is in its bar): only archive and delete of the whole group (decision 915)', async () => {
     render(<Harness live={emptyLive()} />);
     await loaded();
-    expect(screen.queryByRole('button', { name: 'Altro' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Altro' }));
+    const menu = await screen.findByRole('menu', { name: 'Altro' });
+    expect(within(menu).queryByRole('menuitem', { name: /Variante/ })).toBeNull();
+    expect(await within(menu).findByRole('menuitem', { name: 'Archivia tutte le 3 varianti' })).toBeTruthy();
+    expect(within(menu).getByRole('menuitem', { name: 'Elimina tutte le 3 varianti…' })).toBeTruthy();
+    expect(api.creativeRemoval).toHaveBeenCalledWith('acme', 'lancio');
   });
 });
 
