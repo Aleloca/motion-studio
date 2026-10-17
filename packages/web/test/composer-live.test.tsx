@@ -468,6 +468,19 @@ describe('user note 8: the agent\'s question in the conversation', () => {
     expect(within(card).getByText('No answer in time')).toBeTruthy();
   });
 
+  it('review fix: a message sent while the question card waits sits below the card; one sent before it stays above', () => {
+    const approval = { id: 'q1', jobId: 'j1', projectSlug: 'acme', creativeSlug: 'c1', kind: 'question' as const, title: 'The agent asks you a question', detail: '', toolName: 'AskUserQuestion', alwaysRule: null, explanation: null, agentReason: null, createdAt: at(3), expiresAt: '2026-10-14T10:13:00.000Z',
+      questions: [{ question, header: 'Length', multiSelect: false, options: [{ label: '12 s', description: '' }, { label: '30 s', description: '' }] }] };
+    const msg = (min: number, text: string, clientId: string): ConversationEntry => ({ type: 'user', at: at(min), text, pins: [], attachments: [], jobId: 'j1', mode: 'live', clientId });
+    const entries = [request, agent(2, { kind: 'text', text: 'One doubt first' }), agent(2, asked), msg(2, 'Before the card', '22222222-2222-4222-8222-222222222222'), msg(4, 'While it waits', '33333333-3333-4333-8333-333333333333')];
+    render(<I18nProvider locale="en"><Conversation {...props} approvals={[approval]} entries={entries} job={running} /></I18nProvider>);
+    const list = screen.getByRole('log');
+    const pos = (el: Element) => [...list.querySelectorAll('article, [data-approval]')].indexOf(el);
+    const card = list.querySelector('[data-approval="q1"]')!;
+    expect(pos(article('Before the card'))).toBeLessThan(pos(card));
+    expect(pos(article('While it waits'))).toBeGreaterThan(pos(card));
+  });
+
   it('a pending question (also after a reload: it comes with the snapshot) is a question card in the flow', () => {
     const approval = { id: 'q1', jobId: 'j1', projectSlug: 'acme', creativeSlug: 'c1', kind: 'question' as const, title: 'The agent asks you a question', detail: '', toolName: 'AskUserQuestion', alwaysRule: null, explanation: null, agentReason: null, createdAt: at(2), expiresAt: '2026-10-14T10:12:00.000Z',
       questions: [{ question, header: 'Length', multiSelect: false, options: [{ label: '12 s', description: 'As in the title' }, { label: '30 s', description: 'As in the brief' }] }] };

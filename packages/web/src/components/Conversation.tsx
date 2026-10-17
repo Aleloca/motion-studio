@@ -329,10 +329,21 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
     const approvalsOf = (jobId: string | null) => shownApprovals
       .filter((s) => (jobId === null ? !jobs.has(s.approval.jobId) : s.approval.jobId === jobId))
       .map((s): Item => ({ key: `ap:${s.approval.id}`, kind: 'approval', shown: s }));
-    const turn = (jobId: string) => [
-      ...turnItems(t.web.liveUi.interruptedRow, jobId, jobs.get(jobId)!, jobId === job?.id && working, unfolded.has(jobId), detailsOpen.has(jobId), logOf, inserts.get(jobId)),
-      ...approvalsOf(jobId),
-    ];
+    const turn = (jobId: string) => {
+      const events = jobs.get(jobId)!;
+      const cards = approvalsOf(jobId);
+      // A message sent after the turn's last event and after its first open card was shown goes below the cards (review
+      // fix): it answers what is on screen. Times compare on one machine (the core's clock, or the page's for the outbox).
+      const since = shownApprovals.filter((x) => x.approval.jobId === jobId).map((x) => Date.parse(x.approval.createdAt)).filter(Number.isFinite);
+      const cardAt = since.length > 0 ? Math.min(...since) : Infinity;
+      const all = inserts.get(jobId) ?? [];
+      const below = (x: TurnInsert) => x.anchor >= events.length && 'at' in x.item && Date.parse(x.item.at) >= cardAt;
+      return [
+        ...turnItems(t.web.liveUi.interruptedRow, jobId, events, jobId === job?.id && working, unfolded.has(jobId), detailsOpen.has(jobId), logOf, all.filter((x) => !below(x))),
+        ...cards,
+        ...all.filter(below).map((x) => x.item),
+      ];
+    };
 
     // C2: a user turn sent again with the same text and comments right after its turn failed (Try again) is a compact
     // "Retried · HH:MM" label, not a second identical bubble. A turn failed when its agent result is an error or the
