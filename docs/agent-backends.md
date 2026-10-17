@@ -55,6 +55,8 @@ Without the sandbox the launcher also guards the workspace settings (`WorkspaceS
 
 The MCP tools available per job type are in `MCP_TOOLS`. Permissions that go beyond the perimeter reach the interface through the `approve` tool (`--permission-prompt-tool`).
 
+Creative turns also get the app actions (`APP_ACTION_TOOLS`, decision 917: `update_brief`, `add_format`, `duplicate_format`, `add_language`, `add_variant`, `discard_variant`, `restore_variant`, `set_pick`, `render_version`, `prepare_export`; `creatives/agent-actions.ts`). Their scope is the bridge context's `appScope` (`LaunchInput.appScope`, set by the creative turn: its creative and the version it makes), never a tool argument; each handler calls the function the UI's route calls. A backend only has to expose these tools like the others: nothing in them depends on Claude Code. Brief edits made during the turn become the creative's pending brief; actions that need the turn to be over run from `CreativeTurnService.onTurnSettled`.
+
 ## What a CodexRunner would need
 The principle is that nothing outside `agent/` knows which agent is behind it. A `CodexRunner` would have to:
 - implement `AgentRunner`, translating the other agent's events into the `AgentEvent`s above (including `result` with the session to resume) and returning `AgentRunResult` with the same rules (an ok `result` wins over a later cancellation);
