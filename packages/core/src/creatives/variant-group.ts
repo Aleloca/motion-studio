@@ -86,6 +86,13 @@ export class VariantGroupService {
     return out;
   }
 
+  /** The group's formats now: the host's pending brief when it has one, else its own (the same source as `groupSelection`). */
+  async groupFormats(ref: CreativeRef): Promise<string[]> {
+    const r = await this.resolve(ref);
+    if (!r.group) throw new CodedError(409, r.orphan ? t().errors.variantOrphan : t().errors.variantNoGroup, r.orphan ? 'variant-orphan' : 'variant-no-group');
+    return (await this.canonical(r.host, await this.deps.store.get(r.host.creativeSlug))).brief.formats;
+  }
+
   /** Runs `fn` under the host's lock with the group as stored now (re-read under the lock). 409 outside a group. */
   private async withGroup<T>(ref: CreativeRef, fn: (host: CreativeRef, hostFile: CreativeFile, g: VariantGroup) => Promise<T>): Promise<T> {
     const e = t().errors;
@@ -186,15 +193,17 @@ export class VariantGroupService {
           if (hostPending) await turns.runLocked(sisterRef, () => turns.applySharedBrief(sisterRef, shared));
           if (s.baseFrom) {
             const baseLetter = g.members.find((m) => m.slug === s.baseFrom!.slug)!.letter;
+            // Recorded BEFORE the seed: it commits the sister's folder first and then does more (version, conversation), any of which can fail.
+            committed.push(slug);
             await turns.runLocked(sisterRef, () => this.seed(sisterRef, s.baseFrom!, baseLetter));
-            committed.push(slug); // `seed` committed the sister's folder
           }
         }
         await this.writeGroup(host, g, false);
       } catch (err) {
         for (const slug of created.reverse()) await store.removeSisterFolder(slug).catch(() => {});
         // Minor (Task 2): a seeded sister's folder is already in git; its removal is committed too, not left as a deletion.
-        if (committed.length > 0) await turns.commitFolder(host, committed.map((s) => store.dir(s)), t().jobs.variantsRolledBackCommit({ title: hostFile.title })).catch(() => null);
+        // One by one: a sister whose seed failed before its commit has nothing to commit (git refuses the path), and must not hold back the others.
+        for (const slug of committed) await turns.commitFolder(host, [store.dir(slug)], t().jobs.variantsRolledBackCommit({ title: hostFile.title })).catch(() => null);
         throw err;
       }
       await turns.commitCreativeFiles(host, [host.creativeSlug], t().jobs.variantsAddedCommit({ title: hostFile.title, letters: created.map((s) => upper(s.slice(-1) as VariantLetter)).join(', ') }),

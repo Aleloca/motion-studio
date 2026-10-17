@@ -252,4 +252,17 @@ describe('minor (Task 2): the localization overlay edit applies the variant\'s p
     expect((await env.app.inject({ url: url(B), headers: H })).json().creative.brief.locales.extra).toEqual(['de', 'fr']);
     expect(await side.pendingBrief(env.projectDir(), B)).toBeNull();
   });
+
+  it('fix wave: GET export-group answers the group\'s canonical formats: the host\'s pending brief wins', async () => {
+    const side = new CreativeSideStateStore(null);
+    env = await startInstanceEnv('ms-test-variant-fmts-', { sideState: side });
+    const slug = await env.create(['test-wide'], { links: {}, locales: { primary: 'en', extra: ['de'] } });
+    const url = `/api/projects/acme/creatives/${slug}`;
+    expect((await env.app.inject({ method: 'POST', url: `${url}/variants`, headers: H, payload: { count: 2 } })).statusCode).toBe(201);
+    const read = async () => (await env.app.inject({ url: `${url}/export-group`, headers: H })).json() as { formats: string[] };
+    expect((await read()).formats).toEqual(['test-wide']);
+    const hostBrief = (await env.app.inject({ url, headers: H })).json().creative.brief;
+    await side.setPendingBrief(env.projectDir(), slug, { brief: { ...hostBrief, formats: ['test-wide', 'test-tall'] }, at: new Date().toISOString() });
+    expect((await read()).formats).toEqual(['test-wide', 'test-tall']);
+  });
 });

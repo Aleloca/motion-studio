@@ -618,6 +618,7 @@ export const en = {
     conflict: 'The same work is already queued or running. Try again when it ends.',
     briefUpdatedCommit: (p: { title: string }) => `${p.title}: brief updated`,
     variantsAddedCommit: (p: { title: string; letters: string }) => `${p.title}: variants ${p.letters}`,
+    variantRequestWillStop: 'This request will be stopped as soon as it starts (it could not be removed from the queue)',
     variantsRolledBackCommit: (p: { title: string }) => `${p.title}: adding variants rolled back`,
     variantGroupCommit: (p: { title: string }) => `${p.title}: variants`,
     variantSeedRequest: (p: { letter: string; n: number }) => `Started from variant ${p.letter}, version ${p.n}`,

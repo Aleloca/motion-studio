@@ -54,11 +54,11 @@ const upper = (l: VariantLetter) => l.toUpperCase();
 interface Entry {
   letter: VariantLetter; ref: CreativeRef; jobId?: string; clientId?: string;
   /** Applied to the queued request's turn when it starts (the cover). */ onStart?: (jobId: string) => void;
-  gone?: Promise<void>; markGone?: () => void; /** Told the turn's id when a queued request starts: `gone` follows that turn. */ watch?: (jobId: string) => void;
+  gone?: Promise<void>; markGone?: () => void; /** Set once `gone` resolved: nothing more is set for it (no hold, no cover, no hook). */ ended?: boolean; /** Told the turn's id when a queued request starts: `gone` follows that turn. */ watch?: (jobId: string) => void;
 }
 /** The hook of a queued request: its current hold, what its turn gets when it starts, and what happens if it is removed by hand. */
 const hookOf = (e: Entry, hold: JobWaitReason | null) => ({ hold, started: (id: string) => { e.jobId = id; e.watch?.(id); e.onStart?.(id); }, removed: () => e.markGone?.() });
-interface PaidPlan { items: NonNullable<PaidBatch['items']>; rules: string[] }
+interface PaidPlan { items: NonNullable<PaidBatch['items']>; rules: string[]; /** The rules still open per variant, to recompute `rules` for the variants that really start. */ byVariant: Partial<Record<VariantLetter, string[]>> }
 type DirectionsRun = Awaited<ReturnType<VariantDirections['begin']>>;
 
 /**
@@ -128,11 +128,13 @@ export class VariantFanout {
       try {
         if (idle.includes(m)) {
           const job = await turns.start(mref, message, { ...(formats ? { formats } : {}), ...(first ? { hold: first } : {}) });
-          entries.push({ letter: m.letter, ref: mref, jobId: job.id, gone: this.deps.queue.whenSettled(job.id).then(() => {}) });
+          const held: Entry = { letter: m.letter, ref: mref, jobId: job.id };
+          held.gone = this.deps.queue.whenSettled(job.id).then(() => { held.ended = true; });
+          entries.push(held);
           out.jobs[m.letter] = job.id;
         } else {
           const entry: Entry = { letter: m.letter, ref: mref, clientId: randomUUID() };
-          entry.gone = new Promise<void>((resolve) => { entry.markGone = resolve; });
+          entry.gone = new Promise<void>((resolve) => { entry.markGone = () => { entry.ended = true; resolve(); }; });
           // Looked up after the current step: the turn is told its id right BEFORE it is enqueued.
           entry.watch = (id) => { void Promise.resolve().then(() => this.deps.queue.whenSettled(id)).then(() => entry.markGone?.()); };
           if (first) turns.setQueuedHook(mref, entry.clientId!, hookOf(entry, first));
@@ -149,7 +151,12 @@ export class VariantFanout {
     }
     if (entries.length === 0 && error) throw error;
     // Minor (Task 3): the card lists only the targets that really started; one whose start failed has nothing to confirm.
-    const started = wholePlan ? { ...wholePlan, items: wholePlan.items.filter((i) => entries.some((e) => e.letter === i.variant)) } : null;
+    const startedLetters = new Set(entries.map((e) => e.letter));
+    const started = wholePlan ? {
+      ...wholePlan, items: wholePlan.items.filter((i) => startedLetters.has(i.variant)),
+      // The cover's rules too: a rule only a failed variant needed is not covered.
+      rules: [...new Set([...startedLetters].flatMap((l) => wholePlan.byVariant[l] ?? []))],
+    } : null;
     const plan = started && started.items.length > 0 ? started : null;
     if (entries.length === 0 || !first) return out;
     // The background part: directions, then the card, then the start.
@@ -202,6 +209,7 @@ export class VariantFanout {
   /** The current hold of every target: its held turn, or its queued request's turn when it starts. */
   private setHold(entries: Entry[], reason: JobWaitReason | null): void {
     for (const e of entries) {
+      if (e.ended) continue; // gone by hand: a hook set now would never be consumed
       if (e.jobId) { this.deps.queue.setHold(e.jobId, reason); continue; }
       this.deps.turns.setQueuedHook(e.ref, e.clientId!, hookOf(e, reason));
     }
@@ -216,6 +224,7 @@ export class VariantFanout {
       void Promise.resolve().then(() => queue.whenSettled(id)).then(() => approvals.uncover(id));
     };
     for (const e of entries) {
+      if (e.ended) continue;
       if (e.jobId) { apply(e.jobId); continue; }
       // Keyed by member + clientId: applied when that queued request becomes a turn (right before it is enqueued).
       e.onStart = apply;
@@ -239,6 +248,7 @@ export class VariantFanout {
           else {
             // Still queued (the removal failed): it must not run later as if nothing was decided. The hook stays; its turn is
             // stopped as soon as it is made, before it can run.
+            await new CreativeStore(e.ref.projectDir).appendConversation(e.ref.creativeSlug, { type: 'system', at: new Date().toISOString(), level: 'warning', text: t().jobs.variantRequestWillStop }).catch(() => {});
             console.warn(`Motion Studio: a declined variant request of ${e.ref.creativeSlug} could not be removed from its queue: ${err instanceof Error ? err.message : String(err)}`);
             turns.setQueuedHook(e.ref, e.clientId, { hold: 'variant-confirm', started: (id) => { void Promise.resolve().then(() => stopJob({ queue, approvals }, id)); } }); // after the step: the turn is enqueued right after this call
           }
@@ -290,6 +300,7 @@ export class VariantFanout {
     const allowed = async (rule: string) => isAllowedRule(rule) && await permissions.has(rule).catch(() => false);
     const items: PaidPlan['items'] = [];
     const rules = new Set<string>();
+    const byVariant: PaidPlan['byVariant'] = {};
     for (const m of members) {
       const c = await store.get(m.slug);
       for (const s of await this.deps.paidPlan(c.brief.services)) {
@@ -297,9 +308,10 @@ export class VariantFanout {
         for (const r of s.rules) if (!(await allowed(r))) open.push(r);
         if (open.length === 0) continue;
         for (const r of open) rules.add(r);
+        byVariant[m.letter] = [...new Set([...(byVariant[m.letter] ?? []), ...open])];
         items.push({ variant: m.letter, provider: s.provider, capability: s.kind, ...(s.kind === 'music' && c.brief.durationSec ? { seconds: c.brief.durationSec } : {}) });
       }
     }
-    return items.length === 0 ? null : { items, rules: [...rules] };
+    return items.length === 0 ? null : { items, rules: [...rules], byVariant };
   }
 }

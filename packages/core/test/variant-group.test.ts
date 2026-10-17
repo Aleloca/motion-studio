@@ -434,6 +434,20 @@ describe('minors (Task 2): a failed add leaves nothing behind, in git too', { ti
     expect(execFileSync('git', ['ls-files', '--', `creatives/${sis('b')}`], { cwd: projectDir, encoding: 'utf8' })).toBe('');
   });
 
+  it('the seed failing after it committed the sister (appendVersion throws): the removal is committed, the tree is clean', async () => {
+    turns = makeTurns({ contract: 'compositions', claude: true });
+    svc = new VariantGroupService({ store, turns });
+    process.env.FAKE_CLAUDE_SCENARIO = 'composition';
+    await turns.start(host);
+    await queue.whenIdle();
+    vi.spyOn(store, 'appendVersion').mockRejectedValueOnce(new Error('disk full'));
+    await expect(svc.addVariants(host, [{ baseFrom: { slug: host.creativeSlug, version: 1 } }])).rejects.toThrow('disk full');
+    vi.restoreAllMocks();
+    expect(existsSync(join(projectDir, 'creatives', sis('b')))).toBe(false);
+    expect(execFileSync('git', ['status', '--porcelain', '--', `creatives/${sis('b')}`], { cwd: projectDir, encoding: 'utf8' })).toBe('');
+    expect(execFileSync('git', ['ls-files', '--', `creatives/${sis('b')}`], { cwd: projectDir, encoding: 'utf8' })).toBe('');
+  });
+
   it('a sister added while the host\'s brief is pending starts from the pending brief: its links match its formats', async () => {
     await svc.addVariants(host, [{}]);
     // The host works (its next brief is pending): a link B->A exists for the format the pending brief removes.

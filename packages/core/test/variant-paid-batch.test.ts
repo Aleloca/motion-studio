@@ -10,6 +10,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { messages, type ApprovalRequest } from '@motion-studio/shared';
+import { CreativeSideStateStore } from '../src/creatives/creative-side-state.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { CreativeTurnService } from '../src/creatives/creative-turns.ts';
 import { variantApp, type VariantApp } from './helpers/variant-app.ts';
@@ -287,6 +288,9 @@ describe('variant paid batch (Review Focus 4)', () => {
     await decide((await v.pending())[0]!, 'deny');
     await vi.waitFor(async () => expect((await stateOf(res.json().jobs.a)).state).toBe('cancelled'));
     await vi.waitFor(async () => expect((await v.detail(`${slug}~b`)).creative.queued).toHaveLength(1));
+    // The chat of B says what will happen to the request.
+    const conv = (await v.app.inject(`${v.url(`${slug}~b`)}/conversation`)).json() as Array<{ type: string; text?: string }>;
+    expect(conv.filter((e) => e.type === 'system').map((e) => e.text)).toContainEqual(expect.stringMatching(/fermata appena parte|stopped as soon as it starts/));
     // B's turn ends: the request is still in its queue, so it starts by itself; its turn is stopped before it can run.
     rb0.finish();
     const bJobs = async () => (await v.jobs()).filter((j) => j.kind === 'creative' && j.key.endsWith(`:${slug}~b`));
@@ -311,6 +315,74 @@ describe('variant paid batch (Review Focus 4)', () => {
     expect([...new Set(card.paidBatch!.items!.map((i) => i.variant))].sort()).toEqual(['a', 'c']);
     expect(card.paidBatch!.total?.variants).toBe(2);
     await decide(card, 'deny');
+    await v.waitIdle();
+  });
+
+  it('fix wave: the queue write is through, so the card goes even when the answer\'s read fails', async () => {
+    v = await variantApp({ keys: KEYS });
+    const slug = await v.group(['Audace', 'Calma']);
+    await turn(`${slug}~b`, 'Prima B');
+    const rb0 = await runOf(`${slug}~b`);
+    const res = await run(slug, { targets: 'all-active', request: { text: 'Più luce' } });
+    const body = res.json() as { jobs: Record<string, string> };
+    await vi.waitFor(async () => expect(await v.pending()).toHaveLength(1));
+    await v.app.inject({ method: 'POST', url: `/api/jobs/${body.jobs.a}/cancel` });
+    const clientId = (await v.detail(`${slug}~b`)).creative.queued![0]!.clientId;
+    vi.spyOn(CreativeSideStateStore.prototype, 'merged').mockRejectedValueOnce(new Error('read failed'));
+    expect((await v.app.inject({ method: 'DELETE', url: `${v.url(`${slug}~b`)}/queue/${clientId}` })).statusCode).toBe(500);
+    await vi.waitFor(async () => expect(await v.pending()).toEqual([]), { timeout: 5000 });
+    rb0.finish();
+    await v.waitIdle();
+  });
+
+  it('fix wave: the cover\'s rules are those of the variants that started (a failed variant\'s rule is not covered)', async () => {
+    v = await variantApp({ keys: KEYS });
+    const slug = await v.group(['Audace', 'Calma', 'Retro']);
+    // A and C need only images; B (which will fail to start) also needs the voice.
+    const store = new CreativeStore(v.projectDir);
+    for (const s of [slug, `${slug}~c`]) {
+      const c = await store.get(s);
+      await store.update(s, { brief: { ...c.brief, services: { ...c.brief.services, voice: 'none' } } });
+    }
+    const start = CreativeTurnService.prototype.start;
+    vi.spyOn(CreativeTurnService.prototype, 'start').mockImplementation(async function (this: CreativeTurnService, ref, ...rest) {
+      if (ref.creativeSlug === `${slug}~b`) throw new Error('boom');
+      return start.call(this, ref, ...rest);
+    });
+    const cover = vi.spyOn(v.approvals, 'cover');
+    await run(slug, { targets: 'all-active', request: { text: 'Più luce' } });
+    await vi.waitFor(async () => expect(await v.pending()).toHaveLength(1));
+    const card = (await v.pending())[0]!;
+    expect(card.paidBatch!.items!.map((i) => i.capability)).not.toContain('voice');
+    await decide(card, 'once');
+    await vi.waitFor(() => expect(cover).toHaveBeenCalled());
+    const rules = cover.mock.calls[0]![1] as string[];
+    expect([...rules].length).toBeGreaterThan(0);
+    expect([...rules]).not.toContain('provider:tts-openai');
+    (await runOf(slug)).finish();
+    (await runOf(`${slug}~c`)).finish();
+    await v.waitIdle();
+  });
+
+  it('fix wave: a request gone by hand gets no hook back when the card is approved', async () => {
+    v = await variantApp({ keys: KEYS });
+    const slug = await v.group(['Audace', 'Calma', 'Retro']);
+    await turn(`${slug}~b`, 'Prima B');
+    const rb0 = await runOf(`${slug}~b`);
+    const res = await run(slug, { targets: 'all-active', request: { text: 'Più luce' } });
+    const body = res.json() as { jobs: Record<string, string>; queued: string[] };
+    expect(body.queued).toEqual(['b']);
+    await vi.waitFor(async () => expect(await v.pending()).toHaveLength(1));
+    const clientId = (await v.detail(`${slug}~b`)).creative.queued![0]!.clientId;
+    expect((await v.app.inject({ method: 'DELETE', url: `${v.url(`${slug}~b`)}/queue/${clientId}` })).statusCode).toBe(200);
+    const hooks = vi.spyOn(CreativeTurnService.prototype, 'setQueuedHook');
+    await decide((await v.pending())[0]!, 'once');
+    const ra = await runOf(slug);
+    // Approved: the run released its held turns and covered them, but set nothing for the request that is gone.
+    expect(hooks.mock.calls.filter((c) => c[1] === clientId && c[2] !== null)).toEqual([]);
+    rb0.finish();
+    ra.finish();
+    (await runOf(`${slug}~c`)).finish();
     await v.waitIdle();
   });
 

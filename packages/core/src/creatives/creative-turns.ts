@@ -1685,16 +1685,17 @@ export class CreativeTurnService {
 
   /** DELETE …/queue/:clientId: only while it waits. */
   async removeQueued(ref: CreativeRef, clientId: string): Promise<CreativeFile> {
-    const out = await this.editQueue(ref, (q) => {
+    return this.editQueue(ref, (q) => {
       if (!q.some((x) => x.clientId === clientId)) throw new CodedError(404, t().live.notQueued, 'not-queued');
       return q.filter((x) => x.clientId !== clientId);
+    }, () => {
+      // Phase 15: a removed request no longer has a variant run's hook (the run is told, so its card can go when nothing is left).
+      // As soon as the queue write is through: the later reads of the answer must not decide whether the hook is dropped.
+      const hookKey = `${creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug)}\0${clientId}`;
+      const hook = this.queuedHooks.get(hookKey);
+      this.queuedHooks.delete(hookKey);
+      hook?.removed?.();
     });
-    // Phase 15: a removed request no longer has a variant run's hook (the run is told, so its card can go when nothing is left).
-    const hookKey = `${creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug)}\0${clientId}`;
-    const hook = this.queuedHooks.get(hookKey);
-    this.queuedHooks.delete(hookKey);
-    hook?.removed?.();
-    return out;
   }
 
   /** PUT …/queue/:clientId: new text and pins, only while it waits. Changed pins refer to the version on screen now. */
@@ -1729,12 +1730,13 @@ export class CreativeTurnService {
     });
   }
 
-  private async editQueue(ref: CreativeRef, fn: (q: QueuedRequest[]) => QueuedRequest[]): Promise<CreativeFile> {
+  private async editQueue(ref: CreativeRef, fn: (q: QueuedRequest[]) => QueuedRequest[], written?: () => void): Promise<CreativeFile> {
     const store = new CreativeStore(ref.projectDir);
     await this.runLocked(ref, () => this.side.update(ref.projectDir, ref.creativeSlug, (c) => {
       const next = fn(c.queued ?? []);
       return { queued: next.length > 0 ? next : undefined };
     }));
+    written?.();
     this.changed(ref);
     return this.side.merged(ref.projectDir, ref.creativeSlug, await store.get(ref.creativeSlug));
   }

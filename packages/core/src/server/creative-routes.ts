@@ -732,7 +732,8 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   app.get<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/export-group', async (req) => {
     const ref = await refOf(req.params.slug, req.params.c);
     const plan = await planGroupExport(variantsOf(ref), ref.store, ref);
-    return { items: plan.map(({ creativeDir: _dir, set: _set, ...p }) => p) };
+    // `formats`: the group's canonical formats (the host's pending brief, else its own), for the rows of the final selection.
+    return { items: plan.map(({ creativeDir: _dir, set: _set, ...p }) => p), formats: await variantsOf(ref).groupFormats(ref) };
   });
 
   /**
