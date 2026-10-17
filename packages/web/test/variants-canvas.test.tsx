@@ -177,16 +177,17 @@ describe('variant canvas · layout', () => {
     // The formats column follows the grouping: one group per format, the variants inside it.
     const column = screen.getByRole('complementary', { name: /Formati|Formats/ });
     const fmt = within(column).getAllByRole('group').find((g) => /Post 1:1/.test(g.getAttribute('aria-label') ?? ''))!;
-    expect(within(fmt).getAllByRole('button').map((b) => b.textContent)).toEqual([expect.stringMatching(/^A/), expect.stringMatching(/^B/), expect.stringMatching(/^C/)]);
+    await waitFor(() => expect(within(fmt).getAllByRole('button').map((b) => b.textContent)).toEqual([expect.stringMatching(/^A/), expect.stringMatching(/^B/), expect.stringMatching(/^C/)]));
     rerender(<Harness live={emptyLive()} />);
   });
 
   it('by variant the formats column lists each variant with its formats', async () => {
     render(<Harness live={emptyLive()} />);
     await loaded();
-    const column = screen.getByRole('complementary', { name: /Formati|Formats/ });
-    const b = within(column).getByRole('group', { name: 'Variante B · Audace' });
-    expect(within(b).getAllByRole('button').length).toBe(2);
+    const column = await screen.findByRole('complementary', { name: /Formati|Formats/ });
+    const b = await within(column).findByRole('group', { name: 'Variante B · Audace' });
+    // B's formats come from B's own creative detail, which loads after A's region is up.
+    await waitFor(() => expect(within(b).getAllByRole('button').length).toBe(2));
   });
 });
 
