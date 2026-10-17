@@ -85,7 +85,7 @@ export async function checkComposition(compDir: string, format: string, preset: 
     problems.push(compositionProblem('composition.durationOffBrief', { duration: Math.round(c.duration * 10) / 10, target: briefDurationSec }));
   }
   if (preset.identity) {
-    const v = await identityProblems(compDir, c);
+    const v = await identityProblems(compDir, c, { requireDark: preset.identity === 'logo' });
     problems.push(...v.problems);
     warnings.push(...v.warnings);
   }
@@ -94,15 +94,18 @@ export async function checkComposition(compDir: string, format: string, preset: 
 
 /**
  * Vector mode of an identity format (Phase 14, spec §4.2, decisions 726–728): the composition's shape
- * (`checkVectorComposition`) and the strict check of its SVG files (`checkVectorSvg`), as problems: they reach the agent's
- * repair turn with their reasons (at most 5 a file). `<text>` is a warning.
+ * (`checkVectorComposition`) and the strict check of its SVG files (`checkVectorSvg`: the main one, `small` and `dark`), as
+ * problems: they reach the agent's repair turn with their reasons (at most 5 a file). `<text>` is a warning.
+ * `requireDark` (the turn check of a logo, decision 876): a logo without its negative `dark` clip is a problem. The render
+ * does not ask for it, so an older logo without one still renders and exports.
  */
-export async function identityProblems(compDir: string, c: Composition): Promise<{ problems: CompositionProblem[]; warnings: CompositionProblem[] }> {
+export async function identityProblems(compDir: string, c: Composition, o: { requireDark?: boolean } = {}): Promise<{ problems: CompositionProblem[]; warnings: CompositionProblem[] }> {
   const problems: CompositionProblem[] = [];
   const warnings: CompositionProblem[] = [];
   const v = checkVectorComposition(c);
   if (!v.ok) return { problems: [compositionProblem('composition.vectorShape', { reason: v.reason })], warnings };
-  for (const file of v.small !== undefined ? [v.svgFile, v.small] : [v.svgFile]) {
+  if (o.requireDark && v.dark === undefined) problems.push(compositionProblem('composition.logoDarkMissing'));
+  for (const file of [v.svgFile, v.small, v.dark].filter((f): f is string => f !== undefined)) {
     const r = await readConfinedFile(compDir, file, MAX_VECTOR_SVG_BYTES).catch(() => null);
     if (r === null) continue; // missing: the validator's assetMissing says so
     if ('skipped' in r) {

@@ -429,6 +429,7 @@ export const en = {
     ambiguousNames: (p: { path: string }) => `Two files of the composition folder have the same name once Unicode-normalised (${p.path}): rename one of them`,
     durationOffBrief: (p: { duration: number; target: number }) => `The composition lasts ${p.duration}s, but about ${p.target}s were requested: adjust the duration and the scenes`,
     vectorShape: (p: { reason: string }) => `Logo, favicon and app icon are vector compositions: ${p.reason}`,
+    logoDarkMissing: 'The logo has no negative version for dark backgrounds: add a second svg clip with "id": "dark", "hidden": true, full frame, "fit": "contain", and its own file (e.g. assets/logo-dark.svg): the same design with colours for a dark background',
     svgRefused: (p: { file: string; reason: string }) => `${p.file} was refused by the SVG check: ${p.reason}`,
     svgText: (p: { file: string }) => `${p.file} has text: convert it to paths, or it will look different where the font is not installed`,
     /** A short, translated summary of SVG refusals for the UI (the reasons stay English, for the agent, behind "Details"). */

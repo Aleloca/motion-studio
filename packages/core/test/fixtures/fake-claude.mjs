@@ -121,6 +121,19 @@ rl.once('line', async (line) => {
       // FAKE_CLAUDE_FONT=<file>: the composition declares that font (copied to assets/Mono.woff2, weight 700).
       const fonts = process.env.FAKE_CLAUDE_FONT ? [{ family: 'Mono', src: 'assets/Mono.woff2', weight: 700 }] : [];
       if (fonts.length) { mkdirSync(join(dir, 'assets'), { recursive: true }); copyFileSync(process.env.FAKE_CLAUDE_FONT, join(dir, 'assets', 'Mono.woff2')); }
+      // FAKE_CLAUDE_VECTOR=1 (identity formats): one full-frame svg clip `mark` instead; FAKE_CLAUDE_VECTOR_DARK=always|fix
+      // adds the logo's negative clip `dark` (assets/logo-dark.svg) always, or only in the fix attempt.
+      if (process.env.FAKE_CLAUDE_VECTOR) {
+        mkdirSync(join(dir, 'assets'), { recursive: true });
+        const vsvg = (fill) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="${fill}"/></svg>`;
+        writeFileSync(join(dir, 'assets', 'logo.svg'), vsvg('#111111'));
+        clips.splice(0, clips.length, { id: 'mark', type: 'svg', src: 'assets/logo.svg', start: 0, duration: 0, props: { fit: 'contain' } });
+        const dark = process.env.FAKE_CLAUDE_VECTOR_DARK;
+        if (dark === 'always' || (dark === 'fix' && isFix)) {
+          writeFileSync(join(dir, 'assets', 'logo-dark.svg'), vsvg('#eeeeee'));
+          clips.push({ id: 'dark', type: 'svg', src: 'assets/logo-dark.svg', start: 0, duration: 0, hidden: true, props: { fit: 'contain' } });
+        }
+      }
       const composition = {
         $schema: 'motion-studio/composition@1', width: f.width, height: f.height, fps: mode === 'invalid' ? 7 : 30, duration, background: '#101010', fonts,
         scenes: still || process.env.FAKE_CLAUDE_NO_SCENES ? [] : [{ id: 'one', start: 0, duration: half }, { id: 'two', start: half, duration: Math.round((duration - half) * 10) / 10 }],

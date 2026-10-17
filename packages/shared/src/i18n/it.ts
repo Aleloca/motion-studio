@@ -425,6 +425,7 @@ export const it: Messages = {
     ambiguousNames: (p) => `Due file della cartella della composizione hanno lo stesso nome una volta normalizzato in Unicode (${p.path}): rinominane uno`,
     durationOffBrief: (p) => `La composizione dura ${p.duration}s, ma ne erano stati chiesti circa ${p.target}: correggi la durata e le scene`,
     vectorShape: (p) => `Logo, favicon e icona app sono composizioni vettoriali: ${p.reason}`,
+    logoDarkMissing: 'Il logo non ha la versione negativa per sfondi scuri: aggiungi un secondo clip svg con "id": "dark", "hidden": true, a tutto quadro, "fit": "contain" e un file suo (es. assets/logo-dark.svg): lo stesso disegno con i colori per uno sfondo scuro',
     svgRefused: (p) => `${p.file} è stato rifiutato dal controllo SVG: ${p.reason}`,
     svgText: (p) => `${p.file} contiene testo: convertilo in tracciati, altrimenti cambia aspetto dove il font non è installato`,
     svgRefusedSummary: (p) => `${p.file} non ha passato il controllo di sicurezza degli SVG (${p.count} ${p.count === 1 ? 'motivo' : 'motivi'})`,
