@@ -1,5 +1,6 @@
 import { useState, type KeyboardEvent } from 'react';
 import { cx } from './cx.ts';
+import { ColorPick, withAlphaOf } from './ColorPick.tsx';
 
 export interface ColorSwatchGroup { label: string; colors: readonly string[] }
 
@@ -27,7 +28,7 @@ export function normalizeHex(s: string): string | null {
 }
 
 /**
- * A colour field, drawn here (no native colour input): a hex input and swatches. Enter or leaving the input commits a valid hex;
+ * A colour field: a free picker (a native colour input on the chip), a hex input and swatches. Enter or leaving the input commits a valid hex;
  * Escape drops what was typed; a swatch is a toggle button that chooses its colour.
  */
 export function ColorField({ value, onChange, label, groups = [], disabled, invalid, describedBy, onEnd, className }: ColorFieldProps) {
@@ -48,7 +49,7 @@ export function ColorField({ value, onChange, label, groups = [], disabled, inva
   return (
     <div className={cx('ms-color', className)}>
       <div className="ms-color-top">
-        <span className="ms-color-chip" aria-hidden="true" style={chip ? { background: chip } : undefined} />
+        <ColorPick value={chip} disabled={disabled} onPick={(picked) => { const hex = withAlphaOf(picked, value); setText(null); if (hex.toLowerCase() !== value?.toLowerCase()) onChange(hex); onEnd?.(); }} />
         <label className={cx('ms-field', disabled && 'ms-off', bad && 'ms-invalid')}>
           <input type="text" autoComplete="off" spellCheck={false} aria-label={label} aria-invalid={bad || undefined} aria-describedby={describedBy}
             disabled={disabled} value={shown} placeholder="#rrggbb" maxLength={9}

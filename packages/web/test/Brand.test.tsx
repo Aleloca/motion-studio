@@ -123,6 +123,16 @@ describe('Brand · colors', () => {
     expect(lastKit().colors).toHaveLength(2);
   });
 
+  it('the colour popover has a free picker besides the hex field (a picked colour is saved)', async () => {
+    en(<Brand slug="acme" live={live()} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit color Ink black' }));
+    const native = screen.getByLabelText('Pick a colour') as HTMLInputElement;
+    expect(native.type).toBe('color');
+    fireEvent.change(native, { target: { value: '#336699' } });
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(lastKit().colors[0]).toMatchObject({ id: 'ink', hex: '#336699' }));
+  });
+
   it('shows Saving… then Saved while the kit is saved (T12)', async () => {
     let finish!: (k: BrandKit) => void;
     api.saveBrandKit.mockImplementationOnce((_s, k) => new Promise((r) => { finish = r; void k; }));

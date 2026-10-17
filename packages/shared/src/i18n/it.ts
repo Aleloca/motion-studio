@@ -3307,6 +3307,7 @@ Variabili: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (array JSON)`,
       pinFrame: (p) => `Fotogramma inviato con il commento ${p.n}`,
     },
     ui: {
+      pickColor: 'Scegli un colore',
       loading: 'Caricamento',
       typing: 'Sta scrivendo',
       progress: 'Avanzamento',

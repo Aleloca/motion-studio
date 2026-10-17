@@ -3332,6 +3332,7 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
       pinFrame: (p: { n: number }) => `Frame sent with comment ${p.n}`,
     },
     ui: {
+      pickColor: 'Pick a colour',
       loading: 'Loading',
       typing: 'Typing',
       progress: 'Progress',

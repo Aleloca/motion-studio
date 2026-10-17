@@ -287,6 +287,12 @@ button.ms-avatar:active { transform: scale(.95); }
 .ms-color-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .ms-color-chip { width: 28px; height: 28px; flex: none; border-radius: 6px; box-shadow: inset 0 0 0 1px var(--line); }
 .ms-color-top .ms-field { flex: 1; }
+/* The chip is the native colour input, drawn invisible over the chip: it opens the system picker and keeps keyboard focus. */
+.ms-color-pick { position: relative; display: block; flex: none; cursor: pointer; border-radius: 6px; }
+.ms-color-pick .ms-color-chip { display: block; width: 100%; height: 100%; }
+.ms-color-native { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; opacity: 0; cursor: pointer; }
+.ms-color-pick:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ms-color-pick.ms-off { opacity: .55; cursor: default; }
 .ms-color-group { display: flex; flex-direction: column; gap: 4px; }
 .ms-color-cap { font-size: 11px; color: var(--muted); }
 .ms-color-swatches { display: flex; flex-wrap: wrap; gap: 6px; }

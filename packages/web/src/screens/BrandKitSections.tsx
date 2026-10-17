@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type FormEvent, type RefObject } from 'rea
 import { api } from '../api.ts';
 import { useT } from '../i18n.tsx';
 import { enter } from '../motion/index.ts';
-import { Button, Chip, cx, Field, Icon, Input, Popover, Segmented, Select, Spinner, Tag, toast } from '../ui/index.ts';
+import { Button, Chip, ColorPick, cx, Field, Icon, Input, Popover, Segmented, Select, Spinner, Tag, toast } from '../ui/index.ts';
 import { specimenFamily, useFontPreview } from './brandFonts.ts';
 import { GENRE_CANONICAL, GENRE_KEYS, genreKeyOf, hasLogoFor, MANUAL, nextId, normalizeFamily, normalizeHex, parseWeights, ratioText, stageColor, swatchText } from './brandModel.ts';
 import { TYPING_MS } from './brandSave.ts';
@@ -91,7 +91,7 @@ function Swatch({ c, autoOpen }: { c: BrandColor; autoOpen: boolean }) {
           <div className="ms-bpop-field">
             <span>{b.colors.hex}</span>
             <div className="ms-bhex">
-              <span className="ms-bhex-chip" style={{ background: normalizeHex(hex) ?? c.hex }} aria-hidden="true" />
+              <ColorPick size={22} value={normalizeHex(hex) ?? c.hex} disabled={locked} onPick={(picked) => { setHex(picked.slice(1).toUpperCase()); update({ hex: picked }, TYPING_MS); }} />
               <Field prefix="#" className="ms-grow">
                 <input value={hex} maxLength={7} disabled={locked} aria-label={b.colors.hex} aria-invalid={!hexOk || undefined} spellCheck={false}
                   onChange={(e) => { const v = e.target.value.replace(/[^0-9a-fA-F#]/g, '').replace(/^#/, '').toUpperCase(); setHex(v); const n = normalizeHex(v); if (n) update({ hex: n }, TYPING_MS); }} />
