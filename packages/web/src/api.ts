@@ -282,7 +282,7 @@ export const api = {
   exportPicks: (slug: string, creative: string, body: { destination: string; picks: Record<string, number>; follow?: Record<string, number>; pattern?: string; date?: string } & LocaleOptions) =>
     request<{ destination: string; files: Array<{ from: string; to: string }>; skipped: string[]; excluded?: ExportExcluded[] }>('POST', `${c(slug, creative)}/export`, body),
   /** Phase 15: the group export's plan (any member of the group answers the same): per format, the ★ or default member and version. */
-  groupExportPlan: (slug: string, creative: string) => request<{ items: GroupExportPlanItem[] }>('GET', `${c(slug, creative)}/export-group`),
+  groupExportPlan: (slug: string, creative: string) => request<{ items: GroupExportPlanItem[]; /** The group's canonical formats (the host's pending brief, else its own). */ formats?: string[] }>('GET', `${c(slug, creative)}/export-group`),
   /** Phase 15: exports each (chosen) format from its group selection, with today's file names; `force`: "Render anyway" for translations. */
   exportGroup: (slug: string, creative: string, body: { destination: string; formats?: string[]; pattern?: string; date?: string } & LocaleOptions) =>
     request<GroupExportResult>('POST', `${c(slug, creative)}/export-group`, body),

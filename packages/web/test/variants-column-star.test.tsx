@@ -26,7 +26,7 @@ const item = (format: string, letter: VariantLetter, n: number, source: 'pick' |
 let plan: PlanItem[] = [];
 const build = (slug: string) => detailFor(slug, versionsBy[slug] ?? [], group);
 const api = {
-  groupExportPlan: vi.fn(async () => ({ items: plan })),
+  groupExportPlan: vi.fn(async () => ({ items: plan, formats: ['instagram-post-1x1', 'tiktok-9x16'] })),
   setVariantLayout: vi.fn(async () => build(HOST)),
   getFormats: vi.fn(async () => ({ presets: DEFAULT_FORMATS, error: null, path: '/x' })),
   getCreative: vi.fn(async (_s: string, c: string) => build(c)),
