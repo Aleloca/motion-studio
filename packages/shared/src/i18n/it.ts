@@ -474,6 +474,7 @@ export const it: Messages = {
     stageUnknownBrandFont: 'Questo font non è nel brand kit',
     stageBrandFontNoFile: (p) => `${p.family} non ha un file del font nel brand kit`,
     stagedCollision: (p) => `${p.path} esiste già in questa composizione con un altro contenuto: aggiungi di nuovo il file`,
+    stageSvgBadBase: (p) => `${p.file} non è un SVG di questa composizione: riapri l'editor`,
     summaryNone: 'Modifiche dirette',
     busy: "L'agente o un render sta lavorando su questa creatività: salva la bozza quando ha finito",
     baseChanged: (p) => `${p.format} è cambiato in v${p.n} mentre lo modificavi: riapri l'editor sull'ultima versione (la bozza resta finché non la scarti)`,

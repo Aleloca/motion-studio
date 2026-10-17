@@ -481,6 +481,8 @@ export const en = {
     stageUnknownBrandFont: 'This font is not in the brand kit',
     stageBrandFontNoFile: (p: { family: string }) => `${p.family} has no font file in the brand kit`,
     stagedCollision: (p: { path: string }) => `${p.path} already exists in this composition with other content: add the file again`,
+    /** SVG inner editor: the clip's SVG an edit starts from is neither a file of this version nor one staged for the draft. */
+    stageSvgBadBase: (p: { file: string }) => `${p.file} is not an SVG of this composition: reopen the editor`,
     /** Saving a draft as a new version (Task 4, `DirectEditService.save`). */
     summaryNone: 'Direct edits',
     busy: 'The agent or a render is working on this creative: save the draft when it has finished',

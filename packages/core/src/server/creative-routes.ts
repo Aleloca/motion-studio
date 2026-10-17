@@ -160,12 +160,20 @@ const renderBody = z.object({
  * and format.
  */
 const previewBody = z.object({ format: z.string().min(1).max(200), parentOrigin: z.string().min(1).max(200), renewFrom: z.string().regex(/^[A-Za-z0-9_-]{43}$/).optional() }).strict();
-/** Staging a file for an editor draft (Phase 10b): the live preview session, and a library asset or a brand font. */
+/**
+ * Staging a file for an editor draft (Phase 10b): the live preview session, and a library asset, a brand font or an SVG
+ * edited in the editor (SVG inner editor). An edited SVG's `content` is bounded here only as transport (twice the SVG
+ * limit in characters); its 512 KB limit is the SVG check's, so an oversized one is refused with that reason like any other.
+ */
 const stageBody = z.object({
   token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   from: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('library'), file: z.string().min(1).max(300) }).strict(),
     z.object({ kind: z.literal('brandFont'), id: z.string().min(1).max(64) }).strict(),
+    z.object({
+      kind: z.literal('svgEdit'), clipId: z.string().min(1).max(200),
+      baseSrc: z.string().min(1).max(300).regex(/^assets\/[^\\]+\.svg$/i), content: z.string().min(1).max(2 * MAX_VECTOR_SVG_BYTES),
+    }).strict(),
   ]),
 }).strict();
 /** A composition folder's name: a preset id, or an instance id `<preset>@<k>` (Phase 12). */
@@ -990,11 +998,14 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   /**
    * Stages a library asset or a brand font for a draft (Phase 10b): copied, confined, into the staging folder of the live
    * preview session `token` of this creative, and served under that token. An upload goes through the library's own route
-   * first, then is staged from the library.
+   * first, then is staged from the library. An SVG edited in the editor (`svgEdit`) is checked and written there instead
+   * (`stageSvgEdit`): 400 `svg-edit-refused` / `svg-edit-bad-base`, 409 `variant-discarded`.
    */
-  app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/editor/stage', async (req) => {
+  app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/editor/stage', { bodyLimit: 4 * 1024 * 1024 }, async (req) => {
     const ref = await refOf(req.params.slug, req.params.c);
     const body = parse(stageBody, req.body);
+    // An edited SVG is a write the draft makes: a discarded variant (phase 15) is read-only until restored, as for a save.
+    if (body.from.kind === 'svgEdit') await ctx.turns.assertNotDiscarded(ref);
     return ctx.previews.stage({ projectDir: ref.projectDir, creativeDir: ref.store.dir(ref.creativeSlug), creativeSlug: ref.creativeSlug }, body.token, body.from, currentLocale());
   });
 
