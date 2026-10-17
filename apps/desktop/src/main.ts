@@ -164,6 +164,11 @@ async function run() {
   }
   let closing = false;
   const win = new BrowserWindow(windowOptions(join(__dirname, 'preload.cjs'), nativeTheme.shouldUseDarkColors));
+  // Development only: a packaged app takes its icon from the bundle (electron-builder: build/icon.icns, .ico, .png).
+  if (!app.isPackaged) {
+    const dev = join(__dirname, '..', 'build', process.platform === 'darwin' ? 'icon-mac.png' : 'icon.png');
+    if (process.platform === 'darwin') app.dock?.setIcon(dev); else win.setIcon(dev);
+  }
 
   const trusted = (e: IpcMainInvokeEvent) => ipcSenderTrusted(e, win.webContents, origin);
   ipcMain.handle('ms:pick-folder', async (e, arg: unknown) => {

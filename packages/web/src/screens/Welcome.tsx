@@ -1,3 +1,4 @@
+import { BrandLogo } from '../components/BrandLogo.tsx';
 import { LOCALES, type DoctorCheck, type LanguageSetting, type Locale, type Messages, type WorkspaceInfo, type WorkspaceProblem, type WorkspaceSettings } from '@motion-studio/shared';
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api.ts';
@@ -144,7 +145,7 @@ export function Welcome(props: WelcomeProps) {
             <LogoGlyph />
           </a>
         ) : <span className="ms-logo" aria-hidden="true"><LogoGlyph /></span>}
-        <b className="ms-welcome-brand">Motion Studio</b>
+        <BrandLogo className="ms-welcome-brand" height={22} />
         <span className="ms-welcome-version">{__APP_VERSION__}</span>
         <div className="ms-grow" />
         {props.onLanguage ? <LanguagePicker value={props.language ?? 'system'} systemLocale={props.systemLocale ?? 'en'} onChange={props.onLanguage} /> : null}

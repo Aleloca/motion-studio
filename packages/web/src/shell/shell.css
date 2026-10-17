@@ -17,6 +17,7 @@ html, body, #root { height: 100%; }
 .ms-logo:active { transform: scale(.94); }
 .ms-logo path { fill: var(--accent); }
 .ms-brand { font-weight: 700; white-space: nowrap; }
+.ms-brand-logo { display: flex; align-items: center; flex: none; }
 .ms-topbar-title { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-topbar-center { flex: 1; min-width: 0; display: flex; justify-content: center; }
 .ms-topbar-end { display: flex; align-items: center; gap: 6px; flex: none; margin-left: auto; }
