@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { DEFAULT_FORMATS, workspaceSettingsSchema, type Brief, type CreativeDetail, type JobSummary, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, workspaceSettingsSchema, type Brief, type CreativeDetail, type VersionEntry } from '@motion-studio/shared';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../src/i18n.tsx';
@@ -25,9 +25,9 @@ const api = {
   }),
   sendCreativeTurn: vi.fn(async () => ({})),
   fileUrl: (s: string, c: string, rel: string) => `/f/${s}/${c}/${rel}`,
-  exportPicks: vi.fn(async () => ({ destination: '/d', files: [], skipped: [] as string[] })),
+  // Decision 974: the dialog starts the export as a background job.
+  exportPicksJob: vi.fn(async () => ({ job: { id: 'e1', key: 'export:/w:acme:lancio:0a1b2c3d', kind: 'export' as const, label: 'Export', state: 'queued' as const, createdAt: '2026-10-08T10:00:00.000Z' } })),
   updateSettings: vi.fn(async (patch: object) => workspaceSettingsSchema.parse({ schemaVersion: 1, ...patch })),
-  prepareExport: vi.fn(async (): Promise<{ renders: Array<{ version: number; formats: string[]; job: JobSummary; covers: boolean }> }> => ({ renders: [] })),
 };
 class ApiError extends Error { constructor(public status: number, m: string, public code?: string) { super(m); } }
 vi.mock('../src/api.ts', () => ({ api, ApiError }));

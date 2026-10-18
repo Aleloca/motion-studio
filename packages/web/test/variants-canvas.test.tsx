@@ -42,7 +42,8 @@ const api = {
   updateCreative: vi.fn(async () => build(HOST).creative),
   restoreVersion: vi.fn(async () => build(HOST).creative),
   revealVersion: vi.fn(async () => ({ ok: true })),
-  exportPicks: vi.fn(async (_s: string, _c: string, body: { destination: string; picks: Record<string, number> }) => ({ destination: body.destination, files: [], skipped: [] as string[] })),
+  // Decision 974: the dialog starts the export as a background job.
+  exportPicksJob: vi.fn(async () => ({ job: { id: 'e1', key: 'export:/w:acme:lancio:0a1b2c3d', kind: 'export' as const, label: 'Export', state: 'queued' as const, createdAt: '2026-10-08T10:00:00.000Z' } })),
   cancelJob: vi.fn(async () => ({ cancelled: true })),
   setExportPick: vi.fn(async (..._a: unknown[]) => build(HOST)),
   setFormatLink: vi.fn(async (..._a: unknown[]) => build(HOST)),
