@@ -386,3 +386,15 @@ describe('formatRuns and the state of a history entry (decision 1061)', () => {
     expect(entryHasProblems([...vs, v3], 'reel', 3)).toBe(true);
   });
 });
+
+describe('entryHasProblems and renders (review, decision 1066)', () => {
+  it('the entry\'s own current render counts; a later identical version\'s render does not', () => {
+    const badRender = { ...rendered('reel', 'f', 'a'), problems: ['too large'] };
+    // v1's own render has problems; v2 keeps the content, checked clean: still not a clean ★.
+    const own = [v2(1, [['reel', 'a', undefined, ['durata']]], [badRender]), v2(2, [['reel', 'a', undefined, []]])];
+    expect(entryHasProblems(own, 'reel', 1)).toBe(true);
+    // v1 clean with no render; v2 keeps the content and has a bad render of its own: v1 is clean.
+    const later = [v2(1, [['reel', 'a', undefined, []]]), v2(2, [['reel', 'a', undefined, []]], [badRender])];
+    expect(entryHasProblems(later, 'reel', 1)).toBe(false);
+  });
+});

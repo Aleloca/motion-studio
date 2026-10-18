@@ -7,7 +7,7 @@ import { I18nProvider } from '../src/i18n.tsx';
 
 const api = { getConversation: vi.fn(async (): Promise<ConversationEntry[]> => []), cancelJob: vi.fn(async (_id: string) => ({ cancelled: true })) };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
-const { ActivityCenter, jobHref, jobPlace } = await import('../src/shell/ActivityCenter.tsx');
+const { ActivityCenter, jobHref, jobPlace, versionsByJob } = await import('../src/shell/ActivityCenter.tsx');
 const { jobVariantLetter } = await import('../src/screens/variants/variantModel.ts');
 
 const at = '2026-10-08T10:00:00.000Z';
@@ -122,5 +122,17 @@ describe('Activity center · render lane (Task 8)', () => {
     expect(cancels[0]!.closest('a')).toBeNull();
     await userEvent.click(cancels[1]!);
     expect(api.cancelJob).toHaveBeenCalledWith('r2');
+  });
+});
+
+describe('versionsByJob (decision 1066)', () => {
+  it('a job that kept the latest version (nothing changed) is told apart from one that saved a version', () => {
+    const at = '2026-10-18T10:00:00.000Z';
+    const event = { kind: 'text', text: 'ok' } as unknown as Extract<ConversationEntry, { type: 'agent' }>['event'];
+    const entries: ConversationEntry[] = [
+      { type: 'agent', at, jobId: 'j1', event }, { type: 'version', at, n: 1, status: 'complete' },
+      { type: 'agent', at, jobId: 'j2', event }, { type: 'system', at, level: 'info', text: 'x', keptVersion: 1 },
+    ];
+    expect(versionsByJob(entries)).toEqual({ j1: { n: 1, status: 'complete' }, j2: { n: 1, kept: true } });
   });
 });

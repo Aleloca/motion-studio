@@ -405,6 +405,17 @@ export type ConversationEntry =
    */
   | { type: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string; origin?: 'agent'; keptVersion?: number };
 
+/**
+ * Decision 1066: where a conversation entry closes a turn with a version: a `version` entry (the version it saved), or the
+ * line of a turn that saved none because nothing changed (`keptVersion`: the latest version, which still holds its content;
+ * `kept`, with no status of its own). null for any other entry.
+ */
+export function turnEndOf(e: ConversationEntry): { n: number; status: 'complete' | 'incomplete' | null; kept: boolean } | null {
+  if (e.type === 'version') return { n: e.n, status: e.status, kept: false };
+  if (e.type === 'system' && typeof e.keptVersion === 'number') return { n: e.keptVersion, status: null, kept: true };
+  return null;
+}
+
 export interface CreativeSummary { slug: string; title: string; status: CreativeStatus; formats: string[]; /** The brief's labels of format instances (Phase 12); absent when there are none. */ formatLabels?: Record<string, string>; versions: number; updatedAt: string; cover: string | null;
   /** Phase 15: on a group's host row only (its sisters are not listed): members, active ones, and members whose folder is missing. */
   variants?: VariantListInfo;

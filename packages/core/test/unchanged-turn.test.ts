@@ -162,6 +162,24 @@ describe('a turn that changes no output (decision 1060)', () => {
     expect(d.formats!.find((f) => f.id === 'tiktok-9x16')!.history).toEqual([1, 2]);
   });
 
+  it('a format the turn fails to deliver is a change: the incomplete version is saved as before (review, decision 1066)', async () => {
+    const slug = await create();
+    const first = await runOf(slug);
+    writeCompositions(first, 6);
+    first.finish({ write: false });
+    await waitIdle();
+    expect((await app.inject({ method: 'PUT', url: `${P}/${slug}`, payload: { brief: { ...brief, formats: ['youtube-16x9', 'tiktok-9x16'] } } })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'POST', url: `${P}/${slug}/turns`, payload: {} })).statusCode).toBe(202);
+    // The agent writes nothing, in each of its attempts.
+    for (const nth of [1, 2, 3]) (await runOf(slug, nth)).finish({ write: false });
+    await waitIdle();
+    const d = await detail(slug);
+    expect(d.versions.map((v) => [v.n, v.status])).toEqual([[1, 'complete'], [2, 'incomplete']]);
+    expect(d.versions[1]!.problems.some((p) => p.includes('tiktok-9x16'))).toBe(true);
+    expect(d.creative.status).toBe('incomplete');
+    expect((await systemTexts(slug)).some((x) => x === t().jobs.noOutputChanged({ n: 1, brief: false }))).toBe(false);
+  });
+
   it('in a variant group each variant is judged on its own outputs', async () => {
     const slug = await create(false);
     expect((await app.inject({ method: 'POST', url: `${P}/${slug}/variants`, payload: { count: 2, directions: ['Calmo', 'Ironico'] } })).statusCode).toBe(201);

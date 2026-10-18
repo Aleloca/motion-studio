@@ -5,6 +5,7 @@
 // format view (screens/FormatView.tsx) with T3.
 import { ProblemList } from '../components/ProblemList.tsx';
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
+import { turnEndOf } from '@motion-studio/shared';
 import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, outputWarningText, shownTotal, packInstancesOf, MAX_VARIANTS, nextLetter, type ConversationEntry, type CreativeDetail, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VariantLetter, type VariantMember, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -1120,9 +1121,10 @@ export function sentComments(entries: ConversationEntry[]): SentComments {
       open = [...open, ...e.pins.map((pin, i) => ({ pin, at: e.at, message: m, frame: pin.timeSec !== null || pin.range ? `${i + 1}` : undefined, end: Boolean(pin.range) }))];
       count += e.pins.length;
     }
-    if (e.type === 'version' && open.length) {
-      const n = e.n;
-      applied.push({ n, items: open.map(({ message: m, frame, end, ...k }) => ({ ...k, ...(m === message && frame ? { frame: `${n}-${frame}.jpg`, ...(end ? { frameEnd: `${n}-${frame}e.jpg` } : {}) } : {}) })) });
+    const closed = turnEndOf(e);
+    if (closed && open.length) {
+      const n = closed.n;
+      applied.push({ n, items: open.map(({ message: m, frame, end, ...k }) => ({ ...k, ...(m === message && frame && !closed.kept ? { frame: `${n}-${frame}.jpg`, ...(end ? { frameEnd: `${n}-${frame}e.jpg` } : {}) } : {}) })) });
       open = [];
     }
   }

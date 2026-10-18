@@ -687,9 +687,12 @@ describe('refusals', { timeout: 120_000 }, () => {
     const slug = await create(['test-wide', 'test-tall']);
     // Ops that cancel out: the same composition as v1.
     const body = await draft(slug, 1, 'test-wide', () => {}, [{ kind: 'clipProps', clipId: 'title', props: { text: 'Hello' } }]);
+    const chat = (await store().readConversation(slug)).length;
     const r = await save(slug, body);
     expect(r.statusCode, r.body).toBe(409);
     expect(r.json()).toEqual({ error: ed().unchanged({ format: label('test-wide'), n: 1 }), code: 'editor-unchanged' });
+    // Refused before the version is assembled: nothing said in the chat (review, decision 1066).
+    expect((await store().readConversation(slug)).length).toBe(chat);
     expect((await store().readVersions(slug)).map((v) => v.n)).toEqual([1]);
     expect(existsSync(join(store().dir(slug), 'outputs', 'v2'))).toBe(false);
   });

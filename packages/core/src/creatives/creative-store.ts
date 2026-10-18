@@ -2,7 +2,7 @@ import { lstatSync } from 'node:fs';
 import { appendFile, lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import {
-  activeMembers, creativeFileSchema, hostOf, isSessionId, sisterSlug, versionsFileSchema,
+  activeMembers, creativeFileSchema, hostOf, isSessionId, sisterSlug, turnEndOf, versionsFileSchema,
   type Brief, type ConversationEntry, type CreativeFile, type CreativeListItem, type VariantGroup, type VariantLetter, type VariantListInfo, type VersionEntry,
   issuesText,
 } from '@motion-studio/shared';
@@ -425,7 +425,7 @@ export class CreativeStore {
     for (let i = entries.length - 1; i >= 0; i--) {
       const e = entries[i]!;
       // Decision 1060: a turn that ended without a version (nothing changed) is over too.
-      if (e.type === 'version' || (e.type === 'system' && e.keptVersion !== undefined)) return null;
+      if (turnEndOf(e)) return null;
       if (e.type !== 'agent' || typeof e.jobId !== 'string' || !e.jobId) continue;
       cut ??= e.jobId;
       if (e.jobId !== cut) return null;

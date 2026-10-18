@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { creativeFileSchema, manifestSchema, pinSchema, versionsFileSchema } from '../src/index.ts';
+import { creativeFileSchema, manifestSchema, pinSchema, turnEndOf, versionsFileSchema } from '../src/index.ts';
 
 const now = '2026-10-07T10:00:00.000Z';
 const creative = {
@@ -69,5 +69,14 @@ describe('phase 9 optional fields', () => {
     expect(versionsFileSchema.safeParse({ schemaVersion: 1, versions: [{ ...entry, outputs: [{ ...out, sha256: 'xyz' }] }] }).success).toBe(false);
     const m = { schemaVersion: 1, files: [{ format: 'b', file: 'b.mp4', width: 1, height: 1, followsFormat: 'a' }], tools: [] };
     expect(manifestSchema.parse(m)).toEqual(m);
+  });
+});
+
+describe('turnEndOf (decision 1066)', () => {
+  it('a version entry, or the line of a turn that kept the latest version, closes a turn', () => {
+    const at = '2026-10-18T10:00:00.000Z';
+    expect(turnEndOf({ type: 'version', at, n: 3, status: 'incomplete' })).toEqual({ n: 3, status: 'incomplete', kept: false });
+    expect(turnEndOf({ type: 'system', at, level: 'info', text: 'x', keptVersion: 2 })).toEqual({ n: 2, status: null, kept: true });
+    expect(turnEndOf({ type: 'system', at, level: 'info', text: 'x' })).toBeNull();
   });
 });

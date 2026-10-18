@@ -210,6 +210,14 @@ describe('pin model', () => {
     const { applied } = sentComments([{ type: 'user', at, text: 'x', pins: [old, { ...old, timeSec: 2, range: { start: 2, end: 3 } }], attachments: [] }, { type: 'version', at, n: 3, status: 'complete' }]);
     expect(applied[0]!.items.map((k) => [k.frame, k.frameEnd])).toEqual([['3-1.jpg', undefined], ['3-2.jpg', '3-2e.jpg']]);
   });
+
+  it('a turn that made no version (nothing changed, decision 1066) closes its pins at the kept version, without frames', () => {
+    const pin = { format: REEL, x: 0.25, y: 0.5, timeSec: 4.2, note: 'qui' };
+    const { applied, open } = sentComments([{ type: 'user', at, text: 'x', pins: [pin], attachments: [] }, { type: 'system', at, level: 'info', text: 'nessuna versione nuova', keptVersion: 2 }]);
+    expect(open).toEqual([]);
+    expect(applied.map((a) => a.n)).toEqual([2]);
+    expect(applied[0]!.items[0]!.frame).toBeUndefined();
+  });
 });
 
 describe('chips in the conversation', () => {

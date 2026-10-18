@@ -1,4 +1,4 @@
-import { DEFAULT_FORMATS, SUPPORTED_LOCALES, type AgentEvent, type ApprovalRequest, type ConversationEntry, type JobSummary } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, SUPPORTED_LOCALES, turnEndOf, type AgentEvent, type ApprovalRequest, type ConversationEntry, type JobSummary } from '@motion-studio/shared';
 import { instanceName, presetFor } from '../instances.ts';
 import { localeName } from '../screens/creative/languagesModel.ts';
 import { useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -68,7 +68,8 @@ export function jobHref(job: JobSummary): string | null {
   return href.project(at.project);
 }
 
-type Made = { n: number; status: 'complete' | 'incomplete' };
+/** A saved version, or (decision 1066) the latest version a turn kept because nothing changed. */
+type Made = { n: number; status: 'complete' | 'incomplete' } | { n: number; kept: true };
 
 /** The version each job of a creative produced: agent entries carry the job id, the version entry follows them. */
 export function versionsByJob(entries: ConversationEntry[]): Record<string, Made> {
@@ -77,7 +78,10 @@ export function versionsByJob(entries: ConversationEntry[]): Record<string, Made
   for (const e of entries) {
     if (e.type === 'agent') last = e.jobId;
     else if (e.type === 'user') last = null;
-    else if (e.type === 'version' && last && !out[last]) out[last] = { n: e.n, status: e.status };
+    else if (last && !out[last]) {
+      const end = turnEndOf(e);
+      if (end) out[last] = end.kept || end.status === null ? { n: end.n, kept: true } : { n: end.n, status: end.status };
+    }
   }
   return out;
 }
@@ -357,7 +361,7 @@ function DoneRow({ job, made, failure, tokens, partial }: { job: JobSummary; mad
   const locale = useLocale();
   const ok = job.state === 'succeeded';
   const state = t.web.jobState[job.state];
-  const what = made ? (made.status === 'complete' ? a.versionReady({ n: made.n }) : a.versionIncomplete({ n: made.n }))
+  const what = made ? ('kept' in made ? a.versionKept({ n: made.n }) : made.status === 'complete' ? a.versionReady({ n: made.n }) : a.versionIncomplete({ n: made.n }))
     : failure ? `${state} · ${failure}`
     : ok && job.notes?.length ? job.notes[0]!
     : state;

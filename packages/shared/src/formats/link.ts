@@ -192,8 +192,11 @@ export function entryHasProblems(versions: VersionEntry[], formatId: string, n: 
   const last = formatRuns(versions, formatId).find((r) => r.n === n)?.last ?? n;
   const own = (v: VersionEntry) => (v.compositions?.find((c) => c.format === formatId)?.problems ?? v.outputs.find((o) => o.format === formatId)?.problems) !== undefined;
   const later = byNumber(versions).filter((v) => v.n > n && v.n <= last && own(v)).at(-1);
-  const v = later ?? versions.find((x) => x.n === n);
-  return v !== undefined && hasProblems(v, formatId);
+  const entry = versions.find((x) => x.n === n);
+  if (!entry) return false;
+  // Decision 1066: the content's problems from the latest version that checked it; the render problems are the entry's own
+  // (a ★ never lands on a version whose own render has problems, and a later version's render does not taint this one).
+  return ownProblems(later ?? entry, formatId) || renderProblems(entry, formatId).length > 0;
 }
 
 /**
@@ -251,8 +254,12 @@ export function renderProblems(v: VersionEntry, formatId: string): string[] {
  * format whose current render has problems has problems too (I2: such a render is never a clean ★).
  */
 function hasProblems(v: VersionEntry, formatId: string): boolean {
+  return ownProblems(v, formatId) || renderProblems(v, formatId).length > 0;
+}
+/** `hasProblems` without the render's: the composition's (or file's) own problems, else the version-level ones. */
+function ownProblems(v: VersionEntry, formatId: string): boolean {
   const own = v.compositions?.find((c) => c.format === formatId)?.problems ?? v.outputs.find((o) => o.format === formatId)?.problems;
-  return (own !== undefined ? own.length > 0 : v.problems.length > 0) || renderProblems(v, formatId).length > 0;
+  return own !== undefined ? own.length > 0 : v.problems.length > 0;
 }
 
 export interface Star { version: number | null; manual: boolean; newer: number | null; follows: string | null }
