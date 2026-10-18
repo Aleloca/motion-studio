@@ -6,6 +6,7 @@ import { copyConfinedFile, probeConfinedFile } from '../brand/agent-guard.ts';
 import { findPreset } from '../formats/format-catalog.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
 import { t } from '../i18n.ts';
+import { RenderError } from '../render/errors.ts';
 
 export interface ExportResult {
   destination: string; files: Array<{ from: string; to: string }>; skipped: string[];
@@ -76,15 +77,17 @@ async function copySet(copy: CopyFn, creativeDir: string, n: number, set: { dir:
  * then the target with `O_CREAT | O_EXCL | O_NOFOLLOW` (EEXIST when anything is there, a link included); only a failure after
  * that open says `targetCreated`, so a source-side failure never removes a file that was already at the destination.
  */
-export const copyOwn: CopyFn = async (from, to) => {
+export const copyOwn = async (from: string, to: string, _mode?: number, signal?: AbortSignal): Promise<void> => {
   const src = await open(from, 'r');
   try {
     const dst = await open(to, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o644);
     try {
-      await pipeline(src.createReadStream(), dst.createWriteStream());
+      // A cancel (review #6) stops the copy mid-file; the partial file, ours, is removed.
+      await pipeline(src.createReadStream(), dst.createWriteStream(), ...(signal ? [{ signal }] : []));
     } catch (e) {
-      (e as { targetCreated?: boolean }).targetCreated = true;
-      throw e;
+      await dst.close().catch(() => {});
+      await rm(to, { force: true }).catch(() => {});
+      throw Object.assign(e instanceof Error ? e : new Error(String(e)), { targetCreated: true });
     } finally {
       await dst.close().catch(() => {});
     }
@@ -165,6 +168,8 @@ export interface ExportCommon {
   /** A format's display name in messages; its id when omitted. */
   label?: (format: string) => string;
   copy?: CopyFn;
+  /** Review #6: a cancel stops the copy between files (and a render made for the export mid-file); it ends as `cancelled`. */
+  signal?: AbortSignal;
 }
 
 /** A plain file name (no folder part, not `.`/`..`). */
@@ -243,8 +248,9 @@ async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refu
   const copyIn = (dir: string): CopyFn => opts.copy ?? ((from, to) => copyConfinedFile(dir, relative(dir, from).split(sep).join('/'), to));
   const files: ExportResult['files'] = [];
   for (const it of named) {
+    if (opts.signal?.aborted) throw new RenderError('cancelled', 'cancelled');
     const dir = it.creativeDir ?? opts.creativeDir;
-    const copy = it.source !== undefined ? opts.copy ?? copyOwn : copyIn(dir);
+    const copy = it.source !== undefined ? opts.copy ?? ((from: string, to: string, mode: number) => copyOwn(from, to, mode, opts.signal)) : copyIn(dir);
     const from = it.source ?? join(dir, 'outputs', `v${it.n}`, it.file);
     try {
       const to = await copyUnique(copy, from, dest, it.stem, it.ext);
@@ -253,6 +259,7 @@ async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refu
     } catch (e) {
       const target = (e as { target?: string }).target;
       if (target) await rm(target, { force: true }).catch(() => undefined);
+      if (opts.signal?.aborted) throw new RenderError('cancelled', 'cancelled');
       throw new WorkspaceError(500, t().export.interrupted({ reason: reasonOf(e), count: files.length, path: dest }));
     }
   }

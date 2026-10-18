@@ -792,7 +792,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
         }
         if (!list.length) throw new CodedError(409, t().export.renderProblemsOnly({ list: problems.join(', ') }), 'export-render-problems');
         run?.copying();
-        return exportResolved(list.map(({ problems: _p, ...it }) => it), common);
+        return exportResolved(list.map(({ problems: _p, ...it }) => it), run ? { ...common, signal: run.signal } : common);
       });
       const withProblems = excluded.length ? { ...result, excluded } : result;
       const allRendered = [...rendered, ...localeRendered];
@@ -942,7 +942,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
         unavailable.push(gap(p, gp.kind === 'failed' ? g.renderFailed({ reason: gp.reason ?? '' }) : g.renderProblems({ list: gp.problems.join('; ') })));
       }
       run?.copying();
-      const result = await exportGroup(usable.filter((p) => !gaps.some((gp) => gp.slug === p.slug && gp.item.format === p.format && gp.item.n === p.version)), common, list);
+      const result = await exportGroup(usable.filter((p) => !gaps.some((gp) => gp.slug === p.slug && gp.item.format === p.format && gp.item.n === p.version)), run ? { ...common, signal: run.signal } : common, list);
       const { unavailable: _plan, ...copied } = result;
       return { ...copied, unavailable };
     }, (it) => memberOf.get(it.creativeDir ?? '') ?? hostRef.creativeSlug);
