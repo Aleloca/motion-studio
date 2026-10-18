@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import type { Writable } from 'node:stream';
-import { videoTargetBitrateKbps, type FormatPreset } from '@motion-studio/shared';
+import { QUALITY_BITRATE_FACTOR, videoTargetBitrateKbps, type ExportQuality, type FormatPreset } from '@motion-studio/shared';
 import { RenderError } from './errors.ts';
 import { binaryArch, hostArch, type BinaryArch } from './arch.ts';
 import { killGroup, trackGroup } from './watchdog.ts';
@@ -160,11 +160,41 @@ export type VideoEncoder = 'libx264' | 'h264_videotoolbox';
  * final file played in Chrome shows mid-tones about 8 levels lighter than the preview canvas (measured; platforms and
  * phone players show BT.709 SDR as display-referred, i.e. as designed).
  */
-export function h264Args(encoder: VideoEncoder, kbps: number, fps: number, preset = 'fast'): FfArg[] {
-  const color: FfArg[] = [h264ColourFilter(), '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv'];
-  const common = ['-r', String(fps), '-g', String(fps * 2), '-maxrate', `${Math.round(kbps * 1.5)}k`, '-bufsize', `${Math.round(kbps * 2)}k`, '-profile:v', 'high'];
+export function h264Args(encoder: VideoEncoder, kbps: number, fps: number, preset = 'fast',
+  o: { crf?: number; cap?: boolean; size?: { width: number; height: number } } = {}): FfArg[] {
+  const color: FfArg[] = [h264ColourFilter(o.size), '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv'];
+  // `cap: false` (quality `max`): libx264 at its CRF alone. VideoToolbox has no CRF: it always keeps its bitrate and cap.
+  const cap = o.cap !== false || encoder === 'h264_videotoolbox' ? ['-maxrate', `${Math.round(kbps * 1.5)}k`, '-bufsize', `${Math.round(kbps * 2)}k`] : [];
+  const common = ['-r', String(fps), '-g', String(fps * 2), ...cap, '-profile:v', 'high'];
   if (encoder === 'h264_videotoolbox') return [...color, '-c:v', 'h264_videotoolbox', '-b:v', `${kbps}k`, '-allow_sw', '0', '-realtime', '0', ...common];
-  return [...color, '-c:v', 'libx264', '-preset', preset, '-crf', '20', '-pix_fmt', 'yuv420p', ...common];
+  return [...color, '-c:v', 'libx264', '-preset', preset, '-crf', String(o.crf ?? 20), '-pix_fmt', 'yuv420p', ...common];
+}
+
+/** How a quality is encoded (decision 974): the encoder choice, the bitrate (target and cap reference), CRF, and the frames. */
+export interface QualitySettings {
+  encoder: 'auto' | VideoEncoder;
+  kbps: number;
+  crf: number;
+  /** Whether the bitrate caps the encode (`-maxrate` 1.5x `kbps`). */
+  cap: boolean;
+  /** The libx264 preset, when not the default `fast`. */
+  preset?: string;
+  /** The intermediate frames: JPEG at `jpegQuality`, or lossless PNG. */
+  capture: 'jpeg' | 'png';
+  jpegQuality?: number;
+}
+
+/**
+ * The encode of a quality from the phase 8 target `kbps` of the output (`targetKbps`, scaled by its pixels):
+ * - `standard`: as every render before decision 974: VideoToolbox when its check passes, the target bitrate, CRF 20, JPEG q90;
+ * - `high` (default): libx264 CRF 18 capped at 1.6x the target (8 Mbps at 1080p30 landscape), JPEG q95;
+ * - `max`: libx264 CRF 16 with no cap, preset `medium`, PNG frames (no JPEG loss before the encode).
+ */
+export function qualitySettings(quality: ExportQuality, kbps: number): QualitySettings {
+  const at = (k: number) => Math.max(100, Math.round((kbps * k) / 100) * 100);
+  if (quality === 'standard') return { encoder: 'auto', kbps, crf: 20, cap: true, capture: 'jpeg', jpegQuality: 90 };
+  if (quality === 'max') return { encoder: 'libx264', kbps: at(QUALITY_BITRATE_FACTOR.max), crf: 16, cap: false, preset: 'medium', capture: 'png' };
+  return { encoder: 'libx264', kbps: at(QUALITY_BITRATE_FACTOR.high), crf: 18, cap: true, capture: 'jpeg', jpegQuality: 95 };
 }
 
 /** The minimum SSIM a VideoToolbox test encode must reach against its source (libx264 at the same cap scores ≈0.98+). */

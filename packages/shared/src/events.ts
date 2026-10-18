@@ -77,7 +77,26 @@ export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelle
 /** What a job does: logic and the UI branch on this, never on the (localized) label. */
 /** `localize` (Phase 12): an agent turn that translates an existing version (overlays only, no new version). */
 /** `variant-directions` (Phase 15): the short agent turn that proposes the missing directions of a variant group (no file written). */
-export type JobKind = 'creative' | 'brand-analysis' | 'asset-description' | 'console' | 'render' | 'asset-generation' | 'localize' | 'variant-directions';
+export type JobKind = 'creative' | 'brand-analysis' | 'asset-description' | 'console' | 'render' | 'asset-generation' | 'localize' | 'variant-directions' | 'export';
+
+/**
+ * An export job (decision 974, user report 20): the export runs in the background, so the dialog may close. `stage`
+ * `rendering` while it waits for the renders it needs (`pct` over them, null before any reports), `copying` while the files
+ * are written, `done` with what it wrote. `renders`: the render jobs it waits for (its own are cancelled with it).
+ */
+export interface ExportJobInfo {
+  stage: 'rendering' | 'copying' | 'done';
+  pct: number | null;
+  /** The destination folder (absolute). */
+  destination: string;
+  renders?: string[];
+  /** Once done: the files written (absolute paths). */
+  files?: string[];
+  /** Once done: what was not exported (missing files, a group format left out), as text. */
+  skipped?: string[];
+  /** Once done: renders made now with problems, not copied, as "<format> vN (<reasons>)". */
+  excluded?: string[];
+}
 
 /**
  * Why a queued job waits although the queue has room (Phase 15), for the turns of a variant run: `variant-directions`, the
@@ -123,6 +142,8 @@ export interface JobSummary {
   liveMessages?: number;
   /** Phase 15: why this queued job waits (see `JobWaitReason`); absent once it runs. */
   waitReason?: JobWaitReason;
+  /** Export jobs (decision 974): progress, then the files written. */
+  export?: ExportJobInfo;
 }
 
 /** `question` (user note 8): the agent's `AskUserQuestion`, answered with the options or a text; never "Always". */

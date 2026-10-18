@@ -54,12 +54,16 @@ export function imageSize(buf: Buffer): { width: number; height: number } | null
   return null;
 }
 
-/** Captures one frame and checks its size: a frame of another size is never encoded. */
-export async function captureFrame(page: RenderPage, t: number, o: { format: CaptureFormat; quality?: number; width: number; height: number }): Promise<Buffer> {
+/**
+ * Captures one frame and checks its size: a frame of another size is never encoded. `tolerance`: a render at another scale
+ * (decision 974) may come out a pixel off its rounded size (the encode then scales it exactly).
+ */
+export async function captureFrame(page: RenderPage, t: number, o: { format: CaptureFormat; quality?: number; width: number; height: number; tolerance?: number }): Promise<Buffer> {
   await page.seek(t);
   const buf = await page.capture(o.format, o.quality);
   const size = imageSize(buf);
-  if (!size || size.width !== o.width || size.height !== o.height) {
+  const off = (a: number, b: number) => Math.abs(a - b) > (o.tolerance ?? 0);
+  if (!size || off(size.width, o.width) || off(size.height, o.height)) {
     throw new RenderError('badFrame', `captured frame is ${size ? `${size.width}×${size.height}` : 'unreadable'}, expected ${o.width}×${o.height}`);
   }
   return buf;
@@ -85,7 +89,7 @@ export function writeWithBackpressure(stream: Writable, buf: Buffer, ended: Prom
  * or when `signal` aborts.
  */
 export async function captureSegment(page: RenderPage, seg: Segment, o: {
-  fps: number; format: CaptureFormat; quality?: number; width: number; height: number; signal: AbortSignal;
+  fps: number; format: CaptureFormat; quality?: number; width: number; height: number; tolerance?: number; signal: AbortSignal;
   sink: (frame: Buffer, index: number) => Promise<void>; onFrame?: () => void;
 }): Promise<void> {
   for (let i = seg.from; i < seg.to; i++) {

@@ -456,7 +456,8 @@ export class ElectronProvider implements ChromiumProvider {
     if (this.origin !== null && this.origin !== origin) throw new Error('render: one provider serves one composition server');
     if (this.windows.size + this.opening >= this.maxWindows) throw new RenderError('loadFailed', `render: at most ${this.maxWindows} render windows at once`);
     this.origin = origin;
-    this.pixels ??= { width: o.width, height: o.height };
+    // A page rasterised at another scale (decision 974) holds that many more pixels: the memory limits follow them.
+    this.pixels ??= { width: Math.round(o.width * (o.deviceScaleFactor ?? 1)), height: Math.round(o.height * (o.deviceScaleFactor ?? 1)) };
     this.opening++;
     let rw: RenderWindow;
     // The open's signal, or this provider closing: a wait for an app-wide slot never outlives close().

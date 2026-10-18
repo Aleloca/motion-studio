@@ -78,6 +78,11 @@ export interface OpenPageOptions {
    * alpha), with `Emulation.setDefaultBackgroundColorOverride`. A PNG capture then has the alpha the composition leaves.
    */
   transparentBackground?: boolean;
+  /**
+   * The page is rasterised at this scale (decision 974: a render at another resolution): the layout stays at `width` x
+   * `height` CSS pixels, a capture is about `width × scale` by `height × scale`, sharp. Default 1.
+   */
+  deviceScaleFactor?: number;
 }
 
 export interface ChromiumProvider {
@@ -163,7 +168,8 @@ export async function openCdpRenderPage(client: CdpClient, o: OpenPageOptions & 
   };
   try {
     await o.afterSecure?.();
-    await client.send('Emulation.setDeviceMetricsOverride', { width: o.width, height: o.height, deviceScaleFactor: 1, mobile: false }, { sessionId: sid, timeoutMs: t.callMs });
+    const dsf = o.deviceScaleFactor !== undefined && Number.isFinite(o.deviceScaleFactor) && o.deviceScaleFactor > 0 ? o.deviceScaleFactor : 1;
+    await client.send('Emulation.setDeviceMetricsOverride', { width: o.width, height: o.height, deviceScaleFactor: dsf, mobile: false }, { sessionId: sid, timeoutMs: t.callMs });
     if (o.transparentBackground) await client.send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } }, { sessionId: sid, timeoutMs: t.callMs });
     const loaded = waitForEvent(client, 'Page.loadEventFired', { sessionId: sid, timeoutMs: t.loadMs, signal: o.signal });
     loaded.catch(() => {});
