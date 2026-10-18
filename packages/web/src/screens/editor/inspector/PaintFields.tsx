@@ -26,7 +26,7 @@ export function PaintFields({ fill, stroke, groups, disabled, onChange }: {
   const values: Record<Prop, string | undefined> = { fill, stroke };
   const [chosen, setChosen] = useState<Prop | null>(null);
   const active: Prop = chosen ?? (kinds.fill !== 'colour' && kinds.stroke === 'colour' ? 'stroke' : 'fill');
-  const firstSwatch = groups.flatMap((g) => g.colors)[0] ?? '#000000';
+  const firstSwatch = groups.flatMap((g) => g.colors)[0] ?? '#000000'; // color-data: the colour a new fill or stroke starts from
   const labels: Record<Prop, string> = { fill: e.svgFill, stroke: e.svgStroke };
 
   const row = (prop: Prop) => {

@@ -35,7 +35,7 @@ describe('Icon', () => {
     ]);
     for (const [name, d] of Object.entries(proto)) expect(ICONS[name as keyof typeof ICONS], name).toBe(d);
     const extra = Object.keys(ICONS).filter((k) => !(k in proto));
-    expect(extra).toEqual(['forward', 'menu', 'minus', 'external', 'copy', 'edit', 'pin', 'pause', 'user',
+    expect(extra).toEqual(['send', 'forward', 'menu', 'minus', 'external', 'copy', 'edit', 'pin', 'pause', 'user',
       'undo', 'redo', 'unlock', 'eyeOff', 'rotate', 'music', 'scissors', 'volume', 'mute', 'magnet']);
   });
   it('supports the prototype fill and stroke-width options, colour from currentColor', () => {

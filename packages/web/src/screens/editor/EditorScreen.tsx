@@ -836,7 +836,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
             <span className="ms-fv-badge">
               <FormatBadge slug={slug} creative={creative} label={ownLabel} versions={versions} shown={n} resumeFrom={cr.resumeFrom?.version ?? null}
                 state={group ? { ...state, star: { ...state.star, version: pickedBy?.slug === creative ? pickedBy.version : null, manual: pickedBy?.slug === creative, newer: null } } : state}
-                labelOf={labelOf} actions={versionActions} busy={working} onView={onView} onCompare={openCompare} {...(group ? { unstarred: true } : {})} />
+                labelOf={labelOf} actions={versionActions} busy={working} onView={onView} onCompare={openCompare} />
             </span>
           ) : null}
           {versions.length && cr ? (

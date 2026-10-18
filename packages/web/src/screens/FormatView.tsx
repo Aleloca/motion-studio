@@ -578,7 +578,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
           ) : state && cr ? (
             <span className="ms-fv-badge">
               <FormatBadge slug={slug} creative={creative} label={label} state={group ? { ...state, star: { ...state.star, version: group.group.picks[source.format]?.slug === creative ? group.group.picks[source.format]!.version : null, manual: group.group.picks[source.format]?.slug === creative, newer: null } } : state} versions={versions} shown={source.n} resumeFrom={cr.resumeFrom?.version ?? null}
-                labelOf={formatLabel} actions={actions} busy={working} onView={(v) => view(format, v)} onCompare={openCompare} {...(group ? { unstarred: true } : {})} />
+                labelOf={formatLabel} actions={actions} busy={working} onView={(v) => view(format, v)} onCompare={openCompare} />
             </span>
           ) : null}
           {versions.length && cr ? (
