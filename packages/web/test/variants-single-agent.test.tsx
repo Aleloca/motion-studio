@@ -172,3 +172,43 @@ describe('the group\'s pending comments', () => {
     expect(onB.result.current.stored).toEqual([]);
   });
 });
+
+describe('the helpers\' steps in the chat (decision 983)', () => {
+  const entries: ConversationEntry[] = [
+    { type: 'user', at, text: 'B e C più contrasto', pins: [], attachments: [], jobId: 'g1', group: true },
+    { type: 'agent', at, jobId: 'g1', event: { kind: 'text', text: 'Lavoro su B e C.' }, group: true },
+    { type: 'agent', at, jobId: 'hb', event: { kind: 'text', text: 'Contrasto di B aumentato' }, variant: 'b', groupJobId: 'g1' },
+    { type: 'version', at, n: 4, status: 'complete', variant: 'b', groupJobId: 'g1' },
+    { type: 'agent', at, jobId: 'hc', event: { kind: 'text', text: 'Niente da cambiare in C' }, variant: 'c', groupJobId: 'g1' },
+    { type: 'system', at, level: 'info', text: 'Nessuna modifica', keptVersion: 2, variant: 'c', groupJobId: 'g1' },
+  ];
+  it('one folded row per variant; a click opens its detailed steps', async () => {
+    const { container } = render(panel({ entries }));
+    const rows = [...container.querySelectorAll('[data-helper]')];
+    expect(rows.map((r) => r.querySelector('button')?.textContent)).toEqual([expect.stringContaining('v4 pronta'), expect.stringContaining('nessuna modifica')]);
+    expect(rows.map((r) => r.querySelector('.ms-vchip')?.textContent)).toEqual(['B', 'C']);
+    expect(screen.queryByText('Contrasto di B aumentato')).toBeNull();
+    await userEvent.click(rows[0]!.querySelector('button')!);
+    expect(screen.getByText('Contrasto di B aumentato')).toBeTruthy();
+    expect(screen.queryByText('Niente da cambiare in C')).toBeNull();
+    // The coordinator's words stay in the flow.
+    expect(screen.getByText('Lavoro su B e C.')).toBeTruthy();
+  });
+
+  it('a helper at work says so with its latest step, and its question card is never folded away', () => {
+    const live = [{ kind: 'progress' as const, text: 'Ingrandisco il titolo' }];
+    const helper: JobSummary = { id: 'hb', key: `creative:/w:acme:${HOST}~b`, kind: 'creative', label: 'Lancio', state: 'running', createdAt: at, parentJobId: 'g1', variant: 'b' };
+    const approval = { id: 'q1', jobId: 'hb', projectSlug: 'acme', creativeSlug: `${HOST}~b`, kind: 'question' as const, title: 'Domanda', detail: '', toolName: 'AskUserQuestion', alwaysRule: null, explanation: null, agentReason: null,
+      questions: [{ question: 'Quale colore?', header: 'Colore', multiSelect: false, options: [{ label: 'Rosso', description: '' }, { label: 'Blu', description: '' }] }], createdAt: at, expiresAt: at };
+    const { container } = render(
+      <I18nProvider locale="it">
+        <Conversation slug="acme" creative={HOST} entries={entries.slice(0, 2)} approvals={[approval]} job={groupJob()} single self="a"
+          memberJobs={[{ job: helper, live, variant: 'b' }]} />
+      </I18nProvider>,
+    );
+    const row = container.querySelector('[data-helper]')!;
+    expect(row.textContent).toContain('al lavoro');
+    expect(row.textContent).toContain('Ingrandisco il titolo');
+    expect(screen.getByText('Quale colore?')).toBeTruthy();
+  });
+});

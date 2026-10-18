@@ -1,4 +1,5 @@
-import { DEFAULT_FORMATS, SUPPORTED_LOCALES, turnEndOf, type AgentEvent, type ApprovalRequest, type ConversationEntry, type JobSummary } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, SUPPORTED_LOCALES, turnEndOf, type AgentEvent, type ApprovalRequest, type ConversationEntry, type GroupTurnOutcome, type JobSummary } from '@motion-studio/shared';
+import { groupTurnText } from '../components/groupTurnText.ts';
 import { instanceName, presetFor } from '../instances.ts';
 import { localeName } from '../screens/creative/languagesModel.ts';
 import { useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -47,6 +48,8 @@ export function activityLists(live: EventsState) {
  */
 export function jobPlace(job: JobSummary): { project: string; creative: string | null } | null {
   if (job.key.startsWith('variant-directions:')) return jobPlace({ ...job, key: job.key.slice('variant-directions:'.length) });
+  // Phase 3 of the single agent: a group turn is `group:creative:<root>:<project>:<host>`: it belongs to the host.
+  if (job.key.startsWith('group:')) return jobPlace({ ...job, key: job.key.slice('group:'.length) });
   const parts = job.key.split(':');
   const kind = parts[0];
   if (kind === 'creative' && parts.length >= 4) return { project: parts.at(-2)!, creative: parts.at(-1)! };
@@ -72,8 +75,11 @@ export function jobHref(job: JobSummary): string | null {
   return href.project(at.project);
 }
 
-/** A saved version, or (decision 1066) the latest version a turn kept because nothing changed. */
-type Made = { n: number; status: 'complete' | 'incomplete' } | { n: number; kept: true };
+/**
+ * A saved version, or (decision 1066) the latest version a turn kept because nothing changed; phase 3 of the single agent: what
+ * a group turn did, per variant (its `group-turn` entry).
+ */
+type Made = { n: number; status: 'complete' | 'incomplete' } | { n: number; kept: true } | { group: GroupTurnOutcome[] };
 
 /**
  * The version each job of a creative produced: agent entries carry the job id, the version entry follows them. In a variant
@@ -83,6 +89,9 @@ export function versionsByJob(entries: ConversationEntry[]): Record<string, Made
   const out: Record<string, Made> = {};
   const lastOf = new Map<string, string | null>();
   for (const e of entries) {
+    if (e.type === 'group-turn') { out[e.jobId] = { group: e.outcome }; continue; }
+    // The group's own entries (the coordinator's) are no variant's turn.
+    if (e.group) continue;
     const lane = e.variant ?? '';
     const last = lastOf.get(lane) ?? null;
     if (e.type === 'agent') lastOf.set(lane, e.jobId);
@@ -101,7 +110,7 @@ export function versionsByJob(entries: ConversationEntry[]): Record<string, Made
  */
 function useMadeVersions(jobs: JobSummary[], enabled: boolean): Record<string, Made> {
   const [made, setMade] = useState<Record<string, Made>>({});
-  const wanted = jobs.filter((j) => j.kind === 'creative' && j.state === 'succeeded' && !made[j.id]);
+  const wanted = jobs.filter((j) => (j.kind === 'creative' || j.kind === 'creative-group') && j.state === 'succeeded' && !made[j.id]);
   const creatives = [...new Set(wanted.map((j) => { const at = jobPlace(j); return at?.creative ? `${at.project}\n${at.creative}` : null; }).filter((x): x is string => x !== null))];
   const key = enabled ? `${creatives.join('|')}#${wanted.map((j) => j.id).join(',')}` : '';
   useEffect(() => {
@@ -182,15 +191,16 @@ export function ActivityCenter({ live, initialTab, request = 0, where }: { live:
           : <Empty icon="check" title={a.emptyNeeds} sub={a.emptyNeedsSub} />)}
         {tab === 'running' && (running.length ? (
           <ul className="ms-activity-list">
-            {running.map((j) => (j.kind === 'render'
+            {topLevel(running).map((j) => (j.kind === 'render'
               ? <RenderRow key={j.id} job={j} />
               : j.kind === 'export' ? <ExportRow key={j.id} job={j} />
-              : <RunningRow key={j.id} job={j} step={lastStep(live.events[j.id])} tokens={jobLiveTokens(live, j.id)} partial={jobUsagePartial(live, j.id)} events={live.events[j.id]} />))}
+              : <RunningRow key={j.id} job={j} step={lastStep(live.events[j.id])} tokens={jobLiveTokens(live, j.id)} partial={jobUsagePartial(live, j.id)} events={live.events[j.id]}
+                helpers={childrenOf(running, j).map((h) => <RunningRow key={h.id} job={h} child step={lastStep(live.events[h.id])} tokens={jobLiveTokens(live, h.id)} partial={jobUsagePartial(live, h.id)} />)} />))}
           </ul>
         ) : <Empty icon="clock" title={a.emptyRunning} sub={a.emptyRunningSub} />)}
         {tab === 'done' && (done.length ? (
           <ul className="ms-activity-list">
-            {done.map((j) => <DoneRow key={j.id} job={j} made={made[j.id] ?? null} failure={j.state === 'failed' ? failureOf(j, live.events[j.id]) : null} tokens={jobFinalTokens(live, j.id)} partial={jobUsagePartial(live, j.id)} />)}
+            {topLevel(done).map((j) => <DoneRow key={j.id} job={j} made={made[j.id] ?? null} failure={j.state === 'failed' ? failureOf(j, live.events[j.id]) : null} tokens={jobFinalTokens(live, j.id)} partial={jobUsagePartial(live, j.id)} />)}
           </ul>
         ) : <Empty icon="check" title={a.emptyDone} sub={a.emptyDoneSub} />)}
       </div>
@@ -198,6 +208,13 @@ export function ActivityCenter({ live, initialTab, request = 0, where }: { live:
     </div>
   );
 }
+
+/**
+ * Phase 5 of the single agent (spec §11): a group turn is one row and its helpers are its child rows (`parentJobId`); a helper
+ * whose group turn is not in the same list (an older one) stays a row of its own.
+ */
+const topLevel = (jobs: JobSummary[]) => jobs.filter((j) => !j.parentJobId || !jobs.some((p) => p.id === j.parentJobId));
+const childrenOf = (jobs: JobSummary[], parent: JobSummary) => (parent.kind === 'creative-group' ? jobs.filter((j) => j.parentJobId === parent.id) : []);
 
 function NeedsYou({ approval, leaving, onGone, where }: { approval: ApprovalRequest; leaving: boolean; onGone(id: string): void; where(project: string, creative: string | null): string }) {
   const t = useT();
@@ -213,13 +230,17 @@ function NeedsYou({ approval, leaving, onGone, where }: { approval: ApprovalRequ
   );
 }
 
-/** A row of the Running or Done list: a link to where the job belongs, when its key tells; `after` sits beside the link. */
-function Row({ job, className, children, after }: { job: JobSummary; className?: string; children: ReactNode; after?: ReactNode }) {
+/**
+ * A row of the Running or Done list: a link to where the job belongs, when its key tells; `after` sits beside the link;
+ * `nested` (phase 5): the child rows of a group turn, its helpers, listed under it.
+ */
+function Row({ job, className, children, after, nested }: { job: JobSummary; className?: string; children: ReactNode; after?: ReactNode; nested?: ReactNode[] }) {
   const to = jobHref(job);
   return (
-    <li className={cx('ms-activity-item', after !== undefined && 'ms-activity-with-after')}>
+    <li className={cx('ms-activity-item', after !== undefined && 'ms-activity-with-after', Boolean(nested?.length) && 'ms-activity-parent')}>
       {to ? <a className={cx('ms-activity-row ms-activity-link', className)} href={to}>{children}</a> : <div className={cx('ms-activity-row', className)}>{children}</div>}
       {after}
+      {nested?.length ? <ul className="ms-activity-children">{nested}</ul> : null}
     </li>
   );
 }
@@ -328,18 +349,21 @@ function TodayFooter({ tokens }: { tokens: number | null }) {
 function useVariantTag(job: JobSummary): string {
   const shell = useContext(ShellContext);
   if (job.kind !== 'creative') return '';
+  // Phase 3: a helper says its variant itself.
+  if (job.variant) return ` · ${job.variant.toUpperCase()}`;
   const at = jobPlace(job);
   const letter = at?.creative ? jobVariantLetter(at.creative, shell?.catalog.creatives[at.project]) : null;
   return letter ? ` · ${letter.toUpperCase()}` : '';
 }
 
-function RunningRow({ job, step, tokens, partial, events }: { job: JobSummary; step: string | null; tokens: number | null; partial: boolean; events?: AgentEvent[] }) {
+function RunningRow({ job, step, tokens, partial, events, helpers, child }: { job: JobSummary; step: string | null; tokens: number | null; partial: boolean; events?: AgentEvent[]; helpers?: ReactNode[]; /** A helper's row under its group turn: its variant names it. */ child?: boolean }) {
   const t = useT();
   const tag = useVariantTag(job);
   const queued = job.state === 'queued';
+  const phase = job.kind === 'creative-group' && job.groupPhase && !queued ? t.web.shell.activity.groupPhases[job.groupPhase] : null;
   return (
     // Phase 13: the same Stop menu as the conversation (a creative or console turn can also be redirected; the others have Stop only).
-    <Row job={job} className="ms-tall" after={(
+    <Row job={job} className={cx('ms-tall', child && 'ms-activity-child')} nested={helpers} after={(
       <>
         {job.kind === 'console' && job.state === 'running' ? <ConsoleMessage job={job} events={events} /> : null}
         <StopMenu job={job} className="ms-activity-cancel" />
@@ -347,8 +371,8 @@ function RunningRow({ job, step, tokens, partial, events }: { job: JobSummary; s
     )}>
       <span className={cx('ms-activity-glyph', queued && 'ms-muted')}>{queued ? <Icon name="clock" size={14} /> : <Spinner decorative />}</span>
       <span className="ms-activity-text">
-        <b>{job.label}{tag}</b>
-        <span className="ms-activity-sub">{queued ? (job.waitReason ? t.web.variantGroup.waitReasons[job.waitReason] : t.web.shell.activity.queued) : step ?? t.web.jobState.running}</span>
+        <b>{child ? tag.replace(/^ /, '') : `${job.label}${tag}`}</b>
+        <span className="ms-activity-sub">{queued ? (job.waitReason ? t.web.variantGroup.waitReasons[job.waitReason] : t.web.shell.activity.queued) : step ?? phase ?? t.web.jobState.running}</span>
       </span>
       <TokenCount tokens={tokens} live partial={partial} className="ms-activity-tokens" />
     </Row>
@@ -405,7 +429,7 @@ function DoneRow({ job, made, failure, tokens, partial }: { job: JobSummary; mad
   const state = t.web.jobState[job.state];
   // An export (decision 974): how many files, and where.
   const exported = ok && job.kind === 'export' && job.export?.files ? t.web.exportUi.doneRow({ count: job.export.files.length, folder: job.export.destination }) : null;
-  const what = exported ?? (made ? ('kept' in made ? a.versionKept({ n: made.n }) : made.status === 'complete' ? a.versionReady({ n: made.n }) : a.versionIncomplete({ n: made.n }))
+  const what = exported ?? (made ? ('group' in made ? groupTurnText(t, made.group) : 'kept' in made ? a.versionKept({ n: made.n }) : made.status === 'complete' ? a.versionReady({ n: made.n }) : a.versionIncomplete({ n: made.n }))
     : failure ? `${state} · ${failure}`
     : ok && job.notes?.length ? job.notes[0]!
     : state);
