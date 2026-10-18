@@ -131,6 +131,7 @@ export const SANDBOX_SECTION = [
   '## Sandbox environment',
   '- Writable: the project (your work goes in `creatives/<slug>/work/`, deliveries in `outputs/`), except the protected `.git`, `.claude`, `.studio`, `CLAUDE.md`, `CLAUDE.local.md`, `.mcp.json` and `.gitattributes`; plus $TMPDIR and the tool temp dirs. Nowhere else.',
   "- Put check frames and scratch files in `creatives/<slug>/work/tmp/`, not $TMPDIR — reading files outside the project needs the user's approval.",
+  '- Run shell commands from the project folder with project-relative paths (`sed -n 1,40p creatives/<slug>/work/build.py`). Do not chain `cd <dir> && <command>`: Claude Code refuses to read files after a `cd` it cannot resolve, and the `cd` leaves stray folders behind.',
   '- Package caches (npm, pnpm, yarn, pip, XDG) are already configured and writable: install dependencies normally, without setting cache folders.',
   '- Network access is limited to the allowlisted domains (package registries and a few others); anything else fails.',
   '- Headless Chromium, Puppeteer and Playwright cannot run here and their browser downloads are disabled. Use a working engine from the start: ffmpeg, node-canvas or skia-canvas, Pillow or cairo. Browser-based rendering comes later and is managed by Motion Studio.',
@@ -142,6 +143,7 @@ export const SANDBOX_SECTION_COMPOSITIONS = [
   '## Sandbox environment',
   '- Writable: the project (your workspace is `creatives/<slug>/work/`, deliveries in `outputs/`), except the protected `.git`, `.claude`, `.studio`, `CLAUDE.md`, `CLAUDE.local.md`, `.mcp.json` and `.gitattributes`; plus $TMPDIR and the tool temp dirs. Nowhere else (`.studio/` is readable).',
   "- Put scratch files in `creatives/<slug>/work/tmp/`, not $TMPDIR — reading files outside the project needs the user's approval.",
+  '- Run shell commands from the project folder with project-relative paths (`sed -n 1,40p creatives/<slug>/work/build.py`). Do not chain `cd <dir> && <command>`: Claude Code refuses to read files after a `cd` it cannot resolve, and the `cd` leaves stray folders behind.',
   '- Network access is limited to the allowlisted domains; anything else fails.',
   '- Do not mention these limitations to the user; they are known.',
 ];
@@ -460,7 +462,7 @@ export function identityPromptSection(kinds: ReadonlySet<'logo' | 'favicon' | 'a
     '- Each of these compositions is a still (`"duration": 0`) with exactly ONE `svg` clip that fills the frame (x 0, y 0, the composition\'s width and height, or no box at all) with `"fit": "contain"` in its props (required: the default would crop a drawing that is not square), and no other clip, track content, animation, Ken Burns, rotation, scale or opacity. Put everything in the SVG.',
     '- The SVG lives in the composition\'s `assets/` (e.g. `assets/logo.svg`). Motion Studio exports it as the vector file and draws every PNG from it at its exact size, so it must scale: the root `<svg xmlns="http://www.w3.org/2000/svg">` needs a `viewBox`.',
     '- Motion Studio refuses the SVG, and sends you back to fix it, if it has: `<script>`, `on*` attributes, `<foreignObject>`, `<image>` (embedded or linked), links or `href`/`xlink:href` other than a local `#id`, `url(…)` other than a local `#id`, `@import` or any other `@` rule in `<style>`, CSS escapes, animation elements, `<!DOCTYPE>`/entities, or more than 512 KB. Keep it plain, well-formed XML: paths, shapes, gradients, clip paths, masks, filters, local `<use>`.',
-    '- Convert text to paths. `<text>` is accepted only with a warning, because it looks different where the font is not installed.',
+    '- Convert text to paths. `<text>` is accepted only with a warning, because it looks different where the font is not installed. To outline a font, use a `.ttf` or `.otf` file. Python fontTools cannot read `.woff2` here (it needs the Brotli extension, which is not installed): do not try it; for a `.woff2` font run `pip install --target creatives/<slug>/work/tmp/pylib brotli` first (allowed, nothing system-wide) and put that folder on `PYTHONPATH`.',
     ...(kinds.has('logo') ? [
       '- Logo: draw the logo itself on a transparent background; the SVG\'s `viewBox` sets its proportions (a wide logo has a wide viewBox): `logo.png` is 1024 px on its long side.',
       '- Logo, REQUIRED: the negative version for dark backgrounds, a second `svg` clip with `"id": "dark"`, `"hidden": true`, full frame, `"fit": "contain"`, with its own file (e.g. `assets/logo-dark.svg`), checked like the main SVG. It is the SAME design with the same `viewBox`, never a different one: only the colours change for a dark background (dark inks such as black or navy become white or a light tint, keep the brand accent colour when it reads on dark, and check the contrast of every part). Motion Studio exports it as `logo-dark.svg` and `logo-dark.png`; a logo without it is sent back to you.',

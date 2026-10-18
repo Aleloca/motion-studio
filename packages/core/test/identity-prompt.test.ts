@@ -29,6 +29,7 @@ describe('identity prompt section', () => {
     expect(p).toMatch(/512 KB/);
     expect(p).toMatch(/`"fit": "contain"` in its props \(required/);
     expect(p).toMatch(/Convert text to paths/);
+    expect(p).toMatch(/fontTools cannot read `\.woff2`/);
     expect(p).toMatch(/needs a `viewBox`/);
     expect(p).toMatch(/Never use paid image generation/);
   });
