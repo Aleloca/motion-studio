@@ -128,6 +128,33 @@ describe('CreativeCanvas · fit to view', () => {
     } finally { w.mockRestore(); h.mockRestore(); }
   });
 
+  it('the desktop View menu\'s zoom (⌘+ / ⌘− / ⌘0 over the bridge) zooms the canvas, not the window (decision 1055)', async () => {
+    let menu: ((kind: 'in' | 'out' | 'reset') => void) | null = null;
+    const zoomWindow = vi.fn(async () => {});
+    (window as unknown as { motionStudio?: unknown }).motionStudio = { isDesktop: true, platform: 'darwin', pickFolder: vi.fn(), revealPath: vi.fn(),
+      onZoom: (cb: (kind: 'in' | 'out' | 'reset') => void) => { menu = cb; return () => { menu = null; }; }, zoomWindow };
+    const { installMenuZoom } = await import('../src/shell/menuZoom.ts');
+    const off = installMenuZoom();
+    const size = (dim: 'clientWidth' | 'clientHeight', v: number) => vi.spyOn(HTMLElement.prototype, dim, 'get')
+      .mockImplementation(function (this: HTMLElement) { return this.classList.contains('ms-cv-viewport') ? v : 0; });
+    const w = size('clientWidth', 484);
+    const h = size('clientHeight', 700);
+    try {
+      const { container, unmount } = render(<Harness live={emptyLive()} />);
+      await ready();
+      const fitted = zoomOf(container.querySelector('.ms-cv-frame'));
+      act(() => menu!('in'));
+      await waitFor(() => expect(parseFloat(zoomOf(container.querySelector('.ms-cv-frame')))).toBeCloseTo(parseFloat(fitted) + 0.1));
+      act(() => menu!('reset'));
+      await waitFor(() => expect(zoomOf(container.querySelector('.ms-cv-frame'))).toBe(fitted));
+      expect(zoomWindow).not.toHaveBeenCalled();
+      // Off the canvas the window zooms as the menu always did.
+      unmount();
+      act(() => menu!('out'));
+      expect(zoomWindow).toHaveBeenCalledWith('out');
+    } finally { off(); w.mockRestore(); h.mockRestore(); }
+  });
+
   it('a trackpad pinch (ctrl+wheel) zooms the canvas and never the page; a plain wheel scrolls (decision 973)', async () => {
     const { container } = render(<Harness live={emptyLive()} />);
     await ready();

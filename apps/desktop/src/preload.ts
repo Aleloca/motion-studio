@@ -50,6 +50,15 @@ contextBridge.exposeInMainWorld('motionStudio', {
       return typeof v === 'string' && /^[0-9a-f]{64}$/.test(v) ? v : null;
     } catch { return null; }
   },
+  // Decision 1055: the View menu's zoom ('in' | 'out' | 'reset'), for the page to zoom its canvas; only the kind reaches the
+  // page. Returns the unsubscribe. `zoomWindow` asks the window zoom back (the menu's old behaviour) for the rest of the app.
+  onZoom: (cb: (kind: 'in' | 'out' | 'reset') => void): (() => void) => {
+    if (typeof cb !== 'function') return () => {};
+    const listener = (_e: unknown, kind: unknown) => { if (kind === 'in' || kind === 'out' || kind === 'reset') { try { cb(kind); } catch { /* the page's own error */ } } };
+    ipcRenderer.on('ms:zoom', listener);
+    return () => { ipcRenderer.removeListener('ms:zoom', listener); };
+  },
+  zoomWindow: (kind: 'in' | 'out' | 'reset'): Promise<void> => ipcRenderer.invoke('ms:zoom-window', kind),
   onFullscreenChange: (cb: (fullscreen: boolean) => void): (() => void) => {
     if (typeof cb !== 'function') return () => {};
     const call = (v: boolean) => { try { cb(v); } catch { /* the page's own error */ } };

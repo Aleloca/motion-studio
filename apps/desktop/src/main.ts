@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import { AlreadyRunningError, answersHealth, defaultConfigDir, resolveLocale, resolveLoginShellPath, setLocale, startServer, t } from '@motion-studio/core';
 import { absolutePathArg, attachedGone, attachedGoneAction, attachedLocale, bootLocale, focusOnReady, readSavedLanguage, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, USER_DATA_ENV, userDataDir, userDataOverride } from './helpers.ts';
 import { menuTemplate } from './menu.ts';
+import { applyWindowZoom, registerZoomWindow, sendZoom, type ZoomKind } from './zoom.ts';
 import { notificationOptions, registerAttention, sendAttentionClick, showKept } from './notify.ts';
 import { appSigned, setupUpdates } from './updater.ts';
 import { registerFullscreenQuery, registerTitleBar, registerUiTokenQuery, sendFullscreen } from './titlebar.ts';
@@ -145,10 +146,17 @@ async function smoke(mode: string) {
 }
 
 let menuRestart: (() => void) | undefined;
+/** Whether a URL is the app's own page (set once the core's origin is known): the menu's zoom goes to it first. */
+let menuIsApp: (url: string) => boolean = () => false;
+/** Decision 1055: the View menu's zoom goes to the app's page (its canvas zooms itself); any other window zooms as before. */
+function menuZoom(kind: ZoomKind) {
+  const w = BrowserWindow.getFocusedWindow();
+  if (w && !sendZoom(w.webContents, kind, menuIsApp)) applyWindowZoom(w.webContents, kind);
+}
 function buildMenu(restart?: () => void) {
   if (restart) menuRestart = restart;
   Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate(t(), {
-    mac: process.platform === 'darwin', ...(menuRestart ? { restart: menuRestart } : {}), openRepo: () => void shell.openExternal(REPO_URL),
+    mac: process.platform === 'darwin', ...(menuRestart ? { restart: menuRestart } : {}), openRepo: () => void shell.openExternal(REPO_URL), zoom: menuZoom,
   })));
 }
 
@@ -217,6 +225,9 @@ async function run() {
     invalid: () => new Error(t().desktop.invalidRequest),
   });
   const fullscreen = () => { if (!win.isDestroyed()) sendFullscreen(win.webContents, win.isFullScreen(), (url) => isAppUrl(url, origin)); };
+  // The menu's zoom reaches the app's page; the page hands back what it does not zoom itself (decision 1055).
+  menuIsApp = (url) => isAppUrl(url, origin);
+  registerZoomWindow(ipcMain, { trusted: (e) => ipcSenderTrusted(e as IpcSender, win.webContents, origin), apply: (kind) => applyWindowZoom(win.webContents, kind) });
   win.on('enter-full-screen', fullscreen);
   win.on('leave-full-screen', fullscreen);
   // A (re)loaded page starts from the current state (the preload remembers it until the page subscribes).

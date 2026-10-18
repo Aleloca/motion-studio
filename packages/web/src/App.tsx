@@ -26,6 +26,7 @@ import { go, ShellContext, type ActivityTab, type Shell } from './shell/ShellCon
 import { isMac } from './platform.ts';
 import { TopBar } from './shell/TopBars.tsx';
 import { useAttention, useDraftCloseGuard, useReadyNotice, useRenderCloseGuard } from './shell/useAttention.ts';
+import { installMenuZoom } from './shell/menuZoom.ts';
 import { applyTheme } from './theme.ts';
 import { Spinner, Toasts } from './ui/index.ts';
 import { usePairingNeeded } from './uiToken.ts';
@@ -108,6 +109,8 @@ function AppBody({ live, language, systemLocale, onLanguage }: Props) {
   useReadyNotice(live.jobs);
   // Desktop: closing the window while a render runs asks first.
   useRenderCloseGuard(live.jobs);
+  // Desktop: the View menu's zoom goes to the creative canvas when it is shown, else zooms the window (decision 1055).
+  useEffect(() => installMenuZoom(), []);
   // ...and while an editor draft has edits not saved: the desktop asks too; a browser asks before a reload or a tab close.
   useDraftCloseGuard(useUnsavedDrafts());
 

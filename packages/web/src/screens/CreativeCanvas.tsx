@@ -55,6 +55,7 @@ import { VariantCard } from './variants/VariantCard.tsx';
 import type { ChatTarget } from './variants/VariantSelector.tsx';
 import { CARD_PAD, cardColumns, cardWidth, discardBlock, discardedSelf, fitCards, isRunning, memberLive, readyToChoose, rowState, selectionRows, shortName, shownMembers, thumbZoom, upper } from './variants/variantModel.ts';
 import { pinchZoom, scrollAfterZoom, stepZoom, ZOOM_MIN, zoomKey } from './canvasZoom.ts';
+import { setMenuZoomHandler } from '../shell/menuZoom.ts';
 import './variants/variants.css';
 
 /** T4 only while the player's rect is fresh (boards that arrive later cascade in). */
@@ -425,11 +426,17 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   }, [fitKey, Boolean(detail)]); // eslint-disable-line react-hooks/exhaustive-deps
   const zoomBy = (next: (z: number) => number) => { userZoomed.current = true; setZoom(next); };
   // ⌘+ / ⌘− step, ⌘0 fits again (and lets the canvas refit on resize, as when it opened).
-  usePageShortcut(root, (e) => zoomKey(e) !== null && !inOverlay(e) && Boolean(detail), (e) => {
-    const k = zoomKey(e);
+  const zoomStep = (k: 'in' | 'out' | 'fit') => {
     if (k === 'fit') { userZoomed.current = false; const z = fitNow.current(); if (z !== null) setZoom(z); return; }
     zoomBy((z) => stepZoom(z, k === 'in' ? 1 : -1));
-  });
+  };
+  usePageShortcut(root, (e) => zoomKey(e) !== null && !inOverlay(e) && Boolean(detail), (e) => zoomStep(zoomKey(e)!));
+  // Desktop: the View menu's ⌘+ / ⌘− / ⌘0 arrive over the bridge (on macOS the menu takes the keys first): the same path,
+  // while this canvas is the page shown (decision 1055).
+  const zoomStepNow = useRef(zoomStep);
+  zoomStepNow.current = zoomStep;
+  const canZoom = active && Boolean(detail);
+  useEffect(() => (canZoom ? setMenuZoomHandler((kind) => zoomStepNow.current(kind === 'reset' ? 'fit' : kind)) : undefined), [canZoom]);
   // A trackpad pinch arrives as a wheel event with ctrlKey (Chromium, Electron): the canvas zooms around the pointer and the
   // page never zooms. Any other wheel (two-finger scroll) scrolls the canvas as usual.
   const zoomNow = useRef(zoom);

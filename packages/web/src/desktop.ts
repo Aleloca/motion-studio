@@ -29,6 +29,10 @@ export interface DesktopBridge {
   isFullscreen?(): boolean;
   /** The UI token of the core this window was opened for (synchronous; final wave B3). Missing before Phase 10. */
   uiToken?(): string | null;
+  /** The View menu's zoom (decision 1055): calls `cb` with the kind; returns the unsubscribe. Missing in older builds. */
+  onZoom?(cb: (kind: 'in' | 'out' | 'reset') => void): () => void;
+  /** Zooms the window as the menu's roles did (the page does not zoom itself here). Missing in older builds. */
+  zoomWindow?(kind: 'in' | 'out' | 'reset'): Promise<void>;
 }
 
 /**
