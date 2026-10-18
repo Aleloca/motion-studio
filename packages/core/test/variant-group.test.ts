@@ -22,6 +22,7 @@ import { CreativeTurnService, type CreativeRef } from '../src/creatives/creative
 import { VariantGroupService } from '../src/creatives/variant-group.ts';
 import { Git } from '../src/git.ts';
 import { t } from '../src/i18n.ts';
+import { CodedError } from '../src/workspace-store.ts';
 import { JobQueue } from '../src/jobs/job-queue.ts';
 import { renameJournalSchema } from '../src/library/rename-journal.ts';
 import { NoMediaTools } from '../src/media/media-tools.ts';
@@ -134,9 +135,46 @@ describe('group lifecycle', { timeout: 60_000 }, () => {
     expect(execFileSync('git', ['log', '-1', '--format=%s'], { cwd: projectDir, encoding: 'utf8' })).toContain('AA');
   });
 
-  it('a sister folder already on disk refuses the add (409) and leaves no group or other sister behind', async () => {
+  it('decision 1162: an id is never given twice: not after a sister left, not after the group dissolved, not for an old group with no mark', async () => {
+    const leave = async (slug: string) => {
+      const g = (await json(host.creativeSlug)).variantGroup!;
+      await turns.runLocked(host, () => svc.detachLocked(host, g, slug));
+      await store.removeSisterFolder(slug);
+    };
+    await svc.addVariants(host, [{}, {}]);
+    await leave(sis('c'));
+    await svc.addVariants(host, [{}]);
+    expect((await json(host.creativeSlug)).variantGroup!.members.map((m) => m.letter)).toEqual(['a', 'b', 'd']);
+    // The group dissolves (A alone), then is made again: the next id still comes after d.
+    await leave(sis('d'));
+    await leave(sis('b'));
+    expect((await json(host.creativeSlug)).variantGroup).toBeUndefined();
+    await svc.addVariants(host, [{}]);
+    expect((await json(host.creativeSlug)).variantGroup!.members.map((m) => m.letter)).toEqual(['a', 'e']);
+    // An older host with no mark: the ids its chat already names are not given again.
+    await leave(sis('e'));
+    await store.update(host.creativeSlug, { variantNext: undefined });
+    await writeFile(join(projectDir, 'creatives', host.creativeSlug, 'conversation.jsonl'), `${JSON.stringify({ type: 'system', at: new Date().toISOString(), level: 'info', text: 'x', variant: 'g' })}\n`);
+    await svc.addVariants(host, [{}]);
+    expect((await json(host.creativeSlug)).variantGroup!.members.map((m) => m.letter)).toEqual(['a', 'h']);
+  });
+
+  it('a folder already on disk with a sister\'s name keeps its id out of use (decision 1162): the next ids go past it', async () => {
     await mkdir(join(projectDir, 'creatives', sis('c')));
-    await expect(svc.addVariants(host, [{}, {}])).rejects.toMatchObject({ status: 409, apiCode: 'variant-folder-exists' });
+    await svc.addVariants(host, [{}, {}]);
+    expect((await json(host.creativeSlug)).variantGroup!.members.map((m) => m.letter)).toEqual(['a', 'd', 'e']);
+  });
+
+  it('a sister that cannot be made (409, e.g. its folder appeared meanwhile) leaves no group or other sister behind', async () => {
+    const real = store.createSister.bind(store);
+    let n = 0;
+    const spy = vi.spyOn(store, 'createSister').mockImplementation(async (h, l, c) => {
+      if (++n === 2) throw new CodedError(409, 'exists', 'variant-folder-exists');
+      return real(h, l, c);
+    });
+    try {
+      await expect(svc.addVariants(host, [{}, {}])).rejects.toMatchObject({ status: 409, apiCode: 'variant-folder-exists' });
+    } finally { spy.mockRestore(); }
     expect(existsSync(join(projectDir, 'creatives', sis('b')))).toBe(false);
     expect((await json(host.creativeSlug)).variantGroup).toBeUndefined();
   });

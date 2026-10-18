@@ -1,19 +1,20 @@
 import { existsSync } from 'node:fs';
-import { mkdir, readdir } from 'node:fs/promises';
+import { mkdir, readdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
-  activeMembers, canDiscard, sisterSlug, effectiveLinks, followerVersion, formatDisplayName, hasFormat, MAX_INSTANCES, letterOfSlug, nextInstanceId, nextLetter, presetOf, starOf,
+  activeMembers, canDiscard, sisterSlug, effectiveLinks, followerVersion, formatDisplayName, hasFormat, MAX_INSTANCES, hostOf, letterOfSlug, nextInstanceId, nextLetter, presetOf, starOf,
   VARIANT_ID_RE, variantGroupSchema, variantIdAt, variantIndex,
   type CreativeFile, type VariantGroup, type VariantId, type VariantMember, type VariantPick, type VersionEntry,
 } from '@motion-studio/shared';
 import { readCompositionFolder } from '../compositions/composition-files.ts';
+import { parseConversation } from './group-conversation.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
 import { currentLocale, t } from '../i18n.ts';
 import { CodedError } from '../workspace-store.ts';
 import { copyVerified, versionDirReady } from './carry-over.ts';
 import { compositionDirOf } from './composition-contract.ts';
 import { alignEditorCopies } from './composition-turn.ts';
-import { CREATIVE_SLUG_RE, creativeKind, groupTiedTo, isRealSister, memberPresent, type ChatMigration, type CreativeStore } from './creative-store.ts';
+import { CREATIVE_SLUG_RE, SISTER_SLUG_RE, creativeKind, groupTiedTo, isRealSister, memberPresent, type ChatMigration, type CreativeStore } from './creative-store.ts';
 import type { BriefPatch, CreativeRef, CreativeTurnService, SharedBrief } from './creative-turns.ts';
 
 /**
@@ -211,9 +212,12 @@ export class VariantGroupService {
       const hostPending = await turns.side.pendingBrief(host.projectDir, host.creativeSlug);
       const created: string[] = [];
       const committed: string[] = [];
+      // Decision 1162: never below the host's high-water mark, nor any id its chat or a former sister's folder names.
+      let floor = await this.idFloor(host, g, hostFile);
       try {
         for (const s of specs) {
-          const letter = await this.freeLetter(host, g);
+          const letter = await this.freeLetter(host, floor);
+          floor = variantIndex(letter) + 1;
           const sister: CreativeFile = {
             schemaVersion: 1, title: hostFile.title, brief: hostFile.brief, status: 'draft', error: null,
             createdAt: at, updatedAt: at, resumeFrom: null, linkedCodebases: hostFile.linkedCodebases ?? [], variantOf: host.creativeSlug,
@@ -235,6 +239,7 @@ export class VariantGroupService {
           }
         }
         await this.writeGroup(host, g, false);
+        await store.update(host.creativeSlug, { variantNext: floor });
       } catch (err) {
         for (const slug of created.reverse()) await store.removeSisterFolder(slug).catch(() => {});
         // Minor (Task 2): a seeded sister's folder is already in git; its removal is committed too, not left as a deletion.
@@ -303,12 +308,32 @@ export class VariantGroupService {
   }
 
   /**
-   * The id for a new sister: the one after the group's highest (`nextLetter`: ids are never reused, decision 1151), skipping
-   * the folder of a former sister of this host (an orphan: decision 947, a sister archived on its own leaves the group and
-   * keeps its folder). Any other folder in the way is refused by `createSister` (409 `variant-folder-exists`), as before.
+   * Decision 1162: the lowest position a new id may take. Ids are never given twice: not below the group's highest member
+   * (`nextLetter`), the host's high-water mark `variantNext` (kept when sisters leave and when the group dissolves), any id
+   * the host's chat or its copies from before a merge name (a host older than the mark), nor any former sister's folder.
    */
-  private async freeLetter(host: CreativeRef, g: VariantGroup): Promise<VariantId> {
-    for (let i = variantIndex(nextLetter(g)); ; i++) {
+  private async idFloor(host: CreativeRef, g: VariantGroup, hostFile: CreativeFile): Promise<number> {
+    const { store } = this.deps;
+    let floor = Math.max(variantIndex(nextLetter(g)), hostFile.variantNext ?? 0);
+    const seen = (id: unknown) => { if (typeof id === 'string') floor = Math.max(floor, variantIndex(id) + 1); };
+    const hostDir = store.dir(host.creativeSlug);
+    for (const name of await readdir(hostDir).catch(() => [] as string[])) {
+      if (name !== 'conversation.jsonl' && !name.startsWith('conversation.premerge')) continue;
+      for (const e of parseConversation(await readFile(join(hostDir, name), 'utf8').catch(() => ''))) seen(e.variant);
+    }
+    for (const name of await readdir(dirname(hostDir)).catch(() => [] as string[])) {
+      if (SISTER_SLUG_RE.test(name) && hostOf(name) === host.creativeSlug) seen(letterOfSlug(name));
+    }
+    return floor;
+  }
+
+  /**
+   * The id for a new sister: the first from `floor` (decision 1162), skipping the folder of a former sister of this host (an
+   * orphan: decision 947, a sister archived on its own leaves the group and keeps its folder). Any other folder in the way
+   * is refused by `createSister` (409 `variant-folder-exists`), as before.
+   */
+  private async freeLetter(host: CreativeRef, floor: number): Promise<VariantId> {
+    for (let i = floor; ; i++) {
       const l = variantIdAt(i);
       if (!VARIANT_ID_RE.test(l)) throw new CodedError(409, t().errors.invalidRequest, 'invalid-request');
       if ((await creativeKind(host.projectDir, sisterSlug(host.creativeSlug, l))) !== 'orphan') return l;
