@@ -346,7 +346,7 @@ describe('legacy turns and brief-save links (final review I4)', () => {
 });
 
 describe('sameDelivery (decision 1060: a turn that changes no output makes no version)', () => {
-  const loc = (instanceId: string, hash: string) => ({ locale: 'de', instanceId, hash: h(hash), origin: 'agent' as const, stale: [], voice: 'original' as const });
+  const loc = (instanceId: string, hash: string) => ({ locale: 'de' as const, instanceId, hash: h(hash), origin: 'agent' as const, stale: [], voice: 'original' as const });
   it.each([
     ['the same compositions', v2(1, [['reel', 'a'], ['post', 'p']]), v2(2, [['post', 'p'], ['reel', 'a']]), true],
     ['one composition changed', v2(1, [['reel', 'a'], ['post', 'p']]), v2(2, [['reel', 'a'], ['post', 'q']]), false],

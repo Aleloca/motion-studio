@@ -683,6 +683,17 @@ describe('refusals', { timeout: 120_000 }, () => {
     expect((await save(slug, body)).statusCode).toBe(200);
   });
 
+  it('409 editor-unchanged when the draft is the latest version\'s composition (decision 1062); nothing is written', async () => {
+    const slug = await create(['test-wide', 'test-tall']);
+    // Ops that cancel out: the same composition as v1.
+    const body = await draft(slug, 1, 'test-wide', () => {}, [{ kind: 'clipProps', clipId: 'title', props: { text: 'Hello' } }]);
+    const r = await save(slug, body);
+    expect(r.statusCode, r.body).toBe(409);
+    expect(r.json()).toEqual({ error: ed().unchanged({ format: label('test-wide'), n: 1 }), code: 'editor-unchanged' });
+    expect((await store().readVersions(slug)).map((v) => v.n)).toEqual([1]);
+    expect(existsSync(join(store().dir(slug), 'outputs', 'v2'))).toBe(false);
+  });
+
   it('409 editor-base-changed when another version changed the format; a version that changed only another format is no conflict', async () => {
     const slug = await create(['test-wide', 'test-tall']);
     const body = await draft(slug, 1, 'test-wide', (c) => { clip(c, 'title').props.text = 'Mine'; });

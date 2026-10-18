@@ -89,7 +89,8 @@ export function frames(formats: string[], presets: FormatPreset[], o: { height: 
 export function retryTurn(entries: ConversationEntry[]): { text?: string; pins?: Pin[] } {
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i]!;
-    if (e.type === 'version') return {};
+    // Decision 1060: a turn that ended without a version (nothing changed) is over too.
+    if (e.type === 'version' || (e.type === 'system' && e.keptVersion !== undefined)) return {};
     if (e.type === 'user') return { text: e.text, ...(e.pins.length ? { pins: e.pins } : {}) };
   }
   return {};

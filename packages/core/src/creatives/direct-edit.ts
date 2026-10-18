@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import {
   COMPOSITION_LIMITS, EDITOR_SAVE_STAGED_MAX, compositionProblem, compositionProblemText, describeEdits, draftSizeProblem, editOpSchema, effectiveLinks, formatDisplayName, INSTANCE_ID_RE, isCompositionPath, MAX_INSTANCES, messages,
-  nextInstanceId, normalizeComposition, presetOf, renderJobKey, validateComposition,
+  nextInstanceId, normalizeComposition, presetOf, renderJobKey, sameDelivery, validateComposition,
   type Brief, type CompositionProblem, type CreativeFile, type FormatPreset, type Locale, type StagedAsset, type VersionEntry,
 } from '@motion-studio/shared';
 import { hashConfinedFile } from '../brand/agent-guard.ts';
@@ -408,6 +408,8 @@ export class DirectEditService {
         }
 
         const saved = await this.deps.turns.finishCompositions(ref, store, { creative, targets: [format], carried, carriedComps, links }, presets, latest, n, label, locale, { direct: true, base: { durationSec: baseComp.duration, ...(latestEntry.userDuration ? { userDuration: latestEntry.userDuration } : {}) } });
+        // Decision 1062: a save that changes nothing (ops that cancel out) makes no version; its folder goes below.
+        if (sameDelivery(latest, saved)) throw new CodedError(409, e.unchanged({ format: label(format), n: latest.n }), 'editor-unchanged');
         const { problems } = saved;
         const status = problems.length === 0 ? 'complete' : 'incomplete';
         // The agent's workspace gets an exact copy of this version's compositions (decisions log 263), committed with it so a

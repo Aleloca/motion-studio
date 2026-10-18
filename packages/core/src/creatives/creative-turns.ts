@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { mergeStorePack, verifyScreens } from '../store-pack/brief.ts';
 import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
-import { canFollow, effectiveServices, checkLink, effectiveLinks, legacyTurnKind, linksAfterBriefSave, formatHistory, formatDisplayName, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type AgentEvent, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type StorePack, storePackSchema, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
+import { canFollow, effectiveServices, checkLink, effectiveLinks, legacyTurnKind, linksAfterBriefSave, formatHistory, sameDelivery, formatDisplayName, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type AgentEvent, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type StorePack, storePackSchema, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import { detachLinksUnder } from '../agent/protected-links.ts';
 import { noteCoreChange } from '../core-changes.ts';
@@ -1344,6 +1344,12 @@ export class CreativeTurnService {
         }
         saved = { outputs, problems, tools: assembled.tools, renderCommand: assembled.renderCommand };
       }
+      // Decision 1060 (user call 972): a turn that changed no output makes no version; what it changed besides (the brief,
+      // a pending brief) still applies when it settles, and the latest version is checked again then (decision 964).
+      if (latest && sameDelivery(latest, saved)) {
+        await this.keptLatest(ref, store, { creative, latest, n, versions, live, sessionId: noAgent ? undefined : resumeSessionId, noAgent });
+        return;
+      }
       const { problems } = saved;
       const status = problems.length === 0 ? 'complete' : 'incomplete';
       const commit = await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${n}`, { headWhenClean: true });
@@ -1407,6 +1413,35 @@ export class CreativeTurnService {
       live.redirect?.settle('dropped');
       this.turnDurations.delete(jobId);
     }
+  }
+
+  /**
+   * Decision 1060: the end of a turn whose outputs are all the latest version's (`sameDelivery`). No version is saved: the
+   * unsaved folder `outputs/v<n>` goes (the next turn takes the number again) and the rest of the turn's files are committed.
+   * The latest version stands for the turn: it takes the turn's session (the next turn goes on from that conversation; its
+   * content is the same), and what the agent left for after the turn acts on it (`savedN`). The chat says it, with whether
+   * the brief changes when the turn settles (its pending brief, applied by `briefAfterJob`, which checks the latest version
+   * again on a new duration). The creative's status follows the latest version.
+   */
+  private async keptLatest(ref: CreativeRef, store: CreativeStore, o: { creative: CreativeFile; latest: VersionEntry; n: number; versions: VersionEntry[]; live: LiveTurn; sessionId: string | undefined; noAgent: boolean }): Promise<void> {
+    const slug = ref.creativeSlug;
+    const { creative, latest } = o;
+    const j = t().jobs;
+    await this.clearStaleOutputs(store, slug, o.n, o.versions);
+    await this.deps.git.commitAll(ref.projectDir, j.noOutputChangedCommit({ title: creative.title, n: latest.n }), { headWhenClean: true });
+    if (o.sessionId !== undefined && isSessionId(o.sessionId) && o.sessionId !== latest.sessionId) {
+      await store.updateVersion(slug, latest.n, (v) => ({ ...v, sessionId: o.sessionId! }));
+    }
+    o.live.savedVersion = true;
+    o.live.savedN = latest.n;
+    const brief = Boolean(await this.side.pendingBrief(ref.projectDir, slug));
+    await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: j.noOutputChanged({ n: latest.n, brief }), keptVersion: latest.n });
+    // As after a saved version: a restart's intent is kept only by a turn with no agent; the stopped turn is over.
+    const resumeFrom = o.noAgent && creative.resumeFrom ? { version: latest.n, sessionId: creative.resumeFrom.sessionId } : null;
+    await store.update(slug, { status: latest.status === 'complete' ? 'ready' : 'incomplete', error: null, resumeFrom });
+    await this.side.update(ref.projectDir, slug, () => ({ stoppedSession: undefined }));
+    await this.commitState(ref, j.versionStateCommit({ title: creative.title, n: latest.n }));
+    this.changed(ref);
   }
 
   /**

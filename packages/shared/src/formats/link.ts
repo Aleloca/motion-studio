@@ -184,11 +184,15 @@ export function formatRuns(versions: VersionEntry[], formatId: string): Array<{ 
 /**
  * Decision 1061: whether history entry `n` of `formatId` has problems, as the LATEST version holding the same content says
  * (its checks are the newest, e.g. against a brief whose duration changed since `n`): an entry checked again clean in a
- * later identical version is clean. A version that is not a history entry is judged on its own.
+ * later identical version is clean. Only a version that recorded this format's own problems (its composition's or its
+ * file's) speaks for the entry: version-level problems of an old version are not this content's, so without such a later
+ * version the entry is judged on its own (as is a version that is not a history entry).
  */
 export function entryHasProblems(versions: VersionEntry[], formatId: string, n: number): boolean {
   const last = formatRuns(versions, formatId).find((r) => r.n === n)?.last ?? n;
-  const v = versions.find((x) => x.n === last);
+  const own = (v: VersionEntry) => (v.compositions?.find((c) => c.format === formatId)?.problems ?? v.outputs.find((o) => o.format === formatId)?.problems) !== undefined;
+  const later = byNumber(versions).filter((v) => v.n > n && v.n <= last && own(v)).at(-1);
+  const v = later ?? versions.find((x) => x.n === n);
   return v !== undefined && hasProblems(v, formatId);
 }
 

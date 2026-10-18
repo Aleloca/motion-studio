@@ -49,12 +49,15 @@ const resumeAt = args.indexOf('--resume');
 const resumed = resumeAt >= 0 ? args[resumeAt + 1] : null;
 const sessionId = resumed ? (args.includes('--fork-session') ? `${resumed}-fork` : resumed) : 'fake-session-1';
 const hasFfmpeg = () => spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' }).status === 0;
-// Real (tiny) media when ffmpeg is installed, so tests that use real MediaTools see valid files.
-const writeMedia = (file, f, durationSec) => {
+// Real (tiny) media when ffmpeg is installed, so tests that use real MediaTools see valid files. Tagged with `tag` (the
+// version folder, or FAKE_CLAUDE_MEDIA_TAG), so every turn's media differ, as its compositions do (decision 1060: a turn
+// whose outputs are all the latest version's makes no version).
+const writeMedia = (file, f, durationSec, tag) => {
   if (process.env.FAKE_CLAUDE_NO_FFMPEG) { writeFileSync(file, `fake-media:${f.id}:${Date.now()}:${Math.random()}`); return; }
-  if (!ffmpegOk) { writeFileSync(file, 'fake-media'); return; }
+  if (!ffmpegOk) { writeFileSync(file, `fake-media:${tag}`); return; }
   const input = ['-f', 'lavfi', '-i', `color=c=blue:s=${f.width}x${f.height}${f.kind === 'video' ? `:d=${durationSec}:r=5` : ''}`];
-  const output = f.kind === 'video' ? ['-pix_fmt', 'yuv420p', file] : ['-frames:v', '1', file];
+  const meta = ['-metadata', `comment=${tag}`];
+  const output = f.kind === 'video' ? ['-pix_fmt', 'yuv420p', ...meta, file] : ['-frames:v', '1', ...meta, file];
   const r = spawnSync('ffmpeg', ['-y', '-loglevel', 'error', ...input, ...output], { stdio: 'ignore' });
   if (r.status !== 0) writeFileSync(file, 'fake-media');
 };
@@ -81,7 +84,7 @@ rl.once('line', async (line) => {
     const formats = skipLast ? block.formats.slice(0, -1) : block.formats;
     const files = formats.map((f) => {
       const file = `${f.id}.${f.extensions[0]}`;
-      writeMedia(join(block.outputDir, file), f, block.durationSec ?? 10);
+      writeMedia(join(block.outputDir, file), f, block.durationSec ?? 10, process.env.FAKE_CLAUDE_MEDIA_TAG ?? block.outputDir.split('/').pop());
       return { format: f.id, file, width: f.width, height: f.height, ...(f.kind === 'video' ? { durationSec: block.durationSec ?? 10 } : {}) };
     });
     for (const extra of JSON.parse(process.env.FAKE_CLAUDE_EXTRA_FILES ?? '[]')) {

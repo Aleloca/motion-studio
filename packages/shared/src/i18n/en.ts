@@ -504,6 +504,8 @@ export const en = {
     /** Saving a draft as a new version (Task 4, `DirectEditService.save`). */
     summaryNone: 'Direct edits',
     busy: 'The agent or a render is working on this creative: save the draft when it has finished',
+    /** Decision 1062: a save whose composition is the latest version's makes no version. */
+    unchanged: (p: { format: string; n: number }) => `Nothing changed: ${p.format} is the same as in v${p.n}, so no new version was saved.`,
     baseChanged: (p: { format: string; n: number }) => `${p.format} changed in v${p.n} while you were editing: reopen the editor on the latest version (your draft is kept until you discard it)`,
     carryFailed: (p: { format: string; n: number }) => `${p.format} in v${p.n} is no longer the composition recorded for it: ask the agent to make it again before saving`,
     saveInvalid: (p: { text: string }) => `The draft cannot be saved: ${p.text}`,
@@ -652,6 +654,9 @@ export const en = {
     restartCommit: (p: { title: string; n: number }) => `${p.title}: restart from v${p.n}`,
     stateCommit: (p: { title: string }) => `${p.title}: state`,
     versionStateCommit: (p: { title: string; n: number }) => `${p.title}: v${p.n} · state`,
+    /** Decision 1060: a turn that changed no video or image makes no version. */
+    noOutputChanged: (p: { n: number; brief: boolean }) => `No video or image changed: no new version, v${p.n} stays the latest.${p.brief ? ' The brief is updated.' : ''}`,
+    noOutputChangedCommit: (p: { title: string; n: number }) => `${p.title}: no new version (v${p.n} unchanged)`,
     removedUnsaved: (p: { count: number }) => `Removed ${p.count === 1 ? '1 file' : `${p.count} files`} not saved in a version`,
     restartedFrom: (p: { n: number }) => `Restarted from version ${p.n}: the next message works on that base.`,
     codebaseNotRepo: (p: { path: string }) => `Codebase ${p.path} cannot be checked (not a git repository): changes would go unnoticed`,

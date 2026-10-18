@@ -424,7 +424,8 @@ export class CreativeStore {
     let cut: string | null = null;
     for (let i = entries.length - 1; i >= 0; i--) {
       const e = entries[i]!;
-      if (e.type === 'version') return null;
+      // Decision 1060: a turn that ended without a version (nothing changed) is over too.
+      if (e.type === 'version' || (e.type === 'system' && e.keptVersion !== undefined)) return null;
       if (e.type !== 'agent' || typeof e.jobId !== 'string' || !e.jobId) continue;
       cut ??= e.jobId;
       if (e.jobId !== cut) return null;

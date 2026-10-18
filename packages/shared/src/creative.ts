@@ -400,8 +400,10 @@ export type ConversationEntry =
   /**
    * `warning`: something the user should know that did not fail the turn (e.g. a link removed); shown like `info`.
    * `origin: 'agent'` (decision 917): the line says what the agent did in the app with its tools (absent: the core's own).
+   * `keptVersion` (decision 1060): the turn ended without a version because no output changed; version `keptVersion` (the
+   * latest) still holds its content. The turn's boundary, like a `version` entry, for the readers that look for one.
    */
-  | { type: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string; origin?: 'agent' };
+  | { type: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string; origin?: 'agent'; keptVersion?: number };
 
 export interface CreativeSummary { slug: string; title: string; status: CreativeStatus; formats: string[]; /** The brief's labels of format instances (Phase 12); absent when there are none. */ formatLabels?: Record<string, string>; versions: number; updatedAt: string; cover: string | null;
   /** Phase 15: on a group's host row only (its sisters are not listed): members, active ones, and members whose folder is missing. */
