@@ -260,7 +260,7 @@ describe.skipIf(!tools.ok)('renderer: media timing, seams, audio, still', () => 
       tracks: [{ id: 'v', kind: 'video', clips: [
         { id: 'a', type: 'video', src: 'assets/n.mp4', start: 0, duration: D, ...probed, props: { ...BOXES.v24 } },
         { id: 'b', type: 'video', src: 'assets/n.mp4', start: 0.5, duration: D - 0.5, ...probed, props: { ...BOXES.v25 } },
-      ] }],
+      ] }, { id: 's', kind: 'visual', clips: [{ id: 'mark', type: 'shape', start: 0, duration: D, props: { ...BOXES.trim, fill: '#ffffff' } }] }],
     } as unknown as Composition;
     const p = new ChromeProvider({ exe: tools.chrome!.exe, kind: 'system', limits: { timeLimitMs: 30 * 60_000 } });
     const out = join(creative, VERSION_DIR, `${id}.mp4`);
@@ -268,8 +268,16 @@ describe.skipIf(!tools.ok)('renderer: media timing, seams, audio, still', () => 
     const r = await renderComposition({ dir: creative, versionDir: VERSION_DIR, composition: comp, format: { ...FORMAT, id }, out, provider: p, parallel: 2, signal: new AbortController().signal, distDir: dist, ffmpeg: ff, encoder: 'libx264' });
     if (process.env.MS_RENDER_DEBUG) console.info(`[render] trusted: ${Date.now() - t0} ms`);
     const frames = Array.from({ length: N }, (_, i) => i);
-    expect(decodeStrips(ff, out, BOXES.v24, 2).map(readCode)).toEqual(frames.map((i) => Math.min(i, 29) + 1));
-    expect(decodeStrips(ff, out, BOXES.v25, 2).map(readCode)).toEqual(frames.map((i) => (i < 15 ? 0 : Math.min(i - 15, 29) + 1)));
+    const a = decodeStrips(ff, out, BOXES.v24, 2).map(readCode), b = decodeStrips(ff, out, BOXES.v25, 2).map(readCode);
+    const expA = frames.map((i) => Math.min(i, 29) + 1), expB = frames.map((i) => (i < 15 ? 0 : Math.min(i - 15, 29) + 1));
+    // A static white shape on every frame: when a video box comes out wrong (macOS CI run 39144320381: one frame black on
+    // each of the two pages), it tells a wrong video frame (shape white) from a capture that lost the page (shape dark).
+    const mark = decodeStrips(ff, out, BOXES.trim, 2).map((x) => Math.min(x[0]!, x[1]!));
+    const wrong = frames.filter((i) => a[i] !== expA[i] || b[i] !== expB[i]);
+    if (wrong.length) console.error(`[render] trusted: wrong frames ${wrong.map((i) => `${i} (a ${a[i]}≠${expA[i]}, b ${b[i]}≠${expB[i]}, mark ${mark[i]})`).join(', ')}; warnings ${JSON.stringify(r.warnings)}`);
+    expect(mark.every((x) => x > 200)).toBe(true);
+    expect(a).toEqual(expA);
+    expect(b).toEqual(expB);
     expect(r.warnings).toEqual([]);
     await expectNoLeftovers({ pgids: [p.pgid!], markers: [p.profileDir!] });
     rmSync(out);
@@ -297,7 +305,9 @@ describe.skipIf(!tools.ok)('renderer: media timing, seams, audio, still', () => 
     const shown = (t: number) => { let k = 0; for (let j = 0; j < times.length; j++) if (times[j]! <= Math.min(t, times.at(-1)!) + 1e-9) k = j; return k + 1; };
     const got = decodeStrips(ff, out, BOXES.v24, 2).map(readCode);
     if (process.env.MS_RENDER_DEBUG) console.info(`[render] webm: ${elapsed} ms, ${r.warnings.length} warnings`, got.join(','));
-    expect(got).toEqual(Array.from({ length: N }, (_, i) => shown(i / FPS + VFR_NUDGE)));
+    const exp = Array.from({ length: N }, (_, i) => shown(i / FPS + VFR_NUDGE));
+    if (got.some((g, i) => g !== exp[i])) console.error(`[render] webm: wrong frames ${got.map((g, i) => (g === exp[i] ? '' : `${i} (${g}≠${exp[i]})`)).filter(Boolean).join(', ')}`);
+    expect(got).toEqual(exp);
     expect(r.warnings.every((w) => w.code === 'videoFrameMismatch' && w.clipId === 'w')).toBe(true);
     // No seek waits out its 60 s deadline, checked without a clock (M1): a frame accepted only after the deadline says so in
     // its warning. The renderer keeps the first 50 distinct warnings, so fewer than 50 means none was cut (35 here).

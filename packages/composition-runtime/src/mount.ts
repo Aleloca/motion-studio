@@ -516,6 +516,28 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
   };
 
   /**
+   * Armed just before a seek sets `currentTime`: `wait(ms)` resolves true once Chrome presents a frame for the seek
+   * (`requestVideoFrameCallback`), false after `ms` or without the API. Measured in Chrome 155 (render pages at background
+   * QoS): the callback fires on every paused seek, also for a `display: none` video and for a frame equal to the previous
+   * one, often after `seeked`; until it fires `new VideoFrame(video)` can still give the pre-seek frame, and once it has
+   * fired it gives the seek's. The Ubuntu CI failure of the lenient WebM test (run 39141011457) was that race on a frame
+   * already held out once (`settledFrames`), drawn one output frame late.
+   */
+  const framePresented = (v: HTMLVideoElement): { wait(ms: number): Promise<boolean> } | null => {
+    const rv = v as HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number; cancelVideoFrameCallback?: (id: number) => void };
+    if (typeof rv.requestVideoFrameCallback !== 'function') return null;
+    let done = false;
+    let wake: (() => void) | null = null;
+    const id = rv.requestVideoFrameCallback(() => { done = true; wake?.(); });
+    return {
+      wait: (ms) => done ? Promise.resolve(true) : new Promise<boolean>((resolve) => {
+        const timer = n.setTimeout(() => { wake = null; if (typeof rv.cancelVideoFrameCallback === 'function') rv.cancelVideoFrameCallback(id); resolve(done); }, ms);
+        wake = () => { n.clearTimeout(timer); resolve(true); };
+      }),
+    };
+  };
+
+  /**
    * Seeks one video: the `seeked` wait and the frame check share one deadline (`timeouts.seek`). Render mode fails fast:
    * a frame that could not be drawn rejects the seek (`videoSeekTimeout`), so the renderer stops at once instead of
    * waiting out the deadline of every later seek.
@@ -529,7 +551,8 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     const moves = !(Math.abs(v.currentTime - target) < 1e-6 && !v.seeking && v.readyState >= 2);
     // The frame shown before this seek: the load frame (first seek), and for an untrusted source moving to another target
     // the pre-seek frame, which Chrome may still hand out for a while after `seeked` (frameVerdict), unless that very
-    // frame was already held out once in this video (`settledFrames`).
+    // frame was already held out once in this video (`settledFrames`). Both apply only when Chrome does not report the
+    // seek's frame as presented in time (`framePresented`): the fallback.
     let preSeekTsUs: number | null = null;
     if (m.canvas && (!loadStamps.has(v) || (moves && !sourceTrustedOf(m.clip)))) {
       const f = grabFrame(v);
@@ -542,9 +565,13 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     }
     if (moves) {
       const seeked = new Promise<void>((resolve) => v.addEventListener('seeked', () => resolve(), { once: true }));
+      const presented = m.canvas ? framePresented(v) : null;
       v.currentTime = target;
       await withTimeout(seeked, Math.max(1, deadline - n.performanceNow()), n, `video ${m.clip.src} did not seek to ${target}`)
         .catch((e: unknown) => report('videoSeekTimeout', String(e instanceof Error ? e.message : e), m.clip.id));
+      // Chrome presented this seek's frame (even one equal to the frame before): what the video holds now is it, so the
+      // pre-seek frame is not suspect any more and is never held out (a legitimately repeated frame costs nothing).
+      if (presented && await presented.wait(Math.min(PRE_SEEK_SETTLE_MS, Math.max(1, deadline - n.performanceNow())))) preSeekTsUs = null;
     }
     if (!m.canvas) return;
     if (opts.mode === 'preview') {
