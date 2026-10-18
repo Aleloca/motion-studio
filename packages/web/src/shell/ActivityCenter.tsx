@@ -12,6 +12,7 @@ import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.
 import { href } from '../routes.ts';
 import { Button, Empty, Icon, Popover, ProgressBar, Spinner, Tabs, cx, toast } from '../ui/index.ts';
 import { renderPct } from '../screens/renderModel.ts';
+import { stageText } from '../screens/exportModel.ts';
 import { message } from '../errors.ts';
 import { canAskNotifications } from './notify.ts';
 import { go, ShellContext, type ActivityTab } from './ShellContext.tsx';
@@ -49,6 +50,9 @@ export function jobPlace(job: JobSummary): { project: string; creative: string |
   const parts = job.key.split(':');
   const kind = parts[0];
   if (kind === 'creative' && parts.length >= 4) return { project: parts.at(-2)!, creative: parts.at(-1)! };
+  // Decision 974: an export `export:<root>:<project>:<creative>:<id>`, a render for one export `render-export:…:v<n>:<id>`.
+  if (kind === 'export' && parts.length >= 5) return { project: parts.at(-3)!, creative: parts.at(-2)! };
+  if (kind === 'render-export' && parts.length >= 6) return { project: parts.at(-4)!, creative: parts.at(-3)! };
   if (kind === 'render' && parts.length >= 5) {
     // A follow-up job of a version (`…:v<n>:<k>`, core I3) has one more part.
     const end = /^\d+$/.test(parts.at(-1)!) && /^v\d+$/.test(parts.at(-2)!) ? -1 : 0;
@@ -171,6 +175,7 @@ export function ActivityCenter({ live, initialTab, request = 0, where }: { live:
           <ul className="ms-activity-list">
             {running.map((j) => (j.kind === 'render'
               ? <RenderRow key={j.id} job={j} />
+              : j.kind === 'export' ? <ExportRow key={j.id} job={j} />
               : <RunningRow key={j.id} job={j} step={lastStep(live.events[j.id])} tokens={jobLiveTokens(live, j.id)} partial={jobUsagePartial(live, j.id)} events={live.events[j.id]} />))}
           </ul>
         ) : <Empty icon="clock" title={a.emptyRunning} sub={a.emptyRunningSub} />)}
@@ -260,6 +265,38 @@ function RenderRow({ job }: { job: JobSummary }) {
         <b>{job.label}</b>
         <span className="ms-activity-sub">{sub}</span>
         {!queued && p?.phase === 'frames' ? <ProgressBar className="ms-activity-bar" value={renderPct(job, p.format)} label={sub} /> : null}
+      </span>
+    </Row>
+  );
+}
+
+/**
+ * An export in the background (decision 974, user report 20): its renders' progress (a bar), then the copy; cancelling it
+ * stops the export and the renders it started.
+ */
+function ExportRow({ job }: { job: JobSummary }) {
+  const t = useT();
+  const x = t.web.exportUi;
+  const queued = job.state === 'queued';
+  const sub = queued ? t.web.shell.activity.queued : stageText(job, x);
+  const pct = job.export?.stage === 'rendering' && job.export.renders?.length ? job.export.pct : null;
+  const [cancelling, setCancelling] = useState(false);
+  const cancel = () => {
+    setCancelling(true);
+    Promise.resolve().then(() => api.cancelJob(job.id))
+      .catch((e: unknown) => { setCancelling(false); toast.show(t.web.render.cancelFailed({ detail: message(e) })); });
+  };
+  return (
+    <Row job={job} className="ms-tall" after={(
+      <Button size="sm" variant="ghost" className="ms-activity-cancel" loading={cancelling} disabled={cancelling} aria-label={x.cancelOf({ label: job.label })} onClick={cancel}>
+        {t.web.render.cancel}
+      </Button>
+    )}>
+      <span className={cx('ms-activity-glyph', queued && 'ms-muted')}>{queued ? <Icon name="clock" size={14} /> : <Spinner decorative />}</span>
+      <span className="ms-activity-text">
+        <b>{job.label}</b>
+        <span className="ms-activity-sub">{sub}</span>
+        {pct !== null && pct !== undefined ? <ProgressBar className="ms-activity-bar" value={pct} label={sub} /> : null}
       </span>
     </Row>
   );
@@ -357,10 +394,12 @@ function DoneRow({ job, made, failure, tokens, partial }: { job: JobSummary; mad
   const locale = useLocale();
   const ok = job.state === 'succeeded';
   const state = t.web.jobState[job.state];
-  const what = made ? (made.status === 'complete' ? a.versionReady({ n: made.n }) : a.versionIncomplete({ n: made.n }))
+  // An export (decision 974): how many files, and where.
+  const exported = ok && job.kind === 'export' && job.export?.files ? t.web.exportUi.doneRow({ count: job.export.files.length, folder: job.export.destination }) : null;
+  const what = exported ?? (made ? (made.status === 'complete' ? a.versionReady({ n: made.n }) : a.versionIncomplete({ n: made.n }))
     : failure ? `${state} · ${failure}`
     : ok && job.notes?.length ? job.notes[0]!
-    : state;
+    : state);
   // A failed render's SVG refusals: the English reasons behind "Details" (decision 767), outside the row's link.
   const refusals = !ok ? svgRefusalsOf(job.notes ?? []) : [];
   return (

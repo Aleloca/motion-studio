@@ -2,7 +2,8 @@
  * The whole format page in real Chrome (follow-up batch 2, task 6; one screen since decision 916: the page is the editor).
  * The real EditorScreen and its top bar are rendered in jsdom (the live player replaced by a stand-in that reports itself
  * ready), in English and Italian, in three states: the live preview, a render at 42% (the editor is read-only meanwhile,
- * with its reason) and a ready video with its size; each with the Chat tab and with the Inspector tab of a selected clip.
+ * with its reason; decision 974: the percent shows inside Export) and a ready video; each with the Chat tab and with the
+ * Inspector tab of a selected clip.
  * The markup, given the app's real stylesheets and fonts in the app's own grid (bar over page), is measured in real Chrome
  * at 1024 and 1280 px, in the desktop title bar: the page does not scroll sideways, no element leaves its panel, no text is
  * clipped mid-word, an ellipsis still shows a meaningful part (at least 48 px and a quarter of the text, unless
@@ -118,9 +119,10 @@ function Harness({ live }: { live: EventsState }) {
   );
 }
 
+/** What the bar's Export control says (decision 974: no render status any more; a render shows inside Export). */
 const PILL: Record<'en' | 'it', Record<State, RegExp>> = {
-  en: { idle: /Live preview/, rendering: /Rendering 42%/, ready: /Video ready · 12\.4 MB/ },
-  it: { idle: /Anteprima dal vivo/, rendering: /Render 42%/, ready: /Video pronto · 12,4 MB/ },
+  en: { idle: /^Export$/, rendering: /^Rendering 42%$/, ready: /^Export$/ },
+  it: { idle: /^Esporta$/, rendering: /^Render 42%$/, ready: /^Esporta$/ },
 };
 type Tab = 'chat' | 'inspector';
 /** The app (bar, then page) as the shell lays it out, in the desktop title bar, with the chat and then the inspector tab. */

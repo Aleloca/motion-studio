@@ -1,3 +1,4 @@
+import type { OutputIssue } from './creative.ts';
 import type { LanguageSetting, Locale } from './i18n/index.ts';
 import type { Explanation } from './explain/index.ts';
 import type { ModelUsage, TokenCounts } from './usage.ts';
@@ -94,8 +95,13 @@ export interface ExportJobInfo {
   files?: string[];
   /** Once done: what was not exported (missing files, a group format left out), as text. */
   skipped?: string[];
-  /** Once done: renders made now with problems, not copied, as "<format> vN (<reasons>)". */
-  excluded?: string[];
+  /** Once done: renders made now with problems, not copied (I2), with their problems and codes (P2). */
+  excluded?: Array<{ format: string; version: number; locale?: string; problems: string[]; issues?: OutputIssue[] }>;
+  /**
+   * A failed export refused by a rule the dialog can answer (its `code`, e.g. `localization-needs-force`: "Render anyway"),
+   * with the core's list of what is concerned. Absent for any other failure (the job's `error` says it).
+   */
+  refusal?: { code: string; problems?: string[] };
 }
 
 /**

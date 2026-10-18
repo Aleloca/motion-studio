@@ -389,6 +389,21 @@ describe('export per language', { timeout: 120_000 }, () => {
     expect((await exportPicks(slug, { picks: { 'test-wide': 1 }, locales: ['he'] })).json().code).toBe('locale-rtl');
   });
 
+  it('decision 974: in the background the same refusal fails the export job with its code and list kept ("Render anyway")', async () => {
+    const slug = await create();
+    await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Herzlich willkommen zur brandneuen Version unserer wunderbaren Anwendung für alle Geräte' } });
+    const r = await exportPicks(slug, { picks: { 'test-wide': 1 }, locales: ['de'], background: true, quality: 'high' });
+    expect(r.statusCode, r.body).toBe(200);
+    const job = await env.waitJob((r.json() as { job: JobSummary }).job.id);
+    expect(job.state).toBe('failed');
+    expect(job.export?.refusal).toMatchObject({ code: 'localization-needs-force', problems: [expect.stringContaining('(de)')] });
+    expect(readdirSync(dest)).toEqual([]);
+    const forced = await exportPicks(slug, { picks: { 'test-wide': 1 }, locales: ['de'], force: true, background: true, quality: 'high' });
+    const ok = await env.waitJob((forced.json() as { job: JobSummary }).job.id);
+    expect(ok.state, ok.error).toBe('succeeded');
+    expect(ok.export?.files?.map((f) => f.split('/').pop())).toEqual(['launch-test-wide-v1-de.mp4']);
+  });
+
   it('the primary tag of a creative without extra languages exports today\'s file', async () => {
     const slug = await env.create(['test-wide'], { links: {}, locales: { primary: 'en', extra: [] } });
     const r = await exportPicks(slug, { picks: { 'test-wide': 1 }, locales: ['en'] });

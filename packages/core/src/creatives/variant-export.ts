@@ -34,6 +34,8 @@ export interface GroupPlanItem {
   /** The member's folder. */
   creativeDir: string;
   state: GroupPlanState;
+  /** A composition (v2): rendered by the core, so the export's quality and resolution apply to it (decision 974). */
+  composed?: true;
 }
 
 /**
@@ -68,9 +70,9 @@ export async function planGroupExport(svc: VariantGroupService, store: CreativeS
       // A composition's file is current only when its render is (the single export's `pendingRenders` rule): else it is
       // rendered first, exactly as a single creative's export does.
       const state: GroupPlanState = composed ? (usable && renderState(v!, format) === 'rendered' ? 'ready' : 'needs-render') : usable ? 'ready' : 'missing';
-      out.push({ ...base, ...named, file: o.file, width: o.width, height: o.height, ...setOf(o), state });
+      out.push({ ...base, ...named, file: o.file, width: o.width, height: o.height, ...setOf(o), state, ...(composed ? { composed: true } : {}) });
     } else if (composed) {
-      out.push({ ...base, ...named, file: '', width: 0, height: 0, state: 'needs-render' });
+      out.push({ ...base, ...named, file: '', width: 0, height: 0, state: 'needs-render', composed: true });
     } else {
       out.push({ ...base, ...named, file: '', width: 0, height: 0, state: 'missing' });
     }

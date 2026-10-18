@@ -25,7 +25,7 @@ import { DragStrip } from './shell/DragStrip.tsx';
 import { go, ShellContext, type ActivityTab, type Shell } from './shell/ShellContext.tsx';
 import { isMac } from './platform.ts';
 import { TopBar } from './shell/TopBars.tsx';
-import { useAttention, useDraftCloseGuard, useReadyNotice, useRenderCloseGuard } from './shell/useAttention.ts';
+import { useAttention, useDraftCloseGuard, useExportNotice, useReadyNotice, useRenderCloseGuard } from './shell/useAttention.ts';
 import { applyTheme } from './theme.ts';
 import { Spinner, Toasts } from './ui/index.ts';
 import { usePairingNeeded } from './uiToken.ts';
@@ -106,6 +106,8 @@ function AppBody({ live, language, systemLocale, onLanguage }: Props) {
   useAttention(approvals.length, approvals, { onReview: review, snapshot: live.snapshots ?? 0 });
   // "When a creative is ready" (Settings → Notifications), while the app is in the background.
   useReadyNotice(live.jobs);
+  // Decision 974: an export in the background tells when its files are in the folder (toast with Show in Finder, notification).
+  useExportNotice(live.jobs);
   // Desktop: closing the window while a render runs asks first.
   useRenderCloseGuard(live.jobs);
   // ...and while an editor draft has edits not saved: the desktop asks too; a browser asks before a reload or a tab close.

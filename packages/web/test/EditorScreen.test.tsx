@@ -1035,12 +1035,13 @@ describe('EditorScreen · one screen with the format view (decision 916)', () =>
     await userEvent.click(await screen.findByRole('button', { name: new RegExp(`^View v${n} ·`) }));
   };
 
-  it('the bar has the Versions timeline, the render status, Duplicate and Export; the chat is next to the inspector', async () => {
+  it('the bar has the Versions timeline, Duplicate and Export (no Render, decision 974); the chat is next to the inspector', async () => {
     render(<Harness />);
     await opened();
     const bar = document.querySelector('.ms-topbar') as HTMLElement;
     await waitFor(() => expect(bar.querySelector('.ms-cv-vbtn')).not.toBeNull());
-    expect(bar.querySelector('.ms-fv-render')).not.toBeNull();
+    expect(bar.querySelector('.ms-fv-render')).toBeNull();
+    expect(within(bar).queryByRole('button', { name: /^Render/ })).toBeNull();
     expect(within(bar).getByRole('button', { name: 'Duplicate format' })).toBeTruthy();
     expect(bar.querySelector('.ms-cv-export')).not.toBeNull();
     // Chat first; selecting a clip shows its inspector.

@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { exportJobKey, renderJobsPct, type ExportJobInfo, type JobSummary } from '@motion-studio/shared';
 import { t } from '../i18n.ts';
+import { CodedError } from '../workspace-store.ts';
 import type { JobQueue } from '../jobs/job-queue.ts';
 import type { CreativeRef } from './creative-turns.ts';
 import type { RenderWait } from './render-jobs.ts';
@@ -24,7 +25,7 @@ export interface ExportRun {
 }
 
 /** What an export wrote: the destination and the files, and what it left out. */
-export interface ExportOutcome { destination: string; files: string[]; skipped?: string[]; excluded?: string[] }
+export interface ExportOutcome { destination: string; files: string[]; skipped?: string[]; excluded?: ExportJobInfo['excluded'] }
 
 /** How often a running export reports the progress of its renders (ms). */
 const TICK_MS = 500;
@@ -62,6 +63,12 @@ export class ExportJobService {
             stage: 'done', pct: 100, destination: out.destination, files: out.files, ...(renders.length ? { renders: [...renders] } : {}),
             ...(out.skipped?.length ? { skipped: out.skipped } : {}), ...(out.excluded?.length ? { excluded: out.excluded } : {}),
           } });
+        } catch (e) {
+          // A refusal the dialog answers (decisions log 854: "Render anyway" for translations) keeps its code and list.
+          if (e instanceof CodedError && e.apiCode === 'localization-needs-force') {
+            queue.patch(jobId, { export: { ...progress(), refusal: { code: e.apiCode, ...(e.problems?.length ? { problems: e.problems } : {}) } } });
+          }
+          throw e;
         } finally {
           clearInterval(timer);
         }

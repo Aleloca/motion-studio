@@ -5,7 +5,7 @@
 import type { LocaleTag } from '@motion-studio/shared';
 import { useEffect, useId, useRef, useState } from 'react';
 import { api, type StorePackExportResult } from '../../api.ts';
-import { desktop } from '../../desktop.ts';
+import { desktop, showExported } from '../../desktop.ts';
 import { useLocale, useT } from '../../i18n.tsx';
 import { pop } from '../../motion/index.ts';
 import { isMac } from '../../platform.ts';
@@ -147,7 +147,7 @@ function Body({ onClose, slug, creative, version, group, locales, untranslated =
           ) : null}
           <div className="ms-exp-done-actions">
             {bridge ? (
-              <Button variant="outline" onClick={() => { bridge.revealPath(result.folder).catch((e: unknown) => setError(message(e))); }}>
+              <Button variant="outline" onClick={() => { showExported(bridge, result.folder, []).catch((e: unknown) => setError(message(e))); }}>
                 <Icon name="folder" size={14} />{reveal}
               </Button>
             ) : null}

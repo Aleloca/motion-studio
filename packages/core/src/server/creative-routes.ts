@@ -125,11 +125,9 @@ const exportProfileFields = {
 };
 type VersionEntryList = VersionEntry[];
 /** What an export job reports once done (decision 974): the files written, and what was left out, as text. */
-function outcomeOf(r: ExportResult & { excluded?: Array<{ format: string; version: number; problems: string[]; locale?: string }>; unavailable?: Array<{ message: string }> },
-  label: (id: string) => string): ExportOutcome {
-  const excluded = (r.excluded ?? []).map((e) => `${label(e.format)} v${e.version}${e.locale ? ` (${e.locale})` : ''}: ${e.problems.join('; ')}`);
+function outcomeOf(r: ExportResult & { excluded?: NonNullable<ExportOutcome['excluded']>; unavailable?: Array<{ message: string }> }): ExportOutcome {
   const skipped = [...r.skipped, ...(r.unavailable ?? []).map((u) => u.message)];
-  return { destination: r.destination, files: r.files.map((f) => f.to), ...(skipped.length ? { skipped } : {}), ...(excluded.length ? { excluded } : {}) };
+  return { destination: r.destination, files: r.files.map((f) => f.to), ...(skipped.length ? { skipped } : {}), ...(r.excluded?.length ? { excluded: r.excluded } : {}) };
 }
 /** The profile a body asks for; undefined when it names neither a quality nor a resolution. */
 const profileOfBody = (b: { quality?: ExportQuality; resolution?: number }): RenderProfile | undefined =>
@@ -727,7 +725,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     if (body.background) {
       await checkDestination(destination, ref.root);
       await resolve();
-      return { job: ctx.exports.start(ref, creative.title, destination, async (run) => outcomeOf(await exportNow(run), common.label)) };
+      return { job: ctx.exports.start(ref, creative.title, destination, async (run) => outcomeOf(await exportNow(run))) };
     }
     return exportNow();
 
@@ -844,7 +842,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     if (body.background) {
       await checkDestination(common.destination, ref.root);
       await planOf();
-      return { job: ctx.exports.start({ ...ref, creativeSlug: ref.creativeSlug }, host.title, common.destination, async (run) => outcomeOf(await exportNow(run), label)) };
+      return { job: ctx.exports.start({ ...ref, creativeSlug: ref.creativeSlug }, host.title, common.destination, async (run) => outcomeOf(await exportNow(run))) };
     }
     return exportNow();
 

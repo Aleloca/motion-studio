@@ -1,4 +1,4 @@
-import { DEFAULT_FORMATS, workspaceSettingsSchema, type ApprovalRequest } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, workspaceSettingsSchema, type ApprovalRequest, type JobSummary } from '@motion-studio/shared';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -9,7 +9,7 @@ const api = {
   getSecrets: vi.fn(async () => [{ provider: 'openai', configured: true, source: 'keychain' }, { provider: 'pexels', configured: true, source: 'env' }]),
   setSecret: vi.fn(), deleteSecret: vi.fn(), checkSecret: vi.fn(), getKeyChecks: vi.fn(async () => ({ openai: null, elevenlabs: null, pexels: null, unsplash: null })), updateSettings: vi.fn(), setLanguage: vi.fn(),
   fileUrl: (s: string, c: string, rel: string) => `/f/${s}/${c}/${rel}`,
-  exportPicks: vi.fn(async () => ({ destination: '/out', files: [{ from: 'a', to: 'b' }, { from: 'c', to: 'd' }], skipped: ['x.mov'] })),
+  exportPicksJob: vi.fn(async () => ({ job: { id: 'e1', key: 'export:/w:acme:c1:00000000', kind: 'export', label: 'Export · Summer launch', state: 'queued', createdAt: '2026-10-08T10:00:00.000Z' } })),
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { ApprovalCard } = await import('../src/components/ApprovalCard.tsx');
@@ -46,14 +46,19 @@ describe('approvals, settings and export in English', () => {
     const star = (n: number) => ({ version: n, manual: false, newer: null, follows: null });
     const st = (id: string) => ({ id, history: [2], star: star(2), defaultVersion: 2, exportVersion: 2, starFileMissing: false, linkable: [], follows: null });
     const states = { 'instagram-post-1x1': st('instagram-post-1x1'), 'tiktok-9x16': st('tiktok-9x16') };
-    en(<ExportDialog open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions: [version], states }} presets={DEFAULT_FORMATS} pattern="{title}-{format}-v{v}" />);
+    const dialog = (jobs: Record<string, JobSummary>) => <I18nProvider locale="en"><ExportDialog open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions: [version], states }} presets={DEFAULT_FORMATS} pattern="{title}-{format}-v{v}" jobs={jobs} /></I18nProvider>;
+    const view = render(dialog({}));
     expect(screen.getByRole('dialog', { name: 'Export the starred versions of “Summer launch”' })).toBeTruthy();
     expect(screen.getByText('“Summer launch”: each format at its ★ version, ready to post.')).toBeTruthy();
     expect(screen.getAllByText('summer-launch-instagram-post-1x1-v2.png').length).toBeGreaterThan(0);
     await userEvent.type(screen.getByLabelText('Destination folder'), '/out');
     await userEvent.click(screen.getByRole('checkbox', { name: /^Export TikTok/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Export 1 file' }));
-    expect((await screen.findByRole('status')).textContent).toContain('2 files exported');
+    expect(await screen.findByRole('button', { name: 'Cancel export' })).toBeTruthy();
+    // The export job ends (decision 974): its files and what it left out.
+    view.rerender(dialog({ e1: { id: 'e1', key: 'export:/w:acme:c1:00000000', kind: 'export', label: 'Export · Summer launch', state: 'succeeded', createdAt: '2026-10-08T10:00:00.000Z',
+      export: { stage: 'done', pct: 100, destination: '/out', files: ['/out/b', '/out/d'], skipped: ['x.mov'] } } }));
+    expect(await screen.findByText('2 files exported')).toBeTruthy();
     expect(screen.getByText('Not exported: x.mov')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Done' })).toBeTruthy();
   });

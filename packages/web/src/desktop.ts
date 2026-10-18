@@ -6,6 +6,8 @@ export interface DesktopBridge {
   platform: string;
   pickFolder(title: string, defaultPath?: string): Promise<string | null>;
   revealPath(path: string): Promise<void>;
+  /** Opens a folder itself in the file manager (user report 21; a plain folder only). Missing in older desktop builds. */
+  openFolder?(path: string): Promise<void>;
   /**
    * Native notification from the main process (spec §6.3), answering what the system did with it. Missing in desktop
    * builds older than Phase 7; builds older than this outcome answer nothing (undefined).
@@ -44,4 +46,14 @@ export function externalLinkRel(): string {
 export function desktop(): DesktopBridge | null {
   const b = (window as unknown as { motionStudio?: Partial<DesktopBridge> }).motionStudio;
   return b?.isDesktop === true && typeof b.pickFolder === 'function' && typeof b.revealPath === 'function' ? (b as DesktopBridge) : null;
+}
+
+/**
+ * "Show in Finder" of exported files (user report 21): one file is selected in its folder (Finder opens inside the folder);
+ * several: the folder itself is opened (an older desktop build without `openFolder`: the first file is selected).
+ */
+export function showExported(b: DesktopBridge, folder: string, files: readonly string[]): Promise<void> {
+  if (files.length === 1) return b.revealPath(files[0]!);
+  if (typeof b.openFolder === 'function') return b.openFolder(folder);
+  return b.revealPath(files[0] ?? folder);
 }

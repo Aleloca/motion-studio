@@ -2,6 +2,8 @@ import type { ApprovalRequest, JobSummary } from '@motion-studio/shared';
 import { useEffect, useRef } from 'react';
 import { useT } from '../i18n.tsx';
 import { toast } from '../ui/index.ts';
+import { desktop, showExported } from '../desktop.ts';
+import { isMac } from '../platform.ts';
 import { APP_TITLE, appInBackground, notifyApprovalsEnabled, notifyReadyEnabled, onNotificationClick, setBadge, setDraftsUnsaved, setRendersRunning, showNotification } from './notify.ts';
 
 export interface AttentionOptions {
@@ -99,9 +101,42 @@ export function useReadyNotice(jobs: Readonly<Record<string, JobSummary>>): void
   }, [jobs, t]);
 }
 
-/** The desktop app learns how many renders are queued or running (its close confirmation, Task 8); 0 when the page goes. */
+/**
+ * Decision 974 (user report 20): an export this window saw queued or running tells when it ends. Done: a toast "3 files
+ * exported to …" with Show in Finder (desktop) and, while the app is in the background, a notification; failed: a toast
+ * with the reason. A cancelled export says nothing (the user cancelled it). The activity center's Done list (the bell)
+ * keeps it either way.
+ */
+export function useExportNotice(jobs: Readonly<Record<string, JobSummary>>): void {
+  const t = useT();
+  const active = useRef(new Set<string>());
+  useEffect(() => {
+    const x = t.web.exportUi;
+    for (const job of Object.values(jobs)) {
+      if (job.kind !== 'export') continue;
+      if (job.state === 'queued' || job.state === 'running') { active.current.add(job.id); continue; }
+      if (!active.current.delete(job.id)) continue;
+      const info = job.export;
+      if (job.state === 'succeeded' && info) {
+        const files = info.files ?? [];
+        const body = x.doneToast({ count: files.length, folder: info.destination });
+        const bridge = desktop();
+        const action = bridge ? { label: isMac() ? x.showInFinder : x.showInFolder, run: () => { void showExported(bridge, info.destination, files).catch(() => {}); } } : undefined;
+        toast.show(body, { tone: 'ok', ...(action ? { action } : {}) });
+        if (appInBackground()) showNotification({ title: x.doneNotification, body });
+      } else if (job.state === 'failed') {
+        toast.show(x.failed({ detail: job.error ?? t.web.jobState.failed }));
+      }
+    }
+  }, [jobs, t]);
+}
+
+/**
+ * The desktop app learns how many renders (and exports, decision 974) are queued or running (its close confirmation,
+ * Task 8); 0 when the page goes.
+ */
 export function useRenderCloseGuard(jobs: Record<string, JobSummary>): void {
-  const count = Object.values(jobs).filter((j) => j.kind === 'render' && (j.state === 'queued' || j.state === 'running')).length;
+  const count = Object.values(jobs).filter((j) => (j.kind === 'render' || j.kind === 'export') && (j.state === 'queued' || j.state === 'running')).length;
   useEffect(() => { setRendersRunning(count); }, [count]);
   useEffect(() => () => setRendersRunning(0), []);
 }

@@ -31,7 +31,7 @@ const api = {
   restoreVersion: vi.fn(async () => detail.creative),
   revealVersion: vi.fn(async () => ({ ok: true })),
   exportStorePack: vi.fn(async (..._a: unknown[]) => ({ folder: '/out/pack', written: ['AppStore/en/iphone-69/01-a.png'], failed: [] as Array<{ file: string; reason: string }> })),
-  exportPicks: vi.fn(async (_s: string, _c: string, body: { destination: string; picks: Record<string, number> }) => ({ destination: body.destination, files: Object.keys(body.picks).map((f) => ({ from: f, to: `${body.destination}/${f}` })), skipped: [] as string[] })),
+  exportPicksJob: vi.fn(async (_s: string, _c: string, _body: { destination: string; picks: Record<string, number> }) => ({ job: exportJob({ state: 'queued' }) })),
   cancelJob: vi.fn(async () => ({ cancelled: true })),
   setExportPick: vi.fn(async (..._a: unknown[]) => detail),
   setFormatLink: vi.fn(async (..._a: unknown[]) => detail),
@@ -59,6 +59,8 @@ const { __resetPendingPins } = await import('../src/screens/pendingPins.ts');
 const { takeFrameOrigin } = await import('../src/shell/intents.ts');
 const { getToasts } = await import('../src/ui/toast.tsx');
 
+/** The export job the core answers with (decision 974). */
+const exportJob = (over: Partial<JobSummary> = {}): JobSummary => ({ id: 'e1', key: 'export:/w:acme:lancio:0a1b2c3d', kind: 'export', label: 'Export · Lancio estivo', state: 'running', createdAt: '2026-10-08T10:00:00.000Z', ...over });
 const emptyLive = (): EventsState => ({ approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} } as unknown as EventsState);
 const route: Route = { name: 'creative', slug: 'acme', creative: 'lancio' };
 
@@ -419,7 +421,7 @@ describe('CreativeCanvas · export', () => {
   it('exports only the chosen formats, remembers the folder and offers Show in Finder', async () => {
     const revealPath = vi.fn(async () => {});
     (window as unknown as { motionStudio: unknown }).motionStudio = { isDesktop: true, platform: 'darwin', pickFolder: async () => '/Users/me/Consegna', revealPath };
-    render(<Harness live={emptyLive()} />);
+    const { rerender } = render(<Harness live={emptyLive()} />);
     await ready();
     await userEvent.click(screen.getByRole('button', { name: 'Esporta' }));
     const dialog = await screen.findByRole('dialog', { name: 'Esporta le versioni ★ di “Lancio estivo”' });
@@ -429,11 +431,15 @@ describe('CreativeCanvas · export', () => {
     await userEvent.click(within(dialog).getByRole('checkbox', { name: /^Esporta TikTok/ }));
     await userEvent.click(within(dialog).getByRole('button', { name: 'Scegli…' }));
     await userEvent.click(within(dialog).getByRole('button', { name: 'Esporta 1 file' }));
-    await waitFor(() => expect(api.exportPicks).toHaveBeenCalledOnce());
-    expect(api.exportPicks).toHaveBeenCalledWith('acme', 'lancio', { destination: '/Users/me/Consegna', picks: { 'instagram-post-1x1': 1 }, pattern: '{title}-{format}-v{v}', date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) });
+    await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledOnce());
+    expect(api.exportPicksJob).toHaveBeenCalledWith('acme', 'lancio', { destination: '/Users/me/Consegna', picks: { 'instagram-post-1x1': 1 }, pattern: '{title}-{format}-v{v}', date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), quality: 'high' });
+    await within(dialog).findByRole('button', { name: 'Annulla export' });
+    const done = exportJob({ state: 'succeeded', export: { stage: 'done', pct: 100, destination: '/Users/me/Consegna', files: ['/Users/me/Consegna/lancio-estivo-instagram-post-1x1-v1.png'] } });
+    rerender(<Harness live={{ ...emptyLive(), jobs: { e1: done } } as unknown as EventsState} />);
     expect(await within(dialog).findByText('1 file esportato')).toBeTruthy();
+    // One file: Finder opens its folder with the file selected (user report 21).
     await userEvent.click(within(dialog).getByRole('button', { name: 'Mostra nel Finder' }));
-    expect(revealPath).toHaveBeenCalledWith('/Users/me/Consegna');
+    expect(revealPath).toHaveBeenCalledWith('/Users/me/Consegna/lancio-estivo-instagram-post-1x1-v1.png');
     // No second export from the success screen.
     expect(within(dialog).queryByRole('button', { name: /^Esporta \d/ })).toBeNull();
     expect(localStorage.getItem('ms.exportFolder')).toBe('/Users/me/Consegna');
@@ -441,7 +447,7 @@ describe('CreativeCanvas · export', () => {
 
   it('on the web takes a typed folder, shows errors in place and keeps the folder for next time', async () => {
     localStorage.setItem('ms.exportFolder', '/Users/me/Ultima');
-    api.exportPicks.mockRejectedValueOnce(new Error('Cartella non scrivibile'));
+    api.exportPicksJob.mockRejectedValueOnce(new Error('Cartella non scrivibile'));
     render(<Harness live={emptyLive()} />);
     await ready();
     await userEvent.click(screen.getByRole('button', { name: 'Esporta' }));
@@ -450,7 +456,7 @@ describe('CreativeCanvas · export', () => {
     expect(folder.value).toBe('/Users/me/Ultima');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Esporta 2 file' }));
     expect((await within(dialog).findByRole('alert')).textContent).toContain('Cartella non scrivibile');
-    expect(api.exportPicks).toHaveBeenCalledWith('acme', 'lancio', { destination: '/Users/me/Ultima', picks: { 'instagram-post-1x1': 1, 'tiktok-9x16': 1 }, pattern: '{title}-{format}-v{v}', date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) });
+    expect(api.exportPicksJob).toHaveBeenCalledWith('acme', 'lancio', { destination: '/Users/me/Ultima', picks: { 'instagram-post-1x1': 1, 'tiktok-9x16': 1 }, pattern: '{title}-{format}-v{v}', date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), quality: 'high' });
     // No bridge: no Finder button anywhere.
     expect(within(dialog).queryByRole('button', { name: 'Scegli…' })).toBeNull();
   });
@@ -550,7 +556,7 @@ describe('CreativeCanvas · ported checks', () => {
     // The rows keep the ★ the dialog opened with (v1), not the new version.
     expect(within(dialog).getAllByText('★ v1', { selector: '.ms-exp-ver' })).toHaveLength(2);
     await userEvent.click(within(dialog).getByRole('button', { name: 'Esporta 2 file' }));
-    await waitFor(() => expect(api.exportPicks).toHaveBeenCalledWith('acme', 'lancio', { destination: '/d', picks: { 'instagram-post-1x1': 1, 'tiktok-9x16': 1 }, pattern: '{title}-{format}-v{v}', date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) }));
+    await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledWith('acme', 'lancio', { destination: '/d', picks: { 'instagram-post-1x1': 1, 'tiktok-9x16': 1 }, pattern: '{title}-{format}-v{v}', date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), quality: 'high' }));
   });
 
   it('ignores canvas shortcuts from a page that is leaving', async () => {
@@ -663,25 +669,22 @@ describe('CreativeCanvas · review round 1', () => {
     expect((screen.getByLabelText('Testo del commento') as HTMLTextAreaElement).value).toBe('Non perdermi');
   });
 
-  it('cannot close the export while it runs', async () => {
+  it('the export may be closed while it runs: it goes on, and the bar\'s Export shows its progress (user reports 19, 20)', async () => {
     localStorage.setItem('ms.exportFolder', '/d');
-    let finish!: () => void;
-    api.exportPicks.mockImplementationOnce((_s, _c, body) => new Promise((r) => { finish = () => r({ destination: body.destination, files: [{ from: 'a', to: 'b' }], skipped: [] }); }));
-    render(<Harness live={emptyLive()} />);
+    const { rerender } = render(<Harness live={emptyLive()} />);
     await ready();
     await userEvent.click(screen.getByRole('button', { name: 'Esporta' }));
     const dialog = await screen.findByRole('dialog', { name: 'Esporta le versioni ★ di “Lancio estivo”' });
     await userEvent.click(within(dialog).getByRole('button', { name: 'Esporta 2 file' }));
-    expect((within(dialog).getByRole('button', { name: 'Annulla' }) as HTMLButtonElement).disabled).toBe(true);
-    expect((within(dialog).getByRole('button', { name: 'Chiudi' }) as HTMLButtonElement).disabled).toBe(true);
-    await userEvent.keyboard('{Escape}');
-    fireEvent.click(document.querySelector('.ms-scrim')!);
-    expect(screen.getByRole('dialog', { name: 'Esporta le versioni ★ di “Lancio estivo”' })).toBe(dialog);
-    await act(async () => { finish(); });
-    expect(await within(dialog).findByText('1 file esportato')).toBeTruthy();
-    // Done: closing works again.
+    await within(dialog).findByRole('button', { name: 'Annulla export' });
     await userEvent.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Esporta le versioni ★ di “Lancio estivo”' })).toBeNull());
+    expect(api.cancelJob).not.toHaveBeenCalled();
+    rerender(<Harness live={{ ...emptyLive(), jobs: { e1: exportJob({ export: { stage: 'rendering', pct: 26, destination: '/d', renders: ['r1'] } }) } } as unknown as EventsState} />);
+    const button = await screen.findByRole('button', { name: 'Esportazione 26%' });
+    expect(button.classList.contains('ms-cv-export')).toBe(true);
+    // The progress is inside the control: no pill or bar next to it.
+    expect(document.querySelector('.ms-fv-render, .ms-fv-render-bar')).toBeNull();
   });
 
   it('Restart from here: Undo only when there was a resume point, restoring exactly that version', async () => {
@@ -1338,21 +1341,12 @@ describe('CreativeCanvas · compositions (Task 8)', () => {
     expect(board('instagram-post-1x1').querySelector('iframe')).not.toBeNull();
   }, 20_000);
 
-  it('"Render ★" with one version refused says what started and what did not', async () => {
-    detail = makeDetail([v2(1), { ...v2(2), compositions: [{ format: 'tiktok-9x16', dir: 'compositions/tiktok-9x16', hash: 'e'.repeat(64) }] }]);
-    api.renderVersion.mockImplementation(async (_s: string, _c: string, n: number) => {
-      if (n === 1) throw new Error('Già in corso');
-      return { id: `r${n}`, key: `render:/w:acme:lancio:v${n}`, kind: 'render', label: 'Render', state: 'queued', createdAt: at };
-    });
-    try {
-      render(<Harness live={emptyLive()} />);
-      await picture('tiktok-9x16');
-      await userEvent.click(screen.getByRole('button', { name: 'Render ★' }));
-      await waitFor(() => expect(getToasts().map((x) => x.text).join('|')).toMatch(/^Render di 1 formato; non partiti: Instagram · Post 1:1 v1 \(Già in corso\)/));
-    } finally {
-      api.renderVersion.mockReset();
-      api.renderVersion.mockImplementation(async (_s: string, _c: string, n: number, _f?: string[]) => ({ id: `r${n}`, key: `render:/w:acme:lancio:v${n}`, kind: 'render', label: 'Render', state: 'queued', createdAt: at }));
-    }
+  it('decision 974: no "Render ★" in the bar; a render of the creative shows inside Export', async () => {
+    detail = makeDetail([v2(1)]);
+    render(<Harness live={liveWith(renderJob({ progress: { format: 'tiktok-9x16', phase: 'frames', done: 90, total: 180 } }))} />);
+    await picture('tiktok-9x16');
+    expect(screen.queryByRole('button', { name: 'Render ★' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Render 50%' }).classList.contains('ms-cv-export')).toBe(true);
   });
 
   it('the play button starts the live preview by click', async () => {
@@ -1396,27 +1390,13 @@ describe('CreativeCanvas · compositions (Task 8)', () => {
     expect(api.renderVersion).toHaveBeenCalledWith('acme', 'lancio', 1, ['tiktok-9x16']);
   });
 
-  it('"Render ★" renders every format at its ★; the board menu renders the version on screen', async () => {
+  it('the board menu still renders the version on screen (the versions menu is another task\'s)', async () => {
     detail = makeDetail([v2(1)]);
     render(<Harness live={emptyLive()} />);
     await picture('tiktok-9x16');
-    await userEvent.click(screen.getByRole('button', { name: 'Render ★' }));
-    expect(api.renderVersion).toHaveBeenCalledWith('acme', 'lancio', 1, ['instagram-post-1x1', 'tiktok-9x16']);
     await userEvent.click(within(board('tiktok-9x16')).getByRole('button', { name: /si esporta la v1/ }));
     await userEvent.click(await screen.findByRole('button', { name: 'Render v1' }));
     expect(api.renderVersion).toHaveBeenLastCalledWith('acme', 'lancio', 1, ['tiktok-9x16']);
-  });
-
-  it('"Render ★" is off when every ★ is rendered or rendering, and absent for legacy creatives', async () => {
-    detail = makeDetail([v2(1, [{ ...out('instagram-post-1x1', 'p.png'), sha256: 'd'.repeat(64), fromComposition: HASH['instagram-post-1x1'] }])]);
-    const { unmount } = render(<Harness live={liveWith(renderJob({}))} />);
-    await picture('tiktok-9x16');
-    expect((screen.getByRole('button', { name: 'Render ★' }) as HTMLButtonElement).disabled).toBe(true);
-    unmount();
-    detail = makeDetail([version(1, 'Dal brief')]);
-    render(<Harness live={emptyLive()} />);
-    await ready();
-    expect(screen.queryByRole('button', { name: 'Render ★' })).toBeNull();
   });
 
   it('comments go on a composition without a render too', async () => {

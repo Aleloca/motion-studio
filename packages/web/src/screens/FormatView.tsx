@@ -48,7 +48,7 @@ import { LocaleOutline, LocaleSwitcher } from './creative/LocaleSwitcher.tsx';
 import { localePreviewSource, useLocalePreview } from './creative/useLocalePreview.ts';
 import { RangeDialog } from './editor/RangeDialog.tsx';
 import { clipLabel, clipPin, clipsAt, rangePin, rangeTimes } from './pinModel.ts';
-import { RenderStatus } from './RenderStatus.tsx';
+import { ExportButton } from './ExportButton.tsx';
 import { IdentitySizes } from './identity/IdentitySizes.tsx';
 import { UseAsBrandLogo } from './identity/UseAsBrandLogo.tsx';
 import { FollowerChip, FormatBadge, useNewVersionNotice, useVersionActions, VersionTimeline } from './FormatVersions.tsx';
@@ -584,9 +584,6 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
           {versions.length && cr ? (
             <VersionTimeline slug={slug} creative={creative} versions={versions} resumeFrom={cr.resumeFrom?.version ?? null} actions={actions} buttonRef={versionButton} />
           ) : null}
-          {(video || comp !== null) && cr && detail ? (
-            <RenderStatus slug={slug} creative={creative} version={version} format={source.format} label={label} jobs={Object.values(live.jobs)} jobKey={detail.jobKey} busy={working} image={!video} />
-          ) : null}
           <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} readOnly={readOnly} />
           {comp !== null && !working ? (
             <Tooltip label={readOnly ?? `${t.web.instances.duplicate} · ${t.web.instances.duplicateHint({ label })}`} whenHidden=".ms-bar-label"><Button variant="outline" className="ms-fv-duplicate ms-fold-2" aria-label={t.web.instances.duplicate} loading={duplicating}
@@ -594,9 +591,8 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
               <Icon name="copy" size={13} strokeWidth={1.7} /><span className="ms-bar-label">{t.web.instances.duplicate}</span>
             </Button></Tooltip>
           ) : null}
-          <Button variant="ink" className="ms-cv-export" disabled={!latest} onClick={() => { if (latest) setExporting({ open: true, snapshot: { versions, states } }); }}>
-            <Icon name="download" size={13} strokeWidth={1.7} />{c.export}
-          </Button>
+          <ExportButton jobs={Object.values(live.jobs)} jobKey={detail?.jobKey ?? null} scope={{ version, format: source.format }} disabled={!latest}
+            onClick={() => { if (latest) setExporting({ open: true, snapshot: { versions, states } }); }} />
         </>,
         bar.end,
       ) : null}
@@ -764,7 +760,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
       ) : null}
       <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
         title={cr?.title ?? ''} snapshot={exporting?.snapshot ?? null} presets={presets} labels={cr?.brief.formatLabels} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings}
-        {...(cr && creativeLocales(cr.brief) ? { locales: creativeLocales(cr.brief)! } : {})} />
+        jobs={live.jobs} {...(cr && creativeLocales(cr.brief) ? { locales: creativeLocales(cr.brief)! } : {})} />
     </div>
   );
 }
