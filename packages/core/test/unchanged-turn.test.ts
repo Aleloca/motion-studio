@@ -151,7 +151,8 @@ describe('a turn that changes no output (decision 1060)', () => {
     writeCompositions(run, 6);
     run.finish({ write: false });
     await waitIdle();
-    await vi.waitFor(async () => expect(await actionLines(slug)).toContain(t().agentActions.duplicateDone({ format: 'Seconda', n: 2 })));
+    // The agent's deferred actions run in the turn-settled hook, after the job is no longer running (a duplicate copies a version).
+    await vi.waitFor(async () => expect(await actionLines(slug)).toContain(t().agentActions.duplicateDone({ format: 'Seconda', n: 2 })), { timeout: 10_000 });
     expect(await systemTexts(slug)).toContain(t().jobs.noOutputChanged({ n: 1, brief: false }));
     const d = await detail(slug);
     expect(d.versions.map((v) => [v.n, v.origin ?? 'agent'])).toEqual([[1, 'agent'], [2, 'editor']]);
