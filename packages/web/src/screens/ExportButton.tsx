@@ -16,6 +16,11 @@ export interface ExportButtonProps {
   /** The editor: the version and format on screen (only their render shows). Absent: any render of the creative. */
   scope?: { version: VersionEntry | null; format: string } | null;
   disabled?: boolean;
+  /**
+   * Not the bar's primary action (an outline control): on the variants page "Selezione finale" is (decision 1045), so the
+   * bar's Export steps back there (user report 17: one filled action per bar).
+   */
+  secondary?: boolean;
   onClick(): void;
 }
 
@@ -42,7 +47,7 @@ export function exportActivity(jobs: readonly JobSummary[], jobKey: string | nul
   return { kind: 'render', pct: renders.some((j) => j.state === 'running') ? renderJobsPct(renders) : null };
 }
 
-export function ExportButton({ jobs, jobKey, scope, disabled, onClick }: ExportButtonProps) {
+export function ExportButton({ jobs, jobKey, scope, disabled, secondary, onClick }: ExportButtonProps) {
   const t = useT();
   const x = t.web.exportUi;
   const r = t.web.render;
@@ -52,7 +57,7 @@ export function ExportButton({ jobs, jobKey, scope, disabled, onClick }: ExportB
     : a.pct !== null ? r.rendering({ pct: a.pct }) : r.queued;
   const widest = [t.web.canvas.export, x.exportingPct({ pct: 100 }), x.running, r.rendering({ pct: 100 }), r.queued];
   return (
-    <Button variant="ink" className={cx('ms-cv-export ms-exp-ctl', a && 'ms-working')} disabled={disabled} onClick={onClick}>
+    <Button variant={secondary ? 'outline' : 'ink'} className={cx('ms-cv-export ms-exp-ctl', a && 'ms-working')} disabled={disabled} onClick={onClick}>
       {a && a.pct !== null ? <span className="ms-exp-ctl-fill" style={{ width: `${a.pct}%` }} aria-hidden="true" /> : null}
       {a ? <Spinner decorative size={13} /> : <Icon name="download" size={13} strokeWidth={1.7} />}
       <span className="ms-exp-ctl-label">

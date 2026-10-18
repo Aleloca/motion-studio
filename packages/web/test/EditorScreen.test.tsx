@@ -199,7 +199,8 @@ describe('EditorScreen · shell', () => {
     const bar = document.querySelector('.ms-topbar') as HTMLElement;
     expect(within(bar).getByText('1080×1920 · 6 s · 30 fps')).toBeTruthy();
     expect(within(bar).getByRole('button', { name: /v2 is used for export/ }).textContent).toContain('v2');
-    expect(within(bar).getByRole('button', { name: 'All formats' })).toBeTruthy();
+    // The way back is the creative's crumb (user report 23), by its title.
+    expect(within(bar).getByRole('link', { name: 'Lancio estivo' }).getAttribute('href')).toBe('#/p/acme/c/lancio');
     // No "Edit" button: the page is the editor.
     expect(within(bar).queryByRole('button', { name: /directly$/ })).toBeNull();
   });
@@ -260,7 +261,7 @@ describe('EditorScreen · shell', () => {
     await waitFor(() => expect(document.querySelector('.ms-fv')).not.toBeNull());
     expect(document.querySelector('.ms-ed')).toBeNull();
     const bar = document.querySelector('.ms-topbar') as HTMLElement;
-    await waitFor(() => expect(within(bar).getByRole('button', { name: 'All formats' })).toBeTruthy());
+    await waitFor(() => expect(within(bar).getByRole('link', { name: 'Lancio estivo' })).toBeTruthy());
     expect(within(bar).queryByRole('button', { name: /directly$/ })).toBeNull();
     expect(api.getEditorComposition).not.toHaveBeenCalled();
   });
@@ -632,9 +633,9 @@ describe('EditorScreen · leave guard', () => {
     await waitFor(() => expect(location.hash).toBe(OTHER));
   });
 
-  it('the back button ("All formats") goes through the same guard', async () => {
+  it('the way back (the creative\'s crumb) goes through the same guard', async () => {
     await dirty();
-    await userEvent.click(within(document.querySelector('.ms-topbar') as HTMLElement).getByRole('button', { name: 'All formats' }));
+    await userEvent.click(within(document.querySelector('.ms-topbar') as HTMLElement).getByRole('link', { name: 'Lancio estivo' }));
     // The router (App) would refuse the hash change and ask; here the move happened: ask as the router does.
     expect(location.hash).toBe('#/p/acme/c/lancio');
     act(() => { leaveRefused(location.hash); });
@@ -1031,15 +1032,19 @@ describe('EditorScreen · one screen with the format view (decision 916)', () =>
     await userEvent.click(await screen.findByRole('button', { name: new RegExp(`^View v${n} ·`) }));
   };
 
-  it('the bar has the Versions timeline, Duplicate and Export (no Render, decision 974); the chat is next to the inspector', async () => {
+  it('the bar has the version badge, Export and "…" with Duplicate and the history (no Render, decision 974); the chat is next to the inspector', async () => {
     render(<Harness />);
     await opened();
     const bar = document.querySelector('.ms-topbar') as HTMLElement;
-    await waitFor(() => expect(bar.querySelector('.ms-cv-vbtn')).not.toBeNull());
+    await waitFor(() => expect(bar.querySelector('.ms-bar-more')).not.toBeNull());
     expect(bar.querySelector('.ms-fv-render')).toBeNull();
     expect(within(bar).queryByRole('button', { name: /^Render/ })).toBeNull();
-    expect(within(bar).getByRole('button', { name: 'Duplicate format' })).toBeTruthy();
     expect(bar.querySelector('.ms-cv-export')).not.toBeNull();
+    await userEvent.click(within(bar).getByRole('button', { name: 'More actions' }));
+    const menu = await screen.findByRole('menu', { name: 'More actions' });
+    expect(within(menu).getByRole('menuitem', { name: 'Duplicate format' })).toBeTruthy();
+    expect(within(menu).getByRole('menuitem', { name: 'Version history' })).toBeTruthy();
+    await userEvent.keyboard('{Escape}');
     // Chat first; selecting a clip shows its inspector.
     expect(screen.getByLabelText('Request a change')).toBeTruthy();
     await userEvent.click(within(screen.getByRole('region', { name: 'In this scene' })).getByRole('button', { name: 'title' }));

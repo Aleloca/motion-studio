@@ -75,9 +75,14 @@ beforeEach(() => {
 });
 
 describe('Duplicate format', () => {
+  /** User report 17: the bar's "…" menu holds Duplicate format. */
+  const duplicateItem = async () => {
+    await userEvent.click(await screen.findByRole('button', { name: 'More actions' }));
+    return screen.findByRole('menuitem', { name: 'Duplicate format' });
+  };
   it('copies the format of the version on screen and opens the new instance', async () => {
     render(<Harness format={VIDEO} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Duplicate format' }));
+    await userEvent.click(await duplicateItem());
     await waitFor(() => expect(api.duplicateFormat).toHaveBeenCalledOnce());
     // The ★ of a format with no manual pick is its latest version.
     expect(api.duplicateFormat).toHaveBeenCalledWith('acme', 'lancio', 2, { instanceId: VIDEO });
@@ -87,7 +92,7 @@ describe('Duplicate format', () => {
   it('shows the refusal of the core and stays on the format', async () => {
     api.duplicateFormat.mockRejectedValueOnce(new ApiError(409, 'A generation is running', 'duplicate-busy'));
     render(<Harness format={VIDEO} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Duplicate format' }));
+    await userEvent.click(await duplicateItem());
     expect((await screen.findByText("Couldn't duplicate the format: A generation is running"))).toBeTruthy();
     expect(location.hash).toBe(`#/p/acme/c/lancio/f/${VIDEO}`);
   });
@@ -97,7 +102,10 @@ describe('Duplicate format', () => {
     const { unmount } = render(<Harness format={VIDEO} />);
     await screen.findByRole('main');
     await waitFor(() => expect(api.getCreative).toHaveBeenCalled());
-    expect(screen.queryByRole('button', { name: 'Duplicate format' })).toBeNull();
+    // User report 17: Duplicate format lives in the bar's "…" menu.
+    await userEvent.click(await screen.findByRole('button', { name: 'More actions' }));
+    await screen.findByRole('menu', { name: 'More actions' });
+    expect(screen.queryByRole('menuitem', { name: 'Duplicate format' })).toBeNull();
     unmount();
   });
 
@@ -108,7 +116,7 @@ describe('Duplicate format', () => {
     location.hash = `#/p/acme/c/lancio/f/${VIDEO}@2`;
     render(<Harness format={`${VIDEO}@2`} />);
     expect(await screen.findByText('Summer promo', { selector: 'b[aria-current="page"]' })).toBeTruthy();
-    await userEvent.click(await screen.findByRole('button', { name: 'Duplicate format' }));
+    await userEvent.click(await duplicateItem());
     await waitFor(() => expect(api.duplicateFormat).toHaveBeenCalledWith('acme', 'lancio', 1, { instanceId: `${VIDEO}@2` }));
   });
 });

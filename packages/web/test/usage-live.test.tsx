@@ -269,10 +269,9 @@ describe('per-version tokens', () => {
   it('the version timeline shows tokens per version; a version without usage shows none', async () => {
     const versions = [version(1), version(2, { usage: { tokens: { input: 30_000, output: 8_000, cacheRead: 900_000, cacheWrite: 400 }, costUsd: 0.42 } })];
     const noop = () => {};
-    const ref = { current: null as HTMLButtonElement | null };
-    wrap(<VersionTimeline slug="acme" creative="c" versions={versions} resumeFrom={null} buttonRef={ref}
+    const ref = { current: document.body as HTMLElement | null };
+    wrap(<VersionTimeline slug="acme" creative="c" versions={versions} resumeFrom={null} open onClose={noop} anchor={ref}
       actions={{ star: noop, resetStar: noop, pending: () => false, link: noop, unlink: noop, restart: noop, reveal: noop }} />);
-    fireEvent.click(ref.current!);
     await waitFor(() => expect(document.querySelectorAll('.ms-vmenu-row').length).toBe(2));
     const rows = [...document.querySelectorAll('.ms-vmenu-row')];
     const v2 = rows.find((r) => r.textContent?.includes('v2'))!;

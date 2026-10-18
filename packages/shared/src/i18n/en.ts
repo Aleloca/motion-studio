@@ -1180,7 +1180,6 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
         lastActive: 'It is the last active variant: keep at least one',
       },
       openVariant: 'Open this variant',
-      creativeMenu: 'More',
       fieldHint: 'Each variant is a different creative direction, with all the formats.',
       directionOf: (p: { letter: string }) => `Direction of variant ${p.letter} (optional)`,
       directionPlaceholder: 'E.g. minimal, lots of white space',
@@ -2213,9 +2212,16 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
     },
     formatView: {
       stage: (p: { label: string }) => `Preview of ${p.label}`,
-      /** After the duration in the header, when it is far from the brief's (decisions log 262); the user may update the brief. */
-      briefDuration: (p: { n: string }) => `brief ${p.n} s`,
-      briefDurationEdited: (p: { n: string }) => `brief ${p.n} s (direct edit)`,
+      /**
+       * The bar's warning when the version's duration is far from the brief's (decisions log 262, user reports 6 and 23): a
+       * chip that opens the explanation and the fix (the brief takes the version's duration; the core checks it again).
+       */
+      briefOff: (p: { n: string }) => `Brief says ${p.n} s`,
+      briefOffBody: (p: { n: string; actual: string }) => `This version lasts ${p.actual} s and the brief asks for ${p.n} s, so the check marks it incomplete. If ${p.actual} s is right, put it in the brief: the version is checked again, without a new turn.`,
+      briefOffEdited: 'The duration comes from a direct edit.',
+      briefOffFix: (p: { n: string }) => `Use ${p.n} s in the brief`,
+      briefOffFixed: (p: { n: string }) => `Brief updated: ${p.n} s`,
+      briefOffFailed: (p: { detail: string }) => `The brief could not be updated: ${p.detail}`,
       scenes: 'Scenes',
       scenesSoon: 'Edit scenes, text and timing directly — coming with the timeline',
       play: 'Play (Space)',
@@ -2604,7 +2610,9 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
       },
       versions: {
         timeline: 'Versions',
-        timelineMenu: (p: { total: number }) => `Versions (${p.total}): open the creative's timeline`,
+        /** The "…" item that opens the timeline (decision 972: no "Versions" button in the bars). */
+        historyItem: 'Version history',
+        historyItemVariant: (p: { letter: string }) => `Version history of variant ${p.letter}`,
         timelineRow: (p: { n: number; when: string; note: string }) => `Version ${p.n} · ${p.when} · ${p.note}`,
         title: 'Versions',
         fromBrief: 'From the brief',
@@ -2640,6 +2648,8 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
     },
     formatVersions: {
       badge: (p: { label: string; n: number }) => `${p.label}: v${p.n} is used for export. Open its versions`,
+      /** Beside the bar's badge (user report 17): how many versions the format's menu lists. */
+      count: (p: { n: number }) => (p.n === 1 ? '1 version' : `${p.n} versions`),
       viewing: (p: { n: number }) => `viewing v${p.n}`,
       newer: (p: { n: number }) => `v${p.n} newer`,
       title: (p: { label: string }) => `${p.label} versions`,
@@ -3278,8 +3288,9 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
       projects: 'Projects',
       newProject: 'New project',
       switchProject: (p: { name: string }) => `Project ${p.name}, switch project`,
-      backCreatives: 'Creatives',
       backAllFormats: 'All formats',
+      /** The "…" of a bar: the object's rare actions. */
+      moreActions: 'More actions',
       newCreative: 'New creative',
       breadcrumb: 'Location',
       activity: {

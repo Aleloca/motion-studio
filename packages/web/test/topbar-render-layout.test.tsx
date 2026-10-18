@@ -1,13 +1,15 @@
 /**
- * The format page's top bar (UX feedback batch 1, final wave I2; decision 974, user report 19). The format page is the editor
- * since decision 916: the real EditorScreen is rendered in jsdom, in Italian, with everything the bar can carry at once: the
- * version badge and Versions, Lingue, Duplica and Esporta. There is no Render button and no render status any more
- * (decision 974): a render or an export in progress shows inside Esporta ("Esportazione 26%"), at the control's one size.
- * The bar's markup, given the app's stylesheets and its fonts, is measured in real Chrome at 1024 to 1920 px, in the browser
- * and in the macOS desktop title bar (80 px for the traffic lights), idle and while an export runs: nothing leaves the bar,
- * nothing overlaps, no control's text is clipped, the format's name keeps room, and Esporta has the same width in both
+ * The format page's top bar (UX feedback batch 1, final wave I2; decision 974; user reports 17, 19 and 23). The format page is
+ * the editor since decision 916: the real EditorScreen is rendered in jsdom, in Italian, with long names and everything the bar
+ * can carry at once: the app's mark and the breadcrumb (project, creative by its title, the format), the format's facts, the
+ * "Il brief dice 6 s" warning, the version badge, Lingue, Esporta and "…", a separator and the app's controls. There is no
+ * Render button and no render status (decision 974): a render or an export in progress shows inside Esporta ("Esportazione
+ * 26%"), at the control's one size. The bar's markup, given the app's stylesheets and its fonts, is measured in real Chrome at
+ * 1024 to 1920 px, light and dark, in the browser and in the macOS desktop title bar, idle and while an export runs: nothing
+ * leaves the bar, nothing overlaps, nothing wraps, no control's text is clipped (the crumbs end with an ellipsis and keep their
+ * whole text in the tooltip), every button is 32 px tall, the format's name keeps room, and Esporta has the same width in both
  * states (no layout shift). Chrome only on request (MS_LAYOUT_CHROME=1 or MS_REQUIRE_CHROME=1), through the repo's driver
- * (mock keychain, basic password store).
+ * (mock keychain, basic password store); MS_LAYOUT_SHOTS=<folder> saves a screenshot of each case.
  */
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -28,6 +30,7 @@ const at = '2026-10-08T10:00:00.000Z';
 const VIDEO = 'tiktok-9x16';
 const H = 'b'.repeat(64);
 const out = (format: string, file: string, durationSec: number | null = null): OutputFileInfo => ({ format, file, width: 1080, height: 1920, durationSec, verified: true, preview: null });
+const LONG_TITLE = 'Create a 60-second 16:9 launch video for Motion Studio, the local motion graphics app for macOS';
 const version = (n: number, rendered: boolean): VersionEntry => ({
   n, commit: 'c', sessionId: 's', status: 'complete', createdAt: at, request: '', problems: [], tools: [], renderCommand: null, basedOn: null,
   outputs: rendered ? [{ ...out(VIDEO, 'tiktok.mp4', 8), sha256: 'd'.repeat(64), fromComposition: H }] : [],
@@ -38,8 +41,8 @@ let rendered = true;
 const detailOf = (): CreativeDetail => ({
   slug: 'lancio', jobKey: 'creative:/w:acme:lancio', versions: [version(1, rendered), version(2, rendered)],
   creative: {
-    schemaVersion: 1, title: 'Lancio estivo', status: 'ready', error: null, createdAt: at, updatedAt: at, resumeFrom: null, linkedCodebases: [],
-    brief: { goal: 'g', message: 'm', formats: [VIDEO], durationSec: 8, assets: [], notes: '', locales: { primary: 'it', extra: ['en'] } },
+    schemaVersion: 1, title: LONG_TITLE, status: 'ready', error: null, createdAt: at, updatedAt: at, resumeFrom: null, linkedCodebases: [],
+    brief: { goal: 'g', message: 'm', formats: [VIDEO], durationSec: 6, assets: [], notes: '', locales: { primary: 'it', extra: ['en'] } },
   },
 } as unknown as CreativeDetail);
 
@@ -73,7 +76,7 @@ let live = { approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTick
 function Harness({ route = { name: 'format', slug: 'acme', creative: 'lancio', format: VIDEO }, page = true }: { route?: Route; page?: boolean }) {
   const shell = {
     route, live,
-    catalog: { projects: [{ slug: 'acme', name: 'Acme' }], creatives: {}, refresh: () => {} },
+    catalog: { projects: [{ slug: 'acme', name: 'Acme Studio Milano, campagne 2026' }], creatives: {}, refresh: () => {} },
     activity: { open: false, tab: null, seq: 0, show: () => {}, hide: () => {}, toggle: () => {} },
     openPalette: () => {},
   } as unknown as Shell;
@@ -96,9 +99,10 @@ async function barMarkup(desktopApp: boolean, state: BarState = 'idle'): Promise
   try {
     render(<Harness />);
     const bar = () => document.querySelector('.ms-topbar') as HTMLElement;
-    await waitFor(() => expect(bar().querySelector('.ms-fv-duplicate')).not.toBeNull());
+    await waitFor(() => expect(bar().querySelector('.ms-bar-more')).not.toBeNull());
+    await waitFor(() => expect(bar().querySelector('.ms-crumb-creative .ms-crumb-text')?.textContent).toBe(LONG_TITLE));
     expect(bar().querySelector('.ms-cv-edit')).toBeNull();
-    const names = [/^Lingue/, /^Duplica/, state === 'exporting' ? /^Esportazione 26%$/ : /^Esporta$/];
+    const names = [/^Lingue/, /^Il brief dice 6 s$/, /^Altre azioni$/, state === 'exporting' ? /^Esportazione 26%$/ : /^Esporta$/];
     for (const name of names) expect(within(bar()).getAllByRole('button', { name }).length, String(name)).toBeGreaterThan(0);
     // Decision 974: nothing renders from the bar, and nothing shows a render status beside Esporta.
     expect(within(bar()).queryByRole('button', { name: /render/i })).toBeNull();
@@ -124,18 +128,33 @@ const controls = [...bar.querySelectorAll('button, .ms-pill, .ms-fv-meta, .ms-fv
 for (const el of controls) {
   const r = el.getBoundingClientRect();
   if (r.left < br.left - 0.5 || r.right > br.right + 0.5) problems.push('outside the bar: ' + (el.getAttribute('aria-label') || el.textContent));
-  for (const leaf of [el, ...el.querySelectorAll('*')]) if (vis(leaf) && leaf.children.length === 0 && leaf.textContent && leaf.scrollWidth > leaf.clientWidth + 1) problems.push('clipped: ' + leaf.textContent);
+  // The facts may end with an ellipsis (they are also the name's tooltip, and their own).
+  for (const leaf of [el, ...el.querySelectorAll('*')]) if (vis(leaf) && leaf.children.length === 0 && leaf.textContent && leaf.scrollWidth > leaf.clientWidth + 1 && !(leaf.classList.contains('ms-fv-meta') && leaf.title)) problems.push('clipped: ' + leaf.textContent);
 }
 const solid = controls.filter((el) => !el.classList.contains('ms-fv-badge'));
 for (let i = 0; i < solid.length; i++) for (let j = i + 1; j < solid.length; j++) {
   const a = solid[i].getBoundingClientRect(), b = solid[j].getBoundingClientRect();
   if (a.left < b.right - 0.5 && a.right > b.left + 0.5 && a.top < b.bottom && a.bottom > b.top) problems.push('overlap: ' + (solid[i].textContent || solid[i].getAttribute('aria-label')) + ' / ' + (solid[j].textContent || solid[j].getAttribute('aria-label')));
 }
+// One size (user report 17): every button of the bar is 32 px tall (the avatar and the status chips are not buttons of the row).
+for (const b of [...bar.querySelectorAll('button, a.ms-crumb-link')].filter(vis)) {
+  if (b.classList.contains('ms-avatar') || b.classList.contains('ms-pill')) continue;
+  const h = Math.round(b.getBoundingClientRect().height);
+  if (h !== 32) problems.push('height ' + h + ': ' + (b.getAttribute('aria-label') || b.textContent));
+}
+// One line: every crumb sits on the bar's middle line, and a cut crumb keeps its whole text in the tooltip.
+for (const c of [...bar.querySelectorAll('.ms-crumbs > *')].filter(vis)) {
+  const r = c.getBoundingClientRect();
+  if (r.top < br.top || r.bottom > br.bottom) problems.push('crumb off the line: ' + c.textContent);
+}
+for (const t of bar.querySelectorAll('.ms-crumb-text, .ms-crumb > b')) if (vis(t) && t.scrollWidth > t.clientWidth + 1 && !t.closest('[title]')) problems.push('cut without a tooltip: ' + t.textContent);
 const name = bar.querySelector('.ms-fv-crumb b');
 const nameWidth = name ? name.getBoundingClientRect().width : 0;
 const exportWidth = bar.querySelector('.ms-cv-export') ? Math.round(bar.querySelector('.ms-cv-export').getBoundingClientRect().width * 10) / 10 : 0;
 const unnamed = [...bar.querySelectorAll('button')].filter(vis).filter((b) => !(b.getAttribute('aria-label') || [...b.querySelectorAll('*')].concat([b]).some((n) => vis(n) && [...n.childNodes].some((c) => c.nodeType === 3 && c.textContent.trim())))).map((b) => b.className);
 const widths = [...bar.children].flatMap((c) => c.classList.contains('ms-bar-slot') ? [...c.children] : [c]).filter(vis).map((el) => (el.getAttribute('aria-label') || el.textContent || el.className).slice(0, 18) + '=' + Math.round(el.getBoundingClientRect().width));
+// The current item gives way last (user report 23): a short format name is never cut, the ancestors are.
+if (name && name.scrollWidth > name.clientWidth + 1) problems.push('the format name is cut: ' + name.textContent);
 return { problems, widths, nameWidth: Math.round(nameWidth), slack: bar.clientWidth - bar.scrollWidth, exportWidth, unnamed };
 })()`;
 
@@ -154,23 +173,26 @@ describe('format view bar: CSS rules (scoped to the format view, Ruling AG)', ()
     expect(fmt).toMatch(/\.ms-topbar\.ms-bar-fv\s*\{\s*container:\s*ms-topbar\s*\/\s*inline-size/);
     expect([...fmt.matchAll(/container:\s*ms-topbar/g)]).toHaveLength(1);
   });
-  it('every fold rule is under .ms-bar-fv, the crumb rule included; the render actions go icon-only', () => {
+  it('every fold rule is under .ms-bar-fv; the versions count, the facts and the secondary labels fold', () => {
     const sels = foldSelectors();
-    expect(sels.length).toBeGreaterThan(8);
+    expect(sels.length).toBeGreaterThan(4);
     for (const sel of sels) expect(sel, sel).toMatch(/^\.ms-bar-fv /);
-    expect(sels).toContain('.ms-bar-fv .ms-fold-1 > .ms-bar-label');
-    expect(sels).toContain('.ms-bar-fv .ms-crumbs > .ms-crumb:not(.ms-last)');
+    expect(sels).toContain('.ms-bar-fv .ms-fold-2 > .ms-bar-label');
+    expect(sels).toContain('.ms-bar-fv .ms-fvb-bar > .ms-bar-label');
+    expect(sels).toContain('.ms-bar-fv .ms-fv-meta');
     for (const m of fmt.matchAll(/^([^@/\n][^{\n]*ms-fold[^{\n]*)\{/gm)) expect(m[1]!.trim(), m[1]).toMatch(/^\.ms-bar-fv /);
     expect(fmt).not.toMatch(/@media[^{]*(max|min)-width[^{]*\{[^}]*ms-fold/);
   });
 });
 
 describe('format view bar: what it carries, and which bars fold', () => {
-  it('idle, in Italian: the version badge, Versions, Lingue, Duplica, Esporta; no render control (decision 974)', async () => {
+  it('idle, in Italian: the version badge, Lingue, Esporta, "…"; no Versions, no Duplica in the row, no render control (decisions 972, 974)', async () => {
     const html = await barMarkup(false);
     expect(html).not.toContain('ms-fv-render');
     expect(html).toContain('ms-cv-languages');
-    expect(html).toContain('ms-fv-duplicate');
+    expect(html).toContain('ms-fvb-bar');
+    expect(html).not.toContain('ms-cv-vbtn');
+    expect(html).not.toContain('ms-fv-duplicate');
   });
   it('while an export runs: "Esportazione 26%" inside Esporta, the same control', async () => {
     const html = await barMarkup(true, 'exporting');
@@ -193,9 +215,10 @@ run('format view bar: real Chrome layout', () => {
   beforeAll(async () => { dir = mkdtempSync(join(tmpdir(), 'ms-topbar-')); browser = await launchChrome(chrome!); });
   afterAll(async () => { await browser?.close(); rmSync(dir, { recursive: true, force: true }); });
 
-  // 1024 is the desktop window's minimum width (apps/desktop/src/window.ts), 1440 its default; 1129, 1529 and 1789 put the
-  // browser bar's content (28 px of padding) just above a folding step (1100, 1500, 1760), where it is at its fullest.
-  const WIDTHS = [1024, 1129, 1280, 1440, 1529, 1789, 1920];
+  // 1024 is the desktop window's minimum width (apps/desktop/src/window.ts), 1440 its default; 1229 and 1429 put the browser
+  // bar's content (28 px of padding) just above a folding step (1200, 1400), 1309 and 1509 the desktop one's (108 px).
+  const WIDTHS = [1024, 1229, 1280, 1309, 1429, 1440, 1509, 1920];
+  const shots = process.env.MS_LAYOUT_SHOTS;
   type Measure = { problems: string[]; widths: string[]; nameWidth: number; slack: number; exportWidth: number; unnamed: string[] };
   for (const desktopApp of [false, true]) {
     it(`${desktopApp ? 'desktop (macOS title bar)' : 'browser'}: Italian, ${WIDTHS.join(', ')} px, idle and exporting: everything fits, Esporta keeps its width`, async () => {
@@ -205,15 +228,17 @@ run('format view bar: real Chrome layout', () => {
         const html = await barMarkup(desktopApp, state);
         // The desktop title bar classes come from the app's own titleBar.ts; a browser run has none.
         const header = desktopApp && !html.includes('ms-tb-mac') ? html.replace('class="ms-topbar"', 'class="ms-topbar ms-titlebar ms-tb-mac"') : html;
-        for (const width of WIDTHS) {
-          const page = `<!doctype html><html lang="it"><head><meta charset="utf-8"><style>${FONTS()}\n${ALL_CSS()}
+        for (const width of WIDTHS) for (const theme of ['light', 'dark'] as const) {
+          const page = `<!doctype html><html lang="it" data-theme="${theme}"><head><meta charset="utf-8"><style>${FONTS()}\n${ALL_CSS()}
             body{margin:0;background:var(--bg)}</style></head><body>${header}</body></html>`;
-          const file = join(dir, `${state}-${desktopApp ? 'desktop' : 'web'}-${width}.html`);
+          const file = join(dir, `${state}-${desktopApp ? 'desktop' : 'web'}-${width}-${theme}.html`);
           writeFileSync(file, page);
-          const tab = await browser.newPage(width, 400);
+          const tab = await browser.newPage(width, 120);
           try {
             await tab.goto(`file://${file}`);
             const r = await tab.eval<Measure>(MEASURE, 30_000);
+            if (shots) writeFileSync(join(shots, `format-bar-${state}-${desktopApp ? 'desktop' : 'web'}-${width}-${theme}.png`), await tab.screenshot());
+            if (theme === 'dark') continue;
             console.info(`[topbar] ${state} ${desktopApp ? 'desktop' : 'web'} @${width}: ${JSON.stringify(r)}`);
             const where = `${state} ${desktopApp ? 'desktop' : 'web'} @${width}`;
             for (const p of r.problems) failures.push(`${where}: ${p}`);

@@ -4,7 +4,7 @@
 // "Versions" timeline of the bar, and the actions behind them with their error messages.
 import type { VersionEntry } from '@motion-studio/shared';
 import { entryHasProblems, formatRuns, shownTotal } from '@motion-studio/shared';
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { api } from '../api.ts';
 import { formatDate, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
 import { pop } from '../motion/index.ts';
@@ -160,6 +160,13 @@ export interface FormatBadgeProps {
    * the menu's row) says whether it is the export pick, so two stars never stand side by side.
    */
   unstarred?: boolean;
+  /**
+   * The top bar's one version control (user report 17): a bar-sized button with the number of versions beside the
+   * version ("★ v1 · 2 versioni"), the count folding away on a narrow bar.
+   */
+  bar?: boolean;
+  /** The badge's button (the bar pops it when a new version arrives, T11). */
+  buttonRef?: RefObject<HTMLButtonElement | null>;
 }
 
 /**
@@ -169,16 +176,19 @@ export interface FormatBadgeProps {
 export function FormatBadge(p: FormatBadgeProps) {
   const t = useT();
   const fv = t.web.formatVersions;
-  const anchor = useRef<HTMLButtonElement>(null);
+  const own = useRef<HTMLButtonElement>(null);
+  const anchor = p.buttonRef ?? own;
   const [open, setOpen] = useState(false);
   const star = p.state.star.version;
   if (star === null && p.state.history.length === 0) return null;
   const n = star ?? p.state.history.at(-1)!;
   return (
     <>
-      <button ref={anchor} type="button" className={cx('ms-vbadge ms-star ms-fvb', open && 'ms-open', p.className)} aria-haspopup="dialog" aria-expanded={open}
+      <button ref={anchor} type="button" className={cx(p.bar ? 'ms-btn ms-outline ms-fvb-bar' : 'ms-vbadge ms-star', 'ms-fvb', open && 'ms-open', p.className)} aria-haspopup="dialog" aria-expanded={open}
         aria-label={fv.badge({ label: p.label, n })} onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}>
-        {p.unstarred || star === null ? '' : '★ '}v{n}<Icon name="chevron" size={10} />
+        {p.unstarred || star === null ? '' : '★ '}v{n}
+        {p.bar ? <span className="ms-fvb-count ms-bar-label" aria-hidden="true">· {fv.count({ n: p.state.history.length })}</span> : null}
+        <Icon name="chevron" size={p.bar ? 11 : 10} />
       </button>
       {p.shown !== null && p.shown !== n ? <span className="ms-fvb-viewing">{fv.viewing({ n: p.shown })}</span> : null}
       <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="bottom-start" width={320} label={fv.title({ label: p.label })}>
@@ -319,31 +329,28 @@ export function FollowerChip({ label, primary, short, primaryStar, actions, foll
 }
 
 /**
- * The bar's "Versions" (spec §3.1): the creative's timeline, every vN with its request. A row selects it for "Restart from
- * here" and Show in Finder; what each board shows is chosen on the board itself.
+ * The creative's (a variant's) timeline (spec §3.1): every vN with its request. A row selects it for "Restart from here"
+ * and Show in Finder; what each format shows is chosen on its own badge. Decision 972 and user report 17: no "Versions"
+ * button in the bars any more; the bar's "…" menu opens this popover on its own button (`anchor`).
  */
-export function VersionTimeline({ slug, creative, versions, resumeFrom, actions, buttonRef }: {
-  slug: string; creative: string; versions: VersionEntry[]; resumeFrom: number | null; actions: VersionActions; buttonRef: RefObject<HTMLButtonElement | null>;
+export function VersionTimeline({ slug, creative, versions, resumeFrom, actions, open, onClose, anchor }: {
+  slug: string; creative: string; versions: VersionEntry[]; resumeFrom: number | null; actions: VersionActions;
+  open: boolean; onClose(): void; anchor: RefObject<HTMLElement | null>;
 }) {
   const t = useT();
   const v = t.web.canvas.versions;
   const locale = useLocale();
   const when = useWhen();
-  const [open, setOpen] = useState(false);
   const latest = versions.at(-1)?.n ?? 0;
   const current = resumeFrom ?? latest;
   const [selected, setSelected] = useState(current);
   // Each opening starts on the version the next change resumes from.
   useEffect(() => { if (open) setSelected(current); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   const canRestart = selected !== current;
-  const close = useCallback(() => setOpen(false), []);
+  const close = onClose;
   return (
     <>
-      <button ref={buttonRef} type="button" className={cx('ms-btn ms-outline ms-cv-vbtn ms-no-drag', open && 'ms-open')} aria-haspopup="dialog" aria-expanded={open}
-        aria-label={v.timelineMenu({ total: versions.length })} onClick={() => setOpen((o) => !o)}>
-        <span className="ms-bar-label">{v.timeline}</span><span className="ms-cv-vbtn-count">{versions.length}</span><Icon name="chevron" size={11} />
-      </button>
-      <Popover open={open} onClose={close} anchor={buttonRef} placement="bottom-end" width={320}>
+      <Popover open={open} onClose={close} anchor={anchor} placement="bottom-end" width={320}>
         <div className="ms-vmenu" role="dialog" aria-label={v.title}>
           <div className="ms-vmenu-head"><b>{v.title}</b><span className="ms-vmenu-count">{versions.length}</span></div>
           <div className="ms-vmenu-list">
