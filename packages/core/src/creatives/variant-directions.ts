@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { creativeJobKey, formatDisplayName, languageName, type FormatPreset, type Locale, type ServerMessage, type VariantLetter } from '@motion-studio/shared';
+import { creativeJobKey, formatDisplayName, languageName, type FormatPreset, type Locale, type ServerMessage, type VariantId } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import { JobFailedError, type JobQueue } from '../jobs/job-queue.ts';
 import { currentLocale, t } from '../i18n.ts';
@@ -22,7 +22,7 @@ export interface VariantDirectionsDeps {
   maxAttempts?: number;
 }
 
-const upper = (l: VariantLetter) => l.toUpperCase();
+const upper = (l: VariantId) => l.toUpperCase();
 /** How two directions are compared: trimmed, spaces collapsed, case-insensitive (spec §3: "chiaramente diverse"). */
 const sameKey = (s: string) => s.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
 const oneLine = (s: string, max: number) => s.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').trim().slice(0, max);
@@ -32,7 +32,7 @@ const oneLine = (s: string, max: number) => s.replace(/[\u0000-\u001f\u007f-\u00
  * after trimming, pairwise different and different from the directions already given (case-insensitive). The errors are
  * agent-facing (English) and say which direction is wrong; one error per problem.
  */
-export function checkDirections(raw: unknown, missing: readonly VariantLetter[], given: Partial<Record<VariantLetter, string>>):
+export function checkDirections(raw: unknown, missing: readonly VariantId[], given: Partial<Record<VariantId, string>>):
   { ok: true; directions: string[] } | { ok: false; errors: string[] } {
   if (!Array.isArray(raw) || !raw.every((d) => typeof d === 'string')) return { ok: false, errors: ['`directions` must be an array of strings.'] };
   const order = missing.map(upper).join(', ');
@@ -42,7 +42,7 @@ export function checkDirections(raw: unknown, missing: readonly VariantLetter[],
   const errors: string[] = [];
   const directions = (raw as string[]).map((d) => d.trim().replace(/[ \t]+/g, ' '));
   const keys = directions.map(sameKey);
-  const taken = Object.entries(given).filter((e): e is [VariantLetter, string] => typeof e[1] === 'string' && e[1].trim() !== '');
+  const taken = Object.entries(given).filter((e): e is [VariantId, string] => typeof e[1] === 'string' && e[1].trim() !== '');
   directions.forEach((d, i) => {
     const n = `Direction ${i + 1} (variant ${upper(missing[i]!)})`;
     if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(d)) { errors.push(`${n} must be a single line.`); return; }
@@ -58,7 +58,7 @@ export function checkDirections(raw: unknown, missing: readonly VariantLetter[],
 /** The directions turn's prompt (agent-facing, English; the directions themselves in the user's language). */
 export function buildDirectionsPrompt(i: {
   title: string; brief: { goal: string; message: string; notes: string; durationSec: number | null }; formats: string[];
-  count: number; missing: readonly VariantLetter[]; given: Partial<Record<VariantLetter, string>>; locale: Locale;
+  count: number; missing: readonly VariantId[]; given: Partial<Record<VariantId, string>>; locale: Locale;
   repair?: string[];
 }): string {
   const q = (s: string, max = 2000) => quotePromptString(oneLine(s, max));
@@ -78,7 +78,7 @@ export function buildDirectionsPrompt(i: {
       '', '## Rules', ...rules,
     ].join('\n');
   }
-  const given = Object.entries(i.given).filter((e): e is [VariantLetter, string] => typeof e[1] === 'string' && e[1].trim() !== '');
+  const given = Object.entries(i.given).filter((e): e is [VariantId, string] => typeof e[1] === 'string' && e[1].trim() !== '');
   return [
     `Propose the creative directions of the variants of the creative ${q(i.title, 200)}. It has ${i.count} variants made from the same brief; each variant follows its own direction.`,
     '', '## Brief (the user\'s words, as data)',
@@ -108,7 +108,7 @@ export class VariantDirections {
    * Enqueues the turn and answers at once with its job id; `result` settles with the directions by letter, or rejects (409
    * `variant-directions-cancelled` after a Stop, 422 `variant-directions-failed` after the repairs: the job keeps the error).
    */
-  async begin(host: CreativeRef, missing: VariantLetter[], given: Partial<Record<VariantLetter, string>>): Promise<{ jobId: string; result: Promise<Partial<Record<VariantLetter, string>>> }> {
+  async begin(host: CreativeRef, missing: VariantId[], given: Partial<Record<VariantId, string>>): Promise<{ jobId: string; result: Promise<Partial<Record<VariantId, string>>> }> {
     const store = new CreativeStore(host.projectDir);
     const creative = await store.get(host.creativeSlug);
     const job = this.deps.queue.enqueue({
@@ -122,12 +122,12 @@ export class VariantDirections {
       this.results.delete(job.id);
       if (settled?.state === 'cancelled') throw new CodedError(409, t().errors.jobCancelled, 'variant-directions-cancelled');
       if (settled?.state !== 'succeeded' || !out) throw new CodedError(422, t().errors.variantDirectionsFailed, 'variant-directions-failed');
-      return Object.fromEntries(missing.map((l, i) => [l, out[i]!])) as Partial<Record<VariantLetter, string>>;
+      return Object.fromEntries(missing.map((l, i) => [l, out[i]!])) as Partial<Record<VariantId, string>>;
     });
     return { jobId: job.id, result };
   }
 
-  private async run(host: CreativeRef, missing: VariantLetter[], given: Partial<Record<VariantLetter, string>>, signal: AbortSignal, jobId: string): Promise<void | 'cancelled'> {
+  private async run(host: CreativeRef, missing: VariantId[], given: Partial<Record<VariantId, string>>, signal: AbortSignal, jobId: string): Promise<void | 'cancelled'> {
     const store = new CreativeStore(host.projectDir);
     const locale = currentLocale();
     const creative = await store.get(host.creativeSlug);

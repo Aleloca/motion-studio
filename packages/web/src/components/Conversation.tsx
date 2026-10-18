@@ -1,5 +1,5 @@
 import { QUESTION_DISPLAY } from '@motion-studio/shared';
-import type { AgentEvent, ApprovalRequest, Brief, ConversationEntry, ExplainContext, JobSummary, LiveMessageOutcome, Pin, QueuedRequest, RedirectOutcome, VariantGroup, VariantLetter } from '@motion-studio/shared';
+import type { AgentEvent, ApprovalRequest, Brief, ConversationEntry, ExplainContext, JobSummary, LiveMessageOutcome, Pin, QueuedRequest, RedirectOutcome, VariantGroup, VariantId } from '@motion-studio/shared';
 import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { api, ApiError, type VariantRunResult } from '../api.ts';
 import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
@@ -47,10 +47,10 @@ export function mergeJobEvents(persisted: AgentEvent[], live: AgentEvent[]): Age
 export interface ConversationVariants {
   group: VariantGroup;
   /** The variant whose conversation is shown. */
-  current: VariantLetter;
+  current: VariantId;
   /** "Tutte" is on. */
   all: boolean;
-  missing?: readonly VariantLetter[];
+  missing?: readonly VariantId[];
   onSelect(target: ChatTarget): void;
   /** The same request in every active variant; `null` is the first generation. */
   runAll(body: { text?: string; pins?: Pin[]; formats?: string[] } | null): Promise<VariantRunResult>;

@@ -1,5 +1,5 @@
-// Fixtures of the variant UI tests (Phase 15): a group "lancio" of up to five variants with their details, as the core answers them.
-import { sisterSlug, type CreativeDetail, type OutputFileInfo, type VariantGroup, type VariantLetter, type VariantMember, type VersionEntry } from '@motion-studio/shared';
+// Fixtures of the variant UI tests (Phase 15): a group "lancio" of variants (any number: decision 978) with their details, as the core answers them.
+import { letterOfSlug, sisterSlug, type CreativeDetail, type OutputFileInfo, type VariantGroup, type VariantId, type VariantMember, type VersionEntry } from '@motion-studio/shared';
 
 export const at = '2026-10-08T10:00:00.000Z';
 export const HOST = 'lancio';
@@ -7,19 +7,19 @@ export const out = (format: string, file: string, preview: string | null = null)
 export const version = (n: number, request = '', outputs: OutputFileInfo[] = [out('instagram-post-1x1', 'post.png'), out('tiktok-9x16', 'tiktok.mp4', '.previews/tiktok.mp4.jpg')]): VersionEntry =>
   ({ n, commit: 'c', sessionId: 's', status: 'complete', createdAt: at, request, outputs, problems: [], tools: [], renderCommand: null, basedOn: null });
 
-export const member = (letter: VariantLetter, over: Partial<VariantMember> = {}): VariantMember => ({
+export const member = (letter: VariantId, over: Partial<VariantMember> = {}): VariantMember => ({
   slug: sisterSlug(HOST, letter), letter, direction: null, directionSource: null, status: 'active', createdAt: at, ...over,
 });
-export const DIRECTIONS: Record<VariantLetter, string> = { a: 'Minimale', b: 'Audace', c: 'Giocosa', d: 'Notturna', e: 'Retro' };
-export const groupOf = (letters: VariantLetter[], over: Partial<VariantGroup> = {}, memberOver: Partial<Record<VariantLetter, Partial<VariantMember>>> = {}): VariantGroup => ({
-  members: letters.map((l) => member(l, { direction: DIRECTIONS[l], directionSource: 'user', ...memberOver[l] })),
+export const DIRECTIONS: Record<VariantId, string> = { a: 'Minimale', b: 'Audace', c: 'Giocosa', d: 'Notturna', e: 'Retro' };
+export const groupOf = (letters: VariantId[], over: Partial<VariantGroup> = {}, memberOver: Partial<Record<VariantId, Partial<VariantMember>>> = {}): VariantGroup => ({
+  members: letters.map((l) => member(l, { direction: DIRECTIONS[l] ?? null, directionSource: DIRECTIONS[l] ? 'user' : null, ...memberOver[l] })),
   picks: {}, layout: 'variant', ...over,
 });
 
 const FORMATS = ['instagram-post-1x1', 'tiktok-9x16'];
 /** The detail the core answers for the creative `slug` of the group (the group is in every member's detail). */
-export function detailFor(slug: string, versions: VersionEntry[], group: VariantGroup | null, o: { missing?: VariantLetter[]; formats?: string[]; title?: string; status?: CreativeDetail['creative']['status'] } = {}): CreativeDetail {
-  const letter = slug.includes('~') ? (slug.slice(-1) as VariantLetter) : 'a';
+export function detailFor(slug: string, versions: VersionEntry[], group: VariantGroup | null, o: { missing?: VariantId[]; formats?: string[]; title?: string; status?: CreativeDetail['creative']['status'] } = {}): CreativeDetail {
+  const letter = letterOfSlug(slug);
   return {
     slug, jobKey: `creative:/w:acme:${slug}`, versions,
     creative: {

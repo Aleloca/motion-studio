@@ -3,7 +3,7 @@ import { appendFile, lstat, mkdir, readdir, readFile, rm, writeFile } from 'node
 import { basename, join } from 'node:path';
 import {
   activeMembers, creativeFileSchema, hostOf, isSessionId, sisterSlug, turnEndOf, versionsFileSchema,
-  type Brief, type ConversationEntry, type CreativeFile, type CreativeListItem, type VariantGroup, type VariantLetter, type VariantListInfo, type VersionEntry,
+  type Brief, type ConversationEntry, type CreativeFile, type CreativeListItem, type VariantGroup, type VariantId, type VariantListInfo, type VersionEntry,
   issuesText,
 } from '@motion-studio/shared';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
@@ -15,8 +15,8 @@ import { readRegularFile, readRegularFileSync } from '../safe-read.ts';
 
 /** A creative's folder name as the user's creation makes it (never a `~`: reserved for variant sisters, phase 15). */
 export const CREATIVE_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}$/;
-/** The SHAPE of a variant sister's folder, `<host>~b`..`~e`: whether it is a real sister is `creativeKind`'s question. */
-export const SISTER_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}~[b-e]$/;
+/** The SHAPE of a variant sister's folder, `<host>~b`, `~z`, `~aa`… (decision 978): whether it is a real sister is `creativeKind`'s question. */
+export const SISTER_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}~(?!a$)[a-z]{1,3}$/;
 /** Whether `name` has the shape of a creative folder (a plain one or a sister's). Shape only: see `creativeKind`. */
 export const isCreativeFolderShape = (name: string): boolean => CREATIVE_SLUG_RE.test(name) || SISTER_SLUG_RE.test(name);
 /** Most bytes of a creative.json read to tell a real sister (the host's file). */
@@ -40,7 +40,7 @@ export function memberPresent(hostSlug: string, sister: CreativeFile | null | un
   return sister?.variantOf === hostSlug;
 }
 
-export function sisterIn(hostSlug: string, host: CreativeFile | null, slug: string): { letter: VariantLetter } | null {
+export function sisterIn(hostSlug: string, host: CreativeFile | null, slug: string): { letter: VariantId } | null {
   const g = host?.variantGroup;
   if (!g || !SISTER_SLUG_RE.test(slug) || hostOf(slug) !== hostSlug || !groupTiedTo(hostSlug, g)) return null;
   const m = g.members.find((x) => x.slug === slug && x.letter !== 'a');
@@ -238,7 +238,7 @@ export class CreativeStore {
    * creative (an empty work/, versions and conversation). The folder must not exist (409). Only the variant service calls it,
    * under the host's lock, BEFORE the host's group lists the sister (until then it is no creative: `isRealSister`).
    */
-  async createSister(hostSlug: string, letter: Exclude<VariantLetter, 'a'>, creative: CreativeFile): Promise<string> {
+  async createSister(hostSlug: string, letter: Exclude<VariantId, 'a'>, creative: CreativeFile): Promise<string> {
     const slug = sisterSlug(hostSlug, letter);
     this.dir(slug);
     const parsed = creativeFileSchema.safeParse(creative);

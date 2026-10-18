@@ -1,4 +1,4 @@
-import { DEFAULT_EXPORT_QUALITY, effectiveLinks, isDefaultProfile, letterOfSlug, profileApplies, profileFor, recordedQuality, renderState, type FormatPreset, type JobSummary, type RenderProfile, type VariantLetter, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_QUALITY, effectiveLinks, isDefaultProfile, letterOfSlug, profileApplies, profileFor, recordedQuality, renderState, type FormatPreset, type JobSummary, type RenderProfile, type VariantId, type VersionEntry } from '@motion-studio/shared';
 import { findPreset } from '../formats/format-catalog.ts';
 import { probeConfinedFile } from '../brand/agent-guard.ts';
 import { CodedError } from '../workspace-store.ts';
@@ -21,7 +21,7 @@ export interface GroupPlanItem {
   format: string;
   /** The member (creative folder) the file comes from, and its letter. */
   slug: string;
-  letter: VariantLetter;
+  letter: VariantId;
   /** The version exported (a follower: its own file's version). */
   version: number;
   source: 'pick' | 'default';

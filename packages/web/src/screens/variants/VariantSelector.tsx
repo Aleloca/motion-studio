@@ -1,20 +1,20 @@
 // The chat's "Variante · A · B · C · Tutte" selector (Phase 15, spec §4): a letter shows that variant's conversation and sends
 // to that variant alone; "Tutte" sends the same request to every active variant. Discarded variants are not listed.
-import type { VariantGroup, VariantLetter } from '@motion-studio/shared';
+import type { VariantGroup, VariantId } from '@motion-studio/shared';
 import { useT } from '../../i18n.tsx';
 import { Segmented } from '../../ui/index.ts';
 import { upper } from './variantModel.ts';
 
-export type ChatTarget = VariantLetter | 'all';
+export type ChatTarget = VariantId | 'all';
 
 export interface VariantSelectorProps {
   group: VariantGroup;
   /** The variant whose conversation is shown. */
-  current: VariantLetter;
+  current: VariantId;
   /** "Tutte" is on: the composer sends to every active variant. */
   all: boolean;
   /** Letters whose folder is missing: listed in the group but not choosable. */
-  missing?: readonly VariantLetter[];
+  missing?: readonly VariantId[];
   onSelect(target: ChatTarget): void;
 }
 

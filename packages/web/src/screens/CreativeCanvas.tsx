@@ -8,7 +8,7 @@
 import { ProblemList } from '../components/ProblemList.tsx';
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
 import { turnEndOf } from '@motion-studio/shared';
-import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, outputWarningText, shownTotal, packInstancesOf, MAX_VARIANTS, nextLetter, type ConversationEntry, type CreativeDetail, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VariantLetter, type VariantMember, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
+import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, outputWarningText, shownTotal, packInstancesOf, type ConversationEntry, type CreativeDetail, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VariantId, type VariantMember, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { api, type GroupExportPlanItem } from '../api.ts';
@@ -836,7 +836,6 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
       </>
     );
   };
-  const canAdd = group ? nextLetter(group.group) !== null : false;
   const baseChoices: BaseChoice[] = group ? group.group.members.filter((m) => m.status === 'active' && !group.missing.includes(m.letter)).flatMap((m) => {
     const n = detailOfMember(m.slug)?.versions.at(-1)?.n;
     return n === undefined ? [] : [{ letter: m.letter, slug: m.slug, version: n }];
@@ -865,7 +864,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     <div className="ms-vbar" role="toolbar" aria-label={vg.toolbarAria}>
       <span className="ms-vbar-toggle"><Toggle size="sm" on={variantUi.showDiscarded} onChange={(on) => onVariantUi({ showDiscarded: on })} label={vg.showDiscarded} /><span aria-hidden="true">{vg.showDiscarded}</span></span>
       <span className="ms-grow" />
-      <Button size="sm" variant="outline" disabled={!canAdd} title={canAdd ? undefined : vg.addFull} onClick={() => setAddOpen(true)}>{vg.addVariant}</Button>
+      <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>{vg.addVariant}</Button>
       <Button size="sm" variant="accent" className="ms-vbar-final" aria-haspopup="dialog" onClick={() => setChooser(true)}><Icon name="star" size={13} fill />{vg.finalSelection}</Button>
     </div>
   ) : null;

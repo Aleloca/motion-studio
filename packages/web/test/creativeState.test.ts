@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { ConversationEntry } from '@motion-studio/shared';
-import { channelOf, retryTurn } from '../src/screens/creativeState.ts';
+import type { ApprovalRequest, ConversationEntry, CreativeSummary, JobSummary } from '@motion-studio/shared';
+import { initialEventsState } from '../src/eventsReducer.ts';
+import { channelOf, liveCreative, retryTurn } from '../src/screens/creativeState.ts';
 import { CHANNELS } from '../src/ui/ChannelMark.tsx';
 
 describe('channelOf', () => {
@@ -23,5 +24,22 @@ describe('retryTurn', () => {
     ];
     expect(retryTurn(entries)).toEqual({});
     expect(retryTurn(entries.filter((e) => e.type !== 'system' || e.keptVersion === undefined))).toEqual({ text: 'Porta il brief a 60 s' });
+  });
+});
+
+describe('liveCreative (decision 978)', () => {
+  const at = '2026-10-18T10:00:00.000Z';
+  const job = (id: string, creative: string, state: JobSummary['state'] = 'running') =>
+    ({ id, key: `creative:/w:acme:${creative}`, kind: 'creative', state, createdAt: at }) as unknown as JobSummary;
+  const row = { slug: 'lancio', status: 'ready', variants: { count: 27, active: 27, missing: [] } } as unknown as CreativeSummary;
+  it('counts the jobs and approvals of any sister id (~f, ~aa) on the group row, the host\'s first, then in id order', () => {
+    const live = { ...initialEventsState, jobs: { x: job('x', 'lancio~aa'), y: job('y', 'lancio~f'), z: job('z', 'altro~b') } };
+    expect(liveCreative(row, 'acme', live)).toMatchObject({ state: 'running', job: { id: 'y' } });
+    expect(liveCreative(row, 'acme', { ...live, jobs: { ...live.jobs, h: job('h', 'lancio') } }).job?.id).toBe('h');
+    const approval = { id: 'p', projectSlug: 'acme', creativeSlug: 'lancio~ab', createdAt: at } as unknown as ApprovalRequest;
+    expect(liveCreative(row, 'acme', { ...initialEventsState, approvals: { p: approval } })).toMatchObject({ state: 'needs', approval: { id: 'p' } });
+    // A single creative never takes a lookalike's work; another project's job is not this one's.
+    expect(liveCreative({ ...row, variants: undefined } as CreativeSummary, 'acme', live).state).toBe('ready');
+    expect(liveCreative(row, 'other', live).state).toBe('ready');
   });
 });

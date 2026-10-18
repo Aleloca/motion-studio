@@ -1,5 +1,5 @@
 import { presetFor } from '../instances.ts';
-import { sisterSlug, turnEndOf, VARIANT_LETTERS, type ApprovalRequest, type ConversationEntry, type CreativeSummary, type FormatPreset, type JobSummary, type Pin } from '@motion-studio/shared';
+import { compareVariantIds, hostOf, isSisterSlug, letterOfSlug, turnEndOf, type ApprovalRequest, type ConversationEntry, type CreativeSummary, type FormatPreset, type JobSummary, type Pin } from '@motion-studio/shared';
 import type { EventsState } from '../eventsReducer.ts';
 import { lastStep } from '../jobEvents.ts';
 import { channelOf } from '../ui/index.ts';
@@ -28,15 +28,27 @@ export function creativeJob(live: EventsState, project: string, creative: string
   return Object.values(live.jobs).find((j) => isActive(j) && j.key.startsWith('creative:') && j.key.endsWith(suffix)) ?? null;
 }
 
+/** The creative of a job key `creative:<root>:<project>:<creative>` of `project` (slugs never contain ':'), or null. */
+function creativeOfKey(key: string, project: string): string | null {
+  const i = key.lastIndexOf(':');
+  return i > 0 && key.slice(0, i).endsWith(`:${project}`) ? key.slice(i + 1) : null;
+}
+
 export { lastStep };
 
 export function liveCreative(c: CreativeSummary, project: string, live: EventsState): LiveCreative {
   // Phase 15: a group's row speaks for all its variants (the sisters are not listed on their own).
-  const slugs = c.variants ? [c.slug, ...VARIANT_LETTERS.slice(1).map((l) => sisterSlug(c.slug, l))] : [c.slug];
+  // Any sister id (decision 978: no cap, `~b`…`~z`, `~aa`…): a member is the host's slug or `<host>~<id>`.
+  const ofRow = (slug: string) => slug === c.slug || (Boolean(c.variants) && isSisterSlug(slug) && hostOf(slug) === c.slug);
   const approval = Object.values(live.approvals)
-    .filter((a) => a.projectSlug === project && a.creativeSlug !== null && slugs.includes(a.creativeSlug))
+    .filter((a) => a.projectSlug === project && a.creativeSlug !== null && ofRow(a.creativeSlug))
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0] ?? null;
-  const job = slugs.reduce<JobSummary | null>((found, sl) => found ?? creativeJob(live, project, sl), null);
+  // The host's job first, then the sisters' in id order (as before: A, then B, C…).
+  const job = Object.values(live.jobs)
+    .filter((j) => isActive(j) && j.key.startsWith('creative:'))
+    .map((j) => ({ j, slug: creativeOfKey(j.key, project) }))
+    .filter((x): x is { j: JobSummary; slug: string } => x.slug !== null && ofRow(x.slug))
+    .sort((x, y) => compareVariantIds(letterOfSlug(x.slug), letterOfSlug(y.slug)))[0]?.j ?? null;
   const step = job ? lastStep(live.events[job.id]) : null;
   const state: CardState = approval ? 'needs'
     : job || c.status === 'working' ? 'running'

@@ -6,7 +6,7 @@
  */
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { DEFAULT_FORMATS, type ConversationEntry, type JobSummary, type VariantGroup, type VariantLetter, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, variantIdAt, type ConversationEntry, type JobSummary, type VariantGroup, type VariantId, type VersionEntry } from '@motion-studio/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
 import type { Route } from '../src/routes.ts';
@@ -16,7 +16,7 @@ import { at, detailFor, groupOf, HOST, out, version } from './support/variants.t
 vi.setConfig({ testTimeout: 30_000 });
 
 let group: VariantGroup | null = groupOf(['a', 'b', 'c']);
-let missing: VariantLetter[] = [];
+let missing: VariantId[] = [];
 let orphan = false;
 const versionsBy: Record<string, VersionEntry[]> = {
   [HOST]: [version(1, 'Dal brief')],
@@ -27,7 +27,7 @@ const versionsBy: Record<string, VersionEntry[]> = {
 };
 const conversations: Record<string, ConversationEntry[]> = {};
 const build = (slug: string) => {
-  if (orphan) return { ...detailFor(slug, versionsBy[slug] ?? [], null), variants: { orphan: true as const, host: HOST, letter: slug.slice(-1) as VariantLetter } };
+  if (orphan) return { ...detailFor(slug, versionsBy[slug] ?? [], null), variants: { orphan: true as const, host: HOST, letter: slug.slice(-1) as VariantId } };
   return detailFor(slug, versionsBy[slug] ?? [], group, { missing });
 };
 const reply = (slug = HOST) => build(slug);
@@ -551,13 +551,20 @@ describe('variant canvas · + Variante', () => {
     await waitFor(() => expect(api.addVariants).toHaveBeenCalledWith('acme', HOST, { count: 1, directions: [null], baseFrom: { slug: `${HOST}~b`, version: 2 } }));
   });
 
-  it('is disabled at five variants, with the reason', async () => {
+  it('has no cap (decision 978): five variants and more still add one, and a sixth and a 27th (AA) show as rows', async () => {
     group = groupOf(['a', 'b', 'c', 'd', 'e']);
-    render(<Harness live={emptyLive()} />);
+    const { unmount } = render(<Harness live={emptyLive()} />);
     await loaded();
     const add = screen.getByRole('button', { name: '+ Variante' }) as HTMLButtonElement;
-    expect(add.disabled).toBe(true);
-    expect(add.title).toBe('Hai raggiunto il limite di 5 varianti');
+    expect(add.disabled).toBe(false);
+    expect(add.title).toBe('');
+    unmount();
+    group = groupOf(Array.from({ length: 27 }, (_, i) => variantIdAt(i)));
+    render(<Harness live={emptyLive()} />);
+    await loaded();
+    expect(await region('Variante F')).toBeTruthy();
+    expect(await region('Variante AA')).toBeTruthy();
+    expect((screen.getByRole('button', { name: '+ Variante' }) as HTMLButtonElement).disabled).toBe(false);
   });
 });
 

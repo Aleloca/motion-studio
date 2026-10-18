@@ -205,6 +205,13 @@ describe('mcp-studio server', () => {
       for (const key of Object.keys(t.inputSchema.properties)) expect(key, t.name).not.toMatch(/path|project|slug|dest|job/i);
     }
     expect(tools.find((t) => t.name === 'add_variant')!.inputSchema.required).toEqual(['direction']);
+    // No cap on variants (decision 978): a variant is any id a…z, aa… (the core checks it is a member).
+    for (const name of ['discard_variant', 'restore_variant', 'set_pick']) {
+      const v = tools.find((t) => t.name === name)!.inputSchema.properties.variant as { pattern: string; enum?: unknown };
+      expect(v.enum, name).toBeUndefined();
+      expect(['aa', 'f', 'b'].every((x) => new RegExp(v.pattern).test(x)) && !new RegExp(v.pattern).test('B'), name).toBe(true);
+    }
+    expect(tools.find((t) => t.name === 'add_variant')!.description).not.toMatch(/At most 5/);
     expect(tools.find((t) => t.name === 'update_brief')!.description).toContain('durationSec');
     const res = await rpc(2, 'tools/call', { name: 'update_brief', arguments: { durationSec: 60 } });
     expect(res.result.isError).toBeUndefined();

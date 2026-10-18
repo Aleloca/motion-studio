@@ -11,7 +11,7 @@ import { localeTag } from './localization/schema.ts';
 import { channelName, DEFAULT_FORMATS, formatDisplayName } from './formats.ts';
 import { messages, type Locale } from './i18n/index.ts';
 import type { FormatSummary } from './formats/link.ts';
-import { variantGroupSchema, creativeSlugSchema, type VariantGroup, type VariantLetter } from './variants.ts';
+import { variantGroupSchema, creativeSlugSchema, type VariantGroup, type VariantId } from './variants.ts';
 
 export const creativeStatusSchema = z.enum(['draft', 'working', 'ready', 'incomplete', 'error', 'interrupted']);
 export type CreativeStatus = z.infer<typeof creativeStatusSchema>;
@@ -444,20 +444,20 @@ export interface CreativeSummary { slug: string; title: string; status: Creative
 export interface CreativeRemovalInfo {
   role: 'single' | 'host' | 'sister';
   members: number;
-  letter: VariantLetter | null;
+  letter: VariantId | null;
   title: string;
   archived: boolean;
   blocked: { code: string; message: string } | null;
 }
 /** Phase 15: what the list says about a group (spec §2, "N varianti"). */
-export interface VariantListInfo { count: number; active: number; missing: VariantLetter[] }
+export interface VariantListInfo { count: number; active: number; missing: VariantId[] }
 /**
  * Phase 15: the variant side of a creative's detail. Absent for a creative outside any group (an old creative is unchanged).
  * `orphan`: a sister whose group cannot be found (spec §7), opened as a single creative with a notice.
  */
 export type VariantDetail =
-  | { orphan: false; host: string; letter: VariantLetter; group: VariantGroup; missing: VariantLetter[] }
-  | { orphan: true; host: string; letter: VariantLetter };
+  | { orphan: false; host: string; letter: VariantId; group: VariantGroup; missing: VariantId[] }
+  | { orphan: true; host: string; letter: VariantId };
 /** A creative summary tagged with its project, for cross-project lists such as "Jump back in". */
 export type RecentCreative = CreativeSummary & { project: { slug: string; name: string } };
 export type CreativeListItem = ({ ok: true } & CreativeSummary) | { ok: false; slug: string; error: string };

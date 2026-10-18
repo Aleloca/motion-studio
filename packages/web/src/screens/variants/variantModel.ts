@@ -2,7 +2,7 @@
 // member's card, which job belongs to which variant, and the sizes of the variant cards. No React here.
 import {
   canDiscard, letterOfSlug, presetOf,
-  type CreativeDetail, type CreativeSummary, type JobSummary, type VariantGroup, type VariantLetter, type VariantMember,
+  type CreativeDetail, type CreativeSummary, type JobSummary, type VariantGroup, type VariantId, type VariantMember,
 } from '@motion-studio/shared';
 import type { EventsState } from '../../eventsReducer.ts';
 import { creativeJob } from '../creativeState.ts';
@@ -26,7 +26,7 @@ export function directionsFor(count: number, typed: readonly string[]): Array<st
   return Array.from({ length: count }, (_, i) => typed[i]?.trim() || null);
 }
 
-export const upper = (l: VariantLetter): string => l.toUpperCase();
+export const upper = (l: VariantId): string => l.toUpperCase();
 
 /** The members to draw: the active ones, plus the discarded ones when asked for, in letter order. */
 export function shownMembers(group: VariantGroup, showDiscarded: boolean): VariantMember[] {
@@ -47,7 +47,7 @@ export function memberLive(live: EventsState, project: string, slug: string): Me
 export const isRunning = (l: MemberLive): boolean => l.job !== null;
 
 /** Why a member cannot be discarded now (shared rule: running first, then the last active one), or null. */
-export function discardBlock(group: VariantGroup, letter: VariantLetter, running: boolean): 'running' | 'last-active' | null {
+export function discardBlock(group: VariantGroup, letter: VariantId, running: boolean): 'running' | 'last-active' | null {
   const r = canDiscard(group, letter, running);
   return r.ok || r.reason === 'unknown' ? null : r.reason;
 }
@@ -76,15 +76,15 @@ export function rowState(m: VariantMember, missing: boolean, live: MemberLive, s
 
 /** One line of "Selezione finale". `variant`/`n`: where the format comes from; `source`: a ★ or the default rule. */
 export type SelectionRow =
-  | { format: string; source: 'pick'; variant: VariantLetter; n: number }
-  | { format: string; source: 'default'; variant: VariantLetter | null; n: number | null };
+  | { format: string; source: 'pick'; variant: VariantId; n: number }
+  | { format: string; source: 'default'; variant: VariantId | null; n: number | null };
 
 /**
  * The rows of "Selezione finale" (final wave I1): the core's group export plan (`GET …/export-group`), which is the selection
  * the export copies, one row per format of the brief in its order. Nothing is recomputed here: a format the plan does not
  * have (nothing to export) is the default rule with no variant.
  */
-export function selectionRows(formats: readonly string[], plan: ReadonlyArray<{ format: string; letter: VariantLetter; version: number; source: 'pick' | 'default' }>): SelectionRow[] {
+export function selectionRows(formats: readonly string[], plan: ReadonlyArray<{ format: string; letter: VariantId; version: number; source: 'pick' | 'default' }>): SelectionRow[] {
   return formats.map((format): SelectionRow => {
     const p = plan.find((x) => x.format === format);
     if (!p) return { format, source: 'default', variant: null, n: null };
@@ -104,13 +104,13 @@ export function discardedSelf(variants: CreativeDetail['variants'] | undefined):
 }
 
 /** The letters of members whose folder is missing, as a display list ("C, D"). */
-export const missingList = (letters: readonly VariantLetter[]): string => letters.map(upper).join(', ');
+export const missingList = (letters: readonly VariantId[]): string => letters.map(upper).join(', ');
 
 /**
  * The variant letter of a job for the Activity center: a sister's from its slug; the host's "A" when the creative lists a
  * group (`creatives`: the project's summaries). Null for a creative outside any group.
  */
-export function jobVariantLetter(creativeSlug: string | null, summaries: readonly CreativeSummary[] | undefined): VariantLetter | null {
+export function jobVariantLetter(creativeSlug: string | null, summaries: readonly CreativeSummary[] | undefined): VariantId | null {
   if (!creativeSlug) return null;
   if (creativeSlug.includes('~')) return letterOfSlug(creativeSlug);
   return summaries?.find((c) => c.slug === creativeSlug)?.variants ? 'a' : null;
@@ -201,7 +201,7 @@ export function fitCards(count: number, viewWidth: number, min = 0.5): number | 
  * How many variants the "choose the final one" banner counts: every active variant is ready (none missing), there are at least
  * two to compare, and nothing is chosen yet (no ★ in the group). Null when the banner does not show.
  */
-export function readyToChoose(group: VariantGroup, missing: readonly VariantLetter[], stateOf: (letter: VariantLetter) => RowState['kind']): number | null {
+export function readyToChoose(group: VariantGroup, missing: readonly VariantId[], stateOf: (letter: VariantId) => RowState['kind']): number | null {
   const active = group.members.filter((m) => m.status === 'active');
   if (active.length < 2 || Object.keys(group.picks).length > 0) return null;
   if (active.some((m) => missing.includes(m.letter) || stateOf(m.letter) !== 'ready')) return null;

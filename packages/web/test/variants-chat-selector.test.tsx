@@ -4,7 +4,7 @@
  */
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { DEFAULT_FORMATS, type ConversationEntry, type JobSummary, type Pin, type VariantGroup, type VariantLetter, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, type ConversationEntry, type JobSummary, type Pin, type VariantGroup, type VariantId, type VersionEntry } from '@motion-studio/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
 import type { Shell } from '../src/shell/ShellContext.tsx';
@@ -12,7 +12,7 @@ import { at, detailFor, groupOf, HOST, version } from './support/variants.ts';
 
 vi.setConfig({ testTimeout: 30_000 });
 
-type Run = { jobs: Partial<Record<VariantLetter, string>>; queued: VariantLetter[]; skipped: VariantLetter[]; failed: Partial<Record<VariantLetter, string>> };
+type Run = { jobs: Partial<Record<VariantId, string>>; queued: VariantId[]; skipped: VariantId[]; failed: Partial<Record<VariantId, string>> };
 const run = vi.fn(async (..._a: unknown[]): Promise<Run> => ({ jobs: { a: 'j1', b: 'j2' }, queued: ['c'], skipped: [], failed: {} }));
 let group: VariantGroup = groupOf(['a', 'b', 'c']);
 const versionsBy: Record<string, VersionEntry[]> = { [HOST]: [version(1, 'Dal brief')], [`${HOST}~b`]: [version(1, 'Dal brief')], [`${HOST}~c`]: [version(1, 'Dal brief')] };

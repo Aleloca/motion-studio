@@ -1,4 +1,4 @@
-import type { CreativeFile, FormatPreset, IdentityBrief, Pin, StorePack, VariantLetter } from '@motion-studio/shared';
+import type { CreativeFile, FormatPreset, IdentityBrief, Pin, StorePack, VariantId } from '@motion-studio/shared';
 import { formatDisplayName, presetOf, statedDurationSec, videoTargetBitrateKbps, type BrandKit, type BriefServices, type Locale } from '@motion-studio/shared';
 import { replyInstruction } from '../i18n.ts';
 import { findPreset } from '../formats/format-catalog.ts';
@@ -80,14 +80,14 @@ export interface PromptInput {
   variant?: PromptVariant;
 }
 /** Phase 15: what a variant's prompt says about its group (see `PromptInput.variant`). */
-export interface PromptVariant { letter: VariantLetter; count: number; direction: string | null; others: Array<{ letter: VariantLetter; direction: string | null }> }
+export interface PromptVariant { letter: VariantId; count: number; direction: string | null; others: Array<{ letter: VariantId; direction: string | null }> }
 
 /**
  * Phase 15 (spec §3): the "Variant" section. The directions are the user's or the agent's words: quoted, one line each. The
  * other variants are named by their directions only (agent isolation: their folders are never pointed to).
  */
 export function variantSection(v: PromptVariant): string[] {
-  const L = (l: VariantLetter) => l.toUpperCase();
+  const L = (l: VariantId) => l.toUpperCase();
   const quoted = (d: string) => quotePromptString(oneLine(d, 140));
   return [
     '## Variant',

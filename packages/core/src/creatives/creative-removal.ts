@@ -1,6 +1,6 @@
 import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { activeMembers, creativeJobKey, renderJobKey, type CreativeFile, type CreativeRemovalInfo, type JobSummary, type VariantGroup, type VariantLetter } from '@motion-studio/shared';
+import { activeMembers, creativeJobKey, renderJobKey, type CreativeFile, type CreativeRemovalInfo, type JobSummary, type VariantGroup, type VariantId } from '@motion-studio/shared';
 import { noteCoreChange } from '../core-changes.ts';
 import { t } from '../i18n.ts';
 import type { TrashFn } from '../trash.ts';
@@ -48,7 +48,7 @@ interface Plan {
   creative: CreativeFile | null;
   host: CreativeRef;
   group: VariantGroup | null;
-  letter: VariantLetter | null;
+  letter: VariantId | null;
   /** The creatives the action applies to: the creative itself, or (`host`) every member of its group, A last. */
   targets: string[];
 }

@@ -119,16 +119,19 @@ describe('group lifecycle', { timeout: 60_000 }, () => {
     expect(await isRealSister(projectDir, sis('b'))).toBe(true);
   });
 
-  it('refuses a 6th variant (409 variants-full) and leaves nothing behind', async () => {
+  it('has no cap on variants (decision 978): ids go on past e to z, then aa, and are never reused (decision 1151)', async () => {
     await svc.addVariants(host, [{}, {}, {}, {}]);
-    const before = await readFile(join(projectDir, 'creatives', host.creativeSlug, 'creative.json'), 'utf8');
-    await expect(svc.addVariants(host, [{}])).rejects.toMatchObject({ status: 409, apiCode: 'variants-full' });
-    expect(await readFile(join(projectDir, 'creatives', host.creativeSlug, 'creative.json'), 'utf8')).toBe(before);
-    // A new group asking for 6 at once: refused before any folder is made.
-    const other = (await store.create({ title: 'Altro', brief })).slug;
-    await expect(svc.addVariants(refOf(other), [{}, {}, {}, {}, {}])).rejects.toMatchObject({ status: 409, apiCode: 'variants-full' });
-    expect(existsSync(join(projectDir, 'creatives', `${other}~b`))).toBe(false);
-    expect((await json(other)).variantGroup).toBeUndefined();
+    await svc.addVariants(host, [{}]);
+    expect((await json(host.creativeSlug)).variantGroup!.members.map((m) => m.letter)).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
+    expect(await isRealSister(projectDir, sis('f'))).toBe(true);
+    await svc.addVariants(host, Array.from({ length: 21 }, () => ({})));
+    const g = (await json(host.creativeSlug)).variantGroup!;
+    expect(g.members).toHaveLength(27);
+    expect(g.members.at(-1)).toMatchObject({ letter: 'aa', slug: sis('aa') });
+    expect(existsSync(join(projectDir, 'creatives', sis('aa'), 'creative.json'))).toBe(true);
+    expect(await isRealSister(projectDir, sis('aa'))).toBe(true);
+    // The commit line names the two-letter id whole.
+    expect(execFileSync('git', ['log', '-1', '--format=%s'], { cwd: projectDir, encoding: 'utf8' })).toContain('AA');
   });
 
   it('a sister folder already on disk refuses the add (409) and leaves no group or other sister behind', async () => {
@@ -513,7 +516,9 @@ describe('ruling R2: the one "real sister" check and its users', { timeout: 60_0
     expect(explainContext({ projectDir, creativeSlug: `${plain}~b` }).workDir).toBeUndefined();
     // The brand source of "Use as brand logo" from a sister.
     expect(CREATIVE_SOURCE_RE.test(`creative:${sis('b')}/v2`)).toBe(true);
-    expect(CREATIVE_SOURCE_RE.test(`creative:${host.creativeSlug}~f/v2`)).toBe(false);
+    expect(CREATIVE_SOURCE_RE.test(`creative:${host.creativeSlug}~aa/v2`)).toBe(true); // any id (decision 978)
+    expect(CREATIVE_SOURCE_RE.test(`creative:${host.creativeSlug}~a/v2`)).toBe(false);
+    expect(CREATIVE_SOURCE_RE.test(`creative:${host.creativeSlug}~abcd/v2`)).toBe(false);
   });
 
   it('list collapses real sisters into the host row; sweeps clean real sisters only; the rename journal and brief assets include them', async () => {
@@ -550,7 +555,7 @@ describe('ruling R2: the one "real sister" check and its users', { timeout: 60_0
     expect((await json(sis('c'))).brief.assets).toEqual(['assets/marchio.png']);
     expect((await json(fake)).brief.assets).toEqual(['assets/logo.png']);
     expect(renameJournalSchema.safeParse({ schemaVersion: 1, from: 'assets/a.png', to: 'assets/b.png', startedAt: new Date().toISOString(), brandRefs: false, briefSlugs: [sis('b')] }).success).toBe(true);
-    expect(renameJournalSchema.safeParse({ schemaVersion: 1, from: 'assets/a.png', to: 'assets/b.png', startedAt: new Date().toISOString(), brandRefs: false, briefSlugs: ['x~f'] }).success).toBe(false);
+    expect(renameJournalSchema.safeParse({ schemaVersion: 1, from: 'assets/a.png', to: 'assets/b.png', startedAt: new Date().toISOString(), brandRefs: false, briefSlugs: ['x~a'] }).success).toBe(false);
   });
 
   it('recovery at startup reaches the sisters (listAll): a sister left working is marked interrupted', async () => {

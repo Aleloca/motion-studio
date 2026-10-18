@@ -20,14 +20,17 @@ describe('parseRoute', () => {
 });
 
 describe('variant sisters (Phase 15)', () => {
-  it('a sister\'s slug (`<name>~b` to `~e`) opens as a creative, its formats and its editor too', () => {
+  it('a sister\'s slug (`<name>~b`…`~z`, `~aa`…: decision 978) opens as a creative, its formats and its editor too', () => {
+    expect(parseRoute('#/p/acme/c/lancio~f')).toEqual({ name: 'creative', slug: 'acme', creative: 'lancio~f' });
+    expect(parseRoute('#/p/acme/c/lancio~ab')).toEqual({ name: 'creative', slug: 'acme', creative: 'lancio~ab' });
+    expect(parseRoute(href.format('acme', 'lancio~aa', 'instagram-post-1x1'))).toEqual({ name: 'format', slug: 'acme', creative: 'lancio~aa', format: 'instagram-post-1x1' });
     expect(parseRoute('#/p/acme/c/lancio~b')).toEqual({ name: 'creative', slug: 'acme', creative: 'lancio~b' });
     expect(parseRoute(href.format('acme', 'lancio~e', 'instagram-post-1x1'))).toEqual({ name: 'format', slug: 'acme', creative: 'lancio~e', format: 'instagram-post-1x1' });
     // The old editor address of a sister opens its format (one screen, decision 916).
     expect(parseRoute('#/p/acme/c/lancio~c/f/tiktok-9x16/edit')).toEqual({ name: 'format', slug: 'acme', creative: 'lancio~c', format: 'tiktok-9x16' });
   });
   it('`~a`, `~f` and a tilde anywhere else are not creatives, and a project slug never has one', () => {
-    for (const h of ['#/p/acme/c/lancio~a', '#/p/acme/c/lancio~f', '#/p/acme/c/lan~cio', '#/p/acme/c/lancio~bb', '#/p/ac~b/c/lancio']) expect(parseRoute(h).name, h).not.toBe('creative');
+    for (const h of ['#/p/acme/c/lancio~a', '#/p/acme/c/lancio~B', '#/p/acme/c/lancio~abcd', '#/p/acme/c/lancio~b1', '#/p/acme/c/lan~cio-x', '#/p/ac~b/c/lancio']) expect(parseRoute(h).name, h).not.toBe('creative');
   });
 });
 

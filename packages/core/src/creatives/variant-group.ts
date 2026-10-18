@@ -1,9 +1,9 @@
 import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
-  activeMembers, canDiscard, sisterSlug, effectiveLinks, followerVersion, formatDisplayName, hasFormat, MAX_INSTANCES, MAX_VARIANTS, nextInstanceId, presetOf, starOf,
-  VARIANT_LETTERS, variantGroupSchema,
-  type CreativeFile, type VariantGroup, type VariantLetter, type VariantMember, type VariantPick, type VersionEntry,
+  activeMembers, canDiscard, sisterSlug, effectiveLinks, followerVersion, formatDisplayName, hasFormat, MAX_INSTANCES, letterOfSlug, nextInstanceId, nextLetter, presetOf, starOf,
+  VARIANT_ID_RE, variantGroupSchema, variantIdAt, variantIndex,
+  type CreativeFile, type VariantGroup, type VariantId, type VariantMember, type VariantPick, type VersionEntry,
 } from '@motion-studio/shared';
 import { readCompositionFolder } from '../compositions/composition-files.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
@@ -49,9 +49,8 @@ const now = () => new Date().toISOString();
 
 /** The ref of the group member `slug`, in `host`'s project (the one helper of the variant services). */
 export const memberRef = (host: CreativeRef, slug: string): CreativeRef => ({ root: host.root, projectSlug: host.projectSlug, projectDir: host.projectDir, creativeSlug: slug });
-const letterIndex = (l: VariantLetter) => VARIANT_LETTERS.indexOf(l);
-const byLetter = (a: VariantMember, b: VariantMember) => letterIndex(a.letter) - letterIndex(b.letter);
-const upper = (l: VariantLetter) => l.toUpperCase();
+const byLetter = (a: VariantMember, b: VariantMember) => variantIndex(a.letter) - variantIndex(b.letter);
+const upper = (l: VariantId) => l.toUpperCase();
 
 export class VariantGroupService {
   constructor(private readonly deps: VariantGroupDeps) {}
@@ -127,7 +126,7 @@ export class VariantGroupService {
     };
   }
 
-  private memberOf(g: VariantGroup, letter: VariantLetter): VariantMember {
+  private memberOf(g: VariantGroup, letter: VariantId): VariantMember {
     const m = g.members.find((x) => x.letter === letter);
     if (!m) throw new CodedError(404, t().errors.variantUnknown({ letter: upper(letter) }), 'variant-unknown');
     return m;
@@ -136,8 +135,8 @@ export class VariantGroupService {
   /**
    * Creates the sisters for `ref`'s group (made now when `ref` has none: `ref` becomes member a, with `hostDirection`), one
    * per spec, in the next free letters. Each sister copies the group's brief (the host's links as its start), title and
-   * codebases; with `baseFrom` its v1 is that version's compositions (`seed`). No turn starts here. 409 `variants-full`
-   * beyond MAX_VARIANTS; nothing is left behind on a failure.
+   * codebases; with `baseFrom` its v1 is that version's compositions (`seed`). No turn starts here. There is no cap on the
+   * number of variants (decision 978); nothing is left behind on a failure.
    */
   async addVariants(ref: CreativeRef, request: VariantSpec[] | ((existing: VariantGroup | null) => { specs: VariantSpec[]; hostDirection?: string | null }), opts: { hostDirection?: string | null } = {}): Promise<VariantGroup> {
     const e = t().errors;
@@ -162,7 +161,6 @@ export class VariantGroupService {
         picks: {}, layout: 'variant',
       };
       if (specs.length === 0) throw new CodedError(400, e.invalidRequest, 'invalid-request');
-      if (g.members.length + specs.length > MAX_VARIANTS) throw new CodedError(409, e.variantsFull({ max: MAX_VARIANTS }), 'variants-full');
       for (const s of specs) {
         direction(s.direction);
         if (s.baseFrom && !g.members.some((m) => m.slug === s.baseFrom!.slug && m.status === 'active')) {
@@ -206,7 +204,7 @@ export class VariantGroupService {
         for (const slug of committed) await turns.commitFolder(host, [store.dir(slug)], t().jobs.variantsRolledBackCommit({ title: hostFile.title })).catch(() => null);
         throw err;
       }
-      await turns.commitCreativeFiles(host, [host.creativeSlug], t().jobs.variantsAddedCommit({ title: hostFile.title, letters: created.map((s) => upper(s.slice(-1) as VariantLetter)).join(', ') }),
+      await turns.commitCreativeFiles(host, [host.creativeSlug], t().jobs.variantsAddedCommit({ title: hostFile.title, letters: created.map((s) => upper(letterOfSlug(s))).join(', ') }),
         created.map((s) => store.dir(s)));
       return g;
     });
@@ -220,7 +218,7 @@ export class VariantGroupService {
    * next agent turn builds on v1 with the "Direct edits by the user" section, as after an editor save. The caller holds the
    * sister's lock; no turn of the brand-new sister can run.
    */
-  private async seed(sister: CreativeRef, base: { slug: string; version: number }, baseLetter: VariantLetter): Promise<void> {
+  private async seed(sister: CreativeRef, base: { slug: string; version: number }, baseLetter: VariantId): Promise<void> {
     const { store, turns } = this.deps;
     const e = t().errors;
     const locale = currentLocale();
@@ -267,17 +265,16 @@ export class VariantGroupService {
   }
 
   /**
-   * The next letter for a new sister: the first one no member uses, skipping the folder of a former sister of this host
-   * (an orphan: decision 947, a sister archived on its own leaves the group and keeps its folder). Any other folder in the
-   * way is refused by `createSister` (409 `variant-folder-exists`), as before. 409 `variants-full` when none is left.
+   * The id for a new sister: the one after the group's highest (`nextLetter`: ids are never reused, decision 1151), skipping
+   * the folder of a former sister of this host (an orphan: decision 947, a sister archived on its own leaves the group and
+   * keeps its folder). Any other folder in the way is refused by `createSister` (409 `variant-folder-exists`), as before.
    */
-  private async freeLetter(host: CreativeRef, g: VariantGroup): Promise<Exclude<VariantLetter, 'a'>> {
-    const used = new Set(g.members.map((m) => m.letter));
-    for (const l of VARIANT_LETTERS) {
-      if (l === 'a' || used.has(l)) continue;
+  private async freeLetter(host: CreativeRef, g: VariantGroup): Promise<VariantId> {
+    for (let i = variantIndex(nextLetter(g)); ; i++) {
+      const l = variantIdAt(i);
+      if (!VARIANT_ID_RE.test(l)) throw new CodedError(409, t().errors.invalidRequest, 'invalid-request');
       if ((await creativeKind(host.projectDir, sisterSlug(host.creativeSlug, l))) !== 'orphan') return l;
     }
-    throw new CodedError(409, t().errors.variantsFull({ max: MAX_VARIANTS }), 'variants-full');
   }
 
   /**
@@ -306,7 +303,7 @@ export class VariantGroupService {
    * 409 `variant-running` while one of its turns is queued or running, 409 `variant-last-active`. Discarding a discarded
    * member is a no-op.
    */
-  discard(ref: CreativeRef, letter: VariantLetter): Promise<VariantGroup> {
+  discard(ref: CreativeRef, letter: VariantId): Promise<VariantGroup> {
     return this.withGroup(ref, async (host, _f, g) => {
       const e = t().errors;
       const m = this.memberOf(g, letter);
@@ -334,7 +331,7 @@ export class VariantGroupService {
    * Restores member `letter` (spec §5): active again, without its old ★s (they were cleared by the discard). It catches up
    * with the group's brief at once (or at its next turn when it is working), since a discarded variant is not propagated to.
    */
-  restore(ref: CreativeRef, letter: VariantLetter): Promise<VariantGroup> {
+  restore(ref: CreativeRef, letter: VariantId): Promise<VariantGroup> {
     return this.withGroup(ref, async (host, hostFile, g) => {
       const m = this.memberOf(g, letter);
       if (m.status === 'active') return g;
@@ -382,7 +379,7 @@ export class VariantGroupService {
   }
 
   /** "Usa questa variante per tutti i formati" (spec §5): ★ = that variant's default-rule version of each format it has. */
-  useVariantForAll(ref: CreativeRef, letter: VariantLetter): Promise<VariantGroup> {
+  useVariantForAll(ref: CreativeRef, letter: VariantId): Promise<VariantGroup> {
     return this.withGroup(ref, async (host, hostFile, g) => {
       const m = this.memberOf(g, letter);
       if (m.status !== 'active') throw new CodedError(409, t().errors.variantDiscarded({ letter: upper(letter) }), 'variant-discarded');
@@ -404,7 +401,7 @@ export class VariantGroupService {
   }
 
   /** A variant's direction (spec §3): it applies from that variant's next turn. Empty clears it (the agent may propose one). */
-  setDirection(ref: CreativeRef, letter: VariantLetter, direction: string, source: 'user' | 'agent'): Promise<VariantGroup> {
+  setDirection(ref: CreativeRef, letter: VariantId, direction: string, source: 'user' | 'agent'): Promise<VariantGroup> {
     return this.withGroup(ref, async (host, _f, g) => {
       this.memberOf(g, letter);
       const d = direction.trim();

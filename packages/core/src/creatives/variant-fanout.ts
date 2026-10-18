@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
-  activeMembers, VARIANT_LETTERS,
-  servicesForFormats, type BriefServices, type FormatPreset, type JobWaitReason, type PaidBatch, type Pin, type ProviderId, type VariantGroup, type VariantLetter, type VariantMember, type WorkspaceSettings,
+  activeMembers, variantIndex,
+  servicesForFormats, type BriefServices, type FormatPreset, type JobWaitReason, type PaidBatch, type Pin, type ProviderId, type VariantGroup, type VariantId, type VariantMember, type WorkspaceSettings,
 } from '@motion-studio/shared';
 import type { ApprovalBroker } from '../approvals/broker.ts';
 import { isAllowedRule, PermissionsStore } from '../approvals/permissions-store.ts';
@@ -27,10 +27,10 @@ export interface UserRequest { text?: string; pins?: Pin[]; formats?: string[] }
  * turn, when one runs. `batchId`: the `jobId` of the paid-services card, when one will be shown (after the directions).
  */
 export interface FanoutResult {
-  jobs: Partial<Record<VariantLetter, string>>;
-  queued: VariantLetter[];
-  skipped: VariantLetter[];
-  failed: Partial<Record<VariantLetter, string>>;
+  jobs: Partial<Record<VariantId, string>>;
+  queued: VariantId[];
+  skipped: VariantId[];
+  failed: Partial<Record<VariantId, string>>;
   directionsJobId?: string;
   batchId?: string;
 }
@@ -46,21 +46,21 @@ export interface VariantFanoutDeps {
 }
 
 const PROVIDER_LABEL: Record<ProviderId, string> = { openai: 'OpenAI', elevenlabs: 'ElevenLabs', pexels: 'Pexels', unsplash: 'Unsplash' };
-const letterIndex = (l: VariantLetter) => VARIANT_LETTERS.indexOf(l);
-const upper = (l: VariantLetter) => l.toUpperCase();
+const letterIndex = (l: VariantId) => variantIndex(l);
+const upper = (l: VariantId) => l.toUpperCase();
 
 /**
  * One target of a run: its held turn (`jobId`), or its queued request (`clientId`) until that becomes a turn. `gone` resolves
  * when that work is over without the run's say: the turn settled (stopped by hand), or the request was taken out of the queue.
  */
 interface Entry {
-  letter: VariantLetter; ref: CreativeRef; jobId?: string; clientId?: string;
+  letter: VariantId; ref: CreativeRef; jobId?: string; clientId?: string;
   /** Applied to the queued request's turn when it starts (the cover). */ onStart?: (jobId: string) => void;
   gone?: Promise<void>; markGone?: () => void; /** Set once `gone` resolved: nothing more is set for it (no hold, no cover, no hook). */ ended?: boolean; /** Told the turn's id when a queued request starts: `gone` follows that turn. */ watch?: (jobId: string) => void;
 }
 /** The hook of a queued request: its current hold, what its turn gets when it starts, and what happens if it is removed by hand. */
 const hookOf = (e: Entry, hold: JobWaitReason | null) => ({ hold, started: (id: string) => { e.jobId = id; e.watch?.(id); e.onStart?.(id); }, removed: () => e.markGone?.() });
-interface PaidPlan { items: NonNullable<PaidBatch['items']>; rules: string[]; /** The rules still open per variant, to recompute `rules` for the variants that really start. */ byVariant: Partial<Record<VariantLetter, string[]>> }
+interface PaidPlan { items: NonNullable<PaidBatch['items']>; rules: string[]; /** The rules still open per variant, to recompute `rules` for the variants that really start. */ byVariant: Partial<Record<VariantId, string[]>> }
 type DirectionsRun = Awaited<ReturnType<VariantDirections['begin']>>;
 
 /**
@@ -76,10 +76,28 @@ type DirectionsRun = Awaited<ReturnType<VariantDirections['begin']>>;
  * its requests out of the working variants' queues, so nothing ran and nothing was spent, Claude Code tokens included.
  */
 export class VariantFanout {
+  /**
+   * Decision 1153: the turns of a run that must not add variants, by job id → why. A first generation (a run with no
+   * request) never adds one (no chain of new variants without a cap, decision 978); a request sent to several variants adds
+   * them once, from its first target: the others are told so (report 32). Until the single agent (phase 3) exists.
+   */
+  private readonly noAdd = new Map<string, { lead: VariantId | null }>();
+
   constructor(private readonly deps: VariantFanoutDeps) {}
 
+  /** Why the turn `jobId` may not add a variant (`lead`: the target that adds them; null: a first generation), or null. */
+  addRefusal(jobId: string): { lead: VariantId | null } | null {
+    return this.noAdd.get(jobId) ?? null;
+  }
+
+  private markNoAdd(jobId: string, lead: VariantId | null): void {
+    this.noAdd.set(jobId, { lead });
+    // Looked up after the current step: a queued request's turn is told its id right BEFORE it is enqueued.
+    void Promise.resolve().then(() => this.deps.queue.whenSettled(jobId)).then(() => this.noAdd.delete(jobId));
+  }
+
   /** The group of `ref` and the target members: discarded and missing ones set aside. 409 outside a group or with nothing to start. */
-  private async targetsOf(ref: CreativeRef, targets: VariantLetter[] | 'all-active'): Promise<{ host: CreativeRef; group: VariantGroup; members: VariantMember[]; skipped: VariantLetter[] }> {
+  private async targetsOf(ref: CreativeRef, targets: VariantId[] | 'all-active'): Promise<{ host: CreativeRef; group: VariantGroup; members: VariantMember[]; skipped: VariantId[] }> {
     const e = t().errors;
     const r = await new VariantGroupService({ store: new CreativeStore(ref.projectDir), turns: this.deps.turns }).resolve(ref);
     if (r.orphan) throw new CodedError(409, e.variantOrphan, 'variant-orphan');
@@ -101,7 +119,7 @@ export class VariantFanout {
   }
 
   /** `POST …/variants/run` (ruling R3): the targets' turns and queued requests are made now (held); the rest goes on in the background. */
-  async run(ref: CreativeRef, targets: VariantLetter[] | 'all-active', request: UserRequest | null): Promise<FanoutResult> {
+  async run(ref: CreativeRef, targets: VariantId[] | 'all-active', request: UserRequest | null): Promise<FanoutResult> {
     const { host, group, members, skipped } = await this.targetsOf(ref, targets);
     const { turns } = this.deps;
     const out: FanoutResult = { jobs: {}, queued: [], skipped: [...skipped], failed: {} };
@@ -120,6 +138,9 @@ export class VariantFanout {
       else busy.push(m);
     }
     const candidates = [...idle, ...busy].sort((a, b) => letterIndex(a.letter) - letterIndex(b.letter));
+    // Decision 1153: who may add variants in this run's turns (see `noAdd`).
+    const lead = message ? candidates[0]?.letter ?? null : null;
+    const blocksAdd = (l: VariantId) => !message || l !== lead;
     const missing = candidates.filter((m) => !m.direction).map((m) => m.letter);
     const wholePlan = candidates.length >= 2 ? await this.paidPlan(host, candidates) : null;
     const first: JobWaitReason | null = missing.length > 0 ? 'variant-directions' : wholePlan ? 'variant-confirm' : null;
@@ -130,6 +151,7 @@ export class VariantFanout {
       try {
         if (idle.includes(m)) {
           const job = await turns.start(mref, message, { ...(formats ? { formats } : {}), ...(first ? { hold: first } : {}) });
+          if (blocksAdd(m.letter)) this.markNoAdd(job.id, lead);
           const held: Entry = { letter: m.letter, ref: mref, jobId: job.id };
           held.gone = this.deps.queue.whenSettled(job.id).then(() => { held.ended = true; });
           entries.push(held);
@@ -138,8 +160,12 @@ export class VariantFanout {
           const entry: Entry = { letter: m.letter, ref: mref, clientId: randomUUID() };
           entry.gone = new Promise<void>((resolve) => { entry.markGone = () => { entry.ended = true; resolve(); }; });
           // Looked up after the current step: the turn is told its id right BEFORE it is enqueued.
-          entry.watch = (id) => { void Promise.resolve().then(() => this.deps.queue.whenSettled(id)).then(() => entry.markGone?.()); };
-          if (first) turns.setQueuedHook(mref, entry.clientId!, hookOf(entry, first));
+          entry.watch = (id) => {
+            if (blocksAdd(m.letter)) this.markNoAdd(id, lead);
+            void Promise.resolve().then(() => this.deps.queue.whenSettled(id)).then(() => entry.markGone?.());
+          };
+          // With no hold too when it must learn its turn's id (decision 1153): a hook with no hold changes nothing else.
+          if (first || blocksAdd(m.letter)) turns.setQueuedHook(mref, entry.clientId!, hookOf(entry, first));
           try {
             await turns.postMessage(mref, { clientId: entry.clientId!, text, pins, mode: 'queued' });
           } catch (err) { turns.setQueuedHook(mref, entry.clientId!, null); throw err; }
@@ -165,7 +191,7 @@ export class VariantFanout {
     let directions: DirectionsRun | null = null;
     const runMissing = missing.filter((l) => entries.some((e) => e.letter === l));
     if (runMissing.length > 0) {
-      const given = Object.fromEntries(group.members.filter((m) => m.direction).map((m) => [m.letter, m.direction!])) as Partial<Record<VariantLetter, string>>;
+      const given = Object.fromEntries(group.members.filter((m) => m.direction).map((m) => [m.letter, m.direction!])) as Partial<Record<VariantId, string>>;
       try {
         directions = await this.deps.directions.begin(host, runMissing, given);
       } catch (err) {
@@ -183,7 +209,7 @@ export class VariantFanout {
   }
 
   /** Directions → card → start; anything that does not end in "go" cancels the whole run. */
-  private async background(host: CreativeRef, entries: Entry[], missing: VariantLetter[], directions: DirectionsRun | null, plan: PaidPlan | null, batchId: string | undefined): Promise<void> {
+  private async background(host: CreativeRef, entries: Entry[], missing: VariantId[], directions: DirectionsRun | null, plan: PaidPlan | null, batchId: string | undefined): Promise<void> {
     try {
       if (directions) {
         const found = await directions.result;

@@ -3,7 +3,7 @@
 // side by side with their pictures: a click makes that variant the format's pick (the same group ★ as the cards' "Scegli"), a
 // click on the chosen one goes back to the default rule. The summary rows are the core's group export plan (final wave I1);
 // `rows` is null while it is read.
-import type { OutputFileInfo, VariantLetter } from '@motion-studio/shared';
+import type { OutputFileInfo, VariantId } from '@motion-studio/shared';
 import { useT } from '../../i18n.tsx';
 import { Icon, Modal, cx } from '../../ui/index.ts';
 import { posterOf, useStoryboard } from '../../components/compositionPreview.ts';
@@ -14,7 +14,7 @@ import { upper, type SelectionRow } from './variantModel.ts';
 export interface ChooserThumb { creative: string; n: number; format: string; hash: string | null; out: OutputFileInfo | null }
 
 export interface ChooserOption {
-  letter: VariantLetter;
+  letter: VariantId;
   slug: string;
   /** The short name of the variant (null: none). */
   name: string | null;
