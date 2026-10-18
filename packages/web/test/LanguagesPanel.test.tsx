@@ -18,7 +18,8 @@ const api = {
   decideApproval: vi.fn(async (..._a: unknown[]) => ({})),
   renderVersion: vi.fn(async (..._a: unknown[]) => ({ id: 'r1' })),
   prepareExport: vi.fn(async (..._a: unknown[]) => ({ renders: [] as unknown[] })),
-  exportPicks: vi.fn(async (_s: string, _c: string, body: { destination: string }) => ({ destination: body.destination, files: [{ from: 'a', to: 'b' }], skipped: [] as string[] })),
+  // Decision 974: the dialog starts the export as a background job.
+  exportPicksJob: vi.fn(async (_s: string, _c: string, _body: { destination: string }) => ({ job: { id: 'e1', key: 'export:/w:acme:c1:0a1b2c3d', kind: 'export', label: 'Export · Launch', state: 'queued', createdAt: '2026-10-08T10:00:00.000Z' } })),
   updateSettings: vi.fn(),
   fileUrl: (s: string, c: string, rel: string) => `/f/${s}/${c}/${rel}`,
 };
@@ -309,20 +310,20 @@ describe('Export in several languages', () => {
   it('exports the original alone as before: no languages in the request', async () => {
     open();
     await userEvent.click(screen.getByRole('button', { name: 'Export 1 file' }));
-    await waitFor(() => expect(api.exportPicks).toHaveBeenCalledOnce());
-    expect(api.exportPicks.mock.calls[0]![2]).not.toHaveProperty('locales');
-    expect(api.prepareExport.mock.calls.every((c) => !('locales' in (c[2] as object)))).toBe(true);
+    await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledOnce());
+    expect(api.exportPicksJob.mock.calls[0]![2]).not.toHaveProperty('locales');
+    expect(api.prepareExport).not.toHaveBeenCalled();
   });
 
-  it('with a translation ticked, sends the languages (and prepares their renders)', async () => {
+  it('with a translation ticked, sends the languages (the core renders them in the export job)', async () => {
     open();
     await userEvent.click(screen.getByRole('checkbox', { name: 'German' }));
     await userEvent.click(screen.getByRole('button', { name: 'Export 1 file' }));
-    await waitFor(() => expect(api.exportPicks).toHaveBeenCalledOnce());
+    await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledOnce());
     // Ruling R: the workspace pattern as it is (the core names the translation `…-de`, the original as today), the same
     // rule as the core's default when no pattern is sent.
-    expect(api.exportPicks.mock.calls[0]![2]).toMatchObject({ locales: ['en', 'de'], pattern: '{title}-{format}-v{v}' });
-    expect(api.prepareExport.mock.calls[0]![2]).toMatchObject({ locales: ['en', 'de'] });
+    expect(api.exportPicksJob.mock.calls[0]![2]).toMatchObject({ locales: ['en', 'de'], pattern: '{title}-{format}-v{v}', quality: 'high' });
+    expect(api.prepareExport).not.toHaveBeenCalled();
   });
 
   it('the name preview lists the translated files, named with their language when the pattern has no {locale} (final review I2)', async () => {
@@ -353,15 +354,14 @@ describe('Export in several languages', () => {
   });
 
   it('on a 409 shows the list and "Render anyway", which sends force', async () => {
-    api.exportPicks.mockRejectedValueOnce(new ApiError(409, 'raw', 'localization-needs-force', undefined, ['German · Reel: 1 outdated']));
+    api.exportPicksJob.mockRejectedValueOnce(new ApiError(409, 'raw', 'localization-needs-force', undefined, ['German · Reel: 1 outdated']));
     open();
     await userEvent.click(screen.getByRole('checkbox', { name: 'German' }));
     await userEvent.click(screen.getByRole('button', { name: 'Export 1 file' }));
     const alert = await screen.findByText('German · Reel: 1 outdated');
     expect(alert.closest('[role=alert]')!.textContent).toContain('These translations have open problems or outdated texts:');
     await userEvent.click(screen.getByRole('button', { name: 'Render anyway' }));
-    await waitFor(() => expect(api.exportPicks).toHaveBeenCalledTimes(2));
-    expect(api.exportPicks.mock.calls[1]![2]).toMatchObject({ locales: ['en', 'de'], force: true });
-    expect(api.prepareExport.mock.calls.at(-1)![2]).toMatchObject({ force: true });
+    await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledTimes(2));
+    expect(api.exportPicksJob.mock.calls[1]![2]).toMatchObject({ locales: ['en', 'de'], force: true });
   });
 });

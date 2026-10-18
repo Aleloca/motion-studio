@@ -34,7 +34,8 @@ const api = {
   // UX feedback 1, Task 3: the render status.
   fileBytes: vi.fn(async (..._a: unknown[]): Promise<number | null> => 12_400_000),
   renderVersion: vi.fn(async (..._a: unknown[]) => ({ id: 'r1', key: 'k', kind: 'render', label: 'x', state: 'queued', createdAt: at })),
-  exportPicks: vi.fn(async () => ({ destination: '/d', files: [], skipped: [] })),
+  // Decision 974: the dialog starts the export as a background job.
+  exportPicksJob: vi.fn(async () => ({ job: { id: 'e1', key: 'export:/w:acme:lancio:0a1b2c3d', kind: 'export' as const, label: 'Export', state: 'queued' as const, createdAt: '2026-10-08T10:00:00.000Z' } })),
   cancelJob: vi.fn(async () => ({ cancelled: true })),
   setExportPick: vi.fn(async (..._a: unknown[]) => detail),
   setFormatLink: vi.fn(async (..._a: unknown[]) => detail),
