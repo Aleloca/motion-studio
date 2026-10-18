@@ -400,6 +400,10 @@ describe('phase 9 on composition folders', { timeout: 150_000 }, () => {
     expect(statSync(join(store().dir(slug), 'outputs', 'v2', r2.file)).ino).not.toBe(statSync(join(store().dir(slug), 'outputs', 'v1', r1.file)).ino);
     const manifest = JSON.parse(readFileSync(join(store().dir(slug), 'outputs', 'v2', 'manifest.json'), 'utf8')) as ManifestV2;
     expect(manifest.renders.map((r) => r.format)).toEqual(['test-tall']);
+    // Decision 974 (review nit): the carried render keeps its record of quality, size and encoder, in versions and manifest.
+    expect(r1.render).toBeDefined();
+    expect(r2.render).toEqual(r1.render);
+    expect(manifest.renders[0]!.render).toEqual(r1.render);
     expect(fake.renders).toHaveLength(1);
   });
 

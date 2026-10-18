@@ -3,7 +3,7 @@ import { recoverRenameJournal } from '../library/rename-recovery.ts';
 import { lstat, readdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, join, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { DEFAULT_EXPORT_QUALITY, EXPORT_QUALITIES, EXPORT_RESOLUTIONS, type ExportQuality, type RenderProfile, type VersionEntry, messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow, hostOf, MAX_VARIANTS, VARIANT_LETTERS, type VariantDetail, type VariantLetter } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_QUALITY, EXPORT_QUALITIES, isDefaultProfile, EXPORT_RESOLUTIONS, type ExportQuality, type RenderProfile, type VersionEntry, messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow, hostOf, MAX_VARIANTS, VARIANT_LETTERS, type VariantDetail, type VariantLetter } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
@@ -124,6 +124,10 @@ const exportProfileFields = {
   background: z.boolean().optional(),
 };
 type VersionEntryList = VersionEntry[];
+/** Decision 1007: translations have no profile, so an export with other languages takes only the default one (400). */
+function refuseProfileWithLanguages(profile: RenderProfile | undefined, otherTags: readonly string[]): void {
+  if (profile && otherTags.length > 0 && !isDefaultProfile(profile)) throw new CodedError(400, t().export.profileWithLanguages, 'export-profile-languages');
+}
 /** Decision 974, review #4/#5: an item a render made for the export could not give (its render failed, or has problems). */
 interface ExportGap { item: ExportItem; slug: string; kind: 'failed' | 'problems'; reason?: string; problems: string[]; issues: OutputIssue[] }
 /** What an export job reports once done (decision 974): the files written, and what was left out, as text. */
@@ -711,6 +715,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       return exportVersion({ ...common, version });
     }
     const profile = profileOfBody(body);
+    refuseProfileWithLanguages(profile, otherTags);
     const profileOpts = profile ? { profile, presets } : {};
     const resolve = async () => {
       // The same hashed versions as the creative GET, so a follower's ★ here is the one the dialog showed.
@@ -852,6 +857,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
 
     const only = body.formats ? new Set(body.formats) : null;
     const profile = profileOfBody(body);
+    refuseProfileWithLanguages(profile, otherTags);
     const planOf = async () => withGroupProfile(ref.store, (await planGroupExport(svc, ref.store, ref)).filter((p) => !only || only.has(p.format)), profile, presets);
     // Decision 974: in the background the request answers at once with the job (a refusal of the group first, as before).
     if (body.background) {

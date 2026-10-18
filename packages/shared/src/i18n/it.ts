@@ -529,6 +529,7 @@ export const it: Messages = {
   export: {
     jobLabel: (p) => `Export · ${p.title}`,
     invalidProfile: 'Scegli una risoluzione e una qualità tra quelle offerte da Export',
+    profileWithLanguages: 'Con altre lingue i video si esportano alla dimensione del formato e in qualità Alta: scegli queste, o esporta le altre lingue a parte',
     absoluteDestination: 'Scegli una cartella di destinazione (percorso assoluto)',
     outsideWorkspace: 'Scegli una cartella fuori dal workspace di Motion Studio',
     destinationIsFile: 'La destinazione è un file, non una cartella',

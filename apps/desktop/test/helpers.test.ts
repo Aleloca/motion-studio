@@ -20,6 +20,10 @@ describe('desktop helpers', () => {
       expect(await openableFolder(join(dir, 'Export', 'video.mp4'))).toBe(false);
       expect(await openableFolder(join(dir, 'Evil.app'))).toBe(false);
       expect(await openableFolder(join(dir, 'Plug.BUNDLE'))).toBe(false);
+      for (const name of ['Demo.playground', 'Pkg.swiftpm', 'Disk.sparsebundle', 'App.xcodeproj', 'Work.xcworkspace', 'Doc.rtfd', 'Talk.key']) {
+        await mkdir(join(dir, name));
+        expect(await openableFolder(join(dir, name)), name).toBe(false);
+      }
       expect(await openableFolder(join(dir, 'Looks plain'))).toBe(process.platform !== 'darwin');
       expect(await openableFolder(join(dir, 'link'))).toBe(false);
       expect(await openableFolder(join(dir, 'missing'))).toBe(false);

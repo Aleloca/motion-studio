@@ -404,6 +404,20 @@ describe('export per language', { timeout: 120_000 }, () => {
     expect(ok.export?.files?.map((f) => f.split('/').pop())).toEqual(['launch-test-wide-v1-de.mp4']);
   });
 
+  it('review nit (decision 1007): other languages with another resolution or quality are refused by the core too', async () => {
+    const slug = await create();
+    await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Hallo' } });
+    for (const extra of [{ resolution: 480 }, { quality: 'max' }]) {
+      const r = await exportPicks(slug, { picks: { 'test-wide': 1 }, locales: ['en', 'de'], background: true, ...extra });
+      expect(r.statusCode).toBe(400);
+      expect(r.json().code).toBe('export-profile-languages');
+    }
+    // The primary language alone takes any profile; the default profile with languages is fine.
+    expect((await exportPicks(slug, { picks: { 'test-wide': 1 }, locales: ['en'], background: true, resolution: 480 })).statusCode).toBe(200);
+    expect((await exportPicks(slug, { picks: { 'test-wide': 1 }, locales: ['en', 'de'], background: true, quality: 'high' })).statusCode).toBe(200);
+    await new Promise((r) => setTimeout(r, 300));
+  });
+
   it('the primary tag of a creative without extra languages exports today\'s file', async () => {
     const slug = await env.create(['test-wide'], { links: {}, locales: { primary: 'en', extra: [] } });
     const r = await exportPicks(slug, { picks: { 'test-wide': 1 }, locales: ['en'] });

@@ -539,6 +539,7 @@ export const en = {
   export: {
     jobLabel: (p: { title: string }) => `Export · ${p.title}`,
     invalidProfile: 'Choose a resolution and a quality that Export offers',
+    profileWithLanguages: 'With other languages the videos are exported at the format size and High quality: choose those, or export the other languages apart',
     absoluteDestination: 'Choose a destination folder (absolute path)',
     outsideWorkspace: 'Choose a folder outside the Motion Studio workspace',
     destinationIsFile: 'The destination is a file, not a folder',

@@ -27,7 +27,11 @@ export function absolutePathArg(arg: unknown): string | null {
 
 /** Folder extensions macOS opens as a package (an app, a plug-in…): opening one would launch or install it. */
 const PACKAGE_EXTENSIONS = new Set(['.app', '.appex', '.bundle', '.framework', '.plugin', '.kext', '.prefpane', '.saver', '.xpc', '.qlgenerator', '.mdimporter',
-  '.wdgt', '.action', '.workflow', '.component', '.pkg', '.mpkg', '.service', '.systemextension', '.driver', '.photoslibrary', '.app-shortcut']);
+  '.wdgt', '.action', '.workflow', '.component', '.pkg', '.mpkg', '.service', '.systemextension', '.driver', '.photoslibrary', '.app-shortcut',
+  // Review nit: documents and projects macOS opens as packages (an app opens them, some run code).
+  '.playground', '.swiftpm', '.sparsebundle', '.sparseimage', '.dmg', '.xcodeproj', '.xcworkspace', '.xcarchive', '.xcplugin', '.ideplugin', '.docset', '.dsym',
+  '.osax', '.scptd', '.vst', '.vst3', '.colorpicker', '.rtfd', '.pages', '.numbers', '.key', '.musiclibrary', '.imovielibrary', '.fcpbundle', '.logicx',
+  '.band', '.download', '.nib', '.webarchive', '.shortcut', '.automator', '.installer', '.mlmodelc', '.mlpackage']);
 
 /**
  * Whether `p` may be opened with the system (user report 21: "Show in Finder" opens the export folder itself): a real folder,
