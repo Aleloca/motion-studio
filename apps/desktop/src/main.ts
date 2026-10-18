@@ -166,6 +166,8 @@ async function run() {
   }
   let closing = false;
   const win = new BrowserWindow(windowOptions(join(__dirname, 'preload.cjs'), nativeTheme.shouldUseDarkColors));
+  // A trackpad pinch never zooms the whole page: the canvas reads it (ctrl+wheel) as its own zoom (decision 973).
+  void win.webContents.setVisualZoomLevelLimits(1, 1);
   // Development only: a packaged app takes its icon from the bundle (electron-builder: build/icon.icns, .ico, .png).
   if (!app.isPackaged) {
     const dev = join(__dirname, '..', 'build', process.platform === 'darwin' ? 'icon-mac.png' : 'icon.png');
