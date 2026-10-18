@@ -648,6 +648,7 @@ export const en = {
     variantsAddedCommit: (p: { title: string; letters: string }) => `${p.title}: variants ${p.letters}`,
     variantRequestWillStop: 'This request will be stopped as soon as it starts (it could not be removed from the queue)',
     variantsRolledBackCommit: (p: { title: string }) => `${p.title}: adding variants rolled back`,
+    groupChatMergedCommit: (p: { title: string }) => `${p.title}: the variants' chats merged into one`,
     variantGroupCommit: (p: { title: string }) => `${p.title}: variants`,
     creativeArchivedCommit: (p: { title: string }) => `${p.title}: archived`,
     creativeUnarchivedCommit: (p: { title: string }) => `${p.title}: restored from the archive`,

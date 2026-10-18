@@ -782,7 +782,7 @@ export class CreativeTurnService {
     if (message) {
       // A queued request starts as a user entry with `mode: 'queued'`. One that was first written as a live message (it
       // arrived when the agent had finished) is not written twice, unless it was edited in the queue meanwhile.
-      const written = queued && (await store.readConversation(ref.creativeSlug)).some((e) => e.type === 'user' && e.clientId === queued.clientId
+      const written = queued && (await store.readConversation(ref.creativeSlug, { own: true })).some((e) => e.type === 'user' && e.clientId === queued.clientId
         && e.text === message.text && JSON.stringify(e.pins) === JSON.stringify(message.pins));
       if (!written) {
         await store.appendConversation(ref.creativeSlug, {
@@ -1027,7 +1027,7 @@ export class CreativeTurnService {
           const cp = conversionPlan(versions, base, targets);
           if (cp.sources.length > 0) {
             // Once per conversion: a retry of a turn that saved no version does not repeat the entry.
-            const entries = await store.readConversation(slug);
+            const entries = await store.readConversation(slug, { own: true });
             const texts = new Set([messages('en').jobs.convertingLegacy, messages('it').jobs.convertingLegacy]);
             const since = latest ? Date.parse(latest.createdAt) : 0;
             const told = entries.some((e) => e.type === 'system' && texts.has(e.text) && Date.parse(e.at) > since);
@@ -1850,7 +1850,7 @@ export class CreativeTurnService {
     const store = new CreativeStore(ref.projectDir);
     const q = (await this.side.read(ref.projectDir, ref.creativeSlug)).queued?.find((x) => x.clientId === clientId);
     if (q) return { entry: this.queuedEntry(q), outcome: 'queued' };
-    const e = (await store.readConversation(ref.creativeSlug)).find((x) => x.type === 'user' && x.clientId === clientId);
+    const e = (await store.readConversation(ref.creativeSlug, { own: true })).find((x) => x.type === 'user' && x.clientId === clientId);
     if (e && e.type === 'user') return { entry: e, outcome: e.mode === 'queued' ? 'queued' : 'delivered-pending' };
     return null;
   }

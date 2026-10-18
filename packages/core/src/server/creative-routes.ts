@@ -589,6 +589,10 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   app.get<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/conversation', async (req) => {
     const ref = await refOf(req.params.slug, req.params.c);
     await ref.store.get(ref.creativeSlug);
+    // Decision 982: a group's first read while it is idle merges its chats once (lazily); any member answers the group's.
+    await variantsOf(ref).mergeChat(ref).catch((err: unknown) => {
+      console.warn(`Motion Studio: the chats of ${ref.creativeSlug} were not merged yet: ${err instanceof Error ? err.message : String(err)}`);
+    });
     return ref.store.readConversation(ref.creativeSlug);
   });
 

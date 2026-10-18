@@ -637,6 +637,7 @@ export const it: Messages = {
     variantsAddedCommit: (p) => `${p.title}: varianti ${p.letters}`,
     variantRequestWillStop: 'Questa richiesta verrà fermata appena parte (rimozione dalla coda non riuscita)',
     variantsRolledBackCommit: (p) => `${p.title}: aggiunta di varianti annullata`,
+    groupChatMergedCommit: (p) => `${p.title}: le chat delle varianti unite in una`,
     variantGroupCommit: (p) => `${p.title}: varianti`,
     creativeArchivedCommit: (p) => `${p.title}: archiviata`,
     creativeUnarchivedCommit: (p) => `${p.title}: ripristinata dall'archivio`,

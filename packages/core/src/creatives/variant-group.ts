@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
@@ -12,7 +13,8 @@ import { CodedError } from '../workspace-store.ts';
 import { copyVerified, versionDirReady } from './carry-over.ts';
 import { compositionDirOf } from './composition-contract.ts';
 import { alignEditorCopies } from './composition-turn.ts';
-import { CREATIVE_SLUG_RE, creativeKind, groupTiedTo, isRealSister, memberPresent, type CreativeStore } from './creative-store.ts';
+import { CREATIVE_SLUG_RE, creativeKind, groupTiedTo, isRealSister, memberPresent, type ChatMigration, type CreativeStore } from './creative-store.ts';
+import { PREMERGE_FILE } from './group-conversation.ts';
 import type { BriefPatch, CreativeRef, CreativeTurnService, SharedBrief } from './creative-turns.ts';
 
 /**
@@ -90,6 +92,40 @@ export class VariantGroupService {
     const r = await this.resolve(ref);
     if (!r.group) throw new CodedError(409, r.orphan ? t().errors.variantOrphan : t().errors.variantNoGroup, r.orphan ? 'variant-orphan' : 'variant-no-group');
     return (await this.canonical(r.host, await this.deps.store.get(r.host.creativeSlug))).brief.formats;
+  }
+
+  /**
+   * Decision 982: merges the group's conversations into the host's, once (`CreativeStore.migrateConversation`), when no
+   * member has a turn running or queued; 'busy' otherwise (the readers keep merging in memory until a later call). Called on
+   * a group read (the conversation route): lazily, the first time the group is idle. Commits the logs (best effort).
+   */
+  async mergeChat(ref: CreativeRef): Promise<ChatMigration> {
+    const r = await this.resolve(ref);
+    if (r.orphan || !r.group) return 'none';
+    const { store, turns } = this.deps;
+    const host = r.host;
+    return turns.runLocked(host, async () => {
+      const result = await store.migrateConversation(host.creativeSlug, async (g) => {
+        for (const m of g.members) {
+          const mref = memberRef(host, m.slug);
+          if (turns.turnActive(mref)) return false;
+          const side = await turns.side.read(host.projectDir, m.slug).catch(() => null);
+          if (side?.queued?.length) return false;
+        }
+        return true;
+      });
+      if (result !== 'migrated') return result;
+      const g = (await store.get(host.creativeSlug)).variantGroup!;
+      const logs = [store.dir(host.creativeSlug), ...g.members.filter((m) => m.slug !== host.creativeSlug).map((m) => store.dir(m.slug))]
+        .flatMap((d) => [join(d, 'conversation.jsonl'), join(d, PREMERGE_FILE)]).filter((p) => existsSync(p));
+      const retired = g.members.filter((m) => m.slug !== host.creativeSlug).map((m) => join(store.dir(m.slug), 'conversation.jsonl'));
+      const message = t().jobs.groupChatMergedCommit({ title: (await store.get(host.creativeSlug)).title });
+      const files = [join(store.dir(host.creativeSlug), 'creative.json'), ...logs];
+      // The sisters' logs are gone (renamed): committed as removals when git has them; a log git never had is left out.
+      await turns.commitFolder(host, [...files, ...retired], message).catch(() => turns.commitFolder(host, files, message)).catch(() => null);
+      turns.changed(host);
+      return result;
+    });
   }
 
   /** Runs `fn` under the host's lock with the group as stored now (re-read under the lock). 409 outside a group. */

@@ -400,7 +400,13 @@ export const queuedRequestSchema = z.object({
 });
 export type QueuedRequest = z.infer<typeof queuedRequestSchema>;
 
-export type ConversationEntry =
+/**
+ * Decisions 980 and 982 (phase 2 of the single agent): a variant group has ONE conversation, the host's. Every entry
+ * written for a member carries `variant`, the member's id (`a` for the host); absent on the entries of a creative outside
+ * any group (and, from phase 3, on the coordinator's own).
+ */
+export type ConversationEntry = ConversationEntryBody & { variant?: VariantId };
+type ConversationEntryBody =
   /**
    * Phase 13 (all optional, absent in older logs): `mode` says how a message sent while the agent worked was given
    * (`live`: into the running turn; `queued`: a queued request that started; `redirect`: Stop and redirect), `clientId` the
@@ -422,6 +428,15 @@ export type ConversationEntry =
  * line of a turn that saved none because nothing changed (`keptVersion`: the latest version, which still holds its content;
  * `kept`, with no status of its own). null for any other entry.
  */
+/**
+ * The entries of variant `letter` in a group's conversation: stamped with it, or unstamped (the host's own history from
+ * before its group: variant A's). Readers that reason about one variant (its last request, its turn's end) use it; only
+ * inside a group (outside one, every entry is the creative's own).
+ */
+export function entriesOfVariant(entries: readonly ConversationEntry[], letter: VariantId): ConversationEntry[] {
+  return entries.filter((e) => (e.variant ?? 'a') === letter);
+}
+
 export function turnEndOf(e: ConversationEntry): { n: number; status: 'complete' | 'incomplete' | null; kept: boolean } | null {
   if (e.type === 'version') return { n: e.n, status: e.status, kept: false };
   if (e.type === 'system' && typeof e.keptVersion === 'number') return { n: e.keptVersion, status: null, kept: true };

@@ -60,6 +60,11 @@ export interface VariantGroup {
   /** Final selection per format id. */
   picks: Record<string, VariantPick>;
   layout: 'variant' | 'format';
+  /**
+   * Decision 982: `single` once the members' conversations were merged into the host's (lazy, one time; absent: not yet,
+   * each member still writes its own file and readers merge them in memory).
+   */
+  chat?: 'single';
 }
 
 const memberSchema = z.object({
@@ -76,6 +81,7 @@ export const variantGroupSchema: z.ZodType<VariantGroup> = z.object({
   members: z.array(memberSchema).min(1),
   picks: z.record(z.string().min(1), pickSchema),
   layout: z.enum(['variant', 'format']),
+  chat: z.literal('single').optional(),
 }).superRefine((g, ctx) => {
   const issue = (message: string) => ctx.addIssue({ code: 'custom', message });
   if (g.members[0]?.letter !== 'a') issue('variant.hostNotFirst');
