@@ -239,11 +239,17 @@ export function directEditSection(i: Pick<PromptInput, 'slug' | 'directEdit' | '
   return out;
 }
 
-/** `- <format> @ <t>s, point (x%, y%)[, clip "<clipId>" "<name>"][, range <a>–<b>s]: <note>` (Phase 10b adds the last two). */
+/**
+ * `- <format> @ <t>s, point (x%, y%)[, clip "<clipId>" "<name>"][, its in|out animation][, SVG element "<name>" (child path
+ * <path> of the SVG root)][, range <a>–<b>s]: <note>` (Phase 10b adds the clip and the range; user test items 18 and 13 the
+ * animation slot and the SVG element).
+ */
 export function pinLine(p: Pin): string {
   const clip = p.clipId ? `, clip ${quotePromptString(p.clipId)}${p.clipName ? ` ${quotePromptString(p.clipName)}` : ''}` : '';
+  const anim = p.animation ? `, its ${p.animation} animation` : '';
+  const element = p.element ? `, SVG element ${quotePromptString(p.element.name)} (child path ${p.element.path || 'root'} of the SVG root)` : '';
   const range = p.range ? `, range ${p.range.start.toFixed(1)}\u2013${p.range.end.toFixed(1)}s` : '';
-  return `- ${p.format}${p.timeSec !== null ? ` @ ${p.timeSec.toFixed(1)}s` : ''}, point (${pct(p.x)}, ${pct(p.y)})${clip}${range}${p.note ? `: ${p.note}` : ''}`;
+  return `- ${p.format}${p.timeSec !== null ? ` @ ${p.timeSec.toFixed(1)}s` : ''}, point (${pct(p.x)}, ${pct(p.y)})${clip}${anim}${element}${range}${p.note ? `: ${p.note}` : ''}`;
 }
 
 /**

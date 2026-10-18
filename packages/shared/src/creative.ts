@@ -366,6 +366,13 @@ export const pinSchema = z.object({
   clipName: pinLabel(200).optional(),
   /** The time range, in seconds, the comment is about (Phase 10b): `0 <= start < end`. */
   range: z.object({ start: z.number().min(0), end: z.number() }).refine((r) => r.start < r.end).optional(),
+  /** The clip's animation the comment is about (user test item 18: "Ask the agent" on a custom animation): its in or out slot. */
+  animation: z.enum(['in', 'out']).optional(),
+  /**
+   * The element of an svg clip the comment is about (user test item 13): its path (child indexes from the SVG root, as the
+   * SVG-edit model counts them) and the name the editor showed for it.
+   */
+  element: z.object({ path: z.string().max(120).regex(/^(?:\d{1,6}(?:\/\d{1,6})*)?$/), name: pinLabel(200) }).optional(),
 });
 export type Pin = z.infer<typeof pinSchema>;
 
