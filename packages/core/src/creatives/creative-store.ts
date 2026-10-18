@@ -2,7 +2,7 @@ import { lstatSync } from 'node:fs';
 import { appendFile, lstat, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import {
-  activeMembers, creativeFileSchema, entriesOfVariant, hostOf, isSessionId, sisterSlug, turnEndOf, versionsFileSchema,
+  activeMembers, creativeFileSchema, entriesOfVariant, hostOf, isSessionId, letterOfSlug, sisterSlug, turnEndOf, versionsFileSchema,
   type Brief, type ConversationEntry, type CreativeFile, type CreativeListItem, type VariantGroup, type VariantId, type VariantListInfo, type VersionEntry,
   issuesText,
 } from '@motion-studio/shared';
@@ -429,14 +429,18 @@ export class CreativeStore {
    * `slug`'s conversation. For a member of a variant group (decision 980): the group's one conversation, the same from any
    * member (the host's log once migrated, else the members' logs merged in time order, each entry stamped). `own`: only
    * this member's entries (`entriesOfVariant`): the readers that reason about one variant's turns. A sister that left its
-   * group (an orphan) reads its log from before the merge first, when there is one.
+   * group (an orphan) reads its log from before the merge first, when there is one; outside a group, `own` drops the entries
+   * of other variants (a host whose group is gone keeps the merged chat).
    */
   readConversation(slug: string, opts: { own?: boolean } = {}): Promise<ConversationEntry[]> {
     return conversationLock.run(this.chatKey(slug), async () => {
       const place = await this.chatPlace(slug);
       if (!place) {
         const before = SISTER_SLUG_RE.test(slug) ? await this.readLog(slug, PREMERGE_FILE) : [];
-        return [...before, ...(await this.readLog(slug, 'conversation.jsonl'))];
+        const all = [...before, ...(await this.readLog(slug, 'conversation.jsonl'))];
+        // A host whose group is gone keeps the merged chat: its own readers skip the other variants' entries.
+        const self = letterOfSlug(slug);
+        return opts.own ? all.filter((e) => e.variant === undefined || e.variant === self) : all;
       }
       if (place.single) {
         await this.finishMerge(place);

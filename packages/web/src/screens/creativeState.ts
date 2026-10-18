@@ -1,5 +1,5 @@
 import { presetFor } from '../instances.ts';
-import { compareVariantIds, entriesOfVariant, hostOf, isSisterSlug, letterOfSlug, turnEndOf, type ApprovalRequest, type ConversationEntry, type CreativeSummary, type FormatPreset, type JobSummary, type Pin, type VariantId } from '@motion-studio/shared';
+import { compareVariantIds, hostOf, isSisterSlug, letterOfSlug, turnEndOf, type ApprovalRequest, type ConversationEntry, type CreativeSummary, type FormatPreset, type JobSummary, type Pin, type VariantId } from '@motion-studio/shared';
 import type { EventsState } from '../eventsReducer.ts';
 import { lastStep } from '../jobEvents.ts';
 import { channelOf } from '../ui/index.ts';
@@ -99,8 +99,9 @@ export function frames(formats: string[], presets: FormatPreset[], o: { height: 
  * regenerate without a message) an empty turn, so the core starts again from the brief / its own retry wording.
  */
 export function retryTurn(all: ConversationEntry[], variant?: VariantId): { text?: string; pins?: Pin[] } {
-  // Decision 980: in a group's one chat, one variant's turns only.
-  const entries = variant === undefined ? all : entriesOfVariant(all, variant);
+  // Decision 980: in a group's one chat, one variant's turns only (an unstamped entry is the creative's own: a creative
+  // outside a group, or a host whose group is gone, keeps the merged chat with the other variants' entries stamped).
+  const entries = variant === undefined ? all : all.filter((e) => e.variant === undefined || e.variant === variant);
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i]!;
     // Decision 1060: a turn that ended without a version (nothing changed) is over too.

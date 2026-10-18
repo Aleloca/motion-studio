@@ -34,6 +34,8 @@ describe('retryTurn', () => {
     ];
     expect(retryTurn(entries, 'b')).toEqual({ text: 'Per B' });
     expect(retryTurn(entries, 'a')).toEqual({});
+    // A host whose group is gone: its own unstamped history counts, the other variants' entries do not.
+    expect(retryTurn([{ type: 'user', at, text: 'Mio', pins: [], attachments: [] }, entries[0]!], 'a')).toEqual({ text: 'Mio' });
   });
 });
 

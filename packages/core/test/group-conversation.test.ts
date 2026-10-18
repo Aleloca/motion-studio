@@ -166,6 +166,15 @@ describe('the migration (decision 982)', () => {
     expect(all.sort()).toEqual(Array.from({ length: 30 }, (_, i) => `${i % 2 ? 'b' : 'c'}:w${i}`).sort());
   });
 
+  it('a host whose group is gone (its last sister left) keeps the merged chat; its own readers still see only its turns', async () => {
+    await oldLogs();
+    await store.migrateConversation(host, IDLE);
+    await store.appendConversation(sis('b'), session(60, 'jb2', 'sb2'));
+    await store.update(host, { variantGroup: undefined });
+    expect(texts(await store.readConversation(host)).at(-1)).toBe('b:jb2');
+    expect((await store.lastTurnSession(host))?.sessionId).toBe('sa');
+  });
+
   it('a sister that leaves the group after the merge reads its history from before it', async () => {
     await oldLogs();
     await store.migrateConversation(host, IDLE);
