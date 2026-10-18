@@ -63,7 +63,7 @@ export const workspaceSettingsSchema = z.object({
 });
 export type WorkspaceSettings = z.infer<typeof workspaceSettingsSchema>;
 /** Phase 3 of the single agent: what an absent `singleAgent` means (see `singleAgentOn`). */
-export const SINGLE_AGENT_DEFAULT = false;
+export const SINGLE_AGENT_DEFAULT = true;
 /** Whether a variant group has one agent (the coordinator) under these settings. */
 export const singleAgentOn = (s: Pick<WorkspaceSettings, 'singleAgent'> | null | undefined): boolean => s?.singleAgent ?? SINGLE_AGENT_DEFAULT;
 

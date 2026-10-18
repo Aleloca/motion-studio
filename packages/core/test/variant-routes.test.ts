@@ -51,7 +51,8 @@ describe('variant routes', () => {
     expect(d.creative.variantGroup!.members.map((m) => [m.letter, m.slug, m.direction, m.directionSource])).toEqual([
       ['a', slug, 'Audace', 'user'], ['b', `${slug}~b`, null, null], ['c', `${slug}~c`, 'Calma', 'user'],
     ]);
-    expect(d.variants).toEqual({ orphan: false, host: slug, letter: 'a', group: d.creative.variantGroup, missing: [] });
+    // Phase 3 of the single agent (on by default): the detail names the group turn's key.
+    expect(d.variants).toEqual({ orphan: false, host: slug, letter: 'a', group: d.creative.variantGroup, missing: [], single: { groupJobKey: `group:creative:${join(base, 'ws')}:acme:${slug}` } });
     expect((await app.inject('/api/jobs')).json()).toEqual([]);
     const list = (await app.inject(P)).json() as CreativeListItem[];
     expect(list.map((i) => i.slug)).toEqual([slug]);

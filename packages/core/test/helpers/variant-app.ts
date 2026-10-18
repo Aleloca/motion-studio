@@ -64,7 +64,9 @@ export async function variantApp(o: { keys?: Record<string, string>; settings?: 
   });
   await app.inject({ method: 'PUT', url: '/api/workspace', payload: { path: join(base, 'ws') } });
   await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Acme' } });
-  if (o.settings) await app.inject({ method: 'PUT', url: '/api/settings', payload: o.settings });
+  // Phase 3 of the single agent: these tests drive the per-variant turns of phase 15 (the group's single agent off), unless a
+  // test turns it on (`settings.singleAgent`).
+  await app.inject({ method: 'PUT', url: '/api/settings', payload: { singleAgent: false, ...o.settings } });
   const jobs = async () => (await app.inject('/api/jobs')).json() as JobSummary[];
   return {
     app, runner, approvals, base, projectDir: join(base, 'ws', 'acme'), fetches,

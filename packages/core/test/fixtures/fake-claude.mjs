@@ -11,6 +11,9 @@
 // FAKE_CLAUDE_TEXT=1 / FAKE_CLAUDE_IMAGE=1: composition turns add a text clip `title` (text FAKE_CLAUDE_TEXT_VALUE, default "Hello") / an svg clip `logo` (assets/logo.svg).
 // FAKE_CLAUDE_BRIDGE_CALLS=<json [[tool, args], …]>: before finishing, calls the studio bridge (as the MCP server would) and
 // appends `{ tool, status, body }` per call to FAKE_CLAUDE_BRIDGE_LOG.
+// FAKE_CLAUDE_GROUP_CALLS / FAKE_CLAUDE_GROUP_REPORT_CALLS=<json [[tool, args], …]> (phase 3 of the single agent): a coordinator
+// prompt (its `motion-studio-group` fence) calls the studio bridge with them in its plan / report run, logged to
+// FAKE_CLAUDE_BRIDGE_LOG with the phase.
 // FAKE_CLAUDE_NO_FFMPEG=1: render placeholder media even with ffmpeg installed, each file with its own content.
 // FAKE_CLAUDE_EXTRA_FILES=<json array of manifest entries>: render also writes those files (content `agent:<file>`) and lists
 // the entries whose `format` is set (an entry without one only writes its file).
@@ -178,6 +181,16 @@ rl.once('line', async (line) => {
     for (const [tool, payload] of JSON.parse(process.env.FAKE_CLAUDE_BRIDGE_CALLS)) {
       const res = await fetch(`${env.MOTION_STUDIO_BRIDGE_URL}/api/bridge/${tool}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-motion-studio-bridge': tokenFile.content.trim() }, body: JSON.stringify(payload) });
       appendFileSync(process.env.FAKE_CLAUDE_BRIDGE_LOG, `${JSON.stringify({ tool, status: res.status, body: await res.json().catch(() => null) })}\n`);
+    }
+  }
+  // Phase 3 of the single agent: the coordinator of a variant group.
+  const groupBlock = (() => { const m = [...prompt.matchAll(/```motion-studio-group\n([\s\S]*?)\n```/g)].at(-1); return m ? JSON.parse(m[1]) : null; })();
+  if (groupBlock) {
+    const calls = JSON.parse((groupBlock.phase === 'report' ? process.env.FAKE_CLAUDE_GROUP_REPORT_CALLS : process.env.FAKE_CLAUDE_GROUP_CALLS) ?? '[]');
+    const env = calls.length ? JSON.parse(mcpConfigFile.content).mcpServers.studio.env : null;
+    for (const [tool, payload] of calls) {
+      const res = await fetch(`${env.MOTION_STUDIO_BRIDGE_URL}/api/bridge/${tool}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-motion-studio-bridge': tokenFile.content.trim() }, body: JSON.stringify(payload) });
+      appendFileSync(process.env.FAKE_CLAUDE_BRIDGE_LOG, `${JSON.stringify({ tool, phase: groupBlock.phase, status: res.status, body: await res.json().catch(() => null) })}\n`);
     }
   }
   // Localize turns (Phase 12): FAKE_CLAUDE_LOCALIZE_CALLS (first attempt) or FAKE_CLAUDE_LOCALIZE_FIX_CALLS (repair attempts),
