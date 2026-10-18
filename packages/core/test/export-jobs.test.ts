@@ -125,6 +125,7 @@ async function v2Creative(formats = ['test-wide', 'test-wide-b', 'test-still'], 
   return { slug, store, dir: store.dir(slug) };
 }
 
+const store = () => new CreativeStore(join(ws, 'acme'));
 const jobs = async () => (await app.inject({ url: '/api/jobs', headers: H })).json() as JobSummary[];
 async function waitJob(id: string, until: (j: JobSummary) => boolean = (j) => j.state !== 'queued' && j.state !== 'running'): Promise<JobSummary> {
   for (let i = 0; i < 1500; i++) {
@@ -285,5 +286,31 @@ describe('export jobs (decision 974)', { timeout: 120_000 }, () => {
     expect((await jobs()).find((j) => j.id === renderId)!.state).toBe('cancelled');
     expect(existsSync(dirname(dirname(fake.calls.at(-1)!.out)))).toBe(false);
     expect(existsSync(join(base, 'out'))).toBe(false);
+  });
+
+  it('review #7: two exports waiting for the same render: cancelling one leaves it to the other; cancelling both stops it', async () => {
+    const { slug } = await v2Creative(['test-wide'], {});
+    let release!: () => void;
+    fake.gate = new Promise((r) => { release = r; });
+    const a = await startExport(slug, { destination: join(base, 'a'), picks: { 'test-wide': 1 } });
+    const renderId = (await waitJob(a.id, (j) => (j.export?.renders?.length ?? 0) > 0)).export!.renders![0]!;
+    const b = await startExport(slug, { destination: join(base, 'b'), picks: { 'test-wide': 1 } });
+    await waitJob(b.id, (j) => (j.export?.renders ?? []).includes(renderId));
+    await app.inject({ method: 'POST', url: `/api/jobs/${a.id}/cancel`, headers: H });
+    expect((await waitJob(a.id)).state).toBe('cancelled');
+    expect((await jobs()).find((j) => j.id === renderId)!.state).toBe('running');
+    release();
+    expect((await waitJob(b.id)).state).toBe('succeeded');
+    expect(readdirSync(join(base, 'b'))).toHaveLength(1);
+    // Both cancelled: nobody waits any more, the render stops.
+    await store().updateVersion(slug, 1, (v) => ({ ...v, outputs: [] }));
+    fake.gate = new Promise(() => {});
+    const c = await startExport(slug, { destination: join(base, 'c'), picks: { 'test-wide': 1 } });
+    const r2 = (await waitJob(c.id, (j) => (j.export?.renders?.length ?? 0) > 0)).export!.renders![0]!;
+    const d = await startExport(slug, { destination: join(base, 'd'), picks: { 'test-wide': 1 } });
+    await waitJob(d.id, (j) => (j.export?.renders ?? []).includes(r2));
+    await app.inject({ method: 'POST', url: `/api/jobs/${c.id}/cancel`, headers: H });
+    await app.inject({ method: 'POST', url: `/api/jobs/${d.id}/cancel`, headers: H });
+    expect((await waitJob(r2)).state).toBe('cancelled');
   });
 });

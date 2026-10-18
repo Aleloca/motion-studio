@@ -179,7 +179,15 @@ export class RenderJobService {
    * requested format, the latest of them is returned; otherwise a follow-up job renders the rest, in the same lane (it runs
    * after them), keyed `render:…:v<n>:<k>` (`renderJobKeyOf` matches it too).
    */
-  async start(ref: CreativeRef, n: number, requested?: string[], opts: { locales?: readonly string[]; force?: boolean } = {}): Promise<JobSummary> {
+  async start(ref: CreativeRef, n: number, requested?: string[], opts: { locales?: readonly string[]; force?: boolean; byWait?: boolean } = {}): Promise<JobSummary> {
+    const job = await this.startJob(ref, n, requested, opts);
+    // Review #7: a job asked for by anyone but a cancellable wait (the render route, the agent, prepare) is never cancelled
+    // by an export that shares it.
+    if (!opts.byWait) this.pin(job.id);
+    return job;
+  }
+
+  private async startJob(ref: CreativeRef, n: number, requested: string[] | undefined, opts: { locales?: readonly string[]; force?: boolean; byWait?: boolean }): Promise<JobSummary> {
     const locale = currentLocale();
     const m = messages(locale);
     const store = new CreativeStore(ref.projectDir);
@@ -201,6 +209,7 @@ export class RenderJobService {
     const covered = new Set(active.flatMap((j) => j.formats ?? []));
     const wanted = [...full.primaries, ...Object.keys(full.followers)];
     const missing = wanted.filter((f) => !covered.has(f));
+    if (!opts.byWait) for (const j of active) if (wanted.some((f) => j.formats?.includes(f))) this.pin(j.id);
     if (active.length > 0 && missing.length === 0) {
       // One job covering them all, else the one that ends last: the latest of those covering any (one lane, in order),
       // whose progress a caller (the export dialog) then follows to the end.
@@ -247,45 +256,63 @@ export class RenderJobService {
    * them and queues a follow-up for the rest (I3), so the job returned always covers every format: it is the last of the
    * version's jobs in the render lane, and when it ends the others have too. `wait` is kept for callers; it changes nothing.
    */
-  async ensureJob(ref: CreativeRef, n: number, formats: string[], _o: { wait?: boolean } = {}): Promise<{ job: JobSummary; covers: boolean }> {
-    const job = await this.start(ref, n, formats);
+  async ensureJob(ref: CreativeRef, n: number, formats: string[], o: { wait?: boolean; byWait?: boolean } = {}): Promise<{ job: JobSummary; covers: boolean }> {
+    const job = await this.start(ref, n, formats, o.byWait ? { byWait: true } : {});
     return { job, covers: true };
   }
 
   /** Renders `formats` of each version (`ensureJob`, waiting for a job that covers other formats) and waits; the summaries as they ended. */
   async renderAndWait(ref: CreativeRef, pending: ReadonlyMap<number, string[]>, w: RenderWait = {}): Promise<JobSummary[]> {
     if (w.signal?.aborted) throw new RenderError('cancelled', 'cancelled');
-    const before = this.activeIds();
-    const jobs = await Promise.all([...pending].map(async ([n, formats]) => (await this.ensureJob(ref, n, formats)).job));
+    const jobs = await Promise.all([...pending].map(async ([n, formats]) => (await this.ensureJob(ref, n, formats, { byWait: true })).job));
     // Every active job of those versions (a follow-up runs after the jobs it queued behind; wait for them all).
     const all = new Map(jobs.map((j) => [j.id, j]));
     for (const [n] of pending) for (const j of this.activeJobs(renderJobKey(ref.root, ref.projectSlug, ref.creativeSlug, n))) all.set(j.id, j);
-    return this.waitAll([...all.keys()], [...all.keys()].filter((id) => !before.has(id)), w);
+    return this.waitAll([...all.keys()], w);
   }
 
   /** Renders `formats` of version `n` in `locales` (`start` with locales) and waits for the job; its summary as it ended. */
   async renderLocalesAndWait(ref: CreativeRef, n: number, formats: string[], locales: readonly string[], force: boolean, w: RenderWait = {}): Promise<JobSummary | null> {
     if (w.signal?.aborted) throw new RenderError('cancelled', 'cancelled');
-    const job = await this.start(ref, n, formats, { locales, force });
-    return (await this.waitAll([job.id], [job.id], w))[0] ?? null;
+    const job = await this.start(ref, n, formats, { locales, force, byWait: true });
+    return (await this.waitAll([job.id], w))[0] ?? null;
   }
 
-  private activeIds(): Set<string> {
-    return new Set(this.deps.queue.list().filter((j) => j.state === 'queued' || j.state === 'running').map((j) => j.id));
+  /** Review #7: render jobs someone asked for outside a cancellable wait (never cancelled by an export), and the waits on each. */
+  private readonly pinned = new Set<string>();
+  private readonly waiters = new Map<string, number>();
+  private pin(id: string): void {
+    if (this.pinned.has(id)) return;
+    this.pinned.add(id);
+    void this.deps.queue.whenSettled(id).then(() => this.pinned.delete(id));
   }
 
   /**
-   * Waits for jobs `ids` (reported to `w.onJobs` first). An abort of `w.signal` (an export cancelled, decision 974) cancels
-   * `own`, the jobs this wait started (never one another request started and shares), and rejects as cancelled.
+   * Waits for jobs `ids` (reported to `w.onJobs` first). Every wait counts on each job (review #7). An abort of `w.signal`
+   * (an export cancelled, decision 974) drops this wait and cancels a job only when no other wait is left on it and nobody
+   * asked for it outside a wait (`pinned`: the render route, the agent, prepare); then it rejects as cancelled.
    */
-  private waitAll(ids: string[], own: string[], w: RenderWait): Promise<JobSummary[]> {
+  private waitAll(ids: string[], w: RenderWait): Promise<JobSummary[]> {
     w.onJobs?.(ids);
+    for (const id of ids) this.waiters.set(id, (this.waiters.get(id) ?? 0) + 1);
+    let held = true;
+    const release = (cancel: boolean) => {
+      if (!held) return;
+      held = false;
+      for (const id of ids) {
+        const left = (this.waiters.get(id) ?? 1) - 1;
+        if (left > 0) { this.waiters.set(id, left); continue; }
+        this.waiters.delete(id);
+        if (cancel && !this.pinned.has(id)) this.deps.queue.cancel(id);
+      }
+    };
     const settled = Promise.all(ids.map((id) => this.deps.queue.whenSettled(id))).then((list) => list.filter((j): j is JobSummary => j !== null));
+    settled.then(() => release(false), () => release(false));
     const signal = w.signal;
     if (!signal) return settled;
     return new Promise((resolve, reject) => {
       const onAbort = () => {
-        for (const id of own) this.deps.queue.cancel(id);
+        release(true);
         reject(new RenderError('cancelled', 'cancelled'));
       };
       if (signal.aborted) { onAbort(); return; }
@@ -316,7 +343,7 @@ export class RenderJobService {
       throw e;
     }
     try {
-      const ended = await this.waitAll(ids, ids, w);
+      const ended = await this.waitAll(ids, w);
       return { files, errors: ended.filter((j) => j.state !== 'succeeded').map((j) => j.error ?? j.state) };
     } catch (e) {
       // Cancelled: the caller removes `outDir` next, so wait (bounded) for the renders to stop writing into it first.
