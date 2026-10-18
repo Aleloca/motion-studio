@@ -244,7 +244,8 @@ export const api = {
   addVariants: (slug: string, creative: string, body: { count?: number; directions?: Array<string | null>; baseFrom?: VariantPick }) =>
     request<CreativeDetail>('POST', `${c(slug, creative)}/variants`, body),
   /** Phase 15: starts the first generation (`request` null) or `request` in the target variants; answers at once (202). */
-  runVariants: (slug: string, creative: string, body: { targets: VariantId[] | 'all-active'; request: { text?: string; pins?: Pin[]; formats?: string[] } | null }) =>
+  /** `request.direct` (phase 3 of the single agent): a UI action naming its variants (a Retry): their own turns, not the group's. */
+  runVariants: (slug: string, creative: string, body: { targets: VariantId[] | 'all-active'; request: { text?: string; pins?: Pin[]; formats?: string[]; direct?: true } | null }) =>
     request<VariantRunResult>('POST', `${c(slug, creative)}/variants/run`, body),
   discardVariant: (slug: string, creative: string, letter: VariantId) => request<CreativeDetail>('POST', `${c(slug, creative)}/variants/${letter}/discard`),
   restoreVariant: (slug: string, creative: string, letter: VariantId) => request<CreativeDetail>('POST', `${c(slug, creative)}/variants/${letter}/restore`),
@@ -280,7 +281,7 @@ export const api = {
     request<CreativeDetail>('PUT', `${c(slug, creative)}/links`, { follower, primary }),
   getConversation: (slug: string, creative: string) => request<ConversationEntry[]>('GET', `${c(slug, creative)}/conversation`),
   /** `formats`: the formats the change applies to (spec §2.5); absent means all of them. */
-  sendCreativeTurn: (slug: string, creative: string, body: { text?: string; pins?: Pin[]; formats?: string[] }) => request<JobSummary>('POST', `${c(slug, creative)}/turns`, body),
+  sendCreativeTurn: (slug: string, creative: string, body: { text?: string; pins?: Pin[]; formats?: string[]; direct?: true }) => request<JobSummary>('POST', `${c(slug, creative)}/turns`, body),
   /** Phase 13: a message while the agent works (`live`) or for after it (`queued`). Idempotent on `clientId`. */
   postLiveMessage: (slug: string, creative: string, body: { clientId: string; text: string; pins?: Pin[]; mode: 'live' | 'queued' }) =>
     request<{ entry: ConversationEntry; outcome: LiveMessageOutcome }>('POST', `${c(slug, creative)}/messages`, body),

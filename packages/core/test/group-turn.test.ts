@@ -121,7 +121,7 @@ describe('the group turn', () => {
     expect(await groupJob()).toMatchObject({ state: 'succeeded' });
     const conv = await conversation(slug);
     const end = conv.find((e) => e.type === 'group-turn');
-    expect(end).toMatchObject({ jobId: job.id, group: true, outcome: [{ variant: 'b', jobId: helper.id, version: 1, kept: false, status: 'complete' }] });
+    expect(end).toMatchObject({ jobId: job.id, group: true, outcome: [{ variant: 'b', jobId: helper.id, version: 1, kept: false, status: 'complete', instruction: 'Ingrandisci il titolo del 20%' }] });
     // The turn's usage sums its runs': the coordinator's two and the helper's (one ledger line each).
     const ledger = (await import('node:fs/promises')).readFile(`${v.projectDir}/.studio/usage.jsonl`, 'utf8');
     const lines = (await ledger).trim().split('\n').map((l) => JSON.parse(l) as { jobId: string; costUsd: number | null });
@@ -323,6 +323,23 @@ describe('the group turn', () => {
     (await coordinator(1)).finish({ write: false });
     await v.waitIdle();
     expect(v.runner.runs.filter((r) => !isCoordinator(r))).toHaveLength(3);
+  });
+
+  it('a UI action that names its variant (`direct`, e.g. Retry) is the variant\'s own turn, not a group turn (decision 1145)', async () => {
+    const slug = await setup();
+    const res = await send(`${slug}~b`, 'Riprova questo');
+    expect(res.json()).toMatchObject({ kind: 'creative-group' });
+    (await coordinator()).finish({ write: false });
+    await v.waitIdle();
+    const direct = await v.app.inject({ method: 'POST', url: `${v.url(`${slug}~b`)}/turns`, payload: { text: 'Riprova questo', direct: true } });
+    expect(direct.json()).toMatchObject({ kind: 'creative' });
+    (await v.runOf(`${slug}~b`)).finish();
+    await v.waitIdle();
+    const run = await v.app.inject({ method: 'POST', url: `${v.url(slug)}/variants/run`, payload: { targets: ['c'], request: { text: 'Riprova', direct: true } } });
+    expect(run.json().jobs.c).toBeTruthy();
+    (await v.runOf(`${slug}~c`)).finish();
+    await v.waitIdle();
+    expect(coordinatorRuns()).toHaveLength(1);
   });
 
   it('with the setting off, a message goes to the variant\'s own turn as in phase 15', async () => {

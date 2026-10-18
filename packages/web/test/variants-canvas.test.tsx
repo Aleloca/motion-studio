@@ -166,7 +166,7 @@ describe('variant canvas · cards', () => {
     const row = await region('Variante C');
     await waitFor(() => expect(within(row).getByText('Interrotta')).toBeTruthy());
     await userEvent.click(within(row).getByRole('button', { name: 'Riprova' }));
-    await waitFor(() => expect(api.runVariants).toHaveBeenCalledWith('acme', HOST, { targets: ['c'], request: { text: 'Più grande' } }));
+    await waitFor(() => expect(api.runVariants).toHaveBeenCalledWith('acme', HOST, { targets: ['c'], request: { text: 'Più grande', direct: true } }));
     api.getCreative.mockImplementation(async (_s: string, c: string) => build(c));
     delete conversations[`${HOST}~c`];
   });

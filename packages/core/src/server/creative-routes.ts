@@ -82,7 +82,11 @@ export interface CreativeRoutesContext {
 const isInsideDir = (p: string, base: string | null) => Boolean(base && p.startsWith(base.endsWith(sep) ? base : base + sep));
 
 /** `formats`: the formats the request applies to (spec §2.5); absent or empty: all of them. */
-export const turnBodySchema = z.object({ text: z.string().max(10_000).optional(), pins: z.array(pinSchema).max(50).optional(), formats: z.array(z.string().min(1).max(200)).max(100).optional() });
+/**
+ * `direct` (phase 3 of the single agent, decision 1145): a UI action that already names its variant (a failed variant's
+ * Retry): the variant's own turn even in a group with one agent.
+ */
+export const turnBodySchema = z.object({ text: z.string().max(10_000).optional(), pins: z.array(pinSchema).max(50).optional(), formats: z.array(z.string().min(1).max(200)).max(100).optional(), direct: z.literal(true).optional() });
 const createBody = z.object({ title: z.string(), brief: briefWriteSchema, generate: z.boolean().optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
 // `services` alone changes only that field of the stored brief (the composer's Services chip); `brief` replaces the brief.
 // `formatLabels` / `formats` alone merge into the stored brief the same way (Phase 12: inline labels, reorder, removal).
@@ -603,7 +607,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     // targets (nothing is copied to N agents); a first generation (no request) stays the variants' own turns (decision 1145).
     const text = body.request?.text?.trim() ?? '';
     const pins = body.request?.pins ?? [];
-    if (body.request && (text || pins.length) && ctx.groups && await ctx.groups.enabled(plain)) {
+    if (body.request && (text || pins.length) && !body.request.direct && ctx.groups && await ctx.groups.enabled(plain)) {
       const g = await variantsOf(ref).resolve(ref);
       const variants = body.targets === 'all-active' ? (g.group ? activeMembers(g.group).map((m) => m.letter) : []) : body.targets;
       const job = await ctx.groups.start(plain, { text, pins, variants });
@@ -634,7 +638,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const pins = body.pins ?? [];
     // Phase 3 of the single agent: a message to a group with one agent is the group's turn; a turn with no message or with
     // formats is a UI action that names its variant (Genera, regenerate a format: decision 1145) and stays the variant's.
-    if ((text || pins.length) && !body.formats?.length && ctx.groups && await ctx.groups.enabled(plainRef(ref))) {
+    if ((text || pins.length) && !body.formats?.length && !body.direct && ctx.groups && await ctx.groups.enabled(plainRef(ref))) {
       return reply.status(202).send(await ctx.groups.start(plainRef(ref), { text, pins }));
     }
     const job = await ctx.turns.start(ref, text || pins.length ? { text, pins } : undefined, body.formats ? { formats: body.formats } : {});

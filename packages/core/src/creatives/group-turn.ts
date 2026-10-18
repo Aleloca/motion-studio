@@ -551,7 +551,8 @@ export class GroupTurnService implements GroupRouter {
     for (const item of items) {
       if (signal.aborted) break;
       const m = group.members.find((x) => x.letter === item.variant);
-      if (!m) { outcomes.push({ variant: item.variant, version: null, kept: false, status: 'failed', error: t().errors.variantUnknown({ letter: L(item.variant) }) }); continue; }
+      const instruction = item.instruction ? { instruction: item.instruction } : {};
+      if (!m) { outcomes.push({ variant: item.variant, version: null, kept: false, status: 'failed', error: t().errors.variantUnknown({ letter: L(item.variant) }), ...instruction }); continue; }
       const mref = memberRef(host, m.slug);
       const before = (await store.readVersions(m.slug).catch(() => [])).at(-1)?.n ?? null;
       try {
@@ -562,7 +563,7 @@ export class GroupTurnService implements GroupRouter {
         started.push({ item, slug: m.slug, jobId: job.id, before });
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
-        outcomes.push({ variant: item.variant, version: null, kept: false, status: 'failed', error });
+        outcomes.push({ variant: item.variant, version: null, kept: false, status: 'failed', error, ...instruction });
         await this.write(r, this.groupLine('warning', t().jobs.groupHelperNotStarted({ letter: L(item.variant), error })));
       }
     }
@@ -582,7 +583,7 @@ export class GroupTurnService implements GroupRouter {
       const versions = await store.readVersions(s.slug).catch(() => []);
       const text = [...entries].reverse().find((e) => e.type === 'agent' && e.jobId === s.jobId && e.event.kind === 'text');
       const said = text && text.type === 'agent' && text.event.kind === 'text' ? text.event.text.slice(0, HELPER_TEXT_MAX) : undefined;
-      const base = { variant: s.item.variant, jobId: s.jobId, ...(said ? { text: said } : {}) };
+      const base = { variant: s.item.variant, jobId: s.jobId, ...(said ? { text: said } : {}), ...(s.item.instruction ? { instruction: s.item.instruction } : {}) };
       if (res.savedVersion !== null && res.state === 'succeeded') {
         const kept = res.savedVersion === s.before;
         const v = versions.find((x) => x.n === res.savedVersion);

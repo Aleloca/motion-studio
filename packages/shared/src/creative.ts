@@ -446,6 +446,8 @@ export interface GroupTurnOutcome {
   status: 'complete' | 'incomplete' | 'failed' | 'stopped' | 'unchanged';
   /** Why it failed or did not start (the core's words). */
   error?: string;
+  /** The coordinator's instruction for it (absent: its first generation); a Retry of the variant sends it again. */
+  instruction?: string;
 }
 type ConversationEntryBody =
   /**

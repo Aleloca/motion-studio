@@ -98,15 +98,23 @@ export function frames(formats: string[], presets: FormatPreset[], o: { height: 
  * i.e. the last user message comes after the last version. Otherwise (a failed first generation, or a failed
  * regenerate without a message) an empty turn, so the core starts again from the brief / its own retry wording.
  */
-export function retryTurn(all: ConversationEntry[], variant?: VariantId): { text?: string; pins?: Pin[] } {
+export function retryTurn(all: ConversationEntry[], variant?: VariantId): { text?: string; pins?: Pin[]; direct?: true } {
   // Decision 980: in a group's one chat, one variant's turns only (an unstamped entry is the creative's own: a creative
-  // outside a group, or a host whose group is gone, keeps the merged chat with the other variants' entries stamped).
-  const entries = variant === undefined ? all : all.filter((e) => e.variant === undefined || e.variant === variant);
+  // outside a group, or a host whose group is gone, keeps the merged chat with the other variants' entries stamped). Phase 3
+  // of the single agent: the group's own entries are no variant's, but a group turn's outcome says what the variant was
+  // asked (its helper's instruction). A retry names its variant: it is the variant's own turn (`direct`, decision 1145).
+  const entries = variant === undefined ? all : all.filter((e) => e.type === 'group-turn' || (!e.group && (e.variant === undefined || e.variant === variant)));
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i]!;
+    if (e.type === 'group-turn') {
+      const o = variant === undefined ? undefined : e.outcome.find((x) => x.variant === variant);
+      if (!o) continue;
+      if (o.status === 'failed' || o.status === 'stopped') return o.instruction ? { text: o.instruction, direct: true } : {};
+      return {};
+    }
     // Decision 1060: a turn that ended without a version (nothing changed) is over too.
     if (turnEndOf(e)) return {};
-    if (e.type === 'user') return { text: e.text, ...(e.pins.length ? { pins: e.pins } : {}) };
+    if (e.type === 'user' && !e.group) return { text: e.text, ...(e.pins.length ? { pins: e.pins } : {}), direct: true };
   }
   return {};
 }
