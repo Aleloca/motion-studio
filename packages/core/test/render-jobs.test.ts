@@ -765,6 +765,8 @@ describe('startup sweep', () => {
     const dead = mk('ms-render-Ab12cD', 999_999);
     const profile = mk('ms-render-chrome-xyz789', 999_999);
     const media = mk('ms-render-media-q1W2e3', 999_999);
+    // Review #3: the temp folder of the renders made for one export.
+    const exported = mk('ms-render-export-Zz9Yy8', 999_999);
     const unmarked = mk('ms-render-zzzzzz');
     writeFileSync(join(unmarked, 'something'), 'x'); // not empty and no marker: not provably ours
     const emptyCrash = mk('ms-render-e0e0e0'); // made, never marked (a crash between the two): empty, removed
@@ -772,9 +774,9 @@ describe('startup sweep', () => {
     const recent = mk('ms-render-new001', 999_999);
     // Test fixtures and other tools: never, marker or not.
     const fixtures = ['ms-render-jobs-AbCdEf', 'ms-render-proc-AbCdEf', 'ms-render-media-AbCdEfG', 'ms-test-render-AbCdEf', 'something-else'].map((n) => mk(n, 999_999));
-    for (const d of [dead, profile, media, unmarked, emptyCrash, live, ...fixtures]) old(d);
+    for (const d of [dead, profile, media, exported, unmarked, emptyCrash, live, ...fixtures]) old(d);
     const removed = await sweepRenderTempDirs({ root });
-    expect(removed.sort()).toEqual([dead, profile, media, emptyCrash].sort());
+    expect(removed.sort()).toEqual([dead, profile, media, exported, emptyCrash].sort());
     expect(readdirSync(root).sort()).toEqual([unmarked, live, recent, ...fixtures].map((d) => basename(d)).sort());
   });
 });

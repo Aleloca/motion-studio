@@ -304,13 +304,33 @@ export class RenderJobService {
     Promise<{ files: Map<string, ExportRendered>; errors: string[] }> {
     if (w.signal?.aborted) throw new RenderError('cancelled', 'cancelled');
     const files = new Map<string, ExportRendered>();
-    const jobs: JobSummary[] = [];
-    for (const [n, formats] of pending) {
-      jobs.push(await this.startExportRender(ref, n, formats, profile, join(outDir, `v${n}`), (format, r) => files.set(`${n}\0${format}`, r)));
+    const ids: string[] = [];
+    try {
+      for (const [n, formats] of pending) {
+        ids.push((await this.startExportRender(ref, n, formats, profile, join(outDir, `v${n}`), (format, r) => files.set(`${n}\0${format}`, r))).id);
+      }
+    } catch (e) {
+      // A version that cannot start (review #3): the jobs already queued for this export go too.
+      for (const id of ids) this.deps.queue.cancel(id);
+      await this.settled(ids);
+      throw e;
     }
-    const ids = jobs.map((j) => j.id);
-    const ended = await this.waitAll(ids, ids, w);
-    return { files, errors: ended.filter((j) => j.state !== 'succeeded').map((j) => j.error ?? j.state) };
+    try {
+      const ended = await this.waitAll(ids, ids, w);
+      return { files, errors: ended.filter((j) => j.state !== 'succeeded').map((j) => j.error ?? j.state) };
+    } catch (e) {
+      // Cancelled: the caller removes `outDir` next, so wait (bounded) for the renders to stop writing into it first.
+      await this.settled(ids);
+      throw e;
+    }
+  }
+
+  /** Waits for jobs `ids` to end, at most `ms` (a render stuck in its cancel never holds the caller forever). */
+  private async settled(ids: string[], ms = 30_000): Promise<void> {
+    let timer: NodeJS.Timeout | undefined;
+    const limit = new Promise<void>((r) => { timer = setTimeout(r, ms); timer.unref?.(); });
+    await Promise.race([Promise.all(ids.map((id) => this.deps.queue.whenSettled(id))), limit]);
+    clearTimeout(timer);
   }
 
   private async startExportRender(ref: CreativeRef, n: number, requested: string[], profile: RenderProfile, outDir: string,

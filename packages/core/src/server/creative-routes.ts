@@ -957,7 +957,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       if (pending.size > 0) plans.set(slug, pending);
     }
     if (plans.size === 0) return copy(items);
-    const temp = await makeOwnedTempDir(join(tmpdir(), 'ms-export-'));
+    const temp = await makeOwnedTempDir(join(tmpdir(), 'ms-render-export-'));
     try {
       const files = new Map<string, { path: string; width: number; height: number }>();
       for (const [slug, pending] of plans) {

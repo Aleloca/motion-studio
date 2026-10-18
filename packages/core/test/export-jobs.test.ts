@@ -37,7 +37,7 @@ const comp = (w: number, h: number, duration: number, fill = '#ff0000') => ({
   tracks: [{ id: 't', kind: 'visual', clips: [{ id: 'box', type: 'shape', start: 0, duration, props: { x: 10, y: 10, width: 100, height: 50, fill } }] }],
 });
 
-interface Fake { engine: RenderEngine; calls: RenderCompositionOptions[]; gate: Promise<void> | null }
+interface Fake { engine: RenderEngine; calls: RenderCompositionOptions[]; gate: Promise<void> | null; /** The render ignores a cancel until the gate opens. */ stubborn?: boolean }
 /** A render engine that writes a small file per render, at the size and quality asked for; `gate` holds every render. */
 function fakeEngine(): Fake {
   const f: Fake = { calls: [], gate: null, engine: null as unknown as RenderEngine };
@@ -52,7 +52,10 @@ function fakeEngine(): Fake {
       const temp = join(dirname(o.out), `.${basename(o.out)}.render-${randomBytes(6).toString('hex')}.tmp`);
       noteCoreTemp(temp);
       try {
-        if (f.gate) {
+        if (f.gate && f.stubborn) {
+          await f.gate;
+          if (o.signal.aborted) throw new RenderError('cancelled', 'cancelled');
+        } else if (f.gate) {
           await Promise.race([f.gate, new Promise((_, reject) => {
             if (o.signal.aborted) reject(new RenderError('cancelled', 'cancelled'));
             o.signal.addEventListener('abort', () => reject(new RenderError('cancelled', 'cancelled')), { once: true });
@@ -265,5 +268,22 @@ describe('export jobs (decision 974)', { timeout: 120_000 }, () => {
     expect(done.state, done.error).toBe('succeeded');
     expect(fake.calls.slice(calls).map((c) => c.format.id)).toEqual(['test-wide']);
     expect((await store.readVersions(slug))[0]!.outputs.map((o) => [o.format, o.render?.quality]).sort()).toEqual([['test-wide', 'high'], ['test-wide-b', 'high']]);
+  });
+
+  it('review #3: a cancelled export ends only once its renders have stopped, and its temp folder is gone', async () => {
+    const { slug } = await v2Creative(['test-wide'], {});
+    let release!: () => void;
+    fake.gate = new Promise((r) => { release = r; });
+    fake.stubborn = true;
+    const job = await startExport(slug, { destination: join(base, 'out'), picks: { 'test-wide': 1 }, resolution: 480 });
+    const waiting = await waitJob(job.id, (j) => (j.export?.renders?.length ?? 0) > 0);
+    const renderId = waiting.export!.renders![0]!;
+    await waitJob(renderId, (j) => j.state === 'running');
+    await app.inject({ method: 'POST', url: `/api/jobs/${job.id}/cancel`, headers: H });
+    setTimeout(release, 300);
+    expect((await waitJob(job.id)).state).toBe('cancelled');
+    expect((await jobs()).find((j) => j.id === renderId)!.state).toBe('cancelled');
+    expect(existsSync(dirname(dirname(fake.calls.at(-1)!.out)))).toBe(false);
+    expect(existsSync(join(base, 'out'))).toBe(false);
   });
 });
