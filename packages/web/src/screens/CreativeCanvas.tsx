@@ -9,7 +9,7 @@ import { ProblemList } from '../components/ProblemList.tsx';
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
 import { turnEndOf } from '@motion-studio/shared';
 import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, outputWarningText, shownTotal, packInstancesOf, MAX_VARIANTS, nextLetter, type ConversationEntry, type CreativeDetail, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VariantLetter, type VariantMember, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
-import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { api, type GroupExportPlanItem } from '../api.ts';
 import { BriefEditor } from '../components/BriefEditor.tsx';
@@ -163,6 +163,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     return next;
   });
   const versionButton = useRef<HTMLButtonElement>(null);
+  const [history, setHistory] = useState(false);
   // T11: a new version → toast and a spring on the version badge (the frames reveal themselves on load).
   useNewVersionNotice(Boolean(detail), latest?.n ?? null, active, versionButton);
 
@@ -883,15 +884,20 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
       ) : null}
       {bar?.end ? createPortal(
         <>
-          {versions.length ? (
-            <VersionTimeline slug={slug} creative={creative} versions={versions} resumeFrom={cr.resumeFrom?.version ?? null} actions={actions} buttonRef={versionButton} />
-          ) : null}
           <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} readOnly={readOnly} />
-          {/* Decision 974: no "Render ★"; Export renders what it needs and shows an export or a render in progress. */}
-          <ExportButton jobs={jobList} jobKey={detail.jobKey} disabled={!version && !group} onClick={() => { if (version || group) setExporting({ open: true, snapshot: { versions, states } }); }} />
-          {/* Decision 915: archive and delete; a group's menu acts on the whole group (its variant A). */}
+          {/* Decision 974: no "Render ★"; Export renders what it needs and shows an export or a render in progress. With
+              variants "Selezione finale" is the page's primary action (decision 1045): Export is a secondary one here. */}
+          <ExportButton jobs={jobList} jobKey={detail.jobKey} disabled={!version && !group} secondary={Boolean(group)}
+            onClick={() => { if (version || group) setExporting({ open: true, snapshot: { versions, states } }); }} />
+          {/* Decision 915: archive and delete; a group's menu acts on the whole group (its variant A). Decision 972: the
+              version history of the creative (of the variant open in the chat) is a rare action of this menu. */}
           <CreativeMenu slug={slug} target={group ? hostSlug : creative} title={title} onAddVariant={!group && !vdetail ? () => setAddOpen(true) : null}
+            buttonRef={versionButton} onHistory={versions.length ? { letter: group ? (/~([a-z])$/.exec(creative)?.[1] ?? 'a').toUpperCase() : null, run: () => setHistory(true) } : null}
             onRemoved={(kind) => { if (kind !== 'restored') go(href.project(slug)); }} />
+          {versions.length ? (
+            <VersionTimeline slug={slug} creative={creative} versions={versions} resumeFrom={cr.resumeFrom?.version ?? null} actions={actions}
+              open={history} onClose={() => setHistory(false)} anchor={versionButton} />
+          ) : null}
         </>,
         bar.end,
       ) : null}
@@ -1035,13 +1041,23 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
  * The creative's menu: "+ Variant" for a creative that has no variants yet (phase 15: the only way to start its group from
  * the canvas), then Archive and Delete (decision 915) of the creative, or of the whole group from a group's canvas.
  */
-function CreativeMenu({ slug, target, title, onAddVariant, onRemoved }: {
-  slug: string; target: string; title: string; onAddVariant: (() => void) | null; onRemoved(kind: RemovalDone): void;
+function CreativeMenu({ slug, target, title, onAddVariant, onHistory, buttonRef, onRemoved }: {
+  slug: string; target: string; title: string; onAddVariant: (() => void) | null;
+  /** The version history item (`letter`: the variant open in the chat, in a group). */
+  onHistory: { letter: string | null; run(): void } | null;
+  buttonRef: RefObject<HTMLButtonElement | null>; onRemoved(kind: RemovalDone): void;
 }) {
-  const vg = useT().web.variantGroup;
+  const t = useT();
+  const vg = t.web.variantGroup;
+  const v = t.web.canvas.versions;
   return (
-    <CreativeActionsMenu slug={slug} creative={target} label={vg.creativeMenu} className="ms-cv-more" onDone={onRemoved}
-      extra={onAddVariant ? (close) => <NavItem data-row="" role="menuitem" icon="plus" onClick={() => { close(); onAddVariant(); }}>{vg.addVariantMenu}</NavItem> : undefined} />
+    <CreativeActionsMenu slug={slug} creative={target} label={t.web.shell.moreActions} className="ms-cv-more" variant="ghost" buttonRef={buttonRef} onDone={onRemoved}
+      extra={onAddVariant || onHistory ? (close) => (
+        <>
+          {onAddVariant ? <NavItem data-row="" role="menuitem" icon="plus" onClick={() => { close(); onAddVariant(); }}>{vg.addVariantMenu}</NavItem> : null}
+          {onHistory ? <NavItem data-row="" role="menuitem" icon="clock" onClick={() => { close(); onHistory.run(); }}>{onHistory.letter ? v.historyItemVariant({ letter: onHistory.letter }) : v.historyItem}</NavItem> : null}
+        </>
+      ) : undefined} />
   );
 }
 
@@ -1097,7 +1113,7 @@ function BarTitle({ title, renaming, onStart, onChange, onSave, onCancel, state 
   return (
     <>
       <span className="ms-crumb ms-last ms-cv-crumb">
-        <span className="ms-faint" aria-hidden="true">/</span>
+        <span className="ms-crumb-sep" aria-hidden="true">/</span>
         {renaming !== null ? (
           <Input ref={field} className="ms-cv-title-input" aria-label={c.field} value={renaming} spellCheck={false}
             onChange={(e) => onChange(e.target.value)} onBlur={() => finish(true)}

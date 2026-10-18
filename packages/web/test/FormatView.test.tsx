@@ -244,26 +244,32 @@ describe('FormatView · shared element and bar', () => {
     expect(takeFrameOrigin('format:acme/lancio/tiktok-9x16')).toBeNull();
   });
 
-  it('"← All formats" goes back to the creative route, keeping the player rect for T4', async () => {
+  it('the creative\'s crumb goes back to the creative route, keeping the player rect for T4 (user report 23)', async () => {
     render(<Harness format={VIDEO} />);
     await player();
-    await userEvent.click(within(document.querySelector('.ms-topbar') as HTMLElement).getByRole('button', { name: 'Tutti i formati' }));
+    await userEvent.click(within(document.querySelector('.ms-topbar') as HTMLElement).getByRole('link', { name: 'Lancio estivo' }));
     expect(location.hash).toBe('#/p/acme/c/lancio');
     expect(takeFrameOrigin('canvas:acme/lancio/tiktok-9x16')).not.toBeNull();
   });
 
-  it('says discreetly when the duration is far from the brief, and that a direct edit chose it (decisions log 262)', async () => {
+  it('warns when the duration is far from the brief, and says when a direct edit chose it (decisions log 262, user report 23)', async () => {
     detail = makeDetail([version(1)], { brief: { goal: 'g', message: 'm', formats: ['instagram-post-1x1', 'tiktok-9x16'], durationSec: 6, assets: [], notes: '' } });
     const { unmount } = render(<Harness format={VIDEO} />);
     await player();
     const bar = () => document.querySelector('.ms-topbar') as HTMLElement;
-    expect(within(bar()).getByText('1080×1920 · 9:16 · 8 s · brief 6 s')).toBeTruthy();
+    expect(within(bar()).getByText('1080×1920 · 9:16 · 8 s')).toBeTruthy();
+    await userEvent.click(within(bar()).getByRole('button', { name: 'Il brief dice 6 s' }));
+    let pop = await screen.findByRole('dialog', { name: 'Il brief dice 6 s' });
+    expect(within(pop).queryByText('La durata viene da una modifica diretta.')).toBeNull();
+    expect(within(pop).getByRole('button', { name: 'Usa 8 s nel brief' })).toBeTruthy();
     unmount();
     __resetPreviewSessions();
     detail = makeDetail([{ ...version(1), origin: 'editor' }], { brief: { goal: 'g', message: 'm', formats: ['instagram-post-1x1', 'tiktok-9x16'], durationSec: 6, assets: [], notes: '' } });
     render(<Harness format={VIDEO} />);
     await player();
-    expect(within(bar()).getByText('1080×1920 · 9:16 · 8 s · brief 6 s (modifica diretta)')).toBeTruthy();
+    await userEvent.click(within(bar()).getByRole('button', { name: 'Il brief dice 6 s' }));
+    pop = await screen.findByRole('dialog', { name: 'Il brief dice 6 s' });
+    expect(within(pop).getByText('La durata viene da una modifica diretta.')).toBeTruthy();
   });
 
   it('no note when the duration is within the brief', async () => {
@@ -271,16 +277,18 @@ describe('FormatView · shared element and bar', () => {
     render(<Harness format={VIDEO} />);
     await player();
     expect(within(document.querySelector('.ms-topbar') as HTMLElement).getByText('1080×1920 · 9:16 · 8 s')).toBeTruthy();
+    expect(within(document.querySelector('.ms-topbar') as HTMLElement).queryByRole('button', { name: /Il brief dice/ })).toBeNull();
   });
 
-  it('puts the format, its ★ badge, the Versions timeline and Export in the bar', async () => {
+  it('puts the format, its ★ badge (the one version control), Export and "…" in the bar', async () => {
     render(<Harness format={VIDEO} />);
     await player();
     const bar = document.querySelector('.ms-topbar') as HTMLElement;
     expect(within(bar).getByText('Video 9:16')).toBeTruthy();
     expect(within(bar).getByText(/1080×1920 · 9:16 · 8 s/)).toBeTruthy();
     expect(within(bar).getByRole('button', { name: 'TikTok · Video 9:16: si esporta la v1. Apri le sue versioni' }).textContent).toContain('★ v1');
-    expect(within(bar).getByRole('button', { name: 'Versioni (1): apri la cronologia della creatività' })).toBeTruthy();
+    expect(within(bar).queryByRole('button', { name: /apri la cronologia/ })).toBeNull();
+    expect(within(bar).getByRole('button', { name: 'Altre azioni' })).toBeTruthy();
     await userEvent.click(within(bar).getByRole('button', { name: 'Esporta' }));
     expect(await screen.findByRole('dialog', { name: /Esporta/ })).toBeTruthy();
   });
@@ -337,7 +345,8 @@ describe('FormatView · English', () => {
     expect(screen.getByRole('button', { name: 'Play (Space)' })).toBeTruthy();
     expect(screen.getByText('Edit scenes, text and timing directly — coming with the timeline')).toBeTruthy();
     expect(await screen.findByText('Click the spot of the frame at 00:05.00')).toBeTruthy();
-    expect(within(document.querySelector('.ms-topbar') as HTMLElement).getByRole('button', { name: 'All formats' })).toBeTruthy();
+    expect(within(document.querySelector('.ms-topbar') as HTMLElement).getByRole('navigation', { name: 'Location' })).toBeTruthy();
+    expect(within(document.querySelector('.ms-topbar') as HTMLElement).getByRole('button', { name: 'More actions' })).toBeTruthy();
   });
 });
 
@@ -468,7 +477,7 @@ describe('FormatView · fix round 1', () => {
     render(<Harness format={VIDEO} />);
     await player();
     expect(await screen.findByText('stai guardando la v1')).toBeTruthy();
-    await userEvent.click(within(document.querySelector('.ms-topbar') as HTMLElement).getByRole('button', { name: 'Tutti i formati' }));
+    await userEvent.click(within(document.querySelector('.ms-topbar') as HTMLElement).getByRole('link', { name: 'Lancio estivo' }));
     expect(takeShownVersions('acme/lancio')).toEqual({ [VIDEO]: 1 });
   });
 

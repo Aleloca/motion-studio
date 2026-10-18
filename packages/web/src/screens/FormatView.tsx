@@ -32,7 +32,7 @@ import { href, routeKey } from '../routes.ts';
 import { useBarClaim } from '../shell/barSlots.ts';
 import { setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } from '../shell/intents.ts';
 import { go, ShellContext } from '../shell/ShellContext.tsx';
-import { Button, ChannelMark, Empty, Icon, Pill, Segmented, Select, Spinner, Toggle, Tooltip, cx, toast } from '../ui/index.ts';
+import { Button, ChannelMark, Empty, Icon, Pill, Segmented, Select, Spinner, Toggle, cx, toast } from '../ui/index.ts';
 import { useCreative } from '../useCreative.ts';
 import { boardLabel, PinBubble, SafeZoneBands, type Draft } from './CanvasBoard.tsx';
 import { instanceName, presetFor } from '../instances.ts';
@@ -49,6 +49,8 @@ import { localePreviewSource, useLocalePreview } from './creative/useLocalePrevi
 import { RangeDialog } from './editor/RangeDialog.tsx';
 import { clipLabel, clipPin, clipsAt, rangePin, rangeTimes } from './pinModel.ts';
 import { ExportButton } from './ExportButton.tsx';
+import { BriefOffChip } from './BriefOffChip.tsx';
+import { BarMenu, BarMenuItem } from '../shell/BarMenu.tsx';
 import { IdentitySizes } from './identity/IdentitySizes.tsx';
 import { UseAsBrandLogo } from './identity/UseAsBrandLogo.tsx';
 import { FollowerChip, FormatBadge, useNewVersionNotice, useVersionActions, VersionTimeline } from './FormatVersions.tsx';
@@ -103,7 +105,10 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   // The bar belongs to this page only while it is the route's page (a leaving page stays mounted ~200 ms).
   const ownKey = routeKey({ name: 'format', slug, creative, format });
   const active = !shell || routeKey(shell.route) === ownKey;
-  const bar = useBarClaim(ownKey, active);
+  // The bar's creative crumb is the way back (user report 23): the creative's title, the variant, and `back` (T4).
+  const backRef = useRef<() => void>(() => {});
+  const crumbVariant = detail?.variants && !detail.variants.orphan ? detail.variants.letter.toUpperCase() : null;
+  const bar = useBarClaim(ownKey, active, { title: detail?.creative.title ?? null, variant: crumbVariant, open: () => backRef.current() });
   // T3: the rect of the board this view grows from, taken once, and when the page mounted.
   const [origin] = useState(() => (ownerOrigin !== undefined ? ownerOrigin : takeFrameOrigin(`format:${slug}/${creative}/${format}`)));
   const [mountedAt] = useState(() => performance.now());
@@ -136,6 +141,8 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
     return next;
   }), [states]);
   const versionButton = useRef<HTMLButtonElement>(null);
+  const moreButton = useRef<HTMLButtonElement>(null);
+  const [history, setHistory] = useState(false);
   useNewVersionNotice(Boolean(detail), latest?.n ?? null, active, versionButton);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -369,6 +376,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
     keepVersion(viewing);
     go(href.creative(slug, creative));
   };
+  backRef.current = back;
 
   // Duplicate format (Phase 12): the next free instance of this format, copied from the version on screen; opens the new one.
   const [duplicating, setDuplicating] = useState(false);
@@ -519,11 +527,9 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
     );
   }
 
-  const backButton = <Tooltip label={t.web.shell.backAllFormats} whenHidden=".ms-bar-label"><Button className="ms-back ms-fold-3" aria-label={t.web.shell.backAllFormats} onClick={back}><Icon name="back" size={16} strokeWidth={1.5} /><span className="ms-bar-label">{t.web.shell.backAllFormats}</span></Button></Tooltip>;
   if (!loading && !known) {
     return (
       <div ref={root} className="ms-cv-state">
-        {bar?.start ? createPortal(backButton, bar.start) : null}
         <Empty icon="grid" title={f.unknownTitle({ id: format })} sub={f.unknownSub}
           action={<Button variant="ink" onClick={back}><Icon name="back" size={13} />{t.web.shell.backAllFormats}</Button>} />
       </div>
@@ -534,10 +540,8 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   const n = version?.n ?? null;
   // The version's duration against the brief's (decisions log 262): a discreet note, never a change of the brief.
   const briefSec = cr?.brief.durationSec ?? null;
-  const offBrief = video && duration > 0 && briefSec !== null && isDurationOffBrief(duration, briefSec)
-    ? (version?.origin === 'editor' ? f.briefDurationEdited : f.briefDuration)({ n: formatNumber(locale, briefSec, { maximumFractionDigits: 1 }) })
-    : null;
-  const meta = [`${width}×${height}`, ratioText({ width, height }), video && duration ? c.seconds({ n: formatNumber(locale, duration, { maximumFractionDigits: 1 }) }) : null, offBrief].filter(Boolean).join(' · ');
+  const offBrief = video && duration > 0 && briefSec !== null && isDurationOffBrief(duration, briefSec);
+  const meta = [`${width}×${height}`, ratioText({ width, height }), video && duration ? c.seconds({ n: formatNumber(locale, duration, { maximumFractionDigits: 1 }) }) : null].filter(Boolean).join(' · ');
   const frameStyle: CSSProperties = zoom === 'fit' || video
     ? { width: `min(100cqw, calc(100cqh * ${width / height}))`, aspectRatio: `${width} / ${height}` }
     : { width: Math.round(width * zoom), aspectRatio: `${width} / ${height}` };
@@ -555,15 +559,18 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
 
   return (
     <div ref={root} className={cx('ms-fv', video ? 'ms-fv-video' : 'ms-fv-image')} aria-busy={loading || undefined}>
-      {bar?.start ? createPortal(backButton, bar.start) : null}
       {bar?.title ? createPortal(
         <>
           <span className="ms-crumb ms-last ms-fv-crumb">
-            <span className="ms-faint" aria-hidden="true">/</span>
+            <span className="ms-crumb-sep" aria-hidden="true">/</span>
             {preset ? <ChannelMark channel={channelOf(preset.channel)} /> : null}
-            <b aria-current="page" title={preset ? channelName(preset.channel, locale) : undefined}>{instanceName(preset, format, locale, labels)}</b>
+            <b aria-current="page" title={[preset ? channelName(preset.channel, locale) : null, meta].filter(Boolean).join(' · ')}>{instanceName(preset, format, locale, labels)}</b>
           </span>
-          <span className="ms-fv-meta">{meta}</span>
+          <span className="ms-fv-meta" title={meta}>{meta}</span>
+          {offBrief && cr ? (
+            <BriefOffChip slug={slug} creative={creative} brief={cr.brief} actual={duration} edited={version?.origin === 'editor'}
+              disabled={readOnly ?? (working ? t.web.editor.busyAgent : null)} onChanged={reload} />
+          ) : null}
           {out && !out.verified ? <Pill tone="warn" className="ms-cv-state-pill">{t.web.formatUi.unverified}</Pill> : null}
         </>,
         bar.title,
@@ -577,22 +584,35 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
             </span>
           ) : state && cr ? (
             <span className="ms-fv-badge">
-              <FormatBadge slug={slug} creative={creative} label={label} state={group ? { ...state, star: { ...state.star, version: group.group.picks[source.format]?.slug === creative ? group.group.picks[source.format]!.version : null, manual: group.group.picks[source.format]?.slug === creative, newer: null } } : state} versions={versions} shown={source.n} resumeFrom={cr.resumeFrom?.version ?? null}
+              <FormatBadge bar buttonRef={versionButton} slug={slug} creative={creative} label={label} state={group ? { ...state, star: { ...state.star, version: group.group.picks[source.format]?.slug === creative ? group.group.picks[source.format]!.version : null, manual: group.group.picks[source.format]?.slug === creative, newer: null } } : state} versions={versions} shown={source.n} resumeFrom={cr.resumeFrom?.version ?? null}
                 labelOf={formatLabel} actions={actions} busy={working} onView={(v) => view(format, v)} onCompare={openCompare} />
             </span>
           ) : null}
-          {versions.length && cr ? (
-            <VersionTimeline slug={slug} creative={creative} versions={versions} resumeFrom={cr.resumeFrom?.version ?? null} actions={actions} buttonRef={versionButton} />
-          ) : null}
           <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} readOnly={readOnly} />
-          {comp !== null && !working ? (
-            <Tooltip label={readOnly ?? `${t.web.instances.duplicate} · ${t.web.instances.duplicateHint({ label })}`} whenHidden=".ms-bar-label"><Button variant="outline" className="ms-fv-duplicate ms-fold-2" aria-label={t.web.instances.duplicate} loading={duplicating}
-              disabled={readOnly !== null} {...(readOnly !== null ? { title: readOnly } : {})} onClick={() => void duplicate()}>
-              <Icon name="copy" size={13} strokeWidth={1.7} /><span className="ms-bar-label">{t.web.instances.duplicate}</span>
-            </Button></Tooltip>
-          ) : null}
           <ExportButton jobs={Object.values(live.jobs)} jobKey={detail?.jobKey ?? null} scope={{ version, format: source.format }} disabled={!latest}
             onClick={() => { if (latest) setExporting({ open: true, snapshot: { versions, states } }); }} />
+          {/* User report 17: the rare actions in "…": Duplicate format, and the variant's version history (decision 972). */}
+          {(comp !== null && !working) || (versions.length && cr) ? (
+            <BarMenu buttonRef={moreButton}>
+              {(close) => (
+                <>
+                  {comp !== null && !working ? (
+                    <BarMenuItem icon="copy" close={close} run={() => void duplicate()} hint={t.web.instances.duplicateHint({ label })}
+                      disabled={readOnly ?? (duplicating ? t.web.instances.duplicate : null)}>{t.web.instances.duplicate}</BarMenuItem>
+                  ) : null}
+                  {versions.length && cr ? (
+                    <BarMenuItem icon="clock" close={close} run={() => setHistory(true)}>
+                      {crumbVariant ? t.web.canvas.versions.historyItemVariant({ letter: crumbVariant }) : t.web.canvas.versions.historyItem}
+                    </BarMenuItem>
+                  ) : null}
+                </>
+              )}
+            </BarMenu>
+          ) : null}
+          {versions.length && cr ? (
+            <VersionTimeline slug={slug} creative={creative} versions={versions} resumeFrom={cr.resumeFrom?.version ?? null} actions={actions}
+              open={history} onClose={() => setHistory(false)} anchor={moreButton} />
+          ) : null}
         </>,
         bar.end,
       ) : null}

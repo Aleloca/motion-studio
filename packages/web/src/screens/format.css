@@ -133,10 +133,23 @@
 .ms-fv-mark:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .ms-fv-mark:disabled { opacity: .5; cursor: default; }
 
-/* Bar (portalled into the shell's creative bar). */
-.ms-fv-crumb { flex: 0 1 auto; min-width: 0; }
+/* Bar (portalled into the shell's creative bar; user reports 17 and 23). The format's name is the current crumb, its facts
+   secondary text after it (and the name's tooltip), a duration off the brief a warning chip with the fix. */
+/* The current item gives way last: it does not shrink, it is only capped (its name ends with an ellipsis past the cap). */
+.ms-crumbs .ms-crumb.ms-fv-crumb { flex: 0 0 auto; max-width: min(260px, 20vw); }
 .ms-fv-crumb .ms-chmark, .ms-fv-crumb > span[role="img"] { flex: none; }
-.ms-fv-meta { font-family: var(--mono); font-size: 11px; color: var(--faint); white-space: nowrap; flex: none; }
+.ms-fv-crumb > b { padding-left: 4px; }
+.ms-fv-meta { font-family: var(--mono); font-size: 11px; color: var(--faint); white-space: nowrap; flex: 0 40 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; margin-left: 6px; }
+.ms-brief-off { flex: none; margin-left: 8px; cursor: pointer; transition: box-shadow var(--d-s) var(--e-std); }
+.ms-brief-off:hover, .ms-brief-off[aria-expanded="true"] { box-shadow: inset 0 0 0 1px currentColor; }
+.ms-brief-off:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ms-brief-off-pop { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 4px; font-size: 12.5px; line-height: 1.45; }
+.ms-brief-off-pop p { margin: 0; color: var(--muted); }
+.ms-brief-off-why { font-size: 11.5px; }
+/* The format's one version control (FormatBadge `bar`): a bar-sized outline button, "★ v2 · 3 versioni". */
+.ms-btn.ms-fvb-bar { gap: 6px; padding: 0 10px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ms-fvb-count { font-weight: 400; color: var(--muted); }
+.ms-fv-badge .ms-fvb-viewing { margin-left: 2px; }
 
 /* Narrow windows: the Scenes column folds first, then the chat goes under the player. */
 @media (max-width: 1180px) { .ms-fv.ms-fv-video { grid-template-columns: 180px minmax(0, 1fr) 300px; } .ms-fv { grid-template-columns: minmax(0, 1fr) 300px; } }
@@ -171,29 +184,20 @@
 
 /* Decision 974: no render status in the bar any more; a render or an export in progress shows inside Export (export.css). */
 
-/* The format view's bar, narrow (final wave I2, decision 713). Only the bar the format view claimed (`.ms-bar-fv`, set by
-   TopBars.tsx) is a size container and folds: the creative board, the editor and every other bar are unchanged. The steps
-   read the bar's content width, so the macOS title bar's 80 px count. Measured in Italian, the longest, with everything
-   the bar carries (topbar-render-layout.test.tsx): the actions fold to their icons in three steps, each keeping its name
-   (aria-label) and a tooltip (title); the format's name keeps room. Esporta, the primary action, keeps its label (and its
-   one size while it shows a render or an export in progress). */
+/* The format page's bar, narrow (decision 713, user reports 17 and 23). Only the bar the format page claimed (`.ms-bar-fv`,
+   set by TopBars.tsx) is a size container and folds; the steps read the bar's content width, so the macOS title bar's inset
+   counts. Measured in Italian, the longest, with everything the bar carries (topbar-render-layout.test.tsx): first the
+   versions count beside the badge and a follower's "segue …" go, then the format's facts (still in the name's tooltip) and
+   the secondary actions' labels (each keeps its name and a tooltip); the crumbs shrink with ellipses, the creative's first.
+   Esporta, the primary action, keeps its label (and its one size while it shows a render or an export in progress). */
 .ms-topbar.ms-bar-fv { container: ms-topbar / inline-size; }
-@container ms-topbar (max-width: 1760px) {
-  .ms-bar-fv .ms-fold-1 > .ms-bar-label { display: none; }
-  .ms-bar-fv .ms-btn.ms-fold-1 { width: 28px; padding: 0; gap: 0; }
+@container ms-topbar (max-width: 1400px) {
+  .ms-bar-fv .ms-fvb-bar > .ms-bar-label, .ms-bar-fv .ms-fv-follows { display: none; }
 }
-@container ms-topbar (max-width: 1500px) {
-  .ms-bar-fv .ms-fold-2 > .ms-bar-label, .ms-bar-fv .ms-cv-vbtn > .ms-bar-label, .ms-bar-fv .ms-fv-meta { display: none; }
+@container ms-topbar (max-width: 1200px) {
+  .ms-bar-fv .ms-fold-2 > .ms-bar-label, .ms-bar-fv .ms-fv-meta, .ms-bar-fv .ms-brief-off-text { display: none; }
+  .ms-bar-fv .ms-brief-off { padding: 0 6px; }
   .ms-bar-fv .ms-btn.ms-fold-2 { width: 32px; padding: 0; gap: 0; }
 }
-@container ms-topbar (max-width: 1100px) {
-  .ms-bar-fv .ms-fold-3 > .ms-bar-label { display: none; }
-  .ms-bar-fv .ms-btn.ms-fold-3 { width: 32px; padding: 0; gap: 0; }
-  .ms-bar-fv .ms-btn.ms-sm.ms-fold-3 { width: 28px; }
-  /* The project and creative crumbs give way before the format's name. */
-  .ms-bar-fv .ms-crumbs > .ms-crumb:not(.ms-last) { flex-shrink: 8; }
-  /* Tighter crumbs: the macOS title bar's inset (94 px) leaves the format's name a few px short at 1024. */
-  .ms-bar-fv .ms-crumbs { gap: 4px; }
-}
 /* While one of them is busy its spinner sits next to the icon. */
-.ms-bar-fv .ms-btn.ms-busy:is(.ms-fold-1, .ms-fold-2, .ms-fold-3) { width: auto; padding-inline: 6px; }
+.ms-bar-fv .ms-btn.ms-busy.ms-fold-2 { width: auto; padding-inline: 6px; }

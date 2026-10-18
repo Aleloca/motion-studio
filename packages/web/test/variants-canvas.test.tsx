@@ -457,7 +457,7 @@ describe('variant canvas · a creative with no variants yet', () => {
     api.addVariants.mockImplementationOnce(async () => { group = groupOf(['a', 'b']); return build(HOST); });
     render(<Harness live={emptyLive()} />);
     await screen.findByRole('img', { name: /Post 1:1 v1/ });
-    await userEvent.click(screen.getByRole('button', { name: 'Altro' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Altre azioni' }));
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Aggiungi variante' }));
     const dialog = await screen.findByRole('dialog', { name: 'Aggiungi una variante' });
     await userEvent.type(within(dialog).getByLabelText('Direzione (facoltativa)'), 'Tipografica');
@@ -471,7 +471,7 @@ describe('variant canvas · a creative with no variants yet', () => {
     api.addVariants.mockImplementationOnce(async () => { group = groupOf(['a', 'b']); return build(HOST); });
     render(<Harness live={emptyLive()} />);
     await screen.findByRole('img', { name: /Post 1:1 v1/ });
-    await userEvent.click(screen.getByRole('button', { name: 'Altro' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Altre azioni' }));
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Aggiungi variante' }));
     const dialog = await screen.findByRole('dialog', { name: 'Aggiungi una variante' });
     await userEvent.click(within(dialog).getByRole('button', { name: /Parti da/ }));
@@ -483,8 +483,8 @@ describe('variant canvas · a creative with no variants yet', () => {
   it('a group\'s menu has no "+ Variante" (it is in its bar): only archive and delete of the whole group (decision 915)', async () => {
     render(<Harness live={emptyLive()} />);
     await loaded();
-    await userEvent.click(screen.getByRole('button', { name: 'Altro' }));
-    const menu = await screen.findByRole('menu', { name: 'Altro' });
+    await userEvent.click(screen.getByRole('button', { name: 'Altre azioni' }));
+    const menu = await screen.findByRole('menu', { name: 'Altre azioni' });
     expect(within(menu).queryByRole('menuitem', { name: /Variante/ })).toBeNull();
     expect(await within(menu).findByRole('menuitem', { name: 'Archivia tutte le 3 varianti' })).toBeTruthy();
     expect(within(menu).getByRole('menuitem', { name: 'Elimina tutte le 3 varianti…' })).toBeTruthy();

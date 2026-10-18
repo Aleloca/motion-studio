@@ -85,11 +85,16 @@ describe('final wave I2: a discarded variant is read-only in its format view', (
     group = groupOf(['a', 'b'], {}, { b: { status: 'discarded' } });
     const { unmount } = render(<Harness creative={`${HOST}~b`} />);
     const bar = document.querySelector('.ms-topbar') as HTMLElement;
-    await waitFor(() => expect(bar.querySelector('.ms-fv-duplicate')).not.toBeNull());
+    // User report 17: Duplica formato is in the bar's "…" menu, unavailable with the reason under it.
+    const duplicateItem = async (b: HTMLElement) => {
+      await waitFor(() => expect(b.querySelector('.ms-bar-more')).not.toBeNull());
+      await userEvent.click(within(b).getByRole('button', { name: 'Altre azioni' }));
+      return within(await screen.findByRole('menu', { name: 'Altre azioni' })).findByRole('menuitem', { name: 'Duplica formato' });
+    };
     const reason = 'Variante scartata: ripristinala per lavorarci';
-    const dup = bar.querySelector('.ms-fv-duplicate') as HTMLButtonElement;
-    expect(dup.disabled).toBe(true);
-    expect(dup.title).toBe(reason);
+    const dup = await duplicateItem(bar);
+    expect(dup.getAttribute('aria-disabled')).toBe('true');
+    expect(document.getElementById(dup.getAttribute('aria-describedby')!)!.textContent).toBe(reason);
     const langs = bar.querySelector('.ms-cv-languages') as HTMLButtonElement;
     expect(langs.disabled).toBe(true);
     expect(langs.title).toBe(reason);
@@ -97,8 +102,7 @@ describe('final wave I2: a discarded variant is read-only in its format view', (
     group = groupOf(['a', 'b']);
     render(<Harness creative={`${HOST}~b`} />);
     const bar2 = document.querySelector('.ms-topbar') as HTMLElement;
-    await waitFor(() => expect(bar2.querySelector('.ms-fv-duplicate')).not.toBeNull());
-    expect((bar2.querySelector('.ms-fv-duplicate') as HTMLButtonElement).disabled).toBe(false);
+    expect((await duplicateItem(bar2)).getAttribute('aria-disabled')).toBeNull();
     expect((bar2.querySelector('.ms-cv-languages') as HTMLButtonElement).disabled).toBe(false);
   });
 });

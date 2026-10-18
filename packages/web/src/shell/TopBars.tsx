@@ -165,35 +165,58 @@ export function ProjectTop({ slug, tab }: { slug: string; tab: ProjectTab }) {
 }
 
 // Stable ref callbacks: a new function each render would empty and refill the slots (and re-render the bar) every time.
-const startSlotRef = (el: HTMLElement | null) => setBarSlot('start', el);
 const titleSlotRef = (el: HTMLElement | null) => setBarSlot('title', el);
 const endSlotRef = (el: HTMLElement | null) => setBarSlot('end', el);
 
 /**
- * Creative / editor bar: back, breadcrumb, bell, avatar. With `slots`, the page of the route fills the title slot
- * (after the breadcrumb: editable title and state) and the end slot (version menu, Export); `claimed` says it did, so
- * the last crumb is the page's own title and not the bar's. Without `back` the page puts its own back button in the
- * start slot (the format view, whose way back is a transition).
+ * A creative's folder name as a title, when nothing better is known (user report 23): without the date and a variant's
+ * `~b`, dashes as spaces, the first letter upper case ("2026-10-17-create-a-60-second~b" → "Create a 60 second").
  */
-export function CreativeTop({ back, crumbs, right, slots, claimed }: { back: { label: string; hash: string } | null; crumbs: ReactNode[]; right?: ReactNode; slots?: boolean; claimed?: boolean }) {
+export function slugTitle(slug: string): string {
+  const words = slug.replace(/~[a-z]$/, '').replace(/^\d{4}-\d{2}-\d{2}-?/, '').replace(/-+/g, ' ').trim();
+  return words ? words[0]!.toLocaleUpperCase() + words.slice(1) : slug;
+}
+
+/** An ancestor crumb: a link back to that page, its whole text in the tooltip when it is cut. */
+export interface CrumbLink { label: string; hash: string; title?: string; tag?: string | null; onOpen?: (() => void) | null; className?: string }
+
+const plainClick = (e: MouseEvent) => e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
+
+/**
+ * Creative / format bar (user reports 17 and 23): the app's mark, then the breadcrumb whose ancestors are links (project,
+ * creative: they are the way back, there is no back button), then the current item: `current` (a plain name), or what the
+ * page portals into the title slot (`slots`: its title and state, or the format's name and facts). Right: the object's
+ * actions the page portals into the end slot, a separator, and the app's controls.
+ */
+export function CreativeTop({ links, current, slots }: { links: CrumbLink[]; current?: ReactNode; slots?: boolean }) {
   const t = useT();
-  const current = (i: number) => i === crumbs.length - 1 && !claimed;
   return (
     <>
-      {slots ? <span className="ms-bar-slot ms-bar-start" ref={startSlotRef} /> : null}
-      {back ? <Button className="ms-back" onClick={() => go(back.hash)}><Icon name="back" size={16} strokeWidth={1.5} />{back.label}</Button> : null}
       <nav className="ms-crumbs" aria-label={t.web.shell.breadcrumb}>
-        {crumbs.map((c, i) => (
-          <span key={i} className={cx('ms-crumb', current(i) && 'ms-last')}>
-            {i > 0 ? <span className="ms-faint" aria-hidden="true">/</span> : null}
-            {current(i) ? <b aria-current="page">{c}</b> : <span>{c}</span>}
+        <a className="ms-logo-link ms-bar-home" href={href.projects()} aria-label={t.web.shell.home} title={t.web.shell.home}>
+          <BrandLogo variant="mark" height={22} decorative />
+        </a>
+        {links.map((l, i) => (
+          <span key={i} className={cx('ms-crumb', l.className)}>
+            {i > 0 ? <span className="ms-crumb-sep" aria-hidden="true">/</span> : null}
+            <a className="ms-crumb-link" href={l.hash} title={l.title ?? l.label}
+              onClick={l.onOpen ? (e) => { if (plainClick(e.nativeEvent)) { e.preventDefault(); l.onOpen!(); } } : undefined}>
+              <span className="ms-crumb-text">{l.label}</span>
+              {l.tag ? <span className="ms-crumb-tag">{l.tag}</span> : null}
+            </a>
           </span>
         ))}
+        {current !== undefined ? (
+          <span className="ms-crumb ms-last">
+            <span className="ms-crumb-sep" aria-hidden="true">/</span>
+            <b aria-current="page">{current}</b>
+          </span>
+        ) : null}
         {slots ? <span className="ms-bar-slot ms-bar-title" ref={titleSlotRef} /> : null}
       </nav>
       <div className="ms-grow" />
-      {right}
       {slots ? <span className="ms-bar-slot ms-bar-end" ref={endSlotRef} /> : null}
+      {slots ? <span className="ms-bar-sep" aria-hidden="true" /> : null}
       <Status running={false} />
     </>
   );
@@ -212,7 +235,7 @@ function barKey(r: Route): string {
 export function TopBar() {
   const t = useT();
   const { route: r, catalog } = useShell();
-  const { owner } = useBarSlots();
+  const { owner, crumb } = useBarSlots();
   const titleBar = useTitleBarClass();
   const ref = useRef<HTMLElement>(null);
   const key = barKey(r);
@@ -224,31 +247,39 @@ export function TopBar() {
   }, [key]);
 
   const projectName = (slug: string) => catalog.projects?.find((p) => p.slug === slug)?.name ?? slug;
-  const creativeTitle = (slug: string, c: string) => catalog.creatives[slug]?.find((x) => x.slug === c)?.title || c;
+  // A variant sister (`<slug>~b`) is not in the catalog: its group shares the host's title (spec §2).
+  const catalogTitle = (slug: string, c: string) => {
+    const list = catalog.creatives[slug];
+    return list?.find((x) => x.slug === c)?.title || list?.find((x) => x.slug === c.replace(/~[a-z]$/, ''))?.title || null;
+  };
   let content: ReactNode;
-  /** The format view claimed the bar: only that bar folds its actions by its width (format.css, decision 713). */
+  /** The format page claimed the bar: only that bar folds its actions by its width (format.css, decision 713). */
   let formatBar = false;
+  const projectLink = (slug: string): CrumbLink => ({ label: projectName(slug), hash: href.project(slug), className: 'ms-crumb-project' });
+  const creativeLink = (slug: string, c: string): CrumbLink => {
+    const said = crumb && crumb.key === owner ? crumb : null;
+    const label = said?.title || catalogTitle(slug, c) || slugTitle(c);
+    const letter = said?.variant ?? (/~([a-z])$/.exec(c)?.[1]?.toUpperCase() ?? null);
+    return { label, title: letter ? `${label} · ${letter}` : label, tag: letter, hash: href.creative(slug, c), onOpen: said?.open ?? null, className: 'ms-crumb-creative' };
+  };
   switch (r.name) {
     case 'project':
       content = <ProjectTop slug={r.slug} tab={r.tab} />;
       break;
     case 'new-creative':
-      content = <CreativeTop back={{ label: t.web.shell.backCreatives, hash: href.project(r.slug) }} crumbs={[projectName(r.slug), t.web.shell.newCreative]} />;
+      content = <CreativeTop links={[projectLink(r.slug)]} current={t.web.shell.newCreative} />;
       break;
     case 'creative': {
       // The creative page puts its editable title in the bar; until it does, the crumb shows the known title.
       const claimed = owner === routeKey(r);
-      content = <CreativeTop back={{ label: t.web.shell.backCreatives, hash: href.project(r.slug) }} slots claimed={claimed}
-        crumbs={claimed ? [projectName(r.slug)] : [projectName(r.slug), creativeTitle(r.slug, r.creative)]} />;
+      content = <CreativeTop links={[projectLink(r.slug)]} slots current={claimed ? undefined : creativeLink(r.slug, r.creative).label} />;
       break;
     }
     case 'format': {
-      // The format page (the editor) puts "← All formats" (T4), the format and the version controls in the bar; until it
-      // does, the bar's own back button and the format id.
+      // The format page (the editor) puts the format's name, its facts and its actions in the bar; until it does, the id.
       const claimed = owner === routeKey(r);
       formatBar = claimed;
-      content = <CreativeTop back={claimed ? null : { label: t.web.shell.backAllFormats, hash: href.creative(r.slug, r.creative) }} slots claimed={claimed}
-        crumbs={claimed ? [projectName(r.slug), creativeTitle(r.slug, r.creative)] : [projectName(r.slug), creativeTitle(r.slug, r.creative), <span className="ms-mono">{r.format}</span>]} />;
+      content = <CreativeTop links={[projectLink(r.slug), creativeLink(r.slug, r.creative)]} slots current={claimed ? undefined : <span className="ms-mono">{r.format}</span>} />;
       break;
     }
     case 'settings':

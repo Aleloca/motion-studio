@@ -3,7 +3,7 @@
 // goes to the Trash), and the toasts (archive offers Undo). The core decides what a creative is acted on as (`removal`):
 // a single creative, variant A of a group (the whole group), or a variant B..E alone (it leaves its group).
 import type { CreativeRemovalInfo } from '@motion-studio/shared';
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { api } from '../../api.ts';
 import { useT } from '../../i18n.tsx';
 import { Button, Icon, Modal, NavItem, Popover, toast } from '../../ui/index.ts';
@@ -147,12 +147,15 @@ export function RemovalMenuItems({ removal, close }: { removal: CreativeRemoval;
  * A creative's "…" button with its menu: `extra` items first (given the close function), then Archive and Delete. The
  * removal info is read each time the menu opens (a job may have started or ended since).
  */
-export function CreativeActionsMenu({ slug, creative, label, onDone, extra, className, variant = 'outline', size }: {
+export function CreativeActionsMenu({ slug, creative, label, onDone, extra, className, variant = 'outline', size, buttonRef }: {
   slug: string; creative: string; label: string; onDone?: (kind: RemovalDone) => void;
   extra?: (close: () => void) => ReactNode; className?: string; variant?: 'outline' | 'ghost'; size?: 'sm';
+  /** The "…" button, for a popover that opens from it once the menu is closed (the version history of the creative bar). */
+  buttonRef?: RefObject<HTMLButtonElement | null>;
 }) {
   const [open, setOpen] = useState(false);
-  const more = useRef<HTMLButtonElement>(null);
+  const own = useRef<HTMLButtonElement>(null);
+  const more = buttonRef ?? own;
   const removal = useCreativeRemoval(slug, creative, onDone);
   const { load } = removal;
   useEffect(() => { if (open) load(); }, [open, load]);

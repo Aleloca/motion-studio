@@ -51,14 +51,31 @@ html, body, #root { height: 100%; }
 .ms-pop-cap { display: block; padding: 4px 8px 6px; }
 .ms-pop-sep { height: 1px; background: var(--line2); margin: 6px 4px; }
 
-/* Creative bar. */
-.ms-back { padding-left: 6px; flex: none; }
-.ms-crumbs { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted); }
-.ms-crumb { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
-.ms-crumb > span:last-child, .ms-crumb > b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ms-crumb:not(.ms-last) { flex: 0 1 auto; max-width: min(240px, 30vw); }
-.ms-crumb.ms-last { flex: 1 1 auto; }
-.ms-crumb.ms-last b { color: var(--text); font-weight: 600; }
+/* Creative bar (user reports 17 and 23): the app's mark, the breadcrumb (ancestors are links, the way back), the current
+   item and its facts, then the object's actions, a separator and the app's controls. Every control is 32 px tall. The crumbs
+   never wrap and never push the actions out: the creative's title gives way first, then the project's, the current item
+   last (it keeps at least a few words); each cut text has its whole text in the tooltip. */
+.ms-bar-home { padding: 5px; border-radius: 8px; }
+.ms-bar-home:hover { background: var(--field); }
+.ms-crumbs { display: flex; align-items: center; gap: 2px; min-width: 0; flex: 0 1 auto; color: var(--muted); white-space: nowrap; }
+.ms-crumb { display: inline-flex; align-items: center; gap: 2px; min-width: 0; }
+.ms-crumb-sep { color: var(--faint); padding: 0 2px; flex: none; }
+.ms-crumb-link { display: inline-flex; align-items: center; gap: 6px; min-width: 0; height: 32px; padding: 0 6px; border-radius: 8px; color: var(--muted); text-decoration: none; transition: background var(--d-s) var(--e-std), color var(--d-s) var(--e-std); }
+.ms-crumb-link:hover { background: var(--field); color: var(--text); }
+.ms-crumb-link:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ms-crumb-text, .ms-crumb > b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-crumb-tag { flex: none; font-size: 11px; font-weight: 600; line-height: 18px; padding: 0 6px; border-radius: 5px; background: var(--field); color: var(--muted); }
+.ms-crumb-link:hover .ms-crumb-tag { background: var(--panel); }
+/* Ancestors: the project up to 180 px, the creative up to 280 px; the creative shrinks first. */
+.ms-crumb.ms-crumb-project { flex: 0 4 auto; max-width: 180px; min-width: 44px; }
+.ms-crumb.ms-crumb-creative { flex: 0 8 auto; max-width: clamp(240px, 24vw, 420px); min-width: 56px; }
+.ms-crumb.ms-last { flex: 0 1 auto; min-width: 72px; }
+.ms-crumb.ms-last > b { padding: 0 6px; color: var(--text); font-weight: 600; }
+/* The "…" menu (BarMenu.tsx): an unavailable item's reason under it. */
+.ms-bar-menu-why { margin: 2px 12px 6px; font-size: 11.5px; line-height: 1.4; color: var(--muted); }
+/* Between the object's actions and the app's controls (bell, tokens, avatar). */
+.ms-bar-sep { width: 1px; height: 20px; background: var(--line); flex: none; margin: 0 4px; }
+.ms-bar-end:empty + .ms-bar-sep { display: none; }
 
 /* Activity center (popover body). */
 .ms-activity { margin: -8px; display: flex; flex-direction: column; min-height: 0; }
@@ -135,7 +152,7 @@ input.ms-palette-input::placeholder { color: var(--faint); }
 }
 .ms-app.ms-bare { grid-template-rows: minmax(0, 1fr); }
 
-/* Slots the creative page fills (barSlots.ts): its title and state after the breadcrumb, version menu and Export at the end. */
+/* Slots the creative page fills (barSlots.ts): its title and state after the breadcrumb, its actions at the end. */
 .ms-bar-slot { display: contents; }
 
 /* Integrated desktop title bar (desktop app only: titleBar.ts adds the classes). The bar is the window's drag region and

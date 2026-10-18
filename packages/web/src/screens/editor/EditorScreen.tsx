@@ -50,7 +50,7 @@ import { href, parseRoute, routeKey } from '../../routes.ts';
 import { useBarClaim } from '../../shell/barSlots.ts';
 import { setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } from '../../shell/intents.ts';
 import { go, ShellContext } from '../../shell/ShellContext.tsx';
-import { Button, ChannelMark, Empty, Icon, Modal, Pill, Segmented, Spinner, Tabs, Toggle, Tooltip, cx, toast } from '../../ui/index.ts';
+import { Button, ChannelMark, Empty, Icon, Modal, Pill, Segmented, Spinner, Tabs, Toggle, cx, toast } from '../../ui/index.ts';
 import { useCreative } from '../../useCreative.ts';
 import { pinsKey, usePendingPins } from '../pendingPins.ts';
 import { clipPin, findClipById, rangePin, rangeTimes } from '../pinModel.ts';
@@ -70,6 +70,8 @@ import { IdentitySizes } from '../identity/IdentitySizes.tsx';
 import { UseAsBrandLogo } from '../identity/UseAsBrandLogo.tsx';
 import { compositionOf } from '../renderModel.ts';
 import { ExportButton } from '../ExportButton.tsx';
+import { BriefOffChip } from '../BriefOffChip.tsx';
+import { BarMenu, BarMenuItem } from '../../shell/BarMenu.tsx';
 import { FPS as DEFAULT_FPS, round3, timecode, type Mark, type Speed } from '../Transport.tsx';
 import { entryAt, followersOf, formatStates, shownOf } from '../versionModel.ts';
 import { discardedSelf } from '../variants/variantModel.ts';
@@ -201,7 +203,10 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   const known = Boolean(detail && (detail.creative.brief.formats.includes(format)
     || versions.some((v) => v.outputs.some((o) => o.format === format) || v.compositions?.some((x) => x.format === format))));
   const viewer = !loadingAll && (!known || n === null || (version !== null && comp === null));
-  const bar = useBarClaim(ownKey, active && !viewer);
+  // The bar's creative crumb is the way back (user report 23): the creative's title, the variant, and `back` (T4).
+  const backRef = useRef<() => void>(() => {});
+  const crumbVariant = detail?.variants && !detail.variants.orphan ? detail.variants.letter.toUpperCase() : null;
+  const bar = useBarClaim(ownKey, active && !viewer, { title: detail?.creative.title ?? null, variant: crumbVariant, open: () => backRef.current() });
   // A read-only view's draft goes when another version is shown (it never has edits).
   useEffect(() => (viewOnly ? () => { ownActions.discard(); } : undefined), [viewOnly, ownActions]);
   /** Shows version `v` of the format: the editable one in the editor, another one read-only. */
@@ -666,6 +671,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     if (n !== null) setShownVersions(`${slug}/${creative}`, { [primary]: n });
     go(href.creative(slug, creative));
   };
+  backRef.current = back;
 
   // T3: the board grows into the stage's frame, there from the first render (sized from the catalog); then the side panels.
   const flipped = useRef(false);
@@ -711,6 +717,8 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     // Phase 15: in a variant group the ★ is the group's (this variant, this version), written through the host.
     ...(group ? { groupPick: (id: string, v: number | null) => api.setVariantPick(slug, group.host, id, v === null ? null : { slug: creative, version: v }) } : {}) });
   const versionButton = useRef<HTMLButtonElement>(null);
+  const moreButton = useRef<HTMLButtonElement>(null);
+  const [history, setHistory] = useState(false);
   // The viewer announces new versions itself while it is shown.
   useNewVersionNotice(Boolean(detail) && !viewer, latest?.n ?? null, active && !viewer, versionButton);
   const [compare, setCompare] = useState<{ open: boolean; init: [number, number] } | null>(null);
@@ -782,13 +790,11 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   const ownLabel = labelOf(format);
   // The version's duration against the brief's (decisions log 262): a discreet note, never a change of the brief.
   const briefSec = detail?.creative.brief.durationSec ?? null;
-  const offBrief = draft && video && briefSec !== null && isDurationOffBrief(draft.composition.duration, briefSec)
-    ? (version?.origin === 'editor' ? f.briefDurationEdited : f.briefDuration)({ n: formatNumber(locale, briefSec, { maximumFractionDigits: 1 }) })
-    : null;
+  const offBrief = Boolean(draft && video && briefSec !== null && isDurationOffBrief(draft.composition.duration, briefSec));
   const meta = draft
-    ? [video
+    ? video
       ? e.meta({ size: `${width}×${height}`, seconds: formatNumber(locale, draft.composition.duration, { maximumFractionDigits: 1 }), fps: draft.composition.fps })
-      : e.metaImage({ size: `${width}×${height}` }), offBrief].filter(Boolean).join(' · ')
+      : e.metaImage({ size: `${width}×${height}` })
     : '';
   const frameStyle: CSSProperties = zoomFrame(width, height, video ? null : zoom);
   const alsoList = followers.map(labelOf).join(', ');
@@ -808,19 +814,22 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   const imgSrc = out && version ? outputUrl(slug, creative, version.n, out.file) : null;
   const darkSrc = darkLogo && idSet && version ? outputUrl(slug, creative, version.n, `${idSet.dir}/${darkLogo.path}`) : null;
   const pickedBy = group?.group.picks[primary];
-  const backButton = <Tooltip label={t.web.shell.backAllFormats} whenHidden=".ms-bar-label"><Button className="ms-back ms-fold-3" aria-label={t.web.shell.backAllFormats} onClick={back}><Icon name="back" size={16} strokeWidth={1.5} /><span className="ms-bar-label">{t.web.shell.backAllFormats}</span></Button></Tooltip>;
+  const channel = ownPreset ? channelName(ownPreset.channel, locale) : null;
 
   const page = (
     <div ref={root} className={cx('ms-ed', video ? 'ms-ed-video' : 'ms-ed-image')} aria-busy={!draft || undefined}>
-      {bar?.start ? createPortal(backButton, bar.start) : null}
       {bar?.title ? createPortal(
         <>
           <span className="ms-crumb ms-last ms-fv-crumb">
-            <span className="ms-faint" aria-hidden="true">/</span>
+            <span className="ms-crumb-sep" aria-hidden="true">/</span>
             {ownPreset ? <ChannelMark channel={channelOf(ownPreset.channel)} /> : null}
-            <b aria-current="page" title={ownPreset ? channelName(ownPreset.channel, locale) : undefined}>{instanceName(ownPreset ?? null, format, locale, labels)}</b>
+            <b aria-current="page" title={[channel, meta].filter(Boolean).join(' · ') || undefined}>{instanceName(ownPreset ?? null, format, locale, labels)}</b>
           </span>
-          {meta ? <span className="ms-fv-meta">{meta}</span> : null}
+          {meta ? <span className="ms-fv-meta" title={meta}>{meta}</span> : null}
+          {offBrief && draft && cr ? (
+            <BriefOffChip slug={slug} creative={creative} brief={cr.brief} actual={draft.composition.duration} edited={version?.origin === 'editor'}
+              disabled={discarded ? t.web.variantGroup.discardedReadOnly : working ? e.busyAgent : null} onChanged={reload} />
+          ) : null}
           {out && !out.verified ? <Pill tone="warn" className="ms-cv-state-pill">{t.web.formatUi.unverified}</Pill> : null}
         </>,
         bar.title,
@@ -834,26 +843,37 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
             </span>
           ) : state && cr ? (
             <span className="ms-fv-badge">
-              <FormatBadge slug={slug} creative={creative} label={ownLabel} versions={versions} shown={n} resumeFrom={cr.resumeFrom?.version ?? null}
+              <FormatBadge bar buttonRef={versionButton} slug={slug} creative={creative} label={ownLabel} versions={versions} shown={n} resumeFrom={cr.resumeFrom?.version ?? null}
                 state={group ? { ...state, star: { ...state.star, version: pickedBy?.slug === creative ? pickedBy.version : null, manual: pickedBy?.slug === creative, newer: null } } : state}
                 labelOf={labelOf} actions={versionActions} busy={working} onView={onView} onCompare={openCompare} />
             </span>
           ) : null}
-          {versions.length && cr ? (
-            <VersionTimeline slug={slug} creative={creative} versions={versions} resumeFrom={cr.resumeFrom?.version ?? null} actions={versionActions} buttonRef={versionButton} />
-          ) : null}
           <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} readOnly={discarded ? t.web.variantGroup.discardedReadOnly : null} />
-          {comp !== null && !working ? (
-            <Tooltip label={discarded ? t.web.variantGroup.discardedReadOnly : `${t.web.instances.duplicate} · ${t.web.instances.duplicateHint({ label: ownLabel })}`} whenHidden=".ms-bar-label">
-              <Button variant="outline" className="ms-fv-duplicate ms-fold-2" aria-label={t.web.instances.duplicate} loading={duplicating}
-                disabled={discarded} {...(discarded ? { title: t.web.variantGroup.discardedReadOnly } : {})} onClick={() => void duplicate()}>
-                <Icon name="copy" size={13} strokeWidth={1.7} /><span className="ms-bar-label">{t.web.instances.duplicate}</span>
-              </Button>
-            </Tooltip>
-          ) : null}
           {/* Decision 974: no Render button; Export renders what it needs and shows a render or an export in progress. */}
           <ExportButton jobs={Object.values(live.jobs)} jobKey={detail?.jobKey ?? null} scope={comp !== null ? { version, format: primary } : null} disabled={!latest}
             onClick={() => { if (latest) setExporting({ open: true, snapshot: { versions, states } }); }} />
+          {/* User report 17: the rare actions in "…": Duplicate format, and the variant's version history (decision 972). */}
+          {(comp !== null && !working) || (versions.length && cr) ? (
+            <BarMenu buttonRef={moreButton}>
+              {(close) => (
+                <>
+                  {comp !== null && !working ? (
+                    <BarMenuItem icon="copy" close={close} run={() => void duplicate()} hint={t.web.instances.duplicateHint({ label: ownLabel })}
+                      disabled={discarded ? t.web.variantGroup.discardedReadOnly : duplicating ? t.web.instances.duplicate : null}>{t.web.instances.duplicate}</BarMenuItem>
+                  ) : null}
+                  {versions.length && cr ? (
+                    <BarMenuItem icon="clock" close={close} run={() => setHistory(true)}>
+                      {crumbVariant ? t.web.canvas.versions.historyItemVariant({ letter: crumbVariant }) : t.web.canvas.versions.historyItem}
+                    </BarMenuItem>
+                  ) : null}
+                </>
+              )}
+            </BarMenu>
+          ) : null}
+          {versions.length && cr ? (
+            <VersionTimeline slug={slug} creative={creative} versions={versions} resumeFrom={cr.resumeFrom?.version ?? null} actions={versionActions}
+              open={history} onClose={() => setHistory(false)} anchor={moreButton} />
+          ) : null}
         </>,
         bar.end,
       ) : null}

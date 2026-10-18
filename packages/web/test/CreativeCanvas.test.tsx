@@ -448,7 +448,8 @@ describe('CreativeCanvas · versions', () => {
     expect(within(pop).getByText('La prossima modifica parte dalla v1. Le versioni successive restano nella cronologia.')).toBeTruthy();
     await userEvent.click(within(pop).getByRole('button', { name: 'Riparti da qui' }));
     expect(api.restoreVersion).toHaveBeenCalledWith('acme', 'lancio', 1);
-    await userEvent.click(screen.getByRole('button', { name: /apri la cronologia della creatività/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Altre azioni' }));
+    await userEvent.click(within(await screen.findByRole('menu', { name: 'Altre azioni' })).getByRole('menuitem', { name: 'Cronologia delle versioni' }));
     await userEvent.click(within(await screen.findByRole('dialog', { name: 'Versioni' })).getByRole('button', { name: 'Mostra nel Finder' }));
     expect(api.revealVersion).toHaveBeenCalledWith('acme', 'lancio', 2);
   });
@@ -1317,23 +1318,26 @@ describe('CreativeCanvas · per-format versions (Phase 9)', () => {
     expect(document.querySelector('.ms-cv-world')!.hasAttribute('aria-busy')).toBe(false);
   });
 
-  it('the bar’s "Versions" opens the creative timeline with Restart from here and Show in Finder', async () => {
+  it('the bar’s "…" opens the creative timeline (decision 972: no "Versions" button) with Restart from here and Show in Finder', async () => {
     detail = linked();
     render(<Harness live={emptyLive()} />);
     await loaded();
-    const button = screen.getByRole('button', { name: 'Versioni (3): apri la cronologia della creatività' });
-    expect(button.textContent).toContain('Versioni');
-    // Clickable inside the title bar's drag region (desktop): a no-drag control in a bar slot; its popover is portalled.
-    expect(button.classList.contains('ms-no-drag')).toBe(true);
+    expect(screen.queryByRole('button', { name: /apri la cronologia/ })).toBeNull();
+    const button = screen.getByRole('button', { name: 'Altre azioni' });
+    // Clickable inside the title bar's drag region (desktop): a control in a bar slot; its popover is portalled.
     expect(button.closest('.ms-bar-slot')).not.toBeNull();
-    await userEvent.click(button);
+    const open = async () => {
+      await userEvent.click(button);
+      await userEvent.click(within(await screen.findByRole('menu', { name: 'Altre azioni' })).getByRole('menuitem', { name: 'Cronologia delle versioni' }));
+    };
+    await open();
     const menu = await screen.findByRole('dialog', { name: 'Versioni' });
     expect(within(menu).getByText('Solo il post')).toBeTruthy();
     await userEvent.click(within(menu).getByRole('button', { name: /^Versione 1 ·/ }));
     expect(within(menu).getByText('La prossima modifica parte dalla v1. Le versioni successive restano nella cronologia.')).toBeTruthy();
     await userEvent.click(within(menu).getByRole('button', { name: 'Mostra nel Finder' }));
     expect(api.revealVersion).toHaveBeenCalledWith('acme', 'lancio', 1);
-    await userEvent.click(button);
+    await open();
     const again = await screen.findByRole('dialog', { name: 'Versioni' });
     await userEvent.click(within(again).getByRole('button', { name: /^Versione 2 ·/ }));
     await userEvent.click(within(again).getByRole('button', { name: 'Riparti da qui' }));
