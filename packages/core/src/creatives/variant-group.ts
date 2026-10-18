@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
   activeMembers, canDiscard, sisterSlug, effectiveLinks, followerVersion, formatDisplayName, hasFormat, MAX_INSTANCES, letterOfSlug, nextInstanceId, nextLetter, presetOf, starOf,
@@ -14,7 +14,6 @@ import { copyVerified, versionDirReady } from './carry-over.ts';
 import { compositionDirOf } from './composition-contract.ts';
 import { alignEditorCopies } from './composition-turn.ts';
 import { CREATIVE_SLUG_RE, creativeKind, groupTiedTo, isRealSister, memberPresent, type ChatMigration, type CreativeStore } from './creative-store.ts';
-import { PREMERGE_FILE } from './group-conversation.ts';
 import type { BriefPatch, CreativeRef, CreativeTurnService, SharedBrief } from './creative-turns.ts';
 
 /**
@@ -100,6 +99,8 @@ export class VariantGroupService {
    * a group read (the conversation route): lazily, the first time the group is idle. Commits the logs (best effort).
    */
   async mergeChat(ref: CreativeRef): Promise<ChatMigration> {
+    // Decision 1167: a merged group with nothing to do takes no lock (the conversation route calls this on every read).
+    if (!(await this.deps.store.chatNeedsMerge(ref.creativeSlug))) return 'done';
     const r = await this.resolve(ref);
     if (r.orphan || !r.group) return 'none';
     const { store, turns } = this.deps;
@@ -116,8 +117,9 @@ export class VariantGroupService {
       });
       if (result !== 'migrated') return result;
       const g = (await store.get(host.creativeSlug)).variantGroup!;
-      const logs = [store.dir(host.creativeSlug), ...g.members.filter((m) => m.slug !== host.creativeSlug).map((m) => store.dir(m.slug))]
-        .flatMap((d) => [join(d, 'conversation.jsonl'), join(d, PREMERGE_FILE)]).filter((p) => existsSync(p));
+      const logs = (await Promise.all([store.dir(host.creativeSlug), ...g.members.filter((m) => m.slug !== host.creativeSlug).map((m) => store.dir(m.slug))]
+        .map(async (d) => (await readdir(d).catch(() => [] as string[])).filter((n) => n === 'conversation.jsonl' || n.startsWith('conversation.premerge')).map((n) => join(d, n)))))
+        .flat().filter((p) => existsSync(p));
       const retired = g.members.filter((m) => m.slug !== host.creativeSlug).map((m) => join(store.dir(m.slug), 'conversation.jsonl'));
       const message = t().jobs.groupChatMergedCommit({ title: (await store.get(host.creativeSlug)).title });
       const files = [join(store.dir(host.creativeSlug), 'creative.json'), ...logs];

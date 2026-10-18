@@ -65,6 +65,12 @@ export interface VariantGroup {
    * each member still writes its own file and readers merge them in memory).
    */
   chat?: 'single';
+  /**
+   * Decision 1163: a merge of the chats past its commit point and not yet finished: the merged log's hash and size (only a
+   * file that matches is ever adopted), the copy of each log taken before it (by member slug) and the members whose own log
+   * is still to retire. Cleared when the merge is finished.
+   */
+  chatMerge?: { sha256: string; size: number; copies: Record<string, string>; retire: string[] };
 }
 
 const memberSchema = z.object({
@@ -82,6 +88,11 @@ export const variantGroupSchema: z.ZodType<VariantGroup> = z.object({
   picks: z.record(z.string().min(1), pickSchema),
   layout: z.enum(['variant', 'format']),
   chat: z.literal('single').optional(),
+  chatMerge: z.object({
+    sha256: z.string().regex(/^[0-9a-f]{64}$/), size: z.number().int().min(0),
+    copies: z.record(memberSlugSchema, z.string().regex(/^conversation\.premerge(?:-[0-9a-z]+)?\.jsonl$/)),
+    retire: z.array(memberSlugSchema),
+  }).optional(),
 }).superRefine((g, ctx) => {
   const issue = (message: string) => ctx.addIssue({ code: 'custom', message });
   if (g.members[0]?.letter !== 'a') issue('variant.hostNotFirst');
@@ -104,7 +115,10 @@ export const letterOfSlug = (slug: string): VariantId => {
   return i < 0 ? 'a' : slug.slice(i + 1);
 };
 
-/** The id after the group's highest one: ids are never reused, even after a member is removed (decision 1151). */
+/**
+ * The id after the group's highest member (decision 1151). The core also keeps a high-water mark on the host
+ * (`variantNext`, decision 1162) so an id is never given twice, even after members left or the group dissolved.
+ */
 export const nextLetter = (g: VariantGroup): VariantId =>
   variantIdAt(Math.max(-1, ...g.members.map((m) => variantIndex(m.letter))) + 1);
 

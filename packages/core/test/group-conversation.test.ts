@@ -6,13 +6,14 @@
  * cut at any step.
  */
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { sisterSlug, type Brief, type ConversationEntry, type CreativeFile, type VariantGroup } from '@motion-studio/shared';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { mergeConversations } from '../src/creatives/group-conversation.ts';
+import { CREATIVE_CORE_FILES } from '../src/agent/protected-links.ts';
 
 const brief: Brief = { goal: 'Lancio app', message: '', formats: ['instagram-post-1x1'], durationSec: 6, assets: [], notes: '' };
 const T = (s: number) => new Date(Date.UTC(2026, 9, 18, 10, 0, s)).toISOString();
@@ -139,7 +140,10 @@ describe('the migration (decision 982)', () => {
     await store.appendConversation(sis('b'), info(20, 'B più tardi'));
     expect(await store.migrateConversation(host, IDLE)).toBe('migrated');
     expect(texts(await store.readConversation(host))).toEqual([...view, 'b:B più tardi']);
-    expect(await raw(sis('b'), 'conversation.premerge.jsonl')).toContain('B più tardi');
+    // The copy of the cut attempt is kept; the merge's own copy has the later message (decision 1164).
+    const copies = (await readdir(join(dir, 'creatives', sis('b')))).filter((f) => f.startsWith('conversation.premerge'));
+    expect(copies).toHaveLength(2);
+    expect((await Promise.all(copies.map((f) => raw(sis('b'), f)))).some((x) => x.includes('B più tardi'))).toBe(true);
   });
 
   it('cut after its commit point: the next read or write finishes it first; nothing lost or doubled', async () => {
@@ -182,5 +186,84 @@ describe('the migration (decision 982)', () => {
     await store.update(host, { variantGroup: { ...g, members: g.members.filter((m) => m.letter !== 'c') } });
     await store.appendConversation(sis('c'), info(50, 'orfana'));
     expect(texts(await store.readConversation(sis('c')))).toEqual(['-:ciao C', '-:orfana']);
+  });
+});
+
+describe('review fixes of the merge', () => {
+  const forged = JSON.stringify(session(99, 'jx', 'forged-session')) + '\n';
+
+  it('C1: the merge files are core files (the agent cannot write them; the tripwire watches them)', () => {
+    expect(CREATIVE_CORE_FILES).toEqual(expect.arrayContaining(['conversation.merged.jsonl', 'conversation.premerge.jsonl']));
+  });
+
+  it('C1: a conversation.merged.jsonl that appears in a merged group is never adopted: nothing is lost, no session planted', async () => {
+    await oldLogs();
+    await store.migrateConversation(host, IDLE);
+    await store.appendConversation(sis('b'), info(30, 'dopo il merge'));
+    const before = texts(await store.readConversation(host));
+    await writeFile(log(host, 'conversation.merged.jsonl'), forged);
+    await store.appendConversation(sis('c'), info(31, 'ancora'));
+    expect(texts(await store.readConversation(sis('b')))).toEqual([...before, 'c:ancora']);
+    expect((await store.lastTurnSession(host))?.sessionId).toBe('sa');
+    expect(await store.migrateConversation(host, IDLE)).toBe('done');
+    expect(texts(await store.readConversation(host))).toEqual([...before, 'c:ancora']);
+  });
+
+  it('C1: cut after the commit point, a forged merged log is refused; the merge is rebuilt from the copies', async () => {
+    await oldLogs();
+    const view = texts(await store.readConversation(host));
+    await expect(store.migrateConversation(host, IDLE, { afterFlag: async () => { throw new Error('crash'); } })).rejects.toThrow('crash');
+    await writeFile(log(host, 'conversation.merged.jsonl'), forged);
+    expect(texts(await store.readConversation(sis('c')))).toEqual(view);
+    expect((await store.get(host)).variantGroup?.chatMerge).toBeUndefined();
+    expect(existsSync(log(sis('b')))).toBe(false);
+  });
+
+  it('minor 1: cut after the host took the merged log but before a sister\'s log was retired: the next access retires it; an orphan never reads it twice', async () => {
+    await oldLogs();
+    const view = texts(await store.readConversation(host));
+    await expect(store.migrateConversation(host, IDLE, { afterAdopt: async () => { throw new Error('crash'); } })).rejects.toThrow('crash');
+    expect(existsSync(log(sis('b')))).toBe(true);
+    expect(texts(await store.readConversation(host))).toEqual(view);
+    expect(existsSync(log(sis('b')))).toBe(false);
+    expect((await store.get(host)).variantGroup?.chatMerge).toBeUndefined();
+    // An orphan whose log starts with its copy (an unfinished retire, by hand) reads it once.
+    const g = (await store.get(host)).variantGroup!;
+    await store.update(host, { variantGroup: { ...g, members: g.members.filter((m) => m.letter !== 'c') } });
+    await writeFile(log(sis('c')), await raw(sis('c'), 'conversation.premerge.jsonl'));
+    await store.appendConversation(sis('c'), info(50, 'orfana'));
+    expect(texts(await store.readConversation(sis('c')))).toEqual(['-:ciao C', '-:orfana']);
+  });
+
+  it('minor 4 and 2: a member\'s log found again after the merge (its folder was missing) is merged in at the next idle merge; no earlier copy is overwritten', async () => {
+    await oldLogs();
+    const bLog = await raw(sis('b'));
+    await rm(join(dir, 'creatives', sis('b')), { recursive: true });
+    await store.migrateConversation(host, IDLE);
+    const hostCopy = await raw(host, 'conversation.premerge.jsonl');
+    expect(texts(await store.readConversation(host)).filter((x) => x.startsWith('b:'))).toEqual([]);
+    // The folder comes back (from a backup, or git).
+    const at = T(0);
+    await store.createSister(host, 'b', { schemaVersion: 1, title: 'Lancio', brief, status: 'draft', error: null, createdAt: at, updatedAt: at, resumeFrom: null, linkedCodebases: [], variantOf: host }).catch(() => null);
+    await writeFile(log(sis('b')), bLog);
+    await store.appendConversation(host, info(40, 'A più tardi'));
+    expect(await store.migrateConversation(host, async () => false)).toBe('busy');
+    expect(await store.migrateConversation(host, IDLE)).toBe('migrated');
+    expect(texts(await store.readConversation(host))).toEqual(['a:ciao A', 'b:ciao B', 'b:jb', 'a:A fatto', 'c:ciao C', 'a:ja', 'b:B fatto', 'a:A più tardi']);
+    expect(existsSync(log(sis('b')))).toBe(false);
+    // The first copy of the host's log is still there, beside the second.
+    expect(await raw(host, 'conversation.premerge.jsonl')).toBe(hostCopy);
+    const copies = (await readdir(join(dir, 'creatives', host))).filter((f) => f.startsWith('conversation.premerge'));
+    expect(copies.length).toBe(2);
+    // A new sister's empty log is no reason to merge again.
+    expect(await store.migrateConversation(host, IDLE)).toBe('done');
+  });
+
+  it('steady state: a merged group needs nothing (the conversation route skips the locks)', async () => {
+    await oldLogs();
+    expect(await store.chatNeedsMerge(host)).toBe(true);
+    await store.migrateConversation(host, IDLE);
+    expect(await store.chatNeedsMerge(host)).toBe(false);
+    expect(await store.chatNeedsMerge(sis('b'))).toBe(false);
   });
 });

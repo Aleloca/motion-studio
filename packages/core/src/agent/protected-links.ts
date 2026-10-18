@@ -5,7 +5,8 @@ import { basename, dirname, join, relative, sep } from 'node:path';
 import { noteCoreChange } from '../core-changes.ts';
 
 /** Per creative: the conversation log plus the metadata the core owns (the agent only writes outputs/vN/ and work/). */
-export const CREATIVE_CORE_FILES = ['conversation.jsonl', 'versions.json', 'creative.json'];
+// Decision 1163: the merge files of a variant group's chat too (the agent must never write one the core would adopt).
+export const CREATIVE_CORE_FILES = ['conversation.jsonl', 'versions.json', 'creative.json', 'conversation.merged.jsonl', 'conversation.premerge.jsonl'];
 /** Per brand proposal: its activity log. */
 export const PROPOSAL_LOG = 'log.jsonl';
 /** Project files the core or the next agent turn loads (also protected by the launcher). */

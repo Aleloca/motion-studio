@@ -11,7 +11,7 @@ import { localeTag } from './localization/schema.ts';
 import { channelName, DEFAULT_FORMATS, formatDisplayName } from './formats.ts';
 import { messages, type Locale } from './i18n/index.ts';
 import type { FormatSummary } from './formats/link.ts';
-import { variantGroupSchema, creativeSlugSchema, type VariantGroup, type VariantId } from './variants.ts';
+import { variantGroupSchema, variantIdSchema, creativeSlugSchema, type VariantGroup, type VariantId } from './variants.ts';
 
 export const creativeStatusSchema = z.enum(['draft', 'working', 'ready', 'incomplete', 'error', 'interrupted']);
 export type CreativeStatus = z.infer<typeof creativeStatusSchema>;
@@ -97,8 +97,13 @@ export const creativeFileSchema = z.object({
   stoppedSession: z.object({ sessionId: z.string().min(1), at: z.iso.datetime(), jobId: z.string().min(1) }).optional(),
   /** Phase 15: the variant group, kept on the host creative (letter a) only. Absent in old files. */
   variantGroup: variantGroupSchema.optional(),
-  /** Phase 15: on a sister creative (`<host>~b`..`~e`), the host's slug. Absent in old files and on hosts. */
+  /** Phase 15: on a sister creative (`<host>~b`, `~aa`…), the host's slug. Absent in old files and on hosts. */
   variantOf: creativeSlugSchema.optional(),
+  /**
+   * Decision 1162: on a host, the position of the next variant id ever to be given (`variantIdAt`): never lowered, kept when
+   * a sister leaves and when the group dissolves, so an id is never given twice. Absent in older files.
+   */
+  variantNext: z.number().int().min(1).optional(),
   /**
    * Decision 915: when the user archived the creative. An archived creative is left out of the project's lists (creatives,
    * search, "Jump back in") and listed under "Archiviate", where it can be restored. Absent: not archived.
@@ -397,6 +402,11 @@ export const queuedRequestSchema = z.object({
    * is now kept in the core's memory (only what this process queued starts by itself).
    */
   bootId: z.string().min(1).max(100).optional(),
+  /**
+   * Decision 1153: the request was sent to several variants at once ("Tutte"): `id` is the one request, `lead` the variant
+   * whose turn may add variants (the others are told not to). Kept with the queued request so a restart does not lose it.
+   */
+  fanout: z.object({ id: z.string().min(1).max(100), lead: variantIdSchema }).optional(),
 });
 export type QueuedRequest = z.infer<typeof queuedRequestSchema>;
 
@@ -412,7 +422,9 @@ type ConversationEntryBody =
    * (`live`: into the running turn; `queued`: a queued request that started; `redirect`: Stop and redirect), `clientId` the
    * client's id of it (idempotency), `jobId` the turn it belongs to, `deliveredAt` when it went into a prompt.
    */
-  | { type: 'user'; at: string; text: string; pins: Pin[]; attachments: string[]; jobId?: string; mode?: 'live' | 'queued' | 'redirect'; clientId?: string; deliveredAt?: string }
+  | { type: 'user'; at: string; text: string; pins: Pin[]; attachments: string[]; jobId?: string; mode?: 'live' | 'queued' | 'redirect'; clientId?: string; deliveredAt?: string;
+    /** Decision 1166: the one request id of a message sent to several variants at once (one entry per variant). */
+    fanout?: string }
   | { type: 'agent'; at: string; jobId: string; event: AgentEvent }
   | { type: 'version'; at: string; n: number; status: 'complete' | 'incomplete' }
   /**
