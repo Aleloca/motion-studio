@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('motionStudio', {
   platform: process.platform,
   pickFolder: (title: string, defaultPath?: string): Promise<string | null> => ipcRenderer.invoke('ms:pick-folder', { title, defaultPath }),
   revealPath: (path: string): Promise<void> => ipcRenderer.invoke('ms:reveal', path),
+  // Opens a folder itself in the file manager (a plain folder only; the main process checks it).
+  openFolder: (path: string): Promise<void> => ipcRenderer.invoke('ms:open-folder', path),
   // Approval signals (spec §6.3): the main process validates both and shows them only for the app's own page.
   // Answers what the system did with it: { shown: true } or { shown: false, reason, detail? }.
   notify: (p: { title: string; body: string; sound?: boolean }): Promise<unknown> => ipcRenderer.invoke('ms:notify', { title: p?.title, body: p?.body, sound: p?.sound }),

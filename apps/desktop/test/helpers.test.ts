@@ -1,12 +1,33 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppConfigStore, t } from '@motion-studio/core';
-import { absolutePathArg, attachedGone, attachedGoneAction, attachedLocale, bootLocale, focusOnReady, readSavedLanguage, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, userDataDir } from '../src/helpers.ts';
+import { absolutePathArg, openableFolder, attachedGone, attachedGoneAction, attachedLocale, bootLocale, focusOnReady, readSavedLanguage, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, userDataDir } from '../src/helpers.ts';
 
 describe('desktop helpers', () => {
+  it('opens only a plain folder in the file manager (user report 21): never a file, a link, an app or another bundle', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ms-test-open-folder-'));
+    try {
+      await mkdir(join(dir, 'Export'));
+      await writeFile(join(dir, 'Export', 'video.mp4'), 'x');
+      await mkdir(join(dir, 'Evil.app', 'Contents'), { recursive: true });
+      await mkdir(join(dir, 'Plug.BUNDLE'));
+      await mkdir(join(dir, 'Looks plain', 'Contents'), { recursive: true });
+      await symlink(join(dir, 'Export'), join(dir, 'link'));
+      expect(await openableFolder(join(dir, 'Export'))).toBe(true);
+      expect(await openableFolder(join(dir, 'Export', 'video.mp4'))).toBe(false);
+      expect(await openableFolder(join(dir, 'Evil.app'))).toBe(false);
+      expect(await openableFolder(join(dir, 'Plug.BUNDLE'))).toBe(false);
+      expect(await openableFolder(join(dir, 'Looks plain'))).toBe(process.platform !== 'darwin');
+      expect(await openableFolder(join(dir, 'link'))).toBe(false);
+      expect(await openableFolder(join(dir, 'missing'))).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('reads the UI token from the URL fragment only', () => {
     expect(tokenFromAppUrl('http://127.0.0.1:4318/#t=abc123')).toBe('abc123');
     expect(tokenFromAppUrl('http://127.0.0.1:4318/')).toBeNull();
