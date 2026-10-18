@@ -56,3 +56,123 @@ arrives and worked on later together.
     into the chat composer (like the clip comment chip), so the user can talk to the agent about exactly that animation.
 11. **Colour fields: add a generic colour picker.** The brand and composition swatches are good, but every colour field also
     needs a free picker (any colour, plus hex input).
+
+## Reports of 2026-10-18 (editor, an SVG image layer)
+
+12. **An SVG layer's elements belong in the Layers panel, nested under the layer.** Today the Inspector of a vector-image
+    layer lists "Texts" and "Elements" (Path 1…7, each with an eye). Wanted: the elements appear in the Layers list as
+    children of the layer (expandable), like a design tool's layer tree. Clicking the layer shows the layer's inspector;
+    clicking an element shows an inspector with only that element's settings (fill, stroke, visibility).
+13. **"Path 7" is the word "MotionStudio", but its text can't be changed.** The SVG's lettering is outlined (paths, not
+    `<text>`), so the inspector says "No texts" and offers only colours. Not a bug of the reader, but the user expects to
+    edit the word. Ideas: say it plainly ("this text is drawn as shapes: to change the words, ask the agent or replace it with
+    a text layer"), a one-click "Replace with text" that swaps the element for a real text layer in the brand font, or a
+    shortcut "Ask the agent to change this text" (as in report 10).
+14. **The element's colour fields are two unlabelled pickers.** Selecting Path 7 shows two identical blocks (swatch, hex,
+    Brand palette): the first is the fill, the second the stroke (`svgFill` / `svgStroke` are not visible labels), and the
+    stroke one is empty (`#rrggbb`). Needs visible "Fill" / "Stroke" labels, a compact layout (one palette, not two), and a
+    clear "no stroke" state.
+15. **The stage toolbar's buttons are unclear on an image.** Undo, Redo, "Comment a point" (pin), "Comment on clip", Snap
+    (magnet): icons with tooltips only, and Snap duplicates the timeline's magnet. On an image layer the user can't tell what
+    they do. Ideas: labels or richer tooltips, drop the duplicate Snap, hide what does not apply.
+16. **Switching between the Editor (chat) and the Inspector on an image is not obvious.** The right panel's Chat | Inspector
+    tabs are easy to miss; selecting a layer could open the Inspector by itself, and the tabs need to look like tabs.
+17. **The editor's top bar is cluttered, with no visual hierarchy.** Right side, in a row: the pick badge "★ v1 ⌄", "Versions 2
+    ⌄", the "Live preview" pill, "Render", "Duplicate format", the black "Export", then the bell, "0 tokens" and the avatar.
+    The user: the controls look added one at a time, with no shared UX logic and no clear hierarchy. Ideas: one version control
+    (merge the pick badge and the Versions menu: "v1 ★ · 2 versions ⌄"); "Live preview" as status text, not a pill that looks
+    like a button; one primary action (Export) and one secondary (Render); "Duplicate format" (and other rare actions) into
+    the "…" menu; consistent sizes and spacing; separate the creative's actions from the app's (bell, tokens, avatar).
+18. **"Ask the agent" on an animation should work like the notes.** Today (`EditorScreen.tsx` `askAnimation`) it adds a clip
+    pin with a fixed note ("about the In animation") and jumps to the Chat tab, so the user's words go in the composer, not in
+    the comment. Wanted: the same flow as a clip or spot comment: the note popover opens (`startComment`), the user writes what
+    to change, and the comment is stored bound to that clip and that animation slot (in/out); the user stays in the editor,
+    comments pile up in the chat's pending list and are sent to the agent together.
+19. **(with 17) While a render runs the top bar breaks.** The "Render" button turns into a "Rendering 26%" pill, and a short
+    orange progress line sticks out of it and runs into "Duplicate format". The redesign of 17 must include the rendering
+    state: progress inside the Render control (same size), no stray line, no layout shift.
+20. **The Export dialog can't be closed while it renders.** "Export the starred versions" with a format not rendered yet:
+    "Rendering 1 format first…", and the ×, Cancel and the checkboxes are disabled (`ExportDialog.tsx`: `dismissible={!busy}`,
+    close `disabled={running}`). The render is a server job and would go on, but the copy to the folder is driven by the open
+    dialog, so closing would lose the export. Wanted: close the dialog and keep working; the export finishes on its own
+    (server-side: render, then copy) and tells the user when the files are in the folder (bell/toast), with a way to cancel it
+    from the job list. Also: "Cancel" while rendering should stop the export, not only be disabled.
+21. **"Show in Finder" opens the folder's parent.** After an export to `~/Desktop`, the button (`ExportDialog.tsx:367`,
+    `bridge.revealPath(phase.destination)`) reveals the destination folder itself, so Finder shows its parent with the folder
+    selected (here iCloud Drive with "Scrivania" highlighted) and the user has to open it by hand. Wanted: Finder opens inside
+    the folder, with the exported file(s) selected: reveal the exported file (one file), or open the folder (several files).
+    Check the other "Show in Finder" buttons (renders, project folder) for the same mistake.
+22. **The export doesn't look Full HD; wanted: a quality choice (480p, 720p, 1080p…).** Measured on the user's export
+    (`~/Desktop/create-a-60-second-…-v1.mp4`, ffprobe, read-only): 1920×1080, 30 fps, H.264 High, yuv420p, video about
+    4.1 Mbps (AAC 136 kbps), 31.8 MB for 60 s. So the size is right; the softness comes from the encoding:
+    the target is 5000 kbps for 1080p landscape (`shared/formats.ts` `BITRATE_REFS`), on Apple Silicon likely
+    `h264_videotoolbox` (bitrate mode, no CRF, weaker than x264 at the same rate), from JPEG frames at quality 90
+    (`renderer.ts:250`), with 4:2:0 chroma (sharp coloured text edges suffer most). YouTube recommends about 8 Mbps for
+    1080p30 SDR. Ideas: a quality setting in Export (and Render): resolution (480/720/1080/1440/2160, scaled from the
+    format's size, same ratio) and quality (Standard / High / Max: bitrate or x264 CRF, PNG frames for Max); raise the
+    1080p default; confirm which encoder ran (the render's `encoder` field) before choosing the fix.
+23. **The editor's top bar, left side: too long, and the breadcrumb is not clickable.** In a row: "‹ All formats", "Motion
+    Studio / 2026-10-17-create-a-60-second-16-… / [YouTube] Video 16:9" and the meta "1920×1080 · 60 s · 30 fps · brief 6 s".
+    With long names it grows and pushes the right side (see 17). Wanted: each breadcrumb part is a link back to that page
+    (project, creative), so "‹ All formats" may become redundant. Also seen: the creative crumb shows the folder slug
+    (date + truncated brief), not a readable title; the meta line could move under the title or into a tooltip; "brief 6 s"
+    next to "60 s" is report 6 again (the brief of that creative is still 6 s) and should read as a warning, not plain meta.
+24. **Composer: the Services button and the send button don't explain themselves.** Bottom left, the "Services" control
+    (`components/Conversation.tsx`, the brief's paid services: image, voice, music) is a bare plug icon: without hover or a
+    click the user can't tell what it is about. Wanted: a label ("Services", or the active ones, e.g. "OpenAI · ElevenLabs")
+    or a clearer icon with text. The send button is a bare upload arrow (`Icon name="upload"`), and sending takes Cmd+Enter
+    (Enter makes a new line): show the shortcut on the button itself ("Send ⌘↵", or the ⌘↵ glyph in the icon), and say it in
+    the placeholder too; use a send icon rather than "upload".
+25. **Composer as floating "liquid glass", with the chat scrolling under it.** Wanted: the text input floats over the bottom
+    of the conversation with the translucent, blurred glass look of recent macOS/iOS (backdrop blur + saturation, a soft
+    light edge and shadow, rounded), and the message list scrolls underneath it (the list gets bottom padding equal to the
+    composer's height, so the last message can still be scrolled above it). Check: light and dark themes, readable text over
+    busy content (a tint behind the blur), `prefers-reduced-transparency` falling back to an opaque panel, and the Electron
+    window (on macOS a native vibrancy is possible, but CSS `backdrop-filter` keeps web and desktop the same).
+26. **The variants canvas: the user dislikes both layouts.** By variant: each variant is a full-width text strip ("A · Minimal
+    Apple-style keynote: …", "Ready", "…") with its format block underneath ("Video 16:9 ☆ v1", "16:9 Not rendered", a
+    thumbnail), stacked A, B, C down a long page. By format: the three strips stacked on top (of unequal widths: A's is
+    narrower), then "YouTube · Video 16:9" with three cards side by side. Seen in the screenshots: the variant's identity is a
+    long sentence, not a short name; the strip and its formats read as separate things; the version control differs
+    between cards (A: orange "v1 ⌄" badge; B, C: "› v1"); "Ready" next to "Not rendered" is confusing; every thumbnail shows
+    the same first frame ("Describe a video."), so the variants look alike, and C's is cropped ("Describe a"); A's title
+    shows an orange focus box. Needs a redesign (mockups first): one card per variant with a short name, the style sentence
+    as a secondary line, a representative thumbnail (a middle frame, or hover to play), one status, the formats inside it.
+27. **The variants canvas's floating toolbar: "what is it for?"** Bottom bar (`CreativeCanvas.tsx:913–925`): Select (V),
+    Comment (C), Hand (H), zoom − 75% +, "Safe zones". The user can't see when they would use it. A Figma-like canvas toolbar
+    on a page that is really a list of cards: Select is the default and the only one most people need; Hand duplicates
+    scrolling (and space/middle-drag); Comment pins a note on a card, a feature nobody finds from an unlabelled icon; zoom on
+    a card grid is rarely wanted; Safe zones belongs to a format preview, not the overview. Decide together with 26: likely
+    drop the toolbar, keep zoom as a small size control (or Cmd +/−), move "comment" into the card's own actions, and Safe
+    zones into the editor only.
+    **User's call on zoom:** zoom with the trackpad gestures. Today the canvas has no wheel/pinch handling at all
+    (`CreativeCanvas.tsx`: no `wheel` listener). Pinch on a Mac trackpad arrives as `wheel` with `ctrlKey` in Chromium and
+    Electron: zoom around the pointer; also Cmd +/− and Cmd 0 (fit); two-finger scroll keeps panning. Check that Electron
+    does not zoom the whole page instead (`webContents.setVisualZoomLevelLimits(1, 1)`, preventDefault on the canvas).
+28. **"Final selection" is hard to find.** On the variants page's toolbar it is an outline button at the far right, styled
+    like "+ Variant" and as quiet as "Show discarded"; the user took a long time to find it. It is the page's goal (choosing
+    the variant to keep), so it needs primary weight: a primary button, or a step/banner ("3 variants ready: choose the
+    final one"), and a star on each variant card to pick it directly. Part of the 26–27 redesign; suggests the page's main
+    job is comparing and choosing.
+    **Clicked:** "Final selection" only opens a read-only popover ("Where each format of the group export comes from.
+    Without a ★ the default rule applies to variant A." and one row "YouTube · Video 16:9 · Variant A · v1 · default rule").
+    The actual choosing is the small ☆ next to each format name on the variant cards (`variants/GroupStar.tsx`), which the
+    user did not connect to it. Wanted: the choice is made where the user clicks: the popover (or a real dialog) lists each
+    format with the variants side by side to pick from, and the card ☆ gets a visible label ("Choose" / "Chosen").
+29. **"Versions" in the variants page's header: what is it for?** The user remembered versions as per format, not per
+    creative. How it works (phase 9, decisions 149, 849): a version is one agent turn (or editor save) of one variant, and it
+    holds all that variant's formats; each format then has its own history (the versions where *it* changed) and its own ★.
+    So the header menu ("v2 04:13 PM · 149.9k tokens · Per tutte le varianti cambia il brief…", "v1 · Generation from the
+    brief") is the turn history of the variant currently open in the chat (A/B/C selector), but nothing on the page says which
+    variant, and it sits next to Render/Export as if it were the whole creative's. Its thumbnails are cropped ("scribe").
+    Ideas: drop it from the creative page (the per-format version badge on each card is enough), or label it with the variant
+    ("Variant C · 2 versions") and move it to the chat panel, where the turns are.
+30. **A format's version menu: broken layout, and "1 version" where the user expects 2.** Variant C, "YouTube · Video 16:9
+    versions 1": the row's ★ sits outside the row, past the "Auto" chip, at the popover's edge; "Your pick" and "Auto" on the
+    same row contradict each other; the thumbnail is cropped ("scribe"); "Compare" is a disabled grey block; two stars side by
+    side on the card (the group ★ and the badge's "★ v1"). **Why 1:** checked read-only in the user's `versions.json`: in all
+    three variants v2 has the same 16:9 composition hash as v1 (v2 was the turn that only changed the brief, report 6), so the
+    format's history correctly lists only v1. Right by design, but invisible: the user sees v2 in the variant's menu (report
+    29) and v1 here. Also for A and B v1 is `incomplete` and v2 `complete` with the same hash: the format menu shows only the
+    incomplete one. Ideas: show "v1 (unchanged in v2)" or "v1 · v2", explain "only versions that changed this format"; let a
+    brief-only turn not create a version (or mark it "brief only"); fix the row layout.
