@@ -59,6 +59,17 @@ describe('buildCreativePrompt', () => {
     expect(p).toContain('- instagram-post-1x1 @ 2.0s, point (25%, 50%), clip "logo" "Logo", range 2.0\u20133.5s: both\n');
     expect(p).toContain('- instagram-post-1x1 @ 1.0s, point (25%, 50%), clip "bare"\n');
   });
+  it('iteration: a comment on a clip\'s animation names the slot; one on an SVG element names the element (user test items 13, 18)', () => {
+    const at = { format: 'instagram-post-1x1', x: 0.25, y: 0.5, timeSec: 1, clipId: 'title', clipName: 'Headline' };
+    const p = buildCreativePrompt({ ...base, kind: 'iteration', userText: 'x', pins: [
+      { ...at, animation: 'in', note: 'slower' },
+      { ...at, animation: 'out' },
+      { ...at, clipId: 'logo', clipName: 'Logo', element: { path: '0/6', name: 'Path "7"' }, note: 'say Motion Lab' },
+    ] });
+    expect(p).toContain('- instagram-post-1x1 @ 1.0s, point (25%, 50%), clip "title" "Headline", its in animation: slower\n');
+    expect(p).toContain('- instagram-post-1x1 @ 1.0s, point (25%, 50%), clip "title" "Headline", its out animation\n');
+    expect(p).toContain('- instagram-post-1x1 @ 1.0s, point (25%, 50%), clip "logo" "Logo", SVG element "Path \\"7\\"" (child path 0/6 of the SVG root): say Motion Lab\n');
+  });
   it('iteration: clip id and name are quoted JSON-style; no control character, separator or quote breaks the line', () => {
     const at = { format: 'instagram-post-1x1', x: 0.25, y: 0.5, timeSec: 1 };
     const p = buildCreativePrompt({ ...base, kind: 'iteration', userText: 'x', pins: [

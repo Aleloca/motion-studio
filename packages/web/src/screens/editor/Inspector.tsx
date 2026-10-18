@@ -19,7 +19,8 @@ import { MediaSection } from './inspector/MediaSection.tsx';
 import { ParamsSection } from './inspector/ParamsSection.tsx';
 import { fieldProblems } from './inspector/problems.ts';
 import { ShapeSection } from './inspector/ShapeSection.tsx';
-import { SvgContentSection } from './inspector/SvgContentSection.tsx';
+import { SvgContentSection, SvgElementSection, svgElementName } from './inspector/SvgContentSection.tsx';
+import { useSvgSession } from './svgSessions.tsx';
 import { TextSection } from './inspector/TextSection.tsx';
 import { TimingSection } from './inspector/TimingSection.tsx';
 import { useBrand } from './inspector/useBrand.ts';
@@ -28,7 +29,7 @@ function InspectorBody({ clip, locked }: { clip: Clip; locked: boolean }) {
   const t = useT();
   const e = t.web.editor;
   const locale = useLocale();
-  const { slug, draft, actions } = useEditor();
+  const { slug, draft, actions, svgElement, selectSvgElement } = useEditor();
   const brand = useBrand(slug);
   const comp = draft.composition;
   const [refused, setRefused] = useState<Record<string, string>>({});
@@ -58,13 +59,33 @@ function InspectorBody({ clip, locked }: { clip: Clip; locked: boolean }) {
     brandColors: brand.colors, compositionColors: palette, problemsOf: draft.problems,
   };
   const video = comp.duration > 0;
+  // One element of an svg layer (user test item 12): only its settings, under a way back to the layer.
+  const session = useSvgSession(clip.type === 'svg' ? clip.id : null);
+  const element = clip.type === 'svg' && svgElement !== null && session?.status === 'ready' ? session.elements.find((x) => x.path === svgElement) ?? null : null;
+  const layerName = clipLabel(clip, comp, e);
+  if (element) {
+    return (
+      <div className="ms-insp" data-clip-type="svg-element">
+        <header className="ms-insp-head ms-insp-crumbs">
+          <nav className="ms-insp-crumbnav" aria-label={e.svgCrumbs}>
+            <button type="button" className="ms-insp-crumb" title={e.svgBackToLayer({ name: layerName })} onClick={() => selectSvgElement(null)}>{layerName}</button>
+            <Icon name="forward" size={11} className="ms-insp-crumb-sep" />
+            <b className="ms-insp-name" aria-current="location">{svgElementName(element, e)}</b>
+          </nav>
+          <span className="ms-insp-kind">{e.svgElementKind}</span>
+        </header>
+        {locked ? <p className="ms-insp-locked" role="status"><Icon name="lock" size={13} />{e.inspLocked}</p> : null}
+        <SvgElementSection ctl={ctl} element={element} />
+      </div>
+    );
+  }
   const kinds: Record<Clip['type'], string> = {
     text: e.clipText, shape: e.clipShape, image: e.clipImage, svg: e.clipSvg, video: e.clipVideo, html: e.clipHtml, audio: e.clipAudio,
   };
   return (
     <div className="ms-insp" data-clip-type={clip.type}>
       <header className="ms-insp-head">
-        <b className="ms-insp-name">{clipLabel(clip, comp, e)}</b>
+        <b className="ms-insp-name">{layerName}</b>
         <span className="ms-insp-kind">{kinds[clip.type]}</span>
       </header>
       {locked ? <p className="ms-insp-locked" role="status"><Icon name="lock" size={13} />{e.inspLocked}</p> : null}

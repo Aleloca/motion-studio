@@ -1,39 +1,25 @@
-// SVG content of an svg clip (SVG inner editor, Task 3): the colours, texts and drawn elements inside the clip's file, edited
-// without the agent. The text comes from the core, which answers only text its SVG check accepts (a base file) or that it
-// staged itself (an edit), and is parsed into an XML document that never enters the page. Every change is made on a copy of
-// the latest text and, 300 ms after the last one, staged through the core (`stageSvg`): on success the clip's `src` moves to
-// the staged file and an `svgContent` op feeds the summary, both as one undo step; a refusal shows its reasons here and the
-// `src` stays. The texts the core checked are kept in the draft by path, so an undo finds the earlier text again.
-import {
-  editProblemText, listColors, listElements, listTexts, parseColor, parseSvg, replaceColor, serializeSvg, setElementPaint, setHidden, setText,
-  type Clip, type SvgDoc,
-} from '@motion-studio/shared';
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { api } from '../../../api.ts';
-import { message } from '../../../errors.ts';
-import { useLocale, useT } from '../../../i18n.tsx';
-import { Button, ColorField, Icon, cx } from '../../../ui/index.ts';
-import { peekDraft } from '../draftStore.ts';
+// SVG content of an svg clip (SVG inner editor, Task 3): the colours and texts inside the clip's file, edited without the
+// agent; the elements are children of the layer in the Layers panel and one of them, chosen there or on the stage, has an
+// inspector of its own (`SvgElementSection`, user test items 12 to 14). The reading and the staging of the edits are the
+// clip's session (svgSessions.tsx), shared with the layers tree. In a video (no Layers panel) the section lists the elements
+// as links to their inspector.
+import { parseColor, replaceColor, setElementPaint, setHidden, setText, type Clip, type SvgElement } from '@motion-studio/shared';
+import { useEffect, useState, type KeyboardEvent } from 'react';
+import { useT } from '../../../i18n.tsx';
+import { Button, ColorField, Icon, Toggle, cx } from '../../../ui/index.ts';
 import { useEditor } from '../editorContext.ts';
+import { useSvgSession, type SvgFailure } from '../svgSessions.tsx';
 import { colorGroups } from './colors.ts';
+import { PaintFields } from './PaintFields.tsx';
 import { Section, type Ctl } from './common.tsx';
 
-/** A burst of changes (several swatches clicked) is staged once, this long after the last. */
-export const SVG_STAGE_DELAY_MS = 300;
+export { SVG_STAGE_DELAY_MS } from '../svgSessions.tsx';
 
-type Counts = { colors: number; texts: number; hidden: number };
-/** Changes not staged yet: the text they made from the file `src`, how many of each kind, and the draft (`Draft.gen`) they belong to. */
-type Working = { src: string; text: string; counts: Counts; gen: number };
-type Failure = { text: string; reasons: string[] };
+type T = ReturnType<typeof useT>['web']['editor'];
+/** The name the editor shows for an element of an SVG: its own (`id`, `<title>`), else its kind and place, translated. */
+export const svgElementName = (el: SvgElement, e: Pick<T, 'svgElementName'>): string => (el.named ? el.label : e.svgElementName({ tag: el.tag, n: el.index }));
 
-const ZERO: Counts = { colors: 0, texts: 0, hidden: 0 };
-const failureOf = (err: unknown): Failure => {
-  const problems = (err as { problems?: unknown }).problems;
-  return { text: message(err), reasons: Array.isArray(problems) ? problems.filter((x): x is string => typeof x === 'string') : [] };
-};
-const less = (a: Counts, b: Counts): Counts => ({ colors: Math.max(0, a.colors - b.colors), texts: Math.max(0, a.texts - b.texts), hidden: Math.max(0, a.hidden - b.hidden) });
-
-function Problem({ title, failure }: { title: string; failure: Failure }) {
+export function Problem({ title, failure }: { title: string; failure: SvgFailure }) {
   return (
     <div className="ms-insp-warn ms-svg-problem" role="alert">
       <p>{`${title}: ${failure.text}`}</p>
@@ -43,7 +29,7 @@ function Problem({ title, failure }: { title: string; failure: Failure }) {
 }
 
 /** A text of the SVG: committed on blur or Enter (Shift+Enter is a new line); Escape drops what was typed. */
-function SvgTextField({ label, value, disabled, onCommit }: { label: string; value: string; disabled: boolean; onCommit(text: string): void }) {
+export function SvgTextField({ label, value, disabled, onCommit }: { label: string; value: string; disabled: boolean; onCommit(text: string): void }) {
   const [typed, setTyped] = useState<string | null>(null);
   const commit = () => {
     if (typed !== null && typed !== value) onCommit(typed);
@@ -64,143 +50,36 @@ function SvgTextField({ label, value, disabled, onCommit }: { label: string; val
 export function SvgContentSection({ ctl }: { ctl: Ctl }) {
   const t = useT();
   const e = t.web.editor;
-  const locale = useLocale();
-  const { slug, creative, draft, actions, token, stageSvg, readOnly, svgElement, selectSvgElement } = useEditor();
+  const { draft, readOnly, selectSvgElement } = useEditor();
   const clip = ctl.clip as Extract<Clip, { type: 'svg' }>;
   const comp = draft.composition;
-  const known = draft.svgTexts.get(clip.src);
-  const disabled = ctl.locked || readOnly !== null;
-
-  // The clip's text: read once per file (the core checks it), then kept in the draft.
-  const [readFailure, setReadFailure] = useState<{ src: string; failure: Failure } | null>(null);
-  const failedHere = readFailure?.src === clip.src ? readFailure.failure : null;
-  useEffect(() => {
-    if (known !== undefined || !token || failedHere) return;
-    let alive = true;
-    const src = clip.src;
-    api.getEditorSvg(slug, creative, token, src).then(
-      (r) => { if (alive) actions.svgText(src, r.content); },
-      (err: unknown) => { if (alive) setReadFailure({ src, failure: failureOf(err) }); },
-    );
-    return () => { alive = false; };
-  }, [known, token, clip.src, slug, creative, actions, failedHere]);
-
-  // Changes not staged yet, and the staging (one at a time: a burst during one is staged when it is done). While there are
-  // any, the draft says so (`svgPending`): Save waits and leaving asks.
-  const [working, setWorkingState] = useState<Working | null>(null);
-  const workingRef = useRef<Working | null>(null);
-  const [editFailure, setEditFailure] = useState<Failure | null>(null);
-  const timer = useRef(0);
-  const busy = useRef(false);
-  const again = useRef(false);
-  const latest = useRef({ clipId: clip.id, src: clip.src, known, stageSvg, actions, locale, key: draft.key, gen: draft.gen });
-  latest.current = { clipId: clip.id, src: clip.src, known, stageSvg, actions, locale, key: draft.key, gen: draft.gen };
-  /** Whether `gen` is still the draft open under this key (a save or a discard opens another one). */
-  const sameDraft = (gen: number) => peekDraft(latest.current.key)?.gen === gen;
-  const syncPending = (gen: number) => {
-    if (sameDraft(gen)) latest.current.actions.svgPending(latest.current.clipId, workingRef.current !== null || busy.current);
-  };
-  const setWorking = (w: Working | null) => {
-    const gen = workingRef.current?.gen ?? w?.gen ?? latest.current.gen;
-    workingRef.current = w;
-    setWorkingState(w);
-    syncPending(w?.gen ?? gen);
-  };
-
-  const flush = async (): Promise<void> => {
-    window.clearTimeout(timer.current);
-    timer.current = 0;
-    const w = workingRef.current;
-    if (!w) return;
-    if (busy.current) { again.current = true; return; }
-    busy.current = true;
-    const L = latest.current;
-    try {
-      const staged = await L.stageSvg({ kind: 'svgEdit', clipId: L.clipId, baseSrc: w.src, content: w.text });
-      // A draft saved, discarded or reopened meanwhile is not this one: the answer is dropped, nothing of it touched.
-      if (!sameDraft(w.gen)) { busy.current = false; workingRef.current = null; again.current = false; return; }
-      L.actions.svgText(staged.path, w.text);
-      const now = workingRef.current;
-      // An undo (or a replaced file) moved the clip off the file the change started from: the result is dropped.
-      const clipNow = peekDraft(L.key)!.composition.tracks.flatMap((tr) => tr.clips).find((k) => k.id === L.clipId);
-      if (!clipNow || !('src' in clipNow) || clipNow.src !== w.src) {
-        busy.current = false;
-        setWorking(null);
-        return;
-      }
-      const r = L.actions.applyAll([{ kind: 'clipMedia', clipId: L.clipId, src: staged.path }, { kind: 'svgContent', clipId: L.clipId, ...w.counts }]);
-      if (!r.ok) setEditFailure({ text: editProblemText(r.problem, L.locale), reasons: [] });
-      busy.current = false;
-      // Changes made while this one was on its way go on from the staged file.
-      if (now === w || !r.ok || !now) setWorking(null);
-      else setWorking({ ...now, src: staged.path, counts: less(now.counts, w.counts) });
-    } catch (err) {
-      busy.current = false;
-      if (!sameDraft(w.gen)) { workingRef.current = null; again.current = false; return; }
-      setEditFailure(failureOf(err));
-      // Changes made after the refused one stay (they start from the same file) and are staged next.
-      const now = workingRef.current;
-      if (now && now !== w) { setWorking(now); again.current = true; } else setWorking(null);
-    }
-    if (again.current) { again.current = false; await flush(); }
-  };
-  const flushRef = useRef(flush);
-  flushRef.current = flush;
-  // Leaving the clip (another selection) stages what is pending at once.
-  useEffect(() => () => { if (timer.current) void flushRef.current(); }, []);
-  // An undo or a replaced file moved the clip off the file the pending changes started from: they are dropped.
-  useEffect(() => {
-    const w = workingRef.current;
-    if (w && w.src !== clip.src && !busy.current) { window.clearTimeout(timer.current); timer.current = 0; setWorking(null); }
-  }, [clip.src]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  /** One change: applied to a copy of the latest text, staged after the delay. */
-  const edit = (kind: keyof Counts, change: (doc: SvgDoc) => void) => {
-    if (disabled) return;
-    const w = workingRef.current;
-    const from = w ? w.text : latest.current.known;
-    if (from === undefined) return;
-    const parsed = parseSvg(from);
-    if (!parsed.ok) return;
-    try { change(parsed.doc); } catch { return; }
-    const text = serializeSvg(parsed.doc);
-    if (text === from) return;
-    const counts = { ...(w?.counts ?? ZERO) };
-    counts[kind] += 1;
-    setWorking({ src: w?.src ?? clip.src, text, counts, gen: w?.gen ?? draft.gen });
-    setEditFailure(null);
-    window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => { void flushRef.current(); }, SVG_STAGE_DELAY_MS);
-  };
-
-  const shown = working && working.src === clip.src ? working.text : known;
-  const parsed = useMemo(() => (shown !== undefined ? parseSvg(shown) : null), [shown]);
-  const doc = parsed?.ok ? parsed.doc : null;
-  const colors = useMemo(() => (doc ? listColors(doc) : []), [doc]);
-  const texts = useMemo(() => (doc ? listTexts(doc) : []), [doc]);
-  const elements = useMemo(() => (doc ? listElements(doc) : []), [doc]);
+  const session = useSvgSession(clip.id);
   const [openColor, setOpenColor] = useState<string | null>(null);
   // The colour field is a new one only when another entry is chosen: a change (which renames the entry) keeps it, focus included.
   const [openKey, setOpenKey] = useState(0);
-  const picked = elements.find((x) => x.path === svgElement) ?? null;
-  const nameOf = (el: (typeof elements)[number]) => (el.named ? el.label : e.svgElementName({ tag: el.tag, n: el.index }));
   const groups = colorGroups(e, ctl);
   // The other versions of an identity logo (the hidden `small` and `dark` clips) keep their own colours.
   const versions = comp.duration === 0 && comp.tracks.some((tr) => tr.clips.some((k) => k.type === 'svg' && (k.id === 'small' || k.id === 'dark') && k.id !== clip.id));
-
-  const recolour = (from: string, to: string) => {
-    edit('colors', (d) => { replaceColor(d, from, to); });
-    setOpenColor(parseColor(to) ?? null);
-  };
+  const video = comp.duration > 0;
+  // The open colour goes when the content no longer has it (an undo); a change's own new colour arrives with the session's
+  // next content, so the field is kept until then (and keeps its focus).
+  const doc = session?.doc ?? null;
+  useEffect(() => {
+    if (doc && openColor !== null && !session!.colors.some((c) => c.hex === openColor)) setOpenColor(null);
+  }, [doc]); // eslint-disable-line react-hooks/exhaustive-deps
 
   let body;
-  if (failedHere) body = <Problem title={e.svgCannot} failure={failedHere} />;
-  else if (shown === undefined) body = <p className="ms-insp-note" role="status">{e.svgLoading}</p>;
-  else if (!doc) body = <Problem title={e.svgCannot} failure={{ text: parsed && !parsed.ok ? parsed.reason : '', reasons: [] }} />;
+  if (!session || session.status === 'loading') body = <p className="ms-insp-note" role="status">{e.svgLoading}</p>;
+  else if (session.status === 'failed') body = <Problem title={e.svgCannot} failure={session.failure!} />;
   else {
+    const { colors, texts, elements, disabled, edit } = session;
+    const recolour = (from: string, to: string) => {
+      edit('colors', (d) => { replaceColor(d, from, to); });
+      setOpenColor(parseColor(to) ?? null);
+    };
     body = (
       <>
-        {editFailure ? <Problem title={e.svgRefused} failure={editFailure} /> : null}
+        {session.editFailure ? <Problem title={e.svgRefused} failure={session.editFailure} /> : null}
         <div className="ms-svg-part">
           <span className="ms-insp-cap">{e.svgColors}</span>
           {colors.length === 0 ? <p className="ms-insp-note">{e.svgNoColors}</p> : (
@@ -218,7 +97,7 @@ export function SvgContentSection({ ctl }: { ctl: Ctl }) {
               ))}
             </ul>
           )}
-          {openColor !== null && colors.some((c) => c.hex === openColor) ? (
+          {openColor !== null ? (
             <ColorField key={openKey} label={e.svgColorNew({ hex: openColor })} value={openColor} disabled={disabled} groups={groups}
               onChange={(hex) => recolour(openColor, hex)} />
           ) : null}
@@ -234,34 +113,24 @@ export function SvgContentSection({ ctl }: { ctl: Ctl }) {
             </>
           )}
         </div>
-        <div className="ms-svg-part">
-          <span className="ms-insp-cap">{e.svgElements}</span>
-          {elements.length === 0 ? <p className="ms-insp-note">{e.svgNoElements}</p> : (
-            <ul className="ms-svg-elements" aria-label={e.svgElementList}>
-              {elements.map((el) => {
-                const name = nameOf(el);
-                const eye = el.hidden ? e.svgShow({ name }) : e.svgHide({ name });
-                return (
-                  <li key={el.path} className={cx('ms-svg-el', el.hidden && 'ms-dim', svgElement === el.path && 'ms-sel')} style={{ paddingInlineStart: el.depth * 12 }}>
-                    <Button size="sm" variant="ghost" icon aria-label={eye} title={eye} disabled={disabled} onClick={() => edit('hidden', (d) => setHidden(d, el.path, !el.hidden))}>
-                      <Icon name={el.hidden ? 'eyeOff' : 'eye'} size={13} />
-                    </Button>
-                    <button type="button" className="ms-svg-el-name" aria-current={svgElement === el.path ? 'true' : undefined} title={name}
-                      onClick={() => selectSvgElement(svgElement === el.path ? null : el.path)}>{name}</button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-          {picked ? (
-            <div className="ms-svg-paint">
-              <ColorField label={e.svgFill} value={picked.fill !== undefined && parseColor(picked.fill) ? picked.fill : undefined} disabled={disabled} groups={groups}
-                onChange={(hex) => edit('colors', (d) => setElementPaint(d, picked.path, { fill: hex }))} />
-              <ColorField label={e.svgStroke} value={picked.stroke !== undefined && parseColor(picked.stroke) ? picked.stroke : undefined} disabled={disabled} groups={groups}
-                onChange={(hex) => edit('colors', (d) => setElementPaint(d, picked.path, { stroke: hex }))} />
-            </div>
-          ) : null}
-        </div>
+        {video ? (
+          <div className="ms-svg-part">
+            <span className="ms-insp-cap">{e.svgElements}</span>
+            {elements.length === 0 ? <p className="ms-insp-note">{e.svgNoElements}</p> : (
+              <ul className="ms-svg-elements" aria-label={e.svgElementList}>
+                {elements.map((el) => {
+                  const name = svgElementName(el, e);
+                  return (
+                    <li key={el.path} className={cx('ms-svg-el', el.hidden && 'ms-dim')} style={{ paddingInlineStart: el.depth * 12 }}>
+                      <button type="button" className="ms-svg-el-name" title={name} onClick={() => selectSvgElement(el.path, clip.id)}>{name}</button>
+                      <Icon name="forward" size={12} className="ms-svg-el-go" />
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        ) : null}
       </>
     );
   }
@@ -270,6 +139,45 @@ export function SvgContentSection({ ctl }: { ctl: Ctl }) {
       {versions ? <p className="ms-insp-note">{e.svgOtherVersions}</p> : null}
       {readOnly !== null ? <p className="ms-insp-note" role="status">{readOnly}</p> : null}
       {body}
+    </Section>
+  );
+}
+
+/**
+ * One element of an svg clip (user test items 12 to 14): its visibility, its text when it is one, its fill and stroke, and
+ * "Ask the agent to change it" (a comment bound to the clip and the element). An SVG without any text says that its
+ * lettering is drawn as shapes, so the words are the agent's to change.
+ */
+export function SvgElementSection({ ctl, element }: { ctl: Ctl; element: SvgElement }) {
+  const t = useT();
+  const e = t.web.editor;
+  const { readOnly, askElement } = useEditor();
+  const clip = ctl.clip as Extract<Clip, { type: 'svg' }>;
+  const session = useSvgSession(clip.id)!;
+  const { texts, disabled, edit } = session;
+  const name = svgElementName(element, e);
+  const text = element.tag === 'text' ? texts.find((x) => x.path === element.path) ?? null : null;
+  const groups = colorGroups(e, ctl);
+  return (
+    <Section title={e.secSvgElement} name="svg-element">
+      {readOnly !== null ? <p className="ms-insp-note" role="status">{readOnly}</p> : null}
+      {session.editFailure ? <Problem title={e.svgRefused} failure={session.editFailure} /> : null}
+      <div className="ms-insp-lab ms-svg-visible">
+        <span className="ms-insp-cap" aria-hidden="true">{e.svgVisible}</span>
+        <Toggle size="sm" label={e.svgVisible} on={!element.hidden} disabled={disabled} onChange={(on) => edit('hidden', (d) => setHidden(d, element.path, !on))} />
+      </div>
+      {text ? <SvgTextField label={e.svgText({ n: texts.indexOf(text) + 1 })} value={text.text} disabled={disabled} onCommit={(v) => edit('texts', (d) => setText(d, text.path, v))} /> : null}
+      <PaintFields fill={element.fill} stroke={element.stroke} groups={groups} disabled={disabled}
+        onChange={(prop, value) => edit('colors', (d) => setElementPaint(d, element.path, { [prop]: value }))} />
+      <div className="ms-svg-ask">
+        {texts.length === 0 && element.tag !== 'text' ? <p className="ms-insp-note" role="note">{e.svgOutlined}</p> : null}
+        {askElement ? (
+          <Button size="sm" variant="outline" className="ms-insp-ask" title={e.svgAskElementTip({ name })}
+            disabled={readOnly !== null} onClick={() => askElement(clip.id, { path: element.path, name })}>
+            <Icon name="comment" size={13} />{e.svgAskElement}
+          </Button>
+        ) : null}
+      </div>
     </Section>
   );
 }

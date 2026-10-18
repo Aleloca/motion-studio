@@ -88,6 +88,17 @@ describe('schema additions', () => {
     expect(pinSchema.safeParse({ ...base, range: { start: 2, end: 1 } }).success).toBe(false);
     expect(pinSchema.safeParse({ ...base, range: { start: -1, end: 1 } }).success).toBe(false);
   });
+  it('pins: an animation slot and an SVG element are optional and checked (user test items 13, 18)', () => {
+    const base = { format: 'f', x: 0.5, y: 0.5, timeSec: 1, clipId: 'title' };
+    expect(pinSchema.safeParse({ ...base, animation: 'in' }).success).toBe(true);
+    expect(pinSchema.safeParse({ ...base, animation: 'out' }).success).toBe(true);
+    expect(pinSchema.safeParse({ ...base, animation: 'middle' }).success).toBe(false);
+    expect(pinSchema.safeParse({ ...base, element: { path: '0/3/1', name: 'Path 7' } }).success).toBe(true);
+    expect(pinSchema.safeParse({ ...base, element: { path: '', name: 'root' } }).success).toBe(true);
+    for (const bad of ['0/x', '/0', '0//1', '1234567', '0/'.repeat(60) + '0']) expect(pinSchema.safeParse({ ...base, element: { path: bad, name: 'n' } }).success).toBe(false);
+    expect(pinSchema.safeParse({ ...base, element: { path: '0', name: 'a\nb' } }).success).toBe(false);
+    expect(pinSchema.safeParse({ ...base, element: { path: '0', name: 'n'.repeat(201) } }).success).toBe(false);
+  });
   it('pinClipName makes any clip name a valid pin name', () => {
     expect(pinClipName('Riga 1\nRiga 2\u2028x')).toBe('Riga 1 Riga 2 x');
     expect(pinClipName('n'.repeat(300))).toHaveLength(200);

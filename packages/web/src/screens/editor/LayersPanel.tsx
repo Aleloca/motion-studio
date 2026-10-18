@@ -4,11 +4,15 @@
 // (`trackFlags`); a track with several clips is a header row with the track's flags and the clips nested under it, each with
 // its own (`clipFlags`). A flag the agent wrote on the clip itself of a one-clip layer shows too, and turning it off clears it.
 // A click selects the clip; a locked layer can be selected (its handles say it is locked). No "+": new layers stay with the agent.
-import { editProblemText, type Clip, type Composition, type EditOp, type Track } from '@motion-studio/shared';
+// A vector-image (svg) layer opens like a design tool's tree (user test item 12): its elements are rows nested under it, each
+// with its eye (an edit of the SVG, staged by the clip's session: svgSessions.tsx), and a click on one shows its own inspector.
+import { setHidden, type Clip, type Composition, type EditOp, type SvgElement, type Track, editProblemText } from '@motion-studio/shared';
 import { useState } from 'react';
 import { useLocale, useT } from '../../i18n.tsx';
 import { Button, Icon, cx, type IconName } from '../../ui/index.ts';
 import { useEditor } from './editorContext.ts';
+import { svgElementName } from './inspector/SvgContentSection.tsx';
+import { useSvgSession, useSvgTree } from './svgSessions.tsx';
 
 const CLIP_ICON: Record<Clip['type'], IconName> = { text: 'text', shape: 'grid', image: 'image', svg: 'image', video: 'video', html: 'code', audio: 'music' };
 
@@ -36,9 +40,11 @@ interface RowProps {
   /** Null: a track header, which does not select. */
   onSelect: (() => void) | null;
   onFlag(flag: Flag, value: boolean): void;
+  /** An svg layer: the chevron that shows or hides its elements. */
+  twisty?: { open: boolean; onToggle(): void } | undefined;
 }
 
-function LayerRow({ name, kind, icon, hidden, locked, selected, nested, onSelect, onFlag }: RowProps) {
+function LayerRow({ name, kind, icon, hidden, locked, selected, nested, onSelect, onFlag, twisty }: RowProps) {
   const e = useT().web.editor;
   const eye = hidden ? e.showTrack({ name }) : e.hideTrack({ name });
   const lock = locked ? e.unlockTrack({ name }) : e.lockTrack({ name });
@@ -51,6 +57,11 @@ function LayerRow({ name, kind, icon, hidden, locked, selected, nested, onSelect
   return (
     <div className={cx('ms-layer', nested && 'ms-nested', hidden && 'ms-dim', selected && 'ms-sel')} data-layer-name={name}
       aria-current={selected ? 'true' : undefined}>
+      {twisty ? (
+        <button type="button" className={cx('ms-layer-twisty', twisty.open && 'ms-open')} aria-expanded={twisty.open}
+          aria-label={twisty.open ? e.layerCollapse({ name }) : e.layerExpand({ name })} title={twisty.open ? e.layerCollapse({ name }) : e.layerExpand({ name })}
+          onClick={twisty.onToggle}><Icon name="chevron" size={12} /></button>
+      ) : <span className="ms-layer-twisty" aria-hidden="true" />}
       <Button size="sm" variant="ghost" icon aria-label={eye} title={eye} onClick={() => onFlag('hidden', !hidden)}>
         <Icon name={hidden ? 'eyeOff' : 'eye'} size={14} />
       </Button>
@@ -67,11 +78,45 @@ function LayerRow({ name, kind, icon, hidden, locked, selected, nested, onSelect
   );
 }
 
+const ELEMENT_ICON: Record<string, IconName> = { g: 'grid', text: 'text', image: 'image', use: 'link' };
+
+/** The elements of an open svg layer, nested under its row: the eye hides or shows one, a click shows its inspector. */
+function SvgElementRows({ clip, layerName, nested }: { clip: Extract<Clip, { type: 'svg' }>; layerName: string; nested: boolean }) {
+  const e = useT().web.editor;
+  const { selection, svgElement, selectSvgElement } = useEditor();
+  const session = useSvgSession(clip.id);
+  if (!session || session.status === 'loading') return <p className={cx('ms-layer-el-note', nested && 'ms-nested')} role="status">{e.svgLoading}</p>;
+  if (session.status === 'failed') return <p className={cx('ms-layer-el-note', nested && 'ms-nested')} role="status">{e.svgCannot}</p>;
+  if (session.elements.length === 0) return <p className={cx('ms-layer-el-note', nested && 'ms-nested')}>{e.svgNoElements}</p>;
+  const row = (el: SvgElement) => {
+    const name = svgElementName(el, e);
+    const eye = el.hidden ? e.svgShow({ name }) : e.svgHide({ name });
+    const picked = selection === clip.id && svgElement === el.path;
+    return (
+      <li key={el.path}>
+        <div className={cx('ms-layer', 'ms-layer-el', el.hidden && 'ms-dim', picked && 'ms-sel')} data-svg-element={el.path}
+          style={{ paddingInlineStart: (nested ? 40 : 24) + el.depth * 12 }} aria-current={picked ? 'true' : undefined}>
+          <Button size="sm" variant="ghost" icon aria-label={eye} title={eye} disabled={session.disabled}
+            onClick={() => session.edit('hidden', (d) => setHidden(d, el.path, !el.hidden))}>
+            <Icon name={el.hidden ? 'eyeOff' : 'eye'} size={13} />
+          </Button>
+          <span className="ms-layer-thumb" aria-hidden="true"><Icon name={ELEMENT_ICON[el.tag] ?? 'edit'} size={13} /></span>
+          <button type="button" className="ms-layer-main" onClick={() => selectSvgElement(el.path, clip.id)}>
+            <span className="ms-layer-name" title={name}>{name}</span>
+          </button>
+        </div>
+      </li>
+    );
+  };
+  return <ol className="ms-layers-sub ms-layers-svg" aria-label={e.layerElements({ name: layerName })}>{session.elements.map(row)}</ol>;
+}
+
 export function LayersPanel() {
   const t = useT();
   const e = t.web.editor;
   const locale = useLocale();
-  const { draft, actions, selection, select } = useEditor();
+  const { draft, actions, selection, select, svgElement } = useEditor();
+  const tree = useSvgTree();
   const [notice, setNotice] = useState('');
   const tracks = draft.composition.tracks;
   const layers = [...tracks].reverse().filter((track) => track.clips.length > 0);
@@ -93,6 +138,12 @@ export function LayersPanel() {
     if (track[flag]) trackFlag(track, flag, false);
     if (clip[flag]) clipFlag(clip, flag, false);
   };
+  /** The chevron of an svg layer, and its elements under it when open. */
+  const svgTree = (clip: Clip) => (clip.type === 'svg' ? { open: tree.expanded.has(clip.id), onToggle: () => tree.setExpanded(clip.id, !tree.expanded.has(clip.id)) } : undefined);
+  const elementsOf = (clip: Clip, nested: boolean) => (clip.type === 'svg' && tree.expanded.has(clip.id)
+    ? <SvgElementRows clip={clip} layerName={clipLabel(clip, draft.composition, e)} nested={nested} /> : null);
+  // The layer row is the selection while no element of it is picked.
+  const layerSelected = (clip: Clip) => selection === clip.id && !(clip.type === 'svg' && svgElement !== null);
 
   return (
     <div className="ms-layers" data-slot="layers">
@@ -105,9 +156,10 @@ export function LayersPanel() {
               const clip = track.clips[0]!;
               return (
                 <li key={track.id}>
-                  <LayerRow name={clipLabel(clip, draft.composition, e)} kind={kinds[clip.type]} icon={CLIP_ICON[clip.type]} selected={selection === clip.id}
-                    hidden={Boolean(track.hidden || clip.hidden)} locked={Boolean(track.locked || clip.locked)}
+                  <LayerRow name={clipLabel(clip, draft.composition, e)} kind={kinds[clip.type]} icon={CLIP_ICON[clip.type]} selected={layerSelected(clip)}
+                    hidden={Boolean(track.hidden || clip.hidden)} locked={Boolean(track.locked || clip.locked)} twisty={svgTree(clip)}
                     onSelect={() => select(clip.id)} onFlag={(flag, value) => layerFlag(track, clip, flag, value)} />
+                  {elementsOf(clip, false)}
                 </li>
               );
             }
@@ -118,9 +170,10 @@ export function LayersPanel() {
                 <ol className="ms-layers-sub">
                   {[...track.clips].reverse().map((clip) => (
                     <li key={clip.id}>
-                      <LayerRow nested name={clipLabel(clip, draft.composition, e)} kind={kinds[clip.type]} icon={CLIP_ICON[clip.type]} selected={selection === clip.id}
-                        hidden={Boolean(clip.hidden)} locked={Boolean(clip.locked)}
+                      <LayerRow nested name={clipLabel(clip, draft.composition, e)} kind={kinds[clip.type]} icon={CLIP_ICON[clip.type]} selected={layerSelected(clip)}
+                        hidden={Boolean(clip.hidden)} locked={Boolean(clip.locked)} twisty={svgTree(clip)}
                         onSelect={() => select(clip.id)} onFlag={(flag, value) => clipFlag(clip, flag, value)} />
+                      {elementsOf(clip, true)}
                     </li>
                   ))}
                 </ol>

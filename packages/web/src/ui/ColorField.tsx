@@ -57,17 +57,26 @@ export function ColorField({ value, onChange, label, groups = [], disabled, inva
             onBlur={() => { commit(); setText(null); onEnd?.(); }} />
         </label>
       </div>
+      <ColorSwatches groups={groups} value={value} disabled={disabled} onPick={(hex) => { if (value?.toLowerCase() !== hex.toLowerCase()) onChange(hex); onEnd?.(); }} />
+    </div>
+  );
+}
+
+/** The swatches of a colour field by origin, each a toggle button that chooses its colour (shared by fields that show one palette for several colours). */
+export function ColorSwatches({ groups, value, disabled, onPick }: { groups: readonly ColorSwatchGroup[]; value: string | undefined; disabled?: boolean | undefined; onPick(hex: string): void }) {
+  return (
+    <>
       {groups.filter((g) => g.colors.length > 0).map((g) => (
         <div key={g.label} role="group" aria-label={g.label} className="ms-color-group">
           <span className="ms-color-cap">{g.label}</span>
           <div className="ms-color-swatches">
             {g.colors.map((hex) => (
               <button key={hex} type="button" className="ms-color-swatch" aria-label={hex} aria-pressed={value?.toLowerCase() === hex.toLowerCase()} disabled={disabled}
-                style={{ background: hex }} onClick={() => { if (value?.toLowerCase() !== hex.toLowerCase()) onChange(hex); onEnd?.(); }} />
+                style={{ background: hex }} onClick={() => onPick(hex)} />
             ))}
           </div>
         </div>
       ))}
-    </div>
+    </>
   );
 }

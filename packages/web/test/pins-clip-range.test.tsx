@@ -102,6 +102,7 @@ vi.mock('../src/components/CompositionPlayer.tsx', async () => {
   };
 });
 
+const en = (await import('@motion-studio/shared')).messages('en');
 const { EditorScreen } = await import('../src/screens/editor/EditorScreen.tsx');
 const { FormatView } = await import('../src/screens/FormatView.tsx');
 const { Conversation } = await import('../src/components/Conversation.tsx');
@@ -238,6 +239,13 @@ describe('chips in the conversation', () => {
     render(<I18nProvider locale="en"><Conversation slug="acme" creative="lancio" entries={entries} approvals={[]} job={undefined} live={[]} formatName={() => 'Reel'} canGenerate={false} /></I18nProvider>);
     expect(screen.getByText('Reel · "Headline" clip')).toBeTruthy();
     expect(screen.getByText('Reel · 2.0–3.5 s')).toBeTruthy();
+  });
+  it('a comment on a clip\'s animation or on an SVG element says which (items 18, 13)', () => {
+    const t = { web: { conversation: { chipClipAnimIn: en.web.conversation.chipClipAnimIn, chipClipAnimOut: en.web.conversation.chipClipAnimOut, chipClipElement: en.web.conversation.chipClipElement } } } as never;
+    const clip = { format: 'r', x: 0.5, y: 0.5, timeSec: 1, clipId: 'title', clipName: 'Headline' };
+    expect(clipRangeChip({ ...clip, animation: 'in' }, 'Reel', t, 'en')).toBe('Reel · "Headline" clip · in animation');
+    expect(clipRangeChip({ ...clip, animation: 'out' }, 'Reel', t, 'en')).toBe('Reel · "Headline" clip · out animation');
+    expect(clipRangeChip({ ...clip, element: { path: '0/6', name: 'Path 7' } }, 'Reel', t, 'en')).toBe('Reel · "Path 7" in "Headline"');
   });
   it('clipRangeChip is null for any other pin', () => {
     expect(clipRangeChip(pins[2]!, 'Reel', { web: { conversation: {} } } as never, 'en')).toBeNull();
@@ -376,14 +384,15 @@ describe('the editor', () => {
     expect((within(d).getByRole('button', { name: 'Continue' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('the image editor shows a visible Comment on clip button', async () => {
+  it('the image editor shows a visible Comment on layer button, disabled with the reason until a layer is selected', async () => {
     const still = structuredClone(spike);
     still.duration = 0;
     api.getEditorComposition.mockImplementation(async (_s, _c, n) => ({ ...view(n), composition: still }));
     render(<Page kind="edit" />);
     await screen.findByTestId('player');
-    const b = await screen.findByRole('button', { name: 'Comment on clip' });
+    const b = await screen.findByRole('button', { name: 'Comment on layer' });
     expect((b as HTMLButtonElement).disabled).toBe(true);
+    expect(b.getAttribute('title')).toBe('Select a layer first, in Layers or on the picture');
     expect(screen.queryByRole('button', { name: 'Comment on range' })).toBeNull();
   });
 

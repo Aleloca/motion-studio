@@ -74,6 +74,7 @@ const api = {
   })),
   cancelJob: vi.fn(),
   getStoryboard: vi.fn(),
+  getEditorSvg: vi.fn(async (_s: string, _c: string, _t: string, path: string) => ({ path, content: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#ff0000"/></svg>', warnings: [] })),
 };
 class ApiError extends Error {
   constructor(public status: number, message: string, public code?: string) { super(message); }
@@ -124,6 +125,8 @@ const { I18nProvider } = await import('../src/i18n.tsx');
 const { __resetDrafts, draftKey, peekDraft } = await import('../src/screens/editor/draftStore.ts');
 const { __resetToasts } = await import('../src/ui/toast.tsx');
 
+const { __resetPendingPins, pinsKey, usePendingPins } = await import('../src/screens/pendingPins.ts');
+const { renderHook } = await import('@testing-library/react');
 const KEY = draftKey('acme', 'post', IMG);
 const emptyLive = (): EventsState => ({ approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {}, snapshots: 0 } as unknown as EventsState);
 let live = emptyLive();
@@ -304,5 +307,49 @@ describe('image editor · save', () => {
     expect(peekDraft(KEY)!.ops).toHaveLength(0);
     // No agent turn, no tokens.
     expect(api.sendCreativeTurn).not.toHaveBeenCalled();
+  });
+});
+
+describe('image editor · stage tools and the svg layer tree (user test items 12, 13, 15)', () => {
+  beforeEach(() => { __resetPendingPins(); });
+
+  it('labelled comment tools with their tooltips, undo and redo with the shortcut, the magnet; a comment on an svg element names it', async () => {
+    render(<Harness />);
+    await screen.findByTestId('player');
+    await waitFor(() => expect(peekDraft(KEY)).not.toBeNull());
+    expect(screen.getByRole('button', { name: 'Undo' }).getAttribute('title')).toMatch(/^Undo \((⌘Z|Ctrl\+Z)\)$/);
+    expect(screen.getByRole('button', { name: 'Redo' }).getAttribute('title')).toMatch(/^Redo \((⇧⌘Z|Ctrl\+Shift\+Z)\)$/);
+    const spot = screen.getByRole('button', { name: 'Comment a spot' });
+    expect(spot.textContent).toBe('Comment a spot');
+    expect(spot.getAttribute('title')).toBe('Then click a spot of the picture and write a note for the agent (P)');
+    // An image has no timeline: its magnet stays on the stage, with what it does.
+    expect(screen.getByRole('button', { name: 'Snap to guides and edges' }).getAttribute('title')).toMatch(/^Snap to guides: /);
+    const layerComment = screen.getByRole('button', { name: 'Comment on layer' });
+    expect((layerComment as HTMLButtonElement).disabled).toBe(true);
+
+    // The svg layer opens into its elements; one of them is picked: its inspector, and the comment is about it.
+    await userEvent.click(screen.getByRole('button', { name: 'Show the elements of logo1' }));
+    const tree = await screen.findByRole('list', { name: 'Elements of logo1' });
+    await userEvent.click(within(tree).getByRole('button', { name: 'Rectangle 1' }));
+    expect(screen.getByRole('tab', { name: 'Inspector' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('navigation', { name: 'Layer and element' }).textContent).toBe('logo1Rectangle 1');
+    const elementComment = screen.getByRole('button', { name: 'Comment on element' });
+    expect(elementComment.getAttribute('title')).toBe('Write a note for the agent about the selected element of the layer (C)');
+    await userEvent.click(elementComment);
+    const dialog = await screen.findByRole('dialog', { name: 'Comment on "Rectangle 1" in "logo1"' });
+    await userEvent.type(within(dialog).getByLabelText('Your comment'), 'Più scuro');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add comment' }));
+    const { result } = renderHook(() => usePendingPins(pinsKey('acme', 'post')));
+    expect(result.current[0].map((p) => p.pin)).toEqual([expect.objectContaining({ clipId: 'logo1', element: { path: '0', name: 'Rectangle 1' }, note: 'Più scuro', timeSec: null })]);
+
+    // "Ask the agent to change it" from the element's inspector: the same comment, and the user stays in the inspector.
+    await userEvent.click(screen.getByRole('tab', { name: 'Inspector' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Ask the agent to change it' }));
+    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Comment on "Rectangle 1" in "logo1"' })).getByRole('button', { name: 'Add comment' }));
+    expect(result.current[0]).toHaveLength(2);
+    expect(screen.getByRole('tab', { name: 'Inspector' }).getAttribute('aria-selected')).toBe('true');
+    // Back to the layer: its comment is about the layer again.
+    await userEvent.click(within(screen.getByRole('navigation', { name: 'Layer and element' })).getByRole('button', { name: 'logo1' }));
+    expect(screen.getByRole('button', { name: 'Comment on layer' })).toBeTruthy();
   });
 });

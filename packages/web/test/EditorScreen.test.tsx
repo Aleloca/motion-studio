@@ -190,7 +190,7 @@ describe('EditorScreen · shell', () => {
     expect(screen.getByRole('complementary', { name: 'Scenes' })).toBeTruthy();
     expect(screen.getByRole('region', { name: 'Timeline' })).toBeTruthy();
     // One screen (decision 916): the chat is the default tab, the inspector is next to it.
-    expect(screen.getByRole('tab', { name: 'Chat' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: /^Chat/ }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('tab', { name: 'Inspector' })).toBeTruthy();
     expect(screen.queryByText(/Draft ·/)).toBeNull();
     // Nothing is sent to the player until there is a draft to show.
@@ -204,18 +204,14 @@ describe('EditorScreen · shell', () => {
     expect(within(bar).queryByRole('button', { name: /directly$/ })).toBeNull();
   });
 
-  it('the stage and the scenes column are wired: the selection reaches the runtime, the magnet is shared and not saved', async () => {
+  it('the stage and the scenes column are wired: the selection reaches the runtime; a video has no magnet on the stage (the timeline has it)', async () => {
     render(<Harness />);
     await opened();
     expect(document.querySelector('.ms-stage-layer')).not.toBeNull();
     expect(screen.getByRole('list', { name: 'Scenes of this composition' })).toBeTruthy();
-    // The magnet is on by default and goes to the context the timeline reads.
-    const magnet = screen.getByRole('button', { name: 'Snap to guides and edges' });
-    expect(magnet.getAttribute('aria-pressed')).toBe('true');
+    // The magnet is on by default (the context the stage and the timeline read); the stage's tools do not repeat it (item 15).
     expect((probe.ctx as unknown as { snap: boolean }).snap).toBe(true);
-    await userEvent.click(magnet);
-    expect(magnet.getAttribute('aria-pressed')).toBe('false');
-    expect((probe.ctx as unknown as { snap: boolean }).snap).toBe(false);
+    expect(document.querySelector('.ms-ed-tools .ms-ed-snap')).toBeNull();
     // Picking a clip in "In this scene" selects it and tells the runtime.
     await userEvent.click(within(screen.getByRole('region', { name: 'In this scene' })).getByRole('button', { name: 'title' }));
     expect(media.select).toHaveBeenLastCalledWith('title');
@@ -241,12 +237,12 @@ describe('EditorScreen · shell', () => {
     expect(media.select).toHaveBeenLastCalledWith('title');
     await userEvent.click(within(timeline).getByRole('button', { name: 'Lock Text 1' }));
     expect(peekDraft(KEY)!.ops.at(-1)).toEqual({ kind: 'trackFlags', trackId: 'text', locked: true });
-    // The magnet is the stage's: one state.
-    const both = screen.getAllByRole('button', { name: 'Snap to guides and edges' });
-    expect(both).toHaveLength(2);
-    await userEvent.click(both[0]!);
+    // One magnet, the timeline's: the state the stage's guides read too (user test item 15).
+    const magnets = screen.getAllByRole('button', { name: 'Snap to guides and edges' });
+    expect(magnets).toHaveLength(1);
+    await userEvent.click(magnets[0]!);
     expect((probe.ctx as unknown as { snap: boolean }).snap).toBe(false);
-    expect(both.map((b) => b.getAttribute('aria-pressed'))).toEqual(['false', 'false']);
+    expect(magnets[0]!.getAttribute('aria-pressed')).toBe('false');
   });
 
   it('an image format has the layers panel and no timeline', async () => {
@@ -412,7 +408,7 @@ describe('EditorScreen · save', () => {
     store().apply(move(111));
     await userEvent.click(await screen.findByRole('button', { name: 'Save as v3' }));
     await waitFor(() => expect(api.saveEdits).toHaveBeenCalledTimes(1));
-    await userEvent.click(await screen.findByRole('tab', { name: 'Chat' }));
+    await userEvent.click(await screen.findByRole('tab', { name: /^Chat/ }));
     expect(await screen.findByText('Edited title text')).toBeTruthy();
     expect(document.querySelectorAll('.ms-convo-version-summary')).toHaveLength(1);
   });
@@ -423,7 +419,7 @@ describe('EditorScreen · save', () => {
     act(() => pins.result.current[1](() => [{ version: 2, pin: { format: REEL, clipId: 'title', clipName: 'Title', timeSec: 1, note: 'bigger' } as never }]));
     render(<Harness />);
     await opened();
-    await userEvent.click(await screen.findByRole('tab', { name: 'Chat' }));
+    await userEvent.click(await screen.findByRole('tab', { name: /^Chat/ }));
     expect(await screen.findByText(/bigger/)).toBeTruthy();
     store().apply(move(111));
     await userEvent.click(await screen.findByRole('button', { name: 'Save as v3' }));
@@ -647,7 +643,7 @@ describe('EditorScreen · leave guard', () => {
 
   it('sending a chat message asks first: Keep editing sends nothing, Discard sends it', async () => {
     await dirty();
-    await userEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+    await userEvent.click(screen.getByRole('tab', { name: /^Chat/ }));
     const box = await screen.findByLabelText('Request a change');
     await userEvent.type(box, 'More rhythm');
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
@@ -667,7 +663,7 @@ describe('EditorScreen · leave guard', () => {
   it('sending a chat message with no edits goes straight out', async () => {
     render(<Harness />);
     await opened();
-    await userEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+    await userEvent.click(screen.getByRole('tab', { name: /^Chat/ }));
     await userEvent.type(await screen.findByLabelText('Request a change'), 'Hi');
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledTimes(1));
@@ -792,7 +788,7 @@ describe('EditorScreen · keyboard', () => {
     expect(media.currentTime).toBe(0);
     expect(getToasts()).toHaveLength(0);
     // The chat box too.
-    await userEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+    await userEvent.click(screen.getByRole('tab', { name: /^Chat/ }));
     const box = await screen.findByLabelText('Request a change');
     key({ key: 'z', ctrlKey: true }, box);
     expect(s.draft!.ops).toHaveLength(1);
@@ -1121,7 +1117,7 @@ describe('EditorScreen · one screen with the format view (decision 916)', () =>
     await userEvent.click(within(dialog).getByRole('button', { name: 'Add comment' }));
     const { result } = renderHook(() => usePendingPins(pinsKey('acme', 'lancio')));
     expect(result.current[0]).toEqual([{ version: 2, pin: { format: REEL, x: 0.25, y: 0.25, timeSec: 0, note: 'Più grande' } }]);
-    expect(screen.getByRole('tab', { name: 'Chat' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: /^Chat/ }).getAttribute('aria-selected')).toBe('true');
     expect(document.querySelectorAll('.ms-ed-stage .ms-cv-pin')).toHaveLength(1);
     // P toggles the mode from the keyboard; Esc leaves it.
     fireEvent.keyDown(window, { key: 'p' });
@@ -1130,7 +1126,7 @@ describe('EditorScreen · one screen with the format view (decision 916)', () =>
     expect(screen.getByRole('button', { name: 'Comment a spot' }).getAttribute('aria-pressed')).toBe('false');
   });
 
-  it('"Ask the agent" on a custom animation: a chip on the clip about its animation, the chat, the composer focused (item 10)', async () => {
+  it('"Ask the agent" on a custom animation works like a note: the dialog, a comment bound to the clip and the slot, the user stays (items 10, 18)', async () => {
     const custom = structuredClone(spike);
     (custom.tracks.flatMap((t) => t.clips).find((k) => k.id === 'title') as { animations?: unknown }).animations = [{ prop: 'opacity', from: 0, to: 1, duration: 0.5 }];
     api.getEditorComposition.mockImplementation(async (_s, _c, n) => view(n, { composition: structuredClone(custom) }));
@@ -1138,10 +1134,34 @@ describe('EditorScreen · one screen with the format view (decision 916)', () =>
     await opened();
     await userEvent.click(within(screen.getByRole('region', { name: 'In this scene' })).getByRole('button', { name: 'title' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Ask the agent' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Comment on the in animation of "title"' });
+    await userEvent.type(within(dialog).getByLabelText('Your comment'), 'Più lenta');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add comment' }));
     const { result } = renderHook(() => usePendingPins(pinsKey('acme', 'lancio')));
-    expect(result.current[0]).toEqual([{ version: 2, pin: expect.objectContaining({ format: REEL, clipId: 'title', clipName: 'title', timeSec: 0.2, note: 'About its custom in animation' }) }]);
-    expect(screen.getByRole('tab', { name: 'Chat' }).getAttribute('aria-selected')).toBe('true');
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Request a change')));
+    expect(result.current[0]).toEqual([{ version: 2, pin: expect.objectContaining({ format: REEL, clipId: 'title', clipName: 'title', timeSec: 0.2, animation: 'in', note: 'Più lenta' }) }]);
+    // The user stays in the inspector; the Chat tab counts the comments waiting to be sent.
+    expect(screen.getByRole('tab', { name: 'Inspector' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: /^Chat/ }).textContent).toBe('Chat1');
+    expect(screen.getByText('1 comment waiting to be sent')).toBeTruthy();
+    // A second one piles up with it.
+    await userEvent.click(screen.getByRole('button', { name: 'Ask the agent' }));
+    await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Add comment' }));
+    expect(result.current[0]).toHaveLength(2);
+    expect(screen.getByRole('tab', { name: /^Chat/ }).textContent).toBe('Chat2');
+  });
+
+  it('selecting a clip shows the inspector by itself, but not while the user is writing in the chat (item 16)', async () => {
+    render(<Harness />);
+    await opened();
+    const composer = screen.getByLabelText('Request a change') as HTMLTextAreaElement;
+    await userEvent.type(composer, 'Il titolo');
+    await userEvent.click(within(screen.getByRole('region', { name: 'In this scene' })).getByRole('button', { name: 'title' }));
+    expect(probe.ctx?.selection).toBe('title');
+    expect(screen.getByRole('tab', { name: /^Chat/ }).getAttribute('aria-selected')).toBe('true');
+    await userEvent.clear(screen.getByLabelText('Request a change'));
+    (document.activeElement as HTMLElement | null)?.blur();
+    await userEvent.click(within(screen.getByRole('region', { name: 'In this scene' })).getByRole('button', { name: 'card' }));
+    expect(screen.getByRole('tab', { name: 'Inspector' }).getAttribute('aria-selected')).toBe('true');
   });
 
   it('an identity format: the editor first, then the rendered logo on light and dark, and the sizes grid (identity bar)', async () => {

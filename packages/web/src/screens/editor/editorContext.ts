@@ -39,12 +39,21 @@ export interface EditorState {
   stageSvg(from: SvgEditFrom): Promise<StagedSvgEdit>;
   /** Why nothing may be written from this editor (a discarded variant, phase 15), or null. */
   readOnly: string | null;
-  /** SVG inner editor: the element of the selected svg clip chosen in the list or on the stage (its path), or null. */
+  /** SVG inner editor: the element of the selected svg clip chosen in the layers tree or on the stage (its path), or null. */
   svgElement: string | null;
-  selectSvgElement(path: string | null): void;
   /**
-   * "Ask the agent" on a custom animation (user test item 10): a comment chip on the clip about its `slot` animation goes to
-   * the chat, whose composer takes the focus.
+   * Picks an element of the selected svg clip (null: back to the layer). With `clipId`, of that svg clip, which becomes the
+   * selection (an element row of another layer in the layers tree, user test item 12).
+   */
+  selectSvgElement(path: string | null, clipId?: string): void;
+  /**
+   * "Ask the agent to change it" on an element of an svg clip (user test item 13): the note dialog of a comment bound to the
+   * clip and the element; the comment waits with the others in the chat's pending list.
+   */
+  askElement?(clipId: string, element: { path: string; name: string }): void;
+  /**
+   * "Ask the agent" on a custom animation (user test items 10, 18): the note dialog of a comment bound to the clip and its
+   * `slot` animation; the user stays in the editor and the comment waits with the others in the chat's pending list.
    */
   askAnimation?(clipId: string, slot: 'in' | 'out'): void;
 }
