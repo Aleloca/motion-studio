@@ -48,6 +48,25 @@ describe('busy composer: CSS rules', () => {
   });
 });
 
+describe('floating glass composer: CSS rules (user test note 25)', () => {
+  const conv = src('components/conversation.css');
+  it('the dock floats and the list is padded by its live height', () => {
+    expect(conv).toMatch(/\.ms-convo-dock\s*\{[^}]*position:\s*absolute[^}]*bottom:\s*0/);
+    expect(conv).toMatch(/\.ms-convo-list\s*\{[^}]*padding:[^;]*var\(--ms-dock-h/);
+  });
+  it('glass is blur + saturate behind a feature query and a reduced-transparency guard, over an opaque base', () => {
+    expect(conv).toMatch(/\.ms-composer\s*\{[^}]*background:\s*var\(--glassSolid\)/);
+    const glass = conv.slice(conv.indexOf('@supports'));
+    expect(glass).toMatch(/@media not \(prefers-reduced-transparency: reduce\)/);
+    expect(glass).toMatch(/backdrop-filter:\s*blur\([^)]*\)\s*saturate\(/);
+  });
+  it('the glass tokens exist in the light theme and both dark blocks', () => {
+    const theme = src('theme.css');
+    expect(theme.match(/--glass:/g)?.length).toBe(3);
+    expect(theme.match(/--glassSolid:/g)?.length).toBe(3);
+  });
+});
+
 async function markup(mode: 'live' | 'queue' | 'redirect', locale: 'en' | 'it'): Promise<string> {
   caps = { ...caps, liveInput: mode !== 'queue' };
   const { container, unmount } = render(

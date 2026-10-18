@@ -722,3 +722,40 @@ describe('Conversation · "Applies to" and warnings (Phase 9)', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 });
+
+describe('composer: labels, shortcut and floating dock (user test notes 24, 25)', () => {
+  it('the send button shows the shortcut glyph and the textarea placeholder says it (macOS)', () => {
+    render(view({ entries: [] }));
+    const send = screen.getByRole('button', { name: 'Send' });
+    expect(send.textContent).toContain('⌘↵');
+    expect(send.querySelector('svg')).toBeTruthy();
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).placeholder).toContain('⌘↵ to send');
+  });
+
+  it('uses Ctrl+↵ off macOS', () => {
+    onPlatform('Win32');
+    render(view({ entries: [] }));
+    expect(screen.getByRole('button', { name: 'Send' }).textContent).toContain('Ctrl+↵');
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).placeholder).toContain('Ctrl+↵ to send');
+  });
+
+  it('the queue button also shows the shortcut while the agent works', async () => {
+    render(view({ entries: [], job: running }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Queue for after' }).textContent).toContain('⌘↵'));
+  });
+
+  it('the list is padded by the live height of the dock that floats over it', () => {
+    let observe: (() => void) | undefined;
+    vi.stubGlobal('ResizeObserver', class { constructor(cb: () => void) { observe = cb; } observe() {} disconnect() {} unobserve() {} });
+    const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(150);
+    try {
+      const { container } = render(view({ entries: [] }));
+      const convo = container.querySelector('.ms-convo') as HTMLElement;
+      expect(container.querySelector('.ms-convo-dock form.ms-composer')).toBeTruthy();
+      expect(convo.style.getPropertyValue('--ms-dock-h')).toBe('150px');
+      height.mockReturnValue(220);
+      act(() => observe?.());
+      expect(convo.style.getPropertyValue('--ms-dock-h')).toBe('220px');
+    } finally { height.mockRestore(); vi.unstubAllGlobals(); }
+  });
+});

@@ -392,6 +392,27 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
     const el = listRef.current;
     if (el && atEnd.current) el.scrollTop = el.scrollHeight;
   }, [items.length]);
+  // The dock (wait note, queue, composer) floats over the bottom of the list: the list is padded by its live height, so the
+  // last message can always scroll above it, and a dock that grows (a longer text, chips) keeps the end in view.
+  const convoRef = useRef<HTMLDivElement>(null);
+  const dockRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const dock = dockRef.current;
+    const convo = convoRef.current;
+    if (!dock || !convo) return;
+    const measure = () => {
+      const h = `${dock.offsetHeight}px`;
+      if (convo.style.getPropertyValue('--ms-dock-h') === h) return;
+      convo.style.setProperty('--ms-dock-h', h);
+      const list = listRef.current;
+      if (list && atEnd.current) list.scrollTop = list.scrollHeight;
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(dock);
+    return () => ro.disconnect();
+  }, []);
   const onScroll = () => {
     const el = listRef.current;
     if (el) atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
@@ -416,7 +437,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
 
   const empty = items.length === 0;
   return (
-    <div className="ms-convo">
+    <div ref={convoRef} className="ms-convo">
       {variants ? <VariantSelector group={variants.group} current={variants.current} all={variants.all} missing={variants.missing ?? []} onSelect={variants.onSelect} /> : null}
       <ol ref={listRef} className="ms-convo-list" role="log" aria-label={c.label} onScroll={onScroll}>
         {empty && <li className="ms-convo-empty"><Empty icon="comment" title={c.emptyTitle} sub={c.emptySub} /></li>}
@@ -426,10 +447,13 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
           </Row>
         ))}
       </ol>
-      {job?.waitReason ? <p className="ms-convo-wait" role="status"><Icon name="clock" size={12} />{t.web.variantGroup.waitReasons[job.waitReason]}</p> : null}
-      {/* Always mounted (it renders nothing for an empty queue): an edit the queue overtook is kept even when the queue empties. */}
-      <QueuedRequests slug={slug} creative={creative} queued={queued ?? []} working={working} onChanged={() => onQueueChanged?.()} />
-      <Composer outbox={outboxApi} onQueueChanged={onQueueChanged} slug={slug} creative={creative} job={working && !variants?.all ? job : undefined} fanout={variants?.all ? variants.runAll : undefined} latestJobId={job?.id} snapshots={snapshots} pins={pins} onRemovePin={onRemovePin} onEditPin={onEditPin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} beforeSend={beforeSend} appliesTo={appliesTo} brief={brief} onBriefSaved={onBriefSaved} />
+      {/* The composer floats over the list (liquid glass): the dock is its live height, which pads the list (--ms-dock-h). */}
+      <div ref={dockRef} className="ms-convo-dock">
+        {job?.waitReason ? <p className="ms-convo-wait" role="status"><Icon name="clock" size={12} />{t.web.variantGroup.waitReasons[job.waitReason]}</p> : null}
+        {/* Always mounted (it renders nothing for an empty queue): an edit the queue overtook is kept even when the queue empties. */}
+        <QueuedRequests slug={slug} creative={creative} queued={queued ?? []} working={working} onChanged={() => onQueueChanged?.()} />
+        <Composer outbox={outboxApi} onQueueChanged={onQueueChanged} slug={slug} creative={creative} job={working && !variants?.all ? job : undefined} fanout={variants?.all ? variants.runAll : undefined} latestJobId={job?.id} snapshots={snapshots} pins={pins} onRemovePin={onRemovePin} onEditPin={onEditPin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} beforeSend={beforeSend} appliesTo={appliesTo} brief={brief} onBriefSaved={onBriefSaved} />
+      </div>
     </div>
   );
 }
@@ -883,8 +907,10 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, fanout, latestJ
     }
   };
 
-  const keys = isMac() ? '⌘↵' : 'Ctrl ↵';
-  const placeholder = !working ? c.placeholder : redirect ? u.redirectPlaceholder : caps.liveInput ? u.livePlaceholder : u.queuePlaceholder;
+  const keys = isMac() ? '⌘↵' : 'Ctrl+↵';
+  const kbd = <kbd className="ms-composer-keys" aria-hidden="true">{keys}</kbd>;
+  const placeholderBase = !working ? c.placeholder : redirect ? u.redirectPlaceholder : caps.liveInput ? u.livePlaceholder : u.queuePlaceholder;
+  const placeholder = `${placeholderBase} · ${c.sendHint({ keys })}`;
   const hint = !working ? c.sendHint({ keys }) : redirect ? u.redirectHint({ keys }) : caps.liveInput ? u.liveHint : u.queueHint;
 
   return (
@@ -941,8 +967,8 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, fanout, latestJ
             </Button>
           )}
           {!working && (
-            <Button type="submit" size="sm" variant="accent" icon className="ms-composer-send" aria-label={t.web.common.send} disabled={!canSend}>
-              <Icon name="upload" size={13} strokeWidth={1.8} />
+            <Button type="submit" size="sm" variant="accent" className="ms-composer-send" aria-label={t.web.common.send} disabled={!canSend}>
+              <Icon name="send" size={13} strokeWidth={1.6} />{kbd}
             </Button>
           )}
           {working && redirect && (
@@ -952,14 +978,14 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, fanout, latestJ
             </>
           )}
           {working && !redirect && capsNow === null && (
-            <Tooltip label={u.send} whenHidden=".ms-composer-text"><Button type="submit" size="sm" variant="accent" className="ms-composer-act" aria-label={u.send} loading disabled><Icon name="upload" size={13} strokeWidth={1.8} /><span className="ms-composer-text">{u.send}</span></Button></Tooltip>
+            <Tooltip label={u.send} whenHidden=".ms-composer-text"><Button type="submit" size="sm" variant="accent" className="ms-composer-act" aria-label={u.send} loading disabled><Icon name="send" size={13} strokeWidth={1.6} /><span className="ms-composer-text">{u.send}</span>{kbd}</Button></Tooltip>
           )}
           {working && !redirect && capsNow && !caps.liveInput && (
-            <Tooltip label={u.queue} whenHidden=".ms-composer-text"><Button type="submit" size="sm" variant="accent" className="ms-composer-act" aria-label={u.queue} disabled={!canSend}><Icon name="upload" size={13} strokeWidth={1.8} /><span className="ms-composer-text">{u.queue}</span></Button></Tooltip>
+            <Tooltip label={u.queue} whenHidden=".ms-composer-text"><Button type="submit" size="sm" variant="accent" className="ms-composer-act" aria-label={u.queue} disabled={!canSend}><Icon name="send" size={13} strokeWidth={1.6} /><span className="ms-composer-text">{u.queue}</span>{kbd}</Button></Tooltip>
           )}
           {working && !redirect && capsNow && caps.liveInput && (
             <SplitAction variant="accent" menuLabel={u.sendMore} groupLabel={u.send} disabled={!canSend}
-              primary={<Tooltip label={u.send} whenHidden=".ms-composer-text"><Button type="submit" size="sm" variant="accent" className="ms-composer-act" aria-label={u.send} disabled={!canSend}><Icon name="upload" size={13} strokeWidth={1.8} /><span className="ms-composer-text">{u.send}</span></Button></Tooltip>}
+              primary={<Tooltip label={u.send} whenHidden=".ms-composer-text"><Button type="submit" size="sm" variant="accent" className="ms-composer-act" aria-label={u.send} disabled={!canSend}><Icon name="send" size={13} strokeWidth={1.6} /><span className="ms-composer-text">{u.send}</span>{kbd}</Button></Tooltip>}
               items={[{ key: 'queue', label: u.queue, onSelect: () => void sendWhileWorking('queued') }]} />
           )}
         </div>

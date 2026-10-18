@@ -76,6 +76,18 @@ export function servicesSummary(services: BriefServices | undefined, t: Messages
   return all.length ? all.join(' · ') : sv.summaryAuto;
 }
 
+/**
+ * The chip's visible label: "Services" while nothing is chosen, else the names of the chosen services ("OpenAI · ElevenLabs"),
+ * the first two and a count when there are more (user test note 24). "Off" is a choice but not a service, so it is not named.
+ */
+export function servicesLabel(services: BriefServices | undefined, t: Messages): string {
+  const sv = t.web.services;
+  const s = effectiveServices({ services });
+  const names = [...new Set(SERVICE_KINDS.map((k) => s[k]).filter((c) => c !== 'auto' && c !== 'none'))].map((c) => sv.choices[c]);
+  if (names.length === 0) return sv.chip;
+  return names.length > 2 ? `${names.slice(0, 2).join(' · ')} +${names.length - 2}` : names.join(' · ');
+}
+
 export interface ServicesSelectorProps {
   value: BriefServices | undefined;
   onChange(next: BriefServices): void;
@@ -162,6 +174,7 @@ export function ServicesChip({ slug, creative, brief, busy, onSaved }: { slug: s
   const current = pending ?? brief.services;
   useEffect(() => { setPending(null); }, [brief]);
   const summary = servicesSummary(current, t, (k) => autoSkipped(k, configured, checks));
+  const label = servicesLabel(current, t);
   const save = async (services: BriefServices) => {
     setError(null); setSaving(true); setPending(services);
     try {
@@ -177,7 +190,7 @@ export function ServicesChip({ slug, creative, brief, busy, onSaved }: { slug: s
       <Tooltip label={busy ? `${sv.chipAria({ summary })} · ${sv.busy}` : sv.chipAria({ summary })} whenHidden=".ms-services-chip-label">
       <Button ref={anchor} size="sm" variant="ghost" className="ms-services-chip" aria-haspopup="dialog" aria-expanded={open}
         aria-label={sv.chipAria({ summary })} onClick={() => setOpen((o) => !o)}>
-        <Icon name="key" size={12} /><span className="ms-services-chip-label">{sv.chip}</span><span className="ms-services-chip-sum">{summary}</span>
+        <Icon name="key" size={12} /><span className="ms-services-chip-label">{label}</span>{label === sv.chip ? <span className="ms-services-chip-sum">{summary}</span> : null}
       </Button>
       </Tooltip>
       <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="top-start" width={420} label={sv.title}>
