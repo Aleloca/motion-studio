@@ -489,8 +489,10 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   const [selection, setSelection] = useState<string | null>(null);
   const [tab, setTab] = useState<'chat' | 'inspector'>('chat');
   const toInspector = useCallback(() => {
-    const composer = root.current?.querySelector<HTMLTextAreaElement>('.ms-composer textarea');
-    if (composer && (composer === document.activeElement || composer.value.trim() !== '')) return;
+    // The chat's text fields (the composer above all): any of them focused or holding text means the user is writing there.
+    const panel = root.current?.querySelector('#ms-ed-panel');
+    const fields = panel ? [...panel.querySelectorAll<HTMLTextAreaElement>('textarea')] : [];
+    if (fields.some((f) => f === document.activeElement || f.value.trim() !== '')) return;
     setTab('inspector');
   }, []);
   const select = useCallback((id: string | null) => { setSelection(id); if (id !== null) toInspector(); }, [toInspector]);
