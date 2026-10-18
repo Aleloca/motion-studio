@@ -16,7 +16,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
 import type { Shell } from '../src/shell/ShellContext.tsx';
 import { findChrome, launchChrome, type Browser } from '../../composition-runtime/test/support/chrome.ts';
-import { at, detailFor, groupOf, HOST, version } from './support/variants.ts';
+import { at, detailFor, groupOf, HOST, out, version } from './support/variants.ts';
 import { settled } from './support/settle.ts';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
@@ -25,10 +25,14 @@ const LONG = 'Direzione molto lunga: tipografia grande, molto spazio bianco, col
 // The live check's case (D1): a full-sentence direction that used to wrap over the format rows of the formats column.
 const FOTO = 'Foto calda e materica: chicchi e tostatura in primo piano, luce dorata da finestra, atmosfera artigianale';
 let group: VariantGroup = groupOf(['a', 'b', 'c', 'd', 'e'], {}, { b: { direction: LONG }, c: { direction: FOTO }, d: { status: 'discarded' } });
+/** Decision 1056: three variants of one 16:9 video, the case the comparison is measured on. */
+let compare = false;
 const versionsBy: Record<string, VersionEntry[]> = Object.fromEntries(['', '~b', '~c', '~d', '~e'].map((s) => [`${HOST}${s}`, [version(1, 'Dal brief'), version(2, 'Più chiaro')]]));
 const api = {
   getFormats: vi.fn(async () => ({ presets: DEFAULT_FORMATS, error: null, path: '/x' })),
-  getCreative: vi.fn(async (_s: string, c: string) => detailFor(c, versionsBy[c] ?? [], group, { missing: ['e'] })),
+  getCreative: vi.fn(async (_s: string, c: string) => (compare
+    ? detailFor(c, [version(1, 'Dal brief', [out('youtube-16x9', 'video.mp4', '.previews/video.mp4.jpg')])], group, { formats: ['youtube-16x9'] })
+    : detailFor(c, versionsBy[c] ?? [], group, { missing: ['e'] }))),
   getConversation: vi.fn(async () => []),
   fileUrl: (s: string, c: string, rel: string) => `/f/${s}/${c}/${rel}`,
   getUsage: vi.fn(async () => { throw new Error('offline'); }),
@@ -51,10 +55,11 @@ const chrome = required || process.env.MS_LAYOUT_CHROME === '1' ? findChrome() :
 
 describe('variant canvas: CSS rules', () => {
   const css = src('screens/variants/variants.css');
-  it('the variant bar wraps instead of overflowing, the cards wrap, and a card\'s header wraps its pieces', () => {
+  it('the variant bar wraps instead of overflowing, the cards wrap, a card\'s header keeps its menu on the name\'s line and its state line wraps', () => {
     expect(css).toMatch(/\.ms-vbar\s*\{[^}]*flex-wrap:\s*wrap/);
     expect(css).toMatch(/\.ms-cv-world\.ms-cv-vworld\s*\{[^}]*flex-wrap:\s*wrap/);
-    expect(css).toMatch(/\.ms-vcard-head\s*\{[^}]*flex-wrap:\s*wrap/);
+    expect(css).toMatch(/\.ms-vcard-head\s*\{[^}]*flex-wrap:\s*nowrap/);
+    expect(css).toMatch(/\.ms-vcard-status\s*\{[^}]*flex-wrap:\s*wrap/);
   });
   it('the full direction takes two lines at most; the name never keeps a focus outline after a click', () => {
     expect(css).toMatch(/\.ms-vcard-dir\s*\{[^}]*-webkit-line-clamp:\s*2/);
@@ -113,6 +118,32 @@ async function markup(layout: 'variant' | 'format', locale: 'en' | 'it', page: n
   } finally { unmount(); size.mockRestore(); high.mockRestore(); }
 }
 
+/** The canvas between the formats column and the chat panel at a window `page` px wide (canvas.css). */
+const canvasWidth = (page: number) => page - (page > 1180 ? 252 + 368 : page > 980 ? 200 + 340 : 340);
+
+/** Decision 1056: the markup of three variants of one 16:9 video, everything ready, at a window `page` px wide. */
+async function compareMarkup(page: number): Promise<string> {
+  compare = true;
+  group = groupOf(['a', 'b', 'c'], {}, { a: { direction: 'Minimal Apple-style keynote: white space' }, b: { direction: LONG }, c: { direction: FOTO } });
+  const live = { approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} } as unknown as EventsState;
+  const size = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('ms-cv-viewport') ? canvasWidth(page) : 0; });
+  const high = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('ms-cv-viewport') ? 700 : 0; });
+  const shell = {
+    route: { name: 'creative', slug: 'acme', creative: HOST }, live,
+    catalog: { projects: [{ slug: 'acme', name: 'Acme' }], creatives: {}, refresh: () => {} },
+    activity: { open: false, tab: null, seq: 0, show: () => {}, hide: () => {}, toggle: () => {} }, openPalette: () => {},
+  } as unknown as Shell;
+  const { container, unmount } = render(
+    <I18nProvider locale="it"><ShellContext.Provider value={shell}><header className="ms-topbar"><TopBar /></header><CreativeCanvas slug="acme" creative={HOST} live={live} /></ShellContext.Provider></I18nProvider>);
+  try {
+    await screen.findByRole('toolbar', { name: /Variant/ });
+    await waitFor(() => expect(container.querySelectorAll('.ms-vcard .ms-cv-board').length).toBe(3));
+    await settled(() => container.innerHTML);
+    for (const el of container.querySelectorAll<HTMLElement>('.ms-cv-frame')) if (el.style.zoom) el.setAttribute('style', `${el.getAttribute('style') ?? ''}; zoom: ${el.style.zoom}`);
+    return (container.querySelector('.ms-cv') as HTMLElement).outerHTML;
+  } finally { unmount(); size.mockRestore(); high.mockRestore(); compare = false; }
+}
+
 const MEASURE = `(() => {
 const problems = [];
 const vis = (el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
@@ -121,7 +152,7 @@ const name = (el) => (el.getAttribute('aria-label') || el.textContent || el.clas
 const inside = (el, host, what) => { const r = box(el), h = box(host); if (r.right > h.right + .5 || r.left < h.left - .5 || r.bottom > h.bottom + .5 || r.top < h.top - .5) problems.push(what + ' outside its box: ' + name(el)); };
 if (document.documentElement.scrollWidth > innerWidth) problems.push('page overflows');
 const cv = document.querySelector('.ms-cv');
-const counts = { bar: 0, heads: 0, boards: 0, stars: 0, fmts: 0, cards: 0 };
+const counts = { bar: 0, heads: 0, boards: 0, stars: 0, fmts: 0, cards: 0, canvas: 0, perLine: 0 };
 const bar = cv.querySelector('.ms-vbar');
 counts.bar = bar ? bar.querySelectorAll('button, [role=radio], [role=switch]').length : 0;
 if (bar) {
@@ -137,6 +168,9 @@ const sel = cv.querySelector('.ms-vsel .ms-seg');
 if (sel) { inside(sel, panel, 'chat selector'); for (const r of sel.querySelectorAll('[role=radio]')) { inside(r, panel, 'selector option'); if (r.scrollWidth > r.clientWidth + 1) problems.push('selector option clipped: ' + name(r)); } }
 else problems.push('no chat selector');
 const viewport = cv.querySelector('.ms-cv-viewport');
+counts.canvas = Math.round(viewport.clientWidth);
+const cardTops = [...cv.querySelectorAll('.ms-vcard')].map((c) => Math.round(box(c).top));
+counts.perLine = cardTops.filter((t) => t === cardTops[0]).length;
 if (viewport.scrollWidth > viewport.clientWidth + 1) problems.push('the canvas scrolls sideways: ' + viewport.scrollWidth + '/' + viewport.clientWidth);
 for (const card of cv.querySelectorAll('.ms-vcard')) {
   counts.cards++;
@@ -147,6 +181,8 @@ for (const card of cv.querySelectorAll('.ms-vcard')) {
   if (dir) { const lh = parseFloat(getComputedStyle(dir).lineHeight) || 16; if (box(dir).height > lh * 2 + 1) problems.push('direction taller than 2 lines'); }
 }
 for (const head of cv.querySelectorAll('.ms-vcard-head')) {
+  const title = head.querySelector('.ms-vrow-title'), end = head.querySelector('.ms-vrow-more, .ms-vrow-restore');
+  if (title && end && Math.abs(box(end).top + box(end).height / 2 - (box(title).top + box(title).height / 2)) > 4) problems.push('menu off the name line: ' + name(head));
   counts.heads++;
   for (const el of head.querySelectorAll('button, .ms-pill, .ms-vrow-dir, .ms-grow')) {
     if (!vis(el) || el.classList.contains('ms-grow')) continue;
@@ -155,7 +191,7 @@ for (const head of cv.querySelectorAll('.ms-vcard-head')) {
   const pill = head.querySelector('.ms-pill');
   if (pill && pill.scrollWidth > pill.clientWidth + 1) problems.push('state clipped: ' + name(pill));
   const dir = head.querySelector('.ms-vrow-dir');
-  if (dir && dir.scrollWidth > dir.clientWidth + 1 && dir.getBoundingClientRect().width < 120) problems.push('direction squeezed to ' + Math.round(dir.getBoundingClientRect().width) + 'px');
+  if (dir && dir.scrollWidth > dir.clientWidth + 1 && dir.getBoundingClientRect().width < 96) problems.push('name squeezed to ' + Math.round(dir.getBoundingClientRect().width) + 'px');
 }
 for (const line of cv.querySelectorAll('.ms-cv-board-line:not(.ms-cv-board-sub)')) {
   counts.boards++;
@@ -212,6 +248,19 @@ run('variant canvas: real Chrome layout', () => {
       return await tab.eval<{ problems: string[]; counts: Record<string, number>; formatsColumn: boolean }>(MEASURE, 30_000);
     } finally { await tab.close(); }
   }
+
+  // Decision 1056: comparing is the page's job. Three variants of a 16:9 video with the chat panel open: two side by side at
+  // 1024 and 1280 px windows, three from 1440; nothing sticks out sideways.
+  it('three 16:9 variants: 2 side by side at 1024 and 1280, 3 at 1440, 1512 and 1728', async () => {
+    const lines: Record<number, number> = {};
+    for (const width of [1024, 1280, 1440, 1512, 1728]) {
+      const r = await measure(await compareMarkup(width), width, 'compare');
+      expect(r.problems, `compare @${width}`).toEqual([]);
+      expect(r.counts.canvas, `canvas width @${width}`).toBe(canvasWidth(width));
+      lines[width] = r.counts.perLine!;
+    }
+    expect(lines).toEqual({ 1024: 2, 1280: 2, 1440: 3, 1512: 3, 1728: 3 });
+  }, 180_000);
 
   for (const locale of ['it', 'en'] as const) {
     for (const layout of ['variant', 'format'] as const) {

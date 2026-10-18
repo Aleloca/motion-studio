@@ -24,10 +24,11 @@
 .ms-vcard { display: flex; flex-direction: column; gap: 8px; min-width: 0; max-width: 100%; box-sizing: border-box; padding: 12px; border-radius: 12px;
   background: var(--panel); box-shadow: 0 0 0 1px var(--line), 0 6px 18px var(--shadow); }
 .ms-vcard.ms-on { box-shadow: 0 0 0 1px var(--line), 0 0 0 3px var(--sel), 0 6px 18px var(--shadow); }
-.ms-vcard-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; min-width: 0; }
+/* One line: the name gives way (ellipsis) to the ⋯ menu or "Ripristina", which stay at its end. */
+.ms-vcard-head { display: flex; align-items: center; flex-wrap: nowrap; gap: 8px; min-width: 0; }
 /* The state of its work, "In chat" and "Riprova": the card's second line. */
 .ms-vcard-status { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; min-width: 0; }
-.ms-vrow-title { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; flex: 1 1 auto; min-height: 0; height: 28px; padding: 0 8px 0 2px; margin: 0; border: 0; border-radius: 6px;
+.ms-vrow-title { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; flex: 1 1 0; min-height: 0; height: 28px; padding: 0 8px 0 2px; margin: 0; border: 0; border-radius: 6px;
   background: transparent; color: var(--text); font: inherit; font-weight: 600; cursor: pointer; outline: none; }
 .ms-vrow-title:hover { background: var(--field); }
 /* Focus shows only from the keyboard: a click never leaves an outline on the name. */
@@ -36,7 +37,9 @@
 .ms-vcard-letter { flex: none; min-width: 22px; height: 22px; padding: 0 5px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box;
   font-size: 12px; font-weight: 700; background: var(--ink); color: var(--inkText); }
 .ms-vrow-dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ms-vrow-state { flex: none; }
+/* A long waiting reason ("queued: two variants already working") gives way in a narrow card instead of sticking out. */
+.ms-vrow-state { flex: 0 1 auto; min-width: 0; max-width: 100%; overflow: hidden; }
+.ms-vrow-state > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-vrow-retry, .ms-vrow-restore, .ms-vrow-more { flex: none; }
 .ms-vcard-chat { flex: none; display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--accentText); white-space: nowrap; }
 .ms-vcard.ms-missing .ms-vrow-dir { color: var(--muted); font-style: italic; }

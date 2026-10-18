@@ -141,9 +141,12 @@ export function shortName(direction: string | null): string | null {
   return `${out || first.slice(0, SHORT_NAME_MAX - 1)}…`;
 }
 
-/** A card's width at 100% zoom, its narrowest (the header: letter, name, state, menu) and the grid's gap and side padding. */
+/**
+ * A card's width at 100% zoom, its narrowest (the header: letter, name and menu, then the state) and the grid's gap and side
+ * padding. CARD_MIN (decision 1056): with the chat panel open, three cards side by side from a 1440 px window, two at 1024–1280.
+ */
 export const CARD_W = 360;
-export const CARD_MIN = 260;
+export const CARD_MIN = 210;
 export const CARD_GAP = 24;
 export const CARDS_PAD = 16;
 /** The card's inner padding (its formats sit inside it). */

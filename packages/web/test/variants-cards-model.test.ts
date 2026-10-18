@@ -35,14 +35,23 @@ describe('card sizes', () => {
   const [tall, square] = boardsWith(['tiktok-9x16', 'instagram-post-1x1'], DEFAULT_FORMATS, [], () => ({ format: '', n: null }));
   it('a card is CARD_W × zoom wide, never narrower than its header needs nor wider than the viewport', () => {
     expect(cardWidth(1, 2000, 3)).toBe(CARD_W);
-    expect(cardWidth(0.5, 2000, 3)).toBe(260);
+    expect(cardWidth(0.5, 2000, 3)).toBe(210);
     expect(cardWidth(1, 300, 3)).toBe(300 - 2 * 16);
-    // Not all on one line: the cards of a line share its width (484 px canvas: one 452 px card per line).
-    expect(cardWidth(0.5, 484, 3)).toBe(452);
-    // 700 px: two 260 px cards fit; three wrap, so each line's two share 668 px.
-    expect(cardWidth(0.5, 700, 3)).toBe((668 - 24) / 2);
+    // Not all on one line: the cards of a line share its width (484 px canvas, a 1024 px window: two 214 px cards a line).
+    expect(cardWidth(0.5, 484, 3)).toBe((452 - 24) / 2);
+    // 380 px: one card a line, as wide as the canvas.
+    expect(cardWidth(0.5, 380, 3)).toBe(348);
     // Two cards that fit keep their width.
-    expect(cardWidth(0.5, 700, 2)).toBe(260);
+    expect(cardWidth(0.5, 700, 2)).toBe(210);
+  });
+  it('decision 1056: with the chat panel open, 2 cards side by side at 1024–1280 px windows, 3 from 1440', () => {
+    // The canvas between the formats column and the chat panel (canvas.css): 1024 → 484, 1280 → 660, 1440 → 820, 1512 → 892, 1728 → 1108.
+    const perLine = (view: number) => {
+      const z = fitCards(3, view)!;
+      const w = cardWidth(z, view, 3);
+      return Math.floor((view - 2 * 16 + 24) / (w + 24));
+    };
+    expect([484, 660, 820, 892, 1108].map(perLine)).toEqual([2, 2, 3, 3, 3]);
   });
   it('the formats of a card share its width in columns, as many as fit', () => {
     expect(cardColumns(236, 2)).toEqual({ cols: 2, width: 112 });
