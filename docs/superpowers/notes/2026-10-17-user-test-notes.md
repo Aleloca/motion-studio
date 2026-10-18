@@ -176,3 +176,11 @@ arrives and worked on later together.
     29) and v1 here. Also for A and B v1 is `incomplete` and v2 `complete` with the same hash: the format menu shows only the
     incomplete one. Ideas: show "v1 (unchanged in v2)" or "v1 · v2", explain "only versions that changed this format"; let a
     brief-only turn not create a version (or mark it "brief only"); fix the row layout.
+
+## Follow-ups found while working on 12–30
+
+- **Flaky on Linux CI:** `core/test/render-media.chrome.test.ts` "lenient (untrusted): a VFR WebM … renders and never fails"
+  failed once on ubuntu (run 39141011457, frame index list off by one) with no render code changed, and passed on rerun.
+  Make the frame-index assertion tolerant of the container-default-duration rounding, or pin the expected sequence per platform.
+- **"Replace with a text layer"** for outlined SVG lettering (report 13): not built (decision 1024).
+- **Electron at deviceScaleFactor > 1:** the desktop render windows were only tested with system Chrome (decision 1002).
