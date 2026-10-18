@@ -177,6 +177,44 @@ arrives and worked on later together.
     incomplete one. Ideas: show "v1 (unchanged in v2)" or "v1 · v2", explain "only versions that changed this format"; let a
     brief-only turn not create a version (or mark it "brief only"); fix the row layout.
 
+31. **The paid-services card lists services a creative can't use.** An identity pack (formats `identity-logo`,
+    `identity-favicon`, `identity-app-icon`, SVG only, brief services unset) with 5 variants asked to approve about 20 paid
+    calls: Images (OpenAI), Voice (OpenAI), Music and Sound effects (ElevenLabs) for each variant. Cause:
+    `VariantFanout.paidPlan` (`core/src/creatives/variant-fanout.ts:296`) takes `paidServicePlan`
+    (`core/src/bridge/provider-tools.ts:456`), which lists every paid service the brief's services allow with a key set
+    (unset = auto = all), and never looks at the formats. Still and vector formats have no audio, so voice, music and sound
+    effects can never be called. Whether an SVG identity pack should list Images at all is open. Note that Decline on this card
+    stops every variant (`cancelAll`), so the user can't just say no to the paid part.
+
+32. **"Create a new variant F" from the variants page went to all five variants.** Creative
+    `audin/…-al-momento-ho-gia-loghi-e-icone…` (identity pack, variants A–E), 2026-10-18 21:13Z. The composer on the group
+    page sent the message to A–E. Five agents started; each tried to add F and got "A creative has at most 5 variants".
+    Two questions: a request to add a variant should run once, not per variant; and the user wants a sixth variant, so
+    the limit of 5 (and how to make room, e.g. archiving one) needs a decision.
+    **User's call (2026-10-18):** no limit on the number of variants. Fixes for 31–34 wait for more reports.
+33. **A turn that changes nothing still makes an "incomplete" version (decision 1060 does not apply).** In the run above,
+    variant A's agent refused (limit) and changed nothing. The core still made v2. Its new version folder had no
+    compositions, so the check found "Missing composition" for all three formats, ran two automatic fix attempts, and saved
+    v2 as incomplete. The user then asked "Che problemi dovrebbe avere questa variante?" and the same happened again: v3
+    incomplete. `keepsLatest` (`creative-turns.ts:1429`) requires every format delivered, and an untouched version folder
+    delivers none. A turn that writes no composition must count as unchanged. The fix attempts also cost tokens for nothing.
+34. **Noise in the chat during generation.** The agents' shell commands hit:
+    - "The WOFF2 decoder requires the Brotli Python extension" (the agent reads a woff2 font with fontTools);
+    - "sed reads 'build.py' after a cd whose target cannot be resolved, and a deny rule (//Users/…/.ssh/**) …" (the
+      command guard refuses a command after a `cd` it cannot resolve);
+    - the warning "The agent wrote files that Motion Studio makes itself; they were removed: compositions/.claude" (variants
+      B and D).
+    The agents recovered each time, but the user reads them as errors.
+
+35. **One agent for the whole creative, not one per variant.** The user strongly dislikes that each variant has its own
+    agent and chat: it makes it hard to follow and to talk to. Wanted: a single agent that handles every variant. Which
+    variant it works on comes from the comments/notes left on a variant, or from the message naming it. This also settles
+    report 32 (a "new variant" request runs once). Open points, for the design:
+    - first generation of N variants: today N agents run in parallel; one agent could still hand the heavy work to
+      parallel workers behind the one chat;
+    - a message that names no variant and has no comment attached (the variant open on screen? ask?);
+    - versions stay per variant and per format (decision 972); the existing per-variant chats need a migration.
+
 ## Follow-ups found while working on 12–30
 
 - **Flaky on Linux CI:** `core/test/render-media.chrome.test.ts` "lenient (untrusted): a VFR WebM … renders and never fails"
