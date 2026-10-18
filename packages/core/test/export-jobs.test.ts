@@ -254,4 +254,16 @@ describe('export jobs (decision 974)', { timeout: 120_000 }, () => {
     expect(fake.calls.slice(calls).map((c) => [c.format.id, c.quality, c.out.includes(join('outputs', 'v1'))])).toEqual([['test-wide', 'high', true]]);
     expect((await store.readVersions(slug))[0]!.outputs[0]!.render?.quality).toBe('high');
   });
+
+  it('review #1: a follower exported alone after a primary render made before the quality choice: the primary is rendered again, then the follower is copied', async () => {
+    const { slug, store } = await v2Creative(['test-wide', 'test-wide-b'], { 'test-wide-b': 'test-wide' });
+    await waitJob((await renderVersion(slug)).id);
+    await store.updateVersion(slug, 1, (v) => ({ ...v, outputs: v.outputs.map(({ render: _r, ...o }) => o) }));
+    const calls = fake.calls.length;
+    const job = await startExport(slug, { destination: join(base, 'g'), picks: {}, follow: { 'test-wide-b': 1 } });
+    const done = await waitJob(job.id);
+    expect(done.state, done.error).toBe('succeeded');
+    expect(fake.calls.slice(calls).map((c) => c.format.id)).toEqual(['test-wide']);
+    expect((await store.readVersions(slug))[0]!.outputs.map((o) => [o.format, o.render?.quality]).sort()).toEqual([['test-wide', 'high'], ['test-wide-b', 'high']]);
+  });
 });

@@ -5,7 +5,7 @@ import { copyFile, lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import {
-  compositionProblemText, DEFAULT_EXPORT_QUALITY, effectiveLinks, formatDisplayName, messages, renderProblems, renderState, type RenderInfo, type RenderProfile,
+  compositionProblemText, DEFAULT_EXPORT_QUALITY, profileApplies, recordedQuality, effectiveLinks, formatDisplayName, messages, renderProblems, renderState, type RenderInfo, type RenderProfile,
   type Brief, type Composition, type FormatPreset, type JobProgress, type JobSummary, type Locale, type LocaleTag, type Localization, type LocalizationIssue, type LocalizationRow, type ManifestV2, type OutputFileInfo,
   type IdentitySetInfo, type OutputIssue, type ServerMessage, type VersionComposition, type VersionEntry,
 } from '@motion-studio/shared';
@@ -194,6 +194,7 @@ export class RenderJobService {
     if (opts.locales && opts.locales.length > 0) return this.startLocalized(ref, version, creative.title, requested, opts.locales, opts.force === true, locale);
     if (!this.deps.engine) throw new CodedError(503, m.render.noRenderer, 'no-renderer');
     if ((await this.deps.engine.info()).kind === null) throw new CodedError(409, m.render.noBrowser, 'no-browser');
+    const presets = await this.deps.presets();
     // From here to the enqueue nothing awaits: the active jobs seen are the ones the new job queues behind.
     const base = renderJobKey(ref.root, ref.projectSlug, ref.creativeSlug, n);
     const active = this.activeJobs(base);
@@ -214,6 +215,8 @@ export class RenderJobService {
     if (asked.size > 0) {
       for (const p of basePlan.primaries) {
         if (asked.has(p) || renderState(version, p) !== 'rendered' || renderProblems(version, p).length > 0) continue;
+        // A video render made before the quality choice (review #1): rendered again, so its followers get the default quality too.
+        if (profileApplies(findPreset(presets, p), p) && recordedQuality(version.outputs.find((o) => o.format === p)) !== DEFAULT_EXPORT_QUALITY) continue;
         const file = version.outputs.find((o) => o.format === p)?.file;
         const st = file ? await lstat(join(new CreativeStore(ref.projectDir).outputsDir(ref.creativeSlug, n), file)).catch(() => null) : null;
         if (st?.isFile() && st.nlink === 1) reuse.push(p);
