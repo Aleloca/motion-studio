@@ -1,4 +1,5 @@
-import { access, constants, copyFile, lstat, mkdir, realpath, rm, stat } from 'node:fs/promises';
+import { access, constants, lstat, mkdir, open, realpath, rm, stat } from 'node:fs/promises';
+import { pipeline } from 'node:stream/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { DEFAULT_EXPORT_NAME_PATTERN, exportExtension, exportNameCollisions, exportNameVars, followerMatches, followerVersion, hasFormat, isDefaultProfile, localizedStem, profileApplies, profileFor, DEFAULT_EXPORT_QUALITY, recordedQuality, renderName, renderState, separateInstanceNames, starOf, type FormatPreset, type RenderProfile, type VersionEntry } from '@motion-studio/shared';
 import { copyConfinedFile, probeConfinedFile } from '../brand/agent-guard.ts';
@@ -70,11 +71,25 @@ async function copySet(copy: CopyFn, creativeDir: string, n: number, set: { dir:
   return out;
 }
 
-/** Copies a file of the core's own (a render made for the export) without overwriting; a failure after creating `to` says so. */
-const copyOwn: CopyFn = async (from, to, mode) => {
-  try { await copyFile(from, to, mode); } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== 'EEXIST') (e as { targetCreated?: boolean }).targetCreated = true;
-    throw e;
+/**
+ * Copies a file of the core's own (a render made for the export) without overwriting (review #2): the source is opened first,
+ * then the target with `O_CREAT | O_EXCL | O_NOFOLLOW` (EEXIST when anything is there, a link included); only a failure after
+ * that open says `targetCreated`, so a source-side failure never removes a file that was already at the destination.
+ */
+export const copyOwn: CopyFn = async (from, to) => {
+  const src = await open(from, 'r');
+  try {
+    const dst = await open(to, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o644);
+    try {
+      await pipeline(src.createReadStream(), dst.createWriteStream());
+    } catch (e) {
+      (e as { targetCreated?: boolean }).targetCreated = true;
+      throw e;
+    } finally {
+      await dst.close().catch(() => {});
+    }
+  } finally {
+    await src.close().catch(() => {});
   }
 };
 

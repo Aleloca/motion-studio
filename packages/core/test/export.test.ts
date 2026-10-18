@@ -441,3 +441,27 @@ describe('identity sets (Phase 14)', () => {
     expect(await readdir(base)).toEqual(['creative']);
   });
 });
+
+describe('copying a render made for the export (review #2)', () => {
+  it('a source that cannot be read never removes a file already at the destination', async () => {
+    const { copyOwn } = await import('../src/creatives/export.ts');
+    const dir = await mkdtemp(join(tmpdir(), 'ms-test-copyown-'));
+    try {
+      await writeFile(join(dir, 'src.mp4'), 'render');
+      await chmod(join(dir, 'src.mp4'), 0o000);
+      await writeFile(join(dir, 'theirs.mp4'), 'user file');
+      const err = await copyOwn(join(dir, 'src.mp4'), join(dir, 'theirs.mp4'), 0).then(() => null, (e: unknown) => e as { code?: string; targetCreated?: boolean });
+      expect(err?.targetCreated).toBeFalsy();
+      expect(await readFile(join(dir, 'theirs.mp4'), 'utf8')).toBe('user file');
+      // An existing target: EEXIST, never overwritten; a free name: copied.
+      await chmod(join(dir, 'src.mp4'), 0o644);
+      await expect(copyOwn(join(dir, 'src.mp4'), join(dir, 'theirs.mp4'), 0)).rejects.toMatchObject({ code: 'EEXIST' });
+      expect(await readFile(join(dir, 'theirs.mp4'), 'utf8')).toBe('user file');
+      await copyOwn(join(dir, 'src.mp4'), join(dir, 'new.mp4'), 0);
+      expect(await readFile(join(dir, 'new.mp4'), 'utf8')).toBe('render');
+      // A link at the target is never followed.
+      await symlink(join(dir, 'theirs.mp4'), join(dir, 'link.mp4'));
+      await expect(copyOwn(join(dir, 'src.mp4'), join(dir, 'link.mp4'), 0)).rejects.toMatchObject({ code: 'EEXIST' });
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+});
