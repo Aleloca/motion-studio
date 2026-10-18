@@ -100,7 +100,8 @@ describe('render per language', { timeout: 120_000 }, () => {
     const renders = manifest(slug, 1).renders;
     const plain = renders.filter((r) => r.locale === undefined);
     expect(plain.map((r) => r.file).sort()).toEqual(['test-tall.mp4', 'test-wide.mp4']);
-    for (const r of plain) expect(Object.keys(r).sort()).toEqual(['durationSec', 'file', 'format', 'fromComposition', 'height', 'renderedAt', 'sha256', 'width']);
+    // Decision 974: a video's render also records its quality, size and encoder (`render`); still no language fields.
+    for (const r of plain) expect(Object.keys(r).sort()).toEqual(['durationSec', 'file', 'format', 'fromComposition', 'height', 'render', 'renderedAt', 'sha256', 'width']);
     expect(renders.filter((r) => r.locale === 'de').map((r) => r.file)).toEqual(['test-wide.de.mp4']);
     expect(title(env.fake.renders.find((x) => x.out.endsWith('/test-wide.mp4'))!.composition as never).text).toBe('Hello');
   });

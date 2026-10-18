@@ -506,6 +506,8 @@ export const it: Messages = {
   },
   render: {
     jobLabel: (p) => `Render · ${p.title} v${p.n}`,
+    exportJobLabel: (p) => `Render per l'export · ${p.title} v${p.n} (${p.detail})`,
+    qualityNames: { standard: 'Standard', high: 'Alta', max: 'Massima' },
     notV2: (p) => `v${p.n} non ha composizioni da renderizzare: i suoi file media sono il risultato`,
     formatsNotInVersion: (p) => `Formati non presenti in questa versione: ${p.list}`,
     noRenderer: 'Il render non è disponibile in questo Motion Studio',
@@ -525,6 +527,8 @@ export const it: Messages = {
     identitySetFailed: (p) => `${p.format}: non è stato possibile creare il set di file: ${p.reason}`,
   },
   export: {
+    jobLabel: (p) => `Export · ${p.title}`,
+    invalidProfile: 'Scegli una risoluzione e una qualità tra quelle offerte da Export',
     absoluteDestination: 'Scegli una cartella di destinazione (percorso assoluto)',
     outsideWorkspace: 'Scegli una cartella fuori dal workspace di Motion Studio',
     destinationIsFile: 'La destinazione è un file, non una cartella',

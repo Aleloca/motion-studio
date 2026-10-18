@@ -1,5 +1,5 @@
 import { basename, join } from 'node:path';
-import { effectiveLinks, formatDisplayName, messages, starOf, type FormatPreset, type JobSummary, type LocalizationRow } from '@motion-studio/shared';
+import { DEFAULT_RENDER_PROFILE, effectiveLinks, formatDisplayName, messages, starOf, type ExportQuality, type FormatPreset, type JobSummary, type LocalizationRow, type RenderProfile } from '@motion-studio/shared';
 import { currentLocale, t } from '../i18n.ts';
 import { changedAssets, overlayAssetPaths, readOverlay } from '../localization/store.ts';
 import { assertLocalesInBrief, checkedLocale } from '../localization/validate.ts';
@@ -27,7 +27,9 @@ export const localeAssetsCheck = (projectDir: string, creativeDir: string) => as
 
 export interface PrepareExportDeps { turns: CreativeTurnService; renders: RenderJobService; presets: () => Promise<FormatPreset[]> }
 /** The ★ export's selection (`POST …/export/prepare`, the export dialog's body), or `stars`: every format's ★ as stored. */
-export interface PrepareExportBody { picks?: Record<string, unknown>; follow?: string[] | Record<string, unknown>; locales?: string[]; force?: boolean }
+export interface PrepareExportBody { picks?: Record<string, unknown>; follow?: string[] | Record<string, unknown>; locales?: string[]; force?: boolean;
+  /** Decision 974: the export's quality and resolution (the version renders it needs at the default profile only). */
+  quality?: ExportQuality; resolution?: number }
 export interface PreparedRender { version: number; formats: string[]; job: JobSummary; covers: boolean; locales?: string[] }
 
 /**
@@ -43,6 +45,10 @@ export async function prepareExportRenders(deps: PrepareExportDeps, ref: Creativ
   const creative = await ref.store.get(ref.creativeSlug);
   const creativeDir = ref.store.dir(ref.creativeSlug);
   const presetsForLabels = body.locales ? await deps.presets() : [];
+  // Decision 974: what the export at this profile renders on the version (the agent's `prepare_export`: the dialog's default).
+  const profile: RenderProfile | undefined = o.stars ? DEFAULT_RENDER_PROFILE
+    : body.quality !== undefined || body.resolution !== undefined ? { quality: body.quality ?? DEFAULT_RENDER_PROFILE.quality, ...(body.resolution !== undefined ? { short: body.resolution } : {}) } : undefined;
+  const profileOpts = profile ? { profile, presets: await deps.presets() } : {};
   await reconcileRenders({ projectDir: ref.projectDir, store: ref.store, creativeSlug: ref.creativeSlug }).catch(() => false);
   const { versions, complete } = await withLazyHashes({ projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir, versions: await ref.store.readVersions(ref.creativeSlug) });
   const links = effectiveLinks(creative.brief.links, creative.brief.formats);
@@ -69,7 +75,7 @@ export async function prepareExportRenders(deps: PrepareExportDeps, ref: Creativ
   if (tags) assertLocalesInBrief(creative.brief, tags, currentLocale());
   const includeSource = tags === null || (briefPrimary !== undefined && tags.includes(briefPrimary));
   const otherTags = tags === null ? [] : tags.filter((x) => x !== briefPrimary);
-  const pending = includeSource ? await pendingRenders(creativeDir, versions, items) : new Map<number, string[]>();
+  const pending = includeSource ? await pendingRenders(creativeDir, versions, items, profileOpts) : new Map<number, string[]>();
   if (pending.size > 0) await notDiscarded();
   const renders: PreparedRender[] = [];
   // Answers at once: an active job of that version is reused for the formats it covers and a follow-up job is queued for

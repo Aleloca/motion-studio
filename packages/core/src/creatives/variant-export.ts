@@ -1,9 +1,10 @@
-import { effectiveLinks, letterOfSlug, renderState, type JobSummary, type VariantLetter, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_QUALITY, effectiveLinks, isDefaultProfile, letterOfSlug, profileApplies, profileFor, recordedQuality, renderState, type FormatPreset, type JobSummary, type RenderProfile, type VariantLetter, type VersionEntry } from '@motion-studio/shared';
+import { findPreset } from '../formats/format-catalog.ts';
 import { probeConfinedFile } from '../brand/agent-guard.ts';
 import { CodedError } from '../workspace-store.ts';
 import type { CreativeRef } from './creative-turns.ts';
 import type { CreativeStore } from './creative-store.ts';
-import { checkDestination, exportResolved, plainName, resolveLocalizedItems, setOf, type ExportCommon, type ExportItem, type ExportResult } from './export.ts';
+import { checkDestination, exportResolved, plainName, recordedMatches, resolveLocalizedItems, setOf, type ExportCommon, type ExportItem, type ExportResult } from './export.ts';
 import type { VariantGroupService } from './variant-group.ts';
 
 /**
@@ -73,6 +74,32 @@ export async function planGroupExport(svc: VariantGroupService, store: CreativeS
     } else {
       out.push({ ...base, ...named, file: '', width: 0, height: 0, state: 'missing' });
     }
+  }
+  return out;
+}
+
+/**
+ * Decision 974: the plan of an export at `profile`. A composition taken at another quality or size is `ready`: it is rendered
+ * for the export alone (the route's `withExportRenders`), whatever its version render is. At the default profile a video
+ * whose render was made before the quality choice (`standard`) `needs-render`, as a single creative's export does. Without a
+ * profile (older clients) the plan as it is.
+ */
+export async function withGroupProfile(store: CreativeStore, plan: GroupPlanItem[], profile: RenderProfile | undefined, presets: FormatPreset[]): Promise<GroupPlanItem[]> {
+  if (!profile) return plan;
+  const cache = new Map<string, VersionEntry[]>();
+  const versionsOf = async (slug: string) => {
+    if (!cache.has(slug)) cache.set(slug, await store.readVersions(slug).catch(() => []));
+    return cache.get(slug)!;
+  };
+  const out: GroupPlanItem[] = [];
+  for (const p of plan) {
+    const v = p.state === 'missing' ? undefined : (await versionsOf(p.slug)).find((x) => x.n === p.version);
+    if (!v?.compositions?.some((c) => c.format === p.format)) { out.push(p); continue; }
+    const preset = findPreset(presets, p.format);
+    const wanted = profileFor(preset, p.format, profile);
+    if (!isDefaultProfile(wanted)) { out.push(p.state === 'ready' && recordedMatches(v, p.format, wanted) ? p : { ...p, state: 'ready' }); continue; }
+    const stale = p.state === 'ready' && profileApplies(preset, p.format) && recordedQuality(v.outputs.find((o) => o.format === p.format)) !== DEFAULT_EXPORT_QUALITY;
+    out.push(stale ? { ...p, state: 'needs-render' } : p);
   }
   return out;
 }

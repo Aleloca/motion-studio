@@ -1,11 +1,11 @@
-import { renderJobKey } from '@motion-studio/shared';
+import { exportRenderJobKey, renderJobKey } from '@motion-studio/shared';
 import { randomBytes } from 'node:crypto';
 import { constants } from 'node:fs';
 import { copyFile, lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import {
-  compositionProblemText, effectiveLinks, formatDisplayName, messages, renderProblems, renderState,
+  compositionProblemText, DEFAULT_EXPORT_QUALITY, effectiveLinks, formatDisplayName, messages, renderProblems, renderState, type RenderInfo, type RenderProfile,
   type Brief, type Composition, type FormatPreset, type JobProgress, type JobSummary, type Locale, type LocaleTag, type Localization, type LocalizationIssue, type LocalizationRow, type ManifestV2, type OutputFileInfo,
   type IdentitySetInfo, type OutputIssue, type ServerMessage, type VersionComposition, type VersionEntry,
 } from '@motion-studio/shared';
@@ -85,6 +85,11 @@ export interface RenderJobDeps {
   measureText?: (o: { ref: { projectDir: string; creativeDir: string; creativeSlug: string; n: number }; folder: string; preset: FormatPreset; composition: Composition; signal?: AbortSignal }) => Promise<string[] | null>;
 }
 
+/** How a caller waits for render jobs (decision 974): its cancel, and the jobs it waits for (an export job's progress). */
+export interface RenderWait { signal?: AbortSignal; onJobs?(ids: string[]): void }
+/** A render made for one export (decision 974): the file (in the export's own temp folder) and its record. */
+export interface ExportRendered { path: string; render: RenderInfo }
+
 export interface RenderPlan {
   /** Primary formats to render, in the version's order. */
   primaries: string[];
@@ -145,6 +150,8 @@ export function renderExtension(preset: FormatPreset, still: boolean): string {
 }
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 500);
+/** The record of a video render (decision 974): the quality asked for (the renderer's own when it says), its size and encoder. */
+const renderInfoOf = (r: RenderResult, quality: RenderInfo['quality']): RenderInfo => ({ quality: r.quality ?? quality, width: r.width, height: r.height, encoder: r.encoder });
 const tempName = (name: string) => `.${name}.render-${randomBytes(6).toString('hex')}.tmp`;
 
 /**
@@ -243,19 +250,161 @@ export class RenderJobService {
   }
 
   /** Renders `formats` of each version (`ensureJob`, waiting for a job that covers other formats) and waits; the summaries as they ended. */
-  async renderAndWait(ref: CreativeRef, pending: ReadonlyMap<number, string[]>): Promise<JobSummary[]> {
+  async renderAndWait(ref: CreativeRef, pending: ReadonlyMap<number, string[]>, w: RenderWait = {}): Promise<JobSummary[]> {
+    if (w.signal?.aborted) throw new RenderError('cancelled', 'cancelled');
+    const before = this.activeIds();
     const jobs = await Promise.all([...pending].map(async ([n, formats]) => (await this.ensureJob(ref, n, formats)).job));
     // Every active job of those versions (a follow-up runs after the jobs it queued behind; wait for them all).
     const all = new Map(jobs.map((j) => [j.id, j]));
     for (const [n] of pending) for (const j of this.activeJobs(renderJobKey(ref.root, ref.projectSlug, ref.creativeSlug, n))) all.set(j.id, j);
-    const ended = await Promise.all([...all.values()].map((j) => this.deps.queue.whenSettled(j.id)));
-    return ended.filter((j): j is JobSummary => j !== null);
+    return this.waitAll([...all.keys()], [...all.keys()].filter((id) => !before.has(id)), w);
   }
 
   /** Renders `formats` of version `n` in `locales` (`start` with locales) and waits for the job; its summary as it ended. */
-  async renderLocalesAndWait(ref: CreativeRef, n: number, formats: string[], locales: readonly string[], force: boolean): Promise<JobSummary | null> {
+  async renderLocalesAndWait(ref: CreativeRef, n: number, formats: string[], locales: readonly string[], force: boolean, w: RenderWait = {}): Promise<JobSummary | null> {
+    if (w.signal?.aborted) throw new RenderError('cancelled', 'cancelled');
     const job = await this.start(ref, n, formats, { locales, force });
-    return this.deps.queue.whenSettled(job.id);
+    return (await this.waitAll([job.id], [job.id], w))[0] ?? null;
+  }
+
+  private activeIds(): Set<string> {
+    return new Set(this.deps.queue.list().filter((j) => j.state === 'queued' || j.state === 'running').map((j) => j.id));
+  }
+
+  /**
+   * Waits for jobs `ids` (reported to `w.onJobs` first). An abort of `w.signal` (an export cancelled, decision 974) cancels
+   * `own`, the jobs this wait started (never one another request started and shares), and rejects as cancelled.
+   */
+  private waitAll(ids: string[], own: string[], w: RenderWait): Promise<JobSummary[]> {
+    w.onJobs?.(ids);
+    const settled = Promise.all(ids.map((id) => this.deps.queue.whenSettled(id))).then((list) => list.filter((j): j is JobSummary => j !== null));
+    const signal = w.signal;
+    if (!signal) return settled;
+    return new Promise((resolve, reject) => {
+      const onAbort = () => {
+        for (const id of own) this.deps.queue.cancel(id);
+        reject(new RenderError('cancelled', 'cancelled'));
+      };
+      if (signal.aborted) { onAbort(); return; }
+      signal.addEventListener('abort', onAbort, { once: true });
+      settled.then((r) => { signal.removeEventListener('abort', onAbort); resolve(r); }, (e: unknown) => { signal.removeEventListener('abort', onAbort); reject(e); });
+    });
+  }
+
+  /**
+   * Decision 974: renders `pending` (version → formats) at `profile` (another quality or size than the version's own render)
+   * into `outDir`, for one export, and waits. One render job per version, in the render lane (one render at a time), keyed
+   * `render-export:…` (`exportRenderJobKey`): it records nothing in the version, and no other request reuses it. A follower is
+   * the file of its primary's render. Returns the files made (key `<n>\0<format>`) and the failed jobs' errors.
+   */
+  async exportRenderAndWait(ref: CreativeRef, pending: ReadonlyMap<number, string[]>, profile: RenderProfile, outDir: string, w: RenderWait = {}):
+    Promise<{ files: Map<string, ExportRendered>; errors: string[] }> {
+    if (w.signal?.aborted) throw new RenderError('cancelled', 'cancelled');
+    const files = new Map<string, ExportRendered>();
+    const jobs: JobSummary[] = [];
+    for (const [n, formats] of pending) {
+      jobs.push(await this.startExportRender(ref, n, formats, profile, join(outDir, `v${n}`), (format, r) => files.set(`${n}\0${format}`, r)));
+    }
+    const ids = jobs.map((j) => j.id);
+    const ended = await this.waitAll(ids, ids, w);
+    return { files, errors: ended.filter((j) => j.state !== 'succeeded').map((j) => j.error ?? j.state) };
+  }
+
+  private async startExportRender(ref: CreativeRef, n: number, requested: string[], profile: RenderProfile, outDir: string,
+    collect: (format: string, r: ExportRendered) => void): Promise<JobSummary> {
+    const locale = currentLocale();
+    const m = messages(locale);
+    const store = new CreativeStore(ref.projectDir);
+    const creative = await store.get(ref.creativeSlug);
+    const version = (await store.readVersions(ref.creativeSlug)).find((v) => v.n === n);
+    if (!version) throw new CodedError(404, m.errors.versionNNotFound({ n }), 'version-not-found');
+    const comps = version.compositions ?? [];
+    if (comps.length === 0) throw new CodedError(400, m.render.notV2({ n }), 'version-not-v2');
+    const plan = renderPlan(comps, creative.brief, requested);
+    if (plan.unknown.length > 0) throw new CodedError(400, m.render.formatsNotInVersion({ list: plan.unknown.join(', ') }), 'formats-not-in-version');
+    if (!this.deps.engine) throw new CodedError(503, m.render.noRenderer, 'no-renderer');
+    if ((await this.deps.engine.info()).kind === null) throw new CodedError(409, m.render.noBrowser, 'no-browser');
+    const detail = [profile.short !== undefined ? `${profile.short}p` : null, m.render.qualityNames[profile.quality]].filter(Boolean).join(' · ');
+    return this.deps.queue.enqueue({
+      key: exportRenderJobKey(ref.root, ref.projectSlug, ref.creativeSlug, n, randomBytes(4).toString('hex')),
+      kind: 'render', lane: 'render',
+      label: m.render.exportJobLabel({ title: creative.title, n, detail }),
+      formats: [...plan.primaries, ...Object.keys(plan.followers)],
+      run: async (signal, jobId) => {
+        const presets = await this.deps.presets();
+        const label = (id: string) => formatDisplayName(presets, id, locale);
+        const progress = this.throttled(jobId);
+        const failures: string[] = [];
+        await mkdir(outDir, { recursive: true });
+        try {
+          for (const format of plan.primaries) {
+            if (signal.aborted) throw new RenderError('cancelled', 'cancelled');
+            try {
+              const r = await this.renderForExport({ ref, n, format, comps, presets, profile, outDir, signal, progress, label, locale });
+              collect(format, r);
+              for (const [f, p] of Object.entries(plan.followers)) if (p === format) collect(f, r);
+            } catch (e) {
+              if (signal.aborted || (e instanceof RenderError && e.code === 'cancelled')) throw e;
+              failures.push(m.render.formatFailed({ format: label(format), reason: errorText(e) }));
+            }
+          }
+        } finally {
+          this.deps.queue.patch(jobId, { progress: undefined });
+        }
+        if (failures.length > 0) throw new JobFailedError(m.render.someFailed({ list: failures.join('; ') }));
+      },
+    });
+  }
+
+  /** A job's progress, throttled like the version renders' (phase changes always go out). */
+  private throttled(jobId: string): (p: JobProgress) => void {
+    let last = 0;
+    let lastKey = '';
+    return (p) => {
+      const now = Date.now();
+      const key = `${p.format}:${p.phase}`;
+      if (key === lastKey && p.done < p.total && now - last < (this.deps.progressIntervalMs ?? 250)) return;
+      last = now;
+      lastKey = key;
+      this.deps.queue.patch(jobId, { progress: p });
+    };
+  }
+
+  /**
+   * One format rendered for an export at `profile` (decision 974): the composition checked as for the version's render (its
+   * hash still the recorded one), its media normalised, rendered into `outDir`. Nothing is recorded in the version.
+   */
+  private async renderForExport(o: { ref: CreativeRef; n: number; format: string; comps: VersionComposition[]; presets: FormatPreset[]; profile: RenderProfile; outDir: string;
+    signal: AbortSignal; progress: (p: JobProgress) => void; label: (id: string) => string; locale: Locale }): Promise<ExportRendered> {
+    const { ref, n, format, signal } = o;
+    const m = messages(o.locale);
+    const store = new CreativeStore(ref.projectDir);
+    const creativeDir = store.dir(ref.creativeSlug);
+    const entry = o.comps.find((c) => c.format === format)!;
+    const preset = findPreset(o.presets, format);
+    if (!preset) throw new Error(m.validation.unknownPreset({ id: format }));
+    o.progress({ format, phase: 'media', done: 0, total: 0 });
+    const compDir = join(store.outputsDir(ref.creativeSlug, n), ...entry.dir.split('/'));
+    const loaded = await loadComposition(compDir, preset);
+    if (!loaded.ok) {
+      const list = loaded.problems.slice(0, 5).map((p) => compositionProblemText(p, o.locale)).join('; ');
+      throw new Error(m.render.compositionProblems({ format: o.label(format), list }));
+    }
+    if (loaded.hash !== entry.hash) throw new Error(m.render.compositionChanged({ format: o.label(format) }));
+    const composition = storeComposition(format, loaded.composition);
+    const prepared = await this.deps.normalizer.prepare({ projectDir: ref.projectDir, compDir, composition, signal, onProgress: (p) => o.progress({ format, phase: 'media', done: p.done, total: p.total }) });
+    const file = `${format}.${renderExtension(preset, !(composition.duration > 0))}`;
+    try {
+      const result = await this.deps.engine!.render({
+        ...this.deps.renderOptions,
+        dir: creativeDir, versionDir: `outputs/v${n}`, composition, format: preset, out: join(o.outDir, file), signal, ...(sessionMediaOf(prepared) ? { media: sessionMediaOf(prepared)! } : {}),
+        quality: o.profile.quality, ...(o.profile.short !== undefined ? { short: o.profile.short } : {}),
+        onProgress: (p) => o.progress({ format, phase: 'frames', done: p.frames, total: p.total }),
+      });
+      return { path: result.file, render: renderInfoOf(result, o.profile.quality) };
+    } finally {
+      prepared.release();
+    }
   }
 
   private async run(ref: CreativeRef, n: number, plan: RenderPlan, comps: VersionComposition[], locale: Locale, signal: AbortSignal, jobId: string): Promise<void> {
@@ -355,6 +504,8 @@ export class RenderJobService {
         dir: creativeDir, versionDir: `outputs/v${n}`, composition, format: preset, out: join(versionDir, file), signal, ...(sessionMediaOf(prepared) ? { media: sessionMediaOf(prepared)! } : {}),
         // Store screenshots are flattened, the App Store preview gets its audio track (Phase 12, spec §4.2).
         ...storeRenderOptions(format, composition),
+        // The version's own render is always at the default quality and the format's size (decision 974).
+        quality: DEFAULT_EXPORT_QUALITY,
         onProgress: (p) => o.progress({ format, phase: 'frames', done: p.frames, total: p.total }),
         // The stamp is noted before the rename (M1): a turn's check in between sees the core's own write.
         beforeRename: (temp) => noteCoreOutputWrite(creativeDir, `outputs/v${n}/${file}`, temp),
@@ -362,10 +513,12 @@ export class RenderJobService {
     } finally {
       prepared.release();
     }
+    // What the render was made with (decision 974): its quality, size and the encoder that ran; a still has no quality.
+    const render: Pick<OutputFileInfo, 'render'> = still ? {} : { render: renderInfoOf(result, DEFAULT_EXPORT_QUALITY) };
     // From here the new file is in place: the record is always written, with what is on disk (I3), whatever happens next
     // (a cancel waits for these few steps; a failing follower is left out and reported). First the primary alone, at once,
     // with the renderer's own hash (a crash during the steps below then leaves a true record), then everything.
-    const bare: OutputFileInfo = { format, file, width: result.width, height: result.height, durationSec: result.durationSec, verified: false, preview: null, sha256: result.sha256, problems: [], fromComposition: loaded.hash };
+    const bare: OutputFileInfo = { format, file, width: result.width, height: result.height, durationSec: result.durationSec, verified: false, preview: null, sha256: result.sha256, problems: [], fromComposition: loaded.hash, ...render };
     const infos: OutputFileInfo[] = [];
     let failure: unknown = null;
     // A failing first record must not skip the checks, the follower copies and the final record below (C10).
@@ -375,7 +528,7 @@ export class RenderJobService {
       await noteCoreChange(versionDir);
       if (result.warnings.length > 0) await o.note(m.render.frameWarnings({ format: o.label(format), count: result.warnings.length })).catch(() => {});
       let info = await this.describe({ creativeDir, versionDir, n, preset, file, composition, sha256: result.sha256, hash: loaded.hash, locale: o.locale, poster: true })
-        .catch((e: unknown) => {
+        .then((x) => ({ ...x, ...render }), (e: unknown) => {
           failure = e;
           return bare;
         });
@@ -493,7 +646,8 @@ export class RenderJobService {
         if (ok) { preview = pv; await noteCoreOutputWrite(o.creativeDir, `outputs/v${o.n}/.previews`); }
       }
       const { sha256: _drop, fromComposition: _fc, issues: _own, ...rest } = own;
-      return { ...rest, verified: own.verified && sha256 !== undefined, preview, problems, ...(issues.length ? { issues } : {}), ...(base.sha256 ? { sha256: base.sha256 } : {}), ...(fromComposition ? { fromComposition } : {}) };
+      return { ...rest, verified: own.verified && sha256 !== undefined, preview, problems, ...(issues.length ? { issues } : {}), ...(base.sha256 ? { sha256: base.sha256 } : {}), ...(fromComposition ? { fromComposition } : {}),
+        ...(o.primary.render ? { render: o.primary.render } : {}) };
     } catch {
       return base;
     }
@@ -889,7 +1043,7 @@ export class RenderJobService {
           ...infos.filter((i) => i.sha256 !== undefined).map((i) => ({
             format: i.format, file: i.file, width: i.width, height: i.height,
             durationSec: i.durationSec !== null && i.durationSec > 0 ? i.durationSec : null,
-            sha256: i.sha256!, renderedAt: at, ...(i.fromComposition ? { fromComposition: i.fromComposition } : {}),
+            sha256: i.sha256!, renderedAt: at, ...(i.fromComposition ? { fromComposition: i.fromComposition } : {}), ...(i.render ? { render: i.render } : {}),
           })),
         ],
       };

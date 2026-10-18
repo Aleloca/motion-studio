@@ -516,6 +516,8 @@ export const en = {
   /** Render jobs (Task 5): the core renders a v2 version's compositions on demand. */
   render: {
     jobLabel: (p: { title: string; n: number }) => `Render · ${p.title} v${p.n}`,
+    exportJobLabel: (p: { title: string; n: number; detail: string }) => `Render for export · ${p.title} v${p.n} (${p.detail})`,
+    qualityNames: { standard: 'Standard', high: 'High', max: 'Max' },
     notV2: (p: { n: number }) => `v${p.n} has no compositions to render: its media files are the result`,
     formatsNotInVersion: (p: { list: string }) => `Formats not in this version: ${p.list}`,
     noRenderer: 'Rendering is not available in this Motion Studio',
@@ -535,6 +537,8 @@ export const en = {
     identitySetFailed: (p: { format: string; reason: string }) => `${p.format}: the file set could not be made: ${p.reason}`,
   },
   export: {
+    jobLabel: (p: { title: string }) => `Export · ${p.title}`,
+    invalidProfile: 'Choose a resolution and a quality that Export offers',
     absoluteDestination: 'Choose a destination folder (absolute path)',
     outsideWorkspace: 'Choose a folder outside the Motion Studio workspace',
     destinationIsFile: 'The destination is a file, not a folder',
