@@ -1,10 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import {
   activeMembers, variantIndex,
-  servicesForFormats, type BriefServices, type FormatPreset, type JobWaitReason, type PaidBatch, type Pin, type ProviderId, type VariantGroup, type VariantId, type VariantMember, type WorkspaceSettings,
+  type BriefServices, type FormatPreset, type JobWaitReason, type Pin, type VariantGroup, type VariantId, type VariantMember, type WorkspaceSettings,
 } from '@motion-studio/shared';
 import type { ApprovalBroker } from '../approvals/broker.ts';
-import { isAllowedRule, PermissionsStore } from '../approvals/permissions-store.ts';
 import type { PaidService } from '../bridge/provider-tools.ts';
 import type { JobQueue } from '../jobs/job-queue.ts';
 import { stopJob } from '../jobs/stop.ts';
@@ -14,6 +13,7 @@ import { CreativeStore } from './creative-store.ts';
 import type { CreativeRef, CreativeTurnService } from './creative-turns.ts';
 import type { VariantDirections } from './variant-directions.ts';
 import { memberRef, VariantGroupService } from './variant-group.ts';
+import { askPaidCard, paidCardPlan, type PaidPlan } from './paid-card.ts';
 
 /** What a variant run asks of each target: the same body as `POST …/turns` (text, pins, formats). */
 export interface UserRequest { text?: string; pins?: Pin[]; formats?: string[] }
@@ -45,7 +45,6 @@ export interface VariantFanoutDeps {
   directions: VariantDirections;
 }
 
-const PROVIDER_LABEL: Record<ProviderId, string> = { openai: 'OpenAI', elevenlabs: 'ElevenLabs', pexels: 'Pexels', unsplash: 'Unsplash' };
 const letterIndex = (l: VariantId) => variantIndex(l);
 const upper = (l: VariantId) => l.toUpperCase();
 
@@ -60,7 +59,6 @@ interface Entry {
 }
 /** The hook of a queued request: its current hold, what its turn gets when it starts, and what happens if it is removed by hand. */
 const hookOf = (e: Entry, hold: JobWaitReason | null) => ({ hold, started: (id: string) => { e.jobId = id; e.watch?.(id); e.onStart?.(id); }, removed: () => e.markGone?.() });
-interface PaidPlan { items: NonNullable<PaidBatch['items']>; rules: string[]; /** The rules still open per variant, to recompute `rules` for the variants that really start. */ byVariant: Partial<Record<VariantId, string[]>> }
 type DirectionsRun = Awaited<ReturnType<VariantDirections['begin']>>;
 
 /**
@@ -281,60 +279,17 @@ export class VariantFanout {
 
   /** Shows the card and waits for it: approved, declined (the run goes on without paid services), or stopped (expired, or every target gone by hand). */
   private async ask(host: CreativeRef, entries: Entry[], plan: PaidPlan, batchId: string): Promise<'approved' | 'declined' | 'stopped'> {
-    const a = t().approvals;
-    const { items } = plan;
-    const label = (i: (typeof items)[number]) => a.variantBatchItem({ letter: upper(i.variant), service: a.serviceNames[i.capability], provider: PROVIDER_LABEL[i.provider] });
-    const variants = [...new Set(items.map((i) => i.variant))];
-    const providers = [...new Set(items.map((i) => i.provider))].map((p) => ({ provider: p, calls: items.filter((i) => i.provider === p).length }));
-    const seconds = items.reduce((n, i) => n + (i.seconds ?? 0), 0);
-    const paidBatch: PaidBatch = {
-      // Today's card names one provider: the one with the most calls (`total.providers` lists them all, for Task 5).
-      provider: [...providers].sort((x, y) => y.calls - x.calls)[0]!.provider,
-      calls: items.map((i) => ({ label: label(i), chars: i.chars ?? 0 })),
-      items,
-      total: { variants: variants.length, calls: items.length, providers, ...(seconds > 0 ? { seconds } : {}) },
-    };
-    const detail = a.variantBatchDetail({
-      providers: providers.map((p) => `${PROVIDER_LABEL[p.provider]} ${p.calls}`).join(', '),
-      variants: variants.map((v) => `${upper(v)} ${items.filter((i) => i.variant === v).length}`).join(', '),
-    });
-    const pending = this.deps.approvals.request({
-      jobId: batchId, projectSlug: host.projectSlug, projectDir: host.projectDir, creativeSlug: host.creativeSlug, kind: 'paid-batch',
-      toolName: 'provider:variant-batch', input: {}, title: a.variantBatchTitle({ count: variants.length }), detail, paidBatch,
-    });
     // Every target gone by hand (its turn stopped, its queued request removed): the card has nothing left to confirm.
     void Promise.all(entries.map((e) => e.gone)).then(() => this.deps.approvals.cancelJob(batchId));
-    const o = await pending;
-    if (o.decision === 'once' || o.decision === 'always') return 'approved';
-    return o.decision === 'deny' ? 'declined' : 'stopped';
+    const o = await askPaidCard(this.deps.approvals, host, plan, batchId);
+    return o === 'approved' || o === 'declined' ? o : 'stopped';
   }
 
   /**
-   * The services of the card (spec §3): per target variant, the paid services its agent may use, as the tools would decide them
-   * now (`paidServicePlan`: the brief's choices, the keys, the key checks), without those a project "Always" rule already
-   * allows. Null (no card, start at once) when the confirmation is off or nothing paid can be called.
+   * The services of the card (spec §3): per target variant, the paid services its agent may use now (`paidCardPlan`). Null
+   * (no card, start at once) when the confirmation is off or nothing paid can be called.
    */
-  private async paidPlan(host: CreativeRef, members: VariantMember[]): Promise<PaidPlan | null> {
-    if (!(await this.deps.settings()).confirmPaidProviders) return null;
-    const store = new CreativeStore(host.projectDir);
-    const permissions = new PermissionsStore(host.projectDir);
-    const allowed = async (rule: string) => isAllowedRule(rule) && await permissions.has(rule).catch(() => false);
-    const items: PaidPlan['items'] = [];
-    const rules = new Set<string>();
-    const byVariant: PaidPlan['byVariant'] = {};
-    const presets = await this.deps.presets();
-    for (const m of members) {
-      const c = await store.get(m.slug);
-      // Decision 1125: only what the creative's formats can use (no voice for a still image, no raster images for an identity pack).
-      for (const s of await this.deps.paidPlan(servicesForFormats(c.brief.services, c.brief.formats, presets))) {
-        const open: string[] = [];
-        for (const r of s.rules) if (!(await allowed(r))) open.push(r);
-        if (open.length === 0) continue;
-        for (const r of open) rules.add(r);
-        byVariant[m.letter] = [...new Set([...(byVariant[m.letter] ?? []), ...open])];
-        items.push({ variant: m.letter, provider: s.provider, capability: s.kind, ...(s.kind === 'music' && c.brief.durationSec ? { seconds: c.brief.durationSec } : {}) });
-      }
-    }
-    return items.length === 0 ? null : { items, rules: [...rules], byVariant };
+  private paidPlan(host: CreativeRef, members: VariantMember[]): Promise<PaidPlan | null> {
+    return paidCardPlan(this.deps, host, members.map((m) => ({ letter: m.letter, slug: m.slug })));
   }
 }

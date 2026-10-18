@@ -23,6 +23,7 @@ import { CreativeStore } from './creative-store.ts';
 import { resumeErrorOf, type CreativeRef, type CreativeTurnService, type GroupRouter, type MessageAnswer } from './creative-turns.ts';
 import { pinLine, quotePromptString, defuseTags, USER_REQUEST_CLOSE, USER_REQUEST_OPEN } from './prompt.ts';
 import { MAX_DIRECTION_CHARS, memberRef, VariantGroupService } from './variant-group.ts';
+import { askPaidCard, paidCardPlan, type PaidCardDeps } from './paid-card.ts';
 
 /**
  * Phase 3 of the single agent (decisions 977–983, spec `2026-10-18-single-agent-design.md` §3–§7): a variant group has ONE
@@ -57,7 +58,7 @@ export interface WorkItem { variant: VariantId; instruction: string | null; form
 /** What a group turn starts from: the user's message (its pins carry their variants) and any explicit targets. */
 export interface GroupRequest { text: string; pins: Pin[]; variants?: VariantId[]; clientId?: string; queued?: boolean }
 
-export interface GroupTurnDeps {
+export interface GroupTurnDeps extends PaidCardDeps {
   queue: JobQueue; launcher: AgentLauncher; turns: CreativeTurnService; approvals: ApprovalBroker;
   settings: () => Promise<WorkspaceSettings>;
   model: () => Promise<string | null>;
@@ -88,6 +89,8 @@ interface GroupRun {
 }
 
 interface HelperResult { state: string | undefined; savedVersion: number | null; stopped: boolean }
+/** Phase 4: what the paid-services card decided for the helpers: covered (per variant, its rules) or paid services off. */
+type Cover = { kind: 'covered'; rules: Partial<Record<VariantId, string[]>> } | { kind: 'off' } | null;
 
 const now = () => new Date().toISOString();
 const L = (id: VariantId) => id.toUpperCase();
@@ -254,8 +257,11 @@ export class GroupTurnService implements GroupRouter {
       this.phase(r, 'coordinator');
       if ((await this.coordinate(r, signal)) === 'cancelled') return await this.stopped(r, []);
       if (r.plan.size === 0) return;
+      // Phase 4 (spec §9): one card for a plan of two or more variants, before any helper starts.
+      const cover = await this.confirm(r, signal);
+      if (cover === 'cancelled') return await this.stopped(r, []);
       this.phase(r, 'helpers');
-      const outcomes = await this.dispatch(r, signal);
+      const outcomes = await this.dispatch(r, signal, cover);
       if (signal.aborted) return await this.stopped(r, outcomes);
       this.phase(r, 'report');
       let report: 'ok' | 'cancelled' = 'ok';
@@ -539,8 +545,30 @@ export class GroupTurnService implements GroupRouter {
     return x;
   }
 
+  /**
+   * Phase 4 of the single agent (spec §9, decisions 1125, 1126, 1144): a plan of two or more variants gets ONE paid-services
+   * card (under the group turn's job: its Stop takes it away), listing only the services the formats of each variant's work
+   * can use. Approved: the helpers run under its cover; declined, or expired: they run with the paid services off (the
+   * agent uses free means); the card gone with the turn (Stop): nothing starts. A single work item has no card: each paid
+   * call asks on its own, as for a creative outside a group.
+   */
+  private async confirm(r: GroupRun, signal: AbortSignal): Promise<Cover | 'cancelled'> {
+    if (r.plan.size < 2) return null;
+    const group = (await this.groupOf(r.host)).group;
+    const targets = [...r.plan.values()].flatMap((i) => {
+      const m = group.members.find((x) => x.letter === i.variant);
+      return m ? [{ letter: i.variant, slug: m.slug, ...(i.formats ? { formats: i.formats } : {}) }] : [];
+    });
+    const plan = await paidCardPlan(this.deps, r.host, targets);
+    if (!plan) return null;
+    this.phase(r, 'confirm');
+    const answer = await askPaidCard(this.deps.approvals, r.host, plan, r.jobId);
+    if (signal.aborted || answer === 'cancelled') return 'cancelled';
+    return answer === 'approved' ? { kind: 'covered', rules: plan.byVariant } : { kind: 'off' };
+  }
+
   /** Starts one helper per work item (the slot gate runs two at a time) and waits for all of them; Stop stops them all. */
-  private async dispatch(r: GroupRun, signal: AbortSignal): Promise<ReportOutcome[]> {
+  private async dispatch(r: GroupRun, signal: AbortSignal, cover: Cover = null): Promise<ReportOutcome[]> {
     const { host } = r;
     const store = new CreativeStore(host.projectDir);
     const group = (await this.groupOf(host)).group;
@@ -557,9 +585,17 @@ export class GroupTurnService implements GroupRouter {
       const before = (await store.readVersions(m.slug).catch(() => [])).at(-1)?.n ?? null;
       try {
         const message = item.instruction ? { text: item.instruction, pins: item.pins } : undefined;
-        const job = await this.deps.turns.start(mref, message, { ...(item.formats ? { formats: item.formats } : {}), helper: { jobId: r.jobId, variant: item.variant, request: userRequest } });
+        // A covered (or paid-off) helper waits, held, until its cover is in place: never a paid call before it.
+        const job = await this.deps.turns.start(mref, message, { ...(item.formats ? { formats: item.formats } : {}), ...(cover ? { hold: 'variant-confirm' as const } : {}), helper: { jobId: r.jobId, variant: item.variant, request: userRequest } });
         this.resultOf(job.id);
         r.helpers.set(item.variant, job.id);
+        if (cover) {
+          const { approvals, queue } = this.deps;
+          if (cover.kind === 'covered') approvals.cover(job.id, cover.rules[item.variant] ?? [], Promise.resolve(true));
+          else approvals.coverOff(job.id);
+          void this.resultOf(job.id).promise.then(() => approvals.uncover(job.id));
+          queue.setHold(job.id, null);
+        }
         started.push({ item, slug: m.slug, jobId: job.id, before });
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);

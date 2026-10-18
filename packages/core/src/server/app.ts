@@ -795,7 +795,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // Phase 3 of the single agent: a variant group's turns with one agent (the `singleAgent` setting).
   const groups = new GroupTurnService({
     queue, launcher, turns, approvals, ledger: usageLedger, broadcast: (msg) => hub.broadcast(msg),
-    settings: () => requireWorkspace().readSettings(),
+    settings: () => requireWorkspace().readSettings(), paidPlan: paidServicePlan({ vault, keyChecks }),
+    presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
     model: async () => (await requireWorkspace().readSettings()).model,
   });
   groupsRef = groups;

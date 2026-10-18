@@ -353,6 +353,77 @@ describe('the group turn', () => {
   });
 });
 
+describe('the paid-services card on the plan (phase 4, decisions 1125, 1126, 1144)', () => {
+  const KEYS = { OPENAI_API_KEY: 'sk-test-0123456789' };
+  it('a plan of two variants shows ONE card for those variants before any helper starts; Decline runs them without paid services', async () => {
+    v = await variantApp({ keys: KEYS, settings: { singleAgent: true, confirmPaidProviders: true } });
+    const slug = await v.group(['Audace', 'Calma', 'Retro']);
+    await send(slug, 'Varianti A e B con una nuova immagine di sfondo');
+    const c = await coordinator();
+    // A's work is on the banner only (an image format): its voice is not on the card (decision 1125); B's video post keeps it.
+    expect((await v.bridge(c, 'work_on_variants', { items: [{ variant: 'a', instruction: 'Nuovo sfondo', formats: ['web-banner-300x250'] }, { variant: 'b', instruction: 'Nuovo sfondo' }] })).statusCode).toBe(200);
+    c.finish({ write: false });
+    await vi.waitFor(async () => expect(await v.pending()).toHaveLength(1));
+    const card = (await v.pending())[0]!;
+    const g = (await groupJob())!;
+    // One card, the group turn's (its Stop takes it away), for the plan's variants only.
+    expect(card).toMatchObject({ kind: 'paid-batch', jobId: g.id, creativeSlug: slug });
+    expect([...new Set(card.paidBatch!.items!.map((i) => i.variant))].sort()).toEqual(['a', 'b']);
+    expect(card.paidBatch!.items!.filter((i) => i.variant === 'a').map((i) => i.capability)).toEqual(['images']);
+    expect(card.paidBatch!.items!.filter((i) => i.variant === 'b').map((i) => i.capability).sort()).toEqual(['images', 'voice']);
+    expect(g.groupPhase).toBe('confirm');
+    expect(v.runner.runs.filter((r) => !isCoordinator(r))).toEqual([]);
+    expect((await v.app.inject({ method: 'POST', url: `/api/approvals/${card.id}`, payload: { decision: 'deny' } })).statusCode).toBe(200);
+    const [ha, hb] = [await v.runOf(slug), await v.runOf(`${slug}~b`)];
+    for (const h of [ha, hb]) expect(h.req.prompt).toMatch(/off for this run: the user declined paid services/);
+    ha.finish(); hb.finish();
+    (await coordinator(1)).finish({ write: false });
+    await v.waitIdle();
+    expect(await groupJob()).toMatchObject({ state: 'succeeded' });
+  });
+
+  it('approved: the helpers run under its cover; one work item: no card; Stop while it waits stops the turn', async () => {
+    v = await variantApp({ keys: KEYS, settings: { singleAgent: true, confirmPaidProviders: true } });
+    const slug = await v.group(['Audace', 'Calma']);
+    await send(slug, 'Tutte le varianti con un\'immagine nuova');
+    const c = await coordinator();
+    expect((await v.bridge(c, 'work_on_variants', { items: [{ variant: 'a', instruction: 'x' }, { variant: 'b', instruction: 'x' }] })).statusCode).toBe(200);
+    c.finish({ write: false });
+    await vi.waitFor(async () => expect(await v.pending()).toHaveLength(1));
+    await v.app.inject({ method: 'POST', url: `/api/approvals/${(await v.pending())[0]!.id}`, payload: { decision: 'once' } });
+    const ha = await v.runOf(slug);
+    expect(ha.req.prompt).not.toMatch(/off for this run/);
+    // Its paid call asks nothing more (covered by the card).
+    const call = v.bridge(ha, 'generate_image', { prompt: 'sfondo', width: 1024, height: 1024 });
+    const settled = await Promise.race([call.then(() => 'answered'), new Promise((r) => setTimeout(() => r('waiting'), 1500))]);
+    expect(settled).toBe('answered');
+    expect(await v.pending()).toEqual([]);
+    ha.finish(); (await v.runOf(`${slug}~b`)).finish();
+    (await coordinator(1)).finish({ write: false });
+    await v.waitIdle();
+    // One work item: no card.
+    await send(slug, 'Variante B più luce');
+    const c2 = await coordinator(2);
+    expect((await v.bridge(c2, 'work_on_variants', { items: [{ variant: 'b', instruction: 'luce' }] })).statusCode).toBe(200);
+    c2.finish({ write: false });
+    (await v.runOf(`${slug}~b`, 1)).finish();
+    (await coordinator(3)).finish({ write: false });
+    await v.waitIdle();
+    // Stop while the card waits: the turn ends, nothing ran.
+    await send(slug, 'Tutte le varianti più luce');
+    const c3 = await coordinator(4);
+    expect((await v.bridge(c3, 'work_on_variants', { items: [{ variant: 'a', instruction: 'x' }, { variant: 'b', instruction: 'x' }] })).statusCode).toBe(200);
+    c3.finish({ write: false });
+    await vi.waitFor(async () => expect(await v.pending()).toHaveLength(1));
+    const before = v.runner.runs.length;
+    await v.app.inject({ method: 'POST', url: `/api/jobs/${(await groupJob())!.id}/stop` });
+    await v.waitIdle();
+    expect(v.runner.runs.length).toBe(before);
+    expect(await v.pending()).toEqual([]);
+    expect(await groupJob()).toMatchObject({ state: 'cancelled' });
+  });
+});
+
 describe('restart recovery', () => {
   it('a group turn cut by a restart is said in the group\'s chat and its marker cleared; the coordinator\'s session stays', async () => {
     const slug = await setup();
