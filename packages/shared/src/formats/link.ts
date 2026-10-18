@@ -164,6 +164,58 @@ export function formatHistory(versions: VersionEntry[], formatId: string): numbe
 }
 
 /**
+ * Decision 1061: the per-format history as runs: each history entry `n` and the `last` creative version that still holds its
+ * content (the version just before the next change, or before a version without the format). A version that kept the
+ * content (e.g. a turn that only changed the brief, made before decision 1060) is part of its entry's run.
+ */
+export function formatRuns(versions: VersionEntry[], formatId: string): Array<{ n: number; last: number }> {
+  const runs: Array<{ n: number; last: number }> = [];
+  let previous: Identity | null = null;
+  for (const v of byNumber(versions)) {
+    const current = identityOf(v, formatId);
+    if (!current) { previous = null; continue; }
+    if (previous === null || !sameContent(previous, current)) runs.push({ n: v.n, last: v.n });
+    else runs.at(-1)!.last = v.n;
+    previous = current;
+  }
+  return runs;
+}
+
+/**
+ * Decision 1061: whether history entry `n` of `formatId` has problems, as the LATEST version holding the same content says
+ * (its checks are the newest, e.g. against a brief whose duration changed since `n`): an entry checked again clean in a
+ * later identical version is clean. A version that is not a history entry is judged on its own.
+ */
+export function entryHasProblems(versions: VersionEntry[], formatId: string, n: number): boolean {
+  const last = formatRuns(versions, formatId).find((r) => r.n === n)?.last ?? n;
+  const v = versions.find((x) => x.n === last);
+  return v !== undefined && hasProblems(v, formatId);
+}
+
+/**
+ * Decision 1060: whether a version about to be saved (`next`) delivers exactly what `latest` holds, so no version is made:
+ * the same formats, each with the same content (`sameContent`: the composition hash, or a present and equal file `sha256`
+ * for legacy files) and the same link (`followsFormat`), and the same localization overlays (language, instance, overlay
+ * hash). Renders do not count (a v2 format is its composition). Anything unproven counts as a change, and so does a version
+ * with no format at all.
+ */
+export function sameDelivery(latest: VersionEntry, next: Pick<VersionEntry, 'outputs' | 'compositions' | 'localizations'>): boolean {
+  const formatsOf = (v: Pick<VersionEntry, 'outputs' | 'compositions'>) => new Set([...(v.compositions ?? []).map((c) => c.format), ...v.outputs.map((o) => o.format)]);
+  const a = formatsOf(latest);
+  const b = formatsOf(next);
+  if (a.size === 0 || a.size !== b.size || [...a].some((f) => !b.has(f))) return false;
+  const asEntry = next as VersionEntry;
+  for (const f of a) {
+    const x = identityOf(latest, f);
+    const y = identityOf(asEntry, f);
+    if (!x || !y || !sameContent(x, y)) return false;
+    if (x.kind === 'composition' && y.kind === 'composition' && x.followsFormat !== y.followsFormat) return false;
+  }
+  const overlays = (v: Pick<VersionEntry, 'localizations'>) => (v.localizations ?? []).map((r) => `${r.locale}\0${r.instanceId}\0${r.hash}`).sort().join('\n');
+  return overlays(latest) === overlays(next);
+}
+
+/**
  * Render state of `formatId` in version `v` (decisions R2):
  * - legacy (no composition for the format): `rendered` when the version has the file (the media is the result), else `none`;
  * - v2: `rendered` when an output with a `sha256` exists and its `fromComposition` equals the version's composition hash for
@@ -206,7 +258,8 @@ export interface Star { version: number | null; manual: boolean; newer: number |
  * - a follower (`links[formatId]` set) has no ★ of its own: `follows` names its primary, `version` is null;
  * - a manual pick (`picks[formatId]`) on a version that has the format (`hasFormat`) is kept, and `newer` is the latest version of
  *   the history when it is newer than the pick. A pick on a version without the file is ignored (default rule);
- * - otherwise the latest version of the history whose file has no problems, or the latest one if none is clean;
+ * - otherwise the latest version of the history whose file has no problems (`entryHasProblems`: as the latest version with
+ *   the same content says), or the latest one if none is clean;
  * - no history: `version` null.
  * Picking the latest version clears the manual pick: that is the writer's job, this function reports what is stored.
  * `links` go through `effectiveLinks` here (self-links and chains dropped); pass the brief's formats via
@@ -223,7 +276,8 @@ export function starOf(versions: VersionEntry[], formatId: string, picks: Record
   if (pick !== undefined && versions.some((v) => v.n === pick && hasFormat(v, formatId))) {
     return { version: pick, manual: true, newer: latest !== null && latest > pick ? latest : null, follows: null };
   }
-  const clean = [...history].reverse().find((n) => !hasProblems(versions.find((v) => v.n === n)!, formatId));
+  // Decision 1061: an entry is judged by the latest version that kept its content.
+  const clean = [...history].reverse().find((n) => !entryHasProblems(versions, formatId, n));
   return { version: clean ?? latest, manual: false, newer: null, follows: null };
 }
 
