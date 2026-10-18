@@ -106,7 +106,7 @@ let ws: string;
 let promptFile: string;
 let bridge: AgentBridge;
 
-const ENV = ['FAKE_CLAUDE_VECTOR', 'FAKE_CLAUDE_VECTOR_DARK', 'FAKE_CLAUDE_NO_SCENES', 'FAKE_CLAUDE_SYMLINKS', 'FAKE_CLAUDE_SCENARIO', 'FAKE_CLAUDE_PROMPT_FILE', 'FAKE_CLAUDE_COMP_TAG', 'FAKE_CLAUDE_STRAY', 'FAKE_CLAUDE_ALWAYS_INVALID', 'FAKE_CLAUDE_BRIDGE_CALLS', 'FAKE_CLAUDE_BRIDGE_LOG'];
+const ENV = ['FAKE_CLAUDE_VECTOR', 'FAKE_CLAUDE_VECTOR_DARK', 'FAKE_CLAUDE_NO_SCENES', 'FAKE_CLAUDE_SYMLINKS', 'FAKE_CLAUDE_SCENARIO', 'FAKE_CLAUDE_PROMPT_FILE', 'FAKE_CLAUDE_COMP_TAG', 'FAKE_CLAUDE_STRAY', 'FAKE_CLAUDE_DIRS', 'FAKE_CLAUDE_ALWAYS_INVALID', 'FAKE_CLAUDE_BRIDGE_CALLS', 'FAKE_CLAUDE_BRIDGE_LOG'];
 
 /** The server under test; `extra` adds deps (the final-wave wiring tests). */
 async function boot(extra: Partial<Parameters<typeof buildServer>[0]> = {}) {
@@ -275,6 +275,22 @@ describe('a composition turn', { timeout: 120_000 }, () => {
     expect(readdirSync(dir).sort()).toEqual(['compositions', 'manifest.json']);
     expect(JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')).schemaVersion).toBe(2);
     expect((await systemTexts(slug)).some((x) => x.includes('test-wide.mp4'))).toBe(true);
+  });
+
+  it('Claude Code\'s empty .claude/.cc-writes is removed without a warning; a real .claude write is still reported (report 34)', async () => {
+    process.env.FAKE_CLAUDE_DIRS = JSON.stringify(['compositions/.claude/.cc-writes', '.claude/.cc-writes']);
+    const slug = await create(['test-wide']);
+    const dir = join(store().dir(slug), 'outputs', 'v1');
+    expect(readdirSync(dir).sort()).toEqual(['compositions', 'manifest.json']);
+    expect(readdirSync(join(dir, 'compositions'))).toEqual(['test-wide']);
+    expect((await systemTexts(slug)).some((x) => x.includes('.claude'))).toBe(false);
+  });
+
+  it('a .claude folder holding anything else is still reported', async () => {
+    process.env.FAKE_CLAUDE_DIRS = JSON.stringify(['compositions/.claude/settings']);
+    const slug = await create(['test-wide']);
+    expect(readdirSync(join(store().dir(slug), 'outputs', 'v1', 'compositions'))).toEqual(['test-wide']);
+    expect((await systemTexts(slug)).some((x) => x.includes('compositions/.claude'))).toBe(true);
   });
 
   it('an invalid composition gets its problems and a fix attempt', async () => {

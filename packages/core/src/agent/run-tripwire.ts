@@ -16,7 +16,7 @@ const isFinderMetadata = (n: string) => n === '.DS_Store' || n.startsWith('._') 
  * link) that holds exactly `.cc-writes`, itself a real, empty folder. Anything else (a file, a link, another entry, a
  * non-empty `.cc-writes`) is reported as today. Bounded: at most two directory reads.
  */
-async function isEmptyCcWrites(dir: string): Promise<boolean> {
+export async function isEmptyCcWrites(dir: string): Promise<boolean> {
   const claude = join(dir, '.claude');
   const st = await lstat(claude).catch(() => null);
   if (!st?.isDirectory()) return false;

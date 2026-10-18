@@ -162,6 +162,8 @@ rl.once('line', async (line) => {
       if (process.env.FAKE_CLAUDE_STRAY) writeFileSync(join(block.outputDir, `${f.id}.mp4`), 'agent media');
     }
     if (process.env.FAKE_CLAUDE_STRAY) writeFileSync(join(block.outputDir, 'manifest.json'), JSON.stringify({ schemaVersion: 1, files: [], renderCommand: 'node render.js' }));
+    // FAKE_CLAUDE_DIRS=<json [rel, …]>: empty folders the agent leaves under the version folder (Claude Code's `.claude/.cc-writes`).
+    for (const rel of JSON.parse(process.env.FAKE_CLAUDE_DIRS ?? '[]')) mkdirSync(join(block.outputDir, rel), { recursive: true });
     for (const [name, target] of JSON.parse(process.env.FAKE_CLAUDE_SYMLINKS ?? '[]')) {
       mkdirSync(dirname(join(block.outputDir, name)), { recursive: true });
       spawnSync('rm', ['-rf', join(block.outputDir, name)]);

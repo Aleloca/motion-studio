@@ -11,6 +11,7 @@ import { checkTargets, compositionDirOf, writeNormalized, type TargetsCheck } fr
 import { confinedSha, copyVerified, versionDirReady, type FollowFailure } from './carry-over.ts';
 import { isRealDirChain, realDirChain, writeThroughTemp } from './core-files.ts';
 import { noteCoreChange } from '../core-changes.ts';
+import { isEmptyCcWrites } from '../agent/run-tripwire.ts';
 
 /**
  * A turn under output contract v2 (Task 5b): what phase 9's carry-over and links become with composition folders.
@@ -128,7 +129,8 @@ export async function assembleCompositions(o: {
   for (const name of (await readdir(vdir).catch(() => [] as string[])).sort()) {
     const st = await lstat(join(vdir, name)).catch(() => null);
     if (name === 'compositions' && st?.isDirectory()) continue;
-    stray.push(name);
+    // Claude Code's own bookkeeping (an empty `.claude/.cc-writes`) is removed without a warning (user test report 34).
+    if (!(name === '.claude' && await isEmptyCcWrites(vdir))) stray.push(name);
     await rm(join(vdir, name), { recursive: true, force: true });
   }
   const compsDir = join(vdir, 'compositions');
@@ -137,7 +139,7 @@ export async function assembleCompositions(o: {
     const st = await lstat(join(compsDir, name)).catch(() => null);
     if (o.targets.includes(name) && st?.isDirectory()) continue;
     if (o.carried.includes(name) || Object.hasOwn(o.links, name)) touched.push(name);
-    else stray.push(`compositions/${name}`);
+    else if (!(name === '.claude' && await isEmptyCcWrites(compsDir))) stray.push(`compositions/${name}`);
     await rm(join(compsDir, name), { recursive: true, force: true });
   }
 

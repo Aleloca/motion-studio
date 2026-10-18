@@ -309,6 +309,7 @@ describe('Sandbox environment section', () => {
       expect(p).toMatch(/headless Chromium/i);
       expect(p).toMatch(/do not mention these limitations/i);
       expect(p).toContain("Put check frames and scratch files in `creatives/<slug>/work/tmp/`, not $TMPDIR — reading files outside the project needs the user's approval.");
+      expect(p).toContain('Do not chain `cd <dir> && <command>`');
       noPaths(p);
     }
   });
@@ -390,6 +391,7 @@ describe('buildCreativePrompt, output contract v2 (Task 5b)', () => {
   });
   it('the sandbox section of a composition turn has no rendering-engine advice', () => {
     const p = buildCreativePrompt({ ...v2, kind: 'first', sandboxed: true });
+    expect(p).toContain('Do not chain `cd <dir> && <command>`');
     expect(p).toContain('## Sandbox environment');
     expect(p).not.toMatch(/headless Chromium|node-canvas|Puppeteer and Playwright cannot run/);
   });
