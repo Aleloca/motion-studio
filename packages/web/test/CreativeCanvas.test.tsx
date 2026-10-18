@@ -1109,7 +1109,7 @@ describe('CreativeCanvas · per-format versions (Phase 9)', () => {
     await waitFor(async () => expect(within(await screen.findByRole('dialog', { name: `Versioni di ${REEL_LABEL}` })).getAllByRole('button', { name: /^Guarda la v/ })).toHaveLength(2));
   });
 
-  it('marks the default-rule entry "Auto" with its tooltip; a manual pick offers Reset to Auto', async () => {
+  it('marks the default-rule entry "Automatica" with its tooltip; a manual pick offers Reset to Auto', async () => {
     const { __resetToasts, getToasts } = await import('../src/ui/toast.tsx');
     __resetToasts();
     detail = { ...linked({ exportPicks: { [REEL]: 1 } }), formats: [
@@ -1119,7 +1119,7 @@ describe('CreativeCanvas · per-format versions (Phase 9)', () => {
     await loaded();
     await userEvent.click(badge(REEL_LABEL));
     const pop = await screen.findByRole('dialog', { name: `Versioni di ${REEL_LABEL}` });
-    const auto = within(pop).getByText('Auto').closest('[title]')!;
+    const auto = within(pop).getByText('Automatica').closest('[title]')!;
     expect(auto.getAttribute('title')).toBe('Stella automatica: la versione più recente senza problemi');
     expect(auto.closest('.ms-fvpop-row')!.textContent).toContain('v3');
     expect(within(pop).getByRole('button', { name: /^Guarda la v3 .*Stella automatica/ })).toBeTruthy();
@@ -1135,7 +1135,7 @@ describe('CreativeCanvas · per-format versions (Phase 9)', () => {
     await userEvent.click(badge(REEL_LABEL));
     const pop = await screen.findByRole('dialog', { name: `Versioni di ${REEL_LABEL}` });
     expect(within(pop).queryByRole('button', { name: 'Torna ad Auto' })).toBeNull();
-    expect(within(pop).getByText('Auto')).toBeTruthy();
+    expect(within(pop).getByText('Automatica')).toBeTruthy();
   });
 
   it('a carried format (unchanged since v1, latest v3) offers no Restart from here', async () => {
@@ -1396,15 +1396,15 @@ describe('CreativeCanvas · compositions (Task 8)', () => {
     expect(api.renderVersion).toHaveBeenCalledWith('acme', 'lancio', 1, ['tiktok-9x16']);
   });
 
-  it('"Render ★" renders every format at its ★; the board menu renders the version on screen', async () => {
+  it('"Render ★" renders every format at its ★; the board menu has no Render (decision 974)', async () => {
     detail = makeDetail([v2(1)]);
     render(<Harness live={emptyLive()} />);
     await picture('tiktok-9x16');
     await userEvent.click(screen.getByRole('button', { name: 'Render ★' }));
     expect(api.renderVersion).toHaveBeenCalledWith('acme', 'lancio', 1, ['instagram-post-1x1', 'tiktok-9x16']);
     await userEvent.click(within(board('tiktok-9x16')).getByRole('button', { name: /si esporta la v1/ }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Render v1' }));
-    expect(api.renderVersion).toHaveBeenLastCalledWith('acme', 'lancio', 1, ['tiktok-9x16']);
+    expect(await screen.findByRole('dialog', { name: /^Versioni di / })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Render v1' })).toBeNull();
   });
 
   it('"Render ★" is off when every ★ is rendered or rendering, and absent for legacy creatives', async () => {

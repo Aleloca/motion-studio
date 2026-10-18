@@ -3,7 +3,7 @@
 // Restart from here, Link to …), "viewing v3", the "Linked to …" chip of a follower with Unlink, the creative's
 // "Versions" timeline of the bar, and the actions behind them with their error messages.
 import type { VersionEntry } from '@motion-studio/shared';
-import { shownTotal } from '@motion-studio/shared';
+import { entryHasProblems, formatRuns, shownTotal } from '@motion-studio/shared';
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { api } from '../api.ts';
 import { formatDate, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
@@ -149,10 +149,16 @@ export interface FormatBadgeProps {
   busy?: boolean;
   onView(n: number): void;
   onCompare(): void;
-  /** The version on screen is a v2 one that can be rendered now (Task 8): the menu offers "Render vN". */
+  /**
+   * Ignored (decision 974: no Render in the UI; the menu's "Render vN" is gone). Still accepted so the pages that pass it
+   * keep building until they stop.
+   */
   render?: { n: number; run(): void } | null;
   className?: string;
-  /** Phase 15: in a variant group a board that is not the group's ★ says "v5", without the star. */
+  /**
+   * Phase 15, decision 1064: in a variant group the badge says "v5", never with a ★: the group's ★ beside it (or the ★ in
+   * the menu's row) says whether it is the export pick, so two stars never stand side by side.
+   */
   unstarred?: boolean;
 }
 
@@ -172,7 +178,7 @@ export function FormatBadge(p: FormatBadgeProps) {
     <>
       <button ref={anchor} type="button" className={cx('ms-vbadge ms-star ms-fvb', open && 'ms-open', p.className)} aria-haspopup="dialog" aria-expanded={open}
         aria-label={fv.badge({ label: p.label, n })} onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}>
-        {p.unstarred && star === null ? '' : '★ '}v{n}<Icon name="chevron" size={10} />
+        {p.unstarred || star === null ? '' : '★ '}v{n}<Icon name="chevron" size={10} />
       </button>
       {p.shown !== null && p.shown !== n ? <span className="ms-fvb-viewing">{fv.viewing({ n: p.shown })}</span> : null}
       <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="bottom-start" width={320} label={fv.title({ label: p.label })}>
@@ -182,7 +188,7 @@ export function FormatBadge(p: FormatBadgeProps) {
   );
 }
 
-function VersionsPopover({ slug, creative, label, state, versions, shown, resumeFrom, labelOf, actions, busy, onView, onCompare, render, close }: FormatBadgeProps & { close(): void }) {
+function VersionsPopover({ slug, creative, label, state, versions, shown, resumeFrom, labelOf, actions, busy, onView, onCompare, close }: FormatBadgeProps & { close(): void }) {
   const t = useT();
   const fv = t.web.formatVersions;
   const v = t.web.canvas.versions;
@@ -190,12 +196,17 @@ function VersionsPopover({ slug, creative, label, state, versions, shown, resume
   const when = useWhen();
   const latest = versions.at(-1)?.n ?? 0;
   const star = state.star.version;
-  // A v2 version without a render is a row too (its composition is the version); it has no thumbnail file.
+  // Decision 1061: one row per content of the format: its history entry `n` and the versions up to `last` that kept it
+  // (e.g. a turn that only changed the brief, before decision 1060). A v2 version without a render is a row too (its
+  // composition is the version); it has no thumbnail file.
+  const runs = state.history.length ? formatRuns(versions, state.id) : [];
   const rows = [...state.history].reverse().flatMap((n) => {
     const ver = versions.find((x) => x.n === n);
     const out = ver?.outputs.find((o) => o.format === state.id) ?? null;
-    return ver && (out || ver.compositions?.some((c) => c.format === state.id)) ? [{ ver, out }] : [];
+    const last = runs.find((r) => r.n === n)?.last ?? n;
+    return ver && (out || ver.compositions?.some((c) => c.format === state.id)) ? [{ ver, out, last }] : [];
   });
+  const inRun = (x: number | null, n: number, last: number) => x !== null && x >= n && x <= last;
   // Restarting is offered when the file on screen is not the one the next change starts from: compared as history entries,
   // so a format carried unchanged since its last change (its file is the same in the resume version) offers none.
   const canRestart = shown !== null && shown !== entryAt(versions, state, resumeFrom ?? latest);
@@ -207,35 +218,40 @@ function VersionsPopover({ slug, creative, label, state, versions, shown, resume
         <b>{fv.title({ label })}</b>
         <span className="ms-vmenu-count">{state.star.manual && state.star.newer !== null ? <Pill tone="accent">{fv.newer({ n: state.star.newer })}</Pill> : rows.length}</span>
       </div>
+      <p className="ms-vmenu-explain ms-fvpop-only">{fv.onlyChanges}</p>
       {state.starFileMissing && star !== null ? <p className="ms-vmenu-explain ms-fvpop-warn"><Icon name="warn" size={12} />{fv.fileMissing({ n: star })}</p> : null}
       <div className="ms-vmenu-list">
-        {rows.map(({ ver, out }) => {
+        {rows.map(({ ver, out, last }) => {
           const thumb = out ? outputMedia(slug, creative, ver.n, out) : null;
           const note = ver.request.trim() || v.fromBrief;
-          const isStar = ver.n === star;
-          const on = ver.n === shown;
-          const auto = ver.n === state.defaultVersion;
+          const isStar = inRun(star, ver.n, last);
+          const on = inRun(shown, ver.n, last);
+          const auto = inRun(state.defaultVersion, ver.n, last);
+          // Decision 1063: one pick label per row: the ★ row says who chose it; the rule's row says "Automatica" only
+          // when the ★ is elsewhere (a manual pick).
+          const pick = isStar ? (state.star.manual ? fv.pickedByYou : fv.automatic) : auto && state.star.manual ? fv.automatic : null;
+          const broken = entryHasProblems(versions, state.id, ver.n);
+          const kept = last > ver.n ? fv.unchangedUntil({ last }) : null;
           const tokens = ver.usage ? t.web.usage.tokens({ count: formatTokens(locale, shownTotal(ver.usage.tokens)) }) : null;
+          const ratio = out && out.width > 0 && out.height > 0 ? `${out.width} / ${out.height}` : undefined;
           return (
             <div key={ver.n} data-row="" className={cx('ms-fvpop-row', on && 'ms-on')}>
-              <button type="button" className={cx('ms-vmenu-row', on && 'ms-on')} aria-pressed={on}
-                aria-label={[fv.viewRow({ n: ver.n, when: when(ver.createdAt), note }), tokens, auto ? fv.autoTip : null].filter(Boolean).join(' · ')}
+              <button type="button" className="ms-vmenu-row" aria-pressed={on}
+                aria-label={[fv.viewRow({ n: ver.n, when: when(ver.createdAt), note }), kept, tokens, pick === fv.automatic ? fv.autoTip : null].filter(Boolean).join(' · ')}
                 onClick={() => { onView(ver.n); close(); }}>
-                <span className="ms-vmenu-thumb" aria-hidden="true">
+                <span className={cx('ms-vmenu-thumb', ratio && 'ms-fit')} style={ratio ? { aspectRatio: ratio } : undefined} aria-hidden="true">
                   {!thumb ? <Icon name="video" size={14} /> : thumb.video ? <video src={thumb.src} muted preload="metadata" /> : <img src={thumb.src} alt="" />}
                 </span>
                 <span className="ms-vmenu-text">
-                  <span className="ms-vmenu-line"><b>v{ver.n}</b><span className="ms-vmenu-when">{when(ver.createdAt)}</span>
-                    {on && !isStar ? <Pill>{fv.viewingTag}</Pill> : null}
-                    {isStar && state.star.manual ? <Pill tone="accent">{fv.manual}</Pill> : null}
-                    {auto ? <span className="ms-fvpop-auto" title={fv.autoTip}><Pill>{fv.auto}</Pill></span> : null}
-                    {ver.status === 'incomplete' ? <Pill tone="warn">{v.incomplete}</Pill> : null}
+                  <span className="ms-vmenu-line"><b title={kept ?? undefined}>{kept ? fv.range({ n: ver.n, last }) : `v${ver.n}`}</b><span className="ms-vmenu-when">{when(ver.createdAt)}</span>
+                    {pick ? <span className="ms-fvpop-auto" title={pick === fv.automatic ? fv.autoTip : undefined}><Pill tone={isStar ? 'accent' : undefined}>{pick}</Pill></span> : null}
+                    {broken ? <Pill tone="warn">{v.incomplete}</Pill> : null}
                     <TokenCount tokens={ver.usage ? shownTotal(ver.usage.tokens) : null} className="ms-vmenu-tokens" /></span>
                   <span className="ms-vmenu-note ms-clamp2" title={note}>{note}</span>
                 </span>
               </button>
               <button type="button" className={cx('ms-fvpop-star', isStar && 'ms-on')} aria-pressed={isStar} disabled={pending && !isStar} aria-busy={pending || undefined}
-                aria-label={isStar ? fv.starred({ n: ver.n }) : fv.star({ n: ver.n })} title={isStar ? fv.starred({ n: ver.n }) : fv.star({ n: ver.n })}
+                aria-label={isStar ? fv.starred({ n: star! }) : fv.star({ n: ver.n })} title={isStar ? fv.starred({ n: star! }) : fv.star({ n: ver.n })}
                 onClick={() => { if (!isStar) actions.star(state.id, ver.n); }}>
                 <Icon name="star" size={14} fill={isStar} />
               </button>
@@ -254,14 +270,16 @@ function VersionsPopover({ slug, creative, label, state, versions, shown, resume
           ))}
         </div>
       ) : null}
-      <div className="ms-vmenu-foot">
-        <Button size="sm" className="ms-grow" disabled={rows.length < 2} onClick={() => { close(); onCompare(); }}>{v.compare}</Button>
-        {render ? <Button size="sm" className="ms-grow" onClick={() => { close(); render.run(); }}>{t.web.render.renderVersion({ n: render.n })}</Button> : null}
-        {canRestart ? <Button size="sm" className="ms-grow" onClick={() => { close(); actions.restart(shown); }}>{v.restart}</Button> : null}
-        {state.star.manual ? (
-          <Button size="sm" className="ms-grow" title={fv.autoTip} loading={pending} onClick={() => actions.resetStar(state.id)}>{fv.resetAuto}</Button>
-        ) : null}
-      </div>
+      {/* Decision 974: no Render here; Compare only with something to compare; Reset to Auto only for a manual pick. */}
+      {rows.length >= 2 || canRestart || state.star.manual ? (
+        <div className="ms-vmenu-foot">
+          {rows.length >= 2 ? <Button size="sm" className="ms-grow" onClick={() => { close(); onCompare(); }}>{v.compare}</Button> : null}
+          {canRestart ? <Button size="sm" className="ms-grow" onClick={() => { close(); actions.restart(shown); }}>{v.restart}</Button> : null}
+          {state.star.manual ? (
+            <Button size="sm" className="ms-grow" title={fv.autoTip} loading={pending} onClick={() => actions.resetStar(state.id)}>{fv.resetAuto}</Button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
