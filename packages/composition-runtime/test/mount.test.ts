@@ -323,6 +323,13 @@ describe('render mode video frames (fake VideoFrame)', () => {
   let held = { timestamp: 0, duration: 33_333 };
   /** Called when a seek sets currentTime (the decoder moving to another frame), before `seeked`. */
   let onSeek: (() => void) | null = null;
+  /**
+   * `requestVideoFrameCallback` (off unless a test calls `useFrameCallbacks`): a seek presents the frame `held` then holds
+   * this many ms after it set currentTime (`null`: never), calling back with it as `mediaTime`, as Chrome does on every
+   * paused seek, a frame equal to the previous one included.
+   */
+  let presentAfterMs: number | null = 1;
+  let frameCallbacks: Array<(now: number, md: { mediaTime: number; presentedFrames: number }) => void> = [];
   const restore: Array<() => void> = [];
   const define = (proto: object, key: string, desc: PropertyDescriptor) => {
     const old = Object.getOwnPropertyDescriptor(proto, key);
@@ -332,13 +339,20 @@ describe('render mode video frames (fake VideoFrame)', () => {
   beforeEach(() => {
     held = { timestamp: 0, duration: 33_333 };
     onSeek = null;
+    presentAfterMs = 1;
+    frameCallbacks = [];
     const times = new WeakMap<HTMLMediaElement, number>();
     define(HTMLMediaElement.prototype, 'readyState', { get: () => 4 });
     define(HTMLMediaElement.prototype, 'duration', { get: () => 10 });
     define(HTMLCanvasElement.prototype, 'getContext', { value: () => null, writable: true });
     define(HTMLMediaElement.prototype, 'currentTime', {
       get(this: HTMLMediaElement) { return times.get(this) ?? 0; },
-      set(this: HTMLMediaElement, t: number) { times.set(this, t); onSeek?.(); setTimeout(() => this.dispatchEvent(new Event('seeked')), 1); },
+      set(this: HTMLMediaElement, t: number) {
+        times.set(this, t);
+        onSeek?.();
+        if (presentAfterMs !== null) setTimeout(() => { const cbs = frameCallbacks; frameCallbacks = []; for (const cb of cbs) cb(performance.now(), { mediaTime: held.timestamp / 1e6, presentedFrames: 0 }); }, presentAfterMs);
+        setTimeout(() => this.dispatchEvent(new Event('seeked')), 1);
+      },
     });
     (globalThis as unknown as { VideoFrame: unknown }).VideoFrame = class {
       timestamp = held.timestamp; duration = held.duration; displayWidth = 16; displayHeight = 16; close() {}
@@ -346,6 +360,9 @@ describe('render mode video frames (fake VideoFrame)', () => {
     restore.push(() => { delete (globalThis as { VideoFrame?: unknown }).VideoFrame; });
   });
   afterEach(() => { while (restore.length) restore.pop()!(); });
+  const useFrameCallbacks = () => define(HTMLVideoElement.prototype, 'requestVideoFrameCallback', {
+    value(cb: (typeof frameCallbacks)[number]) { frameCallbacks.push(cb); return frameCallbacks.length; }, writable: true,
+  });
 
   const videoComp = (extra: Record<string, unknown>) => comp({
     fonts: [], tracks: [{ id: 'v', kind: 'video', clips: [{ id: 'vid', type: 'video', src: 'assets/v.mp4', start: 0, duration: 6, sourceFps: 30, ...extra, props: {} }] }],
@@ -411,6 +428,63 @@ describe('render mode video frames (fake VideoFrame)', () => {
     onSeek = () => { setTimeout(() => { held = { timestamp: 733_333, duration: 33_333 }; }, 100); };
     await player.seek(0.74);
     expect(errors.map((e) => e.code)).toEqual(['videoFrameMismatch', 'videoFrameMismatch']);
+  });
+
+  it('untrusted source, Chrome late with the next frame after a frame held out once: without frame callbacks the old frame is drawn (the fallback, unchanged)', async () => {
+    const { player, errors } = run(videoComp({}), 'render', 10_000);
+    await player.seek(0);
+    held = { timestamp: 400_000, duration: 33_333 };
+    await player.seek(0.4);
+    await player.seek(0.5); // the frame at 0.4 s stays (its real duration is longer than reported): held out once, drawn
+    onSeek = () => { setTimeout(() => { held = { timestamp: 600_000, duration: 33_333 }; }, 100); };
+    await player.seek(0.6);
+    expect(errors.map((e) => e.code)).toEqual(['videoFrameMismatch', 'videoFrameMismatch']); // the 0.4 s frame again
+    await new Promise((r) => setTimeout(r, 150)); // the late frame lands in this test, not the next one
+  });
+
+  it('untrusted source with frame callbacks: the frame is read once Chrome presents the seek\'s frame, so a late one is never replaced by the old one (Ubuntu CI, run 39141011457), and a repeated frame costs no window', async () => {
+    useFrameCallbacks();
+    const { player, errors } = run(videoComp({}), 'render', 10_000);
+    await player.seek(0);
+    held = { timestamp: 400_000, duration: 33_333 };
+    await player.seek(0.4);
+    let t0 = performance.now();
+    await player.seek(0.5); // Chrome presents the 0.4 s frame again for this seek: it is the frame there, drawn at once
+    expect(performance.now() - t0).toBeLessThan(PRE_SEEK_SETTLE_MS / 2);
+    expect(errors.map((e) => e.code)).toEqual(['videoFrameMismatch']);
+    // The next seek moves the decoder to the frame at 0.6 s, but Chrome hands out the old one for 100 ms more.
+    presentAfterMs = 100;
+    onSeek = () => { setTimeout(() => { held = { timestamp: 600_000, duration: 33_333 }; }, 100); };
+    await player.seek(0.6);
+    expect(errors.map((e) => e.code)).toEqual(['videoFrameMismatch']); // the 0.6 s frame, no warning
+    // The same on the frame after it, which was never held out: still waited for, never drawn stale.
+    onSeek = () => { setTimeout(() => { held = { timestamp: 633_333, duration: 33_333 }; }, 100); };
+    t0 = performance.now();
+    await player.seek(0.64);
+    expect(errors.map((e) => e.code)).toEqual(['videoFrameMismatch']);
+    expect(performance.now() - t0).toBeLessThan(PRE_SEEK_SETTLE_MS / 2);
+  });
+
+  it('trusted source with frame callbacks: a frame presented late is waited for, not failed', async () => {
+    useFrameCallbacks();
+    const { player, errors } = run(videoComp({ sourceTrusted: true, sourceVideoEnd: 6 }), 'render', 10_000);
+    await player.seek(0);
+    presentAfterMs = 100;
+    onSeek = () => { setTimeout(() => { held = { timestamp: 400_000, duration: 33_333 }; }, 100); };
+    await player.seek(0.4);
+    expect(errors).toEqual([]);
+  });
+
+  it('frame callbacks that never come: after the settle window the frame rules decide as without them (no hang)', async () => {
+    useFrameCallbacks();
+    presentAfterMs = null;
+    const { player, errors } = run(videoComp({}), 'render', 10_000);
+    await player.seek(0);
+    held = { timestamp: 400_000, duration: 33_333 };
+    const t0 = performance.now();
+    await player.seek(0.4);
+    expect(errors).toEqual([]);
+    expect(performance.now() - t0).toBeLessThan(PRE_SEEK_SETTLE_MS + 500);
   });
 
   it('untrusted source: a pre-seek frame replaced by the seek\'s frame within the window is never drawn', async () => {
