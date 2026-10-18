@@ -85,6 +85,12 @@ export interface OpenPageOptions {
   deviceScaleFactor?: number;
 }
 
+/** The physical pixels of a page (its CSS size at its raster scale): what its memory follows. */
+export function pagePixels(o: Pick<OpenPageOptions, 'width' | 'height' | 'deviceScaleFactor'>): { width: number; height: number } {
+  const k = o.deviceScaleFactor !== undefined && Number.isFinite(o.deviceScaleFactor) && o.deviceScaleFactor > 0 ? o.deviceScaleFactor : 1;
+  return { width: Math.round(o.width * k), height: Math.round(o.height * k) };
+}
+
 export interface ChromiumProvider {
   readonly kind: 'electron' | 'system' | 'cft';
   open(o: OpenPageOptions): Promise<RenderPage>;
@@ -386,7 +392,8 @@ export class ChromeProvider implements ChromiumProvider {
     if (this.closing) throw new RenderError('cancelled', 'the browser is closed');
     if (o.signal.aborted) throw new RenderError('cancelled', 'cancelled');
     const origin = new URL(o.url).origin;
-    this.pixels ??= { width: o.width, height: o.height };
+    // A page rasterised at another scale (decision 974, review #8) holds that many more pixels: the memory limits follow them.
+    this.pixels ??= pagePixels(o);
     this.openPages++; // counted from the start: a page loading already uses memory
     try {
       return await this.openCounted(o, origin);

@@ -56,6 +56,11 @@ describe('sizes and fields (pure)', () => {
     expect(Object.fromEntries(videoNeeds(c))).toEqual({ 'assets/a.mp4': { width: 320, height: 400 }, 'assets/b.mp4': { width: 640, height: 360 } });
   });
 
+  it('review #8: a render rasterised at a scale needs that many more pixels of each source', () => {
+    const c = comp([video('assets/a.mp4')]);
+    expect(Object.fromEntries(videoNeeds(c, 2))).toEqual({ 'assets/a.mp4': { width: 640, height: 360 } });
+  });
+
   it('target size: a cover crop keeps the need, never upscaled, even sides, at most MAX_MEDIA_DIM', () => {
     expect(targetSize({ width: 1920, height: 1080 }, { width: 320, height: 180 })).toEqual({ width: 320, height: 180 });
     // A tall box over a wide source: the height decides (cover).

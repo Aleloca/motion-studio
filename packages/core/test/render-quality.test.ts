@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { captureFrame } from '../src/render/capture.ts';
-import type { RenderPage } from '../src/render/chromium-provider.ts';
+import { pagePixels, type RenderPage } from '../src/render/chromium-provider.ts';
 import { h264Args, qualitySettings } from '../src/render/encode.ts';
 import { filterArgv } from '../src/media/ffmpeg-filters.ts';
 
@@ -49,5 +49,10 @@ describe('render quality (decision 974)', () => {
     await expect(captureFrame(pageOf(853, 480), 0, { format: 'png', width: 854, height: 480, tolerance: 1 })).resolves.toBeInstanceOf(Buffer);
     await expect(captureFrame(pageOf(852, 480), 0, { format: 'png', width: 854, height: 480, tolerance: 1 })).rejects.toMatchObject({ code: 'badFrame' });
     await expect(captureFrame(pageOf(853, 480), 0, { format: 'png', width: 854, height: 480 })).rejects.toMatchObject({ code: 'badFrame' });
+  });
+
+  it('review #8: a page rasterised at a scale counts its physical pixels for the memory limits', () => {
+    expect(pagePixels({ width: 1080, height: 1920 })).toEqual({ width: 1080, height: 1920 });
+    expect(pagePixels({ width: 1920, height: 1080, deviceScaleFactor: 2 })).toEqual({ width: 3840, height: 2160 });
   });
 });

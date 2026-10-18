@@ -5,7 +5,7 @@ import { copyFile, lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import {
-  compositionProblemText, outputWarningText, DEFAULT_EXPORT_QUALITY, profileApplies, recordedQuality, effectiveLinks, formatDisplayName, messages, renderProblems, renderState, type RenderInfo, type RenderProfile,
+  compositionProblemText, outputWarningText, scaledSize, DEFAULT_EXPORT_QUALITY, profileApplies, recordedQuality, effectiveLinks, formatDisplayName, messages, renderProblems, renderState, type RenderInfo, type RenderProfile,
   type Brief, type Composition, type FormatPreset, type JobProgress, type JobSummary, type Locale, type LocaleTag, type Localization, type LocalizationIssue, type LocalizationRow, type ManifestV2, type OutputFileInfo,
   type IdentitySetInfo, type OutputIssue, type ServerMessage, type VersionComposition, type VersionEntry,
 } from '@motion-studio/shared';
@@ -457,7 +457,10 @@ export class RenderJobService {
     }
     if (loaded.hash !== entry.hash) throw new Error(m.render.compositionChanged({ format: o.label(format) }));
     const composition = storeComposition(format, loaded.composition);
-    const prepared = await this.deps.normalizer.prepare({ projectDir: ref.projectDir, compDir, composition, signal, onProgress: (p) => o.progress({ format, phase: 'media', done: p.done, total: p.total }) });
+    // The video sources at the render's scale (review #8): never upscaled soft at 1440p or 2160p.
+    const scale = scaledSize(composition, o.profile.short).width / composition.width;
+    const prepared = await this.deps.normalizer.prepare({ projectDir: ref.projectDir, compDir, composition, signal, ...(scale !== 1 ? { scale } : {}),
+      onProgress: (p) => o.progress({ format, phase: 'media', done: p.done, total: p.total }) });
     const file = `${format}.${renderExtension(preset, !(composition.duration > 0))}`;
     try {
       const result = await this.deps.engine!.render({

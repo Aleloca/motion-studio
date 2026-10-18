@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { app, BrowserWindow, powerSaveBlocker, session, type BrowserWindowConstructorOptions, type Debugger, type ProxyConfig, type Session } from 'electron';
 import {
-  allowedPrefix, CdpError, DEAD_PROXY, DEFAULT_PARALLEL, isAllowedRequest, openCdpRenderPage, RenderError, samplePidsMemory,
+  allowedPrefix, CdpError, DEAD_PROXY, pagePixels, DEFAULT_PARALLEL, isAllowedRequest, openCdpRenderPage, RenderError, samplePidsMemory,
   scaledMemoryLimits, startWatchdog,
   type CdpClient, type CdpEvent, type CdpSendOptions, type ChromiumProvider, type ChromiumProviderFactory, type OpenPageOptions,
   type PageTimeouts, type RenderFailure, type RenderPage, type Watchdog, type WatchdogLimits,
@@ -457,7 +457,7 @@ export class ElectronProvider implements ChromiumProvider {
     if (this.windows.size + this.opening >= this.maxWindows) throw new RenderError('loadFailed', `render: at most ${this.maxWindows} render windows at once`);
     this.origin = origin;
     // A page rasterised at another scale (decision 974) holds that many more pixels: the memory limits follow them.
-    this.pixels ??= { width: Math.round(o.width * (o.deviceScaleFactor ?? 1)), height: Math.round(o.height * (o.deviceScaleFactor ?? 1)) };
+    this.pixels ??= pagePixels(o);
     this.opening++;
     let rw: RenderWindow;
     // The open's signal, or this provider closing: a wait for an app-wide slot never outlives close().

@@ -97,14 +97,15 @@ export function clipScaleBound(clip: { props?: { scale?: number }; animations?: 
  * What each video source must cover, in pixels: per `src`, the largest box (composition pixels, the composition being the
  * format's size) times its scale bound, over every video clip of the visible tracks that uses it.
  */
-export function videoNeeds(c: Composition): Map<string, { width: number; height: number }> {
+export function videoNeeds(c: Composition, scale = 1): Map<string, { width: number; height: number }> {
   const out = new Map<string, { width: number; height: number }>();
   for (const track of c.tracks) {
     if (track.hidden) continue;
     for (const clip of track.clips) {
       if (clip.type !== 'video') continue;
       const v = clip as VideoClip;
-      const s = clipScaleBound(v as never);
+      // A render rasterised at a scale (decision 974, review #8) needs that many more pixels.
+      const s = clipScaleBound(v as never) * (Number.isFinite(scale) && scale > 0 ? scale : 1);
       const w = (v.props.width ?? c.width) * s, h = (v.props.height ?? c.height) * s;
       const prev = out.get(v.src);
       out.set(v.src, { width: Math.max(prev?.width ?? 0, w), height: Math.max(prev?.height ?? 0, h) });
@@ -391,6 +392,8 @@ export interface PrepareMediaOptions {
   signal: AbortSignal;
   /** Sources done out of the total ("Preparing media…"). */
   onProgress?(p: { done: number; total: number }): void;
+  /** The raster scale of the render (decision 974: another resolution); default 1. */
+  scale?: number;
 }
 
 /**
@@ -507,7 +510,7 @@ export class MediaNormalizer {
     const local = new AbortController();
     const signal = AbortSignal.any([p.signal, this.closing.signal, local.signal]);
     const cacheDir = mediaCacheDir(p.projectDir);
-    const needs = videoNeeds(p.composition);
+    const needs = videoNeeds(p.composition, p.scale);
     const clips = new Map<string, SessionMediaFile>();
     const warnings: MediaWarning[] = [];
     const total = needs.size;
