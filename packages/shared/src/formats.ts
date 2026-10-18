@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { LOCALES, messages, type Locale } from './i18n/index.ts';
 import { instanceLabel, instancePreset, presetOf } from './format-instance.ts';
+import type { BriefServices } from './services.ts';
 
 export type FormatKind = 'video' | 'image';
 
@@ -178,3 +179,20 @@ export const STORE_LIMITS = {
     promoAutoplaySec: 30,
   },
 } as const;
+
+/**
+ * The brief's services narrowed to what its formats can use (decision 1125), the one rule every "paid services a turn may use"
+ * computation shares (the variants card, the agent's tool lines, the bridge): voice, music and sound effects only when some
+ * format is a video (a still image or an identity file has no audio track); generated and stock images not at all when every
+ * format is an identity output (a vector logo, favicon or app icon embeds no raster image). A format missing from the catalog
+ * is not guessed: with none known, the services stay as they are. Choices already `none` stay `none`.
+ */
+export function servicesForFormats(services: BriefServices | undefined, formatIds: readonly string[], presets: readonly FormatPreset[]): BriefServices | undefined {
+  const known = formatIds.map((id) => instancePreset(presets, id));
+  if (known.length === 0 || known.some((p) => !p)) return services;
+  const ps = known as FormatPreset[];
+  const out: BriefServices = { ...services };
+  if (!ps.some((p) => p.kind === 'video')) { out.voice = 'none'; out.music = 'none'; out.sfx = 'none'; }
+  if (ps.every((p) => p.identity)) out.images = 'none';
+  return out;
+}

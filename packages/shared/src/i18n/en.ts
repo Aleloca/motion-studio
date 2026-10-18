@@ -335,7 +335,7 @@ export const en = {
     voicesBatchDetail: (p: { count: number; chars: number; list: string }) => `${p.count === 1 ? '1 call' : `${p.count} calls`}, ${p.chars} characters in all: ${p.list}`,
     /** Phase 15: the one confirmation of a variant fan-out (spec §3, "Servizi a pagamento"). */
     variantBatchTitle: (p: { count: number }) => `Paid services for ${p.count} variants`,
-    variantBatchDetail: (p: { providers: string; variants: string }) => `Estimated calls (no price known): ${p.providers}. Per variant: ${p.variants}. No variant starts before you answer.`,
+    variantBatchDetail: (p: { providers: string; variants: string }) => `Estimated calls (no price known): ${p.providers}. Per variant: ${p.variants}. No variant starts before you answer. Decline starts the variants without paid services (no paid call will be made in this run); to cancel the generation altogether, stop the job.`,
     variantBatchItem: (p: { letter: string; service: string; provider: string }) => `Variant ${p.letter} · ${p.service} (${p.provider})`,
     serviceNames: { images: 'Images', voice: 'Voice', music: 'Music', sfx: 'Sound effects' },
     generateSfx: (p: { provider: string }) => `Generate a sound effect with ${p.provider}`,

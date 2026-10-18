@@ -333,7 +333,7 @@ export const it: Messages = {
     voicesBatchDetail: (p) => `${p.count === 1 ? '1 chiamata' : `${p.count} chiamate`}, ${p.chars} caratteri in tutto: ${p.list}`,
     /** Fase 15: l'unica conferma di un avvio di più varianti (spec §3, "Servizi a pagamento"). */
     variantBatchTitle: (p) => `Servizi a pagamento per ${p.count} varianti`,
-    variantBatchDetail: (p) => `Chiamate stimate (prezzo non noto): ${p.providers}. Per variante: ${p.variants}. Nessuna variante parte prima della tua risposta.`,
+    variantBatchDetail: (p) => `Chiamate stimate (prezzo non noto): ${p.providers}. Per variante: ${p.variants}. Nessuna variante parte prima della tua risposta. Rifiuta avvia le varianti senza servizi a pagamento (in questa esecuzione non verrà fatta nessuna chiamata a pagamento); per annullare del tutto la generazione, ferma il lavoro.`,
     variantBatchItem: (p) => `Variante ${p.letter} · ${p.service} (${p.provider})`,
     serviceNames: { images: 'Immagini', voice: 'Voce', music: 'Musica', sfx: 'Effetti sonori' },
     generateSfx: (p) => `Generare un effetto sonoro con ${p.provider}`,

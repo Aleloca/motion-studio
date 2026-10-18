@@ -3,8 +3,8 @@
  * Phase 15, Task 3, Review Focus 4 (spec §3 "Servizi a pagamento"), with the orchestrator's fix round 1: "Tutte" with 4 active
  * variants and a paid tool. Exactly one `paid-batch` confirmation (the phase 12 mechanism) lists every variant, the calls per
  * provider and the total. No variant turn starts before it is answered: approving starts them (two run, two wait with the
- * reason) under its cover (their paid calls ask nothing more); declining or the card expiring cancels all four, so nothing ran
- * and nothing was spent. Working variants are in the same card: their request waits in their own queue for the decision and
+ * reason) under its cover (their paid calls ask nothing more); declining (decision 1126) starts them with paid services off;
+ * the card expiring or going away cancels all four, so nothing ran and nothing was spent. Working variants are in the same card: their request waits in their own queue for the decision and
  * leaves it on a decline. No card when nothing paid can be called. A single creative keeps its per-call confirmation.
  * Controlled runner, MemoryVault and a fake fetch: nothing leaves the machine.
  */
@@ -32,6 +32,8 @@ function gate() {
 const KEYS = { OPENAI_API_KEY: 'sk-test-0123456789' };
 const OLD_BRIEF = { goal: 'x', message: '', formats: ['instagram-post-1x1'], durationSec: 10, assets: [], notes: '' };
 const run = (slug: string, body: unknown) => v.app.inject({ method: 'POST', url: `${v.url(slug)}/variants/run`, payload: body as object });
+/** The card gone without an answer (as when every target is stopped): the whole run is cancelled. */
+const dismiss = (a: ApprovalRequest) => v.approvals.cancelJob(a.jobId);
 const decide = (a: ApprovalRequest, decision: string) => v.app.inject({ method: 'POST', url: `/api/approvals/${a.id}`, payload: { decision } });
 const stateOf = async (id: string) => (await v.jobs()).find((j) => j.id === id)!;
 const turn = (slug: string, text: string) => v.app.inject({ method: 'POST', url: `${v.url(slug)}/turns`, payload: { text } });
@@ -47,9 +49,9 @@ async function fourVariants() {
 }
 
 describe('variant paid batch (Review Focus 4)', () => {
-  it('one card for the whole fan-out; no turn starts before it; declining cancels all four: nothing ran, nothing was spent', async () => {
+  it('one card for the whole fan-out; no turn starts before it; declining starts all four WITHOUT paid services: nothing spent, no new question', async () => {
     v = await variantApp({ keys: KEYS });
-    const { ids, batchId } = await fourVariants();
+    const { slug, ids, batchId } = await fourVariants();
     await vi.waitFor(async () => expect(await v.pending()).toHaveLength(1));
     const card = (await v.pending())[0]!;
     expect(card).toMatchObject({ kind: 'paid-batch', jobId: batchId, alwaysRule: null });
@@ -60,16 +62,50 @@ describe('variant paid batch (Review Focus 4)', () => {
     // Today's card still renders: one call line per item; the detail gives the call estimate, no price.
     expect(card.paidBatch!.calls).toHaveLength(8);
     expect(card.detail).toContain('OpenAI 8');
+    // Decision 1126: the card says what Decline does.
+    expect(card.detail).toMatch(/Decline starts the variants without paid services|Rifiuta avvia le varianti senza servizi a pagamento/);
     // Held: every turn waits for the card, no agent runs.
     for (const id of Object.values(ids)) expect(await stateOf(id)).toMatchObject({ state: 'queued', waitReason: 'variant-confirm' });
     await new Promise((r) => setTimeout(r, 150));
     expect(v.runner.runs).toHaveLength(0);
     expect((await decide(card, 'deny')).statusCode).toBe(200);
-    await v.waitIdle();
-    for (const id of Object.values(ids)) expect((await stateOf(id)).state, id).toBe('cancelled');
-    expect(v.runner.runs).toHaveLength(0);
-    expect(v.fetches).toEqual([]);
+    // Two run, two wait for a slot: the run goes on, with paid services off.
+    const ra = await runOf(slug);
+    await runOf(`${slug}~b`);
+    await vi.waitFor(async () => expect((await stateOf(ids.d)).waitReason).toBe('variant-slot'));
+    expect(ra.req.prompt).toMatch(/off for this run/);
+    // A paid call is refused without a card, even though the provider has a key.
+    const voice = await v.bridge(ra, 'tts', { text: 'Benvenuti', provider: 'openai' });
+    expect(voice.statusCode).toBeGreaterThanOrEqual(400);
     expect(await v.pending()).toEqual([]);
+    expect(v.fetches).toEqual([]);
+    ra.finish();
+    (await runOf(`${slug}~b`)).finish();
+    (await runOf(`${slug}~c`)).finish();
+    (await runOf(`${slug}~d`)).finish();
+    await v.waitIdle();
+  });
+
+  it('decision 1125: an identity pack (vector logo, favicon, app icon) asks for no paid service at all; a still image only for images; a video for all', async () => {
+    v = await variantApp({ keys: { ...KEYS, ELEVENLABS_API_KEY: 'el-test-0123456789' } });
+    const make = async (formats: string[]) => {
+      const slug = ((await v.app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: formats[0], brief: { ...OLD_BRIEF, formats }, generate: false } })).json() as { slug: string }).slug;
+      expect((await v.app.inject({ method: 'POST', url: `${v.url(slug)}/variants`, payload: { count: 2, directions: ['x', 'y'] } })).statusCode).toBe(201);
+      return slug;
+    };
+    const identity = await make(['identity-logo', 'identity-favicon', 'identity-app-icon']);
+    const res = await run(identity, { targets: 'all-active', request: null });
+    expect(res.statusCode, res.body).toBe(202);
+    expect(res.json().batchId).toBeUndefined();
+    expect(await v.pending()).toEqual([]);
+    await vi.waitFor(() => expect(v.runner.runs).toHaveLength(2));
+    for (const r of v.runner.runs) { expect(r.req.prompt).not.toMatch(/- tts: .*\(ready\)/); expect(r.req.prompt).not.toMatch(/- generate_image: .*\(ready\)/); }
+    // A still image: only images.
+    const still = await make(['instagram-image-1x1']);
+    await run(still, { targets: 'all-active', request: null });
+    await vi.waitFor(async () => expect(await v.pending()).toHaveLength(1));
+    const items = (await v.pending())[0]!.paidBatch!.items!;
+    expect([...new Set(items.map((i) => i.capability))]).toEqual(['images']);
   });
 
   it('an expired card cancels all four the same way', async () => {
@@ -150,7 +186,7 @@ describe('variant paid batch (Review Focus 4)', () => {
     await v.waitIdle();
   });
 
-  it('all working: one card; declining takes the requests out of their queues (and cancels one that already became a held turn)', async () => {
+  it('all working: one card; a dismissed card takes the requests out of their queues (and cancels one that already became a held turn)', async () => {
     v = await variantApp({ keys: KEYS });
     const slug = await v.group(['Audace', 'Calma']);
     await turn(slug, 'Prima A');
@@ -165,13 +201,34 @@ describe('variant paid batch (Review Focus 4)', () => {
     rb0.finish();
     await vi.waitFor(async () => expect(await v.jobOf(`${slug}~b`)).toMatchObject({ state: 'queued', waitReason: 'variant-confirm' }), { timeout: 10_000 });
     const held = (await v.jobOf(`${slug}~b`))!.id;
-    await decide((await v.pending())[0]!, 'deny');
+    dismiss((await v.pending())[0]!);
     await vi.waitFor(async () => expect((await stateOf(held)).state).toBe('cancelled'));
     await vi.waitFor(async () => expect((await v.detail(slug)).creative.queued ?? []).toEqual([]));
     ra0.finish();
     await v.waitIdle();
     expect(v.runner.runs).toHaveLength(2);
     expect(v.fetches).toEqual([]);
+  });
+
+  it('decision 1126: declining with a working variant: its request stays queued and, when it starts, has paid services off', async () => {
+    v = await variantApp({ keys: KEYS });
+    const slug = await v.group(['Audace', 'Calma']);
+    await turn(`${slug}~b`, 'Prima B');
+    const rb0 = await runOf(`${slug}~b`);
+    const res = await run(slug, { targets: 'all-active', request: { text: 'Più luce' } });
+    expect(res.json().queued).toEqual(['b']);
+    await vi.waitFor(async () => expect(await v.pending()).toHaveLength(1));
+    await decide((await v.pending())[0]!, 'deny');
+    const ra = await runOf(slug);
+    expect(ra.req.prompt).toMatch(/off for this run/);
+    rb0.finish();
+    const rb = await runOf(`${slug}~b`, 1);
+    expect(rb.req.prompt).toMatch(/off for this run/);
+    expect((await v.bridge(rb, 'tts', { text: 'Ciao', provider: 'openai' })).statusCode).toBeGreaterThanOrEqual(400);
+    expect(await v.pending()).toEqual([]);
+    expect(v.fetches).toEqual([]);
+    ra.finish(); rb.finish();
+    await v.waitIdle();
   });
 
   it('race (a): the card is approved while a working variant\'s queued request is being started: its turn is not left held', async () => {
@@ -201,7 +258,7 @@ describe('variant paid batch (Review Focus 4)', () => {
     await v.waitIdle();
   });
 
-  it('race (b): the card is declined while a working variant\'s queued request is being started: that turn never runs', async () => {
+  it('race (b): the card is dismissed while a working variant\'s queued request is being started: that turn never runs', async () => {
     v = await variantApp({ keys: KEYS });
     const slug = await v.group(['Audace', 'Calma']);
     await turn(`${slug}~b`, 'Prima B');
@@ -218,7 +275,7 @@ describe('variant paid batch (Review Focus 4)', () => {
     });
     rb0.finish();
     await g.reached;
-    await decide((await v.pending())[0]!, 'deny');
+    dismiss((await v.pending())[0]!);
     // The run's cancel has reached A (its turn is cancelled) and now waits for B's start in flight.
     await vi.waitFor(async () => expect((await stateOf(res.json().jobs.a)).state).toBe('cancelled'));
     g.open();
@@ -275,7 +332,7 @@ describe('variant paid batch (Review Focus 4)', () => {
     expect(v.runner.runs).toHaveLength(1);
   });
 
-  it('minor (Task 3): a declined request that could not be taken out of the queue never runs (its turn is stopped as it starts)', async () => {
+  it('minor (Task 3): a dismissed request that could not be taken out of the queue never runs (its turn is stopped as it starts)', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     v = await variantApp({ keys: KEYS });
     const slug = await v.group(['Audace', 'Calma']);
@@ -285,7 +342,7 @@ describe('variant paid batch (Review Focus 4)', () => {
     expect(res.json().queued).toEqual(['b']);
     await vi.waitFor(async () => expect(await v.pending()).toHaveLength(1));
     vi.spyOn(CreativeTurnService.prototype, 'removeQueued').mockRejectedValueOnce(new Error('disk full'));
-    await decide((await v.pending())[0]!, 'deny');
+    dismiss((await v.pending())[0]!);
     await vi.waitFor(async () => expect((await stateOf(res.json().jobs.a)).state).toBe('cancelled'));
     await vi.waitFor(async () => expect((await v.detail(`${slug}~b`)).creative.queued).toHaveLength(1));
     // The chat of B says what will happen to the request.
@@ -314,7 +371,7 @@ describe('variant paid batch (Review Focus 4)', () => {
     const card = (await v.pending())[0]!;
     expect([...new Set(card.paidBatch!.items!.map((i) => i.variant))].sort()).toEqual(['a', 'c']);
     expect(card.paidBatch!.total?.variants).toBe(2);
-    await decide(card, 'deny');
+    dismiss(card);
     await v.waitIdle();
   });
 

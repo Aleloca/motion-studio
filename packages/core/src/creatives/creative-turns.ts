@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { mergeStorePack, verifyScreens } from '../store-pack/brief.ts';
 import { lstat, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
-import { canFollow, effectiveServices, checkLink, effectiveLinks, legacyTurnKind, linksAfterBriefSave, formatHistory, sameDelivery, formatDisplayName, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type AgentEvent, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type StorePack, storePackSchema, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
+import { canFollow, effectiveServices, servicesForFormats, checkLink, effectiveLinks, legacyTurnKind, linksAfterBriefSave, formatHistory, sameDelivery, formatDisplayName, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type AgentEvent, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type StorePack, storePackSchema, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import { detachLinksUnder } from '../agent/protected-links.ts';
 import { noteCoreChange } from '../core-changes.ts';
@@ -64,6 +64,8 @@ export interface CreativeTurnDeps {
   previewFramesPerTurn?: number;
   /** Phase 13: cancels the open approvals of a job (`ApprovalBroker.cancelJob`); a redirect calls it before anything else. */
   cancelApprovals?: (jobId: string) => void;
+  /** Decision 1126: the user declined the paid services of this turn's variant run (`ApprovalBroker.paidOff`): the turn is told they are off. */
+  paidOff?: (jobId: string) => boolean;
   /**
    * Phase 13 (final review I1): where each creative's queue and remembered session live — the core's config folder, out
    * of the agent's reach and out of git. Absent: in memory only.
@@ -1008,8 +1010,14 @@ export class CreativeTurnService {
       // One ledger record per attempt: the version's usage is their sum (fix loop included). No agent: no record, no usage.
       const attemptUsage: Array<UsageRecord | null | undefined> = [];
 
+      // Decision 1125: the services this turn may use are the brief's narrowed to what its formats can carry; decision 1126: a
+      // declined paid-services card of the variant run turns every paid one off (stock stays: it is free).
+      const paidOff = this.deps.paidOff?.(jobId) ?? false;
+      const fitted = servicesForFormats(creative.brief.services, creative.brief.formats, presets);
+      const turnServices = paidOff ? { ...fitted, images: fitted?.images === 'none' ? 'none' as const : 'stock' as const, voice: 'none' as const, music: 'none' as const, sfx: 'none' as const } : fitted;
+
       if (!noAgent) {
-        const { context, existing } = await this.buildContext(ref, store, creative.linkedCodebases, creative.brief.services);
+        const { context, existing } = await this.buildContext(ref, store, creative.linkedCodebases, turnServices, paidOff);
         // Phase 15 (spec §3): a variant's own direction and the other active variants', as they are when the turn starts.
         const variant = promptVariant(await this.memberOf(ref));
         // Spec §7: a legacy base (rendered media, v1 manifest) makes this change a conversion to compositions. The core
@@ -1212,7 +1220,7 @@ export class CreativeTurnService {
             request: { prompt, resumeSessionId, forkSession, model },
             usage: { version: n, attempt }, sandboxed,
             // The brief as read at this turn's start (Task 7): a change from the chat applies from the next turn.
-            services: effectiveServices(creative.brief),
+            services: effectiveServices({ services: turnServices }),
             // Decision 917: what the agent's app actions act on: this creative and the version this turn makes.
             appScope: { root: ref.root, projectSlug: ref.projectSlug, projectDir: ref.projectDir, creativeSlug: slug, version: n },
             // After the agent's events written so far, so the chat keeps its order.
@@ -1796,7 +1804,7 @@ export class CreativeTurnService {
     }
   }
 
-  private async buildContext(ref: CreativeRef, store: CreativeStore, creativeCodebases: LinkedCodebase[], services: Brief['services']): Promise<{ context: CreativeContext; existing: string[] }> {
+  private async buildContext(ref: CreativeRef, store: CreativeStore, creativeCodebases: LinkedCodebase[], services: Brief['services'], paidOff = false): Promise<{ context: CreativeContext; existing: string[] }> {
     const note = (text: string) => store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text });
     const brand = new BrandStore(ref.projectDir);
     const library = new LibraryStore(ref.projectDir, this.deps.media);
@@ -1823,7 +1831,7 @@ export class CreativeTurnService {
     for (const c of checks.filter((x) => !x.exists)) await note(t().jobs.codebaseMissing({ path: c.path }));
     const existing = checks.filter((c) => c.exists);
     return {
-      context: { kit, hasGuidelines, assets, references, codebases: existing.map(({ path, note: n }) => ({ path, ...(n ? { note: n } : {}) })), missingCodebases: checks.filter((c) => !c.exists).map((c) => c.path), tools: this.deps.launcher.mcpActive() ? await availableTools(this.deps.vault, services, this.deps.keyChecks) : [] },
+      context: { kit, hasGuidelines, assets, references, codebases: existing.map(({ path, note: n }) => ({ path, ...(n ? { note: n } : {}) })), missingCodebases: checks.filter((c) => !c.exists).map((c) => c.path), tools: this.deps.launcher.mcpActive() ? await availableTools(this.deps.vault, services, this.deps.keyChecks, paidOff) : [] },
       existing: existing.map((c) => c.path),
     };
   }

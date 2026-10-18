@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   activeMembers, VARIANT_LETTERS,
-  type BriefServices, type JobWaitReason, type PaidBatch, type Pin, type ProviderId, type VariantGroup, type VariantLetter, type VariantMember, type WorkspaceSettings,
+  servicesForFormats, type BriefServices, type FormatPreset, type JobWaitReason, type PaidBatch, type Pin, type ProviderId, type VariantGroup, type VariantLetter, type VariantMember, type WorkspaceSettings,
 } from '@motion-studio/shared';
 import type { ApprovalBroker } from '../approvals/broker.ts';
 import { isAllowedRule, PermissionsStore } from '../approvals/permissions-store.ts';
@@ -40,6 +40,8 @@ export interface VariantFanoutDeps {
   settings: () => Promise<WorkspaceSettings>;
   /** The paid services a turn under the brief's services may use now (`paidServicePlan`). */
   paidPlan: (services?: BriefServices) => Promise<PaidService[]>;
+  /** The format presets now: the plan lists only the services a creative's formats can use (decision 1125). */
+  presets: () => Promise<FormatPreset[]>;
   directions: VariantDirections;
 }
 
@@ -195,9 +197,11 @@ export class VariantFanout {
       }
       if (plan && batchId) {
         this.setHold(entries, 'variant-confirm');
-        const approved = await this.ask(host, entries, plan, batchId);
-        if (!approved) { await this.cancelAll(entries); return; }
-        this.cover(entries, plan.rules);
+        const answer = await this.ask(host, entries, plan, batchId);
+        if (answer === 'stopped') { await this.cancelAll(entries); return; }
+        // Decision 1126: Decline is "no paid services", not "no generation": the variants start with paid services off.
+        if (answer === 'declined') this.coverOff(entries);
+        else this.cover(entries, plan.rules);
       }
       this.setHold(entries, null);
     } catch (err) {
@@ -231,6 +235,20 @@ export class VariantFanout {
     }
   }
 
+  /** After a decline: every turn of the run (and each queued request's, when it starts) has paid services off, and any paid call is refused without a card. */
+  private coverOff(entries: Entry[]): void {
+    const { approvals, queue } = this.deps;
+    const apply = (id: string) => {
+      approvals.coverOff(id);
+      void Promise.resolve().then(() => queue.whenSettled(id)).then(() => approvals.uncover(id));
+    };
+    for (const e of entries) {
+      if (e.ended) continue;
+      if (e.jobId) { apply(e.jobId); continue; }
+      e.onStart = apply;
+    }
+  }
+
   /** Nothing of the run goes on: its held turns are cancelled (they never ran), its queued requests leave their queues. */
   private async cancelAll(entries: Entry[]): Promise<void> {
     const { queue, approvals, turns } = this.deps;
@@ -259,8 +277,8 @@ export class VariantFanout {
     }
   }
 
-  /** Shows the card and waits for it; false when declined, expired or cancelled (every turn of the run stopped first). */
-  private async ask(host: CreativeRef, entries: Entry[], plan: PaidPlan, batchId: string): Promise<boolean> {
+  /** Shows the card and waits for it: approved, declined (the run goes on without paid services), or stopped (expired, or every target gone by hand). */
+  private async ask(host: CreativeRef, entries: Entry[], plan: PaidPlan, batchId: string): Promise<'approved' | 'declined' | 'stopped'> {
     const a = t().approvals;
     const { items } = plan;
     const label = (i: (typeof items)[number]) => a.variantBatchItem({ letter: upper(i.variant), service: a.serviceNames[i.capability], provider: PROVIDER_LABEL[i.provider] });
@@ -285,7 +303,8 @@ export class VariantFanout {
     // Every target gone by hand (its turn stopped, its queued request removed): the card has nothing left to confirm.
     void Promise.all(entries.map((e) => e.gone)).then(() => this.deps.approvals.cancelJob(batchId));
     const o = await pending;
-    return o.decision === 'once' || o.decision === 'always';
+    if (o.decision === 'once' || o.decision === 'always') return 'approved';
+    return o.decision === 'deny' ? 'declined' : 'stopped';
   }
 
   /**
@@ -301,9 +320,11 @@ export class VariantFanout {
     const items: PaidPlan['items'] = [];
     const rules = new Set<string>();
     const byVariant: PaidPlan['byVariant'] = {};
+    const presets = await this.deps.presets();
     for (const m of members) {
       const c = await store.get(m.slug);
-      for (const s of await this.deps.paidPlan(c.brief.services)) {
+      // Decision 1125: only what the creative's formats can use (no voice for a still image, no raster images for an identity pack).
+      for (const s of await this.deps.paidPlan(servicesForFormats(c.brief.services, c.brief.formats, presets))) {
         const open: string[] = [];
         for (const r of s.rules) if (!(await allowed(r))) open.push(r);
         if (open.length === 0) continue;
