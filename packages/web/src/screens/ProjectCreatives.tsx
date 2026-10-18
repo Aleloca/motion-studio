@@ -211,7 +211,7 @@ function CreativeCard({ slug, c, info, presets, index, fresh, onChanged }: CardP
   const start = async (then: 'stay' | 'open', fail: (p: { detail: string }) => string) => {
     setBusy(true);
     try {
-      const body = then === 'stay' ? retryTurn(await api.getConversation(slug, c.slug)) : {};
+      const body = then === 'stay' ? retryTurn(await api.getConversation(slug, c.slug), c.variants ? 'a' : undefined) : {};
       // A group that never started starts every variant (one paid-services card); a retry is the host's own turn.
       if (c.variants && then === 'open') await api.runVariants(slug, c.slug, { targets: 'all-active', request: null });
       else await api.sendCreativeTurn(slug, c.slug, body);

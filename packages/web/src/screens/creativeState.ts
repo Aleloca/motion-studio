@@ -1,5 +1,5 @@
 import { presetFor } from '../instances.ts';
-import { compareVariantIds, hostOf, isSisterSlug, letterOfSlug, turnEndOf, type ApprovalRequest, type ConversationEntry, type CreativeSummary, type FormatPreset, type JobSummary, type Pin } from '@motion-studio/shared';
+import { compareVariantIds, entriesOfVariant, hostOf, isSisterSlug, letterOfSlug, turnEndOf, type ApprovalRequest, type ConversationEntry, type CreativeSummary, type FormatPreset, type JobSummary, type Pin, type VariantId } from '@motion-studio/shared';
 import type { EventsState } from '../eventsReducer.ts';
 import { lastStep } from '../jobEvents.ts';
 import { channelOf } from '../ui/index.ts';
@@ -98,7 +98,9 @@ export function frames(formats: string[], presets: FormatPreset[], o: { height: 
  * i.e. the last user message comes after the last version. Otherwise (a failed first generation, or a failed
  * regenerate without a message) an empty turn, so the core starts again from the brief / its own retry wording.
  */
-export function retryTurn(entries: ConversationEntry[]): { text?: string; pins?: Pin[] } {
+export function retryTurn(all: ConversationEntry[], variant?: VariantId): { text?: string; pins?: Pin[] } {
+  // Decision 980: in a group's one chat, one variant's turns only.
+  const entries = variant === undefined ? all : entriesOfVariant(all, variant);
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i]!;
     // Decision 1060: a turn that ended without a version (nothing changed) is over too.

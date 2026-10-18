@@ -25,6 +25,16 @@ describe('retryTurn', () => {
     expect(retryTurn(entries)).toEqual({});
     expect(retryTurn(entries.filter((e) => e.type !== 'system' || e.keptVersion === undefined))).toEqual({ text: 'Porta il brief a 60 s' });
   });
+  it('in a group\'s one chat (decision 980) it reads one variant\'s entries only', () => {
+    const entries: ConversationEntry[] = [
+      { type: 'user', at, text: 'Per B', pins: [], attachments: [], variant: 'b' },
+      { type: 'system', at, level: 'error', text: 'boom', variant: 'b' },
+      { type: 'user', at, text: 'Per A', pins: [], attachments: [], variant: 'a' },
+      { type: 'version', at, n: 3, status: 'complete', variant: 'a' },
+    ];
+    expect(retryTurn(entries, 'b')).toEqual({ text: 'Per B' });
+    expect(retryTurn(entries, 'a')).toEqual({});
+  });
 });
 
 describe('liveCreative (decision 978)', () => {

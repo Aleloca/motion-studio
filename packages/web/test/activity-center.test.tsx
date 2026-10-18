@@ -162,4 +162,14 @@ describe('versionsByJob (decision 1066)', () => {
     ];
     expect(versionsByJob(entries)).toEqual({ j1: { n: 1, status: 'complete' }, j2: { n: 1, kept: true } });
   });
+  it('in a group\'s one chat (decision 980) each variant\'s version follows its own job, however the turns interleave', () => {
+    const at = '2026-10-18T10:00:00.000Z';
+    const event = { kind: 'text', text: 'ok' } as unknown as Extract<ConversationEntry, { type: 'agent' }>['event'];
+    const entries: ConversationEntry[] = [
+      { type: 'agent', at, jobId: 'ja', event, variant: 'a' }, { type: 'agent', at, jobId: 'jb', event, variant: 'b' },
+      { type: 'user', at, text: 'altro', pins: [], attachments: [], variant: 'c' },
+      { type: 'version', at, n: 4, status: 'complete', variant: 'b' }, { type: 'version', at, n: 2, status: 'incomplete', variant: 'a' },
+    ];
+    expect(versionsByJob(entries)).toEqual({ ja: { n: 2, status: 'incomplete' }, jb: { n: 4, status: 'complete' } });
+  });
 });

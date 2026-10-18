@@ -62,7 +62,7 @@ beforeEach(() => {
 describe('chat selector', () => {
   it('lists the active variants and "Tutte"; the open variant is the checked one', () => {
     render(panel({ current: 'b' }));
-    const sel = screen.getByRole('radiogroup', { name: 'Variante' });
+    const sel = screen.getByRole('radiogroup', { name: 'Invia a' });
     expect(within(sel).getAllByRole('radio').map((r) => r.textContent)).toEqual(['A', 'B', 'C', 'Tutte']);
     expect(within(sel).getByRole('radio', { name: 'B' }).getAttribute('aria-checked')).toBe('true');
     expect(within(sel).getByRole('radio', { name: 'Tutte' }).getAttribute('aria-checked')).toBe('false');
@@ -70,12 +70,12 @@ describe('chat selector', () => {
 
   it('a discarded variant is not in the selector, nor in "Tutte"', () => {
     render(panel({ g: groupOf(['a', 'b', 'c'], {}, { c: { status: 'discarded' } }) }));
-    expect(within(screen.getByRole('radiogroup', { name: 'Variante' })).getAllByRole('radio').map((r) => r.textContent)).toEqual(['A', 'B', 'Tutte']);
+    expect(within(screen.getByRole('radiogroup', { name: 'Invia a' })).getAllByRole('radio').map((r) => r.textContent)).toEqual(['A', 'B', 'Tutte']);
   });
 
   it('"Tutte" is offered only with two variants that can really work: a missing member does not count', () => {
     render(panel({ g: groupOf(['a', 'b']), missing: ['b'] }));
-    expect(within(screen.getByRole('radiogroup', { name: 'Variante' })).getAllByRole('radio').map((r) => r.textContent)).toEqual(['A', 'B']);
+    expect(within(screen.getByRole('radiogroup', { name: 'Invia a' })).getAllByRole('radio').map((r) => r.textContent)).toEqual(['A', 'B']);
   });
 
   it('a click on a letter, or on Tutte, tells the page', async () => {
@@ -176,7 +176,7 @@ describe('chat selector', () => {
   it('a panel without variants has no selector and no waiting line (the chat of an old creative)', () => {
     const { container } = render(<I18nProvider locale="it"><Conversation slug="acme" creative={HOST} entries={[]} approvals={[]} job={undefined} onSent={vi.fn()} /></I18nProvider>);
     expect(container.querySelector('[data-variant-selector]')).toBeNull();
-    expect(screen.queryByRole('radiogroup', { name: 'Variante' })).toBeNull();
+    expect(screen.queryByRole('radiogroup', { name: 'Invia a' })).toBeNull();
   });
 });
 

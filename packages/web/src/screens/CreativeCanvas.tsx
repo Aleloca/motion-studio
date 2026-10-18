@@ -7,7 +7,7 @@
 // is a grid of cards, one per variant, to compare and choose ("Selezione finale" is the page's main action).
 import { ProblemList } from '../components/ProblemList.tsx';
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
-import { turnEndOf } from '@motion-studio/shared';
+import { entriesOfVariant, turnEndOf } from '@motion-studio/shared';
 import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, outputWarningText, shownTotal, packInstancesOf, type ConversationEntry, type CreativeDetail, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VariantId, type VariantMember, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
@@ -49,6 +49,7 @@ import { isVideoFile } from '../media.ts';
 import { usePinFrames } from './pinFrames.ts';
 import { rangeSeconds } from './pinModel.ts';
 import { retryTurn } from './creativeState.ts';
+import { chatTick, useGroupChat } from './variants/useGroupChat.ts';
 import { AddVariantDialog, EditDirectionDialog, type BaseChoice } from './variants/AddVariantDialog.tsx';
 import { FinalSelection, type ChooserFormat } from './variants/FinalSelection.tsx';
 import { GroupStar } from './variants/GroupStar.tsx';
@@ -101,7 +102,9 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   const locale = useLocale();
   const shell = useContext(ShellContext);
   const root = useRef<HTMLDivElement>(null);
-  const { detail, conversation, error, reload } = useCreative(slug, creative, live.creativeTicks[`${slug}/${creative}`] ?? 0);
+  // Decision 980: a group's one chat is read again when any of its members changes.
+  const { detail, conversation, error, reload } = useCreative(slug, creative, chatTick(live.creativeTicks, slug, creative));
+  const groupChat = useGroupChat(live, slug, creative, detail);
   // Phase 15: the variant group of this creative; null outside any group, and for an orphan sister (it opens as a single creative).
   const vdetail = detail?.variants;
   const group = vdetail && !vdetail.orphan ? vdetail : null;
@@ -167,9 +170,8 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   // T11: a new version → toast and a spring on the version badge (the frames reveal themselves on load).
   useNewVersionNotice(Boolean(detail), latest?.n ?? null, active, versionButton);
 
-  // The one paid-services card of a variant run belongs to the group (it is filed under the host): every variant's chat shows it.
-  const myApprovals = useMemo(() => Object.values(live.approvals).filter((a) => a.projectSlug === slug
-    && (a.creativeSlug === creative || (a.kind === 'paid-batch' && group?.group.members.some((m) => m.slug === a.creativeSlug)))), [live.approvals, slug, creative, group]);
+  // Decision 980: the group's one chat shows every variant's approvals (the one paid-services card of a variant run included).
+  const myApprovals = useMemo(() => Object.values(live.approvals).filter(groupChat.shows), [live.approvals, groupChat]);
   const job = useMemo(() => {
     if (!detail) return undefined;
     const mine = Object.values(live.jobs).filter((j) => j.key === detail.jobKey);
@@ -488,7 +490,8 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   };
 
   const [tab, setTab] = useState<'chat' | 'comments' | 'brief'>('chat');
-  const sent = useMemo(() => sentComments(conversation), [conversation]);
+  // The Comments tab is this variant's (its versions applied them): its own entries of the group's one chat.
+  const sent = useMemo(() => sentComments(group ? entriesOfVariant(conversation, group.letter) : conversation), [conversation, group]);
 
   if (error && !detail) {
     return (
@@ -722,7 +725,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     onEditDirection: () => setEditDir(m),
     onRetry: () => {
       setVbusy(m.letter);
-      Promise.resolve().then(async () => api.runVariants(slug, hostSlug, { targets: [m.letter], request: retryTurn(await api.getConversation(slug, m.slug)) }))
+      Promise.resolve().then(async () => api.runVariants(slug, hostSlug, { targets: [m.letter], request: retryTurn(await api.getConversation(slug, m.slug), m.letter) }))
         .then(afterGroupChange).catch(failToast(vg.sendAllFailed)).finally(() => setVbusy(null));
     },
   });
@@ -978,6 +981,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
             canGenerate={versions.length === 0} onSent={({ pins: sent }) => { setStored((ps) => ps.filter((p) => !sent.includes(p.pin))); setViewing({}); reload(); }}
             onSelectVersion={viewAll} snapshots={live.snapshots}
             appliesTo={appliesTo} brief={detail.creative.brief} onBriefSaved={reload} queued={detail.creative.queued} onQueueChanged={reload}
+            self={groupChat.self} memberJobs={groupChat.memberJobs} onOpenVariant={(l) => { const m = group?.group.members.find((x) => x.letter === l); if (m) focusMember(m); }}
             {...(group ? { variants: { group: group.group, current: group.letter, all: variantUi.all, missing: group.missing, onSelect: onChatSelect,
               runAll: (body: { text?: string; pins?: Pin[]; formats?: string[] } | null) => api.runVariants(slug, hostSlug, { targets: 'all-active', request: body }) } } : {})}
             versionExtra={(n) => <UsageBadge usage={versions.find((v) => v.n === n)?.usage} billing={live.today?.billing ?? null} />}

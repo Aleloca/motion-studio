@@ -75,13 +75,18 @@ export function jobHref(job: JobSummary): string | null {
 /** A saved version, or (decision 1066) the latest version a turn kept because nothing changed. */
 type Made = { n: number; status: 'complete' | 'incomplete' } | { n: number; kept: true };
 
-/** The version each job of a creative produced: agent entries carry the job id, the version entry follows them. */
+/**
+ * The version each job of a creative produced: agent entries carry the job id, the version entry follows them. In a variant
+ * group's one chat (decision 980) the turns of several variants interleave: each variant's entries are followed apart.
+ */
 export function versionsByJob(entries: ConversationEntry[]): Record<string, Made> {
   const out: Record<string, Made> = {};
-  let last: string | null = null;
+  const lastOf = new Map<string, string | null>();
   for (const e of entries) {
-    if (e.type === 'agent') last = e.jobId;
-    else if (e.type === 'user') last = null;
+    const lane = e.variant ?? '';
+    const last = lastOf.get(lane) ?? null;
+    if (e.type === 'agent') lastOf.set(lane, e.jobId);
+    else if (e.type === 'user') lastOf.set(lane, null);
     else if (last && !out[last]) {
       const end = turnEndOf(e);
       if (end) out[last] = end.kept || end.status === null ? { n: end.n, kept: true } : { n: end.n, status: end.status };

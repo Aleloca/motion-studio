@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { DEFAULT_FORMATS, type JobSummary, type VariantGroup, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, type ConversationEntry, type JobSummary, type VariantGroup, type VersionEntry } from '@motion-studio/shared';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
 import type { Shell } from '../src/shell/ShellContext.tsx';
@@ -25,6 +25,13 @@ const LONG = 'Direzione molto lunga: tipografia grande, molto spazio bianco, col
 // The live check's case (D1): a full-sentence direction that used to wrap over the format rows of the formats column.
 const FOTO = 'Foto calda e materica: chicchi e tostatura in primo piano, luce dorata da finestra, atmosfera artigianale';
 let group: VariantGroup = groupOf(['a', 'b', 'c', 'd', 'e'], {}, { b: { direction: LONG }, c: { direction: FOTO }, d: { status: 'discarded' } });
+const GROUP_CHAT: ConversationEntry[] = [
+  ...(['a', 'b', 'c', 'e'] as const).map((variant, i) => ({ type: 'user' as const, at: at.replace(':00.000Z', `:0${i}.000Z`), text: 'Titoli più grandi e un logo più visibile in ogni formato', pins: [], attachments: [], variant })),
+  { type: 'agent', at, jobId: 'jb', event: { kind: 'text', text: 'Ho ingrandito i titoli della variante B e spostato il logo in alto a destra.' }, variant: 'b' },
+  { type: 'version', at, n: 2, status: 'complete', variant: 'b' },
+  { type: 'system', at, level: 'warning', text: 'Il formato Banner non segue più il Post: la sua composizione è cambiata.', variant: 'c' },
+  { type: 'version', at, n: 2, status: 'incomplete', variant: 'a' },
+];
 /** Decision 1056: three variants of one 16:9 video, the case the comparison is measured on. */
 let compare = false;
 const versionsBy: Record<string, VersionEntry[]> = Object.fromEntries(['', '~b', '~c', '~d', '~e'].map((s) => [`${HOST}${s}`, [version(1, 'Dal brief'), version(2, 'Più chiaro')]]));
@@ -33,7 +40,8 @@ const api = {
   getCreative: vi.fn(async (_s: string, c: string) => (compare
     ? detailFor(c, [version(1, 'Dal brief', [out('youtube-16x9', 'video.mp4', '.previews/video.mp4.jpg')])], group, { formats: ['youtube-16x9'] })
     : detailFor(c, versionsBy[c] ?? [], group, { missing: ['e'] }))),
-  getConversation: vi.fn(async () => []),
+  // Decision 980 (phase 2): the group's one chat, each entry with its variant's chip.
+  getConversation: vi.fn(async () => GROUP_CHAT),
   fileUrl: (s: string, c: string, rel: string) => `/f/${s}/${c}/${rel}`,
   getUsage: vi.fn(async () => { throw new Error('offline'); }),
   getAgentCapabilities: vi.fn(async () => ({ cliVersion: null, liveInput: true, interrupt: true, checkedAt: at })),
@@ -152,7 +160,7 @@ const name = (el) => (el.getAttribute('aria-label') || el.textContent || el.clas
 const inside = (el, host, what) => { const r = box(el), h = box(host); if (r.right > h.right + .5 || r.left < h.left - .5 || r.bottom > h.bottom + .5 || r.top < h.top - .5) problems.push(what + ' outside its box: ' + name(el)); };
 if (document.documentElement.scrollWidth > innerWidth) problems.push('page overflows');
 const cv = document.querySelector('.ms-cv');
-const counts = { bar: 0, heads: 0, boards: 0, stars: 0, fmts: 0, cards: 0, canvas: 0, perLine: 0 };
+const counts = { bar: 0, heads: 0, boards: 0, stars: 0, fmts: 0, cards: 0, canvas: 0, perLine: 0, chips: 0, versions: 0 };
 const bar = cv.querySelector('.ms-vbar');
 counts.bar = bar ? bar.querySelectorAll('button, [role=radio], [role=switch]').length : 0;
 if (bar) {
@@ -167,6 +175,12 @@ const panel = cv.querySelector('.ms-cv-panel');
 const sel = cv.querySelector('.ms-vsel .ms-seg');
 if (sel) { inside(sel, panel, 'chat selector'); for (const r of sel.querySelectorAll('[role=radio]')) { inside(r, panel, 'selector option'); if (r.scrollWidth > r.clientWidth + 1) problems.push('selector option clipped: ' + name(r)); } }
 else problems.push('no chat selector');
+const hint = cv.querySelector('.ms-vsel-hint');
+if (hint) inside(hint, panel, 'selector hint');
+// Decision 980: the variant chips of the group's one chat, and the version cards (another variant's opens it).
+for (const chip of cv.querySelectorAll('.ms-convo .ms-vchip')) { counts.chips++; inside(chip, panel, 'variant chip'); if (chip.scrollWidth > chip.clientWidth + 1) problems.push('chip clipped'); }
+for (const v of cv.querySelectorAll('.ms-convo-version')) { counts.versions++; for (const el of v.querySelectorAll('button, .ms-pill, .ms-vchip')) inside(el, v, 'version card item'); }
+for (const m of cv.querySelectorAll('.ms-msg-meta')) inside(m, panel, 'message header');
 const viewport = cv.querySelector('.ms-cv-viewport');
 counts.canvas = Math.round(viewport.clientWidth);
 const cardTops = [...cv.querySelectorAll('.ms-vcard')].map((c) => Math.round(box(c).top));
@@ -278,6 +292,8 @@ run('variant canvas: real Chrome layout', () => {
           expect(r.formatsColumn, 'formats column shown').toBe(true);
           expect(r.counts.fmts, 'format items').toBeGreaterThan(0);
           if (layout === 'variant') expect(r.counts.colHeads, 'variant headers of the column').toBeGreaterThanOrEqual(3);
+          expect(r.counts.chips, 'variant chips in the chat').toBeGreaterThanOrEqual(7);
+          expect(r.counts.versions, 'version cards').toBe(2);
         }
       }, 180_000);
     }

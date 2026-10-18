@@ -41,6 +41,7 @@ import { LanguagesButton } from '../creative/LanguagesButton.tsx';
 import { creativeLocales } from '../creative/languagesModel.ts';
 import { usePreviewSession } from '../../components/compositionPreview.ts';
 import { Conversation } from '../../components/Conversation.tsx';
+import { chatTick, useGroupChat } from '../variants/useGroupChat.ts';
 import { IntegrityNotice, useIntegrity } from '../../components/IntegrityNotice.tsx';
 import type { EventsState } from '../../eventsReducer.ts';
 import { message } from '../../errors.ts';
@@ -133,7 +134,9 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   const root = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLDivElement>(null);
   const integrity = useIntegrity(slug, live);
-  const { detail, conversation, error, reload } = useCreative(slug, creative, live.creativeTicks[`${slug}/${creative}`] ?? 0);
+  // Decision 980: a group's one chat is read again when any of its members changes.
+  const { detail, conversation, error, reload } = useCreative(slug, creative, chatTick(live.creativeTicks, slug, creative));
+  const groupChat = useGroupChat(live, slug, creative, detail);
 
   // The bar belongs to this page only while it is the route's page (a leaving page stays mounted ~200 ms), and to the viewer
   // instead while that is shown (below).
@@ -693,7 +696,8 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   }, [ready]);
 
   const [exporting, setExporting] = useState<{ open: boolean; snapshot: ExportSnapshot } | null>(null);
-  const myApprovals = useMemo(() => Object.values(live.approvals).filter((a) => a.projectSlug === slug && a.creativeSlug === creative), [live.approvals, slug, creative]);
+  // Decision 980: the group's one chat shows every variant's approvals.
+  const myApprovals = useMemo(() => Object.values(live.approvals).filter(groupChat.shows), [live.approvals, groupChat]);
   const chatLive = useMemo(() => (job ? live.events[job.id] ?? [] : []), [job, live.events]);
   const primaries = (detail?.creative.brief.formats ?? []).filter((id) => states[id] && !states[id]!.follows);
   const appliesTo = useMemo(() => (versions.length && primaries.length > 1 ? {
@@ -1025,6 +1029,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
           {tab === 'chat' ? (
             detail ? (
               <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={job} live={chatLive}
+                self={groupChat.self} memberJobs={groupChat.memberJobs}
                 pins={sourcePins.map((p) => p.pin)} onRemovePin={removePin} onEditPin={editPin} onSelectVersion={onSelectVersion}
                 formatName={labelOf} canGenerate={versions.length === 0} onSent={onSent} beforeSend={beforeSend} snapshots={live.snapshots}
                 versionSummary={(vn) => { const v = versions.find((x) => x.n === vn); return v?.origin === 'editor' && v.request ? v.request : null; }} appliesTo={appliesTo}

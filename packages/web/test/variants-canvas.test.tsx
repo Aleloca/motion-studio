@@ -161,7 +161,7 @@ describe('variant canvas · cards', () => {
   it('a failed or stopped variant shows its state and "Riprova", which runs that variant alone', async () => {
     const stopped = { ...build(`${HOST}~c`), creative: { ...build(`${HOST}~c`).creative, status: 'interrupted' as const } };
     api.getCreative.mockImplementation(async (_s: string, c: string) => (c === `${HOST}~c` ? stopped : build(c)));
-    conversations[`${HOST}~c`] = [{ type: 'user', at, text: 'Più grande', pins: [], attachments: [] }];
+    conversations[`${HOST}~c`] = [{ type: 'user', at, text: 'Più grande', pins: [], attachments: [], variant: 'c' }, { type: 'user', at, text: 'Per A', pins: [], attachments: [], variant: 'a' }];
     render(<Harness live={emptyLive()} />);
     const row = await region('Variante C');
     await waitFor(() => expect(within(row).getByText('Interrotta')).toBeTruthy());
@@ -169,6 +169,34 @@ describe('variant canvas · cards', () => {
     await waitFor(() => expect(api.runVariants).toHaveBeenCalledWith('acme', HOST, { targets: ['c'], request: { text: 'Più grande' } }));
     api.getCreative.mockImplementation(async (_s: string, c: string) => build(c));
     delete conversations[`${HOST}~c`];
+  });
+});
+
+describe('variant canvas · one chat for the group (decision 980, phase 2)', () => {
+  it('another variant\'s turn shows in this chat with its chip and goes on live; its version card opens it; a tick of any member reads the chat again', async () => {
+    conversations[HOST] = [
+      { type: 'user', at, text: 'Per B', pins: [], attachments: [], variant: 'b' },
+      { type: 'agent', at, jobId: 'job-lancio~b', event: { kind: 'text', text: 'Lavoro su B' }, variant: 'b' },
+      { type: 'version', at, n: 2, status: 'complete', variant: 'b' },
+      { type: 'version', at, n: 1, status: 'complete', variant: 'a' },
+    ];
+    const live = { ...emptyLive(), jobs: { 'job-lancio~b': job(`${HOST}~b`) }, events: { 'job-lancio~b': [{ kind: 'text', text: 'Lavoro su B' }, { kind: 'text', text: 'B continua' }] } } as unknown as EventsState;
+    const { rerender } = render(<Harness live={live} />);
+    await loaded();
+    const chat = screen.getByRole('log');
+    await waitFor(() => expect(within(chat).getByText('B continua')).toBeTruthy());
+    expect([...within(chat).getByText('B continua').closest('article')!.querySelectorAll('.ms-vchip')].map((c) => c.textContent)).toEqual(['B']);
+    // A's own version keeps "Vedi v1"; B's opens B.
+    expect(within(chat).getByRole('button', { name: 'Vedi v1' })).toBeTruthy();
+    expect(within(chat).queryByRole('button', { name: 'Vedi v2' })).toBeNull();
+    const reads = api.getConversation.mock.calls.length;
+    rerender(<Harness live={{ ...live, creativeTicks: { [`acme/${HOST}~c`]: 1 } } as EventsState} />);
+    await waitFor(() => expect(api.getConversation.mock.calls.length).toBeGreaterThan(reads));
+    expect(within(screen.getByRole('radiogroup', { name: 'Invia a' })).getByRole('radio', { name: 'A' }).getAttribute('aria-checked')).toBe('true');
+    await userEvent.click(within(chat).getByRole('button', { name: 'Apri B · v2' }));
+    // B is the open variant now: messages go to B (today's target), the chat stays the group's.
+    await waitFor(() => expect(within(screen.getByRole('radiogroup', { name: 'Invia a' })).getByRole('radio', { name: 'B' }).getAttribute('aria-checked')).toBe('true'));
+    delete conversations[HOST];
   });
 });
 
