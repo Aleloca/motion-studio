@@ -54,7 +54,7 @@ export class ApprovalBroker {
    * `paid-batch` decision instead of a card of their own. `rules`: the provider rules the card listed; `decision`: true once
    * approved, false when declined, expired or cancelled. Kept until the job ends (`uncover`).
    */
-  private readonly covers = new Map<string, { rules: ReadonlySet<string>; decision: Promise<boolean> }>();
+  private readonly covers = new Map<string, { rules: ReadonlySet<string> | 'all'; decision: Promise<boolean> }>();
   private readonly timeoutMs: number;
   private readonly now: () => Date;
   constructor(private readonly opts: { broadcast(m: ServerMessage): void; timeoutMs?: number; now?: () => Date; home?: string; tmpDir?: string }) {
@@ -136,11 +136,14 @@ export class ApprovalBroker {
 
   /** Phase 15: the paid calls of `jobId` under one of `rules` are decided by `decision` (a variant batch's card). */
   cover(jobId: string, rules: Iterable<string>, decision: Promise<boolean>): void { this.covers.set(jobId, { rules: new Set(rules), decision }); }
+  /** Decision 1126: a declined variant batch: EVERY paid call of `jobId` is refused without a card (even under a stored "Always" rule), and its turn is told paid services are off. */
+  coverOff(jobId: string): void { this.covers.set(jobId, { rules: 'all', decision: Promise.resolve(false) }); }
+  paidOff(jobId: string): boolean { return this.covers.get(jobId)?.rules === 'all'; }
   uncover(jobId: string): void { this.covers.delete(jobId); }
   /** The batch decision that covers this paid call, or null: the call asks with a card of its own, as before phase 15. */
   coverOf(jobId: string, rule: string): Promise<boolean> | null {
     const c = this.covers.get(jobId);
-    return c && c.rules.has(rule) ? c.decision : null;
+    return c && (c.rules === 'all' || c.rules.has(rule)) ? c.decision : null;
   }
   cancelAll() { for (const id of [...this.items.keys()]) this.finish(id, 'cancelled'); }
   pending(): ApprovalRequest[] { return [...this.items.values()].map((i) => i.request); }

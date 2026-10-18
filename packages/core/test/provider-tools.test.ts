@@ -7,6 +7,7 @@ import { setLocale } from '../src/i18n.ts';
 import { ApprovalBroker } from '../src/approvals/broker.ts';
 import { PermissionsStore } from '../src/approvals/permissions-store.ts';
 import type { BridgeContext } from '../src/bridge/bridge.ts';
+import { DEFAULT_FORMATS, servicesForFormats } from '@motion-studio/shared';
 import { availableTools, providerTools } from '../src/bridge/provider-tools.ts';
 import { LibraryStore } from '../src/library/library-store.ts';
 import { NoMediaTools } from '../src/media/media-tools.ts';
@@ -188,6 +189,27 @@ describe('availableTools', () => {
     expect(lines.find((l) => l.startsWith('- sound_effect'))).toContain('(ready)');
     expect(lines.find((l) => l.startsWith('- music'))).toContain('(off for this creative)');
     expect(await availableTools(vault, undefined)).toEqual(await availableTools(vault));
+  });
+});
+
+describe('availableTools after a declined paid-services card (decision 1126)', () => {
+  it('says the paid tools are off for this run; the free ones stay', async () => {
+    const vault = new MemoryVault({ OPENAI_API_KEY: 'k', ELEVENLABS_API_KEY: 'k', PEXELS_API_KEY: 'k' });
+    const lines = await availableTools(vault, { images: 'stock', voice: 'none', music: 'none', sfx: 'none' }, undefined, true);
+    const line = (n: string) => lines.find((l) => l.startsWith(`- ${n}`))!;
+    for (const n of ['tts', 'music', 'sound_effect']) expect(line(n), n).toContain('off for this run');
+    expect(line('stock_search')).toContain('(ready)');
+  });
+});
+
+describe('servicesForFormats (decision 1125)', () => {
+  const all = { images: 'auto', voice: 'auto', music: 'auto', sfx: 'auto' } as const;
+  it('identity outputs only: nothing paid; a still image: images only; a video: everything; unknown format: unchanged', () => {
+    expect(servicesForFormats(all, ['identity-logo', 'identity-favicon', 'identity-app-icon'], DEFAULT_FORMATS)).toEqual({ images: 'none', voice: 'none', music: 'none', sfx: 'none' });
+    expect(servicesForFormats(all, ['instagram-image-1x1', 'identity-logo'], DEFAULT_FORMATS)).toEqual({ images: 'auto', voice: 'none', music: 'none', sfx: 'none' });
+    expect(servicesForFormats(all, ['identity-logo', 'youtube-16x9'], DEFAULT_FORMATS)).toEqual(all);
+    expect(servicesForFormats(all, ['youtube-16x9@2'], DEFAULT_FORMATS)).toEqual(all);
+    expect(servicesForFormats(undefined, ['custom-x'], DEFAULT_FORMATS)).toBeUndefined();
   });
 });
 

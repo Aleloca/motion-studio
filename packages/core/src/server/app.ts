@@ -384,7 +384,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     queue, launcher, git: deps.git, media, vault, keyChecks, previews,
     // Phase 13: a redirect cancels the job's open approvals first; the queue and remembered sessions live in the config
     // folder, out of the agent's reach (final review I1).
-    cancelApprovals: (jobId) => approvals.cancelJob(jobId), sideState,
+    cancelApprovals: (jobId) => approvals.cancelJob(jobId), paidOff: (jobId) => approvals.paidOff(jobId), sideState,
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
     model: async () => (await requireWorkspace().readSettings()).model,
     broadcast: (msg) => hub.broadcast(msg),
@@ -785,6 +785,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
   const variantRuns = new VariantFanout({
     turns, queue, approvals, directions: variantDirections, settings: () => requireWorkspace().readSettings(), paidPlan: paidServicePlan({ vault, keyChecks }),
+    presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
   });
   registerCreativeRoutes(app, { requireWorkspace, turns, edits, renders, exports: new ExportJobService({ queue }), previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m), git: deps.git, variantRuns, jobs: () => queue.list(), trash: deps.trash ?? noTrash });
   registerStorePackRoutes(app, { requireWorkspace, turns, renders, media });

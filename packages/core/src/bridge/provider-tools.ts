@@ -477,7 +477,7 @@ export function paidServicePlan(deps: Pick<ProviderToolsDeps, 'vault' | 'keyChec
  * `missing` (F5: then "(missing permission: …)"; `unverified` and `error` stay ready). Under a provider the brief names, only
  * that provider counts (a forced provider without its key is never "ready" because the other one has a key).
  */
-export async function availableTools(vault: SecretsVault, services?: BriefServices, keyChecks?: KeyCheckCache): Promise<string[]> {
+export async function availableTools(vault: SecretsVault, services?: BriefServices, keyChecks?: KeyCheckCache, paidOff = false): Promise<string[]> {
   const s = effectiveServices({ services });
   const [openai, eleven, pexels, unsplash] = await Promise.all((['openai', 'elevenlabs', 'pexels', 'unsplash'] as const).map(async (p) => Boolean(await vault.get(p))));
   const keyed: Record<keyof typeof LABEL, boolean> = { openai: openai!, elevenlabs: eleven!, pexels: pexels!, unsplash: unsplash! };
@@ -497,7 +497,8 @@ export async function availableTools(vault: SecretsVault, services?: BriefServic
     const refused = why.flatMap((w) => (w && 'refused' in w ? [w.refused] : []));
     return refused.length ? `(refused by the provider: ${[...new Set(refused)].join(', ')})` : `(not configured: ${noKey})`;
   };
-  const off = (isOff: boolean, st: () => string, why = '') => (isOff ? `(off for this creative${why})` : st());
+  // Decision 1126: after a declined paid-services card the paid ones are "off for this run", whatever the brief says.
+  const off = (isOff: boolean, st: () => string, why = '') => (isOff ? (paidOff && !why ? '(off for this run: the user declined paid services)' : `(off for this creative${why})`) : st());
   const voiceOptions: Array<[keyof typeof LABEL, KeyCapability]> = s.voice === 'openai' ? [['openai', 'tts']] : s.voice === 'elevenlabs' ? [['elevenlabs', 'tts']] : [['openai', 'tts'], ['elevenlabs', 'tts']];
   const voiceNoKey = s.voice === 'openai' ? 'the OpenAI key is missing' : s.voice === 'elevenlabs' ? 'the ElevenLabs key is missing' : 'no TTS key';
   return [
