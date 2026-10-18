@@ -40,8 +40,9 @@ const timeOf = (e: ConversationEntry): number => {
  * a tie, the member listed first (the host, then the sisters in id order). An entry with no readable time goes as soon as
  * its log reaches it. Every entry is stamped with its member's variant.
  */
-export function mergeConversations(lists: ReadonlyArray<{ letter: VariantId; entries: readonly ConversationEntry[] }>): ConversationEntry[] {
-  const logs = lists.map((l) => stampEntries(l.entries, l.letter));
+export function mergeConversations(lists: ReadonlyArray<{ letter: VariantId; entries: readonly ConversationEntry[]; own?: boolean }>): ConversationEntry[] {
+  // `own`: a member's own log, every entry of it is that member's whatever stamp it carries (decision 1169).
+  const logs = lists.map((l) => (l.own ? l.entries.map((e) => ({ ...e, variant: l.letter })) : stampEntries(l.entries, l.letter)));
   const at = logs.map(() => 0);
   const total = logs.reduce((n, l) => n + l.length, 0);
   const out: ConversationEntry[] = [];

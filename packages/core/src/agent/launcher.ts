@@ -12,7 +12,7 @@ import { codebaseHasGlobChars, escapeGlob, findCodebaseSecrets, hasUnsafePathCha
 import { assertAgentFolders } from '../workspace-store.ts';
 import { t } from '../i18n.ts';
 import { buildAgentPolicy, sandboxPath, type AgentJobKind } from './policy.ts';
-import { CREATIVE_CORE_FILES, detachProtectedLinks, PROPOSAL_LOG } from './protected-links.ts';
+import { CREATIVE_CORE_COPY_GLOB, CREATIVE_CORE_FILES, creativeCoreFiles, detachProtectedLinks, PROPOSAL_LOG } from './protected-links.ts';
 import { armTripwire } from './run-tripwire.ts';
 import { IntegrityStore, ProjectQuarantinedError, snapshotDiff } from '../project-integrity.ts';
 import type { AgentRun, AgentRunner, AgentTurnRequest } from './runner.ts';
@@ -132,7 +132,7 @@ async function existingLogFiles(root: string, creativeSlug?: string | null): Pro
   };
   const slugs = new Set(await dirs(join(root, 'creatives')));
   if (creativeSlug) slugs.add(creativeSlug);
-  for (const s of slugs) for (const n of CREATIVE_CORE_FILES) out.push(join(root, 'creatives', s, n));
+  for (const s of slugs) out.push(...await creativeCoreFiles(join(root, 'creatives', s)));
   for (const id of await dirs(join(root, 'brand', 'proposals'))) out.push(join(root, 'brand', 'proposals', id, PROPOSAL_LOG));
   return out;
 }
@@ -207,6 +207,7 @@ export class AgentLauncher {
     protectedDirs.push(...(i.protectedDirs ?? []).flatMap(spellings));
     const logGlobs = roots.flatMap((d) => [
       ...CREATIVE_CORE_FILES.map((n) => `${escapeGlob(join(d, 'creatives'))}/*/${n}`),
+      `${escapeGlob(join(d, 'creatives'))}/*/${CREATIVE_CORE_COPY_GLOB}`,
       `${escapeGlob(join(d, 'brand', 'proposals'))}/*/${PROPOSAL_LOG}`,
     ]);
     // Sandbox denyWrite: the concrete files that exist now (plus this job's own creative) work everywhere. macOS also
@@ -215,6 +216,7 @@ export class AgentLauncher {
     // roots of the globs). The Edit/Write rules use escaped globs always.
     const sandboxGlobs = roots.flatMap((d) => [
       ...CREATIVE_CORE_FILES.map((n) => `${sandboxPath(join(d, 'creatives'))}/*/${n}`),
+      `${sandboxPath(join(d, 'creatives'))}/*/${CREATIVE_CORE_COPY_GLOB}`,
       `${sandboxPath(join(d, 'brand', 'proposals'))}/*/${PROPOSAL_LOG}`,
     ]);
     const logFiles = (await Promise.all(roots.map((d) => existingLogFiles(d, i.creativeSlug)))).flat();

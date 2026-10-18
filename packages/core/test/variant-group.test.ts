@@ -159,10 +159,35 @@ describe('group lifecycle', { timeout: 60_000 }, () => {
     expect((await json(host.creativeSlug)).variantGroup!.members.map((m) => m.letter)).toEqual(['a', 'h']);
   });
 
-  it('a folder already on disk with a sister\'s name keeps its id out of use (decision 1162): the next ids go past it', async () => {
+  it('a folder already on disk with a sister\'s name is skipped with a warning (decision 1169); a plain folder far ahead moves nothing', async () => {
     await mkdir(join(projectDir, 'creatives', sis('c')));
+    await mkdir(join(projectDir, 'creatives', sis('zy')));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await svc.addVariants(host, [{}, {}]);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally { warn.mockRestore(); }
+    expect((await json(host.creativeSlug)).variantGroup!.members.map((m) => m.letter)).toEqual(['a', 'b', 'd']);
+  });
+
+  it('decision 1168: the floor reads only core files: a planted copy or an out-of-range stamp never blocks or skips ids', async () => {
+    const hostDir = join(projectDir, 'creatives', host.creativeSlug);
+    const stamp = (v: string) => `${JSON.stringify({ type: 'system', at: new Date().toISOString(), level: 'info', text: 'x', variant: v })}\n`;
+    await writeFile(join(hostDir, 'conversation.premerge-planted.jsonl'), stamp('zy'));
+    await writeFile(join(hostDir, 'conversation.jsonl'), stamp('zzz'));
     await svc.addVariants(host, [{}, {}]);
-    expect((await json(host.creativeSlug)).variantGroup!.members.map((m) => m.letter)).toEqual(['a', 'd', 'e']);
+    expect((await json(host.creativeSlug)).variantGroup!.members.map((m) => m.letter)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('decision 1169: a merge pending past its commit point is finished before the group dissolves', async () => {
+    await svc.addVariants(host, [{}]);
+    await store.appendConversation(sis('b'), { type: 'system', at: new Date().toISOString(), level: 'info', text: 'di B' });
+    await expect(store.migrateConversation(host.creativeSlug, async () => true, { afterFlag: async () => { throw new Error('crash'); } })).rejects.toThrow('crash');
+    const g = (await json(host.creativeSlug)).variantGroup!;
+    await turns.runLocked(host, () => svc.detachLocked(host, g, sis('b')));
+    expect((await json(host.creativeSlug)).variantGroup).toBeUndefined();
+    expect(existsSync(join(projectDir, 'creatives', host.creativeSlug, 'conversation.merged.jsonl'))).toBe(false);
+    expect((await store.readConversation(host.creativeSlug)).some((e) => e.type === 'system' && e.text === 'di B')).toBe(true);
   });
 
   it('a sister that cannot be made (409, e.g. its folder appeared meanwhile) leaves no group or other sister behind', async () => {

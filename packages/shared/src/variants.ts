@@ -55,6 +55,11 @@ export interface VariantMember {
   createdAt: string;
 }
 export interface VariantPick { slug: string; version: number }
+/**
+ * Decision 1169: one log copied before a chat merge, in merge order: the member, the copy's file, the variant its entries
+ * were merged as, and `own` (every entry forced to that variant; false only for an already merged host log).
+ */
+export interface ChatMergeCopy { slug: string; file: string; letter: VariantId; own: boolean }
 export interface VariantGroup {
   members: VariantMember[];
   /** Final selection per format id. */
@@ -70,7 +75,7 @@ export interface VariantGroup {
    * file that matches is ever adopted), the copy of each log taken before it (by member slug) and the members whose own log
    * is still to retire. Cleared when the merge is finished.
    */
-  chatMerge?: { sha256: string; size: number; copies: Record<string, string>; retire: string[] };
+  chatMerge?: { sha256: string; size: number; copies: ChatMergeCopy[]; retire: string[] };
 }
 
 const memberSchema = z.object({
@@ -90,7 +95,9 @@ export const variantGroupSchema: z.ZodType<VariantGroup> = z.object({
   chat: z.literal('single').optional(),
   chatMerge: z.object({
     sha256: z.string().regex(/^[0-9a-f]{64}$/), size: z.number().int().min(0),
-    copies: z.record(memberSlugSchema, z.string().regex(/^conversation\.premerge(?:-[0-9a-z]+)?\.jsonl$/)),
+    copies: z.array(z.object({
+      slug: memberSlugSchema, file: z.string().regex(/^conversation\.premerge(?:-[0-9a-z]+)?\.jsonl$/), letter: variantIdSchema, own: z.boolean(),
+    })),
     retire: z.array(memberSlugSchema),
   }).optional(),
 }).superRefine((g, ctx) => {

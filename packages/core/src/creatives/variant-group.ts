@@ -7,7 +7,7 @@ import {
   type CreativeFile, type VariantGroup, type VariantId, type VariantMember, type VariantPick, type VersionEntry,
 } from '@motion-studio/shared';
 import { readCompositionFolder } from '../compositions/composition-files.ts';
-import { parseConversation } from './group-conversation.ts';
+import { parseConversation, PREMERGE_FILE } from './group-conversation.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
 import { currentLocale, t } from '../i18n.ts';
 import { CodedError } from '../workspace-store.ts';
@@ -107,6 +107,7 @@ export class VariantGroupService {
     const { store, turns } = this.deps;
     const host = r.host;
     return turns.runLocked(host, async () => {
+      const taken: string[] = [];
       const result = await store.migrateConversation(host.creativeSlug, async (g) => {
         for (const m of g.members) {
           const mref = memberRef(host, m.slug);
@@ -115,15 +116,13 @@ export class VariantGroupService {
           if (side?.queued?.length) return false;
         }
         return true;
-      });
+      }, { copies: async (files) => { taken.push(...files); } });
       if (result !== 'migrated') return result;
       const g = (await store.get(host.creativeSlug)).variantGroup!;
-      const logs = (await Promise.all([store.dir(host.creativeSlug), ...g.members.filter((m) => m.slug !== host.creativeSlug).map((m) => store.dir(m.slug))]
-        .map(async (d) => (await readdir(d).catch(() => [] as string[])).filter((n) => n === 'conversation.jsonl' || n.startsWith('conversation.premerge')).map((n) => join(d, n)))))
-        .flat().filter((p) => existsSync(p));
+      // Decision 1168: only the files this merge wrote or changed: the host's log and creative.json, the copies it took.
       const retired = g.members.filter((m) => m.slug !== host.creativeSlug).map((m) => join(store.dir(m.slug), 'conversation.jsonl'));
       const message = t().jobs.groupChatMergedCommit({ title: (await store.get(host.creativeSlug)).title });
-      const files = [join(store.dir(host.creativeSlug), 'creative.json'), ...logs];
+      const files = [join(store.dir(host.creativeSlug), 'creative.json'), join(store.dir(host.creativeSlug), 'conversation.jsonl'), ...taken].filter((p) => existsSync(p));
       // The sisters' logs are gone (renamed): committed as removals when git has them; a log git never had is left out.
       await turns.commitFolder(host, [...files, ...retired], message).catch(() => turns.commitFolder(host, files, message)).catch(() => null);
       turns.changed(host);
@@ -309,20 +308,24 @@ export class VariantGroupService {
 
   /**
    * Decision 1162: the lowest position a new id may take. Ids are never given twice: not below the group's highest member
-   * (`nextLetter`), the host's high-water mark `variantNext` (kept when sisters leave and when the group dissolves), any id
-   * the host's chat or its copies from before a merge name (a host older than the mark), nor any former sister's folder.
+   * (`nextLetter`), the host's high-water mark `variantNext` (kept when sisters leave and when the group dissolves), any id the
+   * host's chat or its first copy from before a merge names (a host older than the mark), nor a real former sister (an orphan
+   * folder). Decision 1168: only files the agent cannot write count, and an id at the very end of the range is ignored, so
+   * nothing planted can block or skip ids.
    */
   private async idFloor(host: CreativeRef, g: VariantGroup, hostFile: CreativeFile): Promise<number> {
     const { store } = this.deps;
     let floor = Math.max(variantIndex(nextLetter(g)), hostFile.variantNext ?? 0);
-    const seen = (id: unknown) => { if (typeof id === 'string') floor = Math.max(floor, variantIndex(id) + 1); };
+    const seen = (id: unknown) => {
+      const i = typeof id === 'string' ? variantIndex(id) : -1;
+      if (i >= 0 && variantIdAt(i + 1).length <= 3) floor = Math.max(floor, i + 1);
+    };
     const hostDir = store.dir(host.creativeSlug);
-    for (const name of await readdir(hostDir).catch(() => [] as string[])) {
-      if (name !== 'conversation.jsonl' && !name.startsWith('conversation.premerge')) continue;
+    for (const name of ['conversation.jsonl', PREMERGE_FILE]) {
       for (const e of parseConversation(await readFile(join(hostDir, name), 'utf8').catch(() => ''))) seen(e.variant);
     }
     for (const name of await readdir(dirname(hostDir)).catch(() => [] as string[])) {
-      if (SISTER_SLUG_RE.test(name) && hostOf(name) === host.creativeSlug) seen(letterOfSlug(name));
+      if (SISTER_SLUG_RE.test(name) && hostOf(name) === host.creativeSlug && (await creativeKind(host.projectDir, name)) === 'orphan') seen(letterOfSlug(name));
     }
     return floor;
   }
@@ -336,7 +339,10 @@ export class VariantGroupService {
     for (let i = floor; ; i++) {
       const l = variantIdAt(i);
       if (!VARIANT_ID_RE.test(l)) throw new CodedError(409, t().errors.invalidRequest, 'invalid-request');
-      if ((await creativeKind(host.projectDir, sisterSlug(host.creativeSlug, l))) !== 'orphan') return l;
+      const slug = sisterSlug(host.creativeSlug, l);
+      if (!existsSync(this.deps.store.dir(slug))) return l;
+      // Decision 1169: a folder in the way (a former sister, or anything named like one) keeps its id out of use.
+      console.warn(`Motion Studio: the folder creatives/${slug} is in the way of a new variant: its id is skipped.`);
     }
   }
 
@@ -347,6 +353,8 @@ export class VariantGroupService {
    * passes the group as stored then. Returns the group written, or null when it was dropped.
    */
   async detachLocked(host: CreativeRef, g: VariantGroup, slug: string): Promise<VariantGroup | null> {
+    // Decision 1169: a merge of the chats left past its commit point is finished first (its record goes with the group).
+    await this.deps.store.settleChat(host.creativeSlug);
     const m = g.members.find((x) => x.slug === slug && x.letter !== 'a');
     if (!m) return g;
     if (m.status === 'active' && activeMembers(g).length === 1) throw new CodedError(409, t().errors.variantLastActive({ letter: upper(m.letter) }), 'variant-last-active');

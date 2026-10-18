@@ -9,7 +9,7 @@ import { existsSync } from 'node:fs';
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sisterSlug, type Brief, type ConversationEntry, type CreativeFile, type VariantGroup } from '@motion-studio/shared';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { mergeConversations } from '../src/creatives/group-conversation.ts';
@@ -265,5 +265,71 @@ describe('review fixes of the merge', () => {
     await store.migrateConversation(host, IDLE);
     expect(await store.chatNeedsMerge(host)).toBe(false);
     expect(await store.chatNeedsMerge(sis('b'))).toBe(false);
+  });
+});
+
+describe('second review round of the merge', () => {
+  it('item 2: a member\'s log found again keeps no foreign stamp: every entry is that member\'s', async () => {
+    await oldLogs();
+    const bLog = await raw(sis('b'));
+    await rm(join(dir, 'creatives', sis('b')), { recursive: true });
+    await store.migrateConversation(host, IDLE);
+    const at = T(0);
+    await store.createSister(host, 'b', { schemaVersion: 1, title: 'Lancio', brief, status: 'draft', error: null, createdAt: at, updatedAt: at, resumeFrom: null, linkedCodebases: [], variantOf: host });
+    await writeFile(log(sis('b')), bLog + JSON.stringify({ ...info(7, 'timbro estraneo'), variant: 'c' }) + '\n');
+    expect(await store.migrateConversation(host, IDLE)).toBe('migrated');
+    expect(texts(await store.readConversation(host)).filter((x) => x.endsWith('timbro estraneo'))).toEqual(['b:timbro estraneo']);
+  });
+
+  it('item 3: a normal merge warns about nothing; a foreign merged file in the window is warned about once and removed', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await oldLogs();
+      await store.migrateConversation(host, IDLE);
+      expect(warn).not.toHaveBeenCalled();
+    } finally { warn.mockRestore(); }
+  });
+
+  it('item 3: the foreign file found in the window is removed after the warning', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await oldLogs();
+      await expect(store.migrateConversation(host, IDLE, { afterFlag: async () => { throw new Error('crash'); } })).rejects.toThrow('crash');
+      await writeFile(log(host, 'conversation.merged.jsonl'), 'forged\n');
+      await store.readConversation(host);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(existsSync(log(host, 'conversation.merged.jsonl'))).toBe(false);
+    } finally { warn.mockRestore(); }
+  });
+
+  it('item 4: a member that left during the crash window: the merge is rebuilt with each copy\'s own letter and its log is not retired', async () => {
+    await oldLogs();
+    const view = texts(await store.readConversation(host));
+    await expect(store.migrateConversation(host, IDLE, { afterMerged: async () => {}, afterFlag: async () => { throw new Error('crash'); } })).rejects.toThrow('crash');
+    // Lost merged file (rebuild path) and C leaves the group meanwhile.
+    await rm(log(host, 'conversation.merged.jsonl'));
+    const g = (await store.get(host)).variantGroup!;
+    await store.update(host, { variantGroup: { ...g, members: g.members.filter((m) => m.letter !== 'c') } });
+    expect(texts(await store.readConversation(host))).toEqual(view);
+    expect(existsSync(log(sis('c')))).toBe(true);
+    expect((await store.get(host)).variantGroup?.chatMerge).toBeUndefined();
+  });
+
+  it('item 4: settleChat finishes a pending merge (called before a group dissolves)', async () => {
+    await oldLogs();
+    const view = texts(await store.readConversation(host));
+    await expect(store.migrateConversation(host, IDLE, { afterFlag: async () => { throw new Error('crash'); } })).rejects.toThrow('crash');
+    await store.settleChat(host);
+    expect((await store.get(host)).variantGroup?.chatMerge).toBeUndefined();
+    await store.update(host, { variantGroup: undefined });
+    expect(texts(await store.readConversation(host))).toEqual(view);
+  });
+
+  it('item 1: the merge tells its caller exactly the copies it took (the only ones committed)', async () => {
+    await oldLogs();
+    await writeFile(log(sis('b'), 'conversation.premerge-planted.jsonl'), 'x\n');
+    const taken: string[] = [];
+    await store.migrateConversation(host, IDLE, { copies: async (files) => { taken.push(...files); } });
+    expect(taken.sort()).toEqual([log(host, 'conversation.premerge.jsonl'), log(sis('b'), 'conversation.premerge.jsonl'), log(sis('c'), 'conversation.premerge.jsonl')].sort());
   });
 });

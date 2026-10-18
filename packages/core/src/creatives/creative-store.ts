@@ -4,7 +4,7 @@ import { appendFile, lstat, mkdir, readdir, readFile, rename, rm, writeFile } fr
 import { basename, join } from 'node:path';
 import {
   activeMembers, creativeFileSchema, entriesOfVariant, hostOf, isSessionId, letterOfSlug, sisterSlug, turnEndOf, versionsFileSchema,
-  type Brief, type ConversationEntry, type CreativeFile, type CreativeListItem, type VariantGroup, type VariantId, type VariantListInfo, type VersionEntry,
+  type Brief, type ChatMergeCopy, type ConversationEntry, type CreativeFile, type CreativeListItem, type VariantGroup, type VariantId, type VariantListInfo, type VersionEntry,
   issuesText,
 } from '@motion-studio/shared';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic, writeTextFileAtomic } from '../json-file.ts';
@@ -130,7 +130,11 @@ const creativeCache = new Map<string, { ino: number; size: number; mtimeMs: numb
 interface ChatPlace { host: string; letter: VariantId; group: VariantGroup; single: boolean }
 export type ChatMigration = 'migrated' | 'busy' | 'done' | 'none';
 /** Test hooks of `migrateConversation`: a throw from one leaves the disk as a crash at that point would. */
-export interface ChatMigrationHooks { afterMerged?(): Promise<void>; afterFlag?(): Promise<void>; afterAdopt?(): Promise<void> }
+export interface ChatMigrationHooks {
+  afterMerged?(): Promise<void>; afterFlag?(): Promise<void>; afterAdopt?(): Promise<void>;
+  /** The copies this merge took (absolute paths): the only copy files its caller commits (decision 1168). */
+  copies?(files: string[]): Promise<void>;
+}
 /** yyyy-mm-dd in the user's local time zone (a creative made at 23:30 belongs to that day). */
 const localDay = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 
@@ -455,9 +459,14 @@ export class CreativeStore {
       }
       if (opts.own) return stampEntries(await this.readLog(slug, 'conversation.jsonl'), place.letter);
       const lists = [];
-      for (const m of place.group.members) lists.push({ letter: m.letter, entries: await this.readLog(m.slug, 'conversation.jsonl') });
+      for (const m of place.group.members) lists.push({ letter: m.letter, entries: await this.readLog(m.slug, 'conversation.jsonl'), own: true });
       return mergeConversations(lists);
     });
+  }
+
+  /** Finishes a merge of `slug`'s group past its commit point, if any (decision 1169: before the group dissolves). */
+  async settleChat(slug: string): Promise<void> {
+    await conversationLock.run(this.chatKey(slug), () => this.finishedPlace(slug));
   }
 
   /**
@@ -489,18 +498,22 @@ export class CreativeStore {
       const sources = place.single ? [hostSlug, ...(await this.strayLogs(place))] : place.group.members.map((m) => m.slug);
       if (place.single && sources.length === 1) return 'done';
       if (!(await idle(place.group))) return 'busy';
-      const lists: Array<{ letter: VariantId; entries: ConversationEntry[] }> = [];
-      const copies: Record<string, string> = {};
+      const lists: Array<{ letter: VariantId; entries: ConversationEntry[]; own: boolean }> = [];
+      const copies: ChatMergeCopy[] = [];
       for (const slug of sources) {
         const raw = await this.readRaw(slug, 'conversation.jsonl');
         if (raw === null) continue;
-        copies[slug] = await this.keepCopy(slug, raw);
-        lists.push({ letter: place.group.members.find((m) => m.slug === slug)!.letter, entries: parseConversation(raw) });
+        const letter = place.group.members.find((m) => m.slug === slug)!.letter;
+        // Every entry of a member's own log is its own (decision 1169); only an already merged host log keeps its stamps.
+        const own = !(place.single && slug === hostSlug);
+        copies.push({ slug, file: await this.keepCopy(slug, raw), letter, own });
+        lists.push({ letter, entries: parseConversation(raw), own });
       }
+      await hooks.copies?.(copies.map((c) => this.file(c.slug, c.file)));
       const text = serializeConversation(mergeConversations(lists));
       await writeTextFileAtomic(this.file(hostSlug, MERGED_FILE), text);
       await hooks.afterMerged?.();
-      const chatMerge = { sha256: sha256Of(text), size: Buffer.byteLength(text), copies, retire: Object.keys(copies).filter((x) => x !== hostSlug) };
+      const chatMerge = { sha256: sha256Of(text), size: Buffer.byteLength(text), copies, retire: copies.map((c) => c.slug).filter((x) => x !== hostSlug) };
       await this.writeChatState(hostSlug, (g) => ({ ...g, chat: 'single', chatMerge }));
       await hooks.afterFlag?.();
       await this.finishMerge({ ...place, single: true, group: { ...place.group, chat: 'single', chatMerge } }, hooks);
@@ -556,16 +569,21 @@ export class CreativeStore {
     const merged = this.file(place.host, MERGED_FILE);
     const matches = (b: Buffer | null) => b !== null && b.length >= cm.size && sha256Of(b.subarray(0, cm.size)) === cm.sha256;
     const mergedBuf = await readFile(merged).catch(() => null);
-    if (mergedBuf && mergedBuf.length === cm.size && matches(mergedBuf)) {
+    const adopt = mergedBuf !== null && mergedBuf.length === cm.size && matches(mergedBuf);
+    if (mergedBuf !== null && !adopt) {
+      // Not the merge's own (decision 1169): said once and removed, never renamed onto the chat.
+      console.warn(`Motion Studio: ${place.host}/${MERGED_FILE} was not the merge's own: it was removed.`);
+      await rm(merged, { force: true });
+      await noteCoreChange(this.dir(place.host));
+    }
+    if (adopt) {
       await rename(merged, hostLog);
       await noteCoreChange(this.dir(place.host));
     } else if (!matches(await readFile(hostLog).catch(() => null))) {
       // Not adopted yet and no trustworthy merged log: the same merge again, from the copies taken before the commit point.
-      const lists: Array<{ letter: VariantId; entries: ConversationEntry[] }> = [];
-      for (const m of place.group.members) {
-        const copy = cm.copies[m.slug];
-        if (copy) lists.push({ letter: m.letter, entries: parseConversation((await this.readRaw(m.slug, copy)) ?? '') });
-      }
+      // As recorded (decision 1169): each copy with the letter it was merged as, whoever is a member now.
+      const lists: Array<{ letter: VariantId; entries: ConversationEntry[]; own: boolean }> = [];
+      for (const c of cm.copies) lists.push({ letter: c.letter, entries: parseConversation((await this.readRaw(c.slug, c.file)) ?? ''), own: c.own });
       const text = serializeConversation(mergeConversations(lists));
       if (sha256Of(text) !== cm.sha256 || Buffer.byteLength(text) !== cm.size) {
         console.warn(`Motion Studio: the merge of the chats of ${place.host} cannot be finished: its copies changed. Nothing was moved.`);
@@ -573,13 +591,15 @@ export class CreativeStore {
       }
       await writeTextFileAtomic(hostLog, text);
     }
-    if (mergedBuf) console.warn(`Motion Studio: ${place.host}/${MERGED_FILE} was not the merge's own and was ignored.`);
     await hooks.afterAdopt?.();
     for (const slug of cm.retire) {
+      // A sister that left the group meanwhile keeps its log (decision 1169: it reads it as an orphan).
+      if (!place.group.members.some((m) => m.slug === slug)) continue;
       const own = this.file(slug, 'conversation.jsonl');
       const content = await readFile(own).catch(() => null);
       if (content === null) continue;
-      const copy = cm.copies[slug] ? await readFile(this.file(slug, cm.copies[slug])).catch(() => null) : null;
+      const recorded = cm.copies.find((c) => c.slug === slug);
+      const copy = recorded ? await readFile(this.file(slug, recorded.file)).catch(() => null) : null;
       if (copy !== null && copy.equals(content)) await rm(own, { force: true });
       else await rename(own, this.file(slug, await this.freeCopyName(slug)));
       await noteCoreChange(this.dir(slug));
