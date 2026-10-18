@@ -158,4 +158,15 @@ describe('residual fix: render-now and translation writes on a discarded variant
     const { b } = await discardedB();
     refused(await env.app.inject({ method: 'POST', url: `${P}/${b}/export`, headers: H, payload: { destination: dest, picks: { 'test-wide': 1 }, locales: ['de'] } }));
   });
+
+  it('review #5: a render made for the export that fails leaves that format out (unavailable), the others are exported', async () => {
+    const { host } = await group();
+    env.fake.content = (o) => { if (o.out.includes('ms-render-export-') && o.format.id === 'test-tall') throw new Error('boom'); return null; };
+    const r = await exportGroup(host, { resolution: 480, quality: 'high', pattern: '{format}' });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(readdirSync(dest)).toEqual(['test-wide.mp4']);
+    const body = r.json() as { unavailable: Array<{ format: string; message: string }> };
+    expect(body.unavailable.map((u) => u.format)).toEqual(['test-tall']);
+    expect(body.unavailable[0]!.message).toContain('boom');
+  });
 });

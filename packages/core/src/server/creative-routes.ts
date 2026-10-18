@@ -12,7 +12,7 @@ import type { CreativeSideStateStore, StoppedSession } from '../creatives/creati
 import { checkDestination, exportResolved, exportVersion, pendingRenders, profiledRenders, resolveExportPicks, resolveLocalizedItems, type ExportItem, type ExportResult } from '../creatives/export.ts';
 import { makeOwnedTempDir } from '../render/owner.ts';
 import type { ExportJobService, ExportOutcome, ExportRun } from '../creatives/export-jobs.ts';
-import type { RenderWait } from '../creatives/render-jobs.ts';
+import type { ExportRendered, RenderWait } from '../creatives/render-jobs.ts';
 import { assertLocalesInBrief, checkedLocale } from '../localization/validate.ts';
 import { storyboardDir, storyboardSchema, sweepStoryboardTemps, type PreviewService } from '../creatives/previews.ts';
 import { readJsonFile } from '../json-file.ts';
@@ -124,6 +124,8 @@ const exportProfileFields = {
   background: z.boolean().optional(),
 };
 type VersionEntryList = VersionEntry[];
+/** Decision 974, review #4/#5: an item a render made for the export could not give (its render failed, or has problems). */
+interface ExportGap { item: ExportItem; slug: string; kind: 'failed' | 'problems'; reason?: string; problems: string[]; issues: OutputIssue[] }
 /** What an export job reports once done (decision 974): the files written, and what was left out, as text. */
 function outcomeOf(r: ExportResult & { excluded?: NonNullable<ExportOutcome['excluded']>; unavailable?: Array<{ message: string }> }): ExportOutcome {
   const skipped = [...r.skipped, ...(r.unavailable ?? []).map((u) => u.message)];
@@ -777,8 +779,21 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
         if (!items.length) throw new CodedError(409, t().export.renderProblemsOnly({ list: problems.join(', ') }), 'export-render-problems');
       }
       // Decision 974: the videos at another quality or size are rendered for this export alone, then copied from there.
-      const result = await withExportRenders(ref, items, versions, profile ? { profile, presets } : null, wait, common.label,
-        async (list) => { run?.copying(); return exportResolved(list.map(({ problems: _p, ...it }) => it), common); });
+      const result = await withExportRenders(ref, items, versions, profile ? { profile, presets } : null, wait, async (list, gaps) => {
+        // A render made for the export that failed refuses the export, as a version render does; one with problems is left
+        // out and listed (I2, review #4).
+        const failedNow = gaps.filter((g) => g.kind === 'failed');
+        if (failedNow.length > 0) {
+          throw new CodedError(409, t().export.renderFailed({ list: failedNow.map((g) => `${common.label(g.item.format)} v${g.item.n}${g.reason ? ` (${g.reason})` : ''}`).join(', ') }), 'export-render-failed');
+        }
+        for (const g of gaps) {
+          problems.push(t().export.renderProblems({ item: `${common.label(g.item.format)} v${g.item.n}`, list: g.problems.join('; ') }));
+          excluded.push({ format: g.item.format, version: g.item.n, problems: g.problems, issues: g.issues });
+        }
+        if (!list.length) throw new CodedError(409, t().export.renderProblemsOnly({ list: problems.join(', ') }), 'export-render-problems');
+        run?.copying();
+        return exportResolved(list.map(({ problems: _p, ...it }) => it), common);
+      });
       const withProblems = excluded.length ? { ...result, excluded } : result;
       const allRendered = [...rendered, ...localeRendered];
       return allRendered.length > 0 ? { ...withProblems, rendered: allRendered } : withProblems;
@@ -919,9 +934,15 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     // Decision 974: the videos at another quality or size are rendered for this export alone, each in its own member.
     const memberOf = new Map(plan.map((p) => [p.creativeDir, p.slug]));
     const readyItems = items;
-    return withExportRenders(ref, readyItems, [], profile ? { profile, presets } : null, wait, label, async (list) => {
+    return withExportRenders(ref, readyItems, [], profile ? { profile, presets } : null, wait, async (list, gaps) => {
+      // Review #5: a render made for the export that failed, or that has problems, leaves that format out (the group rule).
+      for (const gp of gaps) {
+        const p = plan.find((x) => x.slug === gp.slug && x.format === gp.item.format && x.version === gp.item.n);
+        if (!p) continue;
+        unavailable.push(gap(p, gp.kind === 'failed' ? g.renderFailed({ reason: gp.reason ?? '' }) : g.renderProblems({ list: gp.problems.join('; ') })));
+      }
       run?.copying();
-      const result = await exportGroup(usable, common, list);
+      const result = await exportGroup(usable.filter((p) => !gaps.some((gp) => gp.slug === p.slug && gp.item.format === p.format && gp.item.n === p.version)), common, list);
       const { unavailable: _plan, ...copied } = result;
       return { ...copied, unavailable };
     }, (it) => memberOf.get(it.creativeDir ?? '') ?? hostRef.creativeSlug);
@@ -940,13 +961,13 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
    */
   /**
    * Decision 974: renders the items an export at `profile` takes at another quality or size (`profiledRenders`), each in its
-   * creative (`member`), into a temp folder of the core's own; `copy` then gets the items with those files as their source.
-   * The temp folder goes once the copy is done, whatever happened. A render that fails refuses the export (409
-   * `export-render-failed`), as a version render does.
+   * creative (`member`), into a temp folder of the core's own (`ms-render-export-*`, swept after a crash); `copy` then gets
+   * the items with those files as their source, and the gaps: a format whose render failed, or whose render has problems
+   * (review #4, the output checks of a version render), left out of the items. The temp folder goes once the copy is done.
    */
   async function withExportRenders<R>(ref: CreativeRef & { store: CreativeStore }, items: ExportItem[], versions: VersionEntryList, o: { profile: RenderProfile; presets: FormatPreset[] } | null,
-    wait: RenderWait, label: (id: string) => string, copy: (items: ExportItem[]) => Promise<R>, member?: (it: ExportItem) => string): Promise<R> {
-    if (!o) return copy(items);
+    wait: RenderWait, copy: (items: ExportItem[], gaps: ExportGap[]) => Promise<R>, member?: (it: ExportItem) => string): Promise<R> {
+    if (!o) return copy(items, []);
     const slugOf = (it: ExportItem) => member?.(it) ?? ref.creativeSlug;
     const bySlug = new Map<string, ExportItem[]>();
     for (const it of items) bySlug.set(slugOf(it), [...(bySlug.get(slugOf(it)) ?? []), it]);
@@ -956,24 +977,35 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       const pending = profiledRenders(vs, list, o);
       if (pending.size > 0) plans.set(slug, pending);
     }
-    if (plans.size === 0) return copy(items);
+    if (plans.size === 0) return copy(items, []);
     const temp = await makeOwnedTempDir(join(tmpdir(), 'ms-render-export-'));
     try {
-      const files = new Map<string, { path: string; width: number; height: number }>();
+      const files = new Map<string, ExportRendered>();
+      const failed = new Map<string, string>();
       for (const [slug, pending] of plans) {
         const at = { ...ref, creativeSlug: slug };
         await notDiscarded(at);
         const r = await ctx.renders.exportRenderAndWait(at, pending, o.profile, join(temp, slug), wait);
-        if (r.errors.length > 0 || [...pending].some(([n, fs]) => fs.some((f) => !r.files.has(`${n}\0${f}`)))) {
-          const list = [...pending].flatMap(([n, fs]) => fs.filter((f) => !r.files.has(`${n}\0${f}`)).map((f) => `${label(f)} v${n}`));
-          throw new CodedError(409, t().export.renderFailed({ list: (list.length ? list : r.errors).join(', ') }), 'export-render-failed');
+        for (const [n, fs] of pending) {
+          for (const f of fs) {
+            const k = `${n}\0${f}`;
+            const made = r.files.get(k);
+            if (made) files.set(`${slug}\0${k}`, made);
+            else failed.set(`${slug}\0${k}`, r.failed.get(k) ?? r.errors[0] ?? '');
+          }
         }
-        for (const [k, f] of r.files) files.set(`${slug}\0${k}`, { path: f.path, width: f.render.width, height: f.render.height });
       }
-      return await copy(items.map((it) => {
-        const f = it.localized ? undefined : files.get(`${slugOf(it)}\0${it.n}\0${it.format}`);
-        return f ? { ...it, source: f.path, file: basename(f.path), width: f.width, height: f.height } : it;
-      }));
+      const gaps: ExportGap[] = [];
+      const kept: ExportItem[] = [];
+      for (const it of items) {
+        const k = `${slugOf(it)}\0${it.n}\0${it.format}`;
+        const f = it.localized ? undefined : files.get(k);
+        const reason = it.localized ? undefined : failed.get(k);
+        if (reason !== undefined) { gaps.push({ item: it, slug: slugOf(it), kind: 'failed', reason, problems: [], issues: [] }); continue; }
+        if (f && f.problems.length > 0) { gaps.push({ item: it, slug: slugOf(it), kind: 'problems', problems: f.problems, issues: f.issues }); continue; }
+        kept.push(f ? { ...it, source: f.path, file: basename(f.path), width: f.render.width, height: f.render.height } : it);
+      }
+      return await copy(kept, gaps);
     } finally {
       await rm(temp, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
     }

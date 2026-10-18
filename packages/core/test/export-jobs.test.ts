@@ -30,6 +30,8 @@ const PRESETS: FormatPreset[] = [
   { id: 'test-wide', channel: 'Test', name: 'Wide', width: 320, height: 180, kind: 'video', extensions: ['mp4'], targetBitrateKbps: 800 },
   { id: 'test-wide-b', channel: 'Test', name: 'Wide B', width: 320, height: 180, kind: 'video', extensions: ['mp4'], targetBitrateKbps: 800 },
   { id: 'test-still', channel: 'Test', name: 'Still', width: 320, height: 180, kind: 'image', extensions: ['png', 'jpg'] },
+  // A channel limit no render can meet: its output checks fail.
+  { id: 'test-tiny', channel: 'Test', name: 'Tiny', width: 320, height: 180, kind: 'video', extensions: ['mp4'], maxFileMB: 0.00001 },
 ];
 const comp = (w: number, h: number, duration: number, fill = '#ff0000') => ({
   $schema: 'motion-studio/composition@1', width: w, height: h, fps: 30, duration, background: '#101010', fonts: [],
@@ -312,5 +314,15 @@ describe('export jobs (decision 974)', { timeout: 120_000 }, () => {
     await app.inject({ method: 'POST', url: `/api/jobs/${c.id}/cancel`, headers: H });
     await app.inject({ method: 'POST', url: `/api/jobs/${d.id}/cancel`, headers: H });
     expect((await waitJob(r2)).state).toBe('cancelled');
+  });
+
+  it('review #4: a render made for the export is checked like a version render: one with problems is left out and listed', async () => {
+    const { slug } = await v2Creative(['test-wide', 'test-tiny'], {});
+    const dest = join(base, 'out');
+    const job = await startExport(slug, { destination: dest, picks: { 'test-wide': 1, 'test-tiny': 1 }, resolution: 480, pattern: '{format}' });
+    const done = await waitJob(job.id);
+    expect(done.state, done.error).toBe('succeeded');
+    expect(readdirSync(dest)).toEqual(['test-wide.mp4']);
+    expect(done.export!.excluded).toEqual([expect.objectContaining({ format: 'test-tiny', version: 1, issues: [expect.objectContaining({ code: 'tooLarge' })] })]);
   });
 });

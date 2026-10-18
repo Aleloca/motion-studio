@@ -5,7 +5,7 @@ import { copyFile, lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import {
-  compositionProblemText, DEFAULT_EXPORT_QUALITY, profileApplies, recordedQuality, effectiveLinks, formatDisplayName, messages, renderProblems, renderState, type RenderInfo, type RenderProfile,
+  compositionProblemText, outputWarningText, DEFAULT_EXPORT_QUALITY, profileApplies, recordedQuality, effectiveLinks, formatDisplayName, messages, renderProblems, renderState, type RenderInfo, type RenderProfile,
   type Brief, type Composition, type FormatPreset, type JobProgress, type JobSummary, type Locale, type LocaleTag, type Localization, type LocalizationIssue, type LocalizationRow, type ManifestV2, type OutputFileInfo,
   type IdentitySetInfo, type OutputIssue, type ServerMessage, type VersionComposition, type VersionEntry,
 } from '@motion-studio/shared';
@@ -88,7 +88,11 @@ export interface RenderJobDeps {
 /** How a caller waits for render jobs (decision 974): its cancel, and the jobs it waits for (an export job's progress). */
 export interface RenderWait { signal?: AbortSignal; onJobs?(ids: string[]): void }
 /** A render made for one export (decision 974): the file (in the export's own temp folder) and its record. */
-export interface ExportRendered { path: string; render: RenderInfo }
+export interface ExportRendered {
+  path: string; render: RenderInfo;
+  /** The output checks of that format (review #4: as a version render's, against the format's own preset; never the size). */
+  problems: string[]; issues: OutputIssue[];
+}
 
 export interface RenderPlan {
   /** Primary formats to render, in the version's order. */
@@ -328,13 +332,15 @@ export class RenderJobService {
    * the file of its primary's render. Returns the files made (key `<n>\0<format>`) and the failed jobs' errors.
    */
   async exportRenderAndWait(ref: CreativeRef, pending: ReadonlyMap<number, string[]>, profile: RenderProfile, outDir: string, w: RenderWait = {}):
-    Promise<{ files: Map<string, ExportRendered>; errors: string[] }> {
+    Promise<{ files: Map<string, ExportRendered>; failed: Map<string, string>; errors: string[] }> {
     if (w.signal?.aborted) throw new RenderError('cancelled', 'cancelled');
     const files = new Map<string, ExportRendered>();
+    const failed = new Map<string, string>();
     const ids: string[] = [];
     try {
       for (const [n, formats] of pending) {
-        ids.push((await this.startExportRender(ref, n, formats, profile, join(outDir, `v${n}`), (format, r) => files.set(`${n}\0${format}`, r))).id);
+        ids.push((await this.startExportRender(ref, n, formats, profile, join(outDir, `v${n}`),
+          (format, r) => files.set(`${n}\0${format}`, r), (format, reason) => failed.set(`${n}\0${format}`, reason))).id);
       }
     } catch (e) {
       // A version that cannot start (review #3): the jobs already queued for this export go too.
@@ -344,7 +350,7 @@ export class RenderJobService {
     }
     try {
       const ended = await this.waitAll(ids, w);
-      return { files, errors: ended.filter((j) => j.state !== 'succeeded').map((j) => j.error ?? j.state) };
+      return { files, failed, errors: ended.filter((j) => j.state !== 'succeeded').map((j) => j.error ?? j.state) };
     } catch (e) {
       // Cancelled: the caller removes `outDir` next, so wait (bounded) for the renders to stop writing into it first.
       await this.settled(ids);
@@ -361,7 +367,7 @@ export class RenderJobService {
   }
 
   private async startExportRender(ref: CreativeRef, n: number, requested: string[], profile: RenderProfile, outDir: string,
-    collect: (format: string, r: ExportRendered) => void): Promise<JobSummary> {
+    collect: (format: string, r: ExportRendered) => void, fail: (format: string, reason: string) => void): Promise<JobSummary> {
     const locale = currentLocale();
     const m = messages(locale);
     const store = new CreativeStore(ref.projectDir);
@@ -385,17 +391,26 @@ export class RenderJobService {
         const label = (id: string) => formatDisplayName(presets, id, locale);
         const progress = this.throttled(jobId);
         const failures: string[] = [];
+        const notes: string[] = [];
+        const detail = (text: string) => { notes.push(text); this.deps.queue.patch(jobId, { notes: [...notes] }); };
         await mkdir(outDir, { recursive: true });
         try {
           for (const format of plan.primaries) {
             if (signal.aborted) throw new RenderError('cancelled', 'cancelled');
+            const followers = Object.keys(plan.followers).filter((f) => plan.followers[f] === format);
             try {
               const r = await this.renderForExport({ ref, n, format, comps, presets, profile, outDir, signal, progress, label, locale });
-              collect(format, r);
-              for (const [f, p] of Object.entries(plan.followers)) if (p === format) collect(f, r);
+              // Each file checked against its own format (a follower's limits are its own, M4), as a version render's.
+              for (const f of [format, ...followers]) {
+                const checked = await this.exportChecks(r.path, findPreset(presets, f) ?? { ...findPreset(presets, format)!, id: f }, r.composition, r.render, locale);
+                if (checked.warning) detail(`${label(f)}: ${outputWarningText(checked.warning, locale)}`);
+                collect(f, { path: r.path, render: r.render, problems: checked.problems, issues: checked.issues });
+              }
             } catch (e) {
               if (signal.aborted || (e instanceof RenderError && e.code === 'cancelled')) throw e;
-              failures.push(m.render.formatFailed({ format: label(format), reason: errorText(e) }));
+              const reason = errorText(e);
+              for (const f of [format, ...followers]) fail(f, reason);
+              failures.push(m.render.formatFailed({ format: label(format), reason }));
             }
           }
         } finally {
@@ -425,7 +440,7 @@ export class RenderJobService {
    * hash still the recorded one), its media normalised, rendered into `outDir`. Nothing is recorded in the version.
    */
   private async renderForExport(o: { ref: CreativeRef; n: number; format: string; comps: VersionComposition[]; presets: FormatPreset[]; profile: RenderProfile; outDir: string;
-    signal: AbortSignal; progress: (p: JobProgress) => void; label: (id: string) => string; locale: Locale }): Promise<ExportRendered> {
+    signal: AbortSignal; progress: (p: JobProgress) => void; label: (id: string) => string; locale: Locale }): Promise<{ path: string; render: RenderInfo; composition: Composition }> {
     const { ref, n, format, signal } = o;
     const m = messages(o.locale);
     const store = new CreativeStore(ref.projectDir);
@@ -451,10 +466,50 @@ export class RenderJobService {
         quality: o.profile.quality, ...(o.profile.short !== undefined ? { short: o.profile.short } : {}),
         onProgress: (p) => o.progress({ format, phase: 'frames', done: p.frames, total: p.total }),
       });
-      return { path: result.file, render: renderInfoOf(result, o.profile.quality) };
+      return { path: result.file, render: renderInfoOf(result, o.profile.quality), composition };
     } finally {
       prepared.release();
     }
+  }
+
+  /**
+   * The output checks of a render made for an export (review #4), as `describe` does for a version render: readable, the
+   * duration (and the channel's maximum), the channel's size limit, and the bitrate warning of its quality. The size is the
+   * one the export asked for, so it is never a problem here.
+   */
+  private async exportChecks(path: string, preset: FormatPreset, composition: Composition, render: RenderInfo, locale: Locale):
+    Promise<{ problems: string[]; issues: OutputIssue[]; warning: ReturnType<typeof largeFileWarning> }> {
+    const v = messages(locale).validation;
+    const file = basename(path);
+    const st = await lstat(path);
+    const media = this.deps.media;
+    const probed = media.available ? await media.probe(path).catch(() => null) : null;
+    const problems: string[] = [];
+    const issues: OutputIssue[] = [];
+    const round1 = (x: number) => Math.round(x * 10) / 10;
+    if (media.available && !probed) { problems.push(v.notReadable({ file })); issues.push({ code: 'notReadable', params: {} }); }
+    const video = composition.duration > 0;
+    const durationSec = video ? (probed?.durationSec ?? composition.duration) : null;
+    if (video && durationSec !== null) {
+      if (Math.abs(durationSec - composition.duration) > Math.max(0.1, 2 / composition.fps)) {
+        problems.push(v.durationOffTarget({ file, duration: durationSec.toFixed(1), target: composition.duration }));
+        issues.push({ code: 'durationOffTarget', params: { duration: round1(durationSec), target: composition.duration } });
+      }
+      if (preset.maxDurationSec !== undefined && durationSec > preset.maxDurationSec + 1e-3) {
+        problems.push(v.durationOverMax({ file, duration: durationSec.toFixed(1), max: preset.maxDurationSec }));
+        issues.push({ code: 'durationOverMax', params: { duration: round1(durationSec), max: preset.maxDurationSec } });
+      }
+    }
+    if (preset.maxFileMB !== undefined && st.size / 1e6 > preset.maxFileMB) {
+      problems.push(v.tooLarge({ file, size: (st.size / 1e6).toFixed(1), max: preset.maxFileMB }));
+      issues.push({ code: 'tooLarge', params: { size: round1(st.size / 1e6), max: preset.maxFileMB } });
+    }
+    // The bitrate target scales with the pixels of the output, as the renderer's does.
+    const k = (render.width * render.height) / (preset.width * preset.height);
+    const scaled: FormatPreset = { ...preset, width: render.width, height: render.height,
+      ...(preset.targetBitrateKbps !== undefined ? { targetBitrateKbps: Math.round(preset.targetBitrateKbps * k) } : {}) };
+    const warning = largeFileWarning(scaled, file.slice(file.lastIndexOf('.') + 1), st.size, durationSec, composition.fps, render.quality);
+    return { problems, issues, warning };
   }
 
   private async run(ref: CreativeRef, n: number, plan: RenderPlan, comps: VersionComposition[], locale: Locale, signal: AbortSignal, jobId: string): Promise<void> {
