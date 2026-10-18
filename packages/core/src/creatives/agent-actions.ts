@@ -222,7 +222,7 @@ export class AgentActionService {
     const what = t().agentActions.duplicateQueued({ format: label(a.format) });
     this.defer(s, { kind: 'duplicate', format: a.format, ...(a.label ? { label: a.label } : {}), what });
     await this.note(s, what);
-    return { ok: true, note: `Duplicated from version ${s.version} after this turn ends (a new version made by Motion Studio, no agent).` };
+    return { ok: true, note: `Duplicated from version ${s.version} after this turn ends (a new version made by Motion Studio, no agent); from the latest version if this turn changes no composition.` };
   }
 
   private async addLanguage(s: Scope, a: z.infer<typeof inputs.add_language>) {
@@ -286,7 +286,7 @@ export class AgentActionService {
       const what = x.pickQueued({ format: label(a.format) });
       this.defer(s, { kind: 'pick', format: a.format, shown: label(a.format), what });
       await this.note(s, what);
-      return { ok: true, note: 'The ★ is set on the version this turn makes, when it ends.' };
+      return { ok: true, note: 'The ★ is set on the version this turn makes, when it ends (the latest version if this turn changes no composition).' };
     }
     if (r.group && member) await svc.setPick(s.ref, a.format, { slug: member.slug, version: a.version });
     else await this.deps.turns.setExportPick(s.ref, a.format, a.version);
@@ -305,7 +305,7 @@ export class AgentActionService {
       const what = x.renderQueued({ formats });
       this.defer(s, { kind: 'render', ...(a.formats ? { formats: a.formats } : {}), shown: formats, what });
       await this.note(s, what);
-      return { ok: true, note: 'Rendered when this turn ends (the version you are making).' };
+      return { ok: true, note: 'Rendered when this turn ends (the version you are making, or the latest one if this turn changes no composition).' };
     }
     const job = await this.renderNow(s.ref, a.version, a.formats);
     await this.note(s, x.renderStarted({ n: a.version, formats }));

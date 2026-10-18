@@ -103,8 +103,9 @@ describe('a turn that changes no output (decision 1060)', () => {
     run.finish({ write: false });
     await waitIdle();
     await vi.waitFor(async () => expect((await detail(slug)).creative.brief.durationSec).toBe(60));
+    // The re-check follows the brief's write when the turn settles.
+    await vi.waitFor(async () => expect((await detail(slug)).versions.map((v) => [v.n, v.status])).toEqual([[1, 'complete']]));
     const d = await detail(slug);
-    expect(d.versions.map((v) => [v.n, v.status])).toEqual([[1, 'complete']]);
     expect(d.creative.status).toBe('ready');
     expect(runner.runs).toHaveLength(4);
     expect((await versionEntries(slug)).length).toBe(1);
