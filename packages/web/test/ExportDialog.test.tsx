@@ -126,6 +126,17 @@ describe('ExportDialog · the starred versions', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it('review #9: the started export leaves its "Render anyway" for when the dialog is closed, and says when it is open', async () => {
+    const { exportRegistry } = await import('../src/screens/exportModel.ts');
+    open();
+    await userEvent.click(screen.getByRole('button', { name: 'Export 3 files' }));
+    await screen.findByRole('button', { name: 'Cancel export' });
+    expect(exportRegistry.watched('e1')).toBe(true);
+    const retry = exportRegistry.takeRetry('e1')!;
+    await retry();
+    expect(api.exportPicksJob).toHaveBeenLastCalledWith('acme', 'c1', expect.objectContaining({ force: true, picks: { [REEL]: 5, [POST]: 7 } }));
+  });
+
   it('a failed export job says why, and the export can be tried again', async () => {
     open();
     await userEvent.click(screen.getByRole('button', { name: 'Export 3 files' }));

@@ -5,6 +5,7 @@ import { desktop, showExported } from '../src/desktop.ts';
 import { I18nProvider } from '../src/i18n.tsx';
 import { useExportNotice, useRenderCloseGuard } from '../src/shell/useAttention.ts';
 import { __resetToasts, getToasts } from '../src/ui/toast.tsx';
+import { exportRegistry } from '../src/screens/exportModel.ts';
 
 afterEach(() => { delete (window as unknown as { motionStudio?: unknown }).motionStudio; });
 
@@ -78,6 +79,37 @@ describe('export notice (decision 974, user report 20)', () => {
     h.rerender({ jobs: job('running') });
     h.rerender({ jobs: job('failed', { error: 'Render failed: boom' }) });
     expect(getToasts().map((t) => t.text)).toEqual(['Export failed: Render failed: boom']);
+  });
+
+  it('review #9: what was left out is said, with what to do', () => {
+    const h = renderHook(({ jobs }) => useExportNotice(jobs), { initialProps: { jobs: job('running') }, wrapper });
+    h.rerender({ jobs: job('succeeded', { export: { stage: 'done', pct: 100, destination: '/d', files: ['/d/a.mp4'], skipped: ['x.mov'], excluded: [{ format: 'f', version: 1, problems: ['p'] }] } }) });
+    expect(getToasts().map((t) => t.text)).toEqual(['1 file exported to /d. 2 not exported: open Export again to see why.']);
+  });
+
+  it('review #9: translations that need "Render anyway", with the dialog closed: the toast offers it (or opens the creative)', () => {
+    const retry = vi.fn(async () => {});
+    const refused = { export: { stage: 'rendering', pct: null, destination: '/d', refusal: { code: 'localization-needs-force', problems: ['Wide (de)'] } }, error: 'raw' };
+    exportRegistry.setRetry('e1', retry);
+    const h = renderHook(({ jobs }) => useExportNotice(jobs), { initialProps: { jobs: job('running') }, wrapper });
+    h.rerender({ jobs: job('failed', refused) });
+    const t1 = getToasts()[0]!;
+    expect(t1.text).toBe('Export stopped: these translations have open problems or outdated texts: Wide (de)');
+    expect(t1.action?.label).toBe('Render anyway');
+    t1.action!.run();
+    expect(retry).toHaveBeenCalled();
+    __resetToasts();
+    // No retry known (another window started it): the action opens the creative, where Export can be run again.
+    h.rerender({ jobs: job('running') });
+    h.rerender({ jobs: job('failed', refused) });
+    expect(getToasts()[0]!.action?.label).toBe('Open');
+    __resetToasts();
+    // The dialog that started it is open: it shows the list itself, no toast.
+    const stop = exportRegistry.watch('e1');
+    h.rerender({ jobs: job('running') });
+    h.rerender({ jobs: job('failed', refused) });
+    expect(getToasts()).toEqual([]);
+    stop();
   });
 
   it('a running export keeps the desktop app from closing without asking, like a render', () => {

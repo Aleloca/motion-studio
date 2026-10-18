@@ -27,7 +27,7 @@ import { abortableWait, exportErrorText, withHashRetry } from './versionErrors.t
 import type { FormatState } from './versionModel.ts';
 import { compositionOf, shortProblems } from './renderModel.ts';
 import { localeName } from './creative/languagesModel.ts';
-import { stageText } from './exportModel.ts';
+import { exportRegistry, stageText } from './exportModel.ts';
 
 /** The last destination folder, kept in this browser only. */
 export const EXPORT_FOLDER_KEY = 'ms.exportFolder';
@@ -204,6 +204,8 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
   const [profile, setProfile] = useState<ExportProfileChoice>(readProfile);
   // The export job this dialog started: its end is shown here while the dialog is open (the app tells it anyway).
   const job = phase.kind === 'job' ? jobs[phase.id] : undefined;
+  const watchedId = phase.kind === 'job' ? phase.id : null;
+  useEffect(() => (watchedId ? exportRegistry.watch(watchedId) : undefined), [watchedId]);
   useEffect(() => {
     if (phase.kind !== 'job' || !job || job.state === 'queued' || job.state === 'running') return;
     const info = job.export;
@@ -326,10 +328,12 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
       // Decision 974: the core renders what still needs a render (translations included) and copies, as a job; the request
       // answers at once with it (its refusals still come now). A follower's version is decided on hashes: while old versions
       // are still hashed the core answers hashes-pending, retried after its Retry-After (bounded, like a ★ pick).
-      const started = groupPlan
-        ? await api.exportGroupJob(slug, creative, { destination: dest, formats: chosen.map((c) => c.row.id), pattern, date, ...languageBody, ...profileBody, ...(force ? { force: true } : {}) })
-        : await withHashRetry(() => api.exportPicksJob(slug, creative, { destination: dest, picks, ...followed, pattern, date, ...languageBody, ...profileBody, ...(force ? { force: true } : {}) }),
-          abortableWait(signal));
+      const send = (forced: boolean, wait: Parameters<typeof withHashRetry>[1]) => (groupPlan
+        ? api.exportGroupJob(slug, creative, { destination: dest, formats: chosen.map((c) => c.row.id), pattern, date, ...languageBody, ...profileBody, ...(forced ? { force: true } : {}) })
+        : withHashRetry(() => api.exportPicksJob(slug, creative, { destination: dest, picks, ...followed, pattern, date, ...languageBody, ...profileBody, ...(forced ? { force: true } : {}) }), wait));
+      const started = await send(force, abortableWait(signal));
+      // Review #9: the same export with "Render anyway", for the app's notice when this dialog is closed by then.
+      if (!force) exportRegistry.setRetry(started.job.id, () => send(true, abortableWait(new AbortController().signal)));
       writeFolder(dest);
       if (!lockProfile) writeProfile(profile);
       if (signal.aborted) return;

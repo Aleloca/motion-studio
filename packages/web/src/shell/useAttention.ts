@@ -3,6 +3,10 @@ import { useEffect, useRef } from 'react';
 import { useT } from '../i18n.tsx';
 import { toast } from '../ui/index.ts';
 import { desktop, showExported } from '../desktop.ts';
+import { message } from '../errors.ts';
+import { exportRegistry } from '../screens/exportModel.ts';
+import { jobHref } from './ActivityCenter.tsx';
+import { go } from './ShellContext.tsx';
 import { isMac } from '../platform.ts';
 import { APP_TITLE, appInBackground, notifyApprovalsEnabled, notifyReadyEnabled, onNotificationClick, setBadge, setDraftsUnsaved, setRendersRunning, showNotification } from './notify.ts';
 
@@ -117,12 +121,25 @@ export function useExportNotice(jobs: Readonly<Record<string, JobSummary>>): voi
       if (job.state === 'queued' || job.state === 'running') { active.current.add(job.id); continue; }
       if (!active.current.delete(job.id)) continue;
       const info = job.export;
+      const retry = job.state === 'failed' ? exportRegistry.takeRetry(job.id) : (exportRegistry.forget(job.id), null);
       if (job.state === 'succeeded' && info) {
         const files = info.files ?? [];
-        const body = x.doneToast({ count: files.length, folder: info.destination });
+        // Review #9: what was left out is said with what to do (the dialog, if it is closed, is where the reasons are).
+        const leftOut = (info.skipped?.length ?? 0) + (info.excluded?.length ?? 0);
+        const done = x.doneToast({ count: files.length, folder: info.destination });
+        const body = leftOut > 0 ? `${done}. ${x.doneLeftOut({ count: leftOut })}` : done;
         const bridge = desktop();
         const action = bridge ? { label: isMac() ? x.showInFinder : x.showInFolder, run: () => { void showExported(bridge, info.destination, files).catch(() => {}); } } : undefined;
-        toast.show(body, { tone: 'ok', ...(action ? { action } : {}) });
+        toast.show(body, { tone: leftOut > 0 ? 'neutral' : 'ok', ...(leftOut > 0 ? { sticky: true } : {}), ...(action ? { action } : {}) });
+        if (appInBackground()) showNotification({ title: x.doneNotification, body });
+      } else if (job.state === 'failed' && info?.refusal?.code === 'localization-needs-force') {
+        // The dialog that started it is open: it shows the list and "Render anyway" itself.
+        if (exportRegistry.watched(job.id)) continue;
+        const body = x.needsForceToast({ list: (info.refusal.problems ?? []).join(', ') });
+        const where = jobHref(job);
+        const action = retry ? { label: t.web.languages.renderAnyway, run: () => { void retry().catch((e: unknown) => toast.show(x.failed({ detail: message(e) }))); } }
+          : where ? { label: t.web.shell.activity.open, run: () => go(where) } : undefined;
+        toast.show(body, { sticky: true, ...(action ? { action } : {}) });
         if (appInBackground()) showNotification({ title: x.doneNotification, body });
       } else if (job.state === 'failed') {
         toast.show(x.failed({ detail: job.error ?? t.web.jobState.failed }));
