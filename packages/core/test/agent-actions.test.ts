@@ -275,7 +275,8 @@ describe('render and ★', () => {
     expect((await bridge(run, 'set_pick', { format: 'youtube-16x9', version: 1 })).statusCode).toBe(200);
     expect((await bridge(run, 'set_pick', { format: 'youtube-16x9', version: 1, variant: 'b' })).statusCode).toBe(409);
     expect((await bridge(run, 'set_pick', { format: 'youtube-16x9', version: 'current' })).statusCode).toBe(200);
-    writeCompositions(run, 6);
+    // Another composition (decision 1060: the same one would make no version).
+    writeCompositions(run, 6.5);
     run.finish({ write: false });
     await waitIdle();
     // The deferred render ran and got the same refusal, said in the chat.

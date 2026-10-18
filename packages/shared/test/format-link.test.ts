@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canFollow, checkLink, defaultLinks, effectiveLinks, latestDurationOf, DEFAULT_FORMATS, followerMatches, followerVersion, formatHistory, legacyTurnKind, linksAfterBriefSave, renderProblems, renderState, starOf, type FormatPreset, type OutputFileInfo, type VersionEntry } from '../src/index.ts';
+import { canFollow, checkLink, defaultLinks, effectiveLinks, entryHasProblems, formatRuns, latestDurationOf, sameDelivery, DEFAULT_FORMATS, followerMatches, followerVersion, formatHistory, legacyTurnKind, linksAfterBriefSave, renderProblems, renderState, starOf, type FormatPreset, type OutputFileInfo, type VersionEntry } from '../src/index.ts';
 
 const preset = (id: string): FormatPreset => DEFAULT_FORMATS.find((f) => f.id === id)!;
 const REEL = preset('instagram-reel-9x16');
@@ -342,5 +342,59 @@ describe('legacy turns and brief-save links (final review I4)', () => {
     expect(legacyTurnKind(legacy, { formats: [REEL.id], links: {} })).toBe('convert');
     expect(legacyTurnKind(v2(1, [[REEL.id, 'a']]), { formats: [REEL.id, POST.id], links: {} })).toBe('normal');
     expect(legacyTurnKind(undefined, { formats: [REEL.id], links: {} })).toBe('normal');
+  });
+});
+
+describe('sameDelivery (decision 1060: a turn that changes no output makes no version)', () => {
+  const loc = (instanceId: string, hash: string) => ({ locale: 'de' as const, instanceId, hash: h(hash), origin: 'agent' as const, stale: [], voice: 'original' as const });
+  it.each([
+    ['the same compositions', v2(1, [['reel', 'a'], ['post', 'p']]), v2(2, [['post', 'p'], ['reel', 'a']]), true],
+    ['one composition changed', v2(1, [['reel', 'a'], ['post', 'p']]), v2(2, [['reel', 'a'], ['post', 'q']]), false],
+    ['a format added', v2(1, [['reel', 'a']]), v2(2, [['reel', 'a'], ['post', 'p']]), false],
+    ['a format gone', v2(1, [['reel', 'a'], ['post', 'p']]), v2(2, [['reel', 'a']]), false],
+    ['a follower unlinked onto the same content', v2(1, [['reel', 'a'], ['tiktok', 'a', 'reel']]), v2(2, [['reel', 'a'], ['tiktok', 'a']]), false],
+    ['a new render of the same composition', v2(1, [['reel', 'a']]), v2(2, [['reel', 'a']], [rendered('reel', 'f', 'a')]), true],
+    ['legacy files with the same hashes', ver(1, [out('reel', h('a'))]), ver(2, [out('reel', h('a'))]), true],
+    ['legacy files without a hash (equality must be proven)', ver(1, [out('reel', undefined)]), ver(2, [out('reel', undefined)]), false],
+    ['legacy then v2', ver(1, [out('reel', h('a'))]), v2(2, [['reel', 'a']]), false],
+    ['nothing at all on either side', ver(1, []), ver(2, []), false],
+  ] as const)('%s', (_name, latest, next, expected) => {
+    expect(sameDelivery(latest, next)).toBe(expected);
+  });
+  it('localization overlays count: a changed or missing overlay is a change', () => {
+    const a = { ...v2(1, [['reel', 'a']]), localizations: [loc('reel', 'l')] };
+    expect(sameDelivery(a, { ...v2(2, [['reel', 'a']]), localizations: [loc('reel', 'l')] })).toBe(true);
+    expect(sameDelivery(a, { ...v2(2, [['reel', 'a']]), localizations: [loc('reel', 'm')] })).toBe(false);
+    expect(sameDelivery(a, v2(2, [['reel', 'a']]))).toBe(false);
+  });
+});
+
+describe('formatRuns and the state of a history entry (decision 1061)', () => {
+  it('each history entry spans the versions that kept its content', () => {
+    const vs = [v2(1, [['reel', 'a']], [], ['too long']), v2(2, [['reel', 'a']]), v2(3, [['reel', 'b']]), v2(4, [['post', 'p']]), v2(5, [['reel', 'b']])];
+    expect(formatRuns(vs, 'reel')).toEqual([{ n: 1, last: 2 }, { n: 3, last: 3 }, { n: 5, last: 5 }]);
+    expect(formatRuns(vs, 'nope')).toEqual([]);
+  });
+  it('an entry has the problems of the latest version with the same content', () => {
+    // v1 incomplete (duration off the brief), v2 the same composition checked again against the new brief: clean.
+    const vs = [v2(1, [['reel', 'a', undefined, ['too long']]], [], ['too long']), v2(2, [['reel', 'a', undefined, []]])];
+    expect(entryHasProblems(vs, 'reel', 1)).toBe(false);
+    expect(entryHasProblems([vs[0]!], 'reel', 1)).toBe(true);
+    // A third version with another, broken, composition: the clean entry v1 is the default ★.
+    const v3 = v2(3, [['reel', 'b', undefined, ['bad']]], [], ['bad']);
+    expect(starOf([...vs, v3], 'reel', undefined, undefined).version).toBe(1);
+    expect(entryHasProblems([...vs, v3], 'reel', 3)).toBe(true);
+  });
+});
+
+describe('entryHasProblems and renders (review, decision 1066)', () => {
+  it('the entry\'s own current render counts; a later identical version\'s render does not', () => {
+    const badRender = { ...rendered('reel', 'f', 'a'), problems: ['too large'] };
+    // v1's own render has problems; v2 keeps the content, checked clean: still not a clean ★.
+    const own = [v2(1, [['reel', 'a', undefined, ['durata']]], [badRender]), v2(2, [['reel', 'a', undefined, []]])];
+    expect(entryHasProblems(own, 'reel', 1)).toBe(true);
+    // v1 clean with no render; v2 keeps the content and has a bad render of its own: v1 is clean.
+    const later = [v2(1, [['reel', 'a', undefined, []]]), v2(2, [['reel', 'a', undefined, []]], [badRender])];
+    expect(entryHasProblems(later, 'reel', 1)).toBe(false);
   });
 });

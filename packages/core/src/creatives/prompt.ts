@@ -507,6 +507,8 @@ export function appActionsSection(brief: CreativeFile['brief']): string[] {
     '- add_variant: a new variant with its direction (it starts its own agent turn); discard_variant and restore_variant; set_pick: the ★ (the version exported) of a format.',
     '- render_version: renders a saved version, or "current" (the version you are making, rendered after this turn). prepare_export: renders what the ★ export needs; the user then exports.',
     'Use them only when the user asks for it, or when the brief clearly needs it. You cannot archive or delete anything, nor change settings, keys or permissions.',
+    // Decision 1060.
+    '- A turn whose compositions all stay exactly as they were makes no new version: what you did with these tools still applies, and "the version you are making" is then the latest one.',
     ...(stated !== null && brief.durationSec !== null && stated !== brief.durationSec
       ? [`- The brief's text says about ${stated}s but its duration field says ${brief.durationSec}s. If the text is clearly what the user wants, call update_brief with durationSec ${stated} before you build; if it is unclear, ask with AskUserQuestion.`]
       : []),

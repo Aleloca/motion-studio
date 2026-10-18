@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import {
   COMPOSITION_LIMITS, EDITOR_SAVE_STAGED_MAX, compositionProblem, compositionProblemText, describeEdits, draftSizeProblem, editOpSchema, effectiveLinks, formatDisplayName, INSTANCE_ID_RE, isCompositionPath, MAX_INSTANCES, messages,
-  nextInstanceId, normalizeComposition, presetOf, renderJobKey, validateComposition,
+  nextInstanceId, normalizeComposition, presetOf, renderJobKey, sameDelivery, validateComposition,
   type Brief, type CompositionProblem, type CreativeFile, type FormatPreset, type Locale, type StagedAsset, type VersionEntry,
 } from '@motion-studio/shared';
 import { hashConfinedFile } from '../brand/agent-guard.ts';
@@ -315,6 +315,7 @@ export class DirectEditService {
     const preset = findPreset(presets, format);
     if (!preset) throw new CodedError(409, m.errors.compositionUnusable({ format, n: latest.n }), 'composition-unusable');
     const carryFailed = (f: string) => new CodedError(409, e.carryFailed({ format: label(f), n: latest.n }), 'editor-carry-failed');
+    const unchanged = () => new CodedError(409, e.unchanged({ format: label(format), n: latest.n }), 'editor-unchanged');
     // The base folder, hashed now (still the recorded one) and valid; and every other primary the latest version has.
     const baseComp = await carriableComposition(creativeDir, latest, format);
     const baseDir = join(creativeDir, 'outputs', `v${latest.n}`, ...latestEntry.dir.split('/'));
@@ -395,6 +396,11 @@ export class DirectEditService {
         await writeThroughTemp(compDir, 'composition.json', async (temp) => { await writeFile(temp, text, { flag: 'wx' }); return true; });
         const loaded = await loadComposition(compDir, preset);
         if (!loaded.ok) throw invalid(problemTexts(loaded.problems));
+        // Decision 1062/1066: the same composition as the latest version's, with the links it was saved with: nothing to
+        // save. Refused here, before anything is assembled (no chat line, no follower unlinked); its folder goes below.
+        const sameLinks = formats.every((f) => latest.compositions?.find((c) => c.format === f)?.followsFormat === (Object.hasOwn(links, f) ? links[f] : undefined))
+          && (latest.compositions ?? []).every((c) => formats.includes(c.format));
+        if (loaded.hash === latestEntry.hash && sameLinks) throw unchanged();
         // The folder is the base's files (html layers byte for byte), the staged files used, and the new composition.json.
         const stagedUsed = new Set(used);
         const files = new Map(loaded.folder.files.map((f) => [f.path, f] as const));
@@ -408,6 +414,8 @@ export class DirectEditService {
         }
 
         const saved = await this.deps.turns.finishCompositions(ref, store, { creative, targets: [format], carried, carriedComps, links }, presets, latest, n, label, locale, { direct: true, base: { durationSec: baseComp.duration, ...(latestEntry.userDuration ? { userDuration: latestEntry.userDuration } : {}) } });
+        // Decision 1062: the backstop for a save that still assembles the latest version exactly; its folder goes below.
+        if (sameDelivery(latest, saved)) throw unchanged();
         const { problems } = saved;
         const status = problems.length === 0 ? 'complete' : 'incomplete';
         // The agent's workspace gets an exact copy of this version's compositions (decisions log 263), committed with it so a

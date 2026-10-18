@@ -1,5 +1,5 @@
 import { presetFor } from '../instances.ts';
-import { sisterSlug, VARIANT_LETTERS, type ApprovalRequest, type ConversationEntry, type CreativeSummary, type FormatPreset, type JobSummary, type Pin } from '@motion-studio/shared';
+import { sisterSlug, turnEndOf, VARIANT_LETTERS, type ApprovalRequest, type ConversationEntry, type CreativeSummary, type FormatPreset, type JobSummary, type Pin } from '@motion-studio/shared';
 import type { EventsState } from '../eventsReducer.ts';
 import { lastStep } from '../jobEvents.ts';
 import { channelOf } from '../ui/index.ts';
@@ -89,7 +89,8 @@ export function frames(formats: string[], presets: FormatPreset[], o: { height: 
 export function retryTurn(entries: ConversationEntry[]): { text?: string; pins?: Pin[] } {
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i]!;
-    if (e.type === 'version') return {};
+    // Decision 1060: a turn that ended without a version (nothing changed) is over too.
+    if (turnEndOf(e)) return {};
     if (e.type === 'user') return { text: e.text, ...(e.pins.length ? { pins: e.pins } : {}) };
   }
   return {};

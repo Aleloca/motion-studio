@@ -1,10 +1,10 @@
-import { activeMembers, briefSchema, creativeJobKey, issuesText, isSessionId, LIVE_LIMITS, MAX_RUNNING_VARIANTS, type JobWaitReason, type ConversationEntry, type LiveMessageOutcome, type QueuedRequest, type RedirectOutcome, type VariantGroup, type VariantMember } from '@motion-studio/shared';
+import { activeMembers, briefSchema, compositionProblemText, creativeJobKey, issuesText, isSessionId, LIVE_LIMITS, MAX_RUNNING_VARIANTS, type JobWaitReason, type ConversationEntry, type LiveMessageOutcome, type QueuedRequest, type RedirectOutcome, type VariantGroup, type VariantMember } from '@motion-studio/shared';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { mergeStorePack, verifyScreens } from '../store-pack/brief.ts';
 import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
-import { canFollow, effectiveServices, checkLink, effectiveLinks, legacyTurnKind, linksAfterBriefSave, formatHistory, formatDisplayName, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type AgentEvent, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type StorePack, storePackSchema, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
+import { canFollow, effectiveServices, checkLink, effectiveLinks, legacyTurnKind, linksAfterBriefSave, formatHistory, sameDelivery, formatDisplayName, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type AgentEvent, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type StorePack, storePackSchema, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import { detachLinksUnder } from '../agent/protected-links.ts';
 import { noteCoreChange } from '../core-changes.ts';
@@ -1323,7 +1323,7 @@ export class CreativeTurnService {
       finalizing = true;
       // Phase 13: from now on a message is the next request; those no attempt took are queued now (Review Focus 1).
       await live.serial(async () => { live.phase = 'finalizing'; await this.drainLive(ref, store, live); });
-      let saved: { outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: string | null; compositions?: VersionComposition[]; localizations?: VersionEntry['localizations']; durationOff?: { duration: number; target: number } };
+      let saved: { outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: string | null; compositions?: VersionComposition[]; localizations?: VersionEntry['localizations']; durationOff?: { duration: number; target: number }; durationProblems?: string[] };
       // Decision 917: the duration the agent set for this turn, if any, is the one the version is checked against.
       if (turnContract === 'compositions') saved = await this.finishCompositions(ref, store, { ...plan, creative: { ...plan.creative, brief: { ...plan.creative.brief, durationSec: checkDuration() } } }, presets, base, n, label, locale,
         { accepted: turnContract === 'compositions' && checkDuration() !== creative.brief.durationSec ? acceptedDurationsOf(base, targets, presets, checkDuration()) : accepted });
@@ -1343,6 +1343,15 @@ export class CreativeTurnService {
           }
         }
         saved = { outputs, problems, tools: assembled.tools, renderCommand: assembled.renderCommand };
+      }
+      // Decision 1060 (user call 972): a turn that changed no output makes no version; what it changed besides (the brief,
+      // a pending brief) still applies when it settles, and the latest version is checked again then (decision 964).
+      // Decision 1066: only when the turn delivered every format of its brief (a target with no composition, or a follower
+      // that could not follow, has no entry, so it would not count as a difference) and found no problem that is new
+      // besides a duration off the brief (which the re-check settles against the brief the turn ends with).
+      if (latest && this.keepsLatest(latest, saved, plan.creative.brief.formats)) {
+        await this.keptLatest(ref, store, { creative, latest, n, versions, live, sessionId: noAgent ? undefined : resumeSessionId, noAgent, request, aborted: signal.aborted });
+        return;
       }
       const { problems } = saved;
       const status = problems.length === 0 ? 'complete' : 'incomplete';
@@ -1407,6 +1416,45 @@ export class CreativeTurnService {
       live.redirect?.settle('dropped');
       this.turnDurations.delete(jobId);
     }
+  }
+
+  /**
+   * Decision 1060: the end of a turn whose outputs are all the latest version's (`sameDelivery`). No version is saved: the
+   * unsaved folder `outputs/v<n>` goes (the next turn takes the number again) and the rest of the turn's files are committed.
+   * The latest version stands for the turn: it takes the turn's session (the next turn goes on from that conversation; its
+   * content is the same), and what the agent left for after the turn acts on it (`savedN`). The chat says it, with whether
+   * the brief changes when the turn settles (its pending brief, applied by `briefAfterJob`, which checks the latest version
+   * again on a new duration). The creative's status follows the latest version.
+   */
+  private keepsLatest(latest: VersionEntry, saved: Pick<VersionEntry, 'outputs' | 'compositions' | 'localizations' | 'problems'> & { durationProblems?: string[] }, formats: readonly string[]): boolean {
+    const delivered = new Set([...(saved.compositions ?? []).map((c) => c.format), ...saved.outputs.map((o) => o.format)]);
+    if (!formats.every((f) => delivered.has(f))) return false;
+    const known = new Set([...latest.problems, ...(saved.durationProblems ?? [])]);
+    return saved.problems.every((p) => known.has(p)) && sameDelivery(latest, saved);
+  }
+
+  private async keptLatest(ref: CreativeRef, store: CreativeStore, o: { creative: CreativeFile; latest: VersionEntry; n: number; versions: VersionEntry[]; live: LiveTurn; sessionId: string | undefined; noAgent: boolean; request: string | undefined; aborted: boolean }): Promise<void> {
+    const slug = ref.creativeSlug;
+    const { creative, latest } = o;
+    const j = t().jobs;
+    await this.clearStaleOutputs(store, slug, o.n, o.versions);
+    await this.deps.git.commitAll(ref.projectDir, j.noOutputChangedCommit({ title: creative.title, n: latest.n }), { headWhenClean: true });
+    if (o.sessionId !== undefined && isSessionId(o.sessionId) && o.sessionId !== latest.sessionId) {
+      await store.updateVersion(slug, latest.n, (v) => ({ ...v, sessionId: o.sessionId! }));
+    }
+    o.live.savedVersion = true;
+    o.live.savedN = latest.n;
+    const brief = Boolean(await this.side.pendingBrief(ref.projectDir, slug));
+    // As the saved path: a turn with no agent says what it was asked, and a late Stop is told.
+    if (o.noAgent && o.request) await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: `${o.request} · ${j.noAgentNeeded}` });
+    await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: j.noOutputChanged({ n: latest.n, brief }), keptVersion: latest.n });
+    if (o.aborted) await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: j.lateCancelKept({ n: latest.n }) });
+    // As after a saved version: a restart's intent is kept only by a turn with no agent; the stopped turn is over.
+    const resumeFrom = o.noAgent && creative.resumeFrom ? { version: latest.n, sessionId: creative.resumeFrom.sessionId } : null;
+    await store.update(slug, { status: latest.status === 'complete' ? 'ready' : 'incomplete', error: null, resumeFrom });
+    await this.side.update(ref.projectDir, slug, () => ({ stoppedSession: undefined }));
+    await this.commitState(ref, j.versionStateCommit({ title: creative.title, n: latest.n }));
+    this.changed(ref);
   }
 
   /**
@@ -1669,7 +1717,7 @@ export class CreativeTurnService {
   async finishCompositions(ref: CreativeRef, store: CreativeStore, plan: Pick<TurnPlan, 'creative' | 'targets' | 'carried' | 'carriedComps' | 'links'>, presets: FormatPreset[], base: VersionEntry | undefined, n: number,
     label: (id: string) => string, locale: Locale,
     /** `direct`: a direct edit (decisions log 262): the brief's duration is not checked. `accepted`: see `acceptedDurationsOf`. */
-    duration: { direct: true; base?: { durationSec: number | null; userDuration?: { durationSec: number } } } | { accepted: ReadonlyMap<string, number> } = { accepted: new Map() }): Promise<{ outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: null; compositions: VersionComposition[]; localizations?: VersionEntry['localizations']; durationOff?: { duration: number; target: number } }> {
+    duration: { direct: true; base?: { durationSec: number | null; userDuration?: { durationSec: number } } } | { accepted: ReadonlyMap<string, number> } = { accepted: new Map() }): Promise<{ outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: null; compositions: VersionComposition[]; localizations?: VersionEntry['localizations']; durationOff?: { duration: number; target: number }; durationProblems: string[] }> {
     const slug = ref.creativeSlug;
     const j = t().jobs;
     const a = await assembleCompositions({
@@ -1689,7 +1737,11 @@ export class CreativeTurnService {
     const exclude = base ? freedSince(plan.creative.freedInstances, base.n) : new Set<string>();
     const localizations = await this.carryLocalizations(ref, store, base, n, a.compositions, presets, locale, exclude);
     const off = a.check ? durationOffOf(a.check) : undefined;
-    return { outputs: a.outputs, problems: a.problems, tools: [], renderCommand: null, compositions: a.compositions, ...(localizations ? { localizations } : {}), ...(off ? { durationOff: off } : {}) };
+    // Decision 1066: the problems that are only a duration off the brief, as the version records them (`checkTargets`).
+    const v = messages(locale).validation;
+    const durationProblems = (a.check?.checks ?? []).flatMap((c) => c.problems.filter((p) => p.key === 'composition.durationOffBrief')
+      .map((p) => v.compositionProblem({ dir: c.dir, text: compositionProblemText(p, locale) })));
+    return { outputs: a.outputs, problems: a.problems, tools: [], renderCommand: null, compositions: a.compositions, ...(localizations ? { localizations } : {}), ...(off ? { durationOff: off } : {}), durationProblems };
   }
 
   /**
