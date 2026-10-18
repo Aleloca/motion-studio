@@ -109,7 +109,7 @@ export interface ConversationProps {
   self?: VariantId;
   onOpenVariant?(variant: VariantId): void;
   /** The other variants' latest turns with their live events: their running turns go on in this chat too. */
-  memberJobs?: ReadonlyArray<{ job: JobSummary; live: AgentEvent[] }>;
+  memberJobs?: ReadonlyArray<{ job: JobSummary; live: AgentEvent[]; variant?: VariantId }>;
 }
 
 /** A message sent while the agent works, until the conversation file shows it (Phase 13). */
@@ -154,8 +154,6 @@ const active = (j: JobSummary | undefined) => !!j && (j.state === 'queued' || j.
 // decision shows as the mark of its command).
 const TECHNICAL = new Set<AgentEvent['kind']>(['session', 'tool_use', 'tool_result', 'rate_limit', 'stderr', 'parse_error', 'auto_approved']);
 const same = (a: string, b: string) => a.trim() === b.trim();
-/** Decision 980: the same request sent to several variants at once ("Tutte") is written once per variant, within moments. */
-const SAME_REQUEST_MS = 60_000;
 const samePins = (a: Pin[], b: Pin[]) => a.length === b.length
   && a.every((p, i) => { const q = b[i]!; return p.format === q.format && p.x === q.x && p.y === q.y && p.timeSec === q.timeSec && (p.note ?? '') === (q.note ?? ''); });
 
@@ -291,7 +289,11 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
     };
     if (job) withLive(job.id, live);
     const others = (memberJobs ?? []).filter((m) => m.job.id !== job?.id);
-    for (const m of others) withLive(m.job.id, m.live);
+    for (const m of others) {
+      withLive(m.job.id, m.live);
+      // A turn with only live events so far has no stamped entry yet: its chip comes from its member (review minor 8).
+      if (m.variant && !jobVariant.has(m.job.id)) jobVariant.set(m.job.id, m.variant);
+    }
     const runningIds = new Set([...(job && working ? [job.id] : []), ...others.filter((m) => active(m.job)).map((m) => m.job.id)]);
     // Phase 13: a message is "sent" when its `user_message_delivered` marker is in the conversation (persisted or live): it
     // was written to the session. "Delivered" only on the CLI's evidence, the `user_message_read` marker (decision 804: the
@@ -376,7 +378,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
     // Per variant in a group's one chat (decision 980): another variant's failure never makes this one's message a retry.
     const lastUsers = new Map<string, { text: string; pins: Pin[]; failed: boolean }>();
     // The request a fan-out wrote once per variant ("Tutte"): one bubble with every variant's chip.
-    let lastBubble: (Extract<Item, { kind: 'user' }> & { variants: VariantId[] }) | null = null;
+    let lastBubble: (Extract<Item, { kind: 'user' }> & { variants: VariantId[]; fanout?: string }) | null = null;
     entries.forEach((e, i) => {
       const lane = e.variant ?? '';
       const lastUser = lastUsers.get(lane) ?? null;
@@ -390,15 +392,15 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
         // Already shown inside its turn.
         lastUsers.set(lane, { text: e.text, pins: e.pins, failed: false });
       } else if (e.type === 'user') {
-        const prev: (Extract<Item, { kind: 'user' }> & { variants: VariantId[] }) | null = lastBubble;
-        if (e.variant && prev && !prev.variants.includes(e.variant) && same(prev.text, e.text) && samePins(prev.pins, e.pins)
-          && Math.abs(Date.parse(e.at) - Date.parse(prev.at)) <= SAME_REQUEST_MS) {
+        const prev: (Extract<Item, { kind: 'user' }> & { variants: VariantId[]; fanout?: string }) | null = lastBubble;
+        // Decision 1166: the shares of one request sent to several variants carry its one id.
+        if (e.variant && e.fanout && prev && prev.fanout === e.fanout && !prev.variants.includes(e.variant)) {
           prev.variants.push(e.variant);
         } else {
           const retried = lastUser !== null && lastUser.failed && same(lastUser.text, e.text) && samePins(lastUser.pins, e.pins);
           const item = retried ? { key, kind: 'retried' as const, at: e.at } : userItem(e, key);
           out.push(item);
-          lastBubble = item.kind === 'user' && e.variant ? { ...item, variants: [e.variant] } : null;
+          lastBubble = item.kind === 'user' && e.variant ? { ...item, variants: [e.variant], ...(e.fanout ? { fanout: e.fanout } : {}) } : null;
           if (lastBubble) out[out.length - 1] = lastBubble;
         }
         lastUsers.set(lane, { text: e.text, pins: e.pins, failed: false });

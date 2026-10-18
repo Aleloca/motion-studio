@@ -778,9 +778,11 @@ describe('Conversation · one chat for a variant group (decisions 980 and 982, p
     expect(chips(screen.getByText('Nota di A').closest('p')!)).toEqual(['A']);
   });
 
-  it('the same request sent to several variants at once ("Tutte") is one bubble with their chips', () => {
-    render(view({ entries: [user(1, 'Più contrasto', 'a', 1), user(1, 'Più contrasto', 'b', 2), user(1, 'Più contrasto', 'c', 3), user(9, 'Più contrasto', 'b')] }));
+  it('the same request sent to several variants at once ("Tutte") is one bubble with their chips, by its request id (decision 1166)', () => {
+    const f = (e: ConversationEntry): ConversationEntry => ({ ...e, fanout: 'r1' } as ConversationEntry);
+    render(view({ entries: [f(user(1, 'Più contrasto', 'a', 1)), f(user(1, 'Più contrasto', 'b', 2)), f(user(1, 'Più contrasto', 'c', 3)), user(1, 'Più contrasto', 'b', 4)] }));
     const bubbles = screen.getAllByRole('article', { name: 'You' });
+    // The same words sent again to B alone, seconds later, are their own message.
     expect(bubbles).toHaveLength(2);
     expect(chips(bubbles[0]!)).toEqual(['A', 'B', 'C']);
     expect(chips(bubbles[1]!)).toEqual(['B']);
@@ -807,6 +809,17 @@ describe('Conversation · one chat for a variant group (decisions 980 and 982, p
     ] }));
     expect(screen.getAllByRole('article', { name: 'You' })).toHaveLength(2);
     expect(screen.queryByText(/^Retried · /)).toBeNull();
+  });
+
+  it('review minor 8: another variant\'s turn with only live events so far carries its chip too', () => {
+    const jc: JobSummary = { ...running, id: 'jc', key: 'creative:k~c' };
+    render(view({ entries: [], memberJobs: [{ job: jc, live: [text('C parte')], variant: 'c' }] } as Props));
+    expect(chips(screen.getByText('C parte').closest('article')!)).toEqual(['C']);
+  });
+
+  it('review minor 6: with no way to open it (a host whose group is gone, the editor), another variant\'s version card has no button at all', () => {
+    render(view({ self: 'a', entries: [{ type: 'version', at: at(2), n: 4, status: 'complete', variant: 'b' }] } as Props));
+    expect(screen.queryByRole('button', { name: /v4/ })).toBeNull();
   });
 
   it('another variant\'s running turn continues live in the same chat', () => {

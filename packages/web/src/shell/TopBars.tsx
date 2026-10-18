@@ -1,5 +1,6 @@
 import { BrandLogo } from '../components/BrandLogo.tsx';
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { hostOf } from '@motion-studio/shared';
 import { useT } from '../i18n.tsx';
 import { D, enter, pop } from '../motion/index.ts';
 import { href, routeKey, type ProjectTab, type Route } from '../routes.ts';
@@ -170,10 +171,10 @@ const endSlotRef = (el: HTMLElement | null) => setBarSlot('end', el);
 
 /**
  * A creative's folder name as a title, when nothing better is known (user report 23): without the date and a variant's
- * `~b`, dashes as spaces, the first letter upper case ("2026-10-17-create-a-60-second~b" → "Create a 60 second").
+ * `~b` or `~aa`, dashes as spaces, the first letter upper case ("2026-10-17-create-a-60-second~b" → "Create a 60 second").
  */
 export function slugTitle(slug: string): string {
-  const words = slug.replace(/~[a-z]$/, '').replace(/^\d{4}-\d{2}-\d{2}-?/, '').replace(/-+/g, ' ').trim();
+  const words = hostOf(slug).replace(/^\d{4}-\d{2}-\d{2}-?/, '').replace(/-+/g, ' ').trim();
   return words ? words[0]!.toLocaleUpperCase() + words.slice(1) : slug;
 }
 
@@ -247,10 +248,10 @@ export function TopBar() {
   }, [key]);
 
   const projectName = (slug: string) => catalog.projects?.find((p) => p.slug === slug)?.name ?? slug;
-  // A variant sister (`<slug>~b`) is not in the catalog: its group shares the host's title (spec §2).
+  // A variant sister (`<slug>~b`, `~aa`…) is not in the catalog: its group shares the host's title (spec §2).
   const catalogTitle = (slug: string, c: string) => {
     const list = catalog.creatives[slug];
-    return list?.find((x) => x.slug === c)?.title || list?.find((x) => x.slug === c.replace(/~[a-z]$/, ''))?.title || null;
+    return list?.find((x) => x.slug === c)?.title || list?.find((x) => x.slug === hostOf(c))?.title || null;
   };
   let content: ReactNode;
   /** The format page claimed the bar: only that bar folds its actions by its width (format.css, decision 713). */

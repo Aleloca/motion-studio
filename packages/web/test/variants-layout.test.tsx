@@ -26,7 +26,7 @@ const LONG = 'Direzione molto lunga: tipografia grande, molto spazio bianco, col
 const FOTO = 'Foto calda e materica: chicchi e tostatura in primo piano, luce dorata da finestra, atmosfera artigianale';
 let group: VariantGroup = groupOf(['a', 'b', 'c', 'd', 'e'], {}, { b: { direction: LONG }, c: { direction: FOTO }, d: { status: 'discarded' } });
 const GROUP_CHAT: ConversationEntry[] = [
-  ...(['a', 'b', 'c', 'e'] as const).map((variant, i) => ({ type: 'user' as const, at: at.replace(':00.000Z', `:0${i}.000Z`), text: 'Titoli più grandi e un logo più visibile in ogni formato', pins: [], attachments: [], variant })),
+  ...(['a', 'b', 'c', 'e'] as const).map((variant, i) => ({ type: 'user' as const, at: at.replace(':00.000Z', `:0${i}.000Z`), text: 'Titoli più grandi e un logo più visibile in ogni formato', pins: [], attachments: [], variant, fanout: 'r1' })),
   { type: 'agent', at, jobId: 'jb', event: { kind: 'text', text: 'Ho ingrandito i titoli della variante B e spostato il logo in alto a destra.' }, variant: 'b' },
   { type: 'version', at, n: 2, status: 'complete', variant: 'b' },
   { type: 'system', at, level: 'warning', text: 'Il formato Banner non segue più il Post: la sua composizione è cambiata.', variant: 'c' },

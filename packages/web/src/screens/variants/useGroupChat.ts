@@ -1,7 +1,7 @@
 // Decision 980 (phase 2 of the single agent): a variant group has one chat, the same on the variants page, inside a variant and
 // in the editor. The core answers the group's conversation for any member; these helpers give each page what the chat needs
 // around it: a refresh when any member changes, the other variants' turns with their live events, and the group's approvals.
-import { hostOf, type AgentEvent, type ApprovalRequest, type CreativeDetail, type JobSummary, type VariantId } from '@motion-studio/shared';
+import { hostOf, letterOfSlug, type AgentEvent, type ApprovalRequest, type CreativeDetail, type JobSummary, type VariantId } from '@motion-studio/shared';
 import { useMemo } from 'react';
 import type { EventsState } from '../../eventsReducer.ts';
 
@@ -16,10 +16,13 @@ export function chatTick(ticks: Record<string, number>, project: string, creativ
 const isActive = (j: JobSummary) => j.state === 'queued' || j.state === 'running';
 
 export interface GroupChat {
-  /** This page's variant (absent outside a group). */
-  self?: VariantId;
-  /** The other members' latest turns with their live events. */
-  memberJobs: Array<{ job: JobSummary; live: AgentEvent[] }>;
+  /**
+   * This page's variant: its letter in the group, else the one its slug names (a host whose group is gone keeps the merged
+   * chat, with the other variants' entries stamped: review minor 6).
+   */
+  self: VariantId;
+  /** The other members' latest turns with their live events and their variant. */
+  memberJobs: Array<{ job: JobSummary; live: AgentEvent[]; variant: VariantId }>;
   /** Whether an approval belongs in this chat: this creative's, or (in a group) any member's. */
   shows(a: ApprovalRequest): boolean;
 }
@@ -36,12 +39,12 @@ export function useGroupChat(live: EventsState, project: string, creative: strin
     return group.group.members.filter((m) => m.slug !== creative).flatMap((m) => {
       const mine = jobs.filter((j) => j.key === `${prefix}${m.slug}`);
       const job = mine.find(isActive) ?? [...mine].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-      return job ? [{ job, live: live.events[job.id] ?? [] }] : [];
+      return job ? [{ job, live: live.events[job.id] ?? [], variant: m.letter }] : [];
     });
   }, [group, detail, creative, live.jobs, live.events]);
-  const self = group?.letter;
+  const self = group?.letter ?? letterOfSlug(creative);
   return useMemo(() => ({
-    ...(self ? { self } : {}),
+    self,
     memberJobs,
     shows: (a: ApprovalRequest) => a.projectSlug === project && a.creativeSlug !== null && memberSlugs.includes(a.creativeSlug),
   }), [self, memberJobs, project, memberSlugs]);
