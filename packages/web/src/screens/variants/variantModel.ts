@@ -1,12 +1,12 @@
 // Pure helpers of the variant UI (Phase 15): defaults of the New creative field, the "Selezione finale" rows, the state of a
-// member's row, which job belongs to which variant, and the width a grouped canvas needs. No React here.
+// member's card, which job belongs to which variant, and the sizes of the variant cards. No React here.
 import {
   canDiscard, letterOfSlug, presetOf,
   type CreativeDetail, type CreativeSummary, type JobSummary, type VariantGroup, type VariantLetter, type VariantMember,
 } from '@motion-studio/shared';
 import type { EventsState } from '../../eventsReducer.ts';
 import { creativeJob } from '../creativeState.ts';
-import { boardFrame, isTall, LABEL_MIN_GROUPED, type BoardModel } from '../canvasModel.ts';
+import { boardFrame, type BoardModel } from '../canvasModel.ts';
 
 /** Longest direction (the core's `MAX_DIRECTION_CHARS`). */
 export const DIRECTION_MAX = 140;
@@ -116,21 +116,91 @@ export function jobVariantLetter(creativeSlug: string | null, summaries: readonl
   return summaries?.find((c) => c.slug === creativeSlug)?.variants ? 'a' : null;
 }
 
+// ---- Decision 973: the variant cards ---------------------------------------------------------------------------------------
+
+/** Longest short name of a variant, its ellipsis included. */
+const SHORT_NAME_MAX = 32;
+
 /**
- * The zoom a grouped canvas opens at: the widest row must fit the viewport's width (rows grow downward and scroll), never
- * above 100% nor below `min`, rounded down to 5%. `rows`: the boards that sit side by side in each row.
+ * The short name of a variant (decision 1041): the first clause of its direction (up to `:`, `,`, `;`, a spaced dash or a
+ * sentence end), cut at a word with "…" when still long. The group stores no name of its own; the full direction stays the
+ * card's second line and tooltip. Null without a direction.
  */
-export function fitGrouped(rows: BoardModel[][], rowKind: 'world' | 'line', viewWidth: number, min: number): number | null {
-  if (viewWidth <= 0 || rows.length === 0) return null;
-  const wide = (b: BoardModel, z: number) => Math.max(boardFrame(b).width * z, LABEL_MIN_GROUPED);
-  // 'world': a variant's row (tall boards in a line, the others stacked in one column); 'line': one format's boards side by side.
-  const widthAt = (boards: BoardModel[], z: number) => {
-    const columns = rowKind === 'world'
-      ? [...boards.filter(isTall).map((b) => wide(b, z)), ...(boards.some((b) => !isTall(b)) ? [Math.max(...boards.filter((b) => !isTall(b)).map((b) => wide(b, z)))] : [])]
-      : boards.map((b) => wide(b, z));
-    return columns.reduce((w, c) => w + c, 0) + 40 * z * Math.max(0, columns.length - 1) + 120 * z;
-  };
-  let z = 1;
-  while (z > min + 1e-9 && rows.some((r) => widthAt(r, z) > viewWidth + 1e-6)) z = Math.max(min, Math.round((z - 0.05) * 20) / 20);
-  return z;
+export function shortName(direction: string | null): string | null {
+  const text = direction?.trim();
+  if (!text) return null;
+  const first = text.split(/\s+[—–-]\s+|[:;,]\s*|[.!?](?:\s+|$)/)[0]!.trim() || text;
+  if (first.length <= SHORT_NAME_MAX) return first;
+  const words = first.split(/\s+/);
+  let out = '';
+  for (const w of words) {
+    const next = out ? `${out} ${w}` : w;
+    if (next.length > SHORT_NAME_MAX - 1) break;
+    out = next;
+  }
+  return `${out || first.slice(0, SHORT_NAME_MAX - 1)}…`;
+}
+
+/** A card's width at 100% zoom, its narrowest (the header: letter, name, state, menu) and the grid's gap and side padding. */
+export const CARD_W = 360;
+export const CARD_MIN = 260;
+export const CARD_GAP = 24;
+export const CARDS_PAD = 16;
+/** The card's inner padding (its formats sit inside it). */
+export const CARD_PAD = 12;
+
+/**
+ * A card's width on screen at zoom `z`: never narrower than its header needs, never wider than the viewport. When the `count`
+ * cards do not all fit on one line, the cards of a line share its whole width (no empty strip at the right of the grid).
+ */
+export function cardWidth(z: number, viewWidth: number, count: number): number {
+  const base = Math.max(CARD_W * z, CARD_MIN);
+  if (viewWidth <= 0) return base;
+  const avail = viewWidth - 2 * CARDS_PAD;
+  if (base >= avail) return avail;
+  const cols = Math.floor((avail + CARD_GAP) / (base + CARD_GAP));
+  return count <= cols ? base : (avail - (cols - 1) * CARD_GAP) / cols;
+}
+
+/** A format's column in a card: the narrowest one (its name and "★ Scegli" under the picture) and the gap between them. */
+export const CELL_MIN = 104;
+export const CELL_GAP = 12;
+
+/** The columns of a card's formats: as many as fit (at most one per format), sharing the card's inner width. */
+export function cardColumns(inner: number, count: number): { cols: number; width: number } {
+  const cols = Math.max(1, Math.min(count, Math.floor((inner + CELL_GAP) / (CELL_MIN + CELL_GAP))));
+  return { cols, width: (inner - (cols - 1) * CELL_GAP) / cols };
+}
+
+/** The tallest thumbnail: the hero of a card, and one among several (a wide card would make a 9:16 a poster). */
+const HERO_MAX_H = 440;
+const THUMB_MAX_H = 320;
+
+/**
+ * The zoom of a format's thumbnail in a column `width` px wide: as wide as the column, never cropped. Alone it is the card's hero
+ * (a tall format at most 1.25 × the width high); among several, at most 16:9 of the width high (a 9:16 fills its column). Never
+ * taller than HERO_MAX_H / THUMB_MAX_H.
+ */
+export function thumbZoom(b: BoardModel, width: number, hero: boolean): number {
+  const f = boardFrame(b);
+  const high = hero ? Math.min(width * 1.25, HERO_MAX_H) : Math.min((width * 16) / 9, THUMB_MAX_H);
+  return Math.min(width / f.width, high / f.height);
+}
+
+/** The zoom that puts `count` cards side by side in the viewport: rounded down to 5%, within 50%–100%. Null without either. */
+export function fitCards(count: number, viewWidth: number, min = 0.5): number | null {
+  if (count <= 0 || viewWidth <= 0) return null;
+  const z = (viewWidth - 2 * CARDS_PAD - (count - 1) * CARD_GAP) / (count * CARD_W);
+  return Math.max(min, Math.min(1, Math.floor(z * 20 + 1e-9) / 20));
+}
+
+/**
+ * How many variants the "choose the final one" banner counts: every active variant is ready (none missing), there are at least
+ * two to compare, and nothing is chosen yet (no ★ in the group). Null when the banner does not show.
+ */
+export function readyToChoose(group: VariantGroup, missing: readonly VariantLetter[], stateOf: (letter: VariantLetter) => RowState['kind']): number | null {
+  const active = group.members.filter((m) => m.status === 'active');
+  if (active.length < 2 || Object.keys(group.picks).length > 0) return null;
+  if (active.some((m) => missing.includes(m.letter) || stateOf(m.letter) !== 'ready')) return null;
+  return active.length;
 }

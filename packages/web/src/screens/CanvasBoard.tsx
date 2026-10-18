@@ -1,6 +1,6 @@
 // A board of the creative canvas (prototype CanvasView boards + PinComposer): the format in proportion with the
-// selected version's output, the generation sheen (T10), the reveal of a new picture (T11), safe zones with their
-// labels, the comment markers and the comment bubble, "Open editor" on hover/focus.
+// selected version's output, the generation sheen (T10), the reveal of a new picture (T11), the comment markers and the
+// comment bubble, "Open editor" and "Comment" on hover/focus. Safe zones live in the format view only (decision 973).
 //
 // Zoom: only the frame (media, safe zones) is zoomed. The label above it, "Open editor", the comment markers and the
 // bubble are screen-sized at any zoom (as in Figma): they sit in the frame's box, sized in screen pixels, at the
@@ -15,10 +15,12 @@ import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { instanceName } from '../instances.ts';
 import { anim, D, E, isSubmitChord } from '../motion/index.ts';
 import { Button, ChannelMark, Icon, Pill, Popover, Textarea, channelOf, cx } from '../ui/index.ts';
-import { boardFrame, LABEL_MIN, LABEL_MIN_GROUPED, outputMedia, pointIn, ratioText, toScreen, type BoardModel } from './canvasModel.ts';
+import { boardFrame, LABEL_MIN, LABEL_MIN_GROUPED, outputMedia, outputUrl, pointIn, ratioText, toScreen, type BoardModel } from './canvasModel.ts';
+import { isVideoFile } from '../media.ts';
 import type { BoardRender } from './renderModel.ts';
 
-export type Tool = 'select' | 'comment' | 'hand';
+/** Decision 973: no tool bar any more; "comment" is entered from a board's own Comment button (or the Comments tab). */
+export type Tool = 'select' | 'comment';
 
 /** A comment being written: a new one (`index` null) or a pending one reopened for editing. */
 export interface Draft { format: string; x: number; y: number; text: string; index: number | null }
@@ -43,7 +45,6 @@ export interface BoardProps {
   badge?: ReactNode;
   /** A note on line 2, e.g. "follows Reel ★ v5". */
   note?: ReactNode;
-  safe: boolean;
   /** Pending comments of the creative with their global numbers (chips use the same numbers). */
   pins: Array<{ pin: Pin; number: number }>;
   draft: Draft | null;
@@ -68,9 +69,19 @@ export interface BoardProps {
    * `hash` its composition hash), its render state and the Render action of "Render failed · Retry". Null: legacy media.
    */
   composition?: { n: number; format: string; hash: string; render: BoardRender; onRender(): void } | null;
+  /**
+   * Decision 973: the board is a thumbnail in a variant's card: one click opens it, its header wraps instead of clipping, only a
+   * render state worth acting on shows (queued, rendering, failed, a problem), and hover plays the rendered file (muted) when
+   * there is one, else the live preview (muted).
+   */
+  card?: boolean;
+  /** The board's own "Comment" (decision 973): starts placing a comment on this board. Absent: no button. */
+  onComment?(): void;
 }
 
 const NARROW_BOARD = 170;
+/** A card's format header: as wide as its column (variantModel.CELL_MIN), the name above "v2 ★ Scegli". */
+const CARD_LABEL_MIN = 96;
 /** Hover intent: the live preview starts after the pointer rests this long on the frame. */
 export const HOVER_INTENT_MS = 450;
 
@@ -114,9 +125,12 @@ export function CanvasBoard(p: BoardProps) {
   useEffect(() => { if (p.tool !== 'select') { setPinned(false); setHovered(false); } }, [p.tool]);
   // A still format (identity logo, favicon, app icon, any image preset) has nothing to play: it keeps its picture and has no play control.
   const still = board.preset?.kind === 'image';
-  const liveOn = comp !== null && !still && p.tool === 'select' && (hovered || pinned);
+  // A card plays its rendered file on hover when it has one (cheap: no preview session), muted and looping.
+  const fileVideo = p.card && !still && board.out && n !== null && isVideoFile(board.out.file) ? outputUrl(p.slug, p.creative, n, board.out.file) : null;
+  const fileOn = fileVideo !== null && p.tool === 'select' && hovered;
+  const liveOn = comp !== null && fileVideo === null && !still && p.tool === 'select' && (hovered || pinned);
   const preview = usePreviewSession({ slug: p.slug, creative: p.creative, n: comp?.n ?? null, format: comp?.format ?? board.id, enabled: liveOn });
-  const hoverIn = () => { if (comp && p.tool === 'select') { window.clearTimeout(intent.current); intent.current = window.setTimeout(() => setHovered(true), HOVER_INTENT_MS); } };
+  const hoverIn = () => { if ((comp || fileVideo) && p.tool === 'select') { window.clearTimeout(intent.current); intent.current = window.setTimeout(() => setHovered(true), HOVER_INTENT_MS); } };
   const hoverOut = () => { window.clearTimeout(intent.current); setHovered(false); };
   const video = board.preset?.kind === 'video';
   const duration = board.out?.durationSec ?? null;
@@ -131,9 +145,14 @@ export function CanvasBoard(p: BoardProps) {
     p.onPlace(pt.x, pt.y);
   };
 
+  // A card's header is as wide as its thumbnail (it wraps); the canvas keeps its label floor.
+  const headWidth = p.card ? Math.max(Math.round(size.width * zoom), CARD_LABEL_MIN)
+    : Math.max(Math.round(size.width * zoom), p.boardKey !== undefined || p.tag !== undefined || p.grouped ? LABEL_MIN_GROUPED : LABEL_MIN);
+  const cardState = comp && (comp.render.kind === 'queued' || comp.render.kind === 'rendering' || comp.render.kind === 'failed' || comp.render.kind === 'problem');
+  const sub = !p.card || p.rendering || p.note || cardState || (board.out && !board.out.verified) || largeFile.length > 0;
   return (
-    <div className={cx('ms-cv-board', p.selected && 'ms-on', drafting && 'ms-drafting')} data-board={p.boardKey ?? board.id}>
-      <div className="ms-cv-board-head" style={{ maxWidth: Math.max(Math.round(size.width * zoom), p.boardKey !== undefined || p.tag !== undefined || p.grouped ? LABEL_MIN_GROUPED : LABEL_MIN) }}>
+    <div className={cx('ms-cv-board', p.card && 'ms-cv-card-board', p.selected && 'ms-on', drafting && 'ms-drafting')} data-board={p.boardKey ?? board.id}>
+      <div className="ms-cv-board-head" style={p.card ? { width: headWidth } : { maxWidth: headWidth }}>
         <div className="ms-cv-board-line">
           {/* The format's name only, whole first; the channel is its mark (the full label is the tooltip and the accessible name). */}
           {board.preset ? <ChannelMark channel={channelOf(board.preset.channel)} /> : null}
@@ -142,25 +161,27 @@ export function CanvasBoard(p: BoardProps) {
           {/* The version badge, or a follower's link chip. */}
           <span className="ms-cv-board-slot">{p.badge}</span>
         </div>
-        <div className="ms-cv-board-line ms-cv-board-sub">
-          {board.preset ? <span className="ms-cv-board-meta">{ratioText(board.preset)}{duration !== null ? ` · ${c.seconds({ n: formatNumber(locale, duration, { maximumFractionDigits: 1 }) })}` : ''}</span> : null}
-          {p.rendering ? <span className="ms-cv-board-state">{c.renderingState}</span>
-            : p.note ? <span className="ms-cv-board-state">{p.note}</span>
-              : comp ? <RenderState render={comp.render} label={label} onRender={comp.onRender} />
-                : board.out && board.out.verified && !largeFile.length ? <span className="ms-cv-board-state">{c.boardReady}</span> : null}
-          {!p.rendering && board.out && !board.out.verified ? <Pill tone="warn">{t.web.formatUi.unverified}</Pill> : null}
-          {largeFile.map((w, i) => <LargeFileChip key={i} warning={w} />)}
-        </div>
+        {sub ? (
+          <div className="ms-cv-board-line ms-cv-board-sub">
+            {board.preset && !p.card ? <span className="ms-cv-board-meta">{ratioText(board.preset)}{duration !== null ? ` · ${c.seconds({ n: formatNumber(locale, duration, { maximumFractionDigits: 1 }) })}` : ''}</span> : null}
+            {p.rendering ? <span className="ms-cv-board-state">{c.renderingState}</span>
+              : p.note ? <span className="ms-cv-board-state">{p.note}</span>
+                : comp && (!p.card || cardState) ? <RenderState render={comp.render} label={label} onRender={comp.onRender} />
+                  : !p.card && board.out && board.out.verified && !largeFile.length ? <span className="ms-cv-board-state">{c.boardReady}</span> : null}
+            {!p.rendering && board.out && !board.out.verified ? <Pill tone="warn">{t.web.formatUi.unverified}</Pill> : null}
+            {largeFile.map((w, i) => <LargeFileChip key={i} warning={w} />)}
+          </div>
+        ) : null}
       </div>
-      <div className={cx('ms-cv-frame-wrap', narrow && 'ms-narrow', liveOn && 'ms-live')} style={{ width: size.width * zoom, height: size.height * zoom }}
+      <div className={cx('ms-cv-frame-wrap', narrow && 'ms-narrow', (liveOn || fileOn) && 'ms-live')} style={{ width: size.width * zoom, height: size.height * zoom }}
         onPointerEnter={hoverIn} onPointerLeave={hoverOut}>
         <div
           ref={frame}
           className={cx('ms-cv-frame', !hasPicture && 'ms-empty-frame')}
           style={{ width: size.width, height: size.height, zoom }}
           data-frame={board.id}
-          onClick={p.onSelect}
-          onDoubleClick={() => { if (hasPicture && frame.current) p.onOpen(frame.current); }}
+          onClick={() => { if (p.card && hasPicture && frame.current) p.onOpen(frame.current); else p.onSelect(); }}
+          onDoubleClick={() => { if (!p.card && hasPicture && frame.current) p.onOpen(frame.current); }}
         >
           {media && n !== null ? (
             media.video
@@ -173,10 +194,10 @@ export function CanvasBoard(p: BoardProps) {
           )}
           {liveOn && preview.state.kind === 'ready' ? (
             <CompositionPlayer session={preview.state.session} title={t.web.render.playerFrame({ label: `${label} v${comp!.n}` })} autoPlay className="ms-cv-live-player"
-              onStall={preview.stalled} onShowing={preview.showing} />
+              onStall={preview.stalled} onShowing={preview.showing} {...(p.card ? { muted: true } : {})} />
           ) : null}
+          {fileOn ? <video key={fileVideo} className="ms-cv-live-file" src={fileVideo!} muted autoPlay loop playsInline aria-hidden="true" /> : null}
           {p.rendering ? <span className="ms-shimmer" aria-hidden="true" /> : null}
-          {p.safe && board.preset ? <SafeZoneBands preset={board.preset} /> : null}
           {p.tool === 'comment' && hasPicture && p.commentable !== false ? (
             <button type="button" className="ms-cv-hit" aria-label={c.commentOn({ label })} onClick={(e) => { e.stopPropagation(); place(e); }} />
           ) : null}
@@ -190,6 +211,12 @@ export function CanvasBoard(p: BoardProps) {
             aria-label={pinned ? t.web.render.stopPreview({ label }) : t.web.render.playPreview({ label })} title={pinned ? t.web.render.stopPreview({ label }) : t.web.render.playPreview({ label })}
             onClick={(e) => { e.stopPropagation(); setPinned((x) => !x); }} onDoubleClick={(e) => e.stopPropagation()}>
             <Icon name={pinned ? 'pause' : 'play'} size={12} fill={!pinned} />
+          </button>
+        ) : null}
+        {p.onComment && p.tool === 'select' && hasPicture ? (
+          <button type="button" className="ms-cv-comment-btn" aria-label={c.commentStart({ label })} title={c.commentStart({ label })}
+            onClick={(e) => { e.stopPropagation(); p.onComment!(); }} onDoubleClick={(e) => e.stopPropagation()}>
+            <Icon name="comment" size={13} strokeWidth={1.6} />
           </button>
         ) : null}
         {p.tool === 'select' && hasPicture ? (

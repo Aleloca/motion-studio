@@ -48,7 +48,6 @@
 .ms-cv-note ul { margin: 4px 0 0; padding-left: 18px; }
 .ms-cv-viewport { position: relative; flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .ms-cv-viewport.ms-tool-comment { cursor: crosshair; }
-.ms-cv-viewport.ms-tool-hand { cursor: grab; }
 .ms-cv-viewport.ms-grabbing { cursor: grabbing; user-select: none; }
 /* Not zoomed itself (overlays stay screen-sized): its spacing scales with the zoom, the frames carry their own. */
 .ms-cv-world {
@@ -111,6 +110,16 @@
 .ms-cv-live:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* While it plays, "Open editor" steps aside to the top (the picture moves under it). */
 .ms-cv-frame-wrap.ms-live .ms-cv-open { top: 28px; }
+/* A card plays its rendered file on hover (decision 973): over the picture, muted, never taking the pointer. */
+.ms-cv-live-file { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+/* A board's own "Comment" (decision 973): in the top-right corner, screen-sized like the play button, on hover or focus. */
+.ms-cv-comment-btn {
+  position: absolute; right: 8px; top: 8px; z-index: 2; width: 28px; height: 28px; min-height: 0; padding: 0; margin: 0; border: 0;
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--onMedia); color: var(--onMediaText);
+  cursor: pointer; box-shadow: 0 6px 16px var(--shadowLg); opacity: 0; transition: opacity var(--d-s) var(--e-std);
+}
+.ms-cv-frame-wrap:hover .ms-cv-comment-btn, .ms-cv-comment-btn:focus-visible { opacity: 1; }
+.ms-cv-comment-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ms-cv-retry {
   min-height: 0; height: auto; padding: 0; margin: 0; border: 0; background: transparent; font: inherit; color: var(--accentText); cursor: pointer;
 }
@@ -163,26 +172,18 @@
 .ms-cv-nothing-card p { margin: 0 0 4px; color: var(--muted); line-height: 1.5; text-wrap: pretty; }
 .ms-cv-nothing-icon { width: 36px; height: 36px; border-radius: 10px; background: var(--field); display: flex; align-items: center; justify-content: center; }
 
-/* Floating hint, legend and tool bar. */
-/* "Comments apply to vN": a compact pill just above the tool bar (bottom 20 + 46 px bar + 10 px gap), one line. */
+/* Floating hint and the zoom bar of the format view (decision 973: the canvas has no tool bar any more). */
+/* "Comments apply to vN": a compact pill at the bottom of the canvas, one line. */
 .ms-cv-lockpill {
-  position: absolute; left: 50%; bottom: 76px; z-index: 5; transform: translateX(-50%); max-width: calc(100% - 32px); height: 26px; padding: 0 12px;
+  position: absolute; left: 50%; bottom: 20px; z-index: 5; transform: translateX(-50%); max-width: calc(100% - 32px); height: 26px; padding: 0 12px;
   display: block; line-height: 26px; border-radius: 999px; background: var(--panel); box-shadow: 0 0 0 1px var(--line), 0 6px 16px var(--shadow);
   font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .ms-cv-hint.ms-lock { height: auto; min-height: 30px; padding: 6px 12px; max-width: calc(100% - 32px); white-space: normal; text-align: center; color: var(--muted); border-radius: 15px; }
-.ms-cv-legend.ms-above-lock { bottom: 112px; }
 .ms-cv-hint {
   position: absolute; left: 50%; top: 14px; z-index: 5; transform: translateX(-50%); height: 30px; padding: 0 12px; border-radius: 999px;
   display: flex; align-items: center; background: var(--panel); box-shadow: 0 0 0 1px var(--line), 0 6px 16px var(--shadow); font-size: 12px; font-weight: 500; white-space: nowrap;
 }
-.ms-cv-legend {
-  position: absolute; left: 16px; bottom: 76px; z-index: 5; width: 260px; max-width: calc(100% - 32px); padding: 12px; border-radius: 10px;
-  display: flex; flex-direction: column; gap: 4px; background: var(--panel); box-shadow: 0 0 0 1px var(--line), 0 10px 30px var(--shadow); font-size: 12px; line-height: 1.45;
-}
-.ms-cv-legend span { color: var(--muted); }
-.ms-cv-legend-keys { display: flex; align-items: center; gap: 6px; }
-.ms-cv-legend-keys i { flex: none; width: 14px; height: 10px; border-radius: 2px; background: color-mix(in srgb, var(--accent) 18%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 70%, transparent); }
 .ms-cv-toolbar {
   position: absolute; left: 50%; bottom: 20px; z-index: 5; transform: translateX(-50%); display: flex; align-items: center; gap: 4px; padding: 6px;
   border-radius: 12px; background: var(--toolbar); border: 1px solid var(--toolbarLine); box-shadow: 0 10px 30px var(--shadowLg); color: var(--onToolbar);
@@ -198,7 +199,6 @@
 .ms-cv-tool:focus-visible, .ms-cv-zoom:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ms-cv-tool-sep { width: 1px; height: 20px; margin: 0 4px; background: var(--toolbarSep); }
 .ms-cv-zoom { min-width: 48px; height: 28px; min-height: 0; padding: 0 4px; margin: 0; border: 0; border-radius: 6px; background: transparent; color: var(--onToolbar); font-family: var(--mono); font-size: 12px; text-align: center; cursor: pointer; font-variant-numeric: tabular-nums; }
-.ms-cv-safe-toggle { display: inline-flex; align-items: center; gap: 8px; padding: 0 8px 0 4px; font-size: 12px; white-space: nowrap; }
 
 /* Bar (portalled into the shell's creative bar). */
 .ms-cv-crumb { flex: 0 1 auto; min-width: 0; }

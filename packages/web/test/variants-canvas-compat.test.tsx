@@ -2,9 +2,10 @@
  * Phase 15, Task 5: a creative without a variant group renders EXACTLY as it did before the variants (no selector, no toggle, no
  * new toolbar items, no new markup). The fixtures are the canvas of such a creative as the code of the commit before this task
  * rendered it (idle in Italian, working in English), with the generated ids normalised; this test renders it with the current
- * code and compares.
+ * code and compares. Decision 973 changed the canvas on purpose (no tool bar, a Comment button on each board): the fixtures were
+ * made again from that code (`MS_UPDATE_GOLDEN=1` writes them), and still guard the ungrouped canvas against the variant code.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { render, screen, waitFor } from '@testing-library/react';
 import { DEFAULT_FORMATS, type ConversationEntry, type JobSummary } from '@motion-studio/shared';
@@ -41,7 +42,11 @@ const { I18nProvider } = await import('../src/i18n.tsx');
 const norm = (html: string) => html.replace(/:r[0-9a-z]+:|_r_[0-9a-z]+_/g, 'ID').replace(/(<time\b[^>]*>)[^<]*(<\/time>)/g, '$1TIME$2');
 const live = (jobs: JobSummary[] = []): EventsState => ({ approvals: {}, jobs: Object.fromEntries(jobs.map((j) => [j.id, j])), events: {}, creativeTicks: {}, projectTicks: {} } as unknown as EventsState);
 const running: JobSummary = { id: 'j1', key: 'creative:/w:acme:lancio', kind: 'creative', label: 'Lancio', state: 'running', createdAt: at };
-const golden = (name: string) => readFileSync(join(import.meta.dirname, 'fixtures', `ungrouped-canvas.${name}.html`), 'utf8');
+const golden = (name: string, actual: string) => {
+  const file = join(import.meta.dirname, 'fixtures', `ungrouped-canvas.${name}.html`);
+  if (process.env.MS_UPDATE_GOLDEN === '1') writeFileSync(file, actual);
+  return readFileSync(file, 'utf8');
+};
 
 function Harness({ l, locale }: { l: EventsState; locale: 'it' | 'en' }) {
   const shell = {
@@ -70,10 +75,12 @@ beforeEach(() => { localStorage.clear(); location.hash = '#/p/acme/c/lancio'; })
 
 describe('a creative without a variant group', () => {
   it('idle: the canvas is byte for byte the one before the variants', async () => {
-    expect(await html(live(), 'it')).toBe(golden('idle-it'));
+    const out = await html(live(), 'it');
+    expect(out).toBe(golden('idle-it', out));
   });
   it('working: so is the canvas of a running creative (the chat in its busy mode)', async () => {
-    expect(await html(live([running]), 'en')).toBe(golden('working-en'));
+    const out = await html(live([running]), 'en');
+    expect(out).toBe(golden('working-en', out));
   });
   it('has no selector, no toggle and no variant toolbar', async () => {
     const out = await html(live(), 'it');

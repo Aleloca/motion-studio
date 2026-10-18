@@ -78,6 +78,11 @@ function Harness({ live }: { live: EventsState }) {
 }
 
 const ready = () => screen.findByRole('img', { name: /Post 1:1 v\d/ });
+/** Decision 973: a board's own Comment button starts placing a comment on it (the tool bar and its C key are gone). */
+const commentOn = (label: string) => fireEvent.click(screen.getByRole('button', { name: `Commenta un punto di ${label}` }));
+/** ⌘ + a key on the page (the platform is a Mac in these tests). */
+const cmd = (key: string) => fireEvent.keyDown(window, { key, metaKey: true });
+const zoomOf = (el: Element | null) => (el as HTMLElement).style.zoom;
 let platform: ReturnType<typeof vi.spyOn> | null = null;
 beforeEach(() => {
   __resetPreviewSessions();
@@ -97,7 +102,7 @@ afterEach(() => {
 });
 
 describe('CreativeCanvas · fit to view', () => {
-  it('opens fitted so every board is visible (CV1), and the zoom controls still work', async () => {
+  it('opens fitted so every board is visible (CV1); ⌘+ / ⌘− step the zoom and ⌘0 fits again (decision 973)', async () => {
     const size = (dim: 'clientWidth' | 'clientHeight', v: number) => vi.spyOn(HTMLElement.prototype, dim, 'get')
       .mockImplementation(function (this: HTMLElement) { return this.classList.contains('ms-cv-viewport') ? v : 0; });
     const w = size('clientWidth', 484);
@@ -105,15 +110,51 @@ describe('CreativeCanvas · fit to view', () => {
     try {
       const { container } = render(<Harness live={emptyLive()} />);
       await ready();
-      expect(screen.getByRole('button', { name: /55%/ })).toBeTruthy();
       // The boards (frames and media) scale; the world's spacing follows the same zoom.
-      expect((container.querySelector('.ms-cv-frame') as HTMLElement).style.zoom).toBe('0.55');
+      expect(zoomOf(container.querySelector('.ms-cv-frame'))).toBe('0.55');
       expect((container.querySelector('.ms-cv-world') as HTMLElement).style.getPropertyValue('--cv-z')).toBe('0.55');
-      await userEvent.click(screen.getByRole('button', { name: /^(Zoom in|Aumenta lo zoom|Ingrandisci)/ }));
-      expect(screen.getByRole('button', { name: /65%/ })).toBeTruthy();
-      await userEvent.click(screen.getByRole('button', { name: /65%/ }));
-      expect(screen.getByRole('button', { name: /100%,/ })).toBeTruthy();
+      cmd('=');
+      await waitFor(() => expect(zoomOf(container.querySelector('.ms-cv-frame'))).toBe('0.65'));
+      cmd('+');
+      await waitFor(() => expect(zoomOf(container.querySelector('.ms-cv-frame'))).toBe('0.75'));
+      cmd('-');
+      await waitFor(() => expect(zoomOf(container.querySelector('.ms-cv-frame'))).toBe('0.65'));
+      cmd('0');
+      await waitFor(() => expect(zoomOf(container.querySelector('.ms-cv-frame'))).toBe('0.55'));
+      // Without ⌘ (or with Ctrl on a Mac) the keys are not the canvas's.
+      fireEvent.keyDown(window, { key: '=', ctrlKey: true });
+      fireEvent.keyDown(window, { key: '=' });
+      expect(zoomOf(container.querySelector('.ms-cv-frame'))).toBe('0.55');
     } finally { w.mockRestore(); h.mockRestore(); }
+  });
+
+  it('a trackpad pinch (ctrl+wheel) zooms the canvas and never the page; a plain wheel scrolls (decision 973)', async () => {
+    const { container } = render(<Harness live={emptyLive()} />);
+    await ready();
+    const viewport = container.querySelector('.ms-cv-viewport') as HTMLElement;
+    const before = parseFloat(zoomOf(container.querySelector('.ms-cv-frame')));
+    const pinch = new WheelEvent('wheel', { deltaY: -30, ctrlKey: true, bubbles: true, cancelable: true });
+    act(() => { viewport.dispatchEvent(pinch); });
+    expect(pinch.defaultPrevented).toBe(true);
+    await waitFor(() => expect(parseFloat(zoomOf(container.querySelector('.ms-cv-frame')))).toBeGreaterThan(before));
+    const zoomed = zoomOf(container.querySelector('.ms-cv-frame'));
+    const scroll = new WheelEvent('wheel', { deltaY: 30, bubbles: true, cancelable: true });
+    act(() => { viewport.dispatchEvent(scroll); });
+    expect(scroll.defaultPrevented).toBe(false);
+    expect(zoomOf(container.querySelector('.ms-cv-frame'))).toBe(zoomed);
+    // Fingers together: out again.
+    act(() => { viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: 40, ctrlKey: true, bubbles: true, cancelable: true })); });
+    await waitFor(() => expect(parseFloat(zoomOf(container.querySelector('.ms-cv-frame')))).toBeLessThan(parseFloat(zoomed)));
+  });
+
+  it('has no tool bar: no Select / Comment / Hand, no zoom buttons, no safe zones, and V / C / H do nothing', async () => {
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    expect(screen.queryByRole('toolbar', { name: /Strumenti/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Seleziona \(V\)|Commenta \(C\)|Mano \(H\)|Aumenta lo zoom|Riduci lo zoom/ })).toBeNull();
+    expect(screen.queryByRole('switch', { name: 'Zone sicure' })).toBeNull();
+    for (const key of ['v', 'c', 'h']) fireEvent.keyDown(window, { key });
+    expect(screen.queryByText('Clicca una tavola per commentare · Esc per uscire')).toBeNull();
   });
 });
 
@@ -146,7 +187,6 @@ describe('CreativeCanvas · overlays stay screen-sized at any zoom', () => {
     try {
       const { container } = render(<Harness live={emptyLive()} />);
       await ready();
-      expect(screen.getByRole('button', { name: /50%/ })).toBeTruthy();
       const post = container.querySelector('[data-board="instagram-post-1x1"]') as HTMLElement;
       // The media keeps scaling…
       const frame = post.querySelector('.ms-cv-frame') as HTMLElement;
@@ -174,7 +214,7 @@ describe('CreativeCanvas · overlays stay screen-sized at any zoom', () => {
       expect(post.classList.contains('ms-drafting')).toBe(false);
 
       // A comment at 25% / 50% of the board (click at 43,86 on the 172 px frame).
-      fireEvent.keyDown(window, { key: 'c' });
+      commentOn('Instagram · Post 1:1');
       fireEvent.click(within(post).getByRole('button', { name: /^Commenta Instagram · Post 1:1/ }), { clientX: 43, clientY: 86, detail: 1 });
       const field = await screen.findByLabelText('Testo del commento');
       const bubble = field.closest('.ms-cv-bubble') as HTMLElement;
@@ -200,8 +240,8 @@ describe('CreativeCanvas · overlays stay screen-sized at any zoom', () => {
       expect(parseFloat(pin.style.top)).toBeCloseTo(0.5 * 344 * 0.5);
 
       // Zooming in moves the anchors with the board; the markers keep their size.
-      await userEvent.click(screen.getByRole('button', { name: /^(Zoom in|Aumenta lo zoom|Ingrandisci)/ }));
-      expect(frame.style.zoom).toBe('0.6');
+      cmd('=');
+      await waitFor(() => expect(frame.style.zoom).toBe('0.6'));
       const moved = within(post).getByRole('button', { name: 'Modifica il commento 1' });
       expect(parseFloat(moved.style.left)).toBeCloseTo(0.25 * 344 * 0.6);
       expect(netScale(moved)).toBe(1);
@@ -236,16 +276,17 @@ describe('CreativeCanvas · overlays (round 2)', () => {
     try {
       const { container } = render(<Harness live={emptyLive()} />);
       await ready();
-      expect(screen.getByRole('button', { name: /50%/ })).toBeTruthy();
       const post = container.querySelector('[data-board="instagram-post-1x1"]') as HTMLElement;
-      fireEvent.keyDown(window, { key: 'c' });
+      expect(zoomOf(post.querySelector('.ms-cv-frame'))).toBe('0.5');
+      commentOn('Instagram · Post 1:1');
       // At 90% of the board: 155 px from the left at 50% (room on the right), 310 px at 100% (no room: opens left).
       fireEvent.click(within(post).getByRole('button', { name: /^Commenta Instagram · Post 1:1/ }), { clientX: 155, clientY: 86, detail: 1 });
       await userEvent.type(await screen.findByLabelText('Testo del commento'), 'Più luce');
       const bubble = () => container.querySelector('.ms-cv-bubble') as HTMLElement;
       expect(bubble().classList.contains('ms-left')).toBe(false);
-      await userEvent.click(screen.getByRole('button', { name: /50%,/ }));
-      expect(screen.getByRole('button', { name: /100%,/ })).toBeTruthy();
+      // ⌘+ five times: 100%. The bubble's text field has the focus: the zoom still answers (it is not a typing key).
+      for (let i = 0; i < 5; i++) cmd('=');
+      await waitFor(() => expect(zoomOf(post.querySelector('.ms-cv-frame'))).toBe('1'));
       expect(bubble().classList.contains('ms-left')).toBe(true);
     } finally { w.mockRestore(); h.mockRestore(); ow.mockRestore(); rect.mockRestore(); }
   });
@@ -255,16 +296,16 @@ describe('CreativeCanvas · comments', () => {
   it('a click in comment mode opens a bubble whose text becomes a pin chip that can be edited and deleted', async () => {
     render(<Harness live={emptyLive()} />);
     await ready();
-    // C switches to comment mode (not while typing).
-    fireEvent.keyDown(window, { key: 'c' });
-    expect(screen.getByRole('button', { name: 'Commenta (C)' }).getAttribute('aria-pressed')).toBe('true');
+    // The board's own Comment button switches to comment mode on that board.
+    commentOn('Instagram · Post 1:1');
     expect(screen.getByText('Clicca una tavola per commentare · Esc per uscire')).toBeTruthy();
+    // Only that board takes the click.
+    expect(screen.queryByRole('button', { name: /^Commenta TikTok/ })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /^Commenta Instagram · Post 1:1/ }), { clientX: 10, clientY: 10 });
     const field = await screen.findByLabelText('Testo del commento');
     expect(document.activeElement).toBe(field);
-    // Typing a "v" in the bubble does not switch tools.
     await userEvent.type(field, 'Logo più piccolo, via');
-    expect(screen.getByRole('button', { name: 'Commenta (C)' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByText('Clicca una tavola per commentare · Esc per uscire')).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Commenta' }));
     expect(screen.queryByLabelText('Testo del commento')).toBeNull();
     // The pin is a numbered marker on the board and a chip in the composer, with its text.
@@ -287,7 +328,7 @@ describe('CreativeCanvas · comments', () => {
   it('sends the text with the pin through sendCreativeTurn', async () => {
     render(<Harness live={emptyLive()} />);
     await ready();
-    await userEvent.click(screen.getByRole('button', { name: 'Commenta (C)' }));
+    commentOn('TikTok · Video 9:16');
     fireEvent.click(screen.getByRole('button', { name: /^Commenta TikTok/ }));
     await userEvent.type(await screen.findByLabelText('Testo del commento'), 'Titolo più in alto');
     // ⌘↵ in the bubble adds the comment.
@@ -307,21 +348,28 @@ describe('CreativeCanvas · comments', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: /Modifica il commento 1/ })).toBeNull());
   });
 
-  it('Escape leaves comment mode and drops the open bubble; V and H pick the other tools', async () => {
+  it('Escape drops the open bubble, then leaves comment mode', async () => {
     render(<Harness live={emptyLive()} />);
     await ready();
-    fireEvent.keyDown(window, { key: 'h' });
-    expect(screen.getByRole('button', { name: 'Mano (H)' }).getAttribute('aria-pressed')).toBe('true');
-    fireEvent.keyDown(window, { key: 'c' });
+    commentOn('Instagram · Post 1:1');
     fireEvent.click(screen.getByRole('button', { name: /^Commenta Instagram/ }));
     const field = await screen.findByLabelText('Testo del commento');
     fireEvent.keyDown(field, { key: 'Escape' });
     expect(screen.queryByLabelText('Testo del commento')).toBeNull();
+    expect(screen.getByText('Clicca una tavola per commentare · Esc per uscire')).toBeTruthy();
     fireEvent.keyDown(window, { key: 'Escape' });
-    expect(screen.getByRole('button', { name: 'Seleziona (V)' }).getAttribute('aria-pressed')).toBe('true');
-    // Shortcuts with a modifier are not the canvas's.
-    fireEvent.keyDown(window, { key: 'c', metaKey: true });
-    expect(screen.getByRole('button', { name: 'Seleziona (V)' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.queryByText('Clicca una tavola per commentare · Esc per uscire')).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Commenta Instagram/ })).toBeNull();
+  });
+
+  it('"Inizia a commentare" in the Comments tab takes a comment on any board', async () => {
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    await userEvent.click(screen.getByRole('tab', { name: /Commenti/ }));
+    expect(screen.getByText('Passa sopra un formato, scegli Commenta e clicca il punto.')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: /^Inizia a commentare/ }));
+    expect(screen.getByRole('button', { name: /^Commenta Instagram/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Commenta TikTok/ })).toBeTruthy();
   });
 });
 
@@ -497,14 +545,12 @@ describe('CreativeCanvas · bar and states', () => {
     expect(await ready()).toBeTruthy();
   });
 
-  it('shows the safe zones with a legend', async () => {
+  it('shows no safe zones: they are in the format view only (decision 973)', async () => {
     detail = makeDetail([version(1)]);
-    render(<Harness live={emptyLive()} />);
+    const { container } = render(<Harness live={emptyLive()} />);
     await ready();
-    await userEvent.click(screen.getByRole('switch', { name: 'Zone sicure' }));
-    expect(screen.getByText('Le aree ombreggiate sono coperte dall’interfaccia del canale. Tieni fuori testi e loghi.')).toBeTruthy();
-    // TikTok 9:16 has a safe zone in the catalog: its bands carry their labels.
-    expect(screen.getAllByText('Didascalia e pulsanti').length).toBeGreaterThan(0);
+    expect(container.querySelector('.ms-cv-safe')).toBeNull();
+    expect(screen.queryByText('Didascalia e pulsanti')).toBeNull();
   });
 });
 
@@ -557,19 +603,20 @@ describe('CreativeCanvas · ported checks', () => {
     const { container } = render(<div className="ms-page"><Harness live={emptyLive()} /></div>);
     await ready();
     // No data-page-active: PageHost keeps this page mounted only for its exit.
-    fireEvent.keyDown(window, { key: 'c' });
+    const zoom = zoomOf(container.querySelector('.ms-cv-frame'));
+    cmd('=');
     fireEvent.keyDown(window, { key: 'F2' });
-    expect(screen.getByRole('button', { name: 'Seleziona (V)' }).getAttribute('aria-pressed')).toBe('true');
+    expect(zoomOf(container.querySelector('.ms-cv-frame'))).toBe(zoom);
     expect(screen.queryByLabelText('Titolo della creatività')).toBeNull();
     container.querySelector('.ms-page')!.setAttribute('data-page-active', '');
-    fireEvent.keyDown(window, { key: 'c' });
-    expect(screen.getByRole('button', { name: 'Commenta (C)' }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.keyDown(window, { key: 'F2' });
+    expect(await screen.findByLabelText('Titolo della creatività')).toBeTruthy();
   });
 });
 
 describe('CreativeCanvas · review round 1', () => {
   const pinOnPost = async (text: string) => {
-    await userEvent.click(screen.getByRole('button', { name: 'Commenta (C)' }));
+    commentOn('Instagram · Post 1:1');
     fireEvent.click(screen.getByRole('button', { name: /^Commenta Instagram · Post 1:1/ }));
     await userEvent.type(await screen.findByLabelText('Testo del commento'), text);
     await userEvent.click(screen.getByRole('button', { name: 'Commenta' }));
@@ -584,13 +631,15 @@ describe('CreativeCanvas · review round 1', () => {
     expect(screen.getByRole('button', { name: 'Modifica il commento 1' })).toBeTruthy();
     await pickVersion(1);
     await waitFor(() => expect(screen.getByRole('img', { name: /Post 1:1 v1/ })).toBeTruthy());
-    // A compact pill above the tool bar, not the floating banner over the boards' headers.
+    // A compact pill at the bottom, not the floating banner over the boards' headers.
     expect(screen.getByText('I commenti valgono per la v2: usa Riparti da qui per commentare questa versione.').classList.contains('ms-cv-lockpill')).toBe(true);
     expect(document.querySelector('.ms-cv-hint.ms-lock')).toBeNull();
-    // The TikTok board still shows v2: C stays, but the post board takes no comment.
-    await userEvent.click(screen.getByRole('button', { name: 'Commenta (C)' }));
+    // The TikTok board still shows v2: it keeps its Comment, but the post board has none and takes no comment.
+    expect(screen.queryByRole('button', { name: 'Commenta un punto di Instagram · Post 1:1' })).toBeNull();
+    commentOn('TikTok · Video 9:16');
     expect(screen.queryByRole('button', { name: /^Commenta Instagram · Post 1:1/ })).toBeNull();
     expect(screen.getByRole('button', { name: /^Commenta TikTok/ })).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'Escape' });
     // The v2 pin is not drawn on the v1 board, but it is still pending for v2 (its chip stays).
     expect(screen.queryByRole('button', { name: 'Modifica il commento 1' })).toBeNull();
     expect(screen.getByRole('button', { name: /^Modifica il commento 1 ·/ })).toBeTruthy();
@@ -604,11 +653,11 @@ describe('CreativeCanvas · review round 1', () => {
     detail = makeDetail([version(1), version(2)], { resumeFrom: { version: 1, sessionId: 's' } });
     render(<Harness live={emptyLive()} />);
     await ready();
-    // The ★ (the latest, v2) is on every board: not the pin source.
-    expect((screen.getByRole('button', { name: 'Commenta (C)' }) as HTMLButtonElement).disabled).toBe(true);
+    // The ★ (the latest, v2) is on every board: not the pin source, so no board offers Comment.
+    expect(screen.queryByRole('button', { name: /^Commenta un punto di/ })).toBeNull();
     expect(screen.getByText('I commenti valgono per la v1: usa Riparti da qui per commentare questa versione.')).toBeTruthy();
     await pickVersion(1);
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Commenta (C)' }) as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Commenta un punto di Instagram · Post 1:1' })).toBeTruthy());
     await pinOnPost('Tieni questo');
     await userEvent.click(screen.getByRole('button', { name: 'Invia' }));
     await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'lancio', {
@@ -640,18 +689,21 @@ describe('CreativeCanvas · review round 1', () => {
     expect(screen.getByRole('button', { name: /^Modifica il commento 1 ·/ }).textContent).toContain('Secondo');
   });
 
-  it('double click opens the editor only with the Select tool', async () => {
+  it('double click opens the editor, but not while placing a comment', async () => {
     render(<Harness live={emptyLive()} />);
     await ready();
-    fireEvent.keyDown(window, { key: 'h' });
+    commentOn('TikTok · Video 9:16');
     fireEvent.doubleClick(screen.getByRole('img', { name: /Post 1:1 v1/ }).closest('[data-frame]')!);
     expect(location.hash).toBe('#/p/acme/c/lancio');
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.doubleClick(screen.getByRole('img', { name: /Post 1:1 v1/ }).closest('[data-frame]')!);
+    expect(location.hash).toBe('#/p/acme/c/lancio/f/instagram-post-1x1');
   });
 
   it('a click on the canvas keeps a bubble with text, and closes an empty one', async () => {
     render(<Harness live={emptyLive()} />);
     await ready();
-    fireEvent.keyDown(window, { key: 'c' });
+    commentOn('Instagram · Post 1:1');
     fireEvent.click(screen.getByRole('button', { name: /^Commenta Instagram · Post 1:1/ }));
     await screen.findByLabelText('Testo del commento');
     const viewport = document.querySelector('.ms-cv-viewport')!;
@@ -1423,7 +1475,7 @@ describe('CreativeCanvas · compositions (Task 8)', () => {
     detail = makeDetail([v2(1)]);
     render(<Harness live={emptyLive()} />);
     await picture('tiktok-9x16');
-    await userEvent.click(screen.getByRole('button', { name: 'Commenta (C)' }));
+    commentOn('TikTok · Video 9:16');
     expect(within(board('tiktok-9x16')).getByRole('button', { name: /^Commenta TikTok/ })).toBeTruthy();
   });
 

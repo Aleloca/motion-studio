@@ -1,9 +1,9 @@
 /**
  * Phase 15, Task 5: layout of the variant canvas in real Chrome. The grouped canvas is rendered in jsdom (no layout there), its markup
- * is given the real stylesheets and measured in Chrome, in both groupings (by variant, by format), at the two widths that matter
- * (1280 and 1024, where the formats column is 252/200 px and the chat panel 368/340 px) and in Italian and English: nothing
- * overflows the page, no control of the variant bar, the row headers or the board headers sticks out of its box or is clipped, the
- * format names stay whole, and the chat selector fits the panel. Without Chrome the measuring tests are skipped (MS_REQUIRE_CHROME=1
+ * is given the real stylesheets and measured in Chrome, at the two widths that matter (1280 and 1024, where the formats column is
+ * 252/200 px and the chat panel 368/340 px) and in Italian and English: nothing overflows the page, no control of the variant bar,
+ * the cards' headers or the board headers sticks out of its box or is clipped, the format names stay whole, the cards wrap inside
+ * the canvas (decision 973: no sideways scrolling) with their thumbnails inside them, and the chat selector fits the panel. Without Chrome the measuring tests are skipped (MS_REQUIRE_CHROME=1
  * makes a missing browser a failure; MS_LAYOUT_CHROME=1 turns it on); the CSS-rule tests always run.
  */
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -51,9 +51,16 @@ const chrome = required || process.env.MS_LAYOUT_CHROME === '1' ? findChrome() :
 
 describe('variant canvas: CSS rules', () => {
   const css = src('screens/variants/variants.css');
-  it('the variant bar wraps instead of overflowing, and the row header wraps its pieces', () => {
+  it('the variant bar wraps instead of overflowing, the cards wrap, and a card\'s header wraps its pieces', () => {
     expect(css).toMatch(/\.ms-vbar\s*\{[^}]*flex-wrap:\s*wrap/);
-    expect(css).toMatch(/\.ms-vrow-head\s*\{[^}]*flex-wrap:\s*wrap/);
+    expect(css).toMatch(/\.ms-cv-world\.ms-cv-vworld\s*\{[^}]*flex-wrap:\s*wrap/);
+    expect(css).toMatch(/\.ms-vcard-head\s*\{[^}]*flex-wrap:\s*wrap/);
+  });
+  it('the full direction takes two lines at most; the name never keeps a focus outline after a click', () => {
+    expect(css).toMatch(/\.ms-vcard-dir\s*\{[^}]*-webkit-line-clamp:\s*2/);
+    expect(css).toMatch(/\.ms-vrow-title\s*\{[^}]*outline:\s*none/);
+    expect(css).toMatch(/\.ms-vrow-title:focus-visible\s*\{/);
+    expect(css).not.toMatch(/\.ms-vrow-title\.ms-on\s*\{/);
   });
   it('a long direction ellipsizes in the header; discarded rows are grey and inert', () => {
     expect(css).toMatch(/\.ms-vrow-dir\s*\{[^}]*text-overflow:\s*ellipsis/);
@@ -79,6 +86,7 @@ const emptyJobs = (): Record<string, JobSummary> => ({
 
 /** The markup of the grouped canvas, with the viewport width the app would have at `page` px (the zoom fits it). */
 async function markup(layout: 'variant' | 'format', locale: 'en' | 'it', page: number): Promise<string> {
+  // Decision 973: the stored layout no longer changes the page (one card per variant); both are measured all the same.
   group = { ...groupOf(['a', 'b', 'c', 'd', 'e'], {}, { b: { direction: LONG }, c: { direction: FOTO }, d: { status: 'discarded' } }), layout };
   const live = { approvals: {}, jobs: emptyJobs(), events: {}, creativeTicks: {}, projectTicks: {} } as unknown as EventsState;
   const viewportWidth = page - (page >= 1180 ? 252 + 368 : 200 + 340);
@@ -99,6 +107,8 @@ async function markup(layout: 'variant' | 'format', locale: 'en' | 'it', page: n
     await waitFor(() => expect(container.querySelectorAll('.ms-cv-board').length).toBeGreaterThanOrEqual(8));
     await userEvent.click(within(container).getByRole('radio', { name: /^(Tutte|All)$/ }));
     await settled(() => container.innerHTML);
+    // jsdom keeps CSS `zoom` (the frames' scale) out of the style attribute: written back, so Chrome lays the frames out as the app does.
+    for (const el of container.querySelectorAll<HTMLElement>('.ms-cv-frame')) if (el.style.zoom) el.setAttribute('style', `${el.getAttribute('style') ?? ''}; zoom: ${el.style.zoom}`);
     return (container.querySelector('.ms-cv') as HTMLElement).outerHTML;
   } finally { unmount(); size.mockRestore(); high.mockRestore(); }
 }
@@ -111,7 +121,7 @@ const name = (el) => (el.getAttribute('aria-label') || el.textContent || el.clas
 const inside = (el, host, what) => { const r = box(el), h = box(host); if (r.right > h.right + .5 || r.left < h.left - .5 || r.bottom > h.bottom + .5 || r.top < h.top - .5) problems.push(what + ' outside its box: ' + name(el)); };
 if (document.documentElement.scrollWidth > innerWidth) problems.push('page overflows');
 const cv = document.querySelector('.ms-cv');
-const counts = { bar: 0, heads: 0, boards: 0, stars: 0, fmts: 0 };
+const counts = { bar: 0, heads: 0, boards: 0, stars: 0, fmts: 0, cards: 0 };
 const bar = cv.querySelector('.ms-vbar');
 counts.bar = bar ? bar.querySelectorAll('button, [role=radio], [role=switch]').length : 0;
 if (bar) {
@@ -126,7 +136,17 @@ const panel = cv.querySelector('.ms-cv-panel');
 const sel = cv.querySelector('.ms-vsel .ms-seg');
 if (sel) { inside(sel, panel, 'chat selector'); for (const r of sel.querySelectorAll('[role=radio]')) { inside(r, panel, 'selector option'); if (r.scrollWidth > r.clientWidth + 1) problems.push('selector option clipped: ' + name(r)); } }
 else problems.push('no chat selector');
-for (const head of cv.querySelectorAll('.ms-vrow-head')) {
+const viewport = cv.querySelector('.ms-cv-viewport');
+if (viewport.scrollWidth > viewport.clientWidth + 1) problems.push('the canvas scrolls sideways: ' + viewport.scrollWidth + '/' + viewport.clientWidth);
+for (const card of cv.querySelectorAll('.ms-vcard')) {
+  counts.cards++;
+  // Sideways only: the cards grow downward and the canvas scrolls.
+  { const r = box(card), v = box(viewport); if (r.left < v.left - .5 || r.right > v.left + viewport.clientWidth + .5) problems.push('card sticks out sideways: ' + name(card)); }
+  for (const el of card.querySelectorAll('.ms-cv-frame-wrap, .ms-cv-board-head')) inside(el, card, 'card content');
+  const dir = card.querySelector('.ms-vcard-dir');
+  if (dir) { const lh = parseFloat(getComputedStyle(dir).lineHeight) || 16; if (box(dir).height > lh * 2 + 1) problems.push('direction taller than 2 lines'); }
+}
+for (const head of cv.querySelectorAll('.ms-vcard-head')) {
   counts.heads++;
   for (const el of head.querySelectorAll('button, .ms-pill, .ms-vrow-dir, .ms-grow')) {
     if (!vis(el) || el.classList.contains('ms-grow')) continue;
@@ -184,6 +204,11 @@ run('variant canvas: real Chrome layout', () => {
     const tab = await browser.newPage(width, 800);
     try {
       await tab.goto(`file://${file}`);
+      // Opt-in: a screenshot of each measured page, for a look (MS_LAYOUT_SHOTS=<folder>).
+      if (process.env.MS_LAYOUT_SHOTS) {
+        writeFileSync(join(process.env.MS_LAYOUT_SHOTS, `${name}-${width}.png`), await tab.screenshot());
+        writeFileSync(join(process.env.MS_LAYOUT_SHOTS, `${name}-${width}.html`), page);
+      }
       return await tab.eval<{ problems: string[]; counts: Record<string, number>; formatsColumn: boolean }>(MEASURE, 30_000);
     } finally { await tab.close(); }
   }
@@ -196,10 +221,11 @@ run('variant canvas: real Chrome layout', () => {
           const r = await measure(html, width, `${locale}-${layout}`);
           expect(r.problems, `${locale} ${layout} @${width}`).toEqual([]);
           // Never vacuous: the bar, the headers, the boards, the ★ and the formats column were all measured.
-          expect(r.counts.bar, 'bar controls').toBeGreaterThanOrEqual(5);
+          expect(r.counts.bar, 'bar controls').toBeGreaterThanOrEqual(3);
+          expect(r.counts.cards, 'cards').toBeGreaterThanOrEqual(5);
           expect(r.counts.boards, 'boards').toBeGreaterThanOrEqual(8);
           expect(r.counts.stars, 'group stars').toBeGreaterThanOrEqual(8);
-          expect(r.counts.heads, 'row headers').toBeGreaterThanOrEqual(5);
+          expect(r.counts.heads, 'card headers').toBeGreaterThanOrEqual(5);
           expect(r.formatsColumn, 'formats column shown').toBe(true);
           expect(r.counts.fmts, 'format items').toBeGreaterThan(0);
           if (layout === 'variant') expect(r.counts.colHeads, 'variant headers of the column').toBeGreaterThanOrEqual(3);
