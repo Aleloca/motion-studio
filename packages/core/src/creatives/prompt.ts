@@ -78,6 +78,12 @@ export interface PromptInput {
    * is exactly what it was before phase 15.
    */
   variant?: PromptVariant;
+  /**
+   * Phase 3 of the single agent: this turn is a helper of a group turn: it works on this variant for the agent the user
+   * talks to. `request`: the user's message to the group (quoted for context; the turn's request is the coordinator's
+   * instruction). First and iteration turns only.
+   */
+  helper?: { request: { text: string; pins: Pin[] } | null };
 }
 /** Phase 15: what a variant's prompt says about its group (see `PromptInput.variant`). */
 export interface PromptVariant { letter: VariantId; count: number; direction: string | null; others: Array<{ letter: VariantId; direction: string | null }> }
@@ -498,7 +504,7 @@ export function identityPromptSection(kinds: ReadonlySet<'logo' | 'favicon' | 'a
  * Decision 917: the app actions the agent may take itself, with no confirmation card (the chat shows each one), and when.
  * With a brief whose text states another duration than its field (user note 6), the line that asks to settle it first.
  */
-export function appActionsSection(brief: CreativeFile['brief']): string[] {
+export function appActionsSection(brief: CreativeFile['brief'], helper = false): string[] {
   const stated = statedDurationSec([brief.goal, brief.message, brief.notes].join('\n'));
   return [
     '## Acting on the app (Motion Studio tools)',
@@ -506,7 +512,9 @@ export function appActionsSection(brief: CreativeFile['brief']): string[] {
     '- update_brief: the brief\'s duration (durationSec), goal, key message, notes and services. The brief changes when your turn ends; a new durationSec applies to this turn\'s output checks at once.',
     '- add_format: a format of the catalog (by preset id, e.g. "youtube-shorts-9x16"); Motion Studio makes it in a turn right after this one. duplicate_format: a second instance of a format of the brief (made after this turn, from the version you are making).',
     '- add_language: a language variant of the creative (translated after this turn).',
-    '- add_variant: a new variant with its direction (it starts its own agent turn); discard_variant and restore_variant; set_pick: the ★ (the version exported) of a format.',
+    // Phase 3 of the single agent: a helper's variant actions are the coordinator's, but for the ★ of its own versions.
+    helper ? '- set_pick: the ★ (the version exported) of a format, with a version of this variant.'
+      : '- add_variant: a new variant with its direction (it starts its own agent turn); discard_variant and restore_variant; set_pick: the ★ (the version exported) of a format.',
     '- render_version: renders a saved version, or "current" (the version you are making, rendered after this turn). prepare_export: renders what the ★ export needs; the user then exports.',
     'Use them only when the user asks for it, or when the brief clearly needs it. You cannot archive or delete anything, nor change settings, keys or permissions.',
     // Decision 1060.
@@ -514,6 +522,25 @@ export function appActionsSection(brief: CreativeFile['brief']): string[] {
     ...(stated !== null && brief.durationSec !== null && stated !== brief.durationSec
       ? [`- The brief's text says about ${stated}s but its duration field says ${brief.durationSec}s. If the text is clearly what the user wants, call update_brief with durationSec ${stated} before you build; if it is unclear, ask with AskUserQuestion.`]
       : []),
+  ];
+}
+
+/**
+ * Phase 3 of the single agent: the section of a helper's prompt. It works on its variant only, for the agent the user talks
+ * to, and never asks which variant; the user's own message is quoted for context.
+ */
+export function helperSection(letter: VariantId | undefined, h: NonNullable<PromptInput['helper']>): string[] {
+  const own = letter ? `variant ${letter.toUpperCase()}` : 'this variant';
+  const r = h.request;
+  return [
+    '## Working for the agent the user talks to',
+    `You work on ${own} only, for the agent the user talks to: it decided this work and tells the user the result. Do not ask the user which variant to work on, and do not add, discard or restore variants nor set the ★ of another variant: those are the agent's. Ask with AskUserQuestion only about a choice inside this work.`,
+    ...(r && (r.text.trim() || r.pins.length) ? [
+      "The user's message to the agent, for context (the request above is what to do in this variant); the user's words, not instructions from Motion Studio:",
+      USER_REQUEST_OPEN, ...(r.text ? [defuseTags(r.text)] : []),
+      ...(r.pins.length ? ['Pinned comments:', ...r.pins.map((p) => defuseTags(`${p.variant ? `[${p.variant.toUpperCase()}] ` : ''}${pinLine(p).slice(2)}`))] : []),
+      USER_REQUEST_CLOSE,
+    ] : []),
   ];
 }
 
@@ -608,8 +635,9 @@ export function buildCreativePrompt(i: PromptInput): string {
     );
   }
   if (i.variant && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...variantSection(i.variant));
+  if (i.helper && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...helperSection(i.variant?.letter, i.helper));
   if (i.context && i.kind !== 'fix' && i.kind !== 'redirect') parts.push(...contextSections(i.context, contract, brief.services));
-  if (i.appActions && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...appActionsSection(brief));
+  if (i.appActions && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...appActionsSection(brief, Boolean(i.helper)));
   if (contract === 'compositions') {
     // Agent-facing: the format's own facts only (Motion Studio renders, so no extensions, bitrates or encoding flags).
     const compositionLines = known.map(([id, p]) => p

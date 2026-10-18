@@ -54,6 +54,9 @@ export interface JobSpec {
    * variant run wait for their directions and for the paid-services card). A held job never holds a slot.
    */
   hold?: JobWaitReason;
+  /** Phase 3 of the single agent: the group turn this job is a helper of, and its variant (copied into the summary). */
+  parentJobId?: string;
+  variant?: string;
 }
 
 interface Entry { summary: JobSummary; spec: JobSpec; controller: AbortController; hold: JobWaitReason | null }
@@ -92,6 +95,8 @@ export class JobQueue {
       summary: {
         id: spec.id ?? randomUUID(), key: spec.key, kind: spec.kind, label: spec.label, state: 'queued', createdAt: new Date().toISOString(),
         ...(spec.formats ? { formats: [...spec.formats] } : {}),
+        ...(spec.parentJobId ? { parentJobId: spec.parentJobId } : {}),
+        ...(spec.variant ? { variant: spec.variant } : {}),
       },
     };
     this.entries.unshift(entry);
@@ -127,7 +132,7 @@ export class JobQueue {
   }
 
   /** Records agent-neutral details learnt while the job runs (e.g. the session id) and broadcasts them. */
-  patch(id: string, fields: Partial<Pick<JobSummary, 'sessionId' | 'notes' | 'formats' | 'progress' | 'liveMessages' | 'export'>>): void {
+  patch(id: string, fields: Partial<Pick<JobSummary, 'sessionId' | 'notes' | 'formats' | 'progress' | 'liveMessages' | 'export' | 'groupPhase'>>): void {
     const entry = this.entries.find((e) => e.summary.id === id);
     const same = (k: keyof typeof fields) => JSON.stringify(entry!.summary[k]) === JSON.stringify(fields[k]);
     if (!entry || (Object.keys(fields) as Array<keyof typeof fields>).every(same)) return;

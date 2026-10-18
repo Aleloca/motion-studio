@@ -8,7 +8,7 @@ import {
   issuesText,
 } from '@motion-studio/shared';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic, writeTextFileAtomic } from '../json-file.ts';
-import { MERGED_FILE, mergeConversations, parseConversation, PREMERGE_FILE, serializeConversation, stampEntries } from './group-conversation.ts';
+import { helperTagOf, MERGED_FILE, mergeConversations, parseConversation, PREMERGE_FILE, serializeConversation, stampEntries } from './group-conversation.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
 import { CodedError, slugify, WorkspaceError } from '../workspace-store.ts';
 import { currentLocale, t } from '../i18n.ts';
@@ -421,7 +421,10 @@ export class CreativeStore {
       const place = await this.finishedPlace(slug);
       const target = place?.single ? place.host : slug;
       const file = this.file(target, 'conversation.jsonl');
-      const stamped = place && entry.variant === undefined ? { ...entry, variant: place.letter } : entry;
+      // Phase 3 of the single agent: the group's own entries (the coordinator's) carry no variant; a helper's carry its group turn.
+      const tag = !entry.group && entry.groupJobId === undefined ? helperTagOf(this.projectDir, slug) : undefined;
+      const withTag = tag ? { ...entry, groupJobId: tag } : entry;
+      const stamped = place && withTag.variant === undefined && !withTag.group ? { ...withTag, variant: place.letter } : withTag;
       // Creating the log (an old or hand-made creative, or one git removed) adds an entry to the creative folder: note it
       // so the post-run tripwire does not read it as a move (FP3).
       const existed = await lstat(file).then(() => true, () => false);
@@ -451,13 +454,13 @@ export class CreativeStore {
         const all = await this.orphanLog(slug);
         // A host whose group is gone keeps the merged chat: its own readers skip the other variants' entries.
         const self = letterOfSlug(slug);
-        return opts.own ? all.filter((e) => e.variant === undefined || e.variant === self) : all;
+        return opts.own ? all.filter((e) => !e.group && (e.variant === undefined || e.variant === self)) : all;
       }
       if (place.single) {
         const all = await this.readLog(place.host, 'conversation.jsonl');
         return opts.own ? entriesOfVariant(all, place.letter) : all;
       }
-      if (opts.own) return stampEntries(await this.readLog(slug, 'conversation.jsonl'), place.letter);
+      if (opts.own) return stampEntries(await this.readLog(slug, 'conversation.jsonl'), place.letter).filter((e) => !e.group);
       const lists = [];
       for (const m of place.group.members) lists.push({ letter: m.letter, entries: await this.readLog(m.slug, 'conversation.jsonl'), own: true });
       return mergeConversations(lists);

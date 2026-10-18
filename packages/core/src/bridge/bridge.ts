@@ -53,10 +53,25 @@ export interface BridgeContext {
    * the agent, frozen with the context: no tool argument ever names a project, a creative or a job.
    */
   readonly appScope?: Readonly<AppScope>;
+  /**
+   * Phase 3 of the single agent, `creative-group` jobs only: the coordinator's own tools (`list_variants`, `work_on_variants`,
+   * `add_variants`), bound by the group turn to its plan. Absent for every other job.
+   */
+  readonly groupTools?: Readonly<GroupTools>;
 }
 
-/** Decision 917: see `BridgeContext.appScope`. */
-export interface AppScope { root: string; projectSlug: string; projectDir: string; creativeSlug: string; version: number }
+/**
+ * Decision 917: see `BridgeContext.appScope`. Phase 3 of the single agent: `group` is the coordinator's scope (the host of
+ * its group, no version of its own: `version` is 0); `helper` a variant's turn run for a group turn (its group-level actions
+ * are the coordinator's).
+ */
+export interface AppScope { root: string; projectSlug: string; projectDir: string; creativeSlug: string; version: number; group?: boolean; helper?: boolean }
+/** Phase 3: see `BridgeContext.groupTools`; each handler checks its arguments (agent input). */
+export interface GroupTools {
+  listVariants(args: Record<string, unknown>): Promise<unknown>;
+  workOnVariants(args: Record<string, unknown>): Promise<unknown>;
+  addVariants(args: Record<string, unknown>): Promise<unknown>;
+}
 
 /** Per-job tokens that let the `studio` MCP server call back into the core on behalf of one agent job. */
 export class AgentBridge {
@@ -71,6 +86,7 @@ export class AgentBridge {
       ...(ctx.services ? { services: Object.freeze({ ...ctx.services }) } : {}),
       ...(ctx.codebases ? { codebases: Object.freeze([...ctx.codebases]) } : {}),
       ...(ctx.appScope ? { appScope: Object.freeze({ ...ctx.appScope }) } : {}),
+      ...(ctx.groupTools ? { groupTools: Object.freeze({ ...ctx.groupTools }) } : {}),
     }));
     return t;
   }

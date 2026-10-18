@@ -28,7 +28,7 @@ let host: string;
 const sis = (l: string) => sisterSlug(host, l);
 const log = (slug: string, name = 'conversation.jsonl') => join(dir, 'creatives', slug, name);
 const raw = (slug: string, name = 'conversation.jsonl') => readFile(log(slug, name), 'utf8');
-const texts = (es: ConversationEntry[]) => es.map((e) => `${e.variant ?? '-'}:${e.type === 'agent' ? e.jobId : e.type === 'version' ? `v${e.n}` : e.text}`);
+const texts = (es: ConversationEntry[]) => es.map((e) => `${e.variant ?? '-'}:${e.type === 'agent' ? e.jobId : e.type === 'version' ? `v${e.n}` : 'text' in e ? e.text : e.type}`);
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'ms-group-chat-'));
@@ -331,5 +331,40 @@ describe('second review round of the merge', () => {
     const taken: string[] = [];
     await store.migrateConversation(host, IDLE, { copies: async (files) => { taken.push(...files); } });
     expect(taken.sort()).toEqual([log(host, 'conversation.premerge.jsonl'), log(sis('b'), 'conversation.premerge.jsonl'), log(sis('c'), 'conversation.premerge.jsonl')].sort());
+  });
+});
+
+describe('the group\'s own entries and the helpers\' (phase 3 of the single agent)', () => {
+  const coord = (s: number, text: string): ConversationEntry => ({ type: 'system', at: T(s), level: 'info', text, group: true });
+  it('a group entry carries no variant, before and after the migration, and no variant\'s own reader sees it', async () => {
+    await oldLogs();
+    await store.appendConversation(host, coord(7, 'Lavoro su B'));
+    await store.appendConversation(host, { type: 'agent', at: T(8), jobId: 'jg', event: { kind: 'session', sessionId: 'sg' }, group: true });
+    const before = await store.readConversation(sis('b'));
+    expect(before.filter((e) => e.group).map((e) => e.variant)).toEqual([undefined, undefined]);
+    // A's own readers (its last turn session above all) never take the coordinator's.
+    expect((await store.lastTurnSession(host))?.sessionId).toBe('sa');
+    expect((await store.readConversation(host, { own: true })).some((e) => e.group)).toBe(false);
+    expect(await store.migrateConversation(host, IDLE)).toBe('migrated');
+    const after = await store.readConversation(sis('c'));
+    expect(after.filter((e) => e.group).map((e) => [e.variant, e.type])).toEqual([[undefined, 'system'], [undefined, 'agent']]);
+    expect((await store.lastTurnSession(host))?.sessionId).toBe('sa');
+    await store.appendConversation(host, coord(9, 'Fatto'));
+    expect((await store.readConversation(host)).at(-1)).toMatchObject({ group: true, text: 'Fatto' });
+    expect((await store.readConversation(host)).at(-1)!.variant).toBeUndefined();
+  });
+
+  it('a member\'s entries carry the group turn\'s id while its helper tag is set', async () => {
+    const { setHelperTag } = await import('../src/creatives/group-conversation.ts');
+    expect(await store.migrateConversation(host, IDLE)).toBe('migrated');
+    setHelperTag(dir, sis('b'), 'group-1');
+    try {
+      await store.appendConversation(sis('b'), info(1, 'B al lavoro'));
+      // Another member is not tagged; an entry that names its group turn keeps it.
+      await store.appendConversation(sis('c'), info(2, 'C'));
+      await store.appendConversation(sis('b'), { ...info(3, 'altro'), groupJobId: 'group-0' });
+    } finally { setHelperTag(dir, sis('b'), null); }
+    await store.appendConversation(sis('b'), info(4, 'B dopo'));
+    expect((await store.readConversation(host)).map((e) => [e.variant, e.groupJobId])).toEqual([['b', 'group-1'], ['c', undefined], ['b', 'group-0'], ['b', undefined]]);
   });
 });

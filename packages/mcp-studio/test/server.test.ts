@@ -223,6 +223,37 @@ describe('mcp-studio server', () => {
     expect((await rpc(3, 'tools/call', { name: 'add_variant', arguments: { direction: 'Ironico' } })).result).toMatchObject({ isError: true });
     expect(calls.length).toBe(before);
   });
+  it('lists the coordinator\'s tools of a group turn with strict schemas and forwards them (phase 3 of the single agent)', async () => {
+    const names = ['report_progress', 'read_brand_kit', 'list_variants', 'work_on_variants', 'add_variants', 'update_brief', 'discard_variant', 'restore_variant', 'set_pick', 'render_version', 'prepare_export'];
+    child.kill();
+    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: names.join(',') });
+    type Schema = { type?: string; additionalProperties?: boolean; required?: string[]; properties: Record<string, any>; items?: any; minItems?: number; maxItems?: number };
+    const tools = (await rpc(1, 'tools/list')).result.tools as Array<{ name: string; description: string; inputSchema: Schema }>;
+    expect(tools.map((t) => t.name)).toEqual(['approve', 'report_progress', 'list_variants', 'work_on_variants', 'add_variants', 'read_brand_kit', 'update_brief', 'discard_variant', 'restore_variant', 'set_pick', 'render_version', 'prepare_export']);
+    const tool = (n: string) => tools.find((t) => t.name === n)!;
+    for (const n of ['list_variants', 'work_on_variants', 'add_variants']) expect(tool(n).inputSchema.additionalProperties, n).toBe(false);
+    const work = tool('work_on_variants').inputSchema.properties.items;
+    expect(tool('work_on_variants').inputSchema.required).toEqual(['items']);
+    expect(work.items.required).toEqual(['variant', 'instruction']);
+    expect(work.items.additionalProperties).toBe(false);
+    expect(work.items.properties.instruction.maxLength).toBe(4000);
+    expect(new RegExp(work.items.properties.variant.pattern).test('aa')).toBe(true);
+    expect(tool('work_on_variants').description).toMatch(/AskUserQuestion/);
+    const add = tool('add_variants').inputSchema.properties.items;
+    expect(add.items.required).toEqual(['direction']);
+    expect(add.items.properties.direction).toMatchObject({ minLength: 3, maxLength: 140 });
+    expect(add.maxItems).toBe(26);
+    expect(tool('render_version').inputSchema.properties.variant).toBeTruthy();
+    expect(JSON.stringify(tools)).not.toMatch(/[àèéìòù]/);
+    await rpc(2, 'tools/call', { name: 'work_on_variants', arguments: { items: [{ variant: 'b', instruction: 'Bigger title' }] } });
+    expect(calls.at(-1)).toMatchObject({ url: '/api/bridge/work_on_variants', token: 'tok', body: { items: [{ variant: 'b', instruction: 'Bigger title' }] } });
+    // A creative turn does not list them.
+    child.kill();
+    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,add_variant' });
+    const before = calls.length;
+    expect((await rpc(3, 'tools/call', { name: 'work_on_variants', arguments: { items: [] } })).result).toMatchObject({ isError: true });
+    expect(calls.length).toBe(before);
+  });
   it('exits on stdin close once in-flight calls are answered', async () => {
     const exited = new Promise<void>((r) => child.on('exit', () => r()));
     const out = rpc(1, 'tools/call', { name: 'report_progress', arguments: { message: 'slow' } });

@@ -55,8 +55,17 @@ export const workspaceSettingsSchema = z.object({
    * (`storedWorkspaceSettingsSchema`) turns both on once; a later `false` saved with the marker is the user's own choice.
    */
   agentLiveDefaults: z.literal(804).optional(),
+  /**
+   * Phase 3 of the single agent (decisions 977–983): a variant group has one agent, the coordinator, that the user talks to;
+   * off: the per-variant turns of phase 15 (the composer's "Invia a" and "Tutte"). Absent: `SINGLE_AGENT_DEFAULT`.
+   */
+  singleAgent: z.boolean().optional(),
 });
 export type WorkspaceSettings = z.infer<typeof workspaceSettingsSchema>;
+/** Phase 3 of the single agent: what an absent `singleAgent` means (see `singleAgentOn`). */
+export const SINGLE_AGENT_DEFAULT = false;
+/** Whether a variant group has one agent (the coordinator) under these settings. */
+export const singleAgentOn = (s: Pick<WorkspaceSettings, 'singleAgent'> | null | undefined): boolean => s?.singleAgent ?? SINGLE_AGENT_DEFAULT;
 
 /**
  * Reading the settings file: a domain typed by hand that is no longer valid (e.g. `printer.local`) is left out, one by

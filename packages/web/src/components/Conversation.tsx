@@ -407,7 +407,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
       } else if (e.type === 'version') {
         if (lastUser) lastUser.failed = false;
         out.push({ key, kind: 'version', at: e.at, n: e.n, complete: e.status === 'complete', ...(e.variant ? { variant: e.variant } : {}) });
-      } else {
+      } else if (e.type === 'system') {
         if (lastUser && e.level === 'error') lastUser.failed = true;
         out.push({ key, kind: 'system', at: e.at, level: e.level, text: e.text, ...(e.origin === 'agent' ? { agent: true } : {}), ...(e.variant ? { variant: e.variant } : {}) });
       }

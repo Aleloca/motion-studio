@@ -25,9 +25,26 @@ export function parseConversation(raw: string): ConversationEntry[] {
   return out;
 }
 
-/** Every entry of member `letter`'s own log carries its variant (an entry that already names one keeps it). */
+/**
+ * Every entry of member `letter`'s own log carries its variant (an entry that already names one keeps it). Phase 3: the
+ * group's own entries (`group`, the coordinator's) never get one.
+ */
 export const stampEntries = (entries: readonly ConversationEntry[], letter: VariantId): ConversationEntry[] =>
-  entries.map((e) => (e.variant === undefined ? { ...e, variant: letter } : e));
+  entries.map((e) => (e.variant === undefined && !e.group ? { ...e, variant: letter } : e));
+
+/**
+ * Phase 3 of the single agent: the members whose turn now runs as a helper of a group turn, by project folder and slug. Every
+ * entry the store writes for such a member carries `groupJobId` (the chat folds the helper's steps under its group turn), so
+ * the forty places that write a turn's entries need not know. Set when the helper's turn is made, cleared once it settled;
+ * a member has at most one turn at a time. In memory only.
+ */
+const helperTags = new Map<string, string>();
+const tagKey = (projectDir: string, slug: string) => `${projectDir}\0${slug}`;
+export function setHelperTag(projectDir: string, slug: string, groupJobId: string | null): void {
+  if (groupJobId) helperTags.set(tagKey(projectDir, slug), groupJobId);
+  else helperTags.delete(tagKey(projectDir, slug));
+}
+export const helperTagOf = (projectDir: string, slug: string): string | undefined => helperTags.get(tagKey(projectDir, slug));
 
 const timeOf = (e: ConversationEntry): number => {
   const ms = Date.parse(e.at);
@@ -42,7 +59,8 @@ const timeOf = (e: ConversationEntry): number => {
  */
 export function mergeConversations(lists: ReadonlyArray<{ letter: VariantId; entries: readonly ConversationEntry[]; own?: boolean }>): ConversationEntry[] {
   // `own`: a member's own log, every entry of it is that member's whatever stamp it carries (decision 1169).
-  const logs = lists.map((l) => (l.own ? l.entries.map((e) => ({ ...e, variant: l.letter })) : stampEntries(l.entries, l.letter)));
+  // Phase 3: the group's own entries keep no variant, whichever log holds them.
+  const logs = lists.map((l) => (l.own ? l.entries.map((e) => (e.group ? e : { ...e, variant: l.letter })) : stampEntries(l.entries, l.letter)));
   const at = logs.map(() => 0);
   const total = logs.reduce((n, l) => n + l.length, 0);
   const out: ConversationEntry[] = [];

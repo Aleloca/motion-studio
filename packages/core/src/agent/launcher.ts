@@ -27,6 +27,8 @@ export const MCP_SERVER = 'studio';
  * Decision 917: the agent's actions on the app, creative turns only (`agent-actions.ts`), with no confirmation card. Never
  * archive, delete, settings, keys or permissions.
  */
+/** Phase 3 of the single agent: the coordinator's own tools (`group-turn.ts`); no other job has them. */
+export const GROUP_TOOLS = ['list_variants', 'work_on_variants', 'add_variants'] as const;
 export const APP_ACTION_TOOLS = ['update_brief', 'add_format', 'duplicate_format', 'add_language', 'add_variant', 'discard_variant', 'restore_variant', 'set_pick', 'render_version', 'prepare_export'] as const;
 export const MCP_TOOLS: Record<AgentJobKind, string[]> = {
   creative: ['report_progress', 'validate_composition', 'preview_frames', 'read_brand_kit', 'generate_image', 'tts', 'sound_effect', 'music', 'list_voices', 'stock_search', 'stock_download', 'fonts_fetch', ...APP_ACTION_TOOLS],
@@ -37,6 +39,9 @@ export const MCP_TOOLS: Record<AgentJobKind, string[]> = {
   localize: ['report_progress', 'submit_localization', 'preview_frames', 'read_brand_kit'],
   // Phase 15: the directions turn of a variant group. Its only tool hands the directions over: no write, no paid tool.
   'variant-directions': ['submit_variant_directions'],
+  // Phase 3 of the single agent: the coordinator of a variant group. It reads, answers, asks (AskUserQuestion, through the
+  // approval prompt) and hands the work to the variants' turns; the group-level app actions are its own. No paid tool.
+  'creative-group': ['report_progress', 'read_brand_kit', ...GROUP_TOOLS, 'update_brief', 'discard_variant', 'restore_variant', 'set_pick', 'render_version', 'prepare_export'],
 };
 
 /** Characters that make Claude Code's sandbox read a path as a glob. */
@@ -85,7 +90,8 @@ export interface LauncherDeps {
 }
 
 /** Phase 13: the jobs whose turns can take messages or an interrupt while they run (spec §2; never brand analysis, describe, localize). */
-const LIVE_JOB_KINDS: ReadonlySet<AgentJobKind> = new Set(['creative', 'console']);
+/** Phase 3 of the single agent: the coordinator of a group takes messages while it runs, as a creative turn does. */
+const LIVE_JOB_KINDS: ReadonlySet<AgentJobKind> = new Set(['creative', 'console', 'creative-group']);
 export interface LaunchInput {
   kind: AgentJobKind; jobId: string; projectSlug: string; projectDir: string; creativeSlug?: string | null;
   codebases?: string[]; protectedFiles?: string[];
@@ -108,6 +114,8 @@ export interface LaunchInput {
   services?: BridgeContext['services'];
   /** Creative turns (decision 917): what the agent's app actions act on (see BridgeContext). */
   appScope?: BridgeContext['appScope'];
+  /** Phase 3: the coordinator's own tools (`creative-group` jobs only, see BridgeContext). */
+  groupTools?: BridgeContext['groupTools'];
   /** What the run's ledger line is about (a creative's version and fix-loop attempt); null for other jobs. */
   usage?: { version: number | null; attempt: number | null };
   /**
@@ -287,7 +295,8 @@ export class AgentLauncher {
           ...(i.locale ? { locale: i.locale } : {}), ...(i.addNotes ? { addNotes: i.addNotes } : {}),
           ...(i.services ? { services: i.services } : {}),
           ...(i.kind === 'brand-analysis' && codebases.length > 0 ? { codebases } : {}),
-          ...(i.kind === 'creative' && i.appScope ? { appScope: i.appScope } : {}),
+          ...((i.kind === 'creative' || i.kind === 'creative-group') && i.appScope ? { appScope: i.appScope } : {}),
+          ...(i.kind === 'creative-group' && i.groupTools ? { groupTools: i.groupTools } : {}),
         });
         // The paths are recorded before writing, so release() also removes a half-written pair.
         const files = await prepareRunFiles(configDir, i.jobId);
@@ -310,7 +319,8 @@ export class AgentLauncher {
       const tracker = new UsageTracker({
         // A translation turn is metered with the creative's turns (the usage report has no kind of its own for it).
         // Phase 15: a variant group's directions turn is metered with the creative's turns (the report has no kind for it).
-        projectDir: i.projectDir, jobId: i.jobId, kind: i.kind === 'variant-directions' ? 'creative' : i.kind, creativeSlug: i.creativeSlug ?? null,
+        // Phase 3: so is the coordinator of a group (its runs are part of the group's turn).
+        projectDir: i.projectDir, jobId: i.jobId, kind: i.kind === 'variant-directions' || i.kind === 'creative-group' ? 'creative' : i.kind, creativeSlug: i.creativeSlug ?? null,
         version: i.usage?.version ?? null, attempt: i.usage?.attempt ?? null,
         ...(i.request.resumeSessionId ? { resumeSessionId: i.request.resumeSessionId } : {}),
       }, this.usageLedger);

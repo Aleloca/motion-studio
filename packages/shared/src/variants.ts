@@ -149,3 +149,89 @@ export const directionLine = (m: Pick<VariantMember, 'letter' | 'direction'>): s
   const L = m.letter.toUpperCase();
   return m.direction ? `${L} · ${m.direction}` : L;
 };
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Phase 3 of the single agent (spec §7, decision 979): the variants a user's words name. The core's ask guard reads them; it
+// is a safety net, not the decision (the coordinator decides): a miss only makes the agent ask, so the reading is
+// conservative and never guesses.
+
+const ID_TOKEN = '[A-Za-z]{1,3}';
+const NOT_LETTER_AFTER = '(?![\\p{L}\\p{N}])';
+const NOT_LETTER_BEFORE = '(?<![\\p{L}\\p{N}])';
+/** What joins two ids of a list: a comma, "e"/"ed"/"and", "&", "/". */
+const LIST_SEP = '\\s*(?:,|&|\\/|\\be\\b|\\bed\\b|\\band\\b)\\s*';
+const RANGE_SEP = '\\s*[-\u2013\u2014]\\s*';
+const ALL_WORDS = '(?:tutte|tutti|ogni|all|every)';
+const VARIANT_WORDS = '(?:variant[ei]?|variants?)';
+
+/** The existing ids from `a` to `b` (both ends included, in either order). */
+function rangeOf(a: VariantId, b: VariantId, known: ReadonlySet<VariantId>): VariantId[] {
+  const [from, to] = [variantIndex(a), variantIndex(b)].sort((x, y) => x - y) as [number, number];
+  return [...known].filter((id) => variantIndex(id) >= from && variantIndex(id) <= to);
+}
+
+/**
+ * The variants of the group (`ids`) that `text` names:
+ * - after "variante/varianti/variant(s)": a list of ids in any case ("varianti B e C", "variant b, c and d"), ranges too;
+ * - bare upper-case ids that are variants of the group ("in B", "B: …", "B-D", "AA"). A sentence that starts with A, E, I or O
+ *   followed by a word is an Italian or English word ("A destra…", "E il logo?", "I colori…"), not an id, unless a list or a
+ *   colon follows ("A e B…", "A: …");
+ * - every variant: "tutte/tutti/ogni/all/every" followed, within four words, by "variante/varianti/variant(s)" ("tutte le
+ *   varianti", "all variants"), or alone as the whole text ("Tutte"). "tutti i colori" names none.
+ */
+export function namedVariants(text: string, ids: readonly VariantId[]): Set<VariantId> {
+  const known = new Set(ids);
+  const out = new Set<VariantId>();
+  const add = (raw: string) => { const id = raw.toLowerCase(); if (known.has(id)) out.add(id); return known.has(id); };
+  const whole = text.trim().replace(/[\s.!?,;:]+$/u, '').replace(/^[\s"'«“(]+/u, '');
+  if (new RegExp(`^${ALL_WORDS}$`, 'iu').test(whole)) return new Set(ids);
+  if (new RegExp(`${NOT_LETTER_BEFORE}${ALL_WORDS}(?:\\s+[\\p{L}\\p{N}]+){0,4}?\\s+${VARIANT_WORDS}${NOT_LETTER_AFTER}`, 'iu').test(text)) return new Set(ids);
+  // After the word "variante": a list of ids, in any case, ranges included; the list stops at the first word that is no id.
+  const keyword = new RegExp(`${NOT_LETTER_BEFORE}${VARIANT_WORDS}\\s+(${ID_TOKEN})${NOT_LETTER_AFTER}`, 'giu');
+  for (const m of text.matchAll(keyword)) {
+    let rest = text.slice(m.index! + m[0].length);
+    let last = m[1]!;
+    if (!add(last)) continue;
+    for (;;) {
+      const range = new RegExp(`^${RANGE_SEP}(${ID_TOKEN})${NOT_LETTER_AFTER}`, 'u').exec(rest);
+      if (range && known.has(range[1]!.toLowerCase())) { for (const id of rangeOf(last.toLowerCase(), range[1]!.toLowerCase(), known)) out.add(id); last = range[1]!; rest = rest.slice(range[0].length); continue; }
+      const next = new RegExp(`^${LIST_SEP}(${ID_TOKEN})${NOT_LETTER_AFTER}`, 'iu').exec(rest);
+      if (!next || !add(next[1]!)) break;
+      last = next[1]!;
+      rest = rest.slice(next[0].length);
+    }
+  }
+  // Bare upper-case ids.
+  const bare = new RegExp(`${NOT_LETTER_BEFORE}([A-Z]{1,3})${NOT_LETTER_AFTER}`, 'gu');
+  for (const m of text.matchAll(bare)) {
+    const token = m[1]!;
+    const id = token.toLowerCase();
+    if (!known.has(id)) continue;
+    const before = text.slice(0, m.index!);
+    const after = text.slice(m.index! + token.length);
+    const initial = /(?:^|[.!?;\n])[\s"'«“(]*$/u.test(before);
+    if (initial && /^[AEIO]$/.test(token)) {
+      const listed = new RegExp(`^(?:\\s*[:,)\\]]|\\s*$|${LIST_SEP}[A-Z]{1,3}${NOT_LETTER_AFTER}|${RANGE_SEP}[A-Z]{1,3}${NOT_LETTER_AFTER})`, 'u').test(after);
+      if (!listed) continue;
+    }
+    out.add(id);
+    const range = new RegExp(`^${RANGE_SEP}([A-Z]{1,3})${NOT_LETTER_AFTER}`, 'u').exec(after);
+    if (range && known.has(range[1]!.toLowerCase())) for (const r of rangeOf(id, range[1]!.toLowerCase(), known)) out.add(r);
+  }
+  return out;
+}
+
+/**
+ * The variants an answer to the agent's question picks: the labels of its options ("B · Calma", several joined with ", ")
+ * and "Tutte"/"All"; any other text (the "Other" answer) is read like a message (`namedVariants`).
+ */
+export function answeredVariants(answer: string, ids: readonly VariantId[]): Set<VariantId> {
+  const known = new Set(ids);
+  const out = new Set<VariantId>();
+  for (const part of answer.split(/,\s+/)) {
+    const label = /^\s*([A-Za-z]{1,3})\s*\u00b7/.exec(part);
+    if (label && known.has(label[1]!.toLowerCase())) { out.add(label[1]!.toLowerCase()); continue; }
+    for (const id of namedVariants(part, ids)) out.add(id);
+  }
+  return out;
+}
