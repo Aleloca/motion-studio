@@ -68,6 +68,9 @@ export const rangeTimes = (locale: Locale, r: { start: number; end: number }) =>
 export function clipRangeChip(p: Pin, format: string, t: T, locale: Locale): string | null {
   const c = t.web.conversation;
   const name = p.clipName ?? p.clipId;
+  // A comment on a clip's animation or on an element of an svg clip (user test items 18, 13) says which.
+  if (p.clipId && p.animation) return (p.animation === 'in' ? c.chipClipAnimIn : c.chipClipAnimOut)({ format, name: name! });
+  if (p.clipId && p.element) return c.chipClipElement({ format, name: name!, element: p.element.name });
   if (p.clipId && p.range) return c.chipClipRange({ format, name: name!, ...rangeTimes(locale, p.range) });
   if (p.clipId) return c.chipClip({ format, name: name! });
   if (p.range) return c.chipRange({ format, ...rangeTimes(locale, p.range) });

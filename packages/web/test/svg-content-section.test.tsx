@@ -1,6 +1,7 @@
 // SVG inner editor, Task 3: the inspector's "SVG content" section of an svg clip. Colours (with their counts), texts and
 // elements edit a copy of the clip's checked SVG text; each change is staged through the core (`stageSvg`, mocked here)
-// and the clip's `src` then points at the staged file, one undo step per change.
+// and the clip's `src` then points at the staged file, one undo step per change. User test items 12 to 14: the elements are
+// children of the layer in the Layers panel, and one of them has an inspector of its own (fill, stroke, visibility).
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { DEFAULT_FORMATS, type Composition, type EditorCompositionView, type StagedSvgEdit } from '@motion-studio/shared';
 import { useEffect, useState, type ReactNode } from 'react';
@@ -20,6 +21,7 @@ const { EditorContext } = await import('../src/screens/editor/editorContext.ts')
 const { __resetDrafts, draftKey, isDirty, peekDraft, useDraft } = await import('../src/screens/editor/draftStore.ts');
 const { Inspector } = await import('../src/screens/editor/Inspector.tsx');
 const { LayersPanel } = await import('../src/screens/editor/LayersPanel.tsx');
+const { SvgSessions } = await import('../src/screens/editor/svgSessions.tsx');
 const { I18nProvider } = await import('../src/i18n.tsx');
 type EditorState = import('../src/screens/editor/editorContext.ts').EditorState;
 
@@ -27,6 +29,8 @@ const KEY = draftKey('acme', 'marchio', LOGO);
 const preset = DEFAULT_FORMATS.find((p) => p.id === LOGO)!;
 const stageSvg = vi.fn<(from: { kind: 'svgEdit'; clipId: string; baseSrc: string; content: string }) => Promise<StagedSvgEdit>>();
 let readOnly: string | null = null;
+let svgText = SVG;
+const askElement = vi.fn();
 let acts: import('../src/screens/editor/draftStore.ts').DraftActions | null = null;
 const undo = () => acts!.undo();
 const redo = () => acts!.redo();
@@ -46,12 +50,19 @@ function Harness({ children, select }: { children: ReactNode; select: string }) 
   const [draft, actions] = useDraft(KEY);
   acts = actions;
   const [selection, setSelection] = useState<string | null>(select);
-  const [svgElement, selectSvgElement] = useState<string | null>(null);
+  const [pick, setPick] = useState<{ clip: string; path: string } | null>(null);
+  const svgElement = pick && pick.clip === selection ? pick.path : null;
+  const selectSvgElement = (path: string | null, clipId?: string) => {
+    const clip = clipId ?? selection;
+    if (clip === null) return;
+    setSelection(clip);
+    setPick(path === null ? null : { clip, path });
+  };
   useEffect(() => { actions.open(view(comp()), preset); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   if (!draft) return null;
   const ctx = {
     slug: 'acme', creative: 'marchio', format: LOGO, primary: LOGO, draft, actions, player: null, selection, select: setSelection,
-    snap: false, setSnap: () => {}, token: 'tok', staging: false, stageAsset: async () => null, readOnly, svgElement, selectSvgElement,
+    snap: false, setSnap: () => {}, token: 'tok', staging: false, stageAsset: async () => null, readOnly, svgElement, selectSvgElement, askElement,
     stageSvg: async (from: Parameters<typeof stageSvg>[0]) => {
       const a = await stageSvg(from);
       actions.stage(a, { from });
@@ -59,7 +70,7 @@ function Harness({ children, select }: { children: ReactNode; select: string }) 
     },
     controls: { playing: false, ready: true, duration: 0 },
   } as unknown as EditorState;
-  return <I18nProvider locale="en"><EditorContext.Provider value={ctx}>{children}</EditorContext.Provider></I18nProvider>;
+  return <I18nProvider locale="en"><EditorContext.Provider value={ctx}><SvgSessions>{children}</SvgSessions></EditorContext.Provider></I18nProvider>;
 }
 
 async function mount(id = 'logo', extra?: ReactNode) {
@@ -84,27 +95,35 @@ async function recolour(from: string, to: string) {
 beforeEach(() => {
   __resetDrafts();
   readOnly = null;
+  svgText = SVG;
+  askElement.mockReset();
   api.getBrand.mockReset();
   api.getBrand.mockResolvedValue({ kit: { colors: [{ id: 'c1', name: 'Ink', hex: '#1B1913', role: 'primary', source: { kind: 'manual', ref: null } }], fonts: [] } });
   api.listAssets.mockReset();
   api.listAssets.mockResolvedValue({ assets: [], error: null, unregistered: [] });
   api.getEditorSvg.mockReset();
-  api.getEditorSvg.mockImplementation(async (_s: string, _c: string, _t: string, path: string) => ({ path, content: SVG, warnings: [] }));
+  api.getEditorSvg.mockImplementation(async (_s: string, _c: string, _t: string, path: string) => ({ path, content: svgText, warnings: [] }));
   stageSvg.mockReset();
   stageSvg.mockImplementation(async (from) => staged(from.content));
 });
 afterEach(() => { cleanup(); });
 
 describe('the SVG content section', () => {
-  it('reads the clip SVG through the core and lists its colours with their counts, its texts and its elements', async () => {
-    await mount();
+  it('reads the clip SVG through the core and lists its colours with their counts and its texts; the elements are in the layers tree', async () => {
+    await mount('logo', <LayersPanel />);
     expect(await within(section()).findByRole('button', { name: '#ff0000, used 2 times' })).toBeTruthy();
     expect(within(section()).getByRole('button', { name: '#00ff00, used 1 time' })).toBeTruthy();
     expect(api.getEditorSvg).toHaveBeenCalledWith('acme', 'marchio', 'tok', 'assets/logo.svg');
     expect((within(section()).getByRole('textbox', { name: 'Text 1' }) as HTMLTextAreaElement).value).toBe('Acme');
-    const list = within(section()).getByRole('list', { name: 'Elements of the SVG' });
+    // No list of elements in the layer's inspector (user test item 12): they moved to the Layers panel.
+    expect(within(section()).queryByRole('list', { name: 'Elements of the SVG' })).toBeNull();
+    const twisty = screen.getByRole('button', { name: 'Show the elements of logo' });
+    expect(twisty.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(twisty);
+    expect(screen.getByRole('button', { name: 'Hide the elements of logo' }).getAttribute('aria-expanded')).toBe('true');
+    const tree = await screen.findByRole('list', { name: 'Elements of logo' });
     // Named elements keep their name; the others are translated from their kind and place.
-    expect(within(list).getAllByRole('button', { name: /^(mark|Rectangle 1|Path 1|Text 1)$/ }).map((b) => b.textContent)).toEqual(['mark', 'Rectangle 1', 'Path 1', 'Text 1']);
+    expect(within(tree).getAllByRole('button', { name: /^(mark|Rectangle 1|Path 1|Text 1)$/ }).map((b) => b.textContent)).toEqual(['mark', 'Rectangle 1', 'Path 1', 'Text 1']);
   });
 
   it('a colour change stages the new text from the clip file and points the clip at it, as one undo step', async () => {
@@ -152,17 +171,85 @@ describe('the SVG content section', () => {
     await waitFor(() => expect(draft().ops.at(-1)).toEqual({ kind: 'svgContent', clipId: 'logo', colors: 0, texts: 1, hidden: 0 }));
   });
 
-  it('hides an element, and selecting one shows its own paint', async () => {
-    await mount();
-    fireEvent.click(await within(section()).findByRole('button', { name: 'Hide Rectangle 1' }));
+  it('the eye of an element in the layers tree hides it through the staging', async () => {
+    await mount('logo', <LayersPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show the elements of logo' }));
+    const tree = await screen.findByRole('list', { name: 'Elements of logo' });
+    fireEvent.click(within(tree).getByRole('button', { name: 'Hide Rectangle 1' }));
     await waitFor(() => expect(stageSvg).toHaveBeenCalledTimes(1));
     expect(stageSvg.mock.calls[0]![0].content).toMatch(/<rect[^>]*display="none"/);
     await waitFor(() => expect(draft().ops.at(-1)).toEqual({ kind: 'svgContent', clipId: 'logo', colors: 0, texts: 0, hidden: 1 }));
-    expect(await within(section()).findByRole('button', { name: 'Show Rectangle 1' })).toBeTruthy();
-    fireEvent.click(within(section()).getByRole('button', { name: 'Path 1' }));
-    expect(within(section()).getByRole('button', { name: 'Path 1' }).getAttribute('aria-current')).toBe('true');
-    expect((within(section()).getByRole('textbox', { name: 'Element fill' }) as HTMLInputElement).value).toBe('#00ff00');
-    expect((within(section()).getByRole('textbox', { name: 'Element stroke' }) as HTMLInputElement).value).toBe('#ff0000');
+    expect(await within(tree).findByRole('button', { name: 'Show Rectangle 1' })).toBeTruthy();
+  });
+
+  it('an element row shows the element inspector: a way back to the layer, visibility, labelled fill and stroke, one palette', async () => {
+    await mount('logo', <LayersPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show the elements of logo' }));
+    fireEvent.click(within(await screen.findByRole('list', { name: 'Elements of logo' })).getByRole('button', { name: 'Path 1' }));
+    const insp = document.querySelector('[data-slot="inspector"]') as HTMLElement;
+    const crumbs = within(insp).getByRole('navigation', { name: 'Layer and element' });
+    expect(crumbs.textContent).toBe('logoPath 1');
+    expect(within(insp).getByText('SVG element')).toBeTruthy();
+    // Only the element's settings: no box, no layer content.
+    expect(insp.querySelector('[data-section="box"]')).toBeNull();
+    expect(insp.querySelector('[data-section="svg"]')).toBeNull();
+    expect((within(insp).getByRole('switch', { name: 'Visible' }) as HTMLButtonElement).getAttribute('aria-checked')).toBe('true');
+    expect((within(insp).getByRole('textbox', { name: 'Fill' }) as HTMLInputElement).value).toBe('#00ff00');
+    expect((within(insp).getByRole('textbox', { name: 'Stroke' }) as HTMLInputElement).value).toBe('#ff0000');
+    expect(within(insp).getByText('Fill', { selector: '.ms-paint-cap' })).toBeTruthy();
+    expect(within(insp).getByText('Stroke', { selector: '.ms-paint-cap' })).toBeTruthy();
+    // The brand palette once, for the row in use (the fill first).
+    expect(within(insp).getAllByRole('group', { name: 'Brand palette' })).toHaveLength(1);
+    expect(within(insp).getByText('Swatches for: Fill')).toBeTruthy();
+    fireEvent.focus(within(insp).getByRole('textbox', { name: 'Stroke' }));
+    expect(within(insp).getByText('Swatches for: Stroke')).toBeTruthy();
+    fireEvent.click(within(insp).getByRole('button', { name: '#1B1913' }));
+    await waitFor(() => expect(stageSvg).toHaveBeenCalledTimes(1));
+    expect(stageSvg.mock.calls[0]![0].content).toMatch(/<path[^>]*stroke="#1b1913"/i);
+    // The tree marks the element, not the layer.
+    expect(document.querySelector('[data-svg-element="0/1"]')!.getAttribute('aria-current')).toBe('true');
+    expect(document.querySelector('[data-layer-name="logo"]')!.getAttribute('aria-current')).toBeNull();
+    // Back to the layer.
+    fireEvent.click(within(crumbs).getByRole('button', { name: 'logo' }));
+    expect(insp.querySelector('[data-section="svg"]')).not.toBeNull();
+  });
+
+  it('no stroke says so and can be added; a stroke can be removed', async () => {
+    svgText = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path d="M0 0L5 5" fill="#00ff00"/></svg>';
+    await mount('logo', <LayersPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show the elements of logo' }));
+    fireEvent.click(within(await screen.findByRole('list', { name: 'Elements of logo' })).getByRole('button', { name: 'Path 1' }));
+    const insp = document.querySelector('[data-slot="inspector"]') as HTMLElement;
+    expect(within(insp).getByRole('status', { name: 'Stroke: No stroke' })).toBeTruthy();
+    expect(within(insp).queryByRole('textbox', { name: 'Stroke' })).toBeNull();
+    fireEvent.click(within(insp).getByRole('button', { name: 'Add stroke' }));
+    await waitFor(() => expect(stageSvg).toHaveBeenCalledTimes(1));
+    expect(stageSvg.mock.calls[0]![0].content).toMatch(/<path[^>]*stroke="#1b1913"/i);
+    await waitFor(() => expect((within(insp).getByRole('textbox', { name: 'Stroke' }) as HTMLInputElement).value).toBe('#1b1913'));
+    fireEvent.click(within(insp).getByRole('button', { name: 'Remove the fill' }));
+    await waitFor(() => expect(stageSvg).toHaveBeenCalledTimes(2));
+    expect(stageSvg.mock.calls[1]![0].content).toMatch(/<path[^>]*fill="none"/);
+    expect(await within(insp).findByRole('button', { name: 'Add fill' })).toBeTruthy();
+  });
+
+  it('an element row of another svg layer selects that layer and the element', async () => {
+    await mount('logo', <LayersPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show the elements of Small version' }));
+    fireEvent.click(within(await screen.findByRole('list', { name: 'Elements of Small version' })).getByRole('button', { name: 'Path 1' }));
+    const insp = document.querySelector('[data-slot="inspector"]') as HTMLElement;
+    expect(within(insp).getByRole('navigation', { name: 'Layer and element' }).textContent).toBe('Small versionPath 1');
+  });
+
+  it('an SVG without text: the element says its lettering is drawn as shapes, and asks the agent through a comment', async () => {
+    svgText = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path d="M0 0L5 5" fill="#000"/><path id="word" d="M1 1L4 4" fill="#000"/></svg>';
+    await mount('logo', <LayersPanel />);
+    expect(await within(section()).findByText(/^No editable texts/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Show the elements of logo' }));
+    fireEvent.click(within(await screen.findByRole('list', { name: 'Elements of logo' })).getByRole('button', { name: 'word' }));
+    const insp = document.querySelector('[data-slot="inspector"]') as HTMLElement;
+    expect(within(insp).getByText('This SVG has no editable text: its lettering is drawn as shapes. To change the words, ask the agent.')).toBeTruthy();
+    fireEvent.click(within(insp).getByRole('button', { name: 'Ask the agent to change it' }));
+    expect(askElement).toHaveBeenCalledWith('logo', { path: '1', name: 'word' });
   });
 
   it('a refused edit shows the reasons and keeps the src; the editor goes on working', async () => {
@@ -189,11 +276,12 @@ describe('the SVG content section', () => {
 
   it('a discarded variant shows the section disabled', async () => {
     readOnly = 'This variant is discarded';
-    await mount();
+    await mount('logo', <LayersPanel />);
     const colour = await within(section()).findByRole('button', { name: '#ff0000, used 2 times' });
     expect((colour as HTMLButtonElement).disabled).toBe(true);
     expect((within(section()).getByRole('textbox', { name: 'Text 1' }) as HTMLTextAreaElement).disabled).toBe(true);
-    expect((within(section()).getByRole('button', { name: 'Hide Rectangle 1' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Show the elements of logo' }));
+    expect((within(await screen.findByRole('list', { name: 'Elements of logo' })).getByRole('button', { name: 'Hide Rectangle 1' }) as HTMLButtonElement).disabled).toBe(true);
     expect(within(section()).getByText('This variant is discarded')).toBeTruthy();
   });
 

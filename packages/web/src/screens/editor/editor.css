@@ -45,6 +45,17 @@
 .ms-ed-pill-text { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .ms-ed-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
 .ms-ed-undo { display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--panel); box-shadow: 0 0 0 1px var(--line); }
+/* The comment tools (user test item 15): labelled buttons in a group of their own, next to undo and redo. */
+.ms-ed-comments { display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--panel); box-shadow: 0 0 0 1px var(--line); min-width: 0; }
+.ms-ed-comments .ms-btn { white-space: nowrap; }
+@container ms-ed-main (max-width: 560px) { .ms-ed-comments .ms-btn { font-size: 12px; } }
+/* The right column's Chat | Inspector (user test item 16): a segmented switch that reads as tabs, the chosen one raised. */
+.ms-tabs.ms-panel.ms-ed-tabs { margin: 8px 10px 0; padding: 3px; gap: 3px; border: 0; border-radius: 9px; background: var(--field); box-shadow: inset 0 0 0 1px var(--line2); }
+.ms-tabs.ms-panel.ms-ed-tabs .ms-tab { flex: 1; justify-content: center; height: 28px; border-radius: 7px; cursor: pointer; font-weight: 500; color: var(--muted); box-shadow: none; }
+.ms-tabs.ms-panel.ms-ed-tabs .ms-tab:hover:not(.ms-on) { color: var(--text); background: color-mix(in srgb, var(--panel) 50%, transparent); }
+.ms-tabs.ms-panel.ms-ed-tabs .ms-tab.ms-on { font-weight: 600; color: var(--text); background: var(--panel); box-shadow: 0 0 0 1px var(--line), 0 1px 3px var(--shadow); }
+.ms-tabs.ms-panel.ms-ed-tabs .ms-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ms-ed-tabs .ms-tab .ms-tag.ms-n { background: var(--accent); color: var(--accentText); }
 
 /* Dialogs (leave guard, discard, base changed). */
 .ms-ed-dialog { padding: 20px 22px; display: flex; flex-direction: column; gap: 10px; }
@@ -227,7 +238,29 @@
 .ms-svg-el.ms-sel { background: var(--field); box-shadow: inset 0 0 0 1px var(--accent); }
 .ms-svg-el.ms-dim .ms-svg-el-name { color: var(--muted); }
 .ms-svg-el-name { flex: 1; min-width: 0; padding: 4px 6px; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 12px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
-.ms-svg-paint { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
+.ms-svg-el-go { flex: none; color: var(--muted); margin-inline-end: 6px; }
+/* One element of an svg layer (user test items 12 to 14): the way back to the layer, visibility, fill and stroke, ask the agent. */
+.ms-insp-crumbnav { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.ms-insp-crumb { flex: 0 1 auto; min-width: 0; padding: 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-insp-crumb:hover { color: var(--text); text-decoration: underline; }
+.ms-insp-crumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+.ms-insp-crumb-sep { flex: none; color: var(--muted); }
+.ms-insp-crumbnav .ms-insp-name { flex: 0 1 auto; min-width: 0; }
+.ms-svg-visible { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ms-paint { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ms-paint-row { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; align-items: center; gap: 6px; min-width: 0; padding: 3px 4px; border-radius: 7px; }
+.ms-paint-row.ms-on { background: var(--field); }
+.ms-paint-cap { font-weight: 600; }
+.ms-paint-field { min-width: 0; }
+.ms-paint-none { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-paint-chip { width: 28px; height: 28px; flex: none; border-radius: 6px; box-shadow: inset 0 0 0 1px var(--line); }
+/* No colour: the chip is crossed out, as in design tools. */
+.ms-paint-chip.ms-empty { background: linear-gradient(to top right, transparent calc(50% - 1px), var(--danger) calc(50% - 1px), var(--danger) calc(50% + 1px), transparent calc(50% + 1px)), var(--panel); }
+.ms-paint-chip.ms-other { background: linear-gradient(135deg, var(--field), var(--muted)); }
+.ms-paint-swatches { display: flex; flex-direction: column; gap: 6px; padding-top: 2px; }
+.ms-paint-for { font-size: 11px; color: var(--muted); }
+.ms-svg-ask { display: flex; flex-direction: column; gap: 6px; padding-top: 4px; border-top: 1px dashed var(--line2); }
 .ms-svg-reasons { margin: 0; padding-left: 18px; font-size: 11.5px; line-height: 1.4; color: var(--muted); overflow-wrap: anywhere; }
 .ms-insp-slot { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .ms-insp-slot-name { font-size: 12px; }
@@ -253,6 +286,20 @@
 .ms-layers-list > li { border-bottom: 1px solid var(--line2); }
 .ms-layer { height: 44px; box-sizing: border-box; display: flex; align-items: center; gap: 4px; padding: 0 6px 0 8px; color: var(--muted); }
 .ms-layer.ms-nested { padding-left: 24px; }
+/* An svg layer's tree (user test item 12): the chevron, and its elements as shorter, indented rows. */
+.ms-layer-twisty { flex: none; width: 16px; height: 24px; padding: 0; margin-inline-end: -2px; border: 0; border-radius: 4px; background: none; color: var(--muted);
+  display: grid; place-items: center; }
+button.ms-layer-twisty { cursor: pointer; }
+button.ms-layer-twisty:hover { color: var(--text); background: var(--field); }
+button.ms-layer-twisty:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+button.ms-layer-twisty svg { transform: rotate(-90deg); transition: transform var(--d-s) var(--e-std); }
+button.ms-layer-twisty.ms-open svg { transform: none; }
+.ms-layers-svg { max-height: 320px; overflow: auto; }
+.ms-layer.ms-layer-el { height: 32px; }
+.ms-layer.ms-layer-el .ms-layer-thumb { width: 22px; height: 22px; border-radius: 5px; }
+.ms-layer.ms-layer-el .ms-layer-name { font-size: 12px; font-weight: 400; }
+.ms-layer-el-note { margin: 0; padding: 6px 12px 8px 48px; font-size: 11.5px; color: var(--muted); }
+.ms-layer-el-note.ms-nested { padding-left: 64px; }
 .ms-layer.ms-sel { background: var(--sel); }
 .ms-layer.ms-dim .ms-layer-name, .ms-layer.ms-dim .ms-layer-thumb { opacity: .55; }
 .ms-layer-thumb {

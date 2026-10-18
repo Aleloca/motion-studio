@@ -28,7 +28,7 @@
 // - The draft goes to the player with `setComposition` (coalesced per animation frame); a draft the runtime refuses is
 //   shown as a problem, never ignored.
 import {
-  channelName, compositionProblem, compositionProblemText, EDITOR_SAVE_STAGED_MAX, isDurationOffBrief, type Composition, type EditorCompositionView, type EditResult, type FormatPreset, type Pin,
+  channelName, compositionProblem, compositionProblemText, EDITOR_SAVE_STAGED_MAX, isDurationOffBrief, listElements, parseSvg, pinClipName, type Composition, type EditorCompositionView, type EditResult, type FormatPreset, type Pin,
   type StagedAsset, type StagedSvgEdit, type StageRequest,
 } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
@@ -88,6 +88,8 @@ import { Timeline } from './Timeline.tsx';
 import { Inspector } from './Inspector.tsx';
 import { ZoomBar, zoomFrame } from './ImageEditor.tsx';
 import { LayersPanel } from './LayersPanel.tsx';
+import { SvgSessions } from './svgSessions.tsx';
+import { isMac } from '../../platform.ts';
 import { useEditorKeys, useNudgeKeys } from './useEditorKeys.ts';
 import { usePlayerControls } from './usePlayerControls.ts';
 import { DEFAULT_EXPORT_NAME_PATTERN, DEFAULT_FORMATS, editProblemText } from '@motion-studio/shared';
@@ -482,18 +484,31 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   const leaveKeep = () => settle(false);
 
   // Selection (set by the stage handles, the timeline, the layers and the scenes: Tasks 6 to 9). Selecting a clip shows its
-  // inspector; a comment shows the chat (the right column's tabs, decision 930).
+  // inspector, unless the user is writing in the chat (user test item 16: the composer focused, or with text in it); a
+  // comment shows the chat (the right column's tabs, decision 930).
   const [selection, setSelection] = useState<string | null>(null);
   const [tab, setTab] = useState<'chat' | 'inspector'>('chat');
-  const select = useCallback((id: string | null) => { setSelection(id); if (id !== null) setTab('inspector'); }, []);
+  const toInspector = useCallback(() => {
+    const composer = root.current?.querySelector<HTMLTextAreaElement>('.ms-composer textarea');
+    if (composer && (composer === document.activeElement || composer.value.trim() !== '')) return;
+    setTab('inspector');
+  }, []);
+  const select = useCallback((id: string | null) => { setSelection(id); if (id !== null) toInspector(); }, [toInspector]);
   // The magnet (stage guides now, the timeline's edges in Task 7): per editor, not saved.
   const [snap, setSnap] = useState(true);
   /** The image editor's zoom: null is Fit, otherwise 50 to 400 %. Not saved. */
   const [zoom, setZoom] = useState<number | null>(null);
   useEffect(() => { setSelection(null); }, [n, primary]);
-  // The SVG element chosen belongs to the selected clip.
-  const [svgElement, setSvgElement] = useState<string | null>(null);
-  useEffect(() => { setSvgElement(null); }, [selection]);
+  // The SVG element chosen belongs to the clip it was chosen in: another selection is the layer again.
+  const [svgPick, setSvgPick] = useState<{ clip: string; path: string } | null>(null);
+  const svgElement = svgPick !== null && svgPick.clip === selection ? svgPick.path : null;
+  const selectSvgElement = useCallback((path: string | null, clipId?: string) => {
+    const clip = clipId ?? selection;
+    if (clip === null) return;
+    if (clip !== selection) setSelection(clip);
+    setSvgPick(path === null ? null : { clip, path });
+    toInspector();
+  }, [selection, toInspector]);
   const video = draft ? draft.composition.duration > 0 : preset?.kind !== 'image';
 
   // Comments (Task 10, and the format view's spot of the frame). Like the format view's, they go on the pin source (the version
@@ -511,19 +526,30 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     ? ps.map((p) => (p.version === base || p.version === pinSource ? { ...p, version: to } : p)) : ps));
   const [rangeOpen, setRangeOpen] = useState(false);
   const askRange = () => { if (commentVideo) setRangeOpen(true); };
-  const [noteFor, setNoteFor] = useState<{ pin: Pin; index: number | null } | null>(null);
+  /** The note dialog of a comment; `stay`: the user stays where they are once it is added (the chat tab is not shown). */
+  const [noteFor, setNoteFor] = useState<{ pin: Pin; index: number | null; stay?: boolean } | null>(null);
   const commentVideo = Boolean(draft && draft.composition.duration > 0);
-  const startComment = (pin: Pin) => {
+  const startComment = (pin: Pin, o: { stay?: boolean } = {}) => {
     if (!canComment) { toast.show(t.web.conversation.onlyOnVersion({ n: pinSource ?? 0 })); return; }
-    setNoteFor({ pin, index: null });
+    setNoteFor({ pin, index: null, ...(o.stay ? { stay: true } : {}) });
+  };
+  /** The name of the picked SVG element, as the layers tree and the inspector show it (null without one). */
+  const pickedElement = (): { path: string; name: string } | null => {
+    if (svgElement === null || !draft || !selection) return null;
+    const clip = findClipById(draft.composition, selection);
+    const text = clip && clip.type === 'svg' ? draft.svgTexts.get(clip.src) : undefined;
+    const parsed = text !== undefined ? parseSvg(text) : null;
+    const el = parsed?.ok ? listElements(parsed.doc).find((x) => x.path === svgElement) : undefined;
+    return el ? { path: el.path, name: pinClipName(el.named ? el.label : e.svgElementName({ tag: el.tag, n: el.index })) } : null;
   };
   const commentClip = () => {
     if (!draft) return;
     const clip = selection ? findClipById(draft.composition, selection) : null;
-    if (!clip) { toast.show(t.web.conversation.clipCommentNeeds); return; }
+    if (!clip) { toast.show(video ? t.web.conversation.clipCommentNeeds : e.commentLayerNeeds); return; }
     const drawn = player?.clipBounds && player.clipBounds.clipId === clip.id ? player.clipBounds : null;
     const time = commentVideo ? controls.clock.get().time : 0;
-    const pin = clipPin({ format: primary, comp: draft.composition, clip, time, drawn });
+    const element = pickedElement();
+    const pin = { ...clipPin({ format: primary, comp: draft.composition, clip, time, drawn }), ...(element ? { element } : {}) };
     startComment(commentVideo ? pin : { ...pin, timeSec: null });
   };
   const commentRange = (r: { start: number; end: number }) => {
@@ -545,19 +571,24 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     setSpotMode(false);
     startComment({ format, x: pt.x, y: pt.y, timeSec: video ? round3(controls.clock.get().time) : null });
   };
-  // The composer takes the focus once the chat is on screen (an effect: after the tab has rendered).
-  const [focusChat, setFocusChat] = useState(0);
-  useEffect(() => { if (focusChat) root.current?.querySelector<HTMLTextAreaElement>('.ms-composer textarea')?.focus(); }, [focusChat]);
-  /** "Ask the agent" on a custom animation (user test item 10): a clip comment chip about it, then the composer. */
+  /**
+   * "Ask the agent" on a custom animation (user test items 10, 18): the note dialog of a comment bound to the clip and its
+   * animation slot, as a clip or spot comment; the user stays in the editor and the comment waits in the chat's pending list.
+   */
   const askAnimation = (clipId: string, slot: 'in' | 'out') => {
     const clip = draft ? findClipById(draft.composition, clipId) : null;
     if (!draft || !clip || pinSource === null) return;
-    if (!canComment) { toast.show(t.web.conversation.onlyOnVersion({ n: pinSource })); return; }
     const time = slot === 'in' ? clip.start : Math.max(clip.start, clip.start + clip.duration - 1 / draft.composition.fps);
-    const pin = clipPin({ format: primary, comp: draft.composition, clip, time, note: slot === 'in' ? e.animAskNoteIn : e.animAskNoteOut });
-    setStoredPins((ps) => [...ps, { pin: commentVideo ? pin : { ...pin, timeSec: null }, version: pinSource }]);
-    setTab('chat');
-    setFocusChat((x) => x + 1);
+    const pin: Pin = { ...clipPin({ format: primary, comp: draft.composition, clip, time }), animation: slot };
+    startComment(commentVideo ? pin : { ...pin, timeSec: null }, { stay: true });
+  };
+  /** "Ask the agent to change it" on an element of an svg clip (user test item 13): the same, bound to the clip and the element. */
+  const askElement = (clipId: string, element: { path: string; name: string }) => {
+    const clip = draft ? findClipById(draft.composition, clipId) : null;
+    if (!draft || !clip || pinSource === null) return;
+    const drawn = player?.clipBounds && player.clipBounds.clipId === clip.id ? player.clipBounds : null;
+    const pin: Pin = { ...clipPin({ format: primary, comp: draft.composition, clip, time: commentVideo ? controls.clock.get().time : 0, drawn }), element: { path: element.path, name: pinClipName(element.name) } };
+    startComment(commentVideo ? pin : { ...pin, timeSec: null }, { stay: true });
   };
   const submitNote = (note: string) => {
     const open = noteFor;
@@ -567,7 +598,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     if (!note) delete withNote.note;
     if (open.index === null) {
       setStoredPins((ps) => [...ps, { pin: withNote, version: pinSource }]);
-      setTab('chat');
+      if (open.stay) toast.show(t.web.conversation.commentWaiting); else setTab('chat');
     } else {
       const at = sourcePins[open.index]?.at;
       setStoredPins((ps) => ps.map((p, k) => (k === at ? { ...p, pin: withNote } : p)));
@@ -582,8 +613,12 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     if (pin) setNoteFor({ pin, index: i });
   }, [sourcePins]);
   const pinsSent = useCallback(({ pins: sentPins }: { pins: Pin[] }) => { setStoredPins((ps) => ps.filter((p) => !sentPins.includes(p.pin))); }, [setStoredPins]);
-  const noteTitle = noteFor ? (noteFor.pin.clipId && !noteFor.pin.range
-    ? t.web.conversation.noteTitleClip({ name: noteFor.pin.clipName ?? noteFor.pin.clipId })
+  const noteName = noteFor ? noteFor.pin.clipName ?? noteFor.pin.clipId ?? '' : '';
+  const noteTitle = noteFor ? (noteFor.pin.clipId && noteFor.pin.animation
+    ? (noteFor.pin.animation === 'in' ? t.web.conversation.noteTitleAnimIn : t.web.conversation.noteTitleAnimOut)({ name: noteName })
+    : noteFor.pin.clipId && noteFor.pin.element ? t.web.conversation.noteTitleElement({ name: noteName, element: noteFor.pin.element.name })
+    : noteFor.pin.clipId && !noteFor.pin.range
+    ? t.web.conversation.noteTitleClip({ name: noteName })
     : noteFor.pin.range ? t.web.conversation.noteTitleRange(rangeTimes(locale, noteFor.pin.range))
       : noteFor.pin.timeSec !== null ? f.commentFrame({ time: timecode(noteFor.pin.timeSec) }) : c.commentOn({ label: labelOf(format) })) : '';
 
@@ -714,7 +749,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     slug, creative, format, primary, draft, actions: safeActions, player, controls, selection, select, snap, setSnap, token, staging,
     stageAsset: readOnly === null ? stageAsset : async () => null,
     stageSvg: readOnly === null ? stageSvg : async () => { throw new Error(readOnly); },
-    readOnly, svgElement, selectSvgElement: setSvgElement, askAnimation,
+    readOnly, svgElement, selectSvgElement, askAnimation, askElement,
   } : null;
 
   // ---- states without an editor
@@ -835,17 +870,28 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
 
       <main className="ms-fv-main ms-ed-main" aria-label={e.stage({ label })}>
         <div className="ms-ed-tools">
+          {/* The stage's tools (user test item 15): undo and redo as icons with their shortcut; the comments with a visible
+              label, disabled with the reason when they do not apply; the magnet only on an image (a video has the timeline's). */}
           <div className="ms-ed-undo" role="toolbar" aria-label={e.draft({ n: draft?.ops.length ?? 0 })}>
-            <Button size="sm" variant="ghost" icon aria-label={e.undo} title={e.undo} disabled={!draft || readOnly !== null || draft.past.length === 0} onClick={() => safeActions.undo()}><Icon name="undo" size={14} /></Button>
-            <Button size="sm" variant="ghost" icon aria-label={e.redo} title={e.redo} disabled={!draft || readOnly !== null || draft.future.length === 0} onClick={() => safeActions.redo()}><Icon name="redo" size={14} /></Button>
-            <Button size="sm" variant={spotMode ? 'outline' : 'ghost'} icon className="ms-ed-spot" aria-label={e.commentSpot} aria-pressed={spotMode} aria-keyshortcuts="P"
-              title={canComment ? e.commentSpotTip : e.commentSpotLocked({ n: pinSource ?? 0 })} disabled={!draft || !canComment} onClick={toggleSpot}><Icon name="pin" size={14} /></Button>
+            <Button size="sm" variant="ghost" icon aria-label={e.undo} title={e.undoTip({ keys: isMac() ? '⌘Z' : 'Ctrl+Z' })} aria-keyshortcuts={isMac() ? 'Meta+Z' : 'Control+Z'}
+              disabled={!draft || readOnly !== null || draft.past.length === 0} onClick={() => safeActions.undo()}><Icon name="undo" size={14} /></Button>
+            <Button size="sm" variant="ghost" icon aria-label={e.redo} title={e.redoTip({ keys: isMac() ? '⇧⌘Z' : 'Ctrl+Shift+Z' })} aria-keyshortcuts={isMac() ? 'Shift+Meta+Z' : 'Control+Shift+Z'}
+              disabled={!draft || readOnly !== null || draft.future.length === 0} onClick={() => safeActions.redo()}><Icon name="redo" size={14} /></Button>
             {draft && !video ? (
-              <Button size="sm" variant="outline" className="ms-ed-comment" aria-keyshortcuts="C" disabled={selection === null} title={selection === null ? t.web.conversation.clipCommentNeeds : undefined} onClick={commentClip}>
-                <Icon name="comment" size={13} />{t.web.conversation.clipComment}
+              <Button size="sm" variant="ghost" icon className="ms-ed-snap" aria-label={e.snap} title={e.snapTip} aria-pressed={snap} onClick={() => setSnap(!snap)}><Icon name="magnet" size={14} /></Button>
+            ) : null}
+          </div>
+          <div className="ms-ed-comments" role="toolbar" aria-label={e.commentTools}>
+            <Button size="sm" variant={spotMode ? 'outline' : 'ghost'} className="ms-ed-spot" aria-pressed={spotMode} aria-keyshortcuts="P"
+              title={canComment ? e.commentSpotTip : e.commentSpotLocked({ n: pinSource ?? 0 })} disabled={!draft || !canComment} onClick={toggleSpot}>
+              <Icon name="pin" size={13} />{e.commentSpot}
+            </Button>
+            {draft && !video ? (
+              <Button size="sm" variant="ghost" className="ms-ed-comment" aria-keyshortcuts="C" disabled={selection === null || !canComment}
+                title={!canComment ? e.commentSpotLocked({ n: pinSource ?? 0 }) : selection === null ? e.commentLayerNeeds : svgElement !== null ? e.commentElementTip : e.commentLayerTip} onClick={commentClip}>
+                <Icon name="comment" size={13} />{svgElement !== null ? e.commentElement : e.commentLayer}
               </Button>
             ) : null}
-            <Button size="sm" variant="ghost" icon className="ms-ed-snap" aria-label={e.snap} title={e.snap} aria-pressed={snap} onClick={() => setSnap(!snap)}><Icon name="magnet" size={14} /></Button>
           </div>
           <span className="ms-grow" />
           {draft && (dirty || saved) ? (
@@ -953,8 +999,9 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
       </main>
 
       <aside className="ms-ed-side ms-ed-right" aria-label={e.panelTabs} data-part="r">
-        <Tabs label={e.panelTabs} value={tab} onChange={setTab} className="ms-fv-tabs"
-          tabs={[{ value: 'chat', label: e.chat, controls: 'ms-ed-panel' }, { value: 'inspector', label: e.inspector, controls: 'ms-ed-panel' }]} />
+        <Tabs label={e.panelTabs} value={tab} onChange={setTab} className="ms-fv-tabs ms-ed-tabs"
+          tabs={[{ value: 'chat', label: e.chat, controls: 'ms-ed-panel', ...(sourcePins.length ? { count: sourcePins.length } : {}) }, { value: 'inspector', label: e.inspector, controls: 'ms-ed-panel' }]} />
+        {sourcePins.length ? <span className="ms-sr" role="status">{e.pendingComments({ n: sourcePins.length })}</span> : null}
         <div id="ms-ed-panel" role="tabpanel" className="ms-ed-panel">
           {tab === 'chat' ? (
             detail ? (
@@ -1028,5 +1075,6 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     </div>
   );
   // Tasks 6 to 10 read the draft, the player and the selection from here (`useEditor()`).
-  return ctx ? <EditorContext.Provider value={ctx}>{page}</EditorContext.Provider> : page;
+  // The svg clips' content (user test item 12) is shared by the layers tree and the inspector: svgSessions.tsx.
+  return ctx ? <EditorContext.Provider value={ctx}><SvgSessions>{page}</SvgSessions></EditorContext.Provider> : page;
 }

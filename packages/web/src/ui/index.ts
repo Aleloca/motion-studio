@@ -9,7 +9,7 @@ export { Input, Textarea } from './Input.tsx';
 export { Slider, type SliderProps } from './Slider.tsx';
 export { NumberField, type NumberFieldProps } from './NumberField.tsx';
 export { ColorPick } from './ColorPick.tsx';
-export { ColorField, normalizeHex, type ColorFieldProps, type ColorSwatchGroup } from './ColorField.tsx';
+export { ColorField, ColorSwatches, normalizeHex, type ColorFieldProps, type ColorSwatchGroup } from './ColorField.tsx';
 export { Toggle, type ToggleProps } from './Toggle.tsx';
 export { Check, type CheckProps } from './Check.tsx';
 export { Segmented, type SegmentedOption, type SegmentedProps } from './Segmented.tsx';

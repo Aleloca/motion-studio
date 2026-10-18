@@ -286,11 +286,11 @@ describe('every field edits through apply', () => {
     (c.tracks.flatMap((t) => t.clips).find((k) => k.id === 'card') as { animations?: unknown }).animations = [{ prop: 'opacity', from: 0, to: 1, duration: 0.5 }];
     await mount('card', c);
     expect(screen.getByText('Custom animation · ask the agent to change it')).toBeTruthy();
-    // User test item 10: a button puts a reference to that animation in the chat.
+    // User test items 10, 18: a button opens a comment on that animation.
     askSpy.mockClear();
     fireEvent.click(screen.getByRole('button', { name: 'Ask the agent' }));
     expect(askSpy).toHaveBeenCalledWith('card', 'in');
-    expect(screen.getByRole('button', { name: 'Ask the agent' }).getAttribute('title')).toBe('Adds a reference to the in animation of card to the chat');
+    expect(screen.getByRole('button', { name: 'Ask the agent' }).getAttribute('title')).toBe('Write what to change in the in animation of card: the comment goes to the agent with your next message');
   });
 
   it('html parameters: one field per declared param, by type', async () => {
