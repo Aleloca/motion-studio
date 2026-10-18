@@ -235,3 +235,14 @@ describe('BriefEditor services', () => {
     expect(lastSaved().brief.services).toEqual({ voice: 'none' });
   });
 });
+
+describe('Services chip label (user test note 24)', () => {
+  it('says Services when nothing is chosen, else the names of the chosen services, with a count when long', async () => {
+    const { servicesLabel } = await import('../src/components/ServicesSelector.tsx');
+    const { messages } = await import('@motion-studio/shared');
+    const t = messages('en');
+    expect(servicesLabel(undefined, t)).toBe('Services');
+    expect(servicesLabel({ images: 'openai', voice: 'elevenlabs' } as never, t)).toBe('OpenAI · ElevenLabs');
+    expect(servicesLabel({ images: 'openai', voice: 'elevenlabs', music: 'stock', sfx: 'none' } as never, t)).toBe('OpenAI · ElevenLabs +1');
+  });
+});
