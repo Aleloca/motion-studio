@@ -1,6 +1,6 @@
 import { lstat } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
-import { formatLabel, videoTargetBitrateKbps, manifestSchema, messages, type Locale, type FormatPreset, type OutputFileInfo, type OutputWarning } from '@motion-studio/shared';
+import { formatLabel, QUALITY_BITRATE_FACTOR, videoTargetBitrateKbps, manifestSchema, messages, type ExportQuality, type Locale, type FormatPreset, type OutputFileInfo, type OutputWarning } from '@motion-studio/shared';
 import { findPreset } from '../formats/format-catalog.ts';
 import { JsonFileError, readJsonFile } from '../json-file.ts';
 import type { MediaTools } from '../media/media-tools.ts';
@@ -23,9 +23,11 @@ function videoTargetKbps(preset: FormatPreset, fps: number | undefined): number 
  * The phase 8 bitrate warning (never a problem): the effective bitrate of a video file above 1.5× its target. Needs a known
  * duration; the target is an H.264 one, so GIF and WebM files never get it.
  */
-export function largeFileWarning(preset: FormatPreset, ext: string, sizeBytes: number, durationSec: number | null, fps: number | undefined): OutputWarning | null {
+export function largeFileWarning(preset: FormatPreset, ext: string, sizeBytes: number, durationSec: number | null, fps: number | undefined,
+  /** A core render's quality (decision 974): its bitrate is the target's for that quality (an agent's file: the phase 8 target). */
+  quality?: ExportQuality): OutputWarning | null {
   if (preset.kind !== 'video' || !H264_EXTENSIONS.has(ext) || durationSec === null || !(durationSec > 0)) return null;
-  const target = videoTargetKbps(preset, fps);
+  const target = videoTargetKbps(preset, fps) * (quality ? QUALITY_BITRATE_FACTOR[quality] : 1);
   const mbps = (sizeBytes * 8) / durationSec / 1e6;
   if (mbps <= (target / 1000) * 1.5) return null;
   return { key: 'outputs.largeFile', params: {

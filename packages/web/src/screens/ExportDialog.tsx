@@ -24,7 +24,6 @@ import { outputMedia } from './canvasModel.ts';
 import { channelOf } from './creativeState.ts';
 import { message } from './common.tsx';
 import { abortableWait, exportErrorText, withHashRetry } from './versionErrors.ts';
-import { renderJobsPct } from '@motion-studio/shared';
 import type { FormatState } from './versionModel.ts';
 import { compositionOf, shortProblems } from './renderModel.ts';
 import { localeName } from './creative/languagesModel.ts';
@@ -82,11 +81,6 @@ export function renderedExtension(preset: FormatPreset | null): string {
   const still = preset?.kind === 'image';
   const prefer = still ? ['png', 'jpg', 'jpeg', 'webp'] : ['mp4', 'mov', 'm4v'];
   return `.${prefer.find((e) => preset?.extensions.includes(e)) ?? prefer[0]!}`;
-}
-
-/** Overall progress of the render jobs an export waits for: each job by its formats done and the current one's frames. */
-export function jobsPct(jobs: Array<JobSummary | undefined>): number | null {
-  return renderJobsPct(jobs);
 }
 
 export function ExportDialog(p: ExportDialogProps) {

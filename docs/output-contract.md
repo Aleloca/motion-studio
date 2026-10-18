@@ -4,7 +4,7 @@ The contract describes what the agent must deliver at the end of every creative 
 
 ## Version 2: compositions (current)
 
-Since phase 10 the agent **never renders final media and never installs renderers**. It delivers one **composition folder** per target format; Motion Studio validates it, shows storyboards and a live preview, and renders the final file on demand (the Render button, or an export that needs it).
+Since phase 10 the agent **never renders final media and never installs renderers**. It delivers one **composition folder** per target format; Motion Studio validates it, shows storyboards and a live preview, and renders the final file on demand (an export that needs it, or the agent's `render_version`; decision 974 removed the Render button).
 
 ```
 <project>/creatives/<date-title>/
@@ -73,7 +73,7 @@ The phase 9 rules apply to composition folders:
 
 ### Rendering
 
-Only Motion Studio renders, outside the agent's sandbox, on request: **Render ★** on the canvas, Render in a format's view, or an export that needs it (`POST …/versions/:n/render` with `formats`, or none for every primary).
+Only Motion Studio renders, outside the agent's sandbox, on request: an export that needs it, the agent's `render_version`, or the API (`POST …/versions/:n/render` with `formats`, or none for every primary). Since decision 974 the UI has no Render button.
 
 - The render job has its own queue lane (one at a time) and never blocks agent turns. Storyboards and `preview_frames` use the preview lane.
 - The engine is the desktop app's own Chromium (hidden, isolated Electron windows), or in the CLI system Chrome (Google Chrome or Chromium, `CHROME_PATH` first), else a Chrome for Testing downloaded with consent into `<config>/chromium/`. The engine is reported by `GET /api/render-engine`.
@@ -92,6 +92,8 @@ A creative whose versions have v1 manifests keeps its media and its exports. At 
 Details: `docs/superpowers/notes/2026-10-12-phase10a-live-checks.md`.
 
 ### Export
+
+Decision 974: with `background: true` the export is a job (kind `export`, its own lane; the request answers `{ job }` at once after the checks it can make, its refusals as before); the job's `export` field reports `stage` (`rendering`, `copying`, `done`), the percent of the render jobs it waits for, and at the end the files written, the skipped ones and the renders with problems left out; a cancel cancels the render jobs it started (never one another request started). `quality` (`standard`, `high`, `max`) and `resolution` (the short side: 480, 720, 1080, 1440, 2160) apply to video compositions: the version's own render is at the format size and `high` (recorded in `outputs[].render` and `renders[].render` with the encoder that ran; a render without it counts as `standard`); another profile is rendered for the export alone (`render-export:` jobs in the render lane, into a temp folder), never recorded in the version. Stills, identity and store pack formats have no profile.
 
 A ★ whose v2 version has no current render (or whose render file is gone) is rendered first: `POST …/export` enqueues the render job of that version (or joins the active one), waits for it, then copies; the response lists what was rendered (`rendered`). `POST …/export/prepare` starts those renders at once and returns their jobs, so the UI can show their progress before the copy. A render that fails is `409 export-render-failed` and nothing is copied. Legacy versions export their media as before. In the per-format summary `starRender` is `rendered`, `notRendered` or `stale`; `starFileMissing` is only for legacy files (or a follower with no qualifying version).
 

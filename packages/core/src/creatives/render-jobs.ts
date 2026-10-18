@@ -742,7 +742,8 @@ export class RenderJobService {
       problems.push(v.tooLarge({ file, size: (st.size / 1e6).toFixed(1), max: preset.maxFileMB }));
       issues.push({ code: 'tooLarge', params: { size: round1(st.size / 1e6), max: preset.maxFileMB } });
     }
-    const large = largeFileWarning(preset, file.slice(file.lastIndexOf('.') + 1), st.size, durationSec, o.composition.fps);
+    // The version's render is at the default quality (decision 974): its bitrate is measured against that quality's target.
+    const large = largeFileWarning(preset, file.slice(file.lastIndexOf('.') + 1), st.size, durationSec, o.composition.fps, DEFAULT_EXPORT_QUALITY);
     let preview: string | null = null;
     if (o.poster && video && media.available && probed) {
       const dir = join(o.versionDir, '.previews');
