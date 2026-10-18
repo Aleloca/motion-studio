@@ -2,7 +2,8 @@
  * Phase 15, Task 5: "Selezione finale" (spec §5). Final wave I1: the rows are the core's group export plan (`GET …/export-group`,
  * the same selection the export copies), never a selection recomputed in the web: a legacy export pick, a discarded A, a
  * follower and a stale ★ read exactly as the export will take them. The plan is read again after a group change and when a
- * member changes.
+ * member changes. Decision 973: it is the page's main action and a real chooser (the variants of each format side by side,
+ * a click picks one), with a banner inviting the choice when every variant is ready and nothing is chosen.
  */
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -68,7 +69,7 @@ const open = async (name = 'Selezione finale') => {
   await userEvent.click(screen.getByRole('button', { name }));
   return screen.findByRole('dialog', { name });
 };
-const rows = (dialog: HTMLElement) => within(dialog).getAllByRole('listitem').map((li) => li.textContent);
+const rows = (dialog: HTMLElement) => [...dialog.querySelectorAll('.ms-vfinal-row')].map((p) => p.textContent);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -98,7 +99,75 @@ describe('selectionRows (the rows of the core\'s plan)', () => {
   });
 });
 
-describe('Selezione finale (the popover)', () => {
+describe('Selezione finale (the chooser)', () => {
+  it('is the page\'s main action: a filled button of the variant bar', async () => {
+    render(<Harness />);
+    const bar = await screen.findByRole('toolbar', { name: 'Varianti' });
+    const final = within(bar).getByRole('button', { name: 'Selezione finale' });
+    expect(final.className).toMatch(/ms-accent/);
+    expect(final.getAttribute('aria-haspopup')).toBe('dialog');
+    // "+ Variante" stays a secondary (outline) action, "Mostra scartate" a switch; the grouping toggle is gone.
+    expect(within(bar).getByRole('button', { name: '+ Variante' }).className).toMatch(/ms-outline/);
+    expect(within(bar).getByRole('switch', { name: 'Mostra scartate' })).toBeTruthy();
+    expect(within(bar).queryByRole('radio')).toBeNull();
+  });
+
+  it('shows, for each format, the variants side by side: a click makes one the pick, a click on the pick goes back to the default rule', async () => {
+    plan = [item('instagram-post-1x1', 'c', 3, 'pick'), item('tiktok-9x16', 'a', 2, 'default')];
+    group = groupOf(['a', 'b', 'c'], { picks: { 'instagram-post-1x1': { slug: `${HOST}~c`, version: 3 } } });
+    render(<Harness />);
+    const dialog = await open();
+    const post = await within(dialog).findByRole('group', { name: 'Instagram · Post 1:1' });
+    // One option per active variant, with its picture, its short name and the version its card shows.
+    await waitFor(() => expect(within(post).getAllByRole('button')).toHaveLength(3));
+    const [a, b, c] = within(post).getAllByRole('button');
+    expect(a!.getAttribute('aria-label')).toBe('Instagram · Post 1:1: variante A, v2');
+    expect(b!.textContent).toMatch(/^BAudacev1/);
+    expect(c!.getAttribute('aria-pressed')).toBe('true');
+    expect(c!.textContent).toMatch(/Scelta/);
+    expect(post.querySelectorAll('.ms-vfinal-thumb img')).toHaveLength(3);
+    // The default rule of the other format is shown on the variant it takes.
+    const tiktok = within(dialog).getByRole('group', { name: 'TikTok · Video 9:16' });
+    await waitFor(() => expect(within(tiktok).getAllByRole('button')[0]!.textContent).toMatch(/Regola predefinita/));
+    await userEvent.click(b!);
+    await waitFor(() => expect(api.setVariantPick).toHaveBeenCalledWith('acme', HOST, 'instagram-post-1x1', { slug: `${HOST}~b`, version: 1 }));
+    await userEvent.click(c!);
+    await waitFor(() => expect(api.setVariantPick).toHaveBeenCalledWith('acme', HOST, 'instagram-post-1x1', null));
+    group = groupOf(['a', 'b', 'c']);
+  });
+
+  it('a discarded variant is not offered', async () => {
+    group = groupOf(['a', 'b', 'c'], {}, { b: { status: 'discarded' } });
+    render(<Harness />);
+    const dialog = await open();
+    const post = await within(dialog).findByRole('group', { name: 'Instagram · Post 1:1' });
+    await waitFor(() => expect(within(post).getAllByRole('button').map((x) => x.getAttribute('aria-label'))).toEqual([
+      'Instagram · Post 1:1: variante A, v2', 'Instagram · Post 1:1: variante C, v3']));
+  });
+
+  it('a banner invites the choice when every variant is ready and nothing is chosen yet; its button opens the chooser', async () => {
+    render(<Harness />);
+    const banner = await screen.findByText('3 varianti pronte: scegli quella finale');
+    await userEvent.click(within(banner.closest('.ms-vready') as HTMLElement).getByRole('button', { name: 'Scegli' }));
+    expect(await screen.findByRole('dialog', { name: 'Selezione finale' })).toBeTruthy();
+  });
+
+  it('no banner once something is chosen, nor while a variant works', async () => {
+    group = groupOf(['a', 'b', 'c'], { picks: { 'tiktok-9x16': { slug: HOST, version: 2 } } });
+    const { unmount } = render(<Harness />);
+    await screen.findByRole('toolbar', { name: 'Varianti' });
+    await waitFor(() => expect(document.querySelectorAll('.ms-vcard').length).toBe(3));
+    expect(screen.queryByText(/varianti pronte/)).toBeNull();
+    unmount();
+    group = groupOf(['a', 'b', 'c']);
+    const live = emptyLive();
+    live.jobs = { b: { id: 'b', key: `creative:/w:acme:${HOST}~b`, kind: 'creative', label: 'Lancio', state: 'running', createdAt: at } } as unknown as EventsState['jobs'];
+    render(<Harness live={live} />);
+    await screen.findByRole('toolbar', { name: 'Varianti' });
+    await waitFor(() => expect(document.querySelectorAll('.ms-vcard').length).toBe(3));
+    expect(screen.queryByText(/varianti pronte/)).toBeNull();
+  });
+
   it('lists, format by format, the variant and version the export takes, and "regola predefinita" for the default rule', async () => {
     plan = [item('instagram-post-1x1', 'c', 3, 'pick'), item('tiktok-9x16', 'a', 2, 'default')];
     render(<Harness />);
@@ -188,11 +257,12 @@ describe('Selezione finale (the popover)', () => {
     await waitFor(() => expect(api.groupExportPlan.mock.calls.length).toBeGreaterThan(calls));
     const dialog = screen.getByRole('dialog', { name: 'Selezione finale' });
     await waitFor(() => expect(rows(dialog)[0]).toBe('Instagram · Post 1:1 · Variante B · v1'));
-    // A group change made here (any of them ends in the same reload): the plan is asked again.
+    // A group change made here (a pick in the chooser; any of them ends in the same reload): the plan is asked again.
     const before = api.groupExportPlan.mock.calls.length;
-    await userEvent.keyboard('{Escape}');
-    await userEvent.click(within(screen.getByRole('toolbar', { name: 'Varianti' })).getByRole('radio', { name: 'Formato' }));
-    await waitFor(() => expect(api.setVariantLayout).toHaveBeenCalled());
+    const post = await within(dialog).findByRole('group', { name: 'Instagram · Post 1:1' });
+    await waitFor(() => expect(within(post).getAllByRole('button')).toHaveLength(3));
+    await userEvent.click(within(post).getAllByRole('button')[2]!);
+    await waitFor(() => expect(api.setVariantPick).toHaveBeenCalled());
     await waitFor(() => expect(api.groupExportPlan.mock.calls.length).toBeGreaterThan(before));
   });
 

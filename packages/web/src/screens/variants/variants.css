@@ -1,4 +1,4 @@
-/* Creative variants (Phase 15): chat selector, canvas bar, rows and groups, ★ across variants, final selection, dialogs. Tokens only. */
+/* Creative variants (Phase 15, decision 973): chat selector, canvas bar, the variants' cards, ★ across variants, the final chooser, dialogs. Tokens only. */
 
 /* Chat selector, at the top of the panel. */
 .ms-vsel { flex: none; display: flex; flex-direction: column; gap: 6px; padding: 10px 14px 0; min-width: 0; }
@@ -7,64 +7,98 @@
 .ms-convo-wait { flex: none; display: flex; align-items: center; gap: 6px; margin: 0; padding: 0 14px 8px; font-size: 11.5px; color: var(--muted); }
 .ms-convo-wait svg { flex: none; }
 
-/* The variant bar above the canvas: grouping, discarded, final selection, add. It wraps, so it never overflows a narrow canvas. */
+/* The variant bar above the canvas: discarded, + Variante and "Selezione finale" (the page's main action, decision 973). It
+   wraps, so it never overflows a narrow canvas. */
 .ms-vbar { position: relative; z-index: 4; flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; padding: 10px 16px; min-width: 0;
   background: var(--panel); border-bottom: 1px solid var(--line); }
-.ms-vbar-group { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
-.ms-vbar-lbl { font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap; }
-.ms-vbar .ms-seg { flex-wrap: wrap; }
-.ms-vbar-toggle { color: var(--text); }
+.ms-vbar-toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; white-space: nowrap; color: var(--text); }
 .ms-vbar .ms-grow { flex: 1 1 0; min-width: 0; }
+.ms-vbar-final { gap: 6px; }
+/* "3 varianti pronte: scegli quella finale". */
+.ms-cv-note.ms-vready { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; }
+.ms-cv-note.ms-vready svg { color: var(--accentText); flex: none; }
+.ms-cv-note.ms-vready b { flex: 1 1 200px; min-width: 0; font-weight: 600; }
 
-/* The variants world: rows (or groups) stacked, each row a header and its boards. */
-.ms-cv-vworld { flex-direction: column; align-items: flex-start; gap: calc(44px * var(--cv-z)); }
-.ms-vrow { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.ms-vrow-boards { display: flex; align-items: flex-start; gap: calc(40px * var(--cv-z)); }
-.ms-vrow-head { position: sticky; left: 16px; z-index: 2; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; width: min(640px, calc(100vw - 120px)); max-width: 100%; min-width: 0;
-  padding: 6px 10px; border-radius: 10px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
-.ms-vrow-head .ms-grow { flex: 1 1 0; min-width: 0; }
-.ms-vrow-title { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; min-height: 0; height: 28px; padding: 0 8px; margin: 0 0 0 -8px; border: 0; border-radius: 6px; background: transparent;
-  color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
+/* The variants' cards (decision 973): side by side, wrapping; each card is as wide as the zoom says (variantModel.cardWidth). */
+.ms-cv-world.ms-cv-vworld { flex-direction: row; flex-wrap: wrap; align-items: flex-start; gap: 24px; padding: 16px 16px 48px; width: auto; max-width: 100%; box-sizing: border-box; }
+.ms-vcard { display: flex; flex-direction: column; gap: 8px; min-width: 0; max-width: 100%; box-sizing: border-box; padding: 12px; border-radius: 12px;
+  background: var(--panel); box-shadow: 0 0 0 1px var(--line), 0 6px 18px var(--shadow); }
+.ms-vcard.ms-on { box-shadow: 0 0 0 1px var(--line), 0 0 0 3px var(--sel), 0 6px 18px var(--shadow); }
+/* One line: the name gives way (ellipsis) to the ⋯ menu or "Ripristina", which stay at its end. */
+.ms-vcard-head { display: flex; align-items: center; flex-wrap: nowrap; gap: 8px; min-width: 0; }
+/* The state of its work, "In chat" and "Riprova": the card's second line. */
+.ms-vcard-status { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; min-width: 0; }
+.ms-vrow-title { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; flex: 1 1 0; min-height: 0; height: 28px; padding: 0 8px 0 2px; margin: 0; border: 0; border-radius: 6px;
+  background: transparent; color: var(--text); font: inherit; font-weight: 600; cursor: pointer; outline: none; }
 .ms-vrow-title:hover { background: var(--field); }
-.ms-vrow-title.ms-on { box-shadow: inset 0 0 0 1.5px var(--accent); }
+/* Focus shows only from the keyboard: a click never leaves an outline on the name. */
+.ms-vrow-title:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
 .ms-vrow-title:disabled { cursor: default; color: var(--muted); }
+.ms-vcard-letter { flex: none; min-width: 22px; height: 22px; padding: 0 5px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box;
+  font-size: 12px; font-weight: 700; background: var(--ink); color: var(--inkText); }
 .ms-vrow-dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ms-vrow-state { flex: none; }
+/* A long waiting reason ("queued: two variants already working") gives way in a narrow card instead of sticking out. */
+.ms-vrow-state { flex: 0 1 auto; min-width: 0; max-width: 100%; overflow: hidden; }
+.ms-vrow-state > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-vrow-retry, .ms-vrow-restore, .ms-vrow-more { flex: none; }
-.ms-vrow-head.ms-missing .ms-vrow-dir { color: var(--muted); font-style: italic; }
+.ms-vcard-chat { flex: none; display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--accentText); white-space: nowrap; }
+.ms-vcard.ms-missing .ms-vrow-dir { color: var(--muted); font-style: italic; }
+/* The full direction: a second line, two lines at most (the whole text is the tooltip). */
+.ms-vcard-dir { margin: 0; font-size: 12px; line-height: 1.4; color: var(--muted); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+  overflow: hidden; overflow-wrap: anywhere; }
+/* The formats inside the card: in rows, each in its own proportions (never cropped); one format is the card's hero. */
+.ms-vcard-formats { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 16px 12px; min-width: 0; }
+.ms-vcard-cell { flex: none; min-width: 0; display: flex; flex-direction: column; align-items: center; }
+.ms-vcard .ms-cv-board { min-width: 0; max-width: 100%; }
+.ms-vcard .ms-cv-board-head { max-width: 100%; }
+.ms-vcard .ms-cv-board-line { flex-wrap: wrap; height: auto; min-height: 20px; row-gap: 4px; overflow: visible; }
+.ms-vcard .ms-cv-board-line .ms-vbadge, .ms-vcard .ms-cv-board-line .ms-vstar { flex: none; }
+.ms-vcard .ms-cv-frame { box-shadow: 0 0 0 1px var(--line2); }
 .ms-vmenu-why { margin: 2px 12px 6px; font-size: 11.5px; line-height: 1.4; color: var(--muted); }
 .ms-navitem[aria-disabled="true"] { opacity: .5; cursor: default; }
 
 /* Discarded: grey, not interactive (Ripristina is in the header). */
-.ms-discarded .ms-vrow-boards, .ms-vcell.ms-discarded { opacity: .5; filter: grayscale(1); pointer-events: none; }
-.ms-vrow.ms-discarded .ms-vrow-head .ms-vrow-title { color: var(--muted); }
+.ms-vcard.ms-discarded .ms-vcard-formats { opacity: .5; filter: grayscale(1); pointer-events: none; }
+.ms-vcard.ms-discarded .ms-vrow-title { color: var(--muted); }
 .ms-cv-group.ms-discarded .ms-cv-fmt { opacity: .5; }
 
-/* Grouped by format: the variants of a format side by side. */
-.ms-vstrip { display: flex; flex-wrap: wrap; gap: 8px; max-width: min(1100px, calc(100vw - 120px)); }
-.ms-vstrip-item { min-width: 0; }
-.ms-vstrip-item .ms-vrow-head { position: static; width: auto; }
-.ms-vgroup { display: flex; flex-direction: column; gap: 12px; }
-.ms-vgroup-head { margin: 0; font-size: 13px; font-weight: 600; position: sticky; left: 16px; width: max-content; max-width: calc(100vw - 120px); overflow-wrap: anywhere; }
-.ms-vgroup-boards { display: flex; align-items: flex-start; gap: calc(40px * var(--cv-z)); }
-.ms-vcell { min-width: 0; }
-.ms-cv-board-tag { flex: none; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 5px; display: inline-flex; align-items: center; justify-content: center;
-  font-size: 11px; font-weight: 700; background: var(--ink); color: var(--inkText); }
-
-/* The ★ across variants and the plain version of another variant's board. */
-.ms-vstar { flex: none; width: 22px; height: 22px; min-height: 0; padding: 0; margin: 0; border: 0; border-radius: 6px; background: transparent; color: var(--faint);
-  display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
-.ms-vstar:hover { background: var(--field); color: var(--text); }
-.ms-vstar.ms-on { color: var(--accentText); }
+/* "★ Scegli" / "★ Scelta": the group's choice of a format, labelled (decision 973), and the plain version of every card. */
+.ms-vstar { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 22px; min-height: 0; padding: 0 8px 0 6px; margin: 0; border: 0; border-radius: 999px;
+  background: var(--field); color: var(--muted); font: inherit; font-size: 11px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.ms-vstar:hover { color: var(--text); box-shadow: inset 0 0 0 1px var(--line); }
+.ms-vstar.ms-on { background: var(--sel); color: var(--accentText); }
 .ms-vstar:disabled { cursor: default; opacity: .5; }
-.ms-vver { flex: none; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.ms-vstar:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ms-vver { flex: none; }
 
-/* Final selection. */
-.ms-vfinal { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; font-size: 12.5px; }
+/* Final selection: the chooser. */
+.ms-vfinal { display: flex; flex-direction: column; gap: 12px; padding: 18px 20px 20px; font-size: 12.5px; max-height: min(80vh, 760px); overflow: auto; box-sizing: border-box; }
+.ms-vfinal-head { display: flex; align-items: center; gap: 8px; }
+.ms-vfinal-head h2 { margin: 0; flex: 1; font-size: 16px; }
+.ms-vfinal-close { flex: none; width: 28px; height: 28px; min-height: 0; padding: 0; margin: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted);
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.ms-vfinal-close:hover { background: var(--field); color: var(--text); }
 .ms-vfinal-hint, .ms-vfinal-empty { margin: 0; font-size: 12px; line-height: 1.4; color: var(--muted); }
-.ms-vfinal-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.ms-vfinal-list li { padding: 6px 8px; border-radius: 8px; background: var(--field); overflow-wrap: anywhere; }
-.ms-vfinal-list li[data-source="pick"] { box-shadow: inset 0 0 0 1px var(--accent); }
+.ms-vfinal-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 16px; }
+.ms-vfinal-format { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ms-vfinal-row { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.ms-vfinal-row[data-source="default"] { color: var(--muted); font-weight: 500; }
+.ms-vfinal-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.ms-vfinal-option { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 0; min-height: 0; padding: 8px; margin: 0; border: 0; border-radius: 10px;
+  background: var(--field); color: var(--text); font: inherit; text-align: left; cursor: pointer; box-shadow: inset 0 0 0 1px var(--line2); }
+.ms-vfinal-option:hover { box-shadow: inset 0 0 0 1px var(--line); }
+.ms-vfinal-option.ms-current { box-shadow: inset 0 0 0 1px var(--line); }
+.ms-vfinal-option.ms-on { box-shadow: inset 0 0 0 2px var(--accent); background: var(--sel); }
+.ms-vfinal-option:disabled { cursor: default; opacity: .55; }
+.ms-vfinal-option:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ms-vfinal-thumb { display: flex; align-items: center; justify-content: center; height: 140px; min-width: 0; }
+.ms-vfinal-pic { display: block; max-height: 100%; border-radius: 6px; overflow: hidden; background: var(--bg); box-shadow: 0 0 0 1px var(--line2); }
+.ms-vfinal-pic img, .ms-vfinal-pic video { display: block; width: 100%; height: 100%; object-fit: contain; }
+.ms-vfinal-name { display: flex; align-items: center; gap: 6px; min-width: 0; font-weight: 600; }
+.ms-vfinal-dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-vfinal-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-height: 20px; }
+.ms-vfinal-tag { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); }
+.ms-vfinal-tag.ms-on { color: var(--accentText); font-weight: 600; }
 
 /* Dialogs. */
 .ms-vdlg { display: flex; flex-direction: column; gap: 8px; padding: 20px 22px; }

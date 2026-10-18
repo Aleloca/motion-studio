@@ -24,7 +24,7 @@ import { readSvgForEdit, removeStaging, stageFile, stageSvgEdit, stagingDirOf, t
 /**
  * Everything the core shows of a composition without a final render (Task 5b):
  *
- * - **Storyboards** (spec §2.2): one small frame at each scene start plus the poster at 1 s (a still: one frame), 270 px
+ * - **Storyboards** (spec §2.2): one small frame at each scene start plus the poster in the middle (a still: one frame), 270 px
  *   wide, JPEG, in `.studio/cache/storyboards/<creative>/v<N>/<format>/` with a `storyboard.json` index. Protected (the
  *   agent cannot write `.studio`), not in the version and not in git, regenerable: the index carries the composition hash
  *   and a missing or stale one is made again on request. A follower uses its primary's (same composition folder).
@@ -44,15 +44,19 @@ export const AGENT_FRAME_MAX_WIDTH = 540;
 export const AGENT_FRAME_MAX_TIMES = 6;
 /** Live preview sessions at once (a canvas with a few boards, Compare's two players); a new one ends the oldest. */
 export const MAX_PREVIEW_SESSIONS = 8;
-/** The poster frame's time (spec: "the poster at 1 s"), clamped to the composition. */
-export const POSTER_TIME_SEC = 1;
+/**
+ * The poster frame's time: the frame at (or just before) the middle of the composition. Spec §2.2 had it at 1 s, but the first
+ * second of every variant shows the same opening (user test 26, decision 1040): the middle is what tells them apart.
+ */
+export const posterTime = (c: Pick<Composition, 'duration' | 'fps'>): number => (c.duration > 0 ? Math.floor((c.duration / 2) * c.fps + 1e-9) / c.fps : 0);
 /** At most this many scene frames in a storyboard (a composition may have up to 200 scenes). */
 const MAX_STORYBOARD_SCENES = 40;
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const FRAME_FILE = /^f-\d{1,3}\.jpg$/;
 export const storyboardSchema = z.object({
-  schemaVersion: z.literal(1),
+  // 2: the poster moved to the middle (decision 1040); an index of 1 no longer reads, so it is made again.
+  schemaVersion: z.literal(2),
   hash: z.string().regex(HEX64),
   width: z.number().int().positive(),
   frames: z.array(z.object({
@@ -76,7 +80,7 @@ export function storyboardPlan(c: Pick<Composition, 'duration' | 'fps' | 'scenes
   const scenes = [...c.scenes].sort((a, b) => a.start - b.start).slice(0, MAX_STORYBOARD_SCENES);
   return [
     ...scenes.map((s) => ({ t: s.start, kind: 'scene' as const, scene: s.id })),
-    { t: Math.min(POSTER_TIME_SEC, c.duration), kind: 'poster' as const },
+    { t: posterTime(c), kind: 'poster' as const },
   ];
 }
 
@@ -336,7 +340,7 @@ export class PreviewService {
           files.set(unique[i]!, { file, width: f.width, height: f.height });
         }
         const sb: Storyboard = {
-          schemaVersion: 1, hash, width: Math.min(STORYBOARD_WIDTH, loaded.composition.width),
+          schemaVersion: 2, hash, width: Math.min(STORYBOARD_WIDTH, loaded.composition.width),
           frames: plan.map((p) => ({ ...p, ...files.get(p.t)! })),
         };
         await writeFile(join(temp, 'storyboard.json'), `${JSON.stringify(sb, null, 2)}\n`, { flag: 'wx' });

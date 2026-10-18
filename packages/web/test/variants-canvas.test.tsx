@@ -1,16 +1,17 @@
 /**
- * Phase 15, Task 5: the canvas of a variant group. One row per variant (or one group per format), the layout toggle, the ★ across
- * variants, discard and restore with "Mostra scartate", the ⋯ menu, "+ Variante", a missing member and an orphan sister. The
- * sibling files cover the chat selector, the final selection, the New creative field and the list.
+ * Phase 15, Task 5: the canvas of a variant group. Decision 973: one card per variant (letter, short name, the direction, one
+ * state, its formats), the ★ across variants ("Scegli" / "Scelta"), discard and restore with "Mostra scartate", the ⋯ menu,
+ * "+ Variante", a missing member and an orphan sister. The sibling files cover the chat selector, the final selection, the New
+ * creative field and the list.
  */
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DEFAULT_FORMATS, type ConversationEntry, type JobSummary, type VariantGroup, type VariantLetter, type VersionEntry } from '@motion-studio/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
 import type { Route } from '../src/routes.ts';
 import type { Shell } from '../src/shell/ShellContext.tsx';
-import { at, detailFor, groupOf, HOST, version } from './support/variants.ts';
+import { at, detailFor, groupOf, HOST, out, version } from './support/variants.ts';
 
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -106,21 +107,25 @@ beforeEach(() => {
 });
 afterEach(() => { platform?.mockRestore(); platform = null; });
 
-describe('variant canvas · rows', () => {
-  it('one row per variant, headed "B · direzione", each with the boards of every format', async () => {
+describe('variant canvas · cards', () => {
+  it('one card per variant: the letter and its name, one state, and the formats inside it', async () => {
     render(<Harness live={emptyLive()} />);
     await loaded();
     for (const [letter, dir] of [['A', 'Minimale'], ['B', 'Audace'], ['C', 'Giocosa']] as const) {
-      const row = await region(`Variante ${letter}`);
-      expect(within(row).getByRole('button', { name: `Variante ${letter} · ${dir}` }).textContent).toBe(`${letter} · ${dir}`);
-      await waitFor(() => expect(within(row).getAllByRole('img', { name: /(Post 1:1|Video 9:16) v\d/ }).length).toBe(2));
+      const card = await region(`Variante ${letter}`);
+      expect(card.className).toMatch(/ms-vcard/);
+      expect(within(card).getByRole('button', { name: `Variante ${letter} · ${dir}` }).textContent).toBe(`${letter}${dir}`);
+      // One state only: the work of the variant, never a render state next to it.
+      expect(within(card).getByText('Pronta')).toBeTruthy();
+      expect(within(card).queryByText(/Non renderizzato|Renderizzato/)).toBeNull();
+      const formats = within(card).getByRole('group', { name: `Formati della variante ${letter}` });
+      await waitFor(() => expect(within(formats).getAllByRole('img', { name: /(Post 1:1|Video 9:16) v\d/ }).length).toBe(2));
     }
     // B's newest version is on its board (its own boards are read from its own creative).
     expect(within(await region('Variante B')).getByRole('img', { name: /Post 1:1 v2/ })).toBeTruthy();
-    // The layout toggle, "Mostra scartate", "Selezione finale" and "+ Variante" are in the variant bar.
+    // "Mostra scartate", "Selezione finale" and "+ Variante" are in the variant bar; no grouping toggle any more.
     const bar = screen.getByRole('toolbar', { name: 'Varianti' });
-    expect(within(bar).getByRole('radio', { name: 'Variante' }).getAttribute('aria-checked')).toBe('true');
-    expect(within(bar).getByRole('radio', { name: 'Formato' }).getAttribute('aria-checked')).toBe('false');
+    expect(within(bar).queryByRole('radio')).toBeNull();
     expect(within(bar).getByRole('switch', { name: 'Mostra scartate' })).toBeTruthy();
     expect(within(bar).getByRole('button', { name: 'Selezione finale' })).toBeTruthy();
     expect(within(bar).getByRole('button', { name: '+ Variante' })).toBeTruthy();
@@ -146,7 +151,7 @@ describe('variant canvas · rows', () => {
     render(<Harness live={live} locale="en" />);
     await screen.findByRole('region', { name: 'Variant A' });
     expect(within(await region('Variant B')).getByText('waiting for confirmation')).toBeTruthy();
-    expect(screen.getByRole('radio', { name: 'Variant' })).toBeTruthy();
+    expect(screen.getByRole('group', { name: 'Formats of variant B' })).toBeTruthy();
     expect(screen.getByRole('switch', { name: 'Show discarded' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Final selection' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '+ Variant' })).toBeTruthy();
@@ -167,21 +172,49 @@ describe('variant canvas · rows', () => {
 });
 
 describe('variant canvas · layout', () => {
-  it('the toggle saves the layout in the group, and "Formato" shows the variants of a format side by side', async () => {
-    const { container, rerender } = render(<Harness live={emptyLive()} />);
+  it('a long direction: a short name (its first clause), the whole direction on a second line and in the tooltip', async () => {
+    const long = 'Minimal Apple-style keynote: white space, one idea per scene, slow fades';
+    group = groupOf(['a', 'b', 'c'], {}, { a: { direction: long } });
+    render(<Harness live={emptyLive()} />);
+    const card = await loaded();
+    const name = within(card).getByRole('button', { name: `Variante A · ${long}` });
+    expect(name.textContent).toBe('AMinimal Apple-style keynote');
+    expect(name.title).toBe(long);
+    const second = card.querySelector('.ms-vcard-dir') as HTMLElement;
+    expect(second.textContent).toBe(long);
+    expect(second.title).toBe(long);
+    // A direction that is already short has no second line.
+    expect((await region('Variante B')).querySelector('.ms-vcard-dir')).toBeNull();
+  });
+
+  it('the stored "format" grouping still shows the cards (the chooser is the view by format)', async () => {
+    group = { ...groupOf(['a', 'b', 'c']), layout: 'format' };
+    const { container } = render(<Harness live={emptyLive()} />);
     await loaded();
-    await userEvent.click(screen.getByRole('radio', { name: 'Formato' }));
-    await waitFor(() => expect(api.setVariantLayout).toHaveBeenCalledWith('acme', HOST, 'format'));
-    const post = await waitFor(() => { const g = container.querySelector<HTMLElement>('.ms-vgroup[data-format="instagram-post-1x1"]'); expect(g).toBeTruthy(); return g!; });
-    // One board per variant, each tagged with its letter.
-    await waitFor(() => expect(post.querySelectorAll('.ms-cv-board-tag').length).toBe(3));
-    expect([...post.querySelectorAll('.ms-cv-board-tag')].map((e) => e.textContent)).toEqual(['A', 'B', 'C']);
-    expect(screen.getByRole('radio', { name: 'Formato' }).getAttribute('aria-checked')).toBe('true');
-    // The formats column follows the grouping: one group per format, the variants inside it.
-    const column = screen.getByRole('complementary', { name: /Formati|Formats/ });
-    const fmt = within(column).getAllByRole('group').find((g) => /Post 1:1/.test(g.getAttribute('aria-label') ?? ''))!;
-    await waitFor(() => expect(within(fmt).getAllByRole('button').map((b) => b.textContent)).toEqual([expect.stringMatching(/^A/), expect.stringMatching(/^B/), expect.stringMatching(/^C/)]));
-    rerender(<Harness live={emptyLive()} />);
+    await waitFor(() => expect(container.querySelectorAll('.ms-vcard').length).toBe(3));
+    expect(container.querySelector('.ms-vgroup')).toBeNull();
+  });
+
+  it('a card with one format makes it the hero; the format\'s proportions are kept', async () => {
+    api.getCreative.mockImplementation(async (_s: string, c: string) => detailFor(c, [version(1, 'Dal brief', [out('tiktok-9x16', 'tiktok.mp4', '.previews/tiktok.mp4.jpg')])], group, { formats: ['tiktok-9x16'] }));
+    try {
+      render(<Harness live={emptyLive()} />);
+      const card = await loaded();
+      await waitFor(() => expect(card.querySelector('.ms-vcard-formats.ms-hero')).toBeTruthy());
+      const wrap = await waitFor(() => { const w = card.querySelector<HTMLElement>('.ms-cv-frame-wrap'); expect(w).toBeTruthy(); return w!; });
+      // 9:16 (304×540 at 100%): width / height stays 304 / 540.
+      expect(parseFloat(wrap.style.width) / parseFloat(wrap.style.height)).toBeCloseTo(304 / 540, 2);
+    } finally { api.getCreative.mockImplementation(async (_s: string, c: string) => build(c)); }
+  });
+
+  it('every card shows the same plain version badge, and the open variant\'s name has no outline when clicked', async () => {
+    const { container } = render(<Harness live={emptyLive()} />);
+    await loaded();
+    await waitFor(() => expect(container.querySelectorAll('.ms-vcard .ms-vver').length).toBe(6));
+    expect([...container.querySelectorAll('.ms-vcard .ms-vver')].every((b) => b.tagName === 'SPAN' && b.className === 'ms-vbadge ms-vver')).toBe(true);
+    // No version menu on a card, nor the old "›" open button.
+    expect(container.querySelector('.ms-vcard .ms-fvb')).toBeNull();
+    expect(container.querySelector('.ms-vopen')).toBeNull();
   });
 
   it('by variant the formats column lists each variant with its formats', async () => {
@@ -349,19 +382,72 @@ describe('variant canvas · every board, whichever variant is open', () => {
     expect(api.getConversation).not.toHaveBeenCalledWith('acme', `${HOST}~c`);
   });
 
-  it('"Apri questa variante" on a board of another variant opens that variant in one click', async () => {
+  it('one click on a format of another variant opens it in the format view', async () => {
     render(<Harness live={emptyLive()} />);
-    await loaded();
-    const row = await region('Variante C');
-    await userEvent.click(within(row).getAllByRole('button', { name: /^Apri questa variante: C$/ })[0]!);
-    await waitFor(() => expect(screen.getByRole('radio', { name: 'C' }).getAttribute('aria-checked')).toBe('true'));
-    expect(api.getConversation).toHaveBeenCalledWith('acme', `${HOST}~c`);
+    const card = await region('Variante C');
+    const img = await within(card).findByRole('img', { name: /Post 1:1 v1/ });
+    await userEvent.click(img.closest('.ms-cv-frame') as HTMLElement);
+    await waitFor(() => expect(location.hash).toBe(`#/p/acme/c/${HOST}~c/f/instagram-post-1x1`));
   });
 
-  it('is in English', async () => {
+  it('one click on a format of the open variant opens it too', async () => {
+    render(<Harness live={emptyLive()} />);
+    const card = await loaded();
+    const img = await within(card).findByRole('img', { name: /Post 1:1 v1/ });
+    await userEvent.click(img.closest('.ms-cv-frame') as HTMLElement);
+    await waitFor(() => expect(location.hash).toBe(`#/p/acme/c/${HOST}/f/instagram-post-1x1`));
+  });
+
+  it('hovering a format plays its rendered file, muted and looping (not the first frame of a still)', async () => {
+    const { container } = render(<Harness live={emptyLive()} />);
+    const card = await region('Variante B');
+    const tiktok = await waitFor(() => { const b = card.querySelector<HTMLElement>('[data-board="b:tiktok-9x16"]'); expect(b).toBeTruthy(); return b!; });
+    // At rest: the poster (a picture), no video.
+    expect(tiktok.querySelector('video')).toBeNull();
+    fireEvent.pointerEnter(tiktok.querySelector('.ms-cv-frame-wrap')!);
+    const video = await waitFor(() => { const v = tiktok.querySelector<HTMLVideoElement>('video.ms-cv-live-file'); expect(v).toBeTruthy(); return v!; });
+    expect(video.getAttribute('src')).toBe(`/f/acme/${HOST}~b/outputs/v2/tiktok.mp4`);
+    expect(video.muted).toBe(true);
+    expect(video.loop).toBe(true);
+    fireEvent.pointerLeave(tiktok.querySelector('.ms-cv-frame-wrap')!);
+    await waitFor(() => expect(tiktok.querySelector('video')).toBeNull());
+    // A still format (the post, a PNG) never plays.
+    const post = container.querySelector('[data-board="b:instagram-post-1x1"] .ms-cv-frame-wrap')!;
+    fireEvent.pointerEnter(post);
+    await new Promise((r) => setTimeout(r, 600));
+    expect(post.querySelector('video')).toBeNull();
+  });
+
+  it('Comment on a format of the open variant places a comment on that format', async () => {
+    render(<Harness live={emptyLive()} />);
+    const card = await loaded();
+    fireEvent.click(await within(card).findByRole('button', { name: 'Commenta un punto di Instagram · Post 1:1' }));
+    fireEvent.click(within(card).getByRole('button', { name: /^Commenta Instagram · Post 1:1/ }));
+    expect(await screen.findByLabelText('Testo del commento')).toBeTruthy();
+  });
+
+  it('Comment on a format of another variant opens that variant and starts commenting on the same format there', async () => {
+    render(<Harness live={emptyLive()} />);
+    const card = await region('Variante C');
+    fireEvent.click(await within(card).findByRole('button', { name: 'Commenta un punto di Instagram · Post 1:1' }));
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'C' }).getAttribute('aria-checked')).toBe('true'));
+    const open = await region('Variante C');
+    // C is the open variant now: its post takes the click (only that board), its chat gets the comment.
+    expect(await within(open).findByRole('button', { name: /^Commenta Instagram · Post 1:1/ })).toBeTruthy();
+    expect(within(open).queryByRole('button', { name: /^Commenta TikTok/ })).toBeNull();
+    expect(screen.getByText('Clicca una tavola per commentare · Esc per uscire')).toBeTruthy();
+  });
+
+  it('"Scegli" is labelled: "Scelta" on the chosen format, in English "Choose" / "Chosen"', async () => {
+    group = groupOf(['a', 'b', 'c'], { picks: { 'instagram-post-1x1': { slug: `${HOST}~b`, version: 2 } } });
+    const { unmount } = render(<Harness live={emptyLive()} />);
+    const b = await region('Variante B');
+    expect((await within(b).findByRole('button', { name: /Post 1:1: la variante B v2 è scelta/ })).textContent).toBe('Scelta');
+    expect(within(b).getByRole('button', { name: /Video 9:16 v2 della variante B per/ }).textContent).toBe('Scegli');
+    unmount();
     render(<Harness live={emptyLive()} locale="en" />);
-    const row = await screen.findByRole('region', { name: 'Variant C' });
-    expect((await within(row).findAllByRole('button', { name: 'Open this variant: C' })).length).toBe(2);
+    const en = await screen.findByRole('region', { name: 'Variant B' });
+    expect((await within(en).findByRole('button', { name: /variant B v2 is chosen/ })).textContent).toBe('Chosen');
   });
 });
 

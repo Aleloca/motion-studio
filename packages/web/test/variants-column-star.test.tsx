@@ -1,7 +1,7 @@
 /**
- * Phase 15, live check D2: the ★ of the formats column reads the same core plan as "Selezione finale", in both groupings: a row
- * is starred when the plan takes its variant for the format (a pick shows the PICK's version, a default-rule choice is starred
- * too and marked), and no other row is. The column and the popover never disagree.
+ * Phase 15, live check D2: the ★ of the formats column reads the same core plan as "Selezione finale": a row is starred when the
+ * plan takes its variant for the format (a pick shows the PICK's version, a default-rule choice is starred too and marked), and no
+ * other row is. The column and the chooser never disagree.
  */
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -72,8 +72,9 @@ async function starred(): Promise<string[]> {
   }).filter((r) => r.includes('★'));
 }
 
+// Decision 973: the page is always one card per variant, and so is the formats column (a stored "format" layout is ignored).
 for (const layout of ['variant', 'format'] as const) {
-  describe(`column ★ grouped by ${layout}`, () => {
+  describe(`column ★ (stored layout: ${layout})`, () => {
     beforeEach(() => { group = { ...groupOf(['a', 'b', 'c']), layout }; });
     it('a pick shows on its variant only, with the pick\'s version even when the row shows another', async () => {
       // instagram -> C v1 (C's row shows v2), thumbnail-like second format -> B v1 (B's row shows v2).
@@ -81,12 +82,8 @@ for (const layout of ['variant', 'format'] as const) {
       render(<Harness />);
       const rows = await starred();
       expect(rows).toHaveLength(2);
-      if (layout === 'variant') {
-        expect(rows.some((r) => r.startsWith('Variante C') && r.endsWith('★ v1'))).toBe(true);
-        expect(rows.some((r) => r.startsWith('Variante B') && r.endsWith('★ v1'))).toBe(true);
-      } else {
-        expect(rows.filter((r) => r.endsWith('★ v1')).map((r) => r.split('|')[1]).sort()).toEqual(['B', 'C']);
-      }
+      expect(rows.some((r) => r.startsWith('Variante C') && r.endsWith('★ v1'))).toBe(true);
+      expect(rows.some((r) => r.startsWith('Variante B') && r.endsWith('★ v1'))).toBe(true);
       expect(rows.some((r) => r.startsWith('Variante A') || r.includes('|A|'))).toBe(false);
     });
     it('the default rule stars the variant it chose, marked as default', async () => {
@@ -104,7 +101,7 @@ for (const layout of ['variant', 'format'] as const) {
       await starred();
       await userEvent.click(screen.getByRole('button', { name: 'Selezione finale' }));
       const dialog = await screen.findByRole('dialog', { name: 'Selezione finale' });
-      await waitFor(() => expect(within(dialog).getAllByRole('listitem').map((l) => l.textContent)).toEqual([
+      await waitFor(() => expect([...dialog.querySelectorAll('.ms-vfinal-row')].map((l) => l.textContent)).toEqual([
         'Instagram · Post 1:1 · Variante C · v1', 'TikTok · Video 9:16 · Variante A · v2 · regola predefinita']));
       const rows = await starred();
       expect(rows).toHaveLength(2);

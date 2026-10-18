@@ -1,8 +1,10 @@
 // Creative · canvas (spec §6.2 #6, §6.1 creative bar), ported from the prototype's CanvasView / VersionsPopover /
-// PinComposer and the Canvas boards: formats column by channel, the boards in proportion on a dotted canvas (zoom,
-// safe zones with a legend, V/C/H tools), Figma-style comments that become chips of the composer, the Chat · Comments ·
-// Brief panel, the version history with Compare, and Export. Replaces the interim CreativePage. A board opens in the
-// format view (screens/FormatView.tsx) with T3.
+// PinComposer and the Canvas boards: formats column by channel, the boards in proportion on a dotted canvas, Figma-style
+// comments that become chips of the composer, the Chat · Comments · Brief panel, the version history with Compare, and
+// Export. Replaces the interim CreativePage. A board opens in the format view (screens/FormatView.tsx) with T3.
+// Decision 973: no floating tool bar. The zoom follows the trackpad (pinch around the pointer, two-finger scroll pans) and
+// ⌘+ / ⌘− / ⌘0; a comment starts from a board's own Comment button; safe zones are in the format view only. A variant group
+// is a grid of cards, one per variant, to compare and choose ("Selezione finale" is the page's main action).
 import { ProblemList } from '../components/ProblemList.tsx';
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
 import { turnEndOf } from '@motion-studio/shared';
@@ -21,7 +23,7 @@ import { href, routeKey } from '../routes.ts';
 import { useBarClaim } from '../shell/barSlots.ts';
 import { setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } from '../shell/intents.ts';
 import { go, ShellContext } from '../shell/ShellContext.tsx';
-import { Button, ChannelMark, Empty, Icon, Input, NavItem, Pill, Popover, Segmented, Spinner, Tabs, Tag, Toggle, cx, toast } from '../ui/index.ts';
+import { Button, ChannelMark, Empty, Icon, Input, NavItem, Pill, Popover, Spinner, Tabs, Tag, Toggle, cx, toast } from '../ui/index.ts';
 import { CreativeActionsMenu, type RemovalDone } from './creative/CreativeRemoval.tsx';
 import { useCreative } from '../useCreative.ts';
 import { jobLiveTokens, jobUsagePartial } from '../usageLive.ts';
@@ -47,20 +49,18 @@ import { usePinFrames } from './pinFrames.ts';
 import { rangeSeconds } from './pinModel.ts';
 import { retryTurn } from './creativeState.ts';
 import { AddVariantDialog, EditDirectionDialog, type BaseChoice } from './variants/AddVariantDialog.tsx';
-import { FinalSelection } from './variants/FinalSelection.tsx';
+import { FinalSelection, type ChooserFormat } from './variants/FinalSelection.tsx';
 import { GroupStar } from './variants/GroupStar.tsx';
 import { useVariantMembers } from './variants/useVariantMembers.ts';
-import { VariantRowHeader } from './variants/VariantRowHeader.tsx';
+import { VariantCard } from './variants/VariantCard.tsx';
 import type { ChatTarget } from './variants/VariantSelector.tsx';
-import { discardBlock, discardedSelf, fitGrouped, isRunning, memberLive, rowState, selectionRows, shownMembers, upper } from './variants/variantModel.ts';
+import { CARD_PAD, cardColumns, cardWidth, discardBlock, discardedSelf, fitCards, isRunning, memberLive, readyToChoose, rowState, selectionRows, shortName, shownMembers, thumbZoom, upper } from './variants/variantModel.ts';
+import { pinchZoom, scrollAfterZoom, stepZoom, ZOOM_MIN, zoomKey } from './canvasZoom.ts';
+import { setMenuZoomHandler } from '../shell/menuZoom.ts';
 import './variants/variants.css';
 
-const ZOOM_MIN = 0.5;
 /** T4 only while the player's rect is fresh (boards that arrive later cascade in). */
 const FLIP_WINDOW_MS = 400;
-const ZOOM_MAX = 2;
-const ZOOM_STEP = 0.1;
-const TOOL_KEYS: Record<string, Tool> = { v: 'select', c: 'comment', h: 'hand' };
 
 
 export interface CreativeCanvasProps {
@@ -73,8 +73,11 @@ export interface CreativeCanvasProps {
   onSettings?(next: WorkspaceSettings): void;
 }
 
-/** Phase 15: what the page remembers about a variant group while the open variant changes (the body remounts on a change). */
-interface VariantUi { route: string; focus: string | null; all: boolean; showDiscarded: boolean }
+/**
+ * Phase 15: what the page remembers about a variant group while the open variant changes (the body remounts on a change).
+ * `comment`: a format to start commenting on once the variant just opened is shown (its card's Comment, decision 973).
+ */
+interface VariantUi { route: string; focus: string | null; all: boolean; showDiscarded: boolean; comment: string | null }
 type CanvasBodyProps = CreativeCanvasProps & { routeCreative: string; variantUi: VariantUi; onVariantUi(patch: Partial<Omit<VariantUi, 'route'>>): void };
 
 /**
@@ -82,8 +85,8 @@ type CanvasBodyProps = CreativeCanvasProps & { routeCreative: string; variantUi:
  * works on the variant the user picked (chat, versions, comments, brief), and shows the other variants' boards beside it.
  */
 export function CreativeCanvas(props: CreativeCanvasProps) {
-  const [ui, setUi] = useState<VariantUi>({ route: props.creative, focus: null, all: false, showDiscarded: false });
-  const own: VariantUi = ui.route === props.creative ? ui : { route: props.creative, focus: null, all: false, showDiscarded: false };
+  const [ui, setUi] = useState<VariantUi>({ route: props.creative, focus: null, all: false, showDiscarded: false, comment: null });
+  const own: VariantUi = ui.route === props.creative ? ui : { route: props.creative, focus: null, all: false, showDiscarded: false, comment: null };
   return (
     <CanvasBody key={own.focus ?? 'route'} {...props} creative={own.focus ?? props.creative} routeCreative={props.creative} variantUi={own}
       onVariantUi={(patch) => setUi({ ...own, ...patch })} />
@@ -181,10 +184,13 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   }, [detail, presets, presetsLoaded, presetsFailure, versions, states, viewing]);
   const [sel, setSel] = useState<string | null>(null);
 
-  // Tools, zoom, safe zones.
-  const [tool, setTool] = useState<Tool>('select');
+  // Comment mode and zoom (decision 973: no tool bar). `commentOn`: the one board a Comment button started on (null: every
+  // board that takes comments, from the Comments tab). A variant opened by its card's Comment starts in comment mode.
+  const [tool, setTool] = useState<Tool>(variantUi.comment ? 'comment' : 'select');
+  const [commentOn, setCommentOn] = useState<string | null>(variantUi.comment);
+  useEffect(() => { if (variantUi.comment) onVariantUi({ comment: null }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const startComment = (id: string | null) => { setDraft(null); setCommentOn(id); setTool('comment'); if (id) setSel(id); };
   const [zoom, setZoom] = useState(1);
-  const [safe, setSafe] = useState(false);
 
   // Comments: pending pins (shared with the format view), the bubble being written. The core crops pin frames from
   // its pin source (core creative-turns: the version resumed from, else the latest): comments are placed, shown and
@@ -205,12 +211,12 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   const sourcePins = useMemo(() => stored.flatMap((p, i) => (p.version === pinSource ? [{ pin: p.pin, at: i }] : [])), [stored, pinSource]);
   const pins = useMemo(() => sourcePins.map((p) => p.pin), [sourcePins]);
   const [draft, setDraft] = useState<Draft | null>(null);
-  // Another version on screen (or a new pin source): no comment tool, no bubble.
+  // Another version on screen (or a new pin source): no comment tool, no bubble. Not before the boards are known.
   useEffect(() => {
-    if (canComment) return;
+    if (canComment || !detail || !presetsLoaded) return;
     setDraft(null);
     setTool((tl) => (tl === 'comment' ? 'select' : tl));
-  }, [canComment]);
+  }, [canComment, Boolean(detail), presetsLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setDraft(null); }, [pinSource]);
   // A bubble on a board that no longer takes comments (another version viewed there) closes.
   useEffect(() => { setDraft((d) => (d && !commentable.has(d.format) ? null : d)); }, [commentable]);
@@ -255,6 +261,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     }
     setDraft(null);
     setTool('select');
+    setCommentOn(null);
   };
   const removePin = (i: number) => {
     const at = sourcePins[i]?.at;
@@ -262,10 +269,8 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     setDraft((d) => (d && d.index !== null ? (d.index === i ? null : d.index > i ? { ...d, index: d.index - 1 } : d) : d));
   };
 
-  // Keyboard: V / C / H, Esc, F2 (never while typing, never from a page that is leaving).
-  usePageShortcut(root, (e) => bare(e) && !isTyping(e) && !inOverlay(e) && !activatesControl(e) && e.key.toLowerCase() in TOOL_KEYS && Boolean(detail) && (canComment || TOOL_KEYS[e.key.toLowerCase()] !== 'comment'),
-    (e) => setTool(TOOL_KEYS[e.key.toLowerCase()]!));
-  usePageShortcut(root, (e) => e.key === 'Escape' && !isTyping(e) && !inOverlay(e) && (tool !== 'select' || draft !== null), () => { setDraft(null); setTool('select'); });
+  // Keyboard: Esc, F2, ⌘+ / ⌘− / ⌘0 (never while typing, but the zoom; never from a page that is leaving).
+  usePageShortcut(root, (e) => e.key === 'Escape' && !isTyping(e) && !inOverlay(e) && (tool !== 'select' || draft !== null), () => { setDraft(null); setTool('select'); setCommentOn(null); });
   const [renaming, setRenaming] = useState<string | null>(null);
   const startRename = useCallback(() => { if (detail) setRenaming(detail.creative.title); }, [detail]);
   usePageShortcut(root, (e) => e.key === 'F2' && bare(e) && !e.shiftKey && !isTyping(e) && !inOverlay(e) && Boolean(detail), startRename);
@@ -330,6 +335,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   // Phase 15: variant UI state: a selected board of another variant (`<letter>:<format>`), the dialogs, a busy member.
   const [vsel, setVsel] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [chooser, setChooser] = useState(false);
   const [editDir, setEditDir] = useState<VariantMember | null>(null);
   const [exportingMember, setExportingMember] = useState<{ open: boolean; detail: CreativeDetail; snapshot: ExportSnapshot } | null>(null);
   const [vbusy, setVbusy] = useState<string | null>(null);
@@ -363,13 +369,13 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     } else void stagger(els, { y: 12 }, 40);
   }, [boards.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Hand tool: drag the canvas.
+  // A middle-button drag moves the canvas (the Hand tool left with the tool bar: two-finger scrolling does the same).
   const viewport = useRef<HTMLDivElement>(null);
   const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
   const [grabbing, setGrabbing] = useState(false);
   const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
     const v = viewport.current;
-    if (!v || !(tool === 'hand' && e.button === 0) && e.button !== 1) return;
+    if (!v || e.button !== 1) return;
     e.preventDefault();
     drag.current = { x: e.clientX, y: e.clientY, left: v.scrollLeft, top: v.scrollTop };
     e.currentTarget.setPointerCapture?.(e.pointerId);
@@ -385,29 +391,31 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   const endDrag = () => { drag.current = null; setGrabbing(false); };
 
   // The canvas opens fitted: every board visible in the viewport (never above 100%). Until the user zooms, it refits
-  // when the viewport or the boards change size (a window resize, a format added); after that the zoom is theirs.
+  // when the viewport or the boards change size (a window resize, a format added); after that the zoom is theirs (⌘0 fits
+  // again). Decision 973: in a variant group the zoom fits the variants' cards side by side.
   const userZoomed = useRef(false);
-  // Phase 15: in a variant group the boards of every shown variant share the canvas; the zoom fits the widest row.
-  const layout = group?.group.layout ?? 'variant';
+  const [viewW, setViewW] = useState(0);
   const modelOf = (d: CreativeDetail) => {
     const st = formatStates(d, presets);
     return { st, bs: boardsWith(d.creative.brief.formats, presets, d.versions, (id) => boardSource(st, id, {}), d.creative.brief.formatLabels) };
   };
   const shownMs = group ? shownMembers(group.group, variantUi.showDiscarded).filter((m) => !group.missing.includes(m.letter)) : [];
   const boardsOfMember = (m: VariantMember): Array<BoardModel & { n: number | null }> => (m.slug === creative ? boards : members[m.slug] ? modelOf(members[m.slug]!).bs : []);
-  const fitRows = group
-    ? layout === 'variant' ? shownMs.map(boardsOfMember).filter((r) => r.length > 0)
-      : (detail?.creative.brief.formats ?? []).map((id) => shownMs.flatMap((m) => boardsOfMember(m).filter((b) => b.id === id))).filter((r) => r.length > 0)
-    : null;
-  const fitKey = group
-    ? `g:${layout}:${shownMs.map((m) => `${m.letter}=${boardsOfMember(m).map((b) => `${b.id}:${b.preset?.width ?? 0}x${b.preset?.height ?? 0}`).join(',')}`).join('|')}`
-    : boards.map((b) => `${b.id}:${b.preset?.width ?? 0}x${b.preset?.height ?? 0}`).join('|');
+  const cardCount = group ? shownMembers(group.group, variantUi.showDiscarded).length : 0;
+  const fitKey = group ? `g:${cardCount}` : boards.map((b) => `${b.id}:${b.preset?.width ?? 0}x${b.preset?.height ?? 0}`).join('|');
+  const fitNow = useRef<() => number | null>(() => null);
+  fitNow.current = () => {
+    const v = viewport.current;
+    if (!v) return null;
+    return group ? fitCards(cardCount, v.clientWidth, ZOOM_MIN) : fitBoards(boards, { width: v.clientWidth, height: v.clientHeight }, ZOOM_MIN);
+  };
   useLayoutEffect(() => {
     const v = viewport.current;
     if (!v || !boards.length) return;
     const fit = () => {
+      setViewW((w) => (w === v.clientWidth ? w : v.clientWidth));
       if (userZoomed.current) return;
-      const z = fitRows ? fitGrouped(fitRows, layout === 'variant' ? 'world' : 'line', v.clientWidth, ZOOM_MIN) : fitBoards(boards, { width: v.clientWidth, height: v.clientHeight }, ZOOM_MIN);
+      const z = fitNow.current();
       if (z !== null) setZoom((cur) => (Math.abs(cur - z) < 1e-6 ? cur : z));
     };
     fit();
@@ -418,6 +426,50 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     return () => { cancelAnimationFrame(frame); ro.disconnect(); };
   }, [fitKey, Boolean(detail)]); // eslint-disable-line react-hooks/exhaustive-deps
   const zoomBy = (next: (z: number) => number) => { userZoomed.current = true; setZoom(next); };
+  // ⌘+ / ⌘− step, ⌘0 fits again (and lets the canvas refit on resize, as when it opened).
+  const zoomStep = (k: 'in' | 'out' | 'fit') => {
+    if (k === 'fit') { userZoomed.current = false; const z = fitNow.current(); if (z !== null) setZoom(z); return; }
+    zoomBy((z) => stepZoom(z, k === 'in' ? 1 : -1));
+  };
+  usePageShortcut(root, (e) => zoomKey(e) !== null && !inOverlay(e) && Boolean(detail), (e) => zoomStep(zoomKey(e)!));
+  // Desktop: the View menu's ⌘+ / ⌘− / ⌘0 arrive over the bridge (on macOS the menu takes the keys first): the same path,
+  // while this canvas is the page shown (decision 1055).
+  const zoomStepNow = useRef(zoomStep);
+  zoomStepNow.current = zoomStep;
+  const canZoom = active && Boolean(detail);
+  useEffect(() => (canZoom ? setMenuZoomHandler((kind) => zoomStepNow.current(kind === 'reset' ? 'fit' : kind)) : undefined), [canZoom]);
+  // A trackpad pinch arrives as a wheel event with ctrlKey (Chromium, Electron): the canvas zooms around the pointer and the
+  // page never zooms. Any other wheel (two-finger scroll) scrolls the canvas as usual.
+  const zoomNow = useRef(zoom);
+  zoomNow.current = zoom;
+  const pinchAnchor = useRef<{ scroll: { left: number; top: number }; pointer: { x: number; y: number }; from: number } | null>(null);
+  useEffect(() => {
+    const v = viewport.current;
+    if (!v) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      const from = zoomNow.current;
+      const to = pinchZoom(from, e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY);
+      if (to === from) return;
+      const r = v.getBoundingClientRect();
+      // The first event of a gesture anchors it; the next ones (before a render) keep that anchor.
+      pinchAnchor.current ??= { scroll: { left: v.scrollLeft, top: v.scrollTop }, pointer: { x: e.clientX - r.left, y: e.clientY - r.top }, from };
+      zoomNow.current = to;
+      zoomBy(() => to);
+    };
+    v.addEventListener('wheel', onWheel, { passive: false });
+    return () => v.removeEventListener('wheel', onWheel);
+  }, [Boolean(detail)]); // eslint-disable-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => {
+    const a = pinchAnchor.current;
+    const v = viewport.current;
+    pinchAnchor.current = null;
+    if (!a || !v) return;
+    const next = scrollAfterZoom(a.scroll, a.pointer, a.from, zoom);
+    v.scrollLeft = next.left;
+    v.scrollTop = next.top;
+  }, [zoom]);
 
   // Generate (no version yet).
   const [starting, setStarting] = useState(false);
@@ -490,11 +542,12 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   if (storePack && !columnGroups.some(([ch]) => ch === PACK_GROUP)) columnGroups.push([PACK_GROUP, []]);
   const tall = boards.filter(isTall);
   const rest = boards.filter((b) => !isTall(b));
-  const zones = boards.some((b) => b.preset?.safeZone);
   const pinsOf = (id: string) => pins.map((pin, i) => ({ pin, number: i + 1 })).filter((x) => x.pin.format === id);
   const badgeOf = (b: BoardModel & { n: number | null }) => {
     const s = states[b.id];
     if (!s) return { badge: null, note: null };
+    // A follower of a variant's card: its plain version and "follows …" (it is chosen with its primary, never alone).
+    if (group && s.follows) return { badge: b.n === null ? null : <span className="ms-vbadge ms-vver">v{b.n}</span>, note: followsOf(b.id) };
     if (s.follows) {
       const primary = formatLabel(s.follows);
       // In the narrow header the primary goes by its format name, as the column does (the menu keeps the full label).
@@ -509,22 +562,28 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     const shownVersion = b.n !== null ? versions.find((v) => v.n === b.n) : undefined;
     const r = boardRender(shownVersion, b.id, jobList, detail.jobKey);
     const canRender = b.n !== null && r !== null && r.kind !== 'queued' && r.kind !== 'rendering';
-    // Phase 15: in a group the badge shows the GROUP's ★ (this variant's version when it is the chosen one), and the board has its own ★ button.
-    const own = group ? ownPick(b.id) : null;
-    const badge = (
-      <FormatBadge slug={slug} creative={creative} label={formatLabel(b.id)} state={group ? { ...s, star: { ...s.star, version: own, manual: own !== null, newer: null } } : s}
-        versions={versions} shown={b.n} resumeFrom={cr.resumeFrom?.version ?? null}
-        labelOf={formatLabel} actions={actions} busy={busyLinks} onView={(v) => view(b.id, v)} onCompare={() => openCompare(b.id)}
-        render={canRender ? { n: b.n!, run: () => renderNow([[b.n!, [b.id]]]) } : null} {...(group ? { unstarred: true } : {})} />
-    );
+    // Phase 15: in a group the card shows the GROUP's ★ ("Scegli" / "Scelta") and the same plain version badge on every
+    // variant (decision 973); the version history of a format is in its format view.
+    if (group) {
+      const own = ownPick(b.id);
+      return {
+        badge: b.n === null ? null : (
+          <>
+            <span className="ms-vbadge ms-vver">v{b.n}</span>
+            <GroupStar label={formatLabel(b.id)} variant={upper(group.letter)} n={b.n} picked={own === b.n} pending={actions.pending(b.id)}
+              onToggle={() => { if (own === b.n) actions.resetStar(b.id); else actions.star(b.id, b.n!); }} />
+          </>
+        ),
+        note: null,
+      };
+    }
     return {
-      badge: group && b.n !== null ? (
-        <>
-          <GroupStar label={formatLabel(b.id)} variant={upper(group.letter)} n={b.n} picked={own === b.n} pending={actions.pending(b.id)}
-            onToggle={() => { if (own === b.n) actions.resetStar(b.id); else actions.star(b.id, b.n!); }} />
-          {badge}
-        </>
-      ) : badge,
+      badge: (
+        <FormatBadge slug={slug} creative={creative} label={formatLabel(b.id)} state={s}
+          versions={versions} shown={b.n} resumeFrom={cr.resumeFrom?.version ?? null}
+          labelOf={formatLabel} actions={actions} busy={busyLinks} onView={(v) => view(b.id, v)} onCompare={() => openCompare(b.id)}
+          render={canRender ? { n: b.n!, run: () => renderNow([[b.n!, [b.id]]]) } : null} />
+      ),
       note: null,
     };
   };
@@ -561,9 +620,12 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     const render = boardRender(v, src, jobList, detail.jobKey);
     return comp && render ? { n: b.n, format: src, hash: comp.hash, render, onRender: () => renderNow([[b.n!, [src]]]) } : null;
   };
-  const board = (b: BoardModel & { n: number | null }, tag?: string) => (
-    <CanvasBoard key={b.id} slug={slug} creative={creative} board={b} n={b.n} {...(tag ? { tag } : {})} {...(group ? { grouped: true } : {})} tool={tool} zoom={zoom} selected={sel === b.id} rendering={isRendering(rendering, b.id)} safe={safe}
+  /** A board of the open creative; in a group, a thumbnail of its card at the card's zoom (`z`). */
+  const board = (b: BoardModel & { n: number | null }, z?: number) => (
+    <CanvasBoard key={b.id} slug={slug} creative={creative} board={b} n={b.n} {...(group ? { grouped: true, card: true } : {})}
+      tool={tool === 'comment' && (commentOn === null || commentOn === b.id) ? 'comment' : 'select'} zoom={z ?? zoom} selected={sel === b.id} rendering={isRendering(rendering, b.id)}
       commentable={commentable.has(b.id)} missing={b.n === null ? latest?.n ?? null : null} {...badgeOf(b)} composition={compositionFor(b)}
+      {...(commentable.has(b.id) && !readOnly ? { onComment: () => startComment(b.id) } : {})}
       pins={commentable.has(b.id) ? pinsOf(b.id) : []} draft={commentable.has(b.id) ? draft : null} nextNumber={pins.length + 1}
       onSelect={() => { setSel(b.id); setVsel(null); }} onOpen={(el) => { if (tool === 'select') openEditor(b.id, el); }} onPlace={(x, y) => place(b.id, x, y)} onEditPin={editPin}
       onDraftText={(text) => setDraft((d) => (d ? { ...d, text } : d))} onDraftCommit={commitDraft} onDraftCancel={() => setDraft(null)}
@@ -664,17 +726,28 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
         .then(afterGroupChange).catch(failToast(vg.sendAllFailed)).finally(() => setVbusy(null));
     },
   });
-  const rowHeader = (m: VariantMember) => {
+  const stateOf = (m: VariantMember) => rowState(m, group!.missing.includes(m.letter), liveOf(m), detailOfMember(m.slug)?.creative.status ?? null);
+  /** Decision 973: a variant's card, its formats' thumbnails inside it at the zoom that fits them in the card. */
+  const card = (m: VariantMember, width: number) => {
     const lv = liveOf(m);
+    const missingMember = group!.missing.includes(m.letter);
+    const list = missingMember ? [] : boardsOfMember(m);
+    const hero = list.length === 1;
+    const make = missingMember ? null : makeFor(m);
+    const col = cardColumns(width - 2 * CARD_PAD, list.length);
     return (
-      <VariantRowHeader member={m} focused={m.slug === creative} hasVersions={hasVersionsOf(m)} busy={vbusy === m.letter} actions={memberActions(m)}
+      <VariantCard key={m.letter} member={m} focused={m.slug === creative} hasVersions={hasVersionsOf(m)} busy={vbusy === m.letter} actions={memberActions(m)}
         removal={{ project: slug, onDone: (kind) => { if (kind === 'restored') return; if (m.slug === creative) go(href.creative(slug, hostSlug)); else afterGroupChange(); } }}
-        state={rowState(m, group!.missing.includes(m.letter), lv, detailOfMember(m.slug)?.creative.status ?? null)}
-        discardBlock={discardBlock(group!.group, m.letter, isRunning(lv))} />
+        state={stateOf(m)} discardBlock={discardBlock(group!.group, m.letter, isRunning(lv))} width={width} hero={hero}>
+        {make ? list.map((b) => <div key={b.id} className="ms-vcard-cell" style={{ width: col.width }}>{make(b, thumbZoom(b, col.width, hero))}</div>) : null}
+      </VariantCard>
     );
   };
-  /** A board of another variant: read-only on the canvas (its tools are on its own page), with the group ★ and its version. */
-  const memberBoard = (m: VariantMember, d: CreativeDetail, st: Record<string, FormatState>, b: BoardModel & { n: number | null }, tag?: string) => {
+  /**
+   * A board of another variant: read-only on the canvas (its tools are on its own page), with the group ★ and its version.
+   * Its Comment opens that variant (its chat takes the comment) and starts commenting on the same format there.
+   */
+  const memberBoard = (m: VariantMember, d: CreativeDetail, st: Record<string, FormatState>, b: BoardModel & { n: number | null }, z: number) => {
     const key = `${m.letter}:${b.id}`;
     const src = boardSource(st, b.id, {}).format;
     const v = d.versions.find((x) => x.n === b.n);
@@ -684,66 +757,56 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     const isPick = pick?.slug === m.slug && pick.version === b.n;
     const mjob = Object.values(live.jobs).find((j) => j.key === d.jobKey && (j.state === 'queued' || j.state === 'running'));
     return (
-      <CanvasBoard key={key} boardKey={key} grouped {...(tag ? { tag } : {})} slug={slug} creative={m.slug} board={b} n={b.n} tool="select" zoom={zoom} selected={vsel === key}
-        rendering={isRendering(renderingOf(mjob, st), b.id)} safe={safe} commentable={false} missing={b.n === null ? d.versions.at(-1)?.n ?? null : null}
+      <CanvasBoard key={key} boardKey={key} grouped card slug={slug} creative={m.slug} board={b} n={b.n} tool="select" zoom={z} selected={vsel === key}
+        rendering={isRendering(renderingOf(mjob, st), b.id)} commentable={false} missing={b.n === null ? d.versions.at(-1)?.n ?? null : null}
+        {...(m.status === 'active' && b.n !== null ? { onComment: () => onVariantUi({ focus: m.slug === routeCreative ? null : m.slug, all: false, comment: b.id }) } : {})}
         badge={b.n === null ? null : (
           <>
+            <span className="ms-vbadge ms-vver">v{b.n}</span>
             {st[b.id]?.follows ? null : <GroupStar label={formatLabel(b.id)} variant={upper(m.letter)} n={b.n} picked={isPick} onToggle={() => pickMember(m.slug, b.id, isPick ? null : b.n)} />}
-            <button type="button" className="ms-vstar ms-vopen" aria-label={`${vg.openVariant}: ${upper(m.letter)}`} title={vg.openVariant} onClick={(e) => { e.stopPropagation(); focusMember(m); }} onDoubleClick={(e) => e.stopPropagation()}><Icon name="forward" size={13} /></button>
-            <span className="ms-vver">v{b.n}</span>
           </>
         )}
-        note={null} pins={[]} draft={null} nextNumber={1}
+        note={st[b.id]?.follows ? t.web.formatVersions.follows({ primary: instanceName(presetFor(presets, st[b.id]!.follows!), st[b.id]!.follows!, locale, d.creative.brief.formatLabels) }) : null}
+        pins={[]} draft={null} nextNumber={1}
         composition={comp && render ? { n: b.n!, format: src, hash: comp.hash, render, onRender: () => { void Promise.resolve().then(() => api.renderVersion(slug, m.slug, b.n!, [src])).catch(failToast(t.web.render.startFailed)); } } : null}
         onSelect={() => { setSel(null); setVsel(key); }}
         onOpen={(el) => { setFrameOrigin(`format:${slug}/${m.slug}/${b.id}`, el.getBoundingClientRect()); go(href.format(slug, m.slug, b.id)); }}
         onPlace={() => {}} onEditPin={() => {}} onDraftText={() => {}} onDraftCommit={() => {}} onDraftCancel={() => {}} onDraftDelete={() => {}} />
     );
   };
-  /** Tall boards in a row, the others stacked beside them (as the single-creative canvas). */
-  const laidOut = (list: Array<BoardModel & { n: number | null }>, make: (b: BoardModel & { n: number | null }) => ReactNode) => {
-    const tl = list.filter(isTall);
-    const rs = list.filter((b) => !isTall(b));
-    return <>{tl.map((b) => make(b))}{rs.length ? <div className="ms-cv-stack">{rs.map((b) => make(b))}</div> : null}</>;
-  };
-  const makeFor = (m: VariantMember, tag?: string): ((b: BoardModel & { n: number | null }) => ReactNode) | null => {
-    if (m.slug === creative) return (b) => board(b, tag);
+  const makeFor = (m: VariantMember): ((b: BoardModel & { n: number | null }, z: number) => ReactNode) | null => {
+    if (m.slug === creative) return (b, z) => board(b, z);
     const d = members[m.slug];
     if (!d) return null;
     const { st } = modelOf(d);
-    return (b) => memberBoard(m, d, st, b, tag);
+    return (b, z) => memberBoard(m, d, st, b, z);
   };
+  /** Decision 973: one card per variant, side by side, wrapping (the grouping by format is the "Selezione finale" chooser). */
   const renderGroupedWorld = () => {
     if (!group) return null;
-    const all = shownMembers(group.group, variantUi.showDiscarded);
-    if (layout === 'variant') {
-      return all.map((m) => {
-        const make = group.missing.includes(m.letter) ? null : makeFor(m);
-        return (
-          <section key={m.letter} className={cx('ms-vrow', m.status === 'discarded' && 'ms-discarded')} aria-label={vg.letterLabel({ letter: upper(m.letter) })} data-variant={m.letter}>
-            {rowHeader(m)}
-            <div className="ms-vrow-boards">{make ? laidOut(boardsOfMember(m), make) : null}</div>
-          </section>
-        );
+    const shown = shownMembers(group.group, variantUi.showDiscarded);
+    const width = cardWidth(zoom, viewW, shown.length);
+    return shown.map((m) => card(m, width));
+  };
+  /** The chooser's formats: each format of the group with the active variants' pictures of it, side by side. */
+  const chooserFormats = (): ChooserFormat[] => {
+    if (!group) return [];
+    const active = shownMs.filter((m) => m.status === 'active');
+    return (planFormats ?? cr.brief.formats).map((format) => {
+      const preset = presetFor(presets, format);
+      const options = active.flatMap((m) => {
+        const d = detailOfMember(m.slug);
+        if (!d) return [];
+        const st = m.slug === creative ? states : modelOf(d).st;
+        const b = boardsOfMember(m).find((x) => x.id === format);
+        const n = b?.n ?? null;
+        const src = boardSource(st, format, m.slug === creative ? viewing : {}).format;
+        const comp = n === null ? null : compositionOf(d.versions.find((v) => v.n === n), src);
+        return [{ letter: m.letter, slug: m.slug, name: shortName(m.direction), n, follows: Boolean(st[format]?.follows),
+          thumb: n === null ? null : { creative: m.slug, n, format: src, hash: comp?.hash ?? null, out: b?.out ?? null } }];
       });
-    }
-    return (
-      <>
-        <div className="ms-vstrip">{all.map((m) => <div key={m.letter} className="ms-vstrip-item">{rowHeader(m)}</div>)}</div>
-        {cr.brief.formats.map((id) => (
-          <section key={id} className="ms-vgroup" role="group" aria-label={formatLabel(id)} data-format={id}>
-            <h3 className="ms-vgroup-head">{formatLabel(id)}</h3>
-            <div className="ms-vgroup-boards">
-              {shownMs.map((m) => {
-                const b = boardsOfMember(m).find((x) => x.id === id);
-                const make = b ? makeFor(m, upper(m.letter)) : null;
-                return b && make ? <div key={m.letter} className={cx('ms-vcell', m.status === 'discarded' && 'ms-discarded')}>{make(b)}</div> : null;
-              })}
-            </div>
-          </section>
-        ))}
-      </>
-    );
+      return { format, label: formatLabel(format), width: preset?.width ?? 1, height: preset?.height ?? 1, options };
+    });
   };
   const renderGroupedColumn = () => {
     if (!group) return null;
@@ -760,25 +823,16 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
         </button>
       );
     };
-    if (layout === 'variant') {
-      return shownMembers(group.group, variantUi.showDiscarded).map((m) => (
+    return (
+      <>
+        {shownMembers(group.group, variantUi.showDiscarded).map((m) => (
         <div key={m.letter} className={cx('ms-cv-group', m.status === 'discarded' && 'ms-discarded')} role="group" aria-label={`${vg.letterLabel({ letter: upper(m.letter) })}${m.direction ? ` · ${m.direction}` : ''}`}>
           <div className="ms-cap ms-cv-group-head ms-vcol-head" title={m.direction ? `${upper(m.letter)} · ${m.direction}` : undefined}>
             <span className="ms-vcol-dir">{m.direction ? `${upper(m.letter)} · ${m.direction}` : upper(m.letter)}{group.missing.includes(m.letter) ? ` · ${vg.missing}` : ''}</span>
           </div>
           {m.slug === creative ? renderColumn() : boardsOfMember(m).map((b) => item(m, b, boardName(b, locale)))}
         </div>
-      ));
-    }
-    return (
-      <>
-        {cr.brief.formats.map((id) => (
-          <div key={id} className="ms-cv-group" role="group" aria-label={formatLabel(id)}>
-            <div className="ms-cap ms-cv-group-head">{formatLabel(id)}</div>
-            {shownMs.map((m) => { const b = boardsOfMember(m).find((x) => x.id === id); return b ? item(m, b, upper(m.letter)) : null; })}
-          </div>
         ))}
-        {storePack ? renderColumn('pack') : null}
       </>
     );
   };
@@ -806,20 +860,16 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   };
   // The rows follow the group's canonical formats, which the core says (never the open sister's own brief: it can lag or be frozen).
   const finalRows = group && groupPlan && planFormats ? selectionRows(planFormats, groupPlan) : null;
+  // Decision 973: "Selezione finale" is the page's main action (filled); "Mostra scartate" and "+ Variante" are secondary.
   const variantBar = group ? (
     <div className="ms-vbar" role="toolbar" aria-label={vg.toolbarAria}>
-      <span className="ms-vbar-group">
-        <span className="ms-vbar-lbl">{vg.groupBy}</span>
-        <Segmented<'variant' | 'format'> label={vg.groupByAria} value={layout} onChange={(next) => {
-          Promise.resolve().then(() => api.setVariantLayout(slug, hostSlug, next)).then(afterGroupChange).catch(failToast(vg.layoutFailed));
-        }} options={[{ value: 'variant', label: vg.variant }, { value: 'format', label: vg.format }]} />
-      </span>
-      <span className="ms-cv-safe-toggle ms-vbar-toggle"><Toggle size="sm" on={variantUi.showDiscarded} onChange={(on) => onVariantUi({ showDiscarded: on })} label={vg.showDiscarded} /><span aria-hidden="true">{vg.showDiscarded}</span></span>
+      <span className="ms-vbar-toggle"><Toggle size="sm" on={variantUi.showDiscarded} onChange={(on) => onVariantUi({ showDiscarded: on })} label={vg.showDiscarded} /><span aria-hidden="true">{vg.showDiscarded}</span></span>
       <span className="ms-grow" />
-      <FinalSelection rows={finalRows} label={formatLabel} />
       <Button size="sm" variant="outline" disabled={!canAdd} title={canAdd ? undefined : vg.addFull} onClick={() => setAddOpen(true)}>{vg.addVariant}</Button>
+      <Button size="sm" variant="accent" className="ms-vbar-final" aria-haspopup="dialog" onClick={() => setChooser(true)}><Icon name="star" size={13} fill />{vg.finalSelection}</Button>
     </div>
   ) : null;
+  const toChoose = group ? readyToChoose(group.group, group.missing, (l) => { const m = group.group.members.find((x) => x.letter === l); return m ? stateOf(m).kind : 'missing'; }) : null;
 
   return (
     <div ref={root} className="ms-cv">
@@ -875,10 +925,16 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
             </div>
           ) : null}
           {actionError ? <p role="alert" className="ms-cv-note ms-err">{actionError}</p> : null}
+          {toChoose !== null ? (
+            <div key="choose" className="ms-cv-note ms-info ms-vready" role="status">
+              <Icon name="star" size={13} /><b>{vg.readyBanner({ count: toChoose })}</b>
+              <Button size="sm" variant="outline" onClick={() => setChooser(true)}>{vg.choose}</Button>
+            </div>
+          ) : null}
         </Notes>
         <div
           ref={viewport}
-          className={cx('ms-cv-viewport', `ms-tool-${tool}`, grabbing && 'ms-grabbing')}
+          className={cx('ms-cv-viewport', tool === 'comment' && 'ms-tool-comment', grabbing && 'ms-grabbing')}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={endDrag}
@@ -890,7 +946,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
             setSel(null);
           }}
         >
-          {/* The world is not zoomed: each board scales its frame, and its spacing follows --cv-z (canvas.css). */}
+          {/* The world is not zoomed: each board scales its frame, and its spacing follows --cv-z (canvas.css). A group's cards wrap. */}
           <div className={cx('ms-cv-world', group && 'ms-cv-vworld')} style={{ '--cv-z': zoom } as CSSProperties}
             aria-busy={rendering === 'all' || rendering.size > 0 ? true : undefined}>
             {group ? renderGroupedWorld() : (
@@ -912,30 +968,8 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
           </div>
         ) : null}
         {tool === 'comment' ? <div className="ms-cv-hint" role="status">{c.commentHint}</div> : null}
-        {/* A compact pill just above the tool bar, never over the boards' headers (live checks of phase 9). */}
+        {/* A compact pill at the bottom, never over the boards' headers (live checks of phase 9). */}
         {commentLock && version && pinSource !== null ? <div className="ms-cv-lockpill" id="ms-cv-comment-lock" role="status" title={c.versions.commentsOn({ n: pinSource })}>{c.versions.commentsOn({ n: pinSource })}</div> : null}
-        {safe ? (
-          <div className={cx('ms-cv-legend', commentLock && version && pinSource !== null && 'ms-above-lock')} role="note">
-            <b>{c.safeTitle}</b>
-            <span>{zones ? c.safeBody : c.safeNone}</span>
-            {zones ? <span className="ms-cv-legend-keys"><i aria-hidden="true" />{c.safeTop} · {c.safeBottom} · {c.safeSide}</span> : null}
-          </div>
-        ) : null}
-        <div className="ms-cv-toolbar" role="toolbar" aria-label={c.tools}>
-          {([['select', 'cursor', c.select], ['comment', 'comment', c.comment], ['hand', 'hand', c.hand]] as const).map(([k, icon, label]) => (
-            <button key={k} type="button" className={cx('ms-cv-tool', tool === k && 'ms-on')} aria-label={label} title={k === 'comment' && !canComment && pinSource !== null ? c.versions.commentsOn({ n: pinSource }) : label} aria-pressed={tool === k}
-              disabled={k === 'comment' && !canComment} aria-describedby={k === 'comment' && !canComment && pinSource !== null ? 'ms-cv-comment-lock' : undefined}
-              aria-keyshortcuts={k === 'select' ? 'V' : k === 'comment' ? 'C' : 'H'} onClick={() => setTool(k)}>
-              <Icon name={icon} size={15} strokeWidth={1.5} />
-            </button>
-          ))}
-          <span className="ms-cv-tool-sep" aria-hidden="true" />
-          <button type="button" className="ms-cv-tool ms-sm" aria-label={c.zoomOut} disabled={zoom <= ZOOM_MIN + 1e-6} onClick={() => zoomBy((z) => Math.max(ZOOM_MIN, Math.round((z - ZOOM_STEP) * 20) / 20))}><Icon name="minus" size={13} /></button>
-          <button type="button" className="ms-cv-zoom" aria-label={c.zoomReset({ pct: Math.round(zoom * 100) })} onClick={() => zoomBy(() => 1)}>{formatNumber(locale, Math.round(zoom * 100))}%</button>
-          <button type="button" className="ms-cv-tool ms-sm" aria-label={c.zoomIn} disabled={zoom >= ZOOM_MAX - 1e-6} onClick={() => zoomBy((z) => Math.min(ZOOM_MAX, Math.round((z + ZOOM_STEP) * 20) / 20))}><Icon name="plus" size={13} /></button>
-          <span className="ms-cv-tool-sep" aria-hidden="true" />
-          <span className="ms-cv-safe-toggle"><Toggle size="sm" on={safe} onChange={setSafe} label={c.safeZones} /><span aria-hidden="true">{c.safeZones}</span></span>
-        </div>
       </main>
 
       <aside className="ms-cv-side ms-cv-panel" aria-label={c.panel}>
@@ -953,7 +987,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
             versionSummary={(n) => { const v = versions.find((x) => x.n === n); return v?.origin === 'editor' && v.request ? v.request : null; }}
             versionNote={(n) => <OutputWarnings outputs={versions.find((v) => v.n === n)?.outputs ?? []} formatLabel={formatLabel} />} />
         ) : null}
-        {tab === 'comments' ? <CommentsTab slug={slug} creative={creative} sent={sent} working={working} formatLabel={formatLabel} onStart={() => { setTool('comment'); }} /> : null}
+        {tab === 'comments' ? <CommentsTab slug={slug} creative={creative} sent={sent} working={working} formatLabel={formatLabel} onStart={() => startComment(null)} /> : null}
         {/* Kept mounted while hidden, so an unsaved brief draft survives tab switches. */}
         <div className="ms-cv-brief-wrap" hidden={tab !== 'brief'}>
           <BriefTab project={slug} detail={detail} presets={presets} disabled={working} readOnly={self.host ? null : readOnly} formatLabel={formatLabel} onChanged={reload} />
@@ -967,6 +1001,8 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
       {group ? (
         <>
           <AddVariantDialog open={addOpen} onClose={() => setAddOpen(false)} bases={baseChoices} onAdd={addVariant} />
+          <FinalSelection open={chooser} onClose={() => setChooser(false)} slug={slug} rows={finalRows} label={formatLabel} formats={chooser ? chooserFormats() : []}
+            onPick={(memberSlug, format, n) => pickMember(memberSlug, format, n)} />
           {editDir ? (
             <EditDirectionDialog open onClose={() => setEditDir(null)} letter={editDir.letter} initial={editDir.direction ?? ''}
               onSave={async (text) => { await api.setVariantDirection(slug, hostSlug, editDir.letter, text); setEditDir(null); afterGroupChange(); }} />

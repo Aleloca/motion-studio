@@ -233,13 +233,13 @@ describe('a composition turn', { timeout: 120_000 }, () => {
     expect(first!.prompt).toContain('.studio/composition.schema.json');
     expect(first!.prompt).toContain('NEVER render final media');
     expect(first!.prompt).not.toContain('renderCommand');
-    // Storyboards: the scene starts and the poster at 1 s, 270 px wide, in the protected cache; a still has one frame.
+    // Storyboards: the scene starts and the poster in the middle (decision 1040), 270 px wide, in the protected cache; a still has one frame.
     const sbDir = storyboardDir(projectDir(), slug, 1, 'test-wide');
     await waitFile(join(sbDir, 'storyboard.json'));
     await waitFile(join(storyboardDir(projectDir(), slug, 1, 'test-still'), 'storyboard.json'));
     const sb = JSON.parse(readFileSync(join(sbDir, 'storyboard.json'), 'utf8'));
-    expect(sb).toMatchObject({ schemaVersion: 1, hash: wideHash, width: 270 });
-    expect(sb.frames.map((f: { t: number; kind: string; scene?: string }) => [f.t, f.kind, f.scene])).toEqual([[0, 'scene', 'one'], [2, 'scene', 'two'], [1, 'poster', undefined]]);
+    expect(sb).toMatchObject({ schemaVersion: 2, hash: wideHash, width: 270 });
+    expect(sb.frames.map((f: { t: number; kind: string; scene?: string }) => [f.t, f.kind, f.scene])).toEqual([[0, 'scene', 'one'], [2, 'scene', 'two'], [2, 'poster', undefined]]);
     for (const f of sb.frames) expect(existsSync(join(sbDir, f.file))).toBe(true);
     const still = JSON.parse(readFileSync(join(storyboardDir(projectDir(), slug, 1, 'test-still'), 'storyboard.json'), 'utf8'));
     expect(still.frames).toHaveLength(1);
@@ -638,7 +638,11 @@ describe('units', () => {
   it('storyboard plan and frame times', () => {
     expect(storyboardPlan({ duration: 0, fps: 30, scenes: [] })).toEqual([{ t: 0, kind: 'poster' }]);
     expect(storyboardPlan({ duration: 0.5, fps: 30, scenes: [{ id: 'b', start: 0.2, duration: 0.3 }, { id: 'a', start: 0, duration: 0.2 }] }))
-      .toEqual([{ t: 0, kind: 'scene', scene: 'a' }, { t: 0.2, kind: 'scene', scene: 'b' }, { t: 0.5, kind: 'poster' }]);
+      .toEqual([{ t: 0, kind: 'scene', scene: 'a' }, { t: 0.2, kind: 'scene', scene: 'b' }, { t: 7 / 30, kind: 'poster' }]);
+    // Decision 1040: the poster is the middle of the video (its first second looks alike in every variant), on a frame.
+    expect(storyboardPlan({ duration: 6, fps: 30, scenes: [] })).toEqual([{ t: 3, kind: 'poster' }]);
+    expect(storyboardPlan({ duration: 1, fps: 24, scenes: [] })).toEqual([{ t: 12 / 24, kind: 'poster' }]);
+    expect(storyboardPlan({ duration: 0.1, fps: 30, scenes: [] })).toEqual([{ t: 1 / 30, kind: 'poster' }]);
     expect(frameTime({ duration: 2, fps: 30 }, 5)).toBeCloseTo(59 / 30);
     expect(frameTime({ duration: 2, fps: 30 }, 1)).toBe(1);
     expect(frameTime({ duration: 0, fps: 30 }, 3)).toBe(0);
