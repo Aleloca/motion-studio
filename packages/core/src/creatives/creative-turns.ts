@@ -2,7 +2,7 @@ import { activeMembers, briefSchema, compositionProblemText, creativeJobKey, iss
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { mergeStorePack, verifyScreens } from '../store-pack/brief.ts';
-import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
 import { canFollow, effectiveServices, checkLink, effectiveLinks, legacyTurnKind, linksAfterBriefSave, formatHistory, sameDelivery, formatDisplayName, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type AgentEvent, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type StorePack, storePackSchema, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
@@ -160,6 +160,19 @@ function durationOffOf(r: TargetsCheck): { duration: number; target: number } | 
     if (p && typeof p.params.duration === 'number' && typeof p.params.target === 'number') return { duration: p.params.duration, target: p.params.target };
   }
   return undefined;
+}
+
+/**
+ * Report 33: whether the agent left the version folder `dir` as the turn found it: nothing in it but folders (it may have
+ * made `compositions/`). Any file or link counts as written. A folder that cannot be read counts as written too.
+ */
+async function slotUntouched(dir: string): Promise<boolean> {
+  const entries = await readdir(dir, { withFileTypes: true }).catch((e: NodeJS.ErrnoException) => (e.code === 'ENOENT' ? [] : null));
+  if (entries === null) return false;
+  for (const e of entries) {
+    if (!e.isDirectory() || !(await slotUntouched(join(dir, e.name)))) return false;
+  }
+  return true;
 }
 
 /** What a turn delivers (spec §2.3–2.5): the agent's targets, the primaries carried from the base, the links to materialize. */
@@ -990,6 +1003,8 @@ export class CreativeTurnService {
       // Durations of the base the agent keeps without being told to bring them back to the brief (decisions log 262).
       let accepted: ReadonlyMap<string, number> = new Map();
       let result = null as ValidationResult | null;
+      /** Report 33: the agent's run left the version folder empty (see `keepable`): the latest version stands for the turn. */
+      let untouched = false;
       // One ledger record per attempt: the version's usage is their sum (fix loop included). No agent: no record, no usage.
       const attemptUsage: Array<UsageRecord | null | undefined> = [];
 
@@ -1095,6 +1110,12 @@ export class CreativeTurnService {
           await store.appendConversation(slug, { type: 'system', at: now(), level: 'warning', text: j.earlierLinksDetached({ list }) });
         }
         const earlierBefore = await snapshotOutputs(creativeDir, earlier);
+        // Report 33 (decision 1120): a turn whose agent writes nothing in the version folder changes no output when every
+        // target is one the latest version delivers as it is now (its own composition, still the recorded one): no repair
+        // attempt, no version. A format the base lacks (added to the brief), a follower that must now be delivered, a
+        // primary that cannot be carried or a base that is not the latest version keep the check and its repairs.
+        const keepable = Boolean(latest && base && base.n === latest.n) && plan.unlinked.length === 0
+          && (await Promise.all(targets.map(async (f) => (base!.compositions?.length ? Boolean(await carriableComposition(creativeDir, base!, f)) : hasFormat(base!, f))))).every(Boolean);
 
         let attempt = 1;
         let sawSession = false;
@@ -1300,6 +1321,8 @@ export class CreativeTurnService {
           }
           // Phase 13: a redirect that arrived while the outputs were checked is the next attempt.
           if (live.redirect && !signal.aborted) continue;
+          // Report 33: nothing written is no change: asking for a fix would only make the agent say so again.
+          if (keepable && await slotUntouched(store.outputsDir(slug, n))) { untouched = true; break; }
           // A preset missing from the catalog cannot be fixed by the agent: retrying would only waste turns.
           if (problems.length === unknown || attempt >= this.maxAttempts) break;
           await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: t().jobs.checkingOutputs({ count: problems.length, attempt: attempt + 1, max: this.maxAttempts }) });
@@ -1323,6 +1346,11 @@ export class CreativeTurnService {
       finalizing = true;
       // Phase 13: from now on a message is the next request; those no attempt took are queued now (Review Focus 1).
       await live.serial(async () => { live.phase = 'finalizing'; await this.drainLive(ref, store, live); });
+      // Report 33: nothing to assemble; `keepable` already required a latest version.
+      if (untouched && latest) {
+        await this.keptLatest(ref, store, { creative, latest, n, versions, live, sessionId: resumeSessionId, noAgent, request, aborted: signal.aborted });
+        return;
+      }
       let saved: { outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: string | null; compositions?: VersionComposition[]; localizations?: VersionEntry['localizations']; durationOff?: { duration: number; target: number }; durationProblems?: string[] };
       // Decision 917: the duration the agent set for this turn, if any, is the one the version is checked against.
       if (turnContract === 'compositions') saved = await this.finishCompositions(ref, store, { ...plan, creative: { ...plan.creative, brief: { ...plan.creative.brief, durationSec: checkDuration() } } }, presets, base, n, label, locale,

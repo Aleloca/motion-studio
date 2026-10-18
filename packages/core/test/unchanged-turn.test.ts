@@ -67,13 +67,26 @@ const bridge = async (run: ControlledRun, tool: string, args: Record<string, unk
   const token = (await readFile(config.mcpServers.studio.env.MOTION_STUDIO_BRIDGE_TOKEN_FILE!, 'utf8')).trim();
   return app.inject({ method: 'POST', url: `/api/bridge/${tool}`, headers: { 'x-motion-studio-bridge': token }, payload: args });
 };
-/** Writes a minimal composition for each format the run's prompt asks for (videos last `duration` seconds). */
+/**
+ * Writes a minimal composition for each format the run's prompt asks for (videos last `duration` seconds); an identity
+ * format's is its one SVG clip.
+ */
 const writeCompositions = (run: ControlledRun, duration: number) => {
   const block = parseStudioBlock(run.req.prompt)!;
   for (const f of block.formats) {
     const dir = join(run.req.cwd, f.compositionDir!);
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'composition.json'), JSON.stringify({ $schema: 'motion-studio/composition@1', width: f.width, height: f.height, fps: 30, duration: f.kind === 'video' ? duration : 0, background: '#000000', fonts: [], scenes: [], tracks: [] }));
+    const identity = f.id.startsWith('identity-');
+    if (identity) {
+      mkdirSync(join(dir, 'assets'), { recursive: true });
+      writeFileSync(join(dir, 'assets', 'mark.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#123456"/></svg>');
+      writeFileSync(join(dir, 'assets', 'mark-dark.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#fedcba"/></svg>');
+    }
+    // The logo also carries its negative version for dark backgrounds (a hidden `dark` clip).
+    const clips = [{ id: 'mark', type: 'svg', src: 'assets/mark.svg', start: 0, duration: 0, props: { fit: 'contain' } },
+      ...(f.id === 'identity-logo' ? [{ id: 'dark', type: 'svg', src: 'assets/mark-dark.svg', start: 0, duration: 0, hidden: true, props: { fit: 'contain' } }] : [])];
+    const tracks = identity ? [{ id: 't', kind: 'visual', clips }] : [];
+    writeFileSync(join(dir, 'composition.json'), JSON.stringify({ $schema: 'motion-studio/composition@1', width: f.width, height: f.height, fps: 30, duration: f.kind === 'video' ? duration : 0, background: '#000000', fonts: [], scenes: [], tracks }));
   }
   return block.formats.map((f) => f.id);
 };
@@ -178,6 +191,66 @@ describe('a turn that changes no output (decision 1060)', () => {
     expect(d.versions[1]!.problems.some((p) => p.includes('tiktok-9x16'))).toBe(true);
     expect(d.creative.status).toBe('incomplete');
     expect((await systemTexts(slug)).some((x) => x === t().jobs.noOutputChanged({ n: 1, brief: false }))).toBe(false);
+  });
+
+  /** Report 33: v1 complete, then turns whose agent writes nothing (a refused action, a plain question). */
+  const writesNothing = async (b: Record<string, unknown>) => {
+    const slug = await create(true, b);
+    const first = await runOf(slug);
+    writeCompositions(first, 6);
+    first.finish({ write: false });
+    await waitIdle();
+    expect((await detail(slug)).versions.map((v) => [v.n, v.status])).toEqual([[1, 'complete']]);
+    for (const [i, text] of ['Crea una nuova variante F', 'Che problemi dovrebbe avere questa variante?'].entries()) {
+      expect((await app.inject({ method: 'POST', url: `${P}/${slug}/turns`, payload: { text } })).statusCode).toBe(202);
+      const run = await runOf(slug, i + 1);
+      // As in the report: the slot's compositions folder exists (the agent made it), with nothing in it.
+      mkdirSync(join(run.req.cwd, `creatives/${slug}/outputs/v2/compositions`), { recursive: true });
+      run.finish({ write: false });
+      await waitIdle();
+    }
+    const d = await detail(slug);
+    expect(d.versions.map((v) => [v.n, v.status])).toEqual([[1, 'complete']]);
+    expect(d.creative.status).toBe('ready');
+    // No repair attempt: one run per turn, and no "Output check" line.
+    expect(runner.runs).toHaveLength(3);
+    const texts = await systemTexts(slug);
+    expect(texts.some((x) => x.startsWith(t().jobs.checkingOutputs({ count: 1, attempt: 2, max: 3 }).split(':')[0]!))).toBe(false);
+    const kept = (await conversation(slug)).filter((e) => e.type === 'system' && e.keptVersion === 1);
+    expect(kept).toHaveLength(2);
+    expect((await versionEntries(slug)).length).toBe(1);
+    expect(existsSync(join(base, 'ws', 'acme', 'creatives', slug, 'outputs', 'v2'))).toBe(false);
+  };
+
+  it('an identity pack turn whose agent writes nothing makes no version and no repair attempt (report 33)', async () => {
+    await writesNothing({ ...brief, formats: ['identity-logo', 'identity-favicon', 'identity-app-icon'] });
+  });
+
+  it('a video turn whose agent writes nothing makes no version and no repair attempt (report 33)', async () => {
+    await writesNothing(brief);
+  });
+
+  it('an agent that writes an incomplete delivery still gets its repair attempts (report 33)', async () => {
+    const slug = await create(true, { ...brief, formats: ['youtube-16x9', 'tiktok-9x16'] });
+    const first = await runOf(slug);
+    writeCompositions(first, 6);
+    first.finish({ write: false });
+    await waitIdle();
+    expect((await app.inject({ method: 'POST', url: `${P}/${slug}/turns`, payload: { text: 'Solo il verticale' } })).statusCode).toBe(202);
+    const run = await runOf(slug, 1);
+    // Only one of the two targets is written: the other is missing.
+    const block = parseStudioBlock(run.req.prompt)!;
+    const f = block.formats.find((x) => x.id === 'tiktok-9x16')!;
+    const dir = join(run.req.cwd, f.compositionDir!);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'composition.json'), JSON.stringify({ $schema: 'motion-studio/composition@1', width: f.width, height: f.height, fps: 30, duration: 5.5, background: '#000000', fonts: [], scenes: [], tracks: [] }));
+    run.finish({ write: false });
+    for (const nth of [2, 3]) (await runOf(slug, nth)).finish({ write: false });
+    await waitIdle();
+    expect(await systemTexts(slug)).toContain(t().jobs.checkingOutputs({ count: 1, attempt: 2, max: 3 }));
+    const d = await detail(slug);
+    expect(d.versions.map((v) => [v.n, v.status])).toEqual([[1, 'complete'], [2, 'incomplete']]);
+    expect(d.versions[1]!.problems.some((p) => p.includes('youtube-16x9'))).toBe(true);
   });
 
   it('in a variant group each variant is judged on its own outputs', async () => {
