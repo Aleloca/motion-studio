@@ -53,7 +53,7 @@ import { setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } 
 import { go, ShellContext } from '../../shell/ShellContext.tsx';
 import { Button, ChannelMark, Empty, Icon, Modal, Pill, Segmented, Spinner, Tabs, Toggle, cx, toast } from '../../ui/index.ts';
 import { useCreative } from '../../useCreative.ts';
-import { pinsKey, usePendingPins } from '../pendingPins.ts';
+import { useChatPins } from '../pendingPins.ts';
 import { clipPin, findClipById, rangePin, rangeTimes } from '../pinModel.ts';
 import { PinNoteDialog } from './PinNoteDialog.tsx';
 import { RangeSpans } from './RangeSpans.tsx';
@@ -525,7 +525,8 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   // resumed from, else the latest) and become chips in the conversation; the note is asked in a small dialog. The version
   // edited is the format's history entry: a pin source that carried the format unchanged (another format changed) has the
   // same composition.
-  const [storedPins, setStoredPins] = usePendingPins(pinsKey(slug, creative));
+  // Phase 3 of the single agent: in a group with one agent the pending comments are the group's (each with its variant).
+  const { stored: storedPins, setStored: setStoredPins, others: otherPins, drop: dropPins } = useChatPins(slug, creative, groupChat.pinScope);
   const pinSource = detail ? detail.creative.resumeFrom?.version ?? latest?.n ?? null : null;
   const canComment = n !== null && entryAt(versions, states[primary], pinSource) === n;
   const sourcePins = useMemo(() => storedPins.flatMap((p, i) => (p.version === pinSource ? [{ pin: p.pin, at: i }] : [])), [storedPins, pinSource]);
@@ -622,7 +623,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     const pin = sourcePins[i]?.pin;
     if (pin) setNoteFor({ pin, index: i });
   }, [sourcePins]);
-  const pinsSent = useCallback(({ pins: sentPins }: { pins: Pin[] }) => { setStoredPins((ps) => ps.filter((p) => !sentPins.includes(p.pin))); }, [setStoredPins]);
+  const pinsSent = useCallback(({ pins: sentPins }: { pins: Pin[] }) => { dropPins(sentPins); }, [dropPins]);
   const noteName = noteFor ? noteFor.pin.clipName ?? noteFor.pin.clipId ?? '' : '';
   const noteTitle = noteFor ? (noteFor.pin.clipId && noteFor.pin.animation
     ? (noteFor.pin.animation === 'in' ? t.web.conversation.noteTitleAnimIn : t.web.conversation.noteTitleAnimOut)({ name: noteName })
@@ -698,7 +699,9 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   const [exporting, setExporting] = useState<{ open: boolean; snapshot: ExportSnapshot } | null>(null);
   // Decision 980: the group's one chat shows every variant's approvals.
   const myApprovals = useMemo(() => Object.values(live.approvals).filter(groupChat.shows), [live.approvals, groupChat]);
-  const chatLive = useMemo(() => (job ? live.events[job.id] ?? [] : []), [job, live.events]);
+  // Phase 3 of the single agent: the chat follows the group's turn (the composer sends to the group).
+  const chatJob = groupChat.single ? groupChat.groupJob : job;
+  const chatLive = useMemo(() => (chatJob ? live.events[chatJob.id] ?? [] : []), [chatJob, live.events]);
   const primaries = (detail?.creative.brief.formats ?? []).filter((id) => states[id] && !states[id]!.follows);
   const appliesTo = useMemo(() => (versions.length && primaries.length > 1 ? {
     primaries: primaries.map((id) => ({ id, label: labelOf(id), followers: followersOf(states, id).map(labelOf) })),
@@ -1028,8 +1031,9 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
         <div id="ms-ed-panel" role="tabpanel" className="ms-ed-panel">
           {tab === 'chat' ? (
             detail ? (
-              <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={job} live={chatLive}
+              <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={chatJob} live={chatLive}
                 self={groupChat.self} memberJobs={groupChat.memberJobs}
+                single={groupChat.single} otherPins={otherPins} onRemoveOtherPin={(p) => dropPins([p])}
                 pins={sourcePins.map((p) => p.pin)} onRemovePin={removePin} onEditPin={editPin} onSelectVersion={onSelectVersion}
                 formatName={labelOf} canGenerate={versions.length === 0} onSent={onSent} beforeSend={beforeSend} snapshots={live.snapshots}
                 versionSummary={(vn) => { const v = versions.find((x) => x.n === vn); return v?.origin === 'editor' && v.request ? v.request : null; }} appliesTo={appliesTo}

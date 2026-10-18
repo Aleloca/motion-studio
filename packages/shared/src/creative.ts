@@ -520,7 +520,12 @@ export interface VariantListInfo { count: number; active: number; missing: Varia
  * `orphan`: a sister whose group cannot be found (spec §7), opened as a single creative with a notice.
  */
 export type VariantDetail =
-  | { orphan: false; host: string; letter: VariantId; group: VariantGroup; missing: VariantId[] }
+  | { orphan: false; host: string; letter: VariantId; group: VariantGroup; missing: VariantId[];
+    /**
+     * Phase 3 of the single agent: the group has one agent (the `singleAgent` setting): the composer sends to the group and
+     * the chat follows the group turn, whose job key is `groupJobKey`. Absent: the per-variant turns of phase 15.
+     */
+    single?: { groupJobKey: string } }
   | { orphan: true; host: string; letter: VariantId };
 /** A creative summary tagged with its project, for cross-project lists such as "Jump back in". */
 export type RecentCreative = CreativeSummary & { project: { slug: string; name: string } };

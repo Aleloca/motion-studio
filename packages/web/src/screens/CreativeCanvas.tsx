@@ -39,7 +39,7 @@ import { LanguagesButton } from './creative/LanguagesButton.tsx';
 import { RenderLanguagesDialog } from './creative/RenderLanguagesDialog.tsx';
 import { creativeLocales, packLanguageGaps } from './creative/languagesModel.ts';
 import { activatesControl, bare, inOverlay, isTyping } from './keys.ts';
-import { pinsKey, usePendingPins } from './pendingPins.ts';
+import { useChatPins } from './pendingPins.ts';
 import { FollowerChip, FormatBadge, useNewVersionNotice, useVersionActions, VersionTimeline } from './FormatVersions.tsx';
 import { boardSource, entryAt, followersOf, formatStates, isRendering, renderingOf, shownOf, type FormatState } from './versionModel.ts';
 import { boardRender, compositionOf } from './renderModel.ts';
@@ -178,6 +178,8 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     return mine.find((j) => j.state === 'queued' || j.state === 'running') ?? mine.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   }, [live.jobs, detail]);
   const working = job?.state === 'queued' || job?.state === 'running';
+  // Phase 3 of the single agent: the chat follows the group's turn (the composer sends to the group).
+  const chatJob = groupChat.single ? groupChat.groupJob : job;
   // Per board: a targeted job renders its formats and their followers only (spec §2.5).
   const rendering = useMemo(() => renderingOf(job, states), [job, states]);
 
@@ -211,7 +213,8 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   }).map((b) => b.id)), [boards, states, viewing, versions, pinSource, hasPicture]);
   const canComment = commentable.size > 0;
   const commentLock = pinSource !== null && boards.some((b) => hasPicture(b) && !commentable.has(b.id));
-  const [stored, setStored] = usePendingPins(pinsKey(slug, creative));
+  // Phase 3 of the single agent: in a group with one agent the pending comments are the group's (each with its variant).
+  const { stored, setStored, others: otherPins, drop: dropPins } = useChatPins(slug, creative, groupChat.pinScope);
   const sourcePins = useMemo(() => stored.flatMap((p, i) => (p.version === pinSource ? [{ pin: p.pin, at: i }] : [])), [stored, pinSource]);
   const pins = useMemo(() => sourcePins.map((p) => p.pin), [sourcePins]);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -976,9 +979,11 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
         <Tabs label={c.panel} value={tab} onChange={setTab}
           tabs={[{ value: 'chat', label: c.tabs.chat }, { value: 'comments', label: c.tabs.comments, count: sent.count }, { value: 'brief', label: c.tabs.brief }]} />
         {tab === 'chat' ? (
-          <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={job} live={job ? live.events[job.id] ?? [] : []}
+          <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={chatJob} live={chatJob ? live.events[chatJob.id] ?? [] : []}
             pins={pins} onRemovePin={removePin} onEditPin={(i) => editPin(i + 1)} formatName={formatLabel}
-            canGenerate={versions.length === 0} onSent={({ pins: sent }) => { setStored((ps) => ps.filter((p) => !sent.includes(p.pin))); setViewing({}); reload(); }}
+            single={groupChat.single} otherPins={otherPins} onRemoveOtherPin={(p) => dropPins([p])}
+            usageOf={(u) => <UsageBadge usage={u} billing={live.today?.billing ?? null} />}
+            canGenerate={versions.length === 0} onSent={({ pins: sent }) => { dropPins(sent); setViewing({}); reload(); }}
             onSelectVersion={viewAll} snapshots={live.snapshots}
             appliesTo={appliesTo} brief={detail.creative.brief} onBriefSaved={reload} queued={detail.creative.queued} onQueueChanged={reload}
             self={groupChat.self} memberJobs={groupChat.memberJobs} onOpenVariant={(l) => { const m = group?.group.members.find((x) => x.letter === l); if (m) focusMember(m); }}

@@ -1,5 +1,6 @@
 import { QUESTION_DISPLAY } from '@motion-studio/shared';
-import type { AgentEvent, ApprovalRequest, Brief, ConversationEntry, ExplainContext, JobSummary, LiveMessageOutcome, Pin, QueuedRequest, RedirectOutcome, VariantGroup, VariantId } from '@motion-studio/shared';
+import { compareVariantIds } from '@motion-studio/shared';
+import type { AgentEvent, ApprovalRequest, Brief, ConversationEntry, ExplainContext, GroupTurnOutcome, JobSummary, LiveMessageOutcome, Pin, QueuedRequest, RedirectOutcome, UsageSummary, VariantGroup, VariantId } from '@motion-studio/shared';
 import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { api, ApiError, type VariantRunResult } from '../api.ts';
 import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
@@ -110,6 +111,16 @@ export interface ConversationProps {
   onOpenVariant?(variant: VariantId): void;
   /** The other variants' latest turns with their live events: their running turns go on in this chat too. */
   memberJobs?: ReadonlyArray<{ job: JobSummary; live: AgentEvent[]; variant?: VariantId }>;
+  /**
+   * Phase 3 of the single agent: the group has one agent. The composer sends to the group (the core's routes take it to the
+   * group turn): no selector, no "Applies to", and the other variants' pending comments (`otherPins`) go with the message.
+   * `job` is then the group turn.
+   */
+  single?: boolean;
+  otherPins?: Pin[];
+  onRemoveOtherPin?(pin: Pin): void;
+  /** The usage of a group turn, shown on its `group-turn` line (e.g. a usage badge). */
+  usageOf?(usage: UsageSummary): ReactNode;
 }
 
 /** A message sent while the agent works, until the conversation file shows it (Phase 13). */
@@ -142,6 +153,8 @@ type Item =
   | { key: string; kind: 'approval'; shown: ShownApproval }
   | { key: string; kind: 'typing' }
   | { key: string; kind: 'retried'; at: string }
+  /** Phase 3 of the single agent: what each variant did in a group turn (decision 980's "worked on" line). */
+  | { key: string; kind: 'groupTurn'; at: string; outcome: GroupTurnOutcome[]; stopped: boolean; usage?: UsageSummary }
   /** User note 8: the agent's AskUserQuestion and what became of it. */
   | { key: string; kind: 'question'; at: string; event: Extract<AgentEvent, { kind: 'question_answered' }>; variant?: VariantId };
 
@@ -229,7 +242,7 @@ function turnItems(interruptedText: string, jobId: string, events: { at: string;
  * only in "Activity details", the job's approvals in the flow, typing dots while the agent works (T9), and the
  * composer with the pending comment chips and ⌘↵.
  */
-export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, onSelectVersion, versionExtra, versionNote, versionSummary, snapshots, appliesTo, brief, onBriefSaved, queued, onQueueChanged, variants, self, onOpenVariant, memberJobs }: ConversationProps) {
+export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, onSelectVersion, versionExtra, versionNote, versionSummary, snapshots, appliesTo, brief, onBriefSaved, queued, onQueueChanged, variants, self, onOpenVariant, memberJobs, single, otherPins, onRemoveOtherPin, usageOf }: ConversationProps) {
   const t = useT();
   const c = t.web.chat;
   const working = active(job);
@@ -323,7 +336,9 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
     };
     const userItem = (e: Extract<ConversationEntry, { type: 'user' }>, key: string): Item => {
       const state = stateOf(e);
-      return { key, kind: 'user', at: e.at, text: e.text, pins: e.pins, ...(state ? { state } : {}), ...(e.mode === 'redirect' ? { redirect: true } : {}) };
+      // Phase 3: a message to the group shows the variants its comments are on.
+      const pinned = e.group ? [...new Set(e.pins.map((p) => p.variant).filter((v): v is VariantId => Boolean(v)))].sort(compareVariantIds) : [];
+      return { key, kind: 'user', at: e.at, text: e.text, pins: e.pins, ...(state ? { state } : {}), ...(e.mode === 'redirect' ? { redirect: true } : {}), ...(pinned.length ? { variants: pinned } : {}) };
     };
     // User note 7: a message of a job written after that job's first event was sent during the turn. It goes inside the
     // turn, after the job's events written before it (the core writes it in the same ordered chain), not below the turn.
@@ -410,6 +425,8 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
       } else if (e.type === 'system') {
         if (lastUser && e.level === 'error') lastUser.failed = true;
         out.push({ key, kind: 'system', at: e.at, level: e.level, text: e.text, ...(e.origin === 'agent' ? { agent: true } : {}), ...(e.variant ? { variant: e.variant } : {}) });
+      } else if (e.type === 'group-turn') {
+        out.push({ key, kind: 'groupTurn', at: e.at, outcome: e.outcome, stopped: e.stopped === true, ...(e.usage ? { usage: e.usage } : {}) });
       }
     });
     // A job with nothing persisted yet (only live events) comes last.
@@ -479,12 +496,12 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
   const empty = items.length === 0;
   return (
     <div ref={convoRef} className="ms-convo">
-      {variants ? <VariantSelector group={variants.group} current={variants.current} all={variants.all} missing={variants.missing ?? []} onSelect={variants.onSelect} /> : null}
+      {variants && !single ? <VariantSelector group={variants.group} current={variants.current} all={variants.all} missing={variants.missing ?? []} onSelect={variants.onSelect} /> : null}
       <ol ref={listRef} className="ms-convo-list" role="log" aria-label={c.label} onScroll={onScroll}>
         {empty && <li className="ms-convo-empty"><Empty icon="comment" title={c.emptyTitle} sub={c.emptySub} /></li>}
         {items.map((item) => (
           <Row key={item.key} animate={mounted.current && item.kind !== 'approval'}>
-            <ItemView item={item} formatName={formatName} onToggleFold={toggleFold} onToggleDetails={toggleDetails} onOpenDetails={openDetails} onSelectVersion={onSelectVersion} versionExtra={versionExtra} versionNote={versionNote} versionSummary={versionSummary} onGone={gone} self={self} onOpenVariant={onOpenVariant} />
+            <ItemView item={item} formatName={formatName} onToggleFold={toggleFold} onToggleDetails={toggleDetails} onOpenDetails={openDetails} onSelectVersion={onSelectVersion} versionExtra={versionExtra} versionNote={versionNote} versionSummary={versionSummary} onGone={gone} self={self} onOpenVariant={onOpenVariant} usageOf={usageOf} />
           </Row>
         ))}
       </ol>
@@ -493,7 +510,8 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
         {job?.waitReason ? <p className="ms-convo-wait" role="status"><Icon name="clock" size={12} />{t.web.variantGroup.waitReasons[job.waitReason]}</p> : null}
         {/* Always mounted (it renders nothing for an empty queue): an edit the queue overtook is kept even when the queue empties. */}
         <QueuedRequests slug={slug} creative={creative} queued={queued ?? []} working={working} onChanged={() => onQueueChanged?.()} />
-        <Composer outbox={outboxApi} onQueueChanged={onQueueChanged} slug={slug} creative={creative} job={working && !variants?.all ? job : undefined} fanout={variants?.all ? variants.runAll : undefined} latestJobId={job?.id} snapshots={snapshots} pins={pins} onRemovePin={onRemovePin} onEditPin={onEditPin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} beforeSend={beforeSend} appliesTo={appliesTo} brief={brief} onBriefSaved={onBriefSaved} />
+        <Composer outbox={outboxApi} onQueueChanged={onQueueChanged} slug={slug} creative={creative} job={working && (single || !variants?.all) ? job : undefined} fanout={variants?.all && !single ? variants.runAll : undefined} latestJobId={job?.id} snapshots={snapshots} pins={pins} onRemovePin={onRemovePin} onEditPin={onEditPin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} beforeSend={beforeSend} appliesTo={single ? undefined : appliesTo} brief={brief} onBriefSaved={onBriefSaved}
+          {...(single ? { single: { others: otherPins ?? [], ...(onRemoveOtherPin ? { onRemoveOther: onRemoveOtherPin } : {}) } } : {})} />
       </div>
     </div>
   );
@@ -573,10 +591,10 @@ function VariantChips({ list }: { list: readonly VariantId[] | undefined }) {
   return <>{list.map((v) => <span key={v} className="ms-vchip" title={vg.letterLabel({ letter: v.toUpperCase() })}>{v.toUpperCase()}</span>)}</>;
 }
 
-function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetails, onSelectVersion, versionExtra, versionNote, versionSummary, onGone, self, onOpenVariant }: {
+function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetails, onSelectVersion, versionExtra, versionNote, versionSummary, onGone, self, onOpenVariant, usageOf }: {
   item: Item; formatName?(id: string): string; onToggleFold(jobId: string): void; onToggleDetails(jobId: string): void; onOpenDetails(jobId: string): void;
   onSelectVersion?(n: number): void; versionExtra?(n: number): ReactNode; versionNote?(n: number): ReactNode; versionSummary?(n: number): string | null; onGone(id: string): void;
-  self?: VariantId; onOpenVariant?(variant: VariantId): void;
+  self?: VariantId; onOpenVariant?(variant: VariantId): void; usageOf?(usage: UsageSummary): ReactNode;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -679,6 +697,20 @@ function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetai
           <ApprovalCard approval={item.shown.approval} leaving={item.shown.leaving} onGone={onGone} />
         </div>
       );
+    case 'groupTurn': {
+      // Decision 980: the agent's message says which variants it worked on (and what became of each).
+      const g = t.web.conversation.groupTurn;
+      const part = (o: GroupTurnOutcome) => `${o.variant.toUpperCase()} (${o.status === 'complete' || o.status === 'incomplete' ? (o.status === 'complete' ? `v${o.version}` : g.incomplete({ n: o.version ?? 0 }))
+        : o.status === 'unchanged' ? (o.version !== null ? g.unchangedAt({ n: o.version }) : g.unchanged) : o.status === 'stopped' ? g.stopped : g.failed})`;
+      return (
+        <div className="ms-convo-groupturn" data-group-turn>
+          <Icon name="check" size={12} />
+          <span>{g.workedOn({ list: item.outcome.map(part).join(', ') })}{item.stopped ? ` · ${g.turnStopped}` : ''}</span>
+          <span className="ms-grow" />
+          {item.usage ? usageOf?.(item.usage) ?? null : null}
+        </div>
+      );
+    }
     case 'typing':
       return (
         <div className="ms-msg ms-convo-typing">
@@ -787,8 +819,10 @@ const SEND_CODES = new Set(['formats-not-in-brief', 'job-running']);
 /** Longest wait for the job a send started before the composer unlocks anyway. */
 export const AWAIT_JOB_MS = 10_000;
 
-function Composer({ outbox, onQueueChanged, slug, creative, job, fanout, latestJobId, snapshots, pins, onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, appliesTo, brief, onBriefSaved }: {
+function Composer({ outbox, onQueueChanged, slug, creative, job, fanout, latestJobId, snapshots, pins: ownPins, onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, appliesTo, brief, onBriefSaved, single }: {
   outbox: OutboxApi; onQueueChanged?(): void;
+  /** Phase 3 of the single agent: the composer is the group's; `others`: the other variants' pending comments, sent too. */
+  single?: { others: Pin[]; onRemoveOther?(p: Pin): void };
   slug: string; creative: string; job: JobSummary | undefined; /** Phase 15 "Tutte": sends to every active variant instead of this creative. */ fanout?: ConversationVariants['runAll']; latestJobId: string | undefined; snapshots: number | undefined; pins: Pin[]; onRemovePin?(i: number): void; onEditPin?(i: number): void; formatName?(id: string): string; canGenerate?: boolean; onSent?(sent: { pins: Pin[] }): void; beforeSend?(): boolean | Promise<boolean>;
   appliesTo?: AppliesTo; brief?: Brief; onBriefSaved?(): void;
 }) {
@@ -797,6 +831,9 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, fanout, latestJ
   const c = t.web.chat;
   const u = t.web.liveUi;
   const id = useId();
+  // Phase 3: with one agent, every variant's pending comments go with the group's message (this page's first).
+  const others = single?.others ?? [];
+  const pins = useMemo(() => (others.length ? [...ownPins, ...others] : ownPins), [ownPins, others]);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   // Synchronous guard: two keystrokes in the same tick both see `sending` false.
@@ -975,8 +1012,15 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, fanout, latestJ
         {pins.length > 0 && (
           <div className="ms-composer-pins">
             {fanout && !text.trim() ? <span className="ms-composer-pins-note">{t.web.variantGroup.pinsNotSentToAll}</span> : null}
-            {pins.map((p, k) => (
+            {pins.map((p, k) => k >= ownPins.length ? (
               <span key={k} className="ms-chip ms-on ms-composer-pin">
+                <VariantChips list={p.variant ? [p.variant] : undefined} />
+                <Icon name="comment" size={11} /><PinLabel pin={p} text={pinText(p, k + 1, formatName, t, locale)} />
+                {single?.onRemoveOther ? <button type="button" className="ms-x" aria-label={t.web.conversation.removeComment({ n: k + 1 })} onClick={() => single.onRemoveOther?.(p)}><Icon name="close" size={10} /></button> : null}
+              </span>
+            ) : (
+              <span key={k} className="ms-chip ms-on ms-composer-pin">
+                {single && p.variant ? <VariantChips list={[p.variant]} /> : null}
                 {onEditPin ? (
                   <button type="button" className="ms-pin-edit" title={p.note || undefined}
                     aria-label={`${t.web.conversation.editComment({ n: k + 1 })} · ${p.note || pinText(p, k + 1, formatName, t, locale)}`} onClick={() => onEditPin(k)}>
@@ -1011,6 +1055,7 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, fanout, latestJ
         {working && redirect && <p className="ms-composer-note">{u.redirectNote}</p>}
         {working && !redirect && capsNow && !caps.liveInput && <p className="ms-composer-note">{u.queueOnly}</p>}
         {working && !redirect && capsNow && caps.liveInput && <p className="ms-composer-note">{u.liveNote}</p>}
+        {single && !working ? <p className="ms-composer-note ms-composer-group">{t.web.variantGroup.singleHint}</p> : null}
         {notice && <p role="status" className="ms-composer-note">{notice}</p>}
         {error && <p role="alert" className="ms-composer-error">{error}</p>}
         <div className="ms-composer-foot">

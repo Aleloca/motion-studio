@@ -364,7 +364,9 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     if (!r.group) return undefined;
     const letter = r.group.members.find((m) => m.slug === slug)?.letter ?? 'a';
     const missing = r.group.members.filter((m) => r.missing.includes(m.slug)).map((m) => m.letter);
-    return { orphan: false, host: r.host.creativeSlug, letter, group: r.group, missing };
+    const { store: _s, ...plain } = ref;
+    const single = ctx.groups && await ctx.groups.enabled(plain) ? { single: { groupJobKey: groupJobKey(ref.root, ref.projectSlug, r.host.creativeSlug) } } : {};
+    return { orphan: false, host: r.host.creativeSlug, letter, group: r.group, missing, ...single };
   };
 
   app.get('/api/formats', async () => catalog().load());

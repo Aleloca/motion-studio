@@ -25,27 +25,46 @@ export interface GroupChat {
   memberJobs: Array<{ job: JobSummary; live: AgentEvent[]; variant: VariantId }>;
   /** Whether an approval belongs in this chat: this creative's, or (in a group) any member's. */
   shows(a: ApprovalRequest): boolean;
+  /**
+   * Phase 3 of the single agent: the group has one agent: the composer sends to the group, and the chat follows the group's
+   * turn (`groupJob`: its active one, else its latest). `memberJobs` then lists this page's own variant's turns too.
+   */
+  single: boolean;
+  groupJob: JobSummary | undefined;
+  /** For the pending comments (`useChatPins`): the group's host and this page's variant, when the group has one agent. */
+  pinScope: { host: string; letter: VariantId } | null;
 }
 
 export function useGroupChat(live: EventsState, project: string, creative: string, detail: CreativeDetail | null): GroupChat {
   const v = detail?.variants;
   const group = v && !v.orphan ? v : null;
   const memberSlugs = useMemo(() => (group ? group.group.members.map((m) => m.slug) : [creative]), [group, creative]);
+  const single = Boolean(group?.single);
   const memberJobs = useMemo(() => {
     if (!group || !detail) return [];
     // A member's job key is this creative's with the member's slug at the end (`creative:<root>:<project>:<slug>`).
     const prefix = detail.jobKey.slice(0, detail.jobKey.length - creative.length);
     const jobs = Object.values(live.jobs);
-    return group.group.members.filter((m) => m.slug !== creative).flatMap((m) => {
+    // With one agent the chat follows the group turn: this page's variant's turns are members' turns like the others.
+    return group.group.members.filter((m) => single || m.slug !== creative).flatMap((m) => {
       const mine = jobs.filter((j) => j.key === `${prefix}${m.slug}`);
       const job = mine.find(isActive) ?? [...mine].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
       return job ? [{ job, live: live.events[job.id] ?? [], variant: m.letter }] : [];
     });
-  }, [group, detail, creative, live.jobs, live.events]);
+  }, [group, detail, creative, live.jobs, live.events, single]);
+  const groupKey = group?.single?.groupJobKey ?? null;
+  const groupJob = useMemo(() => {
+    if (!groupKey) return undefined;
+    const mine = Object.values(live.jobs).filter((j) => j.key === groupKey);
+    return mine.find(isActive) ?? [...mine].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  }, [groupKey, live.jobs]);
   const self = group?.letter ?? letterOfSlug(creative);
+  const host = group?.host ?? null;
   return useMemo(() => ({
     self,
     memberJobs,
     shows: (a: ApprovalRequest) => a.projectSlug === project && a.creativeSlug !== null && memberSlugs.includes(a.creativeSlug),
-  }), [self, memberJobs, project, memberSlugs]);
+    single, groupJob,
+    pinScope: single && host ? { host, letter: self } : null,
+  }), [self, memberJobs, project, memberSlugs, single, groupJob, host]);
 }
