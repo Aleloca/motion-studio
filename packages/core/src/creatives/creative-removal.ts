@@ -1,6 +1,6 @@
 import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { activeMembers, creativeJobKey, renderJobKey, type CreativeFile, type CreativeRemovalInfo, type JobSummary, type VariantGroup, type VariantId } from '@motion-studio/shared';
+import { activeMembers, compareVariantIds, creativeJobKey, letterOfSlug, renderJobKey, type CreativeFile, type CreativeRemovalInfo, type JobSummary, type VariantGroup, type VariantId } from '@motion-studio/shared';
 import { noteCoreChange } from '../core-changes.ts';
 import { t } from '../i18n.ts';
 import type { TrashFn } from '../trash.ts';
@@ -23,6 +23,9 @@ import { memberRef, VariantGroupService } from './variant-group.ts';
  *
  * Archive and delete are the user's actions only: the agent's tools never reach them (decision 917).
  */
+/** Sister slugs in variant id order (`~b` before `~aa`). */
+const bySisterId = (x: string, y: string) => compareVariantIds(letterOfSlug(x), letterOfSlug(y));
+
 export interface CreativeRemovalDeps {
   turns: CreativeTurnService;
   /** The job queue now (queued, running and ended jobs). */
@@ -168,7 +171,8 @@ export class CreativeRemoval {
       const p = await this.plan(ref);
       if (p.host.creativeSlug !== first.host.creativeSlug) throw new WorkspaceError(409, t().jobs.conflict);
       if (p.role === 'host' && !all) throw new CodedError(409, t().errors.creativeGroupAll({ count: p.group!.members.length }), 'creative-group');
-      const others = p.targets.filter((s) => s !== p.host.creativeSlug).sort();
+      // In id order (`b` before `aa`), the one order every multi-member lock takes.
+      const others = p.targets.filter((s) => s !== p.host.creativeSlug).sort(bySisterId);
       const run = async (i: number): Promise<T> => {
         if (i < others.length) return turns.runLocked(memberRef(ref, others[i]!), () => run(i + 1));
         const busy = await this.blocked(ref, p.targets);
@@ -192,7 +196,7 @@ export class CreativeRemoval {
     if (r.host.creativeSlug !== slug) return { ...single, role: 'sister', host: r.host, group: r.group, letter: self?.letter ?? null };
     if (r.group.members.length < 2) return { ...single, group: r.group, letter: 'a' };
     // Variant A last: a failure in the middle never leaves sisters without their host.
-    const sisters = r.group.members.filter((m) => m.letter !== 'a').map((m) => m.slug).sort();
+    const sisters = r.group.members.filter((m) => m.letter !== 'a').map((m) => m.slug).sort(bySisterId);
     return { ...single, role: 'host', group: r.group, letter: 'a', targets: [...sisters, slug] };
   }
 

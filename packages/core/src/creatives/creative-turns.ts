@@ -1,4 +1,4 @@
-import { activeMembers, briefSchema, compositionProblemText, creativeJobKey, issuesText, isSessionId, LIVE_LIMITS, MAX_RUNNING_VARIANTS, type JobWaitReason, type ConversationEntry, type LiveMessageOutcome, type QueuedRequest, type RedirectOutcome, type VariantGroup, type VariantMember } from '@motion-studio/shared';
+import { activeMembers, briefSchema, compositionProblemText, creativeJobKey, issuesText, isSessionId, letterOfSlug, LIVE_LIMITS, MAX_RUNNING_VARIANTS, type JobWaitReason, type ConversationEntry, type LiveMessageOutcome, type QueuedRequest, type RedirectOutcome, type VariantGroup, type VariantId, type VariantMember } from '@motion-studio/shared';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { mergeStorePack, verifyScreens } from '../store-pack/brief.ts';
@@ -116,6 +116,9 @@ export interface CreativeRef { root: string; projectSlug: string; projectDir: st
 
 /** Shared with the web (render keys are derived from it): @motion-studio/shared `creativeJobKey`. */
 export { creativeJobKey };
+/** Decision 1153: a request sent to several variants at once: its one id and the variant whose turn may add variants. */
+export type FanoutTag = NonNullable<QueuedRequest['fanout']>;
+
 /** Phase 15: see `CreativeTurnService.setQueuedHook`. `hold`: the reason the request's turn waits with (null: none now). */
 export interface QueuedHook {
   hold: JobWaitReason | null;
@@ -293,6 +296,8 @@ export class CreativeTurnService {
   private readonly answers = new AnswerCache(MAX_ANSWERS);
   /** Phase 13: the creatives whose queue this process changed, by job key (for `otherJobEndedByKey`). */
   private readonly refs = new Map<string, CreativeRef>();
+  /** Decision 1153: the turns that may not add variants, by job id (`addRefusal`). */
+  private readonly noAdd = new Map<string, { lead: VariantId } | { firstGeneration: true }>();
   /** Phase 15: hooks of queued requests of a variant run, by creative key + clientId (`setQueuedHook`). */
   private readonly queuedHooks = new Map<string, QueuedHook>();
   /** Decision 917: the duration a running turn's output checks use, by job id, once its agent changed the brief's. */
@@ -308,8 +313,19 @@ export class CreativeTurnService {
    * Starts a turn. `opts.formats`: the formats the request applies to (spec §2.5); formats outside the brief are dropped, a
    * follower stands for its primary, and none (or absent) means every primary. The other formats are carried unchanged.
    */
-  async start(ref: CreativeRef, message?: { text: string; pins: Pin[] }, opts: { formats?: string[]; hold?: JobWaitReason } = {}): Promise<JobSummary> {
-    return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), () => this.startLocked(ref, message, opts.formats, undefined, opts.hold));
+  /** `opts.fanout`: the request was sent to several variants at once (decision 1153; see `QueuedRequest.fanout`). */
+  async start(ref: CreativeRef, message?: { text: string; pins: Pin[] }, opts: { formats?: string[]; hold?: JobWaitReason; fanout?: FanoutTag } = {}): Promise<JobSummary> {
+    return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), () => this.startLocked(ref, message, opts.formats, undefined, opts.hold, opts.fanout));
+  }
+
+  /**
+   * Decision 1153 (review minor 10: derived from the turn, not from the run that started it): why turn `jobId` may not add a
+   * variant. `lead`: it is one share of a request sent to several variants, and variant `lead`'s turn adds them;
+   * `firstGeneration`: a turn with no message of a creative already in a group (a group's first generation, or "Genera").
+   * Known from the turn's own start (a fan-out's queued share keeps its `fanout` on disk), for as long as the turn lives.
+   */
+  addRefusal(jobId: string): { lead: VariantId } | { firstGeneration: true } | null {
+    return this.noAdd.get(jobId) ?? null;
   }
 
   /**
@@ -762,7 +778,7 @@ export class CreativeTurnService {
     });
   }
 
-  private async startLocked(ref: CreativeRef, message: { text: string; pins: Pin[]; pinsVersion?: number } | undefined, formats: string[] | undefined, queued?: { clientId: string }, hold?: JobWaitReason): Promise<JobSummary> {
+  private async startLocked(ref: CreativeRef, message: { text: string; pins: Pin[]; pinsVersion?: number } | undefined, formats: string[] | undefined, queued?: { clientId: string }, hold?: JobWaitReason, fanout?: FanoutTag): Promise<JobSummary> {
     const store = new CreativeStore(ref.projectDir);
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     // Same check the queue does, but before touching the creative's files.
@@ -779,6 +795,11 @@ export class CreativeTurnService {
     if (formats?.length && !formats.some((f) => before.brief.formats.includes(f))) throw new CodedError(400, t().errors.formatsNotInBrief, 'formats-not-in-brief');
     const jobId = randomUUID();
     const hookKey = queued ? `${key}\0${queued.clientId}` : null;
+    // Decision 1153: what this turn may not do with `add_variant` (see `addRefusal`).
+    const refusal = !message ? ((await this.memberOf(ref)) ? { firstGeneration: true as const } : null)
+      : fanout && fanout.lead !== letterOfSlug(ref.creativeSlug) ? { lead: fanout.lead } : null;
+    // Set before the job can run; forgotten when it settles (below, once it is enqueued) or when it is never enqueued.
+    if (refusal) this.noAdd.set(jobId, refusal);
     if (message) {
       // A queued request starts as a user entry with `mode: 'queued'`. One that was first written as a live message (it
       // arrived when the agent had finished) is not written twice, unless it was edited in the queue meanwhile.
@@ -788,6 +809,7 @@ export class CreativeTurnService {
         await store.appendConversation(ref.creativeSlug, {
           type: 'user', at: now(), text: message.text, pins: message.pins, attachments: [],
           ...(queued ? { jobId, mode: 'queued' as const, clientId: queued.clientId, deliveredAt: now() } : {}),
+          ...(fanout ? { fanout: fanout.id } : {}),
         });
       } else {
         // Its entry was written earlier (a live message that became the next request): its final state is this marker,
@@ -847,9 +869,10 @@ export class CreativeTurnService {
       });
     } catch (err) {
       this.live.delete(jobId);
+      this.noAdd.delete(jobId);
       throw err;
     }
-    void this.deps.queue.whenSettled(job.id).then((settled) => this.turnSettled(ref, job.id, settled?.state));
+    void this.deps.queue.whenSettled(job.id).then((settled) => { this.noAdd.delete(job.id); return this.turnSettled(ref, job.id, settled?.state); });
     return job;
   }
 
@@ -1867,7 +1890,7 @@ export class CreativeTurnService {
    * decision, so the answer is what really happens (fix round 1, I2): `delivered-pending` when a repair attempt carries it,
    * `queued-after-finish` when no attempt follows. Idempotent on `clientId` (Review Focus 3).
    */
-  async postMessage(ref: CreativeRef, input: UserMessageInput & { mode: 'live' | 'queued' }): Promise<MessageAnswer> {
+  async postMessage(ref: CreativeRef, input: UserMessageInput & { mode: 'live' | 'queued' }, opts: { fanout?: FanoutTag } = {}): Promise<MessageAnswer> {
     const m = checkLiveMessage(input);
     // Phase 15: nothing is queued for a discarded variant (it cannot be working: a working variant cannot be discarded).
     if ((await this.memberOf(ref))?.self.status === 'discarded') throw new CodedError(409, t().errors.variantDiscardedTurn, 'variant-discarded');
@@ -1875,7 +1898,7 @@ export class CreativeTurnService {
     const answer = await this.answers.once(`${key}\0${m.clientId}`, async (): Promise<MessageAnswer> => {
       const known = await this.knownAnswer(ref, m.clientId);
       if (known) return known;
-      if (input.mode === 'queued') return this.queueRequest(ref, m, 'queued');
+      if (input.mode === 'queued') return this.queueRequest(ref, m, 'queued', opts.fanout ? { fanout: opts.fanout } : {});
       const live = this.liveOf(key);
       // Another job of the creative (a translation) takes no messages; with no job at all, the turn is over.
       if (!live) return this.queueRequest(ref, m, this.isActive(key) ? 'queued-unsupported' : 'queued-after-finish');
@@ -1933,10 +1956,10 @@ export class CreativeTurnService {
    * Appends a request to the creative's queue under its lock; the user limit applies unless `limit: false` (never lost). A
    * request that arrived after the agent finished gets the chat's notice (unless `note: false`: the caller writes one).
    */
-  private async queueRequest(ref: CreativeRef, m: UserMessageInput, outcome: Exclude<LiveMessageOutcome, 'delivered-pending'>, o: { limit?: boolean; note?: boolean } = {}): Promise<MessageAnswer> {
+  private async queueRequest(ref: CreativeRef, m: UserMessageInput, outcome: Exclude<LiveMessageOutcome, 'delivered-pending'>, o: { limit?: boolean; note?: boolean; fanout?: FanoutTag } = {}): Promise<MessageAnswer> {
     const store = new CreativeStore(ref.projectDir);
     const pinsVersion = m.pins.length > 0 ? await this.pinsBase(ref) : undefined;
-    const item: QueuedRequest = { clientId: m.clientId, text: m.text, pins: m.pins, at: now(), ...(pinsVersion !== undefined ? { pinsVersion } : {}) };
+    const item: QueuedRequest = { clientId: m.clientId, text: m.text, pins: m.pins, at: now(), ...(pinsVersion !== undefined ? { pinsVersion } : {}), ...(o.fanout ? { fanout: o.fanout } : {}) };
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     this.refs.set(key, ref);
     await this.runLocked(ref, () => this.side.update(ref.projectDir, ref.creativeSlug, (c) => {
@@ -2035,7 +2058,7 @@ export class CreativeTurnService {
     if (!taken) return null;
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     try {
-      const job = await this.startLocked(ref, { text: taken.text, pins: taken.pins, ...(taken.pinsVersion !== undefined ? { pinsVersion: taken.pinsVersion } : {}) }, undefined, { clientId: taken.clientId });
+      const job = await this.startLocked(ref, { text: taken.text, pins: taken.pins, ...(taken.pinsVersion !== undefined ? { pinsVersion: taken.pinsVersion } : {}) }, undefined, { clientId: taken.clientId }, undefined, taken.fanout);
       this.queuedHere.delete(`${key}\0${taken.clientId}`);
       return job;
     } catch (err) {

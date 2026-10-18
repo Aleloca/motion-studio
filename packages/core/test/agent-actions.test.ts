@@ -333,6 +333,33 @@ describe('variants', () => {
   });
 });
 
+describe('decision 1153 kept across a restart (review minor 10)', () => {
+  it('a working variant\'s queued share of a fan-out keeps its lead and request id on disk; when it starts it does not add variants', async () => {
+    const slug = await create(false);
+    expect((await app.inject({ method: 'POST', url: `${P}/${slug}/variants`, payload: { count: 2, directions: ['Uno', 'Due'] } })).statusCode).toBe(201);
+    expect((await app.inject({ method: 'POST', url: `${P}/${slug}~b/turns`, payload: { text: 'Prima' } })).statusCode).toBe(202);
+    const b1 = await runOf(`${slug}~b`);
+    const sent = await app.inject({ method: 'POST', url: `${P}/${slug}/variants/run`, payload: { targets: 'all-active', request: { text: 'Crea una variante' } } });
+    expect(sent.json().queued).toEqual(['b']);
+    const queued = (await detail(`${slug}~b`)).creative.queued!;
+    expect(queued[0]).toMatchObject({ text: 'Crea una variante', fanout: { lead: 'a' } });
+    const a = await runOf(slug);
+    expect((await bridge(a, 'add_variant', { direction: 'Nuova' })).statusCode).toBe(200);
+    writeCompositions(b1, 6);
+    b1.finish({ write: false });
+    // The new variant C took the other slot (two at a time): A ends to let B's queued share start.
+    writeCompositions(a, 6);
+    a.finish({ write: false });
+    const b2 = await runOf(`${slug}~b`, 1);
+    expect((await bridge(b2, 'add_variant', { direction: 'Doppione' })).statusCode).toBe(409);
+    // Both shares of the request carry its one id (decision 1166: one bubble in the chat).
+    const users = (await conversation(slug)).filter((e) => e.type === 'user' && e.text === 'Crea una variante');
+    expect(users.map((e) => e.variant).sort()).toEqual(['a', 'b']);
+    expect(new Set(users.map((e) => e.type === 'user' ? e.fanout : null)).size).toBe(1);
+    expect(users[0]!.type === 'user' && users[0]!.fanout).toBe(queued[0]!.fanout!.id);
+  });
+});
+
 describe('scope and limits', () => {
   it('strict inputs: an unknown key (a project, a path) is refused', async () => {
     const slug = await create();

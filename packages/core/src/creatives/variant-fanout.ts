@@ -76,27 +76,8 @@ type DirectionsRun = Awaited<ReturnType<VariantDirections['begin']>>;
  * its requests out of the working variants' queues, so nothing ran and nothing was spent, Claude Code tokens included.
  */
 export class VariantFanout {
-  /**
-   * Decision 1153: the turns of a run that must not add variants, by job id → why. A first generation (a run with no
-   * request) never adds one (no chain of new variants without a cap, decision 978); a request sent to several variants adds
-   * them once, from its first target: the others are told so (report 32). Until the single agent (phase 3) exists.
-   */
-  private readonly noAdd = new Map<string, { lead: VariantId | null }>();
-
   constructor(private readonly deps: VariantFanoutDeps) {}
 
-  /** Why the turn `jobId` may not add a variant (`lead`: the target that adds them; null: a first generation), or null. */
-  addRefusal(jobId: string): { lead: VariantId | null } | null {
-    return this.noAdd.get(jobId) ?? null;
-  }
-
-  private markNoAdd(jobId: string, lead: VariantId | null): void {
-    this.noAdd.set(jobId, { lead });
-    // Looked up after the current step: a queued request's turn is told its id right BEFORE it is enqueued.
-    void Promise.resolve().then(() => this.deps.queue.whenSettled(jobId)).then(() => this.noAdd.delete(jobId));
-  }
-
-  /** The group of `ref` and the target members: discarded and missing ones set aside. 409 outside a group or with nothing to start. */
   private async targetsOf(ref: CreativeRef, targets: VariantId[] | 'all-active'): Promise<{ host: CreativeRef; group: VariantGroup; members: VariantMember[]; skipped: VariantId[] }> {
     const e = t().errors;
     const r = await new VariantGroupService({ store: new CreativeStore(ref.projectDir), turns: this.deps.turns }).resolve(ref);
@@ -138,9 +119,9 @@ export class VariantFanout {
       else busy.push(m);
     }
     const candidates = [...idle, ...busy].sort((a, b) => letterIndex(a.letter) - letterIndex(b.letter));
-    // Decision 1153: who may add variants in this run's turns (see `noAdd`).
-    const lead = message ? candidates[0]?.letter ?? null : null;
-    const blocksAdd = (l: VariantId) => !message || l !== lead;
+    // Decision 1153: one request id for every share of the request, and the variant whose turn may add variants
+    // (`CreativeTurnService.addRefusal`); kept with a queued share on disk.
+    const fanout = message && candidates[0] ? { id: randomUUID(), lead: candidates[0].letter } : undefined;
     const missing = candidates.filter((m) => !m.direction).map((m) => m.letter);
     const wholePlan = candidates.length >= 2 ? await this.paidPlan(host, candidates) : null;
     const first: JobWaitReason | null = missing.length > 0 ? 'variant-directions' : wholePlan ? 'variant-confirm' : null;
@@ -150,8 +131,7 @@ export class VariantFanout {
       const mref = memberRef(host, m.slug);
       try {
         if (idle.includes(m)) {
-          const job = await turns.start(mref, message, { ...(formats ? { formats } : {}), ...(first ? { hold: first } : {}) });
-          if (blocksAdd(m.letter)) this.markNoAdd(job.id, lead);
+          const job = await turns.start(mref, message, { ...(formats ? { formats } : {}), ...(first ? { hold: first } : {}), ...(fanout ? { fanout } : {}) });
           const held: Entry = { letter: m.letter, ref: mref, jobId: job.id };
           held.gone = this.deps.queue.whenSettled(job.id).then(() => { held.ended = true; });
           entries.push(held);
@@ -160,14 +140,10 @@ export class VariantFanout {
           const entry: Entry = { letter: m.letter, ref: mref, clientId: randomUUID() };
           entry.gone = new Promise<void>((resolve) => { entry.markGone = () => { entry.ended = true; resolve(); }; });
           // Looked up after the current step: the turn is told its id right BEFORE it is enqueued.
-          entry.watch = (id) => {
-            if (blocksAdd(m.letter)) this.markNoAdd(id, lead);
-            void Promise.resolve().then(() => this.deps.queue.whenSettled(id)).then(() => entry.markGone?.());
-          };
-          // With no hold too when it must learn its turn's id (decision 1153): a hook with no hold changes nothing else.
-          if (first || blocksAdd(m.letter)) turns.setQueuedHook(mref, entry.clientId!, hookOf(entry, first));
+          entry.watch = (id) => { void Promise.resolve().then(() => this.deps.queue.whenSettled(id)).then(() => entry.markGone?.()); };
+          if (first) turns.setQueuedHook(mref, entry.clientId!, hookOf(entry, first));
           try {
-            await turns.postMessage(mref, { clientId: entry.clientId!, text, pins, mode: 'queued' });
+            await turns.postMessage(mref, { clientId: entry.clientId!, text, pins, mode: 'queued' }, fanout ? { fanout } : {});
           } catch (err) { turns.setQueuedHook(mref, entry.clientId!, null); throw err; }
           entries.push(entry);
           out.queued.push(m.letter);

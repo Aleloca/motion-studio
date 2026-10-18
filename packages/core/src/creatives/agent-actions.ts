@@ -254,10 +254,10 @@ export class AgentActionService {
     const svc = this.variants(s);
     const r = await svc.resolve(s.ref);
     if (r.orphan) throw new CodedError(409, t().errors.variantOrphan, 'variant-orphan');
-    // Decision 1153: refused in a first generation and in the other targets of a request sent to several variants.
-    const refusal = this.deps.variantRuns.addRefusal(s.jobId);
+    // Decision 1153: refused in a group's first generation and in the other targets of a request sent to several variants.
+    const refusal = this.deps.turns.addRefusal(s.jobId);
     if (refusal) {
-      throw new CodedError(409, refusal.lead ? t().errors.variantAddFanout({ letter: upper(refusal.lead) }) : t().errors.variantAddFirstGeneration, 'variant-add-refused');
+      throw new CodedError(409, 'lead' in refusal ? t().errors.variantAddFanout({ letter: upper(refusal.lead) }) : t().errors.variantAddFirstGeneration, 'variant-add-refused');
     }
     // The canvas's "+ Variante": a creative outside a group becomes A of a group of two (A's direction left as it is).
     const g = await svc.addVariants(r.host, (existing) => (existing === null ? { specs: [{ direction }], hostDirection: null } : { specs: [{ direction }] }));
