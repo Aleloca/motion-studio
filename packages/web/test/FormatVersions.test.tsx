@@ -21,7 +21,7 @@ const ver = (n: number, hash: string, o: { problems?: string[]; outputs?: Output
   outputs: o.outputs ?? [], problems: o.problems ?? [], tools: [], renderCommand: null, basedOn: n > 1 ? n - 1 : null,
   compositions: [{ format: YT, dir: `compositions/${YT}`, hash: h(hash), problems: o.problems ?? [] }],
 });
-const state = (history: number[], over: Partial<FormatState> & { star?: Partial<FormatState['star']> } = {}): FormatState => {
+const state = (history: number[], over: Omit<Partial<FormatState>, 'star'> & { star?: Partial<FormatState['star']> } = {}): FormatState => {
   const { star, ...rest } = over;
   return {
     id: YT, history, defaultVersion: history.at(-1) ?? null, exportVersion: history.at(-1) ?? null, starFileMissing: false, linkable: [], follows: null,
