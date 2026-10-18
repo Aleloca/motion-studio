@@ -17,6 +17,7 @@ import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AgentBridge } from '../src/bridge/bridge.ts';
 import { Git } from '../src/git.ts';
 import { buildServer } from '../src/server/app.ts';
+import { CreativeSideStateStore } from '../src/creatives/creative-side-state.ts';
 
 vi.setConfig({ testTimeout: 120_000, hookTimeout: 60_000 });
 
@@ -120,5 +121,28 @@ describe('the group turn with the fake CLI', () => {
     expect(readFileSync(prompts, 'utf8').trim().split('\n')).toHaveLength(1);
     const conv = (await app.inject(`${P}/${slug}/conversation`)).json() as ConversationEntry[];
     expect(conv.some((e) => e.type === 'group-turn')).toBe(false);
+  });
+
+  it('a group turn cut by a restart: the next start says so in the group\'s chat; the coordinator\'s session stays for the next turn', async () => {
+    const slug = await group();
+    await app.close();
+    // As a crash leaves it: the marker of a running group turn and the coordinator's session, in the core's config folder.
+    const side = new CreativeSideStateStore(join(base, 'config'));
+    const projectDir = join(base, 'ws', 'acme');
+    await side.updateGroup(projectDir, slug, () => ({ turn: { jobId: 'cut', at: new Date().toISOString() }, session: { sessionId: 'coord-1', at: new Date().toISOString() } }));
+    const bridge = new AgentBridge();
+    app = await buildServer({
+      agentContract: 'media', uiToken: null, sandbox: async () => ({ available: false, reason: 'test' }),
+      appConfig: new AppConfigStore(join(base, 'config')), configDir: join(base, 'config'), git: new Git(),
+      runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }), doctor: async () => [], openPath: async () => {},
+      bridge, mcpCommand: [process.execPath, '-e', ''],
+    });
+    bridge.setOrigin(await app.listen({ port: 0, host: '127.0.0.1' }));
+    const conv = (await app.inject(`${P}/${slug}/conversation`)).json() as ConversationEntry[];
+    expect(conv.at(-1)).toMatchObject({ type: 'system', level: 'error', group: true });
+    const job = (await app.inject({ method: 'POST', url: `${P}/${slug}/turns`, payload: { text: 'Riprendiamo' } })).json() as JobSummary;
+    expect((await settled(job.id)).state).toBe('succeeded');
+    const runs = readFileSync(prompts, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { args: string[] });
+    expect(runs.at(-1)!.args.join(' ')).toContain('--resume coord-1');
   });
 });

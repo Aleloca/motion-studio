@@ -517,8 +517,15 @@ export class GroupTurnService implements GroupRouter {
       return { direction: directions[i]!, ...(base ? { baseFrom: { slug: base.slug, version: item.baseFrom!.version } } : {}) };
     });
     if (errors.length > 0) throw refuse(errors);
+    // Taken now (two calls at once never both add) and given back when the add fails: a refused add adds nothing.
     r.added = true;
-    const g = await svc.addVariants(r.host, () => ({ specs }));
+    let g: VariantGroup;
+    try {
+      g = await svc.addVariants(r.host, () => ({ specs }));
+    } catch (err) {
+      r.added = false;
+      throw err;
+    }
     const added = g.members.filter((m) => !before.members.some((b) => b.letter === m.letter));
     for (const m of added) {
       r.created.add(m.letter);

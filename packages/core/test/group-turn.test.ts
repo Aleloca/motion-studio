@@ -185,13 +185,16 @@ describe('the group turn', () => {
     const slug = await setup(['Audace', 'Calma']);
     await send(slug, 'Crea una nuova variante notturna');
     const c = await coordinator();
+    // A refused add (a copy of an existing direction, a base that does not exist) adds nothing and may be tried again.
+    expect((await v.bridge(c, 'add_variants', { items: [{ direction: 'audace' }] })).statusCode).toBe(409);
+    expect((await v.bridge(c, 'add_variants', { items: [{ direction: 'Notturna', baseFrom: { variant: 'b', version: 7 } }] })).statusCode).toBeGreaterThanOrEqual(400);
+    expect((await v.detail(slug)).creative.variantGroup!.members.map((m) => m.letter)).toEqual(['a', 'b']);
     const added = await v.bridge(c, 'add_variants', { items: [{ direction: 'Notturna e al neon' }] });
     expect(added.statusCode, added.body).toBe(200);
     expect(added.json()).toMatchObject({ ok: true, variants: ['c'] });
     const again = await v.bridge(c, 'add_variants', { items: [{ direction: 'Un\'altra ancora' }] });
     expect(again.statusCode).toBe(409);
     expect(again.json().error).toMatch(/already added C/);
-    // A copy of an existing direction would not be one.
     expect((await v.detail(slug)).creative.variantGroup!.members.map((m) => m.letter)).toEqual(['a', 'b', 'c']);
     c.finish({ write: false });
     const first = await v.runOf(`${slug}~c`);
