@@ -1,4 +1,4 @@
-import type { LocaleTag, Localization, LocalizationIssue, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StagedSvgEdit, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, AgentCapabilities, ApprovalDecision, ApprovalRequest, QuestionAnswers, LiveMessageOutcome, RedirectOutcome, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, CreativeRemovalInfo, RecentCreative, DoctorCheck, UpdatesState, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings, StorePack, VariantLetter, VariantPick } from '@motion-studio/shared';
+import type { LocaleTag, Localization, LocalizationIssue, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StagedSvgEdit, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, ExportQuality, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, AgentCapabilities, ApprovalDecision, ApprovalRequest, QuestionAnswers, LiveMessageOutcome, RedirectOutcome, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, CreativeRemovalInfo, RecentCreative, DoctorCheck, UpdatesState, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings, StorePack, VariantLetter, VariantPick } from '@motion-studio/shared';
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
 
@@ -95,6 +95,8 @@ export interface GroupExportPlanItem {
   format: string; slug: string; letter: VariantLetter; version: number; source: 'pick' | 'default';
   /** The version the name's `{v}` shows when it is not `version` (a follower is named after its primary's). */
   v?: number; file: string; width: number; height: number; state: 'ready' | 'needs-render' | 'missing';
+  /** A composition (decision 974: the export's resolution and quality apply to it). */
+  composed?: true;
 }
 export interface GroupExportResult {
   destination: string; files: Array<{ from: string; to: string }>; skipped: string[];
@@ -137,6 +139,9 @@ export type GenerateRequest =
 export interface CatalogState { presets: FormatPreset[]; error: string | null; path: string }
 const p = (slug: string) => `/api/projects/${encodeURIComponent(slug)}`;
 const c = (slug: string, creative: string) => `${p(slug)}/creatives/${encodeURIComponent(creative)}`;
+
+/** Decision 974: the quality and resolution (short side) of an export's videos. */
+export interface ExportProfileBody { quality: ExportQuality; resolution?: number }
 
 export const api = {
   getUpdatesState: () => request<{ state: UpdatesState }>('GET', '/api/updates'),
@@ -293,6 +298,16 @@ export const api = {
    */
   exportPicks: (slug: string, creative: string, body: { destination: string; picks: Record<string, number>; follow?: Record<string, number>; pattern?: string; date?: string } & LocaleOptions) =>
     request<{ destination: string; files: Array<{ from: string; to: string }>; skipped: string[]; excluded?: ExportExcluded[] }>('POST', `${c(slug, creative)}/export`, body),
+  /**
+   * Decision 974: the same export, in the background with a quality and a resolution (the short side; absent: the format's
+   * own size). Answers at once with the export job (its refusals come at once, as `exportPicks`'s); the files come with the
+   * job's `export` once it is done.
+   */
+  exportPicksJob: (slug: string, creative: string, body: { destination: string; picks: Record<string, number>; follow?: Record<string, number>; pattern?: string; date?: string } & LocaleOptions & ExportProfileBody) =>
+    request<{ job: JobSummary }>('POST', `${c(slug, creative)}/export`, { ...body, background: true }),
+  /** Decision 974: the group export in the background (see `exportPicksJob`). */
+  exportGroupJob: (slug: string, creative: string, body: { destination: string; formats?: string[]; pattern?: string; date?: string } & LocaleOptions & ExportProfileBody) =>
+    request<{ job: JobSummary }>('POST', `${c(slug, creative)}/export-group`, { ...body, background: true }),
   /** Phase 15: the group export's plan (any member of the group answers the same): per format, the ★ or default member and version. */
   groupExportPlan: (slug: string, creative: string) => request<{ items: GroupExportPlanItem[]; /** The group's canonical formats (the host's pending brief, else its own). */ formats?: string[] }>('GET', `${c(slug, creative)}/export-group`),
   /** Phase 15: exports each (chosen) format from its group selection, with today's file names; `force`: "Render anyway" for translations. */

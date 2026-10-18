@@ -69,7 +69,7 @@ import { FormatView } from '../FormatView.tsx';
 import { IdentitySizes } from '../identity/IdentitySizes.tsx';
 import { UseAsBrandLogo } from '../identity/UseAsBrandLogo.tsx';
 import { compositionOf } from '../renderModel.ts';
-import { RenderStatus } from '../RenderStatus.tsx';
+import { ExportButton } from '../ExportButton.tsx';
 import { FPS as DEFAULT_FPS, round3, timecode, type Mark, type Speed } from '../Transport.tsx';
 import { entryAt, followersOf, formatStates, shownOf } from '../versionModel.ts';
 import { discardedSelf } from '../variants/variantModel.ts';
@@ -842,9 +842,6 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
           {versions.length && cr ? (
             <VersionTimeline slug={slug} creative={creative} versions={versions} resumeFrom={cr.resumeFrom?.version ?? null} actions={versionActions} buttonRef={versionButton} />
           ) : null}
-          {comp !== null && cr && detail ? (
-            <RenderStatus slug={slug} creative={creative} version={version} format={primary} label={label} jobs={Object.values(live.jobs)} jobKey={detail.jobKey} busy={working} image={!video} />
-          ) : null}
           <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} readOnly={discarded ? t.web.variantGroup.discardedReadOnly : null} />
           {comp !== null && !working ? (
             <Tooltip label={discarded ? t.web.variantGroup.discardedReadOnly : `${t.web.instances.duplicate} · ${t.web.instances.duplicateHint({ label: ownLabel })}`} whenHidden=".ms-bar-label">
@@ -854,9 +851,9 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
               </Button>
             </Tooltip>
           ) : null}
-          <Button variant="ink" className="ms-cv-export" disabled={!latest} onClick={() => { if (latest) setExporting({ open: true, snapshot: { versions, states } }); }}>
-            <Icon name="download" size={13} strokeWidth={1.7} />{c.export}
-          </Button>
+          {/* Decision 974: no Render button; Export renders what it needs and shows a render or an export in progress. */}
+          <ExportButton jobs={Object.values(live.jobs)} jobKey={detail?.jobKey ?? null} scope={comp !== null ? { version, format: primary } : null} disabled={!latest}
+            onClick={() => { if (latest) setExporting({ open: true, snapshot: { versions, states } }); }} />
         </>,
         bar.end,
       ) : null}
@@ -1073,7 +1070,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
       ) : null}
       <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((x) => (x ? { ...x, open: false } : x))} slug={slug} creative={creative}
         title={detail?.creative.title ?? ''} snapshot={exporting?.snapshot ?? null} presets={presets} labels={detail?.creative.brief.formatLabels} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings}
-        {...(detail && creativeLocales(detail.creative.brief) ? { locales: creativeLocales(detail.creative.brief)! } : {})} />
+        jobs={live.jobs} {...(detail && creativeLocales(detail.creative.brief) ? { locales: creativeLocales(detail.creative.brief)! } : {})} />
     </div>
   );
   // Tasks 6 to 10 read the draft, the player and the selection from here (`useEditor()`).

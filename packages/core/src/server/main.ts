@@ -22,6 +22,7 @@ import { createFfmpegTools } from '../media/media-tools.ts';
 import { KeyringVault, type SecretsVault } from '../secrets/vault.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 import { buildServer } from './app.ts';
+import { revealTarget } from './reveal.ts';
 import { moveToTrash, type TrashFn } from '../trash.ts';
 import { acquireBootLock, type BootLock } from './boot-lock.ts';
 import { findRunningInstance, type RunningInstance } from './running-instance.ts';
@@ -33,7 +34,8 @@ const DEV_MCP_SERVER = fileURLToPath(new URL('../../../mcp-studio/src/server.mjs
 /** Shows a folder to the user: selected in the Finder on macOS (never "opened" as an app bundle), opened elsewhere. */
 async function revealFolder(p: string): Promise<void> {
   if (process.platform === 'darwin') {
-    const r = await execCommand('open', ['-R', p]);
+    // The folder itself, not its parent (user report 21): an entry inside is selected.
+    const r = await execCommand('open', ['-R', await revealTarget(p)]);
     if (r.code !== 0) throw new WorkspaceError(500, t().errors.revealFailed);
     return;
   }

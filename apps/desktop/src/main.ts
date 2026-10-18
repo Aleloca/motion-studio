@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { AlreadyRunningError, answersHealth, defaultConfigDir, resolveLocale, resolveLoginShellPath, setLocale, startServer, t } from '@motion-studio/core';
-import { absolutePathArg, attachedGone, attachedGoneAction, attachedLocale, bootLocale, focusOnReady, readSavedLanguage, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, USER_DATA_ENV, userDataDir, userDataOverride } from './helpers.ts';
+import { absolutePathArg, openableFolder, attachedGone, attachedGoneAction, attachedLocale, bootLocale, focusOnReady, readSavedLanguage, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, USER_DATA_ENV, userDataDir, userDataOverride } from './helpers.ts';
 import { menuTemplate } from './menu.ts';
 import { applyWindowZoom, registerZoomWindow, sendZoom, type ZoomKind } from './zoom.ts';
 import { notificationOptions, registerAttention, sendAttentionClick, showKept } from './notify.ts';
@@ -193,6 +193,15 @@ async function run() {
     const p = trusted(e) ? absolutePathArg(arg) : null;
     if (!p) throw new Error(t().desktop.invalidPath);
     shell.showItemInFolder(p);
+  });
+  // User report 21: a folder opened in the file manager itself (not shown in its parent). Only a plain folder: anything the
+  // system would run or install (an app, a package) or a link is revealed in its parent instead.
+  ipcMain.handle('ms:open-folder', async (e, arg: unknown) => {
+    const p = trusted(e) ? absolutePathArg(arg) : null;
+    if (!p) throw new Error(t().desktop.invalidPath);
+    if (!(await openableFolder(p))) { shell.showItemInFolder(p); return; }
+    const failed = await shell.openPath(p);
+    if (failed) throw new Error(failed);
   });
   // Approval signals: native notification (also with the window visible) with one Dock bounce, and the Dock badge.
   const notifications = new Set<Notification>();

@@ -3,18 +3,21 @@
 // file from the latest version where that file is byte-identical to the primary's ★ file (decisions log 140), named with that ★. The file name pattern has token chips, a live preview, an inline collision error and
 // "Save as default" (the workspace's `exportNamePattern`). The destination (native picker on desktop, a field on the web)
 // is remembered; progress, then a success screen with Show in Finder. File sizes are not shown: the API does not report
-// them (ruling R6).
+// them (ruling R6). Decision 974: the export runs on the core as a job (user report 20): the dialog may close at any time
+// and the export goes on (the app tells when the files are in the folder, `useExportNotice`); Cancel export stops it. The
+// videos' resolution and quality are chosen here and remembered in this browser (report 22).
 import {
+  DEFAULT_EXPORT_QUALITY, EXPORT_QUALITIES, EXPORT_RESOLUTIONS, profileApplies, scaledSize, type ExportQuality,
   EXPORT_NAME_TOKENS, exportDate, exportExtension, exportNameCollisions, exportNameVars, localizedStem, renderName, renderProblems, renderState, separateInstanceNames,
   type FormatPreset, type JobSummary, type LocaleTag, type VersionEntry, type WorkspaceSettings,
 } from '@motion-studio/shared';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { api, ApiError, type GroupExportPlanItem } from '../api.ts';
-import { desktop } from '../desktop.ts';
+import { desktop, showExported } from '../desktop.ts';
 import { useLocale, useT } from '../i18n.tsx';
 import { pop } from '../motion/index.ts';
 import { isMac } from '../platform.ts';
-import { Button, ChannelMark, Check, Chip, Icon, Input, Modal, ProgressBar, cx } from '../ui/index.ts';
+import { Button, ChannelMark, Check, Chip, Icon, Input, Modal, ProgressBar, Segmented, Select, cx } from '../ui/index.ts';
 import { instanceName, presetFor } from '../instances.ts';
 import { boardLabel } from './CanvasBoard.tsx';
 import { outputMedia } from './canvasModel.ts';
@@ -22,13 +25,26 @@ import { channelOf } from './creativeState.ts';
 import { message } from './common.tsx';
 import { abortableWait, exportErrorText, withHashRetry } from './versionErrors.ts';
 import type { FormatState } from './versionModel.ts';
-import { compositionOf, renderPct, shortProblems } from './renderModel.ts';
+import { compositionOf, shortProblems } from './renderModel.ts';
 import { localeName } from './creative/languagesModel.ts';
+import { exportRegistry, stageText } from './exportModel.ts';
 
 /** The last destination folder, kept in this browser only. */
 export const EXPORT_FOLDER_KEY = 'ms.exportFolder';
 const readFolder = () => { try { return localStorage.getItem(EXPORT_FOLDER_KEY) ?? ''; } catch { return ''; } };
 const writeFolder = (v: string) => { try { localStorage.setItem(EXPORT_FOLDER_KEY, v); } catch { /* private mode */ } };
+/** The last resolution and quality chosen (decision 974), kept in this browser for every project, as the folder. */
+export const EXPORT_PROFILE_KEY = 'ms.exportProfile';
+export interface ExportProfileChoice { quality: ExportQuality; resolution: number | null }
+export function readProfile(): ExportProfileChoice {
+  try {
+    const v = JSON.parse(localStorage.getItem(EXPORT_PROFILE_KEY) ?? 'null') as Partial<ExportProfileChoice> | null;
+    const quality = (EXPORT_QUALITIES as readonly unknown[]).includes(v?.quality) ? v!.quality! : DEFAULT_EXPORT_QUALITY;
+    const resolution = (EXPORT_RESOLUTIONS as readonly unknown[]).includes(v?.resolution) ? v!.resolution! : null;
+    return { quality, resolution };
+  } catch { return { quality: DEFAULT_EXPORT_QUALITY, resolution: null }; }
+}
+const writeProfile = (v: ExportProfileChoice) => { try { localStorage.setItem(EXPORT_PROFILE_KEY, JSON.stringify(v)); } catch { /* private mode */ } };
 /** The workspace settings bound the pattern to 200 characters. */
 const PATTERN_MAX = 200;
 
@@ -67,27 +83,12 @@ export function renderedExtension(preset: FormatPreset | null): string {
   return `.${prefer.find((e) => preset?.extensions.includes(e)) ?? prefer[0]!}`;
 }
 
-/** Overall progress of the render jobs an export waits for: each job by its formats done and the current one's frames. */
-export function jobsPct(jobs: Array<JobSummary | undefined>): number | null {
-  const known = jobs.filter((j): j is JobSummary => j !== undefined);
-  if (!known.length) return null;
-  const one = (j: JobSummary) => {
-    if (j.state === 'succeeded') return 100;
-    if (j.state !== 'running' || !j.progress) return 0;
-    const list = j.formats?.length ? j.formats : [j.progress.format];
-    const at = Math.max(0, list.indexOf(j.progress.format));
-    return ((at + renderPct(j, j.progress.format) / 100) / list.length) * 100;
-  };
-  return Math.round(known.reduce((a, j) => a + one(j), 0) / known.length);
-}
-
 export function ExportDialog(p: ExportDialogProps) {
   const t = useT();
-  // While the copy runs the dialog stays: closing it would hide an export that still writes files.
-  const [busy, setBusy] = useState(false);
+  // The export runs on the core (decision 974): the dialog may always be closed, the export goes on.
   return (
-    <Modal open={p.open} onClose={p.onClose} label={p.group ? `${t.web.exportUi.groupHeading}: ${p.title}` : t.web.exportUi.title({ title: p.title })} width={760} dismissible={!busy}>
-      {p.group ? <GroupLoader {...p} onBusy={setBusy} /> : p.snapshot ? <ExportBody {...p} snapshot={p.snapshot} onBusy={setBusy} /> : null}
+    <Modal open={p.open} onClose={p.onClose} label={p.group ? `${t.web.exportUi.groupHeading}: ${p.title}` : t.web.exportUi.title({ title: p.title })} width={760}>
+      {p.group ? <GroupLoader {...p} /> : p.snapshot ? <ExportBody {...p} snapshot={p.snapshot} /> : null}
     </Modal>
   );
 }
@@ -95,7 +96,7 @@ export function ExportDialog(p: ExportDialogProps) {
 const NO_SNAPSHOT: ExportSnapshot = { versions: [], states: {} };
 
 /** Reads the group selection when the dialog opens (the modal unmounts it on close), then shows the export of it. */
-function GroupLoader(p: ExportDialogProps & { onBusy(busy: boolean): void }) {
+function GroupLoader(p: ExportDialogProps) {
   const t = useT();
   const [plan, setPlan] = useState<GroupExportPlanItem[] | { error: string } | null>(null);
   useEffect(() => {
@@ -108,9 +109,9 @@ function GroupLoader(p: ExportDialogProps & { onBusy(busy: boolean): void }) {
   return <ExportBody {...p} snapshot={NO_SNAPSHOT} groupPlan={plan} />;
 }
 
-/** `render`: the ★ versions without a render are rendered first (their jobs, and how many formats). */
-type Phase = { kind: 'idle' } | { kind: 'run' } | { kind: 'render'; jobs: string[]; count: number }
-  | { kind: 'done'; destination: string; count: number; skipped: string[]; excluded: string[] };
+/** `run`: the request is on its way; `job`: the export job runs on the core (decision 974); `done`: the files are in the folder. */
+type Phase = { kind: 'idle' } | { kind: 'run' } | { kind: 'job'; id: string }
+  | { kind: 'done'; destination: string; files: string[]; skipped: string[]; excluded: string[] };
 type SaveState = { kind: 'idle' | 'saving' | 'saved' } | { kind: 'failed'; detail: string };
 
 interface Row {
@@ -127,6 +128,8 @@ interface Row {
   output: VersionEntry['outputs'][number] | null;
   /** A v2 composition without a current render: rendered first, then exported (Task 8). */
   needsRender: boolean;
+  /** A composition (v2): the core renders it, so the resolution and quality apply (decision 974); a legacy file is copied as it is. */
+  composed: boolean;
   /** The name the file will have (its extension): the output's, or the render's to come. */
   file: string | null;
   /** The primary's short name, for a follower. */
@@ -143,7 +146,7 @@ interface Row {
   problems: string[];
 }
 
-function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels, pattern: initialPattern, onSettings, onBusy, jobs = {}, locales, groupPlan }: ExportDialogProps & { snapshot: ExportSnapshot; onBusy(busy: boolean): void; groupPlan?: GroupExportPlanItem[] }) {
+function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels, pattern: initialPattern, onSettings, jobs = {}, locales, groupPlan }: ExportDialogProps & { snapshot: ExportSnapshot; groupPlan?: GroupExportPlanItem[] }) {
   const t = useT();
   const x = t.web.exportUi;
   const locale = useLocale();
@@ -154,7 +157,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
     const needsRender = g.state === 'needs-render';
     const output = g.state === 'needs-render' || g.file === '' ? null : { format: g.format, file: g.file, width: g.width, height: g.height, durationSec: null, verified: true, preview: null } as VersionEntry['outputs'][number];
     const sourceLabel = g.source === 'pick' ? x.groupPick({ variant: g.letter.toUpperCase(), n: g.version }) : x.groupDefault({ variant: g.letter.toUpperCase(), n: g.version });
-    return { id: g.format, preset, n: g.v ?? g.version, fileN: g.version, output, needsRender, file: output?.file ?? (needsRender ? `${g.format}${renderedExtension(preset)}` : null),
+    return { id: g.format, preset, n: g.v ?? g.version, fileN: g.version, output, needsRender, composed: g.composed === true, file: output?.file ?? (needsRender ? `${g.format}${renderedExtension(preset)}` : null),
       follows: null, newer: null, blocked: g.state === 'missing' ? x.fileMissing({ n: g.version }) : null, problems: [], member: g.slug, sourceLabel };
   }) : Object.values(states).flatMap((s): Row[] => {
     const n = s.follows ? (states[s.follows]?.star.version ?? null) : s.star.version;
@@ -171,7 +174,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
       : s.starFileMissing ? x.fileMissing({ n: fileN ?? n }) : null;
     const file = output?.file ?? (needsRender ? `${s.id}${renderedExtension(preset)}` : null);
     const problems = version && !needsRender && renderProblems(version, s.id).length ? shortProblems(output, t, locale) : [];
-    return [{ id: s.id, preset, n, fileN, output, needsRender, file, follows, newer: follows === null ? s.star.newer : null, blocked, problems }];
+    return [{ id: s.id, preset, n, fileN, output, needsRender, composed: version !== undefined && compositionOf(version, s.id) !== null, file, follows, newer: follows === null ? s.star.newer : null, blocked, problems }];
   }), [groupPlan, states, versions, presets, labels, x, locale, t]);
   const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(rows.map((r) => [r.id, r.blocked === null && r.problems.length === 0])));
   const [pattern, setPattern] = useState(initialPattern);
@@ -189,12 +192,38 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
   const [langs, setLangs] = useState<Record<string, boolean>>(() => (locales ? { [locales.primary]: true } : {}));
   const [refused, setRefused] = useState<string[] | null>(null);
   const field = useRef<HTMLInputElement>(null);
-  const running = phase.kind === 'run' || phase.kind === 'render';
+  const running = phase.kind === 'run' || phase.kind === 'job';
   const labelId = useId();
   const namesId = useId();
   const previewId = useId();
-  useEffect(() => { onBusy(running); }, [running, onBusy]);
-  useEffect(() => () => onBusy(false), [onBusy]);
+  const resolutionId = useId();
+  const qualityId = useId();
+  const qualityHintId = useId();
+  // The videos' resolution and quality (decision 974), as last chosen. With other languages the videos keep the default
+  // profile: translations are rendered at the format size and High quality.
+  const [profile, setProfile] = useState<ExportProfileChoice>(readProfile);
+  // The export job this dialog started: its end is shown here while the dialog is open (the app tells it anyway).
+  const job = phase.kind === 'job' ? jobs[phase.id] : undefined;
+  const watchedId = phase.kind === 'job' ? phase.id : null;
+  useEffect(() => (watchedId ? exportRegistry.watch(watchedId) : undefined), [watchedId]);
+  useEffect(() => {
+    if (phase.kind !== 'job' || !job || job.state === 'queued' || job.state === 'running') return;
+    const info = job.export;
+    if (job.state === 'succeeded' && info) {
+      // A render made now that had problems was not copied: said apart, with its short reasons (P2).
+      const excluded = (info.excluded ?? []).map((e) => {
+        const row = rows.find((r) => r.id === e.format);
+        const label = boardLabel({ id: e.format, preset: row?.preset ?? null, out: row?.output ?? null, labels }, locale);
+        return x.excludedItem({ label: e.locale ? `${label} (${e.locale})` : label, n: e.version, list: shortProblems({ problems: e.problems, issues: e.issues ?? [] }, t, locale).join('; ') });
+      });
+      setPhase({ kind: 'done', destination: info.destination, files: info.files ?? [], skipped: info.skipped ?? [], excluded });
+      return;
+    }
+    setPhase({ kind: 'idle' });
+    // A translation with open problems (decisions log 854): "Render anyway" sends the export again with `force`.
+    if (info?.refusal?.code === 'localization-needs-force') { setRefused(info.refusal.problems?.length ? info.refusal.problems : [job.error ?? '']); return; }
+    setError(job.state === 'cancelled' ? x.cancelled : x.failed({ detail: job.error ?? t.web.jobState.failed }));
+  }, [phase, job, x, t, rows, labels, locale]);
   // Closing the dialog cancels a retry's wait (an export refused while old versions are hashed) and silences its result.
   // One controller per mount, made by the effect (StrictMode mounts twice).
   const life = useRef(new AbortController());
@@ -272,6 +301,16 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
   const wanted = locales && withLanguages ? [locales.primary, ...locales.extra].filter((tag) => langs[tag]) : [];
   const otherLanguages = locales ? wanted.some((tag) => tag !== locales.primary) : false;
   const languageBody = otherLanguages ? { locales: wanted } : {};
+  const lockProfile = otherLanguages;
+  // The resolution and quality are the videos' (decision 974): stills, identity and store pack formats keep their own.
+  const anyVideo = rows.some((r) => r.composed && profileApplies(r.preset, r.id));
+  /** The size a video row is exported at, when a resolution is chosen ("1280×720"); null otherwise. */
+  const sizeOf = (r: Row): string | null => {
+    if (lockProfile || profile.resolution === null || !r.composed || !r.preset || !profileApplies(r.preset, r.id)) return null;
+    const z = scaledSize(r.preset, profile.resolution);
+    return `${z.width}×${z.height}`;
+  };
+  const profileBody = lockProfile ? { quality: DEFAULT_EXPORT_QUALITY } : { quality: profile.quality, ...(profile.resolution !== null ? { resolution: profile.resolution } : {}) };
   const run = async (force = false) => {
     const dest = folder.trim();
     if (!canRun) return;
@@ -284,51 +323,21 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
     const follow: Record<string, number> = {};
     for (const c of chosen) { if (c.row.follows !== null) follow[c.row.id] = c.row.fileN ?? c.row.n; else picks[c.row.id] = c.row.n; }
     const signal = life.current.signal;
-    if (groupPlan) {
-      // Phase 15: the group export; the core renders what still needs a render (translations included, in their member), and
-      // leaves out what it cannot copy (listed, translated).
-      try {
-        const r = await api.exportGroup(slug, creative, { destination: dest, formats: chosen.map((c) => c.row.id), pattern, date, ...languageBody, ...(force ? { force: true } : {}) });
-        if (signal.aborted) return;
-        writeFolder(dest);
-        setPhase({ kind: 'done', destination: r.destination, count: r.files.length, skipped: r.unavailable.map((u) => u.message), excluded: [] });
-      } catch (e) {
-        if (signal.aborted) return;
-        // The core renders the translations first, as for a single creative: one with open problems asks "Render anyway".
-        if (e instanceof ApiError && e.code === 'localization-needs-force') {
-          setRefused(e.problems?.length ? e.problems : [e.message]);
-          setPhase({ kind: 'idle' });
-          return;
-        }
-        setError(exportErrorText(e, t));
-        setPhase({ kind: 'idle' });
-      }
-      return;
-    }
     const followed = Object.keys(follow).length ? { follow } : {};
     try {
-      // A ★ v2 version without a render is rendered first (Task 8): the jobs start now and show their progress here; the
-      // export below waits for them on the core's side.
-      if (chosen.some((c) => c.row.needsRender) || otherLanguages) {
-        const prep = await withHashRetry(() => api.prepareExport(slug, creative, { picks, ...followed, ...languageBody, ...(force ? { force: true } : {}) }), abortableWait(signal));
-        if (signal.aborted) return;
-        if (prep.renders.length) {
-          setPhase({ kind: 'render', jobs: prep.renders.map((r) => r.job.id), count: prep.renders.reduce((k, r) => k + r.formats.length, 0) });
-        }
-      }
-      // A follower's version is decided on hashes: while old versions are still hashed the core answers hashes-pending,
-      // retried after its Retry-After (bounded, like a ★ pick).
-      const r = await withHashRetry(() => api.exportPicks(slug, creative, { destination: dest, picks, ...followed, pattern, date, ...languageBody, ...(force ? { force: true } : {}) }),
-        abortableWait(signal));
-      if (signal.aborted) return;
+      // Decision 974: the core renders what still needs a render (translations included) and copies, as a job; the request
+      // answers at once with it (its refusals still come now). A follower's version is decided on hashes: while old versions
+      // are still hashed the core answers hashes-pending, retried after its Retry-After (bounded, like a ★ pick).
+      const send = (forced: boolean, wait: Parameters<typeof withHashRetry>[1]) => (groupPlan
+        ? api.exportGroupJob(slug, creative, { destination: dest, formats: chosen.map((c) => c.row.id), pattern, date, ...languageBody, ...profileBody, ...(forced ? { force: true } : {}) })
+        : withHashRetry(() => api.exportPicksJob(slug, creative, { destination: dest, picks, ...followed, pattern, date, ...languageBody, ...profileBody, ...(forced ? { force: true } : {}) }), wait));
+      const started = await send(force, abortableWait(signal));
+      // Review #9: the same export with "Render anyway", for the app's notice when this dialog is closed by then.
+      if (!force) exportRegistry.setRetry(started.job.id, () => send(true, abortableWait(new AbortController().signal)));
       writeFolder(dest);
-      // A render made now that had problems was not copied: said apart, with its short reasons (P2).
-      const excluded = (r.excluded ?? []).map((e) => {
-        const row = rows.find((x) => x.id === e.format);
-        const label = boardLabel({ id: e.format, preset: row?.preset ?? null, out: row?.output ?? null, labels }, locale);
-        return x.excludedItem({ label, n: e.version, list: shortProblems(e, t, locale).join('; ') });
-      });
-      setPhase({ kind: 'done', destination: r.destination, count: r.files.length, skipped: r.skipped ?? [], excluded });
+      if (!lockProfile) writeProfile(profile);
+      if (signal.aborted) return;
+      setPhase({ kind: 'job', id: started.job.id });
     } catch (e) {
       if (signal.aborted) return;
       if (e instanceof ApiError && e.code === 'localization-needs-force') {
@@ -340,6 +349,10 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
       setPhase({ kind: 'idle' });
     }
   };
+  const cancelJob = () => {
+    if (phase.kind !== 'job') return;
+    Promise.resolve().then(() => api.cancelJob(phase.id)).catch((e: unknown) => setError(message(e)));
+  };
 
   const head = (
     <div className="ms-exp-head">
@@ -347,7 +360,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
         <h2>{groupPlan ? x.groupHeading : x.heading}</h2>
         <span className="ms-exp-sub">{groupPlan ? x.groupSub({ title }) : x.sub({ title })}</span>
       </div>
-      <Button variant="ghost" icon aria-label={t.common.close} disabled={running} onClick={onClose}><Icon name="close" size={13} strokeWidth={1.6} /></Button>
+      <Button variant="ghost" icon aria-label={t.common.close} onClick={onClose}><Icon name="close" size={13} strokeWidth={1.6} /></Button>
     </div>
   );
 
@@ -357,14 +370,14 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
         {head}
         <div className="ms-exp-done" role="status">
           <span className="ms-exp-done-mark" ref={(el) => { if (el) void pop(el); }}><Icon name="check" size={24} strokeWidth={2.2} /></span>
-          <b>{x.done({ count: phase.count })}</b>
+          <b>{x.done({ count: phase.files.length })}</b>
           <span className="ms-exp-path">{phase.destination}</span>
           {phase.skipped.length ? <span className="ms-exp-skipped">{x.skipped({ list: phase.skipped.join(', ') })}</span> : null}
           {phase.excluded.length ? <span className="ms-exp-problem" role="alert">{x.excluded({ list: phase.excluded.join(', ') })}</span> : null}
           {error ? <p role="alert" className="ms-exp-error">{error}</p> : null}
           <div className="ms-exp-done-actions">
             {bridge ? (
-              <Button variant="outline" onClick={() => { bridge.revealPath(phase.destination).catch((e: unknown) => setError(message(e))); }}>
+              <Button variant="outline" onClick={() => { showExported(bridge, phase.destination, phase.files).catch((e: unknown) => setError(message(e))); }}>
                 <Icon name="folder" size={14} />{reveal}
               </Button>
             ) : null}
@@ -394,7 +407,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
                 </span>
                 <span className="ms-exp-name">
                   <span className="ms-exp-label">{r.preset ? <ChannelMark channel={channelOf(r.preset.channel)} /> : null}<b>{label}</b></span>
-                  {blocked ? <span className="ms-exp-blocked">{r.blocked}</span> : <span className="ms-exp-file">{name ?? '—'}</span>}
+                  {blocked ? <span className="ms-exp-blocked">{r.blocked}</span> : <span className="ms-exp-file">{name ?? '—'}{sizeOf(r) ? <span className="ms-exp-size"> {x.outputSize({ size: sizeOf(r)! })}</span> : null}</span>}
                   {r.needsRender && !blocked ? <span className="ms-exp-render">{t.web.render.rendersFirst}</span> : null}
                   {r.problems.length && !blocked ? <span className="ms-exp-problem">{x.renderProblems({ list: r.problems.join('; ') })}</span> : null}
                 </span>
@@ -446,6 +459,22 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
           )}
           {bridge ? <Button variant="outline" disabled={running} onClick={() => void choose()}>{x.choose}</Button> : null}
         </div>
+        {anyVideo ? (
+          <>
+            <span className="ms-exp-dest-label" id={resolutionId}>{x.resolution}</span>
+            <div className="ms-exp-dest-field" aria-labelledby={resolutionId}>
+              <Select label={x.resolution} value={lockProfile || profile.resolution === null ? 'original' : String(profile.resolution)} disabled={running || lockProfile}
+                options={[{ value: 'original', label: x.resolutionOriginal }, ...EXPORT_RESOLUTIONS.map((n) => ({ value: String(n), label: x.resolutionOption({ n }) }))]}
+                onChange={(v) => setProfile((p) => ({ ...p, resolution: v === 'original' ? null : Number(v) }))} />
+            </div>
+            <span className="ms-exp-dest-label" id={qualityId}>{x.quality}</span>
+            <div className="ms-exp-quality">
+              <Segmented label={x.quality} value={lockProfile ? DEFAULT_EXPORT_QUALITY : profile.quality} disabled={running || lockProfile} describedBy={qualityHintId}
+                options={EXPORT_QUALITIES.map((q) => ({ value: q, label: x.qualityNames[q] }))} onChange={(q) => setProfile((p) => ({ ...p, quality: q }))} />
+              <span id={qualityHintId} className="ms-exp-note">{lockProfile ? x.profileLocked : `${x.qualityHints[profile.quality]}. ${x.profileHint}.`}</span>
+            </div>
+          </>
+        ) : null}
         <span className="ms-exp-dest-label" id={namesId}>{x.names}</span>
         <div className="ms-exp-pattern">
           <div className="ms-exp-dest-field">
@@ -476,15 +505,15 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
         </div>
       </div>
       <div className="ms-exp-foot">
-        {phase.kind === 'render' ? (
+        {phase.kind === 'job' ? (
           <div className="ms-exp-progress">
-            <span>{t.web.render.renderingFirst({ count: phase.count })}</span>
-            <RenderProgress ids={phase.jobs} jobs={jobs} label={t.web.render.renderingFirst({ count: phase.count })} />
+            <span>{stageText(job, x)}</span>
+            <JobProgress job={job} label={stageText(job, x)} />
+            <span className="ms-exp-note" role="status">{x.background}</span>
           </div>
         ) : running ? (
           <div className="ms-exp-progress">
             <span>{x.running}</span>
-            {/* One request copies every file: there is no per-file progress to show. */}
             <div className="ms-progress ms-indet" role="progressbar" aria-label={x.running}><i /></div>
           </div>
         ) : (
@@ -493,17 +522,27 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
             {error ? <span role="alert" className="ms-exp-error">{error}</span> : <span className="ms-exp-note">{x.noOverwrite}</span>}
           </div>
         )}
-        <Button size="lg" variant="ghost" disabled={running} onClick={onClose}>{t.common.cancel}</Button>
-        <Button size="lg" variant="ink" loading={running} disabled={!canRun || (withLanguages && wanted.length === 0)} onClick={() => void run()}>
-          {x.run({ count: chosen.length })}
-        </Button>
+        {phase.kind === 'job' ? (
+          <>
+            {/* Cancel stops the export on the core (and the renders it started); Close leaves it running. */}
+            <Button size="lg" variant="ghost" onClick={cancelJob}>{x.cancelExport}</Button>
+            <Button size="lg" variant="ink" onClick={onClose}>{t.common.close}</Button>
+          </>
+        ) : (
+          <>
+            <Button size="lg" variant="ghost" onClick={onClose}>{t.common.cancel}</Button>
+            <Button size="lg" variant="ink" loading={running} disabled={!canRun || (withLanguages && wanted.length === 0)} onClick={() => void run()}>
+              {x.run({ count: chosen.length })}
+            </Button>
+          </>
+        )}
       </div>
     </div>
   );
 }
 
-/** The render jobs' progress while an export waits for them; indeterminate until a job reports. */
-function RenderProgress({ ids, jobs, label }: { ids: string[]; jobs: Record<string, JobSummary>; label: string }) {
-  const pct = jobsPct(ids.map((id) => jobs[id]));
-  return pct === null ? <div className="ms-progress ms-indet" role="progressbar" aria-label={label}><i /></div> : <ProgressBar value={pct} label={label} />;
+/** The export job's progress: its renders' percent, indeterminate before any reports and while the files are copied. */
+function JobProgress({ job, label }: { job: JobSummary | undefined; label: string }) {
+  const pct = job?.export?.stage === 'rendering' && job.export.renders?.length ? job.export.pct : null;
+  return pct === null || pct === undefined ? <div className="ms-progress ms-indet" role="progressbar" aria-label={label}><i /></div> : <ProgressBar value={pct} label={label} />;
 }

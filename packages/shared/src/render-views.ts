@@ -9,6 +9,42 @@ export const renderJobKey = (root: string, projectSlug: string, creativeSlug: st
 export function renderJobKeyOf(creativeKey: string, n: number): string | null {
   return creativeKey.startsWith('creative:') ? `render:${creativeKey.slice('creative:'.length)}:v${n}` : null;
 }
+/**
+ * The key of an export job (decision 974): `export:<root>:<project>:<creative>:<id>`, one per export (two exports of a creative
+ * may run at once). `exportJobPrefixOf` gives `export:<root>:<project>:<creative>:` from the creative's job key.
+ */
+export const exportJobKey = (root: string, projectSlug: string, creativeSlug: string, id: string): string => `export:${root}:${projectSlug}:${creativeSlug}:${id}`;
+export function exportJobPrefixOf(creativeKey: string): string | null {
+  return creativeKey.startsWith('creative:') ? `export:${creativeKey.slice('creative:'.length)}:` : null;
+}
+/**
+ * The key of a render made for one export at another quality or size (decision 974): `render-export:<root>:<project>:<creative>:v<n>:<id>`.
+ * Never a version's render job (`renderJobKey`): it records nothing in the version and is not reused by another request.
+ */
+export const exportRenderJobKey = (root: string, projectSlug: string, creativeSlug: string, n: number, id: string): string =>
+  `render-export:${root}:${projectSlug}:${creativeSlug}:v${n}:${id}`;
+
+/** How far a running render job is with `format`: its frames (a format not reached yet is at 0; finishing is 99). */
+export function renderJobPct(job: JobSummary, format: string): number {
+  const p = job.progress;
+  if (!p || p.format !== format || p.phase === 'media') return 0;
+  if (p.phase === 'finishing') return 99;
+  return p.total > 0 ? Math.min(99, Math.floor((p.done / p.total) * 100)) : 0;
+}
+
+/** Overall progress of render jobs: each job by its formats done and the current one's frames; null when none is known. */
+export function renderJobsPct(jobs: ReadonlyArray<JobSummary | undefined>): number | null {
+  const known = jobs.filter((j): j is JobSummary => j !== undefined);
+  if (!known.length) return null;
+  const one = (j: JobSummary) => {
+    if (j.state === 'succeeded') return 100;
+    if (j.state !== 'running' || !j.progress) return 0;
+    const list = j.formats?.length ? j.formats : [j.progress.format];
+    const at = Math.max(0, list.indexOf(j.progress.format));
+    return ((at + renderJobPct(j, j.progress.format) / 100) / list.length) * 100;
+  };
+  return Math.round(known.reduce((a, j) => a + one(j), 0) / known.length);
+}
 
 /**
  * What the core's preview, storyboard, render and render engine routes answer (Task 8), shared by the core and the web.

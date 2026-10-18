@@ -33,6 +33,7 @@ import { boardsWith, fitBoards, isTall, ratioText, type BoardModel } from './can
 import { CompareDialog } from './CompareDialog.tsx';
 import { channelOf } from './creativeState.ts';
 import { ExportDialog, type ExportSnapshot } from './ExportDialog.tsx';
+import { ExportButton } from './ExportButton.tsx';
 import { StorePackExport } from './creative/StorePackExport.tsx';
 import { LanguagesButton } from './creative/LanguagesButton.tsx';
 import { RenderLanguagesDialog } from './creative/RenderLanguagesDialog.tsx';
@@ -41,7 +42,7 @@ import { activatesControl, bare, inOverlay, isTyping } from './keys.ts';
 import { pinsKey, usePendingPins } from './pendingPins.ts';
 import { FollowerChip, FormatBadge, useNewVersionNotice, useVersionActions, VersionTimeline } from './FormatVersions.tsx';
 import { boardSource, entryAt, followersOf, formatStates, isRendering, renderingOf, shownOf, type FormatState } from './versionModel.ts';
-import { boardRender, compositionOf, starRenderPlan } from './renderModel.ts';
+import { boardRender, compositionOf } from './renderModel.ts';
 import './canvas.css';
 import { message } from './common.tsx';
 import { isVideoFile } from '../media.ts';
@@ -300,7 +301,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   const actions = useVersionActions({ slug, creative, states, labelOf: formatLabel, resumeFrom: detail?.creative.resumeFrom?.version ?? null, onChanged: reload, onError: setActionError,
     // In a variant group the ★ is the group's: variant and version, written through the host.
     ...(group ? { groupPick: (format: string, n: number | null) => api.setVariantPick(slug, group.host, format, n === null ? null : { slug: creative, version: n }) } : {}) });
-  // Renders of v2 versions (Task 8): a board's Retry and its menu's "Render vN", and the bar's "Render ★".
+  // Renders of v2 versions (Task 8): a board's Retry and its menu's "Render vN" (decision 974: the bar has Export only).
   const jobList = useMemo(() => Object.values(live.jobs), [live.jobs]);
   // A creative with languages asks which ones first (Phase 12); the others render at once.
   const [renderPlan, setRenderPlan] = useState<Array<[number, string[]]> | null>(null);
@@ -317,8 +318,6 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
         : t.web.render.startFailed({ detail: failed[0]!.detail }));
     });
   };
-  const starPlan = useMemo(() => (detail ? starRenderPlan(states, versions, jobList, detail.jobKey) : new Map<number, string[]>()), [detail, states, versions, jobList]);
-  const anyComposition = versions.some((v) => (v.compositions?.length ?? 0) > 0);
 
   const [compare, setCompare] = useState<{ open: boolean; init: [number, number]; format: string } | null>(null);
   /** Compare of a format (its badge): the version on screen against the entry before it in the format's history. */
@@ -887,16 +886,9 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
           {versions.length ? (
             <VersionTimeline slug={slug} creative={creative} versions={versions} resumeFrom={cr.resumeFrom?.version ?? null} actions={actions} buttonRef={versionButton} />
           ) : null}
-          {anyComposition ? (
-            <Button variant="outline" className="ms-cv-render-stars" disabled={starPlan.size === 0} title={starPlan.size ? t.web.render.renderStarsHint : t.web.render.renderStarsNone}
-              onClick={() => renderNow([...starPlan])}>
-              {t.web.render.renderStars}
-            </Button>
-          ) : null}
           <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} readOnly={readOnly} />
-          <Button variant="ink" className="ms-cv-export" disabled={!version && !group} onClick={() => { if (version || group) setExporting({ open: true, snapshot: { versions, states } }); }}>
-            <Icon name="download" size={13} strokeWidth={1.7} />{c.export}
-          </Button>
+          {/* Decision 974: no "Render ★"; Export renders what it needs and shows an export or a render in progress. */}
+          <ExportButton jobs={jobList} jobKey={detail.jobKey} disabled={!version && !group} onClick={() => { if (version || group) setExporting({ open: true, snapshot: { versions, states } }); }} />
           {/* Decision 915: archive and delete; a group's menu acts on the whole group (its variant A). */}
           <CreativeMenu slug={slug} target={group ? hostSlug : creative} title={title} onAddVariant={!group && !vdetail ? () => setAddOpen(true) : null}
             onRemoved={(kind) => { if (kind !== 'restored') go(href.project(slug)); }} />

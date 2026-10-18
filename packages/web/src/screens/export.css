@@ -1,0 +1,14 @@
+/* The Export control (decision 974, user report 19): every text it may show in one grid cell, the hidden ones setting the
+   width, so "Esporta" and "Esportazione 26%" are the same control at the same size; the progress is a fill behind the text,
+   in the text's own colour (both themes), never a bar outside it. */
+.ms-exp-ctl { position: relative; overflow: hidden; isolation: isolate; }
+.ms-exp-ctl-fill { position: absolute; inset: 0 auto 0 0; z-index: -1; pointer-events: none; background: color-mix(in srgb, currentColor 22%, transparent); transition: width .3s ease; }
+.ms-exp-ctl-label { display: inline-grid; }
+.ms-exp-ctl-label > * { grid-area: 1 / 1; white-space: nowrap; text-align: center; }
+.ms-exp-ctl-sizer { visibility: hidden; }
+.ms-exp-ctl-text { font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .ms-exp-ctl-fill { transition: none; } }
+
+/* Export dialog (decision 974): the videos' quality with its hint, and the size a row is exported at. */
+.ms-exp-quality { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
+.ms-exp-size { color: var(--muted); }

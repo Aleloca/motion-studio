@@ -4,7 +4,7 @@ import { mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
-import type { Composition, FormatPreset } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_QUALITY, scaledSize, type Composition, type ExportQuality, type FormatPreset } from '@motion-studio/shared';
 import { RUNTIME_DIST_DIR } from '@motion-studio/composition-runtime/dist';
 import { startCompositionServer, type CompositionServer, type CompositionSession, type SessionMedia } from '../compositions/composition-server.ts';
 import { readRegularFile } from '../safe-read.ts';
@@ -18,7 +18,7 @@ import {
   type RenderPage, type RuntimeErrorInfo,
 } from './chromium-provider.ts';
 import { cftPlatform, findInstalledCft } from './cft-download.ts';
-import { chooseEncoder, concatLine, countVideoFrames, findFfmpeg, h264Args, hostArch, spawnFfmpeg, targetKbps, type FfmpegInfo, type VideoEncoder } from './encode.ts';
+import { chooseEncoder, concatLine, countVideoFrames, findFfmpeg, h264Args, hostArch, qualitySettings, spawnFfmpeg, targetKbps, type FfmpegInfo, type VideoEncoder } from './encode.ts';
 import { findSystemChrome } from './system-chrome.ts';
 import { MP4_DEMUXERS, ownInput } from '../media/ffmpeg-exec.ts';
 import { renderFrames, type RenderFramesOptions, type RenderFramesResult } from './frames.ts';
@@ -30,8 +30,10 @@ import type { WatchdogLimits } from './watchdog.ts';
  * server and an isolated Chromium (isolation.ts), with the phase 8 encoding targets.
  *
  * - **Video:** `round(duration × fps)` frames at `t = i / fps`, split into `parallel` contiguous segments (default 4), one
- *   page each, every page streaming JPEG q90 into its own ffmpeg (image2pipe → H.264 segment); then the concat demuxer
- *   with the audio mix muxed as AAC 128k, `+faststart`. The frame count of the result is checked exactly.
+ *   page each, every page streaming its frames (JPEG, or PNG for quality `max`) into its own ffmpeg (image2pipe → H.264
+ *   segment); then the concat demuxer with the audio mix muxed as AAC 128k, `+faststart`. The frame count of the result is
+ *   checked exactly. Quality and resolution (decision 974): `qualitySettings` picks the encode; another short side keeps the
+ *   page's layout and rasterises it at the scale (`deviceScaleFactor`), the encode landing it on the exact even size.
  * - **Still** (`duration` 0): one capture at t = 0, PNG (or JPEG/WebP when `out` asks for it).
  * - Everything is written to temp files; the output is renamed to `out` only on success. On cancel, a time limit, a crash,
  *   a watchdog trip or an ffmpeg failure, the browser group and every ffmpeg are killed and the temp files removed.
@@ -43,6 +45,8 @@ import type { WatchdogLimits } from './watchdog.ts';
 
 export interface RenderResult {
   file: string; sha256: string; width: number; height: number; durationSec: number | null; frames: number; encoder: VideoEncoder | null; audio: boolean;
+  /** A video's quality (decision 974); absent for a still. */
+  quality?: ExportQuality;
   /** Non-fatal runtime reports (`videoFrameMismatch`: an untrusted source's frame drawn on stability), at most 50. */
   warnings: RuntimeErrorInfo[];
   /**
@@ -75,12 +79,19 @@ export interface RenderCompositionOptions {
   /** The built runtime (default `RUNTIME_DIST_DIR`), for a server the render starts and for `clock.js`. */
   distDir?: string;
   ffmpeg?: FfmpegInfo;
-  /** `auto` (default): VideoToolbox on macOS when its quality check passes, else libx264. */
+  /** Overrides the quality's encoder (tests); `auto`: VideoToolbox on macOS when its quality check passes, else libx264. */
   encoder?: 'auto' | VideoEncoder;
-  /** libx264 preset; default `fast`. */
+  /** libx264 preset; default the quality's (`fast`, `medium` for `max`). */
   x264Preset?: string;
-  /** JPEG quality of the intermediate frames; default 90. */
+  /** JPEG quality of the intermediate frames; default the quality's (90 standard, 95 high; `max` captures PNG). */
   jpegQuality?: number;
+  /** A video's quality (decision 974, `qualitySettings`); default `high`. */
+  quality?: ExportQuality;
+  /**
+   * A video at another resolution (decision 974): the output's short side, the ratio kept (`scaledSize`). The page is laid
+   * out at the composition's size and rasterised at the scale (`deviceScaleFactor`), so text and shapes stay sharp.
+   */
+  short?: number;
   /** Wall-clock limit of the whole render, ms; default 5 min + 5 s per frame. */
   timeLimitMs?: number;
   /** Where the work folder goes; default the OS temp folder. */
@@ -194,8 +205,13 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
     session = await server.mintSession({ creativeDir: o.dir, versionDir: o.versionDir, format: o.format.id, composition: c, mode: 'render', ttlMs: (o.timeLimitMs ?? 300_000 + frames * 5_000) + 60_000,
       ...(o.media ? { media: o.media } : {}), ...(o.format.safeZone ? { safeZone: o.format.safeZone } : {}) });
     const clock = await clockSource(distDir);
+    // A video at another resolution (decision 974): the output size, and the page's raster scale to reach it.
+    const size = still ? { width: c.width, height: c.height } : scaledSize(c, o.short);
+    const scaled = size.width !== c.width || size.height !== c.height;
+    const dsf = size.width / c.width;
     const openPage = async () => {
-      const p = await o.provider.open({ width: c.width, height: c.height, url: session!.url, signal: ctl.signal, purpose: 'render', ...(clock ? { clockSource: clock } : {}) });
+      const p = await o.provider.open({ width: c.width, height: c.height, url: session!.url, signal: ctl.signal, purpose: 'render', ...(clock ? { clockSource: clock } : {}),
+        ...(scaled ? { deviceScaleFactor: dsf } : {}) });
       pages.push(p);
       const bad = failing(p.info.errors);
       if (bad.length) throw new RenderError('runtimeErrors', `the composition has errors: ${bad.map((e) => e.code).join(', ')}`, bad);
@@ -231,8 +247,13 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
       }
     } else {
       work = await makeOwnedTempDir(join(o.tempDir ?? tmpdir(), 'ms-render-'));
-      const kbps = targetKbps(o.format, c.fps);
-      const encoder = await chooseEncoder(ff!, o.encoder ?? 'auto', c.width, c.height, c.fps, kbps);
+      // The phase 8 target of the output size (scaled by its pixels), then the quality's encode (decision 974).
+      const quality = o.quality ?? DEFAULT_EXPORT_QUALITY;
+      const qs = qualitySettings(quality, Math.max(100, Math.round(targetKbps(o.format, c.fps) * (size.width * size.height) / (c.width * c.height))));
+      const kbps = qs.kbps;
+      const encoder = await chooseEncoder(ff!, o.encoder ?? qs.encoder, size.width, size.height, c.fps, kbps);
+      const capture = { format: qs.capture, ...(qs.capture === 'jpeg' ? { quality: o.jpegQuality ?? qs.jpegQuality ?? 90 } : {}),
+        width: Math.round(c.width * dsf), height: Math.round(c.height * dsf), ...(scaled ? { tolerance: 1 } : {}) };
       const segments = splitSegments(frames, Math.min(16, Math.max(1, Math.floor(o.parallel ?? DEFAULT_PARALLEL))));
       const wav = join(work, 'mix.wav');
       const audio = mixAudio({ ff: ff!, compDir: join(o.dir, ...o.versionDir.split('/'), 'compositions', o.format.id), clips: mixClips(c), durationSec: c.duration, outWav: wav, workDir: work, signal: ctl.signal });
@@ -243,11 +264,11 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
       const segFiles = await Promise.all(segments.map(async (seg, j) => {
         const page = (opened[j] as PromiseFulfilledResult<RenderPage>).value;
         const file = join(work!, `seg-${String(seg.index).padStart(2, '0')}.mp4`);
-        const enc = spawnFfmpeg(ff!, [...ownInput('-', { formats: ['image2pipe'], force: true, options: ['-c:v', 'mjpeg', '-framerate', String(c.fps)] }),
-          ...h264Args(encoder, kbps, c.fps, o.x264Preset), '-an', '-f', 'mp4', file], { signal: ctl.signal, stdin: true });
+        const enc = spawnFfmpeg(ff!, [...ownInput('-', { formats: ['image2pipe'], force: true, options: ['-c:v', qs.capture === 'png' ? 'png' : 'mjpeg', '-framerate', String(c.fps)] }),
+          ...h264Args(encoder, kbps, c.fps, o.x264Preset ?? qs.preset, { crf: qs.crf, cap: qs.cap, ...(scaled ? { size } : {}) }), '-an', '-f', 'mp4', file], { signal: ctl.signal, stdin: true });
         try {
           await captureSegment(page, seg, {
-            fps: c.fps, format: 'jpeg', quality: o.jpegQuality ?? 90, width: c.width, height: c.height, signal: ctl.signal,
+            fps: c.fps, ...capture, signal: ctl.signal,
             sink: (buf) => writeWithBackpressure(enc.stdin!, buf, enc.done), onFrame: tick,
           });
           enc.stdin!.end();
@@ -279,13 +300,13 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
       if (!hasAudio && o.storeAudio) await withSilentAudio(ff!, join(work, `muted${ext}`), tempOut, { durationSec: frames / c.fps, container: VIDEO_EXT[ext] as 'mp4' | 'mov' }, ctl.signal);
       const audioOut = hasAudio || o.storeAudio === true;
       const check = await countVideoFrames(ff!, tempOut);
-      if (!check || check.frames !== frames || check.width !== c.width || check.height !== c.height) {
-        throw new RenderError('ffmpegFailed', `the output has ${check ? `${check.frames} frames at ${check.width}×${check.height}` : 'no readable video'}, expected ${frames} at ${c.width}×${c.height}`);
+      if (!check || check.frames !== frames || check.width !== size.width || check.height !== size.height) {
+        throw new RenderError('ffmpegFailed', `the output has ${check ? `${check.frames} frames at ${check.width}×${check.height}` : 'no readable video'}, expected ${frames} at ${size.width}×${size.height}`);
       }
       const sha256 = await sha256File(tempOut);
       await o.beforeRename?.(tempOut);
       await rename(tempOut, o.out);
-      return { file: o.out, sha256, width: c.width, height: c.height, durationSec: c.duration, frames, encoder, audio: audioOut, warnings, ...(overflows.length ? { textOverflows: overflows } : {}) };
+      return { file: o.out, sha256, width: size.width, height: size.height, durationSec: c.duration, frames, encoder, quality, audio: audioOut, warnings, ...(overflows.length ? { textOverflows: overflows } : {}) };
     }
     const sha256 = await sha256File(tempOut);
     await o.beforeRename?.(tempOut);

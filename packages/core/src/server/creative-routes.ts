@@ -1,15 +1,18 @@
 import type { Git } from '../git.ts';
 import { recoverRenameJournal } from '../library/rename-recovery.ts';
 import { lstat, readdir, realpath, rm } from 'node:fs/promises';
-import { dirname, join, sep } from 'node:path';
+import { basename, dirname, join, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow, hostOf, MAX_VARIANTS, VARIANT_LETTERS, type VariantDetail, type VariantLetter } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_QUALITY, EXPORT_QUALITIES, isDefaultProfile, EXPORT_RESOLUTIONS, type ExportQuality, type RenderProfile, type VersionEntry, messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow, hostOf, MAX_VARIANTS, VARIANT_LETTERS, type VariantDetail, type VariantLetter } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
 import { CreativeStore } from '../creatives/creative-store.ts';
 import type { CreativeSideStateStore, StoppedSession } from '../creatives/creative-side-state.ts';
-import { exportResolved, exportVersion, pendingRenders, resolveExportPicks, resolveLocalizedItems, type ExportItem } from '../creatives/export.ts';
+import { checkDestination, exportResolved, exportVersion, pendingRenders, profiledRenders, resolveExportPicks, resolveLocalizedItems, type ExportItem, type ExportResult } from '../creatives/export.ts';
+import { makeOwnedTempDir } from '../render/owner.ts';
+import type { ExportJobService, ExportOutcome, ExportRun } from '../creatives/export-jobs.ts';
+import type { ExportRendered, RenderWait } from '../creatives/render-jobs.ts';
 import { assertLocalesInBrief, checkedLocale } from '../localization/validate.ts';
 import { storyboardDir, storyboardSchema, sweepStoryboardTemps, type PreviewService } from '../creatives/previews.ts';
 import { readJsonFile } from '../json-file.ts';
@@ -18,13 +21,14 @@ import type { UrlSigner } from './signed-urls.ts';
 import { formatSummaries } from '../creatives/format-summary.ts';
 import { MAX_DIRECTION_CHARS, VariantGroupService } from '../creatives/variant-group.ts';
 import { localeAssetsCheck, prepareExportRenders } from '../creatives/export-prepare.ts';
-import { exportGroup, itemOfPlan, pendingByMember, planGroupExport, renderGroupLocales, resolveGroupLocalized, type GroupPlanItem } from '../creatives/variant-export.ts';
+import { exportGroup, itemOfPlan, pendingByMember, planGroupExport, renderGroupLocales, resolveGroupLocalized, withGroupProfile, type GroupPlanItem } from '../creatives/variant-export.ts';
 import type { VariantFanout } from '../creatives/variant-fanout.ts';
 import { withLazyHashes } from '../creatives/output-hashes.ts';
 import { CreativeRemoval } from '../creatives/creative-removal.ts';
 import type { TrashFn } from '../trash.ts';
 import { creativeJobKey, PICK_RETRY_AFTER_SEC, type CreativeRef, type CreativeTurnService } from '../creatives/creative-turns.ts';
 import type { RenderJobService } from '../creatives/render-jobs.ts';
+import { tmpdir } from 'node:os';
 import { reconcileRenders, renderFileMatches } from '../creatives/render-stamps.ts';
 import { sweepDerivedCaches, sweepEditorStaging } from '../creatives/cache-sweep.ts';
 import { editorCompositionView } from '../creatives/editor-staging.ts';
@@ -56,6 +60,8 @@ export interface CreativeRoutesContext {
   broadcast?: (msg: ServerMessage) => void;
   /** Render jobs of v2 versions (Task 5). */
   renders: RenderJobService;
+  /** Export jobs (decision 974): an export that runs in the background. */
+  exports: ExportJobService;
   /** Storyboards and live preview sessions (Task 5b). */
   previews: PreviewService;
   /** Signs the storyboard image URLs (fix I4). */
@@ -108,6 +114,30 @@ const pickBody = z.object({ format: z.string().min(1).max(200), version: z.numbe
  * `pattern` (else the workspace's `exportNamePattern`). `version` alone is the older payload: every output of that version.
  */
 const MAX_EXPORT_FORMATS = 100;
+/**
+ * Decision 974: the quality and resolution of the exported videos (absent: the files as they are, older clients), and
+ * `background`: the export runs as a job (`{ job }` at once; the files come with the job's `export`).
+ */
+const exportProfileFields = {
+  quality: z.enum(EXPORT_QUALITIES).optional(),
+  resolution: z.number().int().refine((r) => (EXPORT_RESOLUTIONS as readonly number[]).includes(r)).optional(),
+  background: z.boolean().optional(),
+};
+type VersionEntryList = VersionEntry[];
+/** Decision 1007: translations have no profile, so an export with other languages takes only the default one (400). */
+function refuseProfileWithLanguages(profile: RenderProfile | undefined, otherTags: readonly string[]): void {
+  if (profile && otherTags.length > 0 && !isDefaultProfile(profile)) throw new CodedError(400, t().export.profileWithLanguages, 'export-profile-languages');
+}
+/** Decision 974, review #4/#5: an item a render made for the export could not give (its render failed, or has problems). */
+interface ExportGap { item: ExportItem; slug: string; kind: 'failed' | 'problems'; reason?: string; problems: string[]; issues: OutputIssue[] }
+/** What an export job reports once done (decision 974): the files written, and what was left out, as text. */
+function outcomeOf(r: ExportResult & { excluded?: NonNullable<ExportOutcome['excluded']>; unavailable?: Array<{ message: string }> }): ExportOutcome {
+  const skipped = [...r.skipped, ...(r.unavailable ?? []).map((u) => u.message)];
+  return { destination: r.destination, files: r.files.map((f) => f.to), ...(skipped.length ? { skipped } : {}), ...(r.excluded?.length ? { excluded: r.excluded } : {}) };
+}
+/** The profile a body asks for; undefined when it names neither a quality nor a resolution. */
+const profileOfBody = (b: { quality?: ExportQuality; resolution?: number }): RenderProfile | undefined =>
+  b.quality === undefined && b.resolution === undefined ? undefined : { quality: b.quality ?? DEFAULT_EXPORT_QUALITY, ...(b.resolution !== undefined ? { short: b.resolution } : {}) };
 const exportBody = z.object({
   destination: z.unknown().optional(),
   picks: z.record(z.string().min(1).max(200), z.unknown()).refine((r) => Object.keys(r).length <= MAX_EXPORT_FORMATS).optional(),
@@ -123,6 +153,7 @@ const exportBody = z.object({
   locales: z.array(z.string().min(1).max(40)).min(1).max(11).optional(),
   /** "Render anyway" for translations rendered first that have open problems or outdated entries. */
   force: z.boolean().optional(),
+  ...exportProfileFields,
 });
 /** Phase 15 (spec §6): `POST …/export-group`; no picks, the group selection decides. */
 const exportGroupBody = z.object({
@@ -132,6 +163,7 @@ const exportGroupBody = z.object({
   formats: z.array(z.string().min(1).max(200)).max(MAX_EXPORT_FORMATS).optional(),
   /** "Render anyway" for translations rendered first that have open problems or outdated entries (as the single export). */
   force: z.boolean().optional(),
+  ...exportProfileFields,
 }).strict();
 const useAsLogoBody = z.object({ variant: z.enum(['primary', 'icon']) }).strict();
 const linkBody = z.object({ follower: z.string().min(1).max(200), primary: z.string().min(1).max(200).nullable() });
@@ -682,6 +714,9 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       if (!version) throw new WorkspaceError(404, t().errors.versionNotFound);
       return exportVersion({ ...common, version });
     }
+    const profile = profileOfBody(body);
+    refuseProfileWithLanguages(profile, otherTags);
+    const profileOpts = profile ? { profile, presets } : {};
     const resolve = async () => {
       // The same hashed versions as the creative GET, so a follower's ★ here is the one the dialog showed.
       await reconcileRenders({ projectDir: ref.projectDir, store: ref.store, creativeSlug: ref.creativeSlug }).catch(() => false);
@@ -691,57 +726,83 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       if (!complete && body.follow !== undefined) throw new CodedError(503, t().errors.hashesPending, 'hashes-pending', PICK_RETRY_AFTER_SEC);
       const items = resolveExportPicks({ ...common, versions, picks: (body.picks ?? {}) as Record<string, number>, follow: body.follow as string[] | Record<string, number> | undefined,
         links: effectiveLinks(creative.brief.links, creative.brief.formats), storedPicks: creative.exportPicks });
-      return { items, pending: await pendingRenders(creativeDir, versions, items) };
+      return { items, versions, pending: await pendingRenders(creativeDir, versions, items, profileOpts) };
     };
-    let { items, pending } = await resolve();
-    // Task 5b: a v2 ★ with no current render is rendered first (a render job per version, its progress on the job list),
-    // then the picks are resolved again on the new records and copied. Legacy versions export their media as they are.
-    const rendered: Array<{ version: number; formats: string[] }> = [];
-    if (pending.size > 0 && includeSource) {
-      await notDiscarded(ref); // residual fix (decisions log 866): what is already rendered still exports
-      await ctx.renders.renderAndWait(ref, pending);
-      for (const [version, formats] of pending) rendered.push({ version, formats });
-      ({ items, pending } = await resolve());
-      if (pending.size > 0) {
-        const list = [...pending].flatMap(([n, fs]) => fs.map((f) => `${common.label(f)} v${n}`)).join(', ');
-        throw new CodedError(409, t().export.renderFailed({ list }), 'export-render-failed');
+    // Decision 974: in the background the request answers at once with the job (its refusals of the picks first, as before).
+    if (body.background) {
+      await checkDestination(destination, ref.root);
+      await resolve();
+      return { job: ctx.exports.start(ref, creative.title, destination, async (run) => outcomeOf(await exportNow(run))) };
+    }
+    return exportNow();
+
+    async function exportNow(run?: ExportRun) {
+      const wait: RenderWait = run?.wait ?? {};
+      let { items, pending, versions } = await resolve();
+      // Task 5b: a v2 ★ with no current render is rendered first (a render job per version, its progress on the job list),
+      // then the picks are resolved again on the new records and copied. Legacy versions export their media as they are.
+      const rendered: Array<{ version: number; formats: string[] }> = [];
+      if (pending.size > 0 && includeSource) {
+        await notDiscarded(ref); // residual fix (decisions log 866): what is already rendered still exports
+        await ctx.renders.renderAndWait(ref, pending, wait);
+        for (const [version, formats] of pending) rendered.push({ version, formats });
+        ({ items, pending, versions } = await resolve());
+        if (pending.size > 0) {
+          const list = [...pending].flatMap(([n, fs]) => fs.map((f) => `${common.label(f)} v${n}`)).join(', ');
+          throw new CodedError(409, t().export.renderFailed({ list }), 'export-render-failed');
+        }
       }
-    }
-    // A render made just now for this export that has problems (I2) is not copied: the user has not seen them. It is
-    // reported apart (`excluded`, with its problems and their codes: P2, never a silent exclusion); the dialog then shows
-    // the problems and copies it once the row is ticked again.
-    const problems: string[] = [];
-    const excluded: Array<{ format: string; version: number; problems: string[]; issues: OutputIssue[]; locale?: string }> = [];
-    if (rendered.length > 0) {
-      const versions = await ref.store.readVersions(ref.creativeSlug);
-      items = items.filter((it) => {
-        if (!rendered.some((r) => r.version === it.n && r.formats.includes(it.format))) return true;
-        const v = versions.find((x) => x.n === it.n);
-        const list = v ? renderProblems(v, it.format) : [];
-        if (!list.length) return true;
-        problems.push(t().export.renderProblems({ item: `${common.label(it.format)} v${it.n}`, list: list.join('; ') }));
-        excluded.push({ format: it.format, version: it.n, problems: list, issues: v?.outputs.find((o) => o.format === it.format)?.issues ?? [] });
-        return false;
+      // A render made just now for this export that has problems (I2) is not copied: the user has not seen them. It is
+      // reported apart (`excluded`, with its problems and their codes: P2, never a silent exclusion); the dialog then shows
+      // the problems and copies it once the row is ticked again.
+      const problems: string[] = [];
+      const excluded: Array<{ format: string; version: number; problems: string[]; issues: OutputIssue[]; locale?: string }> = [];
+      if (rendered.length > 0) {
+        const versions = await ref.store.readVersions(ref.creativeSlug);
+        items = items.filter((it) => {
+          if (!rendered.some((r) => r.version === it.n && r.formats.includes(it.format))) return true;
+          const v = versions.find((x) => x.n === it.n);
+          const list = v ? renderProblems(v, it.format) : [];
+          if (!list.length) return true;
+          problems.push(t().export.renderProblems({ item: `${common.label(it.format)} v${it.n}`, list: list.join('; ') }));
+          excluded.push({ format: it.format, version: it.n, problems: list, issues: v?.outputs.find((o) => o.format === it.format)?.issues ?? [] });
+          return false;
+        });
+        if (!items.length) throw new CodedError(409, t().export.renderProblemsOnly({ list: problems.join(', ') }), 'export-render-problems');
+      }
+      const localeRendered: Array<{ version: number; formats: string[]; locale: string }> = [];
+      if (tags !== null || primaryLocale !== undefined) {
+        const loc = await withLocales(ref, creativeDir, items, { includeSource, primaryLocale, otherTags, force: body.force === true, label: common.label, wait });
+        localeRendered.push(...loc.rendered);
+        // Ruling J: a translation rendered now with problems is not copied either: reported in `excluded`, as the primary's (I2).
+        items = loc.items.filter((it) => {
+          if (!it.localized || !it.problems?.length || !loc.rendered.some((r) => r.version === it.n && r.locale === it.locale && r.formats.includes(it.format))) return true;
+          problems.push(t().export.renderProblems({ item: `${common.label(it.format)} v${it.n} (${it.locale})`, list: it.problems.join('; ') }));
+          excluded.push({ format: it.format, version: it.n, locale: it.locale!, problems: it.problems, issues: [] });
+          return false;
+        });
+        if (!items.length) throw new CodedError(409, t().export.renderProblemsOnly({ list: problems.join(', ') }), 'export-render-problems');
+      }
+      // Decision 974: the videos at another quality or size are rendered for this export alone, then copied from there.
+      const result = await withExportRenders(ref, items, versions, profile ? { profile, presets } : null, wait, async (list, gaps) => {
+        // A render made for the export that failed refuses the export, as a version render does; one with problems is left
+        // out and listed (I2, review #4).
+        const failedNow = gaps.filter((g) => g.kind === 'failed');
+        if (failedNow.length > 0) {
+          throw new CodedError(409, t().export.renderFailed({ list: failedNow.map((g) => `${common.label(g.item.format)} v${g.item.n}${g.reason ? ` (${g.reason})` : ''}`).join(', ') }), 'export-render-failed');
+        }
+        for (const g of gaps) {
+          problems.push(t().export.renderProblems({ item: `${common.label(g.item.format)} v${g.item.n}`, list: g.problems.join('; ') }));
+          excluded.push({ format: g.item.format, version: g.item.n, problems: g.problems, issues: g.issues });
+        }
+        if (!list.length) throw new CodedError(409, t().export.renderProblemsOnly({ list: problems.join(', ') }), 'export-render-problems');
+        run?.copying();
+        return exportResolved(list.map(({ problems: _p, ...it }) => it), run ? { ...common, signal: run.signal } : common);
       });
-      if (!items.length) throw new CodedError(409, t().export.renderProblemsOnly({ list: problems.join(', ') }), 'export-render-problems');
+      const withProblems = excluded.length ? { ...result, excluded } : result;
+      const allRendered = [...rendered, ...localeRendered];
+      return allRendered.length > 0 ? { ...withProblems, rendered: allRendered } : withProblems;
     }
-    const localeRendered: Array<{ version: number; formats: string[]; locale: string }> = [];
-    if (tags !== null || primaryLocale !== undefined) {
-      const loc = await withLocales(ref, creativeDir, items, { includeSource, primaryLocale, otherTags, force: body.force === true, label: common.label });
-      localeRendered.push(...loc.rendered);
-      // Ruling J: a translation rendered now with problems is not copied either: reported in `excluded`, as the primary's (I2).
-      items = loc.items.filter((it) => {
-        if (!it.localized || !it.problems?.length || !loc.rendered.some((r) => r.version === it.n && r.locale === it.locale && r.formats.includes(it.format))) return true;
-        problems.push(t().export.renderProblems({ item: `${common.label(it.format)} v${it.n} (${it.locale})`, list: it.problems.join('; ') }));
-        excluded.push({ format: it.format, version: it.n, locale: it.locale!, problems: it.problems, issues: [] });
-        return false;
-      });
-      if (!items.length) throw new CodedError(409, t().export.renderProblemsOnly({ list: problems.join(', ') }), 'export-render-problems');
-    }
-    const result = await exportResolved(items.map(({ problems: _p, ...it }) => it), common);
-    const withProblems = excluded.length ? { ...result, excluded } : result;
-    const allRendered = [...rendered, ...localeRendered];
-    return allRendered.length > 0 ? { ...withProblems, rendered: allRendered } : withProblems;
   });
 
   /**
@@ -795,7 +856,19 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       forbiddenRoot: ref.root, presets, pattern, ...(typeof body.date === 'string' ? { now: body.date } : {}), label };
 
     const only = body.formats ? new Set(body.formats) : null;
-    const planOf = async () => (await planGroupExport(svc, ref.store, ref)).filter((p) => !only || only.has(p.format));
+    const profile = profileOfBody(body);
+    refuseProfileWithLanguages(profile, otherTags);
+    const planOf = async () => withGroupProfile(ref.store, (await planGroupExport(svc, ref.store, ref)).filter((p) => !only || only.has(p.format)), profile, presets);
+    // Decision 974: in the background the request answers at once with the job (a refusal of the group first, as before).
+    if (body.background) {
+      await checkDestination(common.destination, ref.root);
+      await planOf();
+      return { job: ctx.exports.start({ ...ref, creativeSlug: ref.creativeSlug }, host.title, common.destination, async (run) => outcomeOf(await exportNow(run))) };
+    }
+    return exportNow();
+
+    async function exportNow(run?: ExportRun) {
+    const wait: RenderWait = run?.wait ?? {};
     let plan = await planOf();
     const key = (p: Pick<GroupPlanItem, 'slug' | 'format' | 'version'>) => `${p.slug}\0${p.format}\0${p.version}`;
     const withProblems = new Map<string, string[]>();
@@ -805,7 +878,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       // One render job per member and version, in the member's own folder; a render that cannot run leaves its formats out,
       // with the job's own error (as the pack route reports it).
       for (const [slug, versions] of pendingByMember(pending)) {
-        const error = await ctx.renders.renderAndWait({ ...ref, creativeSlug: slug }, versions)
+        const error = await ctx.renders.renderAndWait({ ...ref, creativeSlug: slug }, versions, wait)
           .then((jobs) => jobs.find((j) => j.state === 'failed')?.error ?? null, (e: unknown) => (e instanceof Error ? e.message : String(e)));
         if (error) for (const [version, formats] of versions) for (const format of formats) renderErrors.set(key({ slug, format, version }), error);
       }
@@ -846,7 +919,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       let loc = await resolveGroupLocalized(locPlan, ref.store, otherTags, checks);
       // Decision 854 (superseded part) and the orchestrator's ruling: a translation without a current render is rendered now,
       // in its own member, exactly like a single creative's export; `localization-needs-force` asks "Renderizza comunque".
-      const done = await renderGroupLocales(ctx.renders, ref, loc.pending, body.force === true, (list) => messages(currentLocale()).variants.renderNeedsForce({ list }));
+      const done = await renderGroupLocales({ renderLocalesAndWait: (r, n, f, l, force) => ctx.renders.renderLocalesAndWait(r, n, f, l, force, wait) }, ref, loc.pending, body.force === true, (list) => messages(currentLocale()).variants.renderNeedsForce({ list }));
       if (loc.pending.length > 0) loc = await resolveGroupLocalized(locPlan, ref.store, otherTags, checks);
       const renderedNow = (it: ExportItem, slug: string) => done.rendered.some((r) => r.slug === slug && r.version === it.n && r.locale === it.locale && r.formats.includes(it.format));
       for (const it of loc.items) {
@@ -864,9 +937,22 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
         unavailable.push(gap(u.plan, why, u.locale));
       }
     }
-    const result = await exportGroup(usable, common, items);
-    const { unavailable: _plan, ...copied } = result;
-    return { ...copied, unavailable };
+    // Decision 974: the videos at another quality or size are rendered for this export alone, each in its own member.
+    const memberOf = new Map(plan.map((p) => [p.creativeDir, p.slug]));
+    const readyItems = items;
+    return withExportRenders(ref, readyItems, [], profile ? { profile, presets } : null, wait, async (list, gaps) => {
+      // Review #5: a render made for the export that failed, or that has problems, leaves that format out (the group rule).
+      for (const gp of gaps) {
+        const p = plan.find((x) => x.slug === gp.slug && x.format === gp.item.format && x.version === gp.item.n);
+        if (!p) continue;
+        unavailable.push(gap(p, gp.kind === 'failed' ? g.renderFailed({ reason: gp.reason ?? '' }) : g.renderProblems({ list: gp.problems.join('; ') })));
+      }
+      run?.copying();
+      const result = await exportGroup(usable.filter((p) => !gaps.some((gp) => gp.slug === p.slug && gp.item.format === p.format && gp.item.n === p.version)), run ? { ...common, signal: run.signal } : common, list);
+      const { unavailable: _plan, ...copied } = result;
+      return { ...copied, unavailable };
+    }, (it) => memberOf.get(it.creativeDir ?? '') ?? hostRef.creativeSlug);
+    }
   });
 
   /**
@@ -879,12 +965,64 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
    * Residual fix (decisions log 866): a render made now writes the creative's outputs, so a discarded variant refuses it
    * (409 `variant-discarded`), checked under its lock like its other writes; exporting what is already rendered is a read.
    */
+  /**
+   * Decision 974: renders the items an export at `profile` takes at another quality or size (`profiledRenders`), each in its
+   * creative (`member`), into a temp folder of the core's own (`ms-render-export-*`, swept after a crash); `copy` then gets
+   * the items with those files as their source, and the gaps: a format whose render failed, or whose render has problems
+   * (review #4, the output checks of a version render), left out of the items. The temp folder goes once the copy is done.
+   */
+  async function withExportRenders<R>(ref: CreativeRef & { store: CreativeStore }, items: ExportItem[], versions: VersionEntryList, o: { profile: RenderProfile; presets: FormatPreset[] } | null,
+    wait: RenderWait, copy: (items: ExportItem[], gaps: ExportGap[]) => Promise<R>, member?: (it: ExportItem) => string): Promise<R> {
+    if (!o) return copy(items, []);
+    const slugOf = (it: ExportItem) => member?.(it) ?? ref.creativeSlug;
+    const bySlug = new Map<string, ExportItem[]>();
+    for (const it of items) bySlug.set(slugOf(it), [...(bySlug.get(slugOf(it)) ?? []), it]);
+    const plans = new Map<string, Map<number, string[]>>();
+    for (const [slug, list] of bySlug) {
+      const vs = slug === ref.creativeSlug && !member ? versions : await ref.store.readVersions(slug);
+      const pending = profiledRenders(vs, list, o);
+      if (pending.size > 0) plans.set(slug, pending);
+    }
+    if (plans.size === 0) return copy(items, []);
+    const temp = await makeOwnedTempDir(join(tmpdir(), 'ms-render-export-'));
+    try {
+      const files = new Map<string, ExportRendered>();
+      const failed = new Map<string, string>();
+      for (const [slug, pending] of plans) {
+        const at = { ...ref, creativeSlug: slug };
+        await notDiscarded(at);
+        const r = await ctx.renders.exportRenderAndWait(at, pending, o.profile, join(temp, slug), wait);
+        for (const [n, fs] of pending) {
+          for (const f of fs) {
+            const k = `${n}\0${f}`;
+            const made = r.files.get(k);
+            if (made) files.set(`${slug}\0${k}`, made);
+            else failed.set(`${slug}\0${k}`, r.failed.get(k) ?? r.errors[0] ?? '');
+          }
+        }
+      }
+      const gaps: ExportGap[] = [];
+      const kept: ExportItem[] = [];
+      for (const it of items) {
+        const k = `${slugOf(it)}\0${it.n}\0${it.format}`;
+        const f = it.localized ? undefined : files.get(k);
+        const reason = it.localized ? undefined : failed.get(k);
+        if (reason !== undefined) { gaps.push({ item: it, slug: slugOf(it), kind: 'failed', reason, problems: [], issues: [] }); continue; }
+        if (f && f.problems.length > 0) { gaps.push({ item: it, slug: slugOf(it), kind: 'problems', problems: f.problems, issues: f.issues }); continue; }
+        kept.push(f ? { ...it, source: f.path, file: basename(f.path), width: f.render.width, height: f.render.height } : it);
+      }
+      return await copy(kept, gaps);
+    } finally {
+      await rm(temp, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
+    }
+  }
+
   function notDiscarded(ref: CreativeRef): Promise<void> {
     return ctx.turns.runLocked(ref, () => ctx.turns.assertNotDiscarded(ref));
   }
 
   async function withLocales(ref: CreativeRef & { store: CreativeStore }, creativeDir: string, items: ExportItem[],
-    o: { includeSource: boolean; primaryLocale: string | undefined; otherTags: string[]; force: boolean; label: (id: string) => string }):
+    o: { includeSource: boolean; primaryLocale: string | undefined; otherTags: string[]; force: boolean; label: (id: string) => string; wait?: RenderWait }):
     Promise<{ items: ExportItem[]; rendered: Array<{ version: number; formats: string[]; locale: string }> }> {
     const source = o.includeSource ? items.map((it) => (o.primaryLocale !== undefined ? { ...it, locale: o.primaryLocale } : it)) : [];
     const rendered: Array<{ version: number; formats: string[]; locale: string }> = [];
@@ -904,7 +1042,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     if (r.pending.size > 0) {
       await notDiscarded(ref);
       for (const [n, p] of r.pending) {
-        await ctx.renders.renderLocalesAndWait(ref, n, p.formats, p.locales, o.force);
+        await ctx.renders.renderLocalesAndWait(ref, n, p.formats, p.locales, o.force, o.wait);
         for (const locale of p.locales) rendered.push({ version: n, formats: [...p.formats], locale });
       }
       r = await resolveLocalizedItems(creativeDir, await ref.store.readVersions(ref.creativeSlug), items, o.otherTags, matches, assets);

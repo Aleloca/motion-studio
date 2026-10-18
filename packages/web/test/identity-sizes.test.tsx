@@ -60,7 +60,7 @@ class ApiError extends Error { constructor(public status: number, message: strin
 vi.mock('../src/api.ts', () => ({ api, ApiError }));
 const { FormatView } = await import('../src/screens/FormatView.tsx');
 const { IdentitySizes } = await import('../src/screens/identity/IdentitySizes.tsx');
-const { RenderStatus } = await import('../src/screens/RenderStatus.tsx');
+const { ExportButton } = await import('../src/screens/ExportButton.tsx');
 const { ProblemList } = await import('../src/components/ProblemList.tsx');
 const { groupProblems } = await import('../src/screens/svgRefusals.ts');
 const { TopBar } = await import('../src/shell/TopBars.tsx');
@@ -144,43 +144,28 @@ describe('IdentitySizes', () => {
   });
 });
 
-describe('RenderStatus · image formats', () => {
-  const pillOf = (v: VersionEntry, format: string, jobs: unknown[] = []) => render(
-    <I18nProvider locale="it"><RenderStatus slug="acme" creative="lancio" version={v} format={format} label="Etichetta" jobs={jobs as never} jobKey="creative:/w:acme:lancio" busy={false} image /></I18nProvider>);
+describe('Export control · image formats (decision 974: no Render button)', () => {
+  const control = (v: VersionEntry, format: string, jobs: unknown[] = []) => render(
+    <I18nProvider locale="it"><ExportButton jobs={jobs as never} jobKey="creative:/w:acme:lancio" scope={{ version: v, format }} onClick={() => {}} /></I18nProvider>);
 
-  it('a version without a render is the live preview, and Render starts the render of the format', async () => {
-    pillOf(version(1, [out(FAV, undefined, false)]), FAV);
-    expect(screen.getAllByText('Anteprima dal vivo').length).toBeGreaterThan(0);
-    await userEvent.click(screen.getByRole('button', { name: 'Fai il render dell’immagine di Etichetta' }));
-    expect(api.renderVersion).toHaveBeenCalledWith('acme', 'lancio', 1, [FAV]);
+  it('idle: Esporta, and nothing offers a render', () => {
+    control(version(1, [out(FAV, undefined, false)]), FAV);
+    expect(screen.getByRole('button', { name: 'Esporta' })).not.toBeNull();
+    expect(screen.queryByRole('button', { name: /render/i })).toBeNull();
   });
 
-  it('a rendered image: "Immagine pronta", no size lookup, a download', async () => {
-    pillOf(version(1, [out('instagram-post-1x1')]), 'instagram-post-1x1');
-    expect(screen.getAllByText('Immagine pronta').length).toBeGreaterThan(0);
-    expect(api.fileBytes).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'Scarica l’immagine di Etichetta' })).not.toBeNull();
-  });
-
-  it('a rendered set: "Set pronto · N file"', () => {
-    pillOf(version(1, [out(FAV, favSet)]), FAV);
-    expect(screen.getAllByText('Set pronto · 6 file').length).toBeGreaterThan(0);
-    expect(screen.queryByText(/Video pronto/)).toBeNull();
-  });
-
-  it('while rendering: the percent and a calm announcement about the image', () => {
+  it('while the image renders: the percent inside the same control', () => {
     const key = renderJobKeyOf('creative:/w:acme:lancio', 1)!;
     const job = { id: 'r1', key, kind: 'render', label: 'x', state: 'running', createdAt: at, formats: [FAV], progress: { format: FAV, phase: 'frames', done: 40, total: 100 } };
-    const { container } = pillOf(version(1, [out(FAV, undefined, false)]), FAV, [job]);
-    expect(screen.getAllByText('Render 40%').length).toBeGreaterThan(0);
-    expect(container.querySelector('[role="status"]')?.textContent).toBe('Render dell’immagine in corso');
+    control(version(1, [out(FAV, undefined, false)]), FAV, [job]);
+    expect(screen.getByRole('button', { name: 'Render 40%' }).classList.contains('ms-cv-export')).toBe(true);
   });
 });
 
 describe('FormatView · identity formats', () => {
   it('a favicon: the picture, a Dimensioni view with the grid, and the pill for the set', async () => {
     render(<Harness format={FAV} />);
-    await waitFor(() => expect(within(document.querySelector('.ms-topbar') as HTMLElement).getAllByText('Set pronto · 6 file').length).toBeGreaterThan(0));
+    await waitFor(() => expect(within(document.querySelector('.ms-topbar') as HTMLElement).getByRole('button', { name: 'Esporta' })).not.toBeNull());
     expect(screen.queryByRole('list', { name: 'Dimensioni' })).toBeNull();
     await userEvent.click(screen.getByRole('radio', { name: 'Dimensioni' }));
     expect(screen.getByRole('list', { name: 'Dimensioni' })).not.toBeNull();

@@ -2,6 +2,7 @@ import type { RenderCompositionOptions, RenderEngine } from '../render/renderer.
 import { findFfmpeg } from '../render/encode.ts';
 import { MediaNormalizer } from '../render/media-normalize.ts';
 import { RenderJobService } from '../creatives/render-jobs.ts';
+import { ExportJobService } from '../creatives/export-jobs.ts';
 import { PreviewService } from '../creatives/previews.ts';
 import { UrlSigner } from './signed-urls.ts';
 import type { AgentContract } from '../creatives/prompt.ts';
@@ -270,7 +271,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   /** Phase 13: a creative's translation turn ended: the creative's queue may start (set once the turn service exists). */
   let afterOtherJob: ((key: string, state: string) => void) | null = null;
   const queue = new JobQueue({
-    concurrency: 2, lanes: { render: 1, generate: 2 },
+    // `export` (decision 974): an export waits for its renders without taking an agent turn's slot or the render lane.
+    concurrency: 2, lanes: { render: 1, generate: 2, export: 2 },
     onUpdate: (job) => {
       hub.broadcast({ type: 'job', job });
       if (job.kind === 'localize' && job.state !== 'queued' && job.state !== 'running') afterOtherJob?.(job.key, job.state);
@@ -784,7 +786,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const variantRuns = new VariantFanout({
     turns, queue, approvals, directions: variantDirections, settings: () => requireWorkspace().readSettings(), paidPlan: paidServicePlan({ vault, keyChecks }),
   });
-  registerCreativeRoutes(app, { requireWorkspace, turns, edits, renders, previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m), git: deps.git, variantRuns, jobs: () => queue.list(), trash: deps.trash ?? noTrash });
+  registerCreativeRoutes(app, { requireWorkspace, turns, edits, renders, exports: new ExportJobService({ queue }), previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m), git: deps.git, variantRuns, jobs: () => queue.list(), trash: deps.trash ?? noTrash });
   registerStorePackRoutes(app, { requireWorkspace, turns, renders, media });
 
   const routeCtx = { requireWorkspace, brand: brandService, media, git: deps.git, broadcast: (m: ServerMessage) => hub.broadcast(m), configDir };

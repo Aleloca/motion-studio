@@ -78,6 +78,17 @@ export interface OpenPageOptions {
    * alpha), with `Emulation.setDefaultBackgroundColorOverride`. A PNG capture then has the alpha the composition leaves.
    */
   transparentBackground?: boolean;
+  /**
+   * The page is rasterised at this scale (decision 974: a render at another resolution): the layout stays at `width` x
+   * `height` CSS pixels, a capture is about `width × scale` by `height × scale`, sharp. Default 1.
+   */
+  deviceScaleFactor?: number;
+}
+
+/** The physical pixels of a page (its CSS size at its raster scale): what its memory follows. */
+export function pagePixels(o: Pick<OpenPageOptions, 'width' | 'height' | 'deviceScaleFactor'>): { width: number; height: number } {
+  const k = o.deviceScaleFactor !== undefined && Number.isFinite(o.deviceScaleFactor) && o.deviceScaleFactor > 0 ? o.deviceScaleFactor : 1;
+  return { width: Math.round(o.width * k), height: Math.round(o.height * k) };
 }
 
 export interface ChromiumProvider {
@@ -163,7 +174,8 @@ export async function openCdpRenderPage(client: CdpClient, o: OpenPageOptions & 
   };
   try {
     await o.afterSecure?.();
-    await client.send('Emulation.setDeviceMetricsOverride', { width: o.width, height: o.height, deviceScaleFactor: 1, mobile: false }, { sessionId: sid, timeoutMs: t.callMs });
+    const dsf = o.deviceScaleFactor !== undefined && Number.isFinite(o.deviceScaleFactor) && o.deviceScaleFactor > 0 ? o.deviceScaleFactor : 1;
+    await client.send('Emulation.setDeviceMetricsOverride', { width: o.width, height: o.height, deviceScaleFactor: dsf, mobile: false }, { sessionId: sid, timeoutMs: t.callMs });
     if (o.transparentBackground) await client.send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } }, { sessionId: sid, timeoutMs: t.callMs });
     const loaded = waitForEvent(client, 'Page.loadEventFired', { sessionId: sid, timeoutMs: t.loadMs, signal: o.signal });
     loaded.catch(() => {});
@@ -380,7 +392,8 @@ export class ChromeProvider implements ChromiumProvider {
     if (this.closing) throw new RenderError('cancelled', 'the browser is closed');
     if (o.signal.aborted) throw new RenderError('cancelled', 'cancelled');
     const origin = new URL(o.url).origin;
-    this.pixels ??= { width: o.width, height: o.height };
+    // A page rasterised at another scale (decision 974, review #8) holds that many more pixels: the memory limits follow them.
+    this.pixels ??= pagePixels(o);
     this.openPages++; // counted from the start: a page loading already uses memory
     try {
       return await this.openCounted(o, origin);

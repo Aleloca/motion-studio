@@ -169,22 +169,17 @@
 .ms-fv-rangetc { font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; }
 .ms-fv-rangeesc { font-size: 12px; color: var(--muted); padding-inline-end: 6px; }
 
-/* Render status (UX feedback 1, task 3): the pill, a thin progress bar while rendering, and the actions, in the bar by the version. */
-.ms-fv-render { display: inline-flex; align-items: center; gap: 6px; flex: none; min-width: 0; }
-.ms-fv-render-bar { width: 56px; flex: none; }
-@media (max-width: 760px) { .ms-fv-render-bar { display: none; } }
-.ms-fv-render-short { display: none; }
+/* Decision 974: no render status in the bar any more; a render or an export in progress shows inside Export (export.css). */
 
 /* The format view's bar, narrow (final wave I2, decision 713). Only the bar the format view claimed (`.ms-bar-fv`, set by
    TopBars.tsx) is a size container and folds: the creative board, the editor and every other bar are unchanged. The steps
    read the bar's content width, so the macOS title bar's 80 px count. Measured in Italian, the longest, with everything
    the bar carries (topbar-render-layout.test.tsx): the actions fold to their icons in three steps, each keeping its name
-   (aria-label) and a tooltip (title); the format's name keeps room. Esporta, the primary action, keeps its label; so does
-   "Render video" (live preview, failed render) down to the last step. */
+   (aria-label) and a tooltip (title); the format's name keeps room. Esporta, the primary action, keeps its label (and its
+   one size while it shows a render or an export in progress). */
 .ms-topbar.ms-bar-fv { container: ms-topbar / inline-size; }
 @container ms-topbar (max-width: 1760px) {
-  .ms-bar-fv .ms-fold-1 > .ms-bar-label, .ms-bar-fv .ms-fv-render-long { display: none; }
-  .ms-bar-fv .ms-fv-render-short { display: inline; }
+  .ms-bar-fv .ms-fold-1 > .ms-bar-label { display: none; }
   .ms-bar-fv .ms-btn.ms-fold-1 { width: 28px; padding: 0; gap: 0; }
 }
 @container ms-topbar (max-width: 1500px) {

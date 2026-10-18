@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { outputWarningText, versionEntrySchema, type FormatPreset } from '@motion-studio/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { validateOutputs } from '../src/creatives/output-contract.ts';
+import { largeFileWarning, validateOutputs } from '../src/creatives/output-contract.ts';
 import { NoMediaTools, type MediaInfo, type MediaTools } from '../src/media/media-tools.ts';
 
 const presets: FormatPreset[] = [
@@ -190,6 +190,15 @@ describe('validateOutputs', () => {
       expect(r.problems).toEqual([]);
       expect(r.outputs[0]!.warnings?.[0]?.params).toMatchObject({ mbps: 104, targetMbps: 4 });
     });
+    it('decision 974: a core render at High (or Max) is measured against its own quality\'s bitrate', () => {
+      const reel = { id: 'r', channel: 'Instagram', name: 'Reel', width: 1080, height: 1920, kind: 'video' as const, extensions: ['mp4'], targetBitrateKbps: 4000 };
+      // 9 Mbps for 10 s: over 1.5x the phase 8 target (6 Mbps), under 1.5x High's (9.6 Mbps).
+      const size = (9_000_000 / 8) * 10;
+      expect(largeFileWarning(reel, 'mp4', size, 10, 30)).not.toBeNull();
+      expect(largeFileWarning(reel, 'mp4', size, 10, 30, 'high')).toBeNull();
+      expect(largeFileWarning(reel, 'mp4', size * 2, 10, 30, 'high')).not.toBeNull();
+    });
+
     it('never warns on bitrate for GIF or WebM outputs (no H.264 target)', async () => {
       const multi: FormatPreset = { ...reel, extensions: ['mp4', 'gif', 'webm'] };
       for (const ext of ['gif', 'webm']) {

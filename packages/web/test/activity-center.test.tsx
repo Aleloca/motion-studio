@@ -20,6 +20,33 @@ const en = (l: EventsState, tab: 'done' | 'running' = 'done') =>
   render(<I18nProvider locale="en"><ActivityCenter live={l} initialTab={tab} where={where} /></I18nProvider>);
 afterEach(() => vi.clearAllMocks());
 
+describe('Activity center · exports in the background (decision 974, user report 20)', () => {
+  const exp = (over: Partial<JobSummary> = {}) => job({ id: 'e1', key: 'export:C:\\Users\\me\\ws:acme:lancio:0a1b2c3d', kind: 'export', label: 'Export · Lancio estivo', state: 'running', ...over });
+
+  it('an export and a render made for one export belong to their creative', () => {
+    expect(jobPlace(exp())).toEqual({ project: 'acme', creative: 'lancio' });
+    expect(jobHref(job({ id: 'r', key: 'render-export:/w:acme:lancio:v3:0a1b2c3d', kind: 'render' }))).toBe('#/p/acme/c/lancio');
+  });
+
+  it('running: its renders\' progress with a bar, then the copy; Cancel cancels the export', async () => {
+    const view = en(live([exp({ export: { stage: 'rendering', pct: 40, destination: '/d', renders: ['r1'] } })]), 'running');
+    const row = screen.getByText('Export · Lancio estivo').closest('li') as HTMLElement;
+    expect(within(row).getByText('Rendering · 40%')).toBeTruthy();
+    expect(within(row).getByRole('progressbar').getAttribute('aria-valuenow')).toBe('40');
+    await userEvent.click(within(row).getByRole('button', { name: 'Cancel Export · Lancio estivo' }));
+    expect(api.cancelJob).toHaveBeenCalledWith('e1');
+    view.unmount();
+    en(live([exp({ export: { stage: 'copying', pct: null, destination: '/d', renders: ['r1'] } })]), 'running');
+    expect(screen.getByText('Copying the files…')).toBeTruthy();
+    expect(screen.queryByRole('progressbar')).toBeNull();
+  });
+
+  it('done: how many files, and where (the bell keeps it)', () => {
+    en(live([exp({ state: 'succeeded', finishedAt: at, export: { stage: 'done', pct: 100, destination: '/Users/me/Desktop', files: ['/Users/me/Desktop/a.mp4', '/Users/me/Desktop/b.mp4'] } })]));
+    expect(screen.getByText('2 files in /Users/me/Desktop')).toBeTruthy();
+  });
+});
+
 describe('Activity center · what happened (AC2)', () => {
   it('derives the target of every job from its key (a Windows root with ":" too)', () => {
     expect(jobHref(job({ id: 'a' }))).toBe('#/p/acme/c/lancio');

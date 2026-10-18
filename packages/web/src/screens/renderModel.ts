@@ -1,7 +1,7 @@
 // Render state of the v2 (composition) versions on the web side (Task 8, spec §5.3): per board "Not rendered",
 // "Queued · 2 renders ahead", "Rendering 42%", "Rendered", "Render problem · Render again", "Render failed · Retry", from the version's records and the live
 // render jobs; and what "Render ★" renders.
-import { renderJobKeyOf, renderProblems, renderState, type Locale, type Messages, type OutputIssue, type JobSummary, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
+import { renderJobKeyOf, renderJobPct, renderProblems, renderState, type Locale, type Messages, type OutputIssue, type JobSummary, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
 import { summarizeProblems } from './svgRefusals.ts';
 import type { FormatState } from './versionModel.ts';
 
@@ -29,10 +29,7 @@ const ended = (j: JobSummary) => j.finishedAt ?? j.startedAt ?? j.createdAt;
 
 /** How far a running job is with `format`: its frames (a format not reached yet is at 0; finishing is 99). */
 export function renderPct(job: JobSummary, format: string): number {
-  const p = job.progress;
-  if (!p || p.format !== format || p.phase === 'media') return 0;
-  if (p.phase === 'finishing') return 99;
-  return p.total > 0 ? Math.min(99, Math.floor((p.done / p.total) * 100)) : 0;
+  return renderJobPct(job, format);
 }
 
 /**

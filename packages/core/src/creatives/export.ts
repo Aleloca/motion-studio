@@ -1,10 +1,12 @@
-import { access, constants, lstat, mkdir, realpath, rm, stat } from 'node:fs/promises';
+import { access, constants, lstat, mkdir, open, realpath, rm, stat } from 'node:fs/promises';
+import { pipeline } from 'node:stream/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { DEFAULT_EXPORT_NAME_PATTERN, exportExtension, exportNameCollisions, exportNameVars, followerMatches, followerVersion, hasFormat, localizedStem, renderName, renderState, separateInstanceNames, starOf, type FormatPreset, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_NAME_PATTERN, exportExtension, exportNameCollisions, exportNameVars, followerMatches, followerVersion, hasFormat, isDefaultProfile, localizedStem, profileApplies, profileFor, DEFAULT_EXPORT_QUALITY, recordedQuality, renderName, renderState, separateInstanceNames, starOf, type FormatPreset, type RenderProfile, type VersionEntry } from '@motion-studio/shared';
 import { copyConfinedFile, probeConfinedFile } from '../brand/agent-guard.ts';
 import { findPreset } from '../formats/format-catalog.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
 import { t } from '../i18n.ts';
+import { RenderError } from '../render/errors.ts';
 
 export interface ExportResult {
   destination: string; files: Array<{ from: string; to: string }>; skipped: string[];
@@ -70,6 +72,30 @@ async function copySet(copy: CopyFn, creativeDir: string, n: number, set: { dir:
   return out;
 }
 
+/**
+ * Copies a file of the core's own (a render made for the export) without overwriting (review #2): the source is opened first,
+ * then the target with `O_CREAT | O_EXCL | O_NOFOLLOW` (EEXIST when anything is there, a link included); only a failure after
+ * that open says `targetCreated`, so a source-side failure never removes a file that was already at the destination.
+ */
+export const copyOwn = async (from: string, to: string, _mode?: number, signal?: AbortSignal): Promise<void> => {
+  const src = await open(from, 'r');
+  try {
+    const dst = await open(to, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o644);
+    try {
+      // A cancel (review #6) stops the copy mid-file; the partial file, ours, is removed.
+      await pipeline(src.createReadStream(), dst.createWriteStream(), ...(signal ? [{ signal }] : []));
+    } catch (e) {
+      await dst.close().catch(() => {});
+      await rm(to, { force: true }).catch(() => {});
+      throw Object.assign(e instanceof Error ? e : new Error(String(e)), { targetCreated: true });
+    } finally {
+      await dst.close().catch(() => {});
+    }
+  } finally {
+    await src.close().catch(() => {});
+  }
+};
+
 /** The export's text for a failed write (disk full, permission, quota, name too long, other). */
 export function reasonOf(e: unknown): string {
   switch ((e as NodeJS.ErrnoException).code) {
@@ -113,7 +139,12 @@ export interface ExportItem { format: string; n: number; v?: number; file: strin
    * An identity format's file set (Phase 14, spec §4.4): `dir` under `outputs/vN/`, `files` the paths inside it. Exported
    * as a folder named like the file (without its extension), next to it.
    */
-  set?: { dir: string; files: string[] } }
+  set?: { dir: string; files: string[] };
+  /**
+   * Decision 974: the file is a render made for this export at another quality or size, in the core's own temp folder (an
+   * absolute path, never from a request), copied in place of `outputs/vN/<file>`; `file` then names its extension.
+   */
+  source?: string }
 
 /** A set path the export accepts: one or two plain segments (`favicon.ico`, `mipmap-mdpi/ic_launcher.png`). */
 const setPathOk = (p: string) => { const parts = p.split('/'); return parts.length <= 2 && parts.every(plainName); };
@@ -137,6 +168,8 @@ export interface ExportCommon {
   /** A format's display name in messages; its id when omitted. */
   label?: (format: string) => string;
   copy?: CopyFn;
+  /** Review #6: a cancel stops the copy between files (and a render made for the export mid-file); it ends as `cancelled`. */
+  signal?: AbortSignal;
 }
 
 /** A plain file name (no folder part, not `.`/`..`). */
@@ -179,7 +212,9 @@ async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refu
   const ok: ExportItem[] = [];
   for (const it of items) {
     const dir = it.creativeDir ?? opts.creativeDir;
-    let usable = plainName(it.file) && (await probeConfinedFile(dir, `outputs/v${it.n}/${it.file}`)) === true;
+    // A render made for this export is the core's own file (decision 974): only that it is still a regular file.
+    let usable = it.source !== undefined ? plainName(it.file) && (await lstat(it.source).catch(() => null))?.isFile() === true
+      : plainName(it.file) && (await probeConfinedFile(dir, `outputs/v${it.n}/${it.file}`)) === true;
     if (usable && it.set) {
       usable = plainName(it.set.dir) && it.set.files.every(setPathOk);
       for (const f of it.set.files) if (usable) usable = (await probeConfinedFile(dir, `outputs/v${it.n}/${it.set.dir}/${f}`)) === true;
@@ -213,9 +248,10 @@ async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refu
   const copyIn = (dir: string): CopyFn => opts.copy ?? ((from, to) => copyConfinedFile(dir, relative(dir, from).split(sep).join('/'), to));
   const files: ExportResult['files'] = [];
   for (const it of named) {
+    if (opts.signal?.aborted) throw new RenderError('cancelled', 'cancelled');
     const dir = it.creativeDir ?? opts.creativeDir;
-    const copy = copyIn(dir);
-    const from = join(dir, 'outputs', `v${it.n}`, it.file);
+    const copy = it.source !== undefined ? opts.copy ?? ((from: string, to: string, mode: number) => copyOwn(from, to, mode, opts.signal)) : copyIn(dir);
+    const from = it.source ?? join(dir, 'outputs', `v${it.n}`, it.file);
     try {
       const to = await copyUnique(copy, from, dest, it.stem, it.ext);
       if (to) files.push({ from, to }); else skipped.push(it.file);
@@ -223,6 +259,7 @@ async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refu
     } catch (e) {
       const target = (e as { target?: string }).target;
       if (target) await rm(target, { force: true }).catch(() => undefined);
+      if (opts.signal?.aborted) throw new RenderError('cancelled', 'cancelled');
       throw new WorkspaceError(500, t().export.interrupted({ reason: reasonOf(e), count: files.length, path: dest }));
     }
   }
@@ -305,14 +342,47 @@ export function exportResolved(items: ExportItem[], opts: ExportCommon): Promise
  * (`renderState` is not `rendered`) or whose rendered file is not usable on disk any more. Legacy items never do (their
  * media is the result).
  */
-export async function pendingRenders(creativeDir: string, versions: VersionEntry[], items: ExportItem[]): Promise<Map<number, string[]>> {
+export async function pendingRenders(creativeDir: string, versions: VersionEntry[], items: ExportItem[], o: ExportProfileOptions = {}): Promise<Map<number, string[]>> {
   const out = new Map<number, string[]>();
   for (const it of items) {
     const v = versions.find((x) => x.n === it.n);
     if (!v?.compositions?.some((c) => c.format === it.format)) continue;
-    const fresh = renderState(v, it.format) === 'rendered' && it.file !== '' && plainName(it.file)
+    // Decision 974: an item at another quality or size is rendered for the export alone (`profiledRenders`).
+    const preset = o.presets ? findPreset(o.presets, it.format) : undefined;
+    if (o.profile && !isDefaultProfile(profileFor(preset, it.format, o.profile))) continue;
+    // At the default profile a video render made before the quality choice (`standard`) is rendered again, at `high`.
+    const stale = o.profile !== undefined && profileApplies(preset, it.format) && recordedQuality(v.outputs.find((x) => x.format === it.format)) !== DEFAULT_EXPORT_QUALITY;
+    const fresh = !stale && renderState(v, it.format) === 'rendered' && it.file !== '' && plainName(it.file)
       && (await probeConfinedFile(creativeDir, `outputs/v${it.n}/${it.file}`)) === true;
     if (!fresh) out.set(it.n, [...(out.get(it.n) ?? []), it.format]);
+  }
+  return out;
+}
+
+/**
+ * Whether the version's current render of `format` was made at `wanted` (its size, and the quality it recorded: `standard`
+ * for a render made before the choice), so an export at that profile copies it as it is.
+ */
+export function recordedMatches(v: VersionEntry, format: string, wanted: RenderProfile): boolean {
+  return wanted.short === undefined && renderState(v, format) === 'rendered' && recordedQuality(v.outputs.find((x) => x.format === format)) === wanted.quality;
+}
+
+/** The profile of an export (decision 974) and the presets that say which formats take it. Absent: the files as they are. */
+export interface ExportProfileOptions { profile?: RenderProfile; presets?: FormatPreset[] }
+
+/**
+ * Decision 974: the v2 items an export at `profile` renders for itself (another quality or size than the version's own
+ * render), by version. A legacy item (no composition) is copied as it is: there is nothing to render it from.
+ */
+export function profiledRenders(versions: VersionEntry[], items: ExportItem[], o: Required<ExportProfileOptions>): Map<number, string[]> {
+  const out = new Map<number, string[]>();
+  for (const it of items) {
+    if (it.localized) continue;
+    const v = versions.find((x) => x.n === it.n);
+    if (!v?.compositions?.some((c) => c.format === it.format)) continue;
+    const wanted = profileFor(findPreset(o.presets, it.format), it.format, o.profile);
+    if (isDefaultProfile(wanted) || recordedMatches(v, it.format, wanted)) continue;
+    out.set(it.n, [...(out.get(it.n) ?? []), it.format]);
   }
   return out;
 }

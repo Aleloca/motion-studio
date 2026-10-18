@@ -111,8 +111,10 @@ export function normalizeVideoFilter(o: { fps: number; width: number; height: nu
 }
 
 /** The `-vf` of a final H.264 encode: BT.709 limited range `yuv420p`, with the stream's colour properties set (`setparams`). */
-export function h264ColourFilter(): FilterArg {
-  return mint(['-vf', 'scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv']);
+export function h264ColourFilter(size?: { width: number; height: number }): FilterArg {
+  // A render at another size (decision 974) is captured within a pixel of it: the scale lands it exactly on `size`.
+  const scale = size ? `scale=${int(size.width, 2, MAX_SIDE, 'width')}:${int(size.height, 2, MAX_SIDE, 'height')}:flags=lanczos:` : 'scale=';
+  return mint(['-vf', `${scale}out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv`]);
 }
 
 /** The `-vf` of a still frame (storyboards, reference frames, posters): at most `maxWidth` wide, even height, aspect kept. */

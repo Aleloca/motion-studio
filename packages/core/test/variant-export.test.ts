@@ -254,4 +254,32 @@ describe('group export routes', { timeout: 120_000 }, () => {
       expect((await v.app.inject({ method: 'POST', url: `${v.url(solo.slug)}/export-group`, payload: { destination: out2 } })).statusCode).toBe(409);
     } finally { await v.close(); }
   });
+
+  it('decision 974: in the background the group export is a job that copies and reports the files (stills keep their size)', async () => {
+    const { variantApp } = await import('./helpers/variant-app.ts');
+    const v = await variantApp();
+    try {
+      const slug = await v.group([null, null]);
+      const st = new CreativeStore(v.projectDir);
+      await mkdir(join(v.projectDir, 'creatives', slug, 'outputs', 'v1'), { recursive: true });
+      for (const f of [POST, BANNER]) await writeFile(join(v.projectDir, 'creatives', slug, 'outputs', 'v1', `${f}.png`), `${slug}:${f}`);
+      await st.appendVersion(slug, { n: 1, commit: null, sessionId: null, status: 'complete', createdAt: new Date().toISOString(), request: '', problems: [], tools: [], renderCommand: null, basedOn: null,
+        outputs: [POST, BANNER].map((format) => ({ format, file: `${format}.png`, width: 300, height: 250, durationSec: null, verified: true, preview: null })) });
+      const out = join(v.base, 'bg');
+      const bad = await v.app.inject({ method: 'POST', url: `${v.url(slug)}/export-group`, payload: { destination: 'not/absolute', background: true } });
+      expect(bad.statusCode).toBe(400);
+      const r = await v.app.inject({ method: 'POST', url: `${v.url(`${slug}~b`)}/export-group`, payload: { destination: out, background: true, quality: 'max', resolution: 720, pattern: '{format}' } });
+      expect(r.statusCode, r.body).toBe(200);
+      const job = (r.json() as { job: { id: string; kind: string } }).job;
+      expect(job.kind).toBe('export');
+      let done: { state: string; export?: { files?: string[] } } | undefined;
+      for (let i = 0; i < 500 && !(done && done.state !== 'queued' && done.state !== 'running'); i++) {
+        done = ((await v.app.inject({ url: '/api/jobs' })).json() as Array<{ id: string; state: string; export?: { files?: string[] } }>).find((j) => j.id === job.id);
+        await new Promise((res) => setTimeout(res, 20));
+      }
+      expect(done!.state).toBe('succeeded');
+      expect(done!.export!.files!.map((f) => f.split('/').pop()).sort()).toEqual([`${POST}.png`, `${BANNER}.png`]);
+      expect(await readFile(join(out, `${POST}.png`), 'utf8')).toBe(`${slug}:${POST}`);
+    } finally { await v.close(); }
+  });
 });

@@ -237,6 +237,7 @@ export async function assembleCompositions(o: {
       format: x.format, file: x.file, width: x.width, height: x.height,
       durationSec: x.durationSec !== null && x.durationSec > 0 ? x.durationSec : null,
       sha256: x.sha256!, renderedAt: previousRenders.get(`${x.format}:${x.sha256}`) ?? at, ...(x.fromComposition ? { fromComposition: x.fromComposition } : {}),
+      ...(x.render ? { render: x.render } : {}),
     })),
   };
   await writeJsonFileAtomic(join(vdir, 'manifest.json'), manifest);

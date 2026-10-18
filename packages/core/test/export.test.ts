@@ -441,3 +441,49 @@ describe('identity sets (Phase 14)', () => {
     expect(await readdir(base)).toEqual(['creative']);
   });
 });
+
+describe('copying a render made for the export (review #2)', () => {
+  it('a source that cannot be read never removes a file already at the destination', async () => {
+    const { copyOwn } = await import('../src/creatives/export.ts');
+    const dir = await mkdtemp(join(tmpdir(), 'ms-test-copyown-'));
+    try {
+      await writeFile(join(dir, 'src.mp4'), 'render');
+      await chmod(join(dir, 'src.mp4'), 0o000);
+      await writeFile(join(dir, 'theirs.mp4'), 'user file');
+      const err = await copyOwn(join(dir, 'src.mp4'), join(dir, 'theirs.mp4'), 0).then(() => null, (e: unknown) => e as { code?: string; targetCreated?: boolean });
+      expect(err?.targetCreated).toBeFalsy();
+      expect(await readFile(join(dir, 'theirs.mp4'), 'utf8')).toBe('user file');
+      // An existing target: EEXIST, never overwritten; a free name: copied.
+      await chmod(join(dir, 'src.mp4'), 0o644);
+      await expect(copyOwn(join(dir, 'src.mp4'), join(dir, 'theirs.mp4'), 0)).rejects.toMatchObject({ code: 'EEXIST' });
+      expect(await readFile(join(dir, 'theirs.mp4'), 'utf8')).toBe('user file');
+      await copyOwn(join(dir, 'src.mp4'), join(dir, 'new.mp4'), 0);
+      expect(await readFile(join(dir, 'new.mp4'), 'utf8')).toBe('render');
+      // A link at the target is never followed.
+      await symlink(join(dir, 'theirs.mp4'), join(dir, 'link.mp4'));
+      await expect(copyOwn(join(dir, 'src.mp4'), join(dir, 'link.mp4'), 0)).rejects.toMatchObject({ code: 'EEXIST' });
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe('cancel during the copy (review #6)', () => {
+  it('stops between files: what is copied stays, nothing more is written, and it ends as cancelled', async () => {
+    const { copyFile } = await import('node:fs/promises');
+    const ac = new AbortController();
+    const copy = async (from: string, to: string, mode: number) => { await copyFile(from, to, mode); ac.abort(); };
+    const err = await exportVersion({ creativeDir, version, destination: dest, slug: 'lancio', copy, signal: ac.signal }).then(() => null, (e: unknown) => e as { code?: string });
+    expect(err?.code).toBe('cancelled');
+    expect(await readdir(dest)).toEqual(['lancio-instagram-reel-9x16-v2.mp4']);
+  });
+
+  it('a render made for the export stops mid-file: its partial file is removed', async () => {
+    const { copyOwn } = await import('../src/creatives/export.ts');
+    await mkdir(dest, { recursive: true });
+    const big = join(base, 'big.mp4');
+    await writeFile(big, Buffer.alloc(8 * 1024 * 1024, 1));
+    const ac = new AbortController();
+    ac.abort();
+    await expect(copyOwn(big, join(dest, 'part.mp4'), 0, ac.signal)).rejects.toBeTruthy();
+    expect(await readdir(dest)).toEqual([]);
+  });
+});

@@ -100,7 +100,8 @@ describe('render per language', { timeout: 120_000 }, () => {
     const renders = manifest(slug, 1).renders;
     const plain = renders.filter((r) => r.locale === undefined);
     expect(plain.map((r) => r.file).sort()).toEqual(['test-tall.mp4', 'test-wide.mp4']);
-    for (const r of plain) expect(Object.keys(r).sort()).toEqual(['durationSec', 'file', 'format', 'fromComposition', 'height', 'renderedAt', 'sha256', 'width']);
+    // Decision 974: a video's render also records its quality, size and encoder (`render`); still no language fields.
+    for (const r of plain) expect(Object.keys(r).sort()).toEqual(['durationSec', 'file', 'format', 'fromComposition', 'height', 'render', 'renderedAt', 'sha256', 'width']);
     expect(renders.filter((r) => r.locale === 'de').map((r) => r.file)).toEqual(['test-wide.de.mp4']);
     expect(title(env.fake.renders.find((x) => x.out.endsWith('/test-wide.mp4'))!.composition as never).text).toBe('Hello');
   });
@@ -386,6 +387,35 @@ describe('export per language', { timeout: 120_000 }, () => {
     expect(none.statusCode).toBe(409);
     expect(none.json().code).toBe('localization-missing');
     expect((await exportPicks(slug, { picks: { 'test-wide': 1 }, locales: ['he'] })).json().code).toBe('locale-rtl');
+  });
+
+  it('decision 974: in the background the same refusal fails the export job with its code and list kept ("Render anyway")', async () => {
+    const slug = await create();
+    await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Herzlich willkommen zur brandneuen Version unserer wunderbaren Anwendung für alle Geräte' } });
+    const r = await exportPicks(slug, { picks: { 'test-wide': 1 }, locales: ['de'], background: true, quality: 'high' });
+    expect(r.statusCode, r.body).toBe(200);
+    const job = await env.waitJob((r.json() as { job: JobSummary }).job.id);
+    expect(job.state).toBe('failed');
+    expect(job.export?.refusal).toMatchObject({ code: 'localization-needs-force', problems: [expect.stringContaining('(de)')] });
+    expect(readdirSync(dest)).toEqual([]);
+    const forced = await exportPicks(slug, { picks: { 'test-wide': 1 }, locales: ['de'], force: true, background: true, quality: 'high' });
+    const ok = await env.waitJob((forced.json() as { job: JobSummary }).job.id);
+    expect(ok.state, ok.error).toBe('succeeded');
+    expect(ok.export?.files?.map((f) => f.split('/').pop())).toEqual(['launch-test-wide-v1-de.mp4']);
+  });
+
+  it('review nit (decision 1007): other languages with another resolution or quality are refused by the core too', async () => {
+    const slug = await create();
+    await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Hallo' } });
+    for (const extra of [{ resolution: 480 }, { quality: 'max' }]) {
+      const r = await exportPicks(slug, { picks: { 'test-wide': 1 }, locales: ['en', 'de'], background: true, ...extra });
+      expect(r.statusCode).toBe(400);
+      expect(r.json().code).toBe('export-profile-languages');
+    }
+    // The primary language alone takes any profile; the default profile with languages is fine.
+    expect((await exportPicks(slug, { picks: { 'test-wide': 1 }, locales: ['en'], background: true, resolution: 480 })).statusCode).toBe(200);
+    expect((await exportPicks(slug, { picks: { 'test-wide': 1 }, locales: ['en', 'de'], background: true, quality: 'high' })).statusCode).toBe(200);
+    await new Promise((r) => setTimeout(r, 300));
   });
 
   it('the primary tag of a creative without extra languages exports today\'s file', async () => {

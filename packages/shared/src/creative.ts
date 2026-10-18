@@ -6,6 +6,7 @@ import { identityBriefSchema, identitySetInfoSchema } from './identity.ts';
 import { usageSummarySchema } from './usage.ts';
 import { INSTANCE_FOLDER_SOURCE, INSTANCE_ID_RE } from './format-instance.ts';
 import { storePackSchema } from './store-pack.ts';
+import { renderInfoSchema } from './export-quality.ts';
 import { localeTag } from './localization/schema.ts';
 import { channelName, DEFAULT_FORMATS, formatDisplayName } from './formats.ts';
 import { messages, type Locale } from './i18n/index.ts';
@@ -183,6 +184,8 @@ export const outputFileInfoSchema = z.object({
   fromComposition: z.string().regex(HEX64).optional(),
   /** An identity format's render (Phase 14): the file set written next to the main image, in `outputs/vN/<dir>/`. */
   identitySet: identitySetInfoSchema.optional(),
+  /** A core render (decision 974): its quality, size and encoder; absent on older renders (`standard`) and on agent files. */
+  render: renderInfoSchema.optional(),
 });
 export type OutputFileInfo = z.infer<typeof outputFileInfoSchema>;
 
@@ -326,6 +329,8 @@ export const manifestV2Schema = z.object({
     sha256: z.string().regex(HEX64),
     renderedAt: z.iso.datetime(),
     fromComposition: z.string().regex(HEX64).optional(),
+    /** Decision 974: the render's quality, size and encoder (absent on older renders). */
+    render: renderInfoSchema.optional(),
     /**
      * A localized render (Phase 12 §3.5): its language, whether it was made with open problems or outdated entries
      * ("render anyway"), and the outdated ids it shows in the source language. Absent on the primary language's renders.

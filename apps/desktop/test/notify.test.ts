@@ -15,9 +15,12 @@ describe('preload', () => {
     await import('../src/preload.ts');
     const expose = vi.mocked(electron.contextBridge.exposeInMainWorld);
     expect(expose).toHaveBeenCalledWith('motionStudio', expect.any(Object));
-    const bridge = expose.mock.calls[0]![1] as { notify(p: { title: string; body: string }): Promise<void>; setBadge(n: number): Promise<void>; pickFolder: unknown; revealPath: unknown };
+    const bridge = expose.mock.calls[0]![1] as { notify(p: { title: string; body: string }): Promise<void>; setBadge(n: number): Promise<void>; pickFolder: unknown; revealPath: unknown; openFolder(p: string): Promise<void> };
     expect(typeof bridge.pickFolder).toBe('function');
     expect(typeof bridge.revealPath).toBe('function');
+    // User report 21: the folder itself, opened in the file manager.
+    await bridge.openFolder('/Users/x/Desktop');
+    expect(electron.ipcRenderer.invoke).toHaveBeenLastCalledWith('ms:open-folder', '/Users/x/Desktop');
     await bridge.notify({ title: 'Motion Studio', body: 'Run a command' });
     expect(electron.ipcRenderer.invoke).toHaveBeenLastCalledWith('ms:notify', { title: 'Motion Studio', body: 'Run a command' });
     await bridge.setBadge(3);

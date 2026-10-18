@@ -1,5 +1,6 @@
 import { readdirSync, realpathSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { lstat } from 'node:fs/promises';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { AppConfigStore, isLocale, resolveLocale, type currentLocale, type LoginShellPath, type t } from '@motion-studio/core';
 
 type Locale = ReturnType<typeof currentLocale>;
@@ -22,6 +23,27 @@ export function pickFolderArgs(arg: unknown): { title: string; defaultPath?: str
 /** Validated payload of `ms:reveal`: an absolute path, nothing else. */
 export function absolutePathArg(arg: unknown): string | null {
   return typeof arg === 'string' && arg !== '' && !arg.includes('\0') && isAbsolute(arg) ? arg : null;
+}
+
+/** Folder extensions macOS opens as a package (an app, a plug-in…): opening one would launch or install it. */
+const PACKAGE_EXTENSIONS = new Set(['.app', '.appex', '.bundle', '.framework', '.plugin', '.kext', '.prefpane', '.saver', '.xpc', '.qlgenerator', '.mdimporter',
+  '.wdgt', '.action', '.workflow', '.component', '.pkg', '.mpkg', '.service', '.systemextension', '.driver', '.photoslibrary', '.app-shortcut',
+  // Review nit: documents and projects macOS opens as packages (an app opens them, some run code).
+  '.playground', '.swiftpm', '.sparsebundle', '.sparseimage', '.dmg', '.xcodeproj', '.xcworkspace', '.xcarchive', '.xcplugin', '.ideplugin', '.docset', '.dsym',
+  '.osax', '.scptd', '.vst', '.vst3', '.colorpicker', '.rtfd', '.pages', '.numbers', '.key', '.musiclibrary', '.imovielibrary', '.fcpbundle', '.logicx',
+  '.band', '.download', '.nib', '.webarchive', '.shortcut', '.automator', '.installer', '.mlmodelc', '.mlpackage']);
+
+/**
+ * Whether `p` may be opened with the system (user report 21: "Show in Finder" opens the export folder itself): a real folder,
+ * never a file, a link, or a folder the system would run or install (a package extension, or on macOS a `Contents` folder,
+ * the shape of a bundle). Otherwise the caller reveals it in its parent instead.
+ */
+export async function openableFolder(p: string): Promise<boolean> {
+  const st = await lstat(p).catch(() => null);
+  if (!st || st.isSymbolicLink() || !st.isDirectory()) return false;
+  if (PACKAGE_EXTENSIONS.has(extname(p).toLowerCase())) return false;
+  if (process.platform === 'darwin' && (await lstat(join(p, 'Contents')).catch(() => null)) !== null) return false;
+  return true;
 }
 
 /** A slow rc file (nvm, conda…) is common on real Macs: 15 s before falling back to the fixed folders. */

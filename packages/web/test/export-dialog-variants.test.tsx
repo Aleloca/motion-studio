@@ -1,5 +1,6 @@
-import { DEFAULT_FORMATS } from '@motion-studio/shared';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { DEFAULT_FORMATS, type JobSummary } from '@motion-studio/shared';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { useSyncExternalStore } from 'react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../src/i18n.tsx';
@@ -9,28 +10,38 @@ const POST = 'instagram-post-1x1';
 const BANNER = 'web-banner-300x250';
 const item = (o: Partial<Item> & Pick<Item, 'format' | 'slug' | 'letter' | 'version' | 'source'>): Item => ({ file: `${o.format}.png`, width: 300, height: 250, state: 'ready', ...o });
 let plan: Item[];
+/** The export job (decision 974): the group export answers with it; the dialog follows it in the live jobs. */
+const exportJob = (over: Partial<JobSummary> = {}): JobSummary => ({ id: 'g1', key: 'export:/w:acme:lancio:00aa11bb', kind: 'export', label: 'Export · Lancio', state: 'running', createdAt: '2026-10-08T10:00:00.000Z', ...over });
+let liveJobs: Record<string, JobSummary> = {};
+const listeners = new Set<() => void>();
+const setJob = (j: JobSummary) => act(() => { liveJobs = { ...liveJobs, [j.id]: j }; for (const l of listeners) l(); });
+const useJobs = () => useSyncExternalStore((l) => { listeners.add(l); return () => listeners.delete(l); }, () => liveJobs);
 const api = {
   fileUrl: (s: string, c: string, rel: string) => `/f/${s}/${c}/${rel}`,
   groupExportPlan: vi.fn(async (_s: string, _c: string) => ({ items: plan })),
-  exportGroup: vi.fn(async (_s: string, _c: string, body: { destination: string; formats?: string[] }) => ({ destination: body.destination, files: [{ from: 'a', to: 'b' }], skipped: [] as string[], unavailable: [] as Array<{ message: string }> })),
-  exportPicks: vi.fn(async (_s: string, _c: string, body: { destination: string }) => ({ destination: body.destination, files: [], skipped: [] as string[] })),
+  exportGroupJob: vi.fn(async (_s: string, _c: string, _body: { destination: string; formats?: string[] }) => ({ job: exportJob({ state: 'queued' }) })),
+  exportPicksJob: vi.fn(async () => ({ job: exportJob({ id: 'p1', state: 'queued' }) })),
   prepareExport: vi.fn(async () => ({ renders: [] })),
   updateSettings: vi.fn(),
 };
 class ApiError extends Error { constructor(public status: number, msg: string, public code?: string, public retryAfterSec?: number, public problems?: string[]) { super(msg); } }
 vi.mock('../src/api.ts', () => ({ api, ApiError }));
 const { ExportDialog } = await import('../src/screens/ExportDialog.tsx');
+function Live(p: Omit<Parameters<typeof ExportDialog>[0], 'jobs'>) {
+  return <ExportDialog {...p} jobs={useJobs()} />;
+}
 
 const open = (locale: 'it' | 'en' = 'it', group = true) => render(
   <I18nProvider locale={locale}>
-    <ExportDialog open onClose={() => {}} slug="acme" creative="lancio" title="Lancio" snapshot={{ versions: [], states: {} }} presets={DEFAULT_FORMATS}
+    <Live open onClose={() => {}} slug="acme" creative="lancio" title="Lancio" snapshot={{ versions: [], states: {} }} presets={DEFAULT_FORMATS}
       pattern="{title}-{format}-v{v}" {...(group ? { group: true } : {})} />
   </I18nProvider>,
 );
 
 beforeEach(() => {
   localStorage.setItem('ms.exportFolder', '/out');
-  for (const f of [api.groupExportPlan, api.exportGroup, api.exportPicks]) f.mockClear();
+  liveJobs = {};
+  for (const f of [api.groupExportPlan, api.exportGroupJob, api.exportPicksJob]) f.mockClear();
   plan = [item({ format: POST, slug: 'lancio', letter: 'a', version: 2, source: 'default' }), item({ format: BANNER, slug: 'lancio~b', letter: 'b', version: 3, source: 'pick' })];
 });
 
@@ -49,14 +60,15 @@ describe('ExportDialog · group export', () => {
   });
 
   it('exports through the group route with the ticked formats, never through the per-creative one; lists what was left out', async () => {
-    api.exportGroup.mockResolvedValueOnce({ destination: '/out', files: [{ from: 'a', to: 'b' }], skipped: [], unavailable: [{ message: 'Banner (variante C v1): il file manca' }] });
     open();
     await screen.findAllByText('lancio-web-banner-300x250-v3.png');
     await userEvent.click(screen.getByRole('checkbox', { name: /^Esporta Instagram · Post/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Esporta 1 file' }));
-    await waitFor(() => expect(api.exportGroup).toHaveBeenCalled());
-    expect(api.exportGroup).toHaveBeenCalledWith('acme', 'lancio', expect.objectContaining({ destination: '/out', formats: [BANNER], pattern: '{title}-{format}-v{v}' }));
-    expect(api.exportPicks).not.toHaveBeenCalled();
+    await waitFor(() => expect(api.exportGroupJob).toHaveBeenCalled());
+    expect(api.exportGroupJob).toHaveBeenCalledWith('acme', 'lancio', expect.objectContaining({ destination: '/out', formats: [BANNER], pattern: '{title}-{format}-v{v}', quality: 'high' }));
+    expect(api.exportPicksJob).not.toHaveBeenCalled();
+    await screen.findByRole('button', { name: 'Annulla export' });
+    setJob(exportJob({ state: 'succeeded', export: { stage: 'done', pct: 100, destination: '/out', files: ['/out/b'], skipped: ['Banner (variante C v1): il file manca'] } }));
     expect(await screen.findByText(/Non esportati: Banner \(variante C v1\): il file manca/)).toBeTruthy();
   });
 
@@ -83,23 +95,25 @@ describe('ExportDialog · group export', () => {
   });
 
   it('final wave I3: a translation that needs "render anyway" shows the list, and "Render anyway" sends force to the group export', async () => {
-    api.exportGroup.mockRejectedValueOnce(new ApiError(409, 'raw', 'localization-needs-force', undefined, ['Web · Banner (de)']));
     render(
       <I18nProvider locale="en">
-        <ExportDialog open onClose={() => {}} slug="acme" creative="lancio" title="Lancio" snapshot={{ versions: [], states: {} }} presets={DEFAULT_FORMATS}
+        <Live open onClose={() => {}} slug="acme" creative="lancio" title="Lancio" snapshot={{ versions: [], states: {} }} presets={DEFAULT_FORMATS}
           pattern="{title}-{format}-v{v}" group locales={{ primary: 'en', extra: ['de'] }} />
       </I18nProvider>,
     );
     await screen.findAllByText('lancio-web-banner-300x250-v3.png');
     await userEvent.click(screen.getByRole('checkbox', { name: 'German' }));
     await userEvent.click(screen.getByRole('button', { name: /^Export \d+ files?$/ }));
+    // In the background (decision 974) the refusal comes with the export job, its code and list kept.
+    await screen.findByRole('button', { name: 'Cancel export' });
+    setJob(exportJob({ state: 'failed', error: 'raw', export: { stage: 'rendering', pct: null, destination: '/out', refusal: { code: 'localization-needs-force', problems: ['Web · Banner (de)'] } } }));
     const item = await screen.findByText('Web · Banner (de)');
     expect(item.closest('[role=alert]')!.textContent).toContain('These translations have open problems or outdated texts:');
     await userEvent.click(screen.getByRole('button', { name: 'Render anyway' }));
-    await waitFor(() => expect(api.exportGroup).toHaveBeenCalledTimes(2));
-    expect(api.exportGroup.mock.calls[0]![2]).not.toHaveProperty('force');
-    expect(api.exportGroup.mock.calls[1]![2]).toMatchObject({ locales: ['en', 'de'], force: true });
-    expect(api.exportPicks).not.toHaveBeenCalled();
+    await waitFor(() => expect(api.exportGroupJob).toHaveBeenCalledTimes(2));
+    expect(api.exportGroupJob.mock.calls[0]![2]).not.toHaveProperty('force');
+    expect(api.exportGroupJob.mock.calls[1]![2]).toMatchObject({ locales: ['en', 'de'], force: true });
+    expect(api.exportPicksJob).not.toHaveBeenCalled();
   });
 
   it('without the group flag the dialog is the per-creative one (no plan request)', () => {
