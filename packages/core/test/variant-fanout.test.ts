@@ -35,10 +35,10 @@ describe('variant fan-out', () => {
     for (const l of ['a', 'b', 'c', 'd']) expect(job(l)?.id, l).toBe(ids[l]);
     expect(['a', 'b'].map((l) => job(l)!.state)).toEqual(['running', 'running']);
     expect(['c', 'd'].map((l) => [job(l)!.state, job(l)!.waitReason])).toEqual([['queued', 'variant-slot'], ['queued', 'variant-slot']]);
-    // Each turn is in its own conversation, with the same request.
+    // Each turn writes the same request once, labelled with its variant, in the group's one chat (decision 980, phase 2).
     for (const s of [slug, `${slug}~b`, `${slug}~c`, `${slug}~d`]) {
-      const conv = (await v.app.inject(`${v.url(s)}/conversation`)).json() as Array<{ type: string; text?: string }>;
-      expect(conv.filter((e) => e.type === 'user').map((e) => e.text), s).toEqual(['Più contrasto']);
+      const conv = (await v.app.inject(`${v.url(s)}/conversation`)).json() as Array<{ type: string; text?: string; variant?: string }>;
+      expect(conv.filter((e) => e.type === 'user').map((e) => `${e.variant}:${e.text}`).sort(), s).toEqual(['a', 'b', 'c', 'd'].map((l) => `${l}:Più contrasto`));
     }
     await vi.waitFor(() => expect(v.runner.runs).toHaveLength(2));
     // A finishes: C starts. B fails: D starts. The slot is released in every case.

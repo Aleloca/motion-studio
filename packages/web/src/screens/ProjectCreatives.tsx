@@ -1,6 +1,6 @@
 import { instanceName, presetFor } from '../instances.ts';
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
-import { type CreativeListItem, type CreativeSummary, type FormatPreset } from '@motion-studio/shared';
+import { letterOfSlug, type CreativeListItem, type CreativeSummary, type FormatPreset } from '@motion-studio/shared';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react';
 import { api } from '../api.ts';
 import type { EventsState } from '../eventsReducer.ts';
@@ -211,7 +211,7 @@ function CreativeCard({ slug, c, info, presets, index, fresh, onChanged }: CardP
   const start = async (then: 'stay' | 'open', fail: (p: { detail: string }) => string) => {
     setBusy(true);
     try {
-      const body = then === 'stay' ? retryTurn(await api.getConversation(slug, c.slug)) : {};
+      const body = then === 'stay' ? retryTurn(await api.getConversation(slug, c.slug), letterOfSlug(c.slug)) : {};
       // A group that never started starts every variant (one paid-services card); a retry is the host's own turn.
       if (c.variants && then === 'open') await api.runVariants(slug, c.slug, { targets: 'all-active', request: null });
       else await api.sendCreativeTurn(slug, c.slug, body);

@@ -5,7 +5,19 @@ import { basename, dirname, join, relative, sep } from 'node:path';
 import { noteCoreChange } from '../core-changes.ts';
 
 /** Per creative: the conversation log plus the metadata the core owns (the agent only writes outputs/vN/ and work/). */
-export const CREATIVE_CORE_FILES = ['conversation.jsonl', 'versions.json', 'creative.json'];
+// Decision 1163: the merge files of a variant group's chat too (the agent must never write one the core would adopt).
+export const CREATIVE_CORE_FILES = ['conversation.jsonl', 'versions.json', 'creative.json', 'conversation.merged.jsonl', 'conversation.premerge.jsonl'];
+/**
+ * Decision 1168: later copies of a log from before a chat merge (`conversation.premerge-<time>.jsonl`), denied by this glob
+ * (and by their own path once they exist).
+ */
+export const CREATIVE_CORE_COPY_GLOB = 'conversation.premerge-*.jsonl';
+export const CREATIVE_CORE_COPY_RE = /^conversation\.premerge-[0-9a-z]+\.jsonl$/;
+/** The core files of creative folder `dir` that exist now: the fixed ones and its later copies. */
+export async function creativeCoreFiles(dir: string): Promise<string[]> {
+  const copies = (await readdir(dir).catch(() => [] as string[])).filter((n) => CREATIVE_CORE_COPY_RE.test(n));
+  return [...CREATIVE_CORE_FILES, ...copies].map((n) => join(dir, n));
+}
 /** Per brand proposal: its activity log. */
 export const PROPOSAL_LOG = 'log.jsonl';
 /** Project files the core or the next agent turn loads (also protected by the launcher). */
@@ -144,7 +156,7 @@ export async function detachProtectedLinks(projectDir: string): Promise<string[]
   const creatives = join(projectDir, 'creatives');
   for (const s of await subdirs(creatives)) {
     sweep.push(join(creatives, s));
-    for (const n of CREATIVE_CORE_FILES) files.push(join(creatives, s, n));
+    files.push(...await creativeCoreFiles(join(creatives, s)));
   }
   if (await isRealDir(join(projectDir, 'brand'))) {
     const proposals = join(projectDir, 'brand', 'proposals');

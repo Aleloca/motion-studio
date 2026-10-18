@@ -11,7 +11,7 @@ import { localeTag } from './localization/schema.ts';
 import { channelName, DEFAULT_FORMATS, formatDisplayName } from './formats.ts';
 import { messages, type Locale } from './i18n/index.ts';
 import type { FormatSummary } from './formats/link.ts';
-import { variantGroupSchema, creativeSlugSchema, type VariantGroup, type VariantLetter } from './variants.ts';
+import { variantGroupSchema, variantIdSchema, creativeSlugSchema, type VariantGroup, type VariantId } from './variants.ts';
 
 export const creativeStatusSchema = z.enum(['draft', 'working', 'ready', 'incomplete', 'error', 'interrupted']);
 export type CreativeStatus = z.infer<typeof creativeStatusSchema>;
@@ -97,8 +97,13 @@ export const creativeFileSchema = z.object({
   stoppedSession: z.object({ sessionId: z.string().min(1), at: z.iso.datetime(), jobId: z.string().min(1) }).optional(),
   /** Phase 15: the variant group, kept on the host creative (letter a) only. Absent in old files. */
   variantGroup: variantGroupSchema.optional(),
-  /** Phase 15: on a sister creative (`<host>~b`..`~e`), the host's slug. Absent in old files and on hosts. */
+  /** Phase 15: on a sister creative (`<host>~b`, `~aa`…), the host's slug. Absent in old files and on hosts. */
   variantOf: creativeSlugSchema.optional(),
+  /**
+   * Decision 1162: on a host, the position of the next variant id ever to be given (`variantIdAt`): never lowered, kept when
+   * a sister leaves and when the group dissolves, so an id is never given twice. Absent in older files.
+   */
+  variantNext: z.number().int().min(1).optional(),
   /**
    * Decision 915: when the user archived the creative. An archived creative is left out of the project's lists (creatives,
    * search, "Jump back in") and listed under "Archiviate", where it can be restored. Absent: not archived.
@@ -397,16 +402,29 @@ export const queuedRequestSchema = z.object({
    * is now kept in the core's memory (only what this process queued starts by itself).
    */
   bootId: z.string().min(1).max(100).optional(),
+  /**
+   * Decision 1153: the request was sent to several variants at once ("Tutte"): `id` is the one request, `lead` the variant
+   * whose turn may add variants (the others are told not to). Kept with the queued request so a restart does not lose it.
+   */
+  fanout: z.object({ id: z.string().min(1).max(100), lead: variantIdSchema }).optional(),
 });
 export type QueuedRequest = z.infer<typeof queuedRequestSchema>;
 
-export type ConversationEntry =
+/**
+ * Decisions 980 and 982 (phase 2 of the single agent): a variant group has ONE conversation, the host's. Every entry
+ * written for a member carries `variant`, the member's id (`a` for the host); absent on the entries of a creative outside
+ * any group (and, from phase 3, on the coordinator's own).
+ */
+export type ConversationEntry = ConversationEntryBody & { variant?: VariantId };
+type ConversationEntryBody =
   /**
    * Phase 13 (all optional, absent in older logs): `mode` says how a message sent while the agent worked was given
    * (`live`: into the running turn; `queued`: a queued request that started; `redirect`: Stop and redirect), `clientId` the
    * client's id of it (idempotency), `jobId` the turn it belongs to, `deliveredAt` when it went into a prompt.
    */
-  | { type: 'user'; at: string; text: string; pins: Pin[]; attachments: string[]; jobId?: string; mode?: 'live' | 'queued' | 'redirect'; clientId?: string; deliveredAt?: string }
+  | { type: 'user'; at: string; text: string; pins: Pin[]; attachments: string[]; jobId?: string; mode?: 'live' | 'queued' | 'redirect'; clientId?: string; deliveredAt?: string;
+    /** Decision 1166: the one request id of a message sent to several variants at once (one entry per variant). */
+    fanout?: string }
   | { type: 'agent'; at: string; jobId: string; event: AgentEvent }
   | { type: 'version'; at: string; n: number; status: 'complete' | 'incomplete' }
   /**
@@ -422,6 +440,15 @@ export type ConversationEntry =
  * line of a turn that saved none because nothing changed (`keptVersion`: the latest version, which still holds its content;
  * `kept`, with no status of its own). null for any other entry.
  */
+/**
+ * The entries of variant `letter` in a group's conversation: stamped with it, or unstamped (the host's own history from
+ * before its group: variant A's). Readers that reason about one variant (its last request, its turn's end) use it; only
+ * inside a group (outside one, every entry is the creative's own).
+ */
+export function entriesOfVariant(entries: readonly ConversationEntry[], letter: VariantId): ConversationEntry[] {
+  return entries.filter((e) => (e.variant ?? 'a') === letter);
+}
+
 export function turnEndOf(e: ConversationEntry): { n: number; status: 'complete' | 'incomplete' | null; kept: boolean } | null {
   if (e.type === 'version') return { n: e.n, status: e.status, kept: false };
   if (e.type === 'system' && typeof e.keptVersion === 'number') return { n: e.keptVersion, status: null, kept: true };
@@ -444,20 +471,20 @@ export interface CreativeSummary { slug: string; title: string; status: Creative
 export interface CreativeRemovalInfo {
   role: 'single' | 'host' | 'sister';
   members: number;
-  letter: VariantLetter | null;
+  letter: VariantId | null;
   title: string;
   archived: boolean;
   blocked: { code: string; message: string } | null;
 }
 /** Phase 15: what the list says about a group (spec §2, "N varianti"). */
-export interface VariantListInfo { count: number; active: number; missing: VariantLetter[] }
+export interface VariantListInfo { count: number; active: number; missing: VariantId[] }
 /**
  * Phase 15: the variant side of a creative's detail. Absent for a creative outside any group (an old creative is unchanged).
  * `orphan`: a sister whose group cannot be found (spec §7), opened as a single creative with a notice.
  */
 export type VariantDetail =
-  | { orphan: false; host: string; letter: VariantLetter; group: VariantGroup; missing: VariantLetter[] }
-  | { orphan: true; host: string; letter: VariantLetter };
+  | { orphan: false; host: string; letter: VariantId; group: VariantGroup; missing: VariantId[] }
+  | { orphan: true; host: string; letter: VariantId };
 /** A creative summary tagged with its project, for cross-project lists such as "Jump back in". */
 export type RecentCreative = CreativeSummary & { project: { slug: string; name: string } };
 export type CreativeListItem = ({ ok: true } & CreativeSummary) | { ok: false; slug: string; error: string };

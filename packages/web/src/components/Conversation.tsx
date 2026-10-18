@@ -1,5 +1,5 @@
 import { QUESTION_DISPLAY } from '@motion-studio/shared';
-import type { AgentEvent, ApprovalRequest, Brief, ConversationEntry, ExplainContext, JobSummary, LiveMessageOutcome, Pin, QueuedRequest, RedirectOutcome, VariantGroup, VariantLetter } from '@motion-studio/shared';
+import type { AgentEvent, ApprovalRequest, Brief, ConversationEntry, ExplainContext, JobSummary, LiveMessageOutcome, Pin, QueuedRequest, RedirectOutcome, VariantGroup, VariantId } from '@motion-studio/shared';
 import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { api, ApiError, type VariantRunResult } from '../api.ts';
 import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
@@ -42,15 +42,16 @@ export function mergeJobEvents(persisted: AgentEvent[], live: AgentEvent[]): Age
 
 /**
  * Phase 15: the chat of a creative that belongs to a variant group. The selector (A · B · C · Tutte) sits on top of the panel;
- * "Tutte" sends the composer's request to every active variant (`runAll`), a letter shows that variant's conversation.
+ * "Tutte" sends the composer's request to every active variant (`runAll`), a letter sends to that variant (its page). Since
+ * decision 980 the conversation shown is the group's whatever is chosen.
  */
 export interface ConversationVariants {
   group: VariantGroup;
-  /** The variant whose conversation is shown. */
-  current: VariantLetter;
+  /** The variant a message goes to (this page's). */
+  current: VariantId;
   /** "Tutte" is on. */
   all: boolean;
-  missing?: readonly VariantLetter[];
+  missing?: readonly VariantId[];
   onSelect(target: ChatTarget): void;
   /** The same request in every active variant; `null` is the first generation. */
   runAll(body: { text?: string; pins?: Pin[]; formats?: string[] } | null): Promise<VariantRunResult>;
@@ -101,6 +102,14 @@ export interface ConversationProps {
   onQueueChanged?(): void;
   /** Phase 15: absent for a creative outside any variant group (the panel is then exactly as before). */
   variants?: ConversationVariants;
+  /**
+   * Decision 980 (phase 2): in a variant group the chat is the group's, each entry with its variant's chip. `self` is the
+   * variant of this page: a version card of another variant opens it (`onOpenVariant`) instead of "View vN" here.
+   */
+  self?: VariantId;
+  onOpenVariant?(variant: VariantId): void;
+  /** The other variants' latest turns with their live events: their running turns go on in this chat too. */
+  memberJobs?: ReadonlyArray<{ job: JobSummary; live: AgentEvent[]; variant?: VariantId }>;
 }
 
 /** A message sent while the agent works, until the conversation file shows it (Phase 13). */
@@ -118,22 +127,23 @@ export interface AppliesTo {
   fallback?: string[] | null;
 }
 
+/** Decision 980: the variant(s) an entry belongs to, shown as chips (absent outside a variant group). */
 type Item =
-  | { key: string; kind: 'user'; at: string; text: string; pins: Pin[]; state?: MessageState; redirect?: boolean }
-  | { key: string; kind: 'agent'; at: string; text: string; summary: boolean }
+  | { key: string; kind: 'user'; at: string; text: string; pins: Pin[]; state?: MessageState; redirect?: boolean; variants?: VariantId[] }
+  | { key: string; kind: 'agent'; at: string; text: string; summary: boolean; variant?: VariantId }
   | { key: string; kind: 'step'; at: string; text: string }
   | { key: string; kind: 'fold'; jobId: string; count: number; open: boolean }
-  | { key: string; kind: 'error'; at: string; text: string }
+  | { key: string; kind: 'error'; at: string; text: string; variant?: VariantId }
   | { key: string; kind: 'details'; jobId: string; entries: DetailEntry[]; open: boolean }
   | { key: string; kind: 'autoline'; jobId: string; log: CommandLog }
-  | { key: string; kind: 'version'; at: string; n: number; complete: boolean }
+  | { key: string; kind: 'version'; at: string; n: number; complete: boolean; variant?: VariantId }
   /** `agent`: a line about something the agent did in the app with its tools (decision 917). */
-  | { key: string; kind: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string; agent?: boolean }
+  | { key: string; kind: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string; agent?: boolean; variant?: VariantId }
   | { key: string; kind: 'approval'; shown: ShownApproval }
   | { key: string; kind: 'typing' }
   | { key: string; kind: 'retried'; at: string }
   /** User note 8: the agent's AskUserQuestion and what became of it. */
-  | { key: string; kind: 'question'; at: string; event: Extract<AgentEvent, { kind: 'question_answered' }> };
+  | { key: string; kind: 'question'; at: string; event: Extract<AgentEvent, { kind: 'question_answered' }>; variant?: VariantId };
 
 /** An Activity details row: a command (or Read) of the command log, or a raw technical event. */
 type DetailEntry = { key: string; row: CommandRow } | { key: string; event: AgentEvent };
@@ -219,7 +229,7 @@ function turnItems(interruptedText: string, jobId: string, events: { at: string;
  * only in "Activity details", the job's approvals in the flow, typing dots while the agent works (T9), and the
  * composer with the pending comment chips and ⌘↵.
  */
-export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, onSelectVersion, versionExtra, versionNote, versionSummary, snapshots, appliesTo, brief, onBriefSaved, queued, onQueueChanged, variants }: ConversationProps) {
+export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, onSelectVersion, versionExtra, versionNote, versionSummary, snapshots, appliesTo, brief, onBriefSaved, queued, onQueueChanged, variants, self, onOpenVariant, memberJobs }: ConversationProps) {
   const t = useT();
   const c = t.web.chat;
   const working = active(job);
@@ -255,23 +265,36 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
     const out: Item[] = [];
     const jobs = new Map<string, { at: string; event: AgentEvent }[]>();
     const firstIndex = new Map<string, number>();
+    // Decision 980: the variant of each turn in a group's one chat (from its entries).
+    const jobVariant = new Map<string, VariantId>();
     entries.forEach((e, i) => {
       if (e.type !== 'agent') return;
       if (!jobs.has(e.jobId)) { jobs.set(e.jobId, []); firstIndex.set(e.jobId, i); }
       jobs.get(e.jobId)!.push({ at: e.at, event: e.event });
+      if (e.variant && !jobVariant.has(e.jobId)) jobVariant.set(e.jobId, e.variant);
     });
-    // The latest job continues with the live events (shown once: see mergeJobEvents).
-    if (job && live.length > 0) {
-      const persisted = jobs.get(job.id) ?? [];
-      const merged = mergeJobEvents(persisted.map((p) => p.event), live);
+    // A job continues with its live events (shown once: see mergeJobEvents): the latest job of this page, and in a group the
+    // other variants' turns (decision 980).
+    const withLive = (jobId: string, events: AgentEvent[]) => {
+      if (events.length === 0) return;
+      const persisted = jobs.get(jobId) ?? [];
+      const merged = mergeJobEvents(persisted.map((p) => p.event), events);
       const now = new Date().toISOString();
-      jobs.set(job.id, merged.map((event, i) => {
+      jobs.set(jobId, merged.map((event, i) => {
         if (i < persisted.length) return persisted[i]!;
-        const k = `${job.id}:${i}`;
+        const k = `${jobId}:${i}`;
         if (!seenAt.current.has(k)) seenAt.current.set(k, now);
         return { at: seenAt.current.get(k)!, event };
       }));
+    };
+    if (job) withLive(job.id, live);
+    const others = (memberJobs ?? []).filter((m) => m.job.id !== job?.id);
+    for (const m of others) {
+      withLive(m.job.id, m.live);
+      // A turn with only live events so far has no stamped entry yet: its chip comes from its member (review minor 8).
+      if (m.variant && !jobVariant.has(m.job.id)) jobVariant.set(m.job.id, m.variant);
     }
+    const runningIds = new Set([...(job && working ? [job.id] : []), ...others.filter((m) => active(m.job)).map((m) => m.job.id)]);
     // Phase 13: a message is "sent" when its `user_message_delivered` marker is in the conversation (persisted or live): it
     // was written to the session. "Delivered" only on the CLI's evidence, the `user_message_read` marker (decision 804: the
     // agent's turn on it started). Still in the queue: "queued".
@@ -339,8 +362,11 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
       const cardAt = since.length > 0 ? Math.min(...since) : Infinity;
       const all = inserts.get(jobId) ?? [];
       const below = (x: TurnInsert) => x.anchor >= events.length && 'at' in x.item && Date.parse(x.item.at) >= cardAt;
+      const variant = jobVariant.get(jobId);
+      const own = turnItems(t.web.liveUi.interruptedRow, jobId, events, runningIds.has(jobId), unfolded.has(jobId), detailsOpen.has(jobId), logOf, all.filter((x) => !below(x)))
+        .map((it): Item => (variant && (it.kind === 'agent' || it.kind === 'error' || it.kind === 'question' || it.kind === 'system') ? { ...it, variant } : it));
       return [
-        ...turnItems(t.web.liveUi.interruptedRow, jobId, events, jobId === job?.id && working, unfolded.has(jobId), detailsOpen.has(jobId), logOf, all.filter((x) => !below(x))),
+        ...own,
         ...cards,
         ...all.filter(below).map((x) => x.item),
       ];
@@ -349,37 +375,52 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
     // C2: a user turn sent again with the same text and comments right after its turn failed (Try again) is a compact
     // "Retried · HH:MM" label, not a second identical bubble. A turn failed when its agent result is an error or the
     // core wrote an error line; a version means it succeeded.
-    let lastUser: { text: string; pins: Pin[]; failed: boolean } | null = null;
+    // Per variant in a group's one chat (decision 980): another variant's failure never makes this one's message a retry.
+    const lastUsers = new Map<string, { text: string; pins: Pin[]; failed: boolean }>();
+    // The request a fan-out wrote once per variant ("Tutte"): one bubble with every variant's chip.
+    let lastBubble: (Extract<Item, { kind: 'user' }> & { variants: VariantId[]; fanout?: string }) | null = null;
     entries.forEach((e, i) => {
+      const lane = e.variant ?? '';
+      const lastUser = lastUsers.get(lane) ?? null;
       if (e.type === 'agent') {
         if (lastUser && e.event.kind === 'result' && !e.event.ok && !e.event.interrupted) lastUser.failed = true;
-        if (firstIndex.get(e.jobId) === i) out.push(...turn(e.jobId));
+        if (firstIndex.get(e.jobId) === i) { lastBubble = null; out.push(...turn(e.jobId)); }
         return;
       }
       const key = `e${i}`;
       if (e.type === 'user' && inside.has(i)) {
         // Already shown inside its turn.
-        lastUser = { text: e.text, pins: e.pins, failed: false };
+        lastUsers.set(lane, { text: e.text, pins: e.pins, failed: false });
       } else if (e.type === 'user') {
-        const retried = lastUser !== null && lastUser.failed && same(lastUser.text, e.text) && samePins(lastUser.pins, e.pins);
-        out.push(retried ? { key, kind: 'retried', at: e.at } : userItem(e, key));
-        lastUser = { text: e.text, pins: e.pins, failed: false };
+        const prev: (Extract<Item, { kind: 'user' }> & { variants: VariantId[]; fanout?: string }) | null = lastBubble;
+        // Decision 1166: the shares of one request sent to several variants carry its one id.
+        if (e.variant && e.fanout && prev && prev.fanout === e.fanout && !prev.variants.includes(e.variant)) {
+          prev.variants.push(e.variant);
+        } else {
+          const retried = lastUser !== null && lastUser.failed && same(lastUser.text, e.text) && samePins(lastUser.pins, e.pins);
+          const item = retried ? { key, kind: 'retried' as const, at: e.at } : userItem(e, key);
+          out.push(item);
+          lastBubble = item.kind === 'user' && e.variant ? { ...item, variants: [e.variant], ...(e.fanout ? { fanout: e.fanout } : {}) } : null;
+          if (lastBubble) out[out.length - 1] = lastBubble;
+        }
+        lastUsers.set(lane, { text: e.text, pins: e.pins, failed: false });
       } else if (e.type === 'version') {
         if (lastUser) lastUser.failed = false;
-        out.push({ key, kind: 'version', at: e.at, n: e.n, complete: e.status === 'complete' });
+        out.push({ key, kind: 'version', at: e.at, n: e.n, complete: e.status === 'complete', ...(e.variant ? { variant: e.variant } : {}) });
       } else {
         if (lastUser && e.level === 'error') lastUser.failed = true;
-        out.push({ key, kind: 'system', at: e.at, level: e.level, text: e.text, ...(e.origin === 'agent' ? { agent: true } : {}) });
+        out.push({ key, kind: 'system', at: e.at, level: e.level, text: e.text, ...(e.origin === 'agent' ? { agent: true } : {}), ...(e.variant ? { variant: e.variant } : {}) });
       }
     });
     // A job with nothing persisted yet (only live events) comes last.
     if (job && jobs.has(job.id) && !firstIndex.has(job.id)) out.push(...turn(job.id));
+    for (const m of others) if (jobs.has(m.job.id) && !firstIndex.has(m.job.id)) out.push(...turn(m.job.id));
     out.push(...approvalsOf(null));
     out.push(...outItems);
     const waiting = shownApprovals.some((s) => !s.leaving && s.approval.jobId === job?.id);
     if (working && !waiting) out.push({ key: 'typing', kind: 'typing' });
     return out;
-  }, [entries, job, live, working, unfolded, detailsOpen, shownApprovals, ctx, outbox, queued, t]);
+  }, [entries, job, live, working, unfolded, detailsOpen, shownApprovals, ctx, outbox, queued, t, memberJobs]);
 
   // Items present at the first render appear with the panel; later ones enter from +8 px (T9).
   const mounted = useRef(false);
@@ -443,7 +484,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
         {empty && <li className="ms-convo-empty"><Empty icon="comment" title={c.emptyTitle} sub={c.emptySub} /></li>}
         {items.map((item) => (
           <Row key={item.key} animate={mounted.current && item.kind !== 'approval'}>
-            <ItemView item={item} formatName={formatName} onToggleFold={toggleFold} onToggleDetails={toggleDetails} onOpenDetails={openDetails} onSelectVersion={onSelectVersion} versionExtra={versionExtra} versionNote={versionNote} versionSummary={versionSummary} onGone={gone} />
+            <ItemView item={item} formatName={formatName} onToggleFold={toggleFold} onToggleDetails={toggleDetails} onOpenDetails={openDetails} onSelectVersion={onSelectVersion} versionExtra={versionExtra} versionNote={versionNote} versionSummary={versionSummary} onGone={gone} self={self} onOpenVariant={onOpenVariant} />
           </Row>
         ))}
       </ol>
@@ -501,7 +542,7 @@ function PinLabel({ pin, text }: { pin: Pin; text: string }) {
 }
 
 /** User note 8: a question the agent asked, with the user's answer (plain text: the agent wrote the question). */
-function AnsweredQuestion({ at, event }: { at: string; event: Extract<AgentEvent, { kind: 'question_answered' }> }) {
+function AnsweredQuestion({ at, event, variant }: { at: string; event: Extract<AgentEvent, { kind: 'question_answered' }>; variant?: VariantId }) {
   const t = useT();
   const q = t.web.questionUi;
   const none = event.outcome === 'expired' ? q.expired : event.outcome === 'cancelled' ? q.cancelled : q.skipped;
@@ -509,7 +550,7 @@ function AnsweredQuestion({ at, event }: { at: string; event: Extract<AgentEvent
     <article className="ms-msg" aria-label={q.historyLabel}>
       <AgentMark />
       <div className="ms-msg-body">
-        <span className="ms-msg-meta"><b>{q.historyLabel}</b>·<When at={at} /></span>
+        <span className="ms-msg-meta"><b>{q.historyLabel}</b>·<When at={at} /><VariantChips list={variant ? [variant] : undefined} /></span>
         {/* Only text is rendered (review fix): a stored line with another value (an old `__proto__` answer) shows as unanswered. */}
         {(Array.isArray(event.items) ? event.items : []).map((it, i) => (
           <div key={i} className="ms-question-done">
@@ -525,9 +566,17 @@ function AnsweredQuestion({ at, event }: { at: string; event: Extract<AgentEvent
   );
 }
 
-function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetails, onSelectVersion, versionExtra, versionNote, versionSummary, onGone }: {
+/** Decision 980: the chips of the variants an entry belongs to (upper case on screen), each named for screen readers. */
+function VariantChips({ list }: { list: readonly VariantId[] | undefined }) {
+  const vg = useT().web.variantGroup;
+  if (!list?.length) return null;
+  return <>{list.map((v) => <span key={v} className="ms-vchip" title={vg.letterLabel({ letter: v.toUpperCase() })}>{v.toUpperCase()}</span>)}</>;
+}
+
+function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetails, onSelectVersion, versionExtra, versionNote, versionSummary, onGone, self, onOpenVariant }: {
   item: Item; formatName?(id: string): string; onToggleFold(jobId: string): void; onToggleDetails(jobId: string): void; onOpenDetails(jobId: string): void;
   onSelectVersion?(n: number): void; versionExtra?(n: number): ReactNode; versionNote?(n: number): ReactNode; versionSummary?(n: number): string | null; onGone(id: string): void;
+  self?: VariantId; onOpenVariant?(variant: VariantId): void;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -539,7 +588,7 @@ function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetai
           <span className="ms-msg-avatar ms-you" aria-hidden="true"><Icon name="user" size={13} /></span>
           <div className="ms-msg-body">
             <span className="ms-msg-meta">
-              <b>{c.you}</b>·<When at={item.at} />
+              <b>{c.you}</b>·<When at={item.at} /><VariantChips list={item.variants} />
               {item.redirect && <span className="ms-pill ms-accent">{t.web.liveUi.state.redirect}</span>}
               {item.state && (
                 <span className={cx('ms-pill', item.state === 'delivered' ? 'ms-ok' : item.state === 'notDelivered' ? 'ms-warn' : 'ms-neutral')} data-state={item.state}
@@ -557,7 +606,7 @@ function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetai
         </article>
       );
     case 'question':
-      return <AnsweredQuestion at={item.at} event={item.event} />;
+      return <AnsweredQuestion at={item.at} event={item.event} variant={item.variant} />;
     case 'retried':
       return (
         <div className="ms-convo-retried">
@@ -570,7 +619,7 @@ function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetai
         <article className={cx('ms-msg', item.summary && 'ms-summary')} aria-label={item.summary ? c.summary : c.agent}>
           <AgentMark />
           <div className="ms-msg-body">
-            <span className="ms-msg-meta"><b>{c.agent}</b>·<When at={item.at} />{item.summary && <span className="ms-pill ms-ok">{c.summary}</span>}</span>
+            <span className="ms-msg-meta"><b>{c.agent}</b>·<When at={item.at} /><VariantChips list={item.variant ? [item.variant] : undefined} />{item.summary && <span className="ms-pill ms-ok">{c.summary}</span>}</span>
             <div className="ms-msg-bubble"><Markdown text={item.text} /></div>
           </div>
         </article>
@@ -592,31 +641,38 @@ function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetai
         </button>
       );
     case 'error':
-      return <p role="alert" className="ms-convo-error">{c.failed({ error: item.text })}</p>;
+      return <p role="alert" className="ms-convo-error"><VariantChips list={item.variant ? [item.variant] : undefined} />{c.failed({ error: item.text })}</p>;
     case 'details':
       return <Details jobId={item.jobId} entries={item.entries} open={item.open} onToggle={() => onToggleDetails(item.jobId)} />;
     case 'autoline':
       return <AutoLine jobId={item.jobId} log={item.log} onOpen={onOpenDetails} />;
     case 'version': {
-      const summary = versionSummary?.(item.n) ?? null;
+      // Decision 980: another variant's version is not this page's vN: its card opens that variant instead, with no extras.
+      const other = item.variant !== undefined && self !== undefined && item.variant !== self ? item.variant : null;
+      const summary = other ? null : versionSummary?.(item.n) ?? null;
       return (
         <div className="ms-convo-version">
+          <VariantChips list={item.variant ? [item.variant] : undefined} />
           <span className={cx('ms-pill', item.complete ? 'ms-ok' : 'ms-warn')}>v{item.n} · {item.complete ? t.web.status.ready : t.web.status.incomplete}</span>
           {summary ? <span className="ms-convo-version-summary">{summary}</span> : null}
           <span className="ms-grow" />
-          {versionExtra?.(item.n) ?? null}
-          <Button size="sm" variant="outline" onClick={() => onSelectVersion?.(item.n)}>{t.web.conversation.viewVersion({ n: item.n })}</Button>
-          {versionNote?.(item.n) ?? null}
+          {other ? null : versionExtra?.(item.n) ?? null}
+          {other
+            ? (onOpenVariant ? <Button size="sm" variant="outline" onClick={() => onOpenVariant(other)}>{t.web.conversation.openVariantVersion({ letter: other.toUpperCase(), n: item.n })}</Button> : null)
+            : <Button size="sm" variant="outline" onClick={() => onSelectVersion?.(item.n)}>{t.web.conversation.viewVersion({ n: item.n })}</Button>}
+          {other ? null : versionNote?.(item.n) ?? null}
         </div>
       );
     }
-    case 'system':
-      if (item.level === 'error') return <p role="alert" className="ms-convo-system ms-error">{item.text}</p>;
+    case 'system': {
+      const chip = <VariantChips list={item.variant ? [item.variant] : undefined} />;
+      if (item.level === 'error') return <p role="alert" className="ms-convo-system ms-error">{chip}{item.text}</p>;
       // Something to know that did not fail the turn (an unlinked follower, earlier outputs that changed): set apart.
-      if (item.level === 'warning') return <p className="ms-convo-system ms-warning"><Icon name="warn" size={13} /><span>{item.text}</span></p>;
+      if (item.level === 'warning') return <p className="ms-convo-system ms-warning"><Icon name="warn" size={13} />{chip}<span>{item.text}</span></p>;
       // Decision 917: what the agent did in the app, said apart from the core's own notes.
-      if (item.agent) return <p className="ms-convo-system ms-convo-action"><Icon name="sparkle" size={12} /><span className="ms-convo-action-tag">{t.web.conversation.agentAction}</span><span>{item.text}</span></p>;
-      return <p className="ms-convo-system">{item.text}</p>;
+      if (item.agent) return <p className="ms-convo-system ms-convo-action"><Icon name="sparkle" size={12} />{chip}<span className="ms-convo-action-tag">{t.web.conversation.agentAction}</span><span>{item.text}</span></p>;
+      return <p className="ms-convo-system">{chip}{item.text}</p>;
+    }
     case 'approval':
       return (
         <div className="ms-convo-approval">

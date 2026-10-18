@@ -22,6 +22,7 @@ import { CreativeTurnService, type CreativeRef } from '../src/creatives/creative
 import { VariantGroupService } from '../src/creatives/variant-group.ts';
 import { Git } from '../src/git.ts';
 import { t } from '../src/i18n.ts';
+import { CodedError } from '../src/workspace-store.ts';
 import { JobQueue } from '../src/jobs/job-queue.ts';
 import { renameJournalSchema } from '../src/library/rename-journal.ts';
 import { NoMediaTools } from '../src/media/media-tools.ts';
@@ -119,21 +120,86 @@ describe('group lifecycle', { timeout: 60_000 }, () => {
     expect(await isRealSister(projectDir, sis('b'))).toBe(true);
   });
 
-  it('refuses a 6th variant (409 variants-full) and leaves nothing behind', async () => {
+  it('has no cap on variants (decision 978): ids go on past e to z, then aa, and are never reused (decision 1151)', async () => {
     await svc.addVariants(host, [{}, {}, {}, {}]);
-    const before = await readFile(join(projectDir, 'creatives', host.creativeSlug, 'creative.json'), 'utf8');
-    await expect(svc.addVariants(host, [{}])).rejects.toMatchObject({ status: 409, apiCode: 'variants-full' });
-    expect(await readFile(join(projectDir, 'creatives', host.creativeSlug, 'creative.json'), 'utf8')).toBe(before);
-    // A new group asking for 6 at once: refused before any folder is made.
-    const other = (await store.create({ title: 'Altro', brief })).slug;
-    await expect(svc.addVariants(refOf(other), [{}, {}, {}, {}, {}])).rejects.toMatchObject({ status: 409, apiCode: 'variants-full' });
-    expect(existsSync(join(projectDir, 'creatives', `${other}~b`))).toBe(false);
-    expect((await json(other)).variantGroup).toBeUndefined();
+    await svc.addVariants(host, [{}]);
+    expect((await json(host.creativeSlug)).variantGroup!.members.map((m) => m.letter)).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
+    expect(await isRealSister(projectDir, sis('f'))).toBe(true);
+    await svc.addVariants(host, Array.from({ length: 21 }, () => ({})));
+    const g = (await json(host.creativeSlug)).variantGroup!;
+    expect(g.members).toHaveLength(27);
+    expect(g.members.at(-1)).toMatchObject({ letter: 'aa', slug: sis('aa') });
+    expect(existsSync(join(projectDir, 'creatives', sis('aa'), 'creative.json'))).toBe(true);
+    expect(await isRealSister(projectDir, sis('aa'))).toBe(true);
+    // The commit line names the two-letter id whole.
+    expect(execFileSync('git', ['log', '-1', '--format=%s'], { cwd: projectDir, encoding: 'utf8' })).toContain('AA');
   });
 
-  it('a sister folder already on disk refuses the add (409) and leaves no group or other sister behind', async () => {
+  it('decision 1162: an id is never given twice: not after a sister left, not after the group dissolved, not for an old group with no mark', async () => {
+    const leave = async (slug: string) => {
+      const g = (await json(host.creativeSlug)).variantGroup!;
+      await turns.runLocked(host, () => svc.detachLocked(host, g, slug));
+      await store.removeSisterFolder(slug);
+    };
+    await svc.addVariants(host, [{}, {}]);
+    await leave(sis('c'));
+    await svc.addVariants(host, [{}]);
+    expect((await json(host.creativeSlug)).variantGroup!.members.map((m) => m.letter)).toEqual(['a', 'b', 'd']);
+    // The group dissolves (A alone), then is made again: the next id still comes after d.
+    await leave(sis('d'));
+    await leave(sis('b'));
+    expect((await json(host.creativeSlug)).variantGroup).toBeUndefined();
+    await svc.addVariants(host, [{}]);
+    expect((await json(host.creativeSlug)).variantGroup!.members.map((m) => m.letter)).toEqual(['a', 'e']);
+    // An older host with no mark: the ids its chat already names are not given again.
+    await leave(sis('e'));
+    await store.update(host.creativeSlug, { variantNext: undefined });
+    await writeFile(join(projectDir, 'creatives', host.creativeSlug, 'conversation.jsonl'), `${JSON.stringify({ type: 'system', at: new Date().toISOString(), level: 'info', text: 'x', variant: 'g' })}\n`);
+    await svc.addVariants(host, [{}]);
+    expect((await json(host.creativeSlug)).variantGroup!.members.map((m) => m.letter)).toEqual(['a', 'h']);
+  });
+
+  it('a folder already on disk with a sister\'s name is skipped with a warning (decision 1169); a plain folder far ahead moves nothing', async () => {
     await mkdir(join(projectDir, 'creatives', sis('c')));
-    await expect(svc.addVariants(host, [{}, {}])).rejects.toMatchObject({ status: 409, apiCode: 'variant-folder-exists' });
+    await mkdir(join(projectDir, 'creatives', sis('zy')));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await svc.addVariants(host, [{}, {}]);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally { warn.mockRestore(); }
+    expect((await json(host.creativeSlug)).variantGroup!.members.map((m) => m.letter)).toEqual(['a', 'b', 'd']);
+  });
+
+  it('decision 1168: the floor reads only core files: a planted copy or an out-of-range stamp never blocks or skips ids', async () => {
+    const hostDir = join(projectDir, 'creatives', host.creativeSlug);
+    const stamp = (v: string) => `${JSON.stringify({ type: 'system', at: new Date().toISOString(), level: 'info', text: 'x', variant: v })}\n`;
+    await writeFile(join(hostDir, 'conversation.premerge-planted.jsonl'), stamp('zy'));
+    await writeFile(join(hostDir, 'conversation.jsonl'), stamp('zzz'));
+    await svc.addVariants(host, [{}, {}]);
+    expect((await json(host.creativeSlug)).variantGroup!.members.map((m) => m.letter)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('decision 1169: a merge pending past its commit point is finished before the group dissolves', async () => {
+    await svc.addVariants(host, [{}]);
+    await store.appendConversation(sis('b'), { type: 'system', at: new Date().toISOString(), level: 'info', text: 'di B' });
+    await expect(store.migrateConversation(host.creativeSlug, async () => true, { afterFlag: async () => { throw new Error('crash'); } })).rejects.toThrow('crash');
+    const g = (await json(host.creativeSlug)).variantGroup!;
+    await turns.runLocked(host, () => svc.detachLocked(host, g, sis('b')));
+    expect((await json(host.creativeSlug)).variantGroup).toBeUndefined();
+    expect(existsSync(join(projectDir, 'creatives', host.creativeSlug, 'conversation.merged.jsonl'))).toBe(false);
+    expect((await store.readConversation(host.creativeSlug)).some((e) => e.type === 'system' && e.text === 'di B')).toBe(true);
+  });
+
+  it('a sister that cannot be made (409, e.g. its folder appeared meanwhile) leaves no group or other sister behind', async () => {
+    const real = store.createSister.bind(store);
+    let n = 0;
+    const spy = vi.spyOn(store, 'createSister').mockImplementation(async (h, l, c) => {
+      if (++n === 2) throw new CodedError(409, 'exists', 'variant-folder-exists');
+      return real(h, l, c);
+    });
+    try {
+      await expect(svc.addVariants(host, [{}, {}])).rejects.toMatchObject({ status: 409, apiCode: 'variant-folder-exists' });
+    } finally { spy.mockRestore(); }
     expect(existsSync(join(projectDir, 'creatives', sis('b')))).toBe(false);
     expect((await json(host.creativeSlug)).variantGroup).toBeUndefined();
   });
@@ -513,7 +579,9 @@ describe('ruling R2: the one "real sister" check and its users', { timeout: 60_0
     expect(explainContext({ projectDir, creativeSlug: `${plain}~b` }).workDir).toBeUndefined();
     // The brand source of "Use as brand logo" from a sister.
     expect(CREATIVE_SOURCE_RE.test(`creative:${sis('b')}/v2`)).toBe(true);
-    expect(CREATIVE_SOURCE_RE.test(`creative:${host.creativeSlug}~f/v2`)).toBe(false);
+    expect(CREATIVE_SOURCE_RE.test(`creative:${host.creativeSlug}~aa/v2`)).toBe(true); // any id (decision 978)
+    expect(CREATIVE_SOURCE_RE.test(`creative:${host.creativeSlug}~a/v2`)).toBe(false);
+    expect(CREATIVE_SOURCE_RE.test(`creative:${host.creativeSlug}~abcd/v2`)).toBe(false);
   });
 
   it('list collapses real sisters into the host row; sweeps clean real sisters only; the rename journal and brief assets include them', async () => {
@@ -550,7 +618,7 @@ describe('ruling R2: the one "real sister" check and its users', { timeout: 60_0
     expect((await json(sis('c'))).brief.assets).toEqual(['assets/marchio.png']);
     expect((await json(fake)).brief.assets).toEqual(['assets/logo.png']);
     expect(renameJournalSchema.safeParse({ schemaVersion: 1, from: 'assets/a.png', to: 'assets/b.png', startedAt: new Date().toISOString(), brandRefs: false, briefSlugs: [sis('b')] }).success).toBe(true);
-    expect(renameJournalSchema.safeParse({ schemaVersion: 1, from: 'assets/a.png', to: 'assets/b.png', startedAt: new Date().toISOString(), brandRefs: false, briefSlugs: ['x~f'] }).success).toBe(false);
+    expect(renameJournalSchema.safeParse({ schemaVersion: 1, from: 'assets/a.png', to: 'assets/b.png', startedAt: new Date().toISOString(), brandRefs: false, briefSlugs: ['x~a'] }).success).toBe(false);
   });
 
   it('recovery at startup reaches the sisters (listAll): a sister left working is marked interrupted', async () => {

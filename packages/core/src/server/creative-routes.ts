@@ -3,7 +3,7 @@ import { recoverRenameJournal } from '../library/rename-recovery.ts';
 import { lstat, readdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, join, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { DEFAULT_EXPORT_QUALITY, EXPORT_QUALITIES, isDefaultProfile, EXPORT_RESOLUTIONS, type ExportQuality, type RenderProfile, type VersionEntry, messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow, hostOf, MAX_VARIANTS, VARIANT_LETTERS, type VariantDetail, type VariantLetter } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_QUALITY, EXPORT_QUALITIES, isDefaultProfile, EXPORT_RESOLUTIONS, type ExportQuality, type RenderProfile, type VersionEntry, messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow, hostOf, isVariantId, letterOfSlug, MAX_NEW_VARIANTS, variantIdSchema, type VariantDetail, type VariantId } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
@@ -169,8 +169,9 @@ const useAsLogoBody = z.object({ variant: z.enum(['primary', 'icon']) }).strict(
 const linkBody = z.object({ follower: z.string().min(1).max(200), primary: z.string().min(1).max(200).nullable() });
 /** Phase 15: `POST …/variants` (see the route). */
 const addVariantsBody = z.object({
-  count: z.number().int().min(1).max(MAX_VARIANTS).optional(),
-  directions: z.array(z.union([z.string().max(MAX_DIRECTION_CHARS), z.null()])).max(MAX_VARIANTS).optional(),
+  // No cap on the group (decision 978); one request adds at most MAX_NEW_VARIANTS (A included when it creates the group).
+  count: z.number().int().min(1).max(MAX_NEW_VARIANTS).optional(),
+  directions: z.array(z.union([z.string().max(MAX_DIRECTION_CHARS), z.null()])).max(MAX_NEW_VARIANTS).optional(),
   baseFrom: z.object({ slug: z.string().min(1).max(100), version: z.number().int().min(1) }).strict().optional(),
 }).strict();
 const variantPickBody = z.object({ slug: z.string().min(1).max(100), version: z.number().int().min(1) }).strict();
@@ -181,7 +182,7 @@ const directionBody = z.object({ direction: z.string().max(MAX_DIRECTION_CHARS) 
  * `POST …/turns`, or null for the first generation.
  */
 const variantRunBody = z.object({
-  targets: z.union([z.array(z.enum(VARIANT_LETTERS as unknown as [VariantLetter, ...VariantLetter[]])).min(1).max(MAX_VARIANTS), z.literal('all-active')]),
+  targets: z.union([z.array(variantIdSchema).min(1).max(1000), z.literal('all-active')]),
   request: z.union([turnBodySchema.strict(), z.null()]),
 }).strict();
 /** A render request (Task 5): `formats` to render (a follower stands for its primary); absent or empty: every primary. */
@@ -349,7 +350,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   const variantDetail = async (ref: CreativeRef & { store: CreativeStore }): Promise<VariantDetail | undefined> => {
     const r = await variantsOf(ref).resolve(ref);
     const slug = ref.creativeSlug;
-    if (r.orphan) return { orphan: true, host: hostOf(slug), letter: slug.slice(-1) as VariantLetter };
+    if (r.orphan) return { orphan: true, host: hostOf(slug), letter: letterOfSlug(slug) };
     if (!r.group) return undefined;
     const letter = r.group.members.find((m) => m.slug === slug)?.letter ?? 'a';
     const missing = r.group.members.filter((m) => r.missing.includes(m.slug)).map((m) => m.letter);
@@ -506,7 +507,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   // `variant-no-group`) and writes nothing: an old creative is unchanged by them.
   /**
    * Creates sisters (ruling R3: no turn starts; Task 3's `…/variants/run` starts them). With no group yet, `count` is the size
-   * of the group asked for, A included (2..5), and `directions[0]` is A's; on a group, `count` is how many variants to add
+   * of the group asked for, A included (2..MAX_NEW_VARIANTS), and `directions[0]` is A's; on a group, `count` is how many variants to add
    * and `directions` are theirs. A missing or null direction is left for the directions turn. `baseFrom`: every new variant
    * starts from that member's version (decisions log 263).
    */
@@ -534,9 +535,9 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     return reply.status(201).send(await detailOf({ ...r.host, store: ref.store }));
   });
 
-  const letterOf = (l: string): VariantLetter => {
-    if (!(VARIANT_LETTERS as readonly string[]).includes(l)) throw new CodedError(404, t().errors.variantUnknown({ letter: l.slice(0, 2).toUpperCase() }), 'variant-unknown');
-    return l as VariantLetter;
+  const letterOf = (l: string): VariantId => {
+    if (!isVariantId(l)) throw new CodedError(404, t().errors.variantUnknown({ letter: String(l).slice(0, 3).toUpperCase() }), 'variant-unknown');
+    return l as VariantId;
   };
   for (const action of ['discard', 'restore', 'use-for-all'] as const) {
     app.post<{ Params: { slug: string; c: string; l: string } }>(`/api/projects/:slug/creatives/:c/variants/:l/${action}`, async (req): Promise<CreativeDetail> => {
@@ -588,6 +589,10 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   app.get<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/conversation', async (req) => {
     const ref = await refOf(req.params.slug, req.params.c);
     await ref.store.get(ref.creativeSlug);
+    // Decision 982: a group's first read while it is idle merges its chats once (lazily); any member answers the group's.
+    await variantsOf(ref).mergeChat(ref).catch((err: unknown) => {
+      console.warn(`Motion Studio: the chats of ${ref.creativeSlug} were not merged yet: ${err instanceof Error ? err.message : String(err)}`);
+    });
     return ref.store.readConversation(ref.creativeSlug);
   });
 
@@ -901,7 +906,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       if (p.state === 'needs-render') return error ? g.renderFailed({ reason: error }) : g.notRendered;
       return g.missing;
     };
-    type Gap = { format: string; slug: string; letter: VariantLetter; version: number; locale?: string; message: string };
+    type Gap = { format: string; slug: string; letter: VariantId; version: number; locale?: string; message: string };
     const gap = (p: GroupPlanItem, why: string, locale?: string): Gap => ({ format: p.format, slug: p.slug, letter: p.letter, version: p.version, ...(locale !== undefined ? { locale } : {}),
       message: t().export.groupSkipped({ format: locale !== undefined ? `${label(p.format)} (${locale})` : label(p.format), variant: p.letter.toUpperCase(), n: p.version, reason: why }) });
     const unavailable: Gap[] = (includeSource ? usable.filter((p) => p.state !== 'ready') : []).map((p) => gap(p, reason(p)));

@@ -1,13 +1,13 @@
 // "+ Variante" and "Modifica direzione" (Phase 15, spec §3, §5): two small dialogs. A new variant has an optional direction and
 // starts from the brief or from the last version of a chosen variant (which becomes its base).
-import type { VariantLetter, VariantPick } from '@motion-studio/shared';
+import type { VariantId, VariantPick } from '@motion-studio/shared';
 import { useState } from 'react';
 import { useT } from '../../i18n.tsx';
 import { Button, Input, Modal, Select } from '../../ui/index.ts';
 import { DIRECTION_MAX, upper } from './variantModel.ts';
 
 /** A variant a new one can start from: its latest version. */
-export interface BaseChoice { letter: VariantLetter; slug: string; version: number }
+export interface BaseChoice { letter: VariantId; slug: string; version: number }
 
 export interface AddVariantDialogProps {
   open: boolean;
@@ -65,7 +65,7 @@ export function AddVariantDialog({ open, onClose, bases, onAdd }: AddVariantDial
 export interface EditDirectionDialogProps {
   open: boolean;
   onClose(): void;
-  letter: VariantLetter;
+  letter: VariantId;
   initial: string;
   onSave(direction: string): Promise<void>;
 }

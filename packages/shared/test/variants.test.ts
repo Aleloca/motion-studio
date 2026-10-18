@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
-  MAX_VARIANTS, VARIANT_LETTERS, activeMembers, canDiscard, creativeFileSchema, creativeSlugSchema, directionLine, hostOf, isSisterSlug,
-  messages, nextLetter, sisterSlug, sisterSlugSchema, variantGroupSchema, type VariantGroup, type VariantLetter, type VariantMember,
+  activeMembers, compareVariantIds, letterOfSlug, variantIdAt, variantIndex, canDiscard, creativeFileSchema, creativeSlugSchema, directionLine, hostOf, isSisterSlug,
+  messages, nextLetter, sisterSlug, sisterSlugSchema, variantGroupSchema, type VariantGroup, type VariantId, type VariantMember,
 } from '../src/index.ts';
 
 const now = '2026-10-16T10:00:00.000Z';
-const member = (letter: VariantLetter, over: Partial<VariantMember> = {}): VariantMember => ({
+const member = (letter: VariantId, over: Partial<VariantMember> = {}): VariantMember => ({
   slug: sisterSlug('promo', letter), letter, direction: null, directionSource: null, status: 'active', createdAt: now, ...over,
 });
-const group = (letters: VariantLetter[], over: Partial<VariantGroup> = {}): VariantGroup => ({
+const group = (letters: VariantId[], over: Partial<VariantGroup> = {}): VariantGroup => ({
   members: letters.map((l) => member(l)), picks: {}, layout: 'variant', ...over,
 });
 
@@ -17,12 +17,10 @@ describe('variantGroupSchema', () => {
     expect(variantGroupSchema.safeParse(group(['a'])).success).toBe(true);
     expect(variantGroupSchema.safeParse(group(['a', 'b', 'c', 'd', 'e'])).success).toBe(true);
   });
-  it('refuses 6 members by the cap itself (a too_big issue on members), not only by a duplicate', () => {
-    const g = group(['a', 'b', 'c', 'd', 'e']);
-    g.members.push(member('e', { slug: 'promo~e' }));
-    const r = variantGroupSchema.safeParse(g);
-    expect(r.success).toBe(false);
-    expect(r.error!.issues.some((i) => i.code === 'too_big' && i.path.join('.') === 'members')).toBe(true);
+  it('has no cap on members (decision 978): 30 members, ids a…z then aa…ad', () => {
+    const g = group(Array.from({ length: 30 }, (_, i) => variantIdAt(i)));
+    expect(variantGroupSchema.safeParse(g).success).toBe(true);
+    expect(g.members.at(-1)!.slug).toBe('promo~ad');
   });
   it('refuses duplicate letters and duplicate slugs', () => {
     const g = group(['a', 'b']);
@@ -58,10 +56,15 @@ describe('variantGroupSchema', () => {
     expect(creativeSlugSchema.safeParse('promo').success).toBe(true);
     expect(sisterSlugSchema.safeParse('promo~b').success).toBe(true);
     expect(sisterSlugSchema.safeParse('promo~a').success).toBe(false);
-    expect(sisterSlugSchema.safeParse('promo~f').success).toBe(false);
+    expect(sisterSlugSchema.safeParse('promo~f').success).toBe(true);
+    expect(sisterSlugSchema.safeParse('promo~aa').success).toBe(true);
+    expect(sisterSlugSchema.safeParse('promo~zzz').success).toBe(true);
+    expect(sisterSlugSchema.safeParse('promo~aaaa').success).toBe(false);
+    expect(sisterSlugSchema.safeParse('promo~B').success).toBe(false);
+    expect(sisterSlugSchema.safeParse('promo~b1').success).toBe(false);
     expect(sisterSlugSchema.safeParse('promo').success).toBe(false);
     const g = group(['a', 'b']);
-    g.members[1] = member('b', { slug: 'promo~f' });
+    g.members[1] = member('b', { slug: 'promo~F' });
     expect(variantGroupSchema.safeParse(g).success).toBe(false);
   });
 });
@@ -74,15 +77,32 @@ describe('slug helpers', () => {
     expect(isSisterSlug('promo')).toBe(false);
     expect(hostOf('promo~c')).toBe('promo');
     expect(hostOf('promo')).toBe('promo');
+    expect(sisterSlug('promo', 'ab')).toBe('promo~ab');
+    expect(letterOfSlug('promo~ab')).toBe('ab');
+    expect(letterOfSlug('promo~c')).toBe('c');
+    expect(letterOfSlug('promo')).toBe('a');
+    expect(hostOf('promo~ab')).toBe('promo');
+  });
+});
+
+describe('variant ids (decision 978)', () => {
+  it('runs a…z, then aa, ab…, bijective base 26', () => {
+    expect([0, 1, 4, 5, 25, 26, 27, 51, 52, 701, 702].map(variantIdAt)).toEqual(['a', 'b', 'e', 'f', 'z', 'aa', 'ab', 'az', 'ba', 'zz', 'aaa']);
+    for (let i = 0; i < 2000; i++) expect(variantIndex(variantIdAt(i))).toBe(i);
+    expect(variantIndex('A')).toBe(-1);
+    expect(variantIndex('')).toBe(-1);
+  });
+  it('sorts in creation order, not alphabetically', () => {
+    expect(['aa', 'b', 'z', 'a', 'ab'].sort(compareVariantIds)).toEqual(['a', 'b', 'z', 'aa', 'ab']);
   });
 });
 
 describe('nextLetter, activeMembers, canDiscard, directionLine', () => {
-  it('nextLetter skips used letters and returns null at 5', () => {
+  it('nextLetter follows the highest id and never reuses one (decision 1151)', () => {
     expect(nextLetter(group(['a']))).toBe('b');
-    expect(nextLetter(group(['a', 'c']))).toBe('b');
-    expect(nextLetter(group(['a', 'b', 'c', 'd', 'e']))).toBeNull();
-    expect(VARIANT_LETTERS).toHaveLength(MAX_VARIANTS);
+    expect(nextLetter(group(['a', 'c']))).toBe('d');
+    expect(nextLetter(group(['a', 'b', 'c', 'd', 'e']))).toBe('f');
+    expect(nextLetter(group(Array.from({ length: 26 }, (_, i) => variantIdAt(i))))).toBe('aa');
   });
   it('activeMembers drops discarded ones', () => {
     const g = group(['a', 'b', 'c']);

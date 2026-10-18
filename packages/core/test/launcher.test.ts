@@ -228,12 +228,14 @@ describe('AgentLauncher', () => {
     await symlink(real, linked);
     const realDir = await realpath(linked);
     await mkdir(join(real, 'creatives', 'other-1'), { recursive: true });
+    await writeFile(join(real, 'creatives', 'other-1', 'conversation.premerge-abc.jsonl'), '');
     await mkdir(join(real, 'brand', 'proposals', 'p-1'), { recursive: true });
     const tools = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
     for (const kind of ['creative', 'brand-analysis'] as const) {
       for (const available of [false, true]) {
         const { args } = await launch({ sandbox: async () => ({ available, reason: 'x' }) }, kind, linked);
-        const globs = (d: string) => [...['conversation.jsonl', 'versions.json', 'creative.json'].map((n) => `${escapeGlob(join(d, 'creatives'))}/*/${n}`), `${escapeGlob(join(d, 'brand', 'proposals'))}/*/log.jsonl`];
+        // Decision 1168: the later copies from before a chat merge too (`conversation.premerge-<time>.jsonl`).
+        const globs = (d: string) => [...['conversation.jsonl', 'versions.json', 'creative.json', 'conversation.merged.jsonl', 'conversation.premerge.jsonl', 'conversation.premerge-*.jsonl'].map((n) => `${escapeGlob(join(d, 'creatives'))}/*/${n}`), `${escapeGlob(join(d, 'brand', 'proposals'))}/*/log.jsonl`];
         for (const d of [linked, realDir]) for (const g of globs(d)) expect(args).toEqual(expect.arrayContaining(tools.map((t) => `${t}(/${g})`)));
         // The agent's own folders stay writable.
         const globToRe = (g: string) => new RegExp(`^${g.replace(/\\(.)/g, '\u0000$1').split('*').map((x) => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*').replace(/\u0000(.)/g, (_m, c: string) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))}$`);
@@ -246,7 +248,9 @@ describe('AgentLauncher', () => {
         if (available) {
           const settings = JSON.parse(args[args.indexOf('--settings') + 1]!);
           const deny: string[] = settings.sandbox.filesystem.denyWrite;
-          expect(deny).toEqual(expect.arrayContaining([join(linked, 'creatives', '*', 'conversation.jsonl'), join(realDir, 'brand', 'proposals', '*', 'log.jsonl')]));
+          expect(deny).toEqual(expect.arrayContaining([join(linked, 'creatives', '*', 'conversation.jsonl'), join(linked, 'creatives', '*', 'conversation.premerge-*.jsonl'), join(realDir, 'brand', 'proposals', '*', 'log.jsonl')]));
+          // An existing later copy is denied by its own path too (Linux and WSL skip globs).
+          for (const d of [linked, realDir]) expect(deny).toContain(join(d, 'creatives', 'other-1', 'conversation.premerge-abc.jsonl'));
           for (const d of [linked, realDir]) {
             expect(deny).toEqual(expect.arrayContaining([join(d, 'creatives', 'other-1', 'conversation.jsonl'), join(d, 'creatives', 'other-1', 'versions.json'), join(d, 'creatives', 'other-1', 'creative.json'), join(d, 'brand', 'proposals', 'p-1', 'log.jsonl')]));
           }

@@ -60,13 +60,15 @@ describe('variant routes', () => {
     const sister = await detail(`${slug}~b`);
     expect(sister.creative).toMatchObject({ variantOf: slug, brief: { goal: 'Lancio app' } });
     expect(sister.variants).toMatchObject({ orphan: false, host: slug, letter: 'b' });
-    // Adding from a sister adds to the group: here two more (5), then a 6th is refused.
-    expect((await app.inject({ method: 'POST', url: `${P}/${slug}~b/variants`, payload: { count: 3 } })).json()).toMatchObject({ code: 'variants-full' });
+    // Adding from a sister adds to the group: two more (5), then a 6th and more (no cap, decision 978).
     expect((await app.inject({ method: 'POST', url: `${P}/${slug}~b/variants`, payload: { directions: ['Notte', 'Giorno'] } })).statusCode).toBe(201);
     const sixth = await app.inject({ method: 'POST', url: `${P}/${slug}/variants`, payload: {} });
-    expect(sixth.statusCode).toBe(409);
-    expect(sixth.json().code).toBe('variants-full');
-    expect((await detail(slug)).creative.variantGroup!.members).toHaveLength(5);
+    expect(sixth.statusCode).toBe(201);
+    expect((await app.inject({ method: 'POST', url: `${P}/${slug}~f/variants`, payload: { count: 3 } })).statusCode).toBe(201);
+    expect((await detail(slug)).creative.variantGroup!.members.map((m) => m.letter)).toEqual(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i']);
+    expect((await detail(`${slug}~i`)).variants).toMatchObject({ orphan: false, host: slug, letter: 'i' });
+    // One request adds at most MAX_NEW_VARIANTS (decision 1152).
+    expect((await app.inject({ method: 'POST', url: `${P}/${slug}/variants`, payload: { count: 27 } })).statusCode).toBe(400);
     // Bad bodies: a group of one, too many directions, a 141-character direction, unknown keys.
     const other = await create('Altro');
     for (const payload of [{ count: 1 }, { count: 2, directions: ['a', 'b', 'c'] }, { directions: ['x'.repeat(141)] }, { what: 1 }]) {
@@ -79,10 +81,9 @@ describe('variant routes', () => {
     const { slug } = await create();
     const post = () => app.inject({ method: 'POST', url: `${P}/${slug}/variants`, payload: { count: 3 } });
     const res = await Promise.all([post(), post()]);
-    // The first makes the group of 3 (A included); the second sees it and asks to ADD 3 more: over the limit of five.
-    expect(res.map((r) => r.statusCode).sort()).toEqual([201, 409]);
-    expect(res.find((r) => r.statusCode === 409)!.json().code).toBe('variants-full');
-    expect((await detail(slug)).creative.variantGroup!.members.map((m) => m.letter)).toEqual(['a', 'b', 'c']);
+    // The first makes the group of 3 (A included); the second sees it and ADDS 3 more (no cap, decision 978): never a group made twice.
+    expect(res.map((r) => r.statusCode)).toEqual([201, 201]);
+    expect((await detail(slug)).creative.variantGroup!.members.map((m) => m.letter)).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
   });
 
   it('minor (Task 2): PUT picks with no body is refused; only an explicit null clears the ★', async () => {
@@ -189,7 +190,9 @@ describe('variant routes', () => {
     expect((await app.inject({ method: 'POST', url: `${P}/${fake}/turns`, payload: {} })).statusCode).toBe(404);
     expect((await app.inject(P)).json().map((i: CreativeListItem) => i.slug)).toEqual([slug]);
     expect((await app.inject(`/api/usage?project=acme&creative=${encodeURIComponent(fake)}`)).statusCode).toBe(400);
-    expect((await app.inject(`${P}/${encodeURIComponent(`${slug}~f`)}`)).statusCode).toBe(400);
+    expect((await app.inject(`${P}/${encodeURIComponent(`${slug}~aaaa`)}`)).statusCode).toBe(400);
+    // A sister id past e has the right shape now (decision 978): no such creative.
+    expect((await app.inject(`${P}/${encodeURIComponent(`${slug}~f`)}`)).statusCode).toBe(404);
     await rm(join(projectDir(), 'creatives', fake), { recursive: true });
     // A real sister: usage answers; then its host deleted by hand: the sister is an orphan, listed and opened alone.
     await app.inject({ method: 'POST', url: `${P}/${slug}/variants`, payload: { count: 2 } });

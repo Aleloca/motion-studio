@@ -1,18 +1,20 @@
-import { mkdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, readdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
-  activeMembers, canDiscard, sisterSlug, effectiveLinks, followerVersion, formatDisplayName, hasFormat, MAX_INSTANCES, MAX_VARIANTS, nextInstanceId, presetOf, starOf,
-  VARIANT_LETTERS, variantGroupSchema,
-  type CreativeFile, type VariantGroup, type VariantLetter, type VariantMember, type VariantPick, type VersionEntry,
+  activeMembers, canDiscard, sisterSlug, effectiveLinks, followerVersion, formatDisplayName, hasFormat, MAX_INSTANCES, hostOf, letterOfSlug, nextInstanceId, nextLetter, presetOf, starOf,
+  VARIANT_ID_RE, variantGroupSchema, variantIdAt, variantIndex,
+  type CreativeFile, type VariantGroup, type VariantId, type VariantMember, type VariantPick, type VersionEntry,
 } from '@motion-studio/shared';
 import { readCompositionFolder } from '../compositions/composition-files.ts';
+import { parseConversation, PREMERGE_FILE } from './group-conversation.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
 import { currentLocale, t } from '../i18n.ts';
 import { CodedError } from '../workspace-store.ts';
 import { copyVerified, versionDirReady } from './carry-over.ts';
 import { compositionDirOf } from './composition-contract.ts';
 import { alignEditorCopies } from './composition-turn.ts';
-import { CREATIVE_SLUG_RE, creativeKind, groupTiedTo, isRealSister, memberPresent, type CreativeStore } from './creative-store.ts';
+import { CREATIVE_SLUG_RE, SISTER_SLUG_RE, creativeKind, groupTiedTo, isRealSister, memberPresent, type ChatMigration, type CreativeStore } from './creative-store.ts';
 import type { BriefPatch, CreativeRef, CreativeTurnService, SharedBrief } from './creative-turns.ts';
 
 /**
@@ -49,9 +51,8 @@ const now = () => new Date().toISOString();
 
 /** The ref of the group member `slug`, in `host`'s project (the one helper of the variant services). */
 export const memberRef = (host: CreativeRef, slug: string): CreativeRef => ({ root: host.root, projectSlug: host.projectSlug, projectDir: host.projectDir, creativeSlug: slug });
-const letterIndex = (l: VariantLetter) => VARIANT_LETTERS.indexOf(l);
-const byLetter = (a: VariantMember, b: VariantMember) => letterIndex(a.letter) - letterIndex(b.letter);
-const upper = (l: VariantLetter) => l.toUpperCase();
+const byLetter = (a: VariantMember, b: VariantMember) => variantIndex(a.letter) - variantIndex(b.letter);
+const upper = (l: VariantId) => l.toUpperCase();
 
 export class VariantGroupService {
   constructor(private readonly deps: VariantGroupDeps) {}
@@ -93,6 +94,42 @@ export class VariantGroupService {
     return (await this.canonical(r.host, await this.deps.store.get(r.host.creativeSlug))).brief.formats;
   }
 
+  /**
+   * Decision 982: merges the group's conversations into the host's, once (`CreativeStore.migrateConversation`), when no
+   * member has a turn running or queued; 'busy' otherwise (the readers keep merging in memory until a later call). Called on
+   * a group read (the conversation route): lazily, the first time the group is idle. Commits the logs (best effort).
+   */
+  async mergeChat(ref: CreativeRef): Promise<ChatMigration> {
+    // Decision 1167: a merged group with nothing to do takes no lock (the conversation route calls this on every read).
+    if (!(await this.deps.store.chatNeedsMerge(ref.creativeSlug))) return 'done';
+    const r = await this.resolve(ref);
+    if (r.orphan || !r.group) return 'none';
+    const { store, turns } = this.deps;
+    const host = r.host;
+    return turns.runLocked(host, async () => {
+      const taken: string[] = [];
+      const result = await store.migrateConversation(host.creativeSlug, async (g) => {
+        for (const m of g.members) {
+          const mref = memberRef(host, m.slug);
+          if (turns.turnActive(mref)) return false;
+          const side = await turns.side.read(host.projectDir, m.slug).catch(() => null);
+          if (side?.queued?.length) return false;
+        }
+        return true;
+      }, { copies: async (files) => { taken.push(...files); } });
+      if (result !== 'migrated') return result;
+      const g = (await store.get(host.creativeSlug)).variantGroup!;
+      // Decision 1168: only the files this merge wrote or changed: the host's log and creative.json, the copies it took.
+      const retired = g.members.filter((m) => m.slug !== host.creativeSlug).map((m) => join(store.dir(m.slug), 'conversation.jsonl'));
+      const message = t().jobs.groupChatMergedCommit({ title: (await store.get(host.creativeSlug)).title });
+      const files = [join(store.dir(host.creativeSlug), 'creative.json'), join(store.dir(host.creativeSlug), 'conversation.jsonl'), ...taken].filter((p) => existsSync(p));
+      // The sisters' logs are gone (renamed): committed as removals when git has them; a log git never had is left out.
+      await turns.commitFolder(host, [...files, ...retired], message).catch(() => turns.commitFolder(host, files, message)).catch(() => null);
+      turns.changed(host);
+      return result;
+    });
+  }
+
   /** Runs `fn` under the host's lock with the group as stored now (re-read under the lock). 409 outside a group. */
   private async withGroup<T>(ref: CreativeRef, fn: (host: CreativeRef, hostFile: CreativeFile, g: VariantGroup) => Promise<T>): Promise<T> {
     const e = t().errors;
@@ -127,7 +164,7 @@ export class VariantGroupService {
     };
   }
 
-  private memberOf(g: VariantGroup, letter: VariantLetter): VariantMember {
+  private memberOf(g: VariantGroup, letter: VariantId): VariantMember {
     const m = g.members.find((x) => x.letter === letter);
     if (!m) throw new CodedError(404, t().errors.variantUnknown({ letter: upper(letter) }), 'variant-unknown');
     return m;
@@ -136,8 +173,8 @@ export class VariantGroupService {
   /**
    * Creates the sisters for `ref`'s group (made now when `ref` has none: `ref` becomes member a, with `hostDirection`), one
    * per spec, in the next free letters. Each sister copies the group's brief (the host's links as its start), title and
-   * codebases; with `baseFrom` its v1 is that version's compositions (`seed`). No turn starts here. 409 `variants-full`
-   * beyond MAX_VARIANTS; nothing is left behind on a failure.
+   * codebases; with `baseFrom` its v1 is that version's compositions (`seed`). No turn starts here. There is no cap on the
+   * number of variants (decision 978); nothing is left behind on a failure.
    */
   async addVariants(ref: CreativeRef, request: VariantSpec[] | ((existing: VariantGroup | null) => { specs: VariantSpec[]; hostDirection?: string | null }), opts: { hostDirection?: string | null } = {}): Promise<VariantGroup> {
     const e = t().errors;
@@ -162,7 +199,6 @@ export class VariantGroupService {
         picks: {}, layout: 'variant',
       };
       if (specs.length === 0) throw new CodedError(400, e.invalidRequest, 'invalid-request');
-      if (g.members.length + specs.length > MAX_VARIANTS) throw new CodedError(409, e.variantsFull({ max: MAX_VARIANTS }), 'variants-full');
       for (const s of specs) {
         direction(s.direction);
         if (s.baseFrom && !g.members.some((m) => m.slug === s.baseFrom!.slug && m.status === 'active')) {
@@ -175,9 +211,12 @@ export class VariantGroupService {
       const hostPending = await turns.side.pendingBrief(host.projectDir, host.creativeSlug);
       const created: string[] = [];
       const committed: string[] = [];
+      // Decision 1162: never below the host's high-water mark, nor any id its chat or a former sister's folder names.
+      let floor = await this.idFloor(host, g, hostFile);
       try {
         for (const s of specs) {
-          const letter = await this.freeLetter(host, g);
+          const letter = await this.freeLetter(host, floor);
+          floor = variantIndex(letter) + 1;
           const sister: CreativeFile = {
             schemaVersion: 1, title: hostFile.title, brief: hostFile.brief, status: 'draft', error: null,
             createdAt: at, updatedAt: at, resumeFrom: null, linkedCodebases: hostFile.linkedCodebases ?? [], variantOf: host.creativeSlug,
@@ -199,6 +238,7 @@ export class VariantGroupService {
           }
         }
         await this.writeGroup(host, g, false);
+        await store.update(host.creativeSlug, { variantNext: floor });
       } catch (err) {
         for (const slug of created.reverse()) await store.removeSisterFolder(slug).catch(() => {});
         // Minor (Task 2): a seeded sister's folder is already in git; its removal is committed too, not left as a deletion.
@@ -206,7 +246,7 @@ export class VariantGroupService {
         for (const slug of committed) await turns.commitFolder(host, [store.dir(slug)], t().jobs.variantsRolledBackCommit({ title: hostFile.title })).catch(() => null);
         throw err;
       }
-      await turns.commitCreativeFiles(host, [host.creativeSlug], t().jobs.variantsAddedCommit({ title: hostFile.title, letters: created.map((s) => upper(s.slice(-1) as VariantLetter)).join(', ') }),
+      await turns.commitCreativeFiles(host, [host.creativeSlug], t().jobs.variantsAddedCommit({ title: hostFile.title, letters: created.map((s) => upper(letterOfSlug(s))).join(', ') }),
         created.map((s) => store.dir(s)));
       return g;
     });
@@ -220,7 +260,7 @@ export class VariantGroupService {
    * next agent turn builds on v1 with the "Direct edits by the user" section, as after an editor save. The caller holds the
    * sister's lock; no turn of the brand-new sister can run.
    */
-  private async seed(sister: CreativeRef, base: { slug: string; version: number }, baseLetter: VariantLetter): Promise<void> {
+  private async seed(sister: CreativeRef, base: { slug: string; version: number }, baseLetter: VariantId): Promise<void> {
     const { store, turns } = this.deps;
     const e = t().errors;
     const locale = currentLocale();
@@ -267,17 +307,43 @@ export class VariantGroupService {
   }
 
   /**
-   * The next letter for a new sister: the first one no member uses, skipping the folder of a former sister of this host
-   * (an orphan: decision 947, a sister archived on its own leaves the group and keeps its folder). Any other folder in the
-   * way is refused by `createSister` (409 `variant-folder-exists`), as before. 409 `variants-full` when none is left.
+   * Decision 1162: the lowest position a new id may take. Ids are never given twice: not below the group's highest member
+   * (`nextLetter`), the host's high-water mark `variantNext` (kept when sisters leave and when the group dissolves), any id the
+   * host's chat or its first copy from before a merge names (a host older than the mark), nor a real former sister (an orphan
+   * folder). Decision 1168: only files the agent cannot write count, and an id at the very end of the range is ignored, so
+   * nothing planted can block or skip ids.
    */
-  private async freeLetter(host: CreativeRef, g: VariantGroup): Promise<Exclude<VariantLetter, 'a'>> {
-    const used = new Set(g.members.map((m) => m.letter));
-    for (const l of VARIANT_LETTERS) {
-      if (l === 'a' || used.has(l)) continue;
-      if ((await creativeKind(host.projectDir, sisterSlug(host.creativeSlug, l))) !== 'orphan') return l;
+  private async idFloor(host: CreativeRef, g: VariantGroup, hostFile: CreativeFile): Promise<number> {
+    const { store } = this.deps;
+    let floor = Math.max(variantIndex(nextLetter(g)), hostFile.variantNext ?? 0);
+    const seen = (id: unknown) => {
+      const i = typeof id === 'string' ? variantIndex(id) : -1;
+      if (i >= 0 && variantIdAt(i + 1).length <= 3) floor = Math.max(floor, i + 1);
+    };
+    const hostDir = store.dir(host.creativeSlug);
+    for (const name of ['conversation.jsonl', PREMERGE_FILE]) {
+      for (const e of parseConversation(await readFile(join(hostDir, name), 'utf8').catch(() => ''))) seen(e.variant);
     }
-    throw new CodedError(409, t().errors.variantsFull({ max: MAX_VARIANTS }), 'variants-full');
+    for (const name of await readdir(dirname(hostDir)).catch(() => [] as string[])) {
+      if (SISTER_SLUG_RE.test(name) && hostOf(name) === host.creativeSlug && (await creativeKind(host.projectDir, name)) === 'orphan') seen(letterOfSlug(name));
+    }
+    return floor;
+  }
+
+  /**
+   * The id for a new sister: the first from `floor` (decision 1162), skipping the folder of a former sister of this host (an
+   * orphan: decision 947, a sister archived on its own leaves the group and keeps its folder). Any other folder in the way
+   * is refused by `createSister` (409 `variant-folder-exists`), as before.
+   */
+  private async freeLetter(host: CreativeRef, floor: number): Promise<VariantId> {
+    for (let i = floor; ; i++) {
+      const l = variantIdAt(i);
+      if (!VARIANT_ID_RE.test(l)) throw new CodedError(409, t().errors.invalidRequest, 'invalid-request');
+      const slug = sisterSlug(host.creativeSlug, l);
+      if (!existsSync(this.deps.store.dir(slug))) return l;
+      // Decision 1169: a folder in the way (a former sister, or anything named like one) keeps its id out of use.
+      console.warn(`Motion Studio: the folder creatives/${slug} is in the way of a new variant: its id is skipped.`);
+    }
   }
 
   /**
@@ -287,6 +353,8 @@ export class VariantGroupService {
    * passes the group as stored then. Returns the group written, or null when it was dropped.
    */
   async detachLocked(host: CreativeRef, g: VariantGroup, slug: string): Promise<VariantGroup | null> {
+    // Decision 1169: a merge of the chats left past its commit point is finished first (its record goes with the group).
+    await this.deps.store.settleChat(host.creativeSlug);
     const m = g.members.find((x) => x.slug === slug && x.letter !== 'a');
     if (!m) return g;
     if (m.status === 'active' && activeMembers(g).length === 1) throw new CodedError(409, t().errors.variantLastActive({ letter: upper(m.letter) }), 'variant-last-active');
@@ -306,7 +374,7 @@ export class VariantGroupService {
    * 409 `variant-running` while one of its turns is queued or running, 409 `variant-last-active`. Discarding a discarded
    * member is a no-op.
    */
-  discard(ref: CreativeRef, letter: VariantLetter): Promise<VariantGroup> {
+  discard(ref: CreativeRef, letter: VariantId): Promise<VariantGroup> {
     return this.withGroup(ref, async (host, _f, g) => {
       const e = t().errors;
       const m = this.memberOf(g, letter);
@@ -334,7 +402,7 @@ export class VariantGroupService {
    * Restores member `letter` (spec §5): active again, without its old ★s (they were cleared by the discard). It catches up
    * with the group's brief at once (or at its next turn when it is working), since a discarded variant is not propagated to.
    */
-  restore(ref: CreativeRef, letter: VariantLetter): Promise<VariantGroup> {
+  restore(ref: CreativeRef, letter: VariantId): Promise<VariantGroup> {
     return this.withGroup(ref, async (host, hostFile, g) => {
       const m = this.memberOf(g, letter);
       if (m.status === 'active') return g;
@@ -382,7 +450,7 @@ export class VariantGroupService {
   }
 
   /** "Usa questa variante per tutti i formati" (spec §5): ★ = that variant's default-rule version of each format it has. */
-  useVariantForAll(ref: CreativeRef, letter: VariantLetter): Promise<VariantGroup> {
+  useVariantForAll(ref: CreativeRef, letter: VariantId): Promise<VariantGroup> {
     return this.withGroup(ref, async (host, hostFile, g) => {
       const m = this.memberOf(g, letter);
       if (m.status !== 'active') throw new CodedError(409, t().errors.variantDiscarded({ letter: upper(letter) }), 'variant-discarded');
@@ -404,7 +472,7 @@ export class VariantGroupService {
   }
 
   /** A variant's direction (spec §3): it applies from that variant's next turn. Empty clears it (the agent may propose one). */
-  setDirection(ref: CreativeRef, letter: VariantLetter, direction: string, source: 'user' | 'agent'): Promise<VariantGroup> {
+  setDirection(ref: CreativeRef, letter: VariantId, direction: string, source: 'user' | 'agent'): Promise<VariantGroup> {
     return this.withGroup(ref, async (host, _f, g) => {
       this.memberOf(g, letter);
       const d = direction.trim();

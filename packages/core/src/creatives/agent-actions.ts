@@ -1,4 +1,4 @@
-import { INSTANCE_ID_RE, SUPPORTED_LOCALES, VARIANT_LETTERS, briefSchema, formatDisplayName, issuesText, presetOf, type Brief, type BriefServices, type FormatPreset, type VariantLetter } from '@motion-studio/shared';
+import { INSTANCE_ID_RE, SUPPORTED_LOCALES, briefSchema, variantIdSchema, formatDisplayName, issuesText, presetOf, type Brief, type BriefServices, type FormatPreset, type VariantId } from '@motion-studio/shared';
 import { z } from 'zod';
 import type { AppScope, BridgeContext } from '../bridge/bridge.ts';
 import type { BridgeHandler } from '../bridge/bridge-routes.ts';
@@ -27,9 +27,9 @@ import { pendingByMember, planGroupExport } from './variant-export.ts';
  *   group, the group's edit); a new duration applies to the turn's own checks at once. Actions that need the turn to be
  *   over (a duplicate, the render or ★ of "current", the export renders, the follow-up turn of new formats, a translation)
  *   are kept in memory per job and run when the turn settles, in a fixed order; dropped when it saved no version.
- * - **Bounds.** 30 calls per turn; new variants: the group's own cap (MAX_VARIANTS members, discarded ones included, never
- *   freed), so at most 4 variant turns ever per group; one follow-up turn per turn, never from a follow-up turn; one
- *   translation job per turn.
+ * - **Bounds.** 30 calls per turn; new variants: no cap on the group (decision 978), but a variant's first generation never
+ *   adds one and a request sent to several variants adds them from its first target only (decision 1153), so new variants
+ *   never start a chain of turns; one follow-up turn per turn, never from a follow-up turn; one translation job per turn.
  * - **Chat.** Every action writes a system line with `origin: 'agent'` through the turn's ordered writer.
  */
 
@@ -60,7 +60,7 @@ const upper = (l: string) => l.toUpperCase();
 const localeName = (tag: string) => SUPPORTED_LOCALES.find((x) => x.tag === tag)?.name ?? tag;
 const oneLine = (s: string) => s.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').trim();
 
-const letter = z.enum(VARIANT_LETTERS as unknown as [VariantLetter, ...VariantLetter[]]);
+const letter = variantIdSchema;
 const version = z.union([z.number().int().min(1).max(999_999), z.literal('current')]);
 const formatId = z.string().min(1).max(200);
 const label = z.string().trim().min(1).max(60);
@@ -254,8 +254,12 @@ export class AgentActionService {
     const svc = this.variants(s);
     const r = await svc.resolve(s.ref);
     if (r.orphan) throw new CodedError(409, t().errors.variantOrphan, 'variant-orphan');
-    // The canvas's "+ Variante": a creative outside a group becomes A of a group of two (A's direction left as it is). The
-    // group's cap (409 `variants-full`) bounds every variant turn these calls can start: discarded members still count.
+    // Decision 1153: refused in a group's first generation and in the other targets of a request sent to several variants.
+    const refusal = this.deps.turns.addRefusal(s.jobId);
+    if (refusal) {
+      throw new CodedError(409, 'lead' in refusal ? t().errors.variantAddFanout({ letter: upper(refusal.lead) }) : t().errors.variantAddFirstGeneration, 'variant-add-refused');
+    }
+    // The canvas's "+ Variante": a creative outside a group becomes A of a group of two (A's direction left as it is).
     const g = await svc.addVariants(r.host, (existing) => (existing === null ? { specs: [{ direction }], hostDirection: null } : { specs: [{ direction }] }));
     const added = g.members.at(-1)!;
     await this.note(s, t().agentActions.variantAdded({ letter: upper(added.letter), direction }));
@@ -263,7 +267,7 @@ export class AgentActionService {
     return { ok: true, variant: added.letter, started: Boolean(run.jobs[added.letter]), ...(run.failed[added.letter] ? { error: run.failed[added.letter] } : {}) };
   }
 
-  private async discardOrRestore(s: Scope, l: VariantLetter, action: 'discard' | 'restore') {
+  private async discardOrRestore(s: Scope, l: VariantId, action: 'discard' | 'restore') {
     const svc = this.variants(s);
     if (action === 'discard') await svc.discard(s.ref, l);
     else await svc.restore(s.ref, l);

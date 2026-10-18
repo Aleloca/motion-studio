@@ -5,7 +5,7 @@
  */
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { DEFAULT_FORMATS, type VariantGroup, type VariantLetter, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, type VariantGroup, type VariantId, type VersionEntry } from '@motion-studio/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
 import type { Shell } from '../src/shell/ShellContext.tsx';
@@ -20,8 +20,8 @@ const versionsBy: Record<string, VersionEntry[]> = {
   [`${HOST}~b`]: [version(1, 'x'), version(2, 'x')],
   [`${HOST}~c`]: [version(1, 'x'), version(2, 'x')],
 };
-type PlanItem = { format: string; slug: string; letter: VariantLetter; version: number; source: 'pick' | 'default'; file: string; width: number; height: number; state: 'ready' };
-const item = (format: string, letter: VariantLetter, n: number, source: 'pick' | 'default'): PlanItem =>
+type PlanItem = { format: string; slug: string; letter: VariantId; version: number; source: 'pick' | 'default'; file: string; width: number; height: number; state: 'ready' };
+const item = (format: string, letter: VariantId, n: number, source: 'pick' | 'default'): PlanItem =>
   ({ format, slug: letter === 'a' ? HOST : `${HOST}~${letter}`, letter, version: n, source, file: `${format}.png`, width: 1080, height: 1080, state: 'ready' });
 let plan: PlanItem[] = [];
 const build = (slug: string) => detailFor(slug, versionsBy[slug] ?? [], group);

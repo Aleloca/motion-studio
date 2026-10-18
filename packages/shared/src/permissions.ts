@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { variantIdSchema } from './variants.ts';
 
 export const PROVIDER_IDS = ['openai', 'elevenlabs', 'pexels', 'unsplash'] as const;
 export type ProviderId = typeof PROVIDER_IDS[number];
@@ -16,7 +17,8 @@ export type PermissionsFile = z.infer<typeof permissionsFileSchema>;
  */
 export const paidBatchSchema = z.object({
   provider: z.enum(PROVIDER_IDS),
-  calls: z.array(z.object({ label: z.string().max(300), chars: z.number().int().min(0) })).min(1).max(200),
+  // No upper bound tied to the number of variants (decision 978): a batch has one call line per variant and service.
+  calls: z.array(z.object({ label: z.string().max(300), chars: z.number().int().min(0) })).min(1),
   estimate: z.string().max(100).optional(),
   /**
    * Phase 15 (spec §3, "Servizi a pagamento"): the paid services a variant fan-out may use, one item per variant and service,
@@ -25,21 +27,21 @@ export const paidBatchSchema = z.object({
    * card that does not know `items` still renders. Absent: a phase 12 batch.
    */
   items: z.array(z.object({
-    variant: z.enum(['a', 'b', 'c', 'd', 'e']),
+    variant: variantIdSchema,
     provider: z.enum(PROVIDER_IDS),
     capability: z.enum(['images', 'voice', 'music', 'sfx']),
     chars: z.number().int().min(0).optional(),
     seconds: z.number().min(0).optional(),
     estimate: z.string().max(100).optional(),
-  })).min(1).max(40).optional(),
+  })).min(1).optional(),
   /**
    * Phase 15: the batch's total, an estimate of the calls (no price is known): variants, items, the calls per provider (for
    * an intro that names every provider of a mixed batch), and the summed size and estimate when known.
    */
   total: z.object({
-    variants: z.number().int().min(1).max(5),
-    calls: z.number().int().min(1).max(40),
-    providers: z.array(z.object({ provider: z.enum(PROVIDER_IDS), calls: z.number().int().min(1).max(40) })).min(1).max(4).optional(),
+    variants: z.number().int().min(1),
+    calls: z.number().int().min(1),
+    providers: z.array(z.object({ provider: z.enum(PROVIDER_IDS), calls: z.number().int().min(1) })).min(1).max(4).optional(),
     chars: z.number().int().min(0).optional(),
     seconds: z.number().min(0).optional(),
     estimate: z.string().max(100).optional(),

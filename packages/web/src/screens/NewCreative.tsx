@@ -19,7 +19,7 @@ import { StorePackWizard } from './new-creative/StorePackWizard.tsx';
 import { packParts } from './new-creative/storePackModel.ts';
 import { VariantsField } from './variants/VariantsField.tsx';
 import { defaultVariantCount, directionsFor } from './variants/variantModel.ts';
-import { VARIANT_LETTERS } from '@motion-studio/shared';
+import { variantIdAt } from '@motion-studio/shared';
 import './new-creative/storepack.css';
 
 
@@ -327,7 +327,7 @@ export function NewCreative({ slug }: { slug: string }) {
         try {
           if (coreGroup) {
             // The core made the group; the typed directions are set before the first generation.
-            for (const [i, d] of dirs.entries()) if (d !== null) await api.setVariantDirection(slug, created.slug, VARIANT_LETTERS[i]!, d);
+            for (const [i, d] of dirs.entries()) if (d !== null) await api.setVariantDirection(slug, created.slug, variantIdAt(i), d);
           } else {
             await api.addVariants(slug, created.slug, { count: variantCount, directions: dirs });
           }

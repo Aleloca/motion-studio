@@ -6,7 +6,7 @@ import { usageSummarySchema } from './usage.ts';
 import type { AgentEvent } from './events.ts';
 
 /** `creative:<slug>/v<n>`: the version of a creative a manual brand item comes from (a variant sister's slug ends in `~b`..`~e`, phase 15). */
-export const CREATIVE_SOURCE_RE = /^creative:[a-z0-9][a-z0-9-]{0,79}(?:~[b-e])?\/v[1-9]\d{0,5}$/;
+export const CREATIVE_SOURCE_RE = /^creative:[a-z0-9][a-z0-9-]{0,79}(?:~(?!a\/)[a-z]{1,3})?\/v[1-9]\d{0,5}$/;
 const id = z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/, 'issue.id');
 
 export const sourceRefSchema = z.object({ kind: z.enum(['manual', 'website', 'image', 'codebase']), ref: z.string().nullable() })

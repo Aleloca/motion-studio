@@ -1,12 +1,14 @@
-import { lstatSync } from 'node:fs';
-import { appendFile, lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { existsSync, lstatSync } from 'node:fs';
+import { appendFile, lstat, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import {
-  activeMembers, creativeFileSchema, hostOf, isSessionId, sisterSlug, turnEndOf, versionsFileSchema,
-  type Brief, type ConversationEntry, type CreativeFile, type CreativeListItem, type VariantGroup, type VariantLetter, type VariantListInfo, type VersionEntry,
+  activeMembers, creativeFileSchema, entriesOfVariant, hostOf, isSessionId, letterOfSlug, sisterSlug, turnEndOf, versionsFileSchema,
+  type Brief, type ChatMergeCopy, type ConversationEntry, type CreativeFile, type CreativeListItem, type VariantGroup, type VariantId, type VariantListInfo, type VersionEntry,
   issuesText,
 } from '@motion-studio/shared';
-import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
+import { JsonFileError, readJsonFile, writeJsonFileAtomic, writeTextFileAtomic } from '../json-file.ts';
+import { MERGED_FILE, mergeConversations, parseConversation, PREMERGE_FILE, serializeConversation, stampEntries } from './group-conversation.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
 import { CodedError, slugify, WorkspaceError } from '../workspace-store.ts';
 import { currentLocale, t } from '../i18n.ts';
@@ -15,8 +17,8 @@ import { readRegularFile, readRegularFileSync } from '../safe-read.ts';
 
 /** A creative's folder name as the user's creation makes it (never a `~`: reserved for variant sisters, phase 15). */
 export const CREATIVE_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}$/;
-/** The SHAPE of a variant sister's folder, `<host>~b`..`~e`: whether it is a real sister is `creativeKind`'s question. */
-export const SISTER_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}~[b-e]$/;
+/** The SHAPE of a variant sister's folder, `<host>~b`, `~z`, `~aa`… (decision 978): whether it is a real sister is `creativeKind`'s question. */
+export const SISTER_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}~(?!a$)[a-z]{1,3}$/;
 /** Whether `name` has the shape of a creative folder (a plain one or a sister's). Shape only: see `creativeKind`. */
 export const isCreativeFolderShape = (name: string): boolean => CREATIVE_SLUG_RE.test(name) || SISTER_SLUG_RE.test(name);
 /** Most bytes of a creative.json read to tell a real sister (the host's file). */
@@ -40,7 +42,7 @@ export function memberPresent(hostSlug: string, sister: CreativeFile | null | un
   return sister?.variantOf === hostSlug;
 }
 
-export function sisterIn(hostSlug: string, host: CreativeFile | null, slug: string): { letter: VariantLetter } | null {
+export function sisterIn(hostSlug: string, host: CreativeFile | null, slug: string): { letter: VariantId } | null {
   const g = host?.variantGroup;
   if (!g || !SISTER_SLUG_RE.test(slug) || hostOf(slug) !== hostSlug || !groupTiedTo(hostSlug, g)) return null;
   const m = g.members.find((x) => x.slug === slug && x.letter !== 'a');
@@ -115,8 +117,24 @@ const pad2 = (n: number) => String(n).padStart(2, '0');
  * render in an earlier one, each through its own `CreativeStore`, and neither may lose the other's write.
  */
 const versionsLock = new KeyedMutex();
-/** conversation.jsonl appends, by file, for the whole process (same reason). */
+/**
+ * conversation.jsonl appends and reads, for the whole process (same reason), by the HOST's log: a member of a variant group
+ * and its host take the same lock, so a write never lands in a log the group's merge has just retired (decision 982).
+ */
 const conversationLock = new KeyedMutex();
+const sha256Of = (data: string | Buffer): string => createHash('sha256').update(data).digest('hex');
+/** A creative.json read for the conversation routing, kept while the file is the same one (an atomic write is a new inode). */
+const creativeCache = new Map<string, { ino: number; size: number; mtimeMs: number; ctimeMs: number; file: CreativeFile | null }>();
+
+/** Where a group member's conversation lives (`CreativeStore.chatPlace`). */
+interface ChatPlace { host: string; letter: VariantId; group: VariantGroup; single: boolean }
+export type ChatMigration = 'migrated' | 'busy' | 'done' | 'none';
+/** Test hooks of `migrateConversation`: a throw from one leaves the disk as a crash at that point would. */
+export interface ChatMigrationHooks {
+  afterMerged?(): Promise<void>; afterFlag?(): Promise<void>; afterAdopt?(): Promise<void>;
+  /** The copies this merge took (absolute paths): the only copy files its caller commits (decision 1168). */
+  copies?(files: string[]): Promise<void>;
+}
 /** yyyy-mm-dd in the user's local time zone (a creative made at 23:30 belongs to that day). */
 const localDay = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 
@@ -238,7 +256,7 @@ export class CreativeStore {
    * creative (an empty work/, versions and conversation). The folder must not exist (409). Only the variant service calls it,
    * under the host's lock, BEFORE the host's group lists the sister (until then it is no creative: `isRealSister`).
    */
-  async createSister(hostSlug: string, letter: Exclude<VariantLetter, 'a'>, creative: CreativeFile): Promise<string> {
+  async createSister(hostSlug: string, letter: Exclude<VariantId, 'a'>, creative: CreativeFile): Promise<string> {
     const slug = sisterSlug(hostSlug, letter);
     this.dir(slug);
     const parsed = creativeFileSchema.safeParse(creative);
@@ -286,7 +304,7 @@ export class CreativeStore {
     }
   }
 
-  update(slug: string, patch: Partial<Pick<CreativeFile, 'title' | 'brief' | 'status' | 'error' | 'resumeFrom' | 'linkedCodebases' | 'exportPicks' | 'freedInstances' | 'queued' | 'stoppedSession' | 'variantGroup' | 'variantOf' | 'archivedAt'>>): Promise<CreativeFile> {
+  update(slug: string, patch: Partial<Pick<CreativeFile, 'title' | 'brief' | 'status' | 'error' | 'resumeFrom' | 'linkedCodebases' | 'exportPicks' | 'freedInstances' | 'queued' | 'stoppedSession' | 'variantGroup' | 'variantOf' | 'archivedAt' | 'variantNext'>>): Promise<CreativeFile> {
     return this.lock.run(`c:${slug}`, async () => {
       const current = await this.get(slug);
       const nowIso = new Date().toISOString();
@@ -392,34 +410,261 @@ export class CreativeStore {
     });
   }
 
+  /**
+   * Appends `entry` to `slug`'s conversation. Decision 982: a member of a variant group writes into the group's one
+   * conversation, stamped with its `variant` (unless the entry names one): the host's log once the group is migrated
+   * (`variantGroup.chat: 'single'`), its own log until then (merged on read). Every caller keeps passing its own slug.
+   */
   appendConversation(slug: string, entry: ConversationEntry): Promise<void> {
     // Process-wide per file (M7): a render job and a turn append through their own stores.
-    return conversationLock.run(this.file(slug, 'conversation.jsonl'), async () => {
-      const file = this.file(slug, 'conversation.jsonl');
+    return conversationLock.run(this.chatKey(slug), async () => {
+      const place = await this.finishedPlace(slug);
+      const target = place?.single ? place.host : slug;
+      const file = this.file(target, 'conversation.jsonl');
+      const stamped = place && entry.variant === undefined ? { ...entry, variant: place.letter } : entry;
       // Creating the log (an old or hand-made creative, or one git removed) adds an entry to the creative folder: note it
       // so the post-run tripwire does not read it as a move (FP3).
       const existed = await lstat(file).then(() => true, () => false);
-      await appendFile(file, `${JSON.stringify(entry)}\n`);
-      if (!existed) await noteCoreChange(this.dir(slug));
+      await appendFile(file, `${JSON.stringify(stamped)}\n`);
+      if (!existed) await noteCoreChange(this.dir(target));
     });
   }
 
-  async readConversation(slug: string): Promise<ConversationEntry[]> {
-    const raw = await readFile(this.file(slug, 'conversation.jsonl'), 'utf8').catch(() => '');
-    const out: ConversationEntry[] = [];
-    for (const line of raw.split('\n')) {
-      if (!line.trim()) continue;
-      try {
-        const e = JSON.parse(line) as ConversationEntry;
-        if (e && typeof e === 'object' && typeof e.type === 'string') out.push(e);
-      } catch { /* a hand-edited or truncated line: skip it */ }
+  /**
+   * `slug`'s conversation. For a member of a variant group (decision 980): the group's one conversation, the same from any
+   * member (the host's log once migrated, else the members' logs merged in time order, each entry stamped). `own`: only
+   * this member's entries (`entriesOfVariant`): the readers that reason about one variant's turns. A sister that left its
+   * group (an orphan) reads its log from before the merge first, when there is one; outside a group, `own` drops the entries
+   * of other variants (a host whose group is gone keeps the merged chat).
+   */
+  async readConversation(slug: string, opts: { own?: boolean } = {}): Promise<ConversationEntry[]> {
+    // Decision 1167: a merged group with no merge in progress is read without the group's lock (an append adds whole lines; a
+    // line still being written is skipped like a truncated one, and comes with the next read).
+    const quick = await this.chatPlace(slug);
+    if (quick?.single && !quick.group.chatMerge) {
+      const all = await this.readLog(quick.host, 'conversation.jsonl');
+      return opts.own ? entriesOfVariant(all, quick.letter) : all;
+    }
+    return conversationLock.run(this.chatKey(slug), async () => {
+      const place = await this.finishedPlace(slug);
+      if (!place) {
+        const all = await this.orphanLog(slug);
+        // A host whose group is gone keeps the merged chat: its own readers skip the other variants' entries.
+        const self = letterOfSlug(slug);
+        return opts.own ? all.filter((e) => e.variant === undefined || e.variant === self) : all;
+      }
+      if (place.single) {
+        const all = await this.readLog(place.host, 'conversation.jsonl');
+        return opts.own ? entriesOfVariant(all, place.letter) : all;
+      }
+      if (opts.own) return stampEntries(await this.readLog(slug, 'conversation.jsonl'), place.letter);
+      const lists = [];
+      for (const m of place.group.members) lists.push({ letter: m.letter, entries: await this.readLog(m.slug, 'conversation.jsonl'), own: true });
+      return mergeConversations(lists);
+    });
+  }
+
+  /** Finishes a merge of `slug`'s group past its commit point, if any (decision 1169: before the group dissolves). */
+  async settleChat(slug: string): Promise<void> {
+    await conversationLock.run(this.chatKey(slug), () => this.finishedPlace(slug));
+  }
+
+  /**
+   * Whether `slug`'s group has merge work to do (decision 1167, read without locks: the locked call decides again): an
+   * unmigrated group, a merge to finish, or a member's own log found again after the merge (decision 1165).
+   */
+  async chatNeedsMerge(slug: string): Promise<boolean> {
+    const place = await this.chatPlace(slug);
+    if (!place) return false;
+    if (!place.single || place.group.chatMerge) return true;
+    return (await this.strayLogs(place)).length > 0;
+  }
+
+  /**
+   * Decision 982: merges the conversations of `hostSlug`'s group into the host's log. Only when `idle(group)` says no member
+   * has a turn running or queued ('busy' otherwise: nothing changes, readers keep merging in memory). Steps, each safe to cut
+   * by a crash: (1) a copy of every log taken in (never over an earlier copy: decision 1164); (2) the merged log written to
+   * `conversation.merged.jsonl`; (3) the commit point: `variantGroup.chat: 'single'` and `chatMerge` (the merged log's hash and
+   * size, the copies, the logs to retire) in the host's creative.json; (4) `finishMerge`. Before (3) a crash leaves the group
+   * as it was with every log whole; after it, the next read or write of the group finishes (4) first. Once merged, a member's
+   * own log found again later (its folder was missing at the merge, decision 1165) is merged in the same way. Appends wait on
+   * the same lock, so none lands in a retired log. The caller holds the host's creative lock. 'none': not a group's host;
+   * 'done': nothing (more) to merge.
+   */
+  migrateConversation(hostSlug: string, idle: (group: VariantGroup) => Promise<boolean>, hooks: ChatMigrationHooks = {}): Promise<ChatMigration> {
+    return conversationLock.run(this.chatKey(hostSlug), async () => {
+      const place = await this.finishedPlace(hostSlug, hooks);
+      if (!place || place.host !== hostSlug) return 'none';
+      const sources = place.single ? [hostSlug, ...(await this.strayLogs(place))] : place.group.members.map((m) => m.slug);
+      if (place.single && sources.length === 1) return 'done';
+      if (!(await idle(place.group))) return 'busy';
+      const lists: Array<{ letter: VariantId; entries: ConversationEntry[]; own: boolean }> = [];
+      const copies: ChatMergeCopy[] = [];
+      for (const slug of sources) {
+        const raw = await this.readRaw(slug, 'conversation.jsonl');
+        if (raw === null) continue;
+        const letter = place.group.members.find((m) => m.slug === slug)!.letter;
+        // Every entry of a member's own log is its own (decision 1169); only an already merged host log keeps its stamps.
+        const own = !(place.single && slug === hostSlug);
+        copies.push({ slug, file: await this.keepCopy(slug, raw), letter, own });
+        lists.push({ letter, entries: parseConversation(raw), own });
+      }
+      await hooks.copies?.(copies.map((c) => this.file(c.slug, c.file)));
+      const text = serializeConversation(mergeConversations(lists));
+      await writeTextFileAtomic(this.file(hostSlug, MERGED_FILE), text);
+      await hooks.afterMerged?.();
+      const chatMerge = { sha256: sha256Of(text), size: Buffer.byteLength(text), copies, retire: copies.map((c) => c.slug).filter((x) => x !== hostSlug) };
+      await this.writeChatState(hostSlug, (g) => ({ ...g, chat: 'single', chatMerge }));
+      await hooks.afterFlag?.();
+      await this.finishMerge({ ...place, single: true, group: { ...place.group, chat: 'single', chatMerge } }, hooks);
+      return 'migrated';
+    });
+  }
+
+  /** The group conversation lock of `slug`: its host's log (see `conversationLock`). */
+  private chatKey(slug: string): string { return this.file(hostOf(slug), 'conversation.jsonl'); }
+
+  /** Where `slug`'s conversation lives: null outside a group (and for a sister that is not a member of its host's group). */
+  private async chatPlace(slug: string): Promise<ChatPlace | null> {
+    const host = hostOf(slug);
+    const hostFile = await this.cachedCreative(host);
+    const g = hostFile?.variantGroup;
+    if (!g || !groupTiedTo(host, g)) return null;
+    const m = g.members.find((x) => x.slug === slug);
+    return m ? { host, letter: m.letter, group: g, single: g.chat === 'single' } : null;
+  }
+
+  /** `chatPlace` after finishing a merge past its commit point (the caller holds the group's lock). */
+  private async finishedPlace(slug: string, hooks: ChatMigrationHooks = {}): Promise<ChatPlace | null> {
+    const place = await this.chatPlace(slug);
+    if (!place?.group.chatMerge) return place;
+    await this.finishMerge(place, hooks);
+    return this.chatPlace(slug);
+  }
+
+  private async cachedCreative(slug: string): Promise<CreativeFile | null> {
+    const file = this.file(slug, 'creative.json');
+    const st = await lstat(file).catch(() => null);
+    if (!st?.isFile()) { creativeCache.delete(file); return null; }
+    const hit = creativeCache.get(file);
+    if (hit && hit.ino === st.ino && hit.size === st.size && hit.mtimeMs === st.mtimeMs && hit.ctimeMs === st.ctimeMs) return hit.file;
+    const parsed = await readJsonFile(file, creativeFileSchema).catch(() => null);
+    if (creativeCache.size > 500) creativeCache.clear();
+    creativeCache.set(file, { ino: st.ino, size: st.size, mtimeMs: st.mtimeMs, ctimeMs: st.ctimeMs, file: parsed });
+    return parsed;
+  }
+
+  /**
+   * Step 4 of `migrateConversation`, again after a crash, driven only by `chatMerge` (decision 1163): a
+   * `conversation.merged.jsonl` is adopted only when its hash and size are the recorded ones; one that does not match (it was
+   * written by someone else) is never renamed, and the merge is rebuilt from the recorded copies instead. A host log that
+   * already starts with the merged content was adopted before the cut. Then every log to retire goes (its copy holds the
+   * same content; a log that differs is kept under a new copy name) and `chatMerge` is cleared. Without `chatMerge` nothing
+   * here reads or moves a file.
+   */
+  private async finishMerge(place: ChatPlace, hooks: ChatMigrationHooks = {}): Promise<void> {
+    const cm = place.group.chatMerge;
+    if (!cm) return;
+    const hostLog = this.file(place.host, 'conversation.jsonl');
+    const merged = this.file(place.host, MERGED_FILE);
+    const matches = (b: Buffer | null) => b !== null && b.length >= cm.size && sha256Of(b.subarray(0, cm.size)) === cm.sha256;
+    const mergedBuf = await readFile(merged).catch(() => null);
+    const adopt = mergedBuf !== null && mergedBuf.length === cm.size && matches(mergedBuf);
+    if (mergedBuf !== null && !adopt) {
+      // Not the merge's own (decision 1169): said once and removed, never renamed onto the chat.
+      console.warn(`Motion Studio: ${place.host}/${MERGED_FILE} was not the merge's own: it was removed.`);
+      await rm(merged, { force: true });
+      await noteCoreChange(this.dir(place.host));
+    }
+    if (adopt) {
+      await rename(merged, hostLog);
+      await noteCoreChange(this.dir(place.host));
+    } else if (!matches(await readFile(hostLog).catch(() => null))) {
+      // Not adopted yet and no trustworthy merged log: the same merge again, from the copies taken before the commit point.
+      // As recorded (decision 1169): each copy with the letter it was merged as, whoever is a member now.
+      const lists: Array<{ letter: VariantId; entries: ConversationEntry[]; own: boolean }> = [];
+      for (const c of cm.copies) lists.push({ letter: c.letter, entries: parseConversation((await this.readRaw(c.slug, c.file)) ?? ''), own: c.own });
+      const text = serializeConversation(mergeConversations(lists));
+      if (sha256Of(text) !== cm.sha256 || Buffer.byteLength(text) !== cm.size) {
+        console.warn(`Motion Studio: the merge of the chats of ${place.host} cannot be finished: its copies changed. Nothing was moved.`);
+        return;
+      }
+      await writeTextFileAtomic(hostLog, text);
+    }
+    await hooks.afterAdopt?.();
+    for (const slug of cm.retire) {
+      // A sister that left the group meanwhile keeps its log (decision 1169: it reads it as an orphan).
+      if (!place.group.members.some((m) => m.slug === slug)) continue;
+      const own = this.file(slug, 'conversation.jsonl');
+      const content = await readFile(own).catch(() => null);
+      if (content === null) continue;
+      const recorded = cm.copies.find((c) => c.slug === slug);
+      const copy = recorded ? await readFile(this.file(slug, recorded.file)).catch(() => null) : null;
+      if (copy !== null && copy.equals(content)) await rm(own, { force: true });
+      else await rename(own, this.file(slug, await this.freeCopyName(slug)));
+      await noteCoreChange(this.dir(slug));
+    }
+    await this.writeChatState(place.host, (g) => { const { chatMerge: _done, ...rest } = g; return rest; });
+  }
+
+  /** Member logs (not the host's) with content in a merged group: logs found again after the merge (decision 1165). */
+  private async strayLogs(place: ChatPlace): Promise<string[]> {
+    const out: string[] = [];
+    for (const m of place.group.members) {
+      if (m.slug === place.host) continue;
+      const st = await lstat(this.file(m.slug, 'conversation.jsonl')).catch(() => null);
+      if (st?.isFile() && st.size > 0) out.push(m.slug);
     }
     return out;
   }
 
+  /** Writes a copy of `slug`'s log under a name no earlier copy has (decision 1164); returns the name. */
+  private async keepCopy(slug: string, raw: string): Promise<string> {
+    const name = await this.freeCopyName(slug);
+    await writeTextFileAtomic(this.file(slug, name), raw);
+    return name;
+  }
+
+  private async freeCopyName(slug: string): Promise<string> {
+    if (!existsSync(this.file(slug, PREMERGE_FILE))) return PREMERGE_FILE;
+    for (let i = 0; ; i++) {
+      const name = `conversation.premerge-${Date.now().toString(36)}${i ? i.toString(36) : ''}.jsonl`;
+      if (!existsSync(this.file(slug, name))) return name;
+    }
+  }
+
+  /**
+   * An orphan sister's chat: its first copy from before a merge (`conversation.premerge.jsonl`, a core file the agent cannot
+   * write; later copies have other names and are not read), unless its log already starts with it, then its own log.
+   */
+  private async orphanLog(slug: string): Promise<ConversationEntry[]> {
+    const own = (await this.readRaw(slug, 'conversation.jsonl')) ?? '';
+    const before = SISTER_SLUG_RE.test(slug) ? (await this.readRaw(slug, PREMERGE_FILE)) ?? '' : '';
+    return parseConversation(before && own.startsWith(before) ? own : before + own);
+  }
+
+  /** Writes the host's group merge state (`chat`, `chatMerge`). Not a user change: `updatedAt` stays. */
+  private writeChatState(slug: string, fn: (g: VariantGroup) => VariantGroup): Promise<void> {
+    return this.lock.run(`c:${slug}`, async () => {
+      const current = await this.get(slug);
+      if (!current.variantGroup) throw new WorkspaceError(409, t().jobs.conflict);
+      const parsed = creativeFileSchema.parse({ ...current, variantGroup: fn(current.variantGroup) });
+      await writeJsonFileAtomic(this.file(slug, 'creative.json'), parsed);
+    });
+  }
+
+  private async readRaw(slug: string, name: string): Promise<string | null> {
+    return readFile(this.file(slug, name), 'utf8').catch(() => null);
+  }
+
+  private async readLog(slug: string, name: string): Promise<ConversationEntry[]> {
+    return parseConversation((await this.readRaw(slug, name)) ?? '');
+  }
+
   /** The session the agent reported in the turn after the last version (the latest one), with its job; null: none. */
   async lastTurnSession(slug: string): Promise<{ sessionId: string; at: string; jobId: string } | null> {
-    const entries = await this.readConversation(slug);
+    // A variant's own turns only (decision 982): another variant's session is never this one's.
+    const entries = await this.readConversation(slug, { own: true });
     // Only the cut turn's job (the last agent job after the last version): never an earlier, failed turn's session.
     let cut: string | null = null;
     for (let i = entries.length - 1; i >= 0; i--) {

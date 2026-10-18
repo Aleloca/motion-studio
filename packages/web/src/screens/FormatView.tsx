@@ -34,6 +34,7 @@ import { setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } 
 import { go, ShellContext } from '../shell/ShellContext.tsx';
 import { Button, ChannelMark, Empty, Icon, Pill, Segmented, Select, Spinner, Toggle, cx, toast } from '../ui/index.ts';
 import { useCreative } from '../useCreative.ts';
+import { chatTick, useGroupChat } from './variants/useGroupChat.ts';
 import { boardLabel, PinBubble, SafeZoneBands, type Draft } from './CanvasBoard.tsx';
 import { instanceName, presetFor } from '../instances.ts';
 import { outputUrl, pointIn, ratioText } from './canvasModel.ts';
@@ -100,7 +101,9 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   const shell = useContext(ShellContext);
   const root = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLDivElement>(null);
-  const { detail, conversation, error, reload } = useCreative(slug, creative, live.creativeTicks[`${slug}/${creative}`] ?? 0);
+  // Decision 980: a group's one chat is read again when any of its members changes.
+  const { detail, conversation, error, reload } = useCreative(slug, creative, chatTick(live.creativeTicks, slug, creative));
+  const groupChat = useGroupChat(live, slug, creative, detail);
 
   // The bar belongs to this page only while it is the route's page (a leaving page stays mounted ~200 ms).
   const ownKey = routeKey({ name: 'format', slug, creative, format });
@@ -146,7 +149,8 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   useNewVersionNotice(Boolean(detail), latest?.n ?? null, active, versionButton);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const myApprovals = useMemo(() => Object.values(live.approvals).filter((a) => a.projectSlug === slug && a.creativeSlug === creative), [live.approvals, slug, creative]);
+  // Decision 980: the group's one chat shows every variant's approvals.
+  const myApprovals = useMemo(() => Object.values(live.approvals).filter(groupChat.shows), [live.approvals, groupChat]);
   const job = useMemo(() => {
     if (!detail) return undefined;
     const mine = Object.values(live.jobs).filter((j) => j.key === detail.jobKey);
@@ -767,6 +771,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
         <div className="ms-tabs ms-panel ms-fv-tabs"><span className="ms-tab ms-on">{f.chat}</span></div>
         {detail ? (
           <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={job} live={chatLive}
+                self={groupChat.self} memberJobs={groupChat.memberJobs}
             pins={pins} onRemovePin={removePin} onEditPin={onEditChip} formatName={formatLabel}
             canGenerate={versions.length === 0} onSent={onSent} onSelectVersion={onSelectVersion} snapshots={live.snapshots} appliesTo={appliesTo}
             brief={detail.creative.brief} onBriefSaved={reload} queued={detail.creative.queued} onQueueChanged={reload}

@@ -57,3 +57,18 @@ export async function writeJsonFileAtomic(path: string, data: unknown, o: { befo
     throw err;
   }
 }
+
+/** `writeJsonFileAtomic` for a text file (a conversation log): written beside it, then renamed over it. */
+export async function writeTextFileAtomic(path: string, text: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const tmp = `${path}.${randomBytes(6).toString('hex')}.tmp`;
+  noteCoreTemp(tmp);
+  try {
+    await writeFile(tmp, text, 'utf8');
+    await rename(tmp, path);
+    await noteCoreChange(dirname(path));
+  } catch (err) {
+    await unlink(tmp).catch(() => { /* never created or already gone */ });
+    throw err;
+  }
+}

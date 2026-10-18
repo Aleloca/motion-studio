@@ -4,7 +4,7 @@
  */
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { DEFAULT_FORMATS, type ConversationEntry, type JobSummary, type Pin, type VariantGroup, type VariantLetter, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, type ConversationEntry, type JobSummary, type Pin, type VariantGroup, type VariantId, type VersionEntry } from '@motion-studio/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
 import type { Shell } from '../src/shell/ShellContext.tsx';
@@ -12,7 +12,7 @@ import { at, detailFor, groupOf, HOST, version } from './support/variants.ts';
 
 vi.setConfig({ testTimeout: 30_000 });
 
-type Run = { jobs: Partial<Record<VariantLetter, string>>; queued: VariantLetter[]; skipped: VariantLetter[]; failed: Partial<Record<VariantLetter, string>> };
+type Run = { jobs: Partial<Record<VariantId, string>>; queued: VariantId[]; skipped: VariantId[]; failed: Partial<Record<VariantId, string>> };
 const run = vi.fn(async (..._a: unknown[]): Promise<Run> => ({ jobs: { a: 'j1', b: 'j2' }, queued: ['c'], skipped: [], failed: {} }));
 let group: VariantGroup = groupOf(['a', 'b', 'c']);
 const versionsBy: Record<string, VersionEntry[]> = { [HOST]: [version(1, 'Dal brief')], [`${HOST}~b`]: [version(1, 'Dal brief')], [`${HOST}~c`]: [version(1, 'Dal brief')] };
@@ -62,7 +62,7 @@ beforeEach(() => {
 describe('chat selector', () => {
   it('lists the active variants and "Tutte"; the open variant is the checked one', () => {
     render(panel({ current: 'b' }));
-    const sel = screen.getByRole('radiogroup', { name: 'Variante' });
+    const sel = screen.getByRole('radiogroup', { name: 'Invia a' });
     expect(within(sel).getAllByRole('radio').map((r) => r.textContent)).toEqual(['A', 'B', 'C', 'Tutte']);
     expect(within(sel).getByRole('radio', { name: 'B' }).getAttribute('aria-checked')).toBe('true');
     expect(within(sel).getByRole('radio', { name: 'Tutte' }).getAttribute('aria-checked')).toBe('false');
@@ -70,12 +70,12 @@ describe('chat selector', () => {
 
   it('a discarded variant is not in the selector, nor in "Tutte"', () => {
     render(panel({ g: groupOf(['a', 'b', 'c'], {}, { c: { status: 'discarded' } }) }));
-    expect(within(screen.getByRole('radiogroup', { name: 'Variante' })).getAllByRole('radio').map((r) => r.textContent)).toEqual(['A', 'B', 'Tutte']);
+    expect(within(screen.getByRole('radiogroup', { name: 'Invia a' })).getAllByRole('radio').map((r) => r.textContent)).toEqual(['A', 'B', 'Tutte']);
   });
 
   it('"Tutte" is offered only with two variants that can really work: a missing member does not count', () => {
     render(panel({ g: groupOf(['a', 'b']), missing: ['b'] }));
-    expect(within(screen.getByRole('radiogroup', { name: 'Variante' })).getAllByRole('radio').map((r) => r.textContent)).toEqual(['A', 'B']);
+    expect(within(screen.getByRole('radiogroup', { name: 'Invia a' })).getAllByRole('radio').map((r) => r.textContent)).toEqual(['A', 'B']);
   });
 
   it('a click on a letter, or on Tutte, tells the page', async () => {
@@ -176,7 +176,7 @@ describe('chat selector', () => {
   it('a panel without variants has no selector and no waiting line (the chat of an old creative)', () => {
     const { container } = render(<I18nProvider locale="it"><Conversation slug="acme" creative={HOST} entries={[]} approvals={[]} job={undefined} onSent={vi.fn()} /></I18nProvider>);
     expect(container.querySelector('[data-variant-selector]')).toBeNull();
-    expect(screen.queryByRole('radiogroup', { name: 'Variante' })).toBeNull();
+    expect(screen.queryByRole('radiogroup', { name: 'Invia a' })).toBeNull();
   });
 });
 

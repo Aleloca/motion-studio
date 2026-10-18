@@ -759,3 +759,75 @@ describe('composer: labels, shortcut and floating dock (user test notes 24, 25)'
     } finally { height.mockRestore(); vi.unstubAllGlobals(); }
   });
 });
+
+describe('Conversation · one chat for a variant group (decisions 980 and 982, phase 2)', () => {
+  const user = (min: number, t: string, variant?: string, sec = 0): ConversationEntry => ({ type: 'user', at: at(min).replace(':00.000Z', `:${String(sec).padStart(2, '0')}.000Z`), text: t, pins: [], attachments: [], ...(variant ? { variant } : {}) });
+  const chips = (el: HTMLElement) => [...el.querySelectorAll('.ms-vchip')].map((c) => c.textContent);
+
+  it('every entry of a variant carries its chip; an entry with no variant has none', () => {
+    render(view({ entries: [
+      user(1, 'Per B', 'b'), { ...agent(2, text('Fatto su B'), 'jb'), variant: 'b' },
+      { type: 'version', at: at(3), n: 4, status: 'complete', variant: 'b' }, { type: 'system', at: at(4), level: 'info', text: 'Nota di A', variant: 'a' },
+      user(5, 'Senza gruppo'),
+    ] }));
+    const [b, none] = screen.getAllByRole('article', { name: 'You' });
+    expect(chips(b!)).toEqual(['B']);
+    expect(within(b!).getByTitle('Variant B')).toBeTruthy();
+    expect(chips(none!)).toEqual([]);
+    expect(chips(screen.getByRole('article', { name: 'Agent' }))).toEqual(['B']);
+    expect(chips(screen.getByText('Nota di A').closest('p')!)).toEqual(['A']);
+  });
+
+  it('the same request sent to several variants at once ("Tutte") is one bubble with their chips, by its request id (decision 1166)', () => {
+    const f = (e: ConversationEntry): ConversationEntry => ({ ...e, fanout: 'r1' } as ConversationEntry);
+    render(view({ entries: [f(user(1, 'Più contrasto', 'a', 1)), f(user(1, 'Più contrasto', 'b', 2)), f(user(1, 'Più contrasto', 'c', 3)), user(1, 'Più contrasto', 'b', 4)] }));
+    const bubbles = screen.getAllByRole('article', { name: 'You' });
+    // The same words sent again to B alone, seconds later, are their own message.
+    expect(bubbles).toHaveLength(2);
+    expect(chips(bubbles[0]!)).toEqual(['A', 'B', 'C']);
+    expect(chips(bubbles[1]!)).toEqual(['B']);
+  });
+
+  it('a version card of another variant opens that variant; its own keeps "View vN" and its extras', async () => {
+    const onOpenVariant = vi.fn();
+    const versionExtra = vi.fn(() => <span>extra</span>);
+    render(view({ self: 'a', onOpenVariant, versionExtra, entries: [
+      { type: 'version', at: at(1), n: 2, status: 'complete', variant: 'a' }, { type: 'version', at: at(2), n: 4, status: 'complete', variant: 'b' },
+    ] } as Props));
+    expect(screen.queryByRole('button', { name: 'View v4' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Open B · v4' }));
+    expect(onOpenVariant).toHaveBeenCalledWith('b');
+    await userEvent.click(screen.getByRole('button', { name: 'View v2' }));
+    expect(props.onSelectVersion).toHaveBeenCalledWith(2);
+    expect(versionExtra).toHaveBeenCalledWith(2);
+    expect(versionExtra).not.toHaveBeenCalledWith(4);
+  });
+
+  it('a retry is per variant: the same words to another variant after a failure are a full bubble', () => {
+    render(view({ entries: [
+      user(1, 'Bigger logo', 'a'), { ...agent(2, { kind: 'result', ok: false, error: 'boom' }, 'ja'), variant: 'a' }, user(5, 'Bigger logo', 'b'),
+    ] }));
+    expect(screen.getAllByRole('article', { name: 'You' })).toHaveLength(2);
+    expect(screen.queryByText(/^Retried · /)).toBeNull();
+  });
+
+  it('review minor 8: another variant\'s turn with only live events so far carries its chip too', () => {
+    const jc: JobSummary = { ...running, id: 'jc', key: 'creative:k~c' };
+    render(view({ entries: [], memberJobs: [{ job: jc, live: [text('C parte')], variant: 'c' }] } as Props));
+    expect(chips(screen.getByText('C parte').closest('article')!)).toEqual(['C']);
+  });
+
+  it('review minor 6: with no way to open it (a host whose group is gone, the editor), another variant\'s version card has no button at all', () => {
+    render(view({ self: 'a', entries: [{ type: 'version', at: at(2), n: 4, status: 'complete', variant: 'b' }] } as Props));
+    expect(screen.queryByRole('button', { name: /v4/ })).toBeNull();
+  });
+
+  it('another variant\'s running turn continues live in the same chat', () => {
+    const jb: JobSummary = { ...running, id: 'jb', key: 'creative:k~b' };
+    render(view({ entries: [user(1, 'Per B', 'b'), { ...agent(2, text('Inizio B'), 'jb'), variant: 'b' }], memberJobs: [{ job: jb, live: [text('Inizio B'), text('B continua')] }] } as Props));
+    expect(screen.getByText('Inizio B')).toBeTruthy();
+    expect(screen.getByText('B continua')).toBeTruthy();
+    expect(chips(screen.getByText('B continua').closest('article')!)).toEqual(['B']);
+  });
+});
+

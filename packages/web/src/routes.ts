@@ -14,8 +14,8 @@ export type Route =
   | { name: 'format'; slug: string; creative: string; format: string };
 
 const SLUG = '[a-z0-9][a-z0-9-]*';
-/** A creative segment: a slug, or a variant sister's `<slug>~b`…`~e` (Phase 15; `~` is reserved for sisters). */
-const CSLUG = `${SLUG}(?:~[b-e])?`;
+/** A creative segment: a slug, or a variant sister's `<slug>~b`…`~z`, `~aa`… (Phase 15, decision 978; `~` is reserved for sisters). */
+const CSLUG = `${SLUG}(?:~(?:[b-z]|[a-z]{2,3}))?`;
 /** A format segment: a preset id or an instance id (`x@2`; `%40` is the same `@`). */
 const FORMAT_SEG = '[a-z0-9][a-z0-9-]{0,62}(?:(?:@|%40)(?:[2-9]|1[0-9]|20))?';
 /** The old project "Agent console" tab: its technical events now live in the conversation's Activity details. */

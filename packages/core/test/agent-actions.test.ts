@@ -287,7 +287,7 @@ describe('render and ★', () => {
 });
 
 describe('variants', () => {
-  it('add_variant makes a group and starts the new variant; the group cap holds; the own working variant cannot be discarded', async () => {
+  it('add_variant makes a group and starts the new variant; no cap (decision 978); the own working variant cannot be discarded', async () => {
     const slug = await create();
     const run = await runOf(slug);
     const res = await bridge(run, 'add_variant', { direction: 'Più ironico' });
@@ -297,17 +297,66 @@ describe('variants', () => {
     expect(b.req.prompt).toContain('Più ironico');
     expect((await bridge(run, 'discard_variant', { variant: 'a' })).statusCode).toBe(409);
     expect((await bridge(run, 'discard_variant', { variant: 'b' })).statusCode).toBe(409);
-    for (const d of ['C', 'D', 'E']) expect((await bridge(run, 'add_variant', { direction: `Direzione ${d}` })).statusCode).toBe(200);
-    const full = await bridge(run, 'add_variant', { direction: 'Una di troppo' });
-    expect(full.statusCode).toBe(409);
+    for (const d of ['C', 'D', 'E', 'F']) expect((await bridge(run, 'add_variant', { direction: `Direzione ${d}` })).statusCode).toBe(200);
     const g = (await detail(slug)).variants;
-    expect(g && !g.orphan ? g.group.members.map((m) => m.letter) : []).toEqual(['a', 'b', 'c', 'd', 'e']);
+    expect(g && !g.orphan ? g.group.members.map((m) => m.letter) : []).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
+    // Decision 1153: a first generation started by add_variant never adds a variant itself (no chain of turns).
+    const chained = await bridge(b, 'add_variant', { direction: 'Ancora una' });
+    expect(chained.statusCode).toBe(409);
+    expect(chained.json().error).toBe(t().errors.variantAddFirstGeneration);
     expect(await actionLines(slug)).toContain(t().agentActions.variantAdded({ letter: 'B', direction: 'Più ironico' }));
     writeCompositions(b, 6);
     b.finish({ write: false });
     await vi.waitFor(async () => expect((await jobs()).find((j) => j.key.endsWith(`:${slug}~b`) && j.kind === 'creative')?.state).toBe('succeeded'));
     expect((await bridge(run, 'discard_variant', { variant: 'b' })).statusCode).toBe(200);
     expect((await bridge(run, 'restore_variant', { variant: 'b' })).statusCode).toBe(200);
+    expect((await bridge(run, 'discard_variant', { variant: 'zz' })).statusCode).toBe(404);
+  });
+
+  it('decision 1153: a message sent to several variants adds a variant once (the first target only), not once per variant (report 32)', async () => {
+    const slug = await create(false);
+    expect((await app.inject({ method: 'POST', url: `${P}/${slug}/variants`, payload: { count: 3, directions: ['Uno', 'Due', 'Tre'] } })).statusCode).toBe(201);
+    const sent = await app.inject({ method: 'POST', url: `${P}/${slug}/variants/run`, payload: { targets: 'all-active', request: { text: 'Crea una nuova variante' } } });
+    expect(sent.statusCode, sent.body).toBe(202);
+    const [a, b] = [await runOf(slug), await runOf(`${slug}~b`)];
+    const refused = await bridge(b, 'add_variant', { direction: 'Doppione' });
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json().error).toBe(t().errors.variantAddFanout({ letter: 'A' }));
+    expect((await bridge(a, 'add_variant', { direction: 'Nuova' })).statusCode).toBe(200);
+    const g = (await detail(slug)).variants;
+    expect(g && !g.orphan ? g.group.members.map((m) => m.letter) : []).toEqual(['a', 'b', 'c', 'd']);
+    // C was waiting for a slot (two at a time): its turn is a follower too once it starts.
+    writeCompositions(b, 6);
+    b.finish({ write: false });
+    const c = await runOf(`${slug}~c`);
+    expect((await bridge(c, 'add_variant', { direction: 'Doppione' })).statusCode).toBe(409);
+  });
+});
+
+describe('decision 1153 kept across a restart (review minor 10)', () => {
+  it('a working variant\'s queued share of a fan-out keeps its lead and request id on disk; when it starts it does not add variants', async () => {
+    const slug = await create(false);
+    expect((await app.inject({ method: 'POST', url: `${P}/${slug}/variants`, payload: { count: 2, directions: ['Uno', 'Due'] } })).statusCode).toBe(201);
+    expect((await app.inject({ method: 'POST', url: `${P}/${slug}~b/turns`, payload: { text: 'Prima' } })).statusCode).toBe(202);
+    const b1 = await runOf(`${slug}~b`);
+    const sent = await app.inject({ method: 'POST', url: `${P}/${slug}/variants/run`, payload: { targets: 'all-active', request: { text: 'Crea una variante' } } });
+    expect(sent.json().queued).toEqual(['b']);
+    const queued = (await detail(`${slug}~b`)).creative.queued!;
+    expect(queued[0]).toMatchObject({ text: 'Crea una variante', fanout: { lead: 'a' } });
+    const a = await runOf(slug);
+    expect((await bridge(a, 'add_variant', { direction: 'Nuova' })).statusCode).toBe(200);
+    writeCompositions(b1, 6);
+    b1.finish({ write: false });
+    // The new variant C took the other slot (two at a time): A ends to let B's queued share start.
+    writeCompositions(a, 6);
+    a.finish({ write: false });
+    const b2 = await runOf(`${slug}~b`, 1);
+    expect((await bridge(b2, 'add_variant', { direction: 'Doppione' })).statusCode).toBe(409);
+    // Both shares of the request carry its one id (decision 1166: one bubble in the chat).
+    const users = (await conversation(slug)).filter((e) => e.type === 'user' && e.text === 'Crea una variante');
+    expect(users.map((e) => e.variant).sort()).toEqual(['a', 'b']);
+    expect(new Set(users.map((e) => e.type === 'user' ? e.fanout : null)).size).toBe(1);
+    expect(users[0]!.type === 'user' && users[0]!.fanout).toBe(queued[0]!.fanout!.id);
   });
 });
 

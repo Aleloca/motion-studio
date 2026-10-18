@@ -1,10 +1,10 @@
 // The details of the other members of a variant group (Phase 15): their boards sit on the same canvas as the open creative's.
 // Reloaded when a member changes (its live tick) or the list of members does. A member that cannot be read is simply absent.
-import type { CreativeDetail, VariantGroup, VariantLetter } from '@motion-studio/shared';
+import type { CreativeDetail, VariantGroup, VariantId } from '@motion-studio/shared';
 import { useEffect, useState } from 'react';
 import { api } from '../../api.ts';
 
-export function useVariantMembers(project: string, group: VariantGroup | null, self: string, missing: readonly VariantLetter[], ticks: Record<string, number>): Record<string, CreativeDetail> {
+export function useVariantMembers(project: string, group: VariantGroup | null, self: string, missing: readonly VariantId[], ticks: Record<string, number>): Record<string, CreativeDetail> {
   const [details, setDetails] = useState<Record<string, CreativeDetail>>({});
   const others = group ? group.members.filter((m) => m.slug !== self && !missing.includes(m.letter)).map((m) => m.slug) : [];
   const key = others.map((s) => `${s}:${ticks[`${project}/${s}`] ?? 0}`).join('|');
