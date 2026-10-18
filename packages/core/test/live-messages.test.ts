@@ -70,9 +70,15 @@ describe('live messages, capability on (opt-in, fake runner)', () => {
     expect(run.sent[0]!.text).toContain('Usa il blu');
     expect(run.sent[0]!.text).toContain('instagram-post-1x1');
     expect((await s.jobs()).find((j) => j.id === job.id)?.liveMessages).toBe(1);
-    const conv = await s.conversation();
-    const at = conv.findIndex((e) => e.clientId === clientId && e.type === 'user');
-    const marker = conv.findIndex((e) => e.type === 'agent' && (e.event as { kind: string; clientId?: string }).kind === 'user_message_delivered' && (e.event as { clientId: string }).clientId === clientId);
+    // The marker is written through the turn's ordered write chain after the POST has answered: wait for it.
+    const find = async () => {
+      const conv = await s.conversation();
+      const at = conv.findIndex((e) => e.clientId === clientId && e.type === 'user');
+      const marker = conv.findIndex((e) => e.type === 'agent' && (e.event as { kind: string; clientId?: string }).kind === 'user_message_delivered' && (e.event as { clientId: string }).clientId === clientId);
+      return { at, marker };
+    };
+    await vi.waitFor(async () => expect((await find()).marker).toBeGreaterThanOrEqual(0), { timeout: 10_000 });
+    const { at, marker } = await find();
     expect(at).toBeGreaterThanOrEqual(0);
     expect(marker).toBeGreaterThan(at);
     run.finish();
