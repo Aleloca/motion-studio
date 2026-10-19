@@ -117,7 +117,7 @@ export async function pumpUntilDone<T>(value: T, clock: PumpClock, maxPumps = MA
  * hint gets its own behaviour back (decision 1246). `budget` bounds the elements checked in one run (the preview); the rest
  * waits for the next one. Self-contained (no module-level references), so a Chrome test can run its source as it is.
  */
-export function createUnfreezer(doc: Document): { run(budget?: number): void } {
+export function createUnfreezer(doc: Document): { run(budget?: number): void; tracked(): number } {
   const FREEZE = new Set(['transform', 'scale', 'rotate', 'translate']);
   const win = doc.defaultView;
   // Captured now: layer code may replace window.getComputedStyle later (decision 1247).
@@ -164,7 +164,8 @@ export function createUnfreezer(doc: Document): { run(budget?: number): void } {
     if (full) return;
     for (const r of records) {
       if (r.type === 'attributes') {
-        if (r.attributeName === MARK) continue;
+        // Our mark stripped by the layer: put back at the next run (decision 1261); our own writes leave no record.
+        if (r.attributeName === MARK) { if (written.has(r.target as Element)) queue.add(r.target as Element); continue; }
         if (sheetNode(r.target) || r.attributeName === 'class' || r.attributeName === 'id') { full = true; return; }
         const el = r.target as Element;
         // A style change matters only through an inline hint; any other attribute may match a rule: checked on its own.
@@ -204,7 +205,7 @@ export function createUnfreezer(doc: Document): { run(budget?: number): void } {
     for (const s of doc.styleSheets) {
       try { visit(s.cssRules); } catch { names = null; break; }
     }
-    own.delete(MARK); // our own mark never asks for a record
+    own.add(MARK); // the layer stripping our mark (our own writes are dropped with takeRecords)
     const key = names ? [...names].sort().join(' ') : '*';
     if (!observer || key === watched) return;
     watched = key;
@@ -229,7 +230,10 @@ export function createUnfreezer(doc: Document): { run(budget?: number): void } {
     const mine = written.get(el);
     if (!mine && el.hasAttribute(MARK)) el.removeAttribute(MARK); // copied by cloneNode or markup (decision 1256)
     if (mine) {
-      if (style.getPropertyValue('will-change') === mine.wc && style.getPropertyPriority('will-change') === 'important') return;
+      if (style.getPropertyValue('will-change') === mine.wc && style.getPropertyPriority('will-change') === 'important') {
+        if (!el.hasAttribute(MARK)) el.setAttribute(MARK, ''); // stripped by the layer (decision 1261)
+        return;
+      }
       written.delete(el); // the layer rewrote its style: decided again from what it wrote, without our translate
       el.removeAttribute(MARK);
     }
@@ -247,6 +251,9 @@ export function createUnfreezer(doc: Document): { run(budget?: number): void } {
     run(budget = Infinity) {
       if (observer) note(observer.takeRecords());
       ensureSheet();
+      // Elements the layer removed are let go, their own hint given back (decision 1260): a layer that makes and drops
+      // hinted particles every frame never grows this map, and one put back later is decided again.
+      for (const el of [...written.keys()]) if (!el.isConnected) restore(el);
       if (full) {
         full = false;
         queue.clear();
@@ -263,6 +270,8 @@ export function createUnfreezer(doc: Document): { run(budget?: number): void } {
       }
       observer?.takeRecords(); // our own writes
     },
+    /** The elements this unfreezer holds a write for (tests). */
+    tracked: () => written.size,
   };
 }
 
