@@ -382,6 +382,13 @@ arrives and worked on later together.
     background. So the report is: the app's UI stutters during a heavy export (the render windows and the encoder share
     the machine and the desktop app's processes). To measure with the batch: UI frame times during an export, and whether
     the export should yield (fewer parallel frames, lower process priority) while the user works.
+    Done (decisions 1360–1364): measured first. Each frame's PNG (about 96 ms at 2560×1440; JPEG about 25 ms) was encoded
+    by `Page.captureScreenshot` on the main process's UI thread, the app's own, which input goes through: during a
+    2560×1440 max export it was busy 34 of 44 s and the scrolling stalled (36–45 stalls ≥ 50 ms, event-loop delay p99
+    about 200 ms). The desktop now reads a video's frames raw (`capturePage`, same pixels; max is byte-identical) and
+    pipes them to ffmpeg: 0–1 stalls, p99 14 ms (idle 9–10), and the export is 3.2× faster (44 s → 13.7 s). Standard and
+    high are no longer byte-identical (no JPEG step, slightly better). Lower priority or fewer pages: not needed by the
+    numbers. To check by hand in the real app: scroll a list while a 2560×1440 export runs.
 
 54. **Store pack export: the user does not like the file list at all.** What bothers them: the thumbnails are tiny and
     far apart, the list needs too much scrolling (19 files), and the structure is confusing (store, device and file one
