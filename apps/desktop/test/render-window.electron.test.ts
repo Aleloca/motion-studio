@@ -25,6 +25,9 @@
  * - **raw frames (report 53):** a video's frames are read raw at 1x and 2x and give the same video, byte for byte, as PNG
  *   frames; at 0.5 the PNG frames stay. Measurements (`MS_UI_LOAD=1`): a dialog-like list scrolled while an export runs,
  *   raw against JPEG frames, the cost of each capture on the UI thread.
+ * - **raw frames checked (report 56):** the provider's check of raw against PNG frames per scale; every frame of a render
+ *   read raw (with the renderers stopped as the seek ends) and as PNG from the same state; the same video under a forced
+ *   Display P3 profile; a layer's CSS animation paused while it starts on the compositor shows the paused time.
  *
  * Runs on macOS when the Electron binary is installed; elsewhere (a display is needed) only with MS_REQUIRE_ELECTRON=1,
  * which also makes a missing binary a failure. Needs ffmpeg for the renders.
@@ -47,6 +50,7 @@ import {
 } from '../../../packages/core/test/helpers/hostile-layers.ts';
 import { buildRuntime, decodeStrips, FONT, frameCodedVideo, put, readCode, startCanary, startUdpCanary, type Canary, type UdpCanary } from '../../../packages/core/test/helpers/render-env.ts';
 import { barDpr, gradientEnergy, scaleComposition, scaleLayer, TEXT_BOX } from '../../../packages/core/test/helpers/scale-layers.ts';
+import { pauseAnimations, settleAnimations } from '../../../packages/composition-runtime/src/layer-agent.ts';
 
 const DESKTOP = join(import.meta.dirname, '..');
 
@@ -79,6 +83,32 @@ function spikeComposition(duration = 2): Composition {
       { id: 'layer', kind: 'visual', clips: [{ id: 'outro', type: 'html', src: 'layers/outro.html', start: 1.4, duration: duration - 1.4, props: { x: 200, y: 20, width: 100, height: 100 } }] },
     ],
   } as unknown as Composition;
+}
+
+/**
+ * Report 56: where two videos of the same size differ, frame by frame (decoded to RGB): the frames that differ, each with
+ * its differing bytes, largest difference and the box of its differing pixels; at most the first 8.
+ */
+function videoDiff(a: string, b: string): string {
+  const info = /, (\d+)x(\d+)/.exec(spawnSync(ffmpeg!.path, ['-hide_banner', '-i', a], { encoding: 'utf8' }).stderr);
+  if (!info) return 'unreadable';
+  const [w, h] = [Number(info[1]), Number(info[2])];
+  const rgb = (f: string) => execFileSync(ffmpeg!.path, ['-v', 'error', '-i', f, '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { maxBuffer: 1 << 28 });
+  const [x, y] = [rgb(a), rgb(b)];
+  const size = w * h * 3;
+  const frames: string[] = [];
+  for (let i = 0; i * size < Math.min(x.length, y.length); i++) {
+    let n = 0, max = 0, x0 = w, y0 = h, x1 = -1, y1 = -1;
+    for (let k = i * size; k < (i + 1) * size; k++) {
+      const d = Math.abs(x[k]! - y[k]!);
+      if (!d) continue;
+      n++; max = Math.max(max, d);
+      const p = Math.floor((k - i * size) / 3);
+      x0 = Math.min(x0, p % w); x1 = Math.max(x1, p % w); y0 = Math.min(y0, Math.floor(p / w)); y1 = Math.max(y1, Math.floor(p / w));
+    }
+    if (n) frames.push(`frame ${i}: ${n} bytes, max ${max}, box ${x0},${y0}-${x1},${y1}`);
+  }
+  return `${frames.length} frames differ (${x.length} / ${y.length} bytes); ${frames.slice(0, 8).join('; ')}`;
 }
 
 const OUTRO_LAYER = `<!doctype html><html><body style="margin:0"><canvas id="c" width="100" height="100"></canvas><script>
@@ -422,20 +452,69 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
       // A scale that is not an integer (4/3: the user's 2560 × 1440 of a 1080p composition), and a transparent background.
       { name: '43-raw', short: 240 }, { name: '43-png', short: 240, encoded: true },
       { name: 'clear-raw', background: '#00000000' }, { name: 'clear-png', background: '#00000000', encoded: true }];
-    const r = await runHarness({ scenario: 'raw-render', creative, composition: spikeComposition(), format: 'spike', ffmpeg, rawRuns });
+    const out = join(work, 'raw-out');
+    mkdirSync(out, { recursive: true });
+    const r = await runHarness({ scenario: 'raw-render', creative, composition: spikeComposition(), format: 'spike', ffmpeg, rawRuns, out });
     expect(r.ok, r.output).toBe(true);
+    // Report 56: the provider checked raw frames against PNG frames once per scale, before reading them.
+    const checks = find(r.lines, (l) => 'rawChecks' in l).rawChecks as Record<string, { same: boolean }>;
+    console.info(`[raw] checks: ${JSON.stringify(checks)}`);
+    // 1x, 2x, and 4/3 (its page scale is 426 / 320: the even width it is captured at).
+    expect(Object.keys(checks)).toHaveLength(3);
+    for (const [k, c] of Object.entries(checks)) expect(c, `check at ${k}`).toMatchObject({ same: true, differing: 0, opaque: true });
     const by = Object.fromEntries(r.lines.filter((l) => typeof l.raw === 'string').map((l) => [l.raw, l])) as Record<string, { frames: number; width: number; height: number; sha256: string; rawFrames: number; encodedFrames: number; windowsAfter: number }>;
     expect(by['1x-raw']).toMatchObject({ frames: 60, width: W, height: H, rawFrames: 60, encodedFrames: 0, windowsAfter: 0 });
     expect(by['1x-png']).toMatchObject({ frames: 60, rawFrames: 0, encodedFrames: 60 });
     expect(by['2x-raw']).toMatchObject({ frames: 60, width: 2 * W, height: 2 * H, rawFrames: 60, encodedFrames: 0 });
-    // The PNG frames are lossless: the same pixels, so the same video, byte for byte.
-    expect(by['1x-raw']!.sha256).toBe(by['1x-png']!.sha256);
-    expect(by['2x-raw']!.sha256).toBe(by['2x-png']!.sha256);
+    // The PNG frames are lossless: the same pixels, so the same video, byte for byte. A difference names its frames.
+    const same = (a: string, b: string) => expect(by[a]!.sha256, by[a]!.sha256 === by[b]!.sha256 ? '' : `${a} against ${b}: ${videoDiff(join(out, `${a}.mp4`), join(out, `${b}.mp4`))}`).toBe(by[b]!.sha256);
+    same('1x-raw', '1x-png');
+    same('2x-raw', '2x-png');
     expect(by['43-raw']).toMatchObject({ frames: 60, height: 240, rawFrames: 60, encodedFrames: 0 });
-    expect(by['43-raw']!.sha256).toBe(by['43-png']!.sha256);
+    same('43-raw', '43-png');
     expect(by['clear-raw']).toMatchObject({ frames: 60, rawFrames: 60, encodedFrames: 0 });
-    expect(by['clear-raw']!.sha256).toBe(by['clear-png']!.sha256);
+    same('clear-raw', 'clear-png');
     expect(by.half).toMatchObject({ frames: 60, width: W / 2, height: H / 2, rawFrames: 0, encodedFrames: 60, windowsAfter: 0 });
+  }, 900_000);
+
+  it('report 56: raw frames are the PNG frames of the same state, every frame, read with the renderers stopped as the seek ends', async () => {
+    const creative = join(work, 'raw-check');
+    const compDir = join(creative, 'outputs', 'v1', 'compositions', 'spike');
+    frameCodedVideo(ffmpeg!, join(compDir, 'assets', 'v.mp4'), { fps: 30, frames: 95 });
+    put(join(compDir, 'layers', 'outro.html'), OUTRO_LAYER);
+    put(join(compDir, 'assets', 'mono.woff2'), readFileSync(FONT));
+    const times = Array.from({ length: 60 }, (_, i) => i / 30);
+    const r = await runHarness({ scenario: 'raw-check', creative, composition: spikeComposition(), format: 'spike', rawCheck: { times } });
+    expect(r.ok, r.output).toBe(true);
+    const rows = (r.lines[0] as { rawCheck: Array<{ t: number; raw: { sizes: boolean; differing: number }; again: { differing: number } }> }).rawCheck;
+    expect(rows).toHaveLength(60);
+    // A difference with the renderers stopped would be a frame read before the seek's last one was drawn (a stale read);
+    // after the PNG's forced redraw, a difference in the pixels themselves.
+    expect(rows.filter((x) => !x.raw.sizes || x.raw.differing > 0), 'raw read as the seek ends').toEqual([]);
+    expect(rows.filter((x) => x.again.differing > 0), 'raw read after the PNG').toEqual([]);
+  }, 900_000);
+
+  it('report 56: under a forced Display P3 colour profile raw and PNG frames still give the same video, and the sRGB one', async () => {
+    // A machine whose display is not sRGB (the CI runner's virtual display, a wide-gamut screen): the render windows are
+    // offscreen, so neither capture is colour-managed for the display.
+    const creative = join(work, 'raw-p3');
+    const compDir = join(creative, 'outputs', 'v1', 'compositions', 'spike');
+    frameCodedVideo(ffmpeg!, join(compDir, 'assets', 'v.mp4'), { fps: 30, frames: 95 });
+    put(join(compDir, 'layers', 'outro.html'), OUTRO_LAYER);
+    put(join(compDir, 'assets', 'mono.woff2'), readFileSync(FONT));
+    const rawRuns = [{ name: '1x-raw' }, { name: '1x-png', encoded: true }];
+    const run = async (switches: Record<string, string>) => {
+      const r = await runHarness({ scenario: 'raw-render', creative, composition: spikeComposition(), format: 'spike', ffmpeg, rawRuns, switches });
+      expect(r.ok, r.output).toBe(true);
+      const by = Object.fromEntries(r.lines.filter((l) => typeof l.raw === 'string').map((l) => [l.raw, l])) as Record<string, { sha256: string; rawFrames: number }>;
+      expect(by['1x-raw']!.rawFrames).toBe(60);
+      return by;
+    };
+    const srgb = await run({ 'force-color-profile': 'srgb' });
+    const p3 = await run({ 'force-color-profile': 'display-p3-d65' });
+    expect(p3['1x-raw']!.sha256).toBe(p3['1x-png']!.sha256);
+    expect(srgb['1x-raw']!.sha256).toBe(srgb['1x-png']!.sha256);
+    expect(p3['1x-png']!.sha256).toBe(srgb['1x-png']!.sha256);
   }, 900_000);
 
   it('all layers in render (composition server, CDP interception, session rules): the hostile and self-navigating layers reach nothing', async () => {
@@ -679,6 +758,25 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
       expect(Math.abs(seen[i]!.box - 100 * t), `css at ${t}`).toBeLessThanOrEqual(3);
       expect(Math.abs(seen[i]!.bar - 100 * t), `raf at ${t}`).toBeLessThanOrEqual(3);
     });
+  }, 900_000);
+
+  it('report 56: a CSS animation paused while it starts on the compositor shows the paused time once settled (the storyboard\'s first frame)', async (ctx) => {
+    // The layer agent's own functions, in a page whose CSS animation starts on load and is paused at 0 right after it.
+    const runs = 15;
+    const r = await runHarness({ scenario: 'css-pause', cssPause: { runs, pause: pauseAnimations.toString(), settle: settleAnimations.toString() } });
+    expect(r.ok, r.output).toBe(true);
+    const rows = (r.lines[0] as { cssPause: Array<{ mode: 'plain' | 'settled'; pending: boolean; box: number }> }).cssPause;
+    const of = (mode: string) => rows.filter((x) => x.mode === mode);
+    const off = (mode: string) => of(mode).filter((x) => x.box !== 0);
+    // Without settling, Chromium leaves the compositor's value of the frames it ran (logged: a Chromium behaviour, not ours).
+    console.info(`[css-pause] plain: ${of('plain').filter((x) => x.pending).length}/${runs} paused while play-pending, ${off('plain').length} off on screen ${JSON.stringify(off('plain').map((x) => x.box))}; `
+      + `settled: ${of('settled').filter((x) => x.pending).length}/${runs} play-pending, ${off('settled').length} off`);
+    if (!of('settled').some((x) => x.pending)) {
+      // Nothing to prove on this machine: every pause landed after the animation had started on the compositor.
+      console.warn('[css-pause] skipped: no pause landed while the animation was play-pending');
+      ctx.skip();
+    }
+    expect(off('settled'), JSON.stringify(of('settled'))).toEqual([]);
   }, 900_000);
 
   it('decision 1348: a render (parallel windows) of a layer with its own video, a CSS animation and a self-running canvas advances every frame', async () => {

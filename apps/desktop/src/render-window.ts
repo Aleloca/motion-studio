@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { app, BrowserWindow, powerSaveBlocker, session, type BrowserWindowConstructorOptions, type Debugger, type ProxyConfig, type Session } from 'electron';
+import { app, BrowserWindow, nativeImage, powerSaveBlocker, session, type BrowserWindowConstructorOptions, type Debugger, type ProxyConfig, type Session } from 'electron';
 import {
   allowedPrefix, CdpError, DEAD_PROXY, layersAtScale, pagePixels, pageScale, DEFAULT_PARALLEL, isAllowedRequest, openCdpRenderPage, RenderError, samplePidsMemory,
   scaledMemoryLimits, startWatchdog,
@@ -32,7 +32,8 @@ import {
  *   `TargetGate` here): their scripts are refused by the session (above), and the layers are opaque origins that cannot
  *   start them anyway; popups are denied by the handler.
  * - a video's frames are read raw (`capturePage`, `rawFrames`; report 53), not with `Page.captureScreenshot`, whose
- *   PNG/JPEG encode runs on this process's UI thread, the app's.
+ *   PNG/JPEG encode runs on this process's UI thread, the app's; only once this machine's raw frames proved to be a
+ *   PNG's pixels (`checkRawFrames`, report 56), else the PNG/JPEG frames stay.
  *
  * **Closing.** `destroy()` followed at once by a new window's `loadURL` fails with `ERR_FAILED` in Electron 44 (spike
  * §3a): a window is closed with `close()` (with `beforeunload` ignored) and the provider waits for `closed`, falling back
@@ -406,6 +407,133 @@ export async function guardedRawCapture(read: () => Promise<RawFrame>, failure: 
   return frame;
 }
 
+/** A raw frame against a PNG of the same state decoded to BGRA: bytes that differ, the largest difference, and whether every pixel of the raw one is opaque. */
+export interface RawCheck { same: boolean; differing: number; max: number; opaque: boolean; width: number; height: number }
+
+/** Compares a raw BGRA frame with a PNG's pixels (BGRA, the same size): `same` only when every byte matches and the frame is opaque. */
+export function compareRawFrame(raw: RawFrame, png: { data: Buffer; width: number; height: number }): RawCheck {
+  const sized = raw.width === png.width && raw.height === png.height && raw.data.length === png.data.length;
+  let differing = sized ? 0 : Math.max(raw.data.length, png.data.length), max = sized ? 0 : 255, opaque = true;
+  const n = Math.min(raw.data.length, png.data.length);
+  for (let k = 0; k < n; k++) {
+    const d = Math.abs(raw.data[k]! - png.data[k]!);
+    if (d) { differing++; if (d > max) max = d; }
+    if ((k & 3) === 3 && raw.data[k] !== 255) opaque = false;
+  }
+  return { same: sized && differing === 0 && opaque, differing, max, opaque, width: raw.width, height: raw.height };
+}
+
+/**
+ * The pattern the check paints over the page: hues, greys, saturated and half-transparent colours, at device pixels. It
+ * runs in an isolated world of the check's own (`checkRawFrames`): the canvas is held on that world's `window`, out of the
+ * page's reach (never looked up by an id the page could also use), and its two animation frames are native ones (the
+ * page's own `requestAnimationFrame` is the render clock's).
+ */
+const RAW_CHECK_PAINT = `new Promise((resolve) => {
+  const c = document.createElement('canvas');
+  window.__msRawCheck = c;
+  const k = window.devicePixelRatio || 1, w = Math.max(1, Math.round(innerWidth * k)), h = Math.max(1, Math.round(innerHeight * k));
+  c.width = w; c.height = h;
+  c.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:100vh;z-index:2147483647;pointer-events:none';
+  const g = c.getContext('2d');
+  const hues = g.createLinearGradient(0, 0, w, 0);
+  ['#ff0000', '#ffff00', '#00ff00', '#00ffff', '#0000ff', '#ff00ff', '#ff0000'].forEach((s, i) => hues.addColorStop(i / 6, s));
+  g.fillStyle = hues; g.fillRect(0, 0, w, h / 2);
+  const greys = g.createLinearGradient(0, 0, w, 0);
+  greys.addColorStop(0, '#000000'); greys.addColorStop(1, '#ffffff');
+  g.fillStyle = greys; g.fillRect(0, h / 2, w, h / 2);
+  ['rgba(255,64,0,0.5)', 'rgba(0,128,255,0.35)', 'rgba(32,200,90,0.7)'].forEach((s, i) => { g.fillStyle = s; g.fillRect(0, (h * (i + 1)) / 4 - h / 16, w, h / 8); });
+  document.documentElement.appendChild(c);
+  requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)));
+})`;
+/** Takes the pattern away; true only when it is really out of the document. */
+const RAW_CHECK_REMOVE = `(() => { const c = window.__msRawCheck; if (c) c.remove(); window.__msRawCheck = null; return !c || !c.isConnected; })()`;
+
+/** The pattern of a raw frame check could not be taken away: that page would render it, so it must not be used. */
+export class RawCheckCleanupError extends Error {
+  constructor(why: string) { super(`the raw frame check could not remove its pattern: ${why}`); this.name = 'RawCheckCleanupError'; }
+}
+
+/** One `Runtime.evaluate` (`send` with its parameters): the value, or an error for an exception in the page or no value. */
+export async function evaluateValue(send: (params: Record<string, unknown>) => Promise<unknown>, expression: string): Promise<unknown> {
+  const r = await send({ expression, returnByValue: true, awaitPromise: true }) as { result?: { value?: unknown }; exceptionDetails?: { text?: string; exception?: { description?: string } } };
+  if (r?.exceptionDetails) throw new Error(`evaluate threw: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text ?? 'an exception'}`);
+  return r?.result?.value;
+}
+
+/**
+ * Report 56: whether this machine's raw frames (`capturePage`) are the pixels of a PNG (`Page.captureScreenshot`) of the
+ * same state. Before the page's first seek, a pattern (`RAW_CHECK_PAINT`) is shown over it for two native frames, captured
+ * as PNG first (its forced redraw) and then raw, and taken away; the composition is not sought for it (no seek of its own
+ * at open: the render's first seek paints the page). Measured on the developer's Mac: the same bytes under a forced
+ * Display P3 or generic RGB profile, software compositing and a starved GPU process, so a difference here (a colour
+ * transform, an order of channels, alpha) is a machine where raw frames would change the video: its renders keep the
+ * PNG/JPEG frames. An empty PNG is an error, not a difference. A pattern that cannot be taken away (the removal throws,
+ * times out or finds it still there) rejects with `RawCheckCleanupError`, whatever the comparison gave.
+ */
+export async function checkRawFrames(page: Pick<RenderPage, 'capture'>, evaluate: (expression: string) => Promise<unknown>, read: () => Promise<RawFrame>): Promise<RawCheck> {
+  let result: RawCheck | undefined;
+  let error: unknown;
+  try {
+    if (await evaluate(RAW_CHECK_PAINT) !== true) throw new Error('the check pattern was not painted');
+    const img = nativeImage.createFromBuffer(await page.capture('png'));
+    const size = img.getSize();
+    if (img.isEmpty() || size.width < 1 || size.height < 1) throw new Error('the check\'s PNG is empty');
+    result = compareRawFrame(await read(), { data: img.toBitmap(), ...size });
+  } catch (e) {
+    error = e;
+  }
+  let gone: unknown;
+  try { gone = await evaluate(RAW_CHECK_REMOVE); } catch (e) { throw new RawCheckCleanupError(e instanceof Error ? e.message : String(e)); }
+  if (gone !== true) throw new RawCheckCleanupError('it is still in the page');
+  if (error !== undefined) throw error;
+  return result!;
+}
+
+/**
+ * The checks made, by page scale, for the app's life: the first page of each scale that would read raw makes it, the
+ * others wait for it; a check that fails (an error, not a difference) is forgotten, its pages keep the PNG/JPEG frames.
+ */
+const rawChecks = new Map<number, Promise<RawCheck>>();
+
+/** Whether the pages at `scale` read raw frames: `run` checks once (see `rawChecks`); a difference is logged once. */
+export async function rawFramesChecked(scale: number, run: () => Promise<RawCheck>): Promise<boolean> {
+  let check = rawChecks.get(scale);
+  if (!check) {
+    check = run().then((r) => {
+      if (!r.same) console.warn(`Motion Studio: raw frames differ from PNG frames at scale ${scale} (${r.differing} bytes, max ${r.max}, opaque ${String(r.opaque)}, ${r.width}×${r.height}): renders keep PNG/JPEG frames`);
+      return r;
+    });
+    rawChecks.set(scale, check);
+    check.catch(() => { if (rawChecks.get(scale) === check) rawChecks.delete(scale); });
+  }
+  return check.then((r) => r.same, () => false);
+}
+
+/**
+ * Whether a page reads raw frames: only when the caller asked for them (`rawFrames`: a video render, not a still or a
+ * storyboard), the window's scale allows them (`rawFrames()`), and this machine's check at that scale passed. A check
+ * that fails leaves the page on PNG/JPEG frames, except a `RawCheckCleanupError` of this page's own check, which rejects:
+ * the page shows the pattern and must not be used.
+ */
+export async function pageRawFrames(o: Pick<OpenPageOptions, 'deviceScaleFactor' | 'transparentBackground' | 'rawFrames'>, check: () => Promise<RawCheck>): Promise<boolean> {
+  if (o.rawFrames !== true || !rawFrames(o)) return false;
+  let dirty: RawCheckCleanupError | null = null;
+  const raw = await rawFramesChecked(pageScale(o), () => check().catch((e: unknown) => { if (e instanceof RawCheckCleanupError) dirty = e; throw e; }));
+  if (dirty) throw new RenderError('loadFailed', (dirty as RawCheckCleanupError).message);
+  return raw;
+}
+
+/** The raw frame checks made so far, by scale (tests, diagnostics). */
+export async function rawFrameChecks(): Promise<Record<string, RawCheck | null>> {
+  const out: Record<string, RawCheck | null> = {};
+  for (const [k, p] of rawChecks) out[String(k)] = await p.catch(() => null);
+  return out;
+}
+
+/** Tests: forgets every check. */
+export function resetRawFrameChecks(): void { rawChecks.clear(); }
+
 /** The window's surface as BGRA pixels (`toBitmap`: Skia's N32 order, BGRA on every platform the app ships on). */
 export async function captureWindowFrame(win: Pick<BrowserWindow, 'isDestroyed' | 'webContents'>, timeoutMs: number): Promise<RawFrame> {
   if (win.isDestroyed()) throw new RenderError('crashed', 'the render window is gone');
@@ -561,8 +689,16 @@ export class ElectronProvider implements ChromiumProvider {
       });
       cdp.onEvent((e) => { if (e.method === 'Inspector.targetCrashed') this.fail({ code: 'crashed', message: 'a renderer crashed (inspector)' }); });
       const close = page.close;
-      return { ...page, ...(rawFrames(o) ? { captureRaw: () => guardedRawCapture(() => captureWindowFrame(rw.win, this.o.timeouts?.captureMs ?? CAPTURE_MS),
-        () => (page.interception.failure ? new RenderError('isolation', page.interception.failure.message) : this.failureError())) } : {}), close: async () => { o.signal.removeEventListener('abort', onAbort); await close(); } };
+      const captureRaw = () => guardedRawCapture(() => captureWindowFrame(rw.win, this.o.timeouts?.captureMs ?? CAPTURE_MS),
+        () => (page.interception.failure ? new RenderError('isolation', page.interception.failure.message) : this.failureError()));
+      // Report 56: the check runs in an isolated world of its own (its canvas and native frames out of the page's reach).
+      const raw = await pageRawFrames(o, async () => {
+        const { frameTree } = await cdp.send<{ frameTree: { frame: { id: string } } }>('Page.getFrameTree', {}, { sessionId, timeoutMs: t.callMs });
+        const { executionContextId } = await cdp.send<{ executionContextId: number }>('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: 'ms-raw-check' }, { sessionId, timeoutMs: t.callMs });
+        const send = (params: Record<string, unknown>) => cdp.send('Runtime.evaluate', { ...params, contextId: executionContextId }, { sessionId, timeoutMs: t.callMs });
+        return checkRawFrames(page, (expression) => evaluateValue(send, expression), captureRaw);
+      });
+      return { ...page, ...(raw ? { captureRaw } : {}), close: async () => { o.signal.removeEventListener('abort', onAbort); await close(); } };
     } catch (e) {
       o.signal.removeEventListener('abort', onAbort);
       ending = true;

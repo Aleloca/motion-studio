@@ -83,6 +83,11 @@ export interface OpenPageOptions {
    */
   purpose?: 'render' | 'frames';
   /**
+   * Report 56: the caller reads raw frames (`RenderPage.captureRaw`) when the page offers them: a video render. A provider
+   * that checks raw frames before offering them (the desktop's) skips the check for any other page (a still, frames).
+   */
+  rawFrames?: boolean;
+  /**
    * The page's default background is fully transparent instead of white (Phase 14: the identity sets' PNGs keep their
    * alpha), with `Emulation.setDefaultBackgroundColorOverride`. A PNG capture then has the alpha the composition leaves.
    */

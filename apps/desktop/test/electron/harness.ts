@@ -9,18 +9,18 @@ import { Session as InspectorSession } from 'node:inspector';
 import { cpus, loadavg } from 'node:os';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { join } from 'node:path';
-import { app, BrowserWindow, contentTracing, powerSaveBlocker, session } from 'electron';
+import { app, BrowserWindow, contentTracing, nativeImage, powerSaveBlocker, session } from 'electron';
 import type { Composition, FormatPreset } from '../../../../packages/shared/src/index.ts';
 import { findFfmpeg, renderComposition, RenderError, type FfmpegInfo } from '@motion-studio/core';
 import { startCompositionServer } from '../../../../packages/core/src/compositions/composition-server.ts';
 import { renderFrames } from '../../../../packages/core/src/render/frames.ts';
-import { appKeptAwake, closeAllRenderWindows, createRenderWindow, ElectronProvider, liveRenderWindowCount, shutdownForQuit } from '../../src/render-window.ts';
+import { appKeptAwake, closeAllRenderWindows, createRenderWindow, ElectronProvider, liveRenderWindowCount, rawFrameChecks, shutdownForQuit } from '../../src/render-window.ts';
 import { readdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { hardenUiWindow, installPreviewFilter } from '../../src/preview-filter.ts';
 
 interface Config {
-  scenario: 'options' | 'session-rules' | 'render' | 'hostile-render' | 'preview' | 'lifecycle' | 'memory' | 'quit' | 'scale' | 'render-cost' | 'frames' | 'ui-load' | 'capture-probe' | 'raw-render';
+  scenario: 'options' | 'session-rules' | 'render' | 'hostile-render' | 'preview' | 'lifecycle' | 'memory' | 'quit' | 'scale' | 'render-cost' | 'frames' | 'ui-load' | 'capture-probe' | 'raw-render' | 'raw-check' | 'css-pause';
   /** scale (report 51): the pages to open under `creative`, each at its scale (none: the default) and seek time. */
   scalePages?: Array<{ name: string; composition: Composition; format: string; scale?: number; t?: number }>;
   /** The built runtime. */
@@ -49,6 +49,12 @@ interface Config {
   /** raw-render (report 53): renders with raw frames, or `encoded` (PNG), at a short side (none: 1x). */
   rawRuns?: Array<{ name: string; short?: number; encoded?: boolean; quality?: 'standard' | 'high' | 'max'; background?: string }>;
   probe?: { scale: number; times: number[]; outDir: string };
+  /** raw-check (report 56): the times to read raw and as PNG from one page, each from the same state. */
+  rawCheck?: { times: number[] };
+  /** css-pause (report 56): the pages to open, and the layer agent's functions (source) that pause their animation. */
+  cssPause?: { runs: number; pause: string; settle: string };
+  /** Chromium switches appended before the app is ready (e.g. a forced colour profile). */
+  switches?: Record<string, string>;
   /** A throwaway folder under the OS temp folder for every Electron data path (the test removes it after the exit). */
   scratch: string;
 }
@@ -61,6 +67,7 @@ app.setName('ms-electron-harness');
 // No real keychain (Chromium's cookie encryption would otherwise ask for it).
 app.commandLine.appendSwitch('use-mock-keychain');
 app.commandLine.appendSwitch('password-store', 'basic');
+for (const [k, v] of Object.entries(config.switches ?? {})) app.commandLine.appendSwitch(k, v);
 for (const k of ['appData', 'userData', 'sessionData', 'logs', 'crashDumps'] as const) app.setPath(k, join(scratch, k));
 // Not removed here: an rmSync of it in an 'exit' hook hung Electron's exit once pages had loaded over HTTP. The test does it.
 
@@ -126,6 +133,15 @@ function watchServiceWorkers(ses: Electron.Session) {
  * Report 53: counts the frames `provider`'s pages read raw and encoded; `encoded` takes their raw frames away (the PNG or
  * JPEG frames of before).
  */
+/** Two BGRA frames compared: bytes that differ, the largest difference, and the mean difference per channel (B, G, R, A). */
+function frameDiff(a: Buffer, b: Buffer) {
+  let n = 0, max = 0;
+  const sum = [0, 0, 0, 0];
+  for (let k = 0; k < Math.min(a.length, b.length); k++) { const d = a[k]! - b[k]!; if (d) { n++; max = Math.max(max, Math.abs(d)); sum[k % 4]! += d; } }
+  const px = Math.min(a.length, b.length) / 4;
+  return { sizes: a.length === b.length, differing: n, max, mean: sum.map((x) => Math.round((1000 * x) / px) / 1000) };
+}
+
 function countFrames(provider: ElectronProvider, encoded: boolean) {
   const counts = { rawFrames: 0, encodedFrames: 0 };
   const open = provider.open.bind(provider);
@@ -587,6 +603,76 @@ async function run(): Promise<void> {
         });
         report({ raw: run.name, frames: r.frames, width: r.width, height: r.height, sha256: r.sha256, ...counts, windowsAfter: liveRenderWindowCount() });
       }
+      // Report 56: the provider's checks of raw frames against PNG frames, by scale.
+      report({ rawChecks: await rawFrameChecks() });
+      return;
+    }
+    case 'raw-check': {
+      // Report 56: one page, and at each time the raw frame and the PNG of the same state, compared byte for byte (the
+      // PNG decoded to BGRA). The raw frame is read with the page's renderers stopped as the seek resolves: it can only
+      // show what they had already handed to the compositor. Then raw again, after the PNG's forced redraw.
+      const server = await startCompositionServer({ uiOrigins: [], distDir: c.dist });
+      const provider = new ElectronProvider({ limits: { timeLimitMs: 30 * 60_000 } });
+      try {
+        const comp = c.composition!;
+        const s = await server.mintSession({ creativeDir: c.creative!, versionDir: 'outputs/v1', format: c.format!, composition: comp, mode: 'render' });
+        const page = await provider.open({ width: comp.width, height: comp.height, url: s.url, signal: new AbortController().signal, rawFrames: true });
+        if (!page.captureRaw) throw new Error('raw-check: the page has no raw frames');
+        const rows: unknown[] = [];
+        for (const t of c.rawCheck!.times) {
+          await page.seek(t);
+          // This app's own renderers (getAppMetrics), stopped only for the read and always resumed.
+          const tabs = app.getAppMetrics().filter((m) => m.type === 'Tab').map((m) => m.pid);
+          for (const pid of tabs) try { process.kill(pid, 'SIGSTOP'); } catch { /* gone */ }
+          let raw: Buffer;
+          try { raw = (await page.captureRaw()).data; } finally { for (const pid of tabs) try { process.kill(pid, 'SIGCONT'); } catch { /* gone */ } }
+          const png = nativeImage.createFromBuffer(await page.capture('png')).toBitmap();
+          const again = (await page.captureRaw()).data;
+          rows.push({ t, raw: frameDiff(raw, png), again: frameDiff(again, png) });
+        }
+        report({ rawCheck: rows });
+        await page.close();
+      } finally {
+        await provider.close();
+        await server.close();
+      }
+      return;
+    }
+    case 'css-pause': {
+      // Report 56: a page whose CSS animation (a box moving 100 px/s, on the compositor) starts on load, paused at 0 right
+      // after the load (often still play-pending) as the layer agent's seek does: plainly (pause, currentTime) and with
+      // its `settleAnimations`; where the box is on the surface for each, after the seek's frames.
+      const html = '<!doctype html><style>html,body{margin:0;background:#000}#b{position:absolute;left:0;top:0;width:20px;height:20px;background:#fff;animation:go 2s linear forwards}'
+        + '@keyframes go{from{transform:translateX(0)}to{transform:translateX(200px)}}</style><div id="b"></div>';
+      const { pause, settle: settleSrc } = c.cssPause!;
+      const boxAt = async (wc: Electron.WebContents) => {
+        const img = await wc.capturePage(undefined, { stayHidden: true });
+        const b = img.toBitmap();
+        const w = img.getSize().width;
+        // The box's left edge on row 10 in hundredths of a pixel: its centre of mass (anti-aliased edges included) less 9.5.
+        let sum = 0, moment = 0;
+        for (let x = 0; x < w; x++) { const g = b[(10 * w + x) * 4 + 1]! / 255; sum += g; moment += g * x; }
+        return Math.round(100 * (moment / sum - 9.5));
+      };
+      const rows: unknown[] = [];
+      for (let i = 0; i < c.cssPause!.runs; i++) {
+        for (const mode of ['plain', 'settled'] as const) {
+          const win = await loadIn(`css-${mode}-${i}`, `data:text/html,${encodeURIComponent(html)}`, () => {});
+          win.webContents.stopPainting();
+          const pending = await win.webContents.executeJavaScript(`(async () => {
+            const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+            const two = async () => { await frame(); await frame(); };
+            const pending = document.getAnimations().some((a) => a.pending);
+            const started = (${pause})(document, 0);
+            await two();
+            if (${JSON.stringify(mode)} === 'settled') { await (${settleSrc})(started, 0, frame); await two(); }
+            return pending;
+          })()`) as boolean;
+          rows.push({ mode, pending, box: await boxAt(win.webContents) });
+          await close(win);
+        }
+      }
+      report({ cssPause: rows });
       return;
     }
     case 'capture-probe': {

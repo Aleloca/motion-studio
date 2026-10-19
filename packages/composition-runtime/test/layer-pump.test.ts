@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { installVirtualClock } from '../src/clock.ts';
-import { ClockStallError, pumpUntilDone, PUMP_FRAME_EVERY, createUnfreezer, startLayerAgent } from '../src/layer-agent.ts';
+import { ClockStallError, pumpUntilDone, PUMP_FRAME_EVERY, createUnfreezer, pauseAnimations, settleAnimations, startLayerAgent } from '../src/layer-agent.ts';
 import { encodeLayerConfig } from '../src/layer-protocol.ts';
 
 const freshWindow = () => new JSDOM('<!doctype html><p>x</p>', { pretendToBeVisual: true }).window as unknown as Window & typeof globalThis;
@@ -301,5 +301,50 @@ describe('createUnfreezer', () => {
     const plain = new JSDOM('<!doctype html><div id="a" style="will-change: transform"></div>', { pretendToBeVisual: true }).window as unknown as Window & typeof globalThis;
     startLayerAgent(plain);
     expect(plain.document.getElementById('a')!.style.getPropertyValue('will-change')).toBe('transform');
+  });
+});
+
+// Report 56: the animations a seek pauses that were running are sent again to the compositor (one frame at another time).
+describe('pausing the layer\'s animations', () => {
+  const anim = (playState: string, o: { delay?: number; activeDuration?: number } = {}) => {
+    const times: Array<number | null> = [];
+    const a = { playState, effect: { getComputedTiming: () => ({ delay: o.delay ?? 0, activeDuration: o.activeDuration ?? 2000 }) }, pause: vi.fn(() => { a.playState = 'paused'; }),
+      get currentTime() { return times.at(-1) ?? null; }, set currentTime(v: number | null) { times.push(v); } };
+    return Object.assign(a, { times });
+  };
+  const settle = (list: unknown[], t: number, frame: () => Promise<void>) => settleAnimations(list as Animation[], t, frame);
+
+  it('pauses every animation at t and returns those that were not paused yet', () => {
+    const running = anim('running'), pending = anim('running'), finished = anim('finished'), paused = anim('paused');
+    const doc = { getAnimations: () => [running, pending, finished, paused] } as unknown as Document;
+    expect(pauseAnimations(doc, 0.5)).toEqual([running, pending, finished]);
+    for (const a of [running, pending, finished, paused]) { expect(a.pause).toHaveBeenCalled(); expect(a.currentTime).toBe(500); }
+  });
+
+  it('settles inside the active phase: 1 ms on (back near the end) for one frame, then t again', async () => {
+    const a = anim('paused'), end = anim('paused', { activeDuration: 1000.5 });
+    let frames = 0;
+    expect(await settle([a, end], 1, async () => { frames++; expect([a.currentTime, end.currentTime]).toEqual([1001, 999]); })).toBe(true);
+    expect(frames).toBe(1);
+    expect([a.currentTime, end.currentTime]).toEqual([1000, 1000]);
+    expect(await settle([], 1, async () => { frames++; })).toBe(false);
+    expect(frames).toBe(1);
+  });
+
+  it('never leaves the active phase (no animationstart/end again): in its delay, at or after its end, nothing', async () => {
+    const delayed = anim('paused', { delay: 1500 }), ended = anim('paused', { activeDuration: 1000 }), past = anim('paused', { activeDuration: 400 });
+    const frame = vi.fn(async () => {});
+    expect(await settle([delayed, ended, past], 1, frame)).toBe(false);
+    expect(frame).not.toHaveBeenCalled();
+    for (const a of [delayed, ended, past]) expect(a.times).toEqual([]);
+  });
+
+  it('leaves alone an animation that msSeek cancelled (idle), before or during the frame', async () => {
+    const cancelled = anim('idle'), later = anim('paused'), live = anim('paused');
+    const done = await settle([cancelled, later, live], 0.5, async () => { later.playState = 'idle'; });
+    expect(done).toBe(true);
+    expect(cancelled.times).toEqual([]);
+    expect(later.times).toEqual([501]); // not set back: a time would bring it back, paused, over its replacement
+    expect(live.times).toEqual([501, 500]);
   });
 });

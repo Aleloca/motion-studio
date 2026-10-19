@@ -1,5 +1,5 @@
 import { installVirtualClock, type VirtualClock } from './clock.ts';
-import { FrameTimeoutError, PREVIEW_FRAME_WAIT, twoFrames, type FrameWait } from './frames.ts';
+import { FrameTimeoutError, nextFrame, PREVIEW_FRAME_WAIT, twoFrames, type FrameWait } from './frames.ts';
 import { decodeLayerConfig, LAYER_PROTOCOL_VERSION, type LayerConfig, type LayerRequest } from './layer-protocol.ts';
 
 /**
@@ -11,7 +11,8 @@ import { decodeLayerConfig, LAYER_PROTOCOL_VERSION, type LayerConfig, type Layer
  *   both modes, after every seek and tick;
  * - answers the runtime: `ready` (every font face of the layer and of the composition `FontFace.load()`ed, then
  *   `msReady` awaited), `seek(t)` (clock to t, every animation of the document paused at t, `msTimeline` to t,
- *   `await msSeek(t)`, then two native animation frames), `tick(t)` (the same without waiting, for playback).
+ *   `await msSeek(t)`, then two native animation frames; animations it paused that were running are shown at t on the
+ *   compositor too, `settleAnimations`), `tick(t)` (the same without waiting, for playback).
  * Render mode: an `msReady` or `msSeek` that waits on a timer the frozen clock never fires fails after `CLOCK_STALL_MS`
  *   with a diagnostic and the reply code `layerStalled` (and, for `msSeek`, every later seek fails at once, with the same
  *   code), instead of holding the render for the 60 s layer timeout (decision 709).
@@ -275,6 +276,59 @@ export function createUnfreezer(doc: Document): { run(budget?: number): void; tr
   };
 }
 
+/**
+ * Pauses every animation of `doc` at `t` seconds (CSS animations and transitions, WAAPI). Returns the ones that were not
+ * paused yet: those may already run on the compositor (`settleAnimations`).
+ */
+export function pauseAnimations(doc: Document, t: number): Animation[] {
+  const started: Animation[] = [];
+  for (const a of doc.getAnimations()) {
+    try {
+      if (a.playState !== 'paused') started.push(a);
+      a.pause();
+      a.currentTime = t * 1000;
+    } catch { /* an animation without a timeline */ }
+  }
+  return started;
+}
+
+/**
+ * Report 56: animations just paused by `pauseAnimations` shown at `t` on screen too. Chromium runs a transform or opacity
+ * animation on the compositor; paused while it is still starting there (play-pending: as a layer reports ready, or on a
+ * slow machine), the compositor keeps the value of the frames it already ran (measured: one frame ahead in 28 of 29 such
+ * pauses here, 4 and 8 px of a 100 px/s box on the CI runner) while the page's own value is `t`'s, so setting `t` again
+ * changes nothing. A different time for one frame, then `t`, makes the page send its value again. `frame` waits one
+ * native animation frame. Never visible: the seek waits its frames after this. Resolves whether any was nudged.
+ *
+ * Only inside the active phase, and never past its edges (1 ms on, or 1 ms back at its end): leaving the phase would fire
+ * `animationstart`/`animationend`/`transitionend` at the layer again. An animation that `msSeek` cancelled (idle) is left
+ * alone: a time set on it would bring it back, paused, over the one that replaced it. Outside its active phase (in its
+ * delay, or filled after its end) one is not nudged (decision 1406).
+ *
+ * Cost: the seek waits one frame for this and two more after it, about 50 ms, only on seeks that paused running animations
+ * (normally a page's first seek of each layer with its own animations).
+ */
+export async function settleAnimations(started: readonly Animation[], t: number, frame: () => Promise<void>): Promise<boolean> {
+  const ms = t * 1000;
+  const nudged: Animation[] = [];
+  for (const a of started) {
+    try {
+      if (a.playState === 'idle') continue;
+      const ct = a.effect?.getComputedTiming();
+      if (!ct) continue;
+      const from = Number(ct.delay ?? 0), to = from + Number(ct.activeDuration ?? 0);
+      const at = ms + 1 < to ? ms + 1 : ms - 1;
+      if (ms < from || ms >= to || at < from) continue;
+      a.currentTime = at;
+      nudged.push(a);
+    } catch { /* an animation without a timeline */ }
+  }
+  if (nudged.length === 0) return false;
+  await frame();
+  for (const a of nudged) { try { if (a.playState !== 'idle') a.currentTime = ms; } catch { /* an animation without a timeline */ } }
+  return true;
+}
+
 /** The elements the unfreezer checks in one preview tick at most (decision 1245); a render checks them all. */
 export const PREVIEW_UNFREEZE_BUDGET = 2000;
 
@@ -301,20 +355,18 @@ export function startLayerAgent(w: Window & typeof globalThis, o: { stallMs?: nu
   let port: MessagePort | null = null;
   let seekRunning = false;
 
-  const syncAnimations = (t: number) => {
-    for (const a of w.document.getAnimations()) {
-      try { a.pause(); a.currentTime = t * 1000; } catch { /* an animation without a timeline */ }
-    }
-  };
-  const applyTime = (t: number) => {
+  const syncAnimations = (t: number) => pauseAnimations(w.document, t);
+  /** Sets the layer to `t`; returns the animations it paused that were not paused yet (`settleAnimations`). */
+  const applyTime = (t: number): Animation[] => {
     clock.advanceTo(t * 1000);
-    syncAnimations(t);
+    const started = syncAnimations(t);
     const tl = lw.msTimeline;
     if (tl && typeof tl === 'object') {
       if (typeof tl.pause === 'function') tl.pause();
       if (typeof tl.seek === 'function') tl.seek(t, false);
       else if ('currentTime' in tl) tl.currentTime = t * 1000;
     }
+    return started;
   };
   /**
    * Awaits a promise of layer code while pumping the frozen clock at the current time. On every native macrotask the
@@ -331,11 +383,12 @@ export function startLayerAgent(w: Window & typeof globalThis, o: { stallMs?: nu
    * anyway: the memo only makes it fail sooner, it never ships a video with the layer blank (decision 709).
    */
   let seekStalled: string | null = null;
-  const callSeek = async (t: number) => {
+  /** Calls `msSeek`; returns the animations it started (paused now, see `applyTime`). */
+  const callSeek = async (t: number): Promise<Animation[]> => {
     if (typeof lw.msSeek === 'function') {
       try { await pumping(lw.msSeek(t), 'msSeek'); } catch (err) { if (err instanceof ClockStallError) seekStalled = err.message; throw err; }
     }
-    syncAnimations(t); // msSeek may have created animations
+    return syncAnimations(t); // msSeek may have created animations
   };
 
   async function ready(): Promise<string[]> {
@@ -364,11 +417,14 @@ export function startLayerAgent(w: Window & typeof globalThis, o: { stallMs?: nu
         unfreezer.run();
         port?.postMessage({ id: req.id, ok: true, warnings });
       } else if (req.op === 'seek') {
-        applyTime(req.t);
+        const started = applyTime(req.t);
         if (seekStalled !== null) throw new SeekStalledError(`msSeek not called again: ${seekStalled}`);
-        await callSeek(req.t);
+        started.push(...await callSeek(req.t));
         unfreezer.run(); // after the layer's own code drew the frame, before it is painted (decision 1238)
         await twoFrames(clock.native, frameWait);
+        // Report 56: animations that were running (the first seek pauses the layer's CSS animations) shown at `t`, then
+        // two more frames, so the capture sees it.
+        if (started.length && await settleAnimations(started, req.t, () => nextFrame(clock.native, frameWait))) await twoFrames(clock.native, frameWait);
         port?.postMessage({ id: req.id, ok: true });
       }
     } catch (err) {
