@@ -1,6 +1,7 @@
 // Report 48: the files of a store pack, as the pack export lists them to pick from: by store (App Store, Google Play), then by
 // device (one row per screenshot), the preview videos and the feature graphic on their own. Each row has the thumbnail the ★
 // export rows have (report 47): the render when it is current, else a still of the composition.
+// Report 54: the dialog shows them as a gallery per store, one row per device (`galleryRows`); the helpers below are its logic.
 import { presetOf, renderState, STORE_DEVICE_PRESET, STORE_PREVIEW_PRESET, type FormatPreset, type Locale, type StoreId, type VersionEntry } from '@motion-studio/shared';
 import type { GroupExportPlanItem } from '../../api.ts';
 import type { StillRef } from '../../components/compositionStill.ts';
@@ -48,6 +49,40 @@ export function packFileGroups(formats: readonly string[], o: {
     device.rows.push({ id, label, aspect: preset ? preset.width / preset.height : 1, thumb: o.thumbOf(id) });
   }
   return stores;
+}
+
+/**
+ * Report 54: a row of a store's gallery: a device's screenshots (`label` the device's name, `files` the ones its checkbox
+ * covers) and, on the store's last row, the single files after them (`tail`: App Preview, feature graphic, promo video).
+ */
+export interface GalleryRow { key: string; label: string | null; files: PackFileRow[]; tail: PackFileRow[] }
+
+/** A store's rows: one per device with screenshots; the single files at the end of the last one, or alone in a row without a device. */
+export function galleryRows(store: PackStore): GalleryRow[] {
+  const rows: GalleryRow[] = store.devices.filter((d) => !d.single).map((d) => ({ key: d.key, label: d.label, files: d.rows, tail: [] }));
+  const singles = store.devices.filter((d) => d.single).flatMap((d) => d.rows);
+  if (!singles.length) return rows;
+  const last = rows.at(-1);
+  if (last) last.tail = singles; else rows.push({ key: `${store.store}-files`, label: null, files: [], tail: singles });
+  return rows;
+}
+
+/** A store's or a device's checkbox from the files left out: on when all are in, mixed when some are, with "n/m". */
+export function groupCheck(ids: readonly string[], off: ReadonlySet<string>): { n: number; of: number; on: boolean; mixed: boolean } {
+  const n = ids.filter((id) => !off.has(id)).length;
+  return { n, of: ids.length, on: n === ids.length, mixed: n > 0 && n < ids.length };
+}
+
+/** The files left out once `ids` are put in (`include`) or left out; a new set. */
+export function withFiles(off: ReadonlySet<string>, ids: readonly string[], include: boolean): Set<string> {
+  const next = new Set(off);
+  for (const id of ids) { if (include) next.delete(id); else next.add(id); }
+  return next;
+}
+
+/** Whether a sideways strip has more to show before (`back`) or after (`more`) what is in view; a pixel of rounding is nothing. */
+export function scrollEdges(el: { scrollLeft: number; scrollWidth: number; clientWidth: number }): { back: boolean; more: boolean } {
+  return { back: el.scrollLeft > 1, more: el.scrollLeft + el.clientWidth < el.scrollWidth - 1 };
 }
 
 /** A single version's thumbnail of `id`: its render when current, else a still of its composition (report 47). */
