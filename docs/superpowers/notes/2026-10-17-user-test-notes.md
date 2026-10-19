@@ -383,6 +383,14 @@ arrives and worked on later together.
     the machine and the desktop app's processes). To measure with the batch: UI frame times during an export, and whether
     the export should yield (fewer parallel frames, lower process priority) while the user works.
 
+54. **Store pack export: the user does not like the file list at all.** What bothers them: the thumbnails are tiny and
+    far apart, the list needs too much scrolling (19 files), and the structure is confusing (store, device and file one
+    inside the other, numbers 1–8 instead of names). They did not object to the number of checkboxes.
+    User's decision: a gallery per store: one row per device with large thumbnails side by side, as on the canvas,
+    scrolling sideways; a click on a thumbnail leaves it out (it dims), a checkbox only on the device (and the store);
+    the whole pack visible on one screen.
+    Timing: wait for further reports (user).
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
