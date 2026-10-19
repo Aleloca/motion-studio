@@ -6,7 +6,7 @@ import {
 } from '@motion-studio/shared';
 import type { EventsState } from '../../eventsReducer.ts';
 import { creativeJob } from '../creativeState.ts';
-import { boardFrame, type BoardModel } from '../canvasModel.ts';
+import { boardFrame, canvasGroups, type BoardLayout, type BoardModel, type CanvasSection } from '../canvasModel.ts';
 
 /** Longest direction (the core's `MAX_DIRECTION_CHARS`). */
 export const DIRECTION_MAX = 140;
@@ -249,21 +249,19 @@ export function writeVariantView(project: string, host: string, view: VariantVie
   try { localStorage.setItem(variantViewKey(project, host), view); } catch { /* private mode */ }
 }
 
-/** The columns of the "Scelte" view: cells at least `CHOSEN_CELL × z` wide (never under CELL_MIN), as many as fit. */
-export const CHOSEN_CELL = 240;
-export function chosenColumns(inner: number, count: number, z: number): { cols: number; width: number } {
-  const min = Math.max(CELL_MIN, CHOSEN_CELL * z);
-  const cols = Math.max(1, Math.min(Math.max(count, 1), Math.floor((inner + CELL_GAP) / (min + CELL_GAP))));
-  return { cols, width: Math.min((inner - (cols - 1) * CELL_GAP) / cols, Math.max(min, CHOSEN_CELL)) };
-}
+/** Report 52: the headings of the "Scelte" view on the canvas, screen px (variants.css: `.ms-vchosen-head`, `.ms-vchosen-hint`). */
+export const CHOSEN_HEAD = 32;
+export const CHOSEN_HINT = 20;
+/** Report 52: a chosen board's header has the variant's line above the usual two (`.ms-cv-board-from`: 20 px + 2), and a group's label floor. */
+export const CHOSEN_LAYOUT: BoardLayout = { head: 22, grouped: true };
 
 /**
- * Decision 1334: the zoom "Scelte" opens at: the widest of its sections (`count` boards) on one line of a viewport `viewWidth`
- * px wide, rounded down to 5%, within `min`–100% (more boards than fit at `min` wrap). Null without boards or a viewport.
+ * Report 52: the "Scelte" view is a canvas, laid out as the plain one: "Scelte" (its heading), then "Senza scelta" (its heading and
+ * hint) when some format has no choice, each with its boards in the canvas's groups and lines (`canvasGroups`: a store pack by store).
  */
-export function fitChosen(count: number, viewWidth: number, min = 0.5): number | null {
-  if (count <= 0 || viewWidth <= 0) return null;
-  const inner = viewWidth - 2 * CARDS_PAD - 2 * CARD_PAD;
-  const z = ((inner + CELL_GAP) / count - CELL_GAP) / CHOSEN_CELL;
-  return Math.max(min, Math.min(1, Math.floor(z * 20 + 1e-9) / 20));
+export function chosenSections<B extends BoardModel>(chosen: B[], open: B[], pack: ReadonlySet<string>): Array<CanvasSection<B>> {
+  return [
+    { groups: canvasGroups(chosen, pack), head: CHOSEN_HEAD },
+    ...(open.length ? [{ groups: canvasGroups(open, pack), head: CHOSEN_HEAD + CHOSEN_HINT }] : []),
+  ];
 }

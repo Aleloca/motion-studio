@@ -29,7 +29,7 @@ import { useCreative } from '../useCreative.ts';
 import { jobLiveTokens, jobUsagePartial } from '../usageLive.ts';
 import { costText, TokenCount, UsageBadge } from '../shell/Tokens.tsx';
 import { boardLabel, boardName, CanvasBoard, type Draft, type Tool } from './CanvasBoard.tsx';
-import { appliesGroups, boardsWith, canvasGroups, canvasLines, fitBoards, FIT_MIN, groupByChannel, PACK_GROUP, ratioText, type BoardModel } from './canvasModel.ts';
+import { appliesGroups, boardFrame, boardsWith, canvasGroups, canvasLines, fitBoards, fitSections, FIT_MIN, groupByChannel, LABEL_MIN, labelMin, PACK_GROUP, ratioText, type BoardModel, type CanvasItem } from './canvasModel.ts';
 import { CompareDialog } from './CompareDialog.tsx';
 import { channelOf } from './creativeState.ts';
 import { ExportDialog, type ExportSnapshot } from './ExportDialog.tsx';
@@ -57,7 +57,7 @@ import { GroupStar } from './variants/GroupStar.tsx';
 import { useVariantMembers } from './variants/useVariantMembers.ts';
 import { VariantCard } from './variants/VariantCard.tsx';
 import type { ChatTarget } from './variants/VariantSelector.tsx';
-import { CARD_PAD, CARDS_PAD, cardColumns, cardWidth, chosenColumns, chosenView, discardBlock, fitChosen, discardedSelf, fitCards, isRunning, memberLive, readVariantView, readyToChoose, rowState, selectionRows, shortName, shownMembers, thumbZoom, upper, writeVariantView, type ChosenCell, type VariantView } from './variants/variantModel.ts';
+import { CARD_PAD, cardColumns, cardWidth, CHOSEN_LAYOUT, chosenSections, chosenView, discardBlock, discardedSelf, fitCards, isRunning, memberLive, readVariantView, readyToChoose, rowState, selectionRows, shortName, shownMembers, thumbZoom, upper, writeVariantView, type ChosenCell, type VariantView } from './variants/variantModel.ts';
 import { pinchZoom, scrollAfterZoom, stepZoom, ZOOM_MIN, zoomKey } from './canvasZoom.ts';
 import { setMenuZoomHandler } from '../shell/menuZoom.ts';
 import './variants/variants.css';
@@ -418,15 +418,20 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   const viewHost = group?.host ?? creative;
   const storedView = useMemo(() => readVariantView(slug, viewHost, true), [slug, viewHost]);
   const variantView: VariantView = !hasPicks ? 'all' : viewPick ?? storedView;
-  // Decision 1334: "Scelte" fits its widest section (the chosen boards, or those without a choice) instead of the cards.
-  const chosenCount = group && variantView === 'chosen' && detail
-    ? (({ chosen, open }) => Math.max(chosen.length, open.length))(chosenView(planFormats ?? detail.creative.brief.formats, group.group, groupPlan)) : 0;
-  const fitKey = group ? `g:${cardCount}:${variantView}:${chosenCount}` : boards.map((b) => `${b.id}:${b.preset?.width ?? 0}x${b.preset?.height ?? 0}`).join('|');
+  // Report 52: "Scelte" is a canvas laid out as the plain one ("Scelte", then "Senza scelta", each in the canvas's groups and
+  // lines), fitted as the plain canvas (width and height) instead of the cards.
+  const chosenModel = group && variantView === 'chosen' && detail ? (() => {
+    const v = chosenView(planFormats ?? detail.creative.brief.formats, group.group, groupPlan);
+    const of = (cell: ChosenCell): BoardModel & { cell: ChosenCell } => ({ id: cell.format, preset: presetFor(presets, cell.format), out: null, labels: detail.creative.brief.formatLabels, cell });
+    return chosenSections(v.chosen.map(of), v.open.map(of), packIds);
+  })() : null;
+  const chosenKey = chosenModel?.map((s) => s.groups.map((g) => g.boards.map((b) => b.id).join(',')).join(';')).join('|') ?? '';
+  const fitKey = group ? `g:${cardCount}:${variantView}:${chosenKey}` : boards.map((b) => `${b.id}:${b.preset?.width ?? 0}x${b.preset?.height ?? 0}`).join('|');
   const fitNow = useRef<() => number | null>(() => null);
   fitNow.current = () => {
     const v = viewport.current;
     if (!v) return null;
-    if (group && variantView === 'chosen') return fitChosen(chosenCount, v.clientWidth, ZOOM_MIN);
+    if (chosenModel) return fitSections(chosenModel, { width: v.clientWidth, height: v.clientHeight }, FIT_MIN, CHOSEN_LAYOUT);
     return group ? fitCards(cardCount, v.clientWidth, ZOOM_MIN) : fitBoards(canvasGroups(boards, packIds), { width: v.clientWidth, height: v.clientHeight }, FIT_MIN);
   };
   useLayoutEffect(() => {
@@ -446,8 +451,8 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     return () => { cancelAnimationFrame(frame); ro.disconnect(); };
   }, [fitKey, Boolean(detail)]); // eslint-disable-line react-hooks/exhaustive-deps
   const zoomBy = (next: (z: number) => number) => { userZoomed.current = true; setZoom(next); };
-  // Report 40: a canvas that opened below 50% (many boards) can be zoomed back down to where it opened.
-  const zoomMin = () => Math.min(ZOOM_MIN, group ? ZOOM_MIN : fitNow.current() ?? ZOOM_MIN);
+  // Report 40: a canvas that opened below 50% (many boards) can be zoomed back down to where it opened ("Scelte" too: report 52).
+  const zoomMin = () => Math.min(ZOOM_MIN, group && !chosenModel ? ZOOM_MIN : fitNow.current() ?? ZOOM_MIN);
   // ⌘+ / ⌘− step, ⌘0 fits again (and lets the canvas refit on resize, as when it opened).
   const zoomStep = (k: 'in' | 'out' | 'fit') => {
     if (k === 'fit') { userZoomed.current = false; const z = fitNow.current(); if (z !== null) setZoom(z); return; }
@@ -573,6 +578,12 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     const at = fitBoards(groups, viewSize, FIT_MIN);
     return canvasLines(groups, at ?? 1, at === null ? null : viewSize.width);
   })();
+  /** The canvas's lines on screen: a tall board, or a column of stacked boards (report 40), each drawn by `draw`. */
+  const renderLines = <B extends BoardModel>(ls: Array<Array<CanvasItem<B>>>, draw: (b: B) => ReactNode) => ls.map((line, i) => (
+    <div key={i} className="ms-cv-line">
+      {line.map((it) => (it.stack ? <div key={it.boards[0]!.id} className="ms-cv-stack">{it.boards.map(draw)}</div> : draw(it.boards[0]!)))}
+    </div>
+  ));
   const pinsOf = (id: string) => pins.map((pin, i) => ({ pin, number: i + 1 })).filter((x) => x.pin.format === id);
   const badgeOf = (b: BoardModel & { n: number | null }) => {
     const s = states[b.id];
@@ -778,7 +789,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
    * A board of another variant: read-only on the canvas (its tools are on its own page), with the group ★ and its version.
    * Its Comment opens that variant (its chat takes the comment) and starts commenting on the same format there.
    */
-  const memberBoard = (m: VariantMember, d: CreativeDetail, st: Record<string, FormatState>, b: BoardModel & { n: number | null }, z: number) => {
+  const memberBoard = (m: VariantMember, d: CreativeDetail, st: Record<string, FormatState>, b: BoardModel & { n: number | null }, z: number, canvas?: { from: ReactNode }) => {
     const key = `${m.letter}:${b.id}`;
     const src = boardSource(st, b.id, {}).format;
     const v = d.versions.find((x) => x.n === b.n);
@@ -790,7 +801,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     const mrendering = isRendering(renderingOf(mjob, st), b.id);
     const wip = mrendering ? inProgressOf(live, mjob, b.id) : null;
     return (
-      <CanvasBoard key={key} boardKey={key} grouped card slug={slug} creative={m.slug} board={b} n={b.n} tool="select" zoom={z} selected={vsel === key}
+      <CanvasBoard key={key} boardKey={key} grouped card={!canvas} {...(canvas ? { from: canvas.from } : {})} slug={slug} creative={m.slug} board={b} n={b.n} tool="select" zoom={z} selected={vsel === key}
         rendering={!wip && mrendering} {...(wip ? { inProgress: true } : {})} commentable={false} missing={b.n === null ? d.versions.at(-1)?.n ?? null : null}
         {...(m.status === 'active' && b.n !== null ? { onComment: () => onVariantUi({ focus: m.slug === routeCreative ? null : m.slug, all: false, comment: b.id }) } : {})}
         badge={b.n === null ? null : (
@@ -825,45 +836,61 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   /**
    * Report 49: the "Scelte" view, per format only the chosen variant at the chosen version (the group's ★: its board, read-only
    * with its ★, which still changes the pick); then "Senza scelta", each with the variant the default rule takes (decision
-   * 1328: what the export copies, so nothing on the page looks chosen that is not).
+   * 1328: what the export copies, so nothing on the page looks chosen that is not). Report 52: no card: the two sections are
+   * headings on the canvas, their boards laid out as the plain canvas's (`chosenSections`), each with its variant above its name.
    */
   const renderChosenWorld = () => {
-    if (!group) return null;
-    const view = chosenView(planFormats ?? cr.brief.formats, group.group, groupPlan);
-    const inner = Math.max(CARD_PAD, viewW - 2 * CARDS_PAD - 2 * CARD_PAD);
-    const cellOf = (c: ChosenCell, width: number, rule: boolean) => {
+    if (!group || !chosenModel) return null;
+    const at = fitSections(chosenModel, viewSize, FIT_MIN, CHOSEN_LAYOUT);
+    const cellOf = (mb: BoardModel & { cell: ChosenCell }, rule: boolean) => {
+      const c = mb.cell;
       const m = c.slug ? group.group.members.find((x) => x.slug === c.slug) : undefined;
       const d = m ? detailOfMember(m.slug) : null;
       const st = d ? (m!.slug === creative ? states : modelOf(d).st) : null;
       const b = d && st && c.n !== null ? boardsWith([c.format], presets, d.versions, (id) => ({ format: boardSource(st, id, {}).format, n: c.n }), d.creative.brief.formatLabels)[0] : undefined;
+      const from = m ? (
+        <>
+          <span className="ms-vcard-letter">{upper(m.letter)}</span>
+          <span className="ms-vchosen-name">{shortName(m.direction) ?? vg.letterLabel({ letter: upper(m.letter) })}</span>
+          {/* Decision 1357: on a narrow header the tag is its icon alone (the words stay for screen readers and in the tooltip). */}
+          {rule ? <span className="ms-vfinal-tag ms-vchosen-rule" title={vg.chooserDefaultTag}><Icon name="gear" size={11} /><span className="ms-vchosen-rule-text">{vg.chooserDefaultTag}</span></span> : null}
+        </>
+      ) : null;
+      if (m && d && st && b) return memberBoard(m, d, st, b, zoom, { from });
+      // Loading (decision 1337: a member still being read, not missing) or nothing to show: the format's frame, empty, in its place.
+      const f = boardFrame(mb);
+      const label = formatLabel(c.format);
+      const headWidth = Math.max(Math.round(f.width * zoom), labelMin(zoom, true));
       return (
-        <div key={c.format} className="ms-vchosen-cell" style={{ width }}>
-          <p className="ms-vchosen-cap">
-            <b className="ms-vchosen-format">{formatLabel(c.format)}</b>
-            {m ? <span className="ms-vchosen-from"><span className="ms-vcard-letter">{upper(m.letter)}</span><span className="ms-vchosen-name">{shortName(m.direction) ?? vg.letterLabel({ letter: upper(m.letter) })}</span></span> : null}
-            {rule && m ? <span className="ms-vfinal-tag">{vg.chooserDefaultTag}</span> : null}
-          </p>
-          {m && d && st && b ? memberBoard(m, d, st, b, thumbZoom(b, width, false))
-            // Decision 1337: a member still being read (not missing) is loading, not "no variant has it".
-            : m && !d && !group.missing.includes(m.letter) ? <p className="ms-vchosen-none"><Spinner size={14} label={t.web.canvas.loading} /></p>
-            : <p className="ms-vchosen-none">{vg.noVariantFile}</p>}
+        <div key={c.format} className="ms-cv-board ms-vchosen-empty" data-board={`${c.letter ?? ''}:${c.format}`}>
+          <div className={cx('ms-cv-board-head', headWidth < LABEL_MIN && 'ms-narrow-head')} style={{ maxWidth: headWidth }}>
+            <div className="ms-cv-board-line ms-cv-board-from">{from}</div>
+            <div className="ms-cv-board-line">
+              {mb.preset ? <ChannelMark channel={channelOf(mb.preset.channel)} /> : null}
+              <b className="ms-cv-board-name" title={label}>{mb.preset ? boardName(mb, locale) : label}</b>
+            </div>
+            <div className="ms-cv-board-line ms-cv-board-sub" />
+          </div>
+          <div className="ms-cv-frame-wrap ms-vchosen-none" style={{ width: f.width * zoom, height: f.height * zoom }}>
+            {m && !d && !group.missing.includes(m.letter) ? <Spinner size={14} label={t.web.canvas.loading} /> : <span>{vg.noVariantFile}</span>}
+          </div>
         </div>
       );
     };
-    const section = (title: string, cells: ChosenCell[], rule: boolean, hint?: string) => {
-      const col = chosenColumns(inner, cells.length, zoom);
+    return chosenModel.map((section, i) => {
+      const rule = i > 0;
+      const title = rule ? vg.noChoiceTitle : vg.chosenTitle;
+      const count = section.groups.reduce((n, g) => n + g.boards.length, 0);
       return (
-        <section key={title} className={cx('ms-vcard ms-vchosen', rule && 'ms-vchosen-open')} aria-label={title} style={{ width: inner + 2 * CARD_PAD }}>
-          <h3 className="ms-vchosen-title">{rule ? null : <Icon name="star" size={13} fill />}{title}<span className="ms-vchosen-count">{cells.length}</span></h3>
-          {hint ? <p className="ms-vcard-dir">{hint}</p> : null}
-          <div className="ms-vcard-formats">{cells.map((c) => cellOf(c, col.width, rule))}</div>
+        <section key={title} className="ms-vchosen" aria-label={title}>
+          <div className="ms-vchosen-head">
+            <h3 className="ms-vchosen-title">{rule ? null : <Icon name="star" size={13} fill />}{title}<span className="ms-vchosen-count">{count}</span></h3>
+            {rule ? <p className="ms-vchosen-hint" title={vg.noChoiceHint}>{vg.noChoiceHint}</p> : null}
+          </div>
+          {renderLines(canvasLines(section.groups, at ?? 1, at === null ? null : viewSize.width, CHOSEN_LAYOUT), (b) => cellOf(b, rule))}
         </section>
       );
-    };
-    return [
-      section(vg.chosenTitle, view.chosen, false),
-      ...(view.open.length ? [section(vg.noChoiceTitle, view.open, true, vg.noChoiceHint)] : []),
-    ];
+    });
   };
   /** The chooser's formats: each format of the group with the active variants' pictures of it, side by side. */
   const chooserFormats = (): ChooserFormat[] => {
@@ -1032,17 +1059,9 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
           }}
         >
           {/* The world is not zoomed: each board scales its frame, and its spacing follows --cv-z (canvas.css). A group's cards wrap. */}
-          <div className={cx('ms-cv-world', group ? 'ms-cv-vworld' : 'ms-cv-lined')} style={{ '--cv-z': zoom } as CSSProperties}
+          <div className={cx('ms-cv-world', group && !chosenModel ? 'ms-cv-vworld' : 'ms-cv-lined', chosenModel && 'ms-vchosen-world')} style={{ '--cv-z': zoom } as CSSProperties}
             aria-busy={rendering === 'all' || rendering.size > 0 ? true : undefined}>
-            {group ? renderGroupedWorld() : (
-              <>
-                {lines.map((line, i) => (
-                  <div key={i} className="ms-cv-line">
-                    {line.map((it) => (it.stack ? <div key={it.boards[0]!.id} className="ms-cv-stack">{it.boards.map((b) => board(b))}</div> : board(it.boards[0]!)))}
-                  </div>
-                ))}
-              </>
-            )}
+            {group ? renderGroupedWorld() : renderLines(lines, (b) => board(b))}
           </div>
         </div>
         {!versions.length && !working ? (

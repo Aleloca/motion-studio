@@ -1,7 +1,7 @@
 import { DEFAULT_FORMATS } from '@motion-studio/shared';
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('../src/api.ts', () => ({ api: { fileUrl: () => '' } }));
-const { boardsWith, canvasGroups, canvasLines, fitBoards, fitZoom, labelMin, toScreen, worldAt, worldSize, FIT_MIN, LABEL_MIN } = await import('../src/screens/canvasModel.ts');
+const { boardsWith, canvasGroups, canvasLines, fitBoards, fitSections, fitZoom, labelMin, sectionsAt, toScreen, worldAt, worldSize, FIT_MIN, LABEL_MIN, LABEL_MIN_GROUPED } = await import('../src/screens/canvasModel.ts');
 
 describe('canvas fit to view (CV1)', () => {
   const boards = [{ boards: boardsWith(['tiktok-9x16', 'instagram-post-1x1'], DEFAULT_FORMATS, [], () => ({ format: '', n: null })) }];
@@ -100,6 +100,47 @@ describe('canvas rows (report 40)', () => {
       expect(w.height).toBeLessThanOrEqual(view.height);
       expect(w.height).toBeGreaterThan(view.height * 0.85);
     }
+  });
+});
+
+describe('canvas sections (report 52)', () => {
+  const none = () => ({ format: '', n: null });
+  const groups = (ids: string[]) => canvasGroups(boardsWith(ids, DEFAULT_FORMATS, [], none), new Set());
+
+  it('one section without a heading is the plain canvas', () => {
+    const g = groups(['tiktok-9x16', 'instagram-post-1x1']);
+    expect(sectionsAt([{ groups: g, head: 0 }], 1, null)).toEqual(worldAt(g, 1));
+    expect(sectionsAt([{ groups: g, head: 0 }], 0.4, 500)).toEqual(worldAt(g, 0.4, 500));
+    expect(fitSections([{ groups: g, head: 0 }], { width: 430, height: 700 }, 0.25)).toBe(fitBoards(g, { width: 430, height: 700 }, 0.25));
+  });
+
+  it('stacks the sections: each heading (screen px) above its lines, the lines\' gap between sections', () => {
+    // 16:9 → 420×236 (+50 head), 9:16 → 304×540 (+50). Width: the wider section; height: both, a 44 px gap, both headings.
+    const a = groups(['youtube-16x9']);
+    const b = groups(['tiktok-9x16']);
+    expect(sectionsAt([{ groups: a, head: 32 }, { groups: b, head: 52 }], 1, null)).toEqual({ width: 420 + 120, height: 32 + 286 + 44 + 52 + 590 + 180 });
+  });
+
+  it('a board with a taller header (the variant\'s line) and a grouped label floor', () => {
+    const a = groups(['youtube-16x9']);
+    expect(sectionsAt([{ groups: a, head: 0 }], 1, null, { head: 22 }).height).toBe(286 + 22 + 180);
+    // At 50% a 16:9 is 210 px wide: the grouped label (216 px) is the wider.
+    expect(sectionsAt([{ groups: a, head: 0 }], 0.5, null, { grouped: true }).width).toBe(LABEL_MIN_GROUPED + 60);
+  });
+
+  it('fits a single 16:9 as the plain canvas would, and the sections to the viewport\'s height', () => {
+    const one = groups(['youtube-16x9']);
+    expect(fitSections([{ groups: one, head: 32 }], { width: 820, height: 700 }, FIT_MIN, { head: 22, grouped: true })).toBe(fitBoards(one, { width: 820, height: 700 }, FIT_MIN));
+    const pack = ['appstore-iphone-69', 'appstore-iphone-69@2', 'appstore-iphone-69@3', 'playstore-phone-9x16', 'playstore-phone-9x16@2'];
+    const g = canvasGroups(boardsWith(pack, DEFAULT_FORMATS, [], none), new Set(pack));
+    const sections = [{ groups: g, head: 32 }, { groups: groups(['youtube-16x9', 'tiktok-9x16']), head: 52 }];
+    const view = { width: 820, height: 700 };
+    const z = fitSections(sections, view, FIT_MIN, { head: 22, grouped: true })!;
+    const w = sectionsAt(sections, z, view.width, { head: 22, grouped: true });
+    expect(w.width).toBeLessThanOrEqual(view.width);
+    expect(w.height).toBeLessThanOrEqual(view.height);
+    expect(sectionsAt(sections, z + 0.05, view.width, { head: 22, grouped: true }).height).toBeGreaterThan(view.height);
+    expect(fitSections([{ groups: [], head: 32 }], view, FIT_MIN)).toBeNull();
   });
 });
 

@@ -60,6 +60,8 @@ export interface BoardProps {
   onDraftDelete(): void;
   /** Phase 15: the variant's letter before the name (the per-format grouping puts several variants of a format side by side). */
   tag?: string;
+  /** Report 52: a line above the name (the "Scelte" view: the variant's letter and short name); canvasModel counts it (`BoardLayout.head`). */
+  from?: ReactNode;
   /** Phase 15: the board belongs to a variant group (its label line has room for the group ★). */
   grouped?: boolean;
   /** Phase 15: this board's `data-board` when its format id alone is not unique on the canvas (several variants). */
@@ -167,7 +169,8 @@ export function CanvasBoard(p: BoardProps) {
   const sub = !p.card || p.rendering || p.inProgress || p.note || cardState || (board.out && !board.out.verified) || largeFile.length > 0;
   return (
     <div className={cx('ms-cv-board', p.card && 'ms-cv-card-board', p.selected && 'ms-on', drafting && 'ms-drafting')} data-board={p.boardKey ?? board.id}>
-      <div className="ms-cv-board-head" style={p.card ? { width: headWidth } : { maxWidth: headWidth }}>
+      <div className={cx('ms-cv-board-head', narrowHead && 'ms-narrow-head')} style={p.card ? { width: headWidth } : { maxWidth: headWidth }}>
+        {p.from ? <div className="ms-cv-board-line ms-cv-board-from">{p.from}</div> : null}
         <div className="ms-cv-board-line">
           {/* The format's name only, whole first; the channel is its mark (the full label is the tooltip and the accessible name). */}
           {board.preset ? <ChannelMark channel={channelOf(board.preset.channel)} /> : null}
