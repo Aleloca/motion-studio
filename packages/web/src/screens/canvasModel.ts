@@ -79,18 +79,19 @@ export const LABEL_MIN_GROUPED = 216;
 
 /** The lowest zoom the canvas opens at (report 40: a store pack's 19 boards all in view); the user can zoom down to it too. */
 export const FIT_MIN = 0.1;
-/** The narrowest label: a card's (CanvasBoard), reached at 27% and below. */
-const LABEL_FLOOR = 96;
+/** The narrowest label below 50% (review B): about the channel mark and a screenshot's number. */
+const LABEL_SMALL = 40;
 /** Between the lines of boards: the stack's gap. */
 const LINE_GAP = STACK_GAP;
 
 /**
- * The width a board's label keeps at zoom `z`: LABEL_MIN (LABEL_MIN_GROUPED in a variant group) from 50% up, as before;
- * below 50%, only reached by a canvas with many boards, it narrows with the zoom down to 96 px (the name ellipsizes).
+ * The width a board's label keeps at zoom `z`: LABEL_MIN (LABEL_MIN_GROUPED in a variant group) from 50% up, as before.
+ * Below 50%, only reached by a canvas with many boards, the label follows the board (review B of report 40: a 96 px floor made
+ * a store pack's thumbnails tiny); it never goes under 40 px, and shows a short name (CanvasBoard).
  */
 export function labelMin(z: number, grouped = false): number {
-  const full = grouped ? LABEL_MIN_GROUPED : LABEL_MIN;
-  return z >= 0.5 ? full : Math.max(LABEL_FLOOR, Math.round(full * (z / 0.5)));
+  if (z >= 0.5) return grouped ? LABEL_MIN_GROUPED : LABEL_MIN;
+  return LABEL_SMALL;
 }
 
 /** A group of boards on the canvas: a group of the formats column. `alone`: its lines take no other group (a store of a pack). */
@@ -210,7 +211,8 @@ export function fitZoom(world: { width: number; height: number }, view: { width:
 
 /**
  * The zoom the canvas opens at: every board visible, the lines wrapped to the viewport and the labels at their real size
- * (`worldAt`). The largest 5% step from 100% down that fits, never below `min`. Null without boards or before the viewport is
+ * (`worldAt`). The largest zoom that fits, from 100% down (5% steps, 1% below 50%: the wrapping changes with the zoom, so
+ * the search tries each layout and keeps the one with the biggest boards that fits width and height), never below `min`. Null without boards or before the viewport is
  * laid out.
  */
 export function fitBoards(groups: BoardGroup[], view: { width: number; height: number }, min: number): number | null {
@@ -219,7 +221,8 @@ export function fitBoards(groups: BoardGroup[], view: { width: number; height: n
   while (z > min + 1e-9) {
     const w = worldAt(groups, z, view.width);
     if (w.width <= view.width + 1e-6 && w.height <= view.height + 1e-6) break;
-    z = Math.max(min, Math.round((z - 0.05) * 20) / 20);
+    // 5% steps down to 50%, then 1% (review B: at a store pack's 20–30% a 5% step is a fifth of the boards' size).
+    z = z > 0.5 + 1e-9 ? Math.max(min, Math.round((z - 0.05) * 20) / 20) : Math.max(min, Math.round((z - 0.01) * 100) / 100);
   }
   return z;
 }

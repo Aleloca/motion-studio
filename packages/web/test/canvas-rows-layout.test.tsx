@@ -55,13 +55,14 @@ const chrome = required || process.env.MS_LAYOUT_CHROME === '1' ? findChrome() :
 
 /** The canvas between the formats column and the chat panel at a window `page` px wide (canvas.css). */
 const canvasWidth = (page: number) => page - (page > 1180 ? 252 + 368 : page > 980 ? 200 + 340 : 340);
-const VIEW_H = 640;
+/** The canvas's height in a window `page` px wide (common laptop windows: 1280×800, 1440×900, 1728×1117, less the bars). */
+const viewH = (page: number) => (page >= 1700 ? 1050 : page >= 1400 ? 840 : 740);
 
 /** The canvas markup with the viewport the app would have at a window `page` px wide (the zoom fits it). */
 async function markup(page: number): Promise<{ html: string; zoom: number }> {
   const live = { approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} } as unknown as EventsState;
   const size = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('ms-cv-viewport') ? canvasWidth(page) : 0; });
-  const high = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('ms-cv-viewport') ? VIEW_H : 0; });
+  const high = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('ms-cv-viewport') ? viewH(page) : 0; });
   const shell = {
     route: { name: 'creative', slug: 'acme', creative: 'pack' }, live,
     catalog: { projects: [{ slug: 'acme', name: 'Acme' }], creatives: {}, refresh: () => {} },
@@ -90,6 +91,10 @@ describe('store pack canvas: lines', () => {
     expect(lines.flat().slice(0, 9).every((id) => store(id) === 'A')).toBe(true);
     expect(lines.length).toBeGreaterThan(2);
     expect(zoom).toBeLessThan(0.5);
+    // Review B: the narrow labels name a screenshot by its number, the full name is the tooltip.
+    const name = doc.querySelector('[data-board="appstore-iphone-69@3"] .ms-cv-board-name')!;
+    expect(name.textContent).toBe('3');
+    expect(name.getAttribute('title')).toBe('App Store · 3 · Schermata 3');
     expect(screen.queryByText(/Not rendered|Non renderizzato/)).toBeNull();
   });
 });
@@ -112,7 +117,8 @@ for (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++
 }
 const app = rects.filter((x) => x.id.startsWith('appstore')), play = rects.filter((x) => !x.id.startsWith('appstore'));
 if (Math.max(...app.map((x) => x.r.bottom)) > Math.min(...play.map((x) => x.r.top)) + .5) problems.push('a Play Store board above an App Store one');
-return { problems, boards: rects.length };
+const frame = document.querySelector('[data-board="appstore-iphone-69"] .ms-cv-frame');
+return { problems, boards: rects.length, frameH: Math.round(box(frame).height) };
 })()`;
 
 const run = chrome ? describe : describe.skip;
@@ -125,21 +131,26 @@ run('store pack canvas: real Chrome layout', () => {
   afterAll(async () => { await browser?.close(); rmSync(dir, { recursive: true, force: true }); }, 60_000);
 
   it('every board of the 19 is in view at the opening zoom, none overlapping, the App Store above the Play Store (1280, 1440, 1728)', async () => {
+    const sizes: Record<number, { zoom: number; frameH: number }> = {};
     for (const width of [1280, 1440, 1728]) {
-      const { html } = await markup(width);
+      const { html, zoom } = await markup(width);
       // The window is tall enough for the viewport the markup was fitted to (the top bar and the board labels above it).
       const page = `<!doctype html><html lang="it"><head><meta charset="utf-8"><style>${CSS}
-        html,body{margin:0;height:100%} #w{width:${width}px;height:${VIEW_H + 120}px;box-sizing:border-box}</style></head><body><div id="w">${html}</div></body></html>`;
+        html,body{margin:0;height:100%} #w{width:${width}px;height:${viewH(width) + 120}px;box-sizing:border-box}</style></head><body><div id="w">${html}</div></body></html>`;
       const file = join(dir, `pack-${width}.html`);
       writeFileSync(file, page);
-      const tab = await browser.newPage(width, VIEW_H + 120);
+      const tab = await browser.newPage(width, viewH(width) + 120);
       try {
         await tab.goto(`file://${file}`);
         if (process.env.MS_LAYOUT_SHOTS) writeFileSync(join(process.env.MS_LAYOUT_SHOTS, `store-pack-canvas-${width}.png`), await tab.screenshot());
-        const r = await tab.eval<{ problems: string[]; boards: number }>(MEASURE(canvasWidth(width), VIEW_H), 30_000);
+        const r = await tab.eval<{ problems: string[]; boards: number; frameH: number }>(MEASURE(canvasWidth(width), viewH(width)), 30_000);
         expect(r.problems, `@${width}`).toEqual([]);
         expect(r.boards).toBe(19);
+        sizes[width] = { zoom, frameH: r.frameH };
       } finally { await tab.close(); }
     }
+    // Review B: the opening zoom and a screenshot board's height on screen, at each window width.
+    console.log('[store-pack canvas]', JSON.stringify(sizes));
+    expect(sizes[1280]!.frameH).toBeGreaterThan(120);
   }, 180_000);
 });

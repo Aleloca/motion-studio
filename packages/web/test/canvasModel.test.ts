@@ -22,9 +22,9 @@ describe('canvas fit to view (CV1)', () => {
   it('fits with the labels at their real size: fixed two-line height, at least 176 px wide', () => {
     // At 100% every label is one line over a wide frame: the same world as worldSize.
     expect(worldAt(boards, 1)).toEqual(worldSize(boards));
-    // At 40% the frames are 121.6 and 137.6 px but their labels keep 141 px (report 40: 176 px from 50% up, narrower below); the header is always 50 px.
+    // At 40% the labels follow the frames, 121.6 and 137.6 px (report 40: 176 px from 50% up only); the header is always 50 px.
     const small = worldAt(boards, 0.4);
-    expect(small.width).toBeCloseTo(141 + 16 + 141 + 48);
+    expect(small.width).toBeCloseTo(121.6 + 16 + 137.6 + 48);
     expect(small.height).toBeCloseTo(50 + 0.4 * 540 + 0.4 * 180);
     // 430 px: linear fit gives 50%, where the 176 px labels overflow on one line (432 px).
     expect(fitZoom(worldSize(boards), { width: 430, height: 2000 }, 0.25)).toBe(0.5);
@@ -84,11 +84,22 @@ describe('canvas rows (report 40)', () => {
     expect(fitBoards(packGroups, { width: 1400, height: 900 }, FIT_MIN)!).toBeGreaterThan(z);
   });
 
-  it('narrows the labels only below 50%, never under 96 px', () => {
+  it('keeps the labels\' width from 50% up; below, a label follows its board (at least 40 px)', () => {
     expect(labelMin(1)).toBe(LABEL_MIN);
     expect(labelMin(0.5)).toBe(LABEL_MIN);
-    expect(labelMin(0.4)).toBe(141);
-    expect(labelMin(0.1)).toBe(96);
+    expect(labelMin(0.4)).toBe(40);
+    expect(labelMin(0.1)).toBe(40);
+  });
+
+  it('opens a store pack as large as it fits, using the height: the canvas of a 1280, 1440 and 1728 px window (review B)', () => {
+    // [viewport, zoom, lines per line break]: the zoom is the largest (1% steps below 50%) whose wrapped layout fits.
+    for (const [view, zoom, lines] of [[{ width: 660, height: 740 }, 0.24, '9,7,2'], [{ width: 820, height: 840 }, 0.3, '9,7,2'], [{ width: 1108, height: 1050 }, 0.41, '9,7,2']] as const) {
+      expect(fitBoards(packGroups, view, FIT_MIN)).toBe(zoom);
+      expect(canvasLines(packGroups, zoom, view.width).map((l) => l.length).join(',')).toBe(lines);
+      const w = worldAt(packGroups, zoom, view.width);
+      expect(w.height).toBeLessThanOrEqual(view.height);
+      expect(w.height).toBeGreaterThan(view.height * 0.85);
+    }
   });
 });
 

@@ -15,7 +15,7 @@ import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { instanceName } from '../instances.ts';
 import { anim, D, E, isSubmitChord } from '../motion/index.ts';
 import { Button, ChannelMark, Icon, Pill, Popover, Textarea, channelOf, cx } from '../ui/index.ts';
-import { boardFrame, labelMin, outputMedia, outputUrl, pointIn, ratioText, toScreen, type BoardModel } from './canvasModel.ts';
+import { boardFrame, LABEL_MIN, labelMin, outputMedia, outputUrl, pointIn, ratioText, toScreen, type BoardModel } from './canvasModel.ts';
 import { isVideoFile } from '../media.ts';
 import type { BoardRender } from './renderModel.ts';
 
@@ -95,6 +95,12 @@ export function boardName(board: BoardModel, locale: ReturnType<typeof useLocale
   return instanceName(board.preset, board.id, locale, board.labels);
 }
 
+/** A narrow label's name: a store screenshot's number ("3" of "3 · caption"), else the name (it ellipsizes). */
+export function shortBoardName(board: BoardModel, locale: ReturnType<typeof useLocale>): string {
+  const m = /^(\d+) · /.exec(board.labels?.[board.id] ?? '');
+  return m ? m[1]! : boardName(board, locale);
+}
+
 export function boardLabel(board: BoardModel, locale: ReturnType<typeof useLocale>): string {
   return board.preset ? `${channelName(board.preset.channel, locale)} · ${boardName(board, locale)}` : board.id;
 }
@@ -155,7 +161,9 @@ export function CanvasBoard(p: BoardProps) {
   // A card's header is as wide as its thumbnail (it wraps); the canvas keeps its label floor.
   const headWidth = p.card ? Math.max(Math.round(size.width * zoom), CARD_LABEL_MIN)
     : Math.max(Math.round(size.width * zoom), labelMin(zoom, p.boardKey !== undefined || p.tag !== undefined || p.grouped));
-  const cardState = comp && (comp.render.kind === 'queued' || comp.render.kind === 'rendering' || comp.render.kind === 'failed' || comp.render.kind === 'problem');
+  // Review B of report 40: a label narrower than usual (a canvas below 50%) says a screenshot's number alone; the full name is the tooltip.
+  const narrowHead = !p.card && headWidth < LABEL_MIN;
+  const cardState = comp && (comp.render.kind == 'queued' || comp.render.kind === 'rendering' || comp.render.kind === 'failed' || comp.render.kind === 'problem');
   const sub = !p.card || p.rendering || p.inProgress || p.note || cardState || (board.out && !board.out.verified) || largeFile.length > 0;
   return (
     <div className={cx('ms-cv-board', p.card && 'ms-cv-card-board', p.selected && 'ms-on', drafting && 'ms-drafting')} data-board={p.boardKey ?? board.id}>
@@ -164,7 +172,7 @@ export function CanvasBoard(p: BoardProps) {
           {/* The format's name only, whole first; the channel is its mark (the full label is the tooltip and the accessible name). */}
           {board.preset ? <ChannelMark channel={channelOf(board.preset.channel)} /> : null}
           {p.tag ? <span className="ms-cv-board-tag" aria-hidden="true">{p.tag}</span> : null}
-          <b className="ms-cv-board-name" title={label}>{board.preset ? boardName(board, locale) : label}</b>
+          <b className="ms-cv-board-name" title={label}>{board.preset ? (narrowHead ? shortBoardName(board, locale) : boardName(board, locale)) : label}</b>
           {/* The version badge, or a follower's link chip. */}
           <span className="ms-cv-board-slot">{p.badge}</span>
         </div>
