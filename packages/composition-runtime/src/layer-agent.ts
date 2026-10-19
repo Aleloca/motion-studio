@@ -105,11 +105,11 @@ export async function pumpUntilDone<T>(value: T, clock: PumpClock, maxPumps = MA
  * without them (`auto` when nothing else is left): an inline `!important` beats every sheet. What the hint made besides
  * the frozen raster (a stacking context, the containing block of absolute and fixed descendants) comes from an identity
  * `translate: 0px` (decision 1243): it composes with any transform, keeps `preserve-3d` and is no backdrop root (a `filter`
- * hint flattened 3D children and hid a `backdrop-filter` child). It is not written inline (decisions 1250, 1251): the
- * element gets the `data-ms-u` attribute, matched by a rule in the cascade layer `ms-unfreeze` of a sheet kept first in the
- * document, so the lowest layer: every rule of the layer's own (unlayered, or in any layer of its own) that gives the
- * element a `translate`, whenever it starts to match (a sibling, `:has()`, `insertRule`…), wins over it. Taking it back is
- * removing the attribute.
+ * hint flattened 3D children and hid a `backdrop-filter` child). It is not written inline (decisions 1250, 1255): the
+ * element gets the `data-ms-u` attribute, matched by a rule in the cascade layer `ms-unfreeze` of an adopted sheet, so
+ * every unlayered rule of the layer that gives the element a `translate`, whenever it starts to match (a sibling, `:has()`,
+ * `insertRule`…), wins over it; an adopted sheet comes after the document's, so a layer's own `@layer` rule loses to it.
+ * Taking it back is removing the attribute; a mark this unfreezer did not write (a clone) is removed (decision 1256).
  *
  * Cost (decisions 1240, 1245): a full scan only when a class, an id or a sheet changed; an element whose `style` changed is
  * checked only when its inline style names a freezing hint, one whose other attributes changed (SVG `cx`, `d`…) or that
@@ -128,12 +128,25 @@ export function createUnfreezer(doc: Document): { run(budget?: number): void } {
   // The identity translate of the hinted elements, in the lowest cascade layer (decision 1250).
   const MARK = 'data-ms-u';
   const SHEET = `@layer ms-unfreeze { [${MARK}] { translate: 0px; } }`;
-  const sheet = doc.createElement('style');
-  sheet.textContent = SHEET;
-  /** Keeps the sheet whole and first in the document (the first layer declared is the lowest). */
+  /**
+   * A constructed sheet in `document.adoptedStyleSheets`, never a `<style>` of the document (decision 1255): the layer's
+   * `document.querySelector('style')` and `document.styleSheets[0]` stay its own. Kept there when the layer reassigns the
+   * list. Without constructable sheets (jsdom) the mark alone is set.
+   */
+  type Adopting = Document & { adoptedStyleSheets?: CSSStyleSheet[] };
+  const Sheet = win?.CSSStyleSheet as (typeof CSSStyleSheet & { prototype: { replaceSync?: unknown } }) | undefined;
+  let sheet: CSSStyleSheet | null = null;
+  try {
+    if (Sheet && typeof Sheet.prototype.replaceSync === 'function' && Array.isArray((doc as Adopting).adoptedStyleSheets)) {
+      sheet = new Sheet();
+      sheet.replaceSync(SHEET);
+    }
+  } catch { sheet = null; }
   const ensureSheet = () => {
-    if (sheet.textContent !== SHEET) sheet.textContent = SHEET;
-    if (!sheet.isConnected || doc.querySelector('style, link[rel~="stylesheet" i]') !== sheet) (doc.head ?? doc.documentElement)?.prepend(sheet);
+    if (!sheet) return;
+    if (sheet.cssRules.length !== 1) sheet.replaceSync(SHEET);
+    const list = (doc as Adopting).adoptedStyleSheets!;
+    if (!list.includes(sheet)) (doc as Adopting).adoptedStyleSheets = [...list, sheet];
   };
   ensureSheet();
   const queue = new Set<Element>();
@@ -189,7 +202,6 @@ export function createUnfreezer(doc: Document): { run(budget?: number): void } {
       }
     };
     for (const s of doc.styleSheets) {
-      if (s.ownerNode === sheet) continue;
       try { visit(s.cssRules); } catch { names = null; break; }
     }
     own.delete(MARK); // our own mark never asks for a record
@@ -215,6 +227,7 @@ export function createUnfreezer(doc: Document): { run(budget?: number): void } {
     const style = styleOf(el);
     if (!style || !computed || !el.isConnected) return;
     const mine = written.get(el);
+    if (!mine && el.hasAttribute(MARK)) el.removeAttribute(MARK); // copied by cloneNode or markup (decision 1256)
     if (mine) {
       if (style.getPropertyValue('will-change') === mine.wc && style.getPropertyPriority('will-change') === 'important') return;
       written.delete(el); // the layer rewrote its style: decided again from what it wrote, without our translate
@@ -239,7 +252,8 @@ export function createUnfreezer(doc: Document): { run(budget?: number): void } {
         queue.clear();
         watch();
         for (const el of [...written.keys()]) restore(el);
-        for (const el of doc.querySelectorAll('*')) if (el !== sheet) queue.add(el);
+        for (const el of doc.querySelectorAll(`[${MARK}]`)) el.removeAttribute(MARK); // none of ours is left: copies only
+        for (const el of doc.querySelectorAll('*')) queue.add(el);
       }
       let n = 0;
       for (const el of queue) {
