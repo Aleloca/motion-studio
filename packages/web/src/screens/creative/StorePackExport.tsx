@@ -38,8 +38,11 @@ export interface StorePackExportProps {
   untranslated?: readonly LocaleTag[];
   /** Languages translated in full whose translation of a pack format is outdated or has problems (the export may fail for them). */
   needsReview?: readonly LocaleTag[];
-  /** Report 48: the pack's formats (its instances, in the brief's order), listed to pick from. */
-  formats: readonly string[];
+  /**
+   * Report 48: the pack's formats (its instances, in the brief's order), listed to pick from. A group reads them from the core
+   * instead (the host's brief, the one its pack export reads: decision 1333).
+   */
+  formats?: readonly string[];
   presets: readonly FormatPreset[];
   /** The brief's instance labels ("1 · caption"). */
   labels?: Record<string, string>;
@@ -61,7 +64,7 @@ export function StorePackExport(p: StorePackExportProps) {
   );
 }
 
-function Body({ onClose, slug, creative, version, group, locales, untranslated = [], needsReview = [], formats, presets, labels, entry, onBusy }: StorePackExportProps & { onBusy(busy: boolean): void }) {
+function Body({ onClose, slug, creative, version, group, locales, untranslated = [], needsReview = [], formats: ownFormats, presets, labels: ownLabels, entry, onBusy }: StorePackExportProps & { onBusy(busy: boolean): void }) {
   const t = useT();
   const x = t.web.storePack.export;
   const ui = useLocale();
@@ -76,12 +79,18 @@ function Body({ onClose, slug, creative, version, group, locales, untranslated =
   const labelId = useId();
   // A group's thumbnails come from its selection (the member and version of each format), read once.
   const [plan, setPlan] = useState<GroupExportPlanItem[] | null>(null);
+  // Decision 1333: a group's files are the host's pack (read from the core), never a member's brief that may lag behind.
+  const [groupFiles, setGroupFiles] = useState<{ formats: string[]; labels: Record<string, string> } | { error: string } | null>(null);
   useEffect(() => {
     if (!group) return undefined;
     let live = true;
     Promise.resolve().then(() => api.groupExportPlan(slug, creative)).then((r) => { if (live) setPlan(r.items); }, () => { /* no thumbnails */ });
+    Promise.resolve().then(() => api.storePackGroupFiles(slug, creative)).then((r) => { if (live) setGroupFiles(r); }, (e: unknown) => { if (live) setGroupFiles({ error: message(e) }); });
     return () => { live = false; };
   }, [group, slug, creative]);
+  const files = group ? (groupFiles && 'formats' in groupFiles ? groupFiles : null) : { formats: ownFormats ?? [], labels: ownLabels };
+  const formats = useMemo(() => files?.formats ?? [], [files?.formats]);
+  const labels = files?.labels;
   const stores = useMemo(() => packFileGroups(formats, {
     presets, ...(labels ? { labels } : {}), locale: ui, deviceName: (d) => t.web.storePack.devices[d],
     thumbOf: (id) => (group ? groupThumb(slug, plan?.find((g) => g.format === id)) : versionThumb(slug, creative, entry, id)),
@@ -191,7 +200,11 @@ function Body({ onClose, slug, creative, version, group, locales, untranslated =
   return (
     <div className="ms-exp ms-spx">
       {head}
-      {all.length > 0 ? (
+      {group && !files ? (
+        groupFiles && 'error' in groupFiles
+          ? <p className="ms-exp-error ms-exp-empty" role="alert">{t.web.exportUi.groupLoadFailed({ detail: groupFiles.error })}</p>
+          : <p className="ms-exp-empty" role="status">{t.web.exportUi.groupLoading}</p>
+      ) : all.length > 0 ? (
         <div className="ms-spx-files" role="group" aria-label={x.files}>
           {stores.map((s) => {
             const ids = s.devices.flatMap((d) => d.rows.map((r) => r.id));

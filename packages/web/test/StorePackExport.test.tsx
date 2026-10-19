@@ -9,7 +9,9 @@ const exportStorePack = vi.fn(async (_s: string, _c: string, _n: number, _b: unk
 const fileUrl = (slug: string, c: string, rel: string) => `/files/${slug}/${c}/${rel}`;
 const exportStorePackGroup = vi.fn(async (_s: string, _c: string, _b: unknown): Promise<Result> => ({ folder: '/out/fotonica-store-pack', written: [], failed: [] }));
 const groupExportPlan = vi.fn(async () => ({ items: [{ format: 'playstore-feature', slug: 'c1~b', letter: 'b', version: 4, source: 'pick', file: 'playstore-feature.png', width: 1, height: 1, state: 'ready' }] }));
-const api = { exportStorePack, exportStorePackGroup, groupExportPlan, fileUrl };
+// Decision 1333: a group's pack files come from the core (the host's brief), here with a third screenshot the open member lacks.
+const storePackGroupFiles = vi.fn(async (_s: string, _c: string) => ({ formats: [...made.formats.slice(0, 2), 'appstore-iphone-69@3', ...made.formats.slice(2)], labels: { ...made.formatLabels, 'appstore-iphone-69@3': '3 · Share' } }));
+const api = { exportStorePack, exportStorePackGroup, groupExportPlan, storePackGroupFiles, fileUrl };
 class ApiError extends Error { constructor(public status: number, msg: string, public code?: string) { super(msg); } }
 vi.mock('../src/api.ts', () => ({ api, ApiError }));
 const { StorePackExport } = await import('../src/screens/creative/StorePackExport.tsx');
@@ -132,14 +134,30 @@ describe('StorePackExport · report 48, the files to export', () => {
   it('a variant group: thumbnails from its selection, the selection sent to the group\'s pack export', async () => {
     render(
       <I18nProvider locale="en">
-        <StorePackExport open onClose={onClose} slug="acme" creative="c1" title="Fotonica" version={0} group formats={made.formats} presets={DEFAULT_FORMATS} labels={made.formatLabels} />
+        <StorePackExport open onClose={onClose} slug="acme" creative="c1" title="Fotonica" version={0} group presets={DEFAULT_FORMATS} />
       </I18nProvider>,
     );
+    // The host's list (three iPhone screenshots), not a member's lagging brief.
+    expect(await within(await screen.findByRole('group', { name: 'Files' })).findByRole('checkbox', { name: 'iPhone 6.9″ · 3 · Share' })).toBeTruthy();
+    expect(storePackGroupFiles).toHaveBeenCalledWith('acme', 'c1');
+    expect(run().textContent).toBe('Export 8 files');
     await waitFor(() => expect(box('Feature graphic').closest('.ms-spx-file')!.querySelector('img')?.getAttribute('src')).toMatch(/c1~b\/outputs\/v4\/playstore-feature\.png/));
     await userEvent.type(screen.getByLabelText('Destination folder'), '/out');
     await userEvent.click(box('App Store'));
     await userEvent.click(run());
     await waitFor(() => expect(exportStorePackGroup).toHaveBeenCalledWith('acme', 'c1', { destination: '/out', formats: ['playstore-phone-9x16', 'playstore-phone-9x16@2', 'playstore-feature', 'playstore-promo-16x9'] }));
+  });
+
+  it('decision 1333: a group whose files cannot be read says so and cannot export', async () => {
+    storePackGroupFiles.mockRejectedValueOnce(new Error('offline'));
+    render(
+      <I18nProvider locale="en">
+        <StorePackExport open onClose={onClose} slug="acme" creative="c1" title="Fotonica" version={0} group presets={DEFAULT_FORMATS} />
+      </I18nProvider>,
+    );
+    expect((await screen.findByRole('alert')).textContent).toContain('offline');
+    await userEvent.type(screen.getByLabelText('Destination folder'), '/out');
+    expect(run().hasAttribute('disabled')).toBe(true);
   });
 
   it('with languages the count is files × languages', async () => {
