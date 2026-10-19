@@ -4,7 +4,7 @@
 // back and forth between steps (the step list or Back / Next, all reachable with the keyboard) never loses it. The core builds the
 // brief from the choices and checks every app screen; its refusal is shown as it is.
 import {
-  APPSTORE_DEVICES, PLAYSTORE_DEVICES, STORE_SCREENSHOTS, storePackFormats, storePackSchema,
+  APPSTORE_DEVICES, PLAYSTORE_DEVICES, STORE_CAPTION_MAX, STORE_SCREENSHOTS, storePackFormats, storePackSchema,
   type StoreId, type StorePack,
 } from '@motion-studio/shared';
 import { useEffect, useId, useRef, useState } from 'react';
@@ -148,12 +148,11 @@ function Body({ onClose, onDone, slug, dirty, initial, onConfirm }: { onClose():
   const valid: Record<Step, boolean> = {
     app: draft.name.trim() !== '',
     stores: draft.stores.length > 0,
-    screens: shots.every((x) => x.caption.trim() !== '' && decided(x)),
+    screens: shots.every((x) => decided(x)),
     preview: true,
     review: true,
   };
   // A step can be opened when every step before it is done.
-  const captionsOk = shots.every((x) => x.caption.trim() !== '');
   const undecided = shots.flatMap((x, i) => (decided(x) ? [] : [i + 1]));
   const reachable = (i: number) => STEPS.slice(0, i).every((k) => valid[k]);
   const goTo = (i: number) => { if (reachable(i)) setStep(i); };
@@ -282,14 +281,14 @@ function Body({ onClose, onDone, slug, dirty, initial, onConfirm }: { onClose():
               <NumberField label={s.count} value={count} min={bounds.min} max={bounds.max} decimals={0} onChange={(n) => set({ count: n })} />
               <span className="ms-spw-faint">{s.countRange(bounds)}</span>
             </div>
-            {!captionsOk ? <p className="ms-spw-err"><Icon name="warn" size={13} />{s.captionRequired}</p> : null}
+            <p className="ms-spw-faint">{s.captionHint}</p>
             {undecided.length > 0 ? <p className="ms-spw-err" role="status"><Icon name="warn" size={13} />{s.screenMissing({ list: undecided.join(', ') })}</p> : null}
             <ol className="ms-spw-shots">
               {shots.map((shot, i) => (
                 <li key={i} className={cx('ms-spw-shot', shot.noScreen && 'ms-nos')}>
                   <span className="ms-spw-n" aria-hidden="true">{i + 1}</span>
-                  <Input aria-label={s.captionOf({ n: i + 1 })} placeholder={s.caption} value={shot.caption} maxLength={80}
-                    aria-invalid={shot.caption.trim() === '' || undefined} onChange={(e) => setShot(i, { caption: e.target.value })} />
+                  <Input aria-label={s.captionOf({ n: i + 1 })} placeholder={s.caption} value={shot.caption} maxLength={STORE_CAPTION_MAX}
+                    title={shot.caption || undefined} onChange={(e) => setShot(i, { caption: e.target.value })} />
                   <div className="ms-spw-screen">
                     {shot.screen ? (
                       <>
@@ -335,7 +334,7 @@ function Body({ onClose, onDone, slug, dirty, initial, onConfirm }: { onClose():
             <dd>
               <ol className="ms-spw-rshots">
                 {pack.screenshots.map((x, i) => (
-                  <li key={i}><span>{i + 1} · {x.caption}</span> <span className="ms-spw-faint">{x.screen ? baseName(x.screen) : s.reviewNoScreen}</span></li>
+                  <li key={i}><span>{i + 1} · {x.caption || s.reviewFromBrief}</span> <span className="ms-spw-faint">{x.screen ? baseName(x.screen) : s.reviewNoScreen}</span></li>
                 ))}
               </ol>
             </dd>

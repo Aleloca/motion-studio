@@ -29,6 +29,22 @@ export function isStorePackFormat(format: string): boolean {
   return Object.values(STORE_DEVICE_PRESET).some((m) => (Object.values(m) as string[]).includes(preset)) || (Object.values(STORE_PREVIEW_PRESET) as string[]).includes(preset);
 }
 
+/** The longest caption of a pack screenshot (decision 1221: no longer 80; the agent shortens a caption that does not fit). */
+export const STORE_CAPTION_MAX = 2000;
+/** The longest format label (`briefSchema.formatLabels`). */
+const LABEL_MAX = 60;
+
+/**
+ * Screenshot N's label: "N · caption", cut with "…" to the 60 characters of a label (decision 1221: a caption of more than
+ * 56 characters made the whole pack invalid), or "N" for an empty caption.
+ */
+export function screenshotLabel(n: number, caption: string): string {
+  const c = caption.replace(/\s+/g, ' ').trim();
+  if (!c) return String(n);
+  const full = `${n} · ${c}`;
+  return full.length <= LABEL_MAX ? full : `${[...full].slice(0, LABEL_MAX - 1).join('').trimEnd()}…`;
+}
+
 export const storePackSchema = z.object({
   app: z.object({ name: z.string().trim().min(1).max(60), tagline: z.string().trim().max(120) }).strict(),
   stores: z.array(z.enum(STORE_IDS)).min(1).max(2).refine((s) => new Set(s).size === s.length, 'issue.duplicateStores'),
@@ -36,8 +52,11 @@ export const storePackSchema = z.object({
     appstore: z.array(z.enum(APPSTORE_DEVICES)).max(2).optional(),
     playstore: z.array(z.enum(PLAYSTORE_DEVICES)).max(3).optional(),
   }).strict(),
-  /** One per screenshot, in order: its caption and the app screen (a file under `assets/` of the project) it shows, or null. */
-  screenshots: z.array(z.object({ caption: z.string().trim().min(1).max(80), screen: assetFilePath.nullable() }).strict()).min(1).max(10),
+  /**
+   * One per screenshot, in order: its caption and the app screen (a file under `assets/` of the project) it shows, or null.
+   * The caption may be empty (the agent takes it from the brief) and long (the agent shortens it to fit): decision 1221.
+   */
+  screenshots: z.array(z.object({ caption: z.string().trim().max(STORE_CAPTION_MAX), screen: assetFilePath.nullable() }).strict()).min(1).max(10),
   preview: z.boolean(),
   /**
    * The format instances this pack created, in the order of `storePackFormats` (Phase 14): the core sets it. The pack owns exactly
@@ -94,7 +113,7 @@ export function storePackFormats(p: StorePack, presets: readonly SizedPreset[] =
         const id = instanceIdOf(preset, i + 1);
         formats.push(id);
         mine.push(id);
-        formatLabels[id] = `${i + 1} · ${shot.caption}`;
+        formatLabels[id] = screenshotLabel(i + 1, shot.caption);
         if (primaries?.[i]) links[id] = primaries[i]!;
       });
       if (!primaries) firstOfSize.set(size, mine);

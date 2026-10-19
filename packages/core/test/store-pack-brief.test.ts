@@ -27,6 +27,19 @@ const pack: StorePack = {
 };
 
 describe('storePackBrief', () => {
+  it('takes an empty caption and a long one (decision 1221): labels within 60, the message skips the empty one, the prompt says to take it from the brief', () => {
+    const long = `Messaggi › Tutte, casella piena | **Tutti i clienti, un solo posto** | ${'x'.repeat(200)}`;
+    const p2: StorePack = { ...pack, screenshots: [{ caption: long, screen: null }, { caption: '', screen: null }] };
+    const b = storePackBrief(p2, { locale: 'it' });
+    expect(briefSchema.safeParse(b).success).toBe(true);
+    expect(Object.values(b.formatLabels ?? {}).every((l) => l.length <= 60)).toBe(true);
+    expect(b.formatLabels?.['appstore-iphone-69@2']).toBe('2');
+    expect(b.message.split('\n')).toEqual(['Tasky — Plan your day in seconds', `1. ${long}`]);
+    const s2 = storePackPromptSection(p2).join('\n');
+    expect(s2).toContain(`caption ${JSON.stringify(long)}`);
+    expect(s2).toContain('- Screenshot 2: no caption given: take it from the brief');
+    expect(s2).toContain('Shorten a long caption');
+  });
   it('builds the instances, the "N · caption" labels, no links, the app screens as assets and the message', () => {
     const b = storePackBrief(pack, { locale: 'en' });
     expect(b.formats).toEqual([

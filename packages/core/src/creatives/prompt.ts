@@ -1,5 +1,5 @@
 import type { CreativeFile, FormatPreset, IdentityBrief, Pin, StorePack, VariantId } from '@motion-studio/shared';
-import { BRIEF_TEXT_MAX, formatDisplayName, presetOf, statedDurationSec, videoTargetBitrateKbps, type BrandKit, type BriefServices, type Locale } from '@motion-studio/shared';
+import { BRIEF_TEXT_MAX, STORE_CAPTION_MAX, formatDisplayName, presetOf, statedDurationSec, videoTargetBitrateKbps, type BrandKit, type BriefServices, type Locale } from '@motion-studio/shared';
 import { replyInstruction } from '../i18n.ts';
 import { findPreset } from '../formats/format-catalog.ts';
 import { servicesLine } from '../services/service-policy.ts';
@@ -439,7 +439,8 @@ export function storePackPromptSection(p: StorePack): string[] {
     '## App store series',
     `- These formats are the store listing of the app ${q(p.app.name, 60)}${p.app.tagline ? ` (tagline ${q(p.app.tagline, 120)})` : ''}: a series of ${n} screenshot${n === 1 ? '' : 's'} per device, read in order.`,
     '- Instances: `<preset>` is screenshot 1 and `<preset>@k` is screenshot k (their labels read "k · caption"). If the creative has other instances of the same preset, the number in the label is the screenshot number, not the one after the @.',
-    ...p.screenshots.map((s, i) => `- Screenshot ${i + 1}: caption ${q(s.caption, 80)}; ${s.screen ? `app screen ${q(s.screen, 300)} (project path: copy it into the composition's assets/)` : 'no app screen given: design a simple, plausible screen for this caption'}.`),
+    ...p.screenshots.map((s, i) => `- Screenshot ${i + 1}: ${s.caption ? `caption ${q(s.caption, STORE_CAPTION_MAX)}` : 'no caption given: take it from the brief if it has one for this screenshot, else write a short one that fits the app'}; ${s.screen ? `app screen ${q(s.screen, 300)} (project path: copy it into the composition's assets/)` : 'no app screen given: design a simple, plausible screen for this caption'}.`),
+    '- A caption is the user\'s text for that screenshot and may hold notes for you (the screen to show, a headline, a line under it): the text on the screenshot is a short headline (and at most a short line under it), large and legible at store thumbnail size. Shorten a long caption, keeping its meaning and the user\'s words where you can.',
     '- Keep the same grid and style across the whole series: the same background treatment, type scale, caption position, canvas size and spacing on every screenshot of a device.',
     '- Put the caption at the top of each screenshot, large and legible at store thumbnail size; the app screen goes below it.',
     '- Show the app screen only: the screenshot itself, with at most rounded corners and a soft shadow, placed on the background below the caption. Do not draw a device frame: no phone or tablet body, bezel, notch, camera, buttons or status-bar mockup, no logos, no brand marks.',

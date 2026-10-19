@@ -115,20 +115,19 @@ describe('StorePackWizard · steps', () => {
     expect(count().getAttribute('aria-valuemax')).toBe('10');
   });
 
-  it('every screenshot needs a caption before the next step', async () => {
+  it('captions are optional and may be long; every row still needs an app screen or "No app screen" (decision 1221)', async () => {
     open();
     await toScreens();
     expect(next().hasAttribute('disabled')).toBe(true);
-    expect(screen.getByText('Every screenshot needs a caption')).toBeTruthy();
+    expect(screen.queryByText('Every screenshot needs a caption')).toBeNull();
+    expect(screen.getByText(/Captions are optional/)).toBeTruthy();
     const caps = screen.getAllByLabelText(/^Caption of screenshot/);
     expect(caps).toHaveLength(3);
-    await userEvent.type(caps[0]!, 'Sort in seconds');
-    await userEvent.type(caps[1]!, '   ');
-    await userEvent.type(caps[2]!, 'Share');
-    expect(next().hasAttribute('disabled')).toBe(true);
-    await userEvent.type(caps[1]!, 'Find it');
-    // Captions alone are not enough: every row also needs an app screen or an explicit "No app screen".
-    expect(next().hasAttribute('disabled')).toBe(true);
+    const long = `Messaggi › Tutte, casella piena | **Tutti i clienti, un solo posto** | ${'x'.repeat(60)}`;
+    await userEvent.click(caps[0]!);
+    await userEvent.paste(long);
+    expect((caps[0] as HTMLInputElement).value).toBe(long);
+    // Captions are not asked for: an app screen or an explicit "No app screen" per row is.
     for (const n of [1, 2, 3]) await userEvent.click(screen.getByRole('button', { name: `Screenshot ${n}: no app screen` }));
     expect(next().hasAttribute('disabled')).toBe(false);
   });

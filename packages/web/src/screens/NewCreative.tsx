@@ -31,6 +31,8 @@ type LengthChoice = (typeof LENGTHS)[number];
 type Kind = 'all' | 'video' | 'image';
 /** Channels open on arrival (prototype): the rest sit behind "More channels" until asked for, searched or selected. */
 const PRIMARY = ['Instagram', 'TikTok', 'YouTube'];
+/** The channels whose group starts with the "Store pack" tile (decision 1222). */
+const PACK_CHANNELS = ['App Store', 'Play Store'];
 const SUGGESTIONS = ['teaser', 'feature', 'screenshots'] as const;
 /** The "App Store screenshots" suggestion also picks this format when the catalog has it. */
 const SCREENSHOT_FORMAT = 'appstore-iphone-69';
@@ -254,10 +256,12 @@ export function NewCreative({ slug }: { slug: string }) {
     && (!q || `${channelName(p.channel, locale)} ${formatName(p, locale)} ${p.channel} ${p.name}`.toLocaleLowerCase().includes(q));
   const groups = useMemo(() => [...new Set(presets.map((p) => p.channel))], [presets]);
   const primary = groups.some((g) => PRIMARY.includes(g)) ? groups.filter((g) => PRIMARY.includes(g)) : groups.slice(0, 3);
-  // The "Store pack" entry sits in the first store group, with the formats; a search by its name finds it too.
+  // The "Store pack" entry is the first tile of the App Store and Play Store groups (decision 1222: no longer a row on top);
+  // a set pack keeps them open, and a search by its name shows them with it.
   const packShown = (!q || `${t.web.storePack.entryTitle} ${t.web.storePack.entryHint} ${t.web.storePack.title}`.toLocaleLowerCase().includes(q));
-  const open = (g: string) => q !== '' || primary.includes(g) || more.has(g) || presets.some((p) => p.channel === g && selected.includes(p.id));
-  const visibleGroups = groups.map((g) => ({ g, items: presets.filter((p) => p.channel === g && shown(p)) })).filter(({ g, items }) => open(g) && items.length > 0);
+  const packIn = (g: string) => PACK_CHANNELS.includes(g) && packShown;
+  const open = (g: string) => q !== '' || primary.includes(g) || more.has(g) || presets.some((p) => p.channel === g && selected.includes(p.id)) || (pack !== null && PACK_CHANNELS.includes(g));
+  const visibleGroups = groups.map((g) => ({ g, items: presets.filter((p) => p.channel === g && shown(p)) })).filter(({ g, items }) => open(g) && (items.length > 0 || packIn(g)));
   const hiddenGroups = q ? [] : groups.filter((g) => !open(g));
 
   const root = useEnter<HTMLDivElement>([catalog.value !== null]);
@@ -557,14 +561,7 @@ export function NewCreative({ slug }: { slug: string }) {
             </div>
           ) : null}
 
-          {/* The store pack entry is always here, whatever the state of the channel groups below (a search that does not name it hides it). */}
-          {packShown ? (
-            <div className="ms-nc-group ms-nc-packrow" role="group" aria-label={t.web.storePack.entryTitle}>
-              <div className="ms-nc-tiles ms-nc-packtiles"><PackTile pack={pack} onOpen={() => setPackOpen(true)} onRemove={() => setPack(null)} /></div>
-            </div>
-          ) : null}
-
-          {catalog.value !== null && visibleGroups.length === 0 && !packShown ? (
+          {catalog.value !== null && visibleGroups.length === 0 ? (
             <Empty icon="search" title={n.noMatch} sub={n.noMatchBody} action={<Button size="sm" variant="outline" onClick={() => { setQuery(''); setKind('all'); }}>{n.showAllFormats}</Button>} />
           ) : null}
 
@@ -573,13 +570,14 @@ export function NewCreative({ slug }: { slug: string }) {
             const count = items.filter((p) => selected.includes(p.id)).length;
             const name = channelName(g, locale);
             return (
-              <div key={g} className="ms-nc-group" role="group" aria-label={name} data-enter style={{ '--cols': Math.min(items.length, TILE_COLUMNS) } as CSSProperties}>
+              <div key={g} className="ms-nc-group" role="group" aria-label={name} data-enter style={{ '--cols': Math.min(items.length + (packIn(g) ? 1 : 0), TILE_COLUMNS) } as CSSProperties}>
                 <div className="ms-nc-ghead">
                   <ChannelMark channel={channelOf(g)} size={20} />
                   <b className="ms-nc-ell">{name}</b>
                   {count ? <span className="ms-nc-faint ms-nc-small">{n.selectedCount({ n: count })}</span> : null}
                 </div>
                 <div className="ms-nc-tiles">
+                  {packIn(g) ? <PackTile pack={pack} onOpen={() => setPackOpen(true)} onRemove={() => setPack(null)} /> : null}
                   {items.map((p) => (
                     <Tile key={p.id} preset={p} on={selected.includes(p.id)} onClick={() => toggle(p.id)}
                       link={selected.includes(p.id) && plan.candidates[p.id] ? { primary: presetLabel(plan.candidates[p.id]!), on: !linkOff.has(p.id), onToggle: () => toggleLink(p.id) } : null}
