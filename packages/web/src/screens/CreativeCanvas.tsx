@@ -29,7 +29,7 @@ import { useCreative } from '../useCreative.ts';
 import { jobLiveTokens, jobUsagePartial } from '../usageLive.ts';
 import { costText, TokenCount, UsageBadge } from '../shell/Tokens.tsx';
 import { boardLabel, boardName, CanvasBoard, type Draft, type Tool } from './CanvasBoard.tsx';
-import { boardsWith, canvasGroups, canvasLines, fitBoards, FIT_MIN, groupByChannel, PACK_GROUP, ratioText, type BoardModel } from './canvasModel.ts';
+import { appliesGroups, boardsWith, canvasGroups, canvasLines, fitBoards, FIT_MIN, groupByChannel, PACK_GROUP, ratioText, type BoardModel } from './canvasModel.ts';
 import { CompareDialog } from './CompareDialog.tsx';
 import { channelOf } from './creativeState.ts';
 import { ExportDialog, type ExportSnapshot } from './ExportDialog.tsx';
@@ -547,6 +547,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   const appliesTo = versions.length && primaries.length > 1 ? {
     primaries: primaries.map((id) => ({ id, label: formatLabel(id), followers: followersOf(states, id).map(formatLabel) })),
     followerOf: (id: string) => states[id]?.follows ?? null,
+    groups: appliesGroups(primaries, presets, cr.brief, locale, t.web.formatUi.other),
   } : undefined;
   // The pack's group is there whenever the creative has a pack, even if its instances were all taken out by hand: the export stays reachable.
   const columnGroups = groupByChannel(boards, packIds);

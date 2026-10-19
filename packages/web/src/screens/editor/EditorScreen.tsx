@@ -60,7 +60,7 @@ import { RangeSpans } from './RangeSpans.tsx';
 import { RangeDialog } from './RangeDialog.tsx';
 import { instanceName, presetFor } from '../../instances.ts';
 import { boardLabel, SafeZoneBands } from '../CanvasBoard.tsx';
-import { outputUrl, pointIn } from '../canvasModel.ts';
+import { appliesGroups, outputUrl, pointIn } from '../canvasModel.ts';
 import { CompareDialog } from '../CompareDialog.tsx';
 import { channelOf, lastStep } from '../creativeState.ts';
 import { ExportDialog, type ExportSnapshot } from '../ExportDialog.tsx';
@@ -707,7 +707,8 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     primaries: primaries.map((id) => ({ id, label: labelOf(id), followers: followersOf(states, id).map(labelOf) })),
     followerOf: (id: string) => states[id]?.follows ?? null,
     fallback: [primary],
-  } : undefined), [versions.length, primaries.join(','), states, labelOf, primary]); // eslint-disable-line react-hooks/exhaustive-deps
+    groups: appliesGroups(primaries, presets, detail?.creative.brief ?? {}, locale, t.web.formatUi.other),
+  } : undefined), [versions.length, primaries.join(','), states, labelOf, primary, presets, detail?.creative.brief, locale, t]); // eslint-disable-line react-hooks/exhaustive-deps
   // After a message the page shows what the canvas would (the ★ or the version being edited).
   const onSent = useCallback((sent: { pins: Pin[] }) => { pinsSent(sent); setViewN(undefined); reload(); }, [reload, pinsSent]);
   // "View vN" of a version card: this format as it was in vN (read-only unless it is the editable composition).

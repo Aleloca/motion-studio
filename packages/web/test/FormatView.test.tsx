@@ -556,9 +556,14 @@ describe('FormatView · per-format versions (Phase 9)', () => {
     detail = makeDetail([version(1)]);
     render(<Harness format={VIDEO} />);
     await player();
-    const group = screen.getByRole('group', { name: 'Si applica a' });
-    expect(within(group).getByRole('button', { name: 'TikTok · Video 9:16' }).getAttribute('aria-pressed')).toBe('true');
-    expect(within(group).getByRole('button', { name: 'Tutti i formati' }).getAttribute('aria-pressed')).toBe('false');
+    // Report 42: the menu button says the format; in the menu it is checked under its channel's group.
+    const button = screen.getByRole('button', { name: /^Si applica a: / });
+    expect(button.textContent).toBe('Si applica a:TikTok · Video 9:16');
+    await userEvent.click(button);
+    const menu = screen.getByRole('menu', { name: 'Si applica a' });
+    expect(within(within(menu).getByRole('group', { name: 'TikTok' })).getByRole('menuitemcheckbox', { name: 'Video 9:16' }).getAttribute('aria-checked')).toBe('true');
+    expect(within(menu).getByRole('menuitemcheckbox', { name: 'Tutti i formati' }).getAttribute('aria-checked')).toBe('false');
+    await userEvent.keyboard('{Escape}');
     await userEvent.type(screen.getByLabelText('Chiedi una modifica'), 'Più ritmo');
     await userEvent.click(screen.getByRole('button', { name: 'Invia' }));
     await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'lancio', { text: 'Più ritmo', pins: [], formats: [VIDEO] }));

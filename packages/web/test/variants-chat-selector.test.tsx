@@ -119,8 +119,9 @@ describe('chat selector', () => {
     unmount();
     run.mockClear();
     render(panel({ all: true, pins: [pin], appliesTo }));
-    const chips = screen.getByRole('group', { name: /Si applica a|Applies to/ });
-    await userEvent.click(within(chips).getByRole('button', { name: 'Video' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Si applica a: / }));
+    await userEvent.click(within(screen.getByRole('menu')).getByRole('menuitemcheckbox', { name: 'Video' }));
+    await userEvent.keyboard('{Escape}');
     await say('Solo il video');
     await userEvent.click(screen.getByRole('button', { name: 'Invia' }));
     await waitFor(() => expect(run).toHaveBeenCalledWith({ text: 'Solo il video', pins: [], formats: ['tiktok-9x16'] }));

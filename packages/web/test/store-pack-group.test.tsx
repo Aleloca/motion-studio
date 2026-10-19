@@ -121,4 +121,15 @@ describe('CreativeCanvas · the store pack is one group', () => {
     const outside = within(column()).getAllByRole('group', { name: 'App Store' }).filter((g) => !group.contains(g));
     expect(items(outside[0]!)).toHaveLength(1);
   });
+
+  it('report 42: the chat\'s "Si applica a" menu groups the formats as the column (the pack by store, the hand-picked ones in their channel)', async () => {
+    render(<Harness />);
+    await ready();
+    await userEvent.click(screen.getByRole('button', { name: /^Si applica a: Tutti i formati/ }));
+    const menu = screen.getByRole('menu', { name: 'Si applica a' });
+    expect(within(menu).getAllByRole('group').map((g) => g.getAttribute('aria-label'))).toEqual(['Instagram', 'App Store', 'App Store', 'Play Store']);
+    const store = within(menu).getAllByRole('group', { name: 'App Store' })[1]!;
+    await userEvent.click(within(store).getByRole('menuitemcheckbox', { name: 'App Store: tutto il gruppo' }));
+    expect(screen.getByRole('button', { name: /^Si applica a: / }).textContent).toBe('Si applica a:App Store · 2 formati');
+  });
 });

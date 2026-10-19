@@ -1,8 +1,8 @@
 // Pure helpers of the creative canvas: what a board shows, its size on the canvas, where a click lands.
-import type { FormatPreset, OutputFileInfo, VersionEntry } from '@motion-studio/shared';
+import { channelName, packInstancesOf, type FormatPreset, type Locale, type OutputFileInfo, type StorePack, type VersionEntry } from '@motion-studio/shared';
 import { api } from '../api.ts';
 import { isVideoFile } from '../media.ts';
-import { presetFor } from '../instances.ts';
+import { instanceName, presetFor } from '../instances.ts';
 
 
 /** A format of the creative on the canvas: its preset (null when the catalog no longer has it) and its output. */
@@ -111,14 +111,34 @@ export function groupByChannel<B extends BoardModel>(boards: B[], pack: Readonly
   return [...m.entries()];
 }
 
+/** The formats column's groups with a store pack split into its stores (the column's sub-groups), each with its channel. */
+export function formatSections<B extends BoardModel>(boards: B[], pack: ReadonlySet<string>): Array<{ channel: string; pack: boolean; boards: B[] }> {
+  type Section = { channel: string; pack: boolean; boards: B[] };
+  return groupByChannel(boards, pack).flatMap(([ch, list]): Section[] => (ch === PACK_GROUP
+    ? groupByChannel(list, new Set()).map(([c, l]) => ({ channel: c, pack: true, boards: l }))
+    : [{ channel: ch, pack: false, boards: list }]));
+}
+
 /**
  * The canvas's groups (report 40): the formats column's, so the two always match. A store pack's group splits into its
  * stores (App Store, Play Store: the column's sub-groups), each on lines of its own.
  */
 export function canvasGroups<B extends BoardModel>(boards: B[], pack: ReadonlySet<string>): Array<BoardGroup<B>> {
-  return groupByChannel(boards, pack).flatMap(([ch, list]): Array<BoardGroup<B>> => (ch === PACK_GROUP
-    ? groupByChannel(list, new Set()).map(([, l]) => ({ boards: l, alone: true }))
-    : [{ boards: list }]));
+  return formatSections(boards, pack).map((s) => (s.pack ? { boards: s.boards, alone: true } : { boards: s.boards }));
+}
+
+/**
+ * The groups of the composer's "Applies to" menu (report 42): the formats `ids` grouped as in the formats column (a store pack by
+ * store), each group by its channel's name (`other` without one) and each format by its short name.
+ */
+export function appliesGroups(ids: string[], presets: FormatPreset[], brief: { storePack?: StorePack | null; formatLabels?: Record<string, string> }, locale: Locale, other: string):
+  Array<{ label: string; items: Array<{ id: string; name: string }> }> {
+  const pack = new Set(brief.storePack ? packInstancesOf(brief.storePack) : []);
+  const boards: BoardModel[] = ids.map((id) => ({ id, preset: presetFor(presets, id), out: null }));
+  return formatSections(boards, pack).map((s) => ({
+    label: s.channel !== '' ? channelName(s.channel, locale) : other,
+    items: s.boards.map((b) => ({ id: b.id, name: instanceName(b.preset, b.id, locale, brief.formatLabels) })),
+  }));
 }
 
 /** A group's places: its tall boards one by one, then its other boards stacked (the layout of the canvas before report 40). */
