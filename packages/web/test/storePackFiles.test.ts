@@ -1,6 +1,6 @@
 import { DEFAULT_FORMATS, storePackFormats, type StorePack, type VersionEntry } from '@motion-studio/shared';
 import { describe, expect, it } from 'vitest';
-import { galleryRows, groupCheck, groupThumb, packFileGroups, revealLeft, scrollEdges, versionThumb, withFiles } from '../src/screens/creative/storePackFiles.ts';
+import { gridColumns, groupCheck, groupThumb, packFileGroups, shownItem, stepItem, versionThumb, withFiles } from '../src/screens/creative/storePackFiles.ts';
 
 const pack: StorePack = {
   app: { name: 'Tasky', tagline: '' }, stores: ['appstore', 'playstore'],
@@ -25,22 +25,13 @@ describe('packFileGroups', () => {
   });
 });
 
-describe('report 54: the gallery', () => {
-  const groups = (p: StorePack) => { const m = storePackFormats(p); return packFileGroups(m.formats, { presets: DEFAULT_FORMATS, labels: m.formatLabels, locale: 'en', deviceName: (d) => names[d], thumbOf: () => null }); };
-  const shape = (rows: ReturnType<typeof galleryRows>) => rows.map((r) => [r.label, r.files.map((f) => f.id), r.tail.map((f) => f.id)]);
+describe('report 54, variant A: the list and the grid', () => {
+  const groups = () => packFileGroups(made.formats, { presets: DEFAULT_FORMATS, labels: made.formatLabels, locale: 'en', deviceName: (d) => names[d], thumbOf: () => null });
 
-  it('one row per device; the single files at the end of the store\'s last row', () => {
-    const [app, play] = groups(pack);
-    expect(shape(galleryRows(app!))).toEqual([['iPhone 6.9″', ['appstore-iphone-69', 'appstore-iphone-69@2'], ['appstore-preview']]]);
-    expect(shape(galleryRows(play!))).toEqual([
-      ['Phone', ['playstore-phone-9x16', 'playstore-phone-9x16@2'], []],
-      ['Tablet', ['playstore-tablet', 'playstore-tablet@2'], ['playstore-feature', 'playstore-promo-16x9']],
-    ]);
-  });
-
-  it('a store with only single files: one row without a device', () => {
-    const [play] = groups({ ...pack, stores: ['playstore'], devices: { playstore: ['feature'] } });
-    expect(shape(galleryRows(play!))).toEqual([[null, [], ['playstore-feature', 'playstore-promo-16x9']]]);
+  it('each item knows its kind and size: screenshots, a video, an image', () => {
+    const [app, play] = groups();
+    expect(app!.devices.map((d) => [d.key, d.kind, d.width, d.height])).toEqual([['appstore-iphone-69', 'shots', 1320, 2868], ['appstore-preview', 'video', 886, 1920]]);
+    expect(play!.devices.map((d) => d.kind)).toEqual(['shots', 'shots', 'image', 'video']);
   });
 
   it('a group\'s checkbox: on, off or mixed, with n/m', () => {
@@ -56,22 +47,26 @@ describe('report 54: the gallery', () => {
     expect([...off]).toEqual(['a']);
   });
 
-  it('the strip\'s edges: more to either side, a pixel of rounding ignored', () => {
-    expect(scrollEdges({ scrollLeft: 0, scrollWidth: 500, clientWidth: 500 })).toEqual({ back: false, more: false });
-    expect(scrollEdges({ scrollLeft: 0, scrollWidth: 900, clientWidth: 500 })).toEqual({ back: false, more: true });
-    expect(scrollEdges({ scrollLeft: 200, scrollWidth: 900, clientWidth: 500 })).toEqual({ back: true, more: true });
-    expect(scrollEdges({ scrollLeft: 399.5, scrollWidth: 900, clientWidth: 500 })).toEqual({ back: true, more: false });
+  it('the item shown: the one chosen while it exists, else the first device of the first store', () => {
+    const g = groups();
+    expect(shownItem(g, null)?.key).toBe('appstore-iphone-69');
+    expect(shownItem(g, 'playstore-feature')?.key).toBe('playstore-feature');
+    expect(shownItem(g, 'gone')?.key).toBe('appstore-iphone-69');
+    expect(shownItem([], null)).toBeNull();
   });
-});
 
-describe('report 54 review: a focused thumbnail clear of the faded edges', () => {
-  const view = { scrollLeft: 100, clientWidth: 500 };
-  it('scrolls a thumbnail under an edge fully in view, past the fade; one already clear stays put', () => {
-    expect(revealLeft({ left: 120, width: 90 }, view, 70)).toBe(50);
-    expect(revealLeft({ left: 520, width: 90 }, view, 70)).toBe(180);
-    expect(revealLeft({ left: 200, width: 90 }, view, 70)).toBeNull();
-    // Never before the start.
-    expect(revealLeft({ left: 10, width: 90 }, view, 70)).toBe(0);
+  it('the grid: four columns for portrait files, two for landscape ones', () => {
+    const [app, play] = groups();
+    expect(gridColumns(app!.devices[0]!)).toBe(4);
+    expect(gridColumns(app!.devices[1]!)).toBe(4);
+    expect(gridColumns(play!.devices.find((d) => d.kind === 'image')!)).toBe(2);
+  });
+
+  it('arrow keys move along the items, stopping at the ends', () => {
+    expect(stepItem(['a', 'b', 'c'], 'a', 1)).toBe('b');
+    expect(stepItem(['a', 'b', 'c'], 'c', 1)).toBe('c');
+    expect(stepItem(['a', 'b', 'c'], 'a', -1)).toBe('a');
+    expect(stepItem(['a', 'b', 'c'], 'x', 1)).toBe('a');
   });
 });
 
