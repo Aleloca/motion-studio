@@ -64,6 +64,13 @@ describe('project icon', () => {
     expect((await detail()).icon).toBeNull();
   });
 
+  it('a renamed image stays the icon', async () => {
+    await put({ icon: { asset: 'pick.png' } });
+    const r = await app.inject({ method: 'PATCH', url: `${P}/assets/item/pick.png`, payload: { name: 'chosen.png' } });
+    expect(r.json(), r.body).toMatchObject({ file: 'chosen.png' });
+    expect((await detail())).toMatchObject({ project: { icon: { asset: 'chosen.png' } }, icon: 'assets/chosen.png' });
+  });
+
   it('refuses a file that is not an image of the library', async () => {
     for (const icon of [{ asset: 'missing.png' }, { asset: 'Inter.woff2' }, { asset: '../project.json' }, 'logo']) {
       const r = await put({ icon });

@@ -81,7 +81,7 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
   });
 
   app.patch<{ Params: { slug: string; '*': string } }>('/api/projects/:slug/assets/item/*', async (req) => {
-    const { lib, projectDir } = await project(req.params.slug);
+    const { ws, lib, projectDir } = await project(req.params.slug);
     const { name, ...patch } = parse(assetPatch, req.body);
     let file = req.params['*'];
     let renamed: { from: string; brand: boolean; creatives: string[] } | null = null;
@@ -99,6 +99,14 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
       if (renamed) await done(projectDir, req.params.slug, t().jobs.renameAssetCommit({ from: renamed.from, to: file }), renamed.brand).catch(() => {});
     }
     if (!renamed) await done(projectDir, req.params.slug, t().jobs.updateAssetCommit({ file: entry!.file }));
+    // Report 44: the project's icon chosen from this image follows its new name.
+    else {
+      const icon = (await ws.getProject(req.params.slug)).icon;
+      if (typeof icon === 'object' && icon.asset === renamed.from) {
+        await ws.updateProject(req.params.slug, { icon: { asset: file } });
+        ctx.broadcast({ type: 'project', project: req.params.slug });
+      }
+    }
     for (const creative of renamed?.creatives ?? []) ctx.broadcast({ type: 'creative', project: req.params.slug, creative });
     return entry;
   });
