@@ -263,6 +263,21 @@ arrives and worked on later together.
     and checked, marked "In lavorazione", with the version still recorded at the end of the turn. Measure the cost
     before choosing. To do with the next reports, together with 40 (same screen).
 
+42. **The chat's "Applies to" chips do not scale to many formats.** In a creative with 19 formats (store pack,
+    2026-10-19) the composer shows one chip per format ("All formats", "App Store · 1" … "Play Store · Promo video
+    16:9"): ten rows of chips above the message field. The user finds it awkward with many formats.
+    User's call: one menu button "Si applica a: Tutti i formati ▾" that opens the formats grouped as in the side list
+    (App Store, Play Store…), a checkbox per format and one per group; the button says what is chosen ("App Store · 3
+    formati"). To do with the next reports, with 40 and 41.
+
+43. **"Not rendered" under every finished board is confusing.** The store pack screenshots show v1 with "Not rendered"
+    (2026-10-19); the user asks what it means and whether rendering was removed in favour of export only. It means the
+    version's compositions exist (the board shows them live) but the final file (PNG/MP4) was not made: since decision
+    974 a render starts from Export (it renders what is missing) or from the board menu "Render vN"; the bar has Export
+    only. The label reads like something is missing or broken.
+    User's call: no label on a ready board that has no render; only the useful states stay (queued, rendering %, failed
+    · retry, problems). Renders still start from Export or "Render vN". To do with the next reports.
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
