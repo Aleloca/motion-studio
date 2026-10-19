@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { app, BrowserWindow, powerSaveBlocker, session, type BrowserWindowConstructorOptions, type Debugger, type ProxyConfig, type Session } from 'electron';
 import {
-  allowedPrefix, CdpError, DEAD_PROXY, pagePixels, DEFAULT_PARALLEL, isAllowedRequest, openCdpRenderPage, RenderError, samplePidsMemory,
+  allowedPrefix, CdpError, DEAD_PROXY, pagePixels, pageScale, DEFAULT_PARALLEL, isAllowedRequest, openCdpRenderPage, RenderError, samplePidsMemory,
   scaledMemoryLimits, startWatchdog,
   type CdpClient, type CdpEvent, type CdpSendOptions, type ChromiumProvider, type ChromiumProviderFactory, type OpenPageOptions,
   type PageTimeouts, type RenderFailure, type RenderPage, type Watchdog, type WatchdogLimits,
@@ -14,6 +14,8 @@ import {
  *
  * **One hidden window per page** (a parallel segment), created fresh for every page and never reused:
  * - `show: false`, offscreen rendering, `sandbox`, `contextIsolation`, no preload, no Node anywhere, no `<webview>`;
+ *   a page at another scale (decision 974) renders offscreen at that device scale factor (report 51), so its html layers,
+ *   out-of-process iframes the page's device metrics override never reaches, are rasterised at it too;
  * - its own **in-memory session partition** (`ms-render-<uuid>`, never `persist:`), locked before the window exists:
  *   - `setProxy` to a dead proxy with only the composition server's `127.0.0.1:<port>` bypassed and the implicit loopback
  *     bypass removed (`<-loopback>`): the per-session equivalent of the Chrome provider's `--proxy-server` flags (an
@@ -65,14 +67,18 @@ const CLOSED_WAIT_MS = 10_000;
  * transparent `backgroundColor`), so a capture keeps the page's alpha; `openCdpRenderPage` also sets the page's default
  * background to transparent over CDP. Every other render window keeps Electron's opaque default.
  */
-export function renderWindowOptions(partition: string, width: number, height: number, o: { transparent?: boolean } = {}): BrowserWindowConstructorOptions {
+export function renderWindowOptions(partition: string, width: number, height: number, o: { transparent?: boolean; scale?: number } = {}): BrowserWindowConstructorOptions {
   if (!partition.startsWith(RENDER_PARTITION_PREFIX)) throw new Error('render window: not a render partition');
+  const scale = o.scale !== undefined && Number.isFinite(o.scale) && o.scale > 0 && o.scale !== 1 ? o.scale : null;
   return {
     show: false, width, height, useContentSize: true, enableLargerThanScreen: true, frame: false, skipTaskbar: true, focusable: false,
     paintWhenInitiallyHidden: true,
     ...(o.transparent ? { transparent: true, backgroundColor: '#00000000' } : {}),
     webPreferences: {
-      offscreen: true, sandbox: true, contextIsolation: true,
+      // Report 51 (decision 1341): a page rasterised at a scale gets it as the window's own device scale factor, which every
+      // frame of every process gets. The page's `Emulation.setDeviceMetricsOverride` never reached the html layers (sandboxed
+      // iframes, out of process): they drew at 1x and were stretched.
+      offscreen: scale ? { deviceScaleFactor: scale } : true, sandbox: true, contextIsolation: true,
       nodeIntegration: false, nodeIntegrationInSubFrames: false, nodeIntegrationInWorker: false,
       webSecurity: true, allowRunningInsecureContent: false, webviewTag: false, navigateOnDragDrop: false,
       backgroundThrottling: false, spellcheck: false, safeDialogs: true, autoplayPolicy: 'no-user-gesture-required',
@@ -239,14 +245,14 @@ export interface RenderWindow {
 }
 
 /** A fresh, locked, hidden window on `about:blank` (see the module comment), within the app-wide cap. */
-export async function createRenderWindow(o: { prefix: string; width: number; height: number; signal?: AbortSignal; lane?: WindowLane; transparent?: boolean }): Promise<RenderWindow> {
+export async function createRenderWindow(o: { prefix: string; width: number; height: number; signal?: AbortSignal; lane?: WindowLane; transparent?: boolean; scale?: number }): Promise<RenderWindow> {
   const release = await renderWindowSlots.acquire(o.signal, o.lane ?? 'render');
   let win: BrowserWindow;
   const partition = `${RENDER_PARTITION_PREFIX}${randomUUID()}`;
   const ses = session.fromPartition(partition, { cache: false });
   try {
     await lockRenderSession(ses, o.prefix);
-    win = new BrowserWindow(renderWindowOptions(partition, o.width, o.height, { transparent: o.transparent === true }));
+    win = new BrowserWindow(renderWindowOptions(partition, o.width, o.height, { transparent: o.transparent === true, ...(o.scale !== undefined ? { scale: o.scale } : {}) }));
   } catch (e) {
     release();
     throw e;
@@ -377,7 +383,7 @@ export interface ElectronProviderOptions {
   limits: WatchdogLimits;
   timeouts?: PageTimeouts;
   /** Tests: replaces `createRenderWindow`. */
-  createWindow?: (o: { prefix: string; width: number; height: number; signal?: AbortSignal; lane?: WindowLane; transparent?: boolean }) => Promise<RenderWindow>;
+  createWindow?: (o: { prefix: string; width: number; height: number; signal?: AbortSignal; lane?: WindowLane; transparent?: boolean; scale?: number }) => Promise<RenderWindow>;
   /** Tests: the memory reading of the windows' pids (default: the core's sampler with `app.getAppMetrics()`). */
   sample?: (pids: number[]) => ReturnType<typeof samplePidsMemory>;
 }
@@ -463,7 +469,8 @@ export class ElectronProvider implements ChromiumProvider {
     // The open's signal, or this provider closing: a wait for an app-wide slot never outlives close().
     const signal = AbortSignal.any([o.signal, this.closeCtl.signal]);
     const lane: WindowLane = o.purpose === 'frames' ? 'preview' : 'render';
-    const creating = (this.o.createWindow ?? createRenderWindow)({ prefix, width: o.width, height: o.height, signal, lane, ...(o.transparentBackground ? { transparent: true } : {}) });
+    const scale = pageScale(o);
+    const creating = (this.o.createWindow ?? createRenderWindow)({ prefix, width: o.width, height: o.height, signal, lane, ...(o.transparentBackground ? { transparent: true } : {}), ...(scale !== 1 ? { scale } : {}) });
     this.creating.add(creating);
     try {
       rw = await creating;

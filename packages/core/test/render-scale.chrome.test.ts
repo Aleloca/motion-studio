@@ -73,6 +73,9 @@ describe.skipIf(!tools.ok)('renderer: an html layer is rasterised at the render 
     expect(e.truth).toBeGreaterThan(100);
     expect(barDpr(scaled.px, scaled.width, 2)).toBe(2);
     expect(e.scaled / e.truth).toBeGreaterThan(0.9);
+    // The user's case: 1920 × 1080 exported at 2560 × 1440.
+    const third = await capture('text', 1, 4 / 3);
+    expect(barDpr(third.px, third.width, 4 / 3)).toBeCloseTo(4 / 3, 1);
   });
 
   it('at scale 1 (stills, previews, a render at the composition size) nothing changes: devicePixelRatio 1', async () => {

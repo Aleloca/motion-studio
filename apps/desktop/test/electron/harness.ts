@@ -16,7 +16,9 @@ import { basename, dirname } from 'node:path';
 import { hardenUiWindow, installPreviewFilter } from '../../src/preview-filter.ts';
 
 interface Config {
-  scenario: 'options' | 'session-rules' | 'render' | 'hostile-render' | 'preview' | 'lifecycle' | 'memory' | 'quit';
+  scenario: 'options' | 'session-rules' | 'render' | 'hostile-render' | 'preview' | 'lifecycle' | 'memory' | 'quit' | 'scale';
+  /** scale (report 51): the pages to open under `creative`, each at its scale (none: the default) and seek time. */
+  scalePages?: Array<{ name: string; composition: Composition; format: string; scale?: number; t?: number }>;
   /** The built runtime. */
   dist: string;
   /** The creative folder (render scenarios). */
@@ -302,6 +304,35 @@ async function run(): Promise<void> {
       const temps = readdirSync(dir).filter((n) => n.startsWith(`.${basename(c.out!)}.render-`));
       const workDirs = readdirSync(scratch).filter((n) => n.startsWith('ms-render-'));
       report({ phase: 'quit', framesAtQuit: frames, windowsBefore, result: await outcome, windows: liveRenderWindowCount(), allWindows: BrowserWindow.getAllWindows().length, out: existsSync(c.out!), temps, workDirs });
+      return;
+    }
+    case 'scale': {
+      // Report 51: pages through the provider, as a render opens them (`deviceScaleFactor` at a scale, none at 1). Each
+      // reports the layer frame's devicePixelRatio and process, the page's, and the PNG at `t`.
+      const server = await startCompositionServer({ uiOrigins: [], distDir: c.dist });
+      try {
+        for (const p of c.scalePages!) {
+          const provider = new ElectronProvider({ limits: { timeLimitMs: 30 * 60_000 } });
+          try {
+            const s = await server.mintSession({ creativeDir: c.creative!, versionDir: 'outputs/v1', format: p.format, composition: p.composition, mode: 'render' });
+            const page = await provider.open({ width: p.composition.width, height: p.composition.height, url: s.url, signal: new AbortController().signal, ...(p.scale !== undefined ? { deviceScaleFactor: p.scale } : {}) });
+            await page.seek(p.t ?? 0);
+            const png = await page.capture('png');
+            const wc = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL() === s.url)!.webContents;
+            const layers = [];
+            for (const f of wc.mainFrame.framesInSubtree) {
+              if (!f.url.includes('/layers/')) continue;
+              layers.push({ outOfProcess: f.osProcessId !== wc.mainFrame.osProcessId, ...(await f.executeJavaScript('({ dpr: devicePixelRatio, inner: [innerWidth, innerHeight] })') as object) });
+            }
+            const top = await wc.executeJavaScript('({ dpr: devicePixelRatio, inner: [innerWidth, innerHeight] })');
+            report({ page: p.name, errors: page.info.errors.length, top, layers, png: png.toString('base64') });
+          } finally {
+            await provider.close();
+          }
+        }
+      } finally {
+        await server.close();
+      }
       return;
     }
     case 'memory': {

@@ -52,6 +52,16 @@ describe('render window options', () => {
     // Everything else (isolation) is the same.
     expect(t.webPreferences).toEqual(renderWindowOptions(`${RENDER_PARTITION_PREFIX}x3`, 64, 64).webPreferences);
   });
+
+  it('report 51: a window for a page at a scale renders offscreen at that device scale factor; at 1 as before', () => {
+    const scaled = renderWindowOptions(`${RENDER_PARTITION_PREFIX}x4`, 1920, 1080, { scale: 4 / 3 });
+    expect(scaled).toMatchObject({ width: 1920, height: 1080 });
+    expect(scaled.webPreferences?.offscreen).toEqual({ deviceScaleFactor: 4 / 3 });
+    const { offscreen: _a, ...isolation } = scaled.webPreferences!;
+    const { offscreen: _b, ...plain } = renderWindowOptions(`${RENDER_PARTITION_PREFIX}x4`, 1920, 1080).webPreferences!;
+    expect(isolation).toEqual(plain);
+    for (const scale of [1, 0, Number.NaN]) expect(renderWindowOptions(`${RENDER_PARTITION_PREFIX}x5`, 64, 64, { scale }).webPreferences?.offscreen, String(scale)).toBe(true);
+  });
 });
 
 describe('render session lockdown', () => {
@@ -301,6 +311,15 @@ describe('ElectronProvider', () => {
     void provider.open({ width: 64, height: 64, url: `${PREFIX}runtime/index.html?mode=render`, signal: new AbortController().signal, transparentBackground: true }).catch(() => {});
     await new Promise((r) => setTimeout(r, 0));
     expect(created[0]).toMatchObject({ transparent: true });
+  });
+
+  it('report 51: a page at a scale gets a window at that scale; a page at 1 or without one, none', async () => {
+    const created: Array<{ scale?: number }> = [];
+    const provider = new ElectronProvider({ maxWindows: 3, limits: { timeLimitMs: 60_000 }, createWindow: (o) => { created.push(o); return new Promise(() => {}); } });
+    const open = (deviceScaleFactor?: number) => void provider.open({ width: 64, height: 64, url: `${PREFIX}runtime/index.html?mode=render`, signal: new AbortController().signal, ...(deviceScaleFactor !== undefined ? { deviceScaleFactor } : {}) }).catch(() => {});
+    open(2); open(1); open();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(created.map((c) => c.scale)).toEqual([2, undefined, undefined]);
   });
 
   it('close() waits for a window still being created, and that window is closed (M6)', async () => {

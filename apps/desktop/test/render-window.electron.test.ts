@@ -16,13 +16,15 @@
  * - **the preview filter:** a UI-like page framing the real preview AND every hostile layer directly (Task 3's residual):
  *   the control (no filter) reaches the canary; with the filter on the UI session nothing does, and the preview still loads;
  * - **lifecycle:** app quit closes every render window of every provider (their renderers end), cancel, the time limit,
- *   the window cap; **memory:** a 2 GB layer trips the watchdog (`memoryLimit`), no window left.
+ *   the window cap; **memory:** a 2 GB layer trips the watchdog (`memoryLimit`), no window left;
+ * - **scale (report 51):** at scale 2 an html layer (out of process) sees devicePixelRatio 2 and its text is as sharp as
+ *   the ground truth (the layer twice as large at scale 1), report 38's camera rig too; at 1 nothing changes.
  *
  * Runs on macOS when the Electron binary is installed; elsewhere (a display is needed) only with MS_REQUIRE_ELECTRON=1,
  * which also makes a missing binary a failure. Needs ffmpeg for the renders.
  */
-import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { createRequire } from 'node:module';
 import { tmpdir, userInfo } from 'node:os';
@@ -38,6 +40,7 @@ import {
   selfNavigationPath, selfNavigationTrack, workerTransportProbe, writeHostileLayers,
 } from '../../../packages/core/test/helpers/hostile-layers.ts';
 import { buildRuntime, decodeStrips, FONT, frameCodedVideo, put, readCode, startCanary, startUdpCanary, type Canary, type UdpCanary } from '../../../packages/core/test/helpers/render-env.ts';
+import { barDpr, gradientEnergy, scaleComposition, scaleLayer, TEXT_BOX } from '../../../packages/core/test/helpers/scale-layers.ts';
 
 const DESKTOP = join(import.meta.dirname, '..');
 
@@ -503,6 +506,54 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
     expect(q.windowsBefore, JSON.stringify(q)).toBeGreaterThan(0);
     expect(q).toMatchObject({ result: 'cancelled', windows: 0, allWindows: 0, out: false, temps: [], workDirs: [] });
     expect(existsSync(out)).toBe(false);
+  }, 900_000);
+
+  it('report 51: at scale 2 an html layer, still out of process, sees devicePixelRatio 2 and its text is as sharp as the ground truth; 1x unchanged', async () => {
+    const creative = join(work, 'scale');
+    const layers = { text: scaleLayer(), truth: scaleLayer(2), rig: scaleLayer(1, true), 'rig-truth': scaleLayer(2, true) };
+    for (const [id, html] of Object.entries(layers)) {
+      const dir = join(creative, 'outputs', 'v1', 'compositions', id);
+      put(join(dir, 'assets', 'Mono.woff2'), readFileSync(FONT));
+      put(join(dir, 'layers', `${id}.html`), html);
+    }
+    const pages = [
+      { name: 'scaled', composition: scaleComposition('text'), format: 'text', scale: 2 },
+      { name: 'truth', composition: scaleComposition('truth', 2), format: 'truth' },
+      { name: 'plain', composition: scaleComposition('text'), format: 'text' },
+      { name: 'one', composition: scaleComposition('text'), format: 'text', scale: 1 },
+      { name: 'rig', composition: scaleComposition('rig'), format: 'rig', scale: 2, t: 1 },
+      { name: 'rig-truth', composition: scaleComposition('rig-truth', 2), format: 'rig-truth', t: 1 },
+      // The user's case: 1920 × 1080 exported at 2560 × 1440.
+      { name: 'third', composition: scaleComposition('text'), format: 'text', scale: 4 / 3 },
+    ];
+    const r = await runHarness({ scenario: 'scale', creative, scalePages: pages });
+    expect(r.ok, r.output).toBe(true);
+    const got: Record<string, { energy: number; bar: number; width: number; layers: unknown; top: unknown; errors: unknown }> = {};
+    for (const l of r.lines.filter((x) => typeof x.page === 'string')) {
+      const file = join(work, `scale-${String(l.page)}.png`);
+      writeFileSync(file, Buffer.from(String(l.png), 'base64'));
+      const px = new Uint8Array(execFileSync(ffmpeg!.path, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-i', file, '-f', 'rawvideo', '-pix_fmt', 'gray', '-'], { maxBuffer: 1 << 26 }));
+      const width = Math.round(Math.sqrt(px.length * 16 / 9));
+      const k = width / 320;
+      got[String(l.page)] = { energy: gradientEnergy(px, width, TEXT_BOX, k), bar: barDpr(px, width, k), width, layers: l.layers, top: l.top, errors: l.errors };
+    }
+    const ratio = (a: string, b: string) => got[a]!.energy / got[b]!.energy;
+    console.info(`[scale] electron text energy at scale 2: ${got.scaled?.energy.toFixed(1)}, ground truth ${got.truth?.energy.toFixed(1)}, ratio ${ratio('scaled', 'truth').toFixed(3)}; rig ${ratio('rig', 'rig-truth').toFixed(3)}`);
+    for (const p of pages) expect(got[p.name]?.errors, p.name).toBe(0);
+    expect(got.scaled!.width).toBe(640);
+    expect(got.scaled!.layers).toEqual([{ outOfProcess: true, dpr: 2, inner: [320, 180] }]);
+    expect(got.scaled!.top).toEqual({ dpr: 2, inner: [320, 180] });
+    expect(got.scaled!.bar).toBe(2);
+    expect(ratio('scaled', 'truth')).toBeGreaterThan(0.9);
+    expect(ratio('rig', 'rig-truth')).toBeGreaterThan(0.9);
+    expect(got.third!.width).toBe(427);
+    expect((got.third!.layers as Array<{ dpr: number }>)[0]!.dpr).toBeCloseTo(4 / 3, 5);
+    // At 1 (stills, previews, a render at the composition size): as before.
+    for (const name of ['plain', 'one']) {
+      expect(got[name]!.width, name).toBe(320);
+      expect(got[name]!.layers, name).toEqual([{ outOfProcess: true, dpr: 1, inner: [320, 180] }]);
+      expect(got[name]!.bar, name).toBe(1);
+    }
   }, 900_000);
 
   it('memory: a 2 GB layer trips the watchdog (memoryLimit) and no window is left', async () => {

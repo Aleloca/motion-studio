@@ -80,7 +80,9 @@ export interface OpenPageOptions {
   transparentBackground?: boolean;
   /**
    * The page is rasterised at this scale (decision 974: a render at another resolution): the layout stays at `width` x
-   * `height` CSS pixels, a capture is about `width × scale` by `height × scale`, sharp. Default 1.
+   * `height` CSS pixels, a capture is about `width × scale` by `height × scale`, sharp. Default 1. A provider also gives the
+   * scale to the out-of-process html layers, which the page's override does not reach (report 51): Chrome is launched at it
+   * (`scaleFlags`), the desktop's render window renders offscreen at it.
    */
   deviceScaleFactor?: number;
 }
