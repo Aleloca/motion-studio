@@ -378,6 +378,10 @@ arrives and worked on later together.
     14:48 and not made again when the dialog opened at 22:24; there are no render files. So nothing is rendered while
     scrolling, and saving renders would not change the list. The cause is still to be measured.
     Timing: measure and fix together with further reports (user).
+    Correction by the user: the list no longer stutters; the stutter was while a 2560×1440 60 fps video export ran in the
+    background. So the report is: the app's UI stutters during a heavy export (the render windows and the encoder share
+    the machine and the desktop app's processes). To measure with the batch: UI frame times during an export, and whether
+    the export should yield (fewer parallel frames, lower process priority) while the user works.
 
 ## Follow-ups found while working on 12–30
 
