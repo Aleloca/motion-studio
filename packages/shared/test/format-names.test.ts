@@ -34,7 +34,7 @@ describe('format names (report 55)', () => {
   });
 
   it('withAgentNames names what it may, composes the screenshot number and refuses the user\'s names and unknown formats', () => {
-    const b = { ...packBrief(), formats: [...packBrief().formats, 'youtube-16x9'], formatLabels: { ...packBrief().formatLabels, 'youtube-16x9': 'Mio video' } };
+    const b: Brief = { ...packBrief(), formats: [...packBrief().formats, 'youtube-16x9'], formatLabels: { ...packBrief().formatLabels, 'youtube-16x9': 'Mio video' } };
     const r = withAgentNames(b, {
       'appstore-iphone-69': '  Tutti i clienti,\n una casella ', 'appstore-iphone-69@2': 'Fatture', 'appstore-iphone-69@3': 'Promemoria',
       'youtube-16x9': 'Altro', 'tiktok-9x16': 'Nope',
