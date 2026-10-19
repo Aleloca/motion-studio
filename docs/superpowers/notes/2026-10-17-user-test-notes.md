@@ -394,7 +394,9 @@ arrives and worked on later together.
     (its checkbox, name and n/m on the left, then the thumbnails side by side, all one height at their real shape, the row
     scrolling sideways with a fading edge and an arrow); App Preview, feature graphic and promo video at the end of the
     store's last row after a divider. A click (or Space/Enter) on a thumbnail leaves it out: grey, an eye struck through,
-    the name struck through. At 1440×900 the 19-file pack fits without scrolling up and down (thumbnails 198 px high).
+    the name struck through. At 1440×900 the 19-file pack fits without scrolling up and down (thumbnails 176 px high).
+    Review (decisions 1376–1379): "Screenshot" and "Video e grafica" captions over the two parts of a row, the store's name
+    toggles the store, the arrows follow the content's width, a focused thumbnail scrolls clear of the faded edge.
 
 55. **Speaking names for formats.** The formats column lists the store pack's screenshots as 1–8: the user cannot tell
     them apart. They ask that the agent name what it makes, where it makes sense ("1 · Tutti i clienti, una casella"),
