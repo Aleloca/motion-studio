@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { app, BrowserWindow, powerSaveBlocker, session, type BrowserWindowConstructorOptions, type Debugger, type ProxyConfig, type Session } from 'electron';
+import { app, BrowserWindow, nativeImage, powerSaveBlocker, session, type BrowserWindowConstructorOptions, type Debugger, type ProxyConfig, type Session } from 'electron';
 import {
   allowedPrefix, CdpError, DEAD_PROXY, layersAtScale, pagePixels, pageScale, DEFAULT_PARALLEL, isAllowedRequest, openCdpRenderPage, RenderError, samplePidsMemory,
   scaledMemoryLimits, startWatchdog,
@@ -32,7 +32,8 @@ import {
  *   `TargetGate` here): their scripts are refused by the session (above), and the layers are opaque origins that cannot
  *   start them anyway; popups are denied by the handler.
  * - a video's frames are read raw (`capturePage`, `rawFrames`; report 53), not with `Page.captureScreenshot`, whose
- *   PNG/JPEG encode runs on this process's UI thread, the app's.
+ *   PNG/JPEG encode runs on this process's UI thread, the app's; only once this machine's raw frames proved to be a
+ *   PNG's pixels (`checkRawFrames`, report 56), else the PNG/JPEG frames stay.
  *
  * **Closing.** `destroy()` followed at once by a new window's `loadURL` fails with `ERR_FAILED` in Electron 44 (spike
  * §3a): a window is closed with `close()` (with `beforeunload` ignored) and the provider waits for `closed`, falling back
@@ -406,6 +407,92 @@ export async function guardedRawCapture(read: () => Promise<RawFrame>, failure: 
   return frame;
 }
 
+/** A raw frame against a PNG of the same state decoded to BGRA: bytes that differ, the largest difference, and whether every pixel of the raw one is opaque. */
+export interface RawCheck { same: boolean; differing: number; max: number; opaque: boolean; width: number; height: number }
+
+/** Compares a raw BGRA frame with a PNG's pixels (BGRA, the same size): `same` only when every byte matches and the frame is opaque. */
+export function compareRawFrame(raw: RawFrame, png: { data: Buffer; width: number; height: number }): RawCheck {
+  const sized = raw.width === png.width && raw.height === png.height && raw.data.length === png.data.length;
+  let differing = sized ? 0 : Math.max(raw.data.length, png.data.length), max = sized ? 0 : 255, opaque = true;
+  const n = Math.min(raw.data.length, png.data.length);
+  for (let k = 0; k < n; k++) {
+    const d = Math.abs(raw.data[k]! - png.data[k]!);
+    if (d) { differing++; if (d > max) max = d; }
+    if ((k & 3) === 3 && raw.data[k] !== 255) opaque = false;
+  }
+  return { same: sized && differing === 0 && opaque, differing, max, opaque, width: raw.width, height: raw.height };
+}
+
+/** The pattern the check paints over the page: hues, greys, saturated and half-transparent colours, at device pixels. */
+const RAW_CHECK_ID = 'ms-raw-check';
+const RAW_CHECK_PAINT = `(() => {
+  const c = document.createElement('canvas');
+  c.id = ${JSON.stringify(RAW_CHECK_ID)};
+  const k = window.devicePixelRatio || 1, w = Math.max(1, Math.round(innerWidth * k)), h = Math.max(1, Math.round(innerHeight * k));
+  c.width = w; c.height = h;
+  c.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:100vh;z-index:2147483647;pointer-events:none';
+  const g = c.getContext('2d');
+  const hues = g.createLinearGradient(0, 0, w, 0);
+  ['#ff0000', '#ffff00', '#00ff00', '#00ffff', '#0000ff', '#ff00ff', '#ff0000'].forEach((s, i) => hues.addColorStop(i / 6, s));
+  g.fillStyle = hues; g.fillRect(0, 0, w, h / 2);
+  const greys = g.createLinearGradient(0, 0, w, 0);
+  greys.addColorStop(0, '#000000'); greys.addColorStop(1, '#ffffff');
+  g.fillStyle = greys; g.fillRect(0, h / 2, w, h / 2);
+  ['rgba(255,64,0,0.5)', 'rgba(0,128,255,0.35)', 'rgba(32,200,90,0.7)'].forEach((s, i) => { g.fillStyle = s; g.fillRect(0, (h * (i + 1)) / 4 - h / 16, w, h / 8); });
+  document.documentElement.appendChild(c);
+  return true;
+})()`;
+
+/**
+ * Report 56: whether this machine's raw frames (`capturePage`) are the pixels of a PNG (`Page.captureScreenshot`) of the
+ * same state. The page shows a pattern (`RAW_CHECK_PAINT`) over itself and is sought (its own frames waited), then
+ * captured as PNG first (its forced redraw), then raw; the pattern is removed (the render's own seeks paint the page
+ * again). Measured on the developer's Mac: the same bytes under a forced Display P3 or generic RGB profile, software
+ * compositing and a starved GPU process, so a difference here (a colour transform, an order of channels, alpha) is a
+ * machine where raw frames would change the video: its renders keep the PNG/JPEG frames.
+ */
+export async function checkRawFrames(page: Pick<RenderPage, 'seek' | 'capture'>, evaluate: (expression: string) => Promise<unknown>, read: () => Promise<RawFrame>): Promise<RawCheck> {
+  await evaluate(RAW_CHECK_PAINT);
+  try {
+    await page.seek(0);
+    const img = nativeImage.createFromBuffer(await page.capture('png'));
+    const png = { data: img.toBitmap(), ...img.getSize() };
+    return compareRawFrame(await read(), png);
+  } finally {
+    await evaluate(`document.getElementById(${JSON.stringify(RAW_CHECK_ID)})?.remove(), true`).catch(() => {});
+  }
+}
+
+/**
+ * The checks made, by page scale, for the app's life: the first page of each scale that would read raw makes it, the
+ * others wait for it; a check that fails (an error, not a difference) is forgotten, its pages keep the PNG/JPEG frames.
+ */
+const rawChecks = new Map<number, Promise<RawCheck>>();
+
+/** Whether the pages at `scale` read raw frames: `run` checks once (see `rawChecks`); a difference is logged once. */
+export async function rawFramesChecked(scale: number, run: () => Promise<RawCheck>): Promise<boolean> {
+  let check = rawChecks.get(scale);
+  if (!check) {
+    check = run().then((r) => {
+      if (!r.same) console.warn(`Motion Studio: raw frames differ from PNG frames at scale ${scale} (${r.differing} bytes, max ${r.max}, opaque ${String(r.opaque)}, ${r.width}×${r.height}): renders keep PNG/JPEG frames`);
+      return r;
+    });
+    rawChecks.set(scale, check);
+    check.catch(() => { if (rawChecks.get(scale) === check) rawChecks.delete(scale); });
+  }
+  return check.then((r) => r.same, () => false);
+}
+
+/** The raw frame checks made so far, by scale (tests, diagnostics). */
+export async function rawFrameChecks(): Promise<Record<string, RawCheck | null>> {
+  const out: Record<string, RawCheck | null> = {};
+  for (const [k, p] of rawChecks) out[String(k)] = await p.catch(() => null);
+  return out;
+}
+
+/** Tests: forgets every check. */
+export function resetRawFrameChecks(): void { rawChecks.clear(); }
+
 /** The window's surface as BGRA pixels (`toBitmap`: Skia's N32 order, BGRA on every platform the app ships on). */
 export async function captureWindowFrame(win: Pick<BrowserWindow, 'isDestroyed' | 'webContents'>, timeoutMs: number): Promise<RawFrame> {
   if (win.isDestroyed()) throw new RenderError('crashed', 'the render window is gone');
@@ -561,8 +648,12 @@ export class ElectronProvider implements ChromiumProvider {
       });
       cdp.onEvent((e) => { if (e.method === 'Inspector.targetCrashed') this.fail({ code: 'crashed', message: 'a renderer crashed (inspector)' }); });
       const close = page.close;
-      return { ...page, ...(rawFrames(o) ? { captureRaw: () => guardedRawCapture(() => captureWindowFrame(rw.win, this.o.timeouts?.captureMs ?? CAPTURE_MS),
-        () => (page.interception.failure ? new RenderError('isolation', page.interception.failure.message) : this.failureError())) } : {}), close: async () => { o.signal.removeEventListener('abort', onAbort); await close(); } };
+      const captureRaw = () => guardedRawCapture(() => captureWindowFrame(rw.win, this.o.timeouts?.captureMs ?? CAPTURE_MS),
+        () => (page.interception.failure ? new RenderError('isolation', page.interception.failure.message) : this.failureError()));
+      // A storyboard never reads raw frames: no check for it.
+      const raw = rawFrames(o) && o.purpose !== 'frames'
+        && await rawFramesChecked(pageScale(o), () => checkRawFrames(page, (expression) => cdp.send('Runtime.evaluate', { expression, returnByValue: true }, { sessionId, timeoutMs: t.callMs }), captureRaw));
+      return { ...page, ...(raw ? { captureRaw } : {}), close: async () => { o.signal.removeEventListener('abort', onAbort); await close(); } };
     } catch (e) {
       o.signal.removeEventListener('abort', onAbort);
       ending = true;

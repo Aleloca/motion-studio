@@ -14,11 +14,14 @@ vi.mock('electron', () => ({
   powerSaveBlocker: { start: vi.fn(() => 7), stop: vi.fn() },
   BrowserWindow: vi.fn(),
   session: { fromPartition: vi.fn() },
+  // The raw frame check (report 56) decodes the PNG with nativeImage: here the "PNG" is the BGRA bytes themselves.
+  nativeImage: { createFromBuffer: vi.fn((b: Buffer) => ({ toBitmap: () => b, getSize: () => ({ width: b.length / 4, height: 1 }) })) },
 }));
 
 const {
   renderWindowOptions, renderProxyConfig, renderRequestAllowed, lockRenderSession, closeRenderWindow, DebuggerCdpClient,
   ElectronProvider, RENDER_PARTITION_PREFIX, desktopRenderOptions, DESKTOP_RENDER_PARALLEL, rawFrames, captureWindowFrame, guardedRawCapture,
+  compareRawFrame, checkRawFrames, rawFramesChecked, rawFrameChecks, resetRawFrameChecks,
 } = await import('../src/render-window.ts');
 
 const PREFIX = 'http://127.0.0.1:43210/abcdefghijklmnop0123/';
@@ -334,6 +337,51 @@ describe('ElectronProvider', () => {
     await expect(captureWindowFrame({ isDestroyed: () => true } as never, 20)).rejects.toMatchObject({ code: 'crashed' });
     const img = { getSize: () => ({ width: 2, height: 1 }), isEmpty: () => false, toBitmap: () => Buffer.alloc(8) };
     await expect(captureWindowFrame({ isDestroyed: () => false, webContents: { capturePage: async () => img } } as never, 20)).resolves.toMatchObject({ width: 2, height: 1 });
+  });
+
+  it('report 56: a raw frame is the PNG\'s only when every byte matches and every pixel is opaque', () => {
+    const px = (...v: number[]) => Buffer.from(v);
+    const png = { data: px(10, 20, 30, 255, 40, 50, 60, 255), width: 2, height: 1 };
+    expect(compareRawFrame({ data: px(10, 20, 30, 255, 40, 50, 60, 255), width: 2, height: 1 }, png)).toMatchObject({ same: true, differing: 0, max: 0, opaque: true });
+    // A colour transform, red and blue swapped, a premultiplied half-transparent pixel, another size.
+    expect(compareRawFrame({ data: px(11, 20, 30, 255, 40, 52, 60, 255), width: 2, height: 1 }, png)).toMatchObject({ same: false, differing: 2, max: 2 });
+    expect(compareRawFrame({ data: px(30, 20, 10, 255, 60, 50, 40, 255), width: 2, height: 1 }, png)).toMatchObject({ same: false, differing: 4, max: 20 });
+    expect(compareRawFrame({ data: px(10, 20, 30, 255, 40, 50, 60, 128), width: 2, height: 1 }, png)).toMatchObject({ same: false, opaque: false });
+    expect(compareRawFrame({ data: px(10, 20, 30, 255), width: 1, height: 1 }, png).same).toBe(false);
+  });
+
+  it('report 56: the check paints its pattern, seeks, reads the PNG first, then raw, and always takes the pattern away', async () => {
+    const steps: string[] = [];
+    const bgra = Buffer.from([1, 2, 3, 255]);
+    const page = { seek: async (t: number) => { steps.push(`seek ${t}`); }, capture: async () => { steps.push('png'); return bgra; } };
+    const evaluate = async (e: string) => { steps.push(e.includes('remove()') ? 'unpaint' : 'paint'); return true; };
+    await expect(checkRawFrames(page as never, evaluate, async () => { steps.push('raw'); return { data: bgra, width: 1, height: 1 }; })).resolves.toMatchObject({ same: true });
+    expect(steps).toEqual(['paint', 'seek 0', 'png', 'raw', 'unpaint']);
+    steps.length = 0;
+    await expect(checkRawFrames(page as never, evaluate, async () => { throw new Error('gone'); })).rejects.toThrow('gone');
+    expect(steps.at(-1)).toBe('unpaint');
+  });
+
+  it('report 56: one check per scale for the app\'s life; a difference keeps PNG frames there, a failed check is made again', async () => {
+    resetRawFrameChecks();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const same = { same: true, differing: 0, max: 0, opaque: true, width: 4, height: 4 };
+      const run = vi.fn(async () => same);
+      expect(await Promise.all([rawFramesChecked(1, run), rawFramesChecked(1, run)])).toEqual([true, true]);
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(await rawFramesChecked(2, async () => ({ ...same, same: false, differing: 12, max: 3 }))).toBe(false);
+      expect(await rawFramesChecked(2, run)).toBe(false); // remembered
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]![0])).toContain('12 bytes, max 3');
+      const failing = vi.fn(async () => { throw new Error('timeout'); });
+      expect(await rawFramesChecked(4 / 3, failing)).toBe(false);
+      expect(await rawFramesChecked(4 / 3, run)).toBe(true);
+      expect(Object.keys(await rawFrameChecks())).toEqual(['1', '2', String(4 / 3)]);
+    } finally {
+      warn.mockRestore();
+      resetRawFrameChecks();
+    }
   });
 
   it('report 53: a raw capture is refused when the isolation failed before it, and its frame dropped when it failed during it', async () => {
