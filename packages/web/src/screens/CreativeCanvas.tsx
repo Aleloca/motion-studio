@@ -8,7 +8,7 @@
 import { ProblemList } from '../components/ProblemList.tsx';
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
 import { entriesOfVariant, turnEndOf } from '@motion-studio/shared';
-import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, outputWarningText, shownTotal, packInstancesOf, type ConversationEntry, type CreativeDetail, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VariantId, type VariantMember, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
+import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, outputWarningText, shownTotal, packInstancesOf, type ConversationEntry, type JobSummary, type CreativeDetail, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VariantId, type VariantMember, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { api, type GroupExportPlanItem } from '../api.ts';
@@ -638,17 +638,20 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     return comp && render ? { n: b.n, format: src, hash: comp.hash, render, onRender: () => renderNow([[b.n!, [src]]]) } : null;
   };
   /** A board of the open creative; in a group, a thumbnail of its card at the card's zoom (`z`). */
-  const board = (b: BoardModel & { n: number | null }, z?: number) => (
+  const board = (b: BoardModel & { n: number | null }, z?: number) => {
+    const wip = isRendering(rendering, b.id) ? inProgressOf(live, job, b.id) : null;
+    return (
     <CanvasBoard key={b.id} slug={slug} creative={creative} board={b} n={b.n} {...(group ? { grouped: true, card: true } : {})}
-      tool={tool === 'comment' && (commentOn === null || commentOn === b.id) ? 'comment' : 'select'} zoom={z ?? zoom} selected={sel === b.id} rendering={isRendering(rendering, b.id)}
-      commentable={commentable.has(b.id)} missing={b.n === null ? latest?.n ?? null : null} {...badgeOf(b)} composition={compositionFor(b)}
+      tool={tool === 'comment' && (commentOn === null || commentOn === b.id) ? 'comment' : 'select'} zoom={z ?? zoom} selected={sel === b.id} rendering={!wip && isRendering(rendering, b.id)}
+      commentable={commentable.has(b.id)} missing={b.n === null ? latest?.n ?? null : null} {...badgeOf(b)} {...(wip ? { inProgress: true } : {})} composition={wip ?? compositionFor(b)}
       {...(commentable.has(b.id) && !readOnly ? { onComment: () => startComment(b.id) } : {})}
       pins={commentable.has(b.id) ? pinsOf(b.id) : []} draft={commentable.has(b.id) ? draft : null} nextNumber={pins.length + 1}
       onSelect={() => { setSel(b.id); setVsel(null); }} onOpen={(el) => { if (tool === 'select') openEditor(b.id, el); }} onPlace={(x, y) => place(b.id, x, y)} onEditPin={editPin}
       onDraftText={(text) => setDraft((d) => (d ? { ...d, text } : d))} onDraftCommit={commitDraft} onDraftCancel={() => setDraft(null)}
       onDraftDelete={() => { if (draft?.index !== null && draft?.index !== undefined) removePin(draft.index); }}
     />
-  );
+    );
+  };
 
   /** The formats column's channel groups of the open creative (a store pack's group included). */
   const renderColumn = (only?: 'pack') => columnGroups.filter(([ch]) => (only ? ch === PACK_GROUP : true)).map(([channel, items]) => {
@@ -773,9 +776,11 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     const pick = group!.group.picks[b.id];
     const isPick = pick?.slug === m.slug && pick.version === b.n;
     const mjob = Object.values(live.jobs).find((j) => j.key === d.jobKey && (j.state === 'queued' || j.state === 'running'));
+    const mrendering = isRendering(renderingOf(mjob, st), b.id);
+    const wip = mrendering ? inProgressOf(live, mjob, b.id) : null;
     return (
       <CanvasBoard key={key} boardKey={key} grouped card slug={slug} creative={m.slug} board={b} n={b.n} tool="select" zoom={z} selected={vsel === key}
-        rendering={isRendering(renderingOf(mjob, st), b.id)} commentable={false} missing={b.n === null ? d.versions.at(-1)?.n ?? null : null}
+        rendering={!wip && mrendering} {...(wip ? { inProgress: true } : {})} commentable={false} missing={b.n === null ? d.versions.at(-1)?.n ?? null : null}
         {...(m.status === 'active' && b.n !== null ? { onComment: () => onVariantUi({ focus: m.slug === routeCreative ? null : m.slug, all: false, comment: b.id }) } : {})}
         badge={b.n === null ? null : (
           <>
@@ -785,7 +790,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
         )}
         note={st[b.id]?.follows ? t.web.formatVersions.follows({ primary: instanceName(presetFor(presets, st[b.id]!.follows!), st[b.id]!.follows!, locale, d.creative.brief.formatLabels) }) : null}
         pins={[]} draft={null} nextNumber={1}
-        composition={comp && render ? { n: b.n!, format: src, hash: comp.hash, render, onRender: () => { void Promise.resolve().then(() => api.renderVersion(slug, m.slug, b.n!, [src])).catch(failToast(t.web.render.startFailed)); } } : null}
+        composition={wip ?? (comp && render ? { n: b.n!, format: src, hash: comp.hash, render, onRender: () => { void Promise.resolve().then(() => api.renderVersion(slug, m.slug, b.n!, [src])).catch(failToast(t.web.render.startFailed)); } } : null)}
         onSelect={() => { setSel(null); setVsel(key); }}
         onOpen={(el) => { setFrameOrigin(`format:${slug}/${m.slug}/${b.id}`, el.getBoundingClientRect()); go(href.format(slug, m.slug, b.id)); }}
         onPlace={() => {}} onEditPin={() => {}} onDraftText={() => {}} onDraftCommit={() => {}} onDraftCancel={() => {}} onDraftDelete={() => {}} />
@@ -1093,6 +1098,17 @@ function OutputWarnings({ outputs, formatLabel }: { outputs: VersionEntry['outpu
       {lines.map((l, i) => <li key={i}><Icon name="warn" size={12} /><span><b>{formatLabel(l.format)}</b> · {l.text}</span></li>)}
     </ul>
   );
+}
+
+/**
+ * Report 41: the composition a board shows while creative turn `job` runs, once the core said this format of the version it
+ * is writing passed the agent's check (`formatReady`): that unrecorded version and hash, no render state. Null otherwise
+ * (job not running, format not checked, or taken back).
+ */
+function inProgressOf(live: EventsState, job: JobSummary | undefined, format: string): { n: number; format: string; hash: string; render: { kind: 'none' }; onRender(): void } | null {
+  if (!job || job.kind !== 'creative' || job.state !== 'running') return null;
+  const r = live.ready?.[job.id]?.[format];
+  return r ? { n: r.n, format, hash: r.hash, render: { kind: 'none' }, onRender: () => {} } : null;
 }
 
 function Notes({ children }: { children: ReactNode }) {

@@ -1383,6 +1383,49 @@ describe('CreativeCanvas · compositions (Task 8)', () => {
     expect(document.querySelector('iframe')).toBeNull();
   });
 
+  it('report 41: a board goes from "In render…" to its in-progress picture on formatReady ("In lavorazione", hover plays it), and to the recorded version at the end', async () => {
+    detail = makeDetail([v2(1)]);
+    const turn: JobSummary = { id: 'j1', key: 'creative:/w:acme:lancio', kind: 'creative', label: 'x', state: 'running', createdAt: at };
+    const withReady = (l: EventsState, ready: EventsState['ready']) => ({ ...l, ready } as EventsState);
+    const { rerender } = render(<Harness live={liveWith(turn)} />);
+    await picture('tiktok-9x16');
+    const sub = (id: string) => board(id).querySelector('.ms-cv-board-sub')!.textContent;
+    expect(sub('tiktok-9x16')).toContain('In render…');
+    // The core says the TikTok of v2 (being written) passed the agent's check.
+    rerender(<Harness live={withReady(liveWith(turn), { j1: { 'tiktok-9x16': { n: 2, hash: 'd'.repeat(64) } } })} />);
+    await waitFor(() => expect(sub('tiktok-9x16')).toContain('In lavorazione'));
+    expect(sub('tiktok-9x16')).not.toContain('In render…');
+    expect(sub('instagram-post-1x1')).toContain('In render…');
+    await waitFor(() => expect(api.getStoryboard).toHaveBeenCalledWith('acme', 'lancio', 2, 'tiktok-9x16'));
+    await waitFor(() => expect(board('tiktok-9x16').querySelector('.ms-cv-frame img')!.getAttribute('src')).toBe('/sb/tiktok-9x16/v2/f-1.jpg?s=1'));
+    expect(board('tiktok-9x16').querySelector('.ms-shimmer')).toBeNull();
+    // Hover plays it, like a recorded board (never all of them at once).
+    fireEvent.pointerOver(board('tiktok-9x16').querySelector('.ms-cv-frame-wrap')!);
+    await waitFor(() => expect(api.previewSession).toHaveBeenCalledWith('acme', 'lancio', 2, 'tiktok-9x16', location.origin));
+    // A later check failed: taken back.
+    rerender(<Harness live={withReady(liveWith(turn), { j1: {} })} />);
+    await waitFor(() => expect(sub('tiktok-9x16')).toContain('In render…'));
+    // The turn ends with v2 recorded: the board shows v2 as any recorded version, nothing "in progress" any more.
+    rerender(<Harness live={withReady(liveWith(turn), { j1: { 'tiktok-9x16': { n: 2, hash: 'd'.repeat(64) } } })} />);
+    await waitFor(() => expect(sub('tiktok-9x16')).toContain('In lavorazione'));
+    detail = makeDetail([v2(1), v2(2)]);
+    const done = { ...liveWith({ ...turn, state: 'succeeded' }), creativeTicks: { 'acme/lancio': 1 } } as EventsState;
+    rerender(<Harness live={withReady(done, { j1: { 'tiktok-9x16': { n: 2, hash: 'd'.repeat(64) } } })} />);
+    await waitFor(() => expect(sub('tiktok-9x16')).not.toContain('In lavorazione'));
+    expect(sub('tiktok-9x16')).not.toContain('In render…');
+  });
+
+  it('report 41: a stopped turn clears its in-progress boards', async () => {
+    detail = makeDetail([v2(1)]);
+    const turn: JobSummary = { id: 'j1', key: 'creative:/w:acme:lancio', kind: 'creative', label: 'x', state: 'running', createdAt: at };
+    const ready = { j1: { 'tiktok-9x16': { n: 2, hash: 'd'.repeat(64) } } };
+    const { rerender } = render(<Harness live={{ ...liveWith(turn), ready } as EventsState} />);
+    await waitFor(() => expect(board('tiktok-9x16').querySelector('.ms-cv-board-sub')!.textContent).toContain('In lavorazione'));
+    rerender(<Harness live={{ ...liveWith({ ...turn, state: 'cancelled' }), ready } as EventsState} />);
+    await waitFor(() => expect(board('tiktok-9x16').querySelector('.ms-cv-board-sub')?.textContent ?? '').not.toContain('In lavorazione'));
+    await waitFor(() => expect(board('tiktok-9x16').querySelector('.ms-cv-frame img')!.getAttribute('src')).toBe('/sb/tiktok-9x16/v1/f-1.jpg?s=1'));
+  });
+
   it('plays live on hover intent (a sandboxed frame), and stops when the pointer leaves', async () => {
     detail = makeDetail([v2(1)]);
     render(<Harness live={emptyLive()} />);

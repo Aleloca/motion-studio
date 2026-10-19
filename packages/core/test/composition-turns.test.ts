@@ -14,7 +14,8 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { renderState, type ApprovalRequest, type CreativeDetail, type FormatPreset, type JobSummary, type ManifestV2, type VersionEntry } from '@motion-studio/shared';
+import { renderState, type ApprovalRequest, type CreativeDetail, type FormatPreset, type JobSummary, type ManifestV2, type ServerMessage, type VersionEntry } from '@motion-studio/shared';
+import WebSocket from 'ws';
 import { AppConfigStore } from '../src/app-config.ts';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AgentBridge } from '../src/bridge/bridge.ts';
@@ -510,6 +511,75 @@ describe('the agent\'s AskUserQuestion (user note 8)', { timeout: 120_000 }, () 
     const events = (await store().readConversation(slug)).flatMap((e) => (e.type === 'agent' ? [e.event] : []));
     expect(events).toContainEqual({ kind: 'question_answered', outcome: 'answered', toolUseId: 'toolu_ask1', items: [{ header: 'Durata', question, answer: '12 s' }] });
     expect(events.some((e) => e.kind === 'approval_decided')).toBe(false);
+  });
+});
+
+describe('report 41: each format shown as soon as the agent\'s check passes', { timeout: 120_000 }, () => {
+  const question = (id: string) => ['approve', { tool_name: 'AskUserQuestion', tool_use_id: id, input: { questions: [{ question: 'Quale?', header: 'Scelta', multiSelect: false,
+    options: [{ label: 'A', description: 'a' }, { label: 'B', description: 'b' }] }] } }];
+  /** A first generation of `formats` whose agent validates `test-wide` and then waits on a question card; the events it broadcasts. */
+  async function waiting(formats: string[]) {
+    const url = await app.listen({ port: 0, host: '127.0.0.1' });
+    bridge.setOrigin(url);
+    process.env.FAKE_CLAUDE_BRIDGE_LOG = join(base, 'bridge.jsonl');
+    process.env.FAKE_CLAUDE_BRIDGE_CALLS = JSON.stringify([['validate_composition', { format: 'test-wide' }], question('toolu_q41')]);
+    const sock = new WebSocket(`${url.replace('http', 'ws')}/api/events?t=${TOKEN}`, { headers: { origin: url } });
+    const events: ServerMessage[] = [];
+    sock.on('message', (d) => events.push(JSON.parse(String(d)) as ServerMessage));
+    await new Promise((r) => sock.once('open', r));
+    const r = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', headers: H, payload: {
+      title: 'Launch', generate: true, brief: { goal: 'g', message: '', formats, durationSec: 4, assets: [], notes: '' },
+    } });
+    expect(r.statusCode, r.body).toBe(201);
+    let card: ApprovalRequest | undefined;
+    for (let i = 0; i < 1500 && !card; i++) {
+      card = ((await app.inject({ url: '/api/approvals', headers: H })).json() as ApprovalRequest[])[0];
+      if (!card) await new Promise((res) => setTimeout(res, 20));
+    }
+    expect(card).toBeDefined();
+    return { slug: r.json().slug as string, job: r.json().job as JobSummary, card: card!, events, close: () => sock.close() };
+  }
+  const storyboard = (slug: string, format: string) => app.inject({ url: `/api/projects/acme/creatives/${slug}/versions/1/storyboards/${format}`, headers: H });
+  const preview = (slug: string, format: string) => app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/preview-session`, headers: H, payload: { format, parentOrigin: UI_ORIGIN } });
+
+  it('broadcasts the checked format with its hash; its storyboard and live preview work before the version is recorded, the others do not', async () => {
+    const w = await waiting(['test-wide', 'test-wide-b']);
+    try {
+      const ready = w.events.filter((e) => e.type === 'formatReady');
+      expect(ready).toEqual([{ type: 'formatReady', jobId: w.job.id, project: 'acme', creative: w.slug, n: 1, format: 'test-wide', hash: expect.stringMatching(/^[0-9a-f]{64}$/) }]);
+      const hash = (ready[0] as { hash: string }).hash;
+      // Nothing is recorded yet.
+      expect(await store().readVersions(w.slug)).toEqual([]);
+      const sb = await storyboard(w.slug, 'test-wide');
+      expect(sb.statusCode, sb.body).toBe(200);
+      expect(sb.json()).toMatchObject({ format: 'test-wide', hash });
+      const img = await app.inject({ url: (sb.json() as { frames: Array<{ url: string }> }).frames[0]!.url });
+      expect(img.statusCode).toBe(200);
+      const pv = await preview(w.slug, 'test-wide');
+      expect(pv.statusCode, pv.body).toBe(200);
+      expect(pv.json()).toMatchObject({ format: 'test-wide', hash });
+      // Not checked yet, not a format of the turn, another version: as before (404).
+      expect((await storyboard(w.slug, 'test-wide-b')).statusCode).toBe(404);
+      expect((await preview(w.slug, 'test-wide-b')).statusCode).toBe(404);
+      expect((await storyboard(w.slug, 'nope')).statusCode).toBe(404);
+      expect((await app.inject({ url: `/api/projects/acme/creatives/${w.slug}/versions/2/storyboards/test-wide`, headers: H })).statusCode).toBe(404);
+      // The turn goes on and records v1 at the end, with the hash it announced.
+      expect((await app.inject({ method: 'POST', url: `/api/approvals/${w.card.id}/answer`, headers: H, payload: { answers: [{ selected: [0] }] } })).statusCode).toBe(200);
+      expect((await waitJob(w.job.id)).state).toBe('succeeded');
+      expect((await versionOf(w.slug, 1)).compositions!.find((c) => c.format === 'test-wide')!.hash).toBe(hash);
+    } finally { w.close(); }
+  });
+
+  it('a stopped turn takes its formats back: nothing is served for them any more', async () => {
+    const w = await waiting(['test-wide', 'test-wide-b']);
+    try {
+      expect(w.events.some((e) => e.type === 'formatReady')).toBe(true);
+      expect((await app.inject({ method: 'POST', url: `/api/jobs/${w.job.id}/cancel`, headers: H })).statusCode).toBe(200);
+      expect((await waitJob(w.job.id)).state).toBe('cancelled');
+      expect(await store().readVersions(w.slug)).toEqual([]);
+      expect((await storyboard(w.slug, 'test-wide')).statusCode).toBe(404);
+      expect((await preview(w.slug, 'test-wide')).statusCode).toBe(404);
+    } finally { w.close(); }
   });
 });
 

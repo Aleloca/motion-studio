@@ -90,3 +90,19 @@ describe('approvals', () => {
     expect(Object.keys(s.approvals)).toEqual(['a2']);
   });
 });
+
+describe('report 41: formats ready during a turn', () => {
+  const ready = (format: string, hash: string | null) => ({ type: 'formatReady' as const, jobId: 'j1', project: 'acme', creative: 'c', n: 3, format, hash });
+  it('keeps each checked format of a running job with its version and hash; a null hash takes it back; the end of the job drops them', () => {
+    let s = eventsReducer(initialEventsState, { type: 'job', job: job('j1', 'running') });
+    s = eventsReducer(s, ready('a', 'h1'));
+    s = eventsReducer(s, ready('b', 'h2'));
+    s = eventsReducer(s, ready('a', 'h3'));
+    expect(s.ready).toEqual({ j1: { a: { n: 3, hash: 'h3' }, b: { n: 3, hash: 'h2' } } });
+    s = eventsReducer(s, ready('b', null));
+    expect(s.ready).toEqual({ j1: { a: { n: 3, hash: 'h3' } } });
+    expect(eventsReducer(s, { type: 'job', job: job('j1', 'cancelled') }).ready).toEqual({});
+    expect(eventsReducer(s, { type: 'snapshot', jobs: [job('j1', 'failed')], approvals: [], locale: 'it', languageSetting: 'system', systemLocale: 'it' }).ready).toEqual({});
+    expect(eventsReducer(s, { type: 'snapshot', jobs: [job('j1', 'running')], approvals: [], locale: 'it', languageSetting: 'system', systemLocale: 'it' }).ready).toEqual(s.ready);
+  });
+});

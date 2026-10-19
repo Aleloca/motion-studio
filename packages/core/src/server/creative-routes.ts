@@ -14,7 +14,7 @@ import { makeOwnedTempDir } from '../render/owner.ts';
 import type { ExportJobService, ExportOutcome, ExportRun } from '../creatives/export-jobs.ts';
 import type { ExportRendered, RenderWait } from '../creatives/render-jobs.ts';
 import { assertLocalesInBrief, checkedLocale } from '../localization/validate.ts';
-import { storyboardDir, storyboardSchema, sweepStoryboardTemps, type PreviewService } from '../creatives/previews.ts';
+import { storyboardDir, storyboardSchema, sweepStoryboardTemps, workVersion, type PreviewService } from '../creatives/previews.ts';
 import { readJsonFile } from '../json-file.ts';
 import { isRealDirChain } from '../creatives/core-files.ts';
 import type { UrlSigner } from './signed-urls.ts';
@@ -361,6 +361,11 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     // 400 for invalid slugs; phase 15: 404 for a sister-shaped folder that is neither a real sister nor an orphan (ruling R2).
     await store.assertOpenable(creativeSlug);
     return { root: ws.root, projectSlug: slug, projectDir, creativeSlug, store };
+  };
+  /** Report 41: version `n` of a running turn, standing for `format` alone once the agent's check passed on it; else undefined. */
+  const inProgress = (ref: CreativeRef, n: number, format: string) => {
+    const hash = Number.isInteger(n) && n > 0 ? ctx.turns.readyFormat(ref, n, format) : null;
+    return hash === null ? undefined : workVersion(n, format, hash);
   };
   const variantsOf = (ref: CreativeRef & { store: CreativeStore }) => new VariantGroupService({ store: ref.store, turns: ctx.turns });
   /** Phase 15: the variant side of a creative's detail; absent outside a group (an old creative's detail is unchanged). */
@@ -1134,9 +1139,11 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   app.post<{ Params: { slug: string; c: string; n: string } }>('/api/projects/:slug/creatives/:c/versions/:n/preview-session', async (req) => {
     const ref = await refOf(req.params.slug, req.params.c);
     const n = Number(req.params.n);
-    const version = Number.isInteger(n) && n > 0 ? (await ref.store.readVersions(ref.creativeSlug)).find((v) => v.n === n) : undefined;
-    if (!version) throw new WorkspaceError(404, t().errors.versionNotFound);
+    const recorded = Number.isInteger(n) && n > 0 ? (await ref.store.readVersions(ref.creativeSlug)).find((v) => v.n === n) : undefined;
     const body = parse(previewBody, req.body);
+    // Report 41: a format of the version a running turn is writing, once the agent's check passed on it.
+    const version = recorded ?? inProgress(ref, n, body.format);
+    if (!version) throw new WorkspaceError(404, t().errors.versionNotFound);
     return ctx.previews.mintPreview({ projectDir: ref.projectDir, creativeDir: ref.store.dir(ref.creativeSlug), creativeSlug: ref.creativeSlug, n }, version, body.format, body.parentOrigin, currentLocale(),
       body.renewFrom !== undefined ? { renewFrom: body.renewFrom } : {});
   });
@@ -1229,7 +1236,8 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   app.get<{ Params: { slug: string; c: string; n: string; format: string } }>('/api/projects/:slug/creatives/:c/versions/:n/storyboards/:format', async (req) => {
     const ref = await refOf(req.params.slug, req.params.c);
     const n = Number(req.params.n);
-    const version = Number.isInteger(n) && n > 0 ? (await ref.store.readVersions(ref.creativeSlug)).find((v) => v.n === n) : undefined;
+    const recorded = Number.isInteger(n) && n > 0 ? (await ref.store.readVersions(ref.creativeSlug)).find((v) => v.n === n) : undefined;
+    const version = recorded ?? inProgress(ref, n, req.params.format);
     if (!version) throw new WorkspaceError(404, t().errors.versionNotFound);
     const r = await ctx.previews.storyboardOf({ projectDir: ref.projectDir, creativeDir: ref.store.dir(ref.creativeSlug), creativeSlug: ref.creativeSlug, n }, version, req.params.format);
     if (!r) throw new CodedError(404, t().errors.previewUnavailable, 'storyboard-unavailable');

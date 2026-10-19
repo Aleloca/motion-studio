@@ -77,6 +77,11 @@ export interface BoardProps {
   card?: boolean;
   /** The board's own "Comment" (decision 973): starts placing a comment on this board. Absent: no button. */
   onComment?(): void;
+  /**
+   * Report 41: the running turn's version of this format passed the agent's check: `composition` is that unrecorded version's
+   * (its storyboard poster, the live preview on hover), labelled "In lavorazione" instead of "Rendering…".
+   */
+  inProgress?: boolean;
 }
 
 const NARROW_BOARD = 170;
@@ -98,7 +103,9 @@ export function CanvasBoard(p: BoardProps) {
   const t = useT();
   const c = t.web.canvas;
   const locale = useLocale();
-  const { board, n } = p;
+  const { n } = p;
+  // Report 41: an in-progress board shows the turn's composition only, never the file of the version it replaces.
+  const board = p.inProgress ? { ...p.board, out: null } : p.board;
   const frame = useRef<HTMLDivElement>(null);
   const label = boardLabel(board, locale);
   const size = boardFrame(board);
@@ -149,7 +156,7 @@ export function CanvasBoard(p: BoardProps) {
   const headWidth = p.card ? Math.max(Math.round(size.width * zoom), CARD_LABEL_MIN)
     : Math.max(Math.round(size.width * zoom), labelMin(zoom, p.boardKey !== undefined || p.tag !== undefined || p.grouped));
   const cardState = comp && (comp.render.kind === 'queued' || comp.render.kind === 'rendering' || comp.render.kind === 'failed' || comp.render.kind === 'problem');
-  const sub = !p.card || p.rendering || p.note || cardState || (board.out && !board.out.verified) || largeFile.length > 0;
+  const sub = !p.card || p.rendering || p.inProgress || p.note || cardState || (board.out && !board.out.verified) || largeFile.length > 0;
   return (
     <div className={cx('ms-cv-board', p.card && 'ms-cv-card-board', p.selected && 'ms-on', drafting && 'ms-drafting')} data-board={p.boardKey ?? board.id}>
       <div className="ms-cv-board-head" style={p.card ? { width: headWidth } : { maxWidth: headWidth }}>
@@ -164,7 +171,8 @@ export function CanvasBoard(p: BoardProps) {
         {sub ? (
           <div className="ms-cv-board-line ms-cv-board-sub">
             {board.preset && !p.card ? <span className="ms-cv-board-meta">{ratioText(board.preset)}{duration !== null ? ` · ${c.seconds({ n: formatNumber(locale, duration, { maximumFractionDigits: 1 }) })}` : ''}</span> : null}
-            {p.rendering ? <span className="ms-cv-board-state">{c.renderingState}</span>
+            {p.inProgress ? <span className="ms-cv-board-state ms-cv-wip">{c.inProgress}</span>
+              : p.rendering ? <span className="ms-cv-board-state">{c.renderingState}</span>
               : p.note ? <span className="ms-cv-board-state">{p.note}</span>
                 : comp && (!p.card || cardState) ? <RenderState render={comp.render} label={label} onRender={comp.onRender} />
                   : !p.card && board.out && board.out.verified && !largeFile.length ? <span className="ms-cv-board-state">{c.boardReady}</span> : null}

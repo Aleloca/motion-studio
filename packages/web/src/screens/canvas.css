@@ -56,6 +56,8 @@
 }
 .ms-cv-stack { display: flex; flex-direction: column; gap: calc(44px * var(--cv-z)); }
 /* Report 40: the boards in lines (canvasModel.canvasLines), one or more per group of the formats column. */
+/* Report 41: a format the running turn has checked, shown before the version is recorded. */
+.ms-cv-board-state.ms-cv-wip { color: var(--accent); }
 .ms-cv-world.ms-cv-lined { flex-direction: column; gap: calc(44px * var(--cv-z)); }
 .ms-cv-line { display: flex; align-items: flex-start; gap: calc(40px * var(--cv-z)); }
 

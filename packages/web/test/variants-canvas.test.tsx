@@ -52,6 +52,8 @@ const api = {
   renderVersion: vi.fn(async (..._a: unknown[]) => ({ id: 'r1' })),
   getAgentCapabilities: vi.fn(async () => ({ cliVersion: null, liveInput: false, interrupt: false, checkedAt: at })),
   getPinFrames: vi.fn(async () => ({ n: 1, expiresAt: at, frames: [] })),
+  // Report 41: an in-progress board asks for the storyboard of the turn's version (none here).
+  getStoryboard: vi.fn(async (..._a: unknown[]) => { throw new Error('none'); }),
   // Phase 15.
   runVariants: vi.fn(async (..._a: unknown[]) => ({ jobs: { c: 'j1' }, queued: [], skipped: [], failed: {} })),
   addVariants: vi.fn(async (..._a: unknown[]) => build(HOST)),
@@ -109,6 +111,20 @@ beforeEach(() => {
 afterEach(() => { platform?.mockRestore(); platform = null; });
 
 describe('variant canvas · cards', () => {
+  it('report 41: a variant working in parallel shows each format in its card as soon as it is checked ("In lavorazione")', async () => {
+    const turnB: JobSummary = { id: 'jb', key: `creative:/w:acme:${HOST}~b`, kind: 'creative', label: 'x', state: 'running', createdAt: at };
+    const turnC: JobSummary = { id: 'jc', key: `creative:/w:acme:${HOST}~c`, kind: 'creative', label: 'x', state: 'running', createdAt: at };
+    const live = { ...emptyLive(), jobs: { jb: turnB, jc: turnC }, ready: { jb: { 'tiktok-9x16': { n: 3, hash: 'd'.repeat(64) } } } } as EventsState;
+    render(<Harness live={live} />);
+    await loaded();
+    const boardIn = async (letter: string, id: string) => within(await region(`Variante ${letter}`)).getAllByRole('group').map((g) => g.querySelector(`[data-board$="${id}"]`)).find(Boolean) as HTMLElement;
+    await waitFor(async () => expect((await boardIn('B', 'tiktok-9x16')).textContent).toContain('In lavorazione'));
+    expect((await boardIn('B', 'instagram-post-1x1')).textContent).not.toContain('In lavorazione');
+    // C's turn has nothing checked yet: its boards are still being made.
+    expect((await boardIn('C', 'tiktok-9x16')).textContent).not.toContain('In lavorazione');
+    await waitFor(() => expect(api.getStoryboard).toHaveBeenCalledWith('acme', `${HOST}~b`, 3, 'tiktok-9x16'));
+  });
+
   it('one card per variant: the letter and its name, one state, and the formats inside it', async () => {
     render(<Harness live={emptyLive()} />);
     await loaded();

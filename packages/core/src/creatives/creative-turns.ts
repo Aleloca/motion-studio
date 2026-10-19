@@ -109,6 +109,11 @@ class LiveTurn extends LiveSession {
   savedVersion = false;
   /** Decision 917: the number of the version it saved (the app actions kept for after the turn act on it). */
   savedN: number | null = null;
+  /**
+   * Report 41: the version the turn writes (`n`, recorded only at its end) and the formats whose composition passed the agent's
+   * check, with the hash checked. The storyboard and live preview routes serve these (and only these) before `n` is recorded.
+   */
+  work: { n: number; ready: Map<string, string> } | null = null;
   constructor(jobId: string, caps: LiveSession['caps'], readonly ref: CreativeRef) { super(jobId, caps); }
 }
 /** How many idempotency answers are kept (per process; older ones are found again in the conversation or the queue). */
@@ -1122,6 +1127,18 @@ export class CreativeTurnService {
           versionDir: store.outputsDir(slug, n), targets: only === undefined ? targets : targets.filter((f) => f === only), presets,
           briefDurationSec: checkDuration(), locale, acceptedDurations: acceptedNow(),
         });
+        // Report 41: a format whose check passes is shown at once (its hash, from the unrecorded `outputs/v<n>`); one that fails
+        // a later check is taken back. Only changes are broadcast.
+        live.work = { n, ready: new Map() };
+        const announceReady = (list: Array<{ format: string; hash: string | null }>) => {
+          const work = live.work;
+          if (!work || work.n !== n) return;
+          for (const { format, hash } of list) {
+            if ((work.ready.get(format) ?? null) === hash) continue;
+            if (hash === null) work.ready.delete(format); else work.ready.set(format, hash);
+            this.deps.broadcast({ type: 'formatReady', jobId, project: ref.projectSlug, creative: slug, n, format, hash });
+          }
+        };
         // The agent's MCP tools on its compositions (output contract v2): the same checks as after the turn, and a few frames.
         let previewCalls = 0;
         const previewLimit = this.deps.previewFramesPerTurn ?? 10;
@@ -1129,6 +1146,7 @@ export class CreativeTurnService {
           validateComposition: async (format?: string) => {
             if (format !== undefined && !targets.includes(format)) throw new CodedError(400, t().errors.formatNotInTurn({ format: format.slice(0, 100), list: targets.join(', ') }), 'formats-not-in-turn');
             const r = await checkCompositions(format);
+            announceReady(r.checks.map((c) => ({ format: c.format, hash: (r.byFormat.get(c.format) ?? []).length === 0 ? c.finalHash : null })));
             return {
               // The hash after normalisation: the one the version will record.
               formats: r.checks.map((c) => ({ format: c.format, ok: (r.byFormat.get(c.format) ?? []).length === 0, hash: c.finalHash })),
@@ -2181,6 +2199,15 @@ export class CreativeTurnService {
 
   /** Whether a job is a creative turn this service runs (its live side exists). */
   hasLiveTurn(jobId: string): boolean { return this.live.has(jobId); }
+
+  /**
+   * Report 41: the hash of `format` in version `n` that the creative's running turn is writing, when the agent's check passed
+   * on it (and nothing failed since); null otherwise (no such turn, another version, a format not checked).
+   */
+  readyFormat(ref: CreativeRef, n: number, format: string): string | null {
+    const work = this.liveOf(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug))?.work;
+    return work && work.n === n ? work.ready.get(format) ?? null : null;
+  }
 
   /**
    * POST /api/jobs/:id/redirect for a creative turn (spec §3), through the sequence shared with the console
