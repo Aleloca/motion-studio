@@ -49,20 +49,27 @@ describe('New creative · the store pack is an entry of the formats list', () =>
     render(<I18nProvider locale="it"><ShellContext.Provider value={shell}><NewCreative slug="acme" /></ShellContext.Provider></I18nProvider>);
     await waitFor(() => screen.getByRole('group', { name: 'Instagram' }));
   };
+  // Decision 1222: the entry is the first tile of the App Store and Play Store groups; App Store is under "more channels".
+  const openStores = async () => { await userEvent.click(screen.getByRole('button', { name: /^App Store/ })); };
+  const entry = () => within(screen.getByRole('group', { name: 'App Store' })).getByRole('button', { name: 'Aggiungi il pacchetto store ai formati' });
 
-  it('has no separate card; the entry is visible without searching or opening any group, and a search by name still finds it', async () => {
+  it('has no separate card or row on top; the entry is in the App Store and Play Store groups, and a search by name finds it', async () => {
     await open();
     expect(screen.queryByRole('group', { name: 'App Store' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Aggiungi il pacchetto store ai formati' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Aggiungi il pacchetto store ai formati' })).toBeNull();
     await userEvent.type(screen.getByRole('searchbox'), 'zzz');
     expect(screen.queryByRole('button', { name: 'Aggiungi il pacchetto store ai formati' })).toBeNull();
     await userEvent.clear(screen.getByRole('searchbox'));
     await userEvent.type(screen.getByRole('searchbox'), 'pacchetto');
-    expect(screen.getByRole('button', { name: 'Aggiungi il pacchetto store ai formati' })).toBeTruthy();
+    expect(within(screen.getByRole('group', { name: 'App Store' })).getByRole('button', { name: 'Aggiungi il pacchetto store ai formati' })).toBeTruthy();
+    expect(within(screen.getByRole('group', { name: 'Play Store' })).getByRole('button', { name: 'Aggiungi il pacchetto store ai formati' })).toBeTruthy();
     await userEvent.clear(screen.getByRole('searchbox'));
     expect(screen.queryByText('Prepara il pacchetto')).toBeNull();
     expect(screen.queryByText('Pacchetto App Store', { selector: 'b' })).toBeNull();
-    await userEvent.click(screen.getByRole('button', { name: 'Aggiungi il pacchetto store ai formati' }));
+    await openStores();
+    const tiles = within(screen.getByRole('group', { name: 'App Store' })).getAllByRole('button');
+    expect(tiles[0]!.getAttribute('aria-label')).toBe('Aggiungi il pacchetto store ai formati');
+    await userEvent.click(entry());
     const dialog = await screen.findByRole('dialog', { name: 'Pacchetto App Store' });
     expect(within(dialog).getByLabelText("Nome dell'app")).toBeTruthy();
   });
@@ -71,14 +78,17 @@ describe('New creative · the store pack is an entry of the formats list', () =>
     await open();
     await userEvent.type(screen.getByLabelText('Cosa vuoi realizzare?'), 'Lancio di Tasky');
     await userEvent.click(within(screen.getByRole('group', { name: 'Instagram' })).getAllByRole('button')[0]!);
-    await userEvent.click(screen.getByRole('button', { name: 'Aggiungi il pacchetto store ai formati' }));
+    await openStores();
+    await userEvent.click(entry());
     const dialog = await screen.findByRole('dialog', { name: 'Pacchetto App Store' });
     await fillWizard(dialog);
     await userEvent.click(within(dialog).getByRole('button', { name: 'Aggiungi ai formati' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Pacchetto App Store' })).toBeNull());
     expect(createStorePack).not.toHaveBeenCalled();
-    // The tile is on and says how many screenshots.
-    expect((await screen.findByRole('button', { name: 'Pacchetto store, 3 screenshot: modifica' })).getAttribute('aria-pressed')).toBe('true');
+    // The tile is on and says how many screenshots, in both store groups (a set pack keeps them open).
+    const on = await screen.findAllByRole('button', { name: 'Pacchetto store, 3 screenshot: modifica' });
+    expect(on).toHaveLength(2);
+    expect(on.every((b) => b.getAttribute('aria-pressed') === 'true')).toBe(true);
     await userEvent.click(screen.getByRole('button', { name: 'Salva bozza' }));
     await waitFor(() => expect(createCreative).toHaveBeenCalledOnce());
     const body = createCreative.mock.calls[0]![1] as { brief: { formats: string[]; storePack: StorePack; formatLabels: Record<string, string> } };
@@ -98,7 +108,7 @@ describe('New creative · the store pack is an entry of the formats list', () =>
     await userEvent.type(screen.getByRole('searchbox'), 'iPhone 6');
     await userEvent.click(within(await screen.findByRole('group', { name: 'App Store' })).getByRole('button', { name: /iPhone 6\.9/ }));
     await userEvent.clear(screen.getByRole('searchbox'));
-    await userEvent.click(screen.getByRole('button', { name: 'Aggiungi il pacchetto store ai formati' }));
+    await userEvent.click(entry());
     await fillWizard(await screen.findByRole('dialog', { name: 'Pacchetto App Store' }));
     await userEvent.click(screen.getByRole('button', { name: 'Aggiungi ai formati' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Salva bozza' }));
@@ -112,11 +122,12 @@ describe('New creative · the store pack is an entry of the formats list', () =>
 
   it('a pack alone is enough to create; taking it out brings back the "pick a format" state', async () => {
     await open();
-    await userEvent.click(screen.getByRole('button', { name: 'Aggiungi il pacchetto store ai formati' }));
+    await openStores();
+    await userEvent.click(entry());
     await fillWizard(await screen.findByRole('dialog', { name: 'Pacchetto App Store' }));
     await userEvent.click(screen.getByRole('button', { name: 'Aggiungi ai formati' }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Rimuovi il pacchetto store' }));
-    expect(screen.getByRole('button', { name: 'Aggiungi il pacchetto store ai formati' }).getAttribute('aria-pressed')).toBe('false');
+    await userEvent.click((await screen.findAllByRole('button', { name: 'Rimuovi il pacchetto store' }))[0]!);
+    expect(entry().getAttribute('aria-pressed')).toBe('false');
   });
 });
 

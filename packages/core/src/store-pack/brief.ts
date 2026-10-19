@@ -24,7 +24,7 @@ export function storePackBrief(p: StorePack, o: { locale: Locale; presets?: read
   const { formats, formatLabels, links } = storePackFormats(p, o.presets);
   const assets = [...new Set(p.screenshots.flatMap((s) => (s.screen ? [s.screen] : [])))];
   const head = p.app.tagline ? `${p.app.name} — ${p.app.tagline}` : p.app.name;
-  const message = [head, ...p.screenshots.map((s, i) => `${i + 1}. ${s.caption}`)].join('\n');
+  const message = [head, ...p.screenshots.flatMap((s, i) => (s.caption ? [`${i + 1}. ${s.caption}`] : []))].join('\n');
   return {
     goal: messages(o.locale).variants.storePack.goal({ app: p.app.name }),
     message, formats, formatLabels, links, assets, notes: '',

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_FORMATS, INSTANCE_ID_RE, briefSchema, storePackFormats, storePackSchema, type StorePack } from '../src/index.ts';
+import { DEFAULT_FORMATS, INSTANCE_ID_RE, STORE_CAPTION_MAX, briefSchema, screenshotLabel, storePackFormats, storePackSchema, type StorePack } from '../src/index.ts';
 
 const shots = (n: number) => Array.from({ length: n }, (_, i) => ({ caption: `Cap ${i + 1}`, screen: i % 2 ? null : `assets/s${i}.png` }));
 const apple: StorePack = { app: { name: 'Bread', tagline: 'Bake' }, stores: ['appstore'], devices: { appstore: ['iphone-69'] }, screenshots: shots(3), preview: false };
@@ -32,7 +32,23 @@ describe('storePackSchema', () => {
   it('is strict and bounds the text', () => {
     expect(storePackSchema.safeParse({ ...apple, extra: 1 }).success).toBe(false);
     expect(storePackSchema.safeParse({ ...apple, app: { name: '', tagline: '' } }).success).toBe(false);
-    expect(storePackSchema.safeParse({ ...apple, screenshots: [{ caption: '', screen: null }] }).success).toBe(false);
+    // Decision 1221: a caption may be empty (the agent takes it from the brief) and longer than 80 characters, up to the cap.
+    expect(storePackSchema.safeParse({ ...apple, screenshots: [{ caption: '', screen: null }] }).success).toBe(true);
+    expect(storePackSchema.safeParse({ ...apple, screenshots: [{ caption: 'x'.repeat(STORE_CAPTION_MAX), screen: null }] }).success).toBe(true);
+    expect(storePackSchema.safeParse({ ...apple, screenshots: [{ caption: 'x'.repeat(STORE_CAPTION_MAX + 1), screen: null }] }).success).toBe(false);
+  });
+  it('labels a screenshot within the 60 characters of a label, "N" when it has no caption (decision 1221)', () => {
+    expect(screenshotLabel(2, 'Breve')).toBe('2 · Breve');
+    expect(screenshotLabel(3, '  ')).toBe('3');
+    const long = screenshotLabel(8, `Io › Disponibilità, tema scuro | **Disponibile quando vuoi tu** | ${'x'.repeat(200)}`);
+    expect(long.length).toBe(60);
+    expect(long.endsWith('…')).toBe(true);
+    expect(long.startsWith('8 · Io › Disponibilità')).toBe(true);
+    const pack = { ...apple, screenshots: [{ caption: 'y'.repeat(300), screen: null }, { caption: '', screen: null }] };
+    expect(storePackSchema.safeParse(pack).success).toBe(true);
+    const labels = Object.values(storePackFormats(pack).formatLabels);
+    expect(labels.every((l) => l.length <= 60)).toBe(true);
+    expect(labels).toContain('2');
   });
   it('confines a screenshot screen to assets/', () => {
     const withScreen = (screen: string | null) => storePackSchema.safeParse({ ...apple, screenshots: [{ caption: 'a', screen }] }).success;

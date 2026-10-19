@@ -228,6 +228,9 @@ arrives and worked on later together.
     and a label at most 60. Any caption over 56 characters blocks the whole pack. Workaround until the fix: captions of
     56 characters at most.
 
+37. **New creative: the "Store pack" entry should not sit on top of the formats list.** The user wants it as part of the
+    "App Store" and "Play Store" groups (2026-10-19). Done with 36 (decisions 1221, 1222).
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's

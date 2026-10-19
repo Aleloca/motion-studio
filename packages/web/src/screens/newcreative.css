@@ -168,7 +168,6 @@ button.ms-nc-link.ms-on { background: var(--sel); color: var(--accentText); }
 button.ms-nc-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ms-nc-link-no { cursor: help; color: var(--muted); }
 /* The store pack's tile (Phase 14): its remove button sits under the tick, at the right edge. */
-.ms-nc-packtiles { grid-template-columns: minmax(118px, 220px); }
 .ms-nc-pack-remove { left: auto; right: 6px; top: 30px; }
 .ms-nc-tile-text { display: flex; flex-direction: column; min-width: 0; }
 .ms-nc-tile-text b { font-weight: 600; }

@@ -37,11 +37,12 @@ const board = () => waitFor(() => screen.getByRole('group', { name: 'Instagram' 
 const brief = () => screen.getByLabelText('Cosa vuoi realizzare?');
 
 describe('NewCreative · App store pack', () => {
-  it('has no separate pack card (Phase 14): the always-visible "Pacchetto store" tile opens the wizard on the app step', async () => {
+  it('has no separate pack card (Phase 14): the "Pacchetto store" tile of the App Store group opens the wizard on the app step (decision 1222)', async () => {
     render(<I18nProvider locale="it"><ShellContext.Provider value={shell('Acme')}><NewCreative slug="acme" /></ShellContext.Provider></I18nProvider>);
     await board();
     expect(screen.queryByText('Prepara il pacchetto')).toBeNull();
-    await userEvent.click(screen.getByRole('button', { name: 'Aggiungi il pacchetto store ai formati' }));
+    await userEvent.click(screen.getByRole('button', { name: /^App Store/ }));
+    await userEvent.click(within(screen.getByRole('group', { name: 'App Store' })).getByRole('button', { name: 'Aggiungi il pacchetto store ai formati' }));
     const dialog = await screen.findByRole('dialog', { name: 'Pacchetto App Store' });
     expect(within(dialog).getByLabelText("Nome dell'app")).toBeTruthy();
     expect(within(dialog).getByRole('button', { name: 'Avanti' }).hasAttribute('disabled')).toBe(true);
