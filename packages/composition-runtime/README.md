@@ -182,12 +182,14 @@ never hangs. Task 4 still puts its own timeout on each `Runtime.evaluate`.
   - It has its own opaque origin, so it cannot reach the runtime or the UI.
   - The runtime never touches its document. Render and preview behave the same way.
 - **Clock injection.** The core injects `layer.js` as the **first script** of the layer: `injectLayerBootstrap` puts it right
-  after the doctype, or at the start. It runs before any layer code and does three things:
+  after the doctype, or at the start. It runs before any layer code and does four things:
   - it installs the **virtual clock** in the layer, in both modes. In the preview, the runtime advances it on every animation
     frame, so rAF, `Date` and timer code follows the timeline, pauses and scrubs;
   - it defines a frozen `window.msParams` from the iframe's `name`, which is readable before any script runs. An `image`
     param becomes an absolute URL inside the composition;
-  - it adds the composition's fonts to the layer document.
+  - it adds the composition's fonts to the layer document;
+  - it turns `will-change` off in the layer document (a sheet, plus inline `!important` hints at every seek; report 38,
+    decision 1230): a hinted layer is rasterised once and then resampled, so zoomed text came out blurred.
 
   Task 4 may also inject `clock.js` with `Page.addScriptToEvaluateOnNewDocument`. Installing the clock is idempotent.
 - **The private channel.** After the iframe's `load`, the runtime posts `{ type: 'ms-layer-connect', v: 1 }` with a

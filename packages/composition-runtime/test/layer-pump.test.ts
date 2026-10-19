@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { installVirtualClock } from '../src/clock.ts';
-import { ClockStallError, pumpUntilDone, PUMP_FRAME_EVERY, startLayerAgent } from '../src/layer-agent.ts';
+import { ClockStallError, pumpUntilDone, PUMP_FRAME_EVERY, startLayerAgent, UNFREEZE_CSS, unfreezeRaster } from '../src/layer-agent.ts';
 import { encodeLayerConfig } from '../src/layer-protocol.ts';
 
 const freshWindow = () => new JSDOM('<!doctype html><p>x</p>', { pretendToBeVisual: true }).window as unknown as Window & typeof globalThis;
@@ -165,5 +165,35 @@ describe('layer.js replies to a stall with code layerStalled', () => {
     const request = renderLayer((w) => { (w as unknown as { msReady: unknown }).msReady = Promise.reject(new Error('boom')); });
     const r = await request({ op: 'ready' });
     expect(r).toEqual({ id: 1, ok: false, error: 'boom' });
+  });
+});
+
+// Report 38 (decision 1230): the layer document never keeps a will-change hint that freezes the raster scale.
+describe('unfreezeRaster', () => {
+  it('adds the sheet once, adds it back when layer code removed it, and clears an inline !important hint', () => {
+    const w = freshWindow();
+    const doc = w.document;
+    doc.body.innerHTML = '<div id="a" style="will-change: transform !important; color: red"></div><div id="b" style="color: blue"></div>';
+    const sheet: { el: HTMLStyleElement | null } = { el: null };
+    unfreezeRaster(doc, sheet);
+    expect(doc.querySelectorAll('style')).toHaveLength(1);
+    expect(sheet.el!.textContent).toBe(UNFREEZE_CSS);
+    const a = doc.getElementById('a')!;
+    expect([a.style.getPropertyValue('will-change'), a.style.getPropertyPriority('will-change'), a.style.color]).toEqual(['auto', 'important', 'red']);
+    expect(doc.getElementById('b')!.getAttribute('style')).toBe('color: blue');
+    unfreezeRaster(doc, sheet);
+    expect(doc.querySelectorAll('style')).toHaveLength(1);
+    sheet.el!.remove();
+    unfreezeRaster(doc, sheet);
+    expect(doc.querySelectorAll('style')).toHaveLength(1);
+  });
+  it('the layer agent installs it at start in a Motion Studio layer only', () => {
+    const plain = freshWindow();
+    startLayerAgent(plain);
+    expect(plain.document.querySelectorAll('style')).toHaveLength(0);
+    const w = new JSDOM('<!doctype html><p>x</p>', { pretendToBeVisual: true }).window as unknown as Window & typeof globalThis;
+    w.name = encodeLayerConfig({ v: 1, mode: 'preview', clipId: 'c', params: {}, fonts: [] });
+    startLayerAgent(w);
+    expect(w.document.querySelector('style')!.textContent).toBe(UNFREEZE_CSS);
   });
 });

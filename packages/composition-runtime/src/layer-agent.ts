@@ -7,6 +7,7 @@ import { decodeLayerConfig, LAYER_PROTOCOL_VERSION, type LayerConfig, type Layer
  * - installs the virtual clock (both modes: in preview the runtime advances it on every frame, so free JS animations
  *   follow the timeline, pause with it and scrub with it);
  * - defines `window.msParams` (frozen) from the configuration in `window.name`;
+ * - neutralises `will-change` in the layer document (`unfreezeRaster`, report 38, decision 1230), in both modes;
  * - answers the runtime: `ready` (every font face of the layer and of the composition `FontFace.load()`ed, then
  *   `msReady` awaited), `seek(t)` (clock to t, every animation of the document paused at t, `msTimeline` to t,
  *   `await msSeek(t)`, then two native animation frames), `tick(t)` (the same without waiting, for playback).
@@ -91,6 +92,29 @@ export async function pumpUntilDone<T>(value: T, clock: PumpClock, maxPumps = MA
   return p;
 }
 
+/**
+ * Report 38 (decisions 1230–1231): Chromium rasterises an element with `will-change: transform` once, at the scale it
+ * first had, and then transforms that bitmap, so a camera rig that zooms text (`#world{will-change:transform}` scaled every
+ * frame) came out as a resampled, blurred bitmap at any export size. Every frame of a render is a fresh still, so the hint
+ * buys nothing: this sheet turns it off on every element (an id-heavy selector, so a layer's own `#id{…!important}` rule
+ * does not win), and `unfreezeRaster` also clears an inline `will-change … !important`, which no sheet overrides. Nothing
+ * else changes (the transform itself is the layer's; translateZ and paused CSS/WAAPI animations re-raster on their own).
+ */
+const UNFREEZE_SELECTOR = ':not(#ms-x):not(#ms-x):not(#ms-x):not(#ms-x):not(#ms-x):not(#ms-x):not(#ms-x):not(#ms-x)';
+export const UNFREEZE_CSS = `${UNFREEZE_SELECTOR}, ${UNFREEZE_SELECTOR}::before, ${UNFREEZE_SELECTOR}::after { will-change: auto !important; }`;
+
+/** Keeps the `UNFREEZE_CSS` sheet in `doc` (added again when layer code removed it), and clears inline `will-change`. */
+export function unfreezeRaster(doc: Document, sheet: { el: HTMLStyleElement | null }): void {
+  if (!sheet.el) {
+    sheet.el = doc.createElement('style');
+    sheet.el.textContent = UNFREEZE_CSS;
+  }
+  if (!sheet.el.isConnected) (doc.head ?? doc.documentElement)?.appendChild(sheet.el);
+  for (const el of doc.querySelectorAll<HTMLElement>('[style*="will-change" i]')) {
+    if (el.style.getPropertyValue('will-change') && el.style.getPropertyValue('will-change') !== 'auto') el.style.setProperty('will-change', 'auto', 'important');
+  }
+}
+
 /** `stallMs`: the render-mode stall bound (`CLOCK_STALL_MS`; shorter only in tests). */
 export function startLayerAgent(w: Window & typeof globalThis, o: { stallMs?: number } = {}): void {
   const config: LayerConfig | null = decodeLayerConfig(w.name);
@@ -99,6 +123,8 @@ export function startLayerAgent(w: Window & typeof globalThis, o: { stallMs?: nu
   // Render: a missing frame fails the seek (never a stale capture); preview: a short fallback.
   const frameWait: FrameWait = config.mode === 'render' ? { strict: true, timeoutMs: config.frameTimeoutMs ?? 30_000 } : PREVIEW_FRAME_WAIT;
   const lw = w as unknown as LayerWindow;
+  const sheet: { el: HTMLStyleElement | null } = { el: null };
+  unfreezeRaster(w.document, sheet);
   Object.defineProperty(lw, 'msParams', { value: Object.freeze({ ...config.params }), writable: false, configurable: false, enumerable: true });
 
   const declared: FontFace[] = [];
@@ -171,8 +197,10 @@ export function startLayerAgent(w: Window & typeof globalThis, o: { stallMs?: nu
     try {
       if (req.op === 'ready') {
         const warnings = await ready();
+        unfreezeRaster(w.document, sheet);
         port?.postMessage({ id: req.id, ok: true, warnings });
       } else if (req.op === 'seek') {
+        unfreezeRaster(w.document, sheet); // layer code may have added elements or inline styles since
         applyTime(req.t);
         if (seekStalled !== null) throw new SeekStalledError(`msSeek not called again: ${seekStalled}`);
         await callSeek(req.t);
