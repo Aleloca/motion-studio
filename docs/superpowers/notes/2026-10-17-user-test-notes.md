@@ -291,6 +291,14 @@ arrives and worked on later together.
     by itself; Project settings let the user pick another asset or go back to the initials; an image's detail offers
     "Usa come icona del progetto". To do with the next reports.
 
+45. **No thumbnails outside the creative for a version that was never rendered.** Project Audin (2026-10-19): its only
+    creative (the Audin Desk store pack, v1 ready, 19 formats shown live on the canvas) has empty dashed placeholders
+    ("110:239") on its card in the Creatives list, and the project card on Projects shows the brand placeholder instead
+    of a creative. The cards use rendered output files; since decision 974 a v2 version has no file until Export or
+    "Render vN", so every new creative will look empty from the outside. The user wants previews there too.
+    Proposed fix: without a render file, cards and covers use a frame of the composition (as the canvas does). To do
+    with the next reports, together with 44 (same Projects page).
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
