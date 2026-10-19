@@ -364,6 +364,14 @@ arrives and worked on later together.
     keep the layers at 1x as before, chrome-headless-shell checked, and the render windows no longer copy every
     offscreen frame into the main process (main-process CPU of a 2560×1440 render 7.5 s → 5.6 s).
 
+52. **"Scelte" view: one tiny preview inside a huge card.** With one chosen format (a 16:9 video) the view shows a card as wide
+    as the canvas with a thumbnail of about 280 px in its corner. The user: the space for formats and previews must be used
+    better, and why a card at all? No other view puts boards in a card (the variants' cards excepted). Cause: each cell of
+    "Scelte" is capped at 240 px × zoom (`chosenColumns`, `CHOSEN_CELL`) and the sections are drawn as `ms-vcard`.
+    User's decision: like the plain canvas: no card, the chosen boards laid out as the canvas of a creative without
+    variants (fit to the viewport, lines per group), each with its variant's letter above it; "Scelte" and "Senza scelta"
+    as plain headings one above the other. Timing: wait for further reports.
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
