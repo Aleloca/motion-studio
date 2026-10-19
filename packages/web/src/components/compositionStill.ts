@@ -39,7 +39,7 @@ function inLine<T>(job: () => Promise<T>): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const start = () => {
       running += 1;
-      job().then(resolve, reject).finally(() => {
+      Promise.resolve().then(job).then(resolve, reject).finally(() => {
         running -= 1;
         line.shift()?.();
       });

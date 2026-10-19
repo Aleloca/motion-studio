@@ -14,3 +14,14 @@ export function CoverStill({ still, onNone, onLoad }: { still: StillRef; onNone?
     </span>
   );
 }
+
+/**
+ * A small thumbnail of a composition's still (the export dialogs, the version menus), asked once on screen; nothing while
+ * there is none (the caller's empty frame stays).
+ */
+export function StillImg({ still }: { still: StillRef }) {
+  const { ref, seen } = useSeen<HTMLElement>();
+  const { url } = useCompositionStill(still, seen);
+  // Until the URL arrives an empty box of the thumbnail's size is the element watched for visibility.
+  return url ? <img src={url} alt="" /> : <span ref={ref} style={{ display: 'block', width: '100%', height: '100%' }} />;
+}

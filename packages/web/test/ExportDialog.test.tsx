@@ -10,6 +10,8 @@ import type { FormatState } from '../src/screens/versionModel.ts';
 const exportJob = (over: Partial<JobSummary> = {}): JobSummary => ({ id: 'e1', key: 'export:/w:acme:c1:abcd0123', kind: 'export', label: 'Export · Summer launch', state: 'running', createdAt: '2026-10-08T10:00:00.000Z', ...over });
 const api = {
   fileUrl: (s: string, c: string, rel: string) => `/f/${s}/${c}/${rel}`,
+  getStoryboard: vi.fn(async (_s: string, c: string, n: number, f: string) => ({ format: f, hash: 'e'.repeat(64), width: 270, expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    frames: [{ t: 3, kind: 'poster', url: `/sb/${c}/v${n}/${f}.jpg`, width: 270, height: 480 }] })),
   exportPicksJob: vi.fn(async (_s: string, _c: string, _body: { destination: string }) => ({ job: exportJob({ state: 'queued' }) })),
   cancelJob: vi.fn(async () => ({ cancelled: true })),
   updateSettings: vi.fn(async (patch: { exportNamePattern?: string }) => workspaceSettingsSchema.parse({ schemaVersion: 1, ...patch })),
@@ -321,6 +323,15 @@ describe('ExportDialog · compositions rendered first (Task 8)', () => {
     expect(screen.getAllByText('summer-launch-instagram-reel-9x16-v7.mp4')).toHaveLength(2);
     expect(screen.getAllByText('Rendered first')).toHaveLength(1);
     expect(screen.getByRole('button', { name: 'Export 2 files' })).toBeTruthy();
+  });
+
+  it('report 47: a composition without a render shows a still of it; a rendered one its file', async () => {
+    openWith();
+    const thumbs = () => [...document.querySelectorAll('.ms-exp-row:not(.ms-exp-cols) .ms-exp-thumb')];
+    await waitFor(() => expect(thumbs()[0]!.querySelector('img')?.getAttribute('src')).toBe(`/sb/c1/v7/${REEL}.jpg`));
+    expect(api.getStoryboard).toHaveBeenCalledWith('acme', 'c1', 7, REEL);
+    expect(thumbs()[1]!.querySelector('img')?.getAttribute('src')).toBe(`/f/acme/c1/outputs/v7/${POST}.png`);
+    expect(api.getStoryboard).not.toHaveBeenCalledWith('acme', 'c1', 7, POST);
   });
 
   it('the core renders the missing formats first: the dialog shows the job\'s progress, then the files', async () => {

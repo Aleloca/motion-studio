@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../src/i18n.tsx';
 
-type Item = { format: string; slug: string; letter: string; version: number; source: 'pick' | 'default'; v?: number; file: string; width: number; height: number; state: 'ready' | 'needs-render' | 'missing' };
+type Item = { format: string; slug: string; letter: string; version: number; source: 'pick' | 'default'; v?: number; file: string; width: number; height: number; state: 'ready' | 'needs-render' | 'missing'; composed?: true; hash?: string };
 const POST = 'instagram-post-1x1';
 const BANNER = 'web-banner-300x250';
 const item = (o: Partial<Item> & Pick<Item, 'format' | 'slug' | 'letter' | 'version' | 'source'>): Item => ({ file: `${o.format}.png`, width: 300, height: 250, state: 'ready', ...o });
@@ -18,6 +18,8 @@ const setJob = (j: JobSummary) => act(() => { liveJobs = { ...liveJobs, [j.id]: 
 const useJobs = () => useSyncExternalStore((l) => { listeners.add(l); return () => listeners.delete(l); }, () => liveJobs);
 const api = {
   fileUrl: (s: string, c: string, rel: string) => `/f/${s}/${c}/${rel}`,
+  getStoryboard: vi.fn(async (_s: string, c: string, n: number, f: string) => ({ format: f, hash: 'e'.repeat(64), width: 270, expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    frames: [{ t: 3, kind: 'poster', url: `/sb/${c}/v${n}/${f}.jpg`, width: 270, height: 480 }] })),
   groupExportPlan: vi.fn(async (_s: string, _c: string) => ({ items: plan })),
   exportGroupJob: vi.fn(async (_s: string, _c: string, _body: { destination: string; formats?: string[] }) => ({ job: exportJob({ state: 'queued' }) })),
   exportPicksJob: vi.fn(async () => ({ job: exportJob({ id: 'p1', state: 'queued' }) })),
@@ -46,6 +48,15 @@ beforeEach(() => {
 });
 
 describe('ExportDialog · group export', () => {
+  it('report 47: a member\'s composition without a render shows a still of it, from that member', async () => {
+    plan = [item({ format: POST, slug: 'lancio', letter: 'a', version: 2, source: 'default' }),
+      item({ format: BANNER, slug: 'lancio~b', letter: 'b', version: 3, source: 'pick', file: '', state: 'needs-render', composed: true, hash: 'e'.repeat(64) })];
+    open();
+    const dialog = await screen.findByRole('dialog', { name: /Esporta la selezione finale/ });
+    await waitFor(() => expect(dialog.querySelector(`img[src="/sb/lancio~b/v3/${BANNER}.jpg"]`)).toBeTruthy());
+    expect(api.getStoryboard).toHaveBeenCalledWith('acme', 'lancio~b', 3, BANNER);
+  });
+
   it('lists each format with where it comes from, named as the host names it', async () => {
     open();
     const dialog = await screen.findByRole('dialog', { name: /Esporta la selezione finale/ });

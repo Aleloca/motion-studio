@@ -9,7 +9,7 @@
 // for each export (report 39, decision 1242).
 import {
   DEFAULT_EXPORT_QUALITY, EXPORT_FPS, EXPORT_QUALITIES, EXPORT_RESOLUTIONS, profileApplies, scaledSize, type ExportFps, type ExportQuality,
-  EXPORT_NAME_TOKENS, exportDate, exportExtension, exportNameCollisions, exportNameVars, localizedStem, renderName, renderProblems, renderState, separateInstanceNames,
+  EXPORT_NAME_TOKENS, type CompositionStill, exportDate, exportExtension, exportNameCollisions, exportNameVars, localizedStem, renderName, renderProblems, renderState, separateInstanceNames,
   type FormatPreset, type JobSummary, type LocaleTag, type VersionEntry, type WorkspaceSettings,
 } from '@motion-studio/shared';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -22,6 +22,7 @@ import { Button, ChannelMark, Check, Chip, Icon, Input, Modal, ProgressBar, Segm
 import { instanceName, presetFor } from '../instances.ts';
 import { boardLabel } from './CanvasBoard.tsx';
 import { outputMedia } from './canvasModel.ts';
+import { StillImg } from '../components/CoverStill.tsx';
 import { channelOf } from './creativeState.ts';
 import { message } from './common.tsx';
 import { abortableWait, exportErrorText, withHashRetry } from './versionErrors.ts';
@@ -129,6 +130,8 @@ interface Row {
   output: VersionEntry['outputs'][number] | null;
   /** A v2 composition without a current render: rendered first, then exported (Task 8). */
   needsRender: boolean;
+  /** Report 47: the composition the thumbnail shows a still of when there is no current render; null otherwise. */
+  still: CompositionStill | null;
   /** A composition (v2): the core renders it, so the resolution and quality apply (decision 974); a legacy file is copied as it is. */
   composed: boolean;
   /** The name the file will have (its extension): the output's, or the render's to come. */
@@ -158,7 +161,8 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
     const needsRender = g.state === 'needs-render';
     const output = g.state === 'needs-render' || g.file === '' ? null : { format: g.format, file: g.file, width: g.width, height: g.height, durationSec: null, verified: true, preview: null } as VersionEntry['outputs'][number];
     const sourceLabel = g.source === 'pick' ? x.groupPick({ variant: g.letter.toUpperCase(), n: g.version }) : x.groupDefault({ variant: g.letter.toUpperCase(), n: g.version });
-    return { id: g.format, preset, n: g.v ?? g.version, fileN: g.version, output, needsRender, composed: g.composed === true, file: output?.file ?? (needsRender ? `${g.format}${renderedExtension(preset)}` : null),
+    const still = needsRender && g.hash ? { n: g.version, format: g.format, hash: g.hash } : null;
+    return { id: g.format, preset, n: g.v ?? g.version, fileN: g.version, output, needsRender, still, composed: g.composed === true, file: output?.file ?? (needsRender ? `${g.format}${renderedExtension(preset)}` : null),
       follows: null, newer: null, blocked: g.state === 'missing' ? x.fileMissing({ n: g.version }) : null, problems: [], member: g.slug, sourceLabel };
   }) : Object.values(states).flatMap((s): Row[] => {
     const n = s.follows ? (states[s.follows]?.star.version ?? null) : s.star.version;
@@ -167,7 +171,9 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
     const fileN = s.follows ? s.exportVersion ?? (compositionOf(versions.find((v) => v.n === n), s.id) ? n : null) : n;
     const version = fileN === null ? undefined : versions.find((v) => v.n === fileN);
     const output = version?.outputs.find((o) => o.format === s.id) ?? null;
-    const needsRender = version !== undefined && compositionOf(version, s.id) !== null && renderState(version, s.id) !== 'rendered';
+    const comp = compositionOf(version, s.id);
+    const needsRender = version !== undefined && comp !== null && renderState(version, s.id) !== 'rendered';
+    const still = needsRender && comp && fileN !== null ? { n: fileN, format: s.id, hash: comp.hash } : null;
     const preset = presetFor(presets, s.id);
     const follows = s.follows ? instanceName(presetFor(presets, s.follows), s.follows, locale, labels) : null;
     const blocked = needsRender ? null : !output
@@ -175,7 +181,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
       : s.starFileMissing ? x.fileMissing({ n: fileN ?? n }) : null;
     const file = output?.file ?? (needsRender ? `${s.id}${renderedExtension(preset)}` : null);
     const problems = version && !needsRender && renderProblems(version, s.id).length ? shortProblems(output, t, locale) : [];
-    return [{ id: s.id, preset, n, fileN, output, needsRender, composed: version !== undefined && compositionOf(version, s.id) !== null, file, follows, newer: follows === null ? s.star.newer : null, blocked, problems }];
+    return [{ id: s.id, preset, n, fileN, output, needsRender, still, composed: version !== undefined && compositionOf(version, s.id) !== null, file, follows, newer: follows === null ? s.star.newer : null, blocked, problems }];
   }), [groupPlan, states, versions, presets, labels, x, locale, t]);
   const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(rows.map((r) => [r.id, r.blocked === null && r.problems.length === 0])));
   const [pattern, setPattern] = useState(initialPattern);
@@ -403,14 +409,15 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
           <div className="ms-exp-row ms-exp-cols ms-cap" aria-hidden="true"><span /><span /><span>{x.format}</span><span>{x.version}</span></div>
           {named.map(({ row: r, name }) => {
             const label = boardLabel({ id: r.id, preset: r.preset, out: r.output, labels }, locale);
-            const media = r.output && r.fileN !== null ? outputMedia(slug, r.member ?? creative, r.fileN, r.output) : null;
+            const media = !r.still && r.output && r.fileN !== null ? outputMedia(slug, r.member ?? creative, r.fileN, r.output) : null;
             const aspect = r.preset ? r.preset.width / r.preset.height : r.output ? r.output.width / r.output.height : 1;
             const blocked = r.blocked !== null;
             return (
               <div key={r.id} className={cx('ms-exp-row', blocked ? 'ms-blocked' : !on[r.id] && 'ms-off')}>
                 <Check on={!blocked && Boolean(on[r.id])} label={x.include({ label })} disabled={running || blocked} onChange={(v) => setOn((s) => ({ ...s, [r.id]: v }))} />
                 <span className={cx('ms-exp-thumb', aspect > 1.05 ? 'ms-wide' : aspect < 0.95 ? 'ms-tall' : 'ms-square')} aria-hidden="true">
-                  {media ? (media.video ? <video src={media.src} muted preload="metadata" /> : <img src={media.src} alt="" />) : null}
+                  {r.still ? <StillImg still={{ ...r.still, slug, creative: r.member ?? creative }} />
+                    : media ? (media.video ? <video src={media.src} muted preload="metadata" /> : <img src={media.src} alt="" />) : null}
                 </span>
                 <span className="ms-exp-name">
                   <span className="ms-exp-label">{r.preset ? <ChannelMark channel={channelOf(r.preset.channel)} /> : null}<b>{label}</b></span>
