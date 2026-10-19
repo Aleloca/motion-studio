@@ -40,6 +40,21 @@ describe('mergeStorePack keeps the agent\'s screenshot names (report 55)', () =>
     const out = mergeStorePack({ ...r.brief, formats: [YT, ...r.brief.formats] }, null);
     expect(out.brief.agentFormatLabels).toBeUndefined();
   });
+
+  it('review: a wizard edit keeps the user\'s own name of a screenshot without a caption, and of one whose caption did not change', () => {
+    const p = pack(3, { screenshots: [{ caption: '', screen: null }, { caption: 'Two', screen: null }, { caption: 'Three', screen: null }] });
+    const f = storePackFormats(p);
+    const start: Brief = {
+      goal: 'g', message: '', durationSec: null, assets: [], notes: '', storePack: { ...p, instances: f.formats }, formats: f.formats,
+      formatLabels: { ...f.formatLabels, [PHONE(1)]: 'Mio uno', [PHONE(2)]: 'Mio due', [PHONE(3)]: 'Mio tre' },
+    };
+    // Screenshot 1 still has no caption, 2 keeps its caption, 3 gets a new one (the new caption wins); a 4th is added.
+    const r = mergeStorePack(start, { ...p, screenshots: [{ caption: '', screen: null }, { caption: 'Two', screen: null }, { caption: 'Three, new', screen: null }, { caption: '', screen: null }] });
+    expect(r.brief.formatLabels).toEqual({ [PHONE(1)]: 'Mio uno', [PHONE(2)]: 'Mio due', [PHONE(3)]: '3 · Three, new', [PHONE(4)]: '4' });
+    // A caption taken away: the user's own name stays too.
+    const r2 = mergeStorePack(start, { ...p, screenshots: [{ caption: '', screen: null }, { caption: '', screen: null }, { caption: 'Three', screen: null }] });
+    expect(r2.brief.formatLabels).toMatchObject({ [PHONE(2)]: 'Mio due', [PHONE(3)]: 'Mio tre' });
+  });
 });
 
 describe('mergeStorePack (Review Focus 4)', () => {

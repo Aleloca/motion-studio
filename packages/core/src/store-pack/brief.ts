@@ -41,7 +41,8 @@ export function storePackBrief(p: StorePack, o: { locale: Locale; presets?: read
  *   (an old pack grown over a hand-picked @4 gets @5); `store-pack-collision` only when a preset has no free instance left;
  * - the slots the new pack no longer needs go (`removed`) with their labels and links; the new ones come in (`added`), after
  *   the last pack instance that stays, or at the end; labels follow the captions (a screenshot without one keeps the name the
- *   agent gave it, report 55), links are those of `storePackFormats`;
+ *   agent gave it, report 55; the user's own name stays while the caption is empty or unchanged), links are those of
+ *   `storePackFormats`;
  * - the fields `storePackBrief` derives from the pack follow it: the app screens in `assets` (those of the old pack go, the new
  *   ones come), `durationSec` (20 s when the preview is turned on and there is no length, null again when it is turned off and
  *   the length is still the pack's), `goal` and `message` (replaced only while they are still what the old pack generated);
@@ -75,10 +76,17 @@ export function mergeStorePack(brief: Brief, next: StorePack | null, presets?: r
   const { storePack: _old, formatLabels: oldLabels, links: oldLinks, agentFormatLabels: oldAgent, ...rest } = brief;
   const labels = Object.fromEntries(Object.entries(oldLabels ?? {}).filter(([k]) => !removed.includes(k)));
   const agent: Record<string, string> = { ...oldAgent };
+  // What the old pack made of each label ("N · caption", "N"): a label that differs from it is someone's own name.
+  const prevMade = prev ? storePackFormats(prev, presets).formatLabels : {};
   for (const [k, v] of Object.entries(wantLabels)) {
+    const old = oldLabels?.[k];
+    const made = prevSlot.has(k) ? prevMade[prevSlot.get(k)!] : undefined;
+    const given = agentNamedLabel(brief, k);
+    const noCaption = /^\d+$/.test(v);
     // Report 55: a screenshot still without a caption keeps the name the agent gave it, after its number; a caption wins.
-    const given = /^\d+$/.test(v) ? agentNamedLabel(brief, k) : null;
-    if (given !== null) labels[k] = agent[k] = screenshotLabel(Number(v), given);
+    if (noCaption && given !== null) labels[k] = agent[k] = screenshotLabel(Number(v), given);
+    // Review: the user's own name (a rename in the formats column) stays while the caption is empty or did not change.
+    else if (given === null && old !== undefined && made !== undefined && old !== made && (noCaption || v === made)) labels[k] = old;
     else { labels[k] = v; delete agent[k]; }
   }
   const keptAgent = keptAgentLabels(agent, labels);
