@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { installVirtualClock } from '../src/clock.ts';
-import { ClockStallError, pumpUntilDone, PUMP_FRAME_EVERY, createUnfreezer, startLayerAgent } from '../src/layer-agent.ts';
+import { ClockStallError, pumpUntilDone, PUMP_FRAME_EVERY, createUnfreezer, pauseAnimations, settleAnimations, startLayerAgent } from '../src/layer-agent.ts';
 import { encodeLayerConfig } from '../src/layer-protocol.ts';
 
 const freshWindow = () => new JSDOM('<!doctype html><p>x</p>', { pretendToBeVisual: true }).window as unknown as Window & typeof globalThis;
@@ -301,5 +301,32 @@ describe('createUnfreezer', () => {
     const plain = new JSDOM('<!doctype html><div id="a" style="will-change: transform"></div>', { pretendToBeVisual: true }).window as unknown as Window & typeof globalThis;
     startLayerAgent(plain);
     expect(plain.document.getElementById('a')!.style.getPropertyValue('will-change')).toBe('transform');
+  });
+});
+
+// Report 56: the animations a seek pauses that were running are sent again to the compositor (one frame at another time).
+describe('pausing the layer\'s animations', () => {
+  const anim = (playState: string, endTime = 2000) => {
+    const times: Array<number | null> = [];
+    const a = { playState, effect: { getComputedTiming: () => ({ endTime }) }, pause: vi.fn(() => { a.playState = 'paused'; }),
+      get currentTime() { return times.at(-1) ?? null; }, set currentTime(v: number | null) { times.push(v); } };
+    return Object.assign(a, { times });
+  };
+
+  it('pauses every animation at t and returns those that were not paused yet', () => {
+    const running = anim('running'), pending = anim('running'), finished = anim('finished'), paused = anim('paused');
+    const doc = { getAnimations: () => [running, pending, finished, paused] } as unknown as Document;
+    expect(pauseAnimations(doc, 0.5)).toEqual([running, pending, finished]);
+    for (const a of [running, pending, finished, paused]) { expect(a.pause).toHaveBeenCalled(); expect(a.currentTime).toBe(500); }
+  });
+
+  it('settles: 1 ms on (back at the end) for one frame, then t again; nothing for none', async () => {
+    const a = anim('paused'), end = anim('paused', 1000);
+    let frames = 0;
+    await settleAnimations([a, end], 1, async () => { frames++; expect([a.currentTime, end.currentTime]).toEqual([1001, 999]); });
+    expect(frames).toBe(1);
+    expect([a.currentTime, end.currentTime]).toEqual([1000, 1000]);
+    await settleAnimations([], 1, async () => { frames++; });
+    expect(frames).toBe(1);
   });
 });
