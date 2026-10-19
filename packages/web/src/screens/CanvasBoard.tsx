@@ -242,7 +242,7 @@ export function CanvasBoard(p: BoardProps) {
 }
 
 /**
- * A v2 board's render state (spec §5.3): "Not rendered", "Queued · 2 renders ahead", "Rendering 42%", "Rendered", "Render
+ * A v2 board's render state (spec §5.3): nothing without a render (report 43), "Queued · 2 renders ahead", "Rendering 42%", "Rendered", "Render
  * failed · Retry", and a render with problems (I2): never "Rendered", a warning chip with the reasons and "Render again".
  */
 export function RenderState({ render, label, onRender }: { render: BoardRender; label: string; onRender(): void }) {
@@ -258,7 +258,8 @@ export function RenderState({ render, label, onRender }: { render: BoardRender; 
           {r.failedState} · <button type="button" className="ms-cv-retry" aria-label={r.retryRenderOf({ label })} onClick={(e) => { e.stopPropagation(); onRender(); }}>{r.retryRender}</button>
         </span>
       );
-    default: return <span className="ms-cv-board-state">{r.notRendered}</span>;
+    // Report 43: a ready board without a render says nothing (renders start from Export or "Render vN").
+    default: return null;
   }
 }
 

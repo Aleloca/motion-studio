@@ -1,4 +1,4 @@
-// Render state of the v2 (composition) versions on the web side (Task 8, spec §5.3): per board "Not rendered",
+// Render state of the v2 (composition) versions on the web side (Task 8, spec §5.3): per board nothing without a render (report 43),
 // "Queued · 2 renders ahead", "Rendering 42%", "Rendered", "Render problem · Render again", "Render failed · Retry", from the version's records and the live
 // render jobs; and what "Render ★" renders.
 import { renderJobKeyOf, renderJobPct, renderProblems, renderState, type Locale, type Messages, type OutputIssue, type JobSummary, type VersionComposition, type VersionEntry } from '@motion-studio/shared';

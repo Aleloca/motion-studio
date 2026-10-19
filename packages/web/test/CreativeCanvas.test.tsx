@@ -1372,12 +1372,13 @@ describe('CreativeCanvas · compositions (Task 8)', () => {
   /** The board's picture once the canvas has loaded. */
   const picture = (id: string) => waitFor(() => { const img = board(id)?.querySelector('.ms-cv-frame img'); expect(img).toBeTruthy(); return img as HTMLImageElement; });
 
-  it('a board shows its storyboard poster and "Not rendered"; no live preview on first render', async () => {
+  it('a board shows its storyboard poster and no render label (report 43: no "Not rendered"); no live preview on first render', async () => {
     detail = makeDetail([v2(1)]);
     render(<Harness live={emptyLive()} />);
     const poster = await picture('tiktok-9x16');
     expect(poster.getAttribute('src')).toBe('/sb/tiktok-9x16/v1/f-1.jpg?s=1');
-    expect(within(board('tiktok-9x16')).getByText('Non renderizzato')).toBeTruthy();
+    expect(within(board('tiktok-9x16')).queryByText('Non renderizzato')).toBeNull();
+    expect(board('tiktok-9x16')!.querySelector('.ms-cv-board-state')).toBeNull();
     expect(api.previewSession).not.toHaveBeenCalled();
     expect(document.querySelector('iframe')).toBeNull();
   });
