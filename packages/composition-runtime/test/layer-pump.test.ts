@@ -216,16 +216,12 @@ describe('createUnfreezer', () => {
     expect([wc(d, 'a'), wc(d, 'b')]).toEqual(['||', 'auto|important|u']);
     expect(d.getElementById('b')!.style.color).toBe('red');
   });
-  it('decisions 1250, 1251: the layered sheet stays whole and first; a rewritten hint loses its mark; our mark costs no scan', () => {
+  it('decisions 1250, 1252, 1255: no sheet in the document; a rewritten hint loses its mark; our mark costs no scan', () => {
     const d = doc('<style>#z{color:red}</style><div id="a" style="will-change: transform"></div>');
     const u = createUnfreezer(d);
     u.run();
-    const first = () => d.querySelector('style')!;
-    expect(first().textContent).toBe('@layer ms-unfreeze { [data-ms-u] { translate: 0px; } }');
-    const theirs = d.createElement('style'); theirs.textContent = '@layer y{#a{translate:5px}}'; d.head.prepend(theirs);
-    [...d.querySelectorAll('style')].find((x) => x.textContent!.includes('ms-unfreeze'))!.textContent = 'x{}';
-    u.run();
-    expect(first().textContent).toContain('@layer ms-unfreeze');
+    expect([...d.querySelectorAll('style')].map((x) => x.textContent)).toEqual(['#z{color:red}']);
+    expect(d.styleSheets).toHaveLength(1);
     const a = d.getElementById('a')!;
     expect(wc(d, 'a')).toBe('auto|important|u');
     a.style.setProperty('will-change', 'opacity');
@@ -239,6 +235,21 @@ describe('createUnfreezer', () => {
     u.run();
     expect(spy).toHaveBeenCalledTimes(0);
     spy.mockRestore();
+  });
+  it('decision 1256: a mark copied by cloneNode or markup goes; a full scan strips every mark it did not write', () => {
+    const d = doc('<div id="a" style="will-change: transform"><i>x</i></div><div id="w"></div>');
+    const u = createUnfreezer(d);
+    u.run();
+    const copy = d.getElementById('a')!.cloneNode(true) as HTMLElement;
+    copy.id = 'c';
+    d.body.append(copy);
+    d.getElementById('w')!.innerHTML = '<p id="p" data-ms-u=""></p>';
+    u.run();
+    expect([d.getElementById('c')!.hasAttribute('data-ms-u'), d.getElementById('p')!.hasAttribute('data-ms-u'), d.getElementById('a')!.hasAttribute('data-ms-u')]).toEqual([false, false, true]);
+    const q = d.createElement('q'); q.id = 'q'; q.setAttribute('data-ms-u', ''); d.body.append(q);
+    d.body.className = 'x'; // a full scan
+    u.run();
+    expect([d.getElementById('q')!.hasAttribute('data-ms-u'), d.getElementById('a')!.hasAttribute('data-ms-u')]).toEqual([false, true]);
   });
   it('captures getComputedStyle when made: a layer replacing it later changes nothing', () => {
     const d = doc('<div id="a"></div>');
