@@ -1,4 +1,4 @@
-import { compareVariantIds, languageName, type Brief, type ConversationEntry, type GroupTurnOutcome, type Locale, type Pin, type VariantId } from '@motion-studio/shared';
+import { BRIEF_TEXT_MAX, compareVariantIds, languageName, type Brief, type ConversationEntry, type GroupTurnOutcome, type Locale, type Pin, type VariantId } from '@motion-studio/shared';
 import { defuseTags, pinLine, quotePromptString, USER_REQUEST_CLOSE, USER_REQUEST_OPEN } from './prompt.ts';
 
 /**
@@ -85,11 +85,11 @@ export function buildCoordinatorPrompt(i: CoordinatorPromptInput): string {
     '- A variant that is working now cannot take work in this turn: say so, and the user can ask again when it is done.',
     '', '## The variants', ...i.variants.map(variantLine), ...(picks.length ? ['', ...picks] : []),
     '', '## The brief (the group\'s, the user\'s words as data)',
-    `- Goal: ${quotePromptString(oneLine(b.goal, 2000))}`,
-    ...(b.message ? [`- Key message: ${quotePromptString(oneLine(b.message, 500))}`] : []),
+    `- Goal: ${quotePromptString(b.goal.trim().slice(0, BRIEF_TEXT_MAX))}`,
+    ...(b.message ? [`- Key message: ${quotePromptString(b.message.trim().slice(0, BRIEF_TEXT_MAX))}`] : []),
     ...(b.durationSec ? [`- Video duration: about ${b.durationSec} seconds`] : []),
     `- Formats: ${b.formats.join(', ')}`,
-    ...(b.notes ? [`- Notes: ${quotePromptString(oneLine(b.notes, 4000))}`] : []),
+    ...(b.notes ? [`- Notes: ${quotePromptString(b.notes.trim().slice(0, BRIEF_TEXT_MAX))}`] : []),
   ];
   if (i.digest?.text) {
     parts.push('', i.digest.kind === 'bootstrap'

@@ -19,12 +19,12 @@ import { StorePackWizard } from './new-creative/StorePackWizard.tsx';
 import { packParts } from './new-creative/storePackModel.ts';
 import { VariantsField } from './variants/VariantsField.tsx';
 import { defaultVariantCount, directionsFor } from './variants/variantModel.ts';
-import { variantIdAt } from '@motion-studio/shared';
+import { BRIEF_TEXT_MAX, variantIdAt } from '@motion-studio/shared';
 import './new-creative/storepack.css';
 
 
-/** Brief length shown under the field (prototype: "142 / 2000"). */
-const GOAL_MAX = 2000;
+/** Brief length shown under the field (decisions log 1220: the shared safety cap, no longer 2000). */
+const GOAL_MAX = BRIEF_TEXT_MAX;
 const TITLE_MAX = 60;
 const LENGTHS = ['6', '15', '30', '60', 'custom'] as const;
 type LengthChoice = (typeof LENGTHS)[number];

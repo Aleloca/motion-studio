@@ -16,6 +16,12 @@ import { variantGroupSchema, variantIdSchema, creativeSlugSchema, type VariantGr
 export const creativeStatusSchema = z.enum(['draft', 'working', 'ready', 'incomplete', 'error', 'interrupted']);
 export type CreativeStatus = z.infer<typeof creativeStatusSchema>;
 
+/**
+ * The longest brief text (goal, key message, notes) the app takes and gives the agent: Claude Code has no character limit of its
+ * own (only the model's context), so this is a safety cap, about 25k tokens (decisions log 1220).
+ */
+export const BRIEF_TEXT_MAX = 100_000;
+
 const makeBriefSchema = (formats: z.ZodType<string[]>) => z.object({
   goal: z.string().trim().min(1),
   message: z.string(),

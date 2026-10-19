@@ -37,6 +37,14 @@ describe('buildCoordinatorPrompt', () => {
     expect(p).toContain(`\`\`\`${GROUP_BLOCK}\n{"phase":"coordinator"}\n\`\`\``);
   });
 
+  it('gives the whole brief, past the old 2000 characters, with its line breaks (decision 1220)', () => {
+    const goal = `Primo paragrafo.\n${'x'.repeat(5000)} FINE`;
+    const p = buildCoordinatorPrompt({ ...base, brief: { ...brief, goal, notes: `${'n'.repeat(6000)} CODA` }, request: { text: 'Ciao', pins: [] }, explicit: [] });
+    expect(p).toContain(`- Goal: ${JSON.stringify(goal)}`);
+    expect(p).toContain('CODA"');
+    expect(p.split('\n').filter((l) => l.startsWith('- Goal: '))).toHaveLength(1);
+  });
+
   it('groups the pinned comments by variant and names the explicit targets', () => {
     const p = buildCoordinatorPrompt({ ...base, request: { text: 'Sistema', pins: [pin('b', 'titolo più grande'), pin('a', 'logo')] }, explicit: ['a', 'b'] });
     expect(p).toContain('- [B] instagram-post-1x1 @ 1.0s, point (50%, 50%): titolo più grande');
