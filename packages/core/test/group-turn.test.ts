@@ -312,6 +312,27 @@ describe('the group turn', () => {
     await v.waitIdle();
   });
 
+  it('review M1: a message whose comments target two working helpers that cannot take it live is queued once, with both variants\' comments', async () => {
+    const slug = await setup();
+    await send(slug, 'Varianti B e C più luminose');
+    const c = await coordinator();
+    expect((await v.bridge(c, 'work_on_variants', { items: [{ variant: 'b', instruction: 'luce' }, { variant: 'c', instruction: 'luce' }] })).statusCode).toBe(200);
+    c.finish({ write: false });
+    const [hb, hc] = [await v.runOf(`${slug}~b`), await v.runOf(`${slug}~c`)];
+    const m = await v.app.inject({ method: 'POST', url: `${v.url(slug)}/messages`, payload: { clientId: cid(), text: 'anche qui', pins: [pin('b', 'nota B'), pin('c', 'nota C')], mode: 'live' } });
+    expect(m.json().outcome).toMatch(/^queued/);
+    const q = (await v.detail(slug)).creative.queued ?? [];
+    expect(q).toHaveLength(1);
+    expect(q[0]!.pins.map((p) => p.note).sort()).toEqual(['nota B', 'nota C']);
+    expect([...(q[0]!.variants ?? [])].sort()).toEqual(['b', 'c']);
+    hb.finish(); hc.finish();
+    (await coordinator(1)).finish({ write: false });
+    const next = await coordinator(2);
+    expect(next.req.prompt).toContain('The comments point to the variants B, C.');
+    next.finish({ write: false });
+    await v.waitIdle();
+  });
+
   it('a request sent with "Tutte" is one group turn with every active variant as its target', async () => {
     const slug = await setup();
     const res = await v.app.inject({ method: 'POST', url: `${v.url(slug)}/variants/run`, payload: { targets: 'all-active', request: { text: 'Più luce' } } });

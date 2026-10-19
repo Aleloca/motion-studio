@@ -724,7 +724,16 @@ export class GroupTurnService implements GroupRouter {
     const key = this.keyOf(host);
     await this.deps.turns.side.updateGroup(host.projectDir, host.creativeSlug, (g) => {
       const queued = g.queued ?? [];
-      if (queued.some((x) => x.clientId === m.clientId)) return {};
+      // Review M1: the parts of one message that several helpers could not take come back one by one with the same id: they
+      // are one request, with every part's comments and variants (never a part dropped as a repeat).
+      const same = queued.find((x) => x.clientId === m.clientId);
+      if (same) {
+        const key = (p: Pin) => JSON.stringify(p);
+        const pins = [...same.pins, ...item.pins.filter((p) => !same.pins.some((q) => key(q) === key(p)))];
+        const variants = [...new Set([...(same.variants ?? []), ...(item.variants ?? [])])].sort(compareVariantIds);
+        if (pins.length === same.pins.length && variants.length === (same.variants ?? []).length) return {};
+        return { queued: queued.map((x) => (x === same ? { ...x, pins, ...(variants.length ? { variants } : {}) } : x)) };
+      }
       if (o.limit !== false && queued.length >= LIVE_LIMITS.queued) throw new CodedError(409, t().live.queueFull({ max: LIVE_LIMITS.queued }), 'limit');
       this.queuedHere.add(`${key}\0${m.clientId}`);
       return { queued: [...queued, item] };
