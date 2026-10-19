@@ -1,12 +1,12 @@
 // @vitest-environment node
 /**
- * Report 38 (decision 1230): text in an html layer stays sharp when the layer scales it up, in real Chrome. A camera rig
- * with `will-change: transform` (or a WAAPI/CSS animation of the transform, or a translateZ hack) used to be rasterised
- * once at its first scale and then resampled: at scale(4) the text was a blurred bitmap. The render now neutralises
- * `will-change` in every layer document, so each frame is rasterised at its own scale. The frames are compared with the
+ * Report 38 (decisions 1230, 1237–1239): text in an html layer stays sharp when the layer scales it up, in real Chrome. A
+ * camera rig with `will-change: transform` (or scale, rotate, translate) used to be rasterised once at its first scale and
+ * then resampled: at scale(4) the text was a blurred bitmap. The layer agent now replaces those hints with `filter`, so
+ * each frame is rasterised at its own scale, and the hint's stacking context and containing block stay. The frames are compared with the
  * same layer without the hint (squared gradient energy of the frame at scale ~3.9). Measured before the fix: plain 1173.8,
  * will-change (sheet, id !important, inline !important, with WAAPI) 215.4, a fifth; translateZ, WAAPI and CSS animations
- * alone 1173.8. After it, every variant 1173.8.
+ * alone 1173.8; opacity, filter and contents hints 1173.8 too (they do not freeze). After it, every variant 1173.8.
  * Skipped without Chrome or ffmpeg, unless MS_REQUIRE_CHROME=1.
  */
 import { execFileSync } from 'node:child_process';
