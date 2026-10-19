@@ -1,4 +1,4 @@
-import { INSTANCE_ID_RE, SUPPORTED_LOCALES, briefSchema, variantIdSchema, formatDisplayName, issuesText, presetOf, type Brief, type BriefServices, type FormatPreset, type VariantId } from '@motion-studio/shared';
+import { BRIEF_TEXT_MAX, INSTANCE_ID_RE, SUPPORTED_LOCALES, briefSchema, variantIdSchema, formatDisplayName, issuesText, presetOf, type Brief, type BriefServices, type FormatPreset, type VariantId } from '@motion-studio/shared';
 import { z } from 'zod';
 import type { AppScope, BridgeContext } from '../bridge/bridge.ts';
 import type { BridgeHandler } from '../bridge/bridge-routes.ts';
@@ -71,7 +71,7 @@ const servicesSchema = z.strictObject({
 const inputs = {
   update_brief: z.strictObject({
     durationSec: z.number().int().min(1).max(600).nullable().optional(),
-    goal: z.string().trim().min(1).max(2000).optional(), message: z.string().max(500).optional(), notes: z.string().max(10_000).optional(),
+    goal: z.string().trim().min(1).max(BRIEF_TEXT_MAX).optional(), message: z.string().max(BRIEF_TEXT_MAX).optional(), notes: z.string().max(BRIEF_TEXT_MAX).optional(),
     services: servicesSchema.optional(),
   }).refine((a) => Object.keys(a).length > 0, { message: 'issue.nothingToChange' }),
   add_format: z.strictObject({ format: formatId, label: label.optional() }),

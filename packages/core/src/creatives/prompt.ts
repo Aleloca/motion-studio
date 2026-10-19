@@ -1,5 +1,5 @@
 import type { CreativeFile, FormatPreset, IdentityBrief, Pin, StorePack, VariantId } from '@motion-studio/shared';
-import { formatDisplayName, presetOf, statedDurationSec, videoTargetBitrateKbps, type BrandKit, type BriefServices, type Locale } from '@motion-studio/shared';
+import { BRIEF_TEXT_MAX, formatDisplayName, presetOf, statedDurationSec, videoTargetBitrateKbps, type BrandKit, type BriefServices, type Locale } from '@motion-studio/shared';
 import { replyInstruction } from '../i18n.ts';
 import { findPreset } from '../formats/format-catalog.ts';
 import { servicesLine } from '../services/service-policy.ts';
@@ -786,9 +786,9 @@ export function buildLocalizePrompt(i: LocalizePromptInput): string {
   ];
   if (brand.length) parts.push('', '## Brand tone and writing style', ...brand);
   const briefLines = [
-    i.brief.goal && `- Goal: ${oneLine(i.brief.goal, 1000)}`,
-    i.brief.message && `- Key message: ${oneLine(i.brief.message, 1000)}`,
-    i.brief.notes && `- Notes: ${oneLine(i.brief.notes, 2000)}`,
+    i.brief.goal && `- Goal: ${oneLine(i.brief.goal, BRIEF_TEXT_MAX)}`,
+    i.brief.message && `- Key message: ${oneLine(i.brief.message, BRIEF_TEXT_MAX)}`,
+    i.brief.notes && `- Notes: ${oneLine(i.brief.notes, BRIEF_TEXT_MAX)}`,
   ].filter((l): l is string => typeof l === 'string' && l !== '');
   if (briefLines.length) parts.push('', '## Brief', ...briefLines);
   parts.push('', ...localizeUserSection(i.userText));

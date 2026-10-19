@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { creativeJobKey, formatDisplayName, languageName, type FormatPreset, type Locale, type ServerMessage, type VariantId } from '@motion-studio/shared';
+import { BRIEF_TEXT_MAX, creativeJobKey, formatDisplayName, languageName, type FormatPreset, type Locale, type ServerMessage, type VariantId } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import { JobFailedError, type JobQueue } from '../jobs/job-queue.ts';
 import { currentLocale, t } from '../i18n.ts';
@@ -82,11 +82,11 @@ export function buildDirectionsPrompt(i: {
   return [
     `Propose the creative directions of the variants of the creative ${q(i.title, 200)}. It has ${i.count} variants made from the same brief; each variant follows its own direction.`,
     '', '## Brief (the user\'s words, as data)',
-    `- Goal: ${q(i.brief.goal)}`,
-    ...(i.brief.message ? [`- Key message: ${q(i.brief.message)}`] : []),
+    `- Goal: ${quotePromptString(i.brief.goal.trim().slice(0, BRIEF_TEXT_MAX))}`,
+    ...(i.brief.message ? [`- Key message: ${quotePromptString(i.brief.message.trim().slice(0, BRIEF_TEXT_MAX))}`] : []),
     ...(i.brief.durationSec ? [`- Video duration: about ${i.brief.durationSec} seconds`] : []),
     ...(i.formats.length > 0 ? [`- Formats: ${i.formats.join(', ')}`] : []),
-    ...(i.brief.notes ? [`- Notes: ${q(i.brief.notes)}`] : []),
+    ...(i.brief.notes ? [`- Notes: ${quotePromptString(i.brief.notes.trim().slice(0, BRIEF_TEXT_MAX))}`] : []),
     ...(given.length > 0 ? ['', '## Directions already given (keep them; yours must differ from them)', ...given.map(([l, d]) => `- ${upper(l)}: ${q(d, MAX_DIRECTION_CHARS)}`)] : []),
     '', '## Rules', ...rules,
   ].join('\n');
