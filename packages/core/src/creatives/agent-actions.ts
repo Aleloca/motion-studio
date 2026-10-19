@@ -1,4 +1,4 @@
-import { BRIEF_TEXT_MAX, INSTANCE_ID_RE, SUPPORTED_LOCALES, briefSchema, variantIdSchema, formatDisplayName, issuesText, presetOf, withAgentNames, type AgentNameRefusal, type Brief, type BriefServices, type FormatPreset, type VariantId } from '@motion-studio/shared';
+import { BRIEF_TEXT_MAX, INSTANCE_ID_RE, SUPPORTED_LOCALES, briefSchema, variantIdSchema, formatDisplayName, issuesText, agentNameLabel, presetOf, withAgentNames, type AgentNameRefusal, type Brief, type BriefServices, type FormatPreset, type VariantId } from '@motion-studio/shared';
 import { z } from 'zod';
 import type { AppScope, BridgeContext } from '../bridge/bridge.ts';
 import type { BridgeHandler } from '../bridge/bridge-routes.ts';
@@ -254,7 +254,8 @@ export class AgentActionService {
     const label = await this.labelOf(s);
     if (!brief.formats.includes(a.format)) throw new CodedError(400, t().errors.formatNotInBrief({ format: label(a.format) }), 'format-not-in-brief');
     const what = t().agentActions.duplicateQueued({ format: label(a.format) });
-    this.defer(s, { kind: 'duplicate', format: a.format, ...(a.label ? { label: a.label } : {}), what });
+    // Report 55 review: the label is the agent's name, one line within the 60 of a label.
+    this.defer(s, { kind: 'duplicate', format: a.format, ...(a.label ? { label: agentNameLabel(a.label) } : {}), what });
     await this.note(s, what);
     return { ok: true, note: `Duplicated from version ${s.version} after this turn ends (a new version made by Motion Studio, no agent); from the latest version if this turn changes no composition.` };
   }
@@ -267,22 +268,30 @@ export class AgentActionService {
   private async nameFormats(s: Scope, a: z.infer<typeof inputs.name_formats>) {
     this.notForHelper(s);
     const x = t().agentActions;
-    let named: string[] = [];
-    let refused: AgentNameRefusal[] = [];
-    const { after } = await this.deps.turns.briefFromAgent(s.ref, (current) => {
-      ({ named, refused } = withAgentNames(current, a.names));
-      if (named.length === 0) {
-        const why = (r: AgentNameRefusal) => `${oneLine(r.format).slice(0, 100)} (${r.reason === 'user-named' ? x.nameUserNamed : r.reason === 'empty' ? x.nameEmpty : x.nameNotInBrief})`;
-        throw new CodedError(409, x.namesRefused({ list: refused.map(why).join(', ') }), 'format-names-refused');
-      }
-      return { agentLabels: Object.fromEntries(named.map((id) => [id, a.names[id]!])) };
+    // Review: in a variant group a variant's own turn names only formats with no name yet (the names are the group's, of the
+    // format's common content); renaming them is the coordinator's, so the variants never rename them back and forth.
+    const onlyUnnamed = !s.group && Boolean((await this.variants(s).resolve(s.ref)).group);
+    const why = (r: AgentNameRefusal) => `${oneLine(r.format).slice(0, 100)} (${r.reason === 'user-named' ? x.nameUserNamed : r.reason === 'named' ? x.nameGroupNamed : r.reason === 'empty' ? x.nameEmpty : x.nameNotInBrief})`;
+    const refuse = (refused: AgentNameRefusal[]) => new CodedError(409, x.namesRefused({ list: refused.map(why).join(', ') }), 'format-names-refused');
+    const answer = (named: string[], unchanged: string[], refused: AgentNameRefusal[]) => ({
+      ok: true, named, unchanged, refused,
+      note: `${named.length === 0 ? 'Nothing changed: the names are already these.' : s.group ? 'The names are the group\'s now.' : 'The names are set when this turn ends.'}${refused.some((r) => r.reason === 'user-named') ? ' The user named the formats refused as "user-named": those names are theirs, never name those formats.' : ''}${refused.some((r) => r.reason === 'named') ? ' Formats refused as "named" already have the group\'s name: only the agent the user talks to renames them.' : ''}`,
     });
-    const list = named.map((id) => after.formatLabels?.[id] ?? id).join('; ');
+    // Names equal to the agent's current ones write nothing and say nothing in the chat.
+    const pre = withAgentNames(await this.briefNow(s), a.names, { onlyUnnamed });
+    if (pre.named.length === 0) {
+      if (pre.unchanged.length === 0) throw refuse(pre.refused);
+      return answer([], pre.unchanged, pre.refused);
+    }
+    let r = pre;
+    const { after } = await this.deps.turns.briefFromAgent(s.ref, (current) => {
+      r = withAgentNames(current, a.names, { onlyUnnamed });
+      if (r.named.length === 0) throw refuse(r.refused);
+      return { agentLabels: Object.fromEntries(r.named.map((id) => [id, a.names[id]!])) };
+    });
+    const list = r.named.map((id) => after.formatLabels?.[id] ?? id).join('; ');
     await this.note(s, s.group ? x.formatsNamed({ list }) : `${x.formatsNamed({ list })} · ${x.afterTurn}`);
-    return {
-      ok: true, named, refused,
-      note: `${s.group ? 'The names are the group\'s now.' : 'The names are set when this turn ends.'}${refused.some((r) => r.reason === 'user-named') ? ' The user named the formats refused as "user-named": those names are theirs, never name those formats.' : ''}`,
-    };
+    return answer(r.named, r.unchanged, r.refused);
   }
 
   private async addLanguage(s: Scope, a: z.infer<typeof inputs.add_language>) {

@@ -535,7 +535,7 @@ export function appActionsSection(brief: CreativeFile['brief'], helper = false):
  * Report 55: the agent names every format it makes (`name_formats`), in the user's language, and never a format the user named
  * (listed; Motion Studio refuses it anyway). Not for a helper: the brief is its coordinator's.
  */
-export function formatNamesSection(brief: CreativeFile['brief'], locale: Locale): string[] {
+export function formatNamesSection(brief: CreativeFile['brief'], locale: Locale, grouped = false): string[] {
   const mine = brief.formats.filter((id) => !isUserNamed(brief, id));
   const unnamed = mine.filter((id) => agentNamedLabel(brief, id) === null);
   const theirs = brief.formats.filter((id) => isUserNamed(brief, id));
@@ -543,8 +543,12 @@ export function formatNamesSection(brief: CreativeFile['brief'], locale: Locale)
   return [
     '## Format names',
     `- Give every format you make a short speaking name with name_formats, also when it is the only one of its kind: a few words that say what it shows (for example ${quotePromptString(example)}), in ${languageName(locale)}, at most 40 characters. Motion Studio shows it with the format's channel and size, and a store screenshot after its number ("1 · …"): leave the format, size, channel and number out of the name.`,
-    '- Name each format you make in this turn that has no name yet, and rename a format you named when what it shows changes. Keep the names distinct within the creative. One name_formats call can name them all.',
-    ...(unnamed.length > 0 ? [`- Formats with no name yet: ${unnamed.join(', ')}.`] : []),
+    grouped
+      // Review: in a group the names are the group's (the formats' common content); only the coordinator renames them.
+      ? '- The names are the group\'s: name only formats with no name yet; never rename a named one (the agent the user talks to does that). Say what the format shows in every variant, not this variant\'s look. One name_formats call can name them all.'
+      : '- Name each format you make in this turn that has no name yet, and rename a format you named when what it shows changes. Keep the names distinct within the creative. One name_formats call can name them all.',
+    // Review: the formats of an existing creative get their names at its next turn, also those the turn does not change.
+    ...(unnamed.length > 0 ? [`- Formats with no name yet: ${unnamed.join(', ')}. Name every one of them in this turn, also those you do not change.`] : []),
     theirs.length > 0
       ? `- The user named ${theirs.join(', ')}: those names are theirs. Never rename those formats (Motion Studio refuses it).`
       : '- The user has named no format.',
@@ -668,7 +672,7 @@ export function buildCreativePrompt(i: PromptInput): string {
   if (i.helper && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...helperSection(i.variant?.letter, i.helper));
   if (i.context && i.kind !== 'fix' && i.kind !== 'redirect') parts.push(...contextSections(i.context, contract, brief.services));
   if (i.appActions && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...appActionsSection(brief, Boolean(i.helper)));
-  if (i.appActions && !i.helper && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...formatNamesSection(brief, locale));
+  if (i.appActions && !i.helper && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...formatNamesSection(brief, locale, Boolean(i.variant)));
   if (contract === 'compositions') {
     // Agent-facing: the format's own facts only (Motion Studio renders, so no extensions, bitrates or encoding flags).
     const compositionLines = known.map(([id, p]) => p

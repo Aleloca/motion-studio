@@ -285,6 +285,12 @@ describe('name_formats (report 55)', () => {
     expect(next.req.prompt).toContain('## Format names');
     expect(next.req.prompt).toContain('- youtube-16x9: YouTube · Video 16:9, named "Il lancio in sei secondi" by you');
     expect(next.req.prompt).toContain('The user named instagram-post-1x1');
+    // The same name again changes nothing and writes no chat line (review).
+    const lines = (await actionLines(slug)).length;
+    const same = await bridge(next, 'name_formats', { names: { 'youtube-16x9': 'Il lancio in sei secondi' } });
+    expect(same.statusCode, same.body).toBe(200);
+    expect(same.json()).toMatchObject({ named: [], unchanged: ['youtube-16x9'] });
+    expect((await actionLines(slug)).length).toBe(lines);
     // The agent may rename what it named.
     expect((await bridge(next, 'name_formats', { names: { 'youtube-16x9': 'Lancio, sei secondi' } })).statusCode).toBe(200);
     writeCompositions(next, 6);
@@ -363,13 +369,13 @@ describe('name_formats (report 55)', () => {
     const run = await runOf(slug);
     writeCompositions(run, 6);
     expect((await bridge(run, 'add_format', { format: 'instagram-reel-9x16', label: 'Il lancio in verticale' })).statusCode).toBe(200);
-    expect((await bridge(run, 'duplicate_format', { format: 'youtube-16x9', label: 'Seconda' })).statusCode).toBe(200);
+    expect((await bridge(run, 'duplicate_format', { format: 'youtube-16x9', label: 'Seconda\nriga' })).statusCode).toBe(200);
     run.finish({ write: false });
     const follow = await runOf(slug, 1);
     writeCompositions(follow, 6);
     follow.finish({ write: false });
     await waitIdle();
-    await vi.waitFor(async () => expect((await detail(slug)).creative.brief.agentFormatLabels).toEqual({ 'instagram-reel-9x16': 'Il lancio in verticale', 'youtube-16x9@2': 'Seconda' }));
+    await vi.waitFor(async () => expect((await detail(slug)).creative.brief.agentFormatLabels).toEqual({ 'instagram-reel-9x16': 'Il lancio in verticale', 'youtube-16x9@2': 'Seconda riga' }));
   });
 
   it('in a variant group it is the group\'s edit', async () => {
@@ -380,6 +386,10 @@ describe('name_formats (report 55)', () => {
     expect((await bridge(run, 'name_formats', { names: { 'youtube-16x9': 'Lancio' } })).statusCode).toBe(200);
     expect((await detail(`${slug}~b`)).creative.brief.formatLabels).toEqual({ 'youtube-16x9': 'Lancio', 'instagram-post-1x1': 'Mio post' });
     expect((await detail(`${slug}~b`)).creative.brief.agentFormatLabels).toEqual({ 'youtube-16x9': 'Lancio' });
+    // Review: a variant's own turn names only formats with no name yet; renaming is the coordinator's.
+    const again = await bridge(run, 'name_formats', { names: { 'youtube-16x9': 'Altro' } });
+    expect(again.statusCode).toBe(409);
+    expect(again.json().error).toContain(t().agentActions.nameGroupNamed);
     writeCompositions(run, 6);
     run.finish({ write: false });
     await waitIdle();

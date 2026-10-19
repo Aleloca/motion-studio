@@ -438,7 +438,12 @@ describe('format names in the prompt (report 55)', () => {
     expect(p).toContain('in Italian, at most 40 characters');
     expect(p).toContain('- instagram-post-1x1: Instagram · Post 1:1, named "Prenota in tre tap" by you');
     expect(p).toContain('- web-banner-300x250: Web · Banner 300×250, labelled "Banner estate"');
-    expect(p).toContain('Formats with no name yet: youtube-16x9.');
+    expect(p).toContain('- Formats with no name yet: youtube-16x9. Name every one of them in this turn, also those you do not change.');
+    // A variant of a group names only formats with no name yet: renaming the group's names is its coordinator's.
+    const variant = { letter: 'b' as const, count: 2, direction: null, others: [] };
+    const g = buildCreativePrompt({ ...v2, creative: named, kind: 'iteration', userText: 'x', appActions: true, variant });
+    expect(g).toContain('The names are the group\'s: name only formats with no name yet; never rename a named one (the agent the user talks to does that).');
+    expect(g).not.toContain('rename a format you named when');
     expect(p).toContain('The user named web-banner-300x250: those names are theirs. Never rename those formats');
     const none = buildCreativePrompt({ ...v2, kind: 'first', appActions: true, locale: 'en' });
     expect(none).toContain('in English, at most 40 characters');
