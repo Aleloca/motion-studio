@@ -832,7 +832,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     turns, edits, renders, localize, variantRuns,
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
   });
-  agentActions.setGroupPlan((jobId) => groups.planOf(jobId));
+  agentActions.setGroupPlan((jobId) => groups.planOf(jobId), (jobId, v) => groups.pointedIn(jobId, v));
   registerBridgeRoutes(app, {
     bridge, approvals,
     // The config folder holds the UI token and the bridge tokens: no permission prompt may open it.

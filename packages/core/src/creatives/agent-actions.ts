@@ -109,8 +109,14 @@ export class AgentActionService {
   /** Phase 3: the variants a group turn works on (its plan), which its coordinator may not discard meanwhile. */
   private planOf: (jobId: string) => ReadonlySet<VariantId> = () => new Set();
 
-  /** Phase 3 of the single agent: see `planOf`. */
-  setGroupPlan(fn: (jobId: string) => ReadonlySet<VariantId>): void { this.planOf = fn; }
+  /** Review M3: whether the user pointed to a variant in a group turn (a discard by its coordinator needs it). */
+  private pointedIn: (jobId: string, v: VariantId) => boolean = () => false;
+
+  /** Phase 3 of the single agent: see `planOf` and `pointedIn`. */
+  setGroupPlan(fn: (jobId: string) => ReadonlySet<VariantId>, pointed?: (jobId: string, v: VariantId) => boolean): void {
+    this.planOf = fn;
+    if (pointed) this.pointedIn = pointed;
+  }
 
   constructor(private readonly deps: AgentActionDeps) {
     deps.turns.onTurnSettled((ref, jobId, outcome) => this.settled(ref, jobId, outcome));
@@ -294,6 +300,8 @@ export class AgentActionService {
     this.notForHelper(s);
     // Phase 3: a variant with work in this group turn stays as it is until the turn is over.
     if (s.group && this.planOf(s.jobId).has(l)) throw new CodedError(409, t().agentActions.variantInPlan({ letter: upper(l) }), 'variant-in-plan');
+    // Review M3: the coordinator discards only a variant the user pointed to (decision 979, as for work).
+    if (s.group && action === 'discard' && !this.pointedIn(s.jobId, l)) throw new CodedError(409, t().agentActions.discardNotPointed({ letter: upper(l) }), 'ask-which-variant');
     const svc = this.variants(s);
     if (action === 'discard') await svc.discard(s.ref, l);
     else await svc.restore(s.ref, l);

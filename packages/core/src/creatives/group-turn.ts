@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { z } from 'zod';
 import {
-  activeMembers, answeredVariants, compareVariantIds, creativeJobKey, isSessionId, LIVE_LIMITS, letterOfSlug, MAX_NEW_VARIANTS, namedVariants, singleAgentOn, variantIdSchema,
+  activeMembers, answeredVariants, askedNewVariants, compareVariantIds, creativeJobKey, isSessionId, LIVE_LIMITS, letterOfSlug, MAX_NEW_VARIANTS, namedVariants, singleAgentOn, variantIdSchema,
   type ConversationEntry, type GroupTurnOutcome, type JobSummary, type LiveMessageOutcome, type Pin, type QueuedRequest, type RedirectOutcome,
   type ServerMessage, type VariantGroup, type VariantId, type WorkspaceSettings,
 } from '@motion-studio/shared';
@@ -78,6 +78,8 @@ interface GroupRun {
   plan: Map<VariantId, WorkItem>;
   helpers: Map<VariantId, string>;
   added: boolean;
+  /** Review M3: how many new variants the user's own words of this turn ask for (the most any of them asks; 0: none). */
+  askedNew: number;
   run: AgentRun | null;
   caps: LiveCapabilities;
   /** Messages that came before the coordinator run started: they join its prompt. */
@@ -160,6 +162,11 @@ export class GroupTurnService implements GroupRouter {
     const job = this.activeJob(host);
     return job ? this.runs.get(job.id) : undefined;
   }
+  /** Review M3: whether the user pointed to variant `v` in group turn `jobId` (a discard by its coordinator needs it). */
+  pointedIn(jobId: string, v: VariantId): boolean {
+    const r = this.runs.get(jobId);
+    return Boolean(r && this.pointedTo(r, v));
+  }
   /** Phase 3: the variants a group turn works on (its coordinator may not discard them meanwhile). */
   planOf(jobId: string): ReadonlySet<VariantId> {
     const r = this.runs.get(jobId);
@@ -197,7 +204,7 @@ export class GroupTurnService implements GroupRouter {
       jobId, host, title, request: req, phase: 'queued',
       explicit: new Set([...variantsOfPins(req.pins), ...(req.variants ?? [])].filter((v) => ids.includes(v))),
       named: namedVariants(req.text, ids), answered: new Set(), created: new Set(),
-      plan: new Map(), helpers: new Map(), added: false, run: null, caps: { liveInput: false, interrupt: false },
+      plan: new Map(), helpers: new Map(), added: false, askedNew: askedNewVariants(req.text), run: null, caps: { liveInput: false, interrupt: false },
       later: [], redirect: null, chain: Promise.resolve(), liveMessages: 0,
     };
     await this.write(r, {
@@ -407,7 +414,11 @@ export class GroupTurnService implements GroupRouter {
           }
           // Decision 979: the variants the user picked answering this turn's question may take work.
           if (event.kind === 'question_answered' && event.outcome === 'answered') {
-            for (const item of event.items) if (item.answer) for (const v of answeredVariants(item.answer, ids)) r.answered.add(v);
+            for (const item of event.items) {
+              if (!item.answer) continue;
+              for (const v of answeredVariants(item.answer, ids)) r.answered.add(v);
+              r.askedNew = Math.max(r.askedNew, askedNewVariants(item.answer));
+            }
           }
           this.deps.broadcast({ type: 'agent', jobId: r.jobId, event });
           if (event.kind === 'usage' && event.live) return;
@@ -498,7 +509,10 @@ export class GroupTurnService implements GroupRouter {
     if (r.phase !== 'coordinator') throw refuse(['The work of this turn is already decided: do not add variants now.']);
     // "New variant" runs once (decision 977): one add per group turn.
     if (r.added) throw refuse([`This turn already added ${[...r.created].map(L).join(', ')}: a request for new variants is done once.`]);
+    // Review M3: only when the user's own words of this turn ask for new variants, and no more than they ask for.
+    if (r.askedNew === 0) throw refuse(['The user did not ask for new variants in this turn: do not add any. If you think one would help, ask the user first (AskUserQuestion).']);
     const parsed = addSchema.safeParse(args);
+    if (parsed.success && parsed.data.items.length > r.askedNew) throw refuse([`The user asked for ${r.askedNew} new ${r.askedNew === 1 ? 'variant' : 'variants'}: add at most ${r.askedNew}.`]);
     if (!parsed.success) throw refuse([`Give \`items\`: one \`{ direction }\` per new variant (one line of 3 to ${MAX_DIRECTION_CHARS} characters), with an optional \`baseFrom: { variant, version }\`.`]);
     const svc = this.svc(r.host);
     const before = (await this.groupOf(r.host)).group;
@@ -666,6 +680,7 @@ export class GroupTurnService implements GroupRouter {
         this.deps.queue.patch(r.jobId, { liveMessages: r.liveMessages });
         for (const v of variantsOfPins(m.pins)) r.explicit.add(v);
         for (const v of namedVariants(m.text, ids)) r.named.add(v);
+        r.askedNew = Math.max(r.askedNew, askedNewVariants(m.text));
       };
       if (r.phase === 'queued') {
         takes();
@@ -864,7 +879,11 @@ export class GroupTurnService implements GroupRouter {
     return this.answers.once(`redirect\0${jobId}\0${m.clientId}`, async () => {
       const ids = (await this.groupOf(r.host)).group.members.map((x) => x.letter);
       const entry: ConversationEntry = { type: 'user', at: now(), text: m.text, pins: m.pins, attachments: [], jobId, mode: 'redirect', clientId: m.clientId, group: true };
-      const takes = () => { for (const v of variantsOfPins(m.pins)) r.explicit.add(v); for (const v of namedVariants(m.text, ids)) r.named.add(v); };
+      const takes = () => {
+        for (const v of variantsOfPins(m.pins)) r.explicit.add(v);
+        for (const v of namedVariants(m.text, ids)) r.named.add(v);
+        r.askedNew = Math.max(r.askedNew, askedNewVariants(m.text));
+      };
       if (r.phase === 'queued') {
         takes();
         r.later.push({ text: m.text, pins: m.pins });

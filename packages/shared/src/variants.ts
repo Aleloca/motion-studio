@@ -235,3 +235,39 @@ export function answeredVariants(answer: string, ids: readonly VariantId[]): Set
   }
   return out;
 }
+
+const COUNT_WORDS: Record<string, number> = {
+  un: 1, una: 1, uno: 1, a: 1, an: 1, one: 1, due: 2, two: 2, tre: 3, three: 3, quattro: 4, four: 4, cinque: 5, five: 5,
+  sei: 6, six: 6, sette: 7, seven: 7, otto: 8, eight: 8, nove: 9, nine: 9, dieci: 10, ten: 10,
+};
+const COUNT = `(\\d{1,2}|${Object.keys(COUNT_WORDS).join('|')})`;
+const NEW_WORDS = '(?:nuov[aei]|new|additional|extra|altr[aei]|another|more|aggiuntiv[aei])';
+const VARIANT_WORD = '(?:variant[ei]|variants?)';
+const B = '(?<![\\p{L}\\p{N}])';
+const E = '(?![\\p{L}\\p{N}])';
+
+/**
+ * Review M3 of phase 3: whether the user's words ask for NEW variants, and how many (0: they do not). The core lets the
+ * coordinator add variants only then, and at most that many. Read: "una nuova variante", "altre due varianti", "3 nuove
+ * varianti", "un'altra variante", "due varianti nuove", "aggiungi/crea/fammi una variante", "ancora una variante"; "a new
+ * variant", "another variant", "4 more variants", "add/create/make a variant". A count missing is one. "La variante nuova"
+ * (an existing one), "tutte le varianti", "fai la variante B…" ask for none.
+ */
+export function askedNewVariants(text: string): number {
+  const s = text.toLowerCase().replace(/[’`]/g, "'");
+  const num = (w: string | undefined) => (w === undefined ? 1 : /^\d+$/.test(w) ? Number(w) : COUNT_WORDS[w] ?? 1);
+  let n = 0;
+  const take = (re: RegExp, groups: number[]) => {
+    for (const m of s.matchAll(re)) {
+      const w = groups.map((g) => m[g]).find((x) => x !== undefined);
+      n = Math.max(n, num(w));
+    }
+  };
+  // "una nuova variante", "altre due varianti", "another variant", "4 more variants".
+  take(new RegExp(`${B}(?:${COUNT}\\s+)?${NEW_WORDS}\\s+(?:${COUNT}\\s+)?${VARIANT_WORD}${E}`, 'gu'), [1, 2]);
+  // "due varianti nuove" (a count is needed: "la variante nuova" is an existing one).
+  take(new RegExp(`${B}${COUNT}\\s+${VARIANT_WORD}\\s+(?:nuov[aei]|new|in più|aggiuntiv[aei])${E}`, 'gu'), [1]); // i18n-ignore: words the user may type, not UI text
+  // "aggiungi una variante", "fammi due varianti", "ancora una variante", "add a variant", "make three variants".
+  take(new RegExp(`${B}(?:crea(?:ne|mi)?|aggiungi(?:ne)?|fa(?:i|mmi|nne)|genera(?:ne)?|ancora|add|create|make)\\s+${COUNT}\\s+(?:${NEW_WORDS}\\s+)?${VARIANT_WORD}${E}`, 'gu'), [1]); // i18n-ignore: words the user may type, not UI text
+  return n;
+}

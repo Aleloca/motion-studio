@@ -55,3 +55,28 @@ describe('answeredVariants', () => {
     expect([...answeredVariants('nessuna', ids)]).toEqual([]);
   });
 });
+
+describe('askedNewVariants (review M3)', () => {
+  it('reads a request for new variants and how many, in Italian and English (default one)', async () => {
+    const { askedNewVariants } = await import('../src/variants.ts');
+    const cases: Array<[string, number]> = [
+      ['Crea una nuova variante notturna', 1],
+      ['Aggiungi una variante più calda', 1],
+      ['Fammi altre due varianti', 2],
+      ['crea 3 nuove varianti', 3],
+      ['Vorrei un\'altra variante', 1],
+      ['Ancora una variante, minimale', 1],
+      ['Due varianti nuove: una al neon e una pastello', 2],
+      ['Add a new variant with a neon look', 1],
+      ['make 4 more variants', 4],
+      ['another variant please', 1],
+      ['Create two new variants', 2],
+      ['Tutte le varianti più luminose', 0],
+      ['Ciao, come va?', 0],
+      ['Fai la variante B più chiara', 0],
+      ['Nella variante nuova il titolo è troppo piccolo', 0],
+      ['make all variants brighter', 0],
+    ];
+    for (const [text, n] of cases) expect(askedNewVariants(text), text).toBe(n);
+  });
+});

@@ -359,6 +359,48 @@ describe('the group turn', () => {
     expect((await v.detail(`${slug}~c`)).versions).toHaveLength(1);
   });
 
+  it('review M3: variants are added only when the user asked for new ones, and no more than they asked; a discard needs the user to point to the variant', async () => {
+    const slug = await setup(['Audace', 'Calma']);
+    await send(slug, 'Ciao, come va?');
+    const c = await coordinator();
+    const added = await v.bridge(c, 'add_variants', { items: ['Uno al neon', 'Due pastello', 'Tre vintage'].map((direction) => ({ direction })) });
+    expect(added.statusCode).toBe(409);
+    expect(added.json().error).toMatch(/did not ask for new variants/);
+    const discard = await v.bridge(c, 'discard_variant', { variant: 'b' });
+    expect(discard.statusCode).toBe(409);
+    c.finish({ write: false });
+    await v.waitIdle();
+    expect((await v.detail(slug)).creative.variantGroup!.members.map((m) => [m.letter, m.status])).toEqual([['a', 'active'], ['b', 'active']]);
+    expect(v.runner.runs.filter((r) => !isCoordinator(r))).toEqual([]);
+
+    await send(slug, 'Crea due nuove varianti e scarta la B');
+    const c2 = await coordinator(1);
+    const tooMany = await v.bridge(c2, 'add_variants', { items: ['Uno al neon', 'Due pastello', 'Tre vintage'].map((direction) => ({ direction })) });
+    expect(tooMany.statusCode).toBe(409);
+    expect(tooMany.json().error).toMatch(/at most 2/);
+    expect((await v.bridge(c2, 'add_variants', { items: ['Uno al neon', 'Due pastello'].map((direction) => ({ direction })) })).statusCode).toBe(200);
+    expect((await v.bridge(c2, 'discard_variant', { variant: 'b' })).statusCode).toBe(200);
+    c2.finish({ write: false });
+    for (const s2 of [`${slug}~c`, `${slug}~d`]) (await v.runOf(s2)).finish();
+    (await coordinator(2)).finish({ write: false });
+    await v.waitIdle();
+  });
+
+  it('review M3: a request for a new variant can come in the answer to the agent\'s question', async () => {
+    const slug = await setup(['Audace', 'Calma']);
+    await send(slug, 'Proviamo qualcosa di diverso');
+    const c = await coordinator();
+    const asked = v.bridge(c, 'approve', { tool_name: 'AskUserQuestion', tool_use_id: 'toolu_q', input: { questions: [{ question: 'Cosa preferisci?', header: 'Scelta', multiSelect: false, options: [{ label: 'Una nuova variante', description: '' }, { label: 'Cambiare la A', description: '' }] }] } });
+    await vi.waitFor(async () => expect(await v.pending()).toHaveLength(1));
+    await v.app.inject({ method: 'POST', url: `/api/approvals/${(await v.pending())[0]!.id}/answer`, payload: { answers: [{ selected: [0] }] } });
+    await asked;
+    expect((await v.bridge(c, 'add_variants', { items: [{ direction: 'Notturna' }] })).statusCode).toBe(200);
+    c.finish({ write: false });
+    (await v.runOf(`${slug}~c`)).finish();
+    (await coordinator(1)).finish({ write: false });
+    await v.waitIdle();
+  });
+
   it('a request sent with "Tutte" is one group turn with every active variant as its target', async () => {
     const slug = await setup();
     const res = await v.app.inject({ method: 'POST', url: `${v.url(slug)}/variants/run`, payload: { targets: 'all-active', request: { text: 'Più luce' } } });
