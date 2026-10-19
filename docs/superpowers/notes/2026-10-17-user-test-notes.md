@@ -244,6 +244,15 @@ arrives and worked on later together.
     export profile (default: the format's own, not remembered), the export renders at it, and the render records its fps
     (decisions 1241, 1242 after the review).
 
+40. **Store pack canvas: every board on one row, the space not used.** While the 19 formats of an App Store + Play Store
+    pack generate (2026-10-19), the canvas shows the App Store screenshots 1…8 in a single row that runs off the right edge,
+    small, with the rest of the canvas empty below. Cause: `canvasModel.worldAt` puts every tall board (ratio ≤ 0.75) in
+    one row and the others in one column next to it; `fitBoards` cannot zoom out past `min` and the labels keep a width
+    floor (`LABEL_MIN`), so many tall boards overflow. The user wants the boards laid out to use the space.
+    User's call: one row per group of the side list (App Store 1–8 + App Preview, then Play Store 1–8, then the other
+    formats such as the feature graphic and the video); a row that is too long wraps; the opening zoom shows everything.
+    To do with the next reports.
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
