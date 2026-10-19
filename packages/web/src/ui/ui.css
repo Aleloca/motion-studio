@@ -92,6 +92,8 @@
 .ms-check.ms-on, .ms-check.ms-on:hover { background: var(--accent); box-shadow: none; }
 .ms-check svg { transform: scale(.4); opacity: 0; transition: transform var(--d-s) var(--e-spring), opacity var(--d-xs) var(--e-std); }
 .ms-check.ms-on svg { transform: none; opacity: 1; }
+.ms-check.ms-mixed, .ms-check.ms-mixed:hover { background: var(--accent); box-shadow: none; }
+.ms-check.ms-mixed svg { transform: none; opacity: 1; }
 
 /* Segmented control. */
 .ms-seg { display: flex; gap: 2px; padding: 3px; border-radius: 9px; background: var(--field); min-width: 0; }

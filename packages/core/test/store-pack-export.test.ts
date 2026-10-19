@@ -346,6 +346,88 @@ describe('store pack export', { timeout: 120_000 }, () => {
     expect((await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${solo}/store-pack/export-group`, headers: H, payload: { destination: dest } })).statusCode).toBe(409);
   });
 
+  it('report 48: a selection of the pack exports only those files, with their store folders and numbers, and renders only them', async () => {
+    const slug = await createPack(pack());
+    const r = await exportPack(slug, { formats: ['appstore-iphone-69@2', 'playstore-feature'] });
+    expect(r.statusCode, r.body).toBe(200);
+    const body = r.json() as { folder: string; written: string[]; failed: unknown[]; rendered?: Array<{ formats: string[] }> };
+    expect(body.failed).toEqual([]);
+    expect([...body.written].sort()).toEqual(['AppStore/iPhone-6.9/02-share-with-your-team.png', 'GooglePlay/feature-graphic.png']);
+    expect(tree(body.folder)).toEqual(['AppStore/iPhone-6.9/02-share-with-your-team.png', 'GooglePlay/feature-graphic.png', 'README.txt']);
+    // Only what is selected (and missing) is rendered.
+    expect(body.rendered?.flatMap((x) => x.formats).sort()).toEqual(['appstore-iphone-69@2', 'playstore-feature']);
+  });
+
+  it('report 48: a device left out of the selection is not counted against the store minimum', async () => {
+    const slug = await createPack(pack({ stores: ['playstore'], devices: { playstore: ['phone', 'feature'] }, preview: false }));
+    editBrief(slug, (b) => { b.formats = b.formats.filter((f) => f !== 'playstore-phone-9x16@2'); });
+    const only = (await exportPack(slug, { formats: ['playstore-feature'] })).json() as { written: string[]; failed: unknown[] };
+    expect(only).toMatchObject({ written: ['GooglePlay/feature-graphic.png'], failed: [] });
+    // With the device in the selection the store check stays.
+    const both = (await exportPack(slug, { formats: ['playstore-phone-9x16', 'playstore-feature'] })).json() as { failed: Array<{ file: string; reason: string }> };
+    expect(both.failed).toEqual([{ file: 'GooglePlay/Phone', reason: c().tooFewScreenshots({ count: 1, min: 2 }) }]);
+  });
+
+  it('report 48: the selection is multiplied by the languages asked', async () => {
+    const slug = await createPack(pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false }), { locales: { primary: 'en', extra: ['de'] } });
+    await env.app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}/versions/1/localizations/de/appstore-iphone-69`, headers: H, payload: { texts: { title: 'Hallo' } } });
+    const body = (await exportPack(slug, { formats: ['appstore-iphone-69'] })).json() as { written: string[]; failed: unknown[] };
+    expect([...body.written].sort()).toEqual(['AppStore/de/iPhone-6.9/01-all-your-tasks.png', 'AppStore/en/iPhone-6.9/01-all-your-tasks.png']);
+    expect(body.failed).toEqual([]);
+  });
+
+  it('report 48: a selection with a format that is not this pack\'s, or an empty one, is refused (400)', async () => {
+    const slug = await createPack(pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false }));
+    const got = await env.app.inject({ url: `/api/projects/acme/creatives/${slug}`, headers: H });
+    const brief = (got.json() as { creative: { brief: Record<string, unknown> & { formats: string[] } } }).creative.brief;
+    await env.app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}`, headers: H, payload: { brief: { ...brief, links: undefined, formats: [...brief.formats, 'playstore-tablet'] } } });
+    for (const formats of [['appstore-iphone-69', 'playstore-tablet'], ['playstore-feature'], ['../x'], []]) {
+      const r = await exportPack(slug, { formats });
+      expect(r.statusCode, JSON.stringify(formats)).toBe(400);
+    }
+    const r = await exportPack(slug, { formats: ['appstore-iphone-69', 'playstore-tablet'] });
+    expect(r.json().code).toBe('store-pack-foreign-format');
+    expect(readdirSync(dest)).toEqual([]);
+  });
+
+  it('report 48: a group\'s pack export takes the selection too, and refuses a format that is not the pack\'s', async () => {
+    const slug = await createPack(pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false }));
+    expect((await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/variants`, headers: H, payload: { count: 2 } })).statusCode).toBe(201);
+    const url = `/api/projects/acme/creatives/${slug}/store-pack/export-group`;
+    const r = await env.app.inject({ method: 'POST', url, headers: H, payload: { destination: dest, formats: ['appstore-iphone-69@2'] } });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json()).toMatchObject({ written: ['AppStore/iPhone-6.9/02-share-with-your-team.png'], failed: [] });
+    const bad = await env.app.inject({ method: 'POST', url, headers: H, payload: { destination: dest, formats: ['playstore-feature'] } });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().code).toBe('store-pack-foreign-format');
+  });
+
+  it('decision 1333: a group\'s pack files are the host\'s, whichever member asks, even when that member\'s brief lags behind', async () => {
+    const slug = await createPack(pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false }));
+    expect((await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/variants`, headers: H, payload: { count: 2 } })).statusCode).toBe(201);
+    // B's brief lags: it still has two screenshots while the host's pack has three.
+    const hostFile = join(env.store().dir(slug), 'creative.json');
+    const host = JSON.parse(readFileSync(hostFile, 'utf8')) as { brief: { formats: string[]; formatLabels?: Record<string, string>; storePack: StorePack & { instances?: string[] } } };
+    host.brief.formats.push('appstore-iphone-69@3');
+    host.brief.formatLabels = { ...host.brief.formatLabels, 'appstore-iphone-69@3': '3 · Third' };
+    host.brief.storePack.screenshots.push({ caption: 'Third', screen: null });
+    if (host.brief.storePack.instances) host.brief.storePack.instances.push('appstore-iphone-69@3');
+    writeFileSync(hostFile, JSON.stringify(host));
+    const member = JSON.parse(readFileSync(join(env.store().dir(`${slug}~b`), 'creative.json'), 'utf8')) as { brief: { formats: string[] } };
+    expect(member.brief.formats).not.toContain('appstore-iphone-69@3');
+    for (const asker of [slug, `${slug}~b`]) {
+      const r = await env.app.inject({ url: `/api/projects/acme/creatives/${asker}/store-pack/group-files`, headers: H });
+      expect(r.statusCode, r.body).toBe(200);
+      expect(r.json()).toEqual({ formats: ['appstore-iphone-69', 'appstore-iphone-69@2', 'appstore-iphone-69@3'], labels: { 'appstore-iphone-69': '1 · All your tasks', 'appstore-iphone-69@2': '2 · Share with your team', 'appstore-iphone-69@3': '3 · Third' } });
+    }
+    // The export takes that list as the pack's own: the third screenshot is accepted (not refused as foreign).
+    const r = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}~b/store-pack/export-group`, headers: H, payload: { destination: dest, formats: ['appstore-iphone-69@3'] } });
+    expect(r.statusCode, r.body).toBe(200);
+    // Outside a group: 409; not a pack: 409 not-store-pack.
+    const solo = await createPack(pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false }));
+    expect((await env.app.inject({ url: `/api/projects/acme/creatives/${solo}/store-pack/group-files`, headers: H })).statusCode).toBe(409);
+  });
+
   it('residual fix: a discarded variant\'s own pack export that would render is refused (409 variant-discarded)', async () => {
     const slug = await createPack(pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false, screenshots: [{ caption: 'One', screen: null }] }));
     expect((await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/variants`, headers: H, payload: { count: 2, baseFrom: { slug, version: 1 } } })).statusCode).toBe(201);

@@ -136,6 +136,16 @@ export function packSlotOf(p: StorePack, presets: readonly SizedPreset[] = DEFAU
 }
 
 /**
+ * Decision 1338: the files of a brief's store pack, in the brief's order: the pack's own instances (`packSlotOf`) whose slot has a
+ * place in the pack. The pack export (core) and its dialog (web) both take their list from here, so they never differ.
+ */
+export function packFileFormats(brief: { formats: readonly string[]; storePack?: StorePack | null }, presets: readonly SizedPreset[] = DEFAULT_FORMATS): string[] {
+  if (!brief.storePack) return [];
+  const slotOf = packSlotOf(brief.storePack, presets);
+  return brief.formats.filter((f) => slotOf.has(f) && isStorePackFormat(slotOf.get(f)!));
+}
+
+/**
  * The instances for `next`'s slots (Phase 14): a slot the pack already had (`current`: slot → instance) keeps its instance; a
  * new one takes its own id when free, else the next free instance of its preset (never an id in `taken`). `taken`: every id the
  * brief has now, without the ones being removed. `full`: the preset with no free instance left (20 are the most).

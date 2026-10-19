@@ -154,6 +154,7 @@ describe('Selezione finale (the chooser)', () => {
 
   it('no banner once something is chosen, nor while a variant works', async () => {
     group = groupOf(['a', 'b', 'c'], { picks: { 'tiktok-9x16': { slug: HOST, version: 2 } } });
+    localStorage.setItem(`ms.variantView.acme/${HOST}`, 'all'); // report 49: the cards' view (with a pick the page opens on "Scelte")
     const { unmount } = render(<Harness />);
     await screen.findByRole('toolbar', { name: 'Varianti' });
     await waitFor(() => expect(document.querySelectorAll('.ms-vcard').length).toBe(3));

@@ -150,3 +150,16 @@ export function flip(el: Element | null, from: DOMRect | null, ms: number = D.l)
     () => undefined,
   );
 }
+
+/**
+ * Report 50: a control that changes width (the top bar's Export widening for its progress, then shrinking back) moves from
+ * `fromWidth` to its laid-out width: it grows with a small spring (l), shrinks with the standard curve (m). Nothing when the
+ * width did not change, or under reduced motion.
+ */
+export function stretch(el: Element | null, fromWidth: number): Promise<void> {
+  if (!el) return Promise.resolve();
+  const to = el.getBoundingClientRect().width;
+  if (!to || Math.abs(to - fromWidth) < 1) return Promise.resolve();
+  const grows = to > fromWidth;
+  return anim(el, [{ width: `${fromWidth}px` }, { width: `${to}px` }], grows ? D.l : D.m, grows ? E.spring : E.std).then(() => undefined);
+}

@@ -207,3 +207,63 @@ export function readyToChoose(group: VariantGroup, missing: readonly VariantId[]
   if (active.some((m) => missing.includes(m.letter) || stateOf(m.letter) !== 'ready')) return null;
   return active.length;
 }
+
+// ---- Report 49: the "Scelte" view ------------------------------------------------------------------------------------------
+
+/** A format in the "Scelte" view: the variant and version it shows (null: no variant has it yet). */
+export interface ChosenCell { format: string; letter: VariantId | null; slug: string | null; n: number | null }
+
+/**
+ * The "Scelte" view of `formats` (the group's, in order): `chosen`, the formats with a pick (the group's ★: the plan's variant and
+ * version, the same source as "Selezione finale"); `open`, the others, with the variant and version the default rule takes (what
+ * the export copies), or none. Until the plan is read the stored picks stand in.
+ */
+export function chosenView(formats: readonly string[], group: VariantGroup, plan: ReadonlyArray<{ format: string; slug: string; letter: VariantId; version: number; source: 'pick' | 'default' }> | null): { chosen: ChosenCell[]; open: ChosenCell[] } {
+  const chosen: ChosenCell[] = [];
+  const open: ChosenCell[] = [];
+  for (const format of formats) {
+    if (plan) {
+      const p = plan.find((x) => x.format === format);
+      const cell = p ? { format, letter: p.letter, slug: p.slug, n: p.version } : { format, letter: null, slug: null, n: null };
+      (p?.source === 'pick' ? chosen : open).push(cell);
+      continue;
+    }
+    const pick = Object.hasOwn(group.picks, format) ? group.picks[format] : undefined;
+    const m = pick ? group.members.find((x) => x.slug === pick.slug && x.status === 'active') : undefined;
+    if (pick && m) chosen.push({ format, letter: m.letter, slug: m.slug, n: pick.version });
+    else open.push({ format, letter: null, slug: null, n: null });
+  }
+  return { chosen, open };
+}
+
+export type VariantView = 'chosen' | 'all';
+/** Where the view of a group's page is remembered: per group, under its host's slug, whichever member is open (decision 1336). */
+export const variantViewKey = (project: string, host: string): string => `ms.variantView.${project}/${host}`;
+
+/** The view the page opens on: the remembered one, else "Scelte" when the group has a pick; never "Scelte" without one. */
+export function readVariantView(project: string, host: string, hasPicks: boolean): VariantView {
+  if (!hasPicks) return 'all';
+  try { return localStorage.getItem(variantViewKey(project, host)) === 'all' ? 'all' : 'chosen'; } catch { return 'chosen'; }
+}
+export function writeVariantView(project: string, host: string, view: VariantView): void {
+  try { localStorage.setItem(variantViewKey(project, host), view); } catch { /* private mode */ }
+}
+
+/** The columns of the "Scelte" view: cells at least `CHOSEN_CELL × z` wide (never under CELL_MIN), as many as fit. */
+export const CHOSEN_CELL = 240;
+export function chosenColumns(inner: number, count: number, z: number): { cols: number; width: number } {
+  const min = Math.max(CELL_MIN, CHOSEN_CELL * z);
+  const cols = Math.max(1, Math.min(Math.max(count, 1), Math.floor((inner + CELL_GAP) / (min + CELL_GAP))));
+  return { cols, width: Math.min((inner - (cols - 1) * CELL_GAP) / cols, Math.max(min, CHOSEN_CELL)) };
+}
+
+/**
+ * Decision 1334: the zoom "Scelte" opens at: the widest of its sections (`count` boards) on one line of a viewport `viewWidth`
+ * px wide, rounded down to 5%, within `min`–100% (more boards than fit at `min` wrap). Null without boards or a viewport.
+ */
+export function fitChosen(count: number, viewWidth: number, min = 0.5): number | null {
+  if (count <= 0 || viewWidth <= 0) return null;
+  const inner = viewWidth - 2 * CARDS_PAD - 2 * CARD_PAD;
+  const z = ((inner + CELL_GAP) / count - CELL_GAP) / CHOSEN_CELL;
+  return Math.max(min, Math.min(1, Math.floor(z * 20 + 1e-9) / 20));
+}

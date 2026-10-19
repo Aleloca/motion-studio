@@ -263,7 +263,7 @@ export const api = {
   createStorePack: (slug: string, body: { title: string; storePack: StorePack; generate?: boolean }) =>
     request<{ slug: string; creative: CreativeFile; job: JobSummary | null }>('POST', `${p(slug)}/creatives/store-pack`, body),
   /** Exports the pack of version n (§4.3): written and failed files are relative to the pack folder. */
-  exportStorePack: (slug: string, creative: string, n: number, body: { destination: string; locales?: string[] }) =>
+  exportStorePack: (slug: string, creative: string, n: number, body: { destination: string; locales?: string[]; formats?: string[] }) =>
     request<StorePackExportResult>('POST', `${c(slug, creative)}/versions/${n}/store-pack/export`, body),
   getCreative: (slug: string, creative: string) => request<CreativeDetail>('GET', c(slug, creative)),
   updateCreative: (slug: string, creative: string, body: {
@@ -318,7 +318,10 @@ export const api = {
   exportGroup: (slug: string, creative: string, body: { destination: string; formats?: string[]; pattern?: string; date?: string } & LocaleOptions) =>
     request<GroupExportResult>('POST', `${c(slug, creative)}/export-group`, body),
   /** Phase 15: the store pack of a group, each format from the group selection. */
-  exportStorePackGroup: (slug: string, creative: string, body: { destination: string; locales?: string[] }) =>
+  /** Decision 1333: the files of a group's pack, from the host's brief (the one its pack export reads). */
+  storePackGroupFiles: (slug: string, creative: string) =>
+    request<{ formats: string[]; labels: Record<string, string> }>('GET', `${c(slug, creative)}/store-pack/group-files`),
+  exportStorePackGroup: (slug: string, creative: string, body: { destination: string; locales?: string[]; formats?: string[] }) =>
     request<StorePackExportResult>('POST', `${c(slug, creative)}/store-pack/export-group`, body),
   /**
    * What a ★ export renders first (Task 8): the same picks and followers as `exportPicks`; the jobs are started (or joined)
