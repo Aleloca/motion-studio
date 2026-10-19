@@ -389,6 +389,10 @@ arrives and worked on later together.
     User's decision: a gallery per store: one row per device with large thumbnails side by side, as on the canvas,
     scrolling sideways; a click on a thumbnail leaves it out (it dims), a checkbox only on the device (and the store);
     the whole pack visible on one screen.
+    Second round: the user saw the built gallery and still did not like it; five mockups were made (canvas artifact
+    "Export pacchetto store – varianti": A list + large grid, B full page, C contact sheet, D compact summary, E on the
+    canvas). User's decision: variant A. Left, stores and devices with counts (a click selects the device); right, the
+    selected device's files as large thumbnails, 4 per row, a click excludes one; footer with folder and export button.
     Timing: done together with 52–55 (user, after report 55).
 
 55. **Speaking names for formats.** The formats column lists the store pack's screenshots as 1–8: the user cannot tell
