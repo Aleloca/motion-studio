@@ -80,7 +80,7 @@ const inputs = {
   add_variant: z.strictObject({ direction: z.string().trim().min(3).max(MAX_DIRECTION_CHARS) }),
   variant: z.strictObject({ variant: letter }),
   set_pick: z.strictObject({ format: formatId, version, variant: letter.optional() }),
-  render_version: z.strictObject({ version, formats: z.array(formatId).min(1).max(100).optional() }),
+  render_version: z.strictObject({ version, formats: z.array(formatId).min(1).max(100).optional(), variant: letter.optional() }),
   prepare_export: z.strictObject({}),
 };
 
@@ -93,7 +93,11 @@ function parse<T>(schema: z.ZodType<T>, args: unknown): T {
   return r.data;
 }
 
-interface Scope { ref: CreativeRef; version: number; jobId: string }
+/**
+ * `group` (phase 3 of the single agent): the coordinator of the variant group of `ref` (its host); it has no version of its
+ * own, so "current" is refused and a version always names its variant. `helper`: a variant's turn run for a group turn.
+ */
+interface Scope { ref: CreativeRef; version: number; jobId: string; group: boolean; helper: boolean }
 
 export class AgentActionService {
   /** Calls so far, by job. */
@@ -102,6 +106,17 @@ export class AgentActionService {
   private readonly deferred = new Map<string, Deferred[]>();
   /** Turns started as the follow-up of new formats: they never start another one (depth 1). */
   private readonly followUps = new Set<string>();
+  /** Phase 3: the variants a group turn works on (its plan), which its coordinator may not discard meanwhile. */
+  private planOf: (jobId: string) => ReadonlySet<VariantId> = () => new Set();
+
+  /** Review M3: whether the user pointed to a variant in a group turn (a discard by its coordinator needs it). */
+  private pointedIn: (jobId: string, v: VariantId) => boolean = () => false;
+
+  /** Phase 3 of the single agent: see `planOf` and `pointedIn`. */
+  setGroupPlan(fn: (jobId: string) => ReadonlySet<VariantId>, pointed?: (jobId: string, v: VariantId) => boolean): void {
+    this.planOf = fn;
+    if (pointed) this.pointedIn = pointed;
+  }
 
   constructor(private readonly deps: AgentActionDeps) {
     deps.turns.onTurnSettled((ref, jobId, outcome) => this.settled(ref, jobId, outcome));
@@ -132,17 +147,23 @@ export class AgentActionService {
   /** The turn's scope; refused for any other job, and past the per-turn limit (the call counts even when it then fails). */
   private scopeOf(c: BridgeContext): Scope {
     const a: Readonly<AppScope> | undefined = c.appScope;
-    if (c.kind !== 'creative' || !a) throw new CodedError(403, t().errors.toolUnavailable, 'tool-unavailable');
+    if ((c.kind !== 'creative' && c.kind !== 'creative-group') || !a || (c.kind === 'creative-group') !== (a.group === true)) throw new CodedError(403, t().errors.toolUnavailable, 'tool-unavailable');
     const count = (this.calls.get(c.jobId) ?? 0) + 1;
     if (count > APP_ACTIONS_PER_TURN) throw new CodedError(429, t().agentActions.limit({ max: APP_ACTIONS_PER_TURN }), 'actions-limit');
     this.calls.set(c.jobId, count);
-    return { ref: { root: a.root, projectSlug: a.projectSlug, projectDir: a.projectDir, creativeSlug: a.creativeSlug }, version: a.version, jobId: c.jobId };
+    return { ref: { root: a.root, projectSlug: a.projectSlug, projectDir: a.projectDir, creativeSlug: a.creativeSlug }, version: a.version, jobId: c.jobId, group: a.group === true, helper: a.helper === true };
+  }
+
+  /** Phase 3: a helper's group-level actions are its coordinator's (spec §6, "Helper tools"). */
+  private notForHelper(s: Scope): void {
+    if (s.helper) throw new CodedError(409, t().agentActions.helperGroupAction, 'helper-group-action');
   }
 
   private store(s: Scope) { return new CreativeStore(s.ref.projectDir); }
   private variants(s: Scope) { return new VariantGroupService({ store: this.store(s), turns: this.deps.turns }); }
   private note(s: Scope, text: string, ref: CreativeRef = s.ref): Promise<void> {
-    return this.deps.turns.noteFromTurn(s.jobId, ref, { type: 'system', at: now(), level: 'info', text, origin: 'agent' });
+    // Phase 3: the coordinator's lines are the group's (no variant).
+    return this.deps.turns.noteFromTurn(s.jobId, ref, { type: 'system', at: now(), level: 'info', text, origin: 'agent', ...(s.group ? { group: true as const } : {}) });
   }
   private async labelOf(s: Scope): Promise<(id: string) => string> {
     const presets = await this.deps.presets();
@@ -173,6 +194,7 @@ export class AgentActionService {
   // The brief.
 
   private async updateBrief(s: Scope, a: z.infer<typeof inputs.update_brief>) {
+    this.notForHelper(s);
     const { before, after } = await this.deps.turns.briefFromAgent(s.ref, (current) => {
       const fields: BriefPatch['fields'] = {
         ...(a.durationSec !== undefined ? { durationSec: a.durationSec } : {}), ...(a.goal !== undefined ? { goal: a.goal } : {}),
@@ -192,14 +214,17 @@ export class AgentActionService {
     const kinds = Object.keys(sv.kinds) as Array<keyof BriefServices>;
     const changed = kinds.filter((k) => (before.services?.[k] ?? 'auto') !== (after.services?.[k] ?? 'auto'));
     if (changed.length > 0) lines.push(x.briefServices({ list: changed.map((k) => sv.summaryPart({ kind: sv.kinds[k], choice: sv.choices[after.services?.[k] ?? 'auto'] })).join(', ') }));
-    for (const line of lines) await this.note(s, `${line} · ${x.afterTurn}`);
+    // Phase 3: the coordinator's edit is the group's at once (a working variant takes it at its next turn).
+    for (const line of lines) await this.note(s, s.group ? line : `${line} · ${x.afterTurn}`);
     return {
       ok: true, brief: { durationSec: after.durationSec, goal: after.goal, message: after.message, notes: after.notes, services: after.services ?? {} },
-      note: `The brief changes when this turn ends${a.durationSec !== undefined ? `; this turn's output checks use durationSec ${after.durationSec ?? 'none'} from now on` : ''}. Services stay as they were for this turn.`,
+      note: s.group ? 'The group\'s brief is changed now for every variant that is not working; a working variant takes it at its next turn.'
+        : `The brief changes when this turn ends${a.durationSec !== undefined ? `; this turn's output checks use durationSec ${after.durationSec ?? 'none'} from now on` : ''}. Services stay as they were for this turn.`,
     };
   }
 
   private async addFormat(s: Scope, a: z.infer<typeof inputs.add_format>) {
+    this.notForHelper(s);
     const presets = await this.deps.presets();
     const preset = findPreset(presets, a.format);
     const x = t().agentActions;
@@ -210,12 +235,18 @@ export class AgentActionService {
       if (current.formats.some((f) => presetOf(f) === preset.id)) throw new CodedError(409, x.formatInBrief({ format: name }), 'format-in-brief');
       return { brief: { ...current, formats: [...current.formats, preset.id], ...(a.label ? { formatLabels: { ...current.formatLabels, [preset.id]: a.label } } : {}) } };
     });
+    // Phase 3 (review minor 7): the coordinator's add is the group's at once; the variants make it when they get work for it.
+    if (s.group) {
+      await this.note(s, x.formatAdded({ format: a.label ? `${name} (${a.label})` : name }));
+      return { ok: true, format: preset.id, note: `The format is in the group's brief now (a working variant takes it at its next turn). To make it, give the variants the user wants work with work_on_variants and formats ["${preset.id}"].` };
+    }
     this.defer(s, { kind: 'followUp', formats: [preset.id], what: name });
     await this.note(s, `${x.formatAdded({ format: a.label ? `${name} (${a.label})` : name })} · ${x.afterTurn}`);
     return { ok: true, format: preset.id, note: 'The format is in the brief when this turn ends; Motion Studio then makes it in a turn of its own (not this one): do not write its composition now.' };
   }
 
   private async duplicateFormat(s: Scope, a: z.infer<typeof inputs.duplicate_format>) {
+    if (s.group) throw new CodedError(403, t().errors.toolUnavailable, 'tool-unavailable');
     const brief = await this.briefNow(s);
     const label = await this.labelOf(s);
     if (!brief.formats.includes(a.format)) throw new CodedError(400, t().errors.formatNotInBrief({ format: label(a.format) }), 'format-not-in-brief');
@@ -226,6 +257,7 @@ export class AgentActionService {
   }
 
   private async addLanguage(s: Scope, a: z.infer<typeof inputs.add_language>) {
+    this.notForHelper(s);
     const ui = currentLocale();
     const tag = checkedLocale(a.locale, ui);
     const primary = a.primary !== undefined ? checkedLocale(a.primary, ui) : undefined;
@@ -241,6 +273,19 @@ export class AgentActionService {
       // Already one of the brief's languages: nothing to change, the translation still starts.
       return { fields: loc.extra.includes(tag) ? {} : { locales: { primary: loc.primary, extra: [...loc.extra, tag] } } };
     });
+    // Phase 3 (review minor 7): the coordinator has no turn to wait for: each idle variant with a version is translated now.
+    if (s.group) {
+      await this.note(s, x.languageAdded({ language: localeName(tag) }));
+      const r = await this.variants(s).resolve(s.ref);
+      const left: string[] = [];
+      for (const m of r.group ? r.group.members.filter((x2) => x2.status === 'active') : []) {
+        const mref = { ...s.ref, creativeSlug: m.slug };
+        const latest = (await this.store(s).readVersions(m.slug).catch(() => [])).at(-1)?.n;
+        if (latest === undefined) continue;
+        try { await this.deps.localize.start(mref, latest, { locales: [tag], ...(a.formats ? { formats: a.formats } : {}) }); } catch { left.push(upper(m.letter)); }
+      }
+      return { ok: true, locale: tag, note: left.length ? `The language is in the group's brief; the translation of ${left.join(', ')} could not start now (a variant at work): it can be asked again later.` : 'The language is in the group\'s brief; the translation of every variant with a version has started.' };
+    }
     this.defer(s, { kind: 'localize', locales: [tag], ...(a.formats ? { formats: a.formats } : {}), what: localeName(tag) });
     await this.note(s, x.languageAdded({ language: localeName(tag) }));
     return { ok: true, locale: tag, note: 'The language is in the brief when this turn ends; Motion Studio then starts its translation (a turn of its own).' };
@@ -250,6 +295,9 @@ export class AgentActionService {
   // Variants.
 
   private async addVariant(s: Scope, a: z.infer<typeof inputs.add_variant>) {
+    // Phase 3: a helper never adds variants (its coordinator does, once: `add_variants`); nor does the coordinator through this.
+    if (s.group) throw new CodedError(403, t().errors.toolUnavailable, 'tool-unavailable');
+    this.notForHelper(s);
     const direction = oneLine(a.direction);
     const svc = this.variants(s);
     const r = await svc.resolve(s.ref);
@@ -268,6 +316,11 @@ export class AgentActionService {
   }
 
   private async discardOrRestore(s: Scope, l: VariantId, action: 'discard' | 'restore') {
+    this.notForHelper(s);
+    // Phase 3: a variant with work in this group turn stays as it is until the turn is over.
+    if (s.group && this.planOf(s.jobId).has(l)) throw new CodedError(409, t().agentActions.variantInPlan({ letter: upper(l) }), 'variant-in-plan');
+    // Review M3: the coordinator discards only a variant the user pointed to (decision 979, as for work).
+    if (s.group && action === 'discard' && !this.pointedIn(s.jobId, l)) throw new CodedError(409, t().agentActions.discardNotPointed({ letter: upper(l) }), 'ask-which-variant');
     const svc = this.variants(s);
     if (action === 'discard') await svc.discard(s.ref, l);
     else await svc.restore(s.ref, l);
@@ -282,6 +335,9 @@ export class AgentActionService {
     const label = await this.labelOf(s);
     const x = t().agentActions;
     const self = r.group?.members.find((m) => m.slug === s.ref.creativeSlug);
+    // Phase 3: the coordinator names the variant and a saved version; a helper sets the ★ of its own variant only.
+    if (s.group && (a.variant === undefined || a.version === 'current')) throw new CodedError(400, x.groupPickNeedsVariant, 'invalid-request');
+    if (s.helper && a.variant !== undefined && self && a.variant !== self.letter) this.notForHelper(s);
     if (a.variant !== undefined && !r.group) throw new CodedError(409, t().errors.variantNoGroup, 'variant-no-group');
     const member = a.variant !== undefined ? r.group!.members.find((m) => m.letter === a.variant) : self;
     if (a.variant !== undefined && !member) throw new CodedError(404, t().errors.variantUnknown({ letter: upper(a.variant) }), 'variant-unknown');
@@ -305,6 +361,20 @@ export class AgentActionService {
     const x = t().agentActions;
     const label = await this.labelOf(s);
     const formats = a.formats ? a.formats.map(label).join(', ') : x.allFormats;
+    // Phase 3: the coordinator renders a variant's saved version; a creative turn renders its own versions only.
+    let target = s.ref;
+    if (a.variant !== undefined || s.group) {
+      if (a.variant === undefined || a.version === 'current') throw new CodedError(400, x.groupRenderNeedsVariant, 'invalid-request');
+      const r = await this.variants(s).resolve(s.ref);
+      const m = r.group?.members.find((x2) => x2.letter === a.variant);
+      if (!r.group) throw new CodedError(409, t().errors.variantNoGroup, 'variant-no-group');
+      if (!m) throw new CodedError(404, t().errors.variantUnknown({ letter: upper(a.variant) }), 'variant-unknown');
+      if (!s.group && m.slug !== s.ref.creativeSlug) this.notForHelper(s);
+      target = { ...s.ref, creativeSlug: m.slug };
+      const job = await this.renderNow(target, a.version, a.formats);
+      await this.note(s, x.renderStarted({ n: a.version, formats: `${upper(m.letter)} · ${formats}` }));
+      return { ok: true, jobId: job.id };
+    }
     if (a.version === 'current') {
       const what = x.renderQueued({ formats });
       this.defer(s, { kind: 'render', ...(a.formats ? { formats: a.formats } : {}), shown: formats, what });
@@ -326,6 +396,13 @@ export class AgentActionService {
   }
 
   private async prepareExport(s: Scope) {
+    // Phase 3: the coordinator has no turn of its own to wait for: the renders start now.
+    if (s.group) {
+      const count = await this.exportRenders(s.ref);
+      const x = t().agentActions;
+      await this.note(s, count === 0 ? x.exportNothing : x.exportRendering({ count }));
+      return { ok: true, renders: count };
+    }
     const what = t().agentActions.exportQueued;
     this.defer(s, { kind: 'export', what });
     await this.note(s, what);

@@ -25,6 +25,7 @@ import { assertAgentFolders, CodedError, WorkspaceError } from '../workspace-sto
 import { CreativeStore } from './creative-store.ts';
 import { CreativeSideStateStore } from './creative-side-state.ts';
 import { VariantGroupService } from './variant-group.ts';
+import { setHelperTag } from './group-conversation.ts';
 import { validateOutputs, type ValidationResult } from './output-contract.ts';
 import { confinedSha, copyVerified, earlierOutputDirs, followCheck, isConfinedFile, normalizeTargets, snapshotChanges, snapshotOutputs, versionDirReady, withoutCoreWrites, type FollowFailure } from './carry-over.ts';
 import { outputFileExists } from './format-summary.ts';
@@ -118,6 +119,22 @@ export interface CreativeRef { root: string; projectSlug: string; projectDir: st
 export { creativeJobKey };
 /** Decision 1153: a request sent to several variants at once: its one id and the variant whose turn may add variants. */
 export type FanoutTag = NonNullable<QueuedRequest['fanout']>;
+
+/**
+ * Phase 3 of the single agent: a variant's turn run as a helper of a group turn (spec §4.3). `request`: the user's message to
+ * the group (quoted in the helper's prompt for context; its instruction is the turn's message); `variant`: its id.
+ */
+export interface HelperOf { jobId: string; variant: VariantId; request: { text: string; pins: Pin[] } | null }
+/**
+ * Phase 3: where a grouped member's requests go when its group has one agent (`GroupTurnService`): a helper's leftover
+ * messages join the group's queue, and a member's own queue never starts by itself.
+ */
+export interface GroupRouter {
+  /** Whether `ref`'s group has one agent now. */
+  enabled(ref: CreativeRef): Promise<boolean>;
+  /** Puts `m` (sent to helper `ref` while it worked) into its group's queue, for the variant `variant`. */
+  queueForGroup(ref: CreativeRef, m: UserMessageInput, variant: VariantId): Promise<void>;
+}
 
 /** Phase 15: see `CreativeTurnService.setQueuedHook`. `hold`: the reason the request's turn waits with (null: none now). */
 export interface QueuedHook {
@@ -304,6 +321,10 @@ export class CreativeTurnService {
   private readonly turnDurations = new Map<string, number | null>();
   /** Decision 917: called when a creative turn settles (`onTurnSettled`). */
   private readonly settleHooks: TurnSettledHook[] = [];
+  /** Phase 3 of the single agent: the helpers of group turns, by job id, until they settle. */
+  private readonly helpers = new Map<string, HelperOf>();
+  /** Phase 3: see `GroupRouter` (set by the group turn service). */
+  private router: GroupRouter | null = null;
   constructor(private readonly deps: CreativeTurnDeps) {
     this.maxAttempts = deps.maxAttempts ?? 3;
     this.side = deps.sideState ?? new CreativeSideStateStore(null);
@@ -313,10 +334,21 @@ export class CreativeTurnService {
    * Starts a turn. `opts.formats`: the formats the request applies to (spec §2.5); formats outside the brief are dropped, a
    * follower stands for its primary, and none (or absent) means every primary. The other formats are carried unchanged.
    */
-  /** `opts.fanout`: the request was sent to several variants at once (decision 1153; see `QueuedRequest.fanout`). */
-  async start(ref: CreativeRef, message?: { text: string; pins: Pin[] }, opts: { formats?: string[]; hold?: JobWaitReason; fanout?: FanoutTag } = {}): Promise<JobSummary> {
-    return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), () => this.startLocked(ref, message, opts.formats, undefined, opts.hold, opts.fanout));
+  /**
+   * `opts.fanout`: the request was sent to several variants at once (decision 1153; see `QueuedRequest.fanout`). Phase 3 of
+   * the single agent: `opts.helper`, the turn is a helper of that group turn: `message` is the coordinator's instruction (no
+   * user entry is written: the user's message is the group's), every entry it writes carries `groupJobId`, and its group-level
+   * actions are refused.
+   */
+  async start(ref: CreativeRef, message?: { text: string; pins: Pin[] }, opts: { formats?: string[]; hold?: JobWaitReason; fanout?: FanoutTag; helper?: HelperOf } = {}): Promise<JobSummary> {
+    return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), () => this.startLocked(ref, message, opts.formats, undefined, opts.hold, opts.fanout, opts.helper));
   }
+
+  /** Phase 3 of the single agent: see `GroupRouter`. */
+  setGroupRouter(router: GroupRouter | null): void { this.router = router; }
+
+  /** Phase 3: the group turn job `jobId` is a helper of, or null. */
+  helperOf(jobId: string): HelperOf | null { return this.helpers.get(jobId) ?? null; }
 
   /**
    * Decision 1153 (review minor 10: derived from the turn, not from the run that started it): why turn `jobId` may not add a
@@ -778,7 +810,7 @@ export class CreativeTurnService {
     });
   }
 
-  private async startLocked(ref: CreativeRef, message: { text: string; pins: Pin[]; pinsVersion?: number } | undefined, formats: string[] | undefined, queued?: { clientId: string }, hold?: JobWaitReason, fanout?: FanoutTag): Promise<JobSummary> {
+  private async startLocked(ref: CreativeRef, message: { text: string; pins: Pin[]; pinsVersion?: number } | undefined, formats: string[] | undefined, queued?: { clientId: string }, hold?: JobWaitReason, fanout?: FanoutTag, helper?: HelperOf): Promise<JobSummary> {
     const store = new CreativeStore(ref.projectDir);
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     // Same check the queue does, but before touching the creative's files.
@@ -800,7 +832,10 @@ export class CreativeTurnService {
       : fanout && fanout.lead !== letterOfSlug(ref.creativeSlug) ? { lead: fanout.lead } : null;
     // Set before the job can run; forgotten when it settles (below, once it is enqueued) or when it is never enqueued.
     if (refusal) this.noAdd.set(jobId, refusal);
-    if (message) {
+    // Phase 3: a helper's entries carry its group turn from the first one on (the store stamps them); its message is the
+    // coordinator's instruction, never written as the user's.
+    if (helper) { this.helpers.set(jobId, helper); setHelperTag(ref.projectDir, ref.creativeSlug, helper.jobId); }
+    if (message && !helper) {
       // A queued request starts as a user entry with `mode: 'queued'`. One that was first written as a live message (it
       // arrived when the agent had finished) is not written twice, unless it was edited in the queue meanwhile.
       const written = queued && (await store.readConversation(ref.creativeSlug, { own: true })).some((e) => e.type === 'user' && e.clientId === queued.clientId
@@ -847,6 +882,7 @@ export class CreativeTurnService {
         ...(member ? { slot: { group: variantSlotGroup(ref, member.host), limit: MAX_RUNNING_VARIANTS, reason: 'variant-slot' as const } } : {}),
         // Phase 15: a turn of a variant run waits for the run's directions and paid-services card (`VariantFanout`).
         ...(holdReason ? { hold: holdReason } : {}),
+        ...(helper ? { parentJobId: helper.jobId, variant: helper.variant } : {}),
         // Final wave Q8 (Ruling U micro-race): a failed or cancelled turn pauses its queue HERE, before the job turns terminal,
         // not in `turnSettled` after it: a message arriving in between can no longer start the queue after a failure or Stop.
         run: async (signal, id) => {
@@ -870,6 +906,7 @@ export class CreativeTurnService {
     } catch (err) {
       this.live.delete(jobId);
       this.noAdd.delete(jobId);
+      if (helper) { this.helpers.delete(jobId); setHelperTag(ref.projectDir, ref.creativeSlug, null); }
       throw err;
     }
     void this.deps.queue.whenSettled(job.id).then((settled) => { this.noAdd.delete(job.id); return this.turnSettled(ref, job.id, settled?.state); });
@@ -1224,6 +1261,8 @@ export class CreativeTurnService {
             directEdit: kind === 'iteration' ? directEdit : undefined,
             keptDurations: kind === 'iteration' ? keptDurations : undefined,
             ...(variant ? { variant } : {}),
+            // Phase 3 of the single agent: a helper works on its variant for the coordinator, with the user's message quoted.
+            ...(this.helpers.get(jobId) ? { helper: { request: this.helpers.get(jobId)!.request } } : {}),
             // Decision 917: the agent's app actions (the `studio` server's tools), and a duration problem's way out (user note 6).
             appActions: this.deps.launcher.mcpActive(),
             ...(kind === 'fix' && durationOff ? { durationOff } : {}),
@@ -1245,7 +1284,7 @@ export class CreativeTurnService {
             // The brief as read at this turn's start (Task 7): a change from the chat applies from the next turn.
             services: effectiveServices({ services: turnServices }),
             // Decision 917: what the agent's app actions act on: this creative and the version this turn makes.
-            appScope: { root: ref.root, projectSlug: ref.projectSlug, projectDir: ref.projectDir, creativeSlug: slug, version: n },
+            appScope: { root: ref.root, projectSlug: ref.projectSlug, projectDir: ref.projectDir, creativeSlug: slug, version: n, ...(this.helpers.has(jobId) ? { helper: true } : {}) },
             // After the agent's events written so far, so the chat keeps its order.
             onWarning: (text) => {
               lastWrite = lastWrite.then(() => store.appendConversation(slug, { type: 'system', at: now(), level: 'warning', text }));
@@ -1890,7 +1929,8 @@ export class CreativeTurnService {
    * decision, so the answer is what really happens (fix round 1, I2): `delivered-pending` when a repair attempt carries it,
    * `queued-after-finish` when no attempt follows. Idempotent on `clientId` (Review Focus 3).
    */
-  async postMessage(ref: CreativeRef, input: UserMessageInput & { mode: 'live' | 'queued' }, opts: { fanout?: FanoutTag } = {}): Promise<MessageAnswer> {
+  /** `opts.bubble` (phase 3): the message went to several helpers at once: their entries share it as `fanout` (one bubble). */
+  async postMessage(ref: CreativeRef, input: UserMessageInput & { mode: 'live' | 'queued' }, opts: { fanout?: FanoutTag; bubble?: string } = {}): Promise<MessageAnswer> {
     const m = checkLiveMessage(input);
     // Phase 15: nothing is queued for a discarded variant (it cannot be working: a working variant cannot be discarded).
     if ((await this.memberOf(ref))?.self.status === 'discarded') throw new CodedError(409, t().errors.variantDiscardedTurn, 'variant-discarded');
@@ -1902,7 +1942,7 @@ export class CreativeTurnService {
       const live = this.liveOf(key);
       // Another job of the creative (a translation) takes no messages; with no job at all, the turn is over.
       if (!live) return this.queueRequest(ref, m, this.isActive(key) ? 'queued-unsupported' : 'queued-after-finish');
-      const step = await live.serial(() => this.liveMessage(ref, live, m));
+      const step = await live.serial(() => this.liveMessage(ref, live, m, opts.bubble));
       if (!('wait' in step)) return step;
       const f = await step.wait.final;
       if (f === 'dropped') throw new CodedError(409, t().live.notRunning, 'not-running');
@@ -1912,12 +1952,12 @@ export class CreativeTurnService {
     return answer;
   }
 
-  private async liveMessage(ref: CreativeRef, live: LiveTurn, m: UserMessageInput): Promise<MessageAnswer | { entry: ConversationEntry; wait: LiveMessage }> {
+  private async liveMessage(ref: CreativeRef, live: LiveTurn, m: UserMessageInput, bubble?: string): Promise<MessageAnswer | { entry: ConversationEntry; wait: LiveMessage }> {
     if (live.messages.length >= LIVE_LIMITS.perTurn) throw new CodedError(409, t().live.tooManyLive({ max: LIVE_LIMITS.perTurn }), 'limit');
     if (!live.caps.liveInput) return this.queueRequest(ref, m, 'queued-unsupported');
     if (live.phase === 'finalizing' || live.phase === 'ended') return this.queueRequest(ref, m, 'queued-after-finish');
     const store = new CreativeStore(ref.projectDir);
-    const entry: ConversationEntry = { type: 'user', at: now(), text: m.text, pins: m.pins, attachments: [], jobId: live.jobId, mode: 'live', clientId: m.clientId };
+    const entry: ConversationEntry = { type: 'user', at: now(), text: m.text, pins: m.pins, attachments: [], jobId: live.jobId, mode: 'live', clientId: m.clientId, ...(bubble ? { fanout: bubble } : {}) };
     await (live.write ? live.write(entry) : store.appendConversation(ref.creativeSlug, entry));
     const msg = newLiveMessage(m, 'live');
     live.messages.push(msg);
@@ -1958,6 +1998,17 @@ export class CreativeTurnService {
    */
   private async queueRequest(ref: CreativeRef, m: UserMessageInput, outcome: Exclude<LiveMessageOutcome, 'delivered-pending'>, o: { limit?: boolean; note?: boolean; fanout?: FanoutTag } = {}): Promise<MessageAnswer> {
     const store = new CreativeStore(ref.projectDir);
+    // Phase 3 of the single agent: what a helper could not take is the group's next request, for its variant.
+    const helperLive = this.liveOf(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug));
+    const helper = helperLive ? this.helpers.get(helperLive.jobId) : undefined;
+    if (helper && this.router) {
+      await this.router.queueForGroup(ref, m, helper.variant);
+      if (outcome === 'queued-after-finish' && o.note !== false) {
+        await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text: t().live.queuedAfterFinish });
+      }
+      this.changed(ref);
+      return { entry: this.queuedEntry({ clientId: m.clientId, text: m.text, pins: m.pins, at: now() }), outcome };
+    }
     const pinsVersion = m.pins.length > 0 ? await this.pinsBase(ref) : undefined;
     const item: QueuedRequest = { clientId: m.clientId, text: m.text, pins: m.pins, at: now(), ...(pinsVersion !== undefined ? { pinsVersion } : {}), ...(o.fanout ? { fanout: o.fanout } : {}) };
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
@@ -2074,6 +2125,8 @@ export class CreativeTurnService {
    */
   async maybeAutoRun(ref: CreativeRef): Promise<JobSummary | null> {
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
+    // Phase 3 of the single agent: a grouped member's queue never starts by itself (its requests are the group's).
+    if (this.router && await this.router.enabled(ref).catch(() => false)) return null;
     try {
       return await this.locks.run(key, async () => {
         if (this.isActive(key) || this.paused.has(key)) return null;
@@ -2095,6 +2148,10 @@ export class CreativeTurnService {
     if (live) live.phase = 'ended';
     this.live.delete(jobId);
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
+    // Phase 3 (review minor 5): a helper's entries are tagged until its turn is over; what runs after it (its after-turn
+    // actions, a follow-up turn) is no longer one of its steps.
+    const helper = this.helpers.get(jobId);
+    if (helper) setHelperTag(ref.projectDir, ref.creativeSlug, null);
     // Phase 15: whatever the outcome, a brief the group changed meanwhile applies now that the turn is over.
     await this.briefAfterJob(ref);
     // Decision 917: what the agent asked to do after its turn (duplicates, renders, a follow-up turn…), before the queue.
@@ -2102,6 +2159,8 @@ export class CreativeTurnService {
       await hook(ref, jobId, { state, savedVersion: live?.savedN ?? null, stopped: live?.stopped ?? false })
         .catch((err: Error) => console.warn(`Motion Studio: the actions after a turn of ${ref.creativeSlug} failed: ${err.message}`));
     }
+    // Phase 3: a helper's queue is the group's.
+    if (helper) { this.helpers.delete(jobId); return; }
     if (state !== 'succeeded' || !live?.savedVersion || live.stopped) { this.paused.add(key); return; }
     await this.maybeAutoRun(ref);
   }

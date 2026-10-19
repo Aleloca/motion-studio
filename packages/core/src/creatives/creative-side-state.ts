@@ -32,6 +32,22 @@ const pendingBriefSchema = z.object({
   at: z.iso.datetime(),
 });
 export type PendingBrief = z.infer<typeof pendingBriefSchema>;
+/**
+ * Phase 3 of the single agent, on a group's HOST only: the group's own state. `session`: the coordinator's Claude session
+ * (spec §4.2: resumed at each group turn; out of the agent's reach and out of git, like `stoppedSession`); `turn`: the group
+ * turn running now (cleared when it settles: one found at startup was cut by a restart); `queued`: the group's requests
+ * for after the current group turn (spec §8, the one composer's queue).
+ */
+const groupStateSchema = z.object({
+  session: z.object({ sessionId: z.string().min(1), at: z.iso.datetime() }).optional(),
+  /**
+   * Review minor 2: `request` is the turn's message until its run starts (`started`): a turn cut before (taken from the queue,
+   * or waiting for its lane) puts it back at the top of the queue at startup.
+   */
+  turn: z.object({ jobId: z.string().min(1), at: z.iso.datetime(), started: z.boolean().optional(), request: queuedRequestSchema.optional() }).optional(),
+  queued: z.array(queuedRequestSchema).optional(),
+});
+export type GroupSideState = z.infer<typeof groupStateSchema>;
 const recordSchema = z.object({
   schemaVersion: z.literal(1),
   queued: z.array(queuedRequestSchema).optional(),
@@ -43,13 +59,15 @@ const recordSchema = z.object({
   pendingMigration: z.literal(true).optional(),
   /** Phase 15: see `pendingBriefSchema`. */
   pendingBrief: pendingBriefSchema.optional(),
+  /** Phase 3 of the single agent: see `groupStateSchema`. */
+  group: groupStateSchema.optional(),
 });
 type SideRecord = z.infer<typeof recordSchema>;
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
 /** The item as the core keeps it: `bootId` is no longer stored (Ruling T is in memory now), a legacy one is dropped. */
-const clean = (q: QueuedRequest): QueuedRequest => ({ clientId: q.clientId, text: q.text, pins: q.pins, at: q.at, ...(q.pinsVersion !== undefined ? { pinsVersion: q.pinsVersion } : {}), ...(q.fanout ? { fanout: { id: q.fanout.id, lead: q.fanout.lead } } : {}) });
+const clean = (q: QueuedRequest): QueuedRequest => ({ clientId: q.clientId, text: q.text, pins: q.pins, at: q.at, ...(q.pinsVersion !== undefined ? { pinsVersion: q.pinsVersion } : {}), ...(q.fanout ? { fanout: { id: q.fanout.id, lead: q.fanout.lead } } : {}), ...(q.variants?.length ? { variants: [...q.variants] } : {}) });
 /** A remembered session is kept only when its id could be resumed (the same check as where the command line is built). */
 const validStopped = (s: StoppedSession | undefined): StoppedSession | undefined => (s && isSessionId(s.sessionId) ? s : undefined);
 
@@ -164,6 +182,7 @@ export class CreativeSideStateStore {
       if (queued?.length) next.queued = queued.map(clean);
       if (validStopped(stopped)) next.stoppedSession = stopped;
       if (rec.pendingBrief) next.pendingBrief = rec.pendingBrief;
+      if (rec.group) next.group = rec.group;
       await this.save(key, next);
       return { ...(next.queued ? { queued: next.queued } : {}), ...(next.stoppedSession ? { stoppedSession: next.stoppedSession } : {}) };
     });
@@ -184,6 +203,37 @@ export class CreativeSideStateStore {
       if (pending) next.pendingBrief = pendingBriefSchema.parse(pending); else delete next.pendingBrief;
       if (!pending && rec.pendingBrief === undefined) return;
       await this.save(key, next);
+    });
+  }
+
+  /** Phase 3 of the single agent: the group's own state, on its host (empty when none). */
+  async group(projectDir: string, host: string): Promise<GroupSideState> {
+    const key = await this.key(projectDir, host);
+    return this.lock.run(key, async () => {
+      const g = (await this.ensure(projectDir, host, key)).group ?? {};
+      return { ...g, ...(g.session && !isSessionId(g.session.sessionId) ? { session: undefined } : {}) };
+    });
+  }
+
+  /** Phase 3: read-modify-write of the group's state under the host's lock; `fn` returns the fields to change (`undefined` clears one). */
+  async updateGroup(projectDir: string, host: string, fn: (g: GroupSideState) => Partial<GroupSideState> | Promise<Partial<GroupSideState>>): Promise<GroupSideState> {
+    const key = await this.key(projectDir, host);
+    return this.lock.run(key, async () => {
+      const rec = await this.ensure(projectDir, host, key);
+      const cur = rec.group ?? {};
+      const patch = await fn(cur);
+      const merged: GroupSideState = { ...cur };
+      for (const k of Object.keys(patch) as Array<keyof GroupSideState>) {
+        if (patch[k] === undefined) delete merged[k];
+        else (merged as Record<string, unknown>)[k] = patch[k];
+      }
+      if (merged.queued) merged.queued = merged.queued.length > 0 ? merged.queued.map(clean) : undefined;
+      if (merged.queued === undefined) delete merged.queued;
+      const next: SideRecord = { ...rec };
+      const parsed = groupStateSchema.parse(merged);
+      if (Object.keys(parsed).length > 0) next.group = parsed; else delete next.group;
+      await this.save(key, next);
+      return parsed;
     });
   }
 

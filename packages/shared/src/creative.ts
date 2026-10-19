@@ -3,7 +3,7 @@ import { SERVICE_CHOICES } from './services.ts';
 import type { AgentEvent } from './events.ts';
 import { linkedCodebaseSchema } from './schemas.ts';
 import { identityBriefSchema, identitySetInfoSchema } from './identity.ts';
-import { usageSummarySchema } from './usage.ts';
+import { usageSummarySchema, type UsageSummary } from './usage.ts';
 import { INSTANCE_FOLDER_SOURCE, INSTANCE_ID_RE } from './format-instance.ts';
 import { storePackSchema } from './store-pack.ts';
 import { renderInfoSchema } from './export-quality.ts';
@@ -383,6 +383,11 @@ export const pinSchema = z.object({
    * SVG-edit model counts them) and the name the editor showed for it.
    */
   element: z.object({ path: z.string().max(120).regex(/^(?:\d{1,6}(?:\/\d{1,6})*)?$/), name: pinLabel(200) }).optional(),
+  /**
+   * Phase 3 of the single agent (spec §7, decision 1160): the variant the comment was placed on, set by the UI from the member
+   * on screen. The comments of a message name the variants it targets. Absent on older pins and outside a group.
+   */
+  variant: variantIdSchema.optional(),
 });
 export type Pin = z.infer<typeof pinSchema>;
 
@@ -407,6 +412,11 @@ export const queuedRequestSchema = z.object({
    * whose turn may add variants (the others are told not to). Kept with the queued request so a restart does not lose it.
    */
   fanout: z.object({ id: z.string().min(1).max(100), lead: variantIdSchema }).optional(),
+  /**
+   * Phase 3 of the single agent: a group request's explicit targets besides its comments' variants (a request queued for one
+   * variant before the group had one agent, moved into the group's queue with that variant).
+   */
+  variants: z.array(variantIdSchema).max(1000).optional(),
 });
 export type QueuedRequest = z.infer<typeof queuedRequestSchema>;
 
@@ -415,7 +425,30 @@ export type QueuedRequest = z.infer<typeof queuedRequestSchema>;
  * written for a member carries `variant`, the member's id (`a` for the host); absent on the entries of a creative outside
  * any group (and, from phase 3, on the coordinator's own).
  */
-export type ConversationEntry = ConversationEntryBody & { variant?: VariantId };
+export type ConversationEntry = ConversationEntryBody & {
+  variant?: VariantId;
+  /**
+   * Phase 3 of the single agent: an entry of the group itself, not of one variant: the coordinator's events and lines, the
+   * user's messages to the group, the `group-turn` entry. It never carries `variant` and no variant's own readers see it.
+   */
+  group?: true;
+  /** Phase 3: a helper's entry (a variant's turn run for a group turn): that group turn's job id (the chat folds it under it). */
+  groupJobId?: string;
+};
+/** Phase 3 of the single agent: how one variant's work in a group turn ended (the `group-turn` entry, spec §4.1). */
+export interface GroupTurnOutcome {
+  variant: VariantId;
+  /** The helper's job; absent when it could not start. */
+  jobId?: string;
+  /** The version it saved, or the latest one it kept (`kept`, decision 1060); null: none. */
+  version: number | null;
+  kept: boolean;
+  status: 'complete' | 'incomplete' | 'failed' | 'stopped' | 'unchanged';
+  /** Why it failed or did not start (the core's words). */
+  error?: string;
+  /** The coordinator's instruction for it (absent: its first generation); a Retry of the variant sends it again. */
+  instruction?: string;
+}
 type ConversationEntryBody =
   /**
    * Phase 13 (all optional, absent in older logs): `mode` says how a message sent while the agent worked was given
@@ -433,7 +466,12 @@ type ConversationEntryBody =
    * `keptVersion` (decision 1060): the turn ended without a version because no output changed; version `keptVersion` (the
    * latest) still holds its content. The turn's boundary, like a `version` entry, for the readers that look for one.
    */
-  | { type: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string; origin?: 'agent'; keptVersion?: number };
+  | { type: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string; origin?: 'agent'; keptVersion?: number }
+  /**
+   * Phase 3 of the single agent (spec §4.1): a group turn settled. `outcome`: per variant it worked on; `usage`: the turn's
+   * whole cost (the coordinator's runs and every helper's), when known. Written once, with `group: true`.
+   */
+  | { type: 'group-turn'; at: string; jobId: string; outcome: GroupTurnOutcome[]; stopped?: boolean; usage?: UsageSummary };
 
 /**
  * Decision 1066: where a conversation entry closes a turn with a version: a `version` entry (the version it saved), or the
@@ -446,7 +484,8 @@ type ConversationEntryBody =
  * inside a group (outside one, every entry is the creative's own).
  */
 export function entriesOfVariant(entries: readonly ConversationEntry[], letter: VariantId): ConversationEntry[] {
-  return entries.filter((e) => (e.variant ?? 'a') === letter);
+  // Phase 3: the group's own entries (the coordinator's) belong to no variant.
+  return entries.filter((e) => !e.group && (e.variant ?? 'a') === letter);
 }
 
 export function turnEndOf(e: ConversationEntry): { n: number; status: 'complete' | 'incomplete' | null; kept: boolean } | null {
@@ -483,7 +522,12 @@ export interface VariantListInfo { count: number; active: number; missing: Varia
  * `orphan`: a sister whose group cannot be found (spec §7), opened as a single creative with a notice.
  */
 export type VariantDetail =
-  | { orphan: false; host: string; letter: VariantId; group: VariantGroup; missing: VariantId[] }
+  | { orphan: false; host: string; letter: VariantId; group: VariantGroup; missing: VariantId[];
+    /**
+     * Phase 3 of the single agent: the group has one agent (the `singleAgent` setting): the composer sends to the group and
+     * the chat follows the group turn, whose job key is `groupJobKey`. Absent: the per-variant turns of phase 15.
+     */
+    single?: { groupJobKey: string } }
   | { orphan: true; host: string; letter: VariantId };
 /** A creative summary tagged with its project, for cross-project lists such as "Jump back in". */
 export type RecentCreative = CreativeSummary & { project: { slug: string; name: string } };

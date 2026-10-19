@@ -33,6 +33,7 @@ import { paidServicePlan, providerTools, voiceAvailability, voiceBatch } from '.
 import { VariantDirections } from '../creatives/variant-directions.ts';
 import { AgentActionService } from '../creatives/agent-actions.ts';
 import { VariantFanout } from '../creatives/variant-fanout.ts';
+import { COORDINATOR_LANE, GroupTurnService } from '../creatives/group-turn.ts';
 import { LocalizeService, ProjectActivity } from '../localization/localize-turn.ts';
 import type { LookupFn, Transport } from '../providers/safe-fetch.ts';
 import { checkCodebases, codebaseGlobCharsMessage, codebaseHasGlobChars, codebaseOverlapMessage, codebaseOverlaps, normalizeCodebaseList } from '../codebases.ts';
@@ -272,7 +273,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   let afterOtherJob: ((key: string, state: string) => void) | null = null;
   const queue = new JobQueue({
     // `export` (decision 974): an export waits for its renders without taking an agent turn's slot or the render lane.
-    concurrency: 2, lanes: { render: 1, generate: 2, export: 2 },
+    // `coordinator` (phase 3 of the single agent): a group turn waits for its helpers without taking the main slots they need;
+    // two at a time (review minor 4): with the main lane's default two, at most four Claude processes.
+    concurrency: 2, lanes: { render: 1, generate: 2, export: 2, [COORDINATOR_LANE]: 2 },
     onUpdate: (job) => {
       hub.broadcast({ type: 'job', job });
       if (job.kind === 'localize' && job.state !== 'queued' && job.state !== 'running') afterOtherJob?.(job.key, job.state);
@@ -751,12 +754,15 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     return out;
   });
 
-  // Phase 13 (spec §3): Stop and redirect, for creative and console turns.
+  /** Phase 3 of the single agent: the group turns (made below, with the variant services). */
+  let groupsRef: GroupTurnService | null = null;
+  // Phase 13 (spec §3): Stop and redirect, for creative and console turns (and, phase 3, group turns).
   app.post<{ Params: { id: string } }>('/api/jobs/:id/redirect', async (req): Promise<{ outcome: RedirectOutcome }> => {
     const body = parseLiveBody(req.body);
     const job = queue.list().find((j) => j.id === req.params.id);
     if (!job) throw new CodedError(404, t().errors.notFound, 'job-not-found');
     if (job.kind === 'creative') return turns.redirect(job.id, { clientId: body.clientId, text: body.text, pins: body.pins ?? [] });
+    if (job.kind === 'creative-group' && groupsRef) return groupsRef.redirect(job.id, { clientId: body.clientId, text: body.text, pins: body.pins ?? [] });
     if (job.kind === 'console') return consoleRedirect(job.id, body);
     throw new CodedError(409, t().live.redirectUnsupported, 'redirect-unsupported');
   });
@@ -787,7 +793,15 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     turns, queue, approvals, directions: variantDirections, settings: () => requireWorkspace().readSettings(), paidPlan: paidServicePlan({ vault, keyChecks }),
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
   });
-  registerCreativeRoutes(app, { requireWorkspace, turns, edits, renders, exports: new ExportJobService({ queue }), previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m), git: deps.git, variantRuns, jobs: () => queue.list(), trash: deps.trash ?? noTrash });
+  // Phase 3 of the single agent: a variant group's turns with one agent (the `singleAgent` setting).
+  const groups = new GroupTurnService({
+    queue, launcher, turns, approvals, ledger: usageLedger, broadcast: (msg) => hub.broadcast(msg),
+    settings: () => requireWorkspace().readSettings(), paidPlan: paidServicePlan({ vault, keyChecks }),
+    presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
+    model: async () => (await requireWorkspace().readSettings()).model,
+  });
+  groupsRef = groups;
+  registerCreativeRoutes(app, { requireWorkspace, turns, edits, renders, exports: new ExportJobService({ queue }), previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m), git: deps.git, variantRuns, groups, jobs: () => queue.list(), trash: deps.trash ?? noTrash });
   registerStorePackRoutes(app, { requireWorkspace, turns, renders, media });
 
   const routeCtx = { requireWorkspace, brand: brandService, media, git: deps.git, broadcast: (m: ServerMessage) => hub.broadcast(m), configDir };
@@ -819,6 +833,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     turns, edits, renders, localize, variantRuns,
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
   });
+  agentActions.setGroupPlan((jobId) => groups.planOf(jobId), (jobId, v) => groups.pointedIn(jobId, v));
   registerBridgeRoutes(app, {
     bridge, approvals,
     // The config folder holds the UI token and the bridge tokens: no permission prompt may open it.

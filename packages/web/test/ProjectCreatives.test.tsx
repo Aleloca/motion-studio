@@ -153,7 +153,7 @@ describe('ProjectCreatives cards', () => {
     en(<ProjectCreatives slug="acme" live={live()} />);
     const loop = await waitFor(() => { const c = card('Calder at night loop'); within(c).getByText('Render failed'); return c; });
     await userEvent.click(within(loop).getByRole('button', { name: 'Try again' }));
-    expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'loop', { text: 'Make the logo bigger', pins });
+    expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'loop', { text: 'Make the logo bigger', pins, direct: true });
   });
 
   it('tries again a comments-only turn (no text) with its pins', async () => {
@@ -170,7 +170,7 @@ describe('ProjectCreatives cards', () => {
     en(<ProjectCreatives slug="acme" live={live()} />);
     const loop = await waitFor(() => { const c = card('Calder at night loop'); within(c).getByText('Render failed'); return c; });
     await userEvent.click(within(loop).getByRole('button', { name: 'Try again' }));
-    expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'loop', { text: '', pins });
+    expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'loop', { text: '', pins, direct: true });
   });
 
   it('after two failures in a row, tries again the same user turn (not an empty one)', async () => {
@@ -190,7 +190,7 @@ describe('ProjectCreatives cards', () => {
     const loop = await waitFor(() => { const c = card('Calder at night loop'); within(c).getByText('Render failed'); return c; });
     await userEvent.click(within(loop).getByRole('button', { name: 'Try again' }));
     expect(api.sendCreativeTurn).toHaveBeenCalledTimes(1);
-    expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'loop', { text: 'Make it warmer' });
+    expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'loop', { text: 'Make it warmer', direct: true });
   });
 
   it('retries a failed regeneration without a message as an empty turn', async () => {

@@ -51,7 +51,7 @@ async function autoApprovable(ctx: BridgeRoutesContext, c: BridgeContext, toolNa
 /** The job conditions shared by Bash and Read: sandboxed job, setting on at start and now, no request to leave the sandbox. */
 async function sameConditions(ctx: BridgeRoutesContext, c: BridgeContext, input: Record<string, unknown>): Promise<boolean> {
   // A translation turn never gets anything approved by itself (Phase 12, fix I1), nor a directions turn (Phase 15).
-  if (c.kind === 'localize' || c.kind === 'variant-directions') return false;
+  if (c.kind === 'localize' || c.kind === 'variant-directions' || c.kind === 'creative-group') return false;
   if (c.sandboxed !== true || c.autoApproveAtStart !== true) return false;
   if (Object.hasOwn(input, 'dangerouslyDisableSandbox') && input.dangerouslyDisableSandbox !== false) return false;
   if (!ctx.settings) return false;
@@ -104,13 +104,33 @@ async function askUser(ctx: BridgeRoutesContext, c: BridgeContext, input: Record
     // Own string values only (review fix): a question text never reads a property of Object.prototype.
     items: questions.map((q) => {
       const a = answered && Object.hasOwn(answers, q.question) ? answers[q.question] : undefined;
-      return { header: q.header, question: q.question, ...(typeof a === 'string' ? { answer: a } : {}) };
+      const other = typeof a === 'string' ? userPartOf(a, q.options.map((o) => o.label)) : undefined;
+      return { header: q.header, question: q.question, ...(typeof a === 'string' ? { answer: a } : {}), ...(other ? { other } : {}) };
     }), ...linked,
   };
   // In the conversation as the question and its answer, never as a permission.
   try { c.emit(event); } catch { /* a faulty listener must not change the answer */ }
   if (answered) return { behavior: 'allow', updatedInput: { ...input, answers } };
   return { behavior: 'deny', message: decision === 'expired' ? t().approvals.questionExpired : decision === 'cancelled' ? denyMessage('cancelled') : t().approvals.questionSkipped };
+}
+
+/**
+ * Re-review of phase 3: the part of an answer the user wrote (the "Other" text), without the options the agent wrote. The
+ * answer joins the chosen labels and the user's text with ", " (`askUser` above); a label may hold ", " itself, so the
+ * longest run of parts that is a label goes first. Undefined when nothing is the user's own.
+ */
+export function userPartOf(answer: string, labels: readonly string[]): string | undefined {
+  const parts = answer.split(', ');
+  const own: string[] = [];
+  for (let i = 0; i < parts.length;) {
+    let j = parts.length;
+    while (j > i && !labels.includes(parts.slice(i, j).join(', '))) j--;
+    if (j > i) { i = j; continue; }
+    own.push(parts[i]!);
+    i++;
+  }
+  const text = own.join(', ').trim();
+  return text || undefined;
 }
 
 /** Calls from the `studio` MCP server: one per tool, authenticated by the job's bridge token. */
@@ -140,6 +160,9 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
       }
       // Never auto-approved, never "Always": a question card (user note 8).
       if (toolName === ASK_USER_QUESTION_TOOL) return askUser(ctx, c, input, linked);
+      // Phase 3 of the single agent: the coordinator only reads the project (allowed without a card) and asks; anything else is
+      // its helpers' work, refused without a card.
+      if (c.kind === 'creative-group') return { behavior: 'deny', message: t().approvals.coordinatorReadOnly };
       const auto = (await autoApprovable(ctx, c, a.tool_name, input)) ? { tool: 'Bash', shown: input.command as string }
         : (await autoApprovableRead(ctx, c, a.tool_name, input)) ? { tool: 'Read', shown: input.file_path as string }
           : null;
@@ -184,6 +207,19 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
     submit_localization: async (c, a) => {
       if (!c.submitLocalization) throw new WorkspaceError(400, t().errors.toolUnavailable);
       return c.submitLocalization(a);
+    },
+    // Phase 3 of the single agent: the coordinator's own tools, bound to its group turn (MCP_TOOLS and the handlers).
+    list_variants: async (c, a) => {
+      if (c.kind !== 'creative-group' || !c.groupTools) throw new WorkspaceError(403, t().errors.toolUnavailable);
+      return c.groupTools.listVariants(a);
+    },
+    work_on_variants: async (c, a) => {
+      if (c.kind !== 'creative-group' || !c.groupTools) throw new WorkspaceError(403, t().errors.toolUnavailable);
+      return c.groupTools.workOnVariants(a);
+    },
+    add_variants: async (c, a) => {
+      if (c.kind !== 'creative-group' || !c.groupTools) throw new WorkspaceError(403, t().errors.toolUnavailable);
+      return c.groupTools.addVariants(a);
     },
     // Phase 15: only a `variant-directions` job has it (MCP_TOOLS, checked below for every tool, and the handler itself).
     submit_variant_directions: async (c, a) => {

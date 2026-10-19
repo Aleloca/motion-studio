@@ -255,6 +255,8 @@ describe('a turn that changes no output (decision 1060)', () => {
   });
 
   it('in a variant group each variant is judged on its own outputs', async () => {
+    // The per-variant turns of phase 15 (the group's single agent off).
+    await app.inject({ method: 'PUT', url: '/api/settings', payload: { singleAgent: false } });
     const slug = await create(false);
     expect((await app.inject({ method: 'POST', url: `${P}/${slug}/variants`, payload: { count: 2, directions: ['Calmo', 'Ironico'] } })).statusCode).toBe(201);
     expect((await app.inject({ method: 'POST', url: `${P}/${slug}/variants/run`, payload: { targets: ['a', 'b'], request: null } })).statusCode).toBe(202);

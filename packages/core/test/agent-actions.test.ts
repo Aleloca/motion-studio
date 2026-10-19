@@ -314,6 +314,8 @@ describe('variants', () => {
   });
 
   it('decision 1153: a message sent to several variants adds a variant once (the first target only), not once per variant (report 32)', async () => {
+    // The per-variant turns of phase 15 (the group's single agent off).
+    await app.inject({ method: 'PUT', url: '/api/settings', payload: { singleAgent: false } });
     const slug = await create(false);
     expect((await app.inject({ method: 'POST', url: `${P}/${slug}/variants`, payload: { count: 3, directions: ['Uno', 'Due', 'Tre'] } })).statusCode).toBe(201);
     const sent = await app.inject({ method: 'POST', url: `${P}/${slug}/variants/run`, payload: { targets: 'all-active', request: { text: 'Crea una nuova variante' } } });
@@ -335,6 +337,8 @@ describe('variants', () => {
 
 describe('decision 1153 kept across a restart (review minor 10)', () => {
   it('a working variant\'s queued share of a fan-out keeps its lead and request id on disk; when it starts it does not add variants', async () => {
+    // The per-variant turns of phase 15 (the group's single agent off).
+    await app.inject({ method: 'PUT', url: '/api/settings', payload: { singleAgent: false } });
     const slug = await create(false);
     expect((await app.inject({ method: 'POST', url: `${P}/${slug}/variants`, payload: { count: 2, directions: ['Uno', 'Due'] } })).statusCode).toBe(201);
     expect((await app.inject({ method: 'POST', url: `${P}/${slug}~b/turns`, payload: { text: 'Prima' } })).statusCode).toBe(202);

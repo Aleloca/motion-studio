@@ -167,3 +167,7 @@ input.ms-palette-input::placeholder { color: var(--faint); }
 .ms-titlebar.ms-tb-overlay { padding-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, calc(100vw - 138px)) + 14px); }
 /* Screens without a top bar (boot, Pairing; DragStrip.tsx): an empty strip as tall as the bar, only to move the window. */
 .ms-drag-strip { position: fixed; top: 0; left: 0; right: 0; height: 52px; z-index: 30; }
+/* Phase 5 of the single agent: a group turn's helpers, one child row per variant under its row. */
+.ms-activity-parent { flex-wrap: wrap; }
+.ms-activity-children { list-style: none; margin: 0 0 0 22px; padding: 0; flex: 1 0 100%; min-width: 0; max-width: calc(100% - 22px); }
+.ms-activity-child .ms-activity-text b { font-weight: 600; }

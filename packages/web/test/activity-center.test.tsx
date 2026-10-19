@@ -173,3 +173,37 @@ describe('versionsByJob (decision 1066)', () => {
     expect(versionsByJob(entries)).toEqual({ ja: { n: 2, status: 'incomplete' }, jb: { n: 4, status: 'complete' } });
   });
 });
+
+describe('Activity center · one agent per variant group (phase 5 of the single agent)', () => {
+  const g = (over: Partial<JobSummary> = {}) => job({ id: 'g1', key: 'group:creative:/w:acme:lancio', kind: 'creative-group', label: 'Lancio estivo · agent', state: 'running', finishedAt: undefined, groupPhase: 'helpers', ...over });
+  const helper = (letter: string, over: Partial<JobSummary> = {}) => job({ id: `h${letter}`, key: `creative:/w:acme:${letter === 'a' ? 'lancio' : `lancio~${letter}`}`, label: 'Creative · Lancio estivo', state: 'running', finishedAt: undefined, parentJobId: 'g1', variant: letter, ...over });
+
+  it('a group turn is one row, with one child row per helper under it; it links to the host', () => {
+    en(live([g(), helper('b'), helper('c', { state: 'queued', waitReason: 'variant-slot' })], { hb: [{ kind: 'progress', text: 'Ingrandisco il titolo' }] }), 'running');
+    const list = screen.getAllByRole('list')[0]!;
+    const top = [...list.children];
+    expect(top).toHaveLength(1);
+    expect(top[0]!.textContent).toContain('Lancio estivo · agent');
+    expect(within(list).getAllByRole('link')[0]!.getAttribute('href')).toBe('#/p/acme/c/lancio');
+    const children = within(top[0] as HTMLElement).getAllByRole('listitem');
+    expect(children.map((c) => c.textContent)).toEqual([
+      expect.stringContaining('· B'), expect.stringContaining('· C'),
+    ]);
+    expect(children[0]!.textContent).toContain('Ingrandisco il titolo');
+    expect(children[1]!.textContent).toContain('queued: two variants already working');
+    expect(jobPlace(g())).toEqual({ project: 'acme', creative: 'lancio' });
+  });
+
+  it('a finished group turn says what each variant did, from its group-turn entry', async () => {
+    api.getConversation.mockResolvedValue([
+      { type: 'group-turn', at, jobId: 'g1', group: true, outcome: [
+        { variant: 'b', jobId: 'hb', version: 4, kept: false, status: 'complete' },
+        { variant: 'c', jobId: 'hc', version: 2, kept: true, status: 'unchanged' },
+      ] },
+    ]);
+    en(live([g({ state: 'succeeded', finishedAt: at }), helper('b', { state: 'succeeded', finishedAt: at }), helper('c', { state: 'succeeded', finishedAt: at })]));
+    expect(await screen.findByText('Worked on: B (v4), C (no change, v2)')).toBeTruthy();
+    // The helpers are folded under it, not rows of their own.
+    expect([...screen.getAllByRole('list')[0]!.children]).toHaveLength(1);
+  });
+});

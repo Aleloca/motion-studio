@@ -42,7 +42,7 @@ import { CompareDialog } from './CompareDialog.tsx';
 import { channelOf, lastStep } from './creativeState.ts';
 import { ExportDialog, type ExportSnapshot } from './ExportDialog.tsx';
 import { activatesControl, bare, inOverlay, isTyping } from './keys.ts';
-import { pinsKey, usePendingPins } from './pendingPins.ts';
+import { useChatPins } from './pendingPins.ts';
 import { LanguagesButton } from './creative/LanguagesButton.tsx';
 import { creativeLocales } from './creative/languagesModel.ts';
 import { LocaleOutline, LocaleSwitcher } from './creative/LocaleSwitcher.tsx';
@@ -194,7 +194,8 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   const pinSource = detail ? detail.creative.resumeFrom?.version ?? latest?.n ?? null : null;
   // Comments go on the file the pin source has for this format (a follower: its primary's).
   const canComment = version !== null && (Boolean(out) || comp !== null) && entryAt(versions, states[source.format], pinSource) === version.n;
-  const [stored, setStored] = usePendingPins(pinsKey(slug, creative));
+  // Phase 3 of the single agent: in a group with one agent the pending comments are the group's (each with its variant).
+  const { stored, setStored, others: otherPins, drop: dropPins } = useChatPins(slug, creative, groupChat.pinScope);
   const sourcePins = useMemo(() => stored.flatMap((p, i) => (p.version === pinSource ? [{ pin: p.pin, at: i }] : [])), [stored, pinSource]);
   const pins = useMemo(() => sourcePins.map((p) => p.pin), [sourcePins]);
   const marks = useMemo<Mark[]>(() => pins.map((pin, i) => ({ pin, number: i + 1 })).filter((m) => m.pin.format === format), [pins, format]);
@@ -487,7 +488,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   // Chat callbacks are stable: the panel re-renders only when the conversation or the comments change.
   const onEditChip = useCallback((i: number) => openPinRef.current(i + 1), []);
   const formatLabel = useCallback((id: string) => boardLabel({ id, preset: presetFor(presets, id), out: null, labels }, locale), [presets, locale, labels]);
-  const onSent = useCallback(({ pins: sent }: { pins: Pin[] }) => { setStored((ps) => ps.filter((p) => !sent.includes(p.pin))); setViewing({}); reload(); }, [setStored, reload]);
+  const onSent = useCallback(({ pins: sent }: { pins: Pin[] }) => { dropPins(sent); setViewing({}); reload(); }, [dropPins, reload]);
   // "View vN" of a version card: this format's file as it was in vN.
   const onSelectVersion = useCallback((v: number) => {
     const entry = entryAt(versions, states[source.format], v);
@@ -507,7 +508,9 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
     // In the editor of one format, a change applies to that format unless the user widens it.
     fallback: primaries.includes(source.format) ? [source.format] : null,
   } : undefined), [versions.length, primaries.join(','), states, formatLabel, source.format]); // eslint-disable-line react-hooks/exhaustive-deps
-  const chatLive = useMemo(() => (job ? live.events[job.id] ?? [] : []), [job, live.events]);
+  // Phase 3 of the single agent: the chat follows the group's turn (the composer sends to the group).
+  const chatJob = groupChat.single ? groupChat.groupJob : job;
+  const chatLive = useMemo(() => (chatJob ? live.events[chatJob.id] ?? [] : []), [chatJob, live.events]);
 
   const [compare, setCompare] = useState<{ open: boolean; init: [number, number] } | null>(null);
   /** Compare (the badge): the version on screen against the entry before it in the format's history. */
@@ -770,8 +773,9 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
       <aside className="ms-fv-side ms-fv-panel" aria-label={c.panel} data-part="r">
         <div className="ms-tabs ms-panel ms-fv-tabs"><span className="ms-tab ms-on">{f.chat}</span></div>
         {detail ? (
-          <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={job} live={chatLive}
+          <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={chatJob} live={chatLive}
                 self={groupChat.self} memberJobs={groupChat.memberJobs}
+                single={groupChat.single} otherPins={otherPins} onRemoveOtherPin={(p) => dropPins([p])}
             pins={pins} onRemovePin={removePin} onEditPin={onEditChip} formatName={formatLabel}
             canGenerate={versions.length === 0} onSent={onSent} onSelectVersion={onSelectVersion} snapshots={live.snapshots} appliesTo={appliesTo}
             brief={detail.creative.brief} onBriefSaved={reload} queued={detail.creative.queued} onQueueChanged={reload}

@@ -34,7 +34,11 @@ export type AgentEvent =
    * User note 8: what became of the agent's `AskUserQuestion` (a question card, never a permission). `answered`: each item
    * has the answer the agent received; `deny` (the user chose not to answer), `expired`, `cancelled`: no answers.
    */
-  | { kind: 'question_answered'; outcome: 'answered' | 'deny' | 'expired' | 'cancelled'; items: Array<{ header: string; question: string; answer?: string }>; toolUseId?: string }
+  /**
+   * `other` (re-review of phase 3): the part of `answer` the user wrote themselves (the "Other" text), not one of the options
+   * the agent wrote. Absent: the answer is only the agent's options (or none).
+   */
+  | { kind: 'question_answered'; outcome: 'answered' | 'deny' | 'expired' | 'cancelled'; items: Array<{ header: string; question: string; answer?: string; other?: string }>; toolUseId?: string }
   /**
    * `cumulativeCostUsd` is Claude Code's `total_cost_usd`: CUMULATIVE over a resumed session, never this run's cost
    * (that is the final `usage` event, re-emitted by the core with per-run values). Older stored events may carry it as `costUsd`.
@@ -78,7 +82,8 @@ export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelle
 /** What a job does: logic and the UI branch on this, never on the (localized) label. */
 /** `localize` (Phase 12): an agent turn that translates an existing version (overlays only, no new version). */
 /** `variant-directions` (Phase 15): the short agent turn that proposes the missing directions of a variant group (no file written). */
-export type JobKind = 'creative' | 'brand-analysis' | 'asset-description' | 'console' | 'render' | 'asset-generation' | 'localize' | 'variant-directions' | 'export';
+/** `creative-group` (phase 3 of the single agent): a variant group's turn: the coordinator, its helpers, its closing message. */
+export type JobKind = 'creative' | 'brand-analysis' | 'asset-description' | 'console' | 'render' | 'asset-generation' | 'localize' | 'variant-directions' | 'export' | 'creative-group';
 
 /**
  * An export job (decision 974, user report 20): the export runs in the background, so the dialog may close. `stage`
@@ -150,6 +155,11 @@ export interface JobSummary {
   waitReason?: JobWaitReason;
   /** Export jobs (decision 974): progress, then the files written. */
   export?: ExportJobInfo;
+  /** Phase 3 of the single agent: a helper's group turn (the variant's turn it runs for, spec §5 "Queue mechanics"). */
+  parentJobId?: string;
+  /** Phase 3: a helper's variant id, or a group turn's phase (`coordinator`, `helpers`, `report`). */
+  variant?: string;
+  groupPhase?: 'coordinator' | 'confirm' | 'helpers' | 'report';
 }
 
 /** `question` (user note 8): the agent's `AskUserQuestion`, answered with the options or a text; never "Always". */

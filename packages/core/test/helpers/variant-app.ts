@@ -40,7 +40,7 @@ export interface VariantApp {
 export const variantBrief = { goal: 'Lancio app', message: 'Scarica oggi', formats: ['instagram-post-1x1', 'web-banner-300x250'], durationSec: 10, assets: [], notes: '' };
 const P = '/api/projects/acme/creatives';
 
-export async function variantApp(o: { keys?: Record<string, string>; settings?: Record<string, unknown>; approvalTimeoutMs?: number; trash?: (p: string) => Promise<void> } = {}): Promise<VariantApp> {
+export async function variantApp(o: { keys?: Record<string, string>; settings?: Record<string, unknown>; approvalTimeoutMs?: number; trash?: (p: string) => Promise<void>; claudeVersion?: string } = {}): Promise<VariantApp> {
   const base = await mkdtemp(join(tmpdir(), 'ms-variants-'));
   const runner = new ControlledRunner();
   const bridge = new AgentBridge();
@@ -56,7 +56,7 @@ export async function variantApp(o: { keys?: Record<string, string>; settings?: 
   const app = await buildServer({
     agentContract: 'media', uiToken: null, sandbox: async () => ({ available: false, reason: 'test' }),
     appConfig: new AppConfigStore(join(base, 'config')), configDir: join(base, 'config'), git: new Git(), runner,
-    doctor: async () => [], claudeVersion: async () => '2.1.0', bridge, approvals,
+    doctor: async () => [], claudeVersion: async () => o.claudeVersion ?? '2.1.0', bridge, approvals,
     mcpCommand: [process.execPath, join(base, 'never-started-mcp.mjs')],
     vault: new MemoryVault(o.keys ?? {}),
     ...(o.trash ? { trash: o.trash } : {}),
@@ -64,7 +64,9 @@ export async function variantApp(o: { keys?: Record<string, string>; settings?: 
   });
   await app.inject({ method: 'PUT', url: '/api/workspace', payload: { path: join(base, 'ws') } });
   await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Acme' } });
-  if (o.settings) await app.inject({ method: 'PUT', url: '/api/settings', payload: o.settings });
+  // Phase 3 of the single agent: these tests drive the per-variant turns of phase 15 (the group's single agent off), unless a
+  // test turns it on (`settings.singleAgent`).
+  await app.inject({ method: 'PUT', url: '/api/settings', payload: { singleAgent: false, ...o.settings } });
   const jobs = async () => (await app.inject('/api/jobs')).json() as JobSummary[];
   return {
     app, runner, approvals, base, projectDir: join(base, 'ws', 'acme'), fetches,

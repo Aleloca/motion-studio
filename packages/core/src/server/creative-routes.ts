@@ -3,7 +3,7 @@ import { recoverRenameJournal } from '../library/rename-recovery.ts';
 import { lstat, readdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, join, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { DEFAULT_EXPORT_QUALITY, EXPORT_QUALITIES, isDefaultProfile, EXPORT_RESOLUTIONS, type ExportQuality, type RenderProfile, type VersionEntry, messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow, hostOf, isVariantId, letterOfSlug, MAX_NEW_VARIANTS, variantIdSchema, type VariantDetail, type VariantId } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_QUALITY, EXPORT_QUALITIES, isDefaultProfile, EXPORT_RESOLUTIONS, type ExportQuality, type RenderProfile, type VersionEntry, messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow, activeMembers, hostOf, isVariantId, letterOfSlug, MAX_NEW_VARIANTS, variantIdSchema, type VariantDetail, type VariantId } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
@@ -23,6 +23,7 @@ import { MAX_DIRECTION_CHARS, VariantGroupService } from '../creatives/variant-g
 import { localeAssetsCheck, prepareExportRenders } from '../creatives/export-prepare.ts';
 import { exportGroup, itemOfPlan, pendingByMember, planGroupExport, renderGroupLocales, resolveGroupLocalized, withGroupProfile, type GroupPlanItem } from '../creatives/variant-export.ts';
 import type { VariantFanout } from '../creatives/variant-fanout.ts';
+import { groupJobKey, recoverGroupTurns, type GroupTurnService } from '../creatives/group-turn.ts';
 import { withLazyHashes } from '../creatives/output-hashes.ts';
 import { CreativeRemoval } from '../creatives/creative-removal.ts';
 import type { TrashFn } from '../trash.ts';
@@ -70,6 +71,8 @@ export interface CreativeRoutesContext {
   git?: Git;
   /** Phase 15: starts variants (`POST …/variants/run`): directions turn, then the fan-out. */
   variantRuns: VariantFanout;
+  /** Phase 3 of the single agent: a variant group's turns with one agent (absent: the per-variant turns of phase 15). */
+  groups?: GroupTurnService;
   /** Decision 915: the job queue now (archive and delete are refused while a job of the creative is queued or running). */
   jobs: () => JobSummary[];
   /** Decision 915: where a deleted creative's folder goes (the desktop's Electron Trash, the CLI's own; none: refused). */
@@ -79,7 +82,11 @@ export interface CreativeRoutesContext {
 const isInsideDir = (p: string, base: string | null) => Boolean(base && p.startsWith(base.endsWith(sep) ? base : base + sep));
 
 /** `formats`: the formats the request applies to (spec §2.5); absent or empty: all of them. */
-export const turnBodySchema = z.object({ text: z.string().max(10_000).optional(), pins: z.array(pinSchema).max(50).optional(), formats: z.array(z.string().min(1).max(200)).max(100).optional() });
+/**
+ * `direct` (phase 3 of the single agent, decision 1145): a UI action that already names its variant (a failed variant's
+ * Retry): the variant's own turn even in a group with one agent.
+ */
+export const turnBodySchema = z.object({ text: z.string().max(10_000).optional(), pins: z.array(pinSchema).max(50).optional(), formats: z.array(z.string().min(1).max(200)).max(100).optional(), direct: z.literal(true).optional() });
 const createBody = z.object({ title: z.string(), brief: briefWriteSchema, generate: z.boolean().optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
 // `services` alone changes only that field of the stored brief (the composer's Services chip); `brief` replaces the brief.
 // `formatLabels` / `formats` alone merge into the stored brief the same way (Phase 12: inline labels, reorder, removal).
@@ -291,6 +298,13 @@ export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: st
     await new CreativeStore(dir).recoverInterrupted((slug) => isJobActive(creativeJobKey(ws.root, p.slug, slug)), remember).catch((err: Error) => {
       console.warn(`Motion Studio: creative recovery failed in project ${p.slug}: ${err.message}`);
     });
+    // Phase 3 of the single agent: a group turn the restart cut is said in its group's chat (its helpers were recovered above).
+    if (side) {
+      const slugs = (await new CreativeStore(dir).listAll().catch(() => [])).filter((c) => c.ok).map((c) => c.slug);
+      await recoverGroupTurns(dir, slugs, side, (slug) => isJobActive(groupJobKey(ws.root, p.slug, slug))).catch((err: Error) => {
+        console.warn(`Motion Studio: group turn recovery failed in project ${p.slug}: ${err.message}`);
+      });
+    }
     // Phase 15 (deferred 51): a group's brief kept for a variant that was working when the app stopped is applied now, not
     // only at that variant's next job (its brief would otherwise stay behind the group's until then).
     if (side && ro.applyPendingBrief) {
@@ -354,7 +368,9 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     if (!r.group) return undefined;
     const letter = r.group.members.find((m) => m.slug === slug)?.letter ?? 'a';
     const missing = r.group.members.filter((m) => r.missing.includes(m.slug)).map((m) => m.letter);
-    return { orphan: false, host: r.host.creativeSlug, letter, group: r.group, missing };
+    const { store: _s, ...plain } = ref;
+    const single = ctx.groups && await ctx.groups.enabled(plain) ? { single: { groupJobKey: groupJobKey(ref.root, ref.projectSlug, r.host.creativeSlug) } } : {};
+    return { orphan: false, host: r.host.creativeSlug, letter, group: r.group, missing, ...single };
   };
 
   app.get('/api/formats', async () => catalog().load());
@@ -458,9 +474,13 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir, versions: await ref.store.readVersions(ref.creativeSlug),
       onBackgroundDone: () => ctx.broadcast?.({ type: 'creative', project: ref.projectSlug, creative: ref.creativeSlug }),
     });
+    const merged = await ctx.turns.side.merged(ref.projectDir, ref.creativeSlug, creative);
+    // Phase 3 of the single agent: every member of a group with one agent shows the group's queue (the one composer's).
+    const single = ctx.groups && await ctx.groups.enabled(ref) ? await ctx.groups.queued(ref) : null;
+    if (single) { if (single.length > 0) merged.queued = single; else delete merged.queued; }
     return {
       // Phase 13: the queue and remembered session are kept by the core outside the project (final review I1).
-      slug: ref.creativeSlug, creative: await ctx.turns.side.merged(ref.projectDir, ref.creativeSlug, creative), versions,
+      slug: ref.creativeSlug, creative: merged, versions,
       jobKey: creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug),
       formats: await formatSummaries(creativeDir, creative, versions, (await catalog().load()).presets),
       ...await variantDetail(ref).then((variants) => (variants ? { variants } : {})),
@@ -583,12 +603,27 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const body = parse(variantRunBody, req.body);
     const ref = await refOf(req.params.slug, req.params.c);
     const { store: _store, ...plain } = ref;
+    // Phase 3 of the single agent: a request sent to several variants is ONE group turn, with those variants as its explicit
+    // targets (nothing is copied to N agents); a first generation (no request) stays the variants' own turns (decision 1145).
+    const text = body.request?.text?.trim() ?? '';
+    const pins = body.request?.pins ?? [];
+    if (body.request && (text || pins.length) && !body.request.direct && ctx.groups && await ctx.groups.enabled(plain)) {
+      const g = await variantsOf(ref).resolve(ref);
+      const variants = body.targets === 'all-active' ? (g.group ? activeMembers(g.group).map((m) => m.letter) : []) : body.targets;
+      const job = await ctx.groups.start(plain, { text, pins, variants });
+      return reply.status(202).send({ jobs: {}, queued: [], skipped: [], failed: {}, groupJobId: job.id });
+    }
     return reply.status(202).send(await ctx.variantRuns.run(plain, body.targets, body.request));
   });
 
   app.get<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/conversation', async (req) => {
     const ref = await refOf(req.params.slug, req.params.c);
     await ref.store.get(ref.creativeSlug);
+    // Phase 3 of the single agent: the members' own queues move to the group's first (the merge waits for empty queues).
+    if (ctx.groups && await ctx.groups.enabled(plainRef(ref))) {
+      const g = await variantsOf(ref).resolve(ref);
+      if (g.group && !g.orphan) await ctx.groups.adoptMemberQueues(g.host, g.group).catch(() => {});
+    }
     // Decision 982: a group's first read while it is idle merges its chats once (lazily); any member answers the group's.
     await variantsOf(ref).mergeChat(ref).catch((err: unknown) => {
       console.warn(`Motion Studio: the chats of ${ref.creativeSlug} were not merged yet: ${err instanceof Error ? err.message : String(err)}`);
@@ -601,6 +636,11 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const ref = await refOf(req.params.slug, req.params.c);
     const text = body.text?.trim() ?? '';
     const pins = body.pins ?? [];
+    // Phase 3 of the single agent: a message to a group with one agent is the group's turn; a turn with no message or with
+    // formats is a UI action that names its variant (Genera, regenerate a format: decision 1145) and stays the variant's.
+    if ((text || pins.length) && !body.formats?.length && !body.direct && ctx.groups && await ctx.groups.enabled(plainRef(ref))) {
+      return reply.status(202).send(await ctx.groups.start(plainRef(ref), { text, pins }));
+    }
     const job = await ctx.turns.start(ref, text || pins.length ? { text, pins } : undefined, body.formats ? { formats: body.formats } : {});
     return reply.status(202).send(job);
   });
@@ -610,28 +650,41 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const body = parse(messageBody, req.body);
     const ref = await refOf(req.params.slug, req.params.c);
     await ref.store.get(ref.creativeSlug); // 404 for unknown creatives
+    if (ctx.groups && await ctx.groups.enabled(plainRef(ref))) return ctx.groups.postMessage(plainRef(ref), { clientId: body.clientId, text: body.text, pins: body.pins ?? [], mode: body.mode });
     return ctx.turns.postMessage(ref, { clientId: body.clientId, text: body.text, pins: body.pins ?? [], mode: body.mode });
   });
 
+  // Phase 3 of the single agent: in a group with one agent the queue is the group's, the same from every member.
+  const groupsOn = async (ref: CreativeRef & { store: CreativeStore }) =>
+    (ctx.groups && await ctx.groups.enabled(plainRef(ref)) ? { groups: ctx.groups, plainRef: plainRef(ref) } : null);
+
   app.delete<{ Params: { slug: string; c: string; clientId: string } }>('/api/projects/:slug/creatives/:c/queue/:clientId', async (req) => {
     const ref = await refOf(req.params.slug, req.params.c);
+    const g = await groupsOn(ref);
+    if (g) { await g.groups.removeQueued(g.plainRef, req.params.clientId); return (await detailOf(ref)).creative; }
     return ctx.turns.removeQueued(ref, req.params.clientId);
   });
 
   app.put<{ Params: { slug: string; c: string; clientId: string } }>('/api/projects/:slug/creatives/:c/queue/:clientId', async (req) => {
     const body = parse(queueEditBody, req.body);
     const ref = await refOf(req.params.slug, req.params.c);
+    const g = await groupsOn(ref);
+    if (g) { await g.groups.editQueued(g.plainRef, req.params.clientId, { text: body.text, pins: body.pins ?? [] }); return (await detailOf(ref)).creative; }
     return ctx.turns.editQueued(ref, req.params.clientId, { text: body.text, pins: body.pins ?? [] });
   });
 
   app.put<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/queue', async (req) => {
     const body = parse(queueOrderBody, req.body);
     const ref = await refOf(req.params.slug, req.params.c);
+    const g = await groupsOn(ref);
+    if (g) { await g.groups.reorderQueue(g.plainRef, body.order); return (await detailOf(ref)).creative; }
     return ctx.turns.reorderQueue(ref, body.order);
   });
 
   app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/queue/run-next', async (req, reply) => {
     const ref = await refOf(req.params.slug, req.params.c);
+    const g = await groupsOn(ref);
+    if (g) return reply.status(202).send(await g.groups.runNext(g.plainRef));
     return reply.status(202).send(await ctx.turns.runNext(ref));
   });
 
