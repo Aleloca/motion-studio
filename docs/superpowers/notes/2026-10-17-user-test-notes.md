@@ -390,6 +390,11 @@ arrives and worked on later together.
     scrolling sideways; a click on a thumbnail leaves it out (it dims), a checkbox only on the device (and the store);
     the whole pack visible on one screen.
     Timing: done together with 52–55 (user, after report 55).
+    Done (decisions 1370–1375): per store a heading (tri-state checkbox, store icon, name, n/m) and one row per device
+    (its checkbox, name and n/m on the left, then the thumbnails side by side, all one height at their real shape, the row
+    scrolling sideways with a fading edge and an arrow); App Preview, feature graphic and promo video at the end of the
+    store's last row after a divider. A click (or Space/Enter) on a thumbnail leaves it out: grey, an eye struck through,
+    the name struck through. At 1440×900 the 19-file pack fits without scrolling up and down (thumbnails 198 px high).
 
 55. **Speaking names for formats.** The formats column lists the store pack's screenshots as 1–8: the user cannot tell
     them apart. They ask that the agent name what it makes, where it makes sense ("1 · Tutti i clienti, una casella"),
