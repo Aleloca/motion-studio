@@ -328,6 +328,13 @@ arrives and worked on later together.
     checkbox, plus a checkbox per group; everything checked by default; the store folders and the store checks stay
     the same; the button counts the files ("Esporta 18 file"). To do with the next reports.
 
+49. **After the final selection the other variants should step aside.** In "Final selection" (2026-10-19) the user
+    picks the variant per format (YouTube · Video 16:9 → C v1 ★ Chosen) while A and B stay as visible as C. The user
+    asks whether the variants not chosen should be hidden, so the focus stays on the chosen format of each variant.
+    User's call: once there is at least one choice, the variants page opens on a "Scelte" view: per format only the
+    chosen variant (and version). A "Tutte le varianti" toggle shows them all again; nothing is deleted and the choice
+    can always change. To do with the next reports, together with 48.
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
