@@ -253,7 +253,8 @@ arrives and worked on later together.
     formats such as the feature graphic and the video); a row that is too long wraps; the opening zoom shows everything.
     Done (decisions 1270–1272): the canvas follows the formats column's groups (a store pack by store, each on lines of its
     own; small groups of an ordinary creative share a line when they fit whole), lines wrap at the opening zoom, which can
-    go down to 10% (labels narrower below 50%). Checked in Chrome at 1280, 1440 and 1728 px: all 19 boards in view.
+    go down to 10% (labels follow the boards below 50%, a screenshot named by its number). Checked in Chrome at 1280,
+    1440 and 1728 px: all 19 boards in view, opening at 24%, 30% and 41% (decision 1288 after the review).
 
 41. **Formats appear only when the whole turn is done.** While a multi-format turn runs (the 19-format store pack,
     2026-10-19), every board shows "Rendering…" / "Not generated yet" until the end, then all appear together. The user
@@ -265,7 +266,7 @@ arrives and worked on later together.
     and checked, marked "In lavorazione", with the version still recorded at the end of the turn. Measure the cost
     before choosing. Done (decisions 1277–1281): 19 playing previews took ~1.5 cores and halved the page's frame rate, so a
     format the agent's check passes shows its poster, "In lavorazione", and plays on hover; the version is recorded at the
-    end as before, and a stopped or failed turn clears those boards.
+    end as before, and a stopped or failed turn clears those boards (review fixes: decisions 1282–1287).
 
 42. **The chat's "Applies to" chips do not scale to many formats.** In a creative with 19 formats (store pack,
     2026-10-19) the composer shows one chip per format ("All formats", "App Store · 1" … "Play Store · Promo video
