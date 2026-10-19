@@ -285,6 +285,9 @@ export async function createRenderWindow(o: { prefix: string; width: number; hei
     await close();
     throw new RenderError('loadFailed', `the render window did not start: ${(e as Error).message}`);
   }
+  // Decision 1348: no `paint` events. Nobody listens to them, yet each frame was copied into the main process (at a scale,
+  // that many more pixels); the captures (`Page.captureScreenshot` from the surface) and the page's frames do not need them.
+  wc.stopPainting();
   return {
     win, close,
     pids() {

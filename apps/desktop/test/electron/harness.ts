@@ -16,7 +16,7 @@ import { basename, dirname } from 'node:path';
 import { hardenUiWindow, installPreviewFilter } from '../../src/preview-filter.ts';
 
 interface Config {
-  scenario: 'options' | 'session-rules' | 'render' | 'hostile-render' | 'preview' | 'lifecycle' | 'memory' | 'quit' | 'scale';
+  scenario: 'options' | 'session-rules' | 'render' | 'hostile-render' | 'preview' | 'lifecycle' | 'memory' | 'quit' | 'scale' | 'render-cost';
   /** scale (report 51): the pages to open under `creative`, each at its scale (none: the default) and seek time. */
   scalePages?: Array<{ name: string; composition: Composition; format: string; scale?: number; t?: number }>;
   /** The built runtime. */
@@ -35,6 +35,8 @@ interface Config {
    */
   ui?: { origin: string; all: string; real: string; naked: string; inherit: string; realComposition: string; nakedComposition: string };
   parallel?: number;
+  /** render-cost (decision 1348): the renders to time, each at its short side (none: 1x) and offscreen frame rate (none: the default). */
+  costRuns?: Array<{ name: string; short?: number; frameRate?: number; painting?: boolean }>;
   /** A throwaway folder under the OS temp folder for every Electron data path (the test removes it after the exit). */
   scratch: string;
 }
@@ -131,7 +133,7 @@ async function run(): Promise<void> {
         // What the page itself sees: no Node, no preload bridge.
         pageGlobals: await wc.executeJavaScript('[typeof require, typeof process, typeof module, typeof window.electron, typeof window.motionStudio].join()'),
         processSandboxed: metric?.sandboxed ?? null,
-        visible: rw.win.isVisible(), offscreen: wc.isOffscreen(), persistent: ses.isPersistent(), separate: ses !== session.defaultSession,
+        visible: rw.win.isVisible(), offscreen: wc.isOffscreen(), painting: wc.isPainting(), persistent: ses.isPersistent(), separate: ses !== session.defaultSession,
         proxy: {
           internet: await ses.resolveProxy('https://example.com/'),
           server: await ses.resolveProxy('http://127.0.0.1:47001/abcdefghijklmnop0123/x'),
@@ -185,6 +187,34 @@ async function run(): Promise<void> {
         tempDir: scratch,
       });
       report({ ok: true, frames: r.frames, width: r.width, height: r.height, warnings: r.warnings, ms: Date.now() - t0, windowsAfter: liveRenderWindowCount(), peak: provider.peakMemory });
+      return;
+    }
+    case 'render-cost': {
+      // Decision 1348: what a render costs the main process (offscreen windows hand their frames to it) and the machine,
+      // at 1x and at a scale, with the default parallel pages: wall time, main-process CPU (process.cpuUsage), its peak RSS
+      // sampled every 100 ms. `painting` restores the paint events the render windows stop (the cost before decision 1348), `frameRate` lowers them.
+      for (const run of c.costRuns!) {
+        const provider = new ElectronProvider({
+          limits: { timeLimitMs: 30 * 60_000 },
+          ...(run.frameRate !== undefined || run.painting ? { createWindow: async (o) => {
+            const rw = await createRenderWindow(o);
+            if (run.frameRate !== undefined) rw.win.webContents.setFrameRate(run.frameRate);
+            if (run.painting) rw.win.webContents.startPainting();
+            return rw;
+          } } : {}),
+        });
+        let rss = 0;
+        const timer = setInterval(() => { rss = Math.max(rss, process.memoryUsage().rss); }, 100);
+        const [cpu0, t0] = [process.cpuUsage(), Date.now()];
+        const r = await renderComposition({
+          dir: c.creative!, versionDir: 'outputs/v1', composition: c.composition!, format: formatOf(c.composition!, c.format!), out: join(scratch, `${run.name}.mp4`),
+          provider, signal: new AbortController().signal, distDir: c.dist, ffmpeg: c.ffmpeg!, encoder: 'libx264', tempDir: scratch,
+          ...(run.short !== undefined ? { short: run.short } : {}),
+        });
+        clearInterval(timer);
+        const cpu = process.cpuUsage(cpu0);
+        report({ cost: run.name, frames: r.frames, width: r.width, height: r.height, ms: Date.now() - t0, mainCpuMs: Math.round((cpu.user + cpu.system) / 1000), mainRssPeakMB: Math.round(rss / 2 ** 20), windowsAfter: liveRenderWindowCount() });
+      }
       return;
     }
     case 'hostile-render': {

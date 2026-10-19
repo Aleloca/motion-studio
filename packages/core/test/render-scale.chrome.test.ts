@@ -1,6 +1,6 @@
 // @vitest-environment node
 /**
- * Report 51 (decisions 1340, 1345, 1346): an html layer is rasterised at the render's scale, in real Chrome. The layers are
+ * Report 51 (decisions 1340, 1345–1347): an html layer is rasterised at the render's scale, in real Chrome. The layers are
  * sandboxed iframes, out of process (OOPIF): `Emulation.setDeviceMetricsOverride` reaches the top-level page only, so at
  * scale 2 the layer drew at devicePixelRatio 1 and the page stretched it (every html layer of an export at another
  * resolution, since decision 974). The browser of a scaled render is now launched with `--force-device-scale-factor`.

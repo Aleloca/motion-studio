@@ -1,5 +1,5 @@
 /**
- * Report 51 (decisions 1340–1349): an html layer rasterised at the render's scale. The layers are sandboxed iframes, out
+ * Report 51 (decisions 1340–1348): an html layer rasterised at the render's scale. The layers are sandboxed iframes, out
  * of process: the page's `Emulation.setDeviceMetricsOverride` never reached them, so a render at scale 2 drew the layer at
  * 1x and stretched it. Shared by the Chrome test (render-scale.chrome.test.ts) and the Electron one (the desktop harness).
  */

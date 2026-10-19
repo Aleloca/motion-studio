@@ -300,7 +300,7 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
     expect(r.ok, r.output).toBe(true);
     const o = r.lines[0]!;
     expect(o.prefs).toEqual({ sandbox: true, contextIsolation: true, nodeIntegration: false, nodeIntegrationInSubFrames: false, preload: null, webviewTag: false });
-    expect(o).toMatchObject({ visible: false, offscreen: true, persistent: false, separate: true, webrtc: 'disable_non_proxied_udp', keptAwake: true, windowsOpen: 1 });
+    expect(o).toMatchObject({ visible: false, offscreen: true, painting: false, persistent: false, separate: true, webrtc: 'disable_non_proxied_udp', keptAwake: true, windowsOpen: 1 });
     expect(o.pageGlobals).toBe('undefined,undefined,undefined,undefined,undefined');
     if (process.platform !== 'linux') expect(o.processSandboxed).toBe(true);
     expect(o.pids).toBeGreaterThan(0);
@@ -560,6 +560,22 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
       expect(got[name]!.bar, name).toBe(1);
     }
   }, 900_000);
+
+  // Decision 1348, a measurement (MS_RENDER_COST=1): a 10 s 1920 × 1080 composition with a moving html layer, default parallel
+  // pages, at 1x and at 2560 × 1440, with the paint events (as before 1348, and at 5 fps) and without. Logged, not asserted.
+  it.skipIf(process.env.MS_RENDER_COST !== '1')('render cost at 1x and at a scale (measurement)', async () => {
+    const creative = join(work, 'cost');
+    const dir = join(creative, 'outputs', 'v1', 'compositions', 'cost');
+    put(join(dir, 'assets', 'Mono.woff2'), readFileSync(FONT));
+    put(join(dir, 'layers', 'cost.html'), scaleLayer(6, true).replace('Math.min(1, t)', '(t % 1)'));
+    const base = scaleComposition('cost', 6) as unknown as { duration: number; scenes: Array<{ duration: number }>; tracks: Array<{ clips: Array<{ duration: number }> }> };
+    base.duration = 10; base.scenes[0]!.duration = 10; base.tracks[0]!.clips[0]!.duration = 10;
+    const runs = [{ name: '1x-painting', painting: true }, { name: '1440-painting', short: 1440, painting: true }, { name: '1x' }, { name: '1440', short: 1440 },
+      { name: '1440-painting-fps5', short: 1440, painting: true, frameRate: 5 }];
+    const r = await runHarness({ scenario: 'render-cost', creative, composition: base, format: 'cost', ffmpeg, costRuns: runs });
+    expect(r.ok, r.output).toBe(true);
+    for (const l of r.lines.filter((x) => typeof x.cost === 'string')) console.info(`[cost] ${JSON.stringify(l)}`);
+  }, 1_800_000);
 
   it('memory: a 2 GB layer trips the watchdog (memoryLimit) and no window is left', async () => {
     const creative = join(work, 'mem');
