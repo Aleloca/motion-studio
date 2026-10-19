@@ -12,13 +12,13 @@ import { noteCoreTemp } from '../core-temps.ts';
 import { makeOwnedTempDir } from './owner.ts';
 import { mixAudio, mixClips } from './audio-mix.ts';
 import { CdpError } from './cdp-pipe.ts';
-import { captureFrame, captureSegment, splitSegments, writeWithBackpressure } from './capture.ts';
+import { captureFrame, encodeSegment, splitSegments } from './capture.ts';
 import {
   ChromeProvider, RenderError, type CaptureFormat, type ChromiumProvider, type ChromiumProviderFactory, type PageTimeouts,
   type RenderPage, type RuntimeErrorInfo,
 } from './chromium-provider.ts';
 import { cftPlatform, findInstalledCft } from './cft-download.ts';
-import { chooseEncoder, concatLine, countVideoFrames, findFfmpeg, frameInput, h264Args, hostArch, qualitySettings, spawnFfmpeg, targetKbps, type FfmpegInfo, type FfmpegProcess, type VideoEncoder } from './encode.ts';
+import { chooseEncoder, concatLine, countVideoFrames, findFfmpeg, h264Args, hostArch, qualitySettings, spawnFfmpeg, targetKbps, type FfmpegInfo, type VideoEncoder } from './encode.ts';
 import { findSystemChrome } from './system-chrome.ts';
 import { MP4_DEMUXERS, ownInput } from '../media/ffmpeg-exec.ts';
 import { renderFrames, type RenderFramesOptions, type RenderFramesResult } from './frames.ts';
@@ -270,24 +270,11 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
       const segFiles = await Promise.all(segments.map(async (seg, j) => {
         const page = (opened[j] as PromiseFulfilledResult<RenderPage>).value;
         const file = join(work!, `seg-${String(seg.index).padStart(2, '0')}.mp4`);
-        // Raw frames: the encoder starts at the first frame, whose size it is given.
-        const start = (input: ReturnType<typeof frameInput>) => spawnFfmpeg(ff!, [...input,
+        const start = (input: string[]) => spawnFfmpeg(ff!, [...input,
           ...h264Args(encoder, kbps, c.fps, o.x264Preset ?? qs.preset, { crf: qs.crf, cap: qs.cap, ...(scaled ? { size } : {}) }), '-an', '-f', 'mp4', file], { signal: ctl.signal, stdin: true });
-        let enc: FfmpegProcess | null = raw ? null : start(frameInput(qs.capture, c.fps));
         try {
-          await captureSegment(page, seg, {
-            fps: c.fps, ...capture, signal: ctl.signal, raw,
-            sink: (buf, _i, at) => {
-              enc ??= start(frameInput({ raw: at! }, c.fps));
-              return writeWithBackpressure(enc.stdin!, buf, enc.done);
-            },
-            onFrame: tick,
-          });
-          if (!enc) throw new RenderError('badFrame', 'a segment without frames');
-          enc.stdin!.end();
-          await enc.done;
+          await encodeSegment(page, seg, { fps: c.fps, encoded: qs.capture, ...capture, signal: ctl.signal, raw, start, onFrame: tick });
         } catch (e) {
-          enc?.kill();
           ctl.abort(reason(e)); // stop the other segments at once
           throw e;
         }

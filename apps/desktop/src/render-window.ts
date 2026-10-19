@@ -395,8 +395,19 @@ export function rawFrames(o: Pick<OpenPageOptions, 'deviceScaleFactor' | 'transp
   return !o.transparentBackground && (scale === 1 || layersAtScale(scale));
 }
 
+/**
+ * A raw capture checked like the CDP one (`capture` refuses a page whose isolation failed): `failure` before the capture,
+ * and after it, so a frame captured while a request broke the isolation is never encoded.
+ */
+export async function guardedRawCapture(read: () => Promise<RawFrame>, failure: () => RenderError | null): Promise<RawFrame> {
+  { const f = failure(); if (f) throw f; }
+  const frame = await read();
+  { const f = failure(); if (f) throw f; }
+  return frame;
+}
+
 /** The window's surface as BGRA pixels (`toBitmap`: Skia's N32 order, BGRA on every platform the app ships on). */
-async function captureRawFrame(win: BrowserWindow, timeoutMs: number): Promise<RawFrame> {
+export async function captureWindowFrame(win: Pick<BrowserWindow, 'isDestroyed' | 'webContents'>, timeoutMs: number): Promise<RawFrame> {
   if (win.isDestroyed()) throw new RenderError('crashed', 'the render window is gone');
   let timer: NodeJS.Timeout | undefined;
   try {
@@ -550,7 +561,8 @@ export class ElectronProvider implements ChromiumProvider {
       });
       cdp.onEvent((e) => { if (e.method === 'Inspector.targetCrashed') this.fail({ code: 'crashed', message: 'a renderer crashed (inspector)' }); });
       const close = page.close;
-      return { ...page, ...(rawFrames(o) ? { captureRaw: () => captureRawFrame(rw.win, this.o.timeouts?.captureMs ?? CAPTURE_MS) } : {}), close: async () => { o.signal.removeEventListener('abort', onAbort); await close(); } };
+      return { ...page, ...(rawFrames(o) ? { captureRaw: () => guardedRawCapture(() => captureWindowFrame(rw.win, this.o.timeouts?.captureMs ?? CAPTURE_MS),
+        () => (page.interception.failure ? new RenderError('isolation', page.interception.failure.message) : this.failureError())) } : {}), close: async () => { o.signal.removeEventListener('abort', onAbort); await close(); } };
     } catch (e) {
       o.signal.removeEventListener('abort', onAbort);
       ending = true;

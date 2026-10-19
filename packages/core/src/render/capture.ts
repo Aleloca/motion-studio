@@ -1,6 +1,7 @@
 import type { Writable } from 'node:stream';
 import type { CaptureFormat, RawFrame, RenderPage } from './chromium-provider.ts';
 import { RenderError } from './errors.ts';
+import { frameInput, type FfmpegProcess } from './encode.ts';
 
 /**
  * Frame capture (spec §5.3; spike §2): `seek(i / fps)` then `Page.captureScreenshot`, frame by frame. A video is split into
@@ -86,11 +87,11 @@ export async function captureRawFrame(page: RenderPage, t: number, o: { width: n
 
 /** Writes `buf` to `stream` honouring backpressure; rejects when `ended` settles first (the consumer died). */
 export function writeWithBackpressure(stream: Writable, buf: Buffer, ended: Promise<unknown>): Promise<void> {
-  if (stream.destroyed || stream.writableEnded) return Promise.reject(new RenderError('ffmpegFailed', 'the encoder stopped reading'));
+  if (stream.destroyed || stream.writableEnded) return Promise.reject(new RenderError('ffmpegFailed', STOPPED_READING));
   if (stream.write(buf)) return Promise.resolve();
   return new Promise<void>((resolve, reject) => {
     const onDrain = () => { cleanup(); resolve(); };
-    const onClose = () => { cleanup(); reject(new RenderError('ffmpegFailed', 'the encoder stopped reading')); };
+    const onClose = () => { cleanup(); reject(new RenderError('ffmpegFailed', STOPPED_READING)); };
     const cleanup = () => { stream.off('drain', onDrain); stream.off('close', onClose); stream.off('error', onClose); };
     stream.once('drain', onDrain);
     stream.once('close', onClose);
@@ -122,5 +123,42 @@ export async function captureSegment(page: RenderPage, seg: Segment, o: {
       await o.sink(await captureFrame(page, i / o.fps, o), i);
     }
     o.onFrame?.();
+  }
+}
+
+const STOPPED_READING = 'the encoder stopped reading';
+
+/**
+ * One render segment into its encoder (the renderer's loop per page). Encoded frames: the encoder starts at once on
+ * `image2pipe`. Raw frames (report 53): it starts at the first frame, with that frame's size. When the encoder dies, the
+ * segment fails with the encoder's own error (its stderr), not the pipe's "stopped reading". On any failure the encoder is
+ * killed.
+ */
+export async function encodeSegment(page: RenderPage, seg: Segment, o: {
+  fps: number; encoded: 'png' | 'jpeg'; format: CaptureFormat; quality?: number; width: number; height: number; tolerance?: number; signal: AbortSignal;
+  raw: boolean; start: (input: string[]) => FfmpegProcess; onFrame?: () => void;
+}): Promise<void> {
+  let enc: FfmpegProcess | null = o.raw ? null : o.start(frameInput(o.encoded, o.fps));
+  try {
+    await captureSegment(page, seg, {
+      ...o,
+      sink: (buf, _i, at) => {
+        enc ??= o.start(frameInput({ raw: at! }, o.fps));
+        return writeWithBackpressure(enc.stdin!, buf, enc.done);
+      },
+    });
+    if (!enc) throw new RenderError('badFrame', 'a segment without frames');
+    enc.stdin!.end();
+    await enc.done;
+  } catch (e) {
+    const dead = enc as FfmpegProcess | null;
+    if (dead && e instanceof RenderError && e.code === 'ffmpegFailed' && e.message === STOPPED_READING) {
+      // The pipe only knows the encoder went away: its exit (bounded) says why.
+      const why = await Promise.race([dead.done.then(() => null, (x: unknown) => x), new Promise<null>((r) => setTimeout(() => r(null), 5_000).unref())]);
+      dead.kill();
+      throw why instanceof RenderError ? why : e;
+    }
+    dead?.kill();
+    throw e;
   }
 }

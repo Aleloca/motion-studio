@@ -47,7 +47,7 @@ interface Config {
   uiRuns?: UiRun[];
   /** capture-probe (report 53): the times to capture at `scale`, and where the first frames go. */
   /** raw-render (report 53): renders with raw frames, or `encoded` (PNG), at a short side (none: 1x). */
-  rawRuns?: Array<{ name: string; short?: number; encoded?: boolean; quality?: 'standard' | 'high' | 'max' }>;
+  rawRuns?: Array<{ name: string; short?: number; encoded?: boolean; quality?: 'standard' | 'high' | 'max'; background?: string }>;
   probe?: { scale: number; times: number[]; outDir: string };
   /** A throwaway folder under the OS temp folder for every Electron data path (the test removes it after the exit). */
   scratch: string;
@@ -224,6 +224,9 @@ async function uiLoadRun(c: Config, run: UiRun) {
     if (++n % 120 === 0) dir = -dir;
     try { ui.webContents.sendInputEvent({ type: 'mouseWheel', x: 200, y: 260, deltaX: 0, deltaY: -40 * dir, canScroll: true } as Electron.MouseWheelInputEvent); } catch { /* closing */ }
   }, 16);
+  // The main process's peak RSS (raw frames are 14.7 MB each at 2560 × 1440, against a few MB of PNG).
+  let rss = process.memoryUsage().rss;
+  const rssTimer = setInterval(() => { rss = Math.max(rss, process.memoryUsage().rss); }, 100);
   const eld = monitorEventLoopDelay({ resolution: 5 });
   let prof: InspectorSession | null = null;
   if (run.profile) {
@@ -252,6 +255,7 @@ async function uiLoadRun(c: Config, run: UiRun) {
   eld.disable();
   clearInterval(wheel);
   clearInterval(sampler);
+  clearInterval(rssTimer);
   for (const [pid, v] of await cpuSnapshot()) seen.set(pid, v);
   const traced = run.trace ? longMainTasks(await contentTracing.stopRecording(join(scratch, `${run.name}.trace.json`)), process.pid) : undefined;
   let top: Array<{ fn: string; ms: number }> | undefined;
@@ -291,7 +295,7 @@ async function uiLoadRun(c: Config, run: UiRun) {
       wheels: page.wheels.length, wheelGapP99: r1(pct(wheelGaps, 99)), wheelGapMax: r1(Math.max(0, ...wheelGaps)), wheelGapsOver50: wheelGaps.filter((g) => g > 50).length,
       scrollStalls: stalls, scrollStallMax: r1(stallMax) },
     mainEld: { p50: r1(eld.percentile(50) / 1e6), p99: r1(eld.percentile(99) / 1e6), max: r1(eld.max / 1e6), mean: r1(eld.mean / 1e6) },
-    cpuSeconds: cpu,
+    cpuSeconds: cpu, mainRssPeakMB: Math.round(rss / 2 ** 20),
     ...(traced ? { mainLongTasks: traced } : {}),
     ...(top ? { mainProfile: top } : {}),
   };
@@ -577,7 +581,7 @@ async function run(): Promise<void> {
         const provider = new ElectronProvider({ limits: { timeLimitMs: 30 * 60_000 } });
         const counts = countFrames(provider, run.encoded === true);
         const r = await renderComposition({
-          dir: c.creative!, versionDir: 'outputs/v1', composition: c.composition!, format: formatOf(c.composition!, c.format!), out: join(c.out ?? scratch, `${run.name}.mp4`),
+          dir: c.creative!, versionDir: 'outputs/v1', composition: run.background ? { ...c.composition!, background: run.background } : c.composition!, format: formatOf(c.composition!, c.format!), out: join(c.out ?? scratch, `${run.name}.mp4`),
           provider, parallel: 2, signal: new AbortController().signal, distDir: c.dist, ffmpeg: ff, quality: run.quality ?? 'max', tempDir: scratch,
           ...(run.short !== undefined ? { short: run.short } : {}),
         });

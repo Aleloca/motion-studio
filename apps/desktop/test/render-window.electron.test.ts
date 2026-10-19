@@ -411,14 +411,17 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
     expect(layer[10]).toBeLessThan(60);
   }, 900_000);
 
-  it('report 53: a video\'s frames are read raw (no encode on the UI thread) and give the same video as PNG frames; not below 1', async () => {
+  it('report 53: a video\'s frames are read raw (no encode on the UI thread) and give the same video as PNG frames (1x, 2x, 4/3, transparent background); not below 1', async () => {
     const creative = join(work, 'raw');
     const compDir = join(creative, 'outputs', 'v1', 'compositions', 'spike');
     frameCodedVideo(ffmpeg!, join(compDir, 'assets', 'v.mp4'), { fps: 30, frames: 95 });
     put(join(compDir, 'layers', 'outro.html'), OUTRO_LAYER);
     put(join(compDir, 'assets', 'mono.woff2'), readFileSync(FONT));
     // 1x, 2x (a layer at the window's scale, decision 1341) and 0.5 (the page's override only: no raw frames there).
-    const rawRuns = [{ name: '1x-raw' }, { name: '1x-png', encoded: true }, { name: '2x-raw', short: 360 }, { name: '2x-png', short: 360, encoded: true }, { name: 'half', short: 90 }];
+    const rawRuns = [{ name: '1x-raw' }, { name: '1x-png', encoded: true }, { name: '2x-raw', short: 360 }, { name: '2x-png', short: 360, encoded: true }, { name: 'half', short: 90 },
+      // A scale that is not an integer (4/3: the user's 2560 × 1440 of a 1080p composition), and a transparent background.
+      { name: '43-raw', short: 240 }, { name: '43-png', short: 240, encoded: true },
+      { name: 'clear-raw', background: '#00000000' }, { name: 'clear-png', background: '#00000000', encoded: true }];
     const r = await runHarness({ scenario: 'raw-render', creative, composition: spikeComposition(), format: 'spike', ffmpeg, rawRuns });
     expect(r.ok, r.output).toBe(true);
     const by = Object.fromEntries(r.lines.filter((l) => typeof l.raw === 'string').map((l) => [l.raw, l])) as Record<string, { frames: number; width: number; height: number; sha256: string; rawFrames: number; encodedFrames: number; windowsAfter: number }>;
@@ -428,6 +431,10 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
     // The PNG frames are lossless: the same pixels, so the same video, byte for byte.
     expect(by['1x-raw']!.sha256).toBe(by['1x-png']!.sha256);
     expect(by['2x-raw']!.sha256).toBe(by['2x-png']!.sha256);
+    expect(by['43-raw']).toMatchObject({ frames: 60, height: 240, rawFrames: 60, encodedFrames: 0 });
+    expect(by['43-raw']!.sha256).toBe(by['43-png']!.sha256);
+    expect(by['clear-raw']).toMatchObject({ frames: 60, rawFrames: 60, encodedFrames: 0 });
+    expect(by['clear-raw']!.sha256).toBe(by['clear-png']!.sha256);
     expect(by.half).toMatchObject({ frames: 60, width: W / 2, height: H / 2, rawFrames: 0, encodedFrames: 60, windowsAfter: 0 });
   }, 900_000);
 
