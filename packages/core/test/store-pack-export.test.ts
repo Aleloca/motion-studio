@@ -402,6 +402,32 @@ describe('store pack export', { timeout: 120_000 }, () => {
     expect(bad.json().code).toBe('store-pack-foreign-format');
   });
 
+  it('decision 1333: a group\'s pack files are the host\'s, whichever member asks, even when that member\'s brief lags behind', async () => {
+    const slug = await createPack(pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false }));
+    expect((await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/variants`, headers: H, payload: { count: 2 } })).statusCode).toBe(201);
+    // B's brief lags: it still has two screenshots while the host's pack has three.
+    const hostFile = join(env.store().dir(slug), 'creative.json');
+    const host = JSON.parse(readFileSync(hostFile, 'utf8')) as { brief: { formats: string[]; formatLabels?: Record<string, string>; storePack: StorePack & { instances?: string[] } } };
+    host.brief.formats.push('appstore-iphone-69@3');
+    host.brief.formatLabels = { ...host.brief.formatLabels, 'appstore-iphone-69@3': '3 · Third' };
+    host.brief.storePack.screenshots.push({ caption: 'Third', screen: null });
+    if (host.brief.storePack.instances) host.brief.storePack.instances.push('appstore-iphone-69@3');
+    writeFileSync(hostFile, JSON.stringify(host));
+    const member = JSON.parse(readFileSync(join(env.store().dir(`${slug}~b`), 'creative.json'), 'utf8')) as { brief: { formats: string[] } };
+    expect(member.brief.formats).not.toContain('appstore-iphone-69@3');
+    for (const asker of [slug, `${slug}~b`]) {
+      const r = await env.app.inject({ url: `/api/projects/acme/creatives/${asker}/store-pack/group-files`, headers: H });
+      expect(r.statusCode, r.body).toBe(200);
+      expect(r.json()).toEqual({ formats: ['appstore-iphone-69', 'appstore-iphone-69@2', 'appstore-iphone-69@3'], labels: { 'appstore-iphone-69': '1 · All your tasks', 'appstore-iphone-69@2': '2 · Share with your team', 'appstore-iphone-69@3': '3 · Third' } });
+    }
+    // The export takes that list as the pack's own: the third screenshot is accepted (not refused as foreign).
+    const r = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}~b/store-pack/export-group`, headers: H, payload: { destination: dest, formats: ['appstore-iphone-69@3'] } });
+    expect(r.statusCode, r.body).toBe(200);
+    // Outside a group: 409; not a pack: 409 not-store-pack.
+    const solo = await createPack(pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false }));
+    expect((await env.app.inject({ url: `/api/projects/acme/creatives/${solo}/store-pack/group-files`, headers: H })).statusCode).toBe(409);
+  });
+
   it('residual fix: a discarded variant\'s own pack export that would render is refused (409 variant-discarded)', async () => {
     const slug = await createPack(pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false, screenshots: [{ caption: 'One', screen: null }] }));
     expect((await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/variants`, headers: H, payload: { count: 2, baseFrom: { slug, version: 1 } } })).statusCode).toBe(201);
