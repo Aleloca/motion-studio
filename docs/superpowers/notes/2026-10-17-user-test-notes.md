@@ -284,6 +284,13 @@ arrives and worked on later together.
     User's call: no label on a ready board that has no render; only the useful states stay (queued, rendering %, failed
     · retry, problems). Renders still start from Export or "Render vN". Done (decisions 1273, 1274).
 
+44. **Project icon from an asset.** On the Projects page every project's mark is its initials ("AU", "MS", "HS", "K-")
+    (2026-10-19). Motion Studio already extracts the brand's assets (logos, favicons, app icons) from the site and
+    elsewhere; the user wants to pick one of the project's assets as the project's icon inside the app.
+    User's call: automatic and choosable. When the brand has a fitting icon (app icon, favicon, square logo) it is used
+    by itself; Project settings let the user pick another asset or go back to the initials; an image's detail offers
+    "Usa come icona del progetto". To do with the next reports.
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
