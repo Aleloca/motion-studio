@@ -201,7 +201,11 @@ describe.skipIf(!tools.ok)('renderer: text in a scaled layer stays sharp (report
     const diffs = { structure: await maxDiff('hint', 'reference'), threeD: await maxDiff('hint3d', 'reference3d'), backdrop: await maxDiff('hintBackdrop', 'referenceBackdrop'),
       late: await maxDiff('hintLate', 'referenceLate', [0, 0.35, 0.7]) };
     console.info('[sharpness] structure differences:', JSON.stringify(diffs));
-    expect(diffs).toEqual({ structure: 0, threeD: 0, backdrop: 0, late: [0, 0, 0] });
+    // At most 2 grey levels: Chrome on the macOS CI runner anti-aliases the 3D planes' edges 1 level differently from one
+    // page to the other; the defects this guards against differ by 69 (3D) and 115 (backdrop).
+    const near = (d: number | number[]) => [d].flat().every((x) => x <= 2);
+    expect({ structure: near(diffs.structure), threeD: near(diffs.threeD), backdrop: near(diffs.backdrop), late: [diffs.late].flat().map(near) }, JSON.stringify(diffs))
+      .toEqual({ structure: true, threeD: true, backdrop: true, late: [true, true, true] });
   });
 
   it('the layer\'s own first sheet stays its own: appended CSS and CSSOM edits apply, nothing throws (decision 1255)', async () => {
