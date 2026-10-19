@@ -62,6 +62,18 @@ describe('the project mark', () => {
   });
 });
 
+describe('the Projects page follows the project icon', () => {
+  it('review 6: a project change (its tick) reloads the list, so a new icon shows', async () => {
+    api.listProjects.mockResolvedValue([{ slug: 'audin', ok: true, project: project(), icon: null }]);
+    const { rerender } = it_(<Projects live={live()} />);
+    const card = (await screen.findByText('Audin Desk', { selector: '.ms-pcard-name' })).closest('a')!;
+    expect(card.querySelector('.ms-pmono img')).toBeNull();
+    api.listProjects.mockResolvedValue([{ slug: 'audin', ok: true, project: project(), icon: 'assets/brand/mark.png' }]);
+    rerender(<I18nProvider locale="it"><Projects live={{ ...live(), projectTicks: { audin: 1 } }} /></I18nProvider>);
+    await waitFor(() => expect(screen.getByText('Audin Desk', { selector: '.ms-pcard-name' }).closest('a')!.querySelector('.ms-pmono img')?.getAttribute('src')).toBe('/pf/audin/assets/brand/mark.png'));
+  });
+});
+
 describe('Project settings · project icon', () => {
   const page = () => <ProjectSettings slug="audin" live={live()} settings={workspaceSettingsSchema.parse({ schemaVersion: 1 })} onSettings={() => {}} />;
   const openGeneral = async () => { await userEvent.click(await screen.findByRole('button', { name: 'Generali' })); return screen.findByRole('radiogroup', { name: 'Icona del progetto' }); };
@@ -83,6 +95,26 @@ describe('Project settings · project icon', () => {
     await waitFor(() => expect(api.updateProject).toHaveBeenLastCalledWith('audin', { icon: 'initials' }));
     await userEvent.click(within(group).getByRole('radio', { name: 'Automatica' }));
     await waitFor(() => expect(api.updateProject).toHaveBeenLastCalledWith('audin', { icon: null }));
+  });
+});
+
+describe('Project settings · project icon · keyboard', () => {
+  it('review 10: one tab stop (the checked choice); arrows move between choices, Space or Enter picks', async () => {
+    api.getProject.mockResolvedValue({ slug: 'audin', jobKey: 'k', project: project(), icon: null });
+    api.updateProject.mockImplementation(async (_s: string, body: { icon: unknown }) => ({ slug: 'audin', jobKey: 'k', project: project(body.icon ?? undefined), icon: null }));
+    it_(<ProjectSettings slug="audin" live={live()} settings={workspaceSettingsSchema.parse({ schemaVersion: 1 })} onSettings={() => {}} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Generali' }));
+    const group = await screen.findByRole('radiogroup', { name: 'Icona del progetto' });
+    const radios = await waitFor(() => { const r = within(group).getAllByRole('radio'); expect(r).toHaveLength(5); return r; });
+    expect(radios.map((r) => r.tabIndex)).toEqual([0, -1, -1, -1, -1]);
+    radios[0]!.focus();
+    await userEvent.keyboard('{ArrowRight}');
+    expect(document.activeElement).toBe(radios[1]);
+    await userEvent.keyboard('{End}');
+    expect(document.activeElement).toBe(radios[4]);
+    expect(api.updateProject).not.toHaveBeenCalled();
+    await userEvent.keyboard('{Enter}');
+    await waitFor(() => expect(api.updateProject).toHaveBeenCalledWith('audin', { icon: { asset: 'logo.svg' } }));
   });
 });
 

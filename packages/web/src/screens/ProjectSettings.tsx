@@ -1,5 +1,5 @@
 import { domainSchema, type DoctorCheck, type LinkedCodebase, type PermissionsFile, type ProjectIcon, type WorkspaceSettings, type WorkspaceSettingsView } from '@motion-studio/shared';
-import { useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { api, type CodebaseCheck } from '../api.ts';
 import { desktop } from '../desktop.ts';
 import type { EventsState } from '../eventsReducer.ts';
@@ -8,6 +8,7 @@ import { collapse, enter, useEnter } from '../motion/index.ts';
 import { Button, Card, Empty, Icon, Input, NavItem, Pill, Select, Spinner, Tag, Textarea, Toggle, cx, toast, type IconName } from '../ui/index.ts';
 import { ProjectMark } from '../shell/ProjectSwitcher.tsx';
 import { ShellContext } from '../shell/ShellContext.tsx';
+import { rovingIndex } from '../ui/roving.ts';
 import { Alert, Head, Row, SectionMain, message } from './common.tsx';
 import './settings.css';
 
@@ -210,9 +211,20 @@ function IconCard({ slug, name, choice, shown, tick, onSaved }: {
       setStatus({ ok: false, text: g.failed({ detail: message(err) }) });
     } finally { setBusy(false); }
   };
+  // Review 10: one tab stop (the checked choice, else the first); the arrows, Home and End move the focus, Space or Enter
+  // picks (a pick saves at once, so the focus moving alone saves nothing).
+  const keys = ['auto', 'initials', ...images.map((f) => `a:${f}`)];
+  const stop = keys.includes(current) ? current : 'auto';
+  const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const at = keys.indexOf((e.target as HTMLElement).dataset.key ?? '');
+    const next = at < 0 ? null : rovingIndex(e.key, at, keys.length);
+    if (next === null) return;
+    e.preventDefault();
+    e.currentTarget.querySelectorAll<HTMLElement>('[data-key]')[next]?.focus();
+  };
   const tile = (k: string, label: string, next: ProjectIcon | null, face: ReactNode) => (
-    <button key={k} type="button" role="radio" aria-checked={current === k} aria-label={label} title={label} disabled={busy}
-      className={cx('ms-set-icon-opt', current === k && 'ms-on')} onClick={() => void pick(next)}>
+    <button key={k} type="button" role="radio" aria-checked={current === k} aria-label={label} title={label} aria-disabled={busy || undefined}
+      data-key={k} tabIndex={k === stop ? 0 : -1} className={cx('ms-set-icon-opt', current === k && 'ms-on')} onClick={() => void pick(next)}>
       {face}
     </button>
   );
@@ -220,7 +232,7 @@ function IconCard({ slug, name, choice, shown, tick, onSaved }: {
     <div className="ms-set-narrow" data-enter>
       <Card className="ms-set-form">
         <div className="ms-set-field"><span>{g.title}</span><p className="ms-set-icon-sub">{g.sub}</p></div>
-        <div className="ms-set-icons" role="radiogroup" aria-label={g.label}>
+        <div className="ms-set-icons" role="radiogroup" aria-label={g.label} onKeyDown={onKey}>
           {tile('auto', g.auto, null, <><ProjectMark name={name} slug={slug} icon={choice === null ? shown : null} size="md" /><span>{g.auto}</span></>)}
           {tile('initials', g.initials, 'initials', <><ProjectMark name={name} size="md" /><span>{g.initials}</span></>)}
           {images.map((file) => tile(`a:${file}`, file, { asset: file }, <><ProjectMark name={name} slug={slug} icon={`assets/${file}`} size="md" /><span className="ms-set-icon-file">{file.split('/').pop()}</span></>))}

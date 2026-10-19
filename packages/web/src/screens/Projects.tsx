@@ -82,13 +82,15 @@ export function Projects({ live }: { live: EventsState }) {
   // "New project" from the project switcher (and the header button): bring the name field forward.
   useNewProjectIntent(focusNew);
 
+  // Any project, brand or library change may change a project's icon (report 44, review 6): the list is asked again.
+  const projectTick = useMemo(() => Object.values(live.projectTicks).reduce((a, v) => a + v, 0), [live.projectTicks]);
   useEffect(() => {
     let alive = true;
     Promise.resolve().then(() => api.listProjects())
       .then((r) => { if (alive) { setItems(r); setError(null); } })
       .catch((e: unknown) => { if (alive) setError(message(e)); });
     return () => { alive = false; };
-  }, [nonce]);
+  }, [nonce, projectTick]);
   // Any creative change may reorder "Jump back in".
   const creativeTick = useMemo(() => Object.values(live.creativeTicks).reduce((a, v) => a + v, 0), [live.creativeTicks]);
   useEffect(() => {
