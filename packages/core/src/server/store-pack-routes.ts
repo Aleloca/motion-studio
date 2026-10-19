@@ -23,7 +23,7 @@ import { localeAssetsCheck } from './creative-routes.ts';
  * App store pack routes (Phase 12, Task 6, spec §4):
  * - `POST /api/projects/:slug/creatives/store-pack` `{ title, storePack, locales?, generate? }` → 201 `{ slug, creative, job }`:
  *   the brief is built by the core from the choices (`storePackBrief`), every app screen checked in the project library.
- * - `POST …/creatives/:c/versions/:n/store-pack/export` `{ destination, locales? }` → `{ folder, written, failed, rendered? }`:
+ * - `POST …/creatives/:c/versions/:n/store-pack/export` `{ destination, locales?, formats? }` → `{ folder, written, failed, rendered? }`:
  *   the pack of version n (spec §4.3). Formats without a current render are rendered first (the render pipeline, store steps
  *   included); a render made now that has problems is not copied (I2, Ruling J) and is listed in `failed`; so is a language
  *   without a translation, a render that failed, and every file that fails its store check. The rest is exported.
@@ -42,12 +42,25 @@ const exportBody = z.object({
   destination: z.string().min(1).max(4096),
   /** Languages to export (tags of the brief); absent: every language of the brief. */
   locales: z.array(z.string().min(1).max(40)).min(1).max(11).optional(),
+  /** Report 48: the pack's formats to export (instance ids of this pack); absent: the whole pack. */
+  formats: z.array(z.string().min(1).max(80)).min(1).max(80).optional(),
 }).strict();
 
 function parse<T>(schema: z.ZodType<T>, body: unknown): T {
   const r = schema.safeParse(body ?? {});
   if (!r.success) throw new WorkspaceError(400, t().errors.invalidRequestDetail({ detail: issuesText(r.error, currentLocale()) }));
   return r.data;
+}
+
+/**
+ * Report 48: the pack formats the export takes, in the brief's order: all of them, or the selection, which may only name
+ * formats of this pack (anything else, a hand-picked store format included, is refused before anything is written).
+ */
+function selectedFormats(packFormats: string[], selection: string[] | undefined): string[] {
+  if (!selection) return packFormats;
+  const foreign = [...new Set(selection.filter((f) => !packFormats.includes(f)))];
+  if (foreign.length > 0) throw new CodedError(400, t().variants.storePack.foreignFormat({ list: foreign.join(', ') }), 'store-pack-foreign-format');
+  return packFormats.filter((f) => selection.includes(f));
 }
 
 const localDay = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -108,7 +121,7 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
     // The pack owns its `instances` (the slots' ids in a pack made before); captions, numbers and folders follow the slot.
     const slotOf = packSlotOf(pack, catalog);
     const owned = new Set(slotOf.keys());
-    const packFormats = creative.brief.formats.filter((f) => owned.has(f) && packEntry(pack, slotOf.get(f)!, undefined) !== null);
+    const packFormats = selectedFormats(creative.brief.formats.filter((f) => owned.has(f) && packEntry(pack, slotOf.get(f)!, undefined) !== null), body.formats);
     // Store instances of the brief that are not the pack's (picked by hand): not exported, and said so.
     const notInPack = creative.brief.formats.filter((f) => !owned.has(f) && isStorePackFormat(f))
       .map((f) => { const label = creative.brief.formatLabels?.[f]; return label ? `${f} (${label})` : f; });
@@ -198,7 +211,7 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
     return rendered.length > 0 ? { ...result, rendered } : result;
   });
   /**
-   * Phase 15 (spec §6): the store pack of a variant group, `POST …/creatives/:c/store-pack/export-group` `{ destination, locales? }`.
+   * Phase 15 (spec §6): the store pack of a variant group, `POST …/creatives/:c/store-pack/export-group` `{ destination, locales?, formats? }`.
    * For each pack format the file comes from the member and version of the group selection (the ★, or the default rule on
    * variant A). Translations stay inside their variant: each format's localized renders are those of the member the selection
    * picked, at that version. As in the single pack, a composition or a translation with no current render is rendered first, in
@@ -234,7 +247,7 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
 
     const slotOf = packSlotOf(pack, catalog);
     const owned = new Set(slotOf.keys());
-    const packFormats = creative.brief.formats.filter((f) => owned.has(f) && packEntry(pack, slotOf.get(f)!, undefined) !== null);
+    const packFormats = selectedFormats(creative.brief.formats.filter((f) => owned.has(f) && packEntry(pack, slotOf.get(f)!, undefined) !== null), body.formats);
     const notInPack = creative.brief.formats.filter((f) => !owned.has(f) && isStorePackFormat(f))
       .map((f) => { const label = creative.brief.formatLabels?.[f]; return label ? `${f} (${label})` : f; });
     const sizeOf = (f: string) => { const p = findPreset(catalog, f); return { width: p?.width ?? 0, height: p?.height ?? 0 }; };

@@ -813,6 +813,7 @@ export const it: Messages = {
       googlePlay: 'Google Play',
       goal: (p) => `Screenshot App Store e Google Play per ${p.app}`,
       notStorePack: 'Questa creatività non è un pacchetto store',
+      foreignFormat: (p: { list: string }) => `Non sono formati di questo pacchetto store: ${p.list}`,
       collision: (p: { list: string }) => `Non c'è più posto per altre istanze di ${p.list} (al massimo 20): togli un formato di quel tipo e riprova`,
       badInstances: 'Le istanze del pacchetto store non corrispondono ai suoi formati',
       second: 'Una creatività ha un solo pacchetto store: per cambiarlo o toglierlo si usa il campo storePack, non il brief intero',

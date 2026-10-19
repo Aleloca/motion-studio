@@ -825,6 +825,7 @@ export const en = {
       googlePlay: 'Google Play',
       goal: (p: { app: string }) => `App Store and Google Play screenshots for ${p.app}`,
       notStorePack: 'This creative is not an App store pack',
+      foreignFormat: (p: { list: string }) => `Not formats of this store pack: ${p.list}`,
       collision: (p: { list: string }) => `There is no room for more instances of ${p.list} (20 at most): remove a format of that kind and try again`,
       badInstances: 'The store pack instances do not match its formats',
       second: 'A creative has one store pack: change or remove it with the storePack field, not the whole brief',
