@@ -346,7 +346,12 @@ arrives and worked on later together.
     html layer of an export at another resolution is an upscale. Squared gradient energy on the user's frames at t = 20
     and t = 22.5: 298 and 237 against 542 and 424 for the ground truth (5120 shrunk). Same in the desktop app (Electron
     provider, same page code, layers also out of process).
-    Proposed fix: give the scale to the whole browser or window, keeping the layers' process isolation. To do.
+    Proposed fix: give the scale to the whole browser or window, keeping the layers' process isolation.
+    Done (decisions 1340–1345): Chrome is launched with `--force-device-scale-factor` when the render has a scale, the
+    desktop's render window renders offscreen at that scale (`offscreen.deviceScaleFactor`); the layers stay out of
+    process and see `devicePixelRatio` = the scale; stills, previews and 1x renders are unchanged. On the user's frames,
+    both providers: 298 → 532 at t = 20, 237 → 431 at t = 22.5 (98% and 101% of the ground truth). Page zoom and
+    device emulation were measured and rejected (1342, 1343).
 
 ## Follow-ups found while working on 12–30
 
