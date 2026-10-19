@@ -234,13 +234,15 @@ arrives and worked on later together.
 38. **Blurry text in a 2K export.** The user exported a 60 s 16:9 video at 2560×1440 and the text looks soft, "not like
     2K" (2026-10-19). Cause: the agent's camera rig (`layers/world.html`, `#world{will-change:transform}`, scaled and
     rotated every frame) is rasterised by Chromium once, at its first scale, and then resampled, at any export size.
-    User's call: fix it. Done (decisions 1230–1232): the layer agent turns `will-change` off in every layer document,
-    in renders and in the preview; the agent is told not to use it on what scales or rotates. Measured on 10 px text
-    scaled to ~3.9x (squared gradient energy): 215 with the hint against 1174 without; 1174 for every case after the fix.
+    User's call: fix it. Done (decisions 1230–1232, 1237–1240): the layer agent replaces the hints that freeze the raster
+    (transform, scale, rotate, translate) with `filter` in every layer document, in renders and in the preview; the agent
+    is told not to use them on what scales or rotates. Measured on 10 px text scaled to ~3.9x (squared gradient energy):
+    215 with the hint against 1174 without; 1174 for every case after the fix.
 
 39. **Export frame rate.** Every video is exported at the composition's fps (30); the user wants to choose 24, 25, 30, 50
     or 60 fps in Export (2026-10-19). User's call: offer them. Done (decisions 1233–1236): the frame rate is part of the
-    export profile (default: the format's own), the export renders at it, and the render records its fps.
+    export profile (default: the format's own, not remembered), the export renders at it, and the render records its fps
+    (decisions 1241, 1242 after the review).
 
 ## Follow-ups found while working on 12–30
 
