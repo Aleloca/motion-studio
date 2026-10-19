@@ -1,4 +1,4 @@
-import { BRIEF_TEXT_MAX, INSTANCE_ID_RE, SUPPORTED_LOCALES, briefSchema, variantIdSchema, formatDisplayName, issuesText, presetOf, type Brief, type BriefServices, type FormatPreset, type VariantId } from '@motion-studio/shared';
+import { BRIEF_TEXT_MAX, INSTANCE_ID_RE, SUPPORTED_LOCALES, briefSchema, variantIdSchema, formatDisplayName, issuesText, presetOf, withAgentNames, type AgentNameRefusal, type Brief, type BriefServices, type FormatPreset, type VariantId } from '@motion-studio/shared';
 import { z } from 'zod';
 import type { AppScope, BridgeContext } from '../bridge/bridge.ts';
 import type { BridgeHandler } from '../bridge/bridge-routes.ts';
@@ -76,6 +76,7 @@ const inputs = {
   }).refine((a) => Object.keys(a).length > 0, { message: 'issue.nothingToChange' }),
   add_format: z.strictObject({ format: formatId, label: label.optional() }),
   duplicate_format: z.strictObject({ format: z.string().regex(INSTANCE_ID_RE), label: label.optional() }),
+  name_formats: z.strictObject({ names: z.record(formatId, label).refine((n) => Object.keys(n).length >= 1, { message: 'issue.nothingToChange' }).refine((n) => Object.keys(n).length <= 100) }),
   add_language: z.strictObject({ locale: z.string().min(1).max(40), primary: z.string().min(1).max(40).optional(), formats: z.array(z.string().regex(INSTANCE_ID_RE)).min(1).max(100).optional() }),
   add_variant: z.strictObject({ direction: z.string().trim().min(3).max(MAX_DIRECTION_CHARS) }),
   variant: z.strictObject({ variant: letter }),
@@ -134,6 +135,7 @@ export class AgentActionService {
       update_brief: on((s, a) => this.updateBrief(s, parse(inputs.update_brief, a))),
       add_format: on((s, a) => this.addFormat(s, parse(inputs.add_format, a))),
       duplicate_format: on((s, a) => this.duplicateFormat(s, parse(inputs.duplicate_format, a))),
+      name_formats: on((s, a) => this.nameFormats(s, parse(inputs.name_formats, a))),
       add_language: on((s, a) => this.addLanguage(s, parse(inputs.add_language, a))),
       add_variant: on((s, a) => this.addVariant(s, parse(inputs.add_variant, a))),
       discard_variant: on((s, a) => this.discardOrRestore(s, parse(inputs.variant, a).variant, 'discard')),
@@ -233,7 +235,8 @@ export class AgentActionService {
     const name = formatDisplayName(presets, preset.id, currentLocale());
     await this.deps.turns.briefFromAgent(s.ref, (current) => {
       if (current.formats.some((f) => presetOf(f) === preset.id)) throw new CodedError(409, x.formatInBrief({ format: name }), 'format-in-brief');
-      return { brief: { ...current, formats: [...current.formats, preset.id], ...(a.label ? { formatLabels: { ...current.formatLabels, [preset.id]: a.label } } : {}) } };
+      // Report 55: its label is the agent's (its own name, which it may change later).
+      return { brief: { ...current, formats: [...current.formats, preset.id] }, ...(a.label ? { agentLabels: { [preset.id]: a.label } } : {}) };
     });
     // Phase 3 (review minor 7): the coordinator's add is the group's at once; the variants make it when they get work for it.
     if (s.group) {
@@ -254,6 +257,32 @@ export class AgentActionService {
     this.defer(s, { kind: 'duplicate', format: a.format, ...(a.label ? { label: a.label } : {}), what });
     await this.note(s, what);
     return { ok: true, note: `Duplicated from version ${s.version} after this turn ends (a new version made by Motion Studio, no agent); from the latest version if this turn changes no composition.` };
+  }
+
+  /**
+   * Report 55: the agent's speaking names of the formats, format → name, set when the turn ends (in a group, the group's edit at
+   * once). A store screenshot's name follows its number ("1 · name"). Formats the user named are refused here and again where
+   * the brief is written (`withAgentNames`), whatever the prompt said; with nothing left to name the call is refused (409).
+   */
+  private async nameFormats(s: Scope, a: z.infer<typeof inputs.name_formats>) {
+    this.notForHelper(s);
+    const x = t().agentActions;
+    let named: string[] = [];
+    let refused: AgentNameRefusal[] = [];
+    const { after } = await this.deps.turns.briefFromAgent(s.ref, (current) => {
+      ({ named, refused } = withAgentNames(current, a.names));
+      if (named.length === 0) {
+        const why = (r: AgentNameRefusal) => `${oneLine(r.format).slice(0, 100)} (${r.reason === 'user-named' ? x.nameUserNamed : r.reason === 'empty' ? x.nameEmpty : x.nameNotInBrief})`;
+        throw new CodedError(409, x.namesRefused({ list: refused.map(why).join(', ') }), 'format-names-refused');
+      }
+      return { agentLabels: Object.fromEntries(named.map((id) => [id, a.names[id]!])) };
+    });
+    const list = named.map((id) => after.formatLabels?.[id] ?? id).join('; ');
+    await this.note(s, s.group ? x.formatsNamed({ list }) : `${x.formatsNamed({ list })} · ${x.afterTurn}`);
+    return {
+      ok: true, named, refused,
+      note: `${s.group ? 'The names are the group\'s now.' : 'The names are set when this turn ends.'}${refused.some((r) => r.reason === 'user-named') ? ' The user named the formats refused as "user-named": those names are theirs, never name those formats.' : ''}`,
+    };
   }
 
   private async addLanguage(s: Scope, a: z.infer<typeof inputs.add_language>) {
@@ -449,7 +478,7 @@ export class AgentActionService {
     for (const [i, d] of sorted.entries()) {
       try {
         if (d.kind === 'duplicate') {
-          const r = await this.deps.edits.duplicate(ref, n, { instanceId: d.format, ...(d.label ? { label: d.label } : {}) }, currentLocale());
+          const r = await this.deps.edits.duplicate(ref, n, { instanceId: d.format, ...(d.label ? { label: d.label } : {}) }, currentLocale(), 'agent');
           const presets = await this.deps.presets();
           const brief = (await store.get(ref.creativeSlug)).brief;
           await say(x.duplicateDone({ format: formatDisplayName(presets, r.instanceId, currentLocale(), brief.formatLabels), n: r.version.n }));

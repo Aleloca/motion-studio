@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import {
   COMPOSITION_LIMITS, EDITOR_SAVE_STAGED_MAX, compositionProblem, compositionProblemText, describeEdits, draftSizeProblem, editOpSchema, effectiveLinks, formatDisplayName, INSTANCE_ID_RE, isCompositionPath, MAX_INSTANCES, messages,
-  nextInstanceId, normalizeComposition, presetOf, renderJobKey, sameDelivery, validateComposition,
+  keptAgentLabels, nextInstanceId, normalizeComposition, presetOf, renderJobKey, sameDelivery, validateComposition,
   type Brief, type CompositionProblem, type CreativeFile, type FormatPreset, type Locale, type StagedAsset, type VersionEntry,
 } from '@motion-studio/shared';
 import { hashConfinedFile } from '../brand/agent-guard.ts';
@@ -173,7 +173,7 @@ export class DirectEditService {
    * (a source folder no longer the recorded one). A failure before the version is recorded leaves the brief and the versions as
    * they were.
    */
-  async duplicate(ref: CreativeRef, n: number, body: unknown, locale: Locale): Promise<{ version: VersionEntry; instanceId: string }> {
+  async duplicate(ref: CreativeRef, n: number, body: unknown, locale: Locale, by: 'user' | 'agent' = 'user'): Promise<{ version: VersionEntry; instanceId: string }> {
     const parsed = duplicateFormatBodySchema.safeParse(body ?? {});
     if (!parsed.success) throw new CodedError(400, messages(locale).errors.invalidRequestDetail({ detail: parsed.error.issues[0]?.message ?? '' }), 'duplicate-invalid-body');
     // Phase 15 (decisions log 831): in a variant group the new instance is the group's (host lock first, then this variant's).
@@ -183,14 +183,14 @@ export class DirectEditService {
       await this.deps.turns.assertNotDiscarded(ref);
       return variants.duplicateInGroup(ref, parsed.data.instanceId, parsed.data.label, async (id) => {
         await this.deps.turns.assertNotDiscarded(ref);
-        return this.duplicateLocked(ref, n, parsed.data, locale, id);
-      });
+        return this.duplicateLocked(ref, n, parsed.data, locale, by, id);
+      }, by);
     }
-    return this.deps.turns.runLocked(ref, () => this.duplicateLocked(ref, n, parsed.data, locale));
+    return this.deps.turns.runLocked(ref, () => this.duplicateLocked(ref, n, parsed.data, locale, by));
   }
 
   /** `groupId`: the instance id the variant group allocated for this duplicate (phase 15); absent outside a group. */
-  private async duplicateLocked(ref: CreativeRef, n: number, body: DuplicateFormatBody, locale: Locale, groupId?: string): Promise<{ version: VersionEntry; instanceId: string }> {
+  private async duplicateLocked(ref: CreativeRef, n: number, body: DuplicateFormatBody, locale: Locale, by: 'user' | 'agent', groupId?: string): Promise<{ version: VersionEntry; instanceId: string }> {
     const m = messages(locale);
     const v = m.variants;
     if (this.deps.turns.turnActive(ref) || this.renderActive(ref)) throw new CodedError(409, v.duplicateBusy, 'duplicate-busy');
@@ -240,7 +240,11 @@ export class DirectEditService {
     // A freed id taken again (a gap) starts clean: no stored link at either end, no manual pick (Phase 12).
     const fresh = (c: CreativeFile) => {
       const pruned = withoutFormatState(c.brief.links, c.exportPicks, new Set([instanceId]));
-      const brief: Brief = { ...c.brief, formats: nextFormats, ...(labels ? { formatLabels: labels } : {}), ...(pruned.links ? { links: pruned.links } : {}) };
+      // Report 55: the new instance's label is the agent's when the agent's duplicate_format gave it, else nobody else's.
+      const { agentFormatLabels: _agent, ...rest } = c.brief;
+      const agent = keptAgentLabels({ ...c.brief.agentFormatLabels, ...(by === 'agent' && body.label !== undefined ? { [instanceId]: body.label } : {}) }, labels);
+      if (by !== 'agent' && agent) delete agent[instanceId];
+      const brief: Brief = { ...rest, formats: nextFormats, ...(labels ? { formatLabels: labels } : {}), ...(agent && Object.keys(agent).length > 0 ? { agentFormatLabels: agent } : {}), ...(pruned.links ? { links: pruned.links } : {}) };
       // Nor the old instance's translations (final review I1): its rows up to the latest version are not carried.
       return { brief, exportPicks: pruned.exportPicks, ...withFreedInstances(c.freedInstances, [instanceId], latest.n) };
     };

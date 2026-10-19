@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
   activeMembers, canDiscard, sisterSlug, effectiveLinks, followerVersion, formatDisplayName, hasFormat, MAX_INSTANCES, hostOf, letterOfSlug, nextInstanceId, nextLetter, presetOf, starOf,
-  VARIANT_ID_RE, variantGroupSchema, variantIdAt, variantIndex,
+  keptAgentLabels, VARIANT_ID_RE, variantGroupSchema, variantIdAt, variantIndex,
   type CreativeFile, type VariantGroup, type VariantId, type VariantMember, type VariantPick, type VersionEntry,
 } from '@motion-studio/shared';
 import { readCompositionFolder } from '../compositions/composition-files.ts';
@@ -514,7 +514,7 @@ export class VariantGroupService {
    * right after its source, and is propagated like any brief edit: the other variants fill it at their next turn, a working
    * one gets it then, a discarded one when it is restored.
    */
-  duplicateInGroup<T>(ref: CreativeRef, source: string, label: string | undefined, run: (instanceId: string) => Promise<T>): Promise<T> {
+  duplicateInGroup<T>(ref: CreativeRef, source: string, label: string | undefined, run: (instanceId: string) => Promise<T>, by: 'user' | 'agent' = 'user'): Promise<T> {
     return this.withGroup(ref, async (host, hostFile, g) => {
       const shared = await this.canonical(host, hostFile);
       const ids = new Set(shared.brief.formats);
@@ -535,7 +535,11 @@ export class VariantGroupService {
       const at = formats.indexOf(source);
       formats.splice(at < 0 ? formats.length : at + 1, 0, instanceId);
       const formatLabels = label !== undefined ? { ...shared.brief.formatLabels, [instanceId]: label } : shared.brief.formatLabels;
-      await this.propagateLocked(host, g, { ...shared, brief: { ...shared.brief, formats, ...(formatLabels ? { formatLabels } : {}) } });
+      // Report 55: the label is the agent's when its duplicate_format gave it.
+      const { agentFormatLabels: _agent, ...rest } = shared.brief;
+      const agent = keptAgentLabels({ ...shared.brief.agentFormatLabels, ...(by === 'agent' && label !== undefined ? { [instanceId]: label } : {}) }, formatLabels);
+      if (by !== 'agent' && agent) delete agent[instanceId];
+      await this.propagateLocked(host, g, { ...shared, brief: { ...rest, formats, ...(formatLabels ? { formatLabels } : {}), ...(agent && Object.keys(agent).length > 0 ? { agentFormatLabels: agent } : {}) } });
       return result;
     });
   }

@@ -427,3 +427,25 @@ describe('app actions in the prompt (decision 917, user note 6)', () => {
     expect(buildCreativePrompt({ ...v2, creative: sixty, kind: 'fix', problems: ['x'], durationOff: { duration: 60, target: 6 } })).not.toContain('update_brief');
   });
 });
+
+describe('format names in the prompt (report 55)', () => {
+  const named = { ...creative, brief: { ...creative.brief, formats: ['instagram-post-1x1', 'web-banner-300x250', 'youtube-16x9'],
+    formatLabels: { 'instagram-post-1x1': 'Prenota in tre tap', 'web-banner-300x250': 'Banner estate' }, agentFormatLabels: { 'instagram-post-1x1': 'Prenota in tre tap' } } };
+  it('asks the agent to name every format it makes, in the user\'s language, and names the user\'s names it must not touch', () => {
+    const p = buildCreativePrompt({ ...v2, creative: named, kind: 'iteration', userText: 'x', appActions: true });
+    expect(p).toContain('## Format names');
+    expect(p).toContain('name_formats');
+    expect(p).toContain('in Italian, at most 40 characters');
+    expect(p).toContain('- instagram-post-1x1: Instagram · Post 1:1, named "Prenota in tre tap" by you');
+    expect(p).toContain('- web-banner-300x250: Web · Banner 300×250, labelled "Banner estate"');
+    expect(p).toContain('Formats with no name yet: youtube-16x9.');
+    expect(p).toContain('The user named web-banner-300x250: those names are theirs. Never rename those formats');
+    const none = buildCreativePrompt({ ...v2, kind: 'first', appActions: true, locale: 'en' });
+    expect(none).toContain('in English, at most 40 characters');
+    expect(none).toContain('The user has named no format.');
+    // Not without the tools, not in a repair, not for a helper (the brief is the coordinator's).
+    expect(buildCreativePrompt({ ...v2, creative: named, kind: 'first' })).not.toContain('## Format names');
+    expect(buildCreativePrompt({ ...v2, creative: named, kind: 'fix', problems: ['x'], appActions: true })).not.toContain('## Format names');
+    expect(buildCreativePrompt({ ...v2, creative: named, kind: 'first', appActions: true, helper: { request: null } })).not.toContain('## Format names');
+  });
+});

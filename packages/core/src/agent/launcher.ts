@@ -29,7 +29,7 @@ export const MCP_SERVER = 'studio';
  */
 /** Phase 3 of the single agent: the coordinator's own tools (`group-turn.ts`); no other job has them. */
 export const GROUP_TOOLS = ['list_variants', 'work_on_variants', 'add_variants'] as const;
-export const APP_ACTION_TOOLS = ['update_brief', 'add_format', 'duplicate_format', 'add_language', 'add_variant', 'discard_variant', 'restore_variant', 'set_pick', 'render_version', 'prepare_export'] as const;
+export const APP_ACTION_TOOLS = ['update_brief', 'add_format', 'duplicate_format', 'name_formats', 'add_language', 'add_variant', 'discard_variant', 'restore_variant', 'set_pick', 'render_version', 'prepare_export'] as const;
 export const MCP_TOOLS: Record<AgentJobKind, string[]> = {
   creative: ['report_progress', 'validate_composition', 'preview_frames', 'read_brand_kit', 'generate_image', 'tts', 'sound_effect', 'music', 'list_voices', 'stock_search', 'stock_download', 'fonts_fetch', ...APP_ACTION_TOOLS],
   console: ['report_progress', 'read_brand_kit', 'generate_image', 'tts', 'sound_effect', 'music', 'list_voices', 'stock_search', 'stock_download', 'fonts_fetch'],
@@ -42,7 +42,7 @@ export const MCP_TOOLS: Record<AgentJobKind, string[]> = {
   // Phase 3 of the single agent: the coordinator of a variant group. It reads, answers, asks (AskUserQuestion, through the
   // approval prompt) and hands the work to the variants' turns; the group-level app actions are its own. No paid tool.
   // Review minor 7: the brief-wide changes (brief, formats, languages) are the coordinator's, never a helper's.
-  'creative-group': ['report_progress', 'read_brand_kit', ...GROUP_TOOLS, 'update_brief', 'add_format', 'add_language', 'discard_variant', 'restore_variant', 'set_pick', 'render_version', 'prepare_export'],
+  'creative-group': ['report_progress', 'read_brand_kit', ...GROUP_TOOLS, 'update_brief', 'add_format', 'name_formats', 'add_language', 'discard_variant', 'restore_variant', 'set_pick', 'render_version', 'prepare_export'],
 };
 
 /** Characters that make Claude Code's sandbox read a path as a glob. */
