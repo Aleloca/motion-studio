@@ -594,7 +594,7 @@ function HelperRow({ item, onToggle, children }: { item: Extract<Item, { kind: '
       <button type="button" className="ms-convo-fold ms-convo-helper-row" aria-expanded={item.open} onClick={onToggle}>
         {s.kind === 'working' ? <Spinner decorative /> : <span className="ms-step-check" aria-hidden="true"><Icon name={s.kind === 'failed' ? 'warn' : 'check'} size={13} strokeWidth={2} /></span>}
         <VariantChips list={[item.variant]} />
-        <span className="ms-convo-helper-text">{text}</span>
+        <span className="ms-convo-helper-text" title={text}>{text}</span>
         <Icon name="chevron" size={12} className="ms-chev" />
       </button>
       {item.open ? <div className="ms-convo-helper-steps">{children}</div> : null}

@@ -281,8 +281,11 @@
 .ms-convo-groupturn { margin-left: 36px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--line); color: var(--muted); font-size: 12px; }
 .ms-composer-pin > .ms-vchip { margin-right: 2px; }
 /* Phase 5 of the single agent (decision 983): a helper's row, its steps folded under it. */
-.ms-convo-helper { margin-left: 36px; }
+.ms-convo-helper { margin-left: 36px; min-width: 0; }
+.ms-convo-helper .ms-convo-fold { margin-left: 0; max-width: 100%; min-width: 0; }
 .ms-convo-helper-row { display: flex; align-items: center; gap: 6px; }
+.ms-convo-helper-row > * { flex: none; }
+.ms-convo-helper-row > .ms-convo-helper-text { flex: 0 1 auto; }
 .ms-convo-helper-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-convo-helper-steps { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 0 8px; padding-left: 10px; box-shadow: inset 2px 0 0 var(--line); }
 .ms-convo-helper-card { margin-top: 8px; }
