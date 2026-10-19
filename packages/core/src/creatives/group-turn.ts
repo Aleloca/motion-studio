@@ -130,7 +130,8 @@ export class GroupTurnService implements GroupRouter {
 
   constructor(private readonly deps: GroupTurnDeps) {
     deps.turns.setGroupRouter(this);
-    deps.turns.onTurnSettled(async (_ref, jobId, o) => { this.resultOf(jobId).resolve(o); });
+    // Review minor 3: only the helpers this service started are followed (never every creative turn of the app).
+    deps.turns.onTurnSettled(async (_ref, jobId, o) => { this.results.get(jobId)?.resolve(o); });
   }
 
   // -------------------------------------------------------------------------------------------------------------------
@@ -490,7 +491,8 @@ export class GroupTurnService implements GroupRouter {
     const parsed = workSchema.safeParse(args);
     if (!parsed.success) throw refuse(['Give `items`: one `{ variant, instruction }` per variant (instruction: 1 to 4000 characters), with optional `formats`.']);
     const { group, info } = await this.variantsInfo(r.host, r);
-    const brief = (await new CreativeStore(r.host.projectDir).get(r.host.creativeSlug)).brief;
+    // The group's brief as it is now (a format the coordinator just added is in the host's pending brief while it works).
+    const brief = (await this.deps.turns.side.pendingBrief(r.host.projectDir, r.host.creativeSlug))?.brief ?? (await new CreativeStore(r.host.projectDir).get(r.host.creativeSlug)).brief;
     const errors: string[] = [];
     const seen = new Set<VariantId>();
     for (const item of parsed.data.items) {
@@ -783,18 +785,23 @@ export class GroupTurnService implements GroupRouter {
    */
   async adoptMemberQueues(host: CreativeRef, group: VariantGroup): Promise<void> {
     const side = this.deps.turns.side;
-    const moved: QueuedRequest[] = [];
+    const moved: Array<{ slug: string; items: QueuedRequest[] }> = [];
     for (const mem of group.members) {
       const mref = memberRef(host, mem.slug);
       if (this.deps.turns.turnActive(mref)) continue;
       const own = (await side.read(host.projectDir, mem.slug).catch(() => null))?.queued ?? [];
       if (own.length === 0) continue;
-      await side.update(host.projectDir, mem.slug, () => ({ queued: undefined }));
-      for (const q of own) moved.push({ ...q, pins: q.pins.map((p) => (p.variant ? p : { ...p, variant: mem.letter })), variants: [...new Set([...(q.variants ?? []), mem.letter])] });
+      moved.push({ slug: mem.slug, items: own.map((q) => ({ ...q, pins: q.pins.map((p) => (p.variant ? p : { ...p, variant: mem.letter })), variants: [...new Set([...(q.variants ?? []), mem.letter])] })) });
     }
     if (moved.length === 0) return;
-    moved.sort((a, b) => a.at.localeCompare(b.at));
-    await side.updateGroup(host.projectDir, host.creativeSlug, (g) => ({ queued: [...(g.queued ?? []), ...moved.filter((x) => !(g.queued ?? []).some((y) => y.clientId === x.clientId))] }));
+    const all = moved.flatMap((m) => m.items).sort((a, b) => a.at.localeCompare(b.at));
+    // Review minor 6: the group's queue is written first, then each member's is cleared: a crash in between leaves the
+    // requests in both, and the next adoption adds none twice (by client id).
+    await side.updateGroup(host.projectDir, host.creativeSlug, (g) => ({ queued: [...(g.queued ?? []), ...all.filter((x) => !(g.queued ?? []).some((y) => y.clientId === x.clientId))] }));
+    for (const m of moved) {
+      const ids = new Set(m.items.map((q) => q.clientId));
+      await side.update(host.projectDir, m.slug, (cur) => ({ queued: (cur.queued ?? []).filter((q) => !ids.has(q.clientId)) }));
+    }
     this.changed(host);
   }
 

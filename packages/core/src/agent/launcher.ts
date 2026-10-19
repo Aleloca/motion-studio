@@ -41,7 +41,8 @@ export const MCP_TOOLS: Record<AgentJobKind, string[]> = {
   'variant-directions': ['submit_variant_directions'],
   // Phase 3 of the single agent: the coordinator of a variant group. It reads, answers, asks (AskUserQuestion, through the
   // approval prompt) and hands the work to the variants' turns; the group-level app actions are its own. No paid tool.
-  'creative-group': ['report_progress', 'read_brand_kit', ...GROUP_TOOLS, 'update_brief', 'discard_variant', 'restore_variant', 'set_pick', 'render_version', 'prepare_export'],
+  // Review minor 7: the brief-wide changes (brief, formats, languages) are the coordinator's, never a helper's.
+  'creative-group': ['report_progress', 'read_brand_kit', ...GROUP_TOOLS, 'update_brief', 'add_format', 'add_language', 'discard_variant', 'restore_variant', 'set_pick', 'render_version', 'prepare_export'],
 };
 
 /** Characters that make Claude Code's sandbox read a path as a glob. */

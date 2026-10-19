@@ -2148,6 +2148,10 @@ export class CreativeTurnService {
     if (live) live.phase = 'ended';
     this.live.delete(jobId);
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
+    // Phase 3 (review minor 5): a helper's entries are tagged until its turn is over; what runs after it (its after-turn
+    // actions, a follow-up turn) is no longer one of its steps.
+    const helper = this.helpers.get(jobId);
+    if (helper) setHelperTag(ref.projectDir, ref.creativeSlug, null);
     // Phase 15: whatever the outcome, a brief the group changed meanwhile applies now that the turn is over.
     await this.briefAfterJob(ref);
     // Decision 917: what the agent asked to do after its turn (duplicates, renders, a follow-up turn…), before the queue.
@@ -2155,8 +2159,8 @@ export class CreativeTurnService {
       await hook(ref, jobId, { state, savedVersion: live?.savedN ?? null, stopped: live?.stopped ?? false })
         .catch((err: Error) => console.warn(`Motion Studio: the actions after a turn of ${ref.creativeSlug} failed: ${err.message}`));
     }
-    // Phase 3: a helper's entries are tagged until here (its after-turn actions included); its queue is the group's.
-    if (this.helpers.delete(jobId)) { setHelperTag(ref.projectDir, ref.creativeSlug, null); return; }
+    // Phase 3: a helper's queue is the group's.
+    if (helper) { this.helpers.delete(jobId); return; }
     if (state !== 'succeeded' || !live?.savedVersion || live.stopped) { this.paused.add(key); return; }
     await this.maybeAutoRun(ref);
   }

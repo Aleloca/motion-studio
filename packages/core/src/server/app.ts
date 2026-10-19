@@ -273,8 +273,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   let afterOtherJob: ((key: string, state: string) => void) | null = null;
   const queue = new JobQueue({
     // `export` (decision 974): an export waits for its renders without taking an agent turn's slot or the render lane.
-    // `coordinator` (phase 3 of the single agent): a group turn waits for its helpers without taking the main slots they need.
-    concurrency: 2, lanes: { render: 1, generate: 2, export: 2, [COORDINATOR_LANE]: 4 },
+    // `coordinator` (phase 3 of the single agent): a group turn waits for its helpers without taking the main slots they need;
+    // two at a time (review minor 4): with the main lane's default two, at most four Claude processes.
+    concurrency: 2, lanes: { render: 1, generate: 2, export: 2, [COORDINATOR_LANE]: 2 },
     onUpdate: (job) => {
       hub.broadcast({ type: 'job', job });
       if (job.kind === 'localize' && job.state !== 'queued' && job.state !== 'running') afterOtherJob?.(job.key, job.state);

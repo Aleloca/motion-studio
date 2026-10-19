@@ -194,6 +194,7 @@ export class AgentActionService {
   // The brief.
 
   private async updateBrief(s: Scope, a: z.infer<typeof inputs.update_brief>) {
+    this.notForHelper(s);
     const { before, after } = await this.deps.turns.briefFromAgent(s.ref, (current) => {
       const fields: BriefPatch['fields'] = {
         ...(a.durationSec !== undefined ? { durationSec: a.durationSec } : {}), ...(a.goal !== undefined ? { goal: a.goal } : {}),
@@ -223,7 +224,7 @@ export class AgentActionService {
   }
 
   private async addFormat(s: Scope, a: z.infer<typeof inputs.add_format>) {
-    if (s.group) throw new CodedError(403, t().errors.toolUnavailable, 'tool-unavailable');
+    this.notForHelper(s);
     const presets = await this.deps.presets();
     const preset = findPreset(presets, a.format);
     const x = t().agentActions;
@@ -234,6 +235,11 @@ export class AgentActionService {
       if (current.formats.some((f) => presetOf(f) === preset.id)) throw new CodedError(409, x.formatInBrief({ format: name }), 'format-in-brief');
       return { brief: { ...current, formats: [...current.formats, preset.id], ...(a.label ? { formatLabels: { ...current.formatLabels, [preset.id]: a.label } } : {}) } };
     });
+    // Phase 3 (review minor 7): the coordinator's add is the group's at once; the variants make it when they get work for it.
+    if (s.group) {
+      await this.note(s, x.formatAdded({ format: a.label ? `${name} (${a.label})` : name }));
+      return { ok: true, format: preset.id, note: `The format is in the group's brief now (a working variant takes it at its next turn). To make it, give the variants the user wants work with work_on_variants and formats ["${preset.id}"].` };
+    }
     this.defer(s, { kind: 'followUp', formats: [preset.id], what: name });
     await this.note(s, `${x.formatAdded({ format: a.label ? `${name} (${a.label})` : name })} · ${x.afterTurn}`);
     return { ok: true, format: preset.id, note: 'The format is in the brief when this turn ends; Motion Studio then makes it in a turn of its own (not this one): do not write its composition now.' };
@@ -251,7 +257,7 @@ export class AgentActionService {
   }
 
   private async addLanguage(s: Scope, a: z.infer<typeof inputs.add_language>) {
-    if (s.group) throw new CodedError(403, t().errors.toolUnavailable, 'tool-unavailable');
+    this.notForHelper(s);
     const ui = currentLocale();
     const tag = checkedLocale(a.locale, ui);
     const primary = a.primary !== undefined ? checkedLocale(a.primary, ui) : undefined;
@@ -267,6 +273,19 @@ export class AgentActionService {
       // Already one of the brief's languages: nothing to change, the translation still starts.
       return { fields: loc.extra.includes(tag) ? {} : { locales: { primary: loc.primary, extra: [...loc.extra, tag] } } };
     });
+    // Phase 3 (review minor 7): the coordinator has no turn to wait for: each idle variant with a version is translated now.
+    if (s.group) {
+      await this.note(s, x.languageAdded({ language: localeName(tag) }));
+      const r = await this.variants(s).resolve(s.ref);
+      const left: string[] = [];
+      for (const m of r.group ? r.group.members.filter((x2) => x2.status === 'active') : []) {
+        const mref = { ...s.ref, creativeSlug: m.slug };
+        const latest = (await this.store(s).readVersions(m.slug).catch(() => [])).at(-1)?.n;
+        if (latest === undefined) continue;
+        try { await this.deps.localize.start(mref, latest, { locales: [tag], ...(a.formats ? { formats: a.formats } : {}) }); } catch { left.push(upper(m.letter)); }
+      }
+      return { ok: true, locale: tag, note: left.length ? `The language is in the group's brief; the translation of ${left.join(', ')} could not start now (a variant at work): it can be asked again later.` : 'The language is in the group\'s brief; the translation of every variant with a version has started.' };
+    }
     this.defer(s, { kind: 'localize', locales: [tag], ...(a.formats ? { formats: a.formats } : {}), what: localeName(tag) });
     await this.note(s, x.languageAdded({ language: localeName(tag) }));
     return { ok: true, locale: tag, note: 'The language is in the brief when this turn ends; Motion Studio then starts its translation (a turn of its own).' };

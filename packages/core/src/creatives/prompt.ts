@@ -509,9 +509,12 @@ export function appActionsSection(brief: CreativeFile['brief'], helper = false):
   return [
     '## Acting on the app (Motion Studio tools)',
     'You can change this creative in Motion Studio yourself, with no confirmation card: the chat shows the user each action. When the user asks for one of these, do it with the tool and never tell them to click something.',
-    '- update_brief: the brief\'s duration (durationSec), goal, key message, notes and services. The brief changes when your turn ends; a new durationSec applies to this turn\'s output checks at once.',
-    '- add_format: a format of the catalog (by preset id, e.g. "youtube-shorts-9x16"); Motion Studio makes it in a turn right after this one. duplicate_format: a second instance of a format of the brief (made after this turn, from the version you are making).',
-    '- add_language: a language variant of the creative (translated after this turn).',
+    // Review minor 7: a helper does not change the group's brief (the coordinator does).
+    ...(helper ? ['- duplicate_format: a second instance of a format of the brief (made after this turn, from the version you are making).'] : [
+      '- update_brief: the brief\'s duration (durationSec), goal, key message, notes and services. The brief changes when your turn ends; a new durationSec applies to this turn\'s output checks at once.',
+      '- add_format: a format of the catalog (by preset id, e.g. "youtube-shorts-9x16"); Motion Studio makes it in a turn right after this one. duplicate_format: a second instance of a format of the brief (made after this turn, from the version you are making).',
+      '- add_language: a language variant of the creative (translated after this turn).',
+    ]),
     // Phase 3 of the single agent: a helper's variant actions are the coordinator's, but for the ★ of its own versions.
     helper ? '- set_pick: the ★ (the version exported) of a format, with a version of this variant.'
       : '- add_variant: a new variant with its direction (it starts its own agent turn); discard_variant and restore_variant; set_pick: the ★ (the version exported) of a format.',
@@ -519,7 +522,7 @@ export function appActionsSection(brief: CreativeFile['brief'], helper = false):
     'Use them only when the user asks for it, or when the brief clearly needs it. You cannot archive or delete anything, nor change settings, keys or permissions.',
     // Decision 1060.
     '- A turn whose compositions all stay exactly as they were makes no new version: what you did with these tools still applies, and "the version you are making" is then the latest one.',
-    ...(stated !== null && brief.durationSec !== null && stated !== brief.durationSec
+    ...(!helper && stated !== null && brief.durationSec !== null && stated !== brief.durationSec
       ? [`- The brief's text says about ${stated}s but its duration field says ${brief.durationSec}s. If the text is clearly what the user wants, call update_brief with durationSec ${stated} before you build; if it is unclear, ask with AskUserQuestion.`]
       : []),
   ];
@@ -545,8 +548,10 @@ export function helperSection(letter: VariantId | undefined, h: NonNullable<Prom
 }
 
 /** User note 6: what a repair of a duration problem may do instead of looping (the agent cannot otherwise change the brief). */
-function durationFixLines(d: { duration: number; target: number }): string[] {
+function durationFixLines(d: { duration: number; target: number }, helper = false): string[] {
   const duration = Math.round(d.duration);
+  // Review minor 7: a helper cannot change the brief: it brings the duration back, or asks.
+  if (helper) return [`The duration problem: the brief's duration is ${d.target}s and your composition lasts ${duration}s. Bring the duration back to ${d.target}s; if the user's words clearly ask for ${duration}s, ask with AskUserQuestion.`];
   return [
     `The duration problem: the brief's duration is ${d.target}s and your composition lasts ${duration}s. If the brief text or the user's words clearly ask for ${duration}s, do not shorten the video: call update_brief with durationSec ${duration}, then validate_composition again. If it is unclear which one the user wants, ask with AskUserQuestion. Otherwise bring the duration back to ${d.target}s.`,
   ];
@@ -623,7 +628,7 @@ export function buildCreativePrompt(i: PromptInput): string {
       `The compositions of version ${i.version} do not meet the contract. Fix these problems in the same folders (${outputDir}/compositions/<format-id>/), then call validate_composition again:`,
       // One line each: a problem may quote the agent's own files (an SVG refusal), never a way to start a new line.
       ...(i.problems ?? []).map((p) => `- ${oneLine(p, 2000)}`),
-      ...(i.appActions && i.durationOff ? ['', ...durationFixLines(i.durationOff)] : []),
+      ...(i.appActions && i.durationOff ? ['', ...durationFixLines(i.durationOff, Boolean(i.helper))] : []),
       '', ...repairRequestSection(i.userWords, i.liveMessages),
     );
   } else {

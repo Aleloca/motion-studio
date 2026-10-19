@@ -43,7 +43,9 @@ async function setup(directions: Array<string | null> = ['Audace', 'Calma', 'Ret
 describe('the coordinator\'s tools and permissions', () => {
   it('reads and asks only: no edit tool, no Bash, no paid tool, no project "Always" rules, with and without the sandbox', () => {
     expect(MCP_TOOLS['creative-group']).toEqual(expect.arrayContaining(['list_variants', 'work_on_variants', 'add_variants', 'set_pick', 'update_brief']));
-    for (const paid of ['generate_image', 'tts', 'music', 'sound_effect', 'add_variant', 'add_format']) expect(MCP_TOOLS['creative-group']).not.toContain(paid);
+    for (const paid of ['generate_image', 'tts', 'music', 'sound_effect', 'add_variant']) expect(MCP_TOOLS['creative-group']).not.toContain(paid);
+    // Review minor 7: the brief-wide changes are the coordinator's.
+    expect(MCP_TOOLS['creative-group']).toEqual(expect.arrayContaining(['add_format', 'add_language']));
     expect(MCP_TOOLS.creative).not.toContain('work_on_variants');
     for (const sandbox of [false, true]) {
       const p = buildAgentPolicy({
@@ -401,6 +403,56 @@ describe('the group turn', () => {
     (await v.runOf(`${slug}~c`)).finish();
     (await coordinator(1)).finish({ write: false });
     await v.waitIdle();
+  });
+
+  it('review minor 7: a helper may not change the group\'s brief; the coordinator does (the brief changes at once for idle variants)', async () => {
+    const slug = await setup(['Audace', 'Calma']);
+    await send(slug, 'Variante B: titolo più grande');
+    const c = await coordinator();
+    expect((await v.bridge(c, 'work_on_variants', { items: [{ variant: 'b', instruction: 'titolo' }] })).statusCode).toBe(200);
+    c.finish({ write: false });
+    const hb = await v.runOf(`${slug}~b`);
+    expect(hb.req.prompt).not.toMatch(/- update_brief:/);
+    for (const [tool, args] of [['update_brief', { durationSec: 20 }], ['add_format', { format: 'tiktok-9x16' }], ['add_language', { locale: 'de', primary: 'it' }]] as const) {
+      const r = await v.bridge(hb, tool, args as Record<string, unknown>);
+      expect(r.statusCode, tool).toBe(409);
+      expect(r.json().error, tool).toBe(messages('it').agentActions.helperGroupAction);
+    }
+    hb.finish();
+    // Review minor 5: what runs after the helper's turn is no longer its step (not folded under it).
+    const report = await coordinator(1);
+    expect((await v.bridge(report, 'update_brief', { durationSec: 20 })).statusCode).toBe(200);
+    expect((await v.bridge(report, 'add_format', { format: 'tiktok-9x16' })).statusCode).toBe(200);
+    report.finish({ write: false });
+    await v.waitIdle();
+    for (const s2 of [slug, `${slug}~b`]) {
+      const b = (await v.detail(s2)).creative.brief;
+      expect([b.durationSec, b.formats.includes('tiktok-9x16')], s2).toEqual([20, true]);
+    }
+    const lines = (await conversation(slug)).filter((e) => e.type === 'system' && e.origin === 'agent');
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines.every((e) => e.group && e.variant === undefined)).toBe(true);
+  });
+
+  it('review minor 5: the helper tag is cleared before the turn\'s after-turn actions run', async () => {
+    const slug = await setup(['Audace', 'Calma']);
+    await send(slug, 'Variante B: duplica il post');
+    const c = await coordinator();
+    expect((await v.bridge(c, 'work_on_variants', { items: [{ variant: 'b', instruction: 'duplica' }] })).statusCode).toBe(200);
+    c.finish({ write: false });
+    const hb = await v.runOf(`${slug}~b`);
+    expect((await v.bridge(hb, 'duplicate_format', { format: 'instagram-post-1x1' })).statusCode).toBe(200);
+    hb.finish();
+    (await coordinator(1)).finish({ write: false });
+    await v.waitIdle();
+    const conv = await conversation(slug);
+    const queuedLine = conv.findIndex((e) => e.type === 'system' && e.variant === 'b' && e.origin === 'agent');
+    expect(queuedLine).toBeGreaterThanOrEqual(0);
+    // The line written during the turn is the helper's; what the after-turn action writes is not.
+    expect(conv[queuedLine]!.groupJobId).toBeTruthy();
+    const after = conv.slice(queuedLine + 1).filter((e) => e.type === 'system' && e.variant === 'b' && e.origin === 'agent');
+    expect(after.length).toBeGreaterThan(0);
+    expect(after.every((e) => e.groupJobId === undefined)).toBe(true);
   });
 
   it('a request sent with "Tutte" is one group turn with every active variant as its target', async () => {
