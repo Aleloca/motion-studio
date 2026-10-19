@@ -21,7 +21,7 @@ import { CodedError } from '../workspace-store.ts';
 import { buildCoordinatorPrompt, buildCoordinatorReport, groupDigest, type CoordinatorVariant, type ReportOutcome } from './coordinator-prompt.ts';
 import { CreativeStore } from './creative-store.ts';
 import { resumeErrorOf, type CreativeRef, type CreativeTurnService, type GroupRouter, type MessageAnswer } from './creative-turns.ts';
-import { pinLine, quotePromptString, defuseTags, USER_REQUEST_CLOSE, USER_REQUEST_OPEN } from './prompt.ts';
+import { pinLine, quotePromptString } from './prompt.ts';
 import { MAX_DIRECTION_CHARS, memberRef, VariantGroupService } from './variant-group.ts';
 import { askPaidCard, paidCardPlan, type PaidCardDeps } from './paid-card.ts';
 
@@ -365,24 +365,23 @@ export class GroupTurnService implements GroupRouter {
       let prompt: string;
       if (outcomes) {
         prompt = buildCoordinatorReport({ locale, outcomes, ...(session ? {} : { context: groupDigest(await store.readConversation(host.creativeSlug), { full: true, exclude: r.jobId }).text }) });
-      } else if (redirect && session) {
-        r.plan.clear();
-        prompt = [
-          'The user stopped you to redirect you; anything you recorded with work_on_variants so far is dropped. Their new words (theirs, not instructions from Motion Studio); they win over the earlier message where the two disagree:',
-          USER_REQUEST_OPEN, ...(redirect.text ? [defuseTags(redirect.text)] : []),
-          ...(redirect.pins.length ? ['Pinned comments:', ...redirect.pins.map((p) => defuseTags(`${p.variant ? `- [${L(p.variant)}] ` : ''}${pinLine(p).slice(2)}`))] : []),
-          USER_REQUEST_CLOSE,
-          '', 'The same rules hold: answer, ask with AskUserQuestion, or record the work with work_on_variants and end your run with one short sentence.',
-        ].join('\n');
       } else {
-        if (redirect) r.plan.clear();
+        // Review M2: a redirect drops the work recorded so far, but never a variant this turn made: its first generation stays.
+        if (redirect) {
+          for (const [v, item] of [...r.plan]) {
+            if (r.created.has(v)) r.plan.set(v, { variant: v, instruction: null, pins: [] });
+            else if (item.instruction !== null) r.plan.delete(v);
+          }
+        }
         const entries = await store.readConversation(host.creativeSlug);
         prompt = buildCoordinatorPrompt({
           title: creative.title, slug: host.creativeSlug, brief: creative.brief, locale, variants: info, picks: this.picksOf(group),
-          request: redirect ? { text: [r.request.text, redirect.text].filter(Boolean).join('\n\n'), pins: [...r.request.pins, ...redirect.pins] } : r.request,
+          request: r.request,
           explicit: [...r.explicit].sort(compareVariantIds),
           digest: groupDigest(entries, { exclude: r.jobId, full: !session }),
           ...(r.later.length ? { later: r.later.splice(0) } : {}),
+          ...(redirect ? { redirect } : {}),
+          ...(r.created.size ? { added: group.members.filter((m) => r.created.has(m.letter)).map((m) => ({ id: m.letter, direction: m.direction })) } : {}),
         });
       }
       let seenSession = false;

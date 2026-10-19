@@ -333,6 +333,32 @@ describe('the group turn', () => {
     await v.waitIdle();
   });
 
+  it('review M2: a redirect after add_variants keeps the new variant\'s first generation and tells the coordinator what this turn already added', async () => {
+    const slug = await setup(['Audace', 'Calma']);
+    const job = (await send(slug, 'Crea una nuova variante notturna')).json() as JobSummary;
+    const c = await coordinator();
+    expect((await v.bridge(c, 'add_variants', { items: [{ direction: 'Notturna al neon' }] })).statusCode).toBe(200);
+    expect((await v.bridge(c, 'work_on_variants', { items: [{ variant: 'c', instruction: 'Più neon' }] })).statusCode).toBe(200);
+    const r = await v.app.inject({ method: 'POST', url: `/api/jobs/${job.id}/redirect`, payload: { clientId: cid(), text: 'anzi, falla al tramonto' } });
+    expect(r.json().outcome).toBe('restarted');
+    const c2 = await coordinator(1);
+    expect(c2.req.resumeSessionId).toBe(c.sessionId);
+    // The redirect prompt has the variants (C among them), says C was added in this turn, and is a coordinator prompt.
+    expect(c2.req.prompt).toContain('- C · "Notturna al neon"');
+    expect(c2.req.prompt).toMatch(/This turn already added the variants C/);
+    expect(c2.req.prompt).toContain('anzi, falla al tramonto');
+    // A second add is still refused ("runs once"): the variant made before the redirect is the one.
+    expect((await v.bridge(c2, 'add_variants', { items: [{ direction: 'Tramonto caldo' }] })).statusCode).toBe(409);
+    c2.finish({ write: false });
+    // C's first generation still runs (its instruction given before the redirect is dropped: it was the old words).
+    const first = await v.runOf(`${slug}~c`);
+    expect(first.req.prompt).not.toContain('Più neon');
+    first.finish();
+    (await coordinator(2)).finish({ write: false });
+    await v.waitIdle();
+    expect((await v.detail(`${slug}~c`)).versions).toHaveLength(1);
+  });
+
   it('a request sent with "Tutte" is one group turn with every active variant as its target', async () => {
     const slug = await setup();
     const res = await v.app.inject({ method: 'POST', url: `${v.url(slug)}/variants/run`, payload: { targets: 'all-active', request: { text: 'Più luce' } } });

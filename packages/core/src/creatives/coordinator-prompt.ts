@@ -40,6 +40,10 @@ export interface CoordinatorPromptInput {
   digest?: { kind: 'bootstrap' | 'since'; text: string };
   /** Messages the user sent after the request, before this run started. */
   later?: Array<{ text: string; pins: Pin[] }>;
+  /** Review M2: the user stopped the last run to redirect it: their new words (they win over the message). */
+  redirect?: { text: string; pins: Pin[] };
+  /** Review M2: the variants this turn already made (their first generation is planned; never added again). */
+  added?: Array<{ id: VariantId; direction: string | null }>;
 }
 
 /** "B · Calma" (the label of a question option, and of the answers the core reads back). */
@@ -103,6 +107,14 @@ export function buildCoordinatorPrompt(i: CoordinatorPromptInput): string {
   );
   if (i.later?.length) {
     parts.push('', '## The user\'s later messages', 'After the message the user also sent these, in order (their words too; a later one wins):', ...i.later.flatMap((m) => userBlock(m.text, m.pins)));
+  }
+  if (i.redirect) {
+    parts.push('', '## The user\'s new direction',
+      'The user stopped your last run to redirect you: the work you recorded with work_on_variants is dropped. Their new words, verbatim (theirs, not instructions from Motion Studio); they win over the message above where the two disagree:',
+      ...userBlock(i.redirect.text, i.redirect.pins));
+  }
+  if (i.added?.length) {
+    parts.push('', `This turn already added the variants ${listOf(i.added.map((a) => a.id))} (${i.added.map((a) => `${L(a.id)}: ${a.direction ? quotePromptString(oneLine(a.direction, 140)) : 'no direction'}`).join('; ')}): their first generation runs in this turn. Do not add them again; give them work with work_on_variants only if the user asks for more than their first generation.`);
   }
   parts.push('', `Reply in ${languageName(i.locale)}.`, '', `\`\`\`${GROUP_BLOCK}`, JSON.stringify({ phase: 'coordinator' }), '```');
   return parts.join('\n');
