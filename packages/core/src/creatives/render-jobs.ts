@@ -460,7 +460,10 @@ export class RenderJobService {
       throw new Error(m.render.compositionProblems({ format: o.label(format), list }));
     }
     if (loaded.hash !== entry.hash) throw new Error(m.render.compositionChanged({ format: o.label(format) }));
-    const composition = storeComposition(format, loaded.composition);
+    // Report 39 (decision 1234): at the export's frame rate for the media too, so an embedded video is normalised at that
+    // rate (its own cache file) and never shows each frame twice at 60 fps.
+    const own = storeComposition(format, loaded.composition);
+    const composition = o.profile.fps !== undefined && o.profile.fps !== own.fps ? { ...own, fps: o.profile.fps } : own;
     // The video sources at the render's scale (review #8): never upscaled soft at 1440p or 2160p.
     const scale = scaledSize(composition, o.profile.short).width / composition.width;
     const prepared = await this.deps.normalizer.prepare({ projectDir: ref.projectDir, compDir, composition, signal, ...(scale !== 1 ? { scale } : {}),
@@ -470,10 +473,10 @@ export class RenderJobService {
       const result = await this.deps.engine!.render({
         ...this.deps.renderOptions,
         dir: creativeDir, versionDir: `outputs/v${n}`, composition, format: preset, out: join(o.outDir, file), signal, ...(sessionMediaOf(prepared) ? { media: sessionMediaOf(prepared)! } : {}),
-        quality: o.profile.quality, ...(o.profile.short !== undefined ? { short: o.profile.short } : {}), ...(o.profile.fps !== undefined ? { fps: o.profile.fps } : {}),
+        quality: o.profile.quality, ...(o.profile.short !== undefined ? { short: o.profile.short } : {}),
         onProgress: (p) => o.progress({ format, phase: 'frames', done: p.frames, total: p.total }),
       });
-      return { path: result.file, render: renderInfoOf(result, o.profile.quality, o.profile.fps ?? composition.fps), composition };
+      return { path: result.file, render: renderInfoOf(result, o.profile.quality, composition.fps), composition };
     } finally {
       prepared.release();
     }
@@ -626,7 +629,7 @@ export class RenderJobService {
       prepared.release();
     }
     // What the render was made with (decision 974): its quality, size and the encoder that ran; a still has no quality.
-    const render: Pick<OutputFileInfo, 'render'> = still ? {} : { render: renderInfoOf(result, DEFAULT_EXPORT_QUALITY, storeRenderOptions(format, composition).fps ?? composition.fps) };
+    const render: Pick<OutputFileInfo, 'render'> = still ? {} : { render: renderInfoOf(result, DEFAULT_EXPORT_QUALITY, composition.fps) };
     // From here the new file is in place: the record is always written, with what is on disk (I3), whatever happens next
     // (a cancel waits for these few steps; a failing follower is left out and reported). First the primary alone, at once,
     // with the renderer's own hash (a crash during the steps below then leaves a true record), then everything.

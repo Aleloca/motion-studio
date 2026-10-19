@@ -251,13 +251,15 @@ describe('export jobs (decision 974)', { timeout: 120_000 }, () => {
     const { slug, store } = await v2Creative(['test-wide'], {});
     await waitJob((await renderVersion(slug)).id);
     const before = (await store.readVersions(slug))[0]!.outputs;
-    expect(fake.calls.map((c) => c.fps)).toEqual([undefined]);
+    expect(fake.calls.map((c) => [c.fps, c.composition.fps])).toEqual([[undefined, 30]]);
     const calls = fake.calls.length;
     const dest = join(base, 'out');
     const job = await startExport(slug, { destination: dest, picks: { 'test-wide': 1 }, fps: 60, pattern: '{format}' });
     const done = await waitJob(job.id);
     expect(done.state, done.error).toBe('succeeded');
-    expect(fake.calls.slice(calls).map((c) => [c.format.id, c.quality, c.short, c.fps])).toEqual([['test-wide', 'high', undefined, 60]]);
+    expect(fake.calls.slice(calls).map((c) => [c.format.id, c.quality, c.short, c.composition.fps])).toEqual([['test-wide', 'high', undefined, 60]]);
+    // The composition goes at 60 fps to the media normaliser and the page too (embedded video normalised at 60, never held 2 frames).
+    expect(fake.calls.at(-1)!.composition.fps).toBe(60);
     expect((await jobs()).find((j) => j.id === done.export!.renders![0])!.label).toMatch(/ · Launch v1 \(60 fps · /);
     expect(readFileSync(join(dest, 'test-wide.mp4'), 'utf8')).toContain('320x180 high 60fps');
     expect((await store.readVersions(slug))[0]!.outputs).toEqual(before);
@@ -269,7 +271,7 @@ describe('export jobs (decision 974)', { timeout: 120_000 }, () => {
     await store.updateVersion(slug, 1, (v) => ({ ...v, outputs: v.outputs.map((o) => ({ ...o, render: { quality: 'high', width: 320, height: 180, encoder: 'libx264' } })) }));
     const old = await startExport(slug, { destination: join(base, 'old'), picks: { 'test-wide': 1 }, fps: 30 });
     expect((await waitJob(old.id)).state).toBe('succeeded');
-    expect(fake.calls.slice(calls + 1).map((c) => c.fps)).toEqual([30]);
+    expect(fake.calls.slice(calls + 1).map((c) => c.composition.fps)).toEqual([30]);
   });
 
   it('report 39: a frame rate outside 24, 25, 30, 50, 60 is refused at once', async () => {
