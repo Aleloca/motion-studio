@@ -339,6 +339,15 @@ arrives and worked on later together.
     inside it. User's call: at rest it is a normal-size button; it widens only when an export starts, with a nice
     dedicated animation, and shrinks back when the export is over. To do with the next reports, with 48 and 49.
 
+51. **Text still not sharp in a 2K export after report 38.** The user exported again at 2560×1440, quality max, 60 fps
+    (2026-10-19), and the text is still soft. Cause (measured): html layers are sandboxed iframes running out of process;
+    the export scale (decision 974) is set with `Emulation.setDeviceMetricsOverride` on the top-level page only, which
+    never reaches them (the iframe's own session refuses it), so each layer draws at 1x and the page stretches it: every
+    html layer of an export at another resolution is an upscale. Squared gradient energy on the user's frames at t = 20
+    and t = 22.5: 298 and 237 against 542 and 424 for the ground truth (5120 shrunk). Same in the desktop app (Electron
+    provider, same page code, layers also out of process).
+    Proposed fix: give the scale to the whole browser or window, keeping the layers' process isolation. To do.
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
