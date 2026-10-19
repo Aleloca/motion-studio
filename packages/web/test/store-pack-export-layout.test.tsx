@@ -1,10 +1,11 @@
 /**
- * Report 54: the store pack export as a gallery per store, measured in real Chrome. The dialog is rendered in jsdom with the 19
- * files of a full pack (App Store: 8 iPhone screenshots and the App Preview; Google Play: 8 phone screenshots, the feature
- * graphic and the promo video), its markup is given the real stylesheets and opened in a 1440×900 window: the whole dialog fits
- * without scrolling up and down, every thumbnail has the row's height and its file's shape, the names stay on one line, the App
- * Store's row fits and the Play Store's scrolls sideways. Without Chrome the measuring test is skipped (MS_REQUIRE_CHROME=1 makes a
- * missing browser a failure; MS_LAYOUT_CHROME=1 turns it on); MS_LAYOUT_SHOTS=<folder> saves a screenshot of each case.
+ * Report 54 (the user's variant A): the store pack export in two panes, measured in real Chrome. The dialog is rendered in jsdom
+ * with the 19 files of a full pack (App Store: 8 iPhone screenshots and the App Preview; Google Play: 8 phone screenshots, the
+ * feature graphic and the promo video), its markup is given the real stylesheets and opened in a 1440×900 window: the dialog fits
+ * without scrolling, the list of stores and items fits its pane, the screenshots are four to a row and the feature graphic
+ * alone large, every thumbnail at its file's shape with its name on one line, the footer row in view and unclipped. Without
+ * Chrome the measuring test is skipped (MS_REQUIRE_CHROME=1 makes a missing browser a failure; MS_LAYOUT_CHROME=1 turns it on);
+ * MS_LAYOUT_SHOTS=<folder> saves a screenshot of each case.
  */
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -53,67 +54,53 @@ const entry = {
   })),
 } as unknown as VersionEntry;
 
-/** A sideways track's width as Chrome lays it out at 1440 (the Play Store's row is wider than the dialog, the App Store's not). */
-const TRACK = 1010;
-const trackWidth = (el: HTMLElement) => (el.querySelector('.ms-spx-tile[style*="--spx-a: 2"]') ? 1900 : 900);
-
-/** The dialog's markup with `leftOut` (the tiles' names) clicked off. */
-async function markup(leftOut: string[]): Promise<string> {
-  const cw = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('ms-spx-track') ? TRACK : 0; });
-  const sw = vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('ms-spx-track') ? trackWidth(this) : 0; });
+/** The dialog's markup with `leftOut` (the tiles' names, of the first device) clicked off and the item `show` picked. */
+async function markup(leftOut: string[], show?: string): Promise<string> {
   const { unmount } = render(
     <I18nProvider locale="it">
       <StorePackExport open onClose={() => {}} slug="acme" creative="pack" title="Tasky" version={1} formats={made.formats} presets={DEFAULT_FORMATS} labels={made.formatLabels} entry={entry} />
     </I18nProvider>,
   );
   try {
-    const files = screen.getByRole('group', { name: 'File' });
-    for (const name of leftOut) await userEvent.click(within(files).getByRole('button', { name }));
-    expect(within(files).getAllByRole('button', { pressed: true })).toHaveLength(19 - leftOut.length);
+    for (const name of leftOut) await userEvent.click(within(screen.getByRole('group', { name: 'File' })).getByRole('button', { name }));
+    const nav = screen.getByRole('navigation', { name: 'Store e dispositivi' });
+    if (show) await userEvent.click(within(nav).getByRole('button', { name: new RegExp(`^${show}`) }));
     return (document.querySelector('.ms-modal') as HTMLElement).outerHTML;
-  } finally { unmount(); cw.mockRestore(); sw.mockRestore(); }
+  } finally { unmount(); }
 }
 
-describe('store pack export gallery: markup', () => {
-  it('19 files in two stores, a row each, the single files at the end of the row; the Play Store row shows its sideways arrow', async () => {
+describe('store pack export (variant A): markup', () => {
+  it('19 files: two stores with their items in the list, the first device shown in four columns', async () => {
     const doc = new DOMParser().parseFromString(await markup([]), 'text/html');
-    const rows = [...doc.querySelectorAll('.ms-spx-row')];
-    expect(rows.map((r) => r.querySelectorAll('.ms-spx-tile').length)).toEqual([9, 10]);
-    expect(rows.map((r) => r.querySelector('.ms-spx-head-name')?.textContent)).toEqual(['iPhone 6,9″', 'Telefono']);
-    expect(rows.map((r) => Boolean(r.querySelector('.ms-spx-nav.ms-next')))).toEqual([false, true]);
-    expect(doc.querySelectorAll('.ms-spx-sep')).toHaveLength(2);
+    expect([...doc.querySelectorAll('.ms-spx-item-name')].map((n) => n.textContent)).toEqual(['iPhone 6,9″', 'App Preview', 'Telefono', 'Feature graphic', 'Video promo 16:9']);
+    expect(doc.querySelectorAll('.ms-spx-grid .ms-spx-tile')).toHaveLength(8);
+    expect(doc.querySelector('.ms-spx-total')!.textContent).toBe('19 di 19 file selezionati');
   });
 });
 
 const MEASURE = `(() => {
 const problems = [];
 const box = (el) => el.getBoundingClientRect();
-const dialog = document.querySelector('.ms-dialog'), files = document.querySelector('.ms-spx-files');
+const inside = (el, p, what) => { const a = box(el), b = box(p); if (a.left < b.left - .5 || a.right > b.right + .5 || a.top < b.top - .5 || a.bottom > b.bottom + .5) problems.push(what + ' clipped'); };
+const dialog = document.querySelector('.ms-dialog'), nav = document.querySelector('.ms-spx-nav'), grid = document.querySelector('.ms-spx-grid'), foot = document.querySelector('.ms-spx-foot');
 const d = box(dialog);
 if (d.top < 0 || d.bottom > innerHeight + .5 || d.left < 0 || d.right > innerWidth + .5) problems.push('dialog out of the window: ' + JSON.stringify(d));
 if (dialog.scrollHeight > dialog.clientHeight + 1) problems.push('the dialog scrolls: ' + dialog.scrollHeight + '/' + dialog.clientHeight);
-if (files.scrollHeight > files.clientHeight + 1) problems.push('the files scroll: ' + files.scrollHeight + '/' + files.clientHeight);
-if (document.documentElement.scrollWidth > innerWidth) problems.push('the page scrolls sideways');
-const thumbs = [...document.querySelectorAll('.ms-spx-thumb')];
-const hs = thumbs.map((t) => Math.round(box(t).height));
-if (new Set(hs).size !== 1) problems.push('thumbnails of different heights: ' + hs.join(','));
-for (const t of thumbs) {
-  const tile = t.closest('.ms-spx-tile'), a = parseFloat(tile.style.getPropertyValue('--spx-a'));
-  const r = box(t);
-  if (Math.abs(r.width - r.height * a) > 1.5) problems.push('wrong shape: ' + tile.getAttribute('aria-label') + ' ' + r.width + '×' + r.height);
-  const name = tile.querySelector('.ms-spx-file-name');
+if (nav.scrollHeight > nav.clientHeight + 1) problems.push('the list scrolls: ' + nav.scrollHeight + '/' + nav.clientHeight);
+if (grid.scrollWidth > grid.clientWidth + 1) problems.push('the grid scrolls sideways');
+inside(foot, dialog, 'footer');
+for (const el of foot.children) inside(el, foot, 'footer item ' + el.className);
+for (const el of nav.querySelectorAll('.ms-spx-item, .ms-spx-storehead, .ms-spx-total')) inside(el, nav, 'list item ' + el.textContent);
+const tiles = [...grid.querySelectorAll('.ms-spx-tile')];
+const cols = new Set(tiles.map((t) => Math.round(box(t).left))).size;
+for (const t of tiles) {
+  const th = box(t.querySelector('.ms-spx-thumb')), a = parseFloat(t.style.getPropertyValue('--spx-a'));
+  if (Math.abs(th.width - th.height * a) > 1.5) problems.push('wrong shape: ' + t.getAttribute('aria-label'));
+  const name = t.querySelector('.ms-spx-file-name');
   if (box(name).height > 20) problems.push('name on two lines: ' + name.textContent);
-  if (box(name).width > r.width + .5) problems.push('name wider than its thumbnail: ' + name.textContent);
 }
-for (const row of document.querySelectorAll('.ms-spx-row')) {
-  const tops = [...row.querySelectorAll('.ms-spx-thumb')].map((t) => Math.round(box(t).top));
-  if (new Set(tops).size !== 1) problems.push('the thumbnails of a row are not aligned: ' + tops.join(','));
-  const caps = [...row.querySelectorAll('.ms-spx-seg-cap')];
-  if (caps.length !== 2 || caps.some((c) => box(c).bottom > tops[0] + .5)) problems.push('a part of the row lacks its caption above it');
-}
-const tracks = [...document.querySelectorAll('.ms-spx-track')].map((t) => ({ over: t.scrollWidth > t.clientWidth + 1, w: t.clientWidth }));
 const imgs = [...document.querySelectorAll('.ms-spx-thumb img')];
-return { problems, thumbH: hs[0], tracks, dialog: { w: Math.round(d.width), h: Math.round(d.height) }, broken: imgs.filter((i) => !i.complete || i.naturalWidth === 0).length };
+return { problems, cols, tileW: Math.round(box(tiles[0]).width), dialog: { w: Math.round(d.width), h: Math.round(d.height) }, broken: imgs.filter((i) => !i.complete || i.naturalWidth === 0).length };
 })()`;
 
 const required = process.env.MS_REQUIRE_CHROME === '1';
@@ -121,20 +108,22 @@ const chrome = required || process.env.MS_LAYOUT_CHROME === '1' ? findChrome() :
 const run = chrome ? describe : describe.skip;
 if (!chrome && required) it('Chrome is required (MS_REQUIRE_CHROME=1)', () => { throw new Error('missing Chrome (set CHROME_PATH)'); });
 
-run('store pack export gallery: real Chrome layout', () => {
+run('store pack export (variant A): real Chrome layout', () => {
   let dir = '';
   let browser: Browser;
   beforeAll(async () => { dir = mkdtempSync(join(tmpdir(), 'ms-pack-gallery-')); browser = await launchChrome(chrome!); }, 120_000);
   afterAll(async () => { await browser?.close(); rmSync(dir, { recursive: true, force: true }); }, 60_000);
 
-  const CASES: Array<{ name: string; leftOut: string[]; theme: 'light' | 'dark' }> = [
-    { name: 'all', leftOut: [], theme: 'light' },
-    { name: 'some-left-out', leftOut: ['iPhone 6,9″ · 3 · Condividi con il team', 'iPhone 6,9″ · 6 · Funziona anche offline', 'App Preview', 'Feature graphic'], theme: 'light' },
-    { name: 'some-left-out', leftOut: ['iPhone 6,9″ · 3 · Condividi con il team', 'iPhone 6,9″ · 6 · Funziona anche offline', 'App Preview', 'Feature graphic'], theme: 'dark' },
+  const OUT = ['iPhone 6,9″ · 3 · Condividi con il team', 'iPhone 6,9″ · 6 · Funziona anche offline'];
+  const CASES: Array<{ name: string; leftOut: string[]; show?: string; theme: 'light' | 'dark'; cols: number }> = [
+    { name: 'all', leftOut: [], theme: 'light', cols: 4 },
+    { name: 'some-left-out', leftOut: OUT, theme: 'light', cols: 4 },
+    { name: 'some-left-out', leftOut: OUT, theme: 'dark', cols: 4 },
+    { name: 'feature-graphic', leftOut: [], show: 'Feature graphic', theme: 'light', cols: 1 },
   ];
-  it('at 1440×900 the whole pack is on one screen: same height, real shapes, one-line names; only the Play Store row scrolls sideways', async () => {
+  it('at 1440×900 nothing is clipped: the list fits, four columns of screenshots, the footer in view', async () => {
     for (const c of CASES) {
-      const html = await markup(c.leftOut);
+      const html = await markup(c.leftOut, c.show);
       const page = `<!doctype html><html lang="it" data-theme="${c.theme}"><head><meta charset="utf-8"><style>${FONTS()}\n${ALL_CSS()}
         html,body{margin:0;height:100%}</style></head><body>${html}</body></html>`;
       const file = join(dir, `${c.name}-${c.theme}.html`);
@@ -143,15 +132,13 @@ run('store pack export gallery: real Chrome layout', () => {
       try {
         await tab.goto(`file://${file}`);
         await tab.eval('document.fonts.ready.then(() => Promise.all([...document.images].map((i) => i.decode().catch(() => null))))');
-        if (process.env.MS_LAYOUT_SHOTS) writeFileSync(join(process.env.MS_LAYOUT_SHOTS, `store-pack-gallery-${c.name}-${c.theme}-1440.png`), await tab.screenshot());
-        const r = await tab.eval<{ problems: string[]; thumbH: number; tracks: Array<{ over: boolean; w: number }>; dialog: { w: number; h: number }; broken: number }>(MEASURE, 30_000);
-        console.log('[store-pack gallery]', c.name, c.theme, JSON.stringify({ thumbH: r.thumbH, tracks: r.tracks, dialog: r.dialog }));
+        if (process.env.MS_LAYOUT_SHOTS) writeFileSync(join(process.env.MS_LAYOUT_SHOTS, `store-pack-export-${c.name}-${c.theme}-1440.png`), await tab.screenshot());
+        const r = await tab.eval<{ problems: string[]; cols: number; tileW: number; dialog: { w: number; h: number }; broken: number }>(MEASURE, 30_000);
+        console.log('[store-pack export]', c.name, c.theme, JSON.stringify({ cols: r.cols, tileW: r.tileW, dialog: r.dialog }));
         expect(r.problems, `${c.name} ${c.theme}`).toEqual([]);
         expect(r.broken).toBe(0);
-        expect(r.thumbH).toBeGreaterThanOrEqual(170);
-        expect(r.tracks.map((t) => t.over)).toEqual([false, true]);
-        // The jsdom stand-in for the track's width (the arrows in the markup) is Chrome's.
-        expect(Math.abs(r.tracks[0]!.w - TRACK)).toBeLessThan(40);
+        expect(r.cols).toBe(c.cols);
+        if (c.cols === 4) expect(r.tileW).toBeGreaterThanOrEqual(170);
       } finally { await tab.close(); }
     }
   }, 180_000);

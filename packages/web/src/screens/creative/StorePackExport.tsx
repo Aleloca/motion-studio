@@ -4,10 +4,11 @@
 // and still writes the rest when some files fail, so a result is a list, not a pass/fail.
 // Report 48: above the destination, the pack's files by store and device, each with its thumbnail and a checkbox (a tri-state
 // one per device and store), all on at first; the core exports only the files chosen (`formats`, only when not all are).
-// Report 54: the files are a gallery per store: one row per device of large thumbnails side by side at their real shape, the row
-// scrolling sideways; a click on a thumbnail leaves it out (dimmed and marked), checkboxes only on the device and the store.
+// Report 54 (the user's variant A): two panes. On the left the stores (a tri-state checkbox each) and their items (a device's
+// screenshots, a single file) with n/m; a click on an item shows it on the right, a grid of large thumbnails at their real
+// shape, each a toggle (a click leaves the file out). The destination and the export button are one footer row.
 import type { FormatPreset, LocaleTag, VersionEntry } from '@motion-studio/shared';
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { api, type GroupExportPlanItem, type StorePackExportResult } from '../../api.ts';
 import { StillImg } from '../../components/CoverStill.tsx';
 import { desktop, showExported } from '../../desktop.ts';
@@ -19,7 +20,7 @@ import { message } from '../common.tsx';
 import { EXPORT_FOLDER_KEY } from '../ExportDialog.tsx';
 import { exportErrorText } from '../versionErrors.ts';
 import { localeName } from './languagesModel.ts';
-import { galleryRows, groupCheck, groupThumb, packFileGroups, revealLeft, scrollEdges, versionThumb, withFiles, type PackFileRow } from './storePackFiles.ts';
+import { gridColumns, groupCheck, groupThumb, packFileGroups, shownItem, stepItem, versionThumb, withFiles, type PackDevice, type PackFileRow } from './storePackFiles.ts';
 import '../canvas.css';
 import '../new-creative/storepack.css';
 import './languages.css';
@@ -55,15 +56,15 @@ export interface StorePackExportProps {
 const readFolder = () => { try { return localStorage.getItem(EXPORT_FOLDER_KEY) ?? ''; } catch { return ''; } };
 const writeFolder = (v: string) => { try { localStorage.setItem(EXPORT_FOLDER_KEY, v); } catch { /* private mode */ } };
 
-/** Report 54: wide enough for a store's row of nine screenshots at the gallery's height (the Modal keeps it inside the window). */
-const GALLERY_WIDTH = 1200;
+/** Report 54 (variant A): the list, and a grid of four screenshots about 180 px wide (the Modal keeps it inside the window). */
+const PACK_WIDTH = 1200;
 
 export function StorePackExport(p: StorePackExportProps) {
   const t = useT();
   // While the pack is being made the dialog stays: closing it would hide an export that still writes files.
   const [busy, setBusy] = useState(false);
   return (
-    <Modal open={p.open} onClose={p.onClose} label={t.web.storePack.export.title({ title: p.title })} width={GALLERY_WIDTH} dismissible={!busy}>
+    <Modal open={p.open} onClose={p.onClose} label={t.web.storePack.export.title({ title: p.title })} width={PACK_WIDTH} dismissible={!busy}>
       {p.open ? <Body {...p} onBusy={setBusy} /> : null}
     </Modal>
   );
@@ -104,7 +105,9 @@ function Body({ onClose, slug, creative, version, group, locales, untranslated =
   const [off, setOff] = useState<ReadonlySet<string>>(() => new Set());
   const chosen = all.filter((id) => !off.has(id));
   const setMany = (ids: readonly string[], v: boolean) => setOff((s) => withFiles(s, ids, v));
-  const gallery = useMemo(() => stores.map((s) => ({ store: s, rows: galleryRows(s) })), [stores]);
+  // The item the right pane shows (report 54): the first device of the first store until another is clicked.
+  const [picked, setPicked] = useState<string | null>(null);
+  const shown = shownItem(stores, picked);
   useEffect(() => { onBusy(running); }, [running, onBusy]);
   useEffect(() => () => onBusy(false), [onBusy]);
   // Closing the dialog silences the result of a request that is still running.
@@ -203,93 +206,110 @@ function Body({ onClose, slug, creative, version, group, locales, untranslated =
     );
   }
 
+  const storeName = (id: string) => (id === 'appstore' ? t.variants.storePack.appStore : t.variants.storePack.googlePlay);
+  const meta = (d: PackDevice, withSize: boolean) => {
+    const size = x.size({ width: d.width, height: d.height });
+    if (d.kind === 'shots') return withSize ? `${x.shots({ count: d.rows.length })} · ${size}` : x.shots({ count: d.rows.length });
+    return d.kind === 'video' ? x.video({ size }) : x.image({ size });
+  };
+  const keys = stores.flatMap((s) => s.devices.map((d) => d.key));
+  // Arrow keys move along the items (each a button; Tab goes on to the grid).
+  const onNavKey = (e: KeyboardEvent<HTMLElement>) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    const from = (e.target as HTMLElement).closest<HTMLElement>('.ms-spx-item')?.dataset.item;
+    if (!from) return;
+    e.preventDefault();
+    const to = stepItem(keys, from, e.key === 'ArrowDown' ? 1 : -1);
+    e.currentTarget.querySelector<HTMLElement>(`.ms-spx-item[data-item="${to}"]`)?.focus();
+  };
+  const languages = withLanguages && locales ? (
+    <div className="ms-spx-langs" role="group" aria-label={x.languages}>
+      <span className="ms-spx-langs-title">{x.languages}</span>
+      {[locales.primary, ...locales.extra].map((tag) => {
+        const name = tag === locales.primary ? x.original({ language: localeName(tag, ui) }) : localeName(tag, ui);
+        return (
+          <label key={tag} className="ms-exp-lang">
+            <Check on={Boolean(langs[tag])} label={name} disabled={running} onChange={(v) => setLangs((s) => ({ ...s, [tag]: v }))} />
+            <span>{name}</span>
+            {untranslated.includes(tag) ? <span className="ms-sp-untr">{x.notTranslated}</span> : needsReview.includes(tag) ? <span className="ms-sp-untr">{x.needsReview}</span> : null}
+          </label>
+        );
+      })}
+    </div>
+  ) : null;
+
   return (
-    <div className="ms-exp ms-spx">
+    <div className="ms-exp ms-spx ms-spx-pick">
       {head}
       {group && !files ? (
         groupFiles && 'error' in groupFiles
           ? <p className="ms-exp-error ms-exp-empty" role="alert">{t.web.exportUi.groupLoadFailed({ detail: groupFiles.error })}</p>
           : <p className="ms-exp-empty" role="status">{t.web.exportUi.groupLoading}</p>
-      ) : all.length > 0 ? (
-        // The thumbnails' height shares the window's height among the rows (storepack.css).
-        <div className="ms-spx-files" role="group" aria-label={x.files} style={{ '--spx-rows': gallery.reduce((k, g) => k + g.rows.length, 0) } as CSSProperties}>
-          <p className="ms-spx-hint">{x.galleryHint}</p>
-          {gallery.map(({ store: s, rows }) => {
-            const ids = s.devices.flatMap((d) => d.rows.map((r) => r.id));
-            const name = s.store === 'appstore' ? t.variants.storePack.appStore : t.variants.storePack.googlePlay;
-            const c = groupCheck(ids, off);
-            return (
-              <section key={s.store} className="ms-spx-store">
-                {/* Review: the store's name toggles the store, as a device's name toggles the device. */}
-                <h3 className="ms-spx-storehead">
-                  <label>
+      ) : all.length > 0 && shown ? (
+        <div className="ms-spx-body">
+          <nav className="ms-spx-nav" aria-label={x.nav} onKeyDown={onNavKey}>
+            {stores.map((s) => {
+              const ids = s.devices.flatMap((d) => d.rows.map((r) => r.id));
+              const c = groupCheck(ids, off);
+              const name = storeName(s.store);
+              return (
+                <div key={s.store} className="ms-spx-store">
+                  {/* The store's row turns the whole store on or off (a click on its name too). */}
+                  <label className="ms-spx-storehead">
                     <Check on={c.on} mixed={c.mixed} label={name} disabled={running} onChange={(v) => setMany(ids, v)} />
                     <span className="ms-spx-mark" aria-hidden="true"><ChannelMark channel={s.store === 'appstore' ? 'appstore' : 'googleplay'} size={20} /></span>
-                    <span className="ms-spx-store-name">{name}</span><span className="ms-spx-count">{c.n}/{c.of}</span>
+                    <span className="ms-spx-store-name">{name}</span>
+                    <span className="ms-spx-count">{c.n}/{c.of}</span>
                   </label>
-                </h3>
-                {rows.map((row) => {
-                  const rowIds = row.files.map((r) => r.id);
-                  const rc = groupCheck(rowIds, off);
-                  const tile = (r: PackFileRow, group: string | null) => (
-                    <FileTile key={r.id} row={r} name={group ? x.fileOf({ group, file: r.label }) : r.label} excluded={x.excluded}
-                      on={!off.has(r.id)} disabled={running} onToggle={(v) => setMany([r.id], v)} />
-                  );
-                  return (
-                    <div key={row.key} className="ms-spx-row">
-                      {row.label ? (
-                        <label className="ms-spx-rowhead">
-                          <Check on={rc.on} mixed={rc.mixed} label={row.label} disabled={running} onChange={(v) => setMany(rowIds, v)} />
-                          <span className="ms-spx-head-name" title={row.label}>{row.label}</span>
-                          <span className="ms-spx-count">{rc.n}/{rc.of}</span>
-                        </label>
-                      ) : <span className="ms-spx-rowhead" />}
-                      {/* Review: with single files after them, each part has its caption, so the device's n/m reads as its screenshots only. */}
-                      <Strip back={x.scrollBack} more={x.scrollMore} capped={row.tail.length > 0}>
-                        {row.tail.length ? (
-                          <>
-                            {row.files.length ? (
-                              <div className="ms-spx-seg">
-                                <span className="ms-spx-seg-cap">{x.screenshots}</span>
-                                <div className="ms-spx-seg-tiles">{row.files.map((r) => tile(r, row.label))}</div>
-                              </div>
-                            ) : null}
-                            {row.files.length ? <span className="ms-spx-sep" aria-hidden="true" /> : null}
-                            <div className="ms-spx-seg" role="group" aria-label={x.otherFiles}>
-                              <span className="ms-spx-seg-cap" aria-hidden="true">{x.otherFiles}</span>
-                              <div className="ms-spx-seg-tiles">{row.tail.map((r) => tile(r, null))}</div>
-                            </div>
-                          </>
-                        ) : row.files.map((r) => tile(r, row.label))}
-                      </Strip>
-                    </div>
-                  );
-                })}
-              </section>
-            );
-          })}
-        </div>
-      ) : <p className="ms-exp-empty">{x.noFiles}</p>}
-      {withLanguages && locales ? (
-        <div className="ms-exp-langs ms-sp-langs" role="group" aria-label={x.languages}>
-          <span className="ms-exp-dest-label">{x.languages}</span>
-          <div className="ms-exp-langs-list">
-            {[locales.primary, ...locales.extra].map((tag) => {
-              const name = tag === locales.primary ? x.original({ language: localeName(tag, ui) }) : localeName(tag, ui);
-              return (
-                <label key={tag} className="ms-exp-lang">
-                  <Check on={Boolean(langs[tag])} label={name} disabled={running} onChange={(v) => setLangs((s) => ({ ...s, [tag]: v }))} />
-                  <span>{name}</span>
-                  {untranslated.includes(tag) ? <span className="ms-sp-untr">{x.notTranslated}</span> : needsReview.includes(tag) ? <span className="ms-sp-untr">{x.needsReview}</span> : null}
-                </label>
+                  {s.devices.map((d) => {
+                    const dc = groupCheck(d.rows.map((r) => r.id), off);
+                    const on = d.key === shown.key;
+                    return (
+                      <button key={d.key} type="button" className={cx('ms-spx-item', on && 'ms-on')} data-item={d.key} aria-current={on ? 'true' : undefined} onClick={() => setPicked(d.key)}>
+                        <span className="ms-spx-item-text"><span className="ms-spx-item-name">{d.label}</span><span className="ms-spx-item-meta">{meta(d, false)}</span></span>
+                        <span className="ms-spx-item-count">{dc.n}/{dc.of}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               );
             })}
+            {languages}
+            <p className="ms-spx-total">{x.selectedOf({ n: chosen.length, of: all.length })}</p>
+          </nav>
+          <div className="ms-spx-pane">
+            <div className="ms-spx-pane-head">
+              <h3>{shown.label}</h3>
+              <span className="ms-spx-pane-meta">{meta(shown, true)}</span>
+              <span className="ms-grow" />
+              <button type="button" className="ms-spx-link" disabled={running} onClick={() => setMany(shown.rows.map((r) => r.id), true)}>{x.selectAll}</button>
+              <button type="button" className="ms-spx-link" disabled={running} onClick={() => setMany(shown.rows.map((r) => r.id), false)}>{x.selectNone}</button>
+            </div>
+            <div className="ms-spx-grid" role="group" aria-label={x.files} style={{ '--spx-cols': gridColumns(shown) } as CSSProperties}>
+              {shown.rows.map((r) => (
+                <FileTile key={r.id} row={r} name={shown.single ? r.label : x.fileOf({ group: shown.label, file: r.label })} excluded={x.excluded}
+                  on={!off.has(r.id)} disabled={running} onToggle={(v) => setMany([r.id], v)} />
+              ))}
+            </div>
           </div>
         </div>
+      ) : <p className="ms-exp-empty">{x.noFiles}</p>}
+      {/* Without the list (still reading, or no files) the languages stay above the footer. */}
+      {(group && !files) || !(all.length > 0 && shown) ? languages : null}
+      {running || error ? (
+        <div className="ms-spx-status">
+          {running ? (
+            <div className="ms-exp-progress">
+              <span>{x.running}</span>
+              <div className="ms-progress ms-indet" role="progressbar" aria-label={x.running}><i /></div>
+            </div>
+          ) : <span role="alert" className="ms-exp-error ms-sp-error">{error}</span>}
+        </div>
       ) : null}
-      <div className="ms-exp-dest">
+      {/* One footer row: the destination, the folder picker, Cancel and Export. */}
+      <div className="ms-spx-foot">
         <span className="ms-exp-dest-label" id={labelId}>{x.saveTo}</span>
-        <div className="ms-exp-dest-field">
+        <div className="ms-spx-dest">
           {bridge ? (
             <div className="ms-exp-folder" aria-labelledby={labelId}>
               <Icon name="folder" size={14} />
@@ -300,18 +320,8 @@ function Body({ onClose, slug, creative, version, group, locales, untranslated =
             <Input aria-label={x.folder} value={folder} disabled={running} placeholder={x.placeholder} spellCheck={false}
               onChange={(e) => setFolder(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void run(); }} />
           )}
-          {bridge ? <Button variant="outline" disabled={running} onClick={() => void choose()}>{x.choose}</Button> : null}
         </div>
-      </div>
-      <div className="ms-exp-foot">
-        {running ? (
-          <div className="ms-exp-progress">
-            <span>{x.running}</span>
-            <div className="ms-progress ms-indet" role="progressbar" aria-label={x.running}><i /></div>
-          </div>
-        ) : error ? (
-          <span role="alert" className="ms-exp-error ms-sp-error">{error}</span>
-        ) : <div className="ms-grow" />}
+        {bridge ? <Button variant="outline" size="lg" disabled={running} onClick={() => void choose()}>{x.choose}</Button> : null}
         <Button size="lg" variant="ghost" disabled={running} onClick={onClose}>{x.cancel}</Button>
         <Button size="lg" variant="ink" loading={running} disabled={!canRun} onClick={() => void run()}>{x.run({ count })}</Button>
       </div>
@@ -319,53 +329,10 @@ function Body({ onClose, slug, creative, version, group, locales, untranslated =
   );
 }
 
-/** The faded edge's width (storepack.css) and room for a focus ring: a focused thumbnail scrolls this far clear of the edge. */
-const EDGE = 64 + 6;
-
 /**
- * Report 54: a gallery row's thumbnails side by side, scrolling sideways. Where there is more to see the edge fades and an arrow
- * scrolls by most of a row (for a mouse without a sideways wheel; the keyboard reaches every thumbnail with Tab, and a focused
- * one scrolls clear of the faded edge). The edges follow the strip's box and its content's width (review).
- */
-function Strip({ back, more, capped, children }: { back: string; more: string; capped: boolean; children: ReactNode }) {
-  const track = useRef<HTMLDivElement>(null);
-  const content = useRef<HTMLDivElement>(null);
-  const [edges, setEdges] = useState({ back: false, more: false });
-  useLayoutEffect(() => {
-    const el = track.current;
-    if (!el) return undefined;
-    const update = () => setEdges((e) => { const n = scrollEdges(el); return n.back === e.back && n.more === e.more ? e : n; });
-    update();
-    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
-    ro?.observe(el);
-    if (content.current) ro?.observe(content.current);
-    el.addEventListener('scroll', update, { passive: true });
-    return () => { ro?.disconnect(); el.removeEventListener('scroll', update); };
-  }, []);
-  const by = (dir: 1 | -1) => { const el = track.current; el?.scrollBy?.({ left: dir * el.clientWidth * 0.8 }); };
-  const reveal = (target: EventTarget) => {
-    const el = track.current;
-    const tile = target instanceof HTMLElement ? target.closest('.ms-spx-tile') : null;
-    if (!el || !tile) return;
-    const r = tile.getBoundingClientRect();
-    const left = r.left - el.getBoundingClientRect().left + el.scrollLeft;
-    const to = revealLeft({ left, width: r.width }, el, EDGE);
-    if (to !== null) el.scrollLeft = to;
-  };
-  return (
-    <div className={cx('ms-spx-strip', capped && 'ms-capped', edges.back && 'ms-back', edges.more && 'ms-more')}>
-      <div ref={track} className="ms-spx-track" onFocus={(e) => reveal(e.target)}>
-        <div ref={content} className="ms-spx-content">{children}</div>
-      </div>
-      {edges.back ? <button type="button" className="ms-spx-nav ms-prev" tabIndex={-1} aria-hidden="true" title={back} onClick={() => by(-1)}><Icon name="chevron" size={16} strokeWidth={1.8} /></button> : null}
-      {edges.more ? <button type="button" className="ms-spx-nav ms-next" tabIndex={-1} aria-hidden="true" title={more} onClick={() => by(1)}><Icon name="chevron" size={16} strokeWidth={1.8} /></button> : null}
-    </div>
-  );
-}
-
-/**
- * One file of the pack: its thumbnail (render or still, as the ★ export rows) at the file's shape and the row's height, its name
- * under it. A toggle: pressed while the file is in the export; left out it is dimmed and marked.
+ * One file of the pack: its thumbnail (render or still, as the ★ export rows) at the file's shape, its name under it. A toggle:
+ * pressed (an accent check in the corner) while the file is in the export; left out the corner is an empty ring and the
+ * thumbnail and its name are grey.
  */
 function FileTile({ row, name, excluded, on, disabled, onToggle }: { row: PackFileRow; name: string; excluded: string; on: boolean; disabled: boolean; onToggle(v: boolean): void }) {
   const thumb = row.thumb;
@@ -375,7 +342,7 @@ function FileTile({ row, name, excluded, on, disabled, onToggle }: { row: PackFi
       <span className="ms-spx-thumb">
         {thumb && 'still' in thumb ? <StillImg still={thumb.still} />
           : thumb ? (thumb.media.video ? <video src={thumb.media.src} muted preload="metadata" /> : <img src={thumb.media.src} alt="" />) : null}
-        {on ? null : <span className="ms-spx-excl" title={excluded}><Icon name="eyeOff" size={13} strokeWidth={1.6} /></span>}
+        <span className="ms-spx-badge" title={on ? undefined : excluded}>{on ? <Icon name="check" size={14} strokeWidth={2.6} /> : null}</span>
       </span>
       <span className="ms-spx-file-name">{row.label}</span>
     </button>

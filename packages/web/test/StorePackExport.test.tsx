@@ -75,112 +75,99 @@ describe('StorePackExport · request', () => {
   });
 });
 
-describe('StorePackExport · reports 48 and 54, the files to export in a gallery', () => {
-  const files = () => screen.getByRole('group', { name: 'Files' });
-  const box = (name: string) => within(files()).getByRole('checkbox', { name });
-  const tile = (name: string) => within(files()).getByRole('button', { name });
+describe('StorePackExport · reports 48 and 54 (variant A): the stores on the left, an item\'s files on the right', () => {
+  const nav = () => screen.getByRole('navigation', { name: 'Stores and devices' });
+  const box = (name: string) => within(nav()).getByRole('checkbox', { name });
+  const item = (name: string) => within(nav()).getByRole('button', { name: new RegExp(`^${name}`) });
+  const grid = () => screen.getByRole('group', { name: 'Files' });
+  const tile = (name: string) => within(grid()).getByRole('button', { name });
   const pressed = (name: string) => tile(name).getAttribute('aria-pressed');
 
-  it('a gallery per store: the store\'s and the devices\' checkboxes with n/m, a pressed thumbnail per file; the button counts them', () => {
+  it('lists the stores (a checkbox each) and their items with kind, size and n/m; the first device is shown, its files all in', () => {
     open();
-    expect(within(files()).getAllByRole('checkbox').map((c) => c.getAttribute('aria-label'))).toEqual(['App Store', 'iPhone 6.9″', 'Google Play', 'Phone']);
-    expect(within(files()).getAllByRole('checkbox').every((c) => c.getAttribute('aria-checked') === 'true')).toBe(true);
-    // No checkbox per file: every file is a toggle button, all pressed (in the export).
-    const tiles = within(files()).getAllByRole('button', { pressed: true });
-    expect(tiles.map((b) => b.getAttribute('aria-label'))).toEqual([
-      'iPhone 6.9″ · 1 · Sort', 'iPhone 6.9″ · 2 · Find', 'App Preview', 'Phone · 1 · Sort', 'Phone · 2 · Find', 'Feature graphic', 'Promo video 16:9',
+    expect(within(nav()).getAllByRole('checkbox').map((c) => [c.getAttribute('aria-label'), c.getAttribute('aria-checked')])).toEqual([['App Store', 'true'], ['Google Play', 'true']]);
+    const items = within(nav()).getAllByRole('button').filter((b) => b.classList.contains('ms-spx-item'));
+    expect(items.map((b) => b.textContent)).toEqual([
+      'iPhone 6.9″2 screenshots2/2', 'App Previewvideo · 886 × 19201/1', 'Phone2 screenshots2/2', 'Feature graphicimage · 1024 × 5001/1', 'Promo video 16:9video · 1920 × 10801/1',
     ]);
-    expect(within(files()).queryAllByRole('button', { pressed: false })).toEqual([]);
-    expect(within(files()).getAllByRole('heading').map((h) => h.textContent)).toEqual(['App Store3/3', 'Google Play4/4']);
-    // The name under each thumbnail is the formats column's label, whole in the tooltip.
+    expect(item('iPhone 6.9″').getAttribute('aria-current')).toBe('true');
+    expect(within(nav()).getByText('7 of 7 files selected')).toBeTruthy();
+    expect(screen.getByText('Version 3 · one folder per store, language and device')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'iPhone 6.9″' })).toBeTruthy();
+    expect(screen.getByText('2 screenshots · 1320 × 2868')).toBeTruthy();
+    expect(within(grid()).getAllByRole('button', { pressed: true }).map((b) => b.getAttribute('aria-label'))).toEqual(['iPhone 6.9″ · 1 · Sort', 'iPhone 6.9″ · 2 · Find']);
+    // The name under each thumbnail is the formats column's label, whole in the tooltip; the thumbnail keeps the file's shape.
     expect(tile('iPhone 6.9″ · 2 · Find').textContent).toBe('2 · Find');
     expect(tile('iPhone 6.9″ · 2 · Find').getAttribute('title')).toBe('2 · Find');
+    expect(tile('iPhone 6.9″ · 2 · Find').style.getPropertyValue('--spx-a')).toBe(String(1320 / 2868));
+    expect((grid() as HTMLElement).style.getPropertyValue('--spx-cols')).toBe('4');
     expect(run().textContent).toBe('Export 7 files');
-    const thumb = tile('Phone · 1 · Sort').querySelector('img')!;
-    expect(thumb.getAttribute('src')).toMatch(/outputs\/v3\/playstore-phone-9x16\.png/);
-    // Each thumbnail keeps the file's aspect ratio (the row sets the height).
-    expect(tile('Feature graphic').style.getPropertyValue('--spx-a')).toBe(String(1024 / 500));
   });
 
-  it('a click on a thumbnail leaves it out (dimmed, marked) and a second puts it back; Space and Enter do the same', async () => {
+  it('a click on an item shows it, without turning anything on or off; landscape files get two columns', async () => {
+    open();
+    await userEvent.click(item('Feature graphic'));
+    expect(item('Feature graphic').getAttribute('aria-current')).toBe('true');
+    expect(item('iPhone 6.9″').hasAttribute('aria-current')).toBe(false);
+    expect(screen.getByRole('heading', { name: 'Feature graphic' })).toBeTruthy();
+    expect(within(grid()).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Feature graphic']);
+    expect((grid() as HTMLElement).style.getPropertyValue('--spx-cols')).toBe('2');
+    expect(tile('Feature graphic').querySelector('img')!.getAttribute('src')).toMatch(/outputs\/v3\/playstore-feature\.png/);
+    expect(run().textContent).toBe('Export 7 files');
+  });
+
+  it('a click on a thumbnail leaves it out and a second puts it back; Space and Enter do the same; the counts follow', async () => {
     open();
     await userEvent.click(tile('iPhone 6.9″ · 1 · Sort'));
     expect(pressed('iPhone 6.9″ · 1 · Sort')).toBe('false');
     expect(tile('iPhone 6.9″ · 1 · Sort').classList.contains('ms-off')).toBe(true);
-    expect(within(tile('iPhone 6.9″ · 1 · Sort')).getByTitle('Excluded')).toBeTruthy();
-    expect(box('iPhone 6.9″').getAttribute('aria-checked')).toBe('mixed');
+    expect(item('iPhone 6.9″').textContent).toContain('1/2');
     expect(box('App Store').getAttribute('aria-checked')).toBe('mixed');
-    expect(within(files()).getAllByRole('heading')[0]!.textContent).toBe('App Store2/3');
+    expect(within(nav()).getByText('6 of 7 files selected')).toBeTruthy();
     expect(run().textContent).toBe('Export 6 files');
     await userEvent.click(tile('iPhone 6.9″ · 1 · Sort'));
     expect(pressed('iPhone 6.9″ · 1 · Sort')).toBe('true');
-    expect(within(tile('iPhone 6.9″ · 1 · Sort')).queryByTitle('Excluded')).toBeNull();
-    tile('Feature graphic').focus();
+    tile('iPhone 6.9″ · 2 · Find').focus();
     await userEvent.keyboard(' ');
-    expect(pressed('Feature graphic')).toBe('false');
-    await userEvent.keyboard('{Enter}');
-    expect(pressed('Feature graphic')).toBe('true');
-  });
-
-  it('a device checkbox turns its screenshots off and on, not the single files at the end of its row; the store checkbox is mixed meanwhile', async () => {
-    open();
-    await userEvent.click(box('iPhone 6.9″'));
-    expect(pressed('iPhone 6.9″ · 1 · Sort')).toBe('false');
     expect(pressed('iPhone 6.9″ · 2 · Find')).toBe('false');
-    expect(pressed('App Preview')).toBe('true');
-    expect(box('App Store').getAttribute('aria-checked')).toBe('mixed');
+    await userEvent.keyboard('{Enter}');
+    expect(pressed('iPhone 6.9″ · 2 · Find')).toBe('true');
+  });
+
+  it('"Select all" and "None" act on the item shown only', async () => {
+    open();
+    await userEvent.click(screen.getByRole('button', { name: 'None' }));
+    expect(within(grid()).queryAllByRole('button', { pressed: true })).toEqual([]);
+    expect(item('iPhone 6.9″').textContent).toContain('0/2');
+    expect(item('App Preview').textContent).toContain('1/1');
     expect(run().textContent).toBe('Export 5 files');
-    await userEvent.click(tile('iPhone 6.9″ · 2 · Find'));
-    expect(box('iPhone 6.9″').getAttribute('aria-checked')).toBe('mixed');
-    // A mixed group turns all on.
-    await userEvent.click(box('App Store'));
-    expect(box('iPhone 6.9″').getAttribute('aria-checked')).toBe('true');
+    await userEvent.click(screen.getByRole('button', { name: 'Select all' }));
     expect(run().textContent).toBe('Export 7 files');
+  });
+
+  it('a store\'s checkbox, or a click on its name, turns the whole store off and on; mixed turns all on', async () => {
+    open();
     await userEvent.click(box('Google Play'));
-    expect(pressed('Phone · 2 · Find')).toBe('false');
-    expect(pressed('Feature graphic')).toBe('false');
-    expect(run().textContent).toBe('Export 3 files');
-  });
-
-  it('review: the single files after the divider have a caption of their own, the screenshots before it theirs', () => {
-    open();
-    const rows = [...files().querySelectorAll('.ms-spx-row')];
-    expect(rows.map((r) => [...r.querySelectorAll('.ms-spx-seg-cap')].map((c) => c.textContent))).toEqual([['Screenshots', 'Video and graphics'], ['Screenshots', 'Video and graphics']]);
-    const extra = within(files()).getAllByRole('group', { name: 'Video and graphics' });
-    expect(extra.map((g) => within(g).getAllByRole('button').map((b) => b.getAttribute('aria-label')))).toEqual([['App Preview'], ['Feature graphic', 'Promo video 16:9']]);
-  });
-
-  it('review: a click on the store\'s name toggles the store, as on a device\'s name', async () => {
-    open();
-    await userEvent.click(within(files()).getByText('Google Play'));
     expect(box('Google Play').getAttribute('aria-checked')).toBe('false');
-    expect(pressed('Promo video 16:9')).toBe('false');
-    await userEvent.click(within(files()).getByText('iPhone 6.9″'));
-    expect(box('iPhone 6.9″').getAttribute('aria-checked')).toBe('false');
-    expect(pressed('App Preview')).toBe('true');
+    expect(item('Promo video 16:9').textContent).toContain('0/1');
+    expect(run().textContent).toBe('Export 3 files');
+    await userEvent.click(within(nav()).getByText('Google Play'));
+    expect(box('Google Play').getAttribute('aria-checked')).toBe('true');
+    await userEvent.click(tile('iPhone 6.9″ · 2 · Find'));
+    await userEvent.click(box('App Store'));
+    expect(box('App Store').getAttribute('aria-checked')).toBe('true');
+    expect(run().textContent).toBe('Export 7 files');
   });
 
-  it('review: the arrows follow the content\'s width too, not only the strip\'s box', () => {
-    const seen: Element[] = [];
-    const RO = globalThis.ResizeObserver;
-    globalThis.ResizeObserver = class { observe(el: Element) { seen.push(el); } unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
-    try {
-      open();
-      const content = files().querySelector('.ms-spx-content')!;
-      expect(seen).toContain(content);
-      expect(seen).toContain(content.parentElement);
-    } finally { globalThis.ResizeObserver = RO; }
-  });
-
-  it('review: a thumbnail focused under the faded edge scrolls fully into view', () => {
+  it('arrow keys move along the items in the list', async () => {
     open();
-    const t = tile('Feature graphic');
-    const track = t.closest('.ms-spx-track') as HTMLElement;
-    Object.defineProperty(track, 'clientWidth', { configurable: true, value: 500 });
-    track.getBoundingClientRect = () => ({ left: 0, right: 500, width: 500 } as DOMRect);
-    t.getBoundingClientRect = () => ({ left: 460, right: 660, width: 200 } as DOMRect);
-    t.focus();
-    expect(track.scrollLeft).toBeGreaterThanOrEqual(160 + 64);
+    item('iPhone 6.9″').focus();
+    await userEvent.keyboard('{ArrowDown}');
+    expect(document.activeElement).toBe(item('App Preview'));
+    await userEvent.keyboard('{ArrowDown}');
+    expect(document.activeElement).toBe(item('Phone'));
+    await userEvent.keyboard('{ArrowUp}{ArrowUp}{ArrowUp}');
+    expect(document.activeElement).toBe(item('iPhone 6.9″'));
   });
 
   it('sends the selection when it is not the whole pack, in the brief\'s order; nothing chosen, no export', async () => {
@@ -208,7 +195,8 @@ describe('StorePackExport · reports 48 and 54, the files to export in a gallery
     open();
     await userEvent.type(screen.getByLabelText('Destination folder'), '/out');
     await userEvent.click(run());
-    expect(tile('Phone · 1 · Sort').hasAttribute('disabled')).toBe(true);
+    expect(tile('iPhone 6.9″ · 1 · Sort').hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: 'None' }).hasAttribute('disabled')).toBe(true);
     finish({ folder: '/out/x', written: ['a.png'], failed: [] });
     await screen.findByRole('status');
   });
@@ -223,6 +211,7 @@ describe('StorePackExport · reports 48 and 54, the files to export in a gallery
     expect(await within(await screen.findByRole('group', { name: 'Files' })).findByRole('button', { name: 'iPhone 6.9″ · 3 · Share' })).toBeTruthy();
     expect(storePackGroupFiles).toHaveBeenCalledWith('acme', 'c1');
     expect(run().textContent).toBe('Export 8 files');
+    await userEvent.click(item('Feature graphic'));
     await waitFor(() => expect(tile('Feature graphic').querySelector('img')?.getAttribute('src')).toMatch(/c1~b\/outputs\/v4\/playstore-feature\.png/));
     await userEvent.type(screen.getByLabelText('Destination folder'), '/out');
     await userEvent.click(box('App Store'));
@@ -242,8 +231,9 @@ describe('StorePackExport · reports 48 and 54, the files to export in a gallery
     expect(run().hasAttribute('disabled')).toBe(true);
   });
 
-  it('with languages the count is files × languages', async () => {
+  it('with languages the count is files × languages; the languages sit under the stores in the list', async () => {
     open({ locales: { primary: 'en', extra: ['it', 'de'] } });
+    expect(within(screen.getByRole('navigation', { name: 'Stores and devices' })).getByRole('group', { name: 'Languages' })).toBeTruthy();
     expect(run().textContent).toBe('Export 21 files');
     await userEvent.click(screen.getByRole('checkbox', { name: 'Italian' }));
     expect(run().textContent).toBe('Export 14 files');
