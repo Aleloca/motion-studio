@@ -52,7 +52,9 @@ describe('the coordinator\'s tools and permissions', () => {
       });
       for (const tool of ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash']) expect(p.disallowedTools, `${tool} sandbox=${sandbox}`).toContain(tool);
       expect(p.allowedTools).not.toContain('Bash(ls:*)');
-      expect(p.allowedTools.filter((x) => !x.startsWith('mcp__'))).toEqual(['Read', 'Glob', 'Grep']);
+      // Review minor 1: the reads it gets without asking are the project's only (anything else reaches the prompt, refused).
+      expect(p.allowedTools.filter((x) => !x.startsWith('mcp__'))).toEqual(['Read(//w/p/**)', 'Glob(//w/p/**)', 'Grep(//w/p/**)']);
+      expect(p.allowedTools).not.toContain('Read');
       if (sandbox) expect((p.settings as { sandbox: { autoAllowBashIfSandboxed: boolean; network?: unknown } }).sandbox).toMatchObject({ autoAllowBashIfSandboxed: false });
       if (sandbox) expect((p.settings as { sandbox: { network?: unknown } }).sandbox.network).toBeUndefined();
     }
@@ -517,6 +519,38 @@ describe('the paid-services card on the plan (phase 4, decisions 1125, 1126, 114
 });
 
 describe('restart recovery', () => {
+  it('review minor 2: a group request that had not started (taken from the queue, or waiting for its lane) goes back to the front of the queue, written once', async () => {
+    const slug = await setup();
+    const side = new CreativeSideStateStore(null);
+    await side.read(v.projectDir, slug);
+    const store = new CreativeStore(v.projectDir);
+    await store.appendConversation(slug, { type: 'user', at: new Date().toISOString(), text: 'Più luce in B', pins: [], attachments: [], jobId: 'cut', clientId: 'c-1', group: true });
+    await side.updateGroup(v.projectDir, slug, () => ({
+      turn: { jobId: 'cut', at: new Date().toISOString(), request: { clientId: 'c-1', text: 'Più luce in B', pins: [], at: new Date().toISOString() } },
+      queued: [{ clientId: 'c-2', text: 'Dopo', pins: [], at: new Date().toISOString() }],
+    }));
+    expect(await recoverGroupTurns(v.projectDir, [slug], side, () => false)).toEqual([slug]);
+    expect((await side.group(v.projectDir, slug)).queued?.map((q) => q.clientId)).toEqual(['c-1', 'c-2']);
+    expect((await side.group(v.projectDir, slug)).turn).toBeUndefined();
+    const conv = await store.readConversation(slug);
+    expect(conv.at(-1)).toMatchObject({ type: 'system', group: true, text: messages('it').jobs.groupInterruptedQueued });
+  });
+
+  it('review minor 2: a request put back in the queue after a restart is not written twice when it starts', async () => {
+    const slug = await setup();
+    await send(slug, 'Primo');
+    const c = await coordinator();
+    const id = cid();
+    const q = await v.app.inject({ method: 'POST', url: `${v.url(slug)}/messages`, payload: { clientId: id, text: 'Più luce in B', mode: 'queued' } });
+    expect(q.json().outcome, q.body).toBe('queued');
+    // As a turn cut by a restart had written it before it was put back in the queue.
+    await new CreativeStore(v.projectDir).appendConversation(slug, { type: 'user', at: new Date().toISOString(), text: 'Più luce in B', pins: [], attachments: [], jobId: 'cut', clientId: id, group: true });
+    c.finish({ write: false });
+    (await coordinator(1)).finish({ write: false });
+    await v.waitIdle();
+    expect((await conversation(slug)).filter((e) => e.type === 'user' && e.clientId === id)).toHaveLength(1);
+  });
+
   it('a group turn cut by a restart is said in the group\'s chat and its marker cleared; the coordinator\'s session stays', async () => {
     const slug = await setup();
     const side = new CreativeSideStateStore(null);

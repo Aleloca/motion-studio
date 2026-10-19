@@ -660,6 +660,7 @@ export const en = {
     groupFailed: (p: { text: string }) => `The agent could not answer: ${p.text}`,
     groupReportFailed: (p: { text: string }) => `The variants' work is done, but the agent could not write its reply: ${p.text}`,
     groupHelperNotStarted: (p: { letter: string; error: string }) => `Variant ${p.letter} did not start: ${p.error}`,
+    groupInterruptedQueued: 'The agent\'s turn was interrupted when Motion Studio closed before it started: the message is back at the top of the queue (Run next starts it).',
     groupInterrupted: 'The agent\'s turn was interrupted when Motion Studio closed. Send the message again to go on.',
     variantDirectionsLabel: (p: { title: string }) => `Variant directions · ${p.title}`,
     variantDirectionsDone: (p: { list: string }) => `Directions proposed by the agent: ${p.list}`,

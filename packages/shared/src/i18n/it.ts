@@ -649,6 +649,7 @@ export const it: Messages = {
     groupFailed: (p) => `L'agente non ha potuto rispondere: ${p.text}`,
     groupReportFailed: (p) => `Il lavoro sulle varianti è finito, ma l'agente non ha potuto scrivere la risposta: ${p.text}`,
     groupHelperNotStarted: (p) => `La variante ${p.letter} non è partita: ${p.error}`,
+    groupInterruptedQueued: 'Il turno dell\'agente si è interrotto alla chiusura di Motion Studio prima di partire: il messaggio è tornato in cima alla coda (Esegui il prossimo lo avvia).',
     groupInterrupted: 'Il turno dell\'agente si è interrotto alla chiusura di Motion Studio. Manda di nuovo il messaggio per continuare.',
     variantDirectionsLabel: (p) => `Direzioni delle varianti · ${p.title}`,
     variantDirectionsDone: (p) => `Direzioni proposte dall'agente: ${p.list}`,

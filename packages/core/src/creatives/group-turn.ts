@@ -207,10 +207,19 @@ export class GroupTurnService implements GroupRouter {
       plan: new Map(), helpers: new Map(), added: false, askedNew: askedNewVariants(req.text), run: null, caps: { liveInput: false, interrupt: false },
       later: [], redirect: null, chain: Promise.resolve(), liveMessages: 0,
     };
-    await this.write(r, {
-      type: 'user', at: now(), text: req.text, pins: req.pins, attachments: [], jobId, group: true,
-      ...(req.clientId ? { clientId: req.clientId, ...(req.queued ? { mode: 'queued' as const, deliveredAt: now() } : {}) } : {}),
-    });
+    // Review minor 2: every group message has a client id, so a request put back in the queue by a restart is written once.
+    const clientId = req.clientId ?? `group-${jobId}`;
+    const written = req.clientId !== undefined && (await store.readConversation(host.creativeSlug)).some((e) => e.type === 'user' && e.group && e.clientId === req.clientId);
+    if (!written) {
+      await this.write(r, {
+        type: 'user', at: now(), text: req.text, pins: req.pins, attachments: [], jobId, group: true, clientId,
+        ...(req.queued ? { mode: 'queued' as const, deliveredAt: now() } : {}),
+      });
+    }
+    // Until its run starts, the marker keeps the request (a restart puts it back in the queue: `recoverGroupTurns`).
+    const side = this.deps.turns.side;
+    await side.updateGroup(host.projectDir, host.creativeSlug, () => ({ turn: { jobId, at: now(), request: { clientId, text: req.text, pins: req.pins, at: now(), ...(req.variants?.length ? { variants: req.variants } : {}) } } }));
+    const unmark = () => side.updateGroup(host.projectDir, host.creativeSlug, (g) => (g.turn?.jobId === jobId ? { turn: undefined } : {})).catch(() => {});
     this.runs.set(jobId, r);
     this.paused.delete(this.keyOf(host));
     let job: JobSummary;
@@ -219,10 +228,11 @@ export class GroupTurnService implements GroupRouter {
         id: jobId, key: this.keyOf(host), kind: 'creative-group', lane: COORDINATOR_LANE,
         label: t().jobs.groupLabel({ title }),
         run: (signal) => this.run(r, signal),
-        onCancelledBeforeStart: async () => { await this.write(r, this.groupLine('info', t().jobs.cancelledNote)); r.phase = 'ended'; },
+        onCancelledBeforeStart: async () => { await this.write(r, this.groupLine('info', t().jobs.cancelledNote)); r.phase = 'ended'; await unmark(); },
       });
     } catch (err) {
       this.runs.delete(jobId);
+      await unmark();
       throw err;
     }
     void this.deps.queue.whenSettled(jobId).then((s) => this.afterTurn(r, s));
@@ -257,7 +267,8 @@ export class GroupTurnService implements GroupRouter {
   private async run(r: GroupRun, signal: AbortSignal): Promise<void | 'cancelled'> {
     const { host } = r;
     const side = this.deps.turns.side;
-    await side.updateGroup(host.projectDir, host.creativeSlug, () => ({ turn: { jobId: r.jobId, at: now() } }));
+    // Started: from now a restart says the turn was cut (its message is in the chat; the request is not queued again).
+    await side.updateGroup(host.projectDir, host.creativeSlug, () => ({ turn: { jobId: r.jobId, at: now(), started: true } }));
     try {
       // Decision 982: the chats are merged once the group is idle; until then the store's merged view serves the same chat.
       await this.svc(host).mergeChat(host).catch(() => 'none');
@@ -915,8 +926,13 @@ export async function recoverGroupTurns(projectDir: string, slugs: readonly stri
   for (const slug of slugs) {
     const g = await side.group(projectDir, slug).catch(() => null);
     if (!g?.turn || isActive(slug)) continue;
-    await store.appendConversation(slug, { type: 'system', at: now(), level: 'error', text: t().jobs.groupInterrupted, group: true }).catch(() => {});
-    await side.updateGroup(projectDir, slug, () => ({ turn: undefined })).catch(() => {});
+    // Review minor 2: a turn cut before its run started goes back to the top of the queue (it waits for "Run next").
+    const back = !g.turn.started ? g.turn.request : undefined;
+    await side.updateGroup(projectDir, slug, (cur) => ({
+      turn: undefined,
+      ...(back && !(cur.queued ?? []).some((q) => q.clientId === back.clientId) ? { queued: [back, ...(cur.queued ?? [])] } : {}),
+    })).catch(() => {});
+    await store.appendConversation(slug, { type: 'system', at: now(), level: back ? 'warning' : 'error', text: back ? t().jobs.groupInterruptedQueued : t().jobs.groupInterrupted, group: true }).catch(() => {});
     out.push(slug);
   }
   return out;

@@ -40,7 +40,11 @@ export type PendingBrief = z.infer<typeof pendingBriefSchema>;
  */
 const groupStateSchema = z.object({
   session: z.object({ sessionId: z.string().min(1), at: z.iso.datetime() }).optional(),
-  turn: z.object({ jobId: z.string().min(1), at: z.iso.datetime() }).optional(),
+  /**
+   * Review minor 2: `request` is the turn's message until its run starts (`started`): a turn cut before (taken from the queue,
+   * or waiting for its lane) puts it back at the top of the queue at startup.
+   */
+  turn: z.object({ jobId: z.string().min(1), at: z.iso.datetime(), started: z.boolean().optional(), request: queuedRequestSchema.optional() }).optional(),
   queued: z.array(queuedRequestSchema).optional(),
 });
 export type GroupSideState = z.infer<typeof groupStateSchema>;

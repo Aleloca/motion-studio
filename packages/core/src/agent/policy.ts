@@ -127,7 +127,10 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
   const directions = i.kind === 'variant-directions' || i.kind === 'creative-group';
   const extra = [...(brandCodebases ? codebaseReadAllowRules(i.codebases) : []), ...(directions ? [] : i.projectAllowRules), ...i.mcpTools];
   // With codebases the brand tools keep only WebFetch, and only with a website source: Bash(mkdir/ffprobe) are dropped.
-  const kindTools = (list: readonly string[]) => (brandCodebases ? (i.brandWebsite ? list.filter((t) => t === 'WebFetch') : []) : list);
+  // Phase 3 of the single agent (review minor 1): the coordinator reads the project without asking, nothing else (a read
+  // elsewhere reaches the permission prompt, which refuses it for this kind).
+  const coordinatorReads = i.kind === 'creative-group' && i.projectDir ? COORDINATOR_TOOLS.map((t) => `${t}(/${escapeGlob(i.projectDir!)}/**)`) : null;
+  const kindTools = (list: readonly string[]) => (coordinatorReads ?? (brandCodebases ? (i.brandWebsite ? list.filter((t) => t === 'WebFetch') : []) : list));
   if (!i.sandbox) {
     return { settings: null, allowedTools: unique([...kindTools(LEGACY_TOOLS[i.kind]), ...extra]), disallowedTools, addDirs: [...i.codebases], env: {} };
   }
