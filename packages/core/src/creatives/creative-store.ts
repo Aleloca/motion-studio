@@ -4,7 +4,7 @@ import { appendFile, lstat, mkdir, readdir, readFile, rename, rm, writeFile } fr
 import { basename, join } from 'node:path';
 import {
   activeMembers, creativeFileSchema, entriesOfVariant, hostOf, isSessionId, letterOfSlug, sisterSlug, turnEndOf, versionsFileSchema,
-  type Brief, type ChatMergeCopy, type ConversationEntry, type CreativeFile, type CreativeListItem, type VariantGroup, type VariantId, type VariantListInfo, type VersionEntry,
+  type Brief, type ChatMergeCopy, type CompositionStill, type ConversationEntry, type CreativeFile, type CreativeListItem, type VariantGroup, type VariantId, type VariantListInfo, type VersionEntry,
   issuesText,
 } from '@motion-studio/shared';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic, writeTextFileAtomic } from '../json-file.ts';
@@ -144,6 +144,13 @@ const creativeLocks = new KeyedMutex();
 /** What a creative's brief `assets` held before a rename changed it. */
 export interface BriefAssetChange { slug: string; before: string[] }
 
+/** The still a cover uses when the version has no file: the first brief format with a composition, else its first composition. */
+export function coverStill(v: VersionEntry, formats: readonly string[]): CompositionStill | null {
+  const comps = v.compositions ?? [];
+  const c = formats.map((f) => comps.find((x) => x.format === f)).find((x) => x !== undefined) ?? comps[0];
+  return c ? { n: v.n, format: c.format, hash: c.hash } : null;
+}
+
 export class CreativeStore {
   private readonly root: string;
   private readonly lock = { run: <T>(key: string, fn: () => Promise<T>): Promise<T> => creativeLocks.run(`${this.root}\0${key}`, fn) };
@@ -214,7 +221,9 @@ export class CreativeStore {
         const last = versions.at(-1);
         const first = last?.outputs[0];
         const cover = last && first ? `outputs/v${last.n}/${first.preview ?? first.file}` : null;
-        read.set(e.name, { creative: c, item: { ok: true, slug: e.name, title: c.title, status: c.status, formats: c.brief.formats, ...(c.brief.formatLabels ? { formatLabels: c.brief.formatLabels } : {}), versions: versions.length, updatedAt: c.updatedAt, cover, ...(c.archivedAt ? { archivedAt: c.archivedAt } : {}) } });
+        // Reports 45/47: a version without a file (decision 974) shows a still of its composition instead.
+        const still = cover === null && last ? coverStill(last, c.brief.formats) : null;
+        read.set(e.name, { creative: c, item: { ok: true, slug: e.name, title: c.title, status: c.status, formats: c.brief.formats, ...(c.brief.formatLabels ? { formatLabels: c.brief.formatLabels } : {}), versions: versions.length, updatedAt: c.updatedAt, cover, ...(still ? { coverFrame: still } : {}), ...(c.archivedAt ? { archivedAt: c.archivedAt } : {}) } });
       } catch (err) {
         if (err instanceof JsonFileError && err.reason === 'missing') continue;
         read.set(e.name, { creative: null, item: { ok: false, slug: e.name, error: (err as Error).message } });

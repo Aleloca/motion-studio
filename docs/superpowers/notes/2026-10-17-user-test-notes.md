@@ -289,26 +289,37 @@ arrives and worked on later together.
     elsewhere; the user wants to pick one of the project's assets as the project's icon inside the app.
     User's call: automatic and choosable. When the brand has a fitting icon (app icon, favicon, square logo) it is used
     by itself; Project settings let the user pick another asset or go back to the initials; an image's detail offers
-    "Usa come icona del progetto". To do with the next reports.
+    "Usa come icona del progetto". Done (decisions 1306–1309): `project.json` may carry `icon` (an image of the library or
+    the initials; absent: automatic: the kit's icon logo, else an app icon or favicon of the library, else a square logo);
+    the project bar, the switcher and the Projects page show it contained on a neutral tile, the initials when there is
+    none or it cannot load; Project settings › General picks Automatic, Initials or a library image; an image's detail
+    offers "Usa come icona del progetto"; a renamed image stays the icon.
 
 45. **No thumbnails outside the creative for a version that was never rendered.** Project Audin (2026-10-19): its only
     creative (the Audin Desk store pack, v1 ready, 19 formats shown live on the canvas) has empty dashed placeholders
     ("110:239") on its card in the Creatives list, and the project card on Projects shows the brand placeholder instead
     of a creative. The cards use rendered output files; since decision 974 a v2 version has no file until Export or
     "Render vN", so every new creative will look empty from the outside. The user wants previews there too.
-    Proposed fix: without a render file, cards and covers use a frame of the composition (as the canvas does). To do
-    with the next reports, together with 44 (same Projects page).
+    Proposed fix: without a render file, cards and covers use a frame of the composition (as the canvas does). Done
+    (decisions 1302–1305): the creative card, the project cover, "Jump back in" and the version menus show the canvas's
+    storyboard poster when a version has no current render (the render file wins when there is one), through the existing
+    storyboard route and cache; asked only once on screen, two at a time for the page, shared; no renderer keeps today's
+    placeholder.
 
 46. **"Esporta pacchetto" in the formats column is redundant.** The user wants it removed (2026-10-19). It is not the
     same as the top bar Export: it opens the store pack export (store folders, per-device subfolders, store checks).
     User's call: remove the column button; in a creative with a store pack the top bar Export opens the store pack
     export; when the creative also has formats outside the pack, the dialog first asks what to export ("Pacchetto
     store" or "File dei formati").
+    Done (decisions 1300–1301): the column button is gone; Export opens the pack export, or first a small "Cosa vuoi
+    esportare?" window with the two choices when formats sit outside the pack ("File dei formati" is the ★ export of
+    every format, as before); a variant group's pack export works the same from the top bar.
 
 47. **The Export dialog shows no thumbnails for never-rendered versions.** "Export the starred versions" (2026-10-19)
     lists the 19 formats with empty grey thumbnails and "Rendered first", so the user cannot tell whether the right
     things are being exported. Same cause as 45 (the thumbnails come from render files). Done together with 45:
-    without a render file, a thumbnail is a frame of the composition.
+    without a render file, a thumbnail is a frame of the composition. Done (decisions 1302–1304): the ★ export and the
+    group export show the storyboard poster of each format rendered first.
 
 ## Follow-ups found while working on 12–30
 

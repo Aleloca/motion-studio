@@ -500,7 +500,15 @@ export function turnEndOf(e: ConversationEntry): { n: number; status: 'complete'
   return null;
 }
 
+/**
+ * Reports 45/47: a still of a v2 version's composition, for a version that has no render file (decision 974): the web asks
+ * the storyboard route for (`n`, `format`) and shows its poster frame; `hash` is the composition's (the storyboard's key).
+ */
+export interface CompositionStill { n: number; format: string; hash: string }
+
 export interface CreativeSummary { slug: string; title: string; status: CreativeStatus; formats: string[]; /** The brief's labels of format instances (Phase 12); absent when there are none. */ formatLabels?: Record<string, string>; versions: number; updatedAt: string; cover: string | null;
+  /** Reports 45/47: without a `cover` file, a still of the latest version's composition (its first brief format that has one). */
+  coverFrame?: CompositionStill;
   /** Phase 15: on a group's host row only (its sisters are not listed): members, active ones, and members whose folder is missing. */
   variants?: VariantListInfo;
   /** Phase 15: a sister whose group cannot be found (host gone or not listing it): listed and opened as a single creative. */

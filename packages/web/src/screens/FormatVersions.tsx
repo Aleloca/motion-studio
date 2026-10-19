@@ -3,7 +3,7 @@
 // Restart from here, Link to …), "viewing v3", the "Linked to …" chip of a follower with Unlink, the creative's
 // "Versions" timeline of the bar, and the actions behind them with their error messages.
 import type { VersionEntry } from '@motion-studio/shared';
-import { entryHasProblems, formatRuns, shownTotal } from '@motion-studio/shared';
+import { entryHasProblems, formatRuns, renderState, shownTotal } from '@motion-studio/shared';
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { api } from '../api.ts';
 import { formatDate, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
@@ -12,6 +12,7 @@ import { isMac } from '../platform.ts';
 import { formatTokens, TokenCount } from '../shell/Tokens.tsx';
 import { Button, Icon, Pill, Popover, cx, toast } from '../ui/index.ts';
 import { outputMedia } from './canvasModel.ts';
+import { StillImg } from '../components/CoverStill.tsx';
 import { entryAt, type FormatState } from './versionModel.ts';
 import { abortableWait, errorCode, versionErrorText, withHashRetry, type VersionErrorContext } from './versionErrors.ts';
 import { message } from './common.tsx';
@@ -232,7 +233,10 @@ function VersionsPopover({ slug, creative, label, state, versions, shown, resume
       {state.starFileMissing && star !== null ? <p className="ms-vmenu-explain ms-fvpop-warn"><Icon name="warn" size={12} />{fv.fileMissing({ n: star })}</p> : null}
       <div className="ms-vmenu-list">
         {rows.map(({ ver, out, last }) => {
-          const thumb = out ? outputMedia(slug, creative, ver.n, out) : null;
+          // Report 45: a composition without a current render shows a still of it (the canvas's poster); a render its file.
+          const comp = ver.compositions?.find((c) => c.format === state.id);
+          const still = comp && renderState(ver, state.id) !== 'rendered' ? { slug, creative, n: ver.n, format: state.id, hash: comp.hash } : null;
+          const thumb = !still && out ? outputMedia(slug, creative, ver.n, out) : null;
           const note = ver.request.trim() || v.fromBrief;
           const isStar = inRun(star, ver.n, last);
           const on = inRun(shown, ver.n, last);
@@ -250,7 +254,7 @@ function VersionsPopover({ slug, creative, label, state, versions, shown, resume
                 aria-label={[fv.viewRow({ n: ver.n, when: when(ver.createdAt), note }), kept, tokens, pick === fv.automatic ? fv.autoTip : null].filter(Boolean).join(' · ')}
                 onClick={() => { onView(ver.n); close(); }}>
                 <span className={cx('ms-vmenu-thumb', ratio && 'ms-fit')} style={ratio ? { aspectRatio: ratio } : undefined} aria-hidden="true">
-                  {!thumb ? <Icon name="video" size={14} /> : thumb.video ? <video src={thumb.src} muted preload="metadata" /> : <img src={thumb.src} alt="" />}
+                  {still ? <StillImg still={still} /> : !thumb ? <Icon name="video" size={14} /> : thumb.video ? <video src={thumb.src} muted preload="metadata" /> : <img src={thumb.src} alt="" />}
                 </span>
                 <span className="ms-vmenu-text">
                   <span className="ms-vmenu-line"><b title={kept ?? undefined}>{kept ? fv.range({ n: ver.n, last }) : `v${ver.n}`}</b><span className="ms-vmenu-when">{when(ver.createdAt)}</span>
@@ -356,6 +360,9 @@ export function VersionTimeline({ slug, creative, versions, resumeFrom, actions,
           <div className="ms-vmenu-list">
             {[...versions].reverse().map((ver) => {
               const first = ver.outputs[0];
+              // Report 45: a version without a file shows a still of its first composition.
+              const comp = first ? null : ver.compositions?.[0];
+              const still = comp ? { slug, creative, n: ver.n, format: comp.format, hash: comp.hash } : null;
               const thumb = first ? outputMedia(slug, creative, ver.n, first) : null;
               const note = ver.request.trim() || v.fromBrief;
               const on = ver.n === selected;
@@ -364,7 +371,7 @@ export function VersionTimeline({ slug, creative, versions, resumeFrom, actions,
                 <button key={ver.n} type="button" data-row="" className={cx('ms-vmenu-row', on && 'ms-on')} aria-pressed={on}
                   aria-label={[v.timelineRow({ n: ver.n, when: when(ver.createdAt), note }), tokens].filter(Boolean).join(' · ')} onClick={() => setSelected(ver.n)}>
                   <span className="ms-vmenu-thumb" aria-hidden="true">
-                    {thumb ? (thumb.video ? <video src={thumb.src} muted preload="metadata" /> : <img src={thumb.src} alt="" />) : <Icon name="image" size={14} />}
+                    {still ? <StillImg still={still} /> : thumb ? (thumb.video ? <video src={thumb.src} muted preload="metadata" /> : <img src={thumb.src} alt="" />) : <Icon name="image" size={14} />}
                   </span>
                   <span className="ms-vmenu-text">
                     <span className="ms-vmenu-line"><b>v{ver.n}</b><span className="ms-vmenu-when">{when(ver.createdAt)}</span>

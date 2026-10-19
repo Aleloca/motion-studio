@@ -21,6 +21,7 @@ import { DirectEditService } from '../creatives/direct-edit.ts';
 import { FormatCatalog } from '../formats/format-catalog.ts';
 import { NoMediaTools, type MediaTools } from '../media/media-tools.ts';
 import { AgentLauncher } from '../agent/launcher.ts';
+import { resolveProjectIcon } from '../project-icon.ts';
 import { IntegrityStore } from '../project-integrity.ts';
 import type { AgentRunner } from '../agent/runner.ts';
 import { cachedSandboxDetection, type SandboxSupport } from '../agent/sandbox.ts';
@@ -573,7 +574,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     });
   });
 
-  app.get('/api/projects', async () => requireWorkspace().listProjects());
+  // Report 44: each project with the icon the UI shows (a path under its assets, or null for the initials).
+  app.get('/api/projects', async () => {
+    const ws = requireWorkspace();
+    return Promise.all((await ws.listProjects()).map(async (p) => (p.ok ? { ...p, icon: await resolveProjectIcon(ws.projectDir(p.slug), p.project) } : p)));
+  });
 
   app.post<{ Body: { name?: unknown; description?: unknown } }>('/api/projects', async (req, reply) => {
     const name = typeof req.body?.name === 'string' ? req.body.name : '';
@@ -585,7 +590,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.get<{ Params: { slug: string } }>('/api/projects/:slug', async (req): Promise<ProjectDetail> => {
     const ws = requireWorkspace();
     const project = await ws.getProject(req.params.slug);
-    return { slug: req.params.slug, project, jobKey: projectJobKey(ws.root, req.params.slug) };
+    return { slug: req.params.slug, project, jobKey: projectJobKey(ws.root, req.params.slug), icon: await resolveProjectIcon(ws.projectDir(req.params.slug), project) };
   });
 
   app.post<{ Params: { slug: string }; Body: { prompt?: unknown; resumeSessionId?: unknown } }>(

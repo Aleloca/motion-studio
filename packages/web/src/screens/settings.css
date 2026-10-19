@@ -51,6 +51,16 @@
 .ms-set-form { padding: 18px; display: flex; flex-direction: column; gap: 14px; }
 .ms-set-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .ms-set-field > span { font-size: 12px; font-weight: 600; color: var(--muted); }
+/* Report 44: the project icon's choices. */
+.ms-set-icon-sub { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+.ms-set-icons { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 8px; max-height: 280px; overflow: auto; padding: 2px; }
+.ms-set-icon-opt {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; padding: 10px 6px 8px; margin: 0; font: inherit; font-size: 12px; color: var(--text);
+  background: transparent; border: 1px solid var(--line2); border-radius: 10px; cursor: pointer; transition: background var(--d-m) var(--e-std), border-color var(--d-m) var(--e-std);
+}
+.ms-set-icon-opt:hover { background: var(--field); }
+.ms-set-icon-opt.ms-on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.ms-set-icon-opt > span:last-child { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-set-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
 
 /* Jobs stepper. */

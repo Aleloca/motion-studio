@@ -62,6 +62,22 @@ describe('create / get / list', () => {
     expect(items.find((i) => i.slug === b.slug)).toMatchObject({ ok: true, versions: 0, cover: null });
     expect(items.find((i) => i.slug === c.slug)).toMatchObject({ ok: false });
   });
+  it('reports 45/47: a latest version with compositions and no file has a cover frame (its first brief format); a file wins', async () => {
+    const h = (c: string) => c.repeat(64);
+    const twoFormats = { ...brief, formats: ['tiktok-9x16', 'instagram-post-1x1'] };
+    const a = await store.create({ title: 'Mai renderizzata', brief: twoFormats }, day);
+    await store.appendVersion(a.slug, version(1, { outputs: [], compositions: [
+      { format: 'instagram-post-1x1', dir: 'compositions/instagram-post-1x1', hash: h('a') },
+      { format: 'tiktok-9x16', dir: 'compositions/tiktok-9x16', hash: h('b') },
+    ] }));
+    const b = await store.create({ title: 'Renderizzata', brief }, day);
+    await store.appendVersion(b.slug, version(1, { compositions: [{ format: 'instagram-post-1x1', dir: 'compositions/instagram-post-1x1', hash: h('c') }] }));
+    const items = await store.list();
+    expect(items.find((i) => i.slug === a.slug)).toMatchObject({ cover: null, coverFrame: { n: 1, format: 'tiktok-9x16', hash: h('b') } });
+    const rendered = items.find((i) => i.slug === b.slug)!;
+    expect(rendered).toMatchObject({ cover: 'outputs/v1/.previews/instagram-post-1x1.jpg' });
+    expect(rendered).not.toHaveProperty('coverFrame');
+  });
   it('404 for unknown, 400 for traversal', async () => {
     expect((await store.get('nope').catch((e) => e)).status).toBe(404);
     expect((await store.get('../x').catch((e) => e)).status).toBe(400);

@@ -1,11 +1,14 @@
-import { domainSchema, type DoctorCheck, type LinkedCodebase, type PermissionsFile, type WorkspaceSettings, type WorkspaceSettingsView } from '@motion-studio/shared';
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { domainSchema, type DoctorCheck, type LinkedCodebase, type PermissionsFile, type ProjectIcon, type WorkspaceSettings, type WorkspaceSettingsView } from '@motion-studio/shared';
+import { useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { api, type CodebaseCheck } from '../api.ts';
 import { desktop } from '../desktop.ts';
 import type { EventsState } from '../eventsReducer.ts';
 import { formatWhen, useLocale, useT } from '../i18n.tsx';
 import { collapse, enter, useEnter } from '../motion/index.ts';
 import { Button, Card, Empty, Icon, Input, NavItem, Pill, Select, Spinner, Tag, Textarea, Toggle, cx, toast, type IconName } from '../ui/index.ts';
+import { ProjectMark } from '../shell/ProjectSwitcher.tsx';
+import { ShellContext } from '../shell/ShellContext.tsx';
+import { rovingIndex } from '../ui/roving.ts';
 import { Alert, Head, Row, SectionMain, message } from './common.tsx';
 import './settings.css';
 
@@ -51,7 +54,9 @@ export function ProjectSettings({ slug, live, settings, onSettings, checks: doct
   const s = t.web.projectSettings;
   const tick = live.projectTicks[slug] ?? 0;
   const [nonce, setNonce] = useState(0);
-  const [project, setProject] = useState<{ name: string; description: string; linkedCodebases: LinkedCodebase[] } | null>(null);
+  const [project, setProject] = useState<{ name: string; description: string; linkedCodebases: LinkedCodebase[]; icon?: ProjectIcon } | null>(null);
+  // Report 44: the icon shown now (automatic or chosen), a path under the assets, or null for the initials.
+  const [shownIcon, setShownIcon] = useState<string | null>(null);
   const [checks, setChecks] = useState<CodebaseCheck[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [section, setSection] = useState<Section>('agent');
@@ -60,7 +65,7 @@ export function ProjectSettings({ slug, live, settings, onSettings, checks: doct
   useEffect(() => {
     let alive = true;
     Promise.resolve().then(() => api.getProject(slug))
-      .then((p) => { if (alive) { setProject(p.project); setLoadError(null); } })
+      .then((p) => { if (alive) { setProject(p.project); setShownIcon(p.icon ?? null); setLoadError(null); } })
       .catch((e: unknown) => { if (alive) setLoadError(message(e)); });
     Promise.resolve().then(() => api.getCodebases(slug)).then((c) => { if (alive) setChecks(c); }).catch(() => { /* no "Not found" marks */ });
     return () => { alive = false; };
@@ -97,7 +102,11 @@ export function ProjectSettings({ slug, live, settings, onSettings, checks: doct
       <SectionMain section={section}>
         {error ? <Alert>{error}</Alert> : null}
         {section === 'general' ? (
-          <GeneralSection slug={slug} project={project} onSaved={(p) => setProject((x) => (x ? { ...x, ...p } : x))} />
+          <>
+            <GeneralSection slug={slug} project={project} onSaved={(p) => setProject((x) => (x ? { ...x, ...p } : x))} />
+            <IconCard slug={slug} name={project.name} choice={project.icon ?? null} shown={shownIcon} tick={tick}
+              onSaved={(icon, shown) => { setProject((x) => { if (!x) return x; const { icon: _old, ...rest } = x; return icon ? { ...rest, icon } : rest; }); setShownIcon(shown); }} />
+          </>
         ) : section === 'agent' ? (
           <>
             <Head title={s.agent.title} sub={s.agent.sub} />
@@ -163,6 +172,74 @@ function GeneralSection({ slug, project, onSaved }: { slug: string; project: { n
         </Card>
       </form>
     </>
+  );
+}
+
+/**
+ * Report 44: the project's icon: Automatic (what the brand and the library give, shown), the initials, or one of the
+ * library's images (pictures and SVGs). A pick is saved at once.
+ */
+function IconCard({ slug, name, choice, shown, tick, onSaved }: {
+  slug: string; name: string; choice: ProjectIcon | null; shown: string | null; tick: number; onSaved(icon: ProjectIcon | null, shown: string | null): void;
+}) {
+  const t = useT();
+  const g = t.web.projectSettings.general.icon;
+  const shell = useContext(ShellContext);
+  const [images, setImages] = useState<string[]>([]);
+  const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve().then(() => api.listAssets(slug))
+      .then((r) => { if (alive) setImages(r.assets.filter((a) => a.kind === 'image' || a.kind === 'svg').map((a) => a.file)); })
+      .catch(() => { /* Automatic and Initials stay */ });
+    return () => { alive = false; };
+  }, [slug, tick]);
+  const key = (c: ProjectIcon | null) => (c === null ? 'auto' : c === 'initials' ? 'initials' : `a:${c.asset}`);
+  const current = key(choice);
+  const pick = async (next: ProjectIcon | null) => {
+    if (busy || key(next) === current) return;
+    setBusy(true);
+    setStatus(null);
+    try {
+      const r = await api.updateProject(slug, { icon: next });
+      onSaved(next, r.icon ?? null);
+      // The project bar's mark follows at once.
+      shell?.catalog.refresh();
+      setStatus({ ok: true, text: g.saved });
+    } catch (err) {
+      setStatus({ ok: false, text: g.failed({ detail: message(err) }) });
+    } finally { setBusy(false); }
+  };
+  // Review 10: one tab stop (the checked choice, else the first); the arrows, Home and End move the focus, Space or Enter
+  // picks (a pick saves at once, so the focus moving alone saves nothing).
+  const keys = ['auto', 'initials', ...images.map((f) => `a:${f}`)];
+  const stop = keys.includes(current) ? current : 'auto';
+  const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const at = keys.indexOf((e.target as HTMLElement).dataset.key ?? '');
+    const next = at < 0 ? null : rovingIndex(e.key, at, keys.length);
+    if (next === null) return;
+    e.preventDefault();
+    e.currentTarget.querySelectorAll<HTMLElement>('[data-key]')[next]?.focus();
+  };
+  const tile = (k: string, label: string, next: ProjectIcon | null, face: ReactNode) => (
+    <button key={k} type="button" role="radio" aria-checked={current === k} aria-label={label} title={label} aria-disabled={busy || undefined}
+      data-key={k} tabIndex={k === stop ? 0 : -1} className={cx('ms-set-icon-opt', current === k && 'ms-on')} onClick={() => void pick(next)}>
+      {face}
+    </button>
+  );
+  return (
+    <div className="ms-set-narrow" data-enter>
+      <Card className="ms-set-form">
+        <div className="ms-set-field"><span>{g.title}</span><p className="ms-set-icon-sub">{g.sub}</p></div>
+        <div className="ms-set-icons" role="radiogroup" aria-label={g.label} onKeyDown={onKey}>
+          {tile('auto', g.auto, null, <><ProjectMark name={name} slug={slug} icon={choice === null ? shown : null} size="md" /><span>{g.auto}</span></>)}
+          {tile('initials', g.initials, 'initials', <><ProjectMark name={name} size="md" /><span>{g.initials}</span></>)}
+          {images.map((file) => tile(`a:${file}`, file, { asset: file }, <><ProjectMark name={name} slug={slug} icon={`assets/${file}`} size="md" /><span className="ms-set-icon-file">{file.split('/').pop()}</span></>))}
+        </div>
+        {status ? <p className={status.ok ? 'ms-set-saved' : 'ms-set-error'} role={status.ok ? 'status' : 'alert'}>{status.text}</p> : null}
+      </Card>
+    </div>
   );
 }
 

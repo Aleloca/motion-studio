@@ -479,13 +479,16 @@ describe('CreativeCanvas · store pack export', () => {
     expect(screen.queryByRole('button', { name: 'Esporta pacchetto' })).toBeNull();
   });
 
-  it('with brief.storePack the pack group header (not the top bar) offers the export for the version on screen', async () => {
+  it('report 46: with brief.storePack the top bar Export (not the pack group) offers the pack export for the version on screen', async () => {
     localStorage.setItem('ms.exportFolder', '/out');
     const base = makeDetail([version(1, 'Dal brief')]);
     detail = makeDetail([version(1, 'Dal brief')], { brief: { ...base.creative.brief, storePack: pack } });
     render(<Harness live={emptyLive()} />);
     await ready();
-    await userEvent.click(screen.getByRole('button', { name: 'Esporta pacchetto' }));
+    expect(screen.queryByRole('button', { name: 'Esporta pacchetto' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Esporta' }));
+    // The brief's formats are outside the pack: Export asks first.
+    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Cosa vuoi esportare?' })).getByRole('button', { name: /^Pacchetto store/ }));
     const dialog = await screen.findByRole('dialog', { name: /pacchetto store/ });
     await userEvent.click(within(dialog).getByRole('button', { name: 'Esporta il pacchetto' }));
     await waitFor(() => expect(api.exportStorePack).toHaveBeenCalledWith('acme', 'lancio', 1, { destination: '/out' }));

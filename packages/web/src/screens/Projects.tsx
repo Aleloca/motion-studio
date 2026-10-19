@@ -1,5 +1,5 @@
 import { instanceName, presetFor } from '../instances.ts';
-import { type BrandOverview, type CreativeListItem, type FormatPreset, type ProjectFile, type ProjectListItem, type RecentCreative } from '@motion-studio/shared';
+import { type BrandOverview, type CreativeListItem, type CreativeSummary, type FormatPreset, type ProjectFile, type ProjectListItem, type RecentCreative } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.ts';
 import type { EventsState } from '../eventsReducer.ts';
@@ -12,6 +12,8 @@ import { Button, Icon, Input, Pill, Select, cx, initials, toast } from '../ui/in
 import { liveCreative } from './creativeState.ts';
 import './projects.css';
 import { message } from './common.tsx';
+import { CoverStill } from '../components/CoverStill.tsx';
+import { ProjectIconBox } from '../components/ProjectIcon.tsx';
 import { CoverMedia } from '../components/MediaThumb.tsx';
 import { coverVideo } from '../media.ts';
 
@@ -80,13 +82,15 @@ export function Projects({ live }: { live: EventsState }) {
   // "New project" from the project switcher (and the header button): bring the name field forward.
   useNewProjectIntent(focusNew);
 
+  // Any project, brand or library change may change a project's icon (report 44, review 6): the list is asked again.
+  const projectTick = useMemo(() => Object.values(live.projectTicks).reduce((a, v) => a + v, 0), [live.projectTicks]);
   useEffect(() => {
     let alive = true;
     Promise.resolve().then(() => api.listProjects())
       .then((r) => { if (alive) { setItems(r); setError(null); } })
       .catch((e: unknown) => { if (alive) setError(message(e)); });
     return () => { alive = false; };
-  }, [nonce]);
+  }, [nonce, projectTick]);
   // Any creative change may reorder "Jump back in".
   const creativeTick = useMemo(() => Object.values(live.creativeTicks).reduce((a, v) => a + v, 0), [live.creativeTicks]);
   useEffect(() => {
@@ -227,10 +231,12 @@ function JumpTile({ c, live, presets }: { c: RecentCreative; live: EventsState; 
   const first = c.formats[0] ? presetFor(presets, c.formats[0]) ?? undefined : undefined;
   const width = Math.round(Math.min(120, Math.max(40, THUMB_H * (first ? first.width / first.height : 1))));
   const what = c.formats.length === 1 && first ? instanceName(first, c.formats[0]!, locale, c.formatLabels) : p.formats({ n: c.formats.length });
+  // Reports 45/47: a still there is none of (404/422) gives back the icon, for that composition only (review 3).
+  const [noStill, setNoStill] = useState<string | null>(null);
   return (
     <a className="ms-card ms-jump-tile" data-hover-play href={href.creative(c.project.slug, c.slug)}>
       <span className="ms-jump-thumb" style={{ width }}>
-        {c.cover ? <Cover project={c.project.slug} creative={c.slug} cover={c.cover} /> : <Icon name={first?.kind === 'image' ? 'image' : 'video'} size={16} />}
+        {c.cover || (c.coverFrame && noStill !== c.coverFrame.hash) ? <Cover key={c.coverFrame?.hash ?? 'file'} project={c.project.slug} c={c} onNone={() => setNoStill(c.coverFrame?.hash ?? null)} /> : <Icon name={first?.kind === 'image' ? 'image' : 'video'} size={16} />}
       </span>
       <span className="ms-jump-text">
         <b className="ms-jump-title">{c.title}</b>
@@ -253,10 +259,14 @@ function JumpTile({ c, live, presets }: { c: RecentCreative; live: EventsState; 
   );
 }
 
-/** A creative's cover; its video plays while the card is hovered (CoverMedia). */
-function Cover({ project, creative, cover }: { project: string; creative: string; cover: string }) {
-  const video = coverVideo(cover);
-  return <CoverMedia src={api.fileUrl(project, creative, cover)} video={video ? api.fileUrl(project, creative, video) : null} />;
+/**
+ * A creative's cover; its video plays while the card is hovered (CoverMedia). Without a file, a still of its composition
+ * (reports 45/47); `onNone` when there is none.
+ */
+function Cover({ project, c, onNone }: { project: string; c: Pick<CreativeSummary, 'slug' | 'cover' | 'coverFrame'>; onNone?(): void }) {
+  if (!c.cover) return c.coverFrame ? <CoverStill still={{ ...c.coverFrame, slug: project, creative: c.slug }} {...(onNone ? { onNone } : {})} /> : null;
+  const video = coverVideo(c.cover);
+  return <CoverMedia src={api.fileUrl(project, c.slug, c.cover)} video={video ? api.fileUrl(project, c.slug, video) : null} />;
 }
 
 const later = (a: string, b: string) => (a.localeCompare(b) >= 0 ? a : b);
@@ -302,7 +312,11 @@ function ProjectCard({ item, live, waiting, fresh, index, onActivity }: CardProp
   useLayoutEffect(() => { if (fresh) void enter(ref.current, { y: 16, scale: 0.96 }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const readable = (creatives.value ?? []).flatMap((c) => (c.ok ? [c] : []));
-  const covers = readable.filter((c) => c.cover).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, COVERS);
+  // Reports 45/47: a creative without a file covers with a still of its composition, unless there is none of that
+  // composition (404/422, keyed by its hash: a new version is asked again; other errors keep the slot and retry, review 3).
+  const [noStill, setNoStill] = useState<ReadonlySet<string>>(new Set());
+  const stillKey = (c: CreativeSummary) => `${c.slug}/${c.coverFrame?.hash ?? ''}`;
+  const covers = readable.filter((c) => c.cover || (c.coverFrame && !noStill.has(stillKey(c)))).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, COVERS);
   const colors = (brand.value?.kit.colors ?? []).filter((c) => hex6(c.hex));
   const fonts = brand.value?.kit.fonts.length ?? 0;
   const face = paletteFace(colors);
@@ -323,7 +337,7 @@ function ProjectCard({ item, live, waiting, fresh, index, onActivity }: CardProp
         className={cx('ms-pcover', covers.length > 0 && `ms-n${covers.length}`)}
         style={!covers.length && face ? { background: face.bg } : undefined} // color-data
       >
-        {covers.map((c) => <Cover key={c.slug} project={slug} creative={c.slug} cover={c.cover!} />)}
+        {covers.map((c) => <Cover key={stillKey(c)} project={slug} c={c} onNone={() => setNoStill((x) => new Set(x).add(stillKey(c)))} />)}
         {!covers.length && settled ? (
           <span className={cx('ms-pcover-word', project.name.length > 18 && 'ms-long')} style={face ? { color: face.fg } : undefined}>{project.name}</span> // color-data
         ) : null}
@@ -336,12 +350,12 @@ function ProjectCard({ item, live, waiting, fresh, index, onActivity }: CardProp
       </div>
       <div className="ms-pcard-body">
         <div className="ms-pcard-row">
-          <span
-            className="ms-pmono" aria-hidden="true"
+          <ProjectIconBox
+            slug={slug} icon={item.icon} className="ms-pmono"
             style={face ? { background: colors[0]!.hex, color: contrast(colors[0]!.hex, face.bg) >= 3 ? face.bg : face.fg } : undefined} // color-data
           >
             {initials(project.name)}
-          </span>
+          </ProjectIconBox>
           <span className="ms-pcard-id">
             <b className="ms-pcard-name">{project.name}</b>
             {site ? <span className="ms-pcard-site">{site}</span> : null}

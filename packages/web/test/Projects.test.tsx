@@ -15,9 +15,14 @@ const api = {
   getBrand: vi.fn(),
   listAssets: vi.fn(async () => ({ assets: [], error: null, unregistered: [] })),
   fileUrl: (s: string, c: string, rel: string) => `/files/${s}/${c}/${rel}`,
+  getStoryboard: vi.fn(async (_s: string, _c: string, _n: number, f: string) => storyboardOf(f)),
 };
+const storyboardOf = (format: string) => ({ format, hash: 'a'.repeat(64), width: 270, expiresAt: new Date(Date.now() + 600_000).toISOString(),
+  frames: [{ t: 3, kind: 'poster', url: `/sb/${format}/poster.jpg`, width: 270, height: 480 }] });
+
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { Projects, hex6, luminance } = await import('../src/screens/Projects.tsx');
+const { __resetStills } = await import('../src/components/compositionStill.ts');
 
 const at = '2026-10-08T10:00:00.000Z';
 const project = (slug: string, name: string, updatedAt = at): ProjectListItem =>
@@ -38,6 +43,7 @@ const job: JobSummary = { id: 'j2', key: 'creative:/w:hs:teaser', kind: 'creativ
 const en = (node: React.ReactNode) => render(<I18nProvider locale="en">{node}</I18nProvider>);
 
 beforeEach(() => {
+  __resetStills();
   api.listCreatives.mockResolvedValue([]);
   api.getBrand.mockResolvedValue(brand([]));
   api.recentCreatives.mockResolvedValue([]);
@@ -112,6 +118,61 @@ describe('Projects · cards', () => {
     expect(card.getAttribute('href')).toBe('#/p/hs');
     expect(within(card).getByText('1 approval waiting')).toBeTruthy();
     await waitFor(() => expect(card.textContent).toContain('3 creatives'));
+  });
+
+  it('reports 45/47: a creative never rendered covers the project with a still of its composition; no renderer keeps the name', async () => {
+    api.listProjects.mockResolvedValue([project('au', 'Audin')]);
+    api.listCreatives.mockResolvedValue([
+      { ok: true, slug: 'desk', title: 'Desk', status: 'ready', formats: ['tiktok-9x16'], versions: 1, updatedAt: at, cover: null, coverFrame: { n: 1, format: 'tiktok-9x16', hash: 'a'.repeat(64) } },
+    ] as never);
+    const { unmount } = en(<Projects live={live()} />);
+    const card = (await screen.findByText('Audin', { selector: '.ms-pcard-name' })).closest('a')!;
+    await waitFor(() => expect(card.querySelector('.ms-pcover img')?.getAttribute('src')).toBe('/sb/tiktok-9x16/poster.jpg'));
+    expect(api.getStoryboard).toHaveBeenCalledWith('au', 'desk', 1, 'tiktok-9x16');
+    expect(card.querySelector('.ms-pcover-word')).toBeNull();
+    unmount();
+    __resetStills();
+    api.getStoryboard.mockRejectedValueOnce(Object.assign(new Error('none'), { status: 404 }));
+    en(<Projects live={live()} />);
+    const again = (await screen.findByText('Audin', { selector: '.ms-pcard-name' })).closest('a')!;
+    await waitFor(() => expect(again.querySelector('.ms-pcover-word')?.textContent).toBe('Audin'));
+    expect(again.querySelector('.ms-pcover img')).toBeNull();
+  });
+
+  it('reports 45/47: Jump back in shows the still of a never-rendered creative', async () => {
+    api.listProjects.mockResolvedValue([]);
+    api.recentCreatives.mockResolvedValue([recent('desk', 'Desk', 'ready', { cover: null, coverFrame: { n: 2, format: 'tiktok-9x16', hash: 'a'.repeat(64) } })]);
+    en(<Projects live={live()} />);
+    const tile = (await screen.findByText('Desk', { selector: '.ms-jump-title' })).closest('a')!;
+    await waitFor(() => expect(tile.querySelector('.ms-jump-thumb img')?.getAttribute('src')).toBe('/sb/tiktok-9x16/poster.jpg'));
+    expect(api.getStoryboard).toHaveBeenCalledWith('hs', 'desk', 2, 'tiktok-9x16');
+  });
+
+  it('review 3: an error other than 404/422 is not "no still": the cover keeps its slot (asked again later)', async () => {
+    api.listProjects.mockResolvedValue([project('au', 'Audin')]);
+    api.listCreatives.mockResolvedValue([
+      { ok: true, slug: 'desk', title: 'Desk', status: 'ready', formats: ['tiktok-9x16'], versions: 1, updatedAt: at, cover: null, coverFrame: { n: 1, format: 'tiktok-9x16', hash: 'a'.repeat(64) } },
+    ] as never);
+    api.getStoryboard.mockRejectedValueOnce(Object.assign(new Error('boom'), { status: 500 }));
+    en(<Projects live={live()} />);
+    const card = (await screen.findByText('Audin', { selector: '.ms-pcard-name' })).closest('a')!;
+    await waitFor(() => expect(api.getStoryboard).toHaveBeenCalled());
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+    expect(card.querySelector('.ms-pcover .ms-cover')).toBeTruthy();
+    expect(card.querySelector('.ms-pcover-word')).toBeNull();
+  });
+
+  it('review 3: "no still" is kept per version: a new version of the creative is asked again', async () => {
+    api.listProjects.mockResolvedValue([]);
+    const frame = (hash: string) => recent('desk', 'Desk', 'ready', { cover: null, coverFrame: { n: 1, format: 'tiktok-9x16', hash } });
+    api.recentCreatives.mockResolvedValue([frame('a'.repeat(64))]);
+    api.getStoryboard.mockRejectedValueOnce(Object.assign(new Error('none'), { status: 404 }));
+    const { rerender } = en(<Projects live={live()} />);
+    const tile = (await screen.findByText('Desk', { selector: '.ms-jump-title' })).closest('a')!;
+    await waitFor(() => expect(tile.querySelector('.ms-jump-thumb svg')).toBeTruthy());
+    api.recentCreatives.mockResolvedValue([frame('b'.repeat(64))]);
+    rerender(<I18nProvider locale="en"><Projects live={live({ creativeTicks: { 'hs/desk': 1 } })} /></I18nProvider>);
+    await waitFor(() => expect(screen.getByText('Desk', { selector: '.ms-jump-title' }).closest('a')!.querySelector('.ms-jump-thumb img')?.getAttribute('src')).toBe('/sb/tiktok-9x16/poster.jpg'));
   });
 
   it('falls back to the project name without covers or palette', async () => {
