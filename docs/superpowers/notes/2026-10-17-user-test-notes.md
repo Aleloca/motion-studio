@@ -251,7 +251,9 @@ arrives and worked on later together.
     floor (`LABEL_MIN`), so many tall boards overflow. The user wants the boards laid out to use the space.
     User's call: one row per group of the side list (App Store 1–8 + App Preview, then Play Store 1–8, then the other
     formats such as the feature graphic and the video); a row that is too long wraps; the opening zoom shows everything.
-    To do with the next reports.
+    Done (decisions 1270–1272): the canvas follows the formats column's groups (a store pack by store, each on lines of its
+    own; small groups of an ordinary creative share a line when they fit whole), lines wrap at the opening zoom, which can
+    go down to 10% (labels narrower below 50%). Checked in Chrome at 1280, 1440 and 1728 px: all 19 boards in view.
 
 41. **Formats appear only when the whole turn is done.** While a multi-format turn runs (the 19-format store pack,
     2026-10-19), every board shows "Rendering…" / "Not generated yet" until the end, then all appear together. The user
@@ -261,14 +263,17 @@ arrives and worked on later together.
     User's call: a live preview of each composition while the agent is still writing it would be nice, if it does not
     make the app lag (many boards at once, e.g. 19 in a store pack); otherwise show each format as soon as it is ready
     and checked, marked "In lavorazione", with the version still recorded at the end of the turn. Measure the cost
-    before choosing. To do with the next reports, together with 40 (same screen).
+    before choosing. Done (decisions 1277–1281): 19 playing previews took ~1.5 cores and halved the page's frame rate, so a
+    format the agent's check passes shows its poster, "In lavorazione", and plays on hover; the version is recorded at the
+    end as before, and a stopped or failed turn clears those boards.
 
 42. **The chat's "Applies to" chips do not scale to many formats.** In a creative with 19 formats (store pack,
     2026-10-19) the composer shows one chip per format ("All formats", "App Store · 1" … "Play Store · Promo video
     16:9"): ten rows of chips above the message field. The user finds it awkward with many formats.
     User's call: one menu button "Si applica a: Tutti i formati ▾" that opens the formats grouped as in the side list
     (App Store, Play Store…), a checkbox per format and one per group; the button says what is chosen ("App Store · 3
-    formati"). To do with the next reports, with 40 and 41.
+    formati"). Done (decisions 1275, 1276): one menu button on the canvas, the format view and the editor, also with few
+    formats; the scope sent is unchanged.
 
 43. **"Not rendered" under every finished board is confusing.** The store pack screenshots show v1 with "Not rendered"
     (2026-10-19); the user asks what it means and whether rendering was removed in favour of export only. It means the
@@ -276,7 +281,7 @@ arrives and worked on later together.
     974 a render starts from Export (it renders what is missing) or from the board menu "Render vN"; the bar has Export
     only. The label reads like something is missing or broken.
     User's call: no label on a ready board that has no render; only the useful states stay (queued, rendering %, failed
-    · retry, problems). Renders still start from Export or "Render vN". To do with the next reports.
+    · retry, problems). Renders still start from Export or "Render vN". Done (decisions 1273, 1274).
 
 ## Follow-ups found while working on 12–30
 
