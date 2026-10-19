@@ -1,7 +1,7 @@
 import { lstat, open, realpath } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join, sep } from 'node:path';
-import { allocatePackInstances, messages, packSlotOf, STORE_PREVIEW_SECONDS, storePackFormats, type Brief, type FormatPreset, type Locale, type StorePack } from '@motion-studio/shared';
+import { agentNamedLabel, allocatePackInstances, keptAgentLabels, messages, packSlotOf, screenshotLabel, STORE_PREVIEW_SECONDS, storePackFormats, type Brief, type FormatPreset, type Locale, type StorePack } from '@motion-studio/shared';
 import { currentLocale } from '../i18n.ts';
 import { LibraryStore } from '../library/library-store.ts';
 import type { MediaTools } from '../media/media-tools.ts';
@@ -40,7 +40,8 @@ export function storePackBrief(p: StorePack, o: { locale: Locale; presets?: read
  *   "Add another" instance is never adopted. A new slot takes its own id when free, else the next free instance of its preset
  *   (an old pack grown over a hand-picked @4 gets @5); `store-pack-collision` only when a preset has no free instance left;
  * - the slots the new pack no longer needs go (`removed`) with their labels and links; the new ones come in (`added`), after
- *   the last pack instance that stays, or at the end; labels follow the captions, links are those of `storePackFormats`;
+ *   the last pack instance that stays, or at the end; labels follow the captions (a screenshot without one keeps the name the
+ *   agent gave it, report 55), links are those of `storePackFormats`;
  * - the fields `storePackBrief` derives from the pack follow it: the app screens in `assets` (those of the old pack go, the new
  *   ones come), `durationSec` (20 s when the preview is turned on and there is no length, null again when it is turned off and
  *   the length is still the pack's), `goal` and `message` (replaced only while they are still what the old pack generated);
@@ -71,9 +72,16 @@ export function mergeStorePack(brief: Brief, next: StorePack | null, presets?: r
   const lastKept = formats.reduce((k, f, i) => (owned.has(f) ? i : k), -1);
   formats.splice(lastKept >= 0 ? lastKept + 1 : formats.length, 0, ...added);
 
-  const { storePack: _old, formatLabels: oldLabels, links: oldLinks, ...rest } = brief;
+  const { storePack: _old, formatLabels: oldLabels, links: oldLinks, agentFormatLabels: oldAgent, ...rest } = brief;
   const labels = Object.fromEntries(Object.entries(oldLabels ?? {}).filter(([k]) => !removed.includes(k)));
-  for (const [k, v] of Object.entries(wantLabels)) labels[k] = v;
+  const agent: Record<string, string> = { ...oldAgent };
+  for (const [k, v] of Object.entries(wantLabels)) {
+    // Report 55: a screenshot still without a caption keeps the name the agent gave it, after its number; a caption wins.
+    const given = /^\d+$/.test(v) ? agentNamedLabel(brief, k) : null;
+    if (given !== null) labels[k] = agent[k] = screenshotLabel(Number(v), given);
+    else { labels[k] = v; delete agent[k]; }
+  }
+  const keptAgent = keptAgentLabels(agent, labels);
   let links: Record<string, string> | undefined = oldLinks === undefined ? undefined : Object.fromEntries(Object.entries(oldLinks).filter(([f, p]) => !removed.includes(f) && !removed.includes(p)));
   for (const [f, p] of Object.entries(wantLinks)) if (added.includes(f) && formats.includes(p)) (links ??= {})[f] = p;
 
@@ -106,6 +114,7 @@ export function mergeStorePack(brief: Brief, next: StorePack | null, presets?: r
   const merged: Brief = {
     ...rest, goal, message, durationSec, assets, formats,
     ...(Object.keys(labels).length > 0 ? { formatLabels: labels } : {}),
+    ...(keptAgent ? { agentFormatLabels: keptAgent } : {}),
     ...(links ? { links } : {}),
     ...(next ? { storePack: { ...next, instances } } : {}),
   };

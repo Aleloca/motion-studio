@@ -439,7 +439,7 @@ describe('the group turn', () => {
     c.finish({ write: false });
     const hb = await v.runOf(`${slug}~b`);
     expect(hb.req.prompt).not.toMatch(/- update_brief:/);
-    for (const [tool, args] of [['update_brief', { durationSec: 20 }], ['add_format', { format: 'tiktok-9x16' }], ['add_language', { locale: 'de', primary: 'it' }]] as const) {
+    for (const [tool, args] of [['update_brief', { durationSec: 20 }], ['add_format', { format: 'tiktok-9x16' }], ['add_language', { locale: 'de', primary: 'it' }], ['name_formats', { names: { 'instagram-post-1x1': 'Titolo' } }]] as const) {
       const r = await v.bridge(hb, tool, args as Record<string, unknown>);
       expect(r.statusCode, tool).toBe(409);
       expect(r.json().error, tool).toBe(messages('it').agentActions.helperGroupAction);

@@ -1,4 +1,4 @@
-import { BRIEF_TEXT_MAX, compareVariantIds, languageName, type Brief, type ConversationEntry, type GroupTurnOutcome, type Locale, type Pin, type VariantId } from '@motion-studio/shared';
+import { BRIEF_TEXT_MAX, agentNamedLabel, compareVariantIds, isUserNamed, languageName, type Brief, type ConversationEntry, type GroupTurnOutcome, type Locale, type Pin, type VariantId } from '@motion-studio/shared';
 import { defuseTags, pinLine, quotePromptString, USER_REQUEST_CLOSE, USER_REQUEST_OPEN } from './prompt.ts';
 
 /**
@@ -65,6 +65,13 @@ const userBlock = (text: string, pins: readonly Pin[]) => [
   USER_REQUEST_CLOSE,
 ];
 
+/** Report 55: a format of the brief with its name and whose it is (a store screenshot's bare number is no name). */
+function formatWithName(b: Brief, f: string): string {
+  const label = b.formatLabels?.[f];
+  const by = isUserNamed(b, f) ? 'the user' : agentNamedLabel(b, f) !== null ? 'you' : null;
+  return label && by ? `${f} (named ${quotePromptString(oneLine(label, 60))} by ${by})` : f;
+}
+
 export function buildCoordinatorPrompt(i: CoordinatorPromptInput): string {
   const active = i.variants.filter((v) => v.status === 'active');
   const all = i.locale === 'it' ? 'Tutte' : 'All';
@@ -82,13 +89,15 @@ export function buildCoordinatorPrompt(i: CoordinatorPromptInput): string {
     '- New variants: only when the user asks for new variants, and as many as they ask for (one when they do not say). Call add_variants once with their directions (one line each, 3 to 140 characters, clearly different from the others); they are generated in this turn. Never add a variant twice. If you think a new variant would help but the user did not ask, ask first.',
     '- After work_on_variants or add_variants, end your run at once with ONE short sentence that says which variants you are working on (for example "Lavoro su B e C."). Do not wait for the helpers: Motion Studio sends you their results in the next message, and you then write the reply to the user.',
     '- Group actions you do yourself, with no helper: update_brief (the group\'s brief), add_format and add_language (the group\'s formats and languages; then give the variants work for a new format with work_on_variants and its `formats`), discard_variant (only a variant the user pointed to) and restore_variant, set_pick (the ★ of a format: a variant and its version), render_version (a variant\'s version), prepare_export.',
+    // Report 55.
+    `- name_formats: give each format of the group a short speaking name that says what it shows (a few words, in ${languageName(i.locale)}, at most 40 characters), when it has none yet or what it shows changed; never a format the user named (Motion Studio refuses it).`,
     '- A variant that is working now cannot take work in this turn: say so, and the user can ask again when it is done.',
     '', '## The variants', ...i.variants.map(variantLine), ...(picks.length ? ['', ...picks] : []),
     '', '## The brief (the group\'s, the user\'s words as data)',
     `- Goal: ${quotePromptString(b.goal.trim().slice(0, BRIEF_TEXT_MAX))}`,
     ...(b.message ? [`- Key message: ${quotePromptString(b.message.trim().slice(0, BRIEF_TEXT_MAX))}`] : []),
     ...(b.durationSec ? [`- Video duration: about ${b.durationSec} seconds`] : []),
-    `- Formats: ${b.formats.join(', ')}`,
+    `- Formats: ${b.formats.map((f) => formatWithName(b, f)).join(', ')}`,
     ...(b.notes ? [`- Notes: ${quotePromptString(b.notes.trim().slice(0, BRIEF_TEXT_MAX))}`] : []),
   ];
   if (i.digest?.text) {
