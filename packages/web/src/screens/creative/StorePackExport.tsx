@@ -19,7 +19,7 @@ import { message } from '../common.tsx';
 import { EXPORT_FOLDER_KEY } from '../ExportDialog.tsx';
 import { exportErrorText } from '../versionErrors.ts';
 import { localeName } from './languagesModel.ts';
-import { galleryRows, groupCheck, groupThumb, packFileGroups, scrollEdges, versionThumb, withFiles, type PackFileRow } from './storePackFiles.ts';
+import { galleryRows, groupCheck, groupThumb, packFileGroups, revealLeft, scrollEdges, versionThumb, withFiles, type PackFileRow } from './storePackFiles.ts';
 import '../canvas.css';
 import '../new-creative/storepack.css';
 import './languages.css';
@@ -220,11 +220,14 @@ function Body({ onClose, slug, creative, version, group, locales, untranslated =
             const c = groupCheck(ids, off);
             return (
               <section key={s.store} className="ms-spx-store">
-                <div className="ms-spx-storehead">
-                  <Check on={c.on} mixed={c.mixed} label={name} disabled={running} onChange={(v) => setMany(ids, v)} />
-                  <span aria-hidden="true"><ChannelMark channel={s.store === 'appstore' ? 'appstore' : 'googleplay'} size={20} /></span>
-                  <h3><span className="ms-spx-store-name">{name}</span><span className="ms-spx-count">{c.n}/{c.of}</span></h3>
-                </div>
+                {/* Review: the store's name toggles the store, as a device's name toggles the device. */}
+                <h3 className="ms-spx-storehead">
+                  <label>
+                    <Check on={c.on} mixed={c.mixed} label={name} disabled={running} onChange={(v) => setMany(ids, v)} />
+                    <span className="ms-spx-mark" aria-hidden="true"><ChannelMark channel={s.store === 'appstore' ? 'appstore' : 'googleplay'} size={20} /></span>
+                    <span className="ms-spx-store-name">{name}</span><span className="ms-spx-count">{c.n}/{c.of}</span>
+                  </label>
+                </h3>
                 {rows.map((row) => {
                   const rowIds = row.files.map((r) => r.id);
                   const rc = groupCheck(rowIds, off);
@@ -241,10 +244,23 @@ function Body({ onClose, slug, creative, version, group, locales, untranslated =
                           <span className="ms-spx-count">{rc.n}/{rc.of}</span>
                         </label>
                       ) : <span className="ms-spx-rowhead" />}
-                      <Strip back={x.scrollBack} more={x.scrollMore}>
-                        {row.files.map((r) => tile(r, row.label))}
-                        {row.files.length && row.tail.length ? <span className="ms-spx-sep" aria-hidden="true" /> : null}
-                        {row.tail.map((r) => tile(r, null))}
+                      {/* Review: with single files after them, each part has its caption, so the device's n/m reads as its screenshots only. */}
+                      <Strip back={x.scrollBack} more={x.scrollMore} capped={row.tail.length > 0}>
+                        {row.tail.length ? (
+                          <>
+                            {row.files.length ? (
+                              <div className="ms-spx-seg">
+                                <span className="ms-spx-seg-cap">{x.screenshots}</span>
+                                <div className="ms-spx-seg-tiles">{row.files.map((r) => tile(r, row.label))}</div>
+                              </div>
+                            ) : null}
+                            {row.files.length ? <span className="ms-spx-sep" aria-hidden="true" /> : null}
+                            <div className="ms-spx-seg" role="group" aria-label={x.otherFiles}>
+                              <span className="ms-spx-seg-cap" aria-hidden="true">{x.otherFiles}</span>
+                              <div className="ms-spx-seg-tiles">{row.tail.map((r) => tile(r, null))}</div>
+                            </div>
+                          </>
+                        ) : row.files.map((r) => tile(r, row.label))}
                       </Strip>
                     </div>
                   );
@@ -303,12 +319,17 @@ function Body({ onClose, slug, creative, version, group, locales, untranslated =
   );
 }
 
+/** The faded edge's width (storepack.css) and room for a focus ring: a focused thumbnail scrolls this far clear of the edge. */
+const EDGE = 64 + 6;
+
 /**
  * Report 54: a gallery row's thumbnails side by side, scrolling sideways. Where there is more to see the edge fades and an arrow
- * scrolls by most of a row (for a mouse without a sideways wheel; the keyboard reaches every thumbnail with Tab).
+ * scrolls by most of a row (for a mouse without a sideways wheel; the keyboard reaches every thumbnail with Tab, and a focused
+ * one scrolls clear of the faded edge). The edges follow the strip's box and its content's width (review).
  */
-function Strip({ back, more, children }: { back: string; more: string; children: ReactNode }) {
+function Strip({ back, more, capped, children }: { back: string; more: string; capped: boolean; children: ReactNode }) {
   const track = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
   const [edges, setEdges] = useState({ back: false, more: false });
   useLayoutEffect(() => {
     const el = track.current;
@@ -317,13 +338,25 @@ function Strip({ back, more, children }: { back: string; more: string; children:
     update();
     const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
     ro?.observe(el);
+    if (content.current) ro?.observe(content.current);
     el.addEventListener('scroll', update, { passive: true });
     return () => { ro?.disconnect(); el.removeEventListener('scroll', update); };
   }, []);
   const by = (dir: 1 | -1) => { const el = track.current; el?.scrollBy?.({ left: dir * el.clientWidth * 0.8 }); };
+  const reveal = (target: EventTarget) => {
+    const el = track.current;
+    const tile = target instanceof HTMLElement ? target.closest('.ms-spx-tile') : null;
+    if (!el || !tile) return;
+    const r = tile.getBoundingClientRect();
+    const left = r.left - el.getBoundingClientRect().left + el.scrollLeft;
+    const to = revealLeft({ left, width: r.width }, el, EDGE);
+    if (to !== null) el.scrollLeft = to;
+  };
   return (
-    <div className={cx('ms-spx-strip', edges.back && 'ms-back', edges.more && 'ms-more')}>
-      <div ref={track} className="ms-spx-track">{children}</div>
+    <div className={cx('ms-spx-strip', capped && 'ms-capped', edges.back && 'ms-back', edges.more && 'ms-more')}>
+      <div ref={track} className="ms-spx-track" onFocus={(e) => reveal(e.target)}>
+        <div ref={content} className="ms-spx-content">{children}</div>
+      </div>
       {edges.back ? <button type="button" className="ms-spx-nav ms-prev" tabIndex={-1} aria-hidden="true" title={back} onClick={() => by(-1)}><Icon name="chevron" size={16} strokeWidth={1.8} /></button> : null}
       {edges.more ? <button type="button" className="ms-spx-nav ms-next" tabIndex={-1} aria-hidden="true" title={more} onClick={() => by(1)}><Icon name="chevron" size={16} strokeWidth={1.8} /></button> : null}
     </div>

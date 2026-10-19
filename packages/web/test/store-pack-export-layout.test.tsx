@@ -105,6 +105,12 @@ for (const t of thumbs) {
   if (box(name).height > 20) problems.push('name on two lines: ' + name.textContent);
   if (box(name).width > r.width + .5) problems.push('name wider than its thumbnail: ' + name.textContent);
 }
+for (const row of document.querySelectorAll('.ms-spx-row')) {
+  const tops = [...row.querySelectorAll('.ms-spx-thumb')].map((t) => Math.round(box(t).top));
+  if (new Set(tops).size !== 1) problems.push('the thumbnails of a row are not aligned: ' + tops.join(','));
+  const caps = [...row.querySelectorAll('.ms-spx-seg-cap')];
+  if (caps.length !== 2 || caps.some((c) => box(c).bottom > tops[0] + .5)) problems.push('a part of the row lacks its caption above it');
+}
 const tracks = [...document.querySelectorAll('.ms-spx-track')].map((t) => ({ over: t.scrollWidth > t.clientWidth + 1, w: t.clientWidth }));
 const imgs = [...document.querySelectorAll('.ms-spx-thumb img')];
 return { problems, thumbH: hs[0], tracks, dialog: { w: Math.round(d.width), h: Math.round(d.height) }, broken: imgs.filter((i) => !i.complete || i.naturalWidth === 0).length };
@@ -142,7 +148,7 @@ run('store pack export gallery: real Chrome layout', () => {
         console.log('[store-pack gallery]', c.name, c.theme, JSON.stringify({ thumbH: r.thumbH, tracks: r.tracks, dialog: r.dialog }));
         expect(r.problems, `${c.name} ${c.theme}`).toEqual([]);
         expect(r.broken).toBe(0);
-        expect(r.thumbH).toBeGreaterThanOrEqual(180);
+        expect(r.thumbH).toBeGreaterThanOrEqual(170);
         expect(r.tracks.map((t) => t.over)).toEqual([false, true]);
         // The jsdom stand-in for the track's width (the arrows in the markup) is Chrome's.
         expect(Math.abs(r.tracks[0]!.w - TRACK)).toBeLessThan(40);

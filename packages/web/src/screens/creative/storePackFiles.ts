@@ -85,6 +85,16 @@ export function scrollEdges(el: { scrollLeft: number; scrollWidth: number; clien
   return { back: el.scrollLeft > 1, more: el.scrollLeft + el.clientWidth < el.scrollWidth - 1 };
 }
 
+/**
+ * Where a sideways strip scrolls so that a thumbnail (`left`, `width` in the strip's content) is clear of the faded edges
+ * (`fade` px each side, its focus ring included); null when it already is.
+ */
+export function revealLeft(tile: { left: number; width: number }, view: { scrollLeft: number; clientWidth: number }, fade: number): number | null {
+  if (tile.left - fade < view.scrollLeft) return Math.max(0, tile.left - fade);
+  if (tile.left + tile.width + fade > view.scrollLeft + view.clientWidth) return tile.left + tile.width + fade - view.clientWidth;
+  return null;
+}
+
 /** A single version's thumbnail of `id`: its render when current, else a still of its composition (report 47). */
 export function versionThumb(slug: string, creative: string, v: VersionEntry | undefined, id: string): PackThumb | null {
   if (!v) return null;

@@ -142,6 +142,47 @@ describe('StorePackExport · reports 48 and 54, the files to export in a gallery
     expect(run().textContent).toBe('Export 3 files');
   });
 
+  it('review: the single files after the divider have a caption of their own, the screenshots before it theirs', () => {
+    open();
+    const rows = [...files().querySelectorAll('.ms-spx-row')];
+    expect(rows.map((r) => [...r.querySelectorAll('.ms-spx-seg-cap')].map((c) => c.textContent))).toEqual([['Screenshots', 'Video and graphics'], ['Screenshots', 'Video and graphics']]);
+    const extra = within(files()).getAllByRole('group', { name: 'Video and graphics' });
+    expect(extra.map((g) => within(g).getAllByRole('button').map((b) => b.getAttribute('aria-label')))).toEqual([['App Preview'], ['Feature graphic', 'Promo video 16:9']]);
+  });
+
+  it('review: a click on the store\'s name toggles the store, as on a device\'s name', async () => {
+    open();
+    await userEvent.click(within(files()).getByText('Google Play'));
+    expect(box('Google Play').getAttribute('aria-checked')).toBe('false');
+    expect(pressed('Promo video 16:9')).toBe('false');
+    await userEvent.click(within(files()).getByText('iPhone 6.9″'));
+    expect(box('iPhone 6.9″').getAttribute('aria-checked')).toBe('false');
+    expect(pressed('App Preview')).toBe('true');
+  });
+
+  it('review: the arrows follow the content\'s width too, not only the strip\'s box', () => {
+    const seen: Element[] = [];
+    const RO = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class { observe(el: Element) { seen.push(el); } unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
+    try {
+      open();
+      const content = files().querySelector('.ms-spx-content')!;
+      expect(seen).toContain(content);
+      expect(seen).toContain(content.parentElement);
+    } finally { globalThis.ResizeObserver = RO; }
+  });
+
+  it('review: a thumbnail focused under the faded edge scrolls fully into view', () => {
+    open();
+    const t = tile('Feature graphic');
+    const track = t.closest('.ms-spx-track') as HTMLElement;
+    Object.defineProperty(track, 'clientWidth', { configurable: true, value: 500 });
+    track.getBoundingClientRect = () => ({ left: 0, right: 500, width: 500 } as DOMRect);
+    t.getBoundingClientRect = () => ({ left: 460, right: 660, width: 200 } as DOMRect);
+    t.focus();
+    expect(track.scrollLeft).toBeGreaterThanOrEqual(160 + 64);
+  });
+
   it('sends the selection when it is not the whole pack, in the brief\'s order; nothing chosen, no export', async () => {
     open();
     await userEvent.type(screen.getByLabelText('Destination folder'), '/out');

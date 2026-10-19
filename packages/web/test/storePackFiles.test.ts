@@ -1,6 +1,6 @@
 import { DEFAULT_FORMATS, storePackFormats, type StorePack, type VersionEntry } from '@motion-studio/shared';
 import { describe, expect, it } from 'vitest';
-import { galleryRows, groupCheck, groupThumb, packFileGroups, scrollEdges, versionThumb, withFiles } from '../src/screens/creative/storePackFiles.ts';
+import { galleryRows, groupCheck, groupThumb, packFileGroups, revealLeft, scrollEdges, versionThumb, withFiles } from '../src/screens/creative/storePackFiles.ts';
 
 const pack: StorePack = {
   app: { name: 'Tasky', tagline: '' }, stores: ['appstore', 'playstore'],
@@ -61,6 +61,17 @@ describe('report 54: the gallery', () => {
     expect(scrollEdges({ scrollLeft: 0, scrollWidth: 900, clientWidth: 500 })).toEqual({ back: false, more: true });
     expect(scrollEdges({ scrollLeft: 200, scrollWidth: 900, clientWidth: 500 })).toEqual({ back: true, more: true });
     expect(scrollEdges({ scrollLeft: 399.5, scrollWidth: 900, clientWidth: 500 })).toEqual({ back: true, more: false });
+  });
+});
+
+describe('report 54 review: a focused thumbnail clear of the faded edges', () => {
+  const view = { scrollLeft: 100, clientWidth: 500 };
+  it('scrolls a thumbnail under an edge fully in view, past the fade; one already clear stays put', () => {
+    expect(revealLeft({ left: 120, width: 90 }, view, 70)).toBe(50);
+    expect(revealLeft({ left: 520, width: 90 }, view, 70)).toBe(180);
+    expect(revealLeft({ left: 200, width: 90 }, view, 70)).toBeNull();
+    // Never before the start.
+    expect(revealLeft({ left: 10, width: 90 }, view, 70)).toBe(0);
   });
 });
 
