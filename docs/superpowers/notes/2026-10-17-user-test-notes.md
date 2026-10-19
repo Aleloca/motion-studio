@@ -253,6 +253,16 @@ arrives and worked on later together.
     formats such as the feature graphic and the video); a row that is too long wraps; the opening zoom shows everything.
     To do with the next reports.
 
+41. **Formats appear only when the whole turn is done.** While a multi-format turn runs (the 19-format store pack,
+    2026-10-19), every board shows "Rendering…" / "Not generated yet" until the end, then all appear together. The user
+    wants each format shown as soon as it is ready. Cause: the canvas shows the outputs of a recorded version
+    (`versions.json`), and the version is recorded when the turn ends; during the turn a board only has the `rendering`
+    flag (`renderingOf(job, states)`), with no per-format progress.
+    User's call: a live preview of each composition while the agent is still writing it would be nice, if it does not
+    make the app lag (many boards at once, e.g. 19 in a store pack); otherwise show each format as soon as it is ready
+    and checked, marked "In lavorazione", with the version still recorded at the end of the turn. Measure the cost
+    before choosing. To do with the next reports, together with 40 (same screen).
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
