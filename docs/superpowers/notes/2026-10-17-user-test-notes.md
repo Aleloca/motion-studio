@@ -222,6 +222,11 @@ arrives and worked on later together.
     field cut them.
     User's call: captions become optional; an empty one is taken by the agent from the general brief, a written one
     wins. The 80-character cut goes too: the agent shortens a caption that does not fit. To do with the next reports.
+    Then the creation failed: "Couldn't create the creative: Invalid request: brief.formatLabels.appstore-iphone-69: Too
+    big: expected string to have <=60 characters; …" for all 16 screenshots (App Store and Play Store). Cause:
+    `storePackFormats` (shared `store-pack.ts`) builds each label as "N · caption", but a caption may be 80 characters
+    and a label at most 60. Any caption over 56 characters blocks the whole pack. Workaround until the fix: captions of
+    56 characters at most.
 
 ## Follow-ups found while working on 12–30
 
