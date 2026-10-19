@@ -427,6 +427,34 @@ describe('ExportDialog · resolution and quality (decision 974, user report 22)'
     expect(screen.getByRole('button', { name: /^Resolution/ }).textContent).toContain('720p');
   });
 
+  it('report 39: offers the format\'s own frame rate (its recorded value) and 24 to 60 fps; sends, shows and remembers the choice', async () => {
+    const view = openV2();
+    expect(screen.getByRole('button', { name: /^Frame rate/ }).textContent).toContain('The format\'s own');
+    await userEvent.click(screen.getByRole('button', { name: /^Frame rate/ }));
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(["The format's own", '24 fps', '25 fps', '30 fps', '50 fps', '60 fps']);
+    await userEvent.click(await screen.findByRole('option', { name: '60 fps' }));
+    expect([...document.querySelectorAll('.ms-exp-size')].map((e) => e.textContent)).toEqual([' → 60 fps']);
+    await userEvent.click(screen.getByRole('button', { name: 'Export 2 files' }));
+    await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledWith('acme', 'c1', expect.objectContaining({ quality: 'high', fps: 60 })));
+    view.unmount();
+    openV2();
+    expect(screen.getByRole('button', { name: /^Frame rate/ }).textContent).toContain('60 fps');
+  });
+
+  it('report 39: the format\'s own frame rate shows its value when the renders recorded it; by default no fps is sent', async () => {
+    const at = (o: ReturnType<typeof rendered>) => ({ ...o, render: { quality: 'high' as const, width: o.width, height: o.height, encoder: 'libx264' as const, fps: 30 as const } });
+    const v = { ...v7, outputs: v7.outputs.map((o) => (o.format === REEL ? at(o as ReturnType<typeof rendered>) : o)) };
+    render(
+      <I18nProvider locale="en">
+        <Live open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions: [v], states: st() }} presets={DEFAULT_FORMATS} pattern="{title}-{format}-v{v}" />
+      </I18nProvider>,
+    );
+    expect(screen.getByRole('button', { name: /^Frame rate/ }).textContent).toContain("30 fps (the format's own)");
+    await userEvent.click(screen.getByRole('button', { name: 'Export 2 files' }));
+    await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalled());
+    expect(api.exportPicksJob.mock.calls[0]![2]).not.toHaveProperty('fps');
+  });
+
   it('with other languages the videos keep the format size and High: the choice is locked and said', async () => {
     openV2({ primary: 'en', extra: ['it'] });
     await userEvent.click(screen.getByRole('checkbox', { name: 'Italian' }));
@@ -435,5 +463,6 @@ describe('ExportDialog · resolution and quality (decision 974, user report 22)'
     await userEvent.click(screen.getByRole('button', { name: /^Export 2 files/ }));
     await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledWith('acme', 'c1', expect.objectContaining({ quality: 'high', locales: ['en', 'it'] })));
     expect(api.exportPicksJob.mock.calls[0]![2]).not.toHaveProperty('resolution');
+    expect(api.exportPicksJob.mock.calls[0]![2]).not.toHaveProperty('fps');
   });
 });
