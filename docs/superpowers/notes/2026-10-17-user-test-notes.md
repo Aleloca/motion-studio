@@ -220,6 +220,8 @@ arrives and worked on later together.
     caption (`captionRequired`, schema `.min(1)`), and a caption is cut at 80 characters (`maxLength={80}`, schema
     `.max(80)`). The user pasted longer lines ("Messaggi › Tutte, casella piena | **Tutti i clienti, …"), so the
     field cut them.
+    User's call: captions become optional; an empty one is taken by the agent from the general brief, a written one
+    wins. The 80-character cut goes too: the agent shortens a caption that does not fit. To do with the next reports.
 
 ## Follow-ups found while working on 12–30
 
