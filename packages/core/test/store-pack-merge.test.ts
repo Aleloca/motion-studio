@@ -5,7 +5,7 @@
  * and labels; the versions of removed instances stay in the history; a pack is edited through `storePack`, and only one exists.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { storePackFormats, type Brief, type CreativeFile, type StorePack } from '@motion-studio/shared';
+import { storePackFormats, withAgentNames, type Brief, type CreativeFile, type StorePack } from '@motion-studio/shared';
 import { mergeStorePack, storePackBrief } from '../src/store-pack/brief.ts';
 import { H, startInstanceEnv, type InstanceEnv } from './helpers/instance-server.ts';
 
@@ -26,6 +26,36 @@ const mixed = (): Brief => {
     formats: [YT, HAND, ...f.formats], formatLabels: { [HAND]: 'My own', [YT]: 'Teaser', ...f.formatLabels }, links: {},
   };
 };
+
+describe('mergeStorePack keeps the agent\'s screenshot names (report 55)', () => {
+  it('a wizard edit keeps the names the agent gave screenshots with no caption; a caption the user types wins', () => {
+    const p = pack(3, { screenshots: [{ caption: '', screen: null }, { caption: '', screen: null }, { caption: 'Mine', screen: null }] });
+    const f = storePackFormats(p);
+    const start: Brief = { goal: 'g', message: '', durationSec: null, assets: [], notes: '', storePack: { ...p, instances: f.formats }, formats: f.formats, formatLabels: f.formatLabels };
+    const named = withAgentNames(start, { [PHONE(1)]: 'Tutti i clienti', [PHONE(2)]: 'Promemoria' }).brief;
+    const r = mergeStorePack(named, { ...p, screenshots: [{ caption: '', screen: null }, { caption: 'Avvisi puntuali', screen: null }, { caption: 'Mine', screen: null }, { caption: '', screen: null }] });
+    expect(r.brief.formatLabels).toEqual({ [PHONE(1)]: '1 · Tutti i clienti', [PHONE(2)]: '2 · Avvisi puntuali', [PHONE(3)]: '3 · Mine', [PHONE(4)]: '4' });
+    expect(r.brief.agentFormatLabels).toEqual({ [PHONE(1)]: '1 · Tutti i clienti' });
+    // The pack taken out: its labels and the agent's record of them go.
+    const out = mergeStorePack({ ...r.brief, formats: [YT, ...r.brief.formats] }, null);
+    expect(out.brief.agentFormatLabels).toBeUndefined();
+  });
+
+  it('review: a wizard edit keeps the user\'s own name of a screenshot without a caption, and of one whose caption did not change', () => {
+    const p = pack(3, { screenshots: [{ caption: '', screen: null }, { caption: 'Two', screen: null }, { caption: 'Three', screen: null }] });
+    const f = storePackFormats(p);
+    const start: Brief = {
+      goal: 'g', message: '', durationSec: null, assets: [], notes: '', storePack: { ...p, instances: f.formats }, formats: f.formats,
+      formatLabels: { ...f.formatLabels, [PHONE(1)]: 'Mio uno', [PHONE(2)]: 'Mio due', [PHONE(3)]: 'Mio tre' },
+    };
+    // Screenshot 1 still has no caption, 2 keeps its caption, 3 gets a new one (the new caption wins); a 4th is added.
+    const r = mergeStorePack(start, { ...p, screenshots: [{ caption: '', screen: null }, { caption: 'Two', screen: null }, { caption: 'Three, new', screen: null }, { caption: '', screen: null }] });
+    expect(r.brief.formatLabels).toEqual({ [PHONE(1)]: 'Mio uno', [PHONE(2)]: 'Mio due', [PHONE(3)]: '3 · Three, new', [PHONE(4)]: '4' });
+    // A caption taken away: the user's own name stays too.
+    const r2 = mergeStorePack(start, { ...p, screenshots: [{ caption: '', screen: null }, { caption: '', screen: null }, { caption: 'Three', screen: null }] });
+    expect(r2.brief.formatLabels).toMatchObject({ [PHONE(2)]: 'Mio due', [PHONE(3)]: 'Mio tre' });
+  });
+});
 
 describe('mergeStorePack (Review Focus 4)', () => {
   it('mixed creative: reducing 5 to 3 removes only pack instances; the hand-picked one and YouTube keep place and label', () => {

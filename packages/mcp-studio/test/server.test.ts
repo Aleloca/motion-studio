@@ -194,7 +194,7 @@ describe('mcp-studio server', () => {
     expect(raw.size).toBe(3); // nothing was emitted for the ignored lines
   });
   it('lists the app actions of a creative turn with strict schemas and forwards them (decision 917)', async () => {
-    const actions = ['update_brief', 'add_format', 'duplicate_format', 'add_language', 'add_variant', 'discard_variant', 'restore_variant', 'set_pick', 'render_version', 'prepare_export'];
+    const actions = ['update_brief', 'add_format', 'duplicate_format', 'name_formats', 'add_language', 'add_variant', 'discard_variant', 'restore_variant', 'set_pick', 'render_version', 'prepare_export'];
     child.kill();
     startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: ['report_progress', ...actions].join(',') });
     const tools = (await rpc(1, 'tools/list')).result.tools as Array<{ name: string; description: string; inputSchema: { additionalProperties?: boolean; required?: string[]; properties: Record<string, unknown> } }>;

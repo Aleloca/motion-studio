@@ -61,6 +61,17 @@ describe('buildCoordinatorPrompt', () => {
     const none = buildCoordinatorPrompt({ ...base, request: { text: 'x', pins: [] }, explicit: [] });
     expect(none).not.toContain('## What happened since you last spoke');
   });
+
+  it('report 55: the coordinator names the group\'s formats and is told which names are the user\'s', () => {
+    const named = { ...brief, formatLabels: { 'instagram-post-1x1': 'Scarica oggi, in grande', 'web-banner-300x250': 'Banner mio' }, agentFormatLabels: { 'instagram-post-1x1': 'Scarica oggi, in grande' } };
+    const p = buildCoordinatorPrompt({ ...base, brief: named, request: { text: 'x', pins: [] }, explicit: [] });
+    expect(p).toContain('- Formats: instagram-post-1x1 (named "Scarica oggi, in grande" by you), web-banner-300x250 (named "Banner mio" by the user)');
+    expect(p).toContain('name_formats');
+    expect(p).toContain('in Italian, at most 40 characters');
+    expect(p).toContain('never a format the user named');
+    // Without labels the formats line is as before.
+    expect(buildCoordinatorPrompt({ ...base, request: { text: 'x', pins: [] }, explicit: [] })).toContain('- Formats: instagram-post-1x1, web-banner-300x250\n');
+  });
 });
 
 describe('buildCoordinatorReport', () => {

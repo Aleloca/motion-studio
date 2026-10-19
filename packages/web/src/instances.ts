@@ -12,3 +12,18 @@ export const presetNameOf = (preset: FormatPreset, locale: Locale): string => fo
 export function instanceName(preset: FormatPreset | null, id: string, locale: Locale, labels?: Record<string, string>): string {
   return preset ? instanceLabel(id, presetNameOf(preset, locale), labels) : id;
 }
+
+/**
+ * Report 55 review: the labels a full brief save sends, for `formats`. A key the user changed in the draft (it differs from
+ * `baseline`, the stored labels the draft started from) sends the draft's text; an untouched key sends the `latest` label
+ * the app has (the agent may have named the format meanwhile). Empty labels are not sent. Undefined when there are none.
+ */
+export function fullSaveLabels(formats: readonly string[], draft: Record<string, string> | undefined, baseline: Record<string, string> | undefined, latest: Record<string, string> | undefined): Record<string, string> | undefined {
+  const out: Record<string, string> = {};
+  for (const k of formats) {
+    const d = draft?.[k] ?? '';
+    const v = d === (baseline?.[k] ?? '') ? latest?.[k] ?? d : d;
+    if (v.trim() !== '') out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}

@@ -41,8 +41,21 @@ const LABEL_MAX = 60;
 export function screenshotLabel(n: number, caption: string): string {
   const c = caption.replace(/\s+/g, ' ').trim();
   if (!c) return String(n);
-  const full = `${n} · ${c}`;
-  return full.length <= LABEL_MAX ? full : `${[...full].slice(0, LABEL_MAX - 1).join('').trimEnd()}…`;
+  return cutLabel(`${n} · ${c}`);
+}
+
+/**
+ * `s` within `max` UTF-16 units (the unit of the schema's `max(60)`), cut between code points (never half a surrogate pair)
+ * and ended with "…" only when something was cut (report 55 review).
+ */
+export function cutLabel(s: string, max = LABEL_MAX): string {
+  if (s.length <= max) return s;
+  let out = '';
+  for (const ch of s) {
+    if (out.length + ch.length + 1 > max) break;
+    out += ch;
+  }
+  return `${out.trimEnd()}…`;
 }
 
 export const storePackSchema = z.object({

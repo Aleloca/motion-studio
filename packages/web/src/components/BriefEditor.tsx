@@ -3,7 +3,7 @@
 import { channelName, INSTANCE_ID_RE, legacyTurnKind, linksAfterBriefSave, nextInstanceId, packInstancesOf, presetOf, type StorePack, type Brief, type BriefServices, type CreativeDetail, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
 import { useId, useMemo, useRef, useState, type DragEvent } from 'react';
 import { api } from '../api.ts';
-import { instanceName, presetFor, presetNameOf } from '../instances.ts';
+import { fullSaveLabels, instanceName, presetFor, presetNameOf } from '../instances.ts';
 import { useLocale, useT } from '../i18n.tsx';
 import { Button, ChannelMark, Chip, channelOf, cx, Icon, Input, Modal, Segmented, Textarea } from '../ui/index.ts';
 import { IdentityStart, identityForBrief, resolveIdentity, useBrandLogo } from '../screens/identity/IdentityStart.tsx';
@@ -216,7 +216,9 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged, onRefr
       const chosen = services ?? c.brief.services;
       // The pack changes only through its own entry (`storePack`), never with the rest of the brief.
       const { services: _draft, formatLabels: _labels, identity: _identity, storePack: _pack, ...rest } = brief;
-      const labels = labelsFor(brief.formats, brief.formatLabels);
+      // Report 55 review: an untouched label is the latest one known: the editor's own saves first, then the creative as the
+      // page has it now (a format the agent named since the draft was taken). The core keeps the agent's names in any case.
+      const labels = fullSaveLabels(brief.formats, brief.formatLabels, storedRef.current.formatLabels, { ...c.brief.formatLabels, ...storedRef.current.formatLabels });
       const identity = identityOn && brief.identity ? { identity: identityForBrief(brief.identity, brandLogo.hasLogo) } : {};
       await api.updateCreative(slug, detail.slug, { title, brief: { ...rest, ...identity, ...(labels ? { formatLabels: labels } : {}), durationSec: sec, assets: assets.split(',').map((a) => a.trim()).filter(Boolean), ...(chosen ? { services: chosen } : {}) }, linkedCodebases: codebases });
       saved = true;

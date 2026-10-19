@@ -259,6 +259,143 @@ describe('formats and languages', () => {
   });
 });
 
+describe('name_formats (report 55)', () => {
+  const two = { ...brief, formats: ['youtube-16x9', 'instagram-post-1x1'], formatLabels: { 'instagram-post-1x1': 'Mio post' } };
+
+  it('names the formats the user did not name, when the turn ends; the user\'s names are refused, never changed', async () => {
+    const slug = await create(true, two);
+    const run = await runOf(slug);
+    const res = await bridge(run, 'name_formats', { names: { 'youtube-16x9': 'Il lancio in sei secondi', 'instagram-post-1x1': 'Altro', 'tiktok-9x16': 'Nope' } });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, named: ['youtube-16x9'], refused: [{ format: 'instagram-post-1x1', reason: 'user-named' }, { format: 'tiktok-9x16', reason: 'not-in-brief' }] });
+    // Only names the user gave: refused as a whole.
+    expect((await bridge(run, 'name_formats', { names: { 'instagram-post-1x1': 'Altro' } })).statusCode).toBe(409);
+    expect((await bridge(run, 'name_formats', { names: {} })).statusCode).toBe(400);
+    expect((await detail(slug)).creative.brief.formatLabels).toEqual({ 'instagram-post-1x1': 'Mio post' });
+    writeCompositions(run, 6);
+    run.finish({ write: false });
+    await waitIdle();
+    await vi.waitFor(async () => expect((await detail(slug)).creative.brief.formatLabels).toEqual({ 'youtube-16x9': 'Il lancio in sei secondi', 'instagram-post-1x1': 'Mio post' }));
+    expect((await detail(slug)).creative.brief.agentFormatLabels).toEqual({ 'youtube-16x9': 'Il lancio in sei secondi' });
+    expect(await actionLines(slug)).toContain(`${t().agentActions.formatsNamed({ list: 'Il lancio in sei secondi' })} · ${t().agentActions.afterTurn}`);
+
+    // The next turn's prompt tells the agent which names are its own and which are the user's.
+    expect((await app.inject({ method: 'POST', url: `${P}/${slug}/turns`, payload: { text: 'Più luce' } })).statusCode).toBe(202);
+    const next = await runOf(slug, 1);
+    expect(next.req.prompt).toContain('## Format names');
+    expect(next.req.prompt).toContain('- youtube-16x9: YouTube · Video 16:9, named "Il lancio in sei secondi" by you');
+    expect(next.req.prompt).toContain('The user named instagram-post-1x1');
+    // The same name again changes nothing and writes no chat line (review).
+    const lines = (await actionLines(slug)).length;
+    const same = await bridge(next, 'name_formats', { names: { 'youtube-16x9': 'Il lancio in sei secondi' } });
+    expect(same.statusCode, same.body).toBe(200);
+    expect(same.json()).toMatchObject({ named: [], unchanged: ['youtube-16x9'] });
+    expect((await actionLines(slug)).length).toBe(lines);
+    // The agent may rename what it named.
+    expect((await bridge(next, 'name_formats', { names: { 'youtube-16x9': 'Lancio, sei secondi' } })).statusCode).toBe(200);
+    writeCompositions(next, 6);
+    next.finish({ write: false });
+    await waitIdle();
+    await vi.waitFor(async () => expect((await detail(slug)).creative.brief.formatLabels?.['youtube-16x9']).toBe('Lancio, sei secondi'));
+  });
+
+  it('a name the user edits or types becomes theirs; one they clear can be named by the agent again', async () => {
+    const slug = await create(true, two);
+    let run = await runOf(slug);
+    expect((await bridge(run, 'name_formats', { names: { 'youtube-16x9': 'Lancio' } })).statusCode).toBe(200);
+    writeCompositions(run, 6);
+    run.finish({ write: false });
+    await waitIdle();
+    const url = `${P}/${slug}`;
+    await vi.waitFor(async () => expect((await detail(slug)).creative.brief.agentFormatLabels).toEqual({ 'youtube-16x9': 'Lancio' }));
+    // A full brief save that sends the same label keeps it the agent's; a forged agentFormatLabels is not taken.
+    const stored = (await detail(slug)).creative.brief;
+    let res = await app.inject({ method: 'PUT', url, payload: { brief: { ...stored, notes: 'n', agentFormatLabels: { 'instagram-post-1x1': 'Mio post' } } } });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json().brief.agentFormatLabels).toEqual({ 'youtube-16x9': 'Lancio' });
+    // An inline rename by the user, even to the same text, makes it the user's.
+    res = await app.inject({ method: 'PUT', url, payload: { formatLabels: { 'youtube-16x9': 'Lancio' } } });
+    expect(res.json().brief.agentFormatLabels).toBeUndefined();
+    expect((await app.inject({ method: 'POST', url: `${url}/turns`, payload: { text: 'x' } })).statusCode).toBe(202);
+    run = await runOf(slug, 1);
+    expect((await bridge(run, 'name_formats', { names: { 'youtube-16x9': 'Altro' } })).statusCode).toBe(409);
+    writeCompositions(run, 6);
+    run.finish({ write: false });
+    await waitIdle();
+    // Cleared by the user: nobody's name, the agent may name it again.
+    res = await app.inject({ method: 'PUT', url, payload: { formatLabels: { 'youtube-16x9': null } } });
+    expect(res.json().brief.formatLabels).toEqual({ 'instagram-post-1x1': 'Mio post' });
+    expect((await app.inject({ method: 'POST', url: `${url}/turns`, payload: { text: 'y' } })).statusCode).toBe(202);
+    run = await runOf(slug, 2);
+    expect((await bridge(run, 'name_formats', { names: { 'youtube-16x9': 'Di nuovo' } })).statusCode).toBe(200);
+    writeCompositions(run, 6);
+    run.finish({ write: false });
+    await waitIdle();
+    await vi.waitFor(async () => expect((await detail(slug)).creative.brief.agentFormatLabels).toEqual({ 'youtube-16x9': 'Di nuovo' }));
+  });
+
+  it('review: a stale full brief save never makes the agent\'s name the user\'s, nor drops a newer one', async () => {
+    const slug = await create(true, two);
+    const run = await runOf(slug);
+    expect((await bridge(run, 'name_formats', { names: { 'youtube-16x9': 'Lancio' } })).statusCode).toBe(200);
+    writeCompositions(run, 6);
+    run.finish({ write: false });
+    await waitIdle();
+    await vi.waitFor(async () => expect((await detail(slug)).creative.brief.agentFormatLabels).toEqual({ 'youtube-16x9': 'Lancio' }));
+    const draft = (await detail(slug)).creative.brief;
+    // The agent renames it after the editor took its draft.
+    expect((await app.inject({ method: 'POST', url: `${P}/${slug}/turns`, payload: { text: 'x' } })).statusCode).toBe(202);
+    const next = await runOf(slug, 1);
+    expect((await bridge(next, 'name_formats', { names: { 'youtube-16x9': 'Lancio, secondo' } })).statusCode).toBe(200);
+    writeCompositions(next, 6);
+    next.finish({ write: false });
+    await waitIdle();
+    await vi.waitFor(async () => expect((await detail(slug)).creative.brief.formatLabels?.['youtube-16x9']).toBe('Lancio, secondo'));
+    const url = `${P}/${slug}`;
+    // The stale draft sends the old name back: the agent's newer name stays, still the agent's.
+    let res = await app.inject({ method: 'PUT', url, payload: { brief: { ...draft, notes: 'n' } } });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json().brief.formatLabels).toEqual({ 'youtube-16x9': 'Lancio, secondo', 'instagram-post-1x1': 'Mio post' });
+    expect(res.json().brief.agentFormatLabels).toEqual({ 'youtube-16x9': 'Lancio, secondo' });
+    // A draft without the label (taken before the agent named it) does not drop it either.
+    const { formatLabels: _l, ...noLabels } = draft;
+    res = await app.inject({ method: 'PUT', url, payload: { brief: { ...noLabels, formatLabels: { 'instagram-post-1x1': 'Mio post' } } } });
+    expect(res.json().brief.formatLabels).toEqual({ 'youtube-16x9': 'Lancio, secondo', 'instagram-post-1x1': 'Mio post' });
+    expect(res.json().brief.agentFormatLabels).toEqual({ 'youtube-16x9': 'Lancio, secondo' });
+  });
+
+  it('the labels of add_format and duplicate_format are the agent\'s', async () => {
+    const slug = await create();
+    const run = await runOf(slug);
+    writeCompositions(run, 6);
+    expect((await bridge(run, 'add_format', { format: 'instagram-reel-9x16', label: 'Il lancio in verticale' })).statusCode).toBe(200);
+    expect((await bridge(run, 'duplicate_format', { format: 'youtube-16x9', label: 'Seconda\nriga' })).statusCode).toBe(200);
+    run.finish({ write: false });
+    const follow = await runOf(slug, 1);
+    writeCompositions(follow, 6);
+    follow.finish({ write: false });
+    await waitIdle();
+    await vi.waitFor(async () => expect((await detail(slug)).creative.brief.agentFormatLabels).toEqual({ 'instagram-reel-9x16': 'Il lancio in verticale', 'youtube-16x9@2': 'Seconda riga' }));
+  });
+
+  it('in a variant group it is the group\'s edit', async () => {
+    const slug = await create(false, two);
+    expect((await app.inject({ method: 'POST', url: `${P}/${slug}/variants`, payload: { count: 2, directions: ['Calmo', 'Ironico'] } })).statusCode).toBe(201);
+    expect((await app.inject({ method: 'POST', url: `${P}/${slug}/variants/run`, payload: { targets: ['a'], request: null } })).statusCode).toBe(202);
+    const run = await runOf(slug);
+    expect((await bridge(run, 'name_formats', { names: { 'youtube-16x9': 'Lancio' } })).statusCode).toBe(200);
+    expect((await detail(`${slug}~b`)).creative.brief.formatLabels).toEqual({ 'youtube-16x9': 'Lancio', 'instagram-post-1x1': 'Mio post' });
+    expect((await detail(`${slug}~b`)).creative.brief.agentFormatLabels).toEqual({ 'youtube-16x9': 'Lancio' });
+    // Review: a variant's own turn names only formats with no name yet; renaming is the coordinator's.
+    const again = await bridge(run, 'name_formats', { names: { 'youtube-16x9': 'Altro' } });
+    expect(again.statusCode).toBe(409);
+    expect(again.json().error).toContain(t().agentActions.nameGroupNamed);
+    writeCompositions(run, 6);
+    run.finish({ write: false });
+    await waitIdle();
+  });
+});
+
 describe('render and ★', () => {
   it('render_version of a saved version answers as the app (no renderer here); "current" waits for the turn', async () => {
     const slug = await create();

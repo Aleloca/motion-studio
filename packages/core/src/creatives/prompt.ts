@@ -1,5 +1,5 @@
 import type { CreativeFile, FormatPreset, IdentityBrief, Pin, StorePack, VariantId } from '@motion-studio/shared';
-import { BRIEF_TEXT_MAX, STORE_CAPTION_MAX, formatDisplayName, presetOf, statedDurationSec, videoTargetBitrateKbps, type BrandKit, type BriefServices, type Locale } from '@motion-studio/shared';
+import { BRIEF_TEXT_MAX, STORE_CAPTION_MAX, agentNamedLabel, formatDisplayName, isUserNamed, languageName, presetOf, statedDurationSec, videoTargetBitrateKbps, type BrandKit, type BriefServices, type Locale } from '@motion-studio/shared';
 import { replyInstruction } from '../i18n.ts';
 import { findPreset } from '../formats/format-catalog.ts';
 import { servicesLine } from '../services/service-policy.ts';
@@ -515,19 +515,43 @@ export function appActionsSection(brief: CreativeFile['brief'], helper = false):
     // Review minor 7: a helper does not change the group's brief (the coordinator does).
     ...(helper ? ['- duplicate_format: a second instance of a format of the brief (made after this turn, from the version you are making).'] : [
       '- update_brief: the brief\'s duration (durationSec), goal, key message, notes and services. The brief changes when your turn ends; a new durationSec applies to this turn\'s output checks at once.',
-      '- add_format: a format of the catalog (by preset id, e.g. "youtube-shorts-9x16"); Motion Studio makes it in a turn right after this one. duplicate_format: a second instance of a format of the brief (made after this turn, from the version you are making).',
+      '- add_format: a format of the catalog (by preset id, e.g. "youtube-shorts-9x16"); Motion Studio makes it in a turn right after this one. duplicate_format: a second instance of a format of the brief (made after this turn, from the version you are making). name_formats: the formats\' speaking names (see Format names).',
       '- add_language: a language variant of the creative (translated after this turn).',
     ]),
     // Phase 3 of the single agent: a helper's variant actions are the coordinator's, but for the ★ of its own versions.
     helper ? '- set_pick: the ★ (the version exported) of a format, with a version of this variant.'
       : '- add_variant: a new variant with its direction (it starts its own agent turn); discard_variant and restore_variant; set_pick: the ★ (the version exported) of a format.',
     '- render_version: renders a saved version, or "current" (the version you are making, rendered after this turn). prepare_export: renders what the ★ export needs; the user then exports.',
-    'Use them only when the user asks for it, or when the brief clearly needs it. You cannot archive or delete anything, nor change settings, keys or permissions.',
+    `Use them only when the user asks for it, or when the brief clearly needs it${helper ? '' : ' (name_formats: always, see Format names)'}. You cannot archive or delete anything, nor change settings, keys or permissions.`,
     // Decision 1060.
     '- A turn whose compositions all stay exactly as they were makes no new version: what you did with these tools still applies, and "the version you are making" is then the latest one.',
     ...(!helper && stated !== null && brief.durationSec !== null && stated !== brief.durationSec
       ? [`- The brief's text says about ${stated}s but its duration field says ${brief.durationSec}s. If the text is clearly what the user wants, call update_brief with durationSec ${stated} before you build; if it is unclear, ask with AskUserQuestion.`]
       : []),
+  ];
+}
+
+/**
+ * Report 55: the agent names every format it makes (`name_formats`), in the user's language, and never a format the user named
+ * (listed; Motion Studio refuses it anyway). Not for a helper: the brief is its coordinator's.
+ */
+export function formatNamesSection(brief: CreativeFile['brief'], locale: Locale, grouped = false): string[] {
+  const mine = brief.formats.filter((id) => !isUserNamed(brief, id));
+  const unnamed = mine.filter((id) => agentNamedLabel(brief, id) === null);
+  const theirs = brief.formats.filter((id) => isUserNamed(brief, id));
+  const example = locale === 'it' ? 'Tutti i clienti, una casella' : 'All your clients, one inbox'; // i18n-ignore agent-facing example name in the user's language (report 55)
+  return [
+    '## Format names',
+    `- Give every format you make a short speaking name with name_formats, also when it is the only one of its kind: a few words that say what it shows (for example ${quotePromptString(example)}), in ${languageName(locale)}, at most 40 characters. Motion Studio shows it with the format's channel and size, and a store screenshot after its number ("1 · …"): leave the format, size, channel and number out of the name.`,
+    grouped
+      // Review: in a group the names are the group's (the formats' common content); only the coordinator renames them.
+      ? '- The names are the group\'s: name only formats with no name yet; never rename a named one (the agent the user talks to does that). Say what the format shows in every variant, not this variant\'s look. One name_formats call can name them all.'
+      : '- Name each format you make in this turn that has no name yet, and rename a format you named when what it shows changes. Keep the names distinct within the creative. One name_formats call can name them all.',
+    // Review: the formats of an existing creative get their names at its next turn, also those the turn does not change.
+    ...(unnamed.length > 0 ? [`- Formats with no name yet: ${unnamed.join(', ')}. Name every one of them in this turn, also those you do not change.`] : []),
+    theirs.length > 0
+      ? `- The user named ${theirs.join(', ')}: those names are theirs. Never rename those formats (Motion Studio refuses it).`
+      : '- The user has named no format.',
   ];
 }
 
@@ -572,11 +596,13 @@ export function buildCreativePrompt(i: PromptInput): string {
   const targets = i.formats ?? brief.formats;
   const known = targets.map((id) => [id, findPreset(i.presets, id)] as const);
   const othersKept = brief.formats.some((id) => !targets.includes(id));
-  // Agent-facing name of an instance (Phase 12): the English preset name (`#k` for k > 1), and the user's label, quoted as data.
+  // Agent-facing name of an instance (Phase 12): the English preset name (`#k` for k > 1), and its label, quoted as data: the
+  // agent's own name (report 55) said so, any other label as before.
   const nameOf = (id: string) => {
     const own = brief.formatLabels?.[id];
     const name = formatDisplayName(i.presets, id, 'en');
-    return own ? `${name}, labelled ${quotePromptString(oneLine(own, 60))}` : name;
+    const agents = agentNamedLabel(brief, id) !== null;
+    return own ? `${name}, ${agents ? 'named' : 'labelled'} ${quotePromptString(oneLine(own, 60))}${agents ? ' by you' : ''}` : name;
   };
   // Instances of one preset in the same turn are separate designs, said once per preset (Phase 12).
   const byPreset = new Map<string, string[]>();
@@ -646,6 +672,7 @@ export function buildCreativePrompt(i: PromptInput): string {
   if (i.helper && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...helperSection(i.variant?.letter, i.helper));
   if (i.context && i.kind !== 'fix' && i.kind !== 'redirect') parts.push(...contextSections(i.context, contract, brief.services));
   if (i.appActions && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...appActionsSection(brief, Boolean(i.helper)));
+  if (i.appActions && !i.helper && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...formatNamesSection(brief, locale, Boolean(i.variant)));
   if (contract === 'compositions') {
     // Agent-facing: the format's own facts only (Motion Studio renders, so no extensions, bitrates or encoding flags).
     const compositionLines = known.map(([id, p]) => p

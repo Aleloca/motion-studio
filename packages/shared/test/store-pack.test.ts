@@ -50,6 +50,16 @@ describe('storePackSchema', () => {
     expect(labels.every((l) => l.length <= 60)).toBe(true);
     expect(labels).toContain('2');
   });
+  it('cuts by code points within the schema\'s 60 UTF-16 units, and adds "…" only when it cut (report 55 review)', () => {
+    // Exactly 60 units: kept as it is.
+    const fits = `1 · ${'x'.repeat(56)}`;
+    expect(screenshotLabel(1, 'x'.repeat(56))).toBe(fits);
+    // Astral characters count 2 units each: never past 60, never half a pair.
+    const emoji = screenshotLabel(1, '😀'.repeat(40));
+    expect(emoji.length).toBeLessThanOrEqual(60);
+    expect(emoji.endsWith('😀…')).toBe(true);
+    expect(briefSchema.shape.formatLabels.unwrap().valueType.safeParse(emoji).success).toBe(true);
+  });
   it('confines a screenshot screen to assets/', () => {
     const withScreen = (screen: string | null) => storePackSchema.safeParse({ ...apple, screenshots: [{ caption: 'a', screen }] }).success;
     expect(withScreen('assets/app/home.png')).toBe(true);

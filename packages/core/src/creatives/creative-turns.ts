@@ -1,4 +1,4 @@
-import { activeMembers, briefSchema, compositionProblemText, creativeJobKey, issuesText, isSessionId, letterOfSlug, LIVE_LIMITS, MAX_RUNNING_VARIANTS, type JobWaitReason, type ConversationEntry, type LiveMessageOutcome, type QueuedRequest, type RedirectOutcome, type VariantGroup, type VariantId, type VariantMember } from '@motion-studio/shared';
+import { activeMembers, briefSchema, keptAgentLabels, withAgentNames, compositionProblemText, creativeJobKey, issuesText, isSessionId, letterOfSlug, LIVE_LIMITS, MAX_RUNNING_VARIANTS, type JobWaitReason, type ConversationEntry, type LiveMessageOutcome, type QueuedRequest, type RedirectOutcome, type VariantGroup, type VariantId, type VariantMember } from '@motion-studio/shared';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { mergeStorePack, verifyScreens } from '../store-pack/brief.ts';
@@ -82,6 +82,11 @@ export interface BriefPatch {
    * (a partial save); the result is checked against the brief schema. Never sent by the routes.
    */
   fields?: Partial<Pick<Brief, 'goal' | 'message' | 'notes' | 'durationSec' | 'locales'>>;
+  /**
+   * Report 55 (the agent's `name_formats`, an `add_format` label): names the agent gives, format → name, applied after the rest
+   * by `withAgentNames` (a name the user gave is never changed, whatever is sent). Never sent by the routes.
+   */
+  agentLabels?: Record<string, string>;
 }
 /** Decision 917: how a creative turn ended, for the hooks that run when it settles (`onTurnSettled`). */
 export interface TurnSettled { state: string | undefined; savedVersion: number | null; stopped: boolean }
@@ -579,8 +584,16 @@ export class CreativeTurnService {
         exportPicks = { exportPicks: pruned.exportPicks };
       }
       await markFreed([...gone, ...added]);
-      brief = links ? { ...rest, links } : rest;
-    } else if (patch.services || patch.formatLabels || patch.formats || patch.storePack !== undefined || patch.fields) {
+      // Report 55: which labels are the agent's is the core's to know, never the caller's: the stored ones whose text is unchanged.
+      // Review: a full save never changes or drops the agent's name of a format it keeps, whatever it sends (an editor's draft
+      // may be older than the agent's last name). The user renames or clears a name through `formatLabels` (the formats
+      // column saves each label on its own), which makes it theirs.
+      const { agentFormatLabels: _sentAgent, formatLabels: sentLabels, ...own } = rest;
+      const labels: Record<string, string> = { ...sentLabels };
+      for (const [k, v] of Object.entries(current.agentFormatLabels ?? {})) if (current.formatLabels?.[k] === v && own.formats.includes(k)) labels[k] = v;
+      const agent = keptAgentLabels(current.agentFormatLabels, labels);
+      brief = { ...own, ...(Object.keys(labels).length > 0 ? { formatLabels: labels } : {}), ...(links ? { links } : {}), ...(agent ? { agentFormatLabels: agent } : {}) };
+    } else if (patch.services || patch.formatLabels || patch.formats || patch.storePack !== undefined || patch.fields || patch.agentLabels) {
       // A partial save (services chip, inline labels, reorder, removal): everything else comes from the brief stored now,
       // never from the caller's copy.
       let next: Brief = { ...stored.brief };
@@ -622,14 +635,21 @@ export class CreativeTurnService {
         const merged: Record<string, string> = { ...(next.formatLabels ?? {}) };
         for (const [k, v] of Object.entries(patch.formatLabels)) { if (v === null || v === '') delete merged[k]; else merged[k] = v; }
         next.formatLabels = merged;
+        // Report 55: a label the user sets (even to the agent's text) or clears is no longer the agent's.
+        const agent = Object.fromEntries(Object.entries(next.agentFormatLabels ?? {}).filter(([k]) => !Object.hasOwn(patch.formatLabels!, k)));
+        if (Object.keys(agent).length > 0) next.agentFormatLabels = agent; else delete next.agentFormatLabels;
       }
       // Ruling H: a label of a format the brief no longer has goes with it.
       if (next.formatLabels) {
         const kept = Object.fromEntries(Object.entries(next.formatLabels).filter(([k]) => next.formats.includes(k)));
         if (Object.keys(kept).length > 0) next.formatLabels = kept; else delete next.formatLabels;
       }
+      const agent = keptAgentLabels(next.agentFormatLabels, next.formatLabels);
+      if (agent) next.agentFormatLabels = agent; else delete next.agentFormatLabels;
       brief = next;
     }
+    // Report 55: the agent's names last, on the brief as this save leaves it (a name the user gave is refused here too).
+    if (brief && patch.agentLabels) brief = withAgentNames(brief, patch.agentLabels).brief;
     return { ...(brief ? { brief } : {}), ...(exportPicks ? { exportPicks } : {}), ...(freed ? { freed } : {}) };
   }
 
