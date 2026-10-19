@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agentNamedLabel, briefSchema, briefWriteSchema, isUserNamed, keptAgentLabels, storePackFormats, withAgentNames, type Brief, type StorePack } from '../src/index.ts';
+import { agentNameLabel, agentNamedLabel, briefSchema, briefWriteSchema, isUserNamed, keptAgentLabels, storePackFormats, withAgentNames, type Brief, type StorePack } from '../src/index.ts';
 
 // Report 55: the agent names every format it makes; a name the user gave is never the agent's to change.
 const base: Brief = { goal: 'g', message: '', formats: ['youtube-16x9', 'instagram-post-1x1'], durationSec: 10, assets: [], notes: '' };
@@ -49,9 +49,30 @@ describe('format names (report 55)', () => {
     expect(agentNamedLabel(again.brief, 'appstore-iphone-69')).toBe('Un solo posto');
   });
 
+  it('report 55 review: a number the agent wrote in front of a screenshot\'s name goes; an unchanged name is not named again', () => {
+    const b = packBrief();
+    const r = withAgentNames(b, { 'appstore-iphone-69': '1 · Tutti i clienti', 'appstore-iphone-69@3': '3 - Promemoria' });
+    expect(r.brief.formatLabels).toMatchObject({ 'appstore-iphone-69': '1 · Tutti i clienti', 'appstore-iphone-69@3': '3 · Promemoria' });
+    expect(withAgentNames(b, { 'appstore-iphone-69': '1 · ' }).refused).toEqual([{ format: 'appstore-iphone-69', reason: 'empty' }]);
+    const again = withAgentNames(r.brief, { 'appstore-iphone-69': 'Tutti i clienti', 'appstore-iphone-69@3': 'Altro' });
+    expect(again.unchanged).toEqual(['appstore-iphone-69']);
+    expect(again.named).toEqual(['appstore-iphone-69@3']);
+  });
+
+  it('report 55 review: onlyUnnamed (a variant\'s own turn) names only formats with no name yet', () => {
+    const b = withAgentNames(base, { 'youtube-16x9': 'Lancio' }).brief;
+    const r = withAgentNames(b, { 'youtube-16x9': 'Altro', 'instagram-post-1x1': 'Post' }, { onlyUnnamed: true });
+    expect(r.named).toEqual(['instagram-post-1x1']);
+    expect(r.refused).toEqual([{ format: 'youtube-16x9', reason: 'named' }]);
+    // The same name again is unchanged, not refused.
+    expect(withAgentNames(b, { 'youtube-16x9': 'Lancio' }, { onlyUnnamed: true }).unchanged).toEqual(['youtube-16x9']);
+  });
+
   it('a name is one line of at most 60 characters', () => {
     const r = withAgentNames(base, { 'youtube-16x9': 'x'.repeat(80) });
-    expect([...r.brief.formatLabels!['youtube-16x9']!].length).toBeLessThanOrEqual(60);
+    expect(r.brief.formatLabels!['youtube-16x9']!.length).toBeLessThanOrEqual(60);
+    expect(agentNameLabel('😀'.repeat(40)).length).toBeLessThanOrEqual(60);
+    expect(agentNameLabel(' Seconda\nriga ')).toBe('Seconda riga');
     expect(withAgentNames(base, { 'youtube-16x9': ' \n ' }).refused).toEqual([{ format: 'youtube-16x9', reason: 'empty' }]);
   });
 
