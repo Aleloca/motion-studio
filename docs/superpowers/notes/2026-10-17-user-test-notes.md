@@ -372,6 +372,13 @@ arrives and worked on later together.
     variants (fit to the viewport, lines per group), each with its variant's letter above it; "Scelte" and "Senza scelta"
     as plain headings one above the other. Timing: wait for further reports.
 
+53. **Store pack export: scrolling the file list stutters.** Audin's store pack (19 files, version 1, not rendered). The
+    user asked whether it is the previews being rendered live, and whether images should be saved. First look: the
+    thumbnails are the storyboard posters (270 px JPEG, about 17 KB) already in `.studio/cache/storyboards`, made at
+    14:48 and not made again when the dialog opened at 22:24; there are no render files. So nothing is rendered while
+    scrolling, and saving renders would not change the list. The cause is still to be measured.
+    Timing: measure and fix together with further reports (user).
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
