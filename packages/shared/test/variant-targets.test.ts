@@ -56,6 +56,13 @@ describe('answeredVariants', () => {
   });
 });
 
+describe('bareCount (re-review 3)', () => {
+  it('reads an answer that is only a number', async () => {
+    const { bareCount } = await import('../src/variants.ts');
+    for (const [text, n] of [['3', 3], ['Tre', 3], ['Quante? Due', 2], ['two.', 2], ['tre varianti', null], ['Ciao', null], ['B', null]] as const) expect(bareCount(text), text).toBe(n);
+  });
+});
+
 describe('askedNewVariants (review M3)', () => {
   it('reads a request for new variants and how many, in Italian and English (default one)', async () => {
     const { askedNewVariants } = await import('../src/variants.ts');
@@ -76,6 +83,22 @@ describe('askedNewVariants (review M3)', () => {
       ['Fai la variante B più chiara', 0],
       ['Nella variante nuova il titolo è troppo piccolo', 0],
       ['make all variants brighter', 0],
+      // Re-review: phrases about the EXISTING variants ask for none.
+      ['Applica lo stesso cambio alle altre varianti', 0],
+      ['Fai lo stesso nelle altre due varianti', 0],
+      ['Rendi le altre varianti più calde', 0],
+      ['Nelle altre varianti togli il logo', 0],
+      ['apply it to the other variants too', 0],
+      ['make the more variants look alike', 0],
+      ['fammi una variante B più scura', 0],
+      ['make a variant of the logo bigger in B', 0],
+      ['Ancora una variante del titolo: più grande', 0],
+      ['crea una variante AA più chiara', 0],
+      // ...and the requests stay requests.
+      ['altre 2 nuove varianti', 2],
+      ['Mi fai un\'altra variante?', 1],
+      ['Fammi altre tre varianti', 3],
+      ['crea una variante al neon', 1],
     ];
     for (const [text, n] of cases) expect(askedNewVariants(text), text).toBe(n);
   });

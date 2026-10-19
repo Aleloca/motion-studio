@@ -241,33 +241,58 @@ const COUNT_WORDS: Record<string, number> = {
   sei: 6, six: 6, sette: 7, seven: 7, otto: 8, eight: 8, nove: 9, nine: 9, dieci: 10, ten: 10,
 };
 const COUNT = `(\\d{1,2}|${Object.keys(COUNT_WORDS).join('|')})`;
-const NEW_WORDS = '(?:nuov[aei]|new|additional|extra|altr[aei]|another|more|aggiuntiv[aei])';
+/** Words that make a variant a new one. */
+const FRESH_WORDS = '(?:nuov[aei]|new|additional|extra|another|aggiuntiv[aei])';
+/**
+ * "altre"/"more" ask for new variants only on their own ("altre due varianti", "4 more variants"); after an article or a
+ * preposition they name the existing ones ("alle altre varianti", "the more variants"): re-review 1.
+ */
+const OTHER_WORDS = `(?<!(?<![\\p{L}\\p{N}])(?:${['le', 'alle', 'nelle', 'delle', 'dalle', 'sulle', 'per le', 'tra le', 'fra le', 'gli', 'agli', 'negli', 'degli', 'i', 'the', 'other'].join('|')})\\s+)(?:altr[aei]|more)`; // i18n-ignore: words the user may type, not UI text
+const NEW_WORDS = `(?:${FRESH_WORDS}|${OTHER_WORDS})`;
 const VARIANT_WORD = '(?:variant[ei]|variants?)';
 const B = '(?<![\\p{L}\\p{N}])';
 const E = '(?![\\p{L}\\p{N}])';
+/** After "variante": a variant's id ("variante B") or what it is a variant of ("variante del titolo"): an existing one. */
+const EXISTING_AFTER = /^\s+(?:[A-Z]{1,3}(?![\p{L}\p{N}])|(?:of|del|della|dello|dei|delle|degli|di)(?![\p{L}\p{N}]))/u;
 
 /**
  * Review M3 of phase 3: whether the user's words ask for NEW variants, and how many (0: they do not). The core lets the
  * coordinator add variants only then, and at most that many. Read: "una nuova variante", "altre due varianti", "3 nuove
- * varianti", "un'altra variante", "due varianti nuove", "aggiungi/crea/fammi una variante", "ancora una variante"; "a new
- * variant", "another variant", "4 more variants", "add/create/make a variant". A count missing is one. "La variante nuova"
- * (an existing one), "tutte le varianti", "fai la variante B…" ask for none.
+ * varianti", "altre 2 nuove varianti", "un'altra variante", "due varianti nuove", "aggiungi/crea/fammi una variante",
+ * "ancora una variante"; "a new variant", "another variant", "4 more variants", "add/create/make a variant". A count missing
+ * is one. Phrases about the existing variants ask for none (re-review 1): "la variante nuova", "tutte le varianti", "alle
+ * altre varianti", "the other variants", a variant named by its id ("fammi una variante B più scura") or by what it is a
+ * variant of ("una variante del titolo", "a variant of the logo").
  */
 export function askedNewVariants(text: string): number {
-  const s = text.toLowerCase().replace(/[’`]/g, "'");
+  const original = text.replace(/[’`]/g, "'");
+  const s = original.toLowerCase();
   const num = (w: string | undefined) => (w === undefined ? 1 : /^\d+$/.test(w) ? Number(w) : COUNT_WORDS[w] ?? 1);
   let n = 0;
   const take = (re: RegExp, groups: number[]) => {
     for (const m of s.matchAll(re)) {
+      // The case of the original text tells an id ("B") from a word ("b"); lower-casing keeps the positions.
+      if (s.length === original.length && EXISTING_AFTER.test(original.slice(m.index! + m[0].length))) continue;
       const w = groups.map((g) => m[g]).find((x) => x !== undefined);
       n = Math.max(n, num(w));
     }
   };
-  // "una nuova variante", "altre due varianti", "another variant", "4 more variants".
-  take(new RegExp(`${B}(?:${COUNT}\\s+)?${NEW_WORDS}\\s+(?:${COUNT}\\s+)?${VARIANT_WORD}${E}`, 'gu'), [1, 2]);
+  // "una nuova variante", "altre due varianti", "altre 2 nuove varianti", "another variant", "4 more variants".
+  take(new RegExp(`${B}(?:${COUNT}\\s+)?${NEW_WORDS}\\s+(?:${COUNT}\\s+)?(?:${FRESH_WORDS}\\s+)?${VARIANT_WORD}${E}`, 'gu'), [1, 2]);
   // "due varianti nuove" (a count is needed: "la variante nuova" is an existing one).
   take(new RegExp(`${B}${COUNT}\\s+${VARIANT_WORD}\\s+(?:nuov[aei]|new|in più|aggiuntiv[aei])${E}`, 'gu'), [1]); // i18n-ignore: words the user may type, not UI text
   // "aggiungi una variante", "fammi due varianti", "ancora una variante", "add a variant", "make three variants".
   take(new RegExp(`${B}(?:crea(?:ne|mi)?|aggiungi(?:ne)?|fa(?:i|mmi|nne)|genera(?:ne)?|ancora|add|create|make)\\s+${COUNT}\\s+(?:${NEW_WORDS}\\s+)?${VARIANT_WORD}${E}`, 'gu'), [1]); // i18n-ignore: words the user may type, not UI text
   return n;
+}
+
+/**
+ * Re-review 3: an answer that is only a number ("3", "Tre", "Quante? Due", "two."): its count, else null. Read as the number
+ * of new variants when the user already asked for some in the turn.
+ */
+export function bareCount(text: string): number | null {
+  const m = new RegExp(`^\\s*(?:[^?]*\\?\\s*)?${COUNT}\\s*[.!]?\\s*$`, 'iu').exec(text.toLowerCase());
+  if (!m) return null;
+  const w = m[1]!;
+  return /^\d+$/.test(w) ? Number(w) : COUNT_WORDS[w] ?? null;
 }
