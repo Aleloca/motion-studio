@@ -843,7 +843,10 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
             {m ? <span className="ms-vchosen-from"><span className="ms-vcard-letter">{upper(m.letter)}</span><span className="ms-vchosen-name">{shortName(m.direction) ?? vg.letterLabel({ letter: upper(m.letter) })}</span></span> : null}
             {rule && m ? <span className="ms-vfinal-tag">{vg.chooserDefaultTag}</span> : null}
           </p>
-          {m && d && st && b ? memberBoard(m, d, st, b, thumbZoom(b, width, false)) : <p className="ms-vchosen-none">{vg.noVariantFile}</p>}
+          {m && d && st && b ? memberBoard(m, d, st, b, thumbZoom(b, width, false))
+            // Decision 1337: a member still being read (not missing) is loading, not "no variant has it".
+            : m && !d && !group.missing.includes(m.letter) ? <p className="ms-vchosen-none"><Spinner size={14} label={t.web.canvas.loading} /></p>
+            : <p className="ms-vchosen-none">{vg.noVariantFile}</p>}
         </div>
       );
     };

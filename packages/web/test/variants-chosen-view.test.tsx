@@ -183,6 +183,24 @@ describe('the "Scelte" view of a variant group', () => {
     } finally { size.mockRestore(); }
   });
 
+  it('decision 1337: while the chosen variant is still being read its cell says it is loading, never "no variant has this format"', async () => {
+    group = picked();
+    plan = [item('instagram-post-1x1', 'c', 2, 'pick'), item('tiktok-9x16', 'a', 2, 'default')];
+    let release: () => void = () => {};
+    api.getCreative.mockImplementation(async (_s: string, c: string) => {
+      if (c === `${HOST}~c`) await new Promise<void>((r) => { release = r; });
+      return build(c);
+    });
+    render(<Harness />);
+    const chosen = await screen.findByRole('region', { name: 'Scelte' });
+    const cell = await waitFor(() => { const el = chosen.querySelector('.ms-vchosen-cell'); expect(el).toBeTruthy(); return el!; });
+    expect(cell.textContent).not.toContain('Nessuna variante ha ancora questo formato');
+    expect(within(cell as HTMLElement).getByRole('status')).toBeTruthy();
+    release();
+    await waitFor(() => expect(cell.querySelector('img')).toBeTruthy());
+    api.getCreative.mockImplementation(async (_s: string, c: string) => build(c));
+  });
+
   it('the ★ of a chosen board still changes the pick (nothing is deleted)', async () => {
     group = picked();
     plan = [item('instagram-post-1x1', 'c', 2, 'pick'), item('tiktok-9x16', 'a', 2, 'default')];
