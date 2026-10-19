@@ -299,6 +299,17 @@ arrives and worked on later together.
     Proposed fix: without a render file, cards and covers use a frame of the composition (as the canvas does). To do
     with the next reports, together with 44 (same Projects page).
 
+46. **"Esporta pacchetto" in the formats column is redundant.** The user wants it removed (2026-10-19). It is not the
+    same as the top bar Export: it opens the store pack export (store folders, per-device subfolders, store checks).
+    User's call: remove the column button; in a creative with a store pack the top bar Export opens the store pack
+    export; when the creative also has formats outside the pack, the dialog first asks what to export ("Pacchetto
+    store" or "File dei formati").
+
+47. **The Export dialog shows no thumbnails for never-rendered versions.** "Export the starred versions" (2026-10-19)
+    lists the 19 formats with empty grey thumbnails and "Rendered first", so the user cannot tell whether the right
+    things are being exported. Same cause as 45 (the thumbnails come from render files). Done together with 45:
+    without a render file, a thumbnail is a frame of the composition.
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
