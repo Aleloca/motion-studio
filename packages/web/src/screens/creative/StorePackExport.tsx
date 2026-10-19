@@ -2,9 +2,12 @@
 // the destination (the export dialog's own: the native picker on desktop, a field on the web, remembered), then the result with
 // every file written and every file that failed its store check, each with its reason. The core renders what is missing first
 // and still writes the rest when some files fail, so a result is a list, not a pass/fail.
-import type { LocaleTag } from '@motion-studio/shared';
-import { useEffect, useId, useRef, useState } from 'react';
-import { api, type StorePackExportResult } from '../../api.ts';
+// Report 48: above the destination, the pack's files by store and device, each with its thumbnail and a checkbox (a tri-state
+// one per device and store), all on at first; the core exports only the files chosen (`formats`, only when not all are).
+import type { FormatPreset, LocaleTag, VersionEntry } from '@motion-studio/shared';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { api, type GroupExportPlanItem, type StorePackExportResult } from '../../api.ts';
+import { StillImg } from '../../components/CoverStill.tsx';
 import { desktop, showExported } from '../../desktop.ts';
 import { useLocale, useT } from '../../i18n.tsx';
 import { pop } from '../../motion/index.ts';
@@ -14,6 +17,7 @@ import { message } from '../common.tsx';
 import { EXPORT_FOLDER_KEY } from '../ExportDialog.tsx';
 import { exportErrorText } from '../versionErrors.ts';
 import { localeName } from './languagesModel.ts';
+import { groupThumb, packFileGroups, versionThumb, type PackFileRow } from './storePackFiles.ts';
 import '../canvas.css';
 import '../new-creative/storepack.css';
 import './languages.css';
@@ -34,6 +38,13 @@ export interface StorePackExportProps {
   untranslated?: readonly LocaleTag[];
   /** Languages translated in full whose translation of a pack format is outdated or has problems (the export may fail for them). */
   needsReview?: readonly LocaleTag[];
+  /** Report 48: the pack's formats (its instances, in the brief's order), listed to pick from. */
+  formats: readonly string[];
+  presets: readonly FormatPreset[];
+  /** The brief's instance labels ("1 · caption"). */
+  labels?: Record<string, string>;
+  /** The version the pack is made from (its thumbnails); a group reads its selection instead. */
+  entry?: VersionEntry;
 }
 
 const readFolder = () => { try { return localStorage.getItem(EXPORT_FOLDER_KEY) ?? ''; } catch { return ''; } };
@@ -50,7 +61,7 @@ export function StorePackExport(p: StorePackExportProps) {
   );
 }
 
-function Body({ onClose, slug, creative, version, group, locales, untranslated = [], needsReview = [], onBusy }: StorePackExportProps & { onBusy(busy: boolean): void }) {
+function Body({ onClose, slug, creative, version, group, locales, untranslated = [], needsReview = [], formats, presets, labels, entry, onBusy }: StorePackExportProps & { onBusy(busy: boolean): void }) {
   const t = useT();
   const x = t.web.storePack.export;
   const ui = useLocale();
@@ -63,6 +74,22 @@ function Body({ onClose, slug, creative, version, group, locales, untranslated =
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<StorePackExportResult | null>(null);
   const labelId = useId();
+  // A group's thumbnails come from its selection (the member and version of each format), read once.
+  const [plan, setPlan] = useState<GroupExportPlanItem[] | null>(null);
+  useEffect(() => {
+    if (!group) return undefined;
+    let live = true;
+    Promise.resolve().then(() => api.groupExportPlan(slug, creative)).then((r) => { if (live) setPlan(r.items); }, () => { /* no thumbnails */ });
+    return () => { live = false; };
+  }, [group, slug, creative]);
+  const stores = useMemo(() => packFileGroups(formats, {
+    presets, ...(labels ? { labels } : {}), locale: ui, deviceName: (d) => t.web.storePack.devices[d],
+    thumbOf: (id) => (group ? groupThumb(slug, plan?.find((g) => g.format === id)) : versionThumb(slug, creative, entry, id)),
+  }), [formats, presets, labels, ui, t, group, slug, creative, plan, entry]);
+  const all = useMemo(() => stores.flatMap((s) => s.devices.flatMap((d) => d.rows.map((r) => r.id))), [stores]);
+  const [off, setOff] = useState<ReadonlySet<string>>(() => new Set());
+  const chosen = all.filter((id) => !off.has(id));
+  const setMany = (ids: readonly string[], v: boolean) => setOff((s) => { const n = new Set(s); for (const id of ids) { if (v) n.delete(id); else n.add(id); } return n; });
   useEffect(() => { onBusy(running); }, [running, onBusy]);
   useEffect(() => () => onBusy(false), [onBusy]);
   // Closing the dialog silences the result of a request that is still running.
@@ -70,7 +97,9 @@ function Body({ onClose, slug, creative, version, group, locales, untranslated =
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
   const wanted = locales && withLanguages ? [locales.primary, ...locales.extra].filter((tag) => langs[tag]) : [];
-  const canRun = folder.trim() !== '' && !running && (!withLanguages || wanted.length > 0);
+  // The core writes each chosen file once per language asked.
+  const count = chosen.length * (withLanguages ? wanted.length : 1);
+  const canRun = folder.trim() !== '' && !running && count > 0;
   const choose = async () => {
     setError(null);
     try {
@@ -84,7 +113,7 @@ function Body({ onClose, slug, creative, version, group, locales, untranslated =
     setError(null);
     setRunning(true);
     try {
-      const body = { destination: dest, ...(withLanguages ? { locales: wanted } : {}) };
+      const body = { destination: dest, ...(withLanguages ? { locales: wanted } : {}), ...(chosen.length < all.length ? { formats: chosen } : {}) };
       const r = await (group ? api.exportStorePackGroup(slug, creative, body) : api.exportStorePack(slug, creative, version, body));
       if (!alive.current) return;
       writeFolder(dest);
@@ -162,6 +191,33 @@ function Body({ onClose, slug, creative, version, group, locales, untranslated =
   return (
     <div className="ms-exp ms-spx">
       {head}
+      {all.length > 0 ? (
+        <div className="ms-spx-files" role="group" aria-label={x.files}>
+          {stores.map((s) => {
+            const ids = s.devices.flatMap((d) => d.rows.map((r) => r.id));
+            const name = s.store === 'appstore' ? t.variants.storePack.appStore : t.variants.storePack.googlePlay;
+            const singles = s.devices.filter((d) => d.single).flatMap((d) => d.rows);
+            return (
+              <section key={s.store} className="ms-spx-store">
+                <GroupHead ids={ids} off={off} label={name} disabled={running} onChange={setMany} strong />
+                {s.devices.filter((d) => !d.single).map((d) => (
+                  <div key={d.key} className="ms-spx-device">
+                    <GroupHead ids={d.rows.map((r) => r.id)} off={off} label={d.label} disabled={running} onChange={setMany} />
+                    <div className="ms-spx-grid">
+                      {d.rows.map((r) => <FileTile key={r.id} row={r} slug={slug} name={x.fileOf({ group: d.label, file: r.label })} on={!off.has(r.id)} disabled={running} onChange={(v) => setMany([r.id], v)} />)}
+                    </div>
+                  </div>
+                ))}
+                {singles.length ? (
+                  <div className="ms-spx-grid ms-spx-singles">
+                    {singles.map((r) => <FileTile key={r.id} row={r} slug={slug} name={r.label} on={!off.has(r.id)} disabled={running} onChange={(v) => setMany([r.id], v)} />)}
+                  </div>
+                ) : null}
+              </section>
+            );
+          })}
+        </div>
+      ) : <p className="ms-exp-empty">{x.noFiles}</p>}
       {withLanguages && locales ? (
         <div className="ms-exp-langs ms-sp-langs" role="group" aria-label={x.languages}>
           <span className="ms-exp-dest-label">{x.languages}</span>
@@ -205,8 +261,36 @@ function Body({ onClose, slug, creative, version, group, locales, untranslated =
           <span role="alert" className="ms-exp-error ms-sp-error">{error}</span>
         ) : <div className="ms-grow" />}
         <Button size="lg" variant="ghost" disabled={running} onClick={onClose}>{x.cancel}</Button>
-        <Button size="lg" variant="ink" loading={running} disabled={!canRun} onClick={() => void run()}>{x.run}</Button>
+        <Button size="lg" variant="ink" loading={running} disabled={!canRun} onClick={() => void run()}>{x.run({ count })}</Button>
       </div>
     </div>
+  );
+}
+
+/** A store's or a device's checkbox: on when all its files are, mixed when some are; a click turns all on (or all off). */
+function GroupHead({ ids, off, label, disabled, onChange, strong = false }: { ids: string[]; off: ReadonlySet<string>; label: string; disabled: boolean; onChange(ids: string[], v: boolean): void; strong?: boolean }) {
+  const n = ids.filter((id) => !off.has(id)).length;
+  return (
+    <label className={cx('ms-spx-head', strong && 'ms-spx-storehead')}>
+      <Check on={n === ids.length} mixed={n > 0} label={label} disabled={disabled} onChange={(v) => onChange(ids, v)} />
+      <span className="ms-spx-head-name">{label}</span>
+      <span className="ms-spx-count">{n}/{ids.length}</span>
+    </label>
+  );
+}
+
+/** One file of the pack: its checkbox, its thumbnail (render or still, as the ★ export rows) and its short name. */
+function FileTile({ row, slug, name, on, disabled, onChange }: { row: PackFileRow; slug: string; name: string; on: boolean; disabled: boolean; onChange(v: boolean): void }) {
+  const shape = row.aspect > 1.05 ? 'ms-wide' : row.aspect < 0.95 ? 'ms-tall' : 'ms-square';
+  const thumb = row.thumb;
+  return (
+    <label className={cx('ms-spx-file', !on && 'ms-off')} title={name}>
+      <Check on={on} label={name} disabled={disabled} onChange={onChange} className="ms-spx-check" />
+      <span className={cx('ms-spx-thumb', shape)} aria-hidden="true">
+        {thumb && 'still' in thumb ? <StillImg still={thumb.still} />
+          : thumb ? (thumb.media.video ? <video src={thumb.media.src} muted preload="metadata" /> : <img src={thumb.media.src} alt="" />) : null}
+      </span>
+      <span className="ms-spx-file-name">{row.label}</span>
+    </label>
   );
 }

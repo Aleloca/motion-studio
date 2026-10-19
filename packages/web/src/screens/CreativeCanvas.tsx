@@ -1063,6 +1063,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
         return (
         <StorePackExport open={packExport} onClose={() => setPackExport(false)} slug={slug} creative={group ? hostSlug : creative} title={title} version={version?.n ?? 0}
           {...(group ? { group: true } : {})} untranslated={packGaps.untranslated} needsReview={packGaps.review}
+          formats={cr.brief.formats.filter((f) => packIds.has(f))} presets={presets} {...(cr.brief.formatLabels ? { labels: cr.brief.formatLabels } : {})} {...(version && !group ? { entry: version } : {})}
           {...(creativeLocales(cr.brief) ? { locales: creativeLocales(cr.brief)! } : {})} />
         );
       })() : null}

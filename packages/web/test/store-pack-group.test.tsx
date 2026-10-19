@@ -93,7 +93,7 @@ describe('CreativeCanvas · the store pack is one group', () => {
     const choice = await screen.findByRole('dialog', { name: 'Cosa vuoi esportare?' });
     await userEvent.click(within(choice).getByRole('button', { name: /^Pacchetto store/ }));
     const dialog = await screen.findByRole('dialog', { name: /pacchetto store/ });
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Esporta il pacchetto' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: /^Esporta \d+ file$/ }));
     await waitFor(() => expect(api.exportStorePack).toHaveBeenCalledWith('acme', 'lancio', 1, { destination: '/out' }));
   });
 
@@ -135,7 +135,7 @@ describe('CreativeCanvas · the store pack is one group', () => {
     await screen.findByRole('toolbar', { name: /^Variant/ });
     await userEvent.click(screen.getByRole('button', { name: 'Esporta' }));
     const dialog = await screen.findByRole('dialog', { name: /pacchetto store/ });
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Esporta il pacchetto' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: /^Esporta \d+ file$/ }));
     await waitFor(() => expect(api.exportStorePackGroup).toHaveBeenCalledWith('acme', HOST, { destination: '/out' }));
   });
 
