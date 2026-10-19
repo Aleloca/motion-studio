@@ -51,7 +51,28 @@ const VARIANTS: Record<string, string> = {
   waapi: layer('', 'waapi'),
   waapiHinted: layer('will-change:transform', 'waapi'),
   css: layer('', 'css'),
+  // Decisions 1237–1239: every freezing value, from any rule, and a hint the layer's own msSeek sets after the agent ran.
+  list: layer('will-change:opacity, rotate', 'seek'),
+  translate: layer('will-change:translate', 'seek'),
+  ids: layer('', 'seek').replace('</style>', '#w#w#w#w#w#w#w#w#w#w{will-change:scale !important}</style>'),
+  layered: layer('', 'seek').replace('</style>', '@layer a{#w{will-change:transform !important}}</style>'),
+  inSeek: layer('', 'seek').replace('window.msSeek = (t) => {', "window.msSeek = (t) => { w.style.setProperty('will-change', 'transform', 'important');"),
 };
+
+/**
+ * What a transform hint makes besides the frozen raster (decision 1237): a stacking context (a z-index -1 child paints over
+ * the rig's background, a blend mode blends inside it) and the containing block of absolute and fixed children. `hint`
+ * gives them with `will-change: transform`; the reference with an identity transform, which makes the same.
+ */
+const structure = (rig: string) => `<!doctype html><html><head><style>
+html,body{margin:0;background:#000}
+#rig{margin:40px 0 0 60px;width:160px;height:100px;background:#246;${rig}}
+.abs{position:absolute;left:10px;top:10px;width:30px;height:30px;background:#f80}
+.fix{position:fixed;right:10px;bottom:10px;width:20px;height:20px;background:#0f0}
+.under{position:relative;z-index:-1;width:60px;height:60px;margin:40px 0 0 80px;background:#fff}
+.blend{position:absolute;left:50px;top:50px;width:40px;height:40px;background:#f00;mix-blend-mode:difference}
+</style></head><body><div id="rig"><div class="abs"></div><div class="fix"></div><div class="under"></div><div class="blend"></div></div></body></html>`;
+const STRUCTURE: Record<string, string> = { hint: structure('will-change:transform'), reference: structure('transform:translate(0)') };
 
 describe.skipIf(!tools.ok)('renderer: text in a scaled layer stays sharp (report 38)', { timeout: 300_000 }, () => {
   let work: string;
@@ -65,7 +86,7 @@ describe.skipIf(!tools.ok)('renderer: text in a scaled layer stays sharp (report
     const dir = join(creative, VERSION_DIR, 'compositions', 'sharp');
     mkdirSync(join(dir, 'assets'), { recursive: true });
     copyFileSync(FONT, join(dir, 'assets', 'Mono.woff2'));
-    for (const [name, html] of Object.entries(VARIANTS)) put(join(dir, 'layers', `${name}.html`), html);
+    for (const [name, html] of Object.entries({ ...VARIANTS, ...STRUCTURE })) put(join(dir, 'layers', `${name}.html`), html);
   }, 600_000);
   afterAll(() => { if (work) rmSync(work, { recursive: true, force: true }); });
 
@@ -84,15 +105,16 @@ describe.skipIf(!tools.ok)('renderer: text in a scaled layer stays sharp (report
     }
     return sum / ((W - 1) * (H - 1));
   };
-  /** The frame at t = 0 (scale 1, the first raster) then at t = 29/30 (about scale 3.9). */
-  const frame = async (name: string): Promise<number> => {
-    const { frames, errors } = await renderFrames({
-      dir: creative, versionDir: VERSION_DIR, composition: composition(name), format, times: Array.from({ length: 11 }, (_, i) => i / 10), width: W, imageFormat: 'png',
+  /** The frames from t = 0 (scale 1, the first raster) to t = 29/30 (about scale 3.9), every tenth of a second. */
+  const frames = async (name: string, times = Array.from({ length: 11 }, (_, i) => i / 10)) => {
+    const r = await renderFrames({
+      dir: creative, versionDir: VERSION_DIR, composition: composition(name), format, times, width: W, imageFormat: 'png',
       provider: new ChromeProvider({ exe: tools.chrome!.exe, kind: 'system', limits: { timeLimitMs: 5 * 60_000 } }), signal: new AbortController().signal, distDir: dist,
     });
-    expect(errors).toEqual([]);
-    return energy(grey(frames.at(-1)!.data, name));
+    expect(r.errors).toEqual([]);
+    return r.frames;
   };
+  const frame = async (name: string): Promise<number> => energy(grey((await frames(name)).at(-1)!.data, name));
 
   it('a will-change camera rig, an inline !important hint, a translateZ hack and WAAPI/CSS animations are as sharp as plain text', async () => {
     const plain = await frame('plain');
@@ -101,5 +123,12 @@ describe.skipIf(!tools.ok)('renderer: text in a scaled layer stays sharp (report
     console.info('[sharpness] gradient energy at scale ~3.9:', JSON.stringify(Object.fromEntries(Object.entries(results).map(([k, v]) => [k, Number(v.toFixed(3))]))));
     expect(plain).toBeGreaterThan(1);
     for (const [name, e] of Object.entries(results)) expect(e / plain, name).toBeGreaterThan(0.9);
+  });
+
+  it('the hint\'s stacking context, blend group and containing block are kept: the frame is the one of an identity transform', async () => {
+    const [hint, reference] = [grey((await frames('hint', [0]))[0]!.data, 'hint'), grey((await frames('reference', [0]))[0]!.data, 'reference')];
+    let diff = 0;
+    for (let i = 0; i < hint.length; i++) diff = Math.max(diff, Math.abs(hint[i]! - reference[i]!));
+    expect(diff).toBe(0);
   });
 });

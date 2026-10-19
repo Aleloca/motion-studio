@@ -188,8 +188,8 @@ never hangs. Task 4 still puts its own timeout on each `Runtime.evaluate`.
   - it defines a frozen `window.msParams` from the iframe's `name`, which is readable before any script runs. An `image`
     param becomes an absolute URL inside the composition;
   - it adds the composition's fonts to the layer document;
-  - it turns `will-change` off in the layer document (a sheet, plus inline `!important` hints at every seek; report 38,
-    decision 1230): a hinted layer is rasterised once and then resampled, so zoomed text came out blurred.
+  - it replaces the `will-change` values that freeze the raster scale (transform, scale, rotate, translate) with `filter`,
+    inline `!important`, after every seek and tick (report 38, decisions 1230, 1237–1240): zoomed text came out blurred.
 
   Task 4 may also inject `clock.js` with `Page.addScriptToEvaluateOnNewDocument`. Installing the clock is idempotent.
 - **The private channel.** After the iframe's `load`, the runtime posts `{ type: 'ms-layer-connect', v: 1 }` with a

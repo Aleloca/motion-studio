@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { installVirtualClock } from '../src/clock.ts';
-import { ClockStallError, pumpUntilDone, PUMP_FRAME_EVERY, startLayerAgent, UNFREEZE_CSS, unfreezeRaster } from '../src/layer-agent.ts';
+import { ClockStallError, pumpUntilDone, PUMP_FRAME_EVERY, createUnfreezer, startLayerAgent } from '../src/layer-agent.ts';
 import { encodeLayerConfig } from '../src/layer-protocol.ts';
 
 const freshWindow = () => new JSDOM('<!doctype html><p>x</p>', { pretendToBeVisual: true }).window as unknown as Window & typeof globalThis;
@@ -168,32 +168,43 @@ describe('layer.js replies to a stall with code layerStalled', () => {
   });
 });
 
-// Report 38 (decision 1230): the layer document never keeps a will-change hint that freezes the raster scale.
-describe('unfreezeRaster', () => {
-  it('adds the sheet once, adds it back when layer code removed it, and clears an inline !important hint', () => {
-    const w = freshWindow();
-    const doc = w.document;
-    doc.body.innerHTML = '<div id="a" style="will-change: transform !important; color: red"></div><div id="b" style="color: blue"></div>';
-    const sheet: { el: HTMLStyleElement | null } = { el: null };
-    unfreezeRaster(doc, sheet);
-    expect(doc.querySelectorAll('style')).toHaveLength(1);
-    expect(sheet.el!.textContent).toBe(UNFREEZE_CSS);
-    const a = doc.getElementById('a')!;
-    expect([a.style.getPropertyValue('will-change'), a.style.getPropertyPriority('will-change'), a.style.color]).toEqual(['auto', 'important', 'red']);
-    expect(doc.getElementById('b')!.getAttribute('style')).toBe('color: blue');
-    unfreezeRaster(doc, sheet);
-    expect(doc.querySelectorAll('style')).toHaveLength(1);
-    sheet.el!.remove();
-    unfreezeRaster(doc, sheet);
-    expect(doc.querySelectorAll('style')).toHaveLength(1);
+// Report 38 (decisions 1230, 1237–1240): the layer document never keeps a will-change hint that freezes the raster scale.
+describe('createUnfreezer', () => {
+  const doc = (html: string) => new JSDOM(`<!doctype html>${html}`, { pretendToBeVisual: true }).window.document;
+  const wc = (d: Document, id: string) => { const s = d.getElementById(id)!.style; return `${s.getPropertyValue('will-change')}|${s.getPropertyPriority('will-change')}`; };
+  it('replaces the freezing values (any rule, inline !important too) with filter; leaves the others alone', () => {
+    const d = doc(`<style>#a:not(#x):not(#y){will-change:transform !important}</style><div id="a"></div>
+      <div id="b" style="will-change: opacity, scale !important; color: red"></div><div id="c" style="will-change: opacity"></div><div id="e"></div>`);
+    createUnfreezer(d).run();
+    expect([wc(d, 'a'), wc(d, 'b'), wc(d, 'c'), wc(d, 'e')]).toEqual(['filter|important', 'opacity, filter|important', 'opacity|', '|']);
+    expect(d.getElementById('b')!.style.color).toBe('red');
   });
-  it('the layer agent installs it at start in a Motion Studio layer only', () => {
-    const plain = freshWindow();
+  it('after the layer\'s code: a rewritten inline style, a new element, a class change and a new sheet are caught; nothing changed costs nothing', () => {
+    const d = doc('<style>.z{will-change:rotate}</style><div id="a" style="will-change: transform"></div><div id="b"></div>');
+    const u = createUnfreezer(d);
+    u.run();
+    const a = d.getElementById('a')!;
+    a.style.cssText = 'will-change: translate !important; transform: scale(2)';
+    u.run();
+    expect(wc(d, 'a')).toBe('filter|important');
+    expect(a.style.transform).toBe('scale(2)');
+    const n = d.createElement('div'); n.id = 'n'; n.innerHTML = '<span id="m" style="will-change: transform"></span>'; d.body.append(n);
+    d.getElementById('b')!.className = 'z';
+    u.run();
+    expect([wc(d, 'm'), wc(d, 'b')]).toEqual(['filter|important', 'filter|important']);
+    const st = d.createElement('style'); st.textContent = '#n{will-change:scale}'; d.head.append(st);
+    u.run();
+    expect(wc(d, 'n')).toBe('filter|important');
+    const spy = vi.spyOn(d.defaultView!, 'getComputedStyle');
+    u.run();
+    a.style.transform = 'scale(3)'; // the camera rig's own frame: only this element is looked at again
+    u.run();
+    expect(spy).toHaveBeenCalledTimes(0);
+    spy.mockRestore();
+  });
+  it('the layer agent runs it in a Motion Studio layer only', async () => {
+    const plain = new JSDOM('<!doctype html><div id="a" style="will-change: transform"></div>', { pretendToBeVisual: true }).window as unknown as Window & typeof globalThis;
     startLayerAgent(plain);
-    expect(plain.document.querySelectorAll('style')).toHaveLength(0);
-    const w = new JSDOM('<!doctype html><p>x</p>', { pretendToBeVisual: true }).window as unknown as Window & typeof globalThis;
-    w.name = encodeLayerConfig({ v: 1, mode: 'preview', clipId: 'c', params: {}, fonts: [] });
-    startLayerAgent(w);
-    expect(w.document.querySelector('style')!.textContent).toBe(UNFREEZE_CSS);
+    expect(plain.document.getElementById('a')!.style.getPropertyValue('will-change')).toBe('transform');
   });
 });

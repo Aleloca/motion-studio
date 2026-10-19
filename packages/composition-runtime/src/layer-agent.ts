@@ -7,7 +7,8 @@ import { decodeLayerConfig, LAYER_PROTOCOL_VERSION, type LayerConfig, type Layer
  * - installs the virtual clock (both modes: in preview the runtime advances it on every frame, so free JS animations
  *   follow the timeline, pause with it and scrub with it);
  * - defines `window.msParams` (frozen) from the configuration in `window.name`;
- * - neutralises `will-change` in the layer document (`unfreezeRaster`, report 38, decision 1230), in both modes;
+ * - turns off the `will-change` hints that freeze the raster scale (`createUnfreezer`, report 38, decision 1230), in
+ *   both modes, after every seek and tick;
  * - answers the runtime: `ready` (every font face of the layer and of the composition `FontFace.load()`ed, then
  *   `msReady` awaited), `seek(t)` (clock to t, every animation of the document paused at t, `msTimeline` to t,
  *   `await msSeek(t)`, then two native animation frames), `tick(t)` (the same without waiting, for playback).
@@ -93,26 +94,85 @@ export async function pumpUntilDone<T>(value: T, clock: PumpClock, maxPumps = MA
 }
 
 /**
- * Report 38 (decisions 1230–1231): Chromium rasterises an element with `will-change: transform` once, at the scale it
- * first had, and then transforms that bitmap, so a camera rig that zooms text (`#world{will-change:transform}` scaled every
- * frame) came out as a resampled, blurred bitmap at any export size. Every frame of a render is a fresh still, so the hint
- * buys nothing: this sheet turns it off on every element (an id-heavy selector, so a layer's own `#id{…!important}` rule
- * does not win), and `unfreezeRaster` also clears an inline `will-change … !important`, which no sheet overrides. Nothing
- * else changes (the transform itself is the layer's; translateZ and paused CSS/WAAPI animations re-raster on their own).
+ * Report 38 (decisions 1230, 1231, 1237–1240): Chromium rasterises an element whose `will-change` names a transform
+ * property once, at the scale it first had, and then transforms that bitmap, so a camera rig that zooms text
+ * (`#world{will-change:transform}` scaled every frame) came out as a resampled, blurred bitmap at any export size. Measured
+ * in Chrome: `transform`, `scale`, `rotate` and `translate` freeze the raster scale; `opacity`, `filter` and `contents`
+ * do not, and are left alone.
+ *
+ * The unfreezer reads each element's computed `will-change` (so any rule counts: any specificity, `@layer`, an external
+ * sheet, an inline hint) and, on an element that names a freezing value, writes an inline `will-change … !important`
+ * with the freezing values replaced by `filter`: an inline `!important` beats every sheet, and a `filter` hint keeps what
+ * the transform hint made (a stacking context and isolation group, the containing block of absolute and fixed
+ * descendants) without freezing the raster. The one difference left: a `filter` hint is also a backdrop root.
+ *
+ * Cost (decision 1240): a full scan only when the document's structure, a class/id or a sheet changed (a MutationObserver
+ * says so); otherwise only the elements whose `style` attribute changed, and nothing when nothing changed. Self-contained
+ * (no module-level references), so a Chrome test can run its source as it is.
  */
-const UNFREEZE_SELECTOR = ':not(#ms-x):not(#ms-x):not(#ms-x):not(#ms-x):not(#ms-x):not(#ms-x):not(#ms-x):not(#ms-x)';
-export const UNFREEZE_CSS = `${UNFREEZE_SELECTOR}, ${UNFREEZE_SELECTOR}::before, ${UNFREEZE_SELECTOR}::after { will-change: auto !important; }`;
-
-/** Keeps the `UNFREEZE_CSS` sheet in `doc` (added again when layer code removed it), and clears inline `will-change`. */
-export function unfreezeRaster(doc: Document, sheet: { el: HTMLStyleElement | null }): void {
-  if (!sheet.el) {
-    sheet.el = doc.createElement('style');
-    sheet.el.textContent = UNFREEZE_CSS;
-  }
-  if (!sheet.el.isConnected) (doc.head ?? doc.documentElement)?.appendChild(sheet.el);
-  for (const el of doc.querySelectorAll<HTMLElement>('[style*="will-change" i]')) {
-    if (el.style.getPropertyValue('will-change') && el.style.getPropertyValue('will-change') !== 'auto') el.style.setProperty('will-change', 'auto', 'important');
-  }
+export function createUnfreezer(doc: Document): { run(): void } {
+  const FREEZE = new Set(['transform', 'scale', 'rotate', 'translate']);
+  const win = doc.defaultView;
+  const written = new WeakMap<Element, string>();
+  const touched = new Set<Element>();
+  let full = true;
+  const sheetNode = (n: Node | null): boolean => {
+    for (let e: Node | null = n; e; e = e.parentNode) {
+      const name = e.nodeName.toLowerCase();
+      if (name === 'style' || name === 'link') return true;
+    }
+    return false;
+  };
+  const note = (records: MutationRecord[]) => {
+    if (full) return;
+    for (const r of records) {
+      if (r.type === 'attributes') {
+        if (r.attributeName === 'style' && !sheetNode(r.target)) touched.add(r.target as Element);
+        else { full = true; return; }
+      } else if (r.type === 'characterData') {
+        if (sheetNode(r.target)) { full = true; return; }
+      } else {
+        if (sheetNode(r.target)) { full = true; return; }
+        for (const n of r.addedNodes) {
+          if (n.nodeType !== 1) continue;
+          const el = n as Element;
+          if (sheetNode(el) || el.querySelector('style, link')) { full = true; return; }
+          touched.add(el);
+          for (const d of el.querySelectorAll('*')) touched.add(d);
+        }
+      }
+    }
+  };
+  const observer = win ? new win.MutationObserver(note) : null;
+  observer?.observe(doc, { subtree: true, childList: true, attributes: true, characterData: true });
+  const fix = (el: Element) => {
+    const style = (el as HTMLElement).style as CSSStyleDeclaration | undefined;
+    if (!style || !win) return;
+    const mine = written.get(el);
+    if (mine !== undefined && style.getPropertyValue('will-change') === mine && style.getPropertyPriority('will-change') === 'important') return;
+    const value = win.getComputedStyle(el).willChange;
+    if (!value || value === 'auto') return;
+    const tokens = value.split(',').map((t) => t.trim()).filter(Boolean);
+    if (!tokens.some((t) => FREEZE.has(t))) return;
+    const kept = tokens.filter((t) => !FREEZE.has(t) && t !== 'filter');
+    const next = [...kept, 'filter'].join(', ');
+    style.setProperty('will-change', next, 'important');
+    written.set(el, style.getPropertyValue('will-change'));
+  };
+  return {
+    run() {
+      if (observer) note(observer.takeRecords());
+      if (full) {
+        full = false;
+        touched.clear();
+        for (const el of doc.querySelectorAll('*')) fix(el);
+      } else {
+        for (const el of touched) if (el.isConnected) fix(el);
+        touched.clear();
+      }
+      observer?.takeRecords(); // our own writes
+    },
+  };
 }
 
 /** `stallMs`: the render-mode stall bound (`CLOCK_STALL_MS`; shorter only in tests). */
@@ -123,8 +183,7 @@ export function startLayerAgent(w: Window & typeof globalThis, o: { stallMs?: nu
   // Render: a missing frame fails the seek (never a stale capture); preview: a short fallback.
   const frameWait: FrameWait = config.mode === 'render' ? { strict: true, timeoutMs: config.frameTimeoutMs ?? 30_000 } : PREVIEW_FRAME_WAIT;
   const lw = w as unknown as LayerWindow;
-  const sheet: { el: HTMLStyleElement | null } = { el: null };
-  unfreezeRaster(w.document, sheet);
+  const unfreezer = createUnfreezer(w.document);
   Object.defineProperty(lw, 'msParams', { value: Object.freeze({ ...config.params }), writable: false, configurable: false, enumerable: true });
 
   const declared: FontFace[] = [];
@@ -188,22 +247,23 @@ export function startLayerAgent(w: Window & typeof globalThis, o: { stallMs?: nu
     if (req.op === 'tick') {
       if (!Number.isFinite(req.t)) return;
       applyTime(req.t);
+      unfreezer.run();
       if (!seekRunning && typeof lw.msSeek === 'function') {
         seekRunning = true;
-        try { await callSeek(req.t); } catch { /* reported by the next real seek */ } finally { seekRunning = false; }
+        try { await callSeek(req.t); } catch { /* reported by the next real seek */ } finally { seekRunning = false; unfreezer.run(); }
       }
       return;
     }
     try {
       if (req.op === 'ready') {
         const warnings = await ready();
-        unfreezeRaster(w.document, sheet);
+        unfreezer.run();
         port?.postMessage({ id: req.id, ok: true, warnings });
       } else if (req.op === 'seek') {
-        unfreezeRaster(w.document, sheet); // layer code may have added elements or inline styles since
         applyTime(req.t);
         if (seekStalled !== null) throw new SeekStalledError(`msSeek not called again: ${seekStalled}`);
         await callSeek(req.t);
+        unfreezer.run(); // after the layer's own code drew the frame, before it is painted (decision 1238)
         await twoFrames(clock.native, frameWait);
         port?.postMessage({ id: req.id, ok: true });
       }
