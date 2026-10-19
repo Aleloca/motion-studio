@@ -131,7 +131,8 @@ export async function exportStorePack(o: PackExportOptions): Promise<PackExportR
     for (const f of o.order) {
       const lim = limits(f);
       const preset = presetOf(f);
-      if (!lim || seen.has(preset)) continue;
+      // Report 48: a device with no file in this export (left out of the selection) is not checked.
+      if (!lim || seen.has(preset) || !o.files.some((x) => presetOf(x.format) === preset)) continue;
       seen.add(preset);
       const count = o.order.filter((x) => presetOf(x) === preset).length;
       if (count < lim.min) {

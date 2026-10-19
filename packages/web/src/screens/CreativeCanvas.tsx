@@ -8,7 +8,7 @@
 import { ProblemList } from '../components/ProblemList.tsx';
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
 import { entriesOfVariant, turnEndOf } from '@motion-studio/shared';
-import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, outputWarningText, shownTotal, packInstancesOf, type ConversationEntry, type JobSummary, type CreativeDetail, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VariantId, type VariantMember, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
+import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, outputWarningText, shownTotal, packFileFormats, packInstancesOf, type ConversationEntry, type JobSummary, type CreativeDetail, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VariantId, type VariantMember, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { api, type GroupExportPlanItem } from '../api.ts';
@@ -23,7 +23,7 @@ import { href, routeKey } from '../routes.ts';
 import { useBarClaim } from '../shell/barSlots.ts';
 import { setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } from '../shell/intents.ts';
 import { go, ShellContext } from '../shell/ShellContext.tsx';
-import { Button, ChannelMark, Empty, Icon, Input, NavItem, Pill, Popover, Spinner, Tabs, Tag, Toggle, cx, toast } from '../ui/index.ts';
+import { Button, ChannelMark, Empty, Icon, Input, NavItem, Pill, Popover, Segmented, Spinner, Tabs, Tag, Toggle, cx, toast } from '../ui/index.ts';
 import { CreativeActionsMenu, type RemovalDone } from './creative/CreativeRemoval.tsx';
 import { useCreative } from '../useCreative.ts';
 import { jobLiveTokens, jobUsagePartial } from '../usageLive.ts';
@@ -57,7 +57,7 @@ import { GroupStar } from './variants/GroupStar.tsx';
 import { useVariantMembers } from './variants/useVariantMembers.ts';
 import { VariantCard } from './variants/VariantCard.tsx';
 import type { ChatTarget } from './variants/VariantSelector.tsx';
-import { CARD_PAD, cardColumns, cardWidth, discardBlock, discardedSelf, fitCards, isRunning, memberLive, readyToChoose, rowState, selectionRows, shortName, shownMembers, thumbZoom, upper } from './variants/variantModel.ts';
+import { CARD_PAD, CARDS_PAD, cardColumns, cardWidth, chosenColumns, chosenView, discardBlock, fitChosen, discardedSelf, fitCards, isRunning, memberLive, readVariantView, readyToChoose, rowState, selectionRows, shortName, shownMembers, thumbZoom, upper, writeVariantView, type ChosenCell, type VariantView } from './variants/variantModel.ts';
 import { pinchZoom, scrollAfterZoom, stepZoom, ZOOM_MIN, zoomKey } from './canvasZoom.ts';
 import { setMenuZoomHandler } from '../shell/menuZoom.ts';
 import './variants/variants.css';
@@ -116,6 +116,8 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   const [groupPlan, setGroupPlan] = useState<GroupExportPlanItem[] | null>(null);
   // The group's canonical formats, as the core answers them with the plan (the host's pending brief, else its own); null: not known.
   const [planFormats, setPlanFormats] = useState<string[] | null>(null);
+  // Report 49: the view the user switched to on this page (null: the remembered one, else "Scelte" when the group has a pick).
+  const [viewPick, setViewPick] = useState<VariantView | null>(null);
   const planKey = group ? group.group.members.map((m) => `${m.slug}:${live.creativeTicks[`${slug}/${m.slug}`] ?? 0}`).join('|') : '';
   useEffect(() => {
     if (!group) { setGroupPlan(null); setPlanFormats(null); return; }
@@ -410,11 +412,21 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   const shownMs = group ? shownMembers(group.group, variantUi.showDiscarded).filter((m) => !group.missing.includes(m.letter)) : [];
   const boardsOfMember = (m: VariantMember): Array<BoardModel & { n: number | null }> => (m.slug === creative ? boards : members[m.slug] ? modelOf(members[m.slug]!).bs : []);
   const cardCount = group ? shownMembers(group.group, variantUi.showDiscarded).length : 0;
-  const fitKey = group ? `g:${cardCount}` : boards.map((b) => `${b.id}:${b.preset?.width ?? 0}x${b.preset?.height ?? 0}`).join('|');
+  // Report 49: with a pick the page opens on "Scelte"; without one there is only the cards' view. The view belongs to the group
+  // (remembered under its host, whichever member is open: decision 1336), read once per group.
+  const hasPicks = group !== null && Object.keys(group.group.picks).length > 0;
+  const viewHost = group?.host ?? creative;
+  const storedView = useMemo(() => readVariantView(slug, viewHost, true), [slug, viewHost]);
+  const variantView: VariantView = !hasPicks ? 'all' : viewPick ?? storedView;
+  // Decision 1334: "Scelte" fits its widest section (the chosen boards, or those without a choice) instead of the cards.
+  const chosenCount = group && variantView === 'chosen' && detail
+    ? (({ chosen, open }) => Math.max(chosen.length, open.length))(chosenView(planFormats ?? detail.creative.brief.formats, group.group, groupPlan)) : 0;
+  const fitKey = group ? `g:${cardCount}:${variantView}:${chosenCount}` : boards.map((b) => `${b.id}:${b.preset?.width ?? 0}x${b.preset?.height ?? 0}`).join('|');
   const fitNow = useRef<() => number | null>(() => null);
   fitNow.current = () => {
     const v = viewport.current;
     if (!v) return null;
+    if (group && variantView === 'chosen') return fitChosen(chosenCount, v.clientWidth, ZOOM_MIN);
     return group ? fitCards(cardCount, v.clientWidth, ZOOM_MIN) : fitBoards(canvasGroups(boards, packIds), { width: v.clientWidth, height: v.clientHeight }, FIT_MIN);
   };
   useLayoutEffect(() => {
@@ -805,9 +817,53 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   /** Decision 973: one card per variant, side by side, wrapping (the grouping by format is the "Selezione finale" chooser). */
   const renderGroupedWorld = () => {
     if (!group) return null;
+    if (variantView === 'chosen') return renderChosenWorld();
     const shown = shownMembers(group.group, variantUi.showDiscarded);
     const width = cardWidth(zoom, viewW, shown.length);
     return shown.map((m) => card(m, width));
+  };
+  /**
+   * Report 49: the "Scelte" view, per format only the chosen variant at the chosen version (the group's ★: its board, read-only
+   * with its ★, which still changes the pick); then "Senza scelta", each with the variant the default rule takes (decision
+   * 1328: what the export copies, so nothing on the page looks chosen that is not).
+   */
+  const renderChosenWorld = () => {
+    if (!group) return null;
+    const view = chosenView(planFormats ?? cr.brief.formats, group.group, groupPlan);
+    const inner = Math.max(CARD_PAD, viewW - 2 * CARDS_PAD - 2 * CARD_PAD);
+    const cellOf = (c: ChosenCell, width: number, rule: boolean) => {
+      const m = c.slug ? group.group.members.find((x) => x.slug === c.slug) : undefined;
+      const d = m ? detailOfMember(m.slug) : null;
+      const st = d ? (m!.slug === creative ? states : modelOf(d).st) : null;
+      const b = d && st && c.n !== null ? boardsWith([c.format], presets, d.versions, (id) => ({ format: boardSource(st, id, {}).format, n: c.n }), d.creative.brief.formatLabels)[0] : undefined;
+      return (
+        <div key={c.format} className="ms-vchosen-cell" style={{ width }}>
+          <p className="ms-vchosen-cap">
+            <b className="ms-vchosen-format">{formatLabel(c.format)}</b>
+            {m ? <span className="ms-vchosen-from"><span className="ms-vcard-letter">{upper(m.letter)}</span><span className="ms-vchosen-name">{shortName(m.direction) ?? vg.letterLabel({ letter: upper(m.letter) })}</span></span> : null}
+            {rule && m ? <span className="ms-vfinal-tag">{vg.chooserDefaultTag}</span> : null}
+          </p>
+          {m && d && st && b ? memberBoard(m, d, st, b, thumbZoom(b, width, false))
+            // Decision 1337: a member still being read (not missing) is loading, not "no variant has it".
+            : m && !d && !group.missing.includes(m.letter) ? <p className="ms-vchosen-none"><Spinner size={14} label={t.web.canvas.loading} /></p>
+            : <p className="ms-vchosen-none">{vg.noVariantFile}</p>}
+        </div>
+      );
+    };
+    const section = (title: string, cells: ChosenCell[], rule: boolean, hint?: string) => {
+      const col = chosenColumns(inner, cells.length, zoom);
+      return (
+        <section key={title} className={cx('ms-vcard ms-vchosen', rule && 'ms-vchosen-open')} aria-label={title} style={{ width: inner + 2 * CARD_PAD }}>
+          <h3 className="ms-vchosen-title">{rule ? null : <Icon name="star" size={13} fill />}{title}<span className="ms-vchosen-count">{cells.length}</span></h3>
+          {hint ? <p className="ms-vcard-dir">{hint}</p> : null}
+          <div className="ms-vcard-formats">{cells.map((c) => cellOf(c, col.width, rule))}</div>
+        </section>
+      );
+    };
+    return [
+      section(vg.chosenTitle, view.chosen, false),
+      ...(view.open.length ? [section(vg.noChoiceTitle, view.open, true, vg.noChoiceHint)] : []),
+    ];
   };
   /** The chooser's formats: each format of the group with the active variants' pictures of it, side by side. */
   const chooserFormats = (): ChooserFormat[] => {
@@ -883,6 +939,11 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   // Decision 973: "Selezione finale" is the page's main action (filled); "Mostra scartate" and "+ Variante" are secondary.
   const variantBar = group ? (
     <div className="ms-vbar" role="toolbar" aria-label={vg.toolbarAria}>
+      {hasPicks ? (
+        <Segmented<VariantView> label={vg.viewLabel} value={variantView} className="ms-vbar-view"
+          options={[{ value: 'chosen', label: vg.viewChosen, icon: 'star' }, { value: 'all', label: vg.viewAll }]}
+          onChange={(v) => { setViewPick(v); writeVariantView(slug, hostSlug, v); }} />
+      ) : null}
       <span className="ms-vbar-toggle"><Toggle size="sm" on={variantUi.showDiscarded} onChange={(on) => onVariantUi({ showDiscarded: on })} label={vg.showDiscarded} /><span aria-hidden="true">{vg.showDiscarded}</span></span>
       <span className="ms-grow" />
       <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>{vg.addVariant}</Button>
@@ -1063,6 +1124,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
         return (
         <StorePackExport open={packExport} onClose={() => setPackExport(false)} slug={slug} creative={group ? hostSlug : creative} title={title} version={version?.n ?? 0}
           {...(group ? { group: true } : {})} untranslated={packGaps.untranslated} needsReview={packGaps.review}
+          presets={presets} {...(group ? {} : { formats: packFileFormats(cr.brief, presets), ...(cr.brief.formatLabels ? { labels: cr.brief.formatLabels } : {}), ...(version ? { entry: version } : {}) })}
           {...(creativeLocales(cr.brief) ? { locales: creativeLocales(cr.brief)! } : {})} />
         );
       })() : null}

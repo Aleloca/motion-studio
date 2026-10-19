@@ -831,11 +831,16 @@ describe('FormatView · the Export control (decision 974: no Render button; user
     await waitFor(() => expect(within(bar()).getByRole('button', { name: 'Esporta' })).not.toBeNull());
   });
 
-  it('the control keeps one size: every text it may show sits in the same cell', async () => {
+  it('report 50: a normal button at rest; while it works its texts share one cell, so a new percent never moves it', async () => {
     detail = makeDetail([comp(1)]);
+    const view = render(<Harness format={VIDEO} />);
+    const idle = await waitFor(() => within(bar()).getByRole('button', { name: 'Esporta' }));
+    expect(idle.querySelectorAll('.ms-exp-ctl-sizer')).toHaveLength(0);
+    view.unmount();
+    jobsNow = { r1: renderJob({ progress: { format: VIDEO, phase: 'frames', done: 42, total: 100 } }) };
     render(<Harness format={VIDEO} />);
-    const button = await waitFor(() => within(bar()).getByRole('button', { name: 'Esporta' }));
+    const button = await waitFor(() => within(bar()).getByRole('button', { name: 'Render 42%' }));
     const sizers = [...button.querySelectorAll('.ms-exp-ctl-sizer')].map((e) => e.textContent);
-    expect(sizers).toEqual(expect.arrayContaining(['Esporta', 'Esportazione 100%', 'Render 100%']));
+    expect(sizers).toEqual(expect.arrayContaining(['Esportazione 100%', 'Render 100%']));
   });
 });

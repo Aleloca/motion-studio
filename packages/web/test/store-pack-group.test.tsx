@@ -37,6 +37,7 @@ const api = {
   exportStorePack: vi.fn(async (..._a: unknown[]) => ({ folder: '/out/pack', written: [], failed: [] })),
   exportStorePackGroup: vi.fn(async (..._a: unknown[]) => ({ folder: '/out/pack', written: [], failed: [] })),
   groupExportPlan: vi.fn(async () => ({ items: [], formats: detail.creative.brief.formats })),
+  storePackGroupFiles: vi.fn(async (..._a: unknown[]) => ({ formats: packFormats.formats, labels: packFormats.formatLabels })),
   getAgentCapabilities: vi.fn(async () => ({ cliVersion: null, liveInput: false, interrupt: false, checkedAt: at })),
   getUsage: vi.fn(async () => { throw new Error('offline'); }),
   cancelJob: vi.fn(async () => ({ cancelled: true })),
@@ -93,7 +94,7 @@ describe('CreativeCanvas · the store pack is one group', () => {
     const choice = await screen.findByRole('dialog', { name: 'Cosa vuoi esportare?' });
     await userEvent.click(within(choice).getByRole('button', { name: /^Pacchetto store/ }));
     const dialog = await screen.findByRole('dialog', { name: /pacchetto store/ });
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Esporta il pacchetto' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: /^Esporta \d+ file$/ }));
     await waitFor(() => expect(api.exportStorePack).toHaveBeenCalledWith('acme', 'lancio', 1, { destination: '/out' }));
   });
 
@@ -135,8 +136,10 @@ describe('CreativeCanvas · the store pack is one group', () => {
     await screen.findByRole('toolbar', { name: /^Variant/ });
     await userEvent.click(screen.getByRole('button', { name: 'Esporta' }));
     const dialog = await screen.findByRole('dialog', { name: /pacchetto store/ });
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Esporta il pacchetto' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: /^Esporta \d+ file$/ }));
     await waitFor(() => expect(api.exportStorePackGroup).toHaveBeenCalledWith('acme', HOST, { destination: '/out' }));
+    // Decision 1333: the files listed are the host's pack, read from the core.
+    expect(api.storePackGroupFiles).toHaveBeenCalledWith('acme', HOST);
   });
 
   it('with every pack instance taken out the group is still there, empty, and the pack export stays in Export', async () => {

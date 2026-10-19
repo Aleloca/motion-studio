@@ -1,6 +1,6 @@
 import { act, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { D, E, anim, enter, exit, flip, reducedMotion, stagger } from '../src/motion/motion';
+import { D, E, anim, enter, exit, flip, reducedMotion, stagger, stretch } from '../src/motion/motion';
 import { useEnter } from '../src/motion/useEnter';
 import { PageHost } from '../src/motion/PageHost';
 
@@ -105,11 +105,26 @@ describe('motion helpers', () => {
     expect(call(0).frames[0]!.transform).toBe('translate(50px,20px) scale(2,0.5)');
   });
 
+  it('report 50: stretch animates a control from its old width to its new one (spring when it grows), nothing without a change', async () => {
+    const el = document.createElement('button');
+    el.getBoundingClientRect = () => ({ left: 0, top: 0, width: 180, height: 32 }) as DOMRect;
+    await stretch(el, 180);
+    expect(calls).toHaveLength(0);
+    void stretch(el, 96);
+    expect(call(0).frames).toEqual([{ width: '96px' }, { width: '180px' }]);
+    expect(call(0).opts.easing).toBe(E.spring);
+    el.getBoundingClientRect = () => ({ left: 0, top: 0, width: 96, height: 32 }) as DOMRect;
+    void stretch(el, 180);
+    expect(call(1).frames).toEqual([{ width: '180px' }, { width: '96px' }]);
+    expect(call(1).opts.easing).toBe(E.std);
+  });
+
   it('with reduced motion nothing is animated and promises resolve', async () => {
     reduced = true;
     expect(reducedMotion()).toBe(true);
     const el = document.createElement('div');
-    await Promise.all([enter(el), exit(el), anim(el, []), stagger([el]), flip(el, { left: 1, top: 1, width: 1, height: 1 } as DOMRect)]);
+    el.getBoundingClientRect = () => ({ left: 0, top: 0, width: 180, height: 32 }) as DOMRect;
+    await Promise.all([enter(el), exit(el), anim(el, []), stagger([el]), flip(el, { left: 1, top: 1, width: 1, height: 1 } as DOMRect), stretch(el, 90)]);
     expect(calls).toHaveLength(0);
   });
 });

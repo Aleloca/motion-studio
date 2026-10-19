@@ -7,8 +7,8 @@
  * 26%"), at the control's one size. The bar's markup, given the app's stylesheets and its fonts, is measured in real Chrome at
  * 1024 to 1920 px, light and dark, in the browser and in the macOS desktop title bar, idle and while an export runs: nothing
  * leaves the bar, nothing overlaps, nothing wraps, no control's text is clipped (the crumbs end with an ellipsis and keep their
- * whole text in the tooltip), every button is 32 px tall, the format's name keeps room, and Esporta has the same width in both
- * states (no layout shift). Chrome only on request (MS_LAYOUT_CHROME=1 or MS_REQUIRE_CHROME=1), through the repo's driver
+ * whole text in the tooltip), every button is 32 px tall, the format's name keeps room, and Esporta is a normal button at rest and
+ * widens only while an export runs (report 50). Chrome only on request (MS_LAYOUT_CHROME=1 or MS_REQUIRE_CHROME=1), through the repo's driver
  * (mock keychain, basic password store); MS_LAYOUT_SHOTS=<folder> saves a screenshot of each case.
  */
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -218,10 +218,12 @@ run('format view bar: real Chrome layout', () => {
   // 1024 is the desktop window's minimum width (apps/desktop/src/window.ts), 1440 its default; 1229 and 1429 put the browser
   // bar's content (28 px of padding) just above a folding step (1200, 1400), 1309 and 1509 the desktop one's (108 px).
   const WIDTHS = [1024, 1229, 1280, 1309, 1429, 1440, 1509, 1920];
+  /** Report 50: Esporta at rest, its icon and its word in a 32 px button (it was ~150 px when it kept room for the progress). */
+  const IDLE_EXPORT_MAX = 112;
   const shots = process.env.MS_LAYOUT_SHOTS;
   type Measure = { problems: string[]; widths: string[]; nameWidth: number; slack: number; exportWidth: number; unnamed: string[] };
   for (const desktopApp of [false, true]) {
-    it(`${desktopApp ? 'desktop (macOS title bar)' : 'browser'}: Italian, ${WIDTHS.join(', ')} px, idle and exporting: everything fits, Esporta keeps its width`, async () => {
+    it(`${desktopApp ? 'desktop (macOS title bar)' : 'browser'}: Italian, ${WIDTHS.join(', ')} px, idle and exporting: everything fits, Esporta widens only while it exports`, async () => {
       const failures: string[] = [];
       const exportWidths: Record<string, number> = {};
       for (const state of ['idle', 'exporting'] as const) {
@@ -244,9 +246,11 @@ run('format view bar: real Chrome layout', () => {
             for (const p of r.problems) failures.push(`${where}: ${p}`);
             for (const u of r.unnamed) failures.push(`${where}: a button without a name: ${u}`);
             if (r.nameWidth < 60) failures.push(`${where}: the format name has ${r.nameWidth} px`);
-            if (state === 'idle') exportWidths[width] = r.exportWidth;
-            // User report 19: the control does not change size while it shows the export's progress.
-            else if (Math.abs(r.exportWidth - exportWidths[width]!) > 0.5) failures.push(`${where}: Esporta is ${r.exportWidth} px, ${exportWidths[width]} px idle`);
+            // Report 50: at rest a normal button (its icon and "Esporta"); while it exports it widens to show the progress.
+            if (state === 'idle') {
+              exportWidths[width] = r.exportWidth;
+              if (r.exportWidth > IDLE_EXPORT_MAX) failures.push(`${where}: Esporta is ${r.exportWidth} px at rest (at most ${IDLE_EXPORT_MAX})`);
+            } else if (r.exportWidth <= exportWidths[width]! + 10) failures.push(`${where}: Esporta is ${r.exportWidth} px exporting, ${exportWidths[width]} px idle`);
           } finally { await tab.close(); }
         }
       }

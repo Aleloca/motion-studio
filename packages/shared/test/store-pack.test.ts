@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_FORMATS, INSTANCE_ID_RE, STORE_CAPTION_MAX, briefSchema, screenshotLabel, storePackFormats, storePackSchema, type StorePack } from '../src/index.ts';
+import { DEFAULT_FORMATS, INSTANCE_ID_RE, STORE_CAPTION_MAX, briefSchema, packFileFormats, screenshotLabel, storePackFormats, storePackSchema, type StorePack } from '../src/index.ts';
 
 const shots = (n: number) => Array.from({ length: n }, (_, i) => ({ caption: `Cap ${i + 1}`, screen: i % 2 ? null : `assets/s${i}.png` }));
 const apple: StorePack = { app: { name: 'Bread', tagline: 'Bake' }, stores: ['appstore'], devices: { appstore: ['iphone-69'] }, screenshots: shots(3), preview: false };
@@ -99,5 +99,20 @@ describe('storePackFormats', () => {
     const f = storePackFormats({ ...apple, screenshots: shots(10) }).formats;
     expect(f.at(-1)).toBe('appstore-iphone-69@10');
     expect(f).toHaveLength(10);
+  });
+});
+
+describe('packFileFormats (decision 1338: the pack export\'s files, the same list in the core and the dialog)', () => {
+  const p: StorePack = { app: { name: 'A', tagline: '' }, stores: ['appstore'], devices: { appstore: ['iphone-69'] }, screenshots: [{ caption: 'One', screen: null }, { caption: 'Two', screen: null }], preview: true };
+  it('the pack\'s own instances in the brief\'s order; a hand-picked store format and other formats are not files of the pack', () => {
+    const brief = { formats: ['instagram-post-1x1', 'appstore-preview', 'appstore-iphone-69@2', 'playstore-tablet', 'appstore-iphone-69'], storePack: p };
+    expect(packFileFormats(brief)).toEqual(['appstore-preview', 'appstore-iphone-69@2', 'appstore-iphone-69']);
+  });
+  it('a pack that owns other instances (`instances`) lists those, not a hand-picked one with the slot\'s id', () => {
+    const owned = { ...p, preview: false, instances: ['appstore-iphone-69@3', 'appstore-iphone-69@4'] };
+    expect(packFileFormats({ formats: ['appstore-iphone-69', 'appstore-iphone-69@3', 'appstore-iphone-69@4'], storePack: owned })).toEqual(['appstore-iphone-69@3', 'appstore-iphone-69@4']);
+  });
+  it('no pack, no files', () => {
+    expect(packFileFormats({ formats: ['appstore-iphone-69'] })).toEqual([]);
   });
 });
