@@ -2207,6 +2207,16 @@ export class CreativeTurnService {
   /** Whether a job is a creative turn this service runs (its live side exists). */
   hasLiveTurn(jobId: string): boolean { return this.live.has(jobId); }
 
+  /** Report 41 (review C): the formats announced so far by every running turn, per job (sent with a client's snapshot). */
+  readyFormats(): Record<string, Record<string, { n: number; hash: string }>> {
+    const out: Record<string, Record<string, { n: number; hash: string }>> = {};
+    for (const [jobId, live] of this.live) {
+      const work = live.work;
+      if (work && work.ready.size) out[jobId] = Object.fromEntries([...work.ready].map(([f, r]) => [f, { n: work.n, hash: r.hash }]));
+    }
+    return out;
+  }
+
   /**
    * Report 41: the hash of `format` in version `n` that the creative's running turn is writing, when the agent's check passed
    * on it (and nothing failed since); null otherwise (no such turn, another version, a format not checked).

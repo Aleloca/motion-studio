@@ -92,12 +92,13 @@ export function AppliesMenu({ appliesTo, targets, onChange }: { appliesTo: Appli
             const inGroup = g.items.map((it) => it.id);
             const n = inGroup.filter((id) => chosen.has(id)).length;
             return (
-              <div key={g.label ?? gi} role="group" aria-label={g.label ?? c.appliesTo} className="ms-applies-group">
+              // Keyed by place: two groups may share a name (a hand-picked App Store format and the pack's App Store).
+              <div key={gi} role="group" aria-label={g.label ?? c.appliesTo} className="ms-applies-group">
                 {g.label ? (
                   <>
                     <div className="ms-cap ms-applies-head" aria-hidden="true">{g.label}</div>
                     {groups.length > 1 && g.items.length > 1
-                      ? item(`g:${g.label}`, n === 0 ? false : n === inGroup.length ? true : 'mixed', c.appliesWholeGroup({ group: g.label }), () => toggle(inGroup), undefined, 'ms-applies-whole')
+                      ? item(`g:${gi}`, n === 0 ? false : n === inGroup.length ? true : 'mixed', c.appliesWholeGroup({ group: g.label }), () => toggle(inGroup), undefined, 'ms-applies-whole')
                       : null}
                   </>
                 ) : null}

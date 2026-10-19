@@ -559,6 +559,12 @@ describe('report 41: each format shown as soon as the agent\'s check passes', { 
       const ready = w.events.filter((e) => e.type === 'formatReady');
       expect(ready).toEqual([{ type: 'formatReady', jobId: w.job.id, project: 'acme', creative: w.slug, n: 1, format: 'test-wide', hash: expect.stringMatching(/^[0-9a-f]{64}$/) }]);
       const hash = (ready[0] as { hash: string }).hash;
+      // A window that connects now (a reload, a reconnection) gets the ready formats with its snapshot (review C).
+      const address = app.server.address() as { port: number };
+      const late = new WebSocket(`ws://127.0.0.1:${address.port}/api/events?t=${TOKEN}`, { headers: { origin: `http://127.0.0.1:${address.port}` } });
+      const snapshot = await new Promise<ServerMessage>((res) => late.once('message', (d) => res(JSON.parse(String(d)) as ServerMessage)));
+      late.close();
+      expect(snapshot).toMatchObject({ type: 'snapshot', ready: { [w.job.id]: { 'test-wide': { n: 1, hash } } } });
       // Nothing is recorded yet.
       expect(await store().readVersions(w.slug)).toEqual([]);
       const sb = await storyboard(w.slug, 'test-wide');

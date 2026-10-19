@@ -189,7 +189,9 @@ export interface ApprovalRequest {
 export type ApprovalDecision = 'once' | 'always' | 'deny';
 
 export type ServerMessage =
-  | { type: 'snapshot'; jobs: JobSummary[]; approvals: ApprovalRequest[]; locale: Locale; languageSetting: LanguageSetting; /** What 'system' resolves to on the core's machine. */ systemLocale: Locale }
+  | { type: 'snapshot'; jobs: JobSummary[]; approvals: ApprovalRequest[]; locale: Locale; languageSetting: LanguageSetting; /** What 'system' resolves to on the core's machine. */ systemLocale: Locale;
+    /** Report 41 (review C): per running creative job, the formats announced by `formatReady` so far. */
+    ready?: Record<string, Record<string, { n: number; hash: string }>> }
   /** The language setting changed: the UI switches without reloading. */
   | { type: 'locale'; locale: Locale; setting: LanguageSetting; systemLocale: Locale }
   | { type: 'approval'; approval: ApprovalRequest }

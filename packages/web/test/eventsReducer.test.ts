@@ -104,5 +104,8 @@ describe('report 41: formats ready during a turn', () => {
     expect(eventsReducer(s, { type: 'job', job: job('j1', 'cancelled') }).ready).toEqual({});
     expect(eventsReducer(s, { type: 'snapshot', jobs: [job('j1', 'failed')], approvals: [], locale: 'it', languageSetting: 'system', systemLocale: 'it' }).ready).toEqual({});
     expect(eventsReducer(s, { type: 'snapshot', jobs: [job('j1', 'running')], approvals: [], locale: 'it', languageSetting: 'system', systemLocale: 'it' }).ready).toEqual(s.ready);
+    // A snapshot that carries the core's list replaces it (a reloaded window).
+    expect(eventsReducer(initialEventsState, { type: 'snapshot', jobs: [job('j1', 'running'), job('j2', 'succeeded')], approvals: [], locale: 'it', languageSetting: 'system', systemLocale: 'it',
+      ready: { j1: { a: { n: 4, hash: 'h' } }, j2: { b: { n: 1, hash: 'g' } } } }).ready).toEqual({ j1: { a: { n: 4, hash: 'h' } } });
   });
 });

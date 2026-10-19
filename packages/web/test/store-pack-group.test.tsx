@@ -123,9 +123,13 @@ describe('CreativeCanvas · the store pack is one group', () => {
   });
 
   it('report 42: the chat\'s "Si applica a" menu groups the formats as the column (the pack by store, the hand-picked ones in their channel)', async () => {
+    const errors = vi.spyOn(console, 'error');
     render(<Harness />);
     await ready();
     await userEvent.click(screen.getByRole('button', { name: /^Si applica a: Tutti i formati/ }));
+    // Two groups called "App Store" (review F): no duplicate React keys.
+    expect(errors.mock.calls.some((c) => String(c[0]).includes('same key'))).toBe(false);
+    errors.mockRestore();
     const menu = screen.getByRole('menu', { name: 'Si applica a' });
     expect(within(menu).getAllByRole('group').map((g) => g.getAttribute('aria-label'))).toEqual(['Instagram', 'App Store', 'App Store', 'Play Store']);
     const store = within(menu).getAllByRole('group', { name: 'App Store' })[1]!;

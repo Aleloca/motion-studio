@@ -46,7 +46,8 @@ export function eventsReducer(state: EventsState, msg: EventsAction): EventsStat
         jobs: Object.fromEntries(msg.jobs.map((j) => [j.id, j])),
         liveUsage: Object.fromEntries(Object.entries(state.liveUsage ?? {}).filter(([id]) => msg.jobs.some((j) => j.id === id && j.state === 'running'))),
         jobUsage: keepJobUsage(state.jobUsage, new Set(msg.jobs.map((j) => j.id))),
-        ready: Object.fromEntries(Object.entries(state.ready ?? {}).filter(([id]) => msg.jobs.some((j) => j.id === id && j.state === 'running'))),
+        // The core's list when it sends one (review C: a reloaded window sees the formats already ready), else what we had.
+        ready: Object.fromEntries(Object.entries(msg.ready ?? state.ready ?? {}).filter(([id]) => msg.jobs.some((j) => j.id === id && j.state === 'running'))),
         partialUsage: partialAfterSnapshot(state.partialUsage, msg.jobs),
         approvals: Object.fromEntries((msg.approvals ?? []).map((a) => [a.id, a])),
         language: msg.locale ? { locale: msg.locale, setting: msg.languageSetting ?? 'system', systemLocale: msg.systemLocale ?? msg.locale } : state.language,
