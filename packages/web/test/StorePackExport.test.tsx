@@ -75,40 +75,70 @@ describe('StorePackExport · request', () => {
   });
 });
 
-describe('StorePackExport · report 48, the files to export', () => {
+describe('StorePackExport · reports 48 and 54, the files to export in a gallery', () => {
   const files = () => screen.getByRole('group', { name: 'Files' });
   const box = (name: string) => within(files()).getByRole('checkbox', { name });
+  const tile = (name: string) => within(files()).getByRole('button', { name });
+  const pressed = (name: string) => tile(name).getAttribute('aria-pressed');
 
-  it('lists the files by store and device with their thumbnails, all checked; the button counts them', () => {
+  it('a gallery per store: the store\'s and the devices\' checkboxes with n/m, a pressed thumbnail per file; the button counts them', () => {
     open();
-    expect(within(files()).getAllByRole('checkbox').filter((c) => c.getAttribute('aria-checked') !== 'true')).toEqual([]);
-    expect(box('App Store').getAttribute('aria-checked')).toBe('true');
-    expect(box('Google Play').getAttribute('aria-checked')).toBe('true');
-    expect(box('iPhone 6.9″')).toBeTruthy();
-    expect(box('iPhone 6.9″ · 2 · Find')).toBeTruthy();
-    expect(box('Feature graphic')).toBeTruthy();
-    expect(box('App Preview')).toBeTruthy();
+    expect(within(files()).getAllByRole('checkbox').map((c) => c.getAttribute('aria-label'))).toEqual(['App Store', 'iPhone 6.9″', 'Google Play', 'Phone']);
+    expect(within(files()).getAllByRole('checkbox').every((c) => c.getAttribute('aria-checked') === 'true')).toBe(true);
+    // No checkbox per file: every file is a toggle button, all pressed (in the export).
+    const tiles = within(files()).getAllByRole('button', { pressed: true });
+    expect(tiles.map((b) => b.getAttribute('aria-label'))).toEqual([
+      'iPhone 6.9″ · 1 · Sort', 'iPhone 6.9″ · 2 · Find', 'App Preview', 'Phone · 1 · Sort', 'Phone · 2 · Find', 'Feature graphic', 'Promo video 16:9',
+    ]);
+    expect(within(files()).queryAllByRole('button', { pressed: false })).toEqual([]);
+    expect(within(files()).getAllByRole('heading').map((h) => h.textContent)).toEqual(['App Store3/3', 'Google Play4/4']);
+    // The name under each thumbnail is the formats column's label, whole in the tooltip.
+    expect(tile('iPhone 6.9″ · 2 · Find').textContent).toBe('2 · Find');
+    expect(tile('iPhone 6.9″ · 2 · Find').getAttribute('title')).toBe('2 · Find');
     expect(run().textContent).toBe('Export 7 files');
-    const thumb = box('Phone · 1 · Sort').closest('.ms-spx-file')!.querySelector('img')!;
+    const thumb = tile('Phone · 1 · Sort').querySelector('img')!;
     expect(thumb.getAttribute('src')).toMatch(/outputs\/v3\/playstore-phone-9x16\.png/);
+    // Each thumbnail keeps the file's aspect ratio (the row sets the height).
+    expect(tile('Feature graphic').style.getPropertyValue('--spx-a')).toBe(String(1024 / 500));
   });
 
-  it('a device checkbox turns its screenshots off and on; the store checkbox is mixed meanwhile', async () => {
+  it('a click on a thumbnail leaves it out (dimmed, marked) and a second puts it back; Space and Enter do the same', async () => {
+    open();
+    await userEvent.click(tile('iPhone 6.9″ · 1 · Sort'));
+    expect(pressed('iPhone 6.9″ · 1 · Sort')).toBe('false');
+    expect(tile('iPhone 6.9″ · 1 · Sort').classList.contains('ms-off')).toBe(true);
+    expect(within(tile('iPhone 6.9″ · 1 · Sort')).getByTitle('Excluded')).toBeTruthy();
+    expect(box('iPhone 6.9″').getAttribute('aria-checked')).toBe('mixed');
+    expect(box('App Store').getAttribute('aria-checked')).toBe('mixed');
+    expect(within(files()).getAllByRole('heading')[0]!.textContent).toBe('App Store2/3');
+    expect(run().textContent).toBe('Export 6 files');
+    await userEvent.click(tile('iPhone 6.9″ · 1 · Sort'));
+    expect(pressed('iPhone 6.9″ · 1 · Sort')).toBe('true');
+    expect(within(tile('iPhone 6.9″ · 1 · Sort')).queryByTitle('Excluded')).toBeNull();
+    tile('Feature graphic').focus();
+    await userEvent.keyboard(' ');
+    expect(pressed('Feature graphic')).toBe('false');
+    await userEvent.keyboard('{Enter}');
+    expect(pressed('Feature graphic')).toBe('true');
+  });
+
+  it('a device checkbox turns its screenshots off and on, not the single files at the end of its row; the store checkbox is mixed meanwhile', async () => {
     open();
     await userEvent.click(box('iPhone 6.9″'));
-    expect(box('iPhone 6.9″ · 1 · Sort').getAttribute('aria-checked')).toBe('false');
-    expect(box('iPhone 6.9″ · 2 · Find').getAttribute('aria-checked')).toBe('false');
+    expect(pressed('iPhone 6.9″ · 1 · Sort')).toBe('false');
+    expect(pressed('iPhone 6.9″ · 2 · Find')).toBe('false');
+    expect(pressed('App Preview')).toBe('true');
     expect(box('App Store').getAttribute('aria-checked')).toBe('mixed');
     expect(run().textContent).toBe('Export 5 files');
-    await userEvent.click(box('iPhone 6.9″ · 2 · Find'));
+    await userEvent.click(tile('iPhone 6.9″ · 2 · Find'));
     expect(box('iPhone 6.9″').getAttribute('aria-checked')).toBe('mixed');
     // A mixed group turns all on.
     await userEvent.click(box('App Store'));
     expect(box('iPhone 6.9″').getAttribute('aria-checked')).toBe('true');
     expect(run().textContent).toBe('Export 7 files');
     await userEvent.click(box('Google Play'));
-    expect(box('Phone · 2 · Find').getAttribute('aria-checked')).toBe('false');
-    expect(box('Feature graphic').getAttribute('aria-checked')).toBe('false');
+    expect(pressed('Phone · 2 · Find')).toBe('false');
+    expect(pressed('Feature graphic')).toBe('false');
     expect(run().textContent).toBe('Export 3 files');
   });
 
@@ -116,7 +146,7 @@ describe('StorePackExport · report 48, the files to export', () => {
     open();
     await userEvent.type(screen.getByLabelText('Destination folder'), '/out');
     await userEvent.click(box('Google Play'));
-    await userEvent.click(box('iPhone 6.9″ · 1 · Sort'));
+    await userEvent.click(tile('iPhone 6.9″ · 1 · Sort'));
     await userEvent.click(run());
     await waitFor(() => expect(exportStorePack).toHaveBeenCalledTimes(1));
     expect(exportStorePack.mock.calls[0]![3]).toEqual({ destination: '/out', formats: ['appstore-iphone-69@2', 'appstore-preview'] });
@@ -131,6 +161,17 @@ describe('StorePackExport · report 48, the files to export', () => {
     expect(run().hasAttribute('disabled')).toBe(true);
   });
 
+  it('while the export runs the thumbnails do not toggle', async () => {
+    let finish!: (r: Result) => void;
+    exportStorePack.mockImplementationOnce(() => new Promise<Result>((res) => { finish = res; }));
+    open();
+    await userEvent.type(screen.getByLabelText('Destination folder'), '/out');
+    await userEvent.click(run());
+    expect(tile('Phone · 1 · Sort').hasAttribute('disabled')).toBe(true);
+    finish({ folder: '/out/x', written: ['a.png'], failed: [] });
+    await screen.findByRole('status');
+  });
+
   it('a variant group: thumbnails from its selection, the selection sent to the group\'s pack export', async () => {
     render(
       <I18nProvider locale="en">
@@ -138,10 +179,10 @@ describe('StorePackExport · report 48, the files to export', () => {
       </I18nProvider>,
     );
     // The host's list (three iPhone screenshots), not a member's lagging brief.
-    expect(await within(await screen.findByRole('group', { name: 'Files' })).findByRole('checkbox', { name: 'iPhone 6.9″ · 3 · Share' })).toBeTruthy();
+    expect(await within(await screen.findByRole('group', { name: 'Files' })).findByRole('button', { name: 'iPhone 6.9″ · 3 · Share' })).toBeTruthy();
     expect(storePackGroupFiles).toHaveBeenCalledWith('acme', 'c1');
     expect(run().textContent).toBe('Export 8 files');
-    await waitFor(() => expect(box('Feature graphic').closest('.ms-spx-file')!.querySelector('img')?.getAttribute('src')).toMatch(/c1~b\/outputs\/v4\/playstore-feature\.png/));
+    await waitFor(() => expect(tile('Feature graphic').querySelector('img')?.getAttribute('src')).toMatch(/c1~b\/outputs\/v4\/playstore-feature\.png/));
     await userEvent.type(screen.getByLabelText('Destination folder'), '/out');
     await userEvent.click(box('App Store'));
     await userEvent.click(run());

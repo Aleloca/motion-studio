@@ -4,20 +4,22 @@
 // and still writes the rest when some files fail, so a result is a list, not a pass/fail.
 // Report 48: above the destination, the pack's files by store and device, each with its thumbnail and a checkbox (a tri-state
 // one per device and store), all on at first; the core exports only the files chosen (`formats`, only when not all are).
+// Report 54: the files are a gallery per store: one row per device of large thumbnails side by side at their real shape, the row
+// scrolling sideways; a click on a thumbnail leaves it out (dimmed and marked), checkboxes only on the device and the store.
 import type { FormatPreset, LocaleTag, VersionEntry } from '@motion-studio/shared';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { api, type GroupExportPlanItem, type StorePackExportResult } from '../../api.ts';
 import { StillImg } from '../../components/CoverStill.tsx';
 import { desktop, showExported } from '../../desktop.ts';
 import { useLocale, useT } from '../../i18n.tsx';
 import { pop } from '../../motion/index.ts';
 import { isMac } from '../../platform.ts';
-import { Button, Check, Icon, Input, Modal, cx } from '../../ui/index.ts';
+import { Button, ChannelMark, Check, Icon, Input, Modal, cx } from '../../ui/index.ts';
 import { message } from '../common.tsx';
 import { EXPORT_FOLDER_KEY } from '../ExportDialog.tsx';
 import { exportErrorText } from '../versionErrors.ts';
 import { localeName } from './languagesModel.ts';
-import { groupThumb, packFileGroups, versionThumb, type PackFileRow } from './storePackFiles.ts';
+import { galleryRows, groupCheck, groupThumb, packFileGroups, scrollEdges, versionThumb, withFiles, type PackFileRow } from './storePackFiles.ts';
 import '../canvas.css';
 import '../new-creative/storepack.css';
 import './languages.css';
@@ -53,12 +55,15 @@ export interface StorePackExportProps {
 const readFolder = () => { try { return localStorage.getItem(EXPORT_FOLDER_KEY) ?? ''; } catch { return ''; } };
 const writeFolder = (v: string) => { try { localStorage.setItem(EXPORT_FOLDER_KEY, v); } catch { /* private mode */ } };
 
+/** Report 54: wide enough for a store's row of nine screenshots at the gallery's height (the Modal keeps it inside the window). */
+const GALLERY_WIDTH = 1200;
+
 export function StorePackExport(p: StorePackExportProps) {
   const t = useT();
   // While the pack is being made the dialog stays: closing it would hide an export that still writes files.
   const [busy, setBusy] = useState(false);
   return (
-    <Modal open={p.open} onClose={p.onClose} label={t.web.storePack.export.title({ title: p.title })} width={640} dismissible={!busy}>
+    <Modal open={p.open} onClose={p.onClose} label={t.web.storePack.export.title({ title: p.title })} width={GALLERY_WIDTH} dismissible={!busy}>
       {p.open ? <Body {...p} onBusy={setBusy} /> : null}
     </Modal>
   );
@@ -98,7 +103,8 @@ function Body({ onClose, slug, creative, version, group, locales, untranslated =
   const all = useMemo(() => stores.flatMap((s) => s.devices.flatMap((d) => d.rows.map((r) => r.id))), [stores]);
   const [off, setOff] = useState<ReadonlySet<string>>(() => new Set());
   const chosen = all.filter((id) => !off.has(id));
-  const setMany = (ids: readonly string[], v: boolean) => setOff((s) => { const n = new Set(s); for (const id of ids) { if (v) n.delete(id); else n.add(id); } return n; });
+  const setMany = (ids: readonly string[], v: boolean) => setOff((s) => withFiles(s, ids, v));
+  const gallery = useMemo(() => stores.map((s) => ({ store: s, rows: galleryRows(s) })), [stores]);
   useEffect(() => { onBusy(running); }, [running, onBusy]);
   useEffect(() => () => onBusy(false), [onBusy]);
   // Closing the dialog silences the result of a request that is still running.
@@ -205,27 +211,44 @@ function Body({ onClose, slug, creative, version, group, locales, untranslated =
           ? <p className="ms-exp-error ms-exp-empty" role="alert">{t.web.exportUi.groupLoadFailed({ detail: groupFiles.error })}</p>
           : <p className="ms-exp-empty" role="status">{t.web.exportUi.groupLoading}</p>
       ) : all.length > 0 ? (
-        <div className="ms-spx-files" role="group" aria-label={x.files}>
-          {stores.map((s) => {
+        // The thumbnails' height shares the window's height among the rows (storepack.css).
+        <div className="ms-spx-files" role="group" aria-label={x.files} style={{ '--spx-rows': gallery.reduce((k, g) => k + g.rows.length, 0) } as CSSProperties}>
+          <p className="ms-spx-hint">{x.galleryHint}</p>
+          {gallery.map(({ store: s, rows }) => {
             const ids = s.devices.flatMap((d) => d.rows.map((r) => r.id));
             const name = s.store === 'appstore' ? t.variants.storePack.appStore : t.variants.storePack.googlePlay;
-            const singles = s.devices.filter((d) => d.single).flatMap((d) => d.rows);
+            const c = groupCheck(ids, off);
             return (
               <section key={s.store} className="ms-spx-store">
-                <GroupHead ids={ids} off={off} label={name} disabled={running} onChange={setMany} strong />
-                {s.devices.filter((d) => !d.single).map((d) => (
-                  <div key={d.key} className="ms-spx-device">
-                    <GroupHead ids={d.rows.map((r) => r.id)} off={off} label={d.label} disabled={running} onChange={setMany} />
-                    <div className="ms-spx-grid">
-                      {d.rows.map((r) => <FileTile key={r.id} row={r} slug={slug} name={x.fileOf({ group: d.label, file: r.label })} on={!off.has(r.id)} disabled={running} onChange={(v) => setMany([r.id], v)} />)}
+                <div className="ms-spx-storehead">
+                  <Check on={c.on} mixed={c.mixed} label={name} disabled={running} onChange={(v) => setMany(ids, v)} />
+                  <span aria-hidden="true"><ChannelMark channel={s.store === 'appstore' ? 'appstore' : 'googleplay'} size={20} /></span>
+                  <h3><span className="ms-spx-store-name">{name}</span><span className="ms-spx-count">{c.n}/{c.of}</span></h3>
+                </div>
+                {rows.map((row) => {
+                  const rowIds = row.files.map((r) => r.id);
+                  const rc = groupCheck(rowIds, off);
+                  const tile = (r: PackFileRow, group: string | null) => (
+                    <FileTile key={r.id} row={r} name={group ? x.fileOf({ group, file: r.label }) : r.label} excluded={x.excluded}
+                      on={!off.has(r.id)} disabled={running} onToggle={(v) => setMany([r.id], v)} />
+                  );
+                  return (
+                    <div key={row.key} className="ms-spx-row">
+                      {row.label ? (
+                        <label className="ms-spx-rowhead">
+                          <Check on={rc.on} mixed={rc.mixed} label={row.label} disabled={running} onChange={(v) => setMany(rowIds, v)} />
+                          <span className="ms-spx-head-name" title={row.label}>{row.label}</span>
+                          <span className="ms-spx-count">{rc.n}/{rc.of}</span>
+                        </label>
+                      ) : <span className="ms-spx-rowhead" />}
+                      <Strip back={x.scrollBack} more={x.scrollMore}>
+                        {row.files.map((r) => tile(r, row.label))}
+                        {row.files.length && row.tail.length ? <span className="ms-spx-sep" aria-hidden="true" /> : null}
+                        {row.tail.map((r) => tile(r, null))}
+                      </Strip>
                     </div>
-                  </div>
-                ))}
-                {singles.length ? (
-                  <div className="ms-spx-grid ms-spx-singles">
-                    {singles.map((r) => <FileTile key={r.id} row={r} slug={slug} name={r.label} on={!off.has(r.id)} disabled={running} onChange={(v) => setMany([r.id], v)} />)}
-                  </div>
-                ) : null}
+                  );
+                })}
               </section>
             );
           })}
@@ -280,30 +303,48 @@ function Body({ onClose, slug, creative, version, group, locales, untranslated =
   );
 }
 
-/** A store's or a device's checkbox: on when all its files are, mixed when some are; a click turns all on (or all off). */
-function GroupHead({ ids, off, label, disabled, onChange, strong = false }: { ids: string[]; off: ReadonlySet<string>; label: string; disabled: boolean; onChange(ids: string[], v: boolean): void; strong?: boolean }) {
-  const n = ids.filter((id) => !off.has(id)).length;
+/**
+ * Report 54: a gallery row's thumbnails side by side, scrolling sideways. Where there is more to see the edge fades and an arrow
+ * scrolls by most of a row (for a mouse without a sideways wheel; the keyboard reaches every thumbnail with Tab).
+ */
+function Strip({ back, more, children }: { back: string; more: string; children: ReactNode }) {
+  const track = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ back: false, more: false });
+  useLayoutEffect(() => {
+    const el = track.current;
+    if (!el) return undefined;
+    const update = () => setEdges((e) => { const n = scrollEdges(el); return n.back === e.back && n.more === e.more ? e : n; });
+    update();
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
+    ro?.observe(el);
+    el.addEventListener('scroll', update, { passive: true });
+    return () => { ro?.disconnect(); el.removeEventListener('scroll', update); };
+  }, []);
+  const by = (dir: 1 | -1) => { const el = track.current; el?.scrollBy?.({ left: dir * el.clientWidth * 0.8 }); };
   return (
-    <label className={cx('ms-spx-head', strong && 'ms-spx-storehead')}>
-      <Check on={n === ids.length} mixed={n > 0} label={label} disabled={disabled} onChange={(v) => onChange(ids, v)} />
-      <span className="ms-spx-head-name">{label}</span>
-      <span className="ms-spx-count">{n}/{ids.length}</span>
-    </label>
+    <div className={cx('ms-spx-strip', edges.back && 'ms-back', edges.more && 'ms-more')}>
+      <div ref={track} className="ms-spx-track">{children}</div>
+      {edges.back ? <button type="button" className="ms-spx-nav ms-prev" tabIndex={-1} aria-hidden="true" title={back} onClick={() => by(-1)}><Icon name="chevron" size={16} strokeWidth={1.8} /></button> : null}
+      {edges.more ? <button type="button" className="ms-spx-nav ms-next" tabIndex={-1} aria-hidden="true" title={more} onClick={() => by(1)}><Icon name="chevron" size={16} strokeWidth={1.8} /></button> : null}
+    </div>
   );
 }
 
-/** One file of the pack: its checkbox, its thumbnail (render or still, as the ★ export rows) and its short name. */
-function FileTile({ row, slug, name, on, disabled, onChange }: { row: PackFileRow; slug: string; name: string; on: boolean; disabled: boolean; onChange(v: boolean): void }) {
-  const shape = row.aspect > 1.05 ? 'ms-wide' : row.aspect < 0.95 ? 'ms-tall' : 'ms-square';
+/**
+ * One file of the pack: its thumbnail (render or still, as the ★ export rows) at the file's shape and the row's height, its name
+ * under it. A toggle: pressed while the file is in the export; left out it is dimmed and marked.
+ */
+function FileTile({ row, name, excluded, on, disabled, onToggle }: { row: PackFileRow; name: string; excluded: string; on: boolean; disabled: boolean; onToggle(v: boolean): void }) {
   const thumb = row.thumb;
   return (
-    <label className={cx('ms-spx-file', !on && 'ms-off')} title={name}>
-      <Check on={on} label={name} disabled={disabled} onChange={onChange} className="ms-spx-check" />
-      <span className={cx('ms-spx-thumb', shape)} aria-hidden="true">
+    <button type="button" className={cx('ms-spx-tile', !on && 'ms-off')} aria-pressed={on} aria-label={name} title={row.label} disabled={disabled}
+      onClick={() => onToggle(!on)} style={{ '--spx-a': row.aspect } as CSSProperties}>
+      <span className="ms-spx-thumb">
         {thumb && 'still' in thumb ? <StillImg still={thumb.still} />
           : thumb ? (thumb.media.video ? <video src={thumb.media.src} muted preload="metadata" /> : <img src={thumb.media.src} alt="" />) : null}
+        {on ? null : <span className="ms-spx-excl" title={excluded}><Icon name="eyeOff" size={13} strokeWidth={1.6} /></span>}
       </span>
       <span className="ms-spx-file-name">{row.label}</span>
-    </label>
+    </button>
   );
 }
