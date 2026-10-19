@@ -4,7 +4,7 @@ import { probeConfinedFile } from '../brand/agent-guard.ts';
 import { CodedError } from '../workspace-store.ts';
 import type { CreativeRef } from './creative-turns.ts';
 import type { CreativeStore } from './creative-store.ts';
-import { checkDestination, exportResolved, plainName, recordedMatches, resolveLocalizedItems, setOf, type ExportCommon, type ExportItem, type ExportResult } from './export.ts';
+import { checkDestination, exportResolved, plainName, resolveLocalizedItems, setOf, type ExportCommon, type ExportItem, type ExportResult } from './export.ts';
 import type { VariantGroupService } from './variant-group.ts';
 
 /**
@@ -99,7 +99,9 @@ export async function withGroupProfile(store: CreativeStore, plan: GroupPlanItem
     if (!v?.compositions?.some((c) => c.format === p.format)) { out.push(p); continue; }
     const preset = findPreset(presets, p.format);
     const wanted = profileFor(preset, p.format, profile);
-    if (!isDefaultProfile(wanted)) { out.push(p.state === 'ready' && recordedMatches(v, p.format, wanted) ? p : { ...p, state: 'ready' }); continue; }
+    // Another profile: `ready` either way; the route's `profiledRenders` decides whether the version render is copied (its
+    // record matches and its file is on disk, decision 1241) or the export renders it for itself (decision 1248).
+    if (!isDefaultProfile(wanted)) { out.push(p.state === 'ready' ? p : { ...p, state: 'ready' }); continue; }
     const stale = p.state === 'ready' && profileApplies(preset, p.format) && recordedQuality(v.outputs.find((o) => o.format === p.format)) !== DEFAULT_EXPORT_QUALITY;
     out.push(stale ? { ...p, state: 'needs-render' } : p);
   }

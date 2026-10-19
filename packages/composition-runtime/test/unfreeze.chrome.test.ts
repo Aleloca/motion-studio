@@ -6,7 +6,7 @@
  * result is checked. Skipped without Chrome, unless MS_REQUIRE_CHROME=1.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createUnfreezer } from '../src/layer-agent.ts';
+import { createUnfreezer, PREVIEW_UNFREEZE_BUDGET } from '../src/layer-agent.ts';
 import { findChrome, launchChrome, type Browser } from './support/chrome.ts';
 
 const chrome = findChrome();
@@ -38,7 +38,34 @@ describe.skipIf(!chrome)('unfreezer cost in Chrome (decision 1240)', () => {
           plain: getComputedStyle(document.querySelector('span:not(.dot)')).willChange, count: document.querySelectorAll('*').length };
       })()`);
       console.info(`[unfreezer] ms per frame on 10k elements: rig ${r.rig.toFixed(3)}, unchanged ${r.idle.toFixed(3)}, full scan ${r.full.toFixed(3)} (of which the style recalculation alone ${r.recalc.toFixed(3)})`);
-      expect([r.world, r.dot, r.plain]).toEqual(['filter', 'opacity, filter', 'auto']);
+      expect([r.world, r.dot, r.plain]).toEqual(['auto', 'opacity', 'auto']);
+    } finally {
+      await page.close();
+    }
+  }, 120_000);
+
+  it('10 000 SVG elements: attributes animated every frame, inline style churn, and a preview tick under the budget', async () => {
+    const page = await browser.newPage(800, 600);
+    try {
+      const r = await page.eval<{ attr: number; style: number; styleOwn: number; tick: number; recalc: number; hinted: string }>(`(() => {
+        const ns = 'http://www.w3.org/2000/svg';
+        document.head.innerHTML = '<style>circle.h{will-change:transform}</style>';
+        const svg = document.createElementNS(ns, 'svg'); svg.setAttribute('width', '800'); svg.setAttribute('height', '600'); document.body.append(svg);
+        const cs = []; for (let i = 0; i < 10000; i++) { const c = document.createElementNS(ns, 'circle'); c.setAttribute('r', '2'); if (i === 0) c.setAttribute('class', 'h'); svg.append(c); cs.push(c); }
+        const u = (${createUnfreezer.toString()})(document);
+        u.run();
+        let own = 0;
+        const time = (n, frame, budget) => { let sum = 0; own = 0; for (let f = 0; f < n; f++) { const t1 = performance.now(); frame(f); document.body.offsetWidth; own += performance.now() - t1; const t0 = performance.now(); u.run(budget); sum += performance.now() - t0; } own /= n; return sum / n; };
+        const attr = time(20, (f) => { for (const c of cs) c.setAttribute('cx', String((f * 7 + Math.random() * 800) | 0)); });
+        const style = time(20, (f) => { for (const c of cs) c.style.transform = 'translate(' + f + 'px,0)'; });
+        const styleOwn = own;
+        const tick = time(20, (f) => { for (const c of cs) c.setAttribute('cy', String((f * 5 + Math.random() * 600) | 0)); }, ${PREVIEW_UNFREEZE_BUDGET});
+        let recalc = 0;
+        for (let f = 0; f < 20; f++) { for (const c of cs) c.setAttribute('cx', String(f)); const t0 = performance.now(); getComputedStyle(cs[9999]).willChange; recalc += performance.now() - t0; }
+        return { attr, style, styleOwn, tick, recalc: recalc / 20, hinted: cs[0].style.getPropertyValue('will-change') };
+      })()`);
+      console.info(`[unfreezer] ms per frame on 10k SVG elements: attributes ${r.attr.toFixed(3)}, inline style ${r.style.toFixed(3)} (the layer's own style changes and layout ${r.styleOwn.toFixed(3)}), preview tick (budget ${PREVIEW_UNFREEZE_BUDGET}) ${r.tick.toFixed(3)} (a style recalculation alone ${r.recalc.toFixed(3)})`);
+      expect(r.hinted).toBe('auto');
     } finally {
       await page.close();
     }

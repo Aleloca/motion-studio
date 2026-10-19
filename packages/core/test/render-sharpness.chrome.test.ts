@@ -1,9 +1,10 @@
 // @vitest-environment node
 /**
- * Report 38 (decisions 1230, 1237–1239): text in an html layer stays sharp when the layer scales it up, in real Chrome. A
+ * Report 38 (decisions 1230, 1237–1247): text in an html layer stays sharp when the layer scales it up, in real Chrome. A
  * camera rig with `will-change: transform` (or scale, rotate, translate) used to be rasterised once at its first scale and
- * then resampled: at scale(4) the text was a blurred bitmap. The layer agent now replaces those hints with `filter`, so
- * each frame is rasterised at its own scale, and the hint's stacking context and containing block stay. The frames are compared with the
+ * then resampled: at scale(4) the text was a blurred bitmap. The layer agent now drops those hints (an element without a
+ * transform gets `translate: 0px`), so each frame is rasterised at its own scale, and what the hint made stays: stacking
+ * context, containing block, 3D planes, a working backdrop-filter child (a `filter` substitute broke the last two). The frames are compared with the
  * same layer without the hint (squared gradient energy of the frame at scale ~3.9). Measured before the fix: plain 1173.8,
  * will-change (sheet, id !important, inline !important, with WAAPI) 215.4, a fifth; translateZ, WAAPI and CSS animations
  * alone 1173.8; opacity, filter and contents hints 1173.8 too (they do not freeze). After it, every variant 1173.8.
@@ -60,7 +61,7 @@ const VARIANTS: Record<string, string> = {
 };
 
 /**
- * What a transform hint makes besides the frozen raster (decision 1237): a stacking context (a z-index -1 child paints over
+ * What a transform hint makes besides the frozen raster (decisions 1237, 1243): a stacking context (a z-index -1 child paints over
  * the rig's background, a blend mode blends inside it) and the containing block of absolute and fixed children. `hint`
  * gives them with `will-change: transform`; the reference with an identity transform, which makes the same.
  */
@@ -72,7 +73,21 @@ html,body{margin:0;background:#000}
 .under{position:relative;z-index:-1;width:60px;height:60px;margin:40px 0 0 80px;background:#fff}
 .blend{position:absolute;left:50px;top:50px;width:40px;height:40px;background:#f00;mix-blend-mode:difference}
 </style></head><body><div id="rig"><div class="abs"></div><div class="fix"></div><div class="under"></div><div class="blend"></div></div></body></html>`;
-const STRUCTURE: Record<string, string> = { hint: structure('will-change:transform'), reference: structure('transform:translate(0)') };
+/** Decision 1243: a preserve-3d rig whose two planes intersect (a flattening substitute draws one over the other). */
+const threeD = (rig: string) => `<!doctype html><html><head><style>html,body{margin:0;background:#000}body{perspective:600px}
+#rig{position:absolute;left:80px;top:20px;width:140px;height:140px;transform-style:preserve-3d;transform:rotateX(20deg);${rig}}
+.p{position:absolute;inset:0;transform-style:preserve-3d}.a{background:rgba(255,0,0,.9);transform:rotateY(45deg)}.b{background:rgba(0,0,255,.9);transform:rotateY(-45deg)}
+</style></head><body><div id="rig"><div class="p a"></div><div class="p b"></div></div></body></html>`;
+/** Decision 1243: a glass panel blurring what is behind the rig (a backdrop-root substitute leaves it blurring nothing). */
+const backdrop = (rig: string) => `<!doctype html><html><head><style>html,body{margin:0;background:#000}
+.bg{position:absolute;left:0;top:0;width:320px;height:180px;background:repeating-linear-gradient(45deg,#fff 0 10px,#f00 10px 20px)}
+#rig{position:absolute;left:30px;top:20px;width:260px;height:140px;${rig}}.glass{position:absolute;left:20px;top:20px;width:200px;height:100px;backdrop-filter:blur(8px)}
+</style></head><body><div class="bg"></div><div id="rig"><div class="glass"></div></div></body></html>`;
+const STRUCTURE: Record<string, string> = {
+  hint: structure('will-change:transform'), reference: structure('transform:translate(0)'),
+  hint3d: threeD('will-change:transform'), reference3d: threeD(''),
+  hintBackdrop: backdrop('will-change:transform'), referenceBackdrop: backdrop(''),
+};
 
 describe.skipIf(!tools.ok)('renderer: text in a scaled layer stays sharp (report 38)', { timeout: 300_000 }, () => {
   let work: string;
@@ -125,10 +140,16 @@ describe.skipIf(!tools.ok)('renderer: text in a scaled layer stays sharp (report
     for (const [name, e] of Object.entries(results)) expect(e / plain, name).toBeGreaterThan(0.9);
   });
 
-  it('the hint\'s stacking context, blend group and containing block are kept: the frame is the one of an identity transform', async () => {
-    const [hint, reference] = [grey((await frames('hint', [0]))[0]!.data, 'hint'), grey((await frames('reference', [0]))[0]!.data, 'reference')];
+  /** The largest grey difference between the first frames of two layers. */
+  const maxDiff = async (a: string, b: string) => {
+    const [x, y] = [grey((await frames(a, [0]))[0]!.data, a), grey((await frames(b, [0]))[0]!.data, b)];
     let diff = 0;
-    for (let i = 0; i < hint.length; i++) diff = Math.max(diff, Math.abs(hint[i]! - reference[i]!));
-    expect(diff).toBe(0);
+    for (let i = 0; i < x.length; i++) diff = Math.max(diff, Math.abs(x[i]! - y[i]!));
+    return diff;
+  };
+  it('what the hint makes is kept: stacking context, blend group, containing block, 3D planes and a backdrop-filter child', async () => {
+    const diffs = { structure: await maxDiff('hint', 'reference'), threeD: await maxDiff('hint3d', 'reference3d'), backdrop: await maxDiff('hintBackdrop', 'referenceBackdrop') };
+    console.info('[sharpness] structure differences:', JSON.stringify(diffs));
+    expect(diffs).toEqual({ structure: 0, threeD: 0, backdrop: 0 });
   });
 });
