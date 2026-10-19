@@ -43,9 +43,9 @@ const { ShellContext } = await import('../src/shell/ShellContext.tsx');
 const { I18nProvider } = await import('../src/i18n.tsx');
 
 const emptyLive = (): EventsState => ({ approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} } as unknown as EventsState);
-function Harness() {
+function Harness({ creative = HOST }: { creative?: string }) {
   const shell = {
-    route: { name: 'creative', slug: 'acme', creative: HOST }, live: emptyLive(),
+    route: { name: 'creative', slug: 'acme', creative }, live: emptyLive(),
     catalog: { projects: [{ slug: 'acme', name: 'Acme' }], creatives: {}, refresh: () => {} },
     activity: { open: false, tab: null, seq: 0, show: () => {}, hide: () => {}, toggle: () => {} }, openPalette: () => {},
   } as unknown as Shell;
@@ -53,7 +53,7 @@ function Harness() {
     <I18nProvider locale="it">
       <ShellContext.Provider value={shell}>
         <header className="ms-topbar"><TopBar /></header>
-        <CreativeCanvas slug="acme" creative={HOST} live={emptyLive()} />
+        <CreativeCanvas slug="acme" creative={creative} live={emptyLive()} />
       </ShellContext.Provider>
     </I18nProvider>
   );
@@ -134,7 +134,24 @@ describe('the "Scelte" view of a variant group', () => {
     expect(within(bar).getByRole('button', { name: 'Selezione finale' })).toBeTruthy();
   });
 
-  it('"Tutte le varianti" shows the cards again and is remembered for the creative', async () => {
+  it('decision 1336: the view belongs to the group: a member\'s page opens on the view chosen from another one, read once', async () => {
+    group = picked();
+    plan = [item('instagram-post-1x1', 'c', 2, 'pick'), item('tiktok-9x16', 'a', 2, 'default')];
+    localStorage.setItem(variantViewKey('acme', HOST), 'all');
+    const get = vi.spyOn(Storage.prototype, 'getItem');
+    render(<Harness creative={`${HOST}~b`} />);
+    await waitFor(() => expect(document.querySelectorAll('.ms-vcard[data-variant]')).toHaveLength(3));
+    const reads = () => get.mock.calls.filter(([k]) => k === variantViewKey('acme', HOST)).length;
+    const before = reads();
+    expect(before).toBeGreaterThan(0);
+    // Re-renders of the page (the final selection opening and closing) do not read it again.
+    await userEvent.click(screen.getByRole('button', { name: 'Selezione finale' }));
+    await screen.findByRole('dialog', { name: 'Selezione finale' });
+    expect(reads()).toBe(before);
+    get.mockRestore();
+  });
+
+  it('"Tutte le varianti" shows the cards again and is remembered for the group', async () => {
     group = picked();
     plan = [item('instagram-post-1x1', 'c', 2, 'pick'), item('tiktok-9x16', 'a', 2, 'default')];
     const { unmount } = render(<Harness />);

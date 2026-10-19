@@ -237,16 +237,16 @@ export function chosenView(formats: readonly string[], group: VariantGroup, plan
 }
 
 export type VariantView = 'chosen' | 'all';
-/** Where the view of a group's page is remembered: per creative (the route's). */
-export const variantViewKey = (project: string, creative: string): string => `ms.variantView.${project}/${creative}`;
+/** Where the view of a group's page is remembered: per group, under its host's slug, whichever member is open (decision 1336). */
+export const variantViewKey = (project: string, host: string): string => `ms.variantView.${project}/${host}`;
 
 /** The view the page opens on: the remembered one, else "Scelte" when the group has a pick; never "Scelte" without one. */
-export function readVariantView(project: string, creative: string, hasPicks: boolean): VariantView {
+export function readVariantView(project: string, host: string, hasPicks: boolean): VariantView {
   if (!hasPicks) return 'all';
-  try { return localStorage.getItem(variantViewKey(project, creative)) === 'all' ? 'all' : 'chosen'; } catch { return 'chosen'; }
+  try { return localStorage.getItem(variantViewKey(project, host)) === 'all' ? 'all' : 'chosen'; } catch { return 'chosen'; }
 }
-export function writeVariantView(project: string, creative: string, view: VariantView): void {
-  try { localStorage.setItem(variantViewKey(project, creative), view); } catch { /* private mode */ }
+export function writeVariantView(project: string, host: string, view: VariantView): void {
+  try { localStorage.setItem(variantViewKey(project, host), view); } catch { /* private mode */ }
 }
 
 /** The columns of the "Scelte" view: cells at least `CHOSEN_CELL × z` wide (never under CELL_MIN), as many as fit. */

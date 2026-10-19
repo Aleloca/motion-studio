@@ -340,7 +340,7 @@ arrives and worked on later together.
     can always change. To do with the next reports, together with 48.
     Done (decisions 1326–1329): with at least one pick the variants page opens on "Scelte": per format the chosen variant at
     the chosen version (its ★ still changes the pick), then "Senza scelta" with the variant the default rule takes. A
-    "Scelte | Tutte le varianti" switch in the variant bar shows the cards again, remembered per creative.
+    "Scelte | Tutte le varianti" switch in the variant bar shows the cards again, remembered per group.
 
 50. **The top bar Export button is too wide.** (2026-10-19) It is wide at rest because the export progress bar shows
     inside it. User's call: at rest it is a normal-size button; it widens only when an export starts, with a nice

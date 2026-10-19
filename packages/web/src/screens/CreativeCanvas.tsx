@@ -412,9 +412,12 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   const shownMs = group ? shownMembers(group.group, variantUi.showDiscarded).filter((m) => !group.missing.includes(m.letter)) : [];
   const boardsOfMember = (m: VariantMember): Array<BoardModel & { n: number | null }> => (m.slug === creative ? boards : members[m.slug] ? modelOf(members[m.slug]!).bs : []);
   const cardCount = group ? shownMembers(group.group, variantUi.showDiscarded).length : 0;
-  // Report 49: with a pick the page opens on "Scelte" (remembered per creative); without one there is only the cards' view.
+  // Report 49: with a pick the page opens on "Scelte"; without one there is only the cards' view. The view belongs to the group
+  // (remembered under its host, whichever member is open: decision 1336), read once per group.
   const hasPicks = group !== null && Object.keys(group.group.picks).length > 0;
-  const variantView: VariantView = !hasPicks ? 'all' : viewPick ?? readVariantView(slug, group?.host ?? creative, true);
+  const viewHost = group?.host ?? creative;
+  const storedView = useMemo(() => readVariantView(slug, viewHost, true), [slug, viewHost]);
+  const variantView: VariantView = !hasPicks ? 'all' : viewPick ?? storedView;
   // Decision 1334: "Scelte" fits its widest section (the chosen boards, or those without a choice) instead of the cards.
   const chosenCount = group && variantView === 'chosen' && detail
     ? (({ chosen, open }) => Math.max(chosen.length, open.length))(chosenView(planFormats ?? detail.creative.brief.formats, group.group, groupPlan)) : 0;
