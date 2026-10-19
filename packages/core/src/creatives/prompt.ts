@@ -539,7 +539,7 @@ export function formatNamesSection(brief: CreativeFile['brief'], locale: Locale)
   const mine = brief.formats.filter((id) => !isUserNamed(brief, id));
   const unnamed = mine.filter((id) => agentNamedLabel(brief, id) === null);
   const theirs = brief.formats.filter((id) => isUserNamed(brief, id));
-  const example = locale === 'it' ? 'Tutti i clienti, una casella' : 'All your clients, one inbox';
+  const example = locale === 'it' ? 'Tutti i clienti, una casella' : 'All your clients, one inbox'; // i18n-ignore agent-facing example name in the user's language (report 55)
   return [
     '## Format names',
     `- Give every format you make a short speaking name with name_formats, also when it is the only one of its kind: a few words that say what it shows (for example ${quotePromptString(example)}), in ${languageName(locale)}, at most 40 characters. Motion Studio shows it with the format's channel and size, and a store screenshot after its number ("1 · …"): leave the format, size, channel and number out of the name.`,
