@@ -57,7 +57,7 @@ import { GroupStar } from './variants/GroupStar.tsx';
 import { useVariantMembers } from './variants/useVariantMembers.ts';
 import { VariantCard } from './variants/VariantCard.tsx';
 import type { ChatTarget } from './variants/VariantSelector.tsx';
-import { CARD_PAD, CARDS_PAD, cardColumns, cardWidth, chosenColumns, chosenView, discardBlock, discardedSelf, fitCards, isRunning, memberLive, readVariantView, readyToChoose, rowState, selectionRows, shortName, shownMembers, thumbZoom, upper, writeVariantView, type ChosenCell, type VariantView } from './variants/variantModel.ts';
+import { CARD_PAD, CARDS_PAD, cardColumns, cardWidth, chosenColumns, chosenView, discardBlock, fitChosen, discardedSelf, fitCards, isRunning, memberLive, readVariantView, readyToChoose, rowState, selectionRows, shortName, shownMembers, thumbZoom, upper, writeVariantView, type ChosenCell, type VariantView } from './variants/variantModel.ts';
 import { pinchZoom, scrollAfterZoom, stepZoom, ZOOM_MIN, zoomKey } from './canvasZoom.ts';
 import { setMenuZoomHandler } from '../shell/menuZoom.ts';
 import './variants/variants.css';
@@ -412,11 +412,18 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   const shownMs = group ? shownMembers(group.group, variantUi.showDiscarded).filter((m) => !group.missing.includes(m.letter)) : [];
   const boardsOfMember = (m: VariantMember): Array<BoardModel & { n: number | null }> => (m.slug === creative ? boards : members[m.slug] ? modelOf(members[m.slug]!).bs : []);
   const cardCount = group ? shownMembers(group.group, variantUi.showDiscarded).length : 0;
-  const fitKey = group ? `g:${cardCount}` : boards.map((b) => `${b.id}:${b.preset?.width ?? 0}x${b.preset?.height ?? 0}`).join('|');
+  // Report 49: with a pick the page opens on "Scelte" (remembered per creative); without one there is only the cards' view.
+  const hasPicks = group !== null && Object.keys(group.group.picks).length > 0;
+  const variantView: VariantView = !hasPicks ? 'all' : viewPick ?? readVariantView(slug, group?.host ?? creative, true);
+  // Decision 1334: "Scelte" fits its widest section (the chosen boards, or those without a choice) instead of the cards.
+  const chosenCount = group && variantView === 'chosen' && detail
+    ? (({ chosen, open }) => Math.max(chosen.length, open.length))(chosenView(planFormats ?? detail.creative.brief.formats, group.group, groupPlan)) : 0;
+  const fitKey = group ? `g:${cardCount}:${variantView}:${chosenCount}` : boards.map((b) => `${b.id}:${b.preset?.width ?? 0}x${b.preset?.height ?? 0}`).join('|');
   const fitNow = useRef<() => number | null>(() => null);
   fitNow.current = () => {
     const v = viewport.current;
     if (!v) return null;
+    if (group && variantView === 'chosen') return fitChosen(chosenCount, v.clientWidth, ZOOM_MIN);
     return group ? fitCards(cardCount, v.clientWidth, ZOOM_MIN) : fitBoards(canvasGroups(boards, packIds), { width: v.clientWidth, height: v.clientHeight }, FIT_MIN);
   };
   useLayoutEffect(() => {
@@ -706,9 +713,6 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   // ---- Phase 15: the pieces of a variant group (never built outside one) ---------------------------------------------
   const vg = t.web.variantGroup;
   const hostSlug = group?.host ?? creative;
-  // Report 49: with a pick the page opens on "Scelte" (remembered per creative); without one there is only the cards' view.
-  const hasPicks = group !== null && Object.keys(group.group.picks).length > 0;
-  const variantView: VariantView = !hasPicks ? 'all' : viewPick ?? readVariantView(slug, hostSlug, true);
   const failToast = (make: (p: { detail: string }) => string) => (e: unknown) => toast.show(make({ detail: message(e) }));
   const afterGroupChange = () => { reload(); shell?.catalog.refresh(); setPlanSeq((n) => n + 1); };
   const detailOfMember = (sl: string): CreativeDetail | null => (sl === creative ? detail : members[sl] ?? null);

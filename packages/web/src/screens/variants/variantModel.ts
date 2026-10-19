@@ -256,3 +256,14 @@ export function chosenColumns(inner: number, count: number, z: number): { cols: 
   const cols = Math.max(1, Math.min(Math.max(count, 1), Math.floor((inner + CELL_GAP) / (min + CELL_GAP))));
   return { cols, width: Math.min((inner - (cols - 1) * CELL_GAP) / cols, Math.max(min, CHOSEN_CELL)) };
 }
+
+/**
+ * Decision 1334: the zoom "Scelte" opens at: the widest of its sections (`count` boards) on one line of a viewport `viewWidth`
+ * px wide, rounded down to 5%, within `min`–100% (more boards than fit at `min` wrap). Null without boards or a viewport.
+ */
+export function fitChosen(count: number, viewWidth: number, min = 0.5): number | null {
+  if (count <= 0 || viewWidth <= 0) return null;
+  const inner = viewWidth - 2 * CARDS_PAD - 2 * CARD_PAD;
+  const z = ((inner + CELL_GAP) / count - CELL_GAP) / CHOSEN_CELL;
+  return Math.max(min, Math.min(1, Math.floor(z * 20 + 1e-9) / 20));
+}

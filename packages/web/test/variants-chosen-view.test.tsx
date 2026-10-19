@@ -37,7 +37,7 @@ const api = {
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error { status = 0; } }));
 const { CreativeCanvas } = await import('../src/screens/CreativeCanvas.tsx');
-const { chosenView, readVariantView, variantViewKey } = await import('../src/screens/variants/variantModel.ts');
+const { chosenColumns, chosenView, fitChosen, readVariantView, variantViewKey } = await import('../src/screens/variants/variantModel.ts');
 const { TopBar } = await import('../src/shell/TopBars.tsx');
 const { ShellContext } = await import('../src/shell/ShellContext.tsx');
 const { I18nProvider } = await import('../src/i18n.tsx');
@@ -79,6 +79,17 @@ describe('chosenView (the model)', () => {
     const v = chosenView(['instagram-post-1x1', 'tiktok-9x16'], picked(), null);
     expect(v.chosen).toEqual([{ format: 'instagram-post-1x1', letter: 'c', slug: `${HOST}~c`, n: 2 }]);
     expect(v.open).toEqual([{ format: 'tiktok-9x16', letter: null, slug: null, n: null }]);
+  });
+  it('decision 1334: the opening zoom of "Scelte" puts the widest section\'s boards on one line, within 50%–100%', () => {
+    // 1440 px: 4 chosen boards fit at 100%; 8 need less; 30 stop at 50% and wrap.
+    expect(fitChosen(4, 1440, 0.5)).toBe(1);
+    const z = fitChosen(8, 1440, 0.5)!;
+    expect(z).toBeLessThan(1);
+    expect(chosenColumns(1440 - 2 * 16 - 2 * 12, 8, z).cols).toBe(8);
+    expect(chosenColumns(1440 - 2 * 16 - 2 * 12, 8, z + 0.05).cols).toBeLessThan(8);
+    expect(fitChosen(30, 1440, 0.5)).toBe(0.5);
+    expect(fitChosen(0, 1440, 0.5)).toBeNull();
+    expect(fitChosen(3, 0, 0.5)).toBeNull();
   });
   it('the view: "chosen" by default when there are picks, the remembered one otherwise; storage errors are ignored', () => {
     expect(readVariantView('acme', HOST, true)).toBe('chosen');
@@ -138,6 +149,21 @@ describe('the "Scelte" view of a variant group', () => {
     await userEvent.click(within(await screen.findByRole('radiogroup', { name: 'Vista delle varianti' })).getByRole('radio', { name: 'Scelte' }));
     expect(await screen.findByRole('region', { name: 'Scelte' })).toBeTruthy();
     expect(localStorage.getItem(variantViewKey('acme', HOST))).toBe('chosen');
+  });
+
+  it('decision 1334: "Scelte" opens fitted to its boards, the cards\' view to its cards', async () => {
+    group = picked();
+    plan = [item('instagram-post-1x1', 'c', 2, 'pick'), item('tiktok-9x16', 'a', 2, 'default')];
+    const size = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('ms-cv-viewport') ? 800 : 0; });
+    try {
+      render(<Harness />);
+      await screen.findByRole('region', { name: 'Scelte' });
+      const z = () => (document.querySelector('.ms-cv-world') as HTMLElement).style.getPropertyValue('--cv-z');
+      // One board per section: 100% (three cards at 800 px would be 65%).
+      await waitFor(() => expect(z()).toBe('1'));
+      await userEvent.click(within(screen.getByRole('radiogroup', { name: 'Vista delle varianti' })).getByRole('radio', { name: 'Tutte le varianti' }));
+      await waitFor(() => expect(z()).toBe('0.65'));
+    } finally { size.mockRestore(); }
   });
 
   it('the ★ of a chosen board still changes the pick (nothing is deleted)', async () => {
