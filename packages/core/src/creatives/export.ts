@@ -364,7 +364,10 @@ export async function pendingRenders(creativeDir: string, versions: VersionEntry
  * for a render made before the choice), so an export at that profile copies it as it is.
  */
 export function recordedMatches(v: VersionEntry, format: string, wanted: RenderProfile): boolean {
-  return wanted.short === undefined && renderState(v, format) === 'rendered' && recordedQuality(v.outputs.find((x) => x.format === format)) === wanted.quality;
+  const out = v.outputs.find((x) => x.format === format);
+  // Report 39 (decision 1234): an fps asked for is matched only by a render that recorded it (older records name none).
+  return wanted.short === undefined && renderState(v, format) === 'rendered' && recordedQuality(out) === wanted.quality
+    && (wanted.fps === undefined || out?.render?.fps === wanted.fps);
 }
 
 /** The profile of an export (decision 974) and the presets that say which formats take it. Absent: the files as they are. */

@@ -154,8 +154,12 @@ export function renderExtension(preset: FormatPreset, still: boolean): string {
 }
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 500);
-/** The record of a video render (decision 974): the quality asked for (the renderer's own when it says), its size and encoder. */
-const renderInfoOf = (r: RenderResult, quality: RenderInfo['quality']): RenderInfo => ({ quality: r.quality ?? quality, width: r.width, height: r.height, encoder: r.encoder });
+/**
+ * The record of a video render (decision 974): the quality asked for (the renderer's own when it says), its size and encoder,
+ * and its frame rate (report 39, decision 1234; the renderer's own when it says, else the one asked for).
+ */
+const renderInfoOf = (r: RenderResult, quality: RenderInfo['quality'], fps: Composition['fps']): RenderInfo =>
+  ({ quality: r.quality ?? quality, width: r.width, height: r.height, encoder: r.encoder, fps: r.fps ?? fps });
 const tempName = (name: string) => `.${name}.render-${randomBytes(6).toString('hex')}.tmp`;
 
 /**
@@ -380,7 +384,7 @@ export class RenderJobService {
     if (plan.unknown.length > 0) throw new CodedError(400, m.render.formatsNotInVersion({ list: plan.unknown.join(', ') }), 'formats-not-in-version');
     if (!this.deps.engine) throw new CodedError(503, m.render.noRenderer, 'no-renderer');
     if ((await this.deps.engine.info()).kind === null) throw new CodedError(409, m.render.noBrowser, 'no-browser');
-    const detail = [profile.short !== undefined ? `${profile.short}p` : null, m.render.qualityNames[profile.quality]].filter(Boolean).join(' · ');
+    const detail = [profile.short !== undefined ? `${profile.short}p` : null, profile.fps !== undefined ? m.render.fpsName({ fps: profile.fps }) : null, m.render.qualityNames[profile.quality]].filter(Boolean).join(' · ');
     return this.deps.queue.enqueue({
       key: exportRenderJobKey(ref.root, ref.projectSlug, ref.creativeSlug, n, randomBytes(4).toString('hex')),
       kind: 'render', lane: 'render',
@@ -466,10 +470,10 @@ export class RenderJobService {
       const result = await this.deps.engine!.render({
         ...this.deps.renderOptions,
         dir: creativeDir, versionDir: `outputs/v${n}`, composition, format: preset, out: join(o.outDir, file), signal, ...(sessionMediaOf(prepared) ? { media: sessionMediaOf(prepared)! } : {}),
-        quality: o.profile.quality, ...(o.profile.short !== undefined ? { short: o.profile.short } : {}),
+        quality: o.profile.quality, ...(o.profile.short !== undefined ? { short: o.profile.short } : {}), ...(o.profile.fps !== undefined ? { fps: o.profile.fps } : {}),
         onProgress: (p) => o.progress({ format, phase: 'frames', done: p.frames, total: p.total }),
       });
-      return { path: result.file, render: renderInfoOf(result, o.profile.quality), composition };
+      return { path: result.file, render: renderInfoOf(result, o.profile.quality, o.profile.fps ?? composition.fps), composition };
     } finally {
       prepared.release();
     }
@@ -511,7 +515,7 @@ export class RenderJobService {
     const k = (render.width * render.height) / (preset.width * preset.height);
     const scaled: FormatPreset = { ...preset, width: render.width, height: render.height,
       ...(preset.targetBitrateKbps !== undefined ? { targetBitrateKbps: Math.round(preset.targetBitrateKbps * k) } : {}) };
-    const warning = largeFileWarning(scaled, file.slice(file.lastIndexOf('.') + 1), st.size, durationSec, composition.fps, render.quality);
+    const warning = largeFileWarning(scaled, file.slice(file.lastIndexOf('.') + 1), st.size, durationSec, render.fps ?? composition.fps, render.quality);
     return { problems, issues, warning };
   }
 
@@ -622,7 +626,7 @@ export class RenderJobService {
       prepared.release();
     }
     // What the render was made with (decision 974): its quality, size and the encoder that ran; a still has no quality.
-    const render: Pick<OutputFileInfo, 'render'> = still ? {} : { render: renderInfoOf(result, DEFAULT_EXPORT_QUALITY) };
+    const render: Pick<OutputFileInfo, 'render'> = still ? {} : { render: renderInfoOf(result, DEFAULT_EXPORT_QUALITY, storeRenderOptions(format, composition).fps ?? composition.fps) };
     // From here the new file is in place: the record is always written, with what is on disk (I3), whatever happens next
     // (a cancel waits for these few steps; a failing follower is left out and reported). First the primary alone, at once,
     // with the renderer's own hash (a crash during the steps below then leaves a true record), then everything.

@@ -511,6 +511,7 @@ export const it: Messages = {
     jobLabel: (p) => `Render · ${p.title} v${p.n}`,
     exportJobLabel: (p) => `Render per l'export · ${p.title} v${p.n} (${p.detail})`,
     qualityNames: { standard: 'Standard', high: 'Alta', max: 'Massima' },
+    fpsName: (p) => `${p.fps} fps`,
     notV2: (p) => `v${p.n} non ha composizioni da renderizzare: i suoi file media sono il risultato`,
     formatsNotInVersion: (p) => `Formati non presenti in questa versione: ${p.list}`,
     noRenderer: 'Il render non è disponibile in questo Motion Studio',
@@ -1394,6 +1395,10 @@ Variabili: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (array JSON)`,
       resolution: 'Risoluzione',
       resolutionOriginal: 'Dimensione del formato',
       resolutionOption: (p) => (p.n === 2160 ? '2160p (4K)' : p.n === 1440 ? '1440p (2K)' : `${p.n}p`),
+      // Report 39 (decisione 1235): la frequenza dei fotogrammi dei video, quella del formato se non scelta.
+      frameRate: 'Fotogrammi al secondo',
+      frameRateOriginal: (p) => (p.fps === null ? 'Del formato' : `${p.fps} fps (del formato)`),
+      frameRateOption: (p) => `${p.n} fps`,
       quality: 'Qualità',
       qualityNames: { standard: 'Standard', high: 'Alta', max: 'Massima' },
       qualityHints: {
