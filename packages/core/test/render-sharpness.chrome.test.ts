@@ -83,10 +83,55 @@ const backdrop = (rig: string) => `<!doctype html><html><head><style>html,body{m
 .bg{position:absolute;left:0;top:0;width:320px;height:180px;background:repeating-linear-gradient(45deg,#fff 0 10px,#f00 10px 20px)}
 #rig{position:absolute;left:30px;top:20px;width:260px;height:140px;${rig}}.glass{position:absolute;left:20px;top:20px;width:200px;height:100px;backdrop-filter:blur(8px)}
 </style></head><body><div class="bg"></div><div id="rig"><div class="glass"></div></div></body></html>`;
+/**
+ * Decisions 1250, 1252: a `translate` that starts to match a hinted box later, without a class or id change on it: a sibling
+ * inserted before it (`.s + #c`), a `:has()` flag added elsewhere, a rule added with `insertRule`, and a box whose layer
+ * rewrites its inline hint before a class change gives it a translate (`.t #d`). Each box must land where its rule puts it.
+ * (A layer's own `@layer` rule giving a hinted box a translate loses to the unfreezer's identity: decision 1255.)
+ */
+const late = (hint: boolean) => `<!doctype html><html><head><style>html,body{margin:0;background:#000}
+.b{position:absolute;top:20px;width:30px;height:30px;background:#fff}
+#c{left:10px;${hint ? 'will-change:transform' : ''}}.s + #c{translate:40px}
+#e{left:90px;${hint ? 'will-change:transform' : ''}}body:has(.flag) #e{translate:0 60px}
+#f{left:170px;${hint ? 'will-change:transform' : ''}}
+.t #d{translate:30px 90px}#d{left:240px}
+</style></head><body><div id="c" class="b"></div><div id="e" class="b"></div><div id="f" class="b"></div><div id="d" class="b"${hint ? ' style="will-change: transform"' : ''}></div><script>
+const step = new Set();
+const once = (k, t, at, f) => { if (t >= at && !step.has(k)) { step.add(k); f(); } };
+window.msSeek = (t) => {
+  // Each change in its own frame: no class or id change comes with the first three.
+  once('sibling', t, 0.3, () => { const s = document.createElement('i'); s.className = 's'; document.getElementById('c').before(s); });
+  once('has', t, 0.3, () => { const f = document.createElement('b'); f.className = 'flag'; document.body.append(f); });
+  once('rule', t, 0.3, () => document.styleSheets[0].insertRule('#f{translate:0 100px}', document.styleSheets[0].cssRules.length));
+  once('rewrite', t, 0.3, () => document.getElementById('d').style.setProperty('will-change', 'opacity'));
+  once('class', t, 0.6, () => document.body.classList.add('t'));
+};
+</script></body></html>`;
+/**
+ * Decision 1255: the layer's own first sheet is its own. `document.querySelector('style').textContent += …` and
+ * `document.styleSheets[0].cssRules[1].style` reach the layer's sheet (the unfreezer adds none to the document), so both
+ * boxes turn green and the layer script never throws; a layer that empties `adoptedStyleSheets` gets the sheet back.
+ */
+const ownSheets = `<!doctype html><html><head><style>html,body{margin:0;background:#000}
+#k{position:absolute;left:20px;top:20px;width:40px;height:40px;background:#f00;will-change:transform}
+#m{position:absolute;left:100px;top:20px;width:40px;height:40px;background:#f00}
+#r{margin:100px 0 0 200px;width:60px;height:60px;will-change:transform}#r i{position:absolute;left:0;top:0;width:20px;height:20px;background:#0f0}
+</style></head><body><div id="k"></div><div id="m"></div><div id="r"><i></i></div><script>
+let done = false;
+window.msSeek = (t) => {
+  if (t < 0.3 || done) return;
+  done = true;
+  document.querySelector('style').textContent += '#k{background:#0f0}';
+  document.styleSheets[0].cssRules[2].style.background = '#0f0';
+  document.adoptedStyleSheets = []; // the unfreezer's sheet comes back: #r stays the containing block of its child
+};
+</script></body></html>`;
 const STRUCTURE: Record<string, string> = {
+  ownSheets,
   hint: structure('will-change:transform'), reference: structure('transform:translate(0)'),
   hint3d: threeD('will-change:transform'), reference3d: threeD(''),
   hintBackdrop: backdrop('will-change:transform'), referenceBackdrop: backdrop(''),
+  hintLate: late(true), referenceLate: late(false),
 };
 
 describe.skipIf(!tools.ok)('renderer: text in a scaled layer stays sharp (report 38)', { timeout: 300_000 }, () => {
@@ -141,15 +186,28 @@ describe.skipIf(!tools.ok)('renderer: text in a scaled layer stays sharp (report
   });
 
   /** The largest grey difference between the first frames of two layers. */
-  const maxDiff = async (a: string, b: string) => {
-    const [x, y] = [grey((await frames(a, [0]))[0]!.data, a), grey((await frames(b, [0]))[0]!.data, b)];
-    let diff = 0;
-    for (let i = 0; i < x.length; i++) diff = Math.max(diff, Math.abs(x[i]! - y[i]!));
-    return diff;
+  /** The largest grey difference between the frames of two layers at `times` (one number per time when several). */
+  const maxDiff = async (a: string, b: string, times = [0]) => {
+    const [fa, fb] = [await frames(a, times), await frames(b, times)];
+    const diffs = fa.map((f, k) => {
+      const [x, y] = [grey(f.data, `${a}-${k}`), grey(fb[k]!.data, `${b}-${k}`)];
+      let diff = 0;
+      for (let i = 0; i < x.length; i++) diff = Math.max(diff, Math.abs(x[i]! - y[i]!));
+      return diff;
+    });
+    return diffs.length === 1 ? diffs[0]! : diffs;
   };
   it('what the hint makes is kept: stacking context, blend group, containing block, 3D planes and a backdrop-filter child', async () => {
-    const diffs = { structure: await maxDiff('hint', 'reference'), threeD: await maxDiff('hint3d', 'reference3d'), backdrop: await maxDiff('hintBackdrop', 'referenceBackdrop') };
+    const diffs = { structure: await maxDiff('hint', 'reference'), threeD: await maxDiff('hint3d', 'reference3d'), backdrop: await maxDiff('hintBackdrop', 'referenceBackdrop'),
+      late: await maxDiff('hintLate', 'referenceLate', [0, 0.35, 0.7]) };
     console.info('[sharpness] structure differences:', JSON.stringify(diffs));
-    expect(diffs).toEqual({ structure: 0, threeD: 0, backdrop: 0 });
+    expect(diffs).toEqual({ structure: 0, threeD: 0, backdrop: 0, late: [0, 0, 0] });
+  });
+
+  it('the layer\'s own first sheet stays its own: appended CSS and CSSOM edits apply, nothing throws (decision 1255)', async () => {
+    const [, after] = await frames('ownSheets', [0, 0.5]);
+    const px = grey(after!.data, 'ownSheets');
+    // Green is grey ~150, red ~76.
+    expect([px[40 * W + 40]!, px[40 * W + 120]!, px[110 * W + 210]!].map((g) => g > 120)).toEqual([true, true, true]);
   });
 });

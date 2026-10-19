@@ -171,12 +171,12 @@ describe('layer.js replies to a stall with code layerStalled', () => {
 // Report 38 (decisions 1230, 1237–1247): the layer document never keeps a will-change hint that freezes the raster scale.
 describe('createUnfreezer', () => {
   const doc = (html: string) => new JSDOM(`<!doctype html>${html}`, { pretendToBeVisual: true }).window.document;
-  const wc = (d: Document, id: string) => { const s = d.getElementById(id)!.style; return `${s.getPropertyValue('will-change')}|${s.getPropertyPriority('will-change')}|${s.getPropertyValue('translate')}`; };
-  it('drops the freezing values (any rule, inline !important too), keeps the others; an untransformed element gets translate 0', () => {
+  const wc = (d: Document, id: string) => { const el = d.getElementById(id)!; const s = el.style; return `${s.getPropertyValue('will-change')}|${s.getPropertyPriority('will-change')}|${el.hasAttribute('data-ms-u') ? 'u' : ''}${s.getPropertyValue('translate')}`; };
+  it('drops the freezing values (any rule, inline !important too), keeps the others; the element is marked for the layered translate 0, never inline', () => {
     const d = doc(`<style>#a:not(#x):not(#y){will-change:transform !important}</style><div id="a"></div>
       <div id="b" style="will-change: opacity, scale !important; color: red; transform: rotate(3deg)"></div><div id="c" style="will-change: opacity"></div><div id="e"></div>`);
     createUnfreezer(d).run();
-    expect([wc(d, 'a'), wc(d, 'b'), wc(d, 'c'), wc(d, 'e')]).toEqual(['auto|important|0px', 'opacity|important|', 'opacity||', '||']);
+    expect([wc(d, 'a'), wc(d, 'b'), wc(d, 'c'), wc(d, 'e')]).toEqual(['auto|important|u', 'opacity|important|u', 'opacity||', '||']);
     expect(d.getElementById('b')!.style.color).toBe('red');
   });
   it('after the layer\'s code: a rewritten inline style, a new element, a class change, another attribute and a new sheet are caught; nothing changed costs nothing', () => {
@@ -186,18 +186,18 @@ describe('createUnfreezer', () => {
     const a = d.getElementById('a')!;
     a.style.cssText = 'will-change: translate !important; transform: scale(2)';
     u.run();
-    expect(wc(d, 'a')).toBe('auto|important|');
+    expect(wc(d, 'a')).toBe('auto|important|u');
     expect(a.style.transform).toBe('scale(2)');
     const n = d.createElement('div'); n.id = 'n'; n.innerHTML = '<span id="m" style="will-change: transform"></span>'; d.body.append(n);
     d.getElementById('b')!.className = 'z';
     u.run();
-    expect([wc(d, 'm'), wc(d, 'b')]).toEqual(['auto|important|0px', 'auto|important|0px']);
+    expect([wc(d, 'm'), wc(d, 'b')]).toEqual(['auto|important|u', 'auto|important|u']);
     d.getElementById('c')!.setAttribute('data-k', '1');
     u.run();
-    expect(wc(d, 'c')).toBe('auto|important|0px');
+    expect(wc(d, 'c')).toBe('auto|important|u');
     const st = d.createElement('style'); st.textContent = '#n{will-change:scale}'; d.head.append(st);
     u.run();
-    expect(wc(d, 'n')).toBe('auto|important|0px');
+    expect(wc(d, 'n')).toBe('auto|important|u');
     const spy = vi.spyOn(d.defaultView!, 'getComputedStyle');
     u.run();
     a.style.transform = 'scale(3)'; // the camera rig's own frame: no style is computed
@@ -210,11 +210,46 @@ describe('createUnfreezer', () => {
     const d = doc('<style id="s">#a{will-change:transform}</style><div id="a"></div><div id="b" style="will-change: transform; color: red"></div>');
     const u = createUnfreezer(d);
     u.run();
-    expect([wc(d, 'a'), wc(d, 'b')]).toEqual(['auto|important|0px', 'auto|important|0px']);
+    expect([wc(d, 'a'), wc(d, 'b')]).toEqual(['auto|important|u', 'auto|important|u']);
     d.getElementById('s')!.textContent = '#a{color:blue}';
     u.run();
-    expect([wc(d, 'a'), wc(d, 'b')]).toEqual(['||', 'auto|important|0px']);
+    expect([wc(d, 'a'), wc(d, 'b')]).toEqual(['||', 'auto|important|u']);
     expect(d.getElementById('b')!.style.color).toBe('red');
+  });
+  it('decisions 1250, 1252, 1255: no sheet in the document; a rewritten hint loses its mark; our mark costs no scan', () => {
+    const d = doc('<style>#z{color:red}</style><div id="a" style="will-change: transform"></div>');
+    const u = createUnfreezer(d);
+    u.run();
+    expect([...d.querySelectorAll('style')].map((x) => x.textContent)).toEqual(['#z{color:red}']);
+    expect(d.styleSheets).toHaveLength(1);
+    const a = d.getElementById('a')!;
+    expect(wc(d, 'a')).toBe('auto|important|u');
+    a.style.setProperty('will-change', 'opacity');
+    u.run();
+    expect(wc(d, 'a')).toBe('opacity||');
+    a.style.setProperty('will-change', 'transform');
+    u.run();
+    expect(wc(d, 'a')).toBe('auto|important|u');
+    const spy = vi.spyOn(d.defaultView!, 'getComputedStyle');
+    a.removeAttribute('data-ms-u'); // a record our filter drops: no scan
+    u.run();
+    expect(spy).toHaveBeenCalledTimes(0);
+    spy.mockRestore();
+  });
+  it('decision 1256: a mark copied by cloneNode or markup goes; a full scan strips every mark it did not write', () => {
+    const d = doc('<div id="a" style="will-change: transform"><i>x</i></div><div id="w"></div>');
+    const u = createUnfreezer(d);
+    u.run();
+    const copy = d.getElementById('a')!.cloneNode(true) as HTMLElement;
+    copy.id = 'c';
+    d.body.append(copy);
+    d.getElementById('w')!.innerHTML = '<p id="p" data-ms-u=""></p>';
+    u.run();
+    expect([d.getElementById('c')!.hasAttribute('data-ms-u'), d.getElementById('p')!.hasAttribute('data-ms-u'), d.getElementById('a')!.hasAttribute('data-ms-u')]).toEqual([false, false, true]);
+    const q = d.createElement('q'); q.id = 'q'; q.setAttribute('data-ms-u', ''); d.body.append(q);
+    d.body.className = 'x'; // a full scan
+    u.run();
+    expect([d.getElementById('q')!.hasAttribute('data-ms-u'), d.getElementById('a')!.hasAttribute('data-ms-u')]).toEqual([false, true]);
   });
   it('captures getComputedStyle when made: a layer replacing it later changes nothing', () => {
     const d = doc('<div id="a"></div>');
@@ -223,7 +258,7 @@ describe('createUnfreezer', () => {
     (d.defaultView as unknown as { getComputedStyle: unknown }).getComputedStyle = () => { throw new Error('replaced'); };
     d.getElementById('a')!.setAttribute('style', 'will-change: transform');
     expect(() => u.run()).not.toThrow();
-    expect(wc(d, 'a')).toBe('auto|important|0px');
+    expect(wc(d, 'a')).toBe('auto|important|u');
   });
   it('a budget bounds one run; the rest waits for the next', () => {
     const d = doc(`${Array.from({ length: 10 }, (_, i) => `<i id="i${i}" style="will-change: transform"></i>`).join('')}`);
