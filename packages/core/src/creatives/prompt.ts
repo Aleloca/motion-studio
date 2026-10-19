@@ -280,6 +280,8 @@ export const COMPOSITION_SECTION = [
   '  - paths are relative, under `assets/` or `layers/`, without `..`, schemes or absolute paths;',
   '  - `assets/lib/` is reserved for the files Motion Studio\'s editor adds (library assets and brand fonts the user picked): keep them and their names as they are, never put your own files there.',
   '- html layers (`layers/*.html`) are for effects the clips cannot express: pure in time (CSS/WAAPI animations, or `window.msSeek = (t) => …` / `window.msTimeline`), signal loading with `window.msReady` (a promise), read `window.msParams`; `msReady` and `msSeek` never wait on time (no setTimeout, setInterval, Date or performance.now waits: time does not pass while a frame is rendered); no network, no Worker, no AudioContext, no media playing on its own.',
+  // Report 38 (decision 1232): a will-change layer is rasterised once and resampled, so zoomed text came out blurred.
+  '- In html layers never use `will-change` (nor `translateZ`/`translate3d` hacks) on elements that scale or rotate, such as a camera rig: renders rasterise every frame at the output size, and the hint only freezes the raster scale and blurs the text.',
   '- Minimal example (a 1080×1920, 6 s video):',
   '```json',
   '{ "$schema": "motion-studio/composition@1", "width": 1080, "height": 1920, "fps": 30, "duration": 6, "background": "#101828",',

@@ -164,6 +164,10 @@ describe('CONTEXT_MD', () => {
     expect(CONTEXT_MD).not.toContain('renderCommand');
     expect(CONTEXT_MD).not.toMatch(/Remotion works well|rendered with Playwright/);
   });
+  it('tells html layers not to use will-change on what scales or rotates, in context.md and in the prompt (report 38, decision 1232)', () => {
+    expect(CONTEXT_MD).toContain('never put `will-change` (nor `translateZ`/`translate3d` hacks) on elements that scale or rotate');
+    expect(COMPOSITION_SECTION.join('\n')).toContain('never use `will-change` (nor `translateZ`/`translate3d` hacks) on elements that scale or rotate');
+  });
   it('tells html layers never to wait on time in msReady/msSeek, in context.md and in the prompt (task 2b, decision 709)', () => {
     expect(CONTEXT_MD).toContain('`msReady` and `msSeek` must never wait on time: no `setTimeout`, `setInterval`, `Date` or `performance.now` waits');
     expect(COMPOSITION_SECTION.join('\n')).toContain('`msReady` and `msSeek` never wait on time (no setTimeout, setInterval, Date or performance.now waits');

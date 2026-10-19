@@ -57,6 +57,7 @@ For effects the clips cannot express (particles, charts, custom typography). A l
 - signal loading with \`window.msReady = (async () => { … })()\` (images and fonts loaded);
 - \`msReady\` and \`msSeek\` must never wait on time: no \`setTimeout\`, \`setInterval\`, \`Date\` or \`performance.now\` waits (time does not pass while Motion Studio renders a frame, so such a layer fails the render);
 - read its parameters from \`window.msParams\`;
+- never put \`will-change\` (nor \`translateZ\`/\`translate3d\` hacks) on elements that scale or rotate, such as a camera rig: Motion Studio rasterises every frame at the output size, and the hint only freezes the raster scale and blurs the text;
 - **forbidden**: network (fetch, XMLHttpRequest, WebSocket, external URLs), Worker, AudioContext, \`<video>\`/\`<audio>\` playing on their own. Put files in \`assets/\` and reference them relatively (\`../assets/x.png\`).
 
 ### Common cases
