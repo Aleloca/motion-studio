@@ -10,13 +10,16 @@ import { app, BrowserWindow, powerSaveBlocker, session } from 'electron';
 import type { Composition, FormatPreset } from '../../../../packages/shared/src/index.ts';
 import { renderComposition, RenderError, type FfmpegInfo } from '@motion-studio/core';
 import { startCompositionServer } from '../../../../packages/core/src/compositions/composition-server.ts';
+import { renderFrames } from '../../../../packages/core/src/render/frames.ts';
 import { appKeptAwake, closeAllRenderWindows, createRenderWindow, ElectronProvider, liveRenderWindowCount, shutdownForQuit } from '../../src/render-window.ts';
 import { readdirSync, existsSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { hardenUiWindow, installPreviewFilter } from '../../src/preview-filter.ts';
 
 interface Config {
-  scenario: 'options' | 'session-rules' | 'render' | 'hostile-render' | 'preview' | 'lifecycle' | 'memory' | 'quit';
+  scenario: 'options' | 'session-rules' | 'render' | 'hostile-render' | 'preview' | 'lifecycle' | 'memory' | 'quit' | 'scale' | 'render-cost' | 'frames';
+  /** scale (report 51): the pages to open under `creative`, each at its scale (none: the default) and seek time. */
+  scalePages?: Array<{ name: string; composition: Composition; format: string; scale?: number; t?: number }>;
   /** The built runtime. */
   dist: string;
   /** The creative folder (render scenarios). */
@@ -33,6 +36,10 @@ interface Config {
    */
   ui?: { origin: string; all: string; real: string; naked: string; inherit: string; realComposition: string; nakedComposition: string };
   parallel?: number;
+  /** frames: the storyboard times (renderFrames, `width` wide). */
+  frames?: { times: number[]; width: number };
+  /** render-cost (decision 1348): the renders to time, each at its short side (none: 1x) and offscreen frame rate (none: the default). */
+  costRuns?: Array<{ name: string; short?: number; frameRate?: number; painting?: boolean }>;
   /** A throwaway folder under the OS temp folder for every Electron data path (the test removes it after the exit). */
   scratch: string;
 }
@@ -129,7 +136,7 @@ async function run(): Promise<void> {
         // What the page itself sees: no Node, no preload bridge.
         pageGlobals: await wc.executeJavaScript('[typeof require, typeof process, typeof module, typeof window.electron, typeof window.motionStudio].join()'),
         processSandboxed: metric?.sandboxed ?? null,
-        visible: rw.win.isVisible(), offscreen: wc.isOffscreen(), persistent: ses.isPersistent(), separate: ses !== session.defaultSession,
+        visible: rw.win.isVisible(), offscreen: wc.isOffscreen(), painting: wc.isPainting(), persistent: ses.isPersistent(), separate: ses !== session.defaultSession,
         proxy: {
           internet: await ses.resolveProxy('https://example.com/'),
           server: await ses.resolveProxy('http://127.0.0.1:47001/abcdefghijklmnop0123/x'),
@@ -183,6 +190,45 @@ async function run(): Promise<void> {
         tempDir: scratch,
       });
       report({ ok: true, frames: r.frames, width: r.width, height: r.height, warnings: r.warnings, ms: Date.now() - t0, windowsAfter: liveRenderWindowCount(), peak: provider.peakMemory });
+      return;
+    }
+    case 'frames': {
+      // A storyboard as the app asks for one (renderFrames, purpose `frames`, a smaller capture): after decision 1348 the
+      // windows paint no `paint` events; each frame must still show its own time.
+      const provider = new ElectronProvider({ limits: { timeLimitMs: 30 * 60_000 } });
+      const r = await renderFrames({
+        dir: c.creative!, versionDir: 'outputs/v1', composition: c.composition!, format: formatOf(c.composition!, c.format!), times: c.frames!.times,
+        width: c.frames!.width, imageFormat: 'png', provider, signal: new AbortController().signal, distDir: c.dist,
+      });
+      report({ errors: r.errors, frames: r.frames.map((f) => ({ t: f.t, width: f.width, height: f.height, png: f.data.toString('base64') })), windowsAfter: liveRenderWindowCount() });
+      return;
+    }
+    case 'render-cost': {
+      // Decision 1348: what a render costs the main process (offscreen windows hand their frames to it) and the machine,
+      // at 1x and at a scale, with the default parallel pages: wall time, main-process CPU (process.cpuUsage), its peak RSS
+      // sampled every 100 ms. `painting` restores the paint events the render windows stop (the cost before decision 1348), `frameRate` lowers them.
+      for (const run of c.costRuns!) {
+        const provider = new ElectronProvider({
+          limits: { timeLimitMs: 30 * 60_000 },
+          ...(run.frameRate !== undefined || run.painting ? { createWindow: async (o) => {
+            const rw = await createRenderWindow(o);
+            if (run.frameRate !== undefined) rw.win.webContents.setFrameRate(run.frameRate);
+            if (run.painting) rw.win.webContents.startPainting();
+            return rw;
+          } } : {}),
+        });
+        let rss = 0;
+        const timer = setInterval(() => { rss = Math.max(rss, process.memoryUsage().rss); }, 100);
+        const [cpu0, t0] = [process.cpuUsage(), Date.now()];
+        const r = await renderComposition({
+          dir: c.creative!, versionDir: 'outputs/v1', composition: c.composition!, format: formatOf(c.composition!, c.format!), out: join(scratch, `${run.name}.mp4`),
+          provider, signal: new AbortController().signal, distDir: c.dist, ffmpeg: c.ffmpeg!, encoder: 'libx264', tempDir: scratch,
+          ...(run.short !== undefined ? { short: run.short } : {}),
+        });
+        clearInterval(timer);
+        const cpu = process.cpuUsage(cpu0);
+        report({ cost: run.name, frames: r.frames, width: r.width, height: r.height, ms: Date.now() - t0, mainCpuMs: Math.round((cpu.user + cpu.system) / 1000), mainRssPeakMB: Math.round(rss / 2 ** 20), windowsAfter: liveRenderWindowCount() });
+      }
       return;
     }
     case 'hostile-render': {
@@ -302,6 +348,36 @@ async function run(): Promise<void> {
       const temps = readdirSync(dir).filter((n) => n.startsWith(`.${basename(c.out!)}.render-`));
       const workDirs = readdirSync(scratch).filter((n) => n.startsWith('ms-render-'));
       report({ phase: 'quit', framesAtQuit: frames, windowsBefore, result: await outcome, windows: liveRenderWindowCount(), allWindows: BrowserWindow.getAllWindows().length, out: existsSync(c.out!), temps, workDirs });
+      return;
+    }
+    case 'scale': {
+      // Report 51: pages through the provider, as a render opens them (`deviceScaleFactor` at a scale, none at 1). Each
+      // reports the layer frame's devicePixelRatio and process, the page's, and the PNG at `t`.
+      const server = await startCompositionServer({ uiOrigins: [], distDir: c.dist });
+      try {
+        for (const p of c.scalePages!) {
+          const provider = new ElectronProvider({ limits: { timeLimitMs: 30 * 60_000 } });
+          try {
+            const s = await server.mintSession({ creativeDir: c.creative!, versionDir: 'outputs/v1', format: p.format, composition: p.composition, mode: 'render' });
+            const page = await provider.open({ width: p.composition.width, height: p.composition.height, url: s.url, signal: new AbortController().signal, ...(p.scale !== undefined ? { deviceScaleFactor: p.scale } : {}) });
+            await page.seek(p.t ?? 0);
+            const png = await page.capture('png');
+            const wc = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL() === s.url)!.webContents;
+            const layers = [];
+            for (const f of wc.mainFrame.framesInSubtree) {
+              if (!f.url.includes('/layers/')) continue;
+              layers.push({ outOfProcess: f.osProcessId !== wc.mainFrame.osProcessId, ...(await f.executeJavaScript('({ dpr: devicePixelRatio, inner: [innerWidth, innerHeight] })') as object) });
+            }
+            const top = await wc.executeJavaScript('({ dpr: devicePixelRatio, inner: [innerWidth, innerHeight] })');
+            // Decision 1348: still no paint events once the window shows the composition (a navigation does not restart them).
+            report({ page: p.name, errors: page.info.errors.length, top, layers, painting: wc.isPainting(), png: png.toString('base64') });
+          } finally {
+            await provider.close();
+          }
+        }
+      } finally {
+        await server.close();
+      }
       return;
     }
     case 'memory': {

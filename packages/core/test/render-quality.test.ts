@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { captureFrame } from '../src/render/capture.ts';
-import { pagePixels, type RenderPage } from '../src/render/chromium-provider.ts';
+import { pagePixels, scaleFlags, type RenderPage } from '../src/render/chromium-provider.ts';
 import { h264Args, qualitySettings } from '../src/render/encode.ts';
 import { filterArgv } from '../src/media/ffmpeg-filters.ts';
 
@@ -54,5 +54,13 @@ describe('render quality (decision 974)', () => {
   it('review #8: a page rasterised at a scale counts its physical pixels for the memory limits', () => {
     expect(pagePixels({ width: 1080, height: 1920 })).toEqual({ width: 1080, height: 1920 });
     expect(pagePixels({ width: 1920, height: 1080, deviceScaleFactor: 2 })).toEqual({ width: 3840, height: 2160 });
+  });
+
+  it('report 51: a browser for an upscaled render is launched at its scale; at 1 (stills, previews) or below with no flag', () => {
+    expect(scaleFlags(4 / 3)).toEqual([`--force-device-scale-factor=${4 / 3}`]);
+    expect(scaleFlags(2)).toEqual(['--force-device-scale-factor=2']);
+    // Below 1 (a 720p or 480p export of a 1080p composition, decision 1346): no flag, as before; the layers are drawn at 1x and
+    // the page shrinks them.
+    for (const k of [1, 0.5, 2 / 3, 0, -1, Number.NaN, Number.POSITIVE_INFINITY]) expect(scaleFlags(k), String(k)).toEqual([]);
   });
 });

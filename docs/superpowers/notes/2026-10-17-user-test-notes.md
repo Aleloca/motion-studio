@@ -348,6 +348,22 @@ arrives and worked on later together.
     Done (decisions 1330–1332): at rest Export is icon + "Esporta" (about 92 px); while an export or a render runs it widens
     (the motion system's `stretch`, a small spring; nothing under reduced motion) to show its progress, and shrinks back.
 
+51. **Text still not sharp in a 2K export after report 38.** The user exported again at 2560×1440, quality max, 60 fps
+    (2026-10-19), and the text is still soft. Cause (measured): html layers are sandboxed iframes running out of process;
+    the export scale (decision 974) is set with `Emulation.setDeviceMetricsOverride` on the top-level page only, which
+    never reaches them (the iframe's own session refuses it), so each layer draws at 1x and the page stretches it: every
+    html layer of an export at another resolution is an upscale. Squared gradient energy on the user's frames at t = 20
+    and t = 22.5: 298 and 237 against 542 and 424 for the ground truth (5120 shrunk). Same in the desktop app (Electron
+    provider, same page code, layers also out of process).
+    Proposed fix: give the scale to the whole browser or window, keeping the layers' process isolation.
+    Done (decisions 1340–1348): Chrome is launched with `--force-device-scale-factor` when the render has a scale, the
+    desktop's render window renders offscreen at that scale (`offscreen.deviceScaleFactor`); the layers stay out of
+    process and see `devicePixelRatio` = the scale; stills, previews and 1x renders are unchanged. On the user's frames,
+    both providers: 298 → 532 at t = 20, 237 → 431 at t = 22.5 (98% and 101% of the ground truth). Page zoom and
+    device emulation were measured and rejected (1342, 1343). After review (1346–1348): exports below 1 (720p, 480p)
+    keep the layers at 1x as before, chrome-headless-shell checked, and the render windows no longer copy every
+    offscreen frame into the main process (main-process CPU of a 2560×1440 render 7.5 s → 5.6 s).
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's

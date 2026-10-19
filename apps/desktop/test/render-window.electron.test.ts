@@ -16,13 +16,17 @@
  * - **the preview filter:** a UI-like page framing the real preview AND every hostile layer directly (Task 3's residual):
  *   the control (no filter) reaches the canary; with the filter on the UI session nothing does, and the preview still loads;
  * - **lifecycle:** app quit closes every render window of every provider (their renderers end), cancel, the time limit,
- *   the window cap; **memory:** a 2 GB layer trips the watchdog (`memoryLimit`), no window left.
+ *   the window cap; **memory:** a 2 GB layer trips the watchdog (`memoryLimit`), no window left;
+ * - **scale (report 51):** at scale 2 an html layer (out of process) sees devicePixelRatio 2 and its text is as sharp as
+ *   the ground truth (the layer twice as large at scale 1), report 38's camera rig too; at 1 and below nothing changes.
+ * - **no paint events (decision 1348):** a storyboard (renderFrames) and a parallel render of a layer with its own video, a
+ *   CSS animation and a self-running rAF canvas show each frame's own time; the windows stay without paint events.
  *
  * Runs on macOS when the Electron binary is installed; elsewhere (a display is needed) only with MS_REQUIRE_ELECTRON=1,
  * which also makes a missing binary a failure. Needs ffmpeg for the renders.
  */
-import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { createRequire } from 'node:module';
 import { tmpdir, userInfo } from 'node:os';
@@ -38,6 +42,7 @@ import {
   selfNavigationPath, selfNavigationTrack, workerTransportProbe, writeHostileLayers,
 } from '../../../packages/core/test/helpers/hostile-layers.ts';
 import { buildRuntime, decodeStrips, FONT, frameCodedVideo, put, readCode, startCanary, startUdpCanary, type Canary, type UdpCanary } from '../../../packages/core/test/helpers/render-env.ts';
+import { barDpr, gradientEnergy, scaleComposition, scaleLayer, TEXT_BOX } from '../../../packages/core/test/helpers/scale-layers.ts';
 
 const DESKTOP = join(import.meta.dirname, '..');
 
@@ -76,6 +81,30 @@ const OUTRO_LAYER = `<!doctype html><html><body style="margin:0"><canvas id="c" 
 const g = document.getElementById('c').getContext('2d');
 window.msReady = Promise.resolve();
 window.msSeek = (t) => { g.fillStyle = '#000'; g.fillRect(0, 0, 100, 100); g.fillStyle = '#ffcc00'; g.fillRect(0, 0, Math.round(100 * Math.min(1, t / 2)), 100); };
+</script></body></html>`;
+
+/**
+ * Decision 1348's checks: a layer with its own `<video>` (a frame-coded one, sought by the layer and drawn into a canvas on
+ * `seeked`), a CSS animation (a box moving 100 px a second) and a self-running rAF canvas (a bar growing 100 px a
+ * second, from the layer's virtual `performance.now`). Every frame must show its own time.
+ */
+const MOTION_LAYER = `<!doctype html><html><head><style>html,body{margin:0;background:#000;overflow:hidden}
+#v{position:absolute;left:0;top:0;width:64px;height:32px;opacity:0}#vc{position:absolute;left:0;top:0}
+#css{position:absolute;left:0;top:80px;width:20px;height:20px;background:#fff;animation:go 2s linear forwards}
+@keyframes go{from{transform:translateX(0)}to{transform:translateX(200px)}}#raf{position:absolute;left:0;top:120px}
+</style></head><body><video id="v" src="../assets/v.mp4" muted playsinline preload="auto"></video><canvas id="vc" width="64" height="32"></canvas>
+<div id="css"></div><canvas id="raf" width="320" height="20"></canvas><script>
+const v = document.getElementById('v'), vg = document.getElementById('vc').getContext('2d'), rg = document.getElementById('raf').getContext('2d');
+const loop = () => { rg.clearRect(0, 0, 320, 20); rg.fillStyle = '#fff'; rg.fillRect(0, 0, Math.round(performance.now() / 10), 20); requestAnimationFrame(loop); };
+requestAnimationFrame(loop);
+window.msReady = new Promise((r) => { if (v.readyState >= 2) r(); else v.addEventListener('loadeddata', () => r(), { once: true }); });
+window.msSeek = (t) => new Promise((resolve) => {
+  const draw = () => { vg.drawImage(v, 0, 0, 64, 32); resolve(); };
+  const at = (Math.round(t * 30) + 0.5) / 30;
+  if (Math.abs(v.currentTime - at) < 1e-6 && !v.seeking) { draw(); return; }
+  v.addEventListener('seeked', draw, { once: true });
+  v.currentTime = at;
+});
 </script></body></html>`;
 
 /** A layer that allocates 2 GB of ArrayBuffers once seeked past 0.1 s (as in the core's process test). */
@@ -297,7 +326,7 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
     expect(r.ok, r.output).toBe(true);
     const o = r.lines[0]!;
     expect(o.prefs).toEqual({ sandbox: true, contextIsolation: true, nodeIntegration: false, nodeIntegrationInSubFrames: false, preload: null, webviewTag: false });
-    expect(o).toMatchObject({ visible: false, offscreen: true, persistent: false, separate: true, webrtc: 'disable_non_proxied_udp', keptAwake: true, windowsOpen: 1 });
+    expect(o).toMatchObject({ visible: false, offscreen: true, painting: false, persistent: false, separate: true, webrtc: 'disable_non_proxied_udp', keptAwake: true, windowsOpen: 1 });
     expect(o.pageGlobals).toBe('undefined,undefined,undefined,undefined,undefined');
     if (process.platform !== 'linux') expect(o.processSandboxed).toBe(true);
     expect(o.pids).toBeGreaterThan(0);
@@ -504,6 +533,137 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
     expect(q).toMatchObject({ result: 'cancelled', windows: 0, allWindows: 0, out: false, temps: [], workDirs: [] });
     expect(existsSync(out)).toBe(false);
   }, 900_000);
+
+  it('report 51: at scale 2 an html layer, still out of process, sees devicePixelRatio 2 and its text is as sharp as the ground truth; 1x unchanged', async () => {
+    const creative = join(work, 'scale');
+    const layers = { text: scaleLayer(), truth: scaleLayer(2), rig: scaleLayer(1, true), 'rig-truth': scaleLayer(2, true) };
+    for (const [id, html] of Object.entries(layers)) {
+      const dir = join(creative, 'outputs', 'v1', 'compositions', id);
+      put(join(dir, 'assets', 'Mono.woff2'), readFileSync(FONT));
+      put(join(dir, 'layers', `${id}.html`), html);
+    }
+    const pages = [
+      { name: 'scaled', composition: scaleComposition('text'), format: 'text', scale: 2 },
+      { name: 'truth', composition: scaleComposition('truth', 2), format: 'truth' },
+      { name: 'plain', composition: scaleComposition('text'), format: 'text' },
+      { name: 'one', composition: scaleComposition('text'), format: 'text', scale: 1 },
+      { name: 'rig', composition: scaleComposition('rig'), format: 'rig', scale: 2, t: 1 },
+      { name: 'rig-truth', composition: scaleComposition('rig-truth', 2), format: 'rig-truth', t: 1 },
+      // The user's case: 1920 × 1080 exported at 2560 × 1440.
+      { name: 'third', composition: scaleComposition('text'), format: 'text', scale: 4 / 3 },
+      // Below 1 (a 720p export of a 1080p composition): as before, the layer at 1x and the page shrinking it (decision 1346).
+      { name: 'half', composition: scaleComposition('text'), format: 'text', scale: 0.5 },
+    ];
+    /** The capture size each page must have: its composition at its scale. */
+    const sizeOf = (name: string) => { const p = pages.find((x) => x.name === name)!; const k = p.scale ?? 1; return { width: Math.round(p.composition.width * k), height: Math.round(p.composition.height * k) }; };
+    const r = await runHarness({ scenario: 'scale', creative, scalePages: pages });
+    expect(r.ok, r.output).toBe(true);
+    const got: Record<string, { energy: number; bar: number; width: number; layers: unknown; top: unknown; errors: unknown }> = {};
+    for (const l of r.lines.filter((x) => typeof x.page === 'string')) {
+      const file = join(work, `scale-${String(l.page)}.png`);
+      writeFileSync(file, Buffer.from(String(l.png), 'base64'));
+      const px = new Uint8Array(execFileSync(ffmpeg!.path, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-i', file, '-f', 'rawvideo', '-pix_fmt', 'gray', '-'], { maxBuffer: 1 << 26 }));
+      const { width, height } = sizeOf(String(l.page));
+      expect(px.length, String(l.page)).toBe(width * height);
+      const k = width / 320;
+      got[String(l.page)] = { energy: gradientEnergy(px, width, TEXT_BOX, k), bar: barDpr(px, width, k), width, layers: l.layers, top: l.top, errors: l.errors };
+    }
+    const ratio = (a: string, b: string) => got[a]!.energy / got[b]!.energy;
+    console.info(`[scale] electron text energy at scale 2: ${got.scaled?.energy.toFixed(1)}, ground truth ${got.truth?.energy.toFixed(1)}, ratio ${ratio('scaled', 'truth').toFixed(3)}; rig ${ratio('rig', 'rig-truth').toFixed(3)}`);
+    for (const p of pages) expect(got[p.name]?.errors, p.name).toBe(0);
+    for (const l of r.lines.filter((x) => typeof x.page === 'string')) expect(l.painting, `painting ${String(l.page)}`).toBe(false);
+    expect(got.scaled!.layers).toEqual([{ outOfProcess: true, dpr: 2, inner: [320, 180] }]);
+    expect(got.scaled!.top).toEqual({ dpr: 2, inner: [320, 180] });
+    expect(got.scaled!.bar).toBe(2);
+    expect(ratio('scaled', 'truth')).toBeGreaterThan(0.9);
+    expect(ratio('rig', 'rig-truth')).toBeGreaterThan(0.9);
+    expect((got.third!.layers as Array<{ dpr: number }>)[0]!.dpr).toBeCloseTo(4 / 3, 5);
+    expect(got.half!.layers).toEqual([{ outOfProcess: true, dpr: 1, inner: [320, 180] }]);
+    expect(got.half!.top).toEqual({ dpr: 0.5, inner: [320, 180] });
+    expect(got.half!.bar).toBe(1);
+    // At 1 (stills, previews, a render at the composition size): as before.
+    for (const name of ['plain', 'one']) {
+      expect(got[name]!.layers, name).toEqual([{ outOfProcess: true, dpr: 1, inner: [320, 180] }]);
+      expect(got[name]!.bar, name).toBe(1);
+    }
+  }, 900_000);
+
+  /** The motion composition (decision 1348): 2 s at 30 fps, the motion layer over the whole frame. */
+  const motion = (name: string) => {
+    const creative = join(work, name);
+    const compDir = join(creative, 'outputs', 'v1', 'compositions', 'motion');
+    frameCodedVideo(ffmpeg!, join(compDir, 'assets', 'v.mp4'), { fps: 30, frames: 70 });
+    put(join(compDir, 'layers', 'motion.html'), MOTION_LAYER);
+    const composition = {
+      $schema: 'motion-studio/composition@1', width: W, height: H, fps: 30, duration: 2, background: '#000000', fonts: [],
+      scenes: [{ id: 's', start: 0, duration: 2 }],
+      tracks: [{ id: 'l', kind: 'visual', clips: [{ id: 'm', type: 'html', src: 'layers/motion.html', start: 0, duration: 2, props: { x: 0, y: 0, width: W, height: H } }] }],
+    } as unknown as Composition;
+    return { creative, composition };
+  };
+  /** Where the motion layer's parts are in a grey frame `width` wide (k = width / W): the video code, the CSS box's left edge, the bar's width. */
+  const readMotion = (px: Uint8Array, width: number) => {
+    const k = width / W;
+    const row = (y: number) => Array.from({ length: width }, (_, x) => px[Math.round(y * k) * width + x]!);
+    const avg = (x0: number, x1: number) => { let s = 0, n = 0; for (let y = 4; y < 28; y++) for (let x = x0; x < x1; x++) { s += px[Math.round(y * k) * width + Math.round(x * k)]!; n++; } return s / n; };
+    const box = row(90).findIndex((g) => g > 128);
+    return { code: readCode(new Uint8Array([avg(4, 28), avg(36, 60)])), box: box < 0 ? -1 : Math.round(box / k), bar: Math.round(row(130).filter((g) => g > 128).length / k) };
+  };
+
+  it('decision 1348: a storyboard (renderFrames, purpose frames, half size) shows each time: the layer\'s video, CSS and rAF animations', async () => {
+    const { creative, composition } = motion('frames');
+    const times = [0, 0.5, 1, 1.5];
+    const r = await runHarness({ scenario: 'frames', creative, composition, format: 'motion', frames: { times, width: W / 2 } });
+    expect(r.ok, r.output).toBe(true);
+    const res = r.lines[0]! as { errors: unknown[]; frames: Array<{ t: number; width: number; height: number; png: string }>; windowsAfter: number };
+    expect(res.errors, JSON.stringify(res.errors)).toEqual([]);
+    expect(res.windowsAfter).toBe(0);
+    const seen = res.frames.map((f, i) => {
+      expect([f.width, f.height]).toEqual([W / 2, H / 2]);
+      const file = join(work, `frames-${i}.png`);
+      writeFileSync(file, Buffer.from(f.png, 'base64'));
+      return readMotion(new Uint8Array(execFileSync(ffmpeg!.path, ['-v', 'error', '-i', file, '-f', 'rawvideo', '-pix_fmt', 'gray', '-'])), W / 2);
+    });
+    console.info(`[motion] storyboard: ${JSON.stringify(seen)}`);
+    times.forEach((t, i) => {
+      expect(seen[i]!.code, `video at ${t}`).toBe(Math.round(t * 30) + 1);
+      expect(Math.abs(seen[i]!.box - 100 * t), `css at ${t}`).toBeLessThanOrEqual(3);
+      expect(Math.abs(seen[i]!.bar - 100 * t), `raf at ${t}`).toBeLessThanOrEqual(3);
+    });
+  }, 900_000);
+
+  it('decision 1348: a render (parallel windows) of a layer with its own video, a CSS animation and a self-running canvas advances every frame', async () => {
+    const { creative, composition } = motion('motion');
+    const out = join(creative, 'outputs', 'v1', 'motion.mp4');
+    const r = await runHarness({ scenario: 'render', creative, composition, format: 'motion', out, ffmpeg, parallel: 2 });
+    expect(r.ok, r.output).toBe(true);
+    expect(r.lines[0]).toMatchObject({ ok: true, frames: 60, windowsAfter: 0 });
+    const raw = execFileSync(ffmpeg!.path, ['-v', 'error', '-i', out, '-f', 'rawvideo', '-pix_fmt', 'gray', '-'], { maxBuffer: 1 << 26 });
+    const seen = Array.from({ length: 60 }, (_, i) => readMotion(new Uint8Array(raw.subarray(i * W * H, (i + 1) * W * H)), W));
+    const off = (f: (s: (typeof seen)[number], i: number) => number) => seen.map(f);
+    const codes = off((s, i) => s.code - (i + 1)), css = off((s, i) => s.box - (100 * i) / 30), raf = off((s, i) => s.bar - (100 * i) / 30);
+    console.info(`[motion] render: codes off ${JSON.stringify(codes)}; css off max ${Math.max(...css.map(Math.abs)).toFixed(1)}; raf off max ${Math.max(...raf.map(Math.abs)).toFixed(1)}`);
+    expect(codes.every((d) => Math.abs(d) <= 1), JSON.stringify(codes)).toBe(true);
+    expect(codes.filter((d) => d === 0).length).toBeGreaterThanOrEqual(54);
+    expect(css.every((d) => Math.abs(d) <= 3), JSON.stringify(css)).toBe(true);
+    expect(raf.every((d) => Math.abs(d) <= 3), JSON.stringify(raf)).toBe(true);
+  }, 900_000);
+
+  // Decision 1348, a measurement (MS_RENDER_COST=1): a 10 s 1920 × 1080 composition with a moving html layer, default parallel
+  // pages, at 1x and at 2560 × 1440, with the paint events (as before 1348, and at 5 fps) and without. Logged, not asserted.
+  it.skipIf(process.env.MS_RENDER_COST !== '1')('render cost at 1x and at a scale (measurement)', async () => {
+    const creative = join(work, 'cost');
+    const dir = join(creative, 'outputs', 'v1', 'compositions', 'cost');
+    put(join(dir, 'assets', 'Mono.woff2'), readFileSync(FONT));
+    put(join(dir, 'layers', 'cost.html'), scaleLayer(6, true).replace('Math.min(1, t)', '(t % 1)'));
+    const base = scaleComposition('cost', 6) as unknown as { duration: number; scenes: Array<{ duration: number }>; tracks: Array<{ clips: Array<{ duration: number }> }> };
+    base.duration = 10; base.scenes[0]!.duration = 10; base.tracks[0]!.clips[0]!.duration = 10;
+    const runs = [{ name: '1x-painting', painting: true }, { name: '1440-painting', short: 1440, painting: true }, { name: '1x' }, { name: '1440', short: 1440 },
+      { name: '1440-painting-fps5', short: 1440, painting: true, frameRate: 5 }];
+    const r = await runHarness({ scenario: 'render-cost', creative, composition: base, format: 'cost', ffmpeg, costRuns: runs });
+    expect(r.ok, r.output).toBe(true);
+    for (const l of r.lines.filter((x) => typeof x.cost === 'string')) console.info(`[cost] ${JSON.stringify(l)}`);
+  }, 1_800_000);
 
   it('memory: a 2 GB layer trips the watchdog (memoryLimit) and no window is left', async () => {
     const creative = join(work, 'mem');

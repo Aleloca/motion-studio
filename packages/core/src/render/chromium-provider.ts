@@ -80,15 +80,41 @@ export interface OpenPageOptions {
   transparentBackground?: boolean;
   /**
    * The page is rasterised at this scale (decision 974: a render at another resolution): the layout stays at `width` x
-   * `height` CSS pixels, a capture is about `width × scale` by `height × scale`, sharp. Default 1.
+   * `height` CSS pixels, a capture is about `width × scale` by `height × scale`, sharp. Default 1. A provider also gives the
+   * scale to the out-of-process html layers, which the page's override does not reach (report 51): Chrome is launched at it
+   * (`scaleFlags`), the desktop's render window renders offscreen at it.
    */
   deviceScaleFactor?: number;
 }
 
+/** A page's raster scale: `deviceScaleFactor` when it is a finite positive number, else 1. */
+export function pageScale(o: Pick<OpenPageOptions, 'deviceScaleFactor'>): number {
+  return o.deviceScaleFactor !== undefined && Number.isFinite(o.deviceScaleFactor) && o.deviceScaleFactor > 0 ? o.deviceScaleFactor : 1;
+}
+
 /** The physical pixels of a page (its CSS size at its raster scale): what its memory follows. */
 export function pagePixels(o: Pick<OpenPageOptions, 'width' | 'height' | 'deviceScaleFactor'>): { width: number; height: number } {
-  const k = o.deviceScaleFactor !== undefined && Number.isFinite(o.deviceScaleFactor) && o.deviceScaleFactor > 0 ? o.deviceScaleFactor : 1;
+  const k = pageScale(o);
   return { width: Math.round(o.width * k), height: Math.round(o.height * k) };
+}
+
+/**
+ * Whether the html layers get the page's raster scale (report 51, decisions 1340, 1346): only above 1. Below 1 (a 720p
+ * export of a 1080p composition) they keep drawing at 1x and the page shrinks them, as before.
+ */
+export function layersAtScale(scale: number): boolean {
+  return Number.isFinite(scale) && scale > 1;
+}
+
+/**
+ * The launch flag of a browser whose pages are rasterised at `scale` (report 51, decision 1340): the html layers are
+ * sandboxed iframes in their own processes, and `Emulation.setDeviceMetricsOverride` reaches the top-level page only (the
+ * iframe's own session refuses it: "only top-level targets"), so at another scale the layer drew at 1x and the page
+ * stretched it. `--force-device-scale-factor` is the screen's scale, which every frame of every process gets. Only above 1
+ * (`layersAtScale`).
+ */
+export function scaleFlags(scale: number): string[] {
+  return layersAtScale(scale) ? [`--force-device-scale-factor=${scale}`] : [];
 }
 
 export interface ChromiumProvider {
@@ -174,7 +200,7 @@ export async function openCdpRenderPage(client: CdpClient, o: OpenPageOptions & 
   };
   try {
     await o.afterSecure?.();
-    const dsf = o.deviceScaleFactor !== undefined && Number.isFinite(o.deviceScaleFactor) && o.deviceScaleFactor > 0 ? o.deviceScaleFactor : 1;
+    const dsf = pageScale(o);
     await client.send('Emulation.setDeviceMetricsOverride', { width: o.width, height: o.height, deviceScaleFactor: dsf, mobile: false }, { sessionId: sid, timeoutMs: t.callMs });
     if (o.transparentBackground) await client.send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } }, { sessionId: sid, timeoutMs: t.callMs });
     const loaded = waitForEvent(client, 'Page.loadEventFired', { sessionId: sid, timeoutMs: t.loadMs, signal: o.signal });
@@ -273,6 +299,8 @@ export class ChromeProvider implements ChromiumProvider {
   private gate: TargetGate | null = null;
   private openPages = 0;
   private pixels: { width: number; height: number } | null = null;
+  /** The raster scale the browser was launched with (its first page's). */
+  private scale = 1;
   private readonly stderrTail: string[] = [];
 
   constructor(private readonly o: ChromeProviderOptions) {
@@ -311,13 +339,14 @@ export class ChromeProvider implements ChromiumProvider {
     return killGroupIfMarked(l.proc.pid!, l.profile).catch(() => false);
   }
 
-  private async launch(origin: string): Promise<Launched> {
+  private async launch(origin: string, scale: number): Promise<Launched> {
     const profile = makeOwnedTempDirSync(join(this.o.tempDir ?? tmpdir(), 'ms-render-chrome-'));
     const args = [
       ...BASE_FLAGS, ...networkLockdownFlags(origin),
       `--user-data-dir=${profile}`, '--remote-debugging-pipe', `--js-flags=--max-old-space-size=${this.o.heapMB ?? 512}`,
       ...(this.o.kind === 'system' ? ['--headless=new'] : []),
       ...(process.platform === 'linux' ? ['--disable-dev-shm-usage'] : []),
+      ...scaleFlags(scale),
       ...(this.o.extraFlags ?? []),
       'about:blank',
     ];
@@ -404,9 +433,11 @@ export class ChromeProvider implements ChromiumProvider {
   }
 
   private async openCounted(o: OpenPageOptions, origin: string): Promise<RenderPage> {
-    if (!this.launching) this.launching = this.launch(origin);
+    // The browser's scale is its first page's (report 51): every page of a render has the same one.
+    if (!this.launching) { this.scale = pageScale(o); this.launching = this.launch(origin, this.scale); }
     const l = await this.launching;
     if (l.origin !== origin) throw new Error('render: one provider serves one composition server');
+    if (pageScale(o) !== this.scale) throw new Error('render: one provider serves one scale');
     { const f = this.failureError(); if (f) throw f; }
     const t = { ...DEFAULT_TIMEOUTS, ...this.o.timeouts };
     let created: { targetId: string; sessionId: string; release: () => void };
