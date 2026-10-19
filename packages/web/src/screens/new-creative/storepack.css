@@ -78,28 +78,69 @@ p.ms-spw-faint { margin: 0; }
 .ms-sp-failed { display: flex; flex-direction: column; gap: 6px; }
 .ms-sp-failed > b { font-size: 13px; color: var(--danger); }
 .ms-sp-error { font-size: 12.5px; }
-/* Report 48: the pack's files to pick, by store and device. */
-.ms-spx-files { display: flex; flex-direction: column; gap: 14px; padding: 12px 22px 16px; overflow: auto; min-height: 0; max-height: 360px; }
-.ms-spx-store { display: flex; flex-direction: column; gap: 8px; }
-.ms-spx-device { display: flex; flex-direction: column; gap: 6px; padding-left: 26px; }
-.ms-spx-head { display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
-.ms-spx-head-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
-.ms-spx-storehead .ms-spx-head-name { font-weight: 600; font-size: 13px; }
-.ms-spx-count { margin-left: auto; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.ms-spx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 8px; }
-.ms-spx-singles { padding-left: 26px; }
-.ms-spx-file { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 4px; border-radius: 8px; cursor: pointer; min-width: 0; transition: opacity var(--d-s) var(--e-std), background var(--d-m) var(--e-std); }
-.ms-spx-file:hover { background: var(--field); }
-.ms-spx-file.ms-off { opacity: .5; }
-.ms-spx-check { position: absolute; top: 4px; left: 4px; z-index: 1; width: 16px; height: 16px; }
-.ms-spx-check:not(.ms-on) { background: var(--panel); }
-.ms-spx-thumb { display: block; border-radius: 4px; overflow: hidden; background: var(--field); }
-.ms-spx-thumb.ms-tall { width: 36px; height: 64px; }
-.ms-spx-thumb.ms-wide { width: 68px; height: 38px; margin: 13px 0; }
-.ms-spx-thumb.ms-square { width: 52px; height: 52px; margin: 6px 0; }
-.ms-spx-thumb img, .ms-spx-thumb video { width: 100%; height: 100%; object-fit: cover; display: block; }
-.ms-spx-file-name { max-width: 100%; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-@media (max-width: 640px) { .ms-sp-langs, .ms-spx .ms-exp-dest { grid-template-columns: 1fr; } .ms-spx-files { padding: 12px 16px; } }
+/* Reports 48 and 54 (the user's variant A): the store pack export in two panes. The list of stores and items on the left, the
+   item shown on the right as a grid of large thumbnails at their real shape (--spx-cols columns, --spx-a the file's
+   width / height) scrolling up and down inside the pane; the destination and the export button in one footer row. */
+.ms-spx-pick { height: min(800px, calc(100vh - 64px)); max-height: none; }
+.ms-spx-pick .ms-exp-head { padding: 22px 32px 18px; }
+.ms-spx-body { flex: 1 1 auto; min-height: 0; display: flex; }
+.ms-spx-nav { flex: none; width: 300px; box-sizing: border-box; display: flex; flex-direction: column; gap: 20px; padding: 18px 16px; overflow: hidden auto; background: var(--bg); border-right: 1px solid var(--line2); }
+.ms-spx-store { display: flex; flex-direction: column; gap: 4px; }
+.ms-spx-storehead { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 6px 8px; cursor: pointer; }
+.ms-spx-mark { display: inline-flex; }
+.ms-spx-store-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 700; }
+.ms-spx-count { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ms-spx-item { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 8px 12px 8px 38px; border: 0; border-radius: 12px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; outline: none; transition: background var(--d-s) var(--e-std), box-shadow var(--d-s) var(--e-std); }
+.ms-spx-item:hover { background: color-mix(in srgb, var(--field) 70%, transparent); }
+.ms-spx-item:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+.ms-spx-item.ms-on { background: var(--panel); box-shadow: 0 0 0 1px var(--line), 0 2px 6px var(--shadow); }
+.ms-spx-item.ms-on:focus-visible { box-shadow: 0 0 0 2px var(--accent), 0 2px 6px var(--shadow); }
+.ms-spx-item-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ms-spx-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 500; }
+.ms-spx-item.ms-on .ms-spx-item-name { font-weight: 600; }
+.ms-spx-item-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; color: var(--muted); }
+.ms-spx-item-count { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ms-spx-item.ms-on .ms-spx-item-count { font-weight: 600; color: var(--accentText); }
+.ms-spx-langs { display: flex; flex-direction: column; gap: 6px; padding: 0 8px; }
+.ms-spx-langs-title { font-size: 12px; font-weight: 600; color: var(--muted); }
+.ms-spx-total { margin: auto 8px 0; font-size: 13px; color: var(--muted); }
+.ms-spx-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ms-spx-pane-head { display: flex; align-items: baseline; gap: 12px; padding: 20px 32px 14px; min-width: 0; }
+.ms-spx-pane-head h3 { margin: 0; font-size: 19px; font-weight: 700; white-space: nowrap; }
+.ms-spx-pane-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--muted); }
+.ms-spx-link { flex: none; padding: 2px 0; border: 0; background: none; font: inherit; font-size: 13.5px; color: var(--accentText); cursor: pointer; }
+.ms-spx-link + .ms-spx-link { margin-left: 6px; }
+.ms-spx-link:hover:not(:disabled) { text-decoration: underline; }
+.ms-spx-link:disabled { color: var(--faint); cursor: default; }
+.ms-spx-grid { flex: 1; min-height: 0; overflow: hidden auto; display: grid; grid-template-columns: repeat(var(--spx-cols, 4), minmax(0, 1fr)); gap: 24px; align-content: start; padding: 4px 32px 24px; }
+/* A file: a toggle with an accent check in the corner while it is in; out, an empty ring and a grey thumbnail and name. */
+.ms-spx-tile { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; outline: none; }
+.ms-spx-tile:disabled { cursor: default; }
+.ms-spx-thumb { position: relative; display: block; width: 100%; aspect-ratio: var(--spx-a, 1); border-radius: 10px; overflow: hidden; background: var(--field); box-shadow: 0 0 0 1px var(--line2); transition: box-shadow var(--d-s) var(--e-std); }
+.ms-spx-thumb img, .ms-spx-thumb video { width: 100%; height: 100%; object-fit: cover; display: block; transition: filter var(--d-m) var(--e-std), opacity var(--d-m) var(--e-std); }
+.ms-spx-tile:not(:disabled):hover .ms-spx-thumb { box-shadow: 0 0 0 1px var(--line), 0 4px 14px var(--shadow); }
+.ms-spx-tile:focus-visible .ms-spx-thumb { box-shadow: 0 0 0 2px var(--accent), 0 0 0 5px color-mix(in srgb, var(--accent) 18%, transparent); }
+.ms-spx-badge { position: absolute; top: 10px; left: 10px; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--accent); color: var(--onAccent); box-shadow: 0 0 0 3px var(--panel); }
+.ms-spx-tile.ms-off .ms-spx-badge { background: var(--panel); box-shadow: inset 0 0 0 2px var(--faint), 0 0 0 3px var(--panel); }
+.ms-spx-tile.ms-off .ms-spx-thumb img, .ms-spx-tile.ms-off .ms-spx-thumb video, .ms-spx-tile.ms-off .ms-spx-thumb > span:not(.ms-spx-badge) { filter: grayscale(1); opacity: .35; }
+.ms-spx-file-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--text); }
+.ms-spx-tile.ms-off .ms-spx-file-name { color: var(--faint); }
+.ms-spx-status { display: flex; align-items: center; gap: 12px; padding: 10px 32px; border-top: 1px solid var(--line2); }
+.ms-spx-status .ms-exp-progress { flex: 1; }
+.ms-spx-pick > .ms-spx-langs { padding: 12px 32px; border-top: 1px solid var(--line2); }
+.ms-spx-foot { display: flex; align-items: center; gap: 12px; padding: 14px 32px; border-top: 1px solid var(--line2); background: var(--bg); border-radius: 0 0 18px 18px; }
+.ms-spx-dest { flex: 1; min-width: 0; display: flex; }
+.ms-spx-dest > * { flex: 1; min-width: 0; }
+.ms-spx-dest .ms-input { font-family: var(--mono); font-size: 12.5px; }
+@media (prefers-reduced-motion: reduce) { .ms-spx-item, .ms-spx-thumb, .ms-spx-thumb img, .ms-spx-thumb video { transition: none; } }
+@media (max-width: 760px) {
+  .ms-sp-langs, .ms-spx .ms-exp-dest { grid-template-columns: 1fr; }
+  .ms-spx-body { flex-direction: column; }
+  .ms-spx-nav { width: auto; max-height: 40%; border-right: 0; border-bottom: 1px solid var(--line2); }
+  .ms-spx-grid { --spx-cols: 2 !important; padding: 4px 16px 16px; }
+  .ms-spx-pane-head, .ms-spx-status { padding-left: 16px; padding-right: 16px; }
+  .ms-spx-foot { flex-wrap: wrap; padding: 12px 16px; }
+}
 
 .ms-sp-untr { font-size: 12px; color: var(--warn); }
 .ms-spw-shot.ms-nos .ms-spw-file { color: var(--muted); }
