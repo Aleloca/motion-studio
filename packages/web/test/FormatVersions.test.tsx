@@ -1,14 +1,18 @@
 // A format's version menu (user notes 29–30, decisions 972, 974, 1061–1064): one row per content (a version kept unchanged
 // in later versions is one row "v1–v2", in the state of the latest of them), the ★ inside its row, one pick label, a
 // thumbnail in the format's own proportions, Compare only with two rows, no Render, Reset to Auto only for a manual pick.
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { OutputFileInfo, VersionEntry } from '@motion-studio/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../src/i18n.tsx';
 import type { FormatState } from '../src/screens/versionModel.ts';
 
-const api = { fileUrl: (s: string, c: string, rel: string) => `/f/${s}/${c}/${rel}` };
+const api = {
+  fileUrl: (s: string, c: string, rel: string) => `/f/${s}/${c}/${rel}`,
+  getStoryboard: vi.fn(async (_s: string, _c: string, n: number, f: string) => ({ format: f, hash: 'a'.repeat(64), width: 270, expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    frames: [{ t: 3, kind: 'poster', url: `/sb/v${n}/${f}.jpg`, width: 270, height: 480 }] })),
+};
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error { status = 0; } }));
 const { FormatBadge } = await import('../src/screens/FormatVersions.tsx');
 import type { VersionActions } from '../src/screens/FormatVersions.tsx';
@@ -61,6 +65,16 @@ describe('a format\'s version menu', () => {
     expect(within(row).getByRole('button', { name: /^Guarda la v1 .*invariata fino alla v2/ })).toBeTruthy();
     expect(row.textContent).not.toContain('Incompleta');
     expect(within(pop).getByText('Qui vedi solo le versioni che hanno cambiato questo formato.')).toBeTruthy();
+  });
+
+  it('report 45: a version never rendered shows a still of its composition; a rendered one its file', async () => {
+    const file: OutputFileInfo = { format: YT, file: `${YT}.png`, width: 1920, height: 1080, durationSec: null, verified: true, preview: null, sha256: h('f'), fromComposition: h('b') };
+    mount([ver(1, 'a'), ver(2, 'b', { outputs: [file] })], state([1, 2]));
+    const pop = await open();
+    const [r2, r1] = rows(pop);
+    await waitFor(() => expect(r1!.querySelector('.ms-vmenu-thumb img')?.getAttribute('src')).toBe(`/sb/v1/${YT}.jpg`));
+    expect(r2!.querySelector('.ms-vmenu-thumb img')?.getAttribute('src')).toBe(`/f/acme/lancio/outputs/v2/${YT}.png`);
+    expect(api.getStoryboard).not.toHaveBeenCalledWith('acme', 'lancio', 2, YT);
   });
 
   it('an entry still broken in its latest version says so', async () => {
