@@ -65,6 +65,7 @@ export const it: Messages = {
     projectNotFound: (p) => `Progetto ${p.slug} non trovato`,
     projectNameRequired: 'Il nome del progetto è obbligatorio',
     invalidProject: (p) => `Progetto non valido: ${p.fields}`,
+    projectIconInvalid: 'L’icona del progetto deve essere un’immagine della libreria.',
     fileNotFound: 'file non trovato',
     invalidJson: (p) => `JSON non valido (${p.detail})`,
     invalidContent: (p) => `contenuto non valido — ${p.detail}`,

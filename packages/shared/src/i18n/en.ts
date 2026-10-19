@@ -67,6 +67,7 @@ export const en = {
     projectNotFound: (p: { slug: string }) => `Project ${p.slug} not found`,
     projectNameRequired: 'Enter a project name',
     invalidProject: (p: { fields: string }) => `Invalid project: ${p.fields}`,
+    projectIconInvalid: 'The project icon must be an image of the library.',
     fileNotFound: 'file not found',
     invalidJson: (p: { detail: string }) => `invalid JSON (${p.detail})`,
     invalidContent: (p: { detail: string }) => `invalid content — ${p.detail}`,

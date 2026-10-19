@@ -1,14 +1,17 @@
 import type { FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
-import { linkedCodebaseSchema, type ProjectIntegrity, type ServerMessage } from '@motion-studio/shared';
+import { linkedCodebaseSchema, projectIconSchema, type ProjectIntegrity, type ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
 import { checkCodebases } from '../codebases.ts';
 import { inspectGitSafety } from '../git-safety.ts';
 import { activeIntegrityStore, type IntegrityChange, type IntegritySnapshot } from '../project-integrity.ts';
 import { CodedError, WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
 import { t } from '../i18n.ts';
+import { checkProjectIcon, resolveProjectIcon } from '../project-icon.ts';
 
-const body = z.object({ name: z.string().optional(), description: z.string().max(2000).optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
+const body = z.object({ name: z.string().optional(), description: z.string().max(2000).optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional(),
+  /** Report 44: an image of the library, the initials, or null for the automatic icon. */
+  icon: projectIconSchema.nullable().optional() });
 
 /** Identifies the listed state: each listed path with its kind of change and its current content hash. */
 const integrityToken = (files: IntegrityChange[], snapshot: IntegritySnapshot) =>
@@ -45,9 +48,13 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: { requireWorksp
     const parsed = body.safeParse(req.body ?? {});
     if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidRequest);
     const ws = ctx.requireWorkspace();
+    if (parsed.data.icon) {
+      await ws.getProject(req.params.slug);
+      await checkProjectIcon(ws.projectDir(req.params.slug), parsed.data.icon);
+    }
     const project = await ws.updateProject(req.params.slug, parsed.data);
     ctx.broadcast({ type: 'project', project: req.params.slug });
-    return { slug: req.params.slug, project, jobKey: ctx.jobKeyOf(ws.root, req.params.slug) };
+    return { slug: req.params.slug, project, jobKey: ctx.jobKeyOf(ws.root, req.params.slug), icon: await resolveProjectIcon(ws.projectDir(req.params.slug), project) };
   });
   app.get<{ Params: { slug: string } }>('/api/projects/:slug/codebases', async (req) => {
     const project = await ctx.requireWorkspace().getProject(req.params.slug);

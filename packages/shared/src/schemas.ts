@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { LOCALES } from './i18n/index.ts';
+import { relativeFileSchema } from './library.ts';
 
 export const appConfigSchema = z.object({
   schemaVersion: z.literal(1),
@@ -98,6 +99,10 @@ export const linkedCodebaseSchema = z.object({
 });
 export type LinkedCodebase = z.infer<typeof linkedCodebaseSchema>;
 
+/** Report 44: a chosen project icon: an image of the library, or the initials. */
+export const projectIconSchema = z.union([z.object({ asset: relativeFileSchema }).strict(), z.literal('initials')]);
+export type ProjectIcon = z.infer<typeof projectIconSchema>;
+
 export const projectFileSchema = z.object({
   schemaVersion: z.literal(1),
   name: z.string().trim().min(1),
@@ -105,5 +110,10 @@ export const projectFileSchema = z.object({
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
   linkedCodebases: z.array(linkedCodebaseSchema),
+  /**
+   * Report 44: the project's icon. Absent: automatic (`autoProjectIcon`, else the initials); `{ asset }`: an image of the
+   * library (its path relative to `assets/`); `'initials'`: the initials, even when the brand has an icon.
+   */
+  icon: projectIconSchema.optional(),
 });
 export type ProjectFile = z.infer<typeof projectFileSchema>;

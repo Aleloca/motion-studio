@@ -229,7 +229,8 @@ export interface DoctorCheck {
 }
 
 export type ProjectListItem =
-  | { slug: string; ok: true; project: ProjectFile }
+  /** `icon` (report 44): the icon shown, a path relative to the project (its files route), or null for the initials. */
+  | { slug: string; ok: true; project: ProjectFile; icon?: string | null }
   | { slug: string; ok: false; error: string };
 
 export type WorkspaceProblemCode = 'not-found' | 'invalid' | 'not-writable';
@@ -243,7 +244,7 @@ export interface WorkspaceInfo {
 }
 
 /** GET /api/projects/:slug. `jobKey` is the key of this project's agent jobs (to find an active one). */
-export interface ProjectDetail { slug: string; project: ProjectFile; jobKey: string }
+export interface ProjectDetail { slug: string; project: ProjectFile; jobKey: string; /** Report 44: as in `ProjectListItem`. */ icon?: string | null }
 /** A protected project file that differs from the state Motion Studio recorded (decisions log 141). */
 export interface IntegrityFileChange { path: string; change: 'changed' | 'added' | 'removed' }
 /**

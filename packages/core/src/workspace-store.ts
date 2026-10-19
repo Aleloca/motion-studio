@@ -11,7 +11,7 @@ import {
   storedWorkspaceSettingsSchema,
   workspaceSettingsSchema,
   type ProjectFile,
-  type LinkedCodebase,
+  type LinkedCodebase, type ProjectIcon,
   type ProjectListItem,
   type WorkspaceSettings,
   type WorkspaceSettingsView,
@@ -542,14 +542,17 @@ export class WorkspaceStore {
     return { slug, project };
   }
 
-  updateProject(slug: string, patch: { name?: string; description?: string; linkedCodebases?: LinkedCodebase[] }): Promise<ProjectFile> {
+  /** `icon` (report 44): a choice, or null to go back to the automatic icon (the field is removed). */
+  updateProject(slug: string, patch: { name?: string; description?: string; linkedCodebases?: LinkedCodebase[]; icon?: ProjectIcon | null }): Promise<ProjectFile> {
     return this.projectLock.run(slug, async () => {
       const current = await this.getProject(slug);
       const linkedCodebases = patch.linkedCodebases
         ? normalizeCodebaseList(patch.linkedCodebases)
         : current.linkedCodebases;
       if (patch.linkedCodebases) await assertCodebasesOutside(linkedCodebases, [this.projectDir(slug), this.root], current.linkedCodebases);
-      const parsed = projectFileSchema.safeParse({ ...current, ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)), linkedCodebases, updatedAt: new Date().toISOString() });
+      const merged: Record<string, unknown> = { ...current, ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)), linkedCodebases, updatedAt: new Date().toISOString() };
+      if (patch.icon === null) delete merged.icon;
+      const parsed = projectFileSchema.safeParse(merged);
       if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidProject({ fields: parsed.error.issues.map((i) => i.path.join('.')).join(', ') }));
       const dir = this.projectDir(slug);
       await writeJsonFileAtomic(join(dir, 'project.json'), parsed.data);
