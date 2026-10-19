@@ -233,3 +233,14 @@ describe('AskUserQuestion through the permission prompt', () => {
     await other;
   });
 });
+
+describe('userPartOf (re-review of phase 3)', () => {
+  it('keeps only what the user wrote: never the options the agent wrote, even with ", " inside a label', async () => {
+    const { userPartOf } = await import('../src/bridge/bridge-routes.ts');
+    const labels = ['B · Calma, minimale', 'C · Retro', 'Tutte'];
+    expect(userPartOf('B · Calma, minimale', labels)).toBeUndefined();
+    expect(userPartOf('B · Calma, minimale, C · Retro', labels)).toBeUndefined();
+    expect(userPartOf('C · Retro, e anche una nuova variante', labels)).toBe('e anche una nuova variante');
+    expect(userPartOf('20 s', labels)).toBe('20 s');
+  });
+});

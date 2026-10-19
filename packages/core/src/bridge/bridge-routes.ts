@@ -104,13 +104,33 @@ async function askUser(ctx: BridgeRoutesContext, c: BridgeContext, input: Record
     // Own string values only (review fix): a question text never reads a property of Object.prototype.
     items: questions.map((q) => {
       const a = answered && Object.hasOwn(answers, q.question) ? answers[q.question] : undefined;
-      return { header: q.header, question: q.question, ...(typeof a === 'string' ? { answer: a } : {}) };
+      const other = typeof a === 'string' ? userPartOf(a, q.options.map((o) => o.label)) : undefined;
+      return { header: q.header, question: q.question, ...(typeof a === 'string' ? { answer: a } : {}), ...(other ? { other } : {}) };
     }), ...linked,
   };
   // In the conversation as the question and its answer, never as a permission.
   try { c.emit(event); } catch { /* a faulty listener must not change the answer */ }
   if (answered) return { behavior: 'allow', updatedInput: { ...input, answers } };
   return { behavior: 'deny', message: decision === 'expired' ? t().approvals.questionExpired : decision === 'cancelled' ? denyMessage('cancelled') : t().approvals.questionSkipped };
+}
+
+/**
+ * Re-review of phase 3: the part of an answer the user wrote (the "Other" text), without the options the agent wrote. The
+ * answer joins the chosen labels and the user's text with ", " (`askUser` above); a label may hold ", " itself, so the
+ * longest run of parts that is a label goes first. Undefined when nothing is the user's own.
+ */
+export function userPartOf(answer: string, labels: readonly string[]): string | undefined {
+  const parts = answer.split(', ');
+  const own: string[] = [];
+  for (let i = 0; i < parts.length;) {
+    let j = parts.length;
+    while (j > i && !labels.includes(parts.slice(i, j).join(', '))) j--;
+    if (j > i) { i = j; continue; }
+    own.push(parts[i]!);
+    i++;
+  }
+  const text = own.join(', ').trim();
+  return text || undefined;
 }
 
 /** Calls from the `studio` MCP server: one per tool, authenticated by the job's bridge token. */

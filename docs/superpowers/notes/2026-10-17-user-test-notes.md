@@ -217,6 +217,11 @@ arrives and worked on later together.
 
 ## Follow-ups found while working on 12–30
 
+- **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
+  `add_language` adds the language to the group's brief and starts the translation of every idle variant that has a version
+  (decision 1203); a working variant is only named in the tool's answer. Its translations are not shown per variant card,
+  and there is no way to ask "only B in German". Decide with use whether a language should be a per-variant action (cards
+  and a `variant` argument) or stay group-wide.
 - **Flaky on Linux CI:** `core/test/render-media.chrome.test.ts` "lenient (untrusted): a VFR WebM … renders and never fails"
   failed once on ubuntu (run 39141011457, frame index list off by one) with no render code changed, and passed on rerun.
   Make the frame-index assertion tolerant of the container-default-duration rounding, or pin the expected sequence per platform.

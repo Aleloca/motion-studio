@@ -390,17 +390,43 @@ describe('the group turn', () => {
     await v.waitIdle();
   });
 
-  it('review M3: a request for a new variant can come in the answer to the agent\'s question', async () => {
+  const ask = (c: ControlledRun, question: string, labels: string[]) => v.bridge(c, 'approve', { tool_name: 'AskUserQuestion', tool_use_id: 'toolu_q', input: { questions: [{ question, header: 'Scelta', multiSelect: false, options: labels.map((label) => ({ label, description: '' })) }] } });
+  const answer = async (a: { selected: number[]; other?: string }) => {
+    await vi.waitFor(async () => expect(await v.pending()).toHaveLength(1));
+    await v.app.inject({ method: 'POST', url: `/api/approvals/${(await v.pending())[0]!.id}/answer`, payload: { answers: [a] } });
+  };
+
+  it('review M3 / re-review 2: a request for a new variant can come in the user\'s own words of an answer, never in an option the agent wrote', async () => {
     const slug = await setup(['Audace', 'Calma']);
     await send(slug, 'Proviamo qualcosa di diverso');
     const c = await coordinator();
-    const asked = v.bridge(c, 'approve', { tool_name: 'AskUserQuestion', tool_use_id: 'toolu_q', input: { questions: [{ question: 'Cosa preferisci?', header: 'Scelta', multiSelect: false, options: [{ label: 'Una nuova variante', description: '' }, { label: 'Cambiare la A', description: '' }] }] } });
-    await vi.waitFor(async () => expect(await v.pending()).toHaveLength(1));
-    await v.app.inject({ method: 'POST', url: `/api/approvals/${(await v.pending())[0]!.id}/answer`, payload: { answers: [{ selected: [0] }] } });
-    await asked;
+    // The option label is the coordinator's words: choosing it is no request of the user.
+    const q1 = ask(c, 'Cosa preferisci?', ['Una nuova variante', 'Cambiare la A']);
+    await answer({ selected: [0] });
+    await q1;
+    expect((await v.bridge(c, 'add_variants', { items: [{ direction: 'Notturna' }] })).statusCode).toBe(409);
+    // The user's own "Other" text is.
+    const q2 = ask(c, 'Cosa vuoi fare?', ['Cambiare la A', 'Cambiare la B']);
+    await answer({ selected: [], other: 'Fammi una nuova variante notturna' });
+    await q2;
     expect((await v.bridge(c, 'add_variants', { items: [{ direction: 'Notturna' }] })).statusCode).toBe(200);
     c.finish({ write: false });
     (await v.runOf(`${slug}~c`)).finish();
+    (await coordinator(1)).finish({ write: false });
+    await v.waitIdle();
+  });
+
+  it('re-review 3: after a request for new variants, a bare number answer is their count', async () => {
+    const slug = await setup(['Audace', 'Calma']);
+    await send(slug, 'Crea delle nuove varianti');
+    const c = await coordinator();
+    expect((await v.bridge(c, 'add_variants', { items: [{ direction: 'Uno al neon' }, { direction: 'Due pastello' }] })).statusCode).toBe(409);
+    const q = ask(c, 'Quante varianti?', ['1', '2']);
+    await answer({ selected: [], other: 'Tre' });
+    await q;
+    expect((await v.bridge(c, 'add_variants', { items: ['Uno al neon', 'Due pastello', 'Tre vintage'].map((direction) => ({ direction })) })).statusCode).toBe(200);
+    c.finish({ write: false });
+    for (const l of ['c', 'd', 'e']) (await v.runOf(`${slug}~${l}`)).finish();
     (await coordinator(1)).finish({ write: false });
     await v.waitIdle();
   });
@@ -598,7 +624,10 @@ describe('restart recovery', () => {
     // As a turn cut by a restart had written it before it was put back in the queue.
     await new CreativeStore(v.projectDir).appendConversation(slug, { type: 'user', at: new Date().toISOString(), text: 'Più luce in B', pins: [], attachments: [], jobId: 'cut', clientId: id, group: true });
     c.finish({ write: false });
-    (await coordinator(1)).finish({ write: false });
+    const next = await coordinator(1);
+    // Re-review 7: the request is in its own block, not again in the digest of what happened (see coordinator-prompt.test).
+    expect(next.req.prompt.split('Più luce in B').length).toBeLessThanOrEqual(2);
+    next.finish({ write: false });
     await v.waitIdle();
     expect((await conversation(slug)).filter((e) => e.type === 'user' && e.clientId === id)).toHaveLength(1);
   });

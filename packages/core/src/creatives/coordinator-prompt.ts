@@ -155,9 +155,10 @@ export function buildCoordinatorReport(i: { locale: Locale; outcomes: ReportOutc
  * `since`: what came after the coordinator's last entry (its runs' events carry `group`). Kept: every user message (600
  * characters), each turn's last words of its agent (400), versions saved or kept, error lines. Capped at `maxChars`, newest
  * first: older lines are dropped and counted. `exclude`: a group turn whose own entries are left out (the one starting now);
- * `full`: the whole chat even after a coordinator run (its session was lost).
+ * `full`: the whole chat even after a coordinator run (its session was lost); `skipClientId` (re-review 7): the user entry of
+ * the request being answered, already in the prompt's own block (one a restart put back in the queue was written then).
  */
-export function groupDigest(entries: readonly ConversationEntry[], opts: { maxChars?: number; exclude?: string; full?: boolean } = {}): { kind: 'bootstrap' | 'since'; text: string } {
+export function groupDigest(entries: readonly ConversationEntry[], opts: { maxChars?: number; exclude?: string; full?: boolean; skipClientId?: string } = {}): { kind: 'bootstrap' | 'since'; text: string } {
   const max = opts.maxChars ?? DIGEST_MAX_CHARS;
   let from = 0;
   let kind: 'bootstrap' | 'since' = 'bootstrap';
@@ -177,6 +178,7 @@ export function groupDigest(entries: readonly ConversationEntry[], opts: { maxCh
   for (let k = from; k < entries.length; k++) {
     const e = entries[k]!;
     if (opts.exclude && 'jobId' in e && e.jobId === opts.exclude) continue;
+    if (opts.skipClientId && e.type === 'user' && e.clientId === opts.skipClientId) continue;
     if (e.type === 'user') {
       const pinned = [...new Set(e.pins.map((p) => p.variant).filter((v): v is VariantId => Boolean(v)))];
       const to = e.group ? `to the group${pinned.length ? `; comments on ${listOf(pinned)}` : ''}` : `to ${who(e)}`;

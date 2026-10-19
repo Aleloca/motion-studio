@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { z } from 'zod';
 import {
-  activeMembers, answeredVariants, askedNewVariants, compareVariantIds, creativeJobKey, isSessionId, LIVE_LIMITS, letterOfSlug, MAX_NEW_VARIANTS, namedVariants, singleAgentOn, variantIdSchema,
+  activeMembers, answeredVariants, askedNewVariants, bareCount, compareVariantIds, creativeJobKey, isSessionId, LIVE_LIMITS, letterOfSlug, MAX_NEW_VARIANTS, namedVariants, singleAgentOn, variantIdSchema,
   type ConversationEntry, type GroupTurnOutcome, type JobSummary, type LiveMessageOutcome, type Pin, type QueuedRequest, type RedirectOutcome,
   type ServerMessage, type VariantGroup, type VariantId, type WorkspaceSettings,
 } from '@motion-studio/shared';
@@ -397,7 +397,7 @@ export class GroupTurnService implements GroupRouter {
           title: creative.title, slug: host.creativeSlug, brief: creative.brief, locale, variants: info, picks: this.picksOf(group),
           request: r.request,
           explicit: [...r.explicit].sort(compareVariantIds),
-          digest: groupDigest(entries, { exclude: r.jobId, full: !session }),
+          digest: groupDigest(entries, { exclude: r.jobId, full: !session, ...(r.request.clientId ? { skipClientId: r.request.clientId } : {}) }),
           ...(r.later.length ? { later: r.later.splice(0) } : {}),
           ...(redirect ? { redirect } : {}),
           ...(r.created.size ? { added: group.members.filter((m) => r.created.has(m.letter)).map((m) => ({ id: m.letter, direction: m.direction })) } : {}),
@@ -429,7 +429,11 @@ export class GroupTurnService implements GroupRouter {
             for (const item of event.items) {
               if (!item.answer) continue;
               for (const v of answeredVariants(item.answer, ids)) r.answered.add(v);
-              r.askedNew = Math.max(r.askedNew, askedNewVariants(item.answer));
+              // Re-review 2: only the user's own words of the answer ask for new variants, never an option the agent wrote;
+              // re-review 3: once they asked, a number (typed, or chosen) is how many.
+              if (item.other) r.askedNew = Math.max(r.askedNew, askedNewVariants(item.other));
+              const count = r.askedNew > 0 ? bareCount(item.other ?? item.answer) : null;
+              if (count !== null) r.askedNew = Math.max(r.askedNew, count);
             }
           }
           this.deps.broadcast({ type: 'agent', jobId: r.jobId, event });
@@ -694,6 +698,8 @@ export class GroupTurnService implements GroupRouter {
         for (const v of variantsOfPins(m.pins)) r.explicit.add(v);
         for (const v of namedVariants(m.text, ids)) r.named.add(v);
         r.askedNew = Math.max(r.askedNew, askedNewVariants(m.text));
+        const count = r.askedNew > 0 ? bareCount(m.text) : null;
+        if (count !== null) r.askedNew = Math.max(r.askedNew, count);
       };
       if (r.phase === 'queued') {
         takes();
@@ -901,6 +907,8 @@ export class GroupTurnService implements GroupRouter {
         for (const v of variantsOfPins(m.pins)) r.explicit.add(v);
         for (const v of namedVariants(m.text, ids)) r.named.add(v);
         r.askedNew = Math.max(r.askedNew, askedNewVariants(m.text));
+        const count = r.askedNew > 0 ? bareCount(m.text) : null;
+        if (count !== null) r.askedNew = Math.max(r.askedNew, count);
       };
       if (r.phase === 'queued') {
         takes();

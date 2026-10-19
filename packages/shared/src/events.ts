@@ -34,7 +34,11 @@ export type AgentEvent =
    * User note 8: what became of the agent's `AskUserQuestion` (a question card, never a permission). `answered`: each item
    * has the answer the agent received; `deny` (the user chose not to answer), `expired`, `cancelled`: no answers.
    */
-  | { kind: 'question_answered'; outcome: 'answered' | 'deny' | 'expired' | 'cancelled'; items: Array<{ header: string; question: string; answer?: string }>; toolUseId?: string }
+  /**
+   * `other` (re-review of phase 3): the part of `answer` the user wrote themselves (the "Other" text), not one of the options
+   * the agent wrote. Absent: the answer is only the agent's options (or none).
+   */
+  | { kind: 'question_answered'; outcome: 'answered' | 'deny' | 'expired' | 'cancelled'; items: Array<{ header: string; question: string; answer?: string; other?: string }>; toolUseId?: string }
   /**
    * `cumulativeCostUsd` is Claude Code's `total_cost_usd`: CUMULATIVE over a resumed session, never this run's cost
    * (that is the final `usage` event, re-emitted by the core with per-run values). Older stored events may carry it as `costUsd`.
