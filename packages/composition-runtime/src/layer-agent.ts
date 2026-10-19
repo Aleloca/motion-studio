@@ -298,20 +298,35 @@ export function pauseAnimations(doc: Document, t: number): Animation[] {
  * slow machine), the compositor keeps the value of the frames it already ran (measured: one frame ahead in 28 of 29 such
  * pauses here, 4 and 8 px of a 100 px/s box on the CI runner) while the page's own value is `t`'s, so setting `t` again
  * changes nothing. A different time for one frame, then `t`, makes the page send its value again. `frame` waits one
- * native animation frame. Never visible: the seek waits its frames after this.
+ * native animation frame. Never visible: the seek waits its frames after this. Resolves whether any was nudged.
+ *
+ * Only inside the active phase, and never past its edges (1 ms on, or 1 ms back at its end): leaving the phase would fire
+ * `animationstart`/`animationend`/`transitionend` at the layer again. An animation that `msSeek` cancelled (idle) is left
+ * alone: a time set on it would bring it back, paused, over the one that replaced it. Outside its active phase (in its
+ * delay, or filled after its end) one is not nudged (decision 1406).
+ *
+ * Cost: the seek waits one frame for this and two more after it, about 50 ms, only on seeks that paused running animations
+ * (normally a page's first seek of each layer with its own animations).
  */
-export async function settleAnimations(started: readonly Animation[], t: number, frame: () => Promise<void>): Promise<void> {
-  if (started.length === 0) return;
+export async function settleAnimations(started: readonly Animation[], t: number, frame: () => Promise<void>): Promise<boolean> {
   const ms = t * 1000;
+  const nudged: Animation[] = [];
   for (const a of started) {
     try {
-      // 1 ms on, or back where on is past the end (a value that does not change would send nothing).
-      const end = a.effect?.getComputedTiming().endTime;
-      a.currentTime = typeof end === 'number' && ms + 1 > end ? ms - 1 : ms + 1;
+      if (a.playState === 'idle') continue;
+      const ct = a.effect?.getComputedTiming();
+      if (!ct) continue;
+      const from = Number(ct.delay ?? 0), to = from + Number(ct.activeDuration ?? 0);
+      const at = ms + 1 < to ? ms + 1 : ms - 1;
+      if (ms < from || ms >= to || at < from) continue;
+      a.currentTime = at;
+      nudged.push(a);
     } catch { /* an animation without a timeline */ }
   }
+  if (nudged.length === 0) return false;
   await frame();
-  for (const a of started) { try { a.currentTime = ms; } catch { /* an animation without a timeline */ } }
+  for (const a of nudged) { try { if (a.playState !== 'idle') a.currentTime = ms; } catch { /* an animation without a timeline */ } }
+  return true;
 }
 
 /** The elements the unfreezer checks in one preview tick at most (decision 1245); a render checks them all. */
@@ -409,10 +424,7 @@ export function startLayerAgent(w: Window & typeof globalThis, o: { stallMs?: nu
         await twoFrames(clock.native, frameWait);
         // Report 56: animations that were running (the first seek pauses the layer's CSS animations) shown at `t`, then
         // two more frames, so the capture sees it.
-        if (started.length) {
-          await settleAnimations(started, req.t, () => nextFrame(clock.native, frameWait));
-          await twoFrames(clock.native, frameWait);
-        }
+        if (started.length && await settleAnimations(started, req.t, () => nextFrame(clock.native, frameWait))) await twoFrames(clock.native, frameWait);
         port?.postMessage({ id: req.id, ok: true });
       }
     } catch (err) {

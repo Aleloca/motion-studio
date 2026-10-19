@@ -306,12 +306,13 @@ describe('createUnfreezer', () => {
 
 // Report 56: the animations a seek pauses that were running are sent again to the compositor (one frame at another time).
 describe('pausing the layer\'s animations', () => {
-  const anim = (playState: string, endTime = 2000) => {
+  const anim = (playState: string, o: { delay?: number; activeDuration?: number } = {}) => {
     const times: Array<number | null> = [];
-    const a = { playState, effect: { getComputedTiming: () => ({ endTime }) }, pause: vi.fn(() => { a.playState = 'paused'; }),
+    const a = { playState, effect: { getComputedTiming: () => ({ delay: o.delay ?? 0, activeDuration: o.activeDuration ?? 2000 }) }, pause: vi.fn(() => { a.playState = 'paused'; }),
       get currentTime() { return times.at(-1) ?? null; }, set currentTime(v: number | null) { times.push(v); } };
     return Object.assign(a, { times });
   };
+  const settle = (list: unknown[], t: number, frame: () => Promise<void>) => settleAnimations(list as Animation[], t, frame);
 
   it('pauses every animation at t and returns those that were not paused yet', () => {
     const running = anim('running'), pending = anim('running'), finished = anim('finished'), paused = anim('paused');
@@ -320,13 +321,30 @@ describe('pausing the layer\'s animations', () => {
     for (const a of [running, pending, finished, paused]) { expect(a.pause).toHaveBeenCalled(); expect(a.currentTime).toBe(500); }
   });
 
-  it('settles: 1 ms on (back at the end) for one frame, then t again; nothing for none', async () => {
-    const a = anim('paused'), end = anim('paused', 1000);
+  it('settles inside the active phase: 1 ms on (back near the end) for one frame, then t again', async () => {
+    const a = anim('paused'), end = anim('paused', { activeDuration: 1000.5 });
     let frames = 0;
-    await settleAnimations([a, end] as unknown as Animation[], 1, async () => { frames++; expect([a.currentTime, end.currentTime]).toEqual([1001, 999]); });
+    expect(await settle([a, end], 1, async () => { frames++; expect([a.currentTime, end.currentTime]).toEqual([1001, 999]); })).toBe(true);
     expect(frames).toBe(1);
     expect([a.currentTime, end.currentTime]).toEqual([1000, 1000]);
-    await settleAnimations([], 1, async () => { frames++; });
+    expect(await settle([], 1, async () => { frames++; })).toBe(false);
     expect(frames).toBe(1);
+  });
+
+  it('never leaves the active phase (no animationstart/end again): in its delay, at or after its end, nothing', async () => {
+    const delayed = anim('paused', { delay: 1500 }), ended = anim('paused', { activeDuration: 1000 }), past = anim('paused', { activeDuration: 400 });
+    const frame = vi.fn(async () => {});
+    expect(await settle([delayed, ended, past], 1, frame)).toBe(false);
+    expect(frame).not.toHaveBeenCalled();
+    for (const a of [delayed, ended, past]) expect(a.times).toEqual([]);
+  });
+
+  it('leaves alone an animation that msSeek cancelled (idle), before or during the frame', async () => {
+    const cancelled = anim('idle'), later = anim('paused'), live = anim('paused');
+    const done = await settle([cancelled, later, live], 0.5, async () => { later.playState = 'idle'; });
+    expect(done).toBe(true);
+    expect(cancelled.times).toEqual([]);
+    expect(later.times).toEqual([501]); // not set back: a time would bring it back, paused, over its replacement
+    expect(live.times).toEqual([501, 500]);
   });
 });
