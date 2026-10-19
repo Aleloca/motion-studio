@@ -103,10 +103,13 @@ export async function pumpUntilDone<T>(value: T, clock: PumpClock, maxPumps = MA
  * The unfreezer reads each element's computed `will-change` (any rule counts: any specificity, `@layer`, an external
  * sheet, an inline hint) and, on an element that names a freezing value, writes an inline `will-change … !important`
  * without them (`auto` when nothing else is left): an inline `!important` beats every sheet. What the hint made besides
- * the frozen raster (a stacking context, the containing block of absolute and fixed descendants) an element with a
- * transform keeps from the transform itself; one with none of `transform`, `translate`, `rotate`, `scale` gets an inline
- * `translate: 0px` (decision 1243): an identity transform, which composes with any transform the layer sets later, keeps
- * `preserve-3d` and is no backdrop root (a `filter` hint flattened 3D children and hid a `backdrop-filter` child).
+ * the frozen raster (a stacking context, the containing block of absolute and fixed descendants) comes from an identity
+ * `translate: 0px` (decision 1243): it composes with any transform, keeps `preserve-3d` and is no backdrop root (a `filter`
+ * hint flattened 3D children and hid a `backdrop-filter` child). It is not written inline (decisions 1250, 1251): the
+ * element gets the `data-ms-u` attribute, matched by a rule in the cascade layer `ms-unfreeze` of a sheet kept first in the
+ * document, so the lowest layer: every rule of the layer's own (unlayered, or in any layer of its own) that gives the
+ * element a `translate`, whenever it starts to match (a sibling, `:has()`, `insertRule`…), wins over it. Taking it back is
+ * removing the attribute.
  *
  * Cost (decisions 1240, 1245): a full scan only when a class, an id or a sheet changed; an element whose `style` changed is
  * checked only when its inline style names a freezing hint, one whose other attributes changed (SVG `cx`, `d`…) or that
@@ -121,7 +124,18 @@ export function createUnfreezer(doc: Document): { run(budget?: number): void } {
   const computed = win ? win.getComputedStyle.bind(win) : null;
   const Observer = win ? win.MutationObserver : null;
   /** What this unfreezer wrote on an element, and the inline `will-change` it replaced (to give it back). */
-  const written = new Map<Element, { wc: string; translate: boolean; was: string; wasPriority: string }>();
+  const written = new Map<Element, { wc: string; was: string; wasPriority: string }>();
+  // The identity translate of the hinted elements, in the lowest cascade layer (decision 1250).
+  const MARK = 'data-ms-u';
+  const SHEET = `@layer ms-unfreeze { [${MARK}] { translate: 0px; } }`;
+  const sheet = doc.createElement('style');
+  sheet.textContent = SHEET;
+  /** Keeps the sheet whole and first in the document (the first layer declared is the lowest). */
+  const ensureSheet = () => {
+    if (sheet.textContent !== SHEET) sheet.textContent = SHEET;
+    if (!sheet.isConnected || doc.querySelector('style, link[rel~="stylesheet" i]') !== sheet) (doc.head ?? doc.documentElement)?.prepend(sheet);
+  };
+  ensureSheet();
   const queue = new Set<Element>();
   let full = true;
   const sheetNode = (n: Node | null): boolean => {
@@ -137,6 +151,7 @@ export function createUnfreezer(doc: Document): { run(budget?: number): void } {
     if (full) return;
     for (const r of records) {
       if (r.type === 'attributes') {
+        if (r.attributeName === MARK) continue;
         if (sheetNode(r.target) || r.attributeName === 'class' || r.attributeName === 'id') { full = true; return; }
         const el = r.target as Element;
         // A style change matters only through an inline hint; any other attribute may match a rule: checked on its own.
@@ -164,6 +179,7 @@ export function createUnfreezer(doc: Document): { run(budget?: number): void } {
   let watched: string | null = null;
   const watch = () => {
     let names: Set<string> | null = new Set(['class', 'id', 'style', 'media', 'disabled', 'href', 'rel', 'type']);
+    const own = names;
     const visit = (rules: CSSRuleList) => {
       for (const rule of rules) {
         const sel = (rule as CSSStyleRule).selectorText;
@@ -172,9 +188,11 @@ export function createUnfreezer(doc: Document): { run(budget?: number): void } {
         if (inner) visit(inner);
       }
     };
-    for (const sheet of doc.styleSheets) {
-      try { visit(sheet.cssRules); } catch { names = null; break; }
+    for (const s of doc.styleSheets) {
+      if (s.ownerNode === sheet) continue;
+      try { visit(s.cssRules); } catch { names = null; break; }
     }
+    own.delete(MARK); // our own mark never asks for a record
     const key = names ? [...names].sort().join(' ') : '*';
     if (!observer || key === watched) return;
     watched = key;
@@ -187,11 +205,11 @@ export function createUnfreezer(doc: Document): { run(budget?: number): void } {
     const w = written.get(el);
     const style = styleOf(el);
     written.delete(el);
+    el.removeAttribute(MARK);
     if (!w || !style) return;
     if (style.getPropertyValue('will-change') === w.wc && style.getPropertyPriority('will-change') === 'important') {
       if (w.was) style.setProperty('will-change', w.was, w.wasPriority); else style.removeProperty('will-change');
     }
-    if (w.translate && style.getPropertyValue('translate') === '0px') style.removeProperty('translate');
   };
   const fix = (el: Element) => {
     const style = styleOf(el);
@@ -199,7 +217,8 @@ export function createUnfreezer(doc: Document): { run(budget?: number): void } {
     const mine = written.get(el);
     if (mine) {
       if (style.getPropertyValue('will-change') === mine.wc && style.getPropertyPriority('will-change') === 'important') return;
-      written.delete(el); // the layer rewrote its style: decided again from what it wrote
+      written.delete(el); // the layer rewrote its style: decided again from what it wrote, without our translate
+      el.removeAttribute(MARK);
     }
     const cs = computed(el);
     const value = cs.willChange;
@@ -207,21 +226,20 @@ export function createUnfreezer(doc: Document): { run(budget?: number): void } {
     const was = style.getPropertyValue('will-change');
     const wasPriority = style.getPropertyPriority('will-change');
     const kept = value.split(',').map((t) => t.trim()).filter((t) => t && !FREEZE.has(t));
-    const none = (v: string | undefined) => !v || v === 'none';
-    const untransformed = none(cs.transform) && none(cs.translate) && none(cs.rotate) && none(cs.scale);
     style.setProperty('will-change', kept.length ? kept.join(', ') : 'auto', 'important');
-    if (untransformed) style.setProperty('translate', '0px');
-    written.set(el, { wc: style.getPropertyValue('will-change'), translate: untransformed, was, wasPriority });
+    el.setAttribute(MARK, '');
+    written.set(el, { wc: style.getPropertyValue('will-change'), was, wasPriority });
   };
   return {
     run(budget = Infinity) {
       if (observer) note(observer.takeRecords());
+      ensureSheet();
       if (full) {
         full = false;
         queue.clear();
         watch();
         for (const el of [...written.keys()]) restore(el);
-        for (const el of doc.querySelectorAll('*')) queue.add(el);
+        for (const el of doc.querySelectorAll('*')) if (el !== sheet) queue.add(el);
       }
       let n = 0;
       for (const el of queue) {

@@ -189,8 +189,9 @@ never hangs. Task 4 still puts its own timeout on each `Runtime.evaluate`.
     param becomes an absolute URL inside the composition;
   - it adds the composition's fonts to the layer document;
   - it drops the `will-change` values that freeze the raster scale (transform, scale, rotate, translate), inline
-    `!important`, with `translate: 0px` on an element that has no transform, after every seek and tick (report 38,
-    decisions 1230, 1237–1247): zoomed text came out blurred.
+    `!important`, and marks the element `data-ms-u` for an identity `translate: 0px` in the lowest cascade layer
+    (`ms-unfreeze`, a sheet kept first), after every seek and tick (report 38, decisions 1230, 1237–1251): zoomed text
+    came out blurred.
 
   Task 4 may also inject `clock.js` with `Page.addScriptToEvaluateOnNewDocument`. Installing the clock is idempotent.
 - **The private channel.** After the iframe's `load`, the runtime posts `{ type: 'ms-layer-connect', v: 1 }` with a
