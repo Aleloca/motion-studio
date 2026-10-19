@@ -34,6 +34,7 @@ import { CompareDialog } from './CompareDialog.tsx';
 import { channelOf } from './creativeState.ts';
 import { ExportDialog, type ExportSnapshot } from './ExportDialog.tsx';
 import { ExportButton } from './ExportButton.tsx';
+import { ExportChoice } from './creative/ExportChoice.tsx';
 import { StorePackExport } from './creative/StorePackExport.tsx';
 import { LanguagesButton } from './creative/LanguagesButton.tsx';
 import { RenderLanguagesDialog } from './creative/RenderLanguagesDialog.tsx';
@@ -337,6 +338,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   };
   const [exporting, setExporting] = useState<{ open: boolean; snapshot: ExportSnapshot } | null>(null);
   const [packExport, setPackExport] = useState(false);
+  const [exportChoice, setExportChoice] = useState(false);
   // Phase 15: variant UI state: a selected board of another variant (`<letter>:<format>`), the dialogs, a busy member.
   const [vsel, setVsel] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -673,17 +675,14 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
             </button>
           );
           if (channel === PACK_GROUP) {
-            // Phase 14: the store pack's instances are one group, with App Store and Google Play as sub-groups and the export in its header.
+            // Phase 14: the store pack's instances are one group, with App Store and Google Play as sub-groups. Its export is the top
+            // bar's Export (report 46).
             const stores = groupByChannel(items, new Set()).map(([ch, list]) => [ch, list] as const);
             return (
               <div key={channel} className="ms-cv-group ms-cv-pack" role="group" aria-label={t.web.storePack.groupTitle}>
                 <div className="ms-cap ms-cv-group-head ms-cv-pack-head">
                   <span className="ms-cv-pack-marks" aria-hidden="true"><ChannelMark channel="appstore" /><ChannelMark channel="googleplay" /></span>
                   <span className="ms-cv-pack-title">{t.web.storePack.groupTitle}</span>
-                  <Button size="sm" variant="outline" className="ms-cv-pack-export" disabled={!version && !group} title={t.web.storePack.groupExportAria}
-                    onClick={() => setPackExport(true)}>
-                    <Icon name="download" size={12} strokeWidth={1.7} />{t.web.storePack.groupExport}
-                  </Button>
                 </div>
                 {stores.map(([ch, list]) => (
                   <div key={ch} className="ms-cv-subgroup" role="group" aria-label={ch !== '' ? channelName(ch, locale) : t.web.formatUi.other}>
@@ -909,7 +908,13 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
           {/* Decision 974: no "Render ★"; Export renders what it needs and shows an export or a render in progress. With
               variants "Selezione finale" is the page's primary action (decision 1045): Export is a secondary one here. */}
           <ExportButton jobs={jobList} jobKey={detail.jobKey} disabled={!version && !group} secondary={Boolean(group)}
-            onClick={() => { if (version || group) setExporting({ open: true, snapshot: { versions, states } }); }} />
+            onClick={() => {
+              if (!version && !group) return;
+              // Report 46: a store pack exports as a pack; with formats outside the pack too, Export asks which first.
+              if (!storePack) setExporting({ open: true, snapshot: { versions, states } });
+              else if (cr.brief.formats.some((f) => !packIds.has(f))) setExportChoice(true);
+              else setPackExport(true);
+            }} />
           {/* Decision 915: archive and delete; a group's menu acts on the whole group (its variant A). Decision 972: the
               version history of the creative (of the variant open in the chat) is a rare action of this menu. */}
           <CreativeMenu slug={slug} target={group ? hostSlug : creative} title={title} onAddVariant={!group && !vdetail ? () => setAddOpen(true) : null}
@@ -1047,6 +1052,11 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
       <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={hostSlug}
         title={title} snapshot={exporting?.snapshot ?? null} {...(group ? { group: true } : {})} presets={presets} labels={cr.brief.formatLabels} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings} jobs={live.jobs}
         {...(creativeLocales(cr.brief) ? { locales: creativeLocales(cr.brief)! } : {})} />
+      {storePack ? (
+        <ExportChoice open={exportChoice} onClose={() => setExportChoice(false)}
+          onPack={() => { setExportChoice(false); setPackExport(true); }}
+          onFormats={() => { setExportChoice(false); setExporting({ open: true, snapshot: { versions, states } }); }} />
+      ) : null}
       {cr.brief.storePack && (version || group) ? (() => {
         // A group's pack is made from the group selection, not from one version: no per-version language gaps to mark.
         const packGaps = version && !group ? packLanguageGaps(cr.brief.formats.filter((f) => packIds.has(f)), version, creativeLocales(cr.brief)?.extra ?? []) : { untranslated: [], review: [] };

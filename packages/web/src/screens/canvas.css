@@ -16,7 +16,6 @@
 .ms-cv-pack-head { height: auto; min-height: 28px; flex-wrap: wrap; padding-top: 2px; padding-bottom: 2px; }
 .ms-cv-pack-marks { display: inline-flex; gap: 2px; flex: none; }
 .ms-cv-pack-title { min-width: 0; overflow-wrap: anywhere; }
-.ms-cv-pack-export { margin-left: auto; flex: none; }
 .ms-cv-subgroup { display: flex; flex-direction: column; gap: 2px; padding-left: 8px; }
 .ms-cv-subhead { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 6px; min-width: 0; }
 .ms-cv-fmt { padding-left: 30px; height: 30px; }
@@ -366,6 +365,16 @@
 .ms-exp-titles { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 .ms-exp-titles h2 { margin: 0; font-size: 18px; letter-spacing: -.01em; overflow-wrap: anywhere; text-wrap: balance; }
 .ms-exp-sub { color: var(--muted); }
+/* Report 46: pack or format files, before the export. */
+.ms-exp-choice { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px 18px; }
+.ms-exp-choice-opt {
+  display: flex; align-items: flex-start; gap: 12px; width: 100%; padding: 12px 14px; margin: 0; text-align: left; font: inherit; color: var(--text);
+  background: transparent; border: 1px solid var(--line2); border-radius: 10px; cursor: pointer; transition: background var(--d-m) var(--e-std), border-color var(--d-m) var(--e-std);
+}
+.ms-exp-choice-opt:hover { background: var(--field); border-color: var(--line); }
+.ms-exp-choice-icon { display: inline-flex; gap: 2px; flex: none; padding-top: 1px; }
+.ms-exp-choice-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ms-exp-choice-text span { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
 .ms-exp-rows { padding: 8px 12px; overflow: auto; min-height: 0; }
 .ms-exp-row {
   display: grid; grid-template-columns: 28px 52px minmax(0, 1fr) 150px; gap: 0 12px; align-items: center; padding: 8px 10px; border-radius: 10px;

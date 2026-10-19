@@ -1,12 +1,14 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DEFAULT_FORMATS, storePackFormats, type CreativeDetail, type StorePack, type VersionEntry } from '@motion-studio/shared';
+import { groupOf, HOST } from './support/variants.ts';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
 import type { Route } from '../src/routes.ts';
 import type { Shell } from '../src/shell/ShellContext.tsx';
 
-// The creative's formats column (Phase 14, Task 6): the store pack's instances are one group, with the export in its header.
+// The creative's formats column (Phase 14, Task 6): the store pack's instances are one group; its export is the top bar's
+// Export (report 46), which asks pack or format files when the creative also has formats outside the pack.
 vi.setConfig({ testTimeout: 45_000, hookTimeout: 45_000 });
 
 const at = '2026-10-15T10:00:00.000Z';
@@ -33,6 +35,9 @@ const api = {
   fileUrl: (s: string, c: string, rel: string) => `/f/${s}/${c}/${rel}`,
   updateCreative: vi.fn(async () => detail.creative),
   exportStorePack: vi.fn(async (..._a: unknown[]) => ({ folder: '/out/pack', written: [], failed: [] })),
+  exportStorePackGroup: vi.fn(async (..._a: unknown[]) => ({ folder: '/out/pack', written: [], failed: [] })),
+  groupExportPlan: vi.fn(async () => ({ items: [], formats: detail.creative.brief.formats })),
+  getAgentCapabilities: vi.fn(async () => ({ cliVersion: null, liveInput: false, interrupt: false, checkedAt: at })),
   getUsage: vi.fn(async () => { throw new Error('offline'); }),
   cancelJob: vi.fn(async () => ({ cancelled: true })),
 };
@@ -76,20 +81,39 @@ describe('CreativeCanvas · the store pack is one group', () => {
     expect(group.contains(outside[0]!)).toBe(false);
   });
 
-  it('"Esporta pacchetto" is in the group header, not in the top bar, and opens the export for the version on screen', async () => {
+  it('report 46: no export in the group header; the top bar Export asks pack or format files when formats sit outside the pack', async () => {
     localStorage.setItem('ms.exportFolder', '/out');
     render(<Harness />);
     await ready();
-    // The only "pacchetto" export button is the group's: the bar has none.
-    const exports = screen.getAllByRole('button', { name: 'Esporta pacchetto' });
-    expect(exports).toHaveLength(1);
-    expect(column().contains(exports[0]!)).toBe(true);
-    expect(document.querySelector('.ms-topbar')!.querySelector('.ms-cv-pack-export')).toBeNull();
     const group = within(column()).getByRole('group', { name: 'Pacchetto store' });
-    await userEvent.click(within(group).getByRole('button', { name: 'Esporta pacchetto' }));
+    expect(within(group).queryByRole('button', { name: /Esporta/ })).toBeNull();
+    expect(document.querySelector('.ms-cv-pack-export')).toBeNull();
+    // The hand-picked post and iPad are outside the pack: Export asks first.
+    await userEvent.click(screen.getByRole('button', { name: 'Esporta' }));
+    const choice = await screen.findByRole('dialog', { name: 'Cosa vuoi esportare?' });
+    await userEvent.click(within(choice).getByRole('button', { name: /^Pacchetto store/ }));
     const dialog = await screen.findByRole('dialog', { name: /pacchetto store/ });
     await userEvent.click(within(dialog).getByRole('button', { name: 'Esporta il pacchetto' }));
     await waitFor(() => expect(api.exportStorePack).toHaveBeenCalledWith('acme', 'lancio', 1, { destination: '/out' }));
+  });
+
+  it('report 46: "File dei formati" opens the export of the ★ versions', async () => {
+    render(<Harness />);
+    await ready();
+    await userEvent.click(screen.getByRole('button', { name: 'Esporta' }));
+    const choice = await screen.findByRole('dialog', { name: 'Cosa vuoi esportare?' });
+    await userEvent.click(within(choice).getByRole('button', { name: /^File dei formati/ }));
+    expect(await screen.findByRole('dialog', { name: 'Esporta le versioni ★ di “Lancio estivo”' })).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: 'Cosa vuoi esportare?' })).toBeNull();
+  });
+
+  it('report 46: a creative made only of its pack opens the pack export at once', async () => {
+    detail = makeDetail({ formats: packFormats.formats });
+    render(<Harness />);
+    await waitFor(() => expect(within(column()).getByRole('group', { name: 'Pacchetto store' })).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'Esporta' }));
+    expect(await screen.findByRole('dialog', { name: /pacchetto store/ })).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: 'Cosa vuoi esportare?' })).toBeNull();
   });
 
   it('a creative without a pack has no pack group and no export', async () => {
@@ -102,13 +126,28 @@ describe('CreativeCanvas · the store pack is one group', () => {
     expect(within(column()).getByRole('group', { name: 'App Store' })).toBeTruthy();
   });
 
-  it('with every pack instance taken out the group is still there, empty, and the export stays', async () => {
+  it('report 46: in a variant group the top bar Export opens the group\'s pack export', async () => {
+    localStorage.setItem('ms.exportFolder', '/out');
+    const g = groupOf(['a', 'b']);
+    const base = makeDetail({ formats: packFormats.formats });
+    detail = { ...base, slug: HOST, creative: { ...base.creative, variantGroup: g }, variants: { orphan: false, host: HOST, letter: 'a', group: g, missing: [] } };
+    render(<Harness />);
+    await screen.findByRole('toolbar', { name: /^Variant/ });
+    await userEvent.click(screen.getByRole('button', { name: 'Esporta' }));
+    const dialog = await screen.findByRole('dialog', { name: /pacchetto store/ });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Esporta il pacchetto' }));
+    await waitFor(() => expect(api.exportStorePackGroup).toHaveBeenCalledWith('acme', HOST, { destination: '/out' }));
+  });
+
+  it('with every pack instance taken out the group is still there, empty, and the pack export stays in Export', async () => {
     detail = makeDetail({ formats: ['instagram-post-1x1', 'appstore-ipad-13'], formatLabels: undefined });
     render(<Harness />);
     await ready();
     const group = within(column()).getByRole('group', { name: 'Pacchetto store' });
     expect(items(group)).toHaveLength(0);
-    expect((within(group).getByRole('button', { name: 'Esporta pacchetto' }) as HTMLButtonElement).disabled).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Esporta' }));
+    const choice = await screen.findByRole('dialog', { name: 'Cosa vuoi esportare?' });
+    expect(within(choice).getByRole('button', { name: /^Pacchetto store/ })).toBeTruthy();
   });
 
   it('follows the pack\'s own instances, not the ids a pack would have: a pack grown over a hand-picked @3 owns @4', async () => {
