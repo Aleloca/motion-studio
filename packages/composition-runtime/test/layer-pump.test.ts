@@ -323,7 +323,7 @@ describe('pausing the layer\'s animations', () => {
   it('settles: 1 ms on (back at the end) for one frame, then t again; nothing for none', async () => {
     const a = anim('paused'), end = anim('paused', 1000);
     let frames = 0;
-    await settleAnimations([a, end], 1, async () => { frames++; expect([a.currentTime, end.currentTime]).toEqual([1001, 999]); });
+    await settleAnimations([a, end] as unknown as Animation[], 1, async () => { frames++; expect([a.currentTime, end.currentTime]).toEqual([1001, 999]); });
     expect(frames).toBe(1);
     expect([a.currentTime, end.currentTime]).toEqual([1000, 1000]);
     await settleAnimations([], 1, async () => { frames++; });
