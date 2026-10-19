@@ -215,6 +215,12 @@ arrives and worked on later together.
     - a message that names no variant and has no comment attached (the variant open on screen? ask?);
     - versions stay per variant and per format (decision 972); the existing per-variant chats need a migration.
 
+36. **App store pack wizard, step 3: a caption is required for every screenshot.** The user finds it awkward to write
+    a caption per screenshot when the general brief already has them (2026-10-19). Today the wizard refuses an empty
+    caption (`captionRequired`, schema `.min(1)`), and a caption is cut at 80 characters (`maxLength={80}`, schema
+    `.max(80)`). The user pasted longer lines ("Messaggi › Tutte, casella piena | **Tutti i clienti, …"), so the
+    field cut them.
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
