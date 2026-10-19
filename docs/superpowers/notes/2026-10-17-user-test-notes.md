@@ -327,6 +327,10 @@ arrives and worked on later together.
     User's call: above the destination, the pack's files grouped by store and device, each with its thumbnail and a
     checkbox, plus a checkbox per group; everything checked by default; the store folders and the store checks stay
     the same; the button counts the files ("Esporta 18 file"). To do with the next reports.
+    Done (decisions 1320–1325): the pack export lists the pack's files by store and device, each with its thumbnail (the
+    render, or a still of the composition) and a checkbox, with a tri-state checkbox per store and device; all on at first;
+    "Esporta N file" counts files × languages. The core takes the selection (`formats`, only the pack's own formats, else 400),
+    renders only what is chosen and missing, keeps folders, numbers and store checks; the same for a variant group's pack.
 
 49. **After the final selection the other variants should step aside.** In "Final selection" (2026-10-19) the user
     picks the variant per format (YouTube · Video 16:9 → C v1 ★ Chosen) while A and B stay as visible as C. The user
@@ -334,10 +338,15 @@ arrives and worked on later together.
     User's call: once there is at least one choice, the variants page opens on a "Scelte" view: per format only the
     chosen variant (and version). A "Tutte le varianti" toggle shows them all again; nothing is deleted and the choice
     can always change. To do with the next reports, together with 48.
+    Done (decisions 1326–1329): with at least one pick the variants page opens on "Scelte": per format the chosen variant at
+    the chosen version (its ★ still changes the pick), then "Senza scelta" with the variant the default rule takes. A
+    "Scelte | Tutte le varianti" switch in the variant bar shows the cards again, remembered per creative.
 
 50. **The top bar Export button is too wide.** (2026-10-19) It is wide at rest because the export progress bar shows
     inside it. User's call: at rest it is a normal-size button; it widens only when an export starts, with a nice
     dedicated animation, and shrinks back when the export is over. To do with the next reports, with 48 and 49.
+    Done (decisions 1330–1332): at rest Export is icon + "Esporta" (about 92 px); while an export or a render runs it widens
+    (the motion system's `stretch`, a small spring; nothing under reduced motion) to show its progress, and shrinks back.
 
 ## Follow-ups found while working on 12–30
 
