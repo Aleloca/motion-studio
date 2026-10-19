@@ -22,7 +22,7 @@ export type CreativeStatus = z.infer<typeof creativeStatusSchema>;
  */
 export const BRIEF_TEXT_MAX = 100_000;
 
-const makeBriefSchema = (formats: z.ZodType<string[]>) => z.object({
+const makeBriefSchema = <F extends Record<string, z.ZodType>>(formats: z.ZodType<string[]>, extra: F) => z.object({
   goal: z.string().trim().min(1),
   message: z.string(),
   /** Format instance ids (`<presetId>` or `<presetId>@<k>`, Phase 12): the order is the display and export order. */
@@ -52,6 +52,7 @@ const makeBriefSchema = (formats: z.ZodType<string[]>) => z.object({
   storePack: storePackSchema.optional(),
   /** The identity formats' choices (Phase 14): they apply to every identity format of the brief. Absent in older briefs. */
   identity: identityBriefSchema.optional(),
+  ...extra,
 }).refine((b) => Object.keys(b.formatLabels ?? {}).every((k) => b.formats.includes(k)), { message: 'issue.labelNotInFormats', path: ['formatLabels'] });
 
 /**
@@ -59,9 +60,19 @@ const makeBriefSchema = (formats: z.ZodType<string[]>) => z.object({
  * instance pattern refuses; neither may make the creative unreadable, so duplicates are dropped (the first stays) and any
  * non-empty id is kept as it is (consumers ignore ids that are not in the catalog, as they always did).
  */
-export const briefSchema = makeBriefSchema(z.array(z.string().min(1)).min(1).transform((f) => [...new Set(f)]));
-/** Writing (create and edit requests): format ids must be instance ids and unique. */
-export const briefWriteSchema = makeBriefSchema(z.array(z.string().regex(INSTANCE_ID_RE)).min(1).refine((f) => new Set(f).size === f.length, 'issue.duplicateFormats'));
+export const briefSchema = makeBriefSchema(z.array(z.string().min(1)).min(1).transform((f) => [...new Set(f)]), {
+  /**
+   * Report 55: the labels the agent gave (`name_formats`, an `add_format`/`duplicate_format` label), as the text it gave. A label
+   * is the agent's only while `formatLabels` still holds that same text; any other label is the user's (so every label of a
+   * brief written before is the user's). Kept loose: an entry whose label is gone or changed means nothing. The core owns it.
+   */
+  agentFormatLabels: z.record(z.string(), z.string()).optional(),
+});
+/**
+ * Writing (create and edit requests): format ids must be instance ids and unique. `agentFormatLabels` is not taken (the core
+ * keeps its own, report 55): a client can never make a label the agent's.
+ */
+export const briefWriteSchema = makeBriefSchema(z.array(z.string().regex(INSTANCE_ID_RE)).min(1).refine((f) => new Set(f).size === f.length, 'issue.duplicateFormats'), {});
 
 export type Brief = z.infer<typeof briefSchema>;
 
