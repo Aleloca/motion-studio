@@ -2,7 +2,8 @@ import type { CreativeSummary, ProjectListItem } from '@motion-studio/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.ts';
 
-export interface ProjectEntry { slug: string; name: string }
+/** `icon` (report 44): the project's icon, a path under its assets, or null for the initials. */
+export interface ProjectEntry { slug: string; name: string; icon?: string | null }
 export interface Catalog {
   /** null until the first load. */
   projects: ProjectEntry[] | null;
@@ -12,7 +13,7 @@ export interface Catalog {
 }
 
 const entries = (items: ProjectListItem[]): ProjectEntry[] =>
-  items.flatMap((p) => (p.ok ? [{ slug: p.slug, name: p.project.name }] : []));
+  items.flatMap((p) => (p.ok ? [{ slug: p.slug, name: p.project.name, icon: p.icon ?? null }] : []));
 
 /**
  * What the bars and the command palette know about: the project list and the creatives of the projects visited

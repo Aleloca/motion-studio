@@ -13,6 +13,7 @@ import { liveCreative } from './creativeState.ts';
 import './projects.css';
 import { message } from './common.tsx';
 import { CoverStill } from '../components/CoverStill.tsx';
+import { ProjectIconBox } from '../components/ProjectIcon.tsx';
 import { CoverMedia } from '../components/MediaThumb.tsx';
 import { coverVideo } from '../media.ts';
 
@@ -345,12 +346,12 @@ function ProjectCard({ item, live, waiting, fresh, index, onActivity }: CardProp
       </div>
       <div className="ms-pcard-body">
         <div className="ms-pcard-row">
-          <span
-            className="ms-pmono" aria-hidden="true"
+          <ProjectIconBox
+            slug={slug} icon={item.icon} className="ms-pmono"
             style={face ? { background: colors[0]!.hex, color: contrast(colors[0]!.hex, face.bg) >= 3 ? face.bg : face.fg } : undefined} // color-data
           >
             {initials(project.name)}
-          </span>
+          </ProjectIconBox>
           <span className="ms-pcard-id">
             <b className="ms-pcard-name">{project.name}</b>
             {site ? <span className="ms-pcard-site">{site}</span> : null}

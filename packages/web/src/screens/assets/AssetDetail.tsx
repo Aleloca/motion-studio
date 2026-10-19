@@ -1,10 +1,11 @@
 import type { AssetEntry } from '@motion-studio/shared';
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useContext, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { api } from '../../api.ts';
 import { formatNumber, formatWhen, useLocale, useT } from '../../i18n.tsx';
 import { enter } from '../../motion/index.ts';
 import { externalLinkRel } from '../../desktop.ts';
 import { AudioPlayer, Button, Icon, Input, Textarea, Typing, VideoPlayer, clockText, cx, toast } from '../../ui/index.ts';
+import { ShellContext } from '../../shell/ShellContext.tsx';
 import { message } from '../common.tsx';
 import { MAX_TAG, MAX_TAGS, baseName, formatBytes, mergeTags, splitTags } from './model.ts';
 import { Thumb } from './Thumb.tsx';
@@ -92,6 +93,20 @@ export function AssetDetail({ slug, asset: x, describing, busy, onClose, onSaved
     else if (e.key === 'Backspace' && !tagText && tags.length) { e.preventDefault(); void saveTags(tags.slice(0, -1)); }
   };
   const url = api.projectFileUrl(slug, `assets/${x.file}`);
+  // Report 44: this image becomes the project's icon (Project settings can go back to Automatic or the initials).
+  const [iconBusy, setIconBusy] = useState(false);
+  const shell = useContext(ShellContext);
+  const useAsIcon = async () => {
+    setIconBusy(true);
+    try {
+      await api.updateProject(slug, { icon: { asset: x.file } });
+      toast.show(d.projectIconSet, { tone: 'ok' });
+      // The project bar's mark follows at once.
+      shell?.catalog.refresh();
+    } catch (e) {
+      toast.show(d.projectIconFailed({ detail: message(e) }));
+    } finally { setIconBusy(false); }
+  };
   let host = x.sourceUrl ?? '';
   try { if (x.sourceUrl) host = new URL(x.sourceUrl).hostname; } catch { /* keep the raw address */ }
 
@@ -156,6 +171,9 @@ export function AssetDetail({ slug, asset: x, describing, busy, onClose, onSaved
           {x.sourceUrl ? <><dt>{d.source}</dt><dd><a href={x.sourceUrl} target="_blank" rel={externalLinkRel()} title={x.sourceUrl}>{host}</a></dd></> : null}
           {x.attribution ? <><dt>{d.credit}</dt><dd>{x.attribution}</dd></> : null}
         </dl>
+        {x.kind === 'image' || x.kind === 'svg' ? (
+          <Button variant="outline" loading={iconBusy} onClick={() => void useAsIcon()}><Icon name="image" size={13} />{d.useAsProjectIcon}</Button>
+        ) : null}
         <div className="ms-lib-row">
           <Button variant="ink" className="ms-grow" onClick={onUse}>{a.useInCreative}</Button>
           <Button variant="danger" icon aria-label={d.delete} title={d.delete} onClick={onDelete}><Icon name="trash" size={14} /></Button>
