@@ -370,7 +370,7 @@ arrives and worked on later together.
     "Scelte" is capped at 240 px × zoom (`chosenColumns`, `CHOSEN_CELL`) and the sections are drawn as `ms-vcard`.
     User's decision: like the plain canvas: no card, the chosen boards laid out as the canvas of a creative without
     variants (fit to the viewport, lines per group), each with its variant's letter above it; "Scelte" and "Senza scelta"
-    as plain headings one above the other. Timing: wait for further reports.
+    as plain headings one above the other. Timing: done together with 52–55 (user, after report 55).
 
 53. **Store pack export: scrolling the file list stutters.** Audin's store pack (19 files, version 1, not rendered). The
     user asked whether it is the previews being rendered live, and whether images should be saved. First look: the
