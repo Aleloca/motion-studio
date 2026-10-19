@@ -99,13 +99,22 @@ export function pagePixels(o: Pick<OpenPageOptions, 'width' | 'height' | 'device
 }
 
 /**
+ * Whether the html layers get the page's raster scale (report 51, decisions 1340, 1346): only above 1. Below 1 (a 720p
+ * export of a 1080p composition) they keep drawing at 1x and the page shrinks them, as before.
+ */
+export function layersAtScale(scale: number): boolean {
+  return Number.isFinite(scale) && scale > 1;
+}
+
+/**
  * The launch flag of a browser whose pages are rasterised at `scale` (report 51, decision 1340): the html layers are
  * sandboxed iframes in their own processes, and `Emulation.setDeviceMetricsOverride` reaches the top-level page only (the
  * iframe's own session refuses it: "only top-level targets"), so at another scale the layer drew at 1x and the page
- * stretched it. `--force-device-scale-factor` is the screen's scale, which every frame of every process gets. None at 1.
+ * stretched it. `--force-device-scale-factor` is the screen's scale, which every frame of every process gets. Only above 1
+ * (`layersAtScale`).
  */
 export function scaleFlags(scale: number): string[] {
-  return Number.isFinite(scale) && scale > 0 && scale !== 1 ? [`--force-device-scale-factor=${scale}`] : [];
+  return layersAtScale(scale) ? [`--force-device-scale-factor=${scale}`] : [];
 }
 
 export interface ChromiumProvider {

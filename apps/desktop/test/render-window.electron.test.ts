@@ -18,7 +18,7 @@
  * - **lifecycle:** app quit closes every render window of every provider (their renderers end), cancel, the time limit,
  *   the window cap; **memory:** a 2 GB layer trips the watchdog (`memoryLimit`), no window left;
  * - **scale (report 51):** at scale 2 an html layer (out of process) sees devicePixelRatio 2 and its text is as sharp as
- *   the ground truth (the layer twice as large at scale 1), report 38's camera rig too; at 1 nothing changes.
+ *   the ground truth (the layer twice as large at scale 1), report 38's camera rig too; at 1 and below nothing changes.
  *
  * Runs on macOS when the Electron binary is installed; elsewhere (a display is needed) only with MS_REQUIRE_ELECTRON=1,
  * which also makes a missing binary a failure. Needs ffmpeg for the renders.
@@ -525,7 +525,11 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
       { name: 'rig-truth', composition: scaleComposition('rig-truth', 2), format: 'rig-truth', t: 1 },
       // The user's case: 1920 × 1080 exported at 2560 × 1440.
       { name: 'third', composition: scaleComposition('text'), format: 'text', scale: 4 / 3 },
+      // Below 1 (a 720p export of a 1080p composition): as before, the layer at 1x and the page shrinking it (decision 1346).
+      { name: 'half', composition: scaleComposition('text'), format: 'text', scale: 0.5 },
     ];
+    /** The capture size each page must have: its composition at its scale. */
+    const sizeOf = (name: string) => { const p = pages.find((x) => x.name === name)!; const k = p.scale ?? 1; return { width: Math.round(p.composition.width * k), height: Math.round(p.composition.height * k) }; };
     const r = await runHarness({ scenario: 'scale', creative, scalePages: pages });
     expect(r.ok, r.output).toBe(true);
     const got: Record<string, { energy: number; bar: number; width: number; layers: unknown; top: unknown; errors: unknown }> = {};
@@ -533,24 +537,25 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
       const file = join(work, `scale-${String(l.page)}.png`);
       writeFileSync(file, Buffer.from(String(l.png), 'base64'));
       const px = new Uint8Array(execFileSync(ffmpeg!.path, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-i', file, '-f', 'rawvideo', '-pix_fmt', 'gray', '-'], { maxBuffer: 1 << 26 }));
-      const width = Math.round(Math.sqrt(px.length * 16 / 9));
+      const { width, height } = sizeOf(String(l.page));
+      expect(px.length, String(l.page)).toBe(width * height);
       const k = width / 320;
       got[String(l.page)] = { energy: gradientEnergy(px, width, TEXT_BOX, k), bar: barDpr(px, width, k), width, layers: l.layers, top: l.top, errors: l.errors };
     }
     const ratio = (a: string, b: string) => got[a]!.energy / got[b]!.energy;
     console.info(`[scale] electron text energy at scale 2: ${got.scaled?.energy.toFixed(1)}, ground truth ${got.truth?.energy.toFixed(1)}, ratio ${ratio('scaled', 'truth').toFixed(3)}; rig ${ratio('rig', 'rig-truth').toFixed(3)}`);
     for (const p of pages) expect(got[p.name]?.errors, p.name).toBe(0);
-    expect(got.scaled!.width).toBe(640);
     expect(got.scaled!.layers).toEqual([{ outOfProcess: true, dpr: 2, inner: [320, 180] }]);
     expect(got.scaled!.top).toEqual({ dpr: 2, inner: [320, 180] });
     expect(got.scaled!.bar).toBe(2);
     expect(ratio('scaled', 'truth')).toBeGreaterThan(0.9);
     expect(ratio('rig', 'rig-truth')).toBeGreaterThan(0.9);
-    expect(got.third!.width).toBe(427);
     expect((got.third!.layers as Array<{ dpr: number }>)[0]!.dpr).toBeCloseTo(4 / 3, 5);
+    expect(got.half!.layers).toEqual([{ outOfProcess: true, dpr: 1, inner: [320, 180] }]);
+    expect(got.half!.top).toEqual({ dpr: 0.5, inner: [320, 180] });
+    expect(got.half!.bar).toBe(1);
     // At 1 (stills, previews, a render at the composition size): as before.
     for (const name of ['plain', 'one']) {
-      expect(got[name]!.width, name).toBe(320);
       expect(got[name]!.layers, name).toEqual([{ outOfProcess: true, dpr: 1, inner: [320, 180] }]);
       expect(got[name]!.bar, name).toBe(1);
     }

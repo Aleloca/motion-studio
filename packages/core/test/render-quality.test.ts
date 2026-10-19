@@ -56,9 +56,11 @@ describe('render quality (decision 974)', () => {
     expect(pagePixels({ width: 1920, height: 1080, deviceScaleFactor: 2 })).toEqual({ width: 3840, height: 2160 });
   });
 
-  it('report 51: a browser for a scaled render is launched at its scale; at 1 (stills, previews) with no flag', () => {
+  it('report 51: a browser for an upscaled render is launched at its scale; at 1 (stills, previews) or below with no flag', () => {
     expect(scaleFlags(4 / 3)).toEqual([`--force-device-scale-factor=${4 / 3}`]);
     expect(scaleFlags(2)).toEqual(['--force-device-scale-factor=2']);
-    for (const k of [1, 0, -1, Number.NaN, Number.POSITIVE_INFINITY]) expect(scaleFlags(k), String(k)).toEqual([]);
+    // Below 1 (a 720p or 480p export of a 1080p composition, decision 1346): no flag, as before; the layers are drawn at 1x and
+    // the page shrinks them.
+    for (const k of [1, 0.5, 2 / 3, 0, -1, Number.NaN, Number.POSITIVE_INFINITY]) expect(scaleFlags(k), String(k)).toEqual([]);
   });
 });

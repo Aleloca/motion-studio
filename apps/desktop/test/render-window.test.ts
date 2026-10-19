@@ -60,7 +60,7 @@ describe('render window options', () => {
     const { offscreen: _a, ...isolation } = scaled.webPreferences!;
     const { offscreen: _b, ...plain } = renderWindowOptions(`${RENDER_PARTITION_PREFIX}x4`, 1920, 1080).webPreferences!;
     expect(isolation).toEqual(plain);
-    for (const scale of [1, 0, Number.NaN]) expect(renderWindowOptions(`${RENDER_PARTITION_PREFIX}x5`, 64, 64, { scale }).webPreferences?.offscreen, String(scale)).toBe(true);
+    for (const scale of [1, 0.5, 2 / 3, 0, Number.NaN]) expect(renderWindowOptions(`${RENDER_PARTITION_PREFIX}x5`, 64, 64, { scale }).webPreferences?.offscreen, String(scale)).toBe(true);
   });
 });
 
@@ -313,13 +313,13 @@ describe('ElectronProvider', () => {
     expect(created[0]).toMatchObject({ transparent: true });
   });
 
-  it('report 51: a page at a scale gets a window at that scale; a page at 1 or without one, none', async () => {
+  it('report 51: a page above 1 gets a window at its scale; at 1, below 1 or without one, none (decision 1346)', async () => {
     const created: Array<{ scale?: number }> = [];
-    const provider = new ElectronProvider({ maxWindows: 3, limits: { timeLimitMs: 60_000 }, createWindow: (o) => { created.push(o); return new Promise(() => {}); } });
+    const provider = new ElectronProvider({ maxWindows: 4, limits: { timeLimitMs: 60_000 }, createWindow: (o) => { created.push(o); return new Promise(() => {}); } });
     const open = (deviceScaleFactor?: number) => void provider.open({ width: 64, height: 64, url: `${PREFIX}runtime/index.html?mode=render`, signal: new AbortController().signal, ...(deviceScaleFactor !== undefined ? { deviceScaleFactor } : {}) }).catch(() => {});
-    open(2); open(1); open();
+    open(2); open(1); open(); open(0.5);
     await new Promise((r) => setTimeout(r, 0));
-    expect(created.map((c) => c.scale)).toEqual([2, undefined, undefined]);
+    expect(created.map((c) => c.scale)).toEqual([2, undefined, undefined, undefined]);
   });
 
   it('close() waits for a window still being created, and that window is closed (M6)', async () => {

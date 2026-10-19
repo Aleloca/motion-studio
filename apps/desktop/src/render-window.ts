@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { app, BrowserWindow, powerSaveBlocker, session, type BrowserWindowConstructorOptions, type Debugger, type ProxyConfig, type Session } from 'electron';
 import {
-  allowedPrefix, CdpError, DEAD_PROXY, pagePixels, pageScale, DEFAULT_PARALLEL, isAllowedRequest, openCdpRenderPage, RenderError, samplePidsMemory,
+  allowedPrefix, CdpError, DEAD_PROXY, layersAtScale, pagePixels, pageScale, DEFAULT_PARALLEL, isAllowedRequest, openCdpRenderPage, RenderError, samplePidsMemory,
   scaledMemoryLimits, startWatchdog,
   type CdpClient, type CdpEvent, type CdpSendOptions, type ChromiumProvider, type ChromiumProviderFactory, type OpenPageOptions,
   type PageTimeouts, type RenderFailure, type RenderPage, type Watchdog, type WatchdogLimits,
@@ -14,7 +14,7 @@ import {
  *
  * **One hidden window per page** (a parallel segment), created fresh for every page and never reused:
  * - `show: false`, offscreen rendering, `sandbox`, `contextIsolation`, no preload, no Node anywhere, no `<webview>`;
- *   a page at another scale (decision 974) renders offscreen at that device scale factor (report 51), so its html layers,
+ *   a page at a scale above 1 (decision 974) renders offscreen at that device scale factor (report 51), so its html layers,
  *   out-of-process iframes the page's device metrics override never reaches, are rasterised at it too;
  * - its own **in-memory session partition** (`ms-render-<uuid>`, never `persist:`), locked before the window exists:
  *   - `setProxy` to a dead proxy with only the composition server's `127.0.0.1:<port>` bypassed and the implicit loopback
@@ -69,7 +69,7 @@ const CLOSED_WAIT_MS = 10_000;
  */
 export function renderWindowOptions(partition: string, width: number, height: number, o: { transparent?: boolean; scale?: number } = {}): BrowserWindowConstructorOptions {
   if (!partition.startsWith(RENDER_PARTITION_PREFIX)) throw new Error('render window: not a render partition');
-  const scale = o.scale !== undefined && Number.isFinite(o.scale) && o.scale > 0 && o.scale !== 1 ? o.scale : null;
+  const scale = o.scale !== undefined && layersAtScale(o.scale) ? o.scale : null;
   return {
     show: false, width, height, useContentSize: true, enableLargerThanScreen: true, frame: false, skipTaskbar: true, focusable: false,
     paintWhenInitiallyHidden: true,
@@ -470,7 +470,7 @@ export class ElectronProvider implements ChromiumProvider {
     const signal = AbortSignal.any([o.signal, this.closeCtl.signal]);
     const lane: WindowLane = o.purpose === 'frames' ? 'preview' : 'render';
     const scale = pageScale(o);
-    const creating = (this.o.createWindow ?? createRenderWindow)({ prefix, width: o.width, height: o.height, signal, lane, ...(o.transparentBackground ? { transparent: true } : {}), ...(scale !== 1 ? { scale } : {}) });
+    const creating = (this.o.createWindow ?? createRenderWindow)({ prefix, width: o.width, height: o.height, signal, lane, ...(o.transparentBackground ? { transparent: true } : {}), ...(layersAtScale(scale) ? { scale } : {}) });
     this.creating.add(creating);
     try {
       rw = await creating;

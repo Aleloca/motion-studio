@@ -1,13 +1,15 @@
 // @vitest-environment node
 /**
- * Report 51 (decisions 1340–1349): an html layer is rasterised at the render's scale, in real Chrome. The layers are
+ * Report 51 (decisions 1340, 1345, 1346): an html layer is rasterised at the render's scale, in real Chrome. The layers are
  * sandboxed iframes, out of process (OOPIF): `Emulation.setDeviceMetricsOverride` reaches the top-level page only, so at
  * scale 2 the layer drew at devicePixelRatio 1 and the page stretched it (every html layer of an export at another
  * resolution, since decision 974). The browser of a scaled render is now launched with `--force-device-scale-factor`.
  * The capture at scale 2 is compared with its ground truth: the same layer laid out twice as large (CSS zoom) in a
  * composition twice as large, at scale 1 (squared gradient energy of the text block), and the layer reads its own
  * devicePixelRatio (a bar `20 × devicePixelRatio` CSS pixels wide). Report 38's camera rig is checked at scale 2 too.
- * Skipped without Chrome or ffmpeg, unless MS_REQUIRE_CHROME=1.
+ * Below 1 (a 720p export of a 1080p composition) nothing changes (decision 1346): the layer draws at 1x, the page shrinks it.
+ * Skipped without Chrome or ffmpeg, unless MS_REQUIRE_CHROME=1. `MS_CFT_EXE` (a chrome-headless-shell) runs the scale-2
+ * case with it too (decision 1340).
  */
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -46,10 +48,10 @@ describe.skipIf(!tools.ok)('renderer: an html layer is rasterised at the render 
   });
 
   /** One PNG of composition `id` (`zoom` times the base size) at time `t`, rasterised at `dsf` (none: the page's default). */
-  const capture = async (id: string, zoom: number, dsf: number | undefined, t = 0): Promise<{ px: Uint8Array; width: number }> => {
+  const capture = async (id: string, zoom: number, dsf: number | undefined, t = 0, browser: { exe: string; kind: 'system' | 'cft' } = { exe: tools.chrome!.exe, kind: 'system' }): Promise<{ px: Uint8Array; width: number }> => {
     const composition: Composition = scaleComposition(id, zoom);
     const session = await server.mintSession({ creativeDir: creative, versionDir: VERSION_DIR, format: id, composition, mode: 'render' });
-    const provider = new ChromeProvider({ exe: tools.chrome!.exe, kind: 'system', limits: { timeLimitMs: 5 * 60_000 } });
+    const provider = new ChromeProvider({ ...browser, limits: { timeLimitMs: 5 * 60_000 } });
     try {
       const page = await provider.open({ width: composition.width, height: composition.height, url: session.url, signal: new AbortController().signal, ...(dsf !== undefined ? { deviceScaleFactor: dsf } : {}) });
       expect(page.info.errors).toEqual([]);
@@ -84,6 +86,22 @@ describe.skipIf(!tools.ok)('renderer: an html layer is rasterised at the render 
       expect(plain.width).toBe(SCALE_W);
       expect(barDpr(plain.px, plain.width, 1), String(dsf)).toBe(1);
     }
+  });
+
+  it('below 1 (a 720p export of a 1080p composition) nothing changes: the layer draws at 1x, the capture is the scaled size', async () => {
+    const half = await capture('text', 1, 0.5);
+    expect(half.width).toBe(160);
+    expect(barDpr(half.px, half.width, 0.5)).toBe(1);
+  });
+
+  it.skipIf(!process.env.MS_CFT_EXE)('chrome-headless-shell (kind cft): the same at scale 2', async () => {
+    const browser = { exe: process.env.MS_CFT_EXE!, kind: 'cft' as const };
+    const scaled = await capture('text', 1, 2, 0, browser);
+    const truth = await capture('truth', 2, undefined, 0, browser);
+    const ratio = gradientEnergy(scaled.px, scaled.width, TEXT_BOX, 2) / gradientEnergy(truth.px, truth.width, TEXT_BOX, 2);
+    console.info(`[scale] chrome-headless-shell text energy ratio at scale 2: ${ratio.toFixed(3)}`);
+    expect(barDpr(scaled.px, scaled.width, 2)).toBe(2);
+    expect(ratio).toBeGreaterThan(0.9);
   });
 
   it("report 38's camera rig (will-change, scaled by the layer) stays sharp at scale 2", async () => {

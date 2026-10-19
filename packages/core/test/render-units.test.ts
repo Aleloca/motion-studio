@@ -50,6 +50,18 @@ describe('isolation rules', () => {
     }
     expect(() => new ChromeProvider({ exe: 'x', kind: 'system', limits: { timeLimitMs: 1 }, extraFlags: ['--disable-gpu', '--use-angle=metal'] })).not.toThrow();
   });
+
+  it('report 51: the browser is launched at its first page\'s scale; a page at another scale is refused', async () => {
+    const p = new ChromeProvider({ exe: 'x', kind: 'system', limits: { timeLimitMs: 1 } });
+    const launches: unknown[][] = [];
+    // No real browser: the launch is recorded and gives a browser for the composition server only (no target gate).
+    (p as unknown as { launch: (...a: unknown[]) => Promise<unknown> }).launch = async (...a) => { launches.push(a); return { origin: ORIGIN }; };
+    const page = (deviceScaleFactor?: number) => ({ width: 320, height: 180, url: `${ORIGIN}/${TOKEN}/runtime/index.html?mode=render`, signal: new AbortController().signal, ...(deviceScaleFactor !== undefined ? { deviceScaleFactor } : {}) });
+    await p.open(page(2)).catch(() => {}); // fails later, on the missing gate
+    expect(launches).toEqual([[ORIGIN, 2]]);
+    for (const k of [undefined, 1, 4 / 3]) await expect(p.open(page(k)), String(k)).rejects.toThrow('render: one provider serves one scale');
+    expect(launches).toHaveLength(1);
+  });
 });
 
 /** A fake CDP transport: records calls, lets the test emit events, fails chosen calls. */
