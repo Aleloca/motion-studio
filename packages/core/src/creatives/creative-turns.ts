@@ -585,9 +585,14 @@ export class CreativeTurnService {
       }
       await markFreed([...gone, ...added]);
       // Report 55: which labels are the agent's is the core's to know, never the caller's: the stored ones whose text is unchanged.
-      const { agentFormatLabels: _sentAgent, ...own } = rest;
-      const agent = keptAgentLabels(current.agentFormatLabels, own.formatLabels);
-      brief = { ...own, ...(links ? { links } : {}), ...(agent ? { agentFormatLabels: agent } : {}) };
+      // Review: a full save never changes or drops the agent's name of a format it keeps, whatever it sends (an editor's draft
+      // may be older than the agent's last name). The user renames or clears a name through `formatLabels` (the formats
+      // column saves each label on its own), which makes it theirs.
+      const { agentFormatLabels: _sentAgent, formatLabels: sentLabels, ...own } = rest;
+      const labels: Record<string, string> = { ...sentLabels };
+      for (const [k, v] of Object.entries(current.agentFormatLabels ?? {})) if (current.formatLabels?.[k] === v && own.formats.includes(k)) labels[k] = v;
+      const agent = keptAgentLabels(current.agentFormatLabels, labels);
+      brief = { ...own, ...(Object.keys(labels).length > 0 ? { formatLabels: labels } : {}), ...(links ? { links } : {}), ...(agent ? { agentFormatLabels: agent } : {}) };
     } else if (patch.services || patch.formatLabels || patch.formats || patch.storePack !== undefined || patch.fields || patch.agentLabels) {
       // A partial save (services chip, inline labels, reorder, removal): everything else comes from the brief stored now,
       // never from the caller's copy.

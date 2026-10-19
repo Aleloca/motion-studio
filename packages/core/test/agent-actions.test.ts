@@ -328,6 +328,36 @@ describe('name_formats (report 55)', () => {
     await vi.waitFor(async () => expect((await detail(slug)).creative.brief.agentFormatLabels).toEqual({ 'youtube-16x9': 'Di nuovo' }));
   });
 
+  it('review: a stale full brief save never makes the agent\'s name the user\'s, nor drops a newer one', async () => {
+    const slug = await create(true, two);
+    const run = await runOf(slug);
+    expect((await bridge(run, 'name_formats', { names: { 'youtube-16x9': 'Lancio' } })).statusCode).toBe(200);
+    writeCompositions(run, 6);
+    run.finish({ write: false });
+    await waitIdle();
+    await vi.waitFor(async () => expect((await detail(slug)).creative.brief.agentFormatLabels).toEqual({ 'youtube-16x9': 'Lancio' }));
+    const draft = (await detail(slug)).creative.brief;
+    // The agent renames it after the editor took its draft.
+    expect((await app.inject({ method: 'POST', url: `${P}/${slug}/turns`, payload: { text: 'x' } })).statusCode).toBe(202);
+    const next = await runOf(slug, 1);
+    expect((await bridge(next, 'name_formats', { names: { 'youtube-16x9': 'Lancio, secondo' } })).statusCode).toBe(200);
+    writeCompositions(next, 6);
+    next.finish({ write: false });
+    await waitIdle();
+    await vi.waitFor(async () => expect((await detail(slug)).creative.brief.formatLabels?.['youtube-16x9']).toBe('Lancio, secondo'));
+    const url = `${P}/${slug}`;
+    // The stale draft sends the old name back: the agent's newer name stays, still the agent's.
+    let res = await app.inject({ method: 'PUT', url, payload: { brief: { ...draft, notes: 'n' } } });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json().brief.formatLabels).toEqual({ 'youtube-16x9': 'Lancio, secondo', 'instagram-post-1x1': 'Mio post' });
+    expect(res.json().brief.agentFormatLabels).toEqual({ 'youtube-16x9': 'Lancio, secondo' });
+    // A draft without the label (taken before the agent named it) does not drop it either.
+    const { formatLabels: _l, ...noLabels } = draft;
+    res = await app.inject({ method: 'PUT', url, payload: { brief: { ...noLabels, formatLabels: { 'instagram-post-1x1': 'Mio post' } } } });
+    expect(res.json().brief.formatLabels).toEqual({ 'youtube-16x9': 'Lancio, secondo', 'instagram-post-1x1': 'Mio post' });
+    expect(res.json().brief.agentFormatLabels).toEqual({ 'youtube-16x9': 'Lancio, secondo' });
+  });
+
   it('the labels of add_format and duplicate_format are the agent\'s', async () => {
     const slug = await create();
     const run = await runOf(slug);
