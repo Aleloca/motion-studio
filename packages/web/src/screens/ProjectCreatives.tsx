@@ -308,7 +308,8 @@ function Previews({ slug, c, presets, state }: { slug: string; c: CreativeSummar
   const { ref, seen } = useSeen<HTMLDivElement>();
   const still = !c.cover && c.coverFrame && c.versions > 0 ? { ...c.coverFrame, slug, creative: c.slug } : null;
   const frame = useCompositionStill(still, seen);
-  if ((c.cover || (still && frame.state !== 'none')) && c.versions > 0) {
+  // `none` or `failed` (asked again later): the dashed frames meanwhile (review 3).
+  if ((c.cover || (still && frame.state !== 'none' && frame.state !== 'failed')) && c.versions > 0) {
     const preset = c.formats[0] ? presetFor(presets, c.formats[0]) : null;
     const aspect = natural ?? (preset ? preset.width / preset.height : 1);
     const h = Math.min(STAGE.height, STAGE.maxWidth / aspect);

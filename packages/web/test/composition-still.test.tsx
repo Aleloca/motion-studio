@@ -28,18 +28,51 @@ describe('composition stills', () => {
     expect(api.getStoryboard).toHaveBeenCalledTimes(MAX_STILLS_AT_ONCE);
     while (resolvers.length) { resolvers.shift()!(); await new Promise((r) => setTimeout(r, 0)); }
     const got = await Promise.all([...all, again]);
-    expect(got.map((v) => v?.format)).toEqual(['a', 'b', 'c', 'd', 'a']);
+    expect(got.map((v) => (typeof v === 'object' ? v.format : v))).toEqual(['a', 'b', 'c', 'd', 'a']);
     expect(api.getStoryboard).toHaveBeenCalledTimes(4);
     // Kept: asked again later, no new request.
     await fetchStill(still('c'));
     expect(api.getStoryboard).toHaveBeenCalledTimes(4);
   });
 
-  it('no renderer (404) is none, and is not asked again at once', async () => {
-    api.getStoryboard.mockRejectedValue(new ApiError(404));
-    expect(await fetchStill(still('x'))).toBeNull();
-    expect(await fetchStill(still('x'))).toBeNull();
-    expect(api.getStoryboard).toHaveBeenCalledTimes(1);
+  it('no renderer (404) or an invalid composition (422) is none; another error is failed; neither is asked again at once', async () => {
+    api.getStoryboard.mockRejectedValueOnce(new ApiError(404)).mockRejectedValueOnce(new ApiError(422)).mockRejectedValueOnce(new ApiError(500));
+    expect(await fetchStill(still('x'))).toBe('none');
+    expect(await fetchStill(still('x'))).toBe('none');
+    expect(await fetchStill(still('w'))).toBe('none');
+    expect(await fetchStill(still('v'))).toBe('failed');
+    expect(await fetchStill(still('v'))).toBe('failed');
+    expect(api.getStoryboard).toHaveBeenCalledTimes(3);
+  });
+
+  it('review 2: a still whose thumbnails all left before its turn is dropped from the line, and the line moves on', async () => {
+    const resolvers: Array<() => void> = [];
+    api.getStoryboard.mockImplementation((_s: string, _c: string, _n: number, f: string) => new Promise((r) => { resolvers.push(() => r(view(f))); }));
+    const leave = new AbortController();
+    const stay = new AbortController();
+    void fetchStill(still('a'), stay.signal);
+    void fetchStill(still('b'), stay.signal);
+    // Two thumbnails of c (both leave) and one of d (stays), waiting in line.
+    const c1 = fetchStill(still('c'), leave.signal);
+    const other = new AbortController();
+    const c2 = fetchStill(still('c'), other.signal);
+    const d = fetchStill(still('d'), stay.signal);
+    await Promise.resolve();
+    leave.abort();
+    expect(api.getStoryboard).toHaveBeenCalledTimes(2);
+    other.abort();
+    expect(await c1).toBe('failed');
+    expect(await c2).toBe('failed');
+    resolvers.shift()!();
+    await new Promise((r) => setTimeout(r, 0));
+    // The freed slot goes to d, never to c.
+    expect(api.getStoryboard.mock.calls.map((c) => c[3])).toEqual(['a', 'b', 'd']);
+    resolvers.shift()!(); resolvers.shift()!();
+    expect(typeof (await d)).toBe('object');
+    // A dropped request is not kept: c is asked when a thumbnail of it comes back.
+    void fetchStill(still('c'));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(api.getStoryboard.mock.calls.map((c) => c[3])).toEqual(['a', 'b', 'd', 'c']);
   });
 
   it('a busy core (429) is asked again with a backoff', async () => {
@@ -47,7 +80,7 @@ describe('composition stills', () => {
     api.getStoryboard.mockRejectedValueOnce(new ApiError(429)).mockResolvedValueOnce(view('y'));
     const p = fetchStill(still('y'));
     await vi.advanceTimersByTimeAsync(1500);
-    expect((await p)?.format).toBe('y');
+    expect((await p) as StoryboardView).toMatchObject({ format: 'y' });
     expect(api.getStoryboard).toHaveBeenCalledTimes(2);
   });
 

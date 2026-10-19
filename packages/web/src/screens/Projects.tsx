@@ -229,12 +229,12 @@ function JumpTile({ c, live, presets }: { c: RecentCreative; live: EventsState; 
   const first = c.formats[0] ? presetFor(presets, c.formats[0]) ?? undefined : undefined;
   const width = Math.round(Math.min(120, Math.max(40, THUMB_H * (first ? first.width / first.height : 1))));
   const what = c.formats.length === 1 && first ? instanceName(first, c.formats[0]!, locale, c.formatLabels) : p.formats({ n: c.formats.length });
-  // Reports 45/47: a still that cannot be made gives back the icon.
-  const [noStill, setNoStill] = useState(false);
+  // Reports 45/47: a still there is none of (404/422) gives back the icon, for that composition only (review 3).
+  const [noStill, setNoStill] = useState<string | null>(null);
   return (
     <a className="ms-card ms-jump-tile" data-hover-play href={href.creative(c.project.slug, c.slug)}>
       <span className="ms-jump-thumb" style={{ width }}>
-        {c.cover || (c.coverFrame && !noStill) ? <Cover project={c.project.slug} c={c} onNone={() => setNoStill(true)} /> : <Icon name={first?.kind === 'image' ? 'image' : 'video'} size={16} />}
+        {c.cover || (c.coverFrame && noStill !== c.coverFrame.hash) ? <Cover key={c.coverFrame?.hash ?? 'file'} project={c.project.slug} c={c} onNone={() => setNoStill(c.coverFrame?.hash ?? null)} /> : <Icon name={first?.kind === 'image' ? 'image' : 'video'} size={16} />}
       </span>
       <span className="ms-jump-text">
         <b className="ms-jump-title">{c.title}</b>
@@ -310,9 +310,11 @@ function ProjectCard({ item, live, waiting, fresh, index, onActivity }: CardProp
   useLayoutEffect(() => { if (fresh) void enter(ref.current, { y: 16, scale: 0.96 }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const readable = (creatives.value ?? []).flatMap((c) => (c.ok ? [c] : []));
-  // Reports 45/47: a creative without a file covers with a still of its composition, unless none can be made.
+  // Reports 45/47: a creative without a file covers with a still of its composition, unless there is none of that
+  // composition (404/422, keyed by its hash: a new version is asked again; other errors keep the slot and retry, review 3).
   const [noStill, setNoStill] = useState<ReadonlySet<string>>(new Set());
-  const covers = readable.filter((c) => c.cover || (c.coverFrame && !noStill.has(c.slug))).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, COVERS);
+  const stillKey = (c: CreativeSummary) => `${c.slug}/${c.coverFrame?.hash ?? ''}`;
+  const covers = readable.filter((c) => c.cover || (c.coverFrame && !noStill.has(stillKey(c)))).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, COVERS);
   const colors = (brand.value?.kit.colors ?? []).filter((c) => hex6(c.hex));
   const fonts = brand.value?.kit.fonts.length ?? 0;
   const face = paletteFace(colors);
@@ -333,7 +335,7 @@ function ProjectCard({ item, live, waiting, fresh, index, onActivity }: CardProp
         className={cx('ms-pcover', covers.length > 0 && `ms-n${covers.length}`)}
         style={!covers.length && face ? { background: face.bg } : undefined} // color-data
       >
-        {covers.map((c) => <Cover key={c.slug} project={slug} c={c} onNone={() => setNoStill((x) => new Set(x).add(c.slug))} />)}
+        {covers.map((c) => <Cover key={stillKey(c)} project={slug} c={c} onNone={() => setNoStill((x) => new Set(x).add(stillKey(c)))} />)}
         {!covers.length && settled ? (
           <span className={cx('ms-pcover-word', project.name.length > 18 && 'ms-long')} style={face ? { color: face.fg } : undefined}>{project.name}</span> // color-data
         ) : null}

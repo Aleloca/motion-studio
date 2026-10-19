@@ -148,6 +148,33 @@ describe('Projects · cards', () => {
     expect(api.getStoryboard).toHaveBeenCalledWith('hs', 'desk', 2, 'tiktok-9x16');
   });
 
+  it('review 3: an error other than 404/422 is not "no still": the cover keeps its slot (asked again later)', async () => {
+    api.listProjects.mockResolvedValue([project('au', 'Audin')]);
+    api.listCreatives.mockResolvedValue([
+      { ok: true, slug: 'desk', title: 'Desk', status: 'ready', formats: ['tiktok-9x16'], versions: 1, updatedAt: at, cover: null, coverFrame: { n: 1, format: 'tiktok-9x16', hash: 'a'.repeat(64) } },
+    ] as never);
+    api.getStoryboard.mockRejectedValueOnce(Object.assign(new Error('boom'), { status: 500 }));
+    en(<Projects live={live()} />);
+    const card = (await screen.findByText('Audin', { selector: '.ms-pcard-name' })).closest('a')!;
+    await waitFor(() => expect(api.getStoryboard).toHaveBeenCalled());
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+    expect(card.querySelector('.ms-pcover .ms-cover')).toBeTruthy();
+    expect(card.querySelector('.ms-pcover-word')).toBeNull();
+  });
+
+  it('review 3: "no still" is kept per version: a new version of the creative is asked again', async () => {
+    api.listProjects.mockResolvedValue([]);
+    const frame = (hash: string) => recent('desk', 'Desk', 'ready', { cover: null, coverFrame: { n: 1, format: 'tiktok-9x16', hash } });
+    api.recentCreatives.mockResolvedValue([frame('a'.repeat(64))]);
+    api.getStoryboard.mockRejectedValueOnce(Object.assign(new Error('none'), { status: 404 }));
+    const { rerender } = en(<Projects live={live()} />);
+    const tile = (await screen.findByText('Desk', { selector: '.ms-jump-title' })).closest('a')!;
+    await waitFor(() => expect(tile.querySelector('.ms-jump-thumb svg')).toBeTruthy());
+    api.recentCreatives.mockResolvedValue([frame('b'.repeat(64))]);
+    rerender(<I18nProvider locale="en"><Projects live={live({ creativeTicks: { 'hs/desk': 1 } })} /></I18nProvider>);
+    await waitFor(() => expect(screen.getByText('Desk', { selector: '.ms-jump-title' }).closest('a')!.querySelector('.ms-jump-thumb img')?.getAttribute('src')).toBe('/sb/tiktok-9x16/poster.jpg'));
+  });
+
   it('falls back to the project name without covers or palette', async () => {
     api.listProjects.mockResolvedValue([project('nw', 'Northwind Coffee')]);
     en(<Projects live={live()} />);
