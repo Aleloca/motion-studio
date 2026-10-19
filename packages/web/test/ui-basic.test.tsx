@@ -165,6 +165,16 @@ describe('Check', () => {
     fireEvent.click(c);
     expect(onChange).toHaveBeenLastCalledWith(false);
   });
+
+  it('report 48: a mixed checkbox says "mixed", shows a dash and turns everything on when clicked', () => {
+    const onChange = vi.fn();
+    render(<Check on={false} mixed onChange={onChange} label="iPhone" />);
+    const c = screen.getByRole('checkbox', { name: 'iPhone' });
+    expect(c.getAttribute('aria-checked')).toBe('mixed');
+    expect(c.className).toMatch(/\bms-mixed\b/);
+    fireEvent.click(c);
+    expect(onChange).toHaveBeenCalledWith(true);
+  });
 });
 
 describe('Segmented', () => {
