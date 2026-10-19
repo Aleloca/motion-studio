@@ -181,11 +181,22 @@
 .ms-composer .ms-composer-box:focus-within { box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
 .ms-composer-label { font-size: 11px; color: var(--muted); }
 .ms-composer-pins { display: flex; flex-wrap: wrap; gap: 6px; }
-/* "Applies to" (spec §2.5): a wrapping row of chips; a follower's chip sits by its primary, not choosable. */
-.ms-composer-applies { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.ms-composer-applies-label { font-size: 11px; color: var(--muted); margin-right: 2px; }
-.ms-composer-applies-group { display: inline-flex; flex-wrap: wrap; gap: 4px; }
-.ms-composer-applies .ms-chip { height: 22px; font-size: 11.5px; }
+/* "Applies to" (spec §2.5, report 42): one menu button saying what is chosen; the menu groups the formats as the formats column. */
+.ms-composer-applies { display: flex; min-width: 0; }
+.ms-applies-btn { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-width: 0; height: 24px; padding: 0 8px; margin: 0; border: 0; border-radius: 7px;
+  background: var(--field); color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer; }
+.ms-applies-btn:hover, .ms-applies-btn[aria-expanded="true"] { color: var(--text); box-shadow: inset 0 0 0 1px var(--line); }
+.ms-applies-label { flex: none; }
+.ms-applies-choice { color: var(--text); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-applies-btn svg { flex: none; }
+.ms-applies-menu { display: flex; flex-direction: column; gap: 2px; }
+.ms-applies-group { display: flex; flex-direction: column; gap: 1px; padding-top: 4px; }
+.ms-applies-head { padding: 6px 10px 2px; }
+.ms-applies-item { height: auto; min-height: 30px; gap: 8px; color: var(--text); }
+.ms-applies-item .ms-check { width: 16px; height: 16px; }
+.ms-applies-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-applies-whole .ms-applies-name { color: var(--muted); }
+.ms-applies-follows { display: inline-flex; align-items: center; gap: 3px; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--muted); }
 .ms-composer-follows { margin: 0; display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--muted); }
 .ms-composer-pin { height: 24px; padding-right: 2px; }
 .ms-composer-pin .ms-x {

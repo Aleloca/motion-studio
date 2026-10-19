@@ -8,7 +8,7 @@
 import { ProblemList } from '../components/ProblemList.tsx';
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
 import { entriesOfVariant, turnEndOf } from '@motion-studio/shared';
-import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, outputWarningText, shownTotal, packInstancesOf, type ConversationEntry, type CreativeDetail, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VariantId, type VariantMember, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
+import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, outputWarningText, shownTotal, packInstancesOf, type ConversationEntry, type JobSummary, type CreativeDetail, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VariantId, type VariantMember, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { api, type GroupExportPlanItem } from '../api.ts';
@@ -29,7 +29,7 @@ import { useCreative } from '../useCreative.ts';
 import { jobLiveTokens, jobUsagePartial } from '../usageLive.ts';
 import { costText, TokenCount, UsageBadge } from '../shell/Tokens.tsx';
 import { boardLabel, boardName, CanvasBoard, type Draft, type Tool } from './CanvasBoard.tsx';
-import { boardsWith, fitBoards, isTall, ratioText, type BoardModel } from './canvasModel.ts';
+import { appliesGroups, boardsWith, canvasGroups, canvasLines, fitBoards, FIT_MIN, groupByChannel, PACK_GROUP, ratioText, type BoardModel } from './canvasModel.ts';
 import { CompareDialog } from './CompareDialog.tsx';
 import { channelOf } from './creativeState.ts';
 import { ExportDialog, type ExportSnapshot } from './ExportDialog.tsx';
@@ -399,7 +399,8 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   // when the viewport or the boards change size (a window resize, a format added); after that the zoom is theirs (⌘0 fits
   // again). Decision 973: in a variant group the zoom fits the variants' cards side by side.
   const userZoomed = useRef(false);
-  const [viewW, setViewW] = useState(0);
+  const [viewSize, setViewSize] = useState({ width: 0, height: 0 });
+  const viewW = viewSize.width;
   const modelOf = (d: CreativeDetail) => {
     const st = formatStates(d, presets);
     return { st, bs: boardsWith(d.creative.brief.formats, presets, d.versions, (id) => boardSource(st, id, {}), d.creative.brief.formatLabels) };
@@ -412,13 +413,13 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   fitNow.current = () => {
     const v = viewport.current;
     if (!v) return null;
-    return group ? fitCards(cardCount, v.clientWidth, ZOOM_MIN) : fitBoards(boards, { width: v.clientWidth, height: v.clientHeight }, ZOOM_MIN);
+    return group ? fitCards(cardCount, v.clientWidth, ZOOM_MIN) : fitBoards(canvasGroups(boards, packIds), { width: v.clientWidth, height: v.clientHeight }, FIT_MIN);
   };
   useLayoutEffect(() => {
     const v = viewport.current;
     if (!v || !boards.length) return;
     const fit = () => {
-      setViewW((w) => (w === v.clientWidth ? w : v.clientWidth));
+      setViewSize((w) => (w.width === v.clientWidth && w.height === v.clientHeight ? w : { width: v.clientWidth, height: v.clientHeight }));
       if (userZoomed.current) return;
       const z = fitNow.current();
       if (z !== null) setZoom((cur) => (Math.abs(cur - z) < 1e-6 ? cur : z));
@@ -431,10 +432,12 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     return () => { cancelAnimationFrame(frame); ro.disconnect(); };
   }, [fitKey, Boolean(detail)]); // eslint-disable-line react-hooks/exhaustive-deps
   const zoomBy = (next: (z: number) => number) => { userZoomed.current = true; setZoom(next); };
+  // Report 40: a canvas that opened below 50% (many boards) can be zoomed back down to where it opened.
+  const zoomMin = () => Math.min(ZOOM_MIN, group ? ZOOM_MIN : fitNow.current() ?? ZOOM_MIN);
   // ⌘+ / ⌘− step, ⌘0 fits again (and lets the canvas refit on resize, as when it opened).
   const zoomStep = (k: 'in' | 'out' | 'fit') => {
     if (k === 'fit') { userZoomed.current = false; const z = fitNow.current(); if (z !== null) setZoom(z); return; }
-    zoomBy((z) => stepZoom(z, k === 'in' ? 1 : -1));
+    zoomBy((z) => stepZoom(z, k === 'in' ? 1 : -1, zoomMin()));
   };
   usePageShortcut(root, (e) => zoomKey(e) !== null && !inOverlay(e) && Boolean(detail), (e) => zoomStep(zoomKey(e)!));
   // Desktop: the View menu's ⌘+ / ⌘− / ⌘0 arrive over the bridge (on macOS the menu takes the keys first): the same path,
@@ -447,6 +450,8 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   // page never zooms. Any other wheel (two-finger scroll) scrolls the canvas as usual.
   const zoomNow = useRef(zoom);
   zoomNow.current = zoom;
+  const zoomMinNow = useRef(zoomMin);
+  zoomMinNow.current = zoomMin;
   const pinchAnchor = useRef<{ scroll: { left: number; top: number }; pointer: { x: number; y: number }; from: number } | null>(null);
   useEffect(() => {
     const v = viewport.current;
@@ -455,7 +460,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
       if (!e.ctrlKey) return;
       e.preventDefault();
       const from = zoomNow.current;
-      const to = pinchZoom(from, e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY);
+      const to = pinchZoom(from, e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY, zoomMinNow.current());
       if (to === from) return;
       const r = v.getBoundingClientRect();
       // The first event of a gesture anchors it; the next ones (before a render) keep that anchor.
@@ -542,12 +547,18 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   const appliesTo = versions.length && primaries.length > 1 ? {
     primaries: primaries.map((id) => ({ id, label: formatLabel(id), followers: followersOf(states, id).map(formatLabel) })),
     followerOf: (id: string) => states[id]?.follows ?? null,
+    groups: appliesGroups(primaries, presets, cr.brief, locale, t.web.formatUi.other),
   } : undefined;
   // The pack's group is there whenever the creative has a pack, even if its instances were all taken out by hand: the export stays reachable.
   const columnGroups = groupByChannel(boards, packIds);
   if (storePack && !columnGroups.some(([ch]) => ch === PACK_GROUP)) columnGroups.push([PACK_GROUP, []]);
-  const tall = boards.filter(isTall);
-  const rest = boards.filter((b) => !isTall(b));
+  // Report 40: the canvas's lines follow the formats column's groups, wrapped at the zoom the canvas opens at (the user's zoom
+  // scales them, it does not wrap them again).
+  const lines = (() => {
+    const groups = canvasGroups(boards, packIds);
+    const at = fitBoards(groups, viewSize, FIT_MIN);
+    return canvasLines(groups, at ?? 1, at === null ? null : viewSize.width);
+  })();
   const pinsOf = (id: string) => pins.map((pin, i) => ({ pin, number: i + 1 })).filter((x) => x.pin.format === id);
   const badgeOf = (b: BoardModel & { n: number | null }) => {
     const s = states[b.id];
@@ -627,17 +638,20 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     return comp && render ? { n: b.n, format: src, hash: comp.hash, render, onRender: () => renderNow([[b.n!, [src]]]) } : null;
   };
   /** A board of the open creative; in a group, a thumbnail of its card at the card's zoom (`z`). */
-  const board = (b: BoardModel & { n: number | null }, z?: number) => (
+  const board = (b: BoardModel & { n: number | null }, z?: number) => {
+    const wip = isRendering(rendering, b.id) ? inProgressOf(live, job, b.id) : null;
+    return (
     <CanvasBoard key={b.id} slug={slug} creative={creative} board={b} n={b.n} {...(group ? { grouped: true, card: true } : {})}
-      tool={tool === 'comment' && (commentOn === null || commentOn === b.id) ? 'comment' : 'select'} zoom={z ?? zoom} selected={sel === b.id} rendering={isRendering(rendering, b.id)}
-      commentable={commentable.has(b.id)} missing={b.n === null ? latest?.n ?? null : null} {...badgeOf(b)} composition={compositionFor(b)}
+      tool={tool === 'comment' && (commentOn === null || commentOn === b.id) ? 'comment' : 'select'} zoom={z ?? zoom} selected={sel === b.id} rendering={!wip && isRendering(rendering, b.id)}
+      commentable={commentable.has(b.id)} missing={b.n === null ? latest?.n ?? null : null} {...badgeOf(b)} {...(wip ? { inProgress: true } : {})} composition={wip ?? compositionFor(b)}
       {...(commentable.has(b.id) && !readOnly ? { onComment: () => startComment(b.id) } : {})}
       pins={commentable.has(b.id) ? pinsOf(b.id) : []} draft={commentable.has(b.id) ? draft : null} nextNumber={pins.length + 1}
       onSelect={() => { setSel(b.id); setVsel(null); }} onOpen={(el) => { if (tool === 'select') openEditor(b.id, el); }} onPlace={(x, y) => place(b.id, x, y)} onEditPin={editPin}
       onDraftText={(text) => setDraft((d) => (d ? { ...d, text } : d))} onDraftCommit={commitDraft} onDraftCancel={() => setDraft(null)}
       onDraftDelete={() => { if (draft?.index !== null && draft?.index !== undefined) removePin(draft.index); }}
     />
-  );
+    );
+  };
 
   /** The formats column's channel groups of the open creative (a store pack's group included). */
   const renderColumn = (only?: 'pack') => columnGroups.filter(([ch]) => (only ? ch === PACK_GROUP : true)).map(([channel, items]) => {
@@ -762,9 +776,11 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     const pick = group!.group.picks[b.id];
     const isPick = pick?.slug === m.slug && pick.version === b.n;
     const mjob = Object.values(live.jobs).find((j) => j.key === d.jobKey && (j.state === 'queued' || j.state === 'running'));
+    const mrendering = isRendering(renderingOf(mjob, st), b.id);
+    const wip = mrendering ? inProgressOf(live, mjob, b.id) : null;
     return (
       <CanvasBoard key={key} boardKey={key} grouped card slug={slug} creative={m.slug} board={b} n={b.n} tool="select" zoom={z} selected={vsel === key}
-        rendering={isRendering(renderingOf(mjob, st), b.id)} commentable={false} missing={b.n === null ? d.versions.at(-1)?.n ?? null : null}
+        rendering={!wip && mrendering} {...(wip ? { inProgress: true } : {})} commentable={false} missing={b.n === null ? d.versions.at(-1)?.n ?? null : null}
         {...(m.status === 'active' && b.n !== null ? { onComment: () => onVariantUi({ focus: m.slug === routeCreative ? null : m.slug, all: false, comment: b.id }) } : {})}
         badge={b.n === null ? null : (
           <>
@@ -774,7 +790,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
         )}
         note={st[b.id]?.follows ? t.web.formatVersions.follows({ primary: instanceName(presetFor(presets, st[b.id]!.follows!), st[b.id]!.follows!, locale, d.creative.brief.formatLabels) }) : null}
         pins={[]} draft={null} nextNumber={1}
-        composition={comp && render ? { n: b.n!, format: src, hash: comp.hash, render, onRender: () => { void Promise.resolve().then(() => api.renderVersion(slug, m.slug, b.n!, [src])).catch(failToast(t.web.render.startFailed)); } } : null}
+        composition={wip ?? (comp && render ? { n: b.n!, format: src, hash: comp.hash, render, onRender: () => { void Promise.resolve().then(() => api.renderVersion(slug, m.slug, b.n!, [src])).catch(failToast(t.web.render.startFailed)); } } : null)}
         onSelect={() => { setSel(null); setVsel(key); }}
         onOpen={(el) => { setFrameOrigin(`format:${slug}/${m.slug}/${b.id}`, el.getBoundingClientRect()); go(href.format(slug, m.slug, b.id)); }}
         onPlace={() => {}} onEditPin={() => {}} onDraftText={() => {}} onDraftCommit={() => {}} onDraftCancel={() => {}} onDraftDelete={() => {}} />
@@ -950,12 +966,15 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
           }}
         >
           {/* The world is not zoomed: each board scales its frame, and its spacing follows --cv-z (canvas.css). A group's cards wrap. */}
-          <div className={cx('ms-cv-world', group && 'ms-cv-vworld')} style={{ '--cv-z': zoom } as CSSProperties}
+          <div className={cx('ms-cv-world', group ? 'ms-cv-vworld' : 'ms-cv-lined')} style={{ '--cv-z': zoom } as CSSProperties}
             aria-busy={rendering === 'all' || rendering.size > 0 ? true : undefined}>
             {group ? renderGroupedWorld() : (
               <>
-                {tall.map((b) => board(b))}
-                {rest.length ? <div className="ms-cv-stack">{rest.map((b) => board(b))}</div> : null}
+                {lines.map((line, i) => (
+                  <div key={i} className="ms-cv-line">
+                    {line.map((it) => (it.stack ? <div key={it.boards[0]!.id} className="ms-cv-stack">{it.boards.map((b) => board(b))}</div> : board(it.boards[0]!)))}
+                  </div>
+                ))}
               </>
             )}
           </div>
@@ -1081,17 +1100,15 @@ function OutputWarnings({ outputs, formatLabel }: { outputs: VersionEntry['outpu
   );
 }
 
-/** The key of the store pack's group in the formats column (no channel is called this). */
-const PACK_GROUP = '\u0000store-pack';
-
-/** The formats column's groups, in the order of first appearance; `pack`: the ids of the store pack, which form one group. */
-function groupByChannel<B extends BoardModel>(boards: B[], pack: ReadonlySet<string>): Array<[string, B[]]> {
-  const m = new Map<string, B[]>();
-  for (const b of boards) {
-    const ch = pack.has(b.id) ? PACK_GROUP : b.preset?.channel ?? '';
-    m.set(ch, [...(m.get(ch) ?? []), b]);
-  }
-  return [...m.entries()];
+/**
+ * Report 41: the composition a board shows while creative turn `job` runs, once the core said this format of the version it
+ * is writing passed the agent's check (`formatReady`): that unrecorded version and hash, no render state. Null otherwise
+ * (job not running, format not checked, or taken back).
+ */
+function inProgressOf(live: EventsState, job: JobSummary | undefined, format: string): { n: number; format: string; hash: string; render: { kind: 'none' }; onRender(): void } | null {
+  if (!job || job.kind !== 'creative' || job.state !== 'running') return null;
+  const r = live.ready?.[job.id]?.[format];
+  return r ? { n: r.n, format, hash: r.hash, render: { kind: 'none' }, onRender: () => {} } : null;
 }
 
 function Notes({ children }: { children: ReactNode }) {

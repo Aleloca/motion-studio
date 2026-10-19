@@ -3,7 +3,7 @@
  * new toolbar items, no new markup). The fixtures are the canvas of such a creative as the code of the commit before this task
  * rendered it (idle in Italian, working in English), with the generated ids normalised; this test renders it with the current
  * code and compares. Decision 973 changed the canvas on purpose (no tool bar, a Comment button on each board): the fixtures were
- * made again from that code (`MS_UPDATE_GOLDEN=1` writes them), and still guard the ungrouped canvas against the variant code.
+ * made again from that code (`MS_UPDATE_GOLDEN=1` writes them), and again for report 40 (the boards in lines, one per group of the formats column), and still guard the ungrouped canvas against the variant code.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';

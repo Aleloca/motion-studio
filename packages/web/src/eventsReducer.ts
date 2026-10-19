@@ -9,7 +9,12 @@ import { applyToday, applyUsage, keepJobUsage, partialAfterSnapshot, type JobUsa
  * `jobUsage` and `today` are the token figures of usageLive.ts: per job (this session) and today's workspace total
  * (unset until the ledger's day total arrives: `usage-today`, fetched by useServerEvents after each snapshot).
  */
-export interface EventsState { jobUsage?: Record<string, JobUsage>; /** Jobs whose usage misses runs this page did not see. */ partialUsage?: Record<string, true>; today?: TodayUsage; liveUsage?: Record<string, Extract<AgentEvent, { kind: 'usage' }>>; approvals: Record<string, ApprovalRequest>; jobs: Record<string, JobSummary>; events: Record<string, AgentEvent[]>; creativeTicks: Record<string, number>; projectTicks: Record<string, number>; /** Snapshots received (one per (re)connection): lets the UI tell restored state from new events. */ snapshots?: number; /** Unset until the first snapshot. */ language?: { locale: Locale; setting: LanguageSetting; systemLocale: Locale } | null }
+export interface EventsState { jobUsage?: Record<string, JobUsage>; /** Jobs whose usage misses runs this page did not see. */ partialUsage?: Record<string, true>; today?: TodayUsage; liveUsage?: Record<string, Extract<AgentEvent, { kind: 'usage' }>>; approvals: Record<string, ApprovalRequest>; jobs: Record<string, JobSummary>; events: Record<string, AgentEvent[]>; creativeTicks: Record<string, number>; projectTicks: Record<string, number>; /** Snapshots received (one per (re)connection): lets the UI tell restored state from new events. */ snapshots?: number; /** Unset until the first snapshot. */ language?: { locale: Locale; setting: LanguageSetting; systemLocale: Locale } | null;
+  /**
+   * Report 41: per creative job, the formats of the version it is writing whose check passed (`formatReady`), with that
+   * version's number and the hash checked. Read only while the job runs; dropped when it ends and on a snapshot.
+   */
+  ready?: Record<string, Record<string, { n: number; hash: string }>> }
 export const initialEventsState: EventsState = { approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} };
 const MAX_EVENTS = 2000;
 const TERMINAL = new Set<JobSummary['state']>(['succeeded', 'failed', 'cancelled']);
@@ -17,6 +22,12 @@ const TERMINAL = new Set<JobSummary['state']>(['succeeded', 'failed', 'cancelled
 function withoutLiveUsage(state: EventsState, jobId: string): EventsState['liveUsage'] {
   if (!state.liveUsage || !(jobId in state.liveUsage)) return state.liveUsage;
   const { [jobId]: _gone, ...rest } = state.liveUsage;
+  return rest;
+}
+
+function withoutReady(state: EventsState, jobId: string): EventsState['ready'] {
+  if (!state.ready || !(jobId in state.ready)) return state.ready;
+  const { [jobId]: _gone, ...rest } = state.ready;
   return rest;
 }
 
@@ -35,6 +46,8 @@ export function eventsReducer(state: EventsState, msg: EventsAction): EventsStat
         jobs: Object.fromEntries(msg.jobs.map((j) => [j.id, j])),
         liveUsage: Object.fromEntries(Object.entries(state.liveUsage ?? {}).filter(([id]) => msg.jobs.some((j) => j.id === id && j.state === 'running'))),
         jobUsage: keepJobUsage(state.jobUsage, new Set(msg.jobs.map((j) => j.id))),
+        // The core's list when it sends one (review C: a reloaded window sees the formats already ready), else what we had.
+        ready: Object.fromEntries(Object.entries(msg.ready ?? state.ready ?? {}).filter(([id]) => msg.jobs.some((j) => j.id === id && j.state === 'running'))),
         partialUsage: partialAfterSnapshot(state.partialUsage, msg.jobs),
         approvals: Object.fromEntries((msg.approvals ?? []).map((a) => [a.id, a])),
         language: msg.locale ? { locale: msg.locale, setting: msg.languageSetting ?? 'system', systemLocale: msg.systemLocale ?? msg.locale } : state.language,
@@ -50,7 +63,12 @@ export function eventsReducer(state: EventsState, msg: EventsAction): EventsStat
       return { ...state, approvals: rest };
     }
     case 'job':
-      return { ...state, jobs: { ...state.jobs, [msg.job.id]: msg.job }, ...(TERMINAL.has(msg.job.state) ? { liveUsage: withoutLiveUsage(state, msg.job.id) } : {}) };
+      return { ...state, jobs: { ...state.jobs, [msg.job.id]: msg.job }, ...(TERMINAL.has(msg.job.state) ? { liveUsage: withoutLiveUsage(state, msg.job.id), ready: withoutReady(state, msg.job.id) } : {}) };
+    case 'formatReady': {
+      const { [msg.format]: _old, ...rest } = state.ready?.[msg.jobId] ?? {};
+      const mine = msg.hash === null ? rest : { ...rest, [msg.format]: { n: msg.n, hash: msg.hash } };
+      return { ...state, ready: { ...state.ready, [msg.jobId]: mine } };
+    }
     case 'agent': {
       const e = msg.event;
       if (e.kind === 'usage' && e.live) return applyUsage({ ...state, liveUsage: { ...state.liveUsage, [msg.jobId]: e } }, msg.jobId, e);

@@ -70,7 +70,7 @@ describe('the composer of a group with one agent', () => {
     const other = pin('c', 'logo');
     const { container } = render(panel({ pins: [own], others: [other], onSent, appliesTo }));
     expect(container.querySelector('[data-variant-selector]')).toBeNull();
-    expect(screen.queryByRole('group', { name: 'Si applica a' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Si applica a: / })).toBeNull();
     expect(screen.getByText(/Il messaggio va all'agente della creatività/)).toBeTruthy();
     // Each comment shows its variant.
     const chips = container.querySelectorAll('.ms-composer-pin');

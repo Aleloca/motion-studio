@@ -7,11 +7,12 @@ import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.
 import { enter, isSubmitChord } from '../motion/index.ts';
 import { isMac } from '../platform.ts';
 import { clipRangeChip } from '../screens/pinModel.ts';
-import { Button, Chip, Empty, Icon, Markdown, Spinner, Textarea, Tooltip, Typing, cx, type IconName } from '../ui/index.ts';
+import { Button, Empty, Icon, Markdown, Spinner, Textarea, Tooltip, Typing, cx, type IconName } from '../ui/index.ts';
 import { lastStep } from '../jobEvents.ts';
 import { liveErrorText, newClientId } from './liveErrors.ts';
 import { QueuedRequests } from './QueuedRequests.tsx';
 import { SplitAction } from './SplitAction.tsx';
+import { AppliesMenu } from './AppliesMenu.tsx';
 import { StopMenu } from './StopMenu.tsx';
 import { defaultTargets } from '../screens/versionModel.ts';
 import { VariantSelector, type ChatTarget } from '../screens/variants/VariantSelector.tsx';
@@ -141,6 +142,8 @@ export interface AppliesTo {
   followerOf(id: string): string | null;
   /** The default when there are no comments (null: "All formats"); e.g. the format view's own format. */
   fallback?: string[] | null;
+  /** Report 42: the menu's groups, as in the formats column (a store pack by store), with each format's short name. */
+  groups?: Array<{ label: string; items: Array<{ id: string; name: string }> }>;
 }
 
 /** Decision 980: the variant(s) an entry belongs to, shown as chips (absent outside a variant group). */
@@ -990,11 +993,6 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, fanout, latestJ
       return next.length === ch.length ? ch : next.length ? next : undefined;
     });
   }, [primaryKey]);
-  const toggleTarget = (id: string) => {
-    const now = targets ?? [];
-    const next = now.includes(id) ? now.filter((x) => x !== id) : primaryIds.filter((x) => x === id || now.includes(x));
-    setChoice(next.length === 0 || next.length === primaryIds.length ? null : next);
-  };
 
   /** `first`: the first generation of a never-started group ("Genera"), the only send that may be an empty request. */
   const send = async (body: { text?: string; pins?: Pin[]; formats?: string[] }, first = false) => {
@@ -1114,20 +1112,7 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, fanout, latestJ
             ))}
           </div>
         )}
-        {appliesTo && !working ? (
-          <div className="ms-composer-applies" role="group" aria-label={c.appliesTo} title={c.appliesHint}>
-            <span className="ms-composer-applies-label" aria-hidden="true">{c.appliesTo}</span>
-            <Chip on={targets === null} onClick={() => setChoice(null)}>{c.appliesAll}</Chip>
-            {appliesTo.primaries.map((p) => (
-              <span key={p.id} className="ms-composer-applies-group">
-                <Chip on={targets?.includes(p.id) ?? false} onClick={() => toggleTarget(p.id)}>{p.label}</Chip>
-                {p.followers.map((f) => (
-                  <Chip key={f} disabled onClick={() => {}} icon="link" title={c.followsBoth({ follower: f, primary: p.label })}>{f}</Chip>
-                ))}
-              </span>
-            ))}
-          </div>
-        ) : null}
+        {appliesTo && !working ? <AppliesMenu appliesTo={appliesTo} targets={targets} onChange={setChoice} /> : null}
         {appliesTo && targets && !working ? appliesTo.primaries.filter((p) => targets.includes(p.id)).flatMap((p) => p.followers.map((f) => (
           <p key={`${p.id}:${f}`} className="ms-composer-follows"><Icon name="link" size={11} />{c.followsBoth({ follower: f, primary: p.label })}</p>
         ))) : null}

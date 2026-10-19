@@ -189,7 +189,9 @@ export interface ApprovalRequest {
 export type ApprovalDecision = 'once' | 'always' | 'deny';
 
 export type ServerMessage =
-  | { type: 'snapshot'; jobs: JobSummary[]; approvals: ApprovalRequest[]; locale: Locale; languageSetting: LanguageSetting; /** What 'system' resolves to on the core's machine. */ systemLocale: Locale }
+  | { type: 'snapshot'; jobs: JobSummary[]; approvals: ApprovalRequest[]; locale: Locale; languageSetting: LanguageSetting; /** What 'system' resolves to on the core's machine. */ systemLocale: Locale;
+    /** Report 41 (review C): per running creative job, the formats announced by `formatReady` so far. */
+    ready?: Record<string, Record<string, { n: number; hash: string }>> }
   /** The language setting changed: the UI switches without reloading. */
   | { type: 'locale'; locale: Locale; setting: LanguageSetting; systemLocale: Locale }
   | { type: 'approval'; approval: ApprovalRequest }
@@ -198,6 +200,12 @@ export type ServerMessage =
   | { type: 'agent'; jobId: string; event: AgentEvent }
   /** A creative's files changed (status, versions, conversation): clients refetch it. */
   | { type: 'creative'; project: string; creative: string }
+  /**
+   * Report 41: during creative turn `jobId`, format `format` of the version it is writing (`n`, not recorded yet) passed the
+   * agent's check (validate_composition) with composition hash `hash`; null: a later check failed, it is not ready any more.
+   * The UI shows it "in progress" until the turn ends (the version is still recorded at the end).
+   */
+  | { type: 'formatReady'; jobId: string; project: string; creative: string; n: number; format: string; hash: string | null }
   /** Brand kit, guidelines, sources or proposals of a project changed. */
   | { type: 'brand'; project: string }
   /** Assets or references of a project changed. */

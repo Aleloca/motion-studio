@@ -37,7 +37,7 @@ import { useCreative } from '../useCreative.ts';
 import { chatTick, useGroupChat } from './variants/useGroupChat.ts';
 import { boardLabel, PinBubble, SafeZoneBands, type Draft } from './CanvasBoard.tsx';
 import { instanceName, presetFor } from '../instances.ts';
-import { outputUrl, pointIn, ratioText } from './canvasModel.ts';
+import { appliesGroups, outputUrl, pointIn, ratioText } from './canvasModel.ts';
 import { CompareDialog } from './CompareDialog.tsx';
 import { channelOf, lastStep } from './creativeState.ts';
 import { ExportDialog, type ExportSnapshot } from './ExportDialog.tsx';
@@ -507,7 +507,8 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
     followerOf: (id: string) => states[id]?.follows ?? null,
     // In the editor of one format, a change applies to that format unless the user widens it.
     fallback: primaries.includes(source.format) ? [source.format] : null,
-  } : undefined), [versions.length, primaries.join(','), states, formatLabel, source.format]); // eslint-disable-line react-hooks/exhaustive-deps
+    groups: appliesGroups(primaries, presets, detail?.creative.brief ?? {}, locale, t.web.formatUi.other),
+  } : undefined), [versions.length, primaries.join(','), states, formatLabel, source.format, presets, detail?.creative.brief, locale, t]); // eslint-disable-line react-hooks/exhaustive-deps
   // Phase 3 of the single agent: the chat follows the group's turn (the composer sends to the group).
   const chatJob = groupChat.single ? groupChat.groupJob : job;
   const chatLive = useMemo(() => (chatJob ? live.events[chatJob.id] ?? [] : []), [chatJob, live.events]);

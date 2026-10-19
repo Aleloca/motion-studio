@@ -15,7 +15,7 @@ import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { instanceName } from '../instances.ts';
 import { anim, D, E, isSubmitChord } from '../motion/index.ts';
 import { Button, ChannelMark, Icon, Pill, Popover, Textarea, channelOf, cx } from '../ui/index.ts';
-import { boardFrame, LABEL_MIN, LABEL_MIN_GROUPED, outputMedia, outputUrl, pointIn, ratioText, toScreen, type BoardModel } from './canvasModel.ts';
+import { boardFrame, LABEL_MIN, labelMin, outputMedia, outputUrl, pointIn, ratioText, toScreen, type BoardModel } from './canvasModel.ts';
 import { isVideoFile } from '../media.ts';
 import type { BoardRender } from './renderModel.ts';
 
@@ -77,6 +77,11 @@ export interface BoardProps {
   card?: boolean;
   /** The board's own "Comment" (decision 973): starts placing a comment on this board. Absent: no button. */
   onComment?(): void;
+  /**
+   * Report 41: the running turn's version of this format passed the agent's check: `composition` is that unrecorded version's
+   * (its storyboard poster, the live preview on hover), labelled "In lavorazione" instead of "Rendering…".
+   */
+  inProgress?: boolean;
 }
 
 const NARROW_BOARD = 170;
@@ -90,6 +95,12 @@ export function boardName(board: BoardModel, locale: ReturnType<typeof useLocale
   return instanceName(board.preset, board.id, locale, board.labels);
 }
 
+/** A narrow label's name: a store screenshot's number ("3" of "3 · caption"), else the name (it ellipsizes). */
+export function shortBoardName(board: BoardModel, locale: ReturnType<typeof useLocale>): string {
+  const m = /^(\d+) · /.exec(board.labels?.[board.id] ?? '');
+  return m ? m[1]! : boardName(board, locale);
+}
+
 export function boardLabel(board: BoardModel, locale: ReturnType<typeof useLocale>): string {
   return board.preset ? `${channelName(board.preset.channel, locale)} · ${boardName(board, locale)}` : board.id;
 }
@@ -98,7 +109,9 @@ export function CanvasBoard(p: BoardProps) {
   const t = useT();
   const c = t.web.canvas;
   const locale = useLocale();
-  const { board, n } = p;
+  const { n } = p;
+  // Report 41: an in-progress board shows the turn's composition only, never the file of the version it replaces.
+  const board = p.inProgress ? { ...p.board, out: null } : p.board;
   const frame = useRef<HTMLDivElement>(null);
   const label = boardLabel(board, locale);
   const size = boardFrame(board);
@@ -147,9 +160,11 @@ export function CanvasBoard(p: BoardProps) {
 
   // A card's header is as wide as its thumbnail (it wraps); the canvas keeps its label floor.
   const headWidth = p.card ? Math.max(Math.round(size.width * zoom), CARD_LABEL_MIN)
-    : Math.max(Math.round(size.width * zoom), p.boardKey !== undefined || p.tag !== undefined || p.grouped ? LABEL_MIN_GROUPED : LABEL_MIN);
-  const cardState = comp && (comp.render.kind === 'queued' || comp.render.kind === 'rendering' || comp.render.kind === 'failed' || comp.render.kind === 'problem');
-  const sub = !p.card || p.rendering || p.note || cardState || (board.out && !board.out.verified) || largeFile.length > 0;
+    : Math.max(Math.round(size.width * zoom), labelMin(zoom, p.boardKey !== undefined || p.tag !== undefined || p.grouped));
+  // Review B of report 40: a label narrower than usual (a canvas below 50%) says a screenshot's number alone; the full name is the tooltip.
+  const narrowHead = !p.card && headWidth < LABEL_MIN;
+  const cardState = comp && (comp.render.kind == 'queued' || comp.render.kind === 'rendering' || comp.render.kind === 'failed' || comp.render.kind === 'problem');
+  const sub = !p.card || p.rendering || p.inProgress || p.note || cardState || (board.out && !board.out.verified) || largeFile.length > 0;
   return (
     <div className={cx('ms-cv-board', p.card && 'ms-cv-card-board', p.selected && 'ms-on', drafting && 'ms-drafting')} data-board={p.boardKey ?? board.id}>
       <div className="ms-cv-board-head" style={p.card ? { width: headWidth } : { maxWidth: headWidth }}>
@@ -157,14 +172,15 @@ export function CanvasBoard(p: BoardProps) {
           {/* The format's name only, whole first; the channel is its mark (the full label is the tooltip and the accessible name). */}
           {board.preset ? <ChannelMark channel={channelOf(board.preset.channel)} /> : null}
           {p.tag ? <span className="ms-cv-board-tag" aria-hidden="true">{p.tag}</span> : null}
-          <b className="ms-cv-board-name" title={label}>{board.preset ? boardName(board, locale) : label}</b>
+          <b className="ms-cv-board-name" title={label}>{board.preset ? (narrowHead ? shortBoardName(board, locale) : boardName(board, locale)) : label}</b>
           {/* The version badge, or a follower's link chip. */}
           <span className="ms-cv-board-slot">{p.badge}</span>
         </div>
         {sub ? (
           <div className="ms-cv-board-line ms-cv-board-sub">
             {board.preset && !p.card ? <span className="ms-cv-board-meta">{ratioText(board.preset)}{duration !== null ? ` · ${c.seconds({ n: formatNumber(locale, duration, { maximumFractionDigits: 1 }) })}` : ''}</span> : null}
-            {p.rendering ? <span className="ms-cv-board-state">{c.renderingState}</span>
+            {p.inProgress ? <span className="ms-cv-board-state ms-cv-wip">{c.inProgress}</span>
+              : p.rendering ? <span className="ms-cv-board-state">{c.renderingState}</span>
               : p.note ? <span className="ms-cv-board-state">{p.note}</span>
                 : comp && (!p.card || cardState) ? <RenderState render={comp.render} label={label} onRender={comp.onRender} />
                   : !p.card && board.out && board.out.verified && !largeFile.length ? <span className="ms-cv-board-state">{c.boardReady}</span> : null}
@@ -242,7 +258,7 @@ export function CanvasBoard(p: BoardProps) {
 }
 
 /**
- * A v2 board's render state (spec §5.3): "Not rendered", "Queued · 2 renders ahead", "Rendering 42%", "Rendered", "Render
+ * A v2 board's render state (spec §5.3): nothing without a render (report 43), "Queued · 2 renders ahead", "Rendering 42%", "Rendered", "Render
  * failed · Retry", and a render with problems (I2): never "Rendered", a warning chip with the reasons and "Render again".
  */
 export function RenderState({ render, label, onRender }: { render: BoardRender; label: string; onRender(): void }) {
@@ -258,7 +274,8 @@ export function RenderState({ render, label, onRender }: { render: BoardRender; 
           {r.failedState} · <button type="button" className="ms-cv-retry" aria-label={r.retryRenderOf({ label })} onClick={(e) => { e.stopPropagation(); onRender(); }}>{r.retryRender}</button>
         </span>
       );
-    default: return <span className="ms-cv-board-state">{r.notRendered}</span>;
+    // Report 43: a ready board without a render says nothing (renders start from Export or "Render vN").
+    default: return null;
   }
 }
 

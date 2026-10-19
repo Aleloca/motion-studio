@@ -624,12 +624,18 @@ describe('Conversation · "Applies to" and warnings (Phase 9)', () => {
     primaries: [{ id: 'reel', label: 'Reel', followers: ['TikTok'] }, { id: 'post', label: 'Post', followers: [] }],
     followerOf: (id: string) => (id === 'tiktok' ? 'reel' : null),
   };
-  const group = () => screen.getByRole('group', { name: 'Applies to' });
-  const chip = (name: string) => within(group()).getByRole('button', { name });
+  // Report 42: one menu button saying what is chosen, a menu of checkboxes.
+  const button = () => screen.getByRole('button', { name: /^Applies to: / });
+  const open = async () => { if (button().getAttribute('aria-expanded') !== 'true') await userEvent.click(button()); return screen.getByRole('menu', { name: 'Applies to' }); };
+  const item = async (name: string | RegExp) => within(await open()).getByRole('menuitemcheckbox', { name });
+  const checked = async (name: string | RegExp) => (await item(name)).getAttribute('aria-checked');
 
   it('defaults to All formats without comments and sends no formats', async () => {
     render(view({ entries: [], appliesTo } as Props));
-    expect(chip('All formats').getAttribute('aria-pressed')).toBe('true');
+    expect(button().getAttribute('aria-label')).toBe('Applies to: All formats. Choose the formats');
+    expect(button().textContent).toBe('Applies to:All formats');
+    expect(await checked('All formats')).toBe('true');
+    await userEvent.keyboard('{Escape}');
     await userEvent.type(screen.getByRole('textbox'), 'Warmer');
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'c1', { text: 'Warmer', pins: [] }));
@@ -637,47 +643,81 @@ describe('Conversation · "Applies to" and warnings (Phase 9)', () => {
 
   it('defaults to the formats of the attached comments (a follower stands for its primary) and sends them', async () => {
     render(view({ entries: [], appliesTo, pins: [pin('tiktok')] } as Props));
-    expect(chip('Reel').getAttribute('aria-pressed')).toBe('true');
-    expect(chip('All formats').getAttribute('aria-pressed')).toBe('false');
+    expect(button().textContent).toBe('Applies to:Reel');
+    expect(await checked(/^Reel/)).toBe('true');
+    expect(await checked('All formats')).toBe('false');
     expect(screen.getByText('TikTok follows Reel: the change applies to both', { selector: 'p' })).toBeTruthy();
+    await userEvent.keyboard('{Escape}');
     await userEvent.type(screen.getByRole('textbox'), 'Bigger logo');
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'c1', { text: 'Bigger logo', pins: [pin('tiktok')], formats: ['reel'] }));
   });
 
-  it('chips choose the primaries; a follower cannot be chosen and says why', async () => {
+  it('the checkboxes choose the primaries; a follower is shown by its primary with the reason, never on its own', async () => {
     render(view({ entries: [], appliesTo } as Props));
-    await userEvent.click(chip('Post'));
-    expect(chip('Post').getAttribute('aria-pressed')).toBe('true');
-    expect(chip('All formats').getAttribute('aria-pressed')).toBe('false');
-    const follower = chip('TikTok');
-    expect(follower.getAttribute('aria-disabled')).toBe('true');
-    expect(follower.getAttribute('title')).toBe('TikTok follows Reel: the change applies to both');
-    await userEvent.click(follower);
-    expect(follower.getAttribute('aria-pressed')).not.toBe('true');
+    await userEvent.click(await item('Post'));
+    expect(await checked('Post')).toBe('true');
+    expect(await checked('All formats')).toBe('false');
+    expect(button().textContent).toBe('Applies to:Post');
+    // TikTok follows the Reel: it is in the Reel's row, with the reason as its tooltip, and has no checkbox of its own.
+    const reel = await item(/^Reel/);
+    expect(reel.textContent).toContain('TikTok');
+    expect(reel.querySelector('[title]')!.getAttribute('title')).toBe('TikTok follows Reel: the change applies to both');
+    expect(within(await open()).queryByRole('menuitemcheckbox', { name: 'TikTok' })).toBeNull();
     // Choosing every primary is "All formats" again.
-    await userEvent.click(chip('Reel'));
-    expect(chip('All formats').getAttribute('aria-pressed')).toBe('true');
-    await userEvent.click(chip('Post'));
+    await userEvent.click(reel);
+    expect(await checked('All formats')).toBe('true');
+    await userEvent.click(await item('Post'));
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(button().getAttribute('aria-expanded')).toBe('false'));
     await userEvent.type(screen.getByRole('textbox'), 'x');
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'c1', { text: 'x', pins: [], formats: ['post'] }));
   });
 
-  it('a follower chip carries its reason as its accessible description', () => {
-    render(view({ entries: [], appliesTo } as Props));
-    const follower = chip('TikTok');
-    const id = follower.getAttribute('aria-describedby')!;
-    expect(document.getElementById(id)!.textContent).toBe('TikTok follows Reel: the change applies to both');
+  it('the menu groups the formats as the formats column, with a checkbox per group; the button says what is chosen', async () => {
+    const shots = ['as1', 'as2', 'as3', 'as4'];
+    const grouped = {
+      primaries: [...shots.map((id, i) => ({ id, label: `App Store · ${i + 1}`, followers: [] })), { id: 'ps1', label: 'Play Store · 1', followers: [] }, { id: 'ps2', label: 'Play Store · 2', followers: [] }],
+      followerOf: () => null,
+      groups: [{ label: 'App Store', items: shots.map((id, i) => ({ id, name: `${i + 1}` })) }, { label: 'Play Store', items: [{ id: 'ps1', name: '1' }, { id: 'ps2', name: '2' }] }],
+    };
+    render(view({ entries: [], appliesTo: grouped } as Props));
+    const menu = await open();
+    expect(within(menu).getAllByRole('group').map((g) => g.getAttribute('aria-label'))).toEqual(['App Store', 'Play Store']);
+    const app = within(menu).getByRole('group', { name: 'App Store' });
+    await userEvent.click(within(app).getByRole('menuitemcheckbox', { name: '2' }));
+    await userEvent.click(within(app).getByRole('menuitemcheckbox', { name: '3' }));
+    expect(within(app).getByRole('menuitemcheckbox', { name: 'App Store: whole group' }).getAttribute('aria-checked')).toBe('mixed');
+    expect(button().textContent).toBe('Applies to:App Store · 2 formats');
+    await userEvent.click(within(app).getByRole('menuitemcheckbox', { name: 'App Store: whole group' }));
+    expect(button().textContent).toBe('Applies to:App Store · 4 formats');
+    await userEvent.click(within(within(menu).getByRole('group', { name: 'Play Store' })).getByRole('menuitemcheckbox', { name: '1' }));
+    expect(button().textContent).toBe('Applies to:5 formats');
+    // Keyboard: arrows move between the checkboxes, Escape closes and gives the focus back to the button.
+    (within(menu).getByRole('menuitemcheckbox', { name: 'All formats' })).focus();
+    await userEvent.keyboard('{ArrowDown}');
+    expect(document.activeElement).toBe(within(app).getByRole('menuitemcheckbox', { name: 'App Store: whole group' }));
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(button().getAttribute('aria-expanded')).toBe('false'));
+    expect(document.activeElement).toBe(button());
+    // A click outside closes it too.
+    await open();
+    await userEvent.click(screen.getByRole('textbox'));
+    await waitFor(() => expect(button().getAttribute('aria-expanded')).toBe('false'));
+    await userEvent.type(screen.getByRole('textbox'), 'x');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'c1', { text: 'x', pins: [], formats: ['as1', 'as2', 'as3', 'as4', 'ps1'] }));
   });
 
   it('a chosen format that is no longer a primary is dropped, before sending too', async () => {
     const { rerender } = render(view({ entries: [], appliesTo } as Props));
-    await userEvent.click(chip('Post'));
+    await userEvent.click(await item('Post'));
+    await userEvent.keyboard('{Escape}');
     // The post now follows the reel: only the reel is left, the choice falls back to the default (All).
     const linked = { primaries: [{ id: 'reel', label: 'Reel', followers: ['TikTok', 'Post'] }, { id: 'story', label: 'Story', followers: [] }], followerOf: (id: string) => (id === 'tiktok' || id === 'post' ? 'reel' : null) };
     rerender(view({ entries: [], appliesTo: linked } as Props));
-    expect(chip('All formats').getAttribute('aria-pressed')).toBe('true');
+    expect(button().textContent).toBe('Applies to:All formats');
     await userEvent.type(screen.getByRole('textbox'), 'x');
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'c1', { text: 'x', pins: [] }));
@@ -706,7 +746,7 @@ describe('Conversation · "Applies to" and warnings (Phase 9)', () => {
 
   it('no choice without appliesTo (one primary, no version yet)', () => {
     render(view({ entries: [] }));
-    expect(screen.queryByRole('group', { name: 'Applies to' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Applies to: / })).toBeNull();
   });
 
   it('a warning line is set apart from info, never an alert', () => {

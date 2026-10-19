@@ -205,9 +205,9 @@ describe('CreativeCanvas · overlays stay screen-sized at any zoom', () => {
   it('at 50% the bubble, the pins and the board labels are not scaled, and sit at world point × zoom', async () => {
     const size = (dim: 'clientWidth' | 'clientHeight', v: number) => vi.spyOn(HTMLElement.prototype, dim, 'get')
       .mockImplementation(function (this: HTMLElement) { return this.classList.contains('ms-cv-viewport') ? v : 0; });
-    // World 808×750 at 100% → a 412 px wide viewport fits at exactly 50% (the 9:16 label keeps 160 px).
+    // Report 40: 412 × 660 fits at exactly 50%, the two boards wrapped one under the other (654 px high; 55% would be 709).
     const w = size('clientWidth', 412);
-    const h = size('clientHeight', 2000);
+    const h = size('clientHeight', 660);
     const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
       // The 1:1 board (344×344 at 100%) on screen at 50%: 172×172 at the origin.
       const r = this.classList.contains('ms-cv-hit') ? { left: 0, top: 0, width: 172, height: 172 } : { left: 0, top: 0, width: 0, height: 0 };
@@ -294,7 +294,7 @@ describe('CreativeCanvas · overlays (round 2)', () => {
     const size = (dim: 'clientWidth' | 'clientHeight', v: number) => vi.spyOn(HTMLElement.prototype, dim, 'get')
       .mockImplementation(function (this: HTMLElement) { return this.classList.contains('ms-cv-viewport') ? v : 0; });
     const w = size('clientWidth', 412);
-    const h = size('clientHeight', 2000);
+    const h = size('clientHeight', 660);
     const ow = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('ms-cv-bubble') ? 260 : 0; });
     const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
       const r = this.classList.contains('ms-cv-viewport') ? { left: 0, top: 0, width: 500, height: 800 }
@@ -1372,14 +1372,58 @@ describe('CreativeCanvas · compositions (Task 8)', () => {
   /** The board's picture once the canvas has loaded. */
   const picture = (id: string) => waitFor(() => { const img = board(id)?.querySelector('.ms-cv-frame img'); expect(img).toBeTruthy(); return img as HTMLImageElement; });
 
-  it('a board shows its storyboard poster and "Not rendered"; no live preview on first render', async () => {
+  it('a board shows its storyboard poster and no render label (report 43: no "Not rendered"); no live preview on first render', async () => {
     detail = makeDetail([v2(1)]);
     render(<Harness live={emptyLive()} />);
     const poster = await picture('tiktok-9x16');
     expect(poster.getAttribute('src')).toBe('/sb/tiktok-9x16/v1/f-1.jpg?s=1');
-    expect(within(board('tiktok-9x16')).getByText('Non renderizzato')).toBeTruthy();
+    expect(within(board('tiktok-9x16')).queryByText('Non renderizzato')).toBeNull();
+    expect(board('tiktok-9x16')!.querySelector('.ms-cv-board-state')).toBeNull();
     expect(api.previewSession).not.toHaveBeenCalled();
     expect(document.querySelector('iframe')).toBeNull();
+  });
+
+  it('report 41: a board goes from "In render…" to its in-progress picture on formatReady ("In lavorazione", hover plays it), and to the recorded version at the end', async () => {
+    detail = makeDetail([v2(1)]);
+    const turn: JobSummary = { id: 'j1', key: 'creative:/w:acme:lancio', kind: 'creative', label: 'x', state: 'running', createdAt: at };
+    const withReady = (l: EventsState, ready: EventsState['ready']) => ({ ...l, ready } as EventsState);
+    const { rerender } = render(<Harness live={liveWith(turn)} />);
+    await picture('tiktok-9x16');
+    const sub = (id: string) => board(id).querySelector('.ms-cv-board-sub')!.textContent;
+    expect(sub('tiktok-9x16')).toContain('In render…');
+    // The core says the TikTok of v2 (being written) passed the agent's check.
+    rerender(<Harness live={withReady(liveWith(turn), { j1: { 'tiktok-9x16': { n: 2, hash: 'd'.repeat(64) } } })} />);
+    await waitFor(() => expect(sub('tiktok-9x16')).toContain('In lavorazione'));
+    expect(sub('tiktok-9x16')).not.toContain('In render…');
+    expect(sub('instagram-post-1x1')).toContain('In render…');
+    await waitFor(() => expect(api.getStoryboard).toHaveBeenCalledWith('acme', 'lancio', 2, 'tiktok-9x16'));
+    await waitFor(() => expect(board('tiktok-9x16').querySelector('.ms-cv-frame img')!.getAttribute('src')).toBe('/sb/tiktok-9x16/v2/f-1.jpg?s=1'));
+    expect(board('tiktok-9x16').querySelector('.ms-shimmer')).toBeNull();
+    // Hover plays it, like a recorded board (never all of them at once).
+    fireEvent.pointerOver(board('tiktok-9x16').querySelector('.ms-cv-frame-wrap')!);
+    await waitFor(() => expect(api.previewSession).toHaveBeenCalledWith('acme', 'lancio', 2, 'tiktok-9x16', location.origin));
+    // A later check failed: taken back.
+    rerender(<Harness live={withReady(liveWith(turn), { j1: {} })} />);
+    await waitFor(() => expect(sub('tiktok-9x16')).toContain('In render…'));
+    // The turn ends with v2 recorded: the board shows v2 as any recorded version, nothing "in progress" any more.
+    rerender(<Harness live={withReady(liveWith(turn), { j1: { 'tiktok-9x16': { n: 2, hash: 'd'.repeat(64) } } })} />);
+    await waitFor(() => expect(sub('tiktok-9x16')).toContain('In lavorazione'));
+    detail = makeDetail([v2(1), v2(2)]);
+    const done = { ...liveWith({ ...turn, state: 'succeeded' }), creativeTicks: { 'acme/lancio': 1 } } as EventsState;
+    rerender(<Harness live={withReady(done, { j1: { 'tiktok-9x16': { n: 2, hash: 'd'.repeat(64) } } })} />);
+    await waitFor(() => expect(sub('tiktok-9x16')).not.toContain('In lavorazione'));
+    expect(sub('tiktok-9x16')).not.toContain('In render…');
+  });
+
+  it('report 41: a stopped turn clears its in-progress boards', async () => {
+    detail = makeDetail([v2(1)]);
+    const turn: JobSummary = { id: 'j1', key: 'creative:/w:acme:lancio', kind: 'creative', label: 'x', state: 'running', createdAt: at };
+    const ready = { j1: { 'tiktok-9x16': { n: 2, hash: 'd'.repeat(64) } } };
+    const { rerender } = render(<Harness live={{ ...liveWith(turn), ready } as EventsState} />);
+    await waitFor(() => expect(board('tiktok-9x16').querySelector('.ms-cv-board-sub')!.textContent).toContain('In lavorazione'));
+    rerender(<Harness live={{ ...liveWith({ ...turn, state: 'cancelled' }), ready } as EventsState} />);
+    await waitFor(() => expect(board('tiktok-9x16').querySelector('.ms-cv-board-sub')?.textContent ?? '').not.toContain('In lavorazione'));
+    await waitFor(() => expect(board('tiktok-9x16').querySelector('.ms-cv-frame img')!.getAttribute('src')).toBe('/sb/tiktok-9x16/v1/f-1.jpg?s=1'));
   });
 
   it('plays live on hover intent (a sandboxed frame), and stops when the pointer leaves', async () => {

@@ -777,7 +777,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   app.get('/api/events', { websocket: true }, (socket) => {
     hub.add(socket);
-    hub.send(socket, { type: 'snapshot', jobs: queue.list(), approvals: approvals.pending(), ...languageState() });
+    hub.send(socket, { type: 'snapshot', jobs: queue.list(), approvals: approvals.pending(), ...languageState(), ready: turns.readyFormats() });
   });
 
   // The live preview's composition server origin (Task 8 frames it; started on first use).

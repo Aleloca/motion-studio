@@ -134,8 +134,15 @@ export interface VersionFormatRef { projectDir: string; creativeDir: string; cre
 /** The answer of the preview-session route (shared with the web's player). */
 export type { PreviewSessionInfo } from '@motion-studio/shared';
 
+/**
+ * Report 41: the stand-in for version `n` that a running turn is still writing, with the one format whose check passed (its
+ * own folder, the hash checked): what the storyboard and live preview of an in-progress board read, nothing else.
+ */
+export const workVersion = (n: number, format: string, hash: string): Pick<VersionEntry, 'n' | 'compositions'> =>
+  ({ n, compositions: [{ format, dir: `compositions/${format}`, hash }] });
+
 /** A format's composition entry in a version, resolved to its folder (`compositions/<folder>`). */
-function entryOf(version: VersionEntry | undefined, format: string): { folder: string; hash: string } | null {
+function entryOf(version: Pick<VersionEntry, 'compositions'> | undefined, format: string): { folder: string; hash: string } | null {
   const e = version?.compositions?.find((c) => c.format === format);
   if (!e) return null;
   const folder = e.dir.slice('compositions/'.length);
@@ -324,8 +331,13 @@ export class PreviewService {
       if (!loaded.ok || loaded.hash !== hash) return null;
       const plan = storyboardPlan(loaded.composition);
       const unique = [...new Set(plan.map((p) => p.t))];
+      const compDir = join(ref.creativeDir, 'outputs', `v${ref.n}`, 'compositions', folder);
       const r = await this.frames({ ref, folder, preset, composition: loaded.composition, times: unique, width: Math.min(STORYBOARD_WIDTH, loaded.composition.width), imageFormat: 'jpeg', ...(signal ? { signal } : {}) });
       if (this.closing.signal.aborted) throw new Error('closed');
+      // Report 41 (review D): a version still being written may change while its frames are drawn (the frames read the
+      // files): kept under `hash` only when the folder still has it afterwards.
+      const after = await loadComposition(compDir, preset);
+      if (!after.ok || after.hash !== hash) return null;
       // Every folder of the path is a real directory (a link planted under the cache steers neither the rm nor the rename).
       const parent = await realDirChain(ref.projectDir, ['.studio', 'cache', 'storyboards', ref.creativeSlug, `v${ref.n}`]);
       if (parent === null || join(parent, folder) !== dir) return null;
@@ -377,7 +389,7 @@ export class PreviewService {
   }
 
   /** The storyboard of `format` in `version` (made when missing or stale and possible), with its folder; null when there is none. */
-  async storyboardOf(ref: VersionFormatRef, version: VersionEntry, format: string): Promise<{ folder: string; storyboard: Storyboard } | null> {
+  async storyboardOf(ref: VersionFormatRef, version: Pick<VersionEntry, 'n' | 'compositions'>, format: string): Promise<{ folder: string; storyboard: Storyboard } | null> {
     const e = entryOf(version, format);
     if (!e) throw new CodedError(404, messages(currentLocale()).errors.compositionNotFound({ format, n: version.n }), 'composition-not-found');
     const have = await this.readStoryboard(ref, e.folder, e.hash);
@@ -410,7 +422,7 @@ export class PreviewService {
    * re-hashed and validated (it must still be the recorded one), its media normalised, and a preview-mode session minted
    * for `parentOrigin` (one of the UI origins, else 403). The media lease ends when the session expires.
    */
-  async mintPreview(ref: VersionFormatRef, version: VersionEntry, format: string, parentOrigin: string, locale: Locale, o: { renewFrom?: string } = {}): Promise<PreviewSessionInfo> {
+  async mintPreview(ref: VersionFormatRef, version: Pick<VersionEntry, 'n' | 'compositions'>, format: string, parentOrigin: string, locale: Locale, o: { renewFrom?: string } = {}): Promise<PreviewSessionInfo> {
     const e = messages(locale).errors;
     const entry = entryOf(version, format);
     if (!entry) throw new CodedError(404, e.compositionNotFound({ format, n: version.n }), 'composition-not-found');
@@ -453,6 +465,16 @@ export class PreviewService {
       prepared.release();
       throw err;
     }
+  }
+
+  /**
+   * Report 41 (review E): ends every live preview session of version `ref.n` of this creative: a turn that showed it while
+   * writing it ended without recording it. The number of sessions ended.
+   */
+  revokeVersion(ref: Pick<VersionFormatRef, 'creativeDir' | 'n'>): number {
+    let ended = 0;
+    for (const [token, x] of [...this.sessions]) if (x.creativeDir === ref.creativeDir && x.n === ref.n) { this.endSession(token); ended++; }
+    return ended;
   }
 
   /**
