@@ -335,6 +335,10 @@ arrives and worked on later together.
     chosen variant (and version). A "Tutte le varianti" toggle shows them all again; nothing is deleted and the choice
     can always change. To do with the next reports, together with 48.
 
+50. **The top bar Export button is too wide.** (2026-10-19) It is wide at rest because the export progress bar shows
+    inside it. User's call: at rest it is a normal-size button; it widens only when an export starts, with a nice
+    dedicated animation, and shrinks back when the export is over. To do with the next reports, with 48 and 49.
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
