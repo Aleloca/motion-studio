@@ -47,6 +47,8 @@ export interface RenderResult {
   file: string; sha256: string; width: number; height: number; durationSec: number | null; frames: number; encoder: VideoEncoder | null; audio: boolean;
   /** A video's quality (decision 974); absent for a still. */
   quality?: ExportQuality;
+  /** A video's frame rate (report 39, decision 1234): `fps` when asked for, else the composition's; absent for a still. */
+  fps?: Composition['fps'];
   /** Non-fatal runtime reports (`videoFrameMismatch`: an untrusted source's frame drawn on stability), at most 50. */
   warnings: RuntimeErrorInfo[];
   /**
@@ -111,8 +113,9 @@ export interface RenderCompositionOptions {
   /** An App Store preview (Phase 12): the audio is muxed at 256 kbps, and a silent track is added when there is no audio. */
   storeAudio?: boolean;
   /**
-   * Renders at this frame rate in place of the composition's (final wave P7: the App Store preview at 30 fps). The page gets
-   * the composition with this `fps`, so every frame count, sampling time and encoder setting follows it.
+   * Renders at this frame rate in place of the composition's (final wave P7: the App Store preview at 30 fps; report 39: the
+   * export's frame rate). The page gets the composition with this `fps`, so every frame count, sampling time (t = i / fps)
+   * and encoder setting (the target bitrate +50% above 45 fps) follows it; the duration and the audio mix do not change.
    */
   fps?: Composition['fps'];
 }
@@ -306,7 +309,7 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
       const sha256 = await sha256File(tempOut);
       await o.beforeRename?.(tempOut);
       await rename(tempOut, o.out);
-      return { file: o.out, sha256, width: size.width, height: size.height, durationSec: c.duration, frames, encoder, quality, audio: audioOut, warnings, ...(overflows.length ? { textOverflows: overflows } : {}) };
+      return { file: o.out, sha256, width: size.width, height: size.height, durationSec: c.duration, frames, encoder, quality, fps: c.fps, audio: audioOut, warnings, ...(overflows.length ? { textOverflows: overflows } : {}) };
     }
     const sha256 = await sha256File(tempOut);
     await o.beforeRename?.(tempOut);

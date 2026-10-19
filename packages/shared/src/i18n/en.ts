@@ -522,6 +522,7 @@ export const en = {
     jobLabel: (p: { title: string; n: number }) => `Render · ${p.title} v${p.n}`,
     exportJobLabel: (p: { title: string; n: number; detail: string }) => `Render for export · ${p.title} v${p.n} (${p.detail})`,
     qualityNames: { standard: 'Standard', high: 'High', max: 'Max' },
+    fpsName: (p: { fps: number }) => `${p.fps} fps`,
     notV2: (p: { n: number }) => `v${p.n} has no compositions to render: its media files are the result`,
     formatsNotInVersion: (p: { list: string }) => `Formats not in this version: ${p.list}`,
     noRenderer: 'Rendering is not available in this Motion Studio',
@@ -1414,6 +1415,10 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
       resolution: 'Resolution',
       resolutionOriginal: 'Format size',
       resolutionOption: (p: { n: number }) => (p.n === 2160 ? '2160p (4K)' : p.n === 1440 ? '1440p (2K)' : `${p.n}p`),
+      // Report 39 (decision 1235): the videos' frame rate, the format's own by default.
+      frameRate: 'Frame rate',
+      frameRateOriginal: (p: { fps: string | null }) => (p.fps === null ? "The format's own" : `${p.fps} fps (the format's own)`),
+      frameRateOption: (p: { n: number }) => `${p.n} fps`,
       quality: 'Quality',
       qualityNames: { standard: 'Standard', high: 'High', max: 'Max' },
       qualityHints: {

@@ -5,9 +5,10 @@
 // is remembered; progress, then a success screen with Show in Finder. File sizes are not shown: the API does not report
 // them (ruling R6). Decision 974: the export runs on the core as a job (user report 20): the dialog may close at any time
 // and the export goes on (the app tells when the files are in the folder, `useExportNotice`); Cancel export stops it. The
-// videos' resolution and quality are chosen here and remembered in this browser (report 22).
+// videos' resolution and quality are chosen here and remembered in this browser (report 22); the frame rate is chosen
+// for each export (report 39, decision 1242).
 import {
-  DEFAULT_EXPORT_QUALITY, EXPORT_QUALITIES, EXPORT_RESOLUTIONS, profileApplies, scaledSize, type ExportQuality,
+  DEFAULT_EXPORT_QUALITY, EXPORT_FPS, EXPORT_QUALITIES, EXPORT_RESOLUTIONS, profileApplies, scaledSize, type ExportFps, type ExportQuality,
   EXPORT_NAME_TOKENS, exportDate, exportExtension, exportNameCollisions, exportNameVars, localizedStem, renderName, renderProblems, renderState, separateInstanceNames,
   type FormatPreset, type JobSummary, type LocaleTag, type VersionEntry, type WorkspaceSettings,
 } from '@motion-studio/shared';
@@ -35,16 +36,16 @@ const readFolder = () => { try { return localStorage.getItem(EXPORT_FOLDER_KEY) 
 const writeFolder = (v: string) => { try { localStorage.setItem(EXPORT_FOLDER_KEY, v); } catch { /* private mode */ } };
 /** The last resolution and quality chosen (decision 974), kept in this browser for every project, as the folder. */
 export const EXPORT_PROFILE_KEY = 'ms.exportProfile';
-export interface ExportProfileChoice { quality: ExportQuality; resolution: number | null }
+export interface ExportProfileChoice { quality: ExportQuality; resolution: number | null; /** Report 39: null, the format's own; never remembered (decision 1242). */ fps: ExportFps | null }
 export function readProfile(): ExportProfileChoice {
   try {
     const v = JSON.parse(localStorage.getItem(EXPORT_PROFILE_KEY) ?? 'null') as Partial<ExportProfileChoice> | null;
     const quality = (EXPORT_QUALITIES as readonly unknown[]).includes(v?.quality) ? v!.quality! : DEFAULT_EXPORT_QUALITY;
     const resolution = (EXPORT_RESOLUTIONS as readonly unknown[]).includes(v?.resolution) ? v!.resolution! : null;
-    return { quality, resolution };
-  } catch { return { quality: DEFAULT_EXPORT_QUALITY, resolution: null }; }
+    return { quality, resolution, fps: null };
+  } catch { return { quality: DEFAULT_EXPORT_QUALITY, resolution: null, fps: null }; }
 }
-const writeProfile = (v: ExportProfileChoice) => { try { localStorage.setItem(EXPORT_PROFILE_KEY, JSON.stringify(v)); } catch { /* private mode */ } };
+const writeProfile = ({ quality, resolution }: ExportProfileChoice) => { try { localStorage.setItem(EXPORT_PROFILE_KEY, JSON.stringify({ quality, resolution })); } catch { /* private mode */ } };
 /** The workspace settings bound the pattern to 200 characters. */
 const PATTERN_MAX = 200;
 
@@ -198,6 +199,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
   const previewId = useId();
   const resolutionId = useId();
   const qualityId = useId();
+  const fpsId = useId();
   const qualityHintId = useId();
   // The videos' resolution and quality (decision 974), as last chosen. With other languages the videos keep the default
   // profile: translations are rendered at the format size and High quality.
@@ -303,14 +305,19 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
   const languageBody = otherLanguages ? { locales: wanted } : {};
   const lockProfile = otherLanguages;
   // The resolution and quality are the videos' (decision 974): stills, identity and store pack formats keep their own.
-  const anyVideo = rows.some((r) => r.composed && profileApplies(r.preset, r.id));
-  /** The size a video row is exported at, when a resolution is chosen ("1280×720"); null otherwise. */
+  const videoRow = (r: Row) => r.composed && r.preset !== null && profileApplies(r.preset, r.id);
+  const anyVideo = rows.some(videoRow);
+  /** The size and frame rate a video row is exported at, when chosen ("1280×720 · 60 fps"); null otherwise. */
   const sizeOf = (r: Row): string | null => {
-    if (lockProfile || profile.resolution === null || !r.composed || !r.preset || !profileApplies(r.preset, r.id)) return null;
-    const z = scaledSize(r.preset, profile.resolution);
-    return `${z.width}×${z.height}`;
+    if (lockProfile || !videoRow(r) || (profile.resolution === null && profile.fps === null)) return null;
+    const z = profile.resolution !== null ? scaledSize(r.preset!, profile.resolution) : null;
+    return [z ? `${z.width}×${z.height}` : null, profile.fps !== null ? t.render.fpsName({ fps: profile.fps }) : null].filter(Boolean).join(' · ');
   };
-  const profileBody = lockProfile ? { quality: DEFAULT_EXPORT_QUALITY } : { quality: profile.quality, ...(profile.resolution !== null ? { resolution: profile.resolution } : {}) };
+  // Report 39 (decision 1235): the format's own frame rate, named when every video row's render recorded the same one.
+  const recordedFps = rows.filter(videoRow).map((r) => r.output?.render?.fps ?? null);
+  const ownFps = recordedFps.length > 0 && recordedFps.every((f) => f !== null && f === recordedFps[0]) ? String(recordedFps[0]) : null;
+  const profileBody = lockProfile ? { quality: DEFAULT_EXPORT_QUALITY }
+    : { quality: profile.quality, ...(profile.resolution !== null ? { resolution: profile.resolution } : {}), ...(profile.fps !== null ? { fps: profile.fps } : {}) };
   const run = async (force = false) => {
     const dest = folder.trim();
     if (!canRun) return;
@@ -466,6 +473,12 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
               <Select label={x.resolution} value={lockProfile || profile.resolution === null ? 'original' : String(profile.resolution)} disabled={running || lockProfile}
                 options={[{ value: 'original', label: x.resolutionOriginal }, ...EXPORT_RESOLUTIONS.map((n) => ({ value: String(n), label: x.resolutionOption({ n }) }))]}
                 onChange={(v) => setProfile((p) => ({ ...p, resolution: v === 'original' ? null : Number(v) }))} />
+            </div>
+            <span className="ms-exp-dest-label" id={fpsId}>{x.frameRate}</span>
+            <div className="ms-exp-dest-field" aria-labelledby={fpsId}>
+              <Select label={x.frameRate} value={lockProfile || profile.fps === null ? 'original' : String(profile.fps)} disabled={running || lockProfile}
+                options={[{ value: 'original', label: x.frameRateOriginal({ fps: ownFps }) }, ...EXPORT_FPS.map((n) => ({ value: String(n), label: x.frameRateOption({ n }) }))]}
+                onChange={(v) => setProfile((p) => ({ ...p, fps: v === 'original' ? null : Number(v) as ExportFps }))} />
             </div>
             <span className="ms-exp-dest-label" id={qualityId}>{x.quality}</span>
             <div className="ms-exp-quality">

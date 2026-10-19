@@ -12,7 +12,7 @@ import { rename, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { scaledSize, type FormatPreset, type JobSummary, type ManifestV2 } from '@motion-studio/shared';
 import { AppConfigStore } from '../src/app-config.ts';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
@@ -21,6 +21,7 @@ import { noteCoreTemp } from '../src/core-temps.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { Git } from '../src/git.ts';
 import { RenderError } from '../src/render/errors.ts';
+import { MediaNormalizer } from '../src/render/media-normalize.ts';
 import type { RenderCompositionOptions, RenderEngine, RenderResult } from '../src/render/renderer.ts';
 import { buildServer } from '../src/server/app.ts';
 
@@ -64,7 +65,7 @@ function fakeEngine(): Fake {
           })]);
         }
         const size = still ? { width: o.composition.width, height: o.composition.height } : scaledSize(o.composition, o.short);
-        const body = `render of ${o.format.id} ${size.width}x${size.height} ${o.quality ?? '-'} ${randomBytes(4).toString('hex')}`;
+        const body = `render of ${o.format.id} ${size.width}x${size.height} ${o.quality ?? '-'} ${o.fps ?? o.composition.fps}fps ${randomBytes(4).toString('hex')}`;
         await writeFile(temp, body);
         await o.beforeRename?.(temp);
         await rename(temp, o.out);
@@ -167,7 +168,8 @@ describe('export jobs (decision 974)', { timeout: 120_000 }, () => {
     // The version's render is at the default quality, recorded with its encoder (the follower carries its primary's).
     expect(fake.calls.map((c) => [c.format.id, c.quality, c.short])).toEqual([['test-wide', 'high', undefined], ['test-still', 'high', undefined]]);
     const v = (await store.readVersions(slug))[0]!;
-    const rec = { quality: 'high', width: 320, height: 180, encoder: 'libx264' };
+    // Report 39 (decision 1234): the record names the frame rate too, the composition's own for the version's render.
+    const rec = { quality: 'high', width: 320, height: 180, encoder: 'libx264', fps: 30 };
     expect(v.outputs.find((o) => o.format === 'test-wide')!.render).toEqual(rec);
     expect(v.outputs.find((o) => o.format === 'test-wide-b')!.render).toEqual(rec);
     expect(v.outputs.find((o) => o.format === 'test-still')!.render).toBeUndefined();
@@ -244,6 +246,57 @@ describe('export jobs (decision 974)', { timeout: 120_000 }, () => {
     const again = await startExport(slug, { destination: join(base, 'out2'), picks: { 'test-wide': 1 } });
     expect((await waitJob(again.id)).state).toBe('succeeded');
     expect(fake.calls.length).toBe(calls + 1);
+  });
+
+  it('report 39: another frame rate is rendered for the export alone at that fps; the composition\'s own fps reuses the version render', async () => {
+    const prepare = vi.spyOn(MediaNormalizer.prototype, 'prepare');
+    const { slug, store } = await v2Creative(['test-wide'], {});
+    await waitJob((await renderVersion(slug)).id);
+    const before = (await store.readVersions(slug))[0]!.outputs;
+    expect(fake.calls.map((c) => [c.fps, c.composition.fps])).toEqual([[undefined, 30]]);
+    const calls = fake.calls.length;
+    const dest = join(base, 'out');
+    const job = await startExport(slug, { destination: dest, picks: { 'test-wide': 1 }, fps: 60, pattern: '{format}' });
+    const done = await waitJob(job.id);
+    expect(done.state, done.error).toBe('succeeded');
+    expect(fake.calls.slice(calls).map((c) => [c.format.id, c.quality, c.short, c.composition.fps])).toEqual([['test-wide', 'high', undefined, 60]]);
+    // The composition goes at 60 fps to the media normaliser and the page too (embedded video normalised at 60, never held 2 frames).
+    expect(fake.calls.at(-1)!.composition.fps).toBe(60);
+    expect(prepare.mock.calls.map(([a]) => a.composition.fps)).toEqual([30, 60]);
+    prepare.mockRestore();
+    expect((await jobs()).find((j) => j.id === done.export!.renders![0])!.label).toMatch(/ · Launch v1 \(60 fps · /);
+    expect(readFileSync(join(dest, 'test-wide.mp4'), 'utf8')).toContain('320x180 high 60fps');
+    expect((await store.readVersions(slug))[0]!.outputs).toEqual(before);
+    // 30 fps, the composition's own: the version's render (recorded at 30 fps) is copied, nothing rendered.
+    const own = await startExport(slug, { destination: join(base, 'own'), picks: { 'test-wide': 1 }, fps: 30 });
+    expect((await waitJob(own.id)).state).toBe('succeeded');
+    expect(fake.calls.length).toBe(calls + 1);
+    // A version render recorded before the frame rate choice is not known to be at 30 fps: rendered for the export.
+    await store.updateVersion(slug, 1, (v) => ({ ...v, outputs: v.outputs.map((o) => ({ ...o, render: { quality: 'high', width: 320, height: 180, encoder: 'libx264' } })) }));
+    const old = await startExport(slug, { destination: join(base, 'old'), picks: { 'test-wide': 1 }, fps: 30 });
+    expect((await waitJob(old.id)).state).toBe('succeeded');
+    expect(fake.calls.slice(calls + 1).map((c) => c.composition.fps)).toEqual([30]);
+  });
+
+  it('review of report 39: a version render matching the profile but gone from disk is rendered for the export, not refused', async () => {
+    const { slug, dir } = await v2Creative(['test-wide'], {});
+    await waitJob((await renderVersion(slug)).id);
+    rmSync(join(dir, 'outputs', 'v1', 'test-wide.mp4'));
+    const calls = fake.calls.length;
+    const job = await startExport(slug, { destination: join(base, 'gone'), picks: { 'test-wide': 1 }, fps: 30, pattern: '{format}' });
+    const done = await waitJob(job.id);
+    expect(done.state, done.error).toBe('succeeded');
+    expect(fake.calls.slice(calls).map((c) => [c.format.id, c.composition.fps, c.out.includes(join('outputs', 'v1'))])).toEqual([['test-wide', 30, false]]);
+    expect(readdirSync(join(base, 'gone'))).toEqual(['test-wide.mp4']);
+  });
+
+  it('report 39: a frame rate outside 24, 25, 30, 50, 60 is refused at once', async () => {
+    const { slug } = await v2Creative(['test-wide'], {});
+    for (const fps of [48, 0, '60', 29.97]) {
+      const r = await app.inject({ method: 'POST', url: exportUrl(slug), headers: H, payload: { background: true, destination: join(base, 'o'), picks: { 'test-wide': 1 }, fps } });
+      expect(r.statusCode, String(fps)).toBe(400);
+    }
+    expect((await jobs()).filter((j) => j.kind === 'export')).toEqual([]);
   });
 
   it('a version render made before the quality choice: copied for a standard export, rendered again at high for the default', async () => {

@@ -3,7 +3,7 @@ import { recoverRenameJournal } from '../library/rename-recovery.ts';
 import { lstat, readdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, join, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { DEFAULT_EXPORT_QUALITY, EXPORT_QUALITIES, isDefaultProfile, EXPORT_RESOLUTIONS, type ExportQuality, type RenderProfile, type VersionEntry, messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow, activeMembers, hostOf, isVariantId, letterOfSlug, MAX_NEW_VARIANTS, variantIdSchema, type VariantDetail, type VariantId } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_QUALITY, EXPORT_FPS, EXPORT_QUALITIES, isDefaultProfile, EXPORT_RESOLUTIONS, type ExportFps, type ExportQuality, type RenderProfile, type VersionEntry, messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow, activeMembers, hostOf, isVariantId, letterOfSlug, MAX_NEW_VARIANTS, variantIdSchema, type VariantDetail, type VariantId } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
@@ -128,6 +128,8 @@ const MAX_EXPORT_FORMATS = 100;
 const exportProfileFields = {
   quality: z.enum(EXPORT_QUALITIES).optional(),
   resolution: z.number().int().refine((r) => (EXPORT_RESOLUTIONS as readonly number[]).includes(r)).optional(),
+  /** Report 39 (decision 1234): the frame rate of the exported videos; absent: each composition's own. */
+  fps: z.literal(EXPORT_FPS).optional(),
   background: z.boolean().optional(),
 };
 type VersionEntryList = VersionEntry[];
@@ -142,9 +144,10 @@ function outcomeOf(r: ExportResult & { excluded?: NonNullable<ExportOutcome['exc
   const skipped = [...r.skipped, ...(r.unavailable ?? []).map((u) => u.message)];
   return { destination: r.destination, files: r.files.map((f) => f.to), ...(skipped.length ? { skipped } : {}), ...(r.excluded?.length ? { excluded: r.excluded } : {}) };
 }
-/** The profile a body asks for; undefined when it names neither a quality nor a resolution. */
-const profileOfBody = (b: { quality?: ExportQuality; resolution?: number }): RenderProfile | undefined =>
-  b.quality === undefined && b.resolution === undefined ? undefined : { quality: b.quality ?? DEFAULT_EXPORT_QUALITY, ...(b.resolution !== undefined ? { short: b.resolution } : {}) };
+/** The profile a body asks for; undefined when it names no quality, resolution or frame rate. */
+const profileOfBody = (b: { quality?: ExportQuality; resolution?: number; fps?: ExportFps }): RenderProfile | undefined =>
+  b.quality === undefined && b.resolution === undefined && b.fps === undefined ? undefined
+    : { quality: b.quality ?? DEFAULT_EXPORT_QUALITY, ...(b.resolution !== undefined ? { short: b.resolution } : {}), ...(b.fps !== undefined ? { fps: b.fps } : {}) };
 const exportBody = z.object({
   destination: z.unknown().optional(),
   picks: z.record(z.string().min(1).max(200), z.unknown()).refine((r) => Object.keys(r).length <= MAX_EXPORT_FORMATS).optional(),
@@ -1038,7 +1041,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const plans = new Map<string, Map<number, string[]>>();
     for (const [slug, list] of bySlug) {
       const vs = slug === ref.creativeSlug && !member ? versions : await ref.store.readVersions(slug);
-      const pending = profiledRenders(vs, list, o);
+      const pending = await profiledRenders(ref.store.dir(slug), vs, list, o);
       if (pending.size > 0) plans.set(slug, pending);
     }
     if (plans.size === 0) return copy(items, []);
