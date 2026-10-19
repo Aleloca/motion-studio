@@ -81,6 +81,3 @@ export type RenderInfo = z.infer<typeof renderInfoSchema>;
 
 /** The quality a recorded render was made with (`standard` for one without a record). */
 export const recordedQuality = (o: { render?: RenderInfo } | null | undefined): ExportQuality => o?.render?.quality ?? 'standard';
-
-/** The frame rate a recorded render was made at (`compositionFps` for one without the record). */
-export const recordedFps = (o: { render?: RenderInfo } | null | undefined, compositionFps: number): number => o?.render?.fps ?? compositionFps;

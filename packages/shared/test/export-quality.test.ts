@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_FORMATS, EXPORT_FPS, isDefaultProfile, outputFileInfoSchema, profileApplies, profileFor, recordedFps, recordedQuality, scaledSize } from '../src/index.ts';
+import { DEFAULT_FORMATS, EXPORT_FPS, isDefaultProfile, outputFileInfoSchema, profileApplies, profileFor, recordedQuality, scaledSize } from '../src/index.ts';
 
 const preset = (id: string) => DEFAULT_FORMATS.find((p) => p.id === id)!;
 
@@ -61,8 +61,5 @@ describe('export frame rate (report 39, decision 1233)', () => {
     expect(outputFileInfoSchema.parse({ ...base, render: { ...render, fps: 60 } }).render).toEqual({ ...render, fps: 60 });
     expect(outputFileInfoSchema.parse({ ...base, render }).render).toEqual(render);
     expect(() => outputFileInfoSchema.parse({ ...base, render: { ...render, fps: 48 } })).toThrow();
-    expect(recordedFps(outputFileInfoSchema.parse({ ...base, render: { ...render, fps: 25 } }), 30)).toBe(25);
-    expect(recordedFps(outputFileInfoSchema.parse({ ...base, render }), 30)).toBe(30);
-    expect(recordedFps(undefined, 24)).toBe(24);
   });
 });

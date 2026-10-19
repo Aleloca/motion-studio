@@ -1041,7 +1041,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const plans = new Map<string, Map<number, string[]>>();
     for (const [slug, list] of bySlug) {
       const vs = slug === ref.creativeSlug && !member ? versions : await ref.store.readVersions(slug);
-      const pending = profiledRenders(vs, list, o);
+      const pending = await profiledRenders(ref.store.dir(slug), vs, list, o);
       if (pending.size > 0) plans.set(slug, pending);
     }
     if (plans.size === 0) return copy(items, []);

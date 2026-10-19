@@ -375,16 +375,20 @@ export interface ExportProfileOptions { profile?: RenderProfile; presets?: Forma
 
 /**
  * Decision 974: the v2 items an export at `profile` renders for itself (another quality or size than the version's own
- * render), by version. A legacy item (no composition) is copied as it is: there is nothing to render it from.
+ * render), by version. A legacy item (no composition) is copied as it is: there is nothing to render it from. A version
+ * render whose record matches the profile is copied only while its file is usable on disk (review of report 39, decision
+ * 1241); otherwise the export renders it for itself.
  */
-export function profiledRenders(versions: VersionEntry[], items: ExportItem[], o: Required<ExportProfileOptions>): Map<number, string[]> {
+export async function profiledRenders(creativeDir: string, versions: VersionEntry[], items: ExportItem[], o: Required<ExportProfileOptions>): Promise<Map<number, string[]>> {
   const out = new Map<number, string[]>();
   for (const it of items) {
     if (it.localized) continue;
     const v = versions.find((x) => x.n === it.n);
     if (!v?.compositions?.some((c) => c.format === it.format)) continue;
     const wanted = profileFor(findPreset(o.presets, it.format), it.format, o.profile);
-    if (isDefaultProfile(wanted) || recordedMatches(v, it.format, wanted)) continue;
+    if (isDefaultProfile(wanted)) continue;
+    const file = v.outputs.find((x) => x.format === it.format)?.file ?? '';
+    if (recordedMatches(v, it.format, wanted) && file !== '' && plainName(file) && (await probeConfinedFile(creativeDir, `outputs/v${it.n}/${file}`)) === true) continue;
     out.set(it.n, [...(out.get(it.n) ?? []), it.format]);
   }
   return out;
