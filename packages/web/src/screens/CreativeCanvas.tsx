@@ -8,7 +8,7 @@
 import { ProblemList } from '../components/ProblemList.tsx';
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
 import { entriesOfVariant, turnEndOf } from '@motion-studio/shared';
-import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, outputWarningText, shownTotal, packInstancesOf, type ConversationEntry, type JobSummary, type CreativeDetail, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VariantId, type VariantMember, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
+import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, outputWarningText, shownTotal, packFileFormats, packInstancesOf, type ConversationEntry, type JobSummary, type CreativeDetail, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VariantId, type VariantMember, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { api, type GroupExportPlanItem } from '../api.ts';
@@ -1124,7 +1124,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
         return (
         <StorePackExport open={packExport} onClose={() => setPackExport(false)} slug={slug} creative={group ? hostSlug : creative} title={title} version={version?.n ?? 0}
           {...(group ? { group: true } : {})} untranslated={packGaps.untranslated} needsReview={packGaps.review}
-          presets={presets} {...(group ? {} : { formats: cr.brief.formats.filter((f) => packIds.has(f)), ...(cr.brief.formatLabels ? { labels: cr.brief.formatLabels } : {}), ...(version ? { entry: version } : {}) })}
+          presets={presets} {...(group ? {} : { formats: packFileFormats(cr.brief, presets), ...(cr.brief.formatLabels ? { labels: cr.brief.formatLabels } : {}), ...(version ? { entry: version } : {}) })}
           {...(creativeLocales(cr.brief) ? { locales: creativeLocales(cr.brief)! } : {})} />
         );
       })() : null}

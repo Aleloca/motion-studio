@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
-  briefSchema, briefWriteSchema, issuesText, isStorePackFormat, packSlotOf, renderProblems, storePackSchema, type Brief, type JobSummary, type LocalizationRow, type VersionEntry,
+  briefSchema, briefWriteSchema, issuesText, isStorePackFormat, packFileFormats, packSlotOf, renderProblems, storePackSchema, type JobSummary, type LocalizationRow, type VersionEntry,
 } from '@motion-studio/shared';
 import { CreativeStore } from '../creatives/creative-store.ts';
 import { pendingByMember, planGroupExport, resolveGroupLocalized, type GroupPlanItem } from '../creatives/variant-export.ts';
@@ -14,7 +14,7 @@ import { FormatCatalog, findPreset } from '../formats/format-catalog.ts';
 import { assertLocalesInBrief, checkedLocale } from '../localization/validate.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { storePackBrief, verifyScreens } from '../store-pack/brief.ts';
-import { exportStorePack, packEntry, type PackFile } from '../store-pack/pack-export.ts';
+import { exportStorePack, type PackFile } from '../store-pack/pack-export.ts';
 import { CodedError, expandHome, WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
 import { currentLocale, t } from '../i18n.ts';
 import { localeAssetsCheck } from './creative-routes.ts';
@@ -61,14 +61,6 @@ function selectedFormats(packFormats: string[], selection: string[] | undefined)
   const foreign = [...new Set(selection.filter((f) => !packFormats.includes(f)))];
   if (foreign.length > 0) throw new CodedError(400, t().variants.storePack.foreignFormat({ list: foreign.join(', ') }), 'store-pack-foreign-format');
   return packFormats.filter((f) => selection.includes(f));
-}
-
-/**
- * The pack's formats of a brief, in its order: the pack's own instances that have a place in the pack. The export routes and
- * `group-files` share it, so the files the dialog lists are the files the export takes (decision 1333).
- */
-function packFormatsOf(brief: { formats: string[] }, pack: NonNullable<Brief['storePack']>, slotOf: Map<string, string>): string[] {
-  return brief.formats.filter((f) => slotOf.has(f) && packEntry(pack, slotOf.get(f)!, undefined) !== null);
 }
 
 const localDay = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -129,7 +121,7 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
     // The pack owns its `instances` (the slots' ids in a pack made before); captions, numbers and folders follow the slot.
     const slotOf = packSlotOf(pack, catalog);
     const owned = new Set(slotOf.keys());
-    const packFormats = selectedFormats(packFormatsOf(creative.brief, pack, slotOf), body.formats);
+    const packFormats = selectedFormats(packFileFormats(creative.brief, catalog), body.formats);
     // Store instances of the brief that are not the pack's (picked by hand): not exported, and said so.
     const notInPack = creative.brief.formats.filter((f) => !owned.has(f) && isStorePackFormat(f))
       .map((f) => { const label = creative.brief.formatLabels?.[f]; return label ? `${f} (${label})` : f; });
@@ -235,7 +227,8 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
     const creative = await store.get((await svc.resolve(ref)).host.creativeSlug);
     const pack = creative.brief.storePack;
     if (!pack) throw new CodedError(409, t().variants.storePack.notStorePack, 'not-store-pack');
-    const formats = packFormatsOf(creative.brief, pack, packSlotOf(pack, await presets()));
+    // Decision 1338: the same list as the export routes and the single creative's dialog (`packFileFormats`).
+    const formats = packFileFormats(creative.brief, await presets());
     const labels = Object.fromEntries(formats.flatMap((f) => { const l = creative.brief.formatLabels?.[f]; return l ? [[f, l]] : []; }));
     return { formats, labels };
   });
@@ -276,7 +269,7 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
 
     const slotOf = packSlotOf(pack, catalog);
     const owned = new Set(slotOf.keys());
-    const packFormats = selectedFormats(packFormatsOf(creative.brief, pack, slotOf), body.formats);
+    const packFormats = selectedFormats(packFileFormats(creative.brief, catalog), body.formats);
     const notInPack = creative.brief.formats.filter((f) => !owned.has(f) && isStorePackFormat(f))
       .map((f) => { const label = creative.brief.formatLabels?.[f]; return label ? `${f} (${label})` : f; });
     const sizeOf = (f: string) => { const p = findPreset(catalog, f); return { width: p?.width ?? 0, height: p?.height ?? 0 }; };
