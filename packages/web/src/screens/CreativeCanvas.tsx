@@ -29,7 +29,7 @@ import { useCreative } from '../useCreative.ts';
 import { jobLiveTokens, jobUsagePartial } from '../usageLive.ts';
 import { costText, TokenCount, UsageBadge } from '../shell/Tokens.tsx';
 import { boardLabel, boardName, CanvasBoard, type Draft, type Tool } from './CanvasBoard.tsx';
-import { boardsWith, fitBoards, isTall, ratioText, type BoardModel } from './canvasModel.ts';
+import { boardsWith, canvasGroups, canvasLines, fitBoards, FIT_MIN, groupByChannel, PACK_GROUP, ratioText, type BoardModel } from './canvasModel.ts';
 import { CompareDialog } from './CompareDialog.tsx';
 import { channelOf } from './creativeState.ts';
 import { ExportDialog, type ExportSnapshot } from './ExportDialog.tsx';
@@ -399,7 +399,8 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   // when the viewport or the boards change size (a window resize, a format added); after that the zoom is theirs (⌘0 fits
   // again). Decision 973: in a variant group the zoom fits the variants' cards side by side.
   const userZoomed = useRef(false);
-  const [viewW, setViewW] = useState(0);
+  const [viewSize, setViewSize] = useState({ width: 0, height: 0 });
+  const viewW = viewSize.width;
   const modelOf = (d: CreativeDetail) => {
     const st = formatStates(d, presets);
     return { st, bs: boardsWith(d.creative.brief.formats, presets, d.versions, (id) => boardSource(st, id, {}), d.creative.brief.formatLabels) };
@@ -412,13 +413,13 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   fitNow.current = () => {
     const v = viewport.current;
     if (!v) return null;
-    return group ? fitCards(cardCount, v.clientWidth, ZOOM_MIN) : fitBoards(boards, { width: v.clientWidth, height: v.clientHeight }, ZOOM_MIN);
+    return group ? fitCards(cardCount, v.clientWidth, ZOOM_MIN) : fitBoards(canvasGroups(boards, packIds), { width: v.clientWidth, height: v.clientHeight }, FIT_MIN);
   };
   useLayoutEffect(() => {
     const v = viewport.current;
     if (!v || !boards.length) return;
     const fit = () => {
-      setViewW((w) => (w === v.clientWidth ? w : v.clientWidth));
+      setViewSize((w) => (w.width === v.clientWidth && w.height === v.clientHeight ? w : { width: v.clientWidth, height: v.clientHeight }));
       if (userZoomed.current) return;
       const z = fitNow.current();
       if (z !== null) setZoom((cur) => (Math.abs(cur - z) < 1e-6 ? cur : z));
@@ -431,10 +432,12 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     return () => { cancelAnimationFrame(frame); ro.disconnect(); };
   }, [fitKey, Boolean(detail)]); // eslint-disable-line react-hooks/exhaustive-deps
   const zoomBy = (next: (z: number) => number) => { userZoomed.current = true; setZoom(next); };
+  // Report 40: a canvas that opened below 50% (many boards) can be zoomed back down to where it opened.
+  const zoomMin = () => Math.min(ZOOM_MIN, group ? ZOOM_MIN : fitNow.current() ?? ZOOM_MIN);
   // ⌘+ / ⌘− step, ⌘0 fits again (and lets the canvas refit on resize, as when it opened).
   const zoomStep = (k: 'in' | 'out' | 'fit') => {
     if (k === 'fit') { userZoomed.current = false; const z = fitNow.current(); if (z !== null) setZoom(z); return; }
-    zoomBy((z) => stepZoom(z, k === 'in' ? 1 : -1));
+    zoomBy((z) => stepZoom(z, k === 'in' ? 1 : -1, zoomMin()));
   };
   usePageShortcut(root, (e) => zoomKey(e) !== null && !inOverlay(e) && Boolean(detail), (e) => zoomStep(zoomKey(e)!));
   // Desktop: the View menu's ⌘+ / ⌘− / ⌘0 arrive over the bridge (on macOS the menu takes the keys first): the same path,
@@ -447,6 +450,8 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   // page never zooms. Any other wheel (two-finger scroll) scrolls the canvas as usual.
   const zoomNow = useRef(zoom);
   zoomNow.current = zoom;
+  const zoomMinNow = useRef(zoomMin);
+  zoomMinNow.current = zoomMin;
   const pinchAnchor = useRef<{ scroll: { left: number; top: number }; pointer: { x: number; y: number }; from: number } | null>(null);
   useEffect(() => {
     const v = viewport.current;
@@ -455,7 +460,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
       if (!e.ctrlKey) return;
       e.preventDefault();
       const from = zoomNow.current;
-      const to = pinchZoom(from, e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY);
+      const to = pinchZoom(from, e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY, zoomMinNow.current());
       if (to === from) return;
       const r = v.getBoundingClientRect();
       // The first event of a gesture anchors it; the next ones (before a render) keep that anchor.
@@ -546,8 +551,13 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   // The pack's group is there whenever the creative has a pack, even if its instances were all taken out by hand: the export stays reachable.
   const columnGroups = groupByChannel(boards, packIds);
   if (storePack && !columnGroups.some(([ch]) => ch === PACK_GROUP)) columnGroups.push([PACK_GROUP, []]);
-  const tall = boards.filter(isTall);
-  const rest = boards.filter((b) => !isTall(b));
+  // Report 40: the canvas's lines follow the formats column's groups, wrapped at the zoom the canvas opens at (the user's zoom
+  // scales them, it does not wrap them again).
+  const lines = (() => {
+    const groups = canvasGroups(boards, packIds);
+    const at = fitBoards(groups, viewSize, FIT_MIN);
+    return canvasLines(groups, at ?? 1, at === null ? null : viewSize.width);
+  })();
   const pinsOf = (id: string) => pins.map((pin, i) => ({ pin, number: i + 1 })).filter((x) => x.pin.format === id);
   const badgeOf = (b: BoardModel & { n: number | null }) => {
     const s = states[b.id];
@@ -950,12 +960,15 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
           }}
         >
           {/* The world is not zoomed: each board scales its frame, and its spacing follows --cv-z (canvas.css). A group's cards wrap. */}
-          <div className={cx('ms-cv-world', group && 'ms-cv-vworld')} style={{ '--cv-z': zoom } as CSSProperties}
+          <div className={cx('ms-cv-world', group ? 'ms-cv-vworld' : 'ms-cv-lined')} style={{ '--cv-z': zoom } as CSSProperties}
             aria-busy={rendering === 'all' || rendering.size > 0 ? true : undefined}>
             {group ? renderGroupedWorld() : (
               <>
-                {tall.map((b) => board(b))}
-                {rest.length ? <div className="ms-cv-stack">{rest.map((b) => board(b))}</div> : null}
+                {lines.map((line, i) => (
+                  <div key={i} className="ms-cv-line">
+                    {line.map((it) => (it.stack ? <div key={it.boards[0]!.id} className="ms-cv-stack">{it.boards.map((b) => board(b))}</div> : board(it.boards[0]!)))}
+                  </div>
+                ))}
               </>
             )}
           </div>
@@ -1079,19 +1092,6 @@ function OutputWarnings({ outputs, formatLabel }: { outputs: VersionEntry['outpu
       {lines.map((l, i) => <li key={i}><Icon name="warn" size={12} /><span><b>{formatLabel(l.format)}</b> · {l.text}</span></li>)}
     </ul>
   );
-}
-
-/** The key of the store pack's group in the formats column (no channel is called this). */
-const PACK_GROUP = '\u0000store-pack';
-
-/** The formats column's groups, in the order of first appearance; `pack`: the ids of the store pack, which form one group. */
-function groupByChannel<B extends BoardModel>(boards: B[], pack: ReadonlySet<string>): Array<[string, B[]]> {
-  const m = new Map<string, B[]>();
-  for (const b of boards) {
-    const ch = pack.has(b.id) ? PACK_GROUP : b.preset?.channel ?? '';
-    m.set(ch, [...(m.get(ch) ?? []), b]);
-  }
-  return [...m.entries()];
 }
 
 function Notes({ children }: { children: ReactNode }) {

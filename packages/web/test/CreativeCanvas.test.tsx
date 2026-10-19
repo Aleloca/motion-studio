@@ -205,9 +205,9 @@ describe('CreativeCanvas · overlays stay screen-sized at any zoom', () => {
   it('at 50% the bubble, the pins and the board labels are not scaled, and sit at world point × zoom', async () => {
     const size = (dim: 'clientWidth' | 'clientHeight', v: number) => vi.spyOn(HTMLElement.prototype, dim, 'get')
       .mockImplementation(function (this: HTMLElement) { return this.classList.contains('ms-cv-viewport') ? v : 0; });
-    // World 808×750 at 100% → a 412 px wide viewport fits at exactly 50% (the 9:16 label keeps 160 px).
+    // Report 40: 412 × 660 fits at exactly 50%, the two boards wrapped one under the other (654 px high; 55% would be 709).
     const w = size('clientWidth', 412);
-    const h = size('clientHeight', 2000);
+    const h = size('clientHeight', 660);
     const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
       // The 1:1 board (344×344 at 100%) on screen at 50%: 172×172 at the origin.
       const r = this.classList.contains('ms-cv-hit') ? { left: 0, top: 0, width: 172, height: 172 } : { left: 0, top: 0, width: 0, height: 0 };
@@ -294,7 +294,7 @@ describe('CreativeCanvas · overlays (round 2)', () => {
     const size = (dim: 'clientWidth' | 'clientHeight', v: number) => vi.spyOn(HTMLElement.prototype, dim, 'get')
       .mockImplementation(function (this: HTMLElement) { return this.classList.contains('ms-cv-viewport') ? v : 0; });
     const w = size('clientWidth', 412);
-    const h = size('clientHeight', 2000);
+    const h = size('clientHeight', 660);
     const ow = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('ms-cv-bubble') ? 260 : 0; });
     const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
       const r = this.classList.contains('ms-cv-viewport') ? { left: 0, top: 0, width: 500, height: 800 }

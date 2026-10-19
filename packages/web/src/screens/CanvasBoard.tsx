@@ -15,7 +15,7 @@ import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { instanceName } from '../instances.ts';
 import { anim, D, E, isSubmitChord } from '../motion/index.ts';
 import { Button, ChannelMark, Icon, Pill, Popover, Textarea, channelOf, cx } from '../ui/index.ts';
-import { boardFrame, LABEL_MIN, LABEL_MIN_GROUPED, outputMedia, outputUrl, pointIn, ratioText, toScreen, type BoardModel } from './canvasModel.ts';
+import { boardFrame, labelMin, outputMedia, outputUrl, pointIn, ratioText, toScreen, type BoardModel } from './canvasModel.ts';
 import { isVideoFile } from '../media.ts';
 import type { BoardRender } from './renderModel.ts';
 
@@ -147,7 +147,7 @@ export function CanvasBoard(p: BoardProps) {
 
   // A card's header is as wide as its thumbnail (it wraps); the canvas keeps its label floor.
   const headWidth = p.card ? Math.max(Math.round(size.width * zoom), CARD_LABEL_MIN)
-    : Math.max(Math.round(size.width * zoom), p.boardKey !== undefined || p.tag !== undefined || p.grouped ? LABEL_MIN_GROUPED : LABEL_MIN);
+    : Math.max(Math.round(size.width * zoom), labelMin(zoom, p.boardKey !== undefined || p.tag !== undefined || p.grouped));
   const cardState = comp && (comp.render.kind === 'queued' || comp.render.kind === 'rendering' || comp.render.kind === 'failed' || comp.render.kind === 'problem');
   const sub = !p.card || p.rendering || p.note || cardState || (board.out && !board.out.verified) || largeFile.length > 0;
   return (
