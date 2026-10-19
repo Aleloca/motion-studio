@@ -18,7 +18,7 @@ vi.mock('electron', () => ({
 
 const {
   renderWindowOptions, renderProxyConfig, renderRequestAllowed, lockRenderSession, closeRenderWindow, DebuggerCdpClient,
-  ElectronProvider, RENDER_PARTITION_PREFIX, desktopRenderOptions, DESKTOP_RENDER_PARALLEL,
+  ElectronProvider, RENDER_PARTITION_PREFIX, desktopRenderOptions, DESKTOP_RENDER_PARALLEL, rawFrames, captureWindowFrame, guardedRawCapture,
 } = await import('../src/render-window.ts');
 
 const PREFIX = 'http://127.0.0.1:43210/abcdefghijklmnop0123/';
@@ -320,6 +320,34 @@ describe('ElectronProvider', () => {
     open(2); open(1); open(); open(0.5);
     await new Promise((r) => setTimeout(r, 0));
     expect(created.map((c) => c.scale)).toEqual([2, undefined, undefined, undefined]);
+  });
+
+  it('report 53: raw frames where the window\'s scale is the page\'s (1, above 1); not below 1, not for a transparent page', () => {
+    for (const k of [undefined, 1, 4 / 3, 2]) expect(rawFrames(k === undefined ? {} : { deviceScaleFactor: k }), String(k)).toBe(true);
+    for (const k of [0.5, 2 / 3]) expect(rawFrames({ deviceScaleFactor: k }), String(k)).toBe(false);
+    expect(rawFrames({ transparentBackground: true })).toBe(false);
+  });
+
+  it('report 53: a raw capture that never answers times out; a destroyed window fails at once', async () => {
+    const win = { isDestroyed: () => false, webContents: { capturePage: () => new Promise(() => {}) } };
+    await expect(captureWindowFrame(win as never, 20)).rejects.toMatchObject({ code: 'timeout' });
+    await expect(captureWindowFrame({ isDestroyed: () => true } as never, 20)).rejects.toMatchObject({ code: 'crashed' });
+    const img = { getSize: () => ({ width: 2, height: 1 }), isEmpty: () => false, toBitmap: () => Buffer.alloc(8) };
+    await expect(captureWindowFrame({ isDestroyed: () => false, webContents: { capturePage: async () => img } } as never, 20)).resolves.toMatchObject({ width: 2, height: 1 });
+  });
+
+  it('report 53: a raw capture is refused when the isolation failed before it, and its frame dropped when it failed during it', async () => {
+    const { RenderError } = await import('@motion-studio/core');
+    const frame = { data: Buffer.alloc(8), width: 2, height: 1 };
+    let failure: InstanceType<typeof RenderError> | null = null;
+    let reads = 0;
+    const read = async () => { reads++; return frame; };
+    await expect(guardedRawCapture(read, () => failure)).resolves.toBe(frame);
+    failure = new RenderError('isolation', 'a request left the prefix');
+    await expect(guardedRawCapture(read, () => failure)).rejects.toMatchObject({ code: 'isolation' });
+    expect(reads).toBe(1);
+    failure = null;
+    await expect(guardedRawCapture(async () => { failure = new RenderError('isolation', 'during'); return frame; }, () => failure)).rejects.toMatchObject({ code: 'isolation' });
   });
 
   it('close() waits for a window still being created, and that window is closed (M6)', async () => {
