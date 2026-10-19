@@ -422,6 +422,11 @@ arrives and worked on later together.
     User's decisions: automatic, never over a name the user gave (a name the user set or edited is never changed by the
     agent; the user can always rename); every format gets a speaking name, also when it is the only one of its kind.
     Timing: now, together with 52–54.
+    Done (decisions 1380–1394): the brief records which labels the agent gave (`agentFormatLabels`; a label is the
+    agent's only while it still holds that text, so every older label is the user's). New agent action `name_formats`,
+    asked in every turn for every format with no name yet; the server refuses names over the user's (inline renames,
+    wizard captions), also through stale full brief saves and wizard edits. A store screenshot shows "N · name"; export
+    file names are unchanged. In a variant group only the coordinator renames; a variant names only unnamed formats.
 
 ## Follow-ups found while working on 12–30
 
