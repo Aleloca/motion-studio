@@ -293,6 +293,7 @@ describe('variant canvas · ★ across variants', () => {
 
   it('the chosen board shows a filled ★, and a click on it clears the group pick', async () => {
     group = groupOf(['a', 'b', 'c'], { picks: { 'instagram-post-1x1': { slug: `${HOST}~b`, version: 2 } } });
+    localStorage.setItem(`ms.variantView.acme/${HOST}`, 'all'); // report 49: the cards' view (with a pick the page opens on "Scelte")
     render(<Harness live={emptyLive()} />);
     const row = await region('Variante B');
     const star = await within(row).findByRole('button', { name: /Post 1:1: la variante B v2 è scelta per l'esportazione/ });
@@ -485,6 +486,7 @@ describe('variant canvas · every board, whichever variant is open', () => {
 
   it('"Scegli" is labelled: "Scelta" on the chosen format, in English "Choose" / "Chosen"', async () => {
     group = groupOf(['a', 'b', 'c'], { picks: { 'instagram-post-1x1': { slug: `${HOST}~b`, version: 2 } } });
+    localStorage.setItem(`ms.variantView.acme/${HOST}`, 'all'); // report 49: the cards' view (with a pick the page opens on "Scelte")
     const { unmount } = render(<Harness live={emptyLive()} />);
     const b = await region('Variante B');
     expect((await within(b).findByRole('button', { name: /Post 1:1: la variante B v2 è scelta/ })).textContent).toBe('Scelta');
