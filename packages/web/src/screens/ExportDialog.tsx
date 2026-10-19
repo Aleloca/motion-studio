@@ -5,7 +5,8 @@
 // is remembered; progress, then a success screen with Show in Finder. File sizes are not shown: the API does not report
 // them (ruling R6). Decision 974: the export runs on the core as a job (user report 20): the dialog may close at any time
 // and the export goes on (the app tells when the files are in the folder, `useExportNotice`); Cancel export stops it. The
-// videos' resolution, quality and frame rate are chosen here and remembered in this browser (reports 22, 39).
+// videos' resolution and quality are chosen here and remembered in this browser (report 22); the frame rate is chosen
+// for each export (report 39, decision 1242).
 import {
   DEFAULT_EXPORT_QUALITY, EXPORT_FPS, EXPORT_QUALITIES, EXPORT_RESOLUTIONS, profileApplies, scaledSize, type ExportFps, type ExportQuality,
   EXPORT_NAME_TOKENS, exportDate, exportExtension, exportNameCollisions, exportNameVars, localizedStem, renderName, renderProblems, renderState, separateInstanceNames,
@@ -35,17 +36,16 @@ const readFolder = () => { try { return localStorage.getItem(EXPORT_FOLDER_KEY) 
 const writeFolder = (v: string) => { try { localStorage.setItem(EXPORT_FOLDER_KEY, v); } catch { /* private mode */ } };
 /** The last resolution and quality chosen (decision 974), kept in this browser for every project, as the folder. */
 export const EXPORT_PROFILE_KEY = 'ms.exportProfile';
-export interface ExportProfileChoice { quality: ExportQuality; resolution: number | null; /** Report 39: null, the format's own. */ fps: ExportFps | null }
+export interface ExportProfileChoice { quality: ExportQuality; resolution: number | null; /** Report 39: null, the format's own; never remembered (decision 1242). */ fps: ExportFps | null }
 export function readProfile(): ExportProfileChoice {
   try {
     const v = JSON.parse(localStorage.getItem(EXPORT_PROFILE_KEY) ?? 'null') as Partial<ExportProfileChoice> | null;
     const quality = (EXPORT_QUALITIES as readonly unknown[]).includes(v?.quality) ? v!.quality! : DEFAULT_EXPORT_QUALITY;
     const resolution = (EXPORT_RESOLUTIONS as readonly unknown[]).includes(v?.resolution) ? v!.resolution! : null;
-    const fps = (EXPORT_FPS as readonly unknown[]).includes(v?.fps) ? v!.fps! : null;
-    return { quality, resolution, fps };
+    return { quality, resolution, fps: null };
   } catch { return { quality: DEFAULT_EXPORT_QUALITY, resolution: null, fps: null }; }
 }
-const writeProfile = (v: ExportProfileChoice) => { try { localStorage.setItem(EXPORT_PROFILE_KEY, JSON.stringify(v)); } catch { /* private mode */ } };
+const writeProfile = ({ quality, resolution }: ExportProfileChoice) => { try { localStorage.setItem(EXPORT_PROFILE_KEY, JSON.stringify({ quality, resolution })); } catch { /* private mode */ } };
 /** The workspace settings bound the pattern to 200 characters. */
 const PATTERN_MAX = 200;
 

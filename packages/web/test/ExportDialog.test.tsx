@@ -427,7 +427,7 @@ describe('ExportDialog · resolution and quality (decision 974, user report 22)'
     expect(screen.getByRole('button', { name: /^Resolution/ }).textContent).toContain('720p');
   });
 
-  it('report 39: offers the format\'s own frame rate (its recorded value) and 24 to 60 fps; sends, shows and remembers the choice', async () => {
+  it('report 39: offers the format\'s own frame rate (its recorded value) and 24 to 60 fps; sends and shows the choice, never remembers it', async () => {
     const view = openV2();
     expect(screen.getByRole('button', { name: /^Frame rate/ }).textContent).toContain('The format\'s own');
     await userEvent.click(screen.getByRole('button', { name: /^Frame rate/ }));
@@ -437,8 +437,9 @@ describe('ExportDialog · resolution and quality (decision 974, user report 22)'
     await userEvent.click(screen.getByRole('button', { name: 'Export 2 files' }));
     await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledWith('acme', 'c1', expect.objectContaining({ quality: 'high', fps: 60 })));
     view.unmount();
+    // Not remembered (decision 1242): the next export starts again at the format's own.
     openV2();
-    expect(screen.getByRole('button', { name: /^Frame rate/ }).textContent).toContain('60 fps');
+    expect(screen.getByRole('button', { name: /^Frame rate/ }).textContent).toContain("The format's own");
   });
 
   it('report 39: the format\'s own frame rate shows its value when the renders recorded it; by default no fps is sent', async () => {
