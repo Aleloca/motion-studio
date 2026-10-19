@@ -117,6 +117,18 @@ for (const { id, r, el } of all) {
   const from = el.querySelector('.ms-cv-board-from');
   if (!from) problems.push('no variant line: ' + id);
   else if (from.scrollWidth > from.clientWidth + 1 && !from.querySelector('.ms-vchosen-name')) problems.push('variant line clipped: ' + id);
+  // Decision 1357: nothing in a header line sticks out of the line or is cut inside its own box, the names' ellipsis excepted.
+  for (const line of el.querySelectorAll('.ms-cv-board-line')) {
+    const lr = box(line);
+    for (const child of line.querySelectorAll('*')) {
+      if (child.closest('.ms-sr') || getComputedStyle(child).position === 'absolute') continue;
+      const r = box(child);
+      if (r.width === 0) continue;
+      if (r.right > lr.right + .5 || r.left < lr.left - .5) problems.push('sticks out of its header line: ' + id + ' ' + child.className);
+      const ellipsis = child.matches('.ms-vchosen-name, .ms-cv-board-name');
+      if (!ellipsis && child.scrollWidth > child.clientWidth + 1) problems.push('cut in its box: ' + id + ' ' + child.className);
+    }
+  }
   const star = el.querySelector('.ms-vstar');
   if (!star) problems.push('no star: ' + id);
   else if (box(star).right > box(star.closest('.ms-cv-board-line')).right + .5 || box(star).width < 12) problems.push('star clipped: ' + id);

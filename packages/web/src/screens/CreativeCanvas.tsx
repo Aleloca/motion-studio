@@ -29,7 +29,7 @@ import { useCreative } from '../useCreative.ts';
 import { jobLiveTokens, jobUsagePartial } from '../usageLive.ts';
 import { costText, TokenCount, UsageBadge } from '../shell/Tokens.tsx';
 import { boardLabel, boardName, CanvasBoard, type Draft, type Tool } from './CanvasBoard.tsx';
-import { appliesGroups, boardFrame, boardsWith, canvasGroups, canvasLines, fitBoards, fitSections, FIT_MIN, groupByChannel, labelMin, PACK_GROUP, ratioText, type BoardModel, type CanvasItem } from './canvasModel.ts';
+import { appliesGroups, boardFrame, boardsWith, canvasGroups, canvasLines, fitBoards, fitSections, FIT_MIN, groupByChannel, LABEL_MIN, labelMin, PACK_GROUP, ratioText, type BoardModel, type CanvasItem } from './canvasModel.ts';
 import { CompareDialog } from './CompareDialog.tsx';
 import { channelOf } from './creativeState.ts';
 import { ExportDialog, type ExportSnapshot } from './ExportDialog.tsx';
@@ -852,16 +852,18 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
         <>
           <span className="ms-vcard-letter">{upper(m.letter)}</span>
           <span className="ms-vchosen-name">{shortName(m.direction) ?? vg.letterLabel({ letter: upper(m.letter) })}</span>
-          {rule ? <span className="ms-vfinal-tag">{vg.chooserDefaultTag}</span> : null}
+          {/* Decision 1357: on a narrow header the tag is its icon alone (the words stay for screen readers and in the tooltip). */}
+          {rule ? <span className="ms-vfinal-tag ms-vchosen-rule" title={vg.chooserDefaultTag}><Icon name="gear" size={11} /><span className="ms-vchosen-rule-text">{vg.chooserDefaultTag}</span></span> : null}
         </>
       ) : null;
       if (m && d && st && b) return memberBoard(m, d, st, b, zoom, { from });
       // Loading (decision 1337: a member still being read, not missing) or nothing to show: the format's frame, empty, in its place.
       const f = boardFrame(mb);
       const label = formatLabel(c.format);
+      const headWidth = Math.max(Math.round(f.width * zoom), labelMin(zoom, true));
       return (
         <div key={c.format} className="ms-cv-board ms-vchosen-empty" data-board={`${c.letter ?? ''}:${c.format}`}>
-          <div className="ms-cv-board-head" style={{ maxWidth: Math.max(Math.round(f.width * zoom), labelMin(zoom, true)) }}>
+          <div className={cx('ms-cv-board-head', headWidth < LABEL_MIN && 'ms-narrow-head')} style={{ maxWidth: headWidth }}>
             <div className="ms-cv-board-line ms-cv-board-from">{from}</div>
             <div className="ms-cv-board-line">
               {mb.preset ? <ChannelMark channel={channelOf(mb.preset.channel)} /> : null}
