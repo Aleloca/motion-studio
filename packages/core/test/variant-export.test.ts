@@ -154,7 +154,8 @@ describe('planGroupExport and exportGroup', () => {
       compositions: [{ format: BANNER, dir: `compositions/${BANNER}`, hash: 'a'.repeat(64), problems: [] }] };
     await store.appendVersion(host.creativeSlug, v);
     const plan = await planGroupExport(svc, store, host);
-    expect(plan.find((p) => p.format === BANNER)).toMatchObject({ version: 2, state: 'needs-render', file: '' });
+    // Report 47: its composition hash, for the export dialog's still of it.
+    expect(plan.find((p) => p.format === BANNER)).toMatchObject({ version: 2, state: 'needs-render', file: '', hash: 'a'.repeat(64) });
   });
 
   it('final wave (deferred 99): with languages, a missing source is listed per language and a needs-render one is resolved, never skipped silently', async () => {

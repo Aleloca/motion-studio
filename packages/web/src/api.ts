@@ -97,6 +97,8 @@ export interface GroupExportPlanItem {
   v?: number; file: string; width: number; height: number; state: 'ready' | 'needs-render' | 'missing';
   /** A composition (decision 974: the export's resolution and quality apply to it). */
   composed?: true;
+  /** Report 47: the composition's hash, for its still when it has no current render. */
+  hash?: string;
 }
 export interface GroupExportResult {
   destination: string; files: Array<{ from: string; to: string }>; skipped: string[];

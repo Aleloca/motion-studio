@@ -36,6 +36,8 @@ export interface GroupPlanItem {
   state: GroupPlanState;
   /** A composition (v2): rendered by the core, so the export's quality and resolution apply to it (decision 974). */
   composed?: true;
+  /** Report 47: a composition's hash (the key of its storyboard), for the still the export dialog shows without a render. */
+  hash?: string;
 }
 
 /**
@@ -64,15 +66,16 @@ export async function planGroupExport(svc: VariantGroupService, store: CreativeS
     const primary = d?.links[format];
     const primaryV = primary !== undefined ? selection[primary]?.version : undefined;
     const named = primaryV !== undefined && primaryV !== s.version ? { v: primaryV } : {};
-    const composed = v?.compositions?.some((c) => c.format === format) === true;
+    const comp = v?.compositions?.find((c) => c.format === format);
+    const composed = comp !== undefined;
     if (o) {
       const usable = plainName(o.file) && (await probeConfinedFile(creativeDir, `outputs/v${s.version}/${o.file}`)) === true;
       // A composition's file is current only when its render is (the single export's `pendingRenders` rule): else it is
       // rendered first, exactly as a single creative's export does.
       const state: GroupPlanState = composed ? (usable && renderState(v!, format) === 'rendered' ? 'ready' : 'needs-render') : usable ? 'ready' : 'missing';
-      out.push({ ...base, ...named, file: o.file, width: o.width, height: o.height, ...setOf(o), state, ...(composed ? { composed: true } : {}) });
-    } else if (composed) {
-      out.push({ ...base, ...named, file: '', width: 0, height: 0, state: 'needs-render', composed: true });
+      out.push({ ...base, ...named, file: o.file, width: o.width, height: o.height, ...setOf(o), state, ...(comp ? { composed: true, hash: comp.hash } : {}) });
+    } else if (comp) {
+      out.push({ ...base, ...named, file: '', width: 0, height: 0, state: 'needs-render', composed: true, hash: comp.hash });
     } else {
       out.push({ ...base, ...named, file: '', width: 0, height: 0, state: 'missing' });
     }
