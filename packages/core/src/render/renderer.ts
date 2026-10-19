@@ -18,7 +18,7 @@ import {
   type RenderPage, type RuntimeErrorInfo,
 } from './chromium-provider.ts';
 import { cftPlatform, findInstalledCft } from './cft-download.ts';
-import { chooseEncoder, concatLine, countVideoFrames, findFfmpeg, h264Args, hostArch, qualitySettings, spawnFfmpeg, targetKbps, type FfmpegInfo, type VideoEncoder } from './encode.ts';
+import { chooseEncoder, concatLine, countVideoFrames, findFfmpeg, frameInput, h264Args, hostArch, qualitySettings, spawnFfmpeg, targetKbps, type FfmpegInfo, type FfmpegProcess, type VideoEncoder } from './encode.ts';
 import { findSystemChrome } from './system-chrome.ts';
 import { MP4_DEMUXERS, ownInput } from '../media/ffmpeg-exec.ts';
 import { renderFrames, type RenderFramesOptions, type RenderFramesResult } from './frames.ts';
@@ -31,8 +31,8 @@ import type { WatchdogLimits } from './watchdog.ts';
  *
  * - **Video:** `round(duration × fps)` frames at `t = i / fps`, split into `parallel` contiguous segments (default 4), one
  *   page each, every page streaming its frames (JPEG, or PNG for quality `max`) into its own ffmpeg (image2pipe → H.264
- *   segment); then the concat demuxer with the audio mix muxed as AAC 128k, `+faststart`. The frame count of the result is
- *   checked exactly. Quality and resolution (decision 974): `qualitySettings` picks the encode; another short side keeps the
+ *   segment; a page that gives raw frames, the desktop's, streams them as BGRA instead, report 53); then the concat
+ *   demuxer with the audio mix muxed as AAC 128k, `+faststart`. The frame count of the result is checked exactly. Quality and resolution (decision 974): `qualitySettings` picks the encode; another short side keeps the
  *   page's layout and rasterises it at the scale (`deviceScaleFactor`), the encode landing it on the exact even size.
  * - **Still** (`duration` 0): one capture at t = 0, PNG (or JPEG/WebP when `out` asks for it).
  * - Everything is written to temp files; the output is renamed to `out` only on success. On cancel, a time limit, a crash,
@@ -264,20 +264,30 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
       const opened = await Promise.allSettled(segments.map(() => openPage()));
       const failed = opened.find((r) => r.status === 'rejected');
       if (failed) throw (failed as PromiseRejectedResult).reason;
+      // Report 53: pages that give raw frames (the desktop's render windows) skip the PNG/JPEG encode, which there runs on
+      // the app's UI thread; the pixels are the same as a PNG's, so the video is too.
+      const raw = pages.every((p) => p.captureRaw !== undefined);
       const segFiles = await Promise.all(segments.map(async (seg, j) => {
         const page = (opened[j] as PromiseFulfilledResult<RenderPage>).value;
         const file = join(work!, `seg-${String(seg.index).padStart(2, '0')}.mp4`);
-        const enc = spawnFfmpeg(ff!, [...ownInput('-', { formats: ['image2pipe'], force: true, options: ['-c:v', qs.capture === 'png' ? 'png' : 'mjpeg', '-framerate', String(c.fps)] }),
+        // Raw frames: the encoder starts at the first frame, whose size it is given.
+        const start = (input: ReturnType<typeof frameInput>) => spawnFfmpeg(ff!, [...input,
           ...h264Args(encoder, kbps, c.fps, o.x264Preset ?? qs.preset, { crf: qs.crf, cap: qs.cap, ...(scaled ? { size } : {}) }), '-an', '-f', 'mp4', file], { signal: ctl.signal, stdin: true });
+        let enc: FfmpegProcess | null = raw ? null : start(frameInput(qs.capture, c.fps));
         try {
           await captureSegment(page, seg, {
-            fps: c.fps, ...capture, signal: ctl.signal,
-            sink: (buf) => writeWithBackpressure(enc.stdin!, buf, enc.done), onFrame: tick,
+            fps: c.fps, ...capture, signal: ctl.signal, raw,
+            sink: (buf, _i, at) => {
+              enc ??= start(frameInput({ raw: at! }, c.fps));
+              return writeWithBackpressure(enc.stdin!, buf, enc.done);
+            },
+            onFrame: tick,
           });
+          if (!enc) throw new RenderError('badFrame', 'a segment without frames');
           enc.stdin!.end();
           await enc.done;
         } catch (e) {
-          enc.kill();
+          enc?.kill();
           ctl.abort(reason(e)); // stop the other segments at once
           throw e;
         }

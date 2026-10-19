@@ -55,10 +55,19 @@ export interface RenderPage {
    * about `width × scale` by `height × scale` (storyboards and agent previews, Task 5b).
    */
   capture(format: CaptureFormat, quality?: number, scale?: number): Promise<Buffer>;
+  /**
+   * The viewport as raw pixels, without encoding them (report 53): offered only by a provider that can read them cheaply at
+   * the page's own size (the desktop's render windows, where an encode runs on the app's UI thread). A render's video frames
+   * then go to ffmpeg as they are; stills and storyboards still use `capture`.
+   */
+  captureRaw?(): Promise<RawFrame>;
   /** Every runtime error so far (`__ms.errors`). */
   errors(): Promise<RuntimeErrorInfo[]>;
   close(): Promise<void>;
 }
+
+/** An opaque frame as 32-bit BGRA pixels (8 bits each, row after row, no padding): `width × height × 4` bytes. */
+export interface RawFrame { data: Buffer; width: number; height: number }
 
 export interface OpenPageOptions {
   width: number;

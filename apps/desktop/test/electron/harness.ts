@@ -4,20 +4,23 @@
  * core's config folder is the test's temp one (`MOTION_STUDIO_CONFIG_DIR`). It reads one scenario from `MS_HARNESS`
  * (JSON) and prints `HARNESS <json>` lines; the test asserts on them.
  */
+import { execFile } from 'node:child_process';
+import { Session as InspectorSession } from 'node:inspector';
 import { cpus, loadavg } from 'node:os';
+import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { join } from 'node:path';
-import { app, BrowserWindow, powerSaveBlocker, session } from 'electron';
+import { app, BrowserWindow, contentTracing, powerSaveBlocker, session } from 'electron';
 import type { Composition, FormatPreset } from '../../../../packages/shared/src/index.ts';
-import { renderComposition, RenderError, type FfmpegInfo } from '@motion-studio/core';
+import { findFfmpeg, renderComposition, RenderError, type FfmpegInfo } from '@motion-studio/core';
 import { startCompositionServer } from '../../../../packages/core/src/compositions/composition-server.ts';
 import { renderFrames } from '../../../../packages/core/src/render/frames.ts';
 import { appKeptAwake, closeAllRenderWindows, createRenderWindow, ElectronProvider, liveRenderWindowCount, shutdownForQuit } from '../../src/render-window.ts';
-import { readdirSync, existsSync } from 'node:fs';
+import { readdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { hardenUiWindow, installPreviewFilter } from '../../src/preview-filter.ts';
 
 interface Config {
-  scenario: 'options' | 'session-rules' | 'render' | 'hostile-render' | 'preview' | 'lifecycle' | 'memory' | 'quit' | 'scale' | 'render-cost' | 'frames';
+  scenario: 'options' | 'session-rules' | 'render' | 'hostile-render' | 'preview' | 'lifecycle' | 'memory' | 'quit' | 'scale' | 'render-cost' | 'frames' | 'ui-load' | 'capture-probe' | 'raw-render';
   /** scale (report 51): the pages to open under `creative`, each at its scale (none: the default) and seek time. */
   scalePages?: Array<{ name: string; composition: Composition; format: string; scale?: number; t?: number }>;
   /** The built runtime. */
@@ -40,6 +43,12 @@ interface Config {
   frames?: { times: number[]; width: number };
   /** render-cost (decision 1348): the renders to time, each at its short side (none: 1x) and offscreen frame rate (none: the default). */
   costRuns?: Array<{ name: string; short?: number; frameRate?: number; painting?: boolean }>;
+  /** ui-load (report 53): the app-like window's responsiveness, idle (no `render`) or while a render runs. */
+  uiRuns?: UiRun[];
+  /** capture-probe (report 53): the times to capture at `scale`, and where the first frames go. */
+  /** raw-render (report 53): renders with raw frames, or `encoded` (PNG), at a short side (none: 1x). */
+  rawRuns?: Array<{ name: string; short?: number; encoded?: boolean; quality?: 'standard' | 'high' | 'max' }>;
+  probe?: { scale: number; times: number[]; outDir: string };
   /** A throwaway folder under the OS temp folder for every Electron data path (the test removes it after the exit). */
   scratch: string;
 }
@@ -110,6 +119,181 @@ function watchServiceWorkers(ses: Electron.Session) {
       ses.serviceWorkers.off('running-status-changed', onStatus);
       return { serviceWorkers: max, swEvents };
     },
+  };
+}
+
+/**
+ * Report 53: counts the frames `provider`'s pages read raw and encoded; `encoded` takes their raw frames away (the PNG or
+ * JPEG frames of before).
+ */
+function countFrames(provider: ElectronProvider, encoded: boolean) {
+  const counts = { rawFrames: 0, encodedFrames: 0 };
+  const open = provider.open.bind(provider);
+  provider.open = async (o) => {
+    const { captureRaw, ...p } = await open(o);
+    const capture = p.capture;
+    return {
+      ...p, capture: (...a) => { counts.encodedFrames++; return capture(...a); },
+      ...(captureRaw && !encoded ? { captureRaw: () => { counts.rawFrames++; return captureRaw(); } } : {}),
+    };
+  };
+  return counts;
+}
+
+interface UiRun {
+  name: string;
+  /** Idle runs: how long to measure. */
+  seconds?: number;
+  render?: { short?: number; quality?: 'standard' | 'high' | 'max'; parallel?: number; encoded?: boolean };
+  /** Profile the main process (inspector) during the run: its top self-time functions. */
+  profile?: boolean;
+  /** Trace the run (contentTracing): the main process's UI-thread tasks over 16 ms, by where they were posted from. */
+  trace?: boolean;
+}
+
+/** The browser process's UI-thread tasks (`CrBrowserMain`) of a trace file, longer than 16 ms, summed by their origin. */
+function longMainTasks(file: string, pid: number, minMs = 16) {
+  const trace = JSON.parse(readFileSync(file, 'utf8')) as { traceEvents: Array<{ ph: string; pid: number; tid: number; name: string; dur?: number; args?: Record<string, unknown> }> };
+  const ev = trace.traceEvents;
+  const tid = ev.find((e) => e.ph === 'M' && e.name === 'thread_name' && e.pid === pid && (e.args as { name?: string })?.name === 'CrBrowserMain')?.tid;
+  const by = new Map<string, { n: number; ms: number; max: number }>();
+  let total = 0;
+  for (const e of ev) {
+    if (e.pid !== pid || e.tid !== tid || e.ph !== 'X' || !e.dur || e.dur < minMs * 1000 || !/RunTask/.test(e.name)) continue;
+    const a = (e.args ?? {}) as { src_file?: string; src_func?: string; src?: { file_name?: string; function_name?: string } };
+    const key = `${a.src_func ?? a.src?.function_name ?? '?'} ${(a.src_file ?? a.src?.file_name ?? '?').split('/').slice(-2).join('/')}`;
+    const v = by.get(key) ?? { n: 0, ms: 0, max: 0 };
+    v.n++; v.ms += e.dur / 1000; v.max = Math.max(v.max, e.dur / 1000); total += e.dur / 1000;
+    by.set(key, v);
+  }
+  return { totalMs: Math.round(total), top: [...by].sort((a, b) => b[1].ms - a[1].ms).slice(0, 10).map(([k, v]) => ({ task: k, n: v.n, ms: Math.round(v.ms), max: Math.round(v.max) })) };
+}
+
+/** A dialog-like list (gradient thumbnails and text) the main process scrolls with wheel events; the page logs its frames. */
+const UI_LIST = `<!doctype html><html><head><style>body{margin:0;font:13px system-ui;background:#1b1b1f;color:#ddd}
+#l{position:absolute;inset:0;overflow-y:auto}.r{display:flex;gap:12px;align-items:center;padding:8px 12px;border-bottom:1px solid #333}
+.t{width:160px;height:90px;border-radius:6px;flex:none}</style></head><body><div id="l"></div><script>
+const l = document.getElementById('l');
+for (let i = 0; i < 600; i++) { const r = document.createElement('div'); r.className = 'r';
+  r.innerHTML = '<div class="t" style="background:linear-gradient(' + (i * 37 % 360) + 'deg,hsl(' + (i * 53 % 360) + ',70%,45%),hsl(' + (i * 97 % 360) + ',60%,25%))"></div><div><b>File ' + i + '</b><br>2560 × 1440 · store · device ' + (i % 8) + '</div>';
+  l.appendChild(r); }
+l.scrollTop = 30000;
+window.ms = { frames: [], scroll: [], wheels: [], longTasks: [] };
+const loop = (t) => { window.ms.frames.push(t); window.ms.scroll.push(l.scrollTop); requestAnimationFrame(loop); };
+requestAnimationFrame(loop);
+l.addEventListener('wheel', () => { window.ms.wheels.push(performance.now()); }, { passive: true });
+new PerformanceObserver((list) => { for (const e of list.getEntries()) window.ms.longTasks.push(e.duration); }).observe({ entryTypes: ['longtask'] });
+</script></body></html>`;
+
+const pct = (xs: number[], p: number) => { if (!xs.length) return 0; const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor((p / 100) * s.length))]!; };
+const r1 = (x: number) => Math.round(x * 10) / 10;
+
+/**
+ * CPU seconds of every process of this app (Electron's metrics) and of its ffmpeg children (`ps`, run asynchronously: a
+ * synchronous child would block the very loop being measured), by pid.
+ */
+async function cpuSnapshot(): Promise<Map<number, { kind: string; s: number }>> {
+  const m = new Map<number, { kind: string; s: number }>();
+  for (const p of app.getAppMetrics()) m.set(p.pid, { kind: p.type, s: p.cpu.cumulativeCPUUsage ?? 0 });
+  try {
+    const out = await new Promise<string>((res, rej) => execFile('ps', ['-A', '-o', 'pid=,ppid=,time=,comm='], { encoding: 'utf8' }, (e, o) => (e ? rej(e) : res(o))));
+    for (const line of out.split('\n')) {
+      const mm = /^\s*(\d+)\s+(\d+)\s+(?:(\d+)-)?(?:(\d+):)?(\d+):([\d.]+)\s+(.*)$/.exec(line);
+      if (!mm || Number(mm[2]) !== process.pid || !/ffmpeg/.test(mm[7]!)) continue;
+      const s = Number(mm[3] ?? 0) * 86400 + Number(mm[4] ?? 0) * 3600 + Number(mm[5]) * 60 + Number(mm[6]);
+      m.set(Number(mm[1]), { kind: 'ffmpeg', s });
+    }
+  } catch { /* ps unavailable */ }
+  return m;
+}
+
+/** Report 53: the UI window's frames, the main process's event-loop delay and the CPU per process kind, during `run`. */
+async function uiLoadRun(c: Config, run: UiRun) {
+  const ses = session.fromPartition(`ui-load-${run.name}`, { cache: false });
+  const ui = new BrowserWindow({ show: false, x: 40, y: 40, width: 420, height: 520, focusable: false, webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false, session: ses } });
+  await ui.loadURL(`data:text/html;base64,${Buffer.from(UI_LIST).toString('base64')}`);
+  ui.showInactive();
+  await settle(1500);
+  const uiPid = ui.webContents.getOSProcessId();
+  const before = await cpuSnapshot();
+  const seen = new Map(before);
+  const sampler = setInterval(() => { void cpuSnapshot().then((m) => { for (const [pid, v] of m) seen.set(pid, v); }); }, 1000);
+  // Smooth wheel scrolling, down then up, as a user flicking through a list (60 events a second).
+  let dir = 1, n = 0;
+  const wheel = setInterval(() => {
+    if (++n % 120 === 0) dir = -dir;
+    try { ui.webContents.sendInputEvent({ type: 'mouseWheel', x: 200, y: 260, deltaX: 0, deltaY: -40 * dir, canScroll: true } as Electron.MouseWheelInputEvent); } catch { /* closing */ }
+  }, 16);
+  const eld = monitorEventLoopDelay({ resolution: 5 });
+  let prof: InspectorSession | null = null;
+  if (run.profile) {
+    prof = new InspectorSession(); prof.connect();
+    const post = (m: string, p?: object) => new Promise<unknown>((res, rej) => prof!.post(m, p ?? {}, (e, r) => (e ? rej(e) : res(r))));
+    await post('Profiler.enable'); await post('Profiler.setSamplingInterval', { interval: 500 }); await post('Profiler.start');
+  }
+  if (run.trace) await contentTracing.startRecording({ included_categories: ['toplevel', 'ipc', 'mojom', 'devtools'], excluded_categories: ['*'] });
+  await ui.webContents.executeJavaScript('window.ms.frames.length = 0; window.ms.scroll.length = 0; window.ms.wheels.length = 0; window.ms.longTasks.length = 0; true');
+  eld.enable();
+  const t0 = Date.now();
+  let render: Record<string, unknown> = {};
+  if (run.render) {
+    const provider = new ElectronProvider({ maxWindows: run.render.parallel ?? 4, limits: { timeLimitMs: 30 * 60_000 } });
+    const counts = countFrames(provider, run.render.encoded === true);
+    const r = await renderComposition({
+      dir: c.creative!, versionDir: 'outputs/v1', composition: c.composition!, format: formatOf(c.composition!, c.format!), out: join(scratch, `${run.name}.mp4`),
+      provider, parallel: run.render.parallel ?? 4, signal: new AbortController().signal, distDir: c.dist, ffmpeg: (await findFfmpeg()) ?? c.ffmpeg!, tempDir: scratch,
+      ...(run.render.short !== undefined ? { short: run.render.short } : {}), ...(run.render.quality ? { quality: run.render.quality } : {}),
+    });
+    render = { frames: r.frames, width: r.width, height: r.height, encoder: r.encoder, sha256: r.sha256, ...counts };
+  } else {
+    await settle((run.seconds ?? 10) * 1000);
+  }
+  const ms = Date.now() - t0;
+  eld.disable();
+  clearInterval(wheel);
+  clearInterval(sampler);
+  for (const [pid, v] of await cpuSnapshot()) seen.set(pid, v);
+  const traced = run.trace ? longMainTasks(await contentTracing.stopRecording(join(scratch, `${run.name}.trace.json`)), process.pid) : undefined;
+  let top: Array<{ fn: string; ms: number }> | undefined;
+  if (prof) {
+    const p = await new Promise<{ profile: { nodes: Array<{ id: number; callFrame: { functionName: string; url: string; lineNumber: number } }>; samples: number[]; timeDeltas: number[] } }>((res, rej) => prof!.post('Profiler.stop', (e, r) => (e ? rej(e) : res(r as never))));
+    prof.disconnect();
+    const self = new Map<number, number>();
+    p.profile.samples.forEach((id, i) => self.set(id, (self.get(id) ?? 0) + (p.profile.timeDeltas[i] ?? 0)));
+    const byFn = new Map<string, number>();
+    for (const node of p.profile.nodes) {
+      const f = node.callFrame;
+      const key = `${f.functionName || '(anon)'} ${f.url.split('/').pop() ?? ''}:${f.lineNumber}`;
+      byFn.set(key, (byFn.get(key) ?? 0) + (self.get(node.id) ?? 0) / 1000);
+    }
+    top = [...byFn].sort((a, b) => b[1] - a[1]).slice(0, 15).map(([fn, v]) => ({ fn, ms: Math.round(v) }));
+  }
+  const page = await ui.webContents.executeJavaScript('({ frames: window.ms.frames.slice(), scroll: window.ms.scroll.slice(), wheels: window.ms.wheels.slice(), longTasks: window.ms.longTasks.slice() })') as { frames: number[]; scroll: number[]; wheels: number[]; longTasks: number[] };
+  const gaps = page.frames.slice(1).map((t, i) => t - page.frames[i]!);
+  const wheelGaps = page.wheels.slice(1).map((t, i) => t - page.wheels[i]!);
+  // A stall: the list did not move for 50 ms or more while it was being scrolled (the user's "jerky" scrolling).
+  let stalls = 0, stallMax = 0, still = 0;
+  for (let i = 1; i < page.scroll.length; i++) {
+    if (page.scroll[i] === page.scroll[i - 1]) { still += gaps[i - 1]!; continue; }
+    if (still >= 50) { stalls++; stallMax = Math.max(stallMax, still); }
+    still = 0;
+  }
+  const cpu: Record<string, number> = {};
+  for (const [pid, v] of seen) {
+    const kind = pid === process.pid ? 'main' : pid === uiPid ? 'ui' : v.kind === 'Tab' ? 'renderWindows' : v.kind;
+    cpu[kind] = r1((cpu[kind] ?? 0) + v.s - (before.get(pid)?.s ?? 0));
+  }
+  await close(ui);
+  return {
+    ms, ...render,
+    ui: { frames: page.frames.length, fps: r1(page.frames.length / (ms / 1000)), gapP50: r1(pct(gaps, 50)), gapP95: r1(pct(gaps, 95)), gapP99: r1(pct(gaps, 99)), gapMax: r1(Math.max(0, ...gaps)),
+      over25: gaps.filter((g) => g > 25).length, over50: gaps.filter((g) => g > 50).length, longTasks: page.longTasks.length, longTaskMax: r1(Math.max(0, ...page.longTasks)),
+      wheels: page.wheels.length, wheelGapP99: r1(pct(wheelGaps, 99)), wheelGapMax: r1(Math.max(0, ...wheelGaps)), wheelGapsOver50: wheelGaps.filter((g) => g > 50).length,
+      scrollStalls: stalls, scrollStallMax: r1(stallMax) },
+    mainEld: { p50: r1(eld.percentile(50) / 1e6), p99: r1(eld.percentile(99) / 1e6), max: r1(eld.max / 1e6), mean: r1(eld.mean / 1e6) },
+    cpuSeconds: cpu,
+    ...(traced ? { mainLongTasks: traced } : {}),
+    ...(top ? { mainProfile: top } : {}),
   };
 }
 
@@ -229,6 +413,10 @@ async function run(): Promise<void> {
         const cpu = process.cpuUsage(cpu0);
         report({ cost: run.name, frames: r.frames, width: r.width, height: r.height, ms: Date.now() - t0, mainCpuMs: Math.round((cpu.user + cpu.system) / 1000), mainRssPeakMB: Math.round(rss / 2 ** 20), windowsAfter: liveRenderWindowCount() });
       }
+      return;
+    }
+    case 'ui-load': {
+      for (const run of c.uiRuns!) report({ uiLoad: run.name, ...(await uiLoadRun(c, run)) });
       return;
     }
     case 'hostile-render': {
@@ -376,6 +564,60 @@ async function run(): Promise<void> {
           }
         }
       } finally {
+        await server.close();
+      }
+      return;
+    }
+    case 'raw-render': {
+      // The test's FfmpegInfo lost its encoder set in JSON: the standard quality's `auto` encoder needs it.
+      const ff = (await findFfmpeg()) ?? c.ffmpeg!;
+      // Report 53: renders at quality max (PNG frames when encoded), with the provider's raw frames or without them
+      // (`encoded`: the pages lose `captureRaw`); every frame read is counted by kind.
+      for (const run of c.rawRuns!) {
+        const provider = new ElectronProvider({ limits: { timeLimitMs: 30 * 60_000 } });
+        const counts = countFrames(provider, run.encoded === true);
+        const r = await renderComposition({
+          dir: c.creative!, versionDir: 'outputs/v1', composition: c.composition!, format: formatOf(c.composition!, c.format!), out: join(c.out ?? scratch, `${run.name}.mp4`),
+          provider, parallel: 2, signal: new AbortController().signal, distDir: c.dist, ffmpeg: ff, quality: run.quality ?? 'max', tempDir: scratch,
+          ...(run.short !== undefined ? { short: run.short } : {}),
+        });
+        report({ raw: run.name, frames: r.frames, width: r.width, height: r.height, sha256: r.sha256, ...counts, windowsAfter: liveRenderWindowCount() });
+      }
+      return;
+    }
+    case 'capture-probe': {
+      const server = await startCompositionServer({ uiOrigins: [], distDir: c.dist });
+      const provider = new ElectronProvider({ limits: { timeLimitMs: 30 * 60_000 } });
+      try {
+        const comp = c.composition!;
+        const s = await server.mintSession({ creativeDir: c.creative!, versionDir: 'outputs/v1', format: c.format!, composition: comp, mode: 'render' });
+        const scale = c.probe!.scale;
+        const page = await provider.open({ width: comp.width, height: comp.height, url: s.url, signal: new AbortController().signal, ...(scale !== 1 ? { deviceScaleFactor: scale } : {}) });
+        const wc = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL() === s.url)!.webContents;
+        const times = c.probe!.times;
+        const out: Record<string, unknown> = {};
+        for (const mode of ['png', 'jpeg', 'raw'] as const) {
+          await contentTracing.startRecording({ included_categories: ['toplevel'], excluded_categories: ['*'] });
+          const t0 = Date.now();
+          let i = 0;
+          for (const t of times) {
+            await page.seek(t);
+            if (mode === 'raw') {
+              const img = await wc.capturePage(undefined, { stayHidden: true });
+              const bmp = img.toBitmap();
+              if (i < 2) { writeFileSync(join(c.probe!.outDir, `raw-${i}.bgra`), bmp); out[`size${i}`] = img.getSize(); }
+            } else {
+              const buf = await page.capture(mode, mode === 'jpeg' ? 95 : undefined);
+              if (i < 2 && mode === 'png') writeFileSync(join(c.probe!.outDir, `png-${i}.png`), buf);
+            }
+            i++;
+          }
+          const ms = Date.now() - t0;
+          out[mode] = { ms, perFrame: Math.round(ms / times.length), ui: longMainTasks(await contentTracing.stopRecording(join(scratch, `${mode}.json`)), process.pid, 0) };
+        }
+        report({ probe: out, painting: wc.isPainting() });
+      } finally {
+        await provider.close();
         await server.close();
       }
       return;

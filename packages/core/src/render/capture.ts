@@ -1,5 +1,5 @@
 import type { Writable } from 'node:stream';
-import type { CaptureFormat, RenderPage } from './chromium-provider.ts';
+import type { CaptureFormat, RawFrame, RenderPage } from './chromium-provider.ts';
 import { RenderError } from './errors.ts';
 
 /**
@@ -69,6 +69,21 @@ export async function captureFrame(page: RenderPage, t: number, o: { format: Cap
   return buf;
 }
 
+/**
+ * Report 53: one frame as raw BGRA pixels (`RenderPage.captureRaw`), checked like `captureFrame` (its size, within
+ * `tolerance`) and for its length: a buffer that is not `width × height × 4` bytes is never encoded.
+ */
+export async function captureRawFrame(page: RenderPage, t: number, o: { width: number; height: number; tolerance?: number }): Promise<RawFrame> {
+  if (!page.captureRaw) throw new RenderError('badFrame', 'this page has no raw frames');
+  await page.seek(t);
+  const f = await page.captureRaw();
+  const off = (a: number, b: number) => Math.abs(a - b) > (o.tolerance ?? 0);
+  if (off(f.width, o.width) || off(f.height, o.height) || f.data.length !== f.width * f.height * 4) {
+    throw new RenderError('badFrame', `captured frame is ${f.width}×${f.height} (${f.data.length} bytes), expected ${o.width}×${o.height}`);
+  }
+  return f;
+}
+
 /** Writes `buf` to `stream` honouring backpressure; rejects when `ended` settles first (the consumer died). */
 export function writeWithBackpressure(stream: Writable, buf: Buffer, ended: Promise<unknown>): Promise<void> {
   if (stream.destroyed || stream.writableEnded) return Promise.reject(new RenderError('ffmpegFailed', 'the encoder stopped reading'));
@@ -90,12 +105,22 @@ export function writeWithBackpressure(stream: Writable, buf: Buffer, ended: Prom
  */
 export async function captureSegment(page: RenderPage, seg: Segment, o: {
   fps: number; format: CaptureFormat; quality?: number; width: number; height: number; tolerance?: number; signal: AbortSignal;
-  sink: (frame: Buffer, index: number) => Promise<void>; onFrame?: () => void;
+  /** Report 53: raw BGRA frames (`captureRaw`); the sink gets each frame's size, the same for the whole segment. */
+  raw?: boolean;
+  sink: (frame: Buffer, index: number, size?: { width: number; height: number }) => Promise<void>; onFrame?: () => void;
 }): Promise<void> {
+  let first: { width: number; height: number } | null = null;
   for (let i = seg.from; i < seg.to; i++) {
     if (o.signal.aborted) throw new RenderError('cancelled', 'cancelled');
-    const buf = await captureFrame(page, i / o.fps, o);
-    await o.sink(buf, i);
+    if (o.raw) {
+      const f = await captureRawFrame(page, i / o.fps, o);
+      first ??= { width: f.width, height: f.height };
+      // Raw frames carry no size of their own: the encoder reads them all at the first one's.
+      if (f.width !== first.width || f.height !== first.height) throw new RenderError('badFrame', `captured frame is ${f.width}×${f.height}, the segment's ${first.width}×${first.height}`);
+      await o.sink(f.data, i, first);
+    } else {
+      await o.sink(await captureFrame(page, i / o.fps, o), i);
+    }
     o.onFrame?.();
   }
 }

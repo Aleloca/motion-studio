@@ -4,7 +4,7 @@ import {
   allowedPrefix, CdpError, DEAD_PROXY, layersAtScale, pagePixels, pageScale, DEFAULT_PARALLEL, isAllowedRequest, openCdpRenderPage, RenderError, samplePidsMemory,
   scaledMemoryLimits, startWatchdog,
   type CdpClient, type CdpEvent, type CdpSendOptions, type ChromiumProvider, type ChromiumProviderFactory, type OpenPageOptions,
-  type PageTimeouts, type RenderFailure, type RenderPage, type Watchdog, type WatchdogLimits,
+  type PageTimeouts, type RawFrame, type RenderFailure, type RenderPage, type Watchdog, type WatchdogLimits,
 } from '@motion-studio/core';
 
 /**
@@ -31,6 +31,8 @@ import {
  *   command goes to that real session id. A page-level debugger does not see service or shared workers (no browser-level
  *   `TargetGate` here): their scripts are refused by the session (above), and the layers are opaque origins that cannot
  *   start them anyway; popups are denied by the handler.
+ * - a video's frames are read raw (`capturePage`, `rawFrames`; report 53), not with `Page.captureScreenshot`, whose
+ *   PNG/JPEG encode runs on this process's UI thread, the app's.
  *
  * **Closing.** `destroy()` followed at once by a new window's `loadURL` fails with `ERR_FAILED` in Electron 44 (spike
  * §3a): a window is closed with `close()` (with `beforeunload` ignored) and the provider waits for `closed`, falling back
@@ -61,6 +63,8 @@ export const RENDER_PARTITION_PREFIX = 'ms-render-';
 const CLOSE_GRACE_MS = 5_000;
 /** How long a window may take to emit `closed` after `destroy()`. */
 const CLOSED_WAIT_MS = 10_000;
+/** How long a raw capture may take (the core's default for a CDP capture). */
+const CAPTURE_MS = 90_000;
 
 /**
  * `transparent` (Phase 14, the identity sets' PNGs): the window has no background of its own (`transparent`, fully
@@ -379,6 +383,36 @@ export class DebuggerCdpClient implements CdpClient {
   }
 }
 
+/**
+ * Report 53: whether a page's frames can be read raw (`capturePage`). `Page.captureScreenshot` encodes each frame (PNG about
+ * 96 ms at 2560 × 1440, JPEG about 25 ms) on the browser process's UI thread, the app's own: while an export ran, the UI
+ * stalled. `capturePage` hands over the surface's bitmap: no encode, the same pixels. Only where the window's own scale is
+ * the page's (1, or a scale above 1 given to the window, decision 1341): below 1 the page's override shrinks what CDP
+ * captures, not the window's surface. Never for a transparent page (the bitmap's alpha is premultiplied).
+ */
+export function rawFrames(o: Pick<OpenPageOptions, 'deviceScaleFactor' | 'transparentBackground'>): boolean {
+  const scale = pageScale(o);
+  return !o.transparentBackground && (scale === 1 || layersAtScale(scale));
+}
+
+/** The window's surface as BGRA pixels (`toBitmap`: Skia's N32 order, BGRA on every platform the app ships on). */
+async function captureRawFrame(win: BrowserWindow, timeoutMs: number): Promise<RawFrame> {
+  if (win.isDestroyed()) throw new RenderError('crashed', 'the render window is gone');
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    // `stayHidden`: the capture must not make the hidden window visible (Electron counts it as a capturer otherwise).
+    const img = await Promise.race([
+      win.webContents.capturePage(undefined, { stayHidden: true }),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new CdpError(`capturePage timed out after ${timeoutMs} ms`, 'timeout')), timeoutMs); }),
+    ]);
+    const { width, height } = img.getSize();
+    if (img.isEmpty()) throw new RenderError('badFrame', 'empty capture');
+    return { data: img.toBitmap(), width, height };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export interface ElectronProviderOptions {
   /** Windows (pages) open at once; default `DEFAULT_PARALLEL` (the render's `parallel` setting). */
   maxWindows?: number;
@@ -516,7 +550,7 @@ export class ElectronProvider implements ChromiumProvider {
       });
       cdp.onEvent((e) => { if (e.method === 'Inspector.targetCrashed') this.fail({ code: 'crashed', message: 'a renderer crashed (inspector)' }); });
       const close = page.close;
-      return { ...page, close: async () => { o.signal.removeEventListener('abort', onAbort); await close(); } };
+      return { ...page, ...(rawFrames(o) ? { captureRaw: () => captureRawFrame(rw.win, this.o.timeouts?.captureMs ?? CAPTURE_MS) } : {}), close: async () => { o.signal.removeEventListener('abort', onAbort); await close(); } };
     } catch (e) {
       o.signal.removeEventListener('abort', onAbort);
       ending = true;

@@ -18,7 +18,7 @@ vi.mock('electron', () => ({
 
 const {
   renderWindowOptions, renderProxyConfig, renderRequestAllowed, lockRenderSession, closeRenderWindow, DebuggerCdpClient,
-  ElectronProvider, RENDER_PARTITION_PREFIX, desktopRenderOptions, DESKTOP_RENDER_PARALLEL,
+  ElectronProvider, RENDER_PARTITION_PREFIX, desktopRenderOptions, DESKTOP_RENDER_PARALLEL, rawFrames,
 } = await import('../src/render-window.ts');
 
 const PREFIX = 'http://127.0.0.1:43210/abcdefghijklmnop0123/';
@@ -320,6 +320,12 @@ describe('ElectronProvider', () => {
     open(2); open(1); open(); open(0.5);
     await new Promise((r) => setTimeout(r, 0));
     expect(created.map((c) => c.scale)).toEqual([2, undefined, undefined, undefined]);
+  });
+
+  it('report 53: raw frames where the window\'s scale is the page\'s (1, above 1); not below 1, not for a transparent page', () => {
+    for (const k of [undefined, 1, 4 / 3, 2]) expect(rawFrames(k === undefined ? {} : { deviceScaleFactor: k }), String(k)).toBe(true);
+    for (const k of [0.5, 2 / 3]) expect(rawFrames({ deviceScaleFactor: k }), String(k)).toBe(false);
+    expect(rawFrames({ transparentBackground: true })).toBe(false);
   });
 
   it('close() waits for a window still being created, and that window is closed (M6)', async () => {

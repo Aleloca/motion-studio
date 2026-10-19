@@ -22,10 +22,14 @@
  * - **no paint events (decision 1348):** a storyboard (renderFrames) and a parallel render of a layer with its own video, a
  *   CSS animation and a self-running rAF canvas show each frame's own time; the windows stay without paint events.
  *
+ * - **raw frames (report 53):** a video's frames are read raw at 1x and 2x and give the same video, byte for byte, as PNG
+ *   frames; at 0.5 the PNG frames stay. Measurements (`MS_UI_LOAD=1`): a dialog-like list scrolled while an export runs,
+ *   raw against JPEG frames, the cost of each capture on the UI thread.
+ *
  * Runs on macOS when the Electron binary is installed; elsewhere (a display is needed) only with MS_REQUIRE_ELECTRON=1,
  * which also makes a missing binary a failure. Needs ffmpeg for the renders.
  */
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { createRequire } from 'node:module';
@@ -112,6 +116,24 @@ const MEM_LAYER = `<!doctype html><html><body><script>
 window.msReady = Promise.resolve();
 const keep = [];
 window.msSeek = (t) => { if (t >= 0.1 && keep.length === 0) { for (let i = 0; i < 32; i++) { const a = new Uint8Array(64 * 1024 * 1024); for (let j = 0; j < a.length; j += 4) a[j] = (j * 2654435761) & 255; keep.push(a); } } };
+</script></body></html>`;
+
+/** Report 53: a full-frame canvas of moving gradients and text, at the page's devicePixelRatio (large PNG frames). */
+const HEAVY_LAYER = `<!doctype html><html><head><style>html,body{margin:0;background:#000;overflow:hidden}canvas{width:100vw;height:100vh;display:block}</style></head>
+<body><canvas id="c"></canvas><script>
+const c = document.getElementById('c'), g = c.getContext('2d');
+window.msReady = Promise.resolve();
+window.msSeek = (t) => {
+  const w = c.width = Math.round(innerWidth * devicePixelRatio), h = c.height = Math.round(innerHeight * devicePixelRatio);
+  for (let i = 0; i < 6; i++) {
+    const x = w * (0.5 + 0.4 * Math.sin(t * (0.7 + i * 0.3) + i)), y = h * (0.5 + 0.4 * Math.cos(t * (0.5 + i * 0.2) + i * 2));
+    const gr = g.createRadialGradient(x, y, 0, x, y, w * 0.6);
+    gr.addColorStop(0, 'hsla(' + ((i * 60 + t * 40) % 360) + ',80%,60%,0.9)'); gr.addColorStop(1, 'hsla(' + ((i * 60 + 180) % 360) + ',70%,20%,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, w, h);
+  }
+  g.fillStyle = '#fff'; g.font = (18 * devicePixelRatio) + 'px sans-serif';
+  for (let l = 0; l < 40; l++) g.fillText('Motion Studio export ' + l + ' · t = ' + t.toFixed(3) + ' · the quick brown fox jumps over the lazy dog', 40 * devicePixelRatio + 30 * Math.sin(t + l), (30 + l * 26) * devicePixelRatio);
+};
 </script></body></html>`;
 
 /** The opaque self-navigations (I1): a layer that navigates its own frame to a `data:` or a `blob:` document that fetches. */
@@ -389,6 +411,26 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
     expect(layer[10]).toBeLessThan(60);
   }, 900_000);
 
+  it('report 53: a video\'s frames are read raw (no encode on the UI thread) and give the same video as PNG frames; not below 1', async () => {
+    const creative = join(work, 'raw');
+    const compDir = join(creative, 'outputs', 'v1', 'compositions', 'spike');
+    frameCodedVideo(ffmpeg!, join(compDir, 'assets', 'v.mp4'), { fps: 30, frames: 95 });
+    put(join(compDir, 'layers', 'outro.html'), OUTRO_LAYER);
+    put(join(compDir, 'assets', 'mono.woff2'), readFileSync(FONT));
+    // 1x, 2x (a layer at the window's scale, decision 1341) and 0.5 (the page's override only: no raw frames there).
+    const rawRuns = [{ name: '1x-raw' }, { name: '1x-png', encoded: true }, { name: '2x-raw', short: 360 }, { name: '2x-png', short: 360, encoded: true }, { name: 'half', short: 90 }];
+    const r = await runHarness({ scenario: 'raw-render', creative, composition: spikeComposition(), format: 'spike', ffmpeg, rawRuns });
+    expect(r.ok, r.output).toBe(true);
+    const by = Object.fromEntries(r.lines.filter((l) => typeof l.raw === 'string').map((l) => [l.raw, l])) as Record<string, { frames: number; width: number; height: number; sha256: string; rawFrames: number; encodedFrames: number; windowsAfter: number }>;
+    expect(by['1x-raw']).toMatchObject({ frames: 60, width: W, height: H, rawFrames: 60, encodedFrames: 0, windowsAfter: 0 });
+    expect(by['1x-png']).toMatchObject({ frames: 60, rawFrames: 0, encodedFrames: 60 });
+    expect(by['2x-raw']).toMatchObject({ frames: 60, width: 2 * W, height: 2 * H, rawFrames: 60, encodedFrames: 0 });
+    // The PNG frames are lossless: the same pixels, so the same video, byte for byte.
+    expect(by['1x-raw']!.sha256).toBe(by['1x-png']!.sha256);
+    expect(by['2x-raw']!.sha256).toBe(by['2x-png']!.sha256);
+    expect(by.half).toMatchObject({ frames: 60, width: W / 2, height: H / 2, rawFrames: 0, encodedFrames: 60, windowsAfter: 0 });
+  }, 900_000);
+
   it('all layers in render (composition server, CDP interception, session rules): the hostile and self-navigating layers reach nothing', async () => {
     const creative = join(work, 'hostile');
     const compDir = join(creative, 'outputs', 'v1', 'compositions', 'iso');
@@ -664,6 +706,76 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
     expect(r.ok, r.output).toBe(true);
     for (const l of r.lines.filter((x) => typeof x.cost === 'string')) console.info(`[cost] ${JSON.stringify(l)}`);
   }, 1_800_000);
+
+  // Report 53, a measurement (MS_UI_LOAD=1): a dialog-like list in a shown (inactive) window, scrolled by wheel events from
+  // the main process, idle and while a 1920 × 1080 60 fps composition (a full-frame canvas layer of gradients and text) is
+  // exported at 2560 × 1440 quality max: its frame gaps, the main process's event-loop delay, the CPU per process kind.
+  // `MS_UI_RUNS` (JSON) replaces the runs. Logged, not asserted.
+  it.skipIf(process.env.MS_UI_LOAD !== '1')('the UI while an export runs (measurement)', async () => {
+    const creative = join(work, 'uiload');
+    const dir = join(creative, 'outputs', 'v1', 'compositions', 'heavy');
+    put(join(dir, 'layers', 'heavy.html'), HEAVY_LAYER);
+    const seconds = Number(process.env.MS_UI_SECONDS ?? 6);
+    const composition = {
+      $schema: 'motion-studio/composition@1', width: 1920, height: 1080, fps: 60, duration: seconds, background: '#000000', fonts: [],
+      scenes: [{ id: 's', start: 0, duration: seconds }],
+      tracks: [{ id: 't', kind: 'visual', clips: [{ id: 'l', type: 'html', src: 'layers/heavy.html', start: 0, duration: seconds, props: { x: 0, y: 0, width: 1920, height: 1080 } }] }],
+    } as unknown as Composition;
+    const runs = process.env.MS_UI_RUNS ? JSON.parse(process.env.MS_UI_RUNS) as object[]
+      : [{ name: 'idle', seconds: 10 }, { name: 'export', render: { short: 1440, quality: 'max' } }, { name: 'idle-after', seconds: 10 }];
+    const r = await runHarness({ scenario: 'ui-load', creative, composition, format: 'heavy', ffmpeg, uiRuns: runs }, undefined, 1_700_000);
+    expect(r.ok, r.output).toBe(true);
+    for (const l of r.lines.filter((x) => typeof x.uiLoad === 'string')) console.info(`[ui-load] ${JSON.stringify(l)}`);
+  }, 1_800_000);
+
+  // Report 53, a measurement: the standard and high qualities read JPEG frames before; raw frames skip that loss. How far the
+  // videos are apart (PSNR and SSIM of the raw one against the JPEG one), and their sizes.
+  it.skipIf(process.env.MS_UI_LOAD !== '1')('raw frames against JPEG frames at standard and high (measurement)', async () => {
+    const creative = join(work, 'rawq');
+    const dir = join(creative, 'outputs', 'v1', 'compositions', 'heavy');
+    put(join(dir, 'layers', 'heavy.html'), HEAVY_LAYER);
+    const composition = {
+      $schema: 'motion-studio/composition@1', width: 1920, height: 1080, fps: 60, duration: 2, background: '#000000', fonts: [],
+      scenes: [{ id: 's', start: 0, duration: 2 }],
+      tracks: [{ id: 't', kind: 'visual', clips: [{ id: 'l', type: 'html', src: 'layers/heavy.html', start: 0, duration: 2, props: { x: 0, y: 0, width: 1920, height: 1080 } }] }],
+    } as unknown as Composition;
+    const out = join(work, 'rawq-out');
+    mkdirSync(out, { recursive: true });
+    const qs = ['standard', 'high'] as const;
+    const rawRuns = [{ name: 'truth', quality: 'max', short: 1440 }, ...qs.flatMap((quality) => [{ name: `${quality}-raw`, quality, short: 1440 }, { name: `${quality}-jpeg`, quality, short: 1440, encoded: true }])];
+    const r = await runHarness({ scenario: 'raw-render', creative, composition, format: 'heavy', ffmpeg, rawRuns, out });
+    expect(r.ok, r.output).toBe(true);
+    for (const q of qs) {
+      const [a, b] = [join(out, `${q}-raw.mp4`), join(out, `${q}-jpeg.mp4`)];
+      const truth = join(out, 'truth.mp4');
+      const cmp = (x: string, filter: string) => /(?:average|All):\s*([\d.]+|inf)/.exec(spawnSync(ffmpeg!.path, ['-hide_banner', '-i', x, '-i', truth, '-lavfi', `[0:v][1:v]${filter}`, '-f', 'null', '-'], { encoding: 'utf8' }).stderr)?.[1];
+      console.info(`[raw-q] ${q} against max: raw PSNR ${cmp(a, 'psnr')} dB SSIM ${cmp(a, 'ssim')} (${statSync(a).size} B); jpeg PSNR ${cmp(b, 'psnr')} dB SSIM ${cmp(b, 'ssim')} (${statSync(b).size} B)`);
+    }
+  }, 900_000);
+
+  it.skipIf(process.env.MS_UI_LOAD !== '1')('capture probe (measurement)', async () => {
+    const creative = join(work, 'probe');
+    put(join(creative, 'outputs', 'v1', 'compositions', 'heavy', 'layers', 'heavy.html'), HEAVY_LAYER);
+    const composition = {
+      $schema: 'motion-studio/composition@1', width: 1920, height: 1080, fps: 60, duration: 4, background: '#000000', fonts: [],
+      scenes: [{ id: 's', start: 0, duration: 4 }],
+      tracks: [{ id: 't', kind: 'visual', clips: [{ id: 'l', type: 'html', src: 'layers/heavy.html', start: 0, duration: 4, props: { x: 0, y: 0, width: 1920, height: 1080 } }] }],
+    } as unknown as Composition;
+    const outDir = join(work, 'probe-out');
+    mkdirSync(outDir, { recursive: true });
+    const times = Array.from({ length: 12 }, (_, i) => 0.25 + i * 0.3);
+    const r = await runHarness({ scenario: 'capture-probe', creative, composition, format: 'heavy', probe: { scale: Number(process.env.MS_PROBE_SCALE ?? 2560 / 1920), times, outDir } });
+    expect(r.ok, r.output).toBe(true);
+    console.info(`[probe] ${JSON.stringify(r.lines)}`);
+    const size = (r.lines[0] as { probe: { size0: { width: number; height: number } } }).probe.size0;
+    for (const i of [0, 1]) {
+      const png = execFileSync(ffmpeg!.path, ['-v', 'error', '-i', join(outDir, `png-${i}.png`), '-f', 'rawvideo', '-pix_fmt', 'bgra', '-'], { maxBuffer: 1 << 27 });
+      const raw = readFileSync(join(outDir, `raw-${i}.bgra`));
+      let diff = 0, max = 0;
+      for (let k = 0; k < Math.min(png.length, raw.length); k++) { const d = Math.abs(png[k]! - raw[k]!); if (d) { diff++; max = Math.max(max, d); } }
+      console.info(`[probe] frame ${i}: png ${png.length} raw ${raw.length} (${size.width}×${size.height}) differing bytes ${diff} max ${max}`);
+    }
+  }, 900_000);
 
   it('memory: a 2 GB layer trips the watchdog (memoryLimit) and no window is left', async () => {
     const creative = join(work, 'mem');

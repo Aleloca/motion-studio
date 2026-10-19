@@ -141,6 +141,17 @@ export function runFfmpeg<const A extends readonly FfArg[]>(ff: FfmpegInfo, args
   return spawnFfmpeg(ff, all, o).done;
 }
 
+/**
+ * The encoder's input: the captured frames on stdin, PNG or JPEG images (`image2pipe`), or raw BGRA frames of one size
+ * (report 53: the desktop reads them without encoding).
+ */
+export function frameInput(frames: 'png' | 'jpeg' | { raw: { width: number; height: number } }, fps: number): string[] {
+  if (typeof frames === 'object') {
+    return ownInput('-', { formats: ['rawvideo'], force: true, options: ['-pixel_format', 'bgra', '-video_size', `${frames.raw.width}x${frames.raw.height}`, '-framerate', String(fps)] });
+  }
+  return ownInput('-', { formats: ['image2pipe'], force: true, options: ['-c:v', frames === 'png' ? 'png' : 'mjpeg', '-framerate', String(fps)] });
+}
+
 /** The target bitrate of phase 8 (kbps) for a preset at `fps`. */
 export function targetKbps(format: Pick<FormatPreset, 'width' | 'height' | 'targetBitrateKbps'>, fps: number): number {
   const base = format.targetBitrateKbps ?? videoTargetBitrateKbps(format.width, format.height);
