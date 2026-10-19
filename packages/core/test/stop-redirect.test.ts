@@ -54,6 +54,8 @@ const fakeFetch = (async (url: string) => {
 
 /** The "preview render": a real child process that runs until the call's signal aborts (then it is killed and awaited). */
 const previews = {
+  // Report 41 (review E): a turn that ends without recording its version revokes that version's in-progress previews.
+  revokeVersion: () => {},
   agentFrames: async ({ signal }: { signal: AbortSignal }) => {
     const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
     children.push(child);
