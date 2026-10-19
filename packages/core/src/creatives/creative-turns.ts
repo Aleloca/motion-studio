@@ -111,9 +111,10 @@ class LiveTurn extends LiveSession {
   savedN: number | null = null;
   /**
    * Report 41: the version the turn writes (`n`, recorded only at its end) and the formats whose composition passed the agent's
-   * check, with the hash checked. The storyboard and live preview routes serve these (and only these) before `n` is recorded.
+   * check: `hash` is the composition as it is on disk (what the storyboard and live preview reload and compare: they serve these,
+   * and only these, before `n` is recorded), `finalHash` the one after normalisation (what the version will record).
    */
-  work: { n: number; ready: Map<string, string> } | null = null;
+  work: { n: number; ready: Map<string, { hash: string; finalHash: string | null }> } | null = null;
   constructor(jobId: string, caps: LiveSession['caps'], readonly ref: CreativeRef) { super(jobId, caps); }
 }
 /** How many idempotency answers are kept (per process; older ones are found again in the conversation or the queue). */
@@ -1130,12 +1131,12 @@ export class CreativeTurnService {
         // Report 41: a format whose check passes is shown at once (its hash, from the unrecorded `outputs/v<n>`); one that fails
         // a later check is taken back. Only changes are broadcast.
         live.work = { n, ready: new Map() };
-        const announceReady = (list: Array<{ format: string; hash: string | null }>) => {
+        const announceReady = (list: Array<{ format: string; hash: string | null; finalHash: string | null }>) => {
           const work = live.work;
           if (!work || work.n !== n) return;
-          for (const { format, hash } of list) {
-            if ((work.ready.get(format) ?? null) === hash) continue;
-            if (hash === null) work.ready.delete(format); else work.ready.set(format, hash);
+          for (const { format, hash, finalHash } of list) {
+            if ((work.ready.get(format)?.hash ?? null) === hash) continue;
+            if (hash === null) work.ready.delete(format); else work.ready.set(format, { hash, finalHash });
             this.deps.broadcast({ type: 'formatReady', jobId, project: ref.projectSlug, creative: slug, n, format, hash });
           }
         };
@@ -1146,7 +1147,9 @@ export class CreativeTurnService {
           validateComposition: async (format?: string) => {
             if (format !== undefined && !targets.includes(format)) throw new CodedError(400, t().errors.formatNotInTurn({ format: format.slice(0, 100), list: targets.join(', ') }), 'formats-not-in-turn');
             const r = await checkCompositions(format);
-            announceReady(r.checks.map((c) => ({ format: c.format, hash: (r.byFormat.get(c.format) ?? []).length === 0 ? c.finalHash : null })));
+            // The hash on disk (review A): normalisation (a scene added, a font filled in) changes the final one, and the
+            // storyboard and live preview compare with the files as they are.
+            announceReady(r.checks.map((c) => ({ format: c.format, hash: (r.byFormat.get(c.format) ?? []).length === 0 ? c.hash : null, finalHash: c.finalHash })));
             return {
               // The hash after normalisation: the one the version will record.
               formats: r.checks.map((c) => ({ format: c.format, ok: (r.byFormat.get(c.format) ?? []).length === 0, hash: c.finalHash })),
@@ -2165,6 +2168,10 @@ export class CreativeTurnService {
     const live = this.live.get(jobId);
     if (live) live.phase = 'ended';
     this.live.delete(jobId);
+    // Report 41 (review E): the live previews of a version shown while it was written end with a turn that did not record it.
+    if (live?.work && !(live.savedVersion && live.savedN === live.work.n)) {
+      this.deps.previews?.revokeVersion({ creativeDir: new CreativeStore(ref.projectDir).dir(ref.creativeSlug), n: live.work.n });
+    }
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     // Phase 3 (review minor 5): a helper's entries are tagged until its turn is over; what runs after it (its after-turn
     // actions, a follow-up turn) is no longer one of its steps.
@@ -2206,7 +2213,7 @@ export class CreativeTurnService {
    */
   readyFormat(ref: CreativeRef, n: number, format: string): string | null {
     const work = this.liveOf(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug))?.work;
-    return work && work.n === n ? work.ready.get(format) ?? null : null;
+    return work && work.n === n ? work.ready.get(format)?.hash ?? null : null;
   }
 
   /**

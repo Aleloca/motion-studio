@@ -70,14 +70,17 @@ interface Fake {
   kind: 'injected' | null;
   /** When set, renders wait for it. */
   gate: Promise<void> | null;
+  /** Report 41 (review): called as frames are drawn. */
+  onFrames: (() => void) | null;
 }
 function fakeEngine(): Fake {
-  const f: Fake = { renders: [], frames: [], fail: {}, kind: 'injected', gate: null, engine: null as unknown as RenderEngine };
+  const f: Fake = { renders: [], frames: [], fail: {}, kind: 'injected', gate: null, onFrames: null, engine: null as unknown as RenderEngine };
   f.engine = {
     info: async () => ({ kind: f.kind }),
     provider: async () => { throw new Error('not used'); },
     frames: async (o: Omit<RenderFramesOptions, 'provider'>): Promise<RenderFramesResult> => {
       f.frames.push(o);
+      f.onFrames?.();
       const c = o.composition;
       const height = Math.round((o.width * c.height) / c.width);
       return { frames: o.times.map((t) => ({ t: frameTime(c, t), data: png(o.width, height), width: o.width, height })), errors: [] };
@@ -518,11 +521,11 @@ describe('report 41: each format shown as soon as the agent\'s check passes', { 
   const question = (id: string) => ['approve', { tool_name: 'AskUserQuestion', tool_use_id: id, input: { questions: [{ question: 'Quale?', header: 'Scelta', multiSelect: false,
     options: [{ label: 'A', description: 'a' }, { label: 'B', description: 'b' }] }] } }];
   /** A first generation of `formats` whose agent validates `test-wide` and then waits on a question card; the events it broadcasts. */
-  async function waiting(formats: string[]) {
+  async function waiting(formats: string[], calls: unknown[] = [['validate_composition', { format: 'test-wide' }], question('toolu_q41')]) {
     const url = await app.listen({ port: 0, host: '127.0.0.1' });
     bridge.setOrigin(url);
     process.env.FAKE_CLAUDE_BRIDGE_LOG = join(base, 'bridge.jsonl');
-    process.env.FAKE_CLAUDE_BRIDGE_CALLS = JSON.stringify([['validate_composition', { format: 'test-wide' }], question('toolu_q41')]);
+    process.env.FAKE_CLAUDE_BRIDGE_CALLS = JSON.stringify(calls);
     const sock = new WebSocket(`${url.replace('http', 'ws')}/api/events?t=${TOKEN}`, { headers: { origin: url } });
     const events: ServerMessage[] = [];
     sock.on('message', (d) => events.push(JSON.parse(String(d)) as ServerMessage));
@@ -531,14 +534,22 @@ describe('report 41: each format shown as soon as the agent\'s check passes', { 
       title: 'Launch', generate: true, brief: { goal: 'g', message: '', formats, durationSec: 4, assets: [], notes: '' },
     } });
     expect(r.statusCode, r.body).toBe(201);
+    const card = await nextCard();
+    return { slug: r.json().slug as string, job: r.json().job as JobSummary, card, events, close: () => sock.close() };
+  }
+  /** The next question card the agent waits on (one is answered before the next shows). */
+  async function nextCard(not?: string): Promise<ApprovalRequest> {
     let card: ApprovalRequest | undefined;
     for (let i = 0; i < 1500 && !card; i++) {
-      card = ((await app.inject({ url: '/api/approvals', headers: H })).json() as ApprovalRequest[])[0];
+      card = ((await app.inject({ url: '/api/approvals', headers: H })).json() as ApprovalRequest[]).find((a) => a.id !== not);
       if (!card) await new Promise((res) => setTimeout(res, 20));
     }
     expect(card).toBeDefined();
-    return { slug: r.json().slug as string, job: r.json().job as JobSummary, card: card!, events, close: () => sock.close() };
+    return card!;
   }
+  const answer = (card: ApprovalRequest) => app.inject({ method: 'POST', url: `/api/approvals/${card.id}/answer`, headers: H, payload: { answers: [{ selected: [0] }] } });
+  const cancel = async (job: JobSummary) => { await app.inject({ method: 'POST', url: `/api/jobs/${job.id}/cancel`, headers: H }); return waitJob(job.id); };
+  const compJson = (slug: string) => join(compDir(slug, 1, 'test-wide'), 'composition.json');
   const storyboard = (slug: string, format: string) => app.inject({ url: `/api/projects/acme/creatives/${slug}/versions/1/storyboards/${format}`, headers: H });
   const preview = (slug: string, format: string) => app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/preview-session`, headers: H, payload: { format, parentOrigin: UI_ORIGIN } });
 
@@ -567,6 +578,85 @@ describe('report 41: each format shown as soon as the agent\'s check passes', { 
       expect((await app.inject({ method: 'POST', url: `/api/approvals/${w.card.id}/answer`, headers: H, payload: { answers: [{ selected: [0] }] } })).statusCode).toBe(200);
       expect((await waitJob(w.job.id)).state).toBe('succeeded');
       expect((await versionOf(w.slug, 1)).compositions!.find((c) => c.format === 'test-wide')!.hash).toBe(hash);
+    } finally { w.close(); }
+  });
+
+  it('a composition the check normalises (no scenes) is served all the same: the hash announced is the one on disk', async () => {
+    process.env.FAKE_CLAUDE_NO_SCENES = '1';
+    const w = await waiting(['test-wide']);
+    try {
+      const ready = w.events.find((e) => e.type === 'formatReady') as { hash: string } | undefined;
+      expect(ready).toBeDefined();
+      const sb = await storyboard(w.slug, 'test-wide');
+      expect(sb.statusCode, sb.body).toBe(200);
+      expect(sb.json().hash).toBe(ready!.hash);
+      const pv = await preview(w.slug, 'test-wide');
+      expect(pv.statusCode, pv.body).toBe(200);
+      expect(pv.json().hash).toBe(ready!.hash);
+      await answer(w.card);
+      expect((await waitJob(w.job.id)).state).toBe('succeeded');
+      // Normalisation added a scene: the version records another hash than the one served during the turn.
+      expect((await versionOf(w.slug, 1)).compositions!.find((c) => c.format === 'test-wide')!.hash).not.toBe(ready!.hash);
+    } finally { w.close(); }
+  });
+
+  it('a later failing check takes the format back (hash null); a file changed after the check is refused; another creative\'s v1 is not served', async () => {
+    const w = await waiting(['test-wide', 'test-wide-b'], [['validate_composition', { format: 'test-wide' }], question('toolu_q1'), ['validate_composition', { format: 'test-wide' }], question('toolu_q2')]);
+    try {
+      // Another creative of the project asking for "its" v1 of the same format: nothing.
+      const other = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', headers: H, payload: { title: 'Other', generate: false, brief: { goal: 'g', message: '', formats: ['test-wide'], durationSec: 4, assets: [], notes: '' } } });
+      expect(other.statusCode, other.body).toBe(201);
+      expect((await storyboard(other.json().slug as string, 'test-wide')).statusCode).toBe(404);
+      expect((await preview(other.json().slug as string, 'test-wide')).statusCode).toBe(404);
+      // Changed after the check (a valid composition, another content): its preview and storyboard are refused.
+      const c = JSON.parse(readFileSync(compJson(w.slug), 'utf8')) as { fps: number; duration: number };
+      writeFileSync(compJson(w.slug), JSON.stringify({ ...c, duration: c.duration + 1 }));
+      expect((await preview(w.slug, 'test-wide')).statusCode).toBe(409);
+      expect((await storyboard(w.slug, 'test-wide')).statusCode).toBe(404);
+      // Now broken: the agent's next check fails and the format is taken back.
+      writeFileSync(compJson(w.slug), JSON.stringify({ ...c, fps: 7 }));
+      await answer(w.card);
+      await nextCard(w.card.id);
+      expect(w.events.filter((e) => e.type === 'formatReady').map((e) => (e as { hash: string | null }).hash === null)).toEqual([false, true]);
+      expect((await storyboard(w.slug, 'test-wide')).statusCode).toBe(404);
+      expect((await cancel(w.job)).state).toBe('cancelled');
+    } finally { w.close(); }
+  });
+
+  it('a symlink in the version being written is never served', async () => {
+    const w = await waiting(['test-wide']);
+    try {
+      const file = compJson(w.slug);
+      const copy = join(base, 'outside.json');
+      writeFileSync(copy, readFileSync(file));
+      rmSync(file);
+      symlinkSync(copy, file);
+      expect((await preview(w.slug, 'test-wide')).statusCode).not.toBe(200);
+      expect((await storyboard(w.slug, 'test-wide')).statusCode).toBe(404);
+      expect((await cancel(w.job)).state).toBe('cancelled');
+    } finally { w.close(); }
+  });
+
+  it('a storyboard whose composition changes while its frames are drawn is not kept', async () => {
+    const w = await waiting(['test-wide']);
+    try {
+      const file = compJson(w.slug);
+      const c = JSON.parse(readFileSync(file, 'utf8')) as { duration: number };
+      fake.onFrames = () => { writeFileSync(file, JSON.stringify({ ...c, duration: c.duration + 1 })); fake.onFrames = null; };
+      expect((await storyboard(w.slug, 'test-wide')).statusCode).toBe(404);
+      expect(existsSync(join(storyboardDir(projectDir(), w.slug, 1, 'test-wide'), 'storyboard.json'))).toBe(false);
+      expect((await cancel(w.job)).state).toBe('cancelled');
+    } finally { w.close(); }
+  });
+
+  it('a turn that ends without recording its version ends the live previews of it', async () => {
+    const w = await waiting(['test-wide']);
+    try {
+      const pv = await preview(w.slug, 'test-wide');
+      expect(pv.statusCode, pv.body).toBe(200);
+      expect((await cancel(w.job)).state).toBe('cancelled');
+      const del = await app.inject({ method: 'DELETE', url: `/api/projects/acme/creatives/${w.slug}/versions/1/preview-session/${pv.json().token as string}`, headers: H });
+      expect(del.statusCode).toBe(404);
     } finally { w.close(); }
   });
 
