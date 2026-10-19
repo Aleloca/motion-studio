@@ -377,7 +377,7 @@ arrives and worked on later together.
     thumbnails are the storyboard posters (270 px JPEG, about 17 KB) already in `.studio/cache/storyboards`, made at
     14:48 and not made again when the dialog opened at 22:24; there are no render files. So nothing is rendered while
     scrolling, and saving renders would not change the list. The cause is still to be measured.
-    Timing: measure and fix together with further reports (user).
+    Timing: done together with 52–55 (user, after report 55).
     Correction by the user: the list no longer stutters; the stutter was while a 2560×1440 60 fps video export ran in the
     background. So the report is: the app's UI stutters during a heavy export (the render windows and the encoder share
     the machine and the desktop app's processes). To measure with the batch: UI frame times during an export, and whether
@@ -389,7 +389,14 @@ arrives and worked on later together.
     User's decision: a gallery per store: one row per device with large thumbnails side by side, as on the canvas,
     scrolling sideways; a click on a thumbnail leaves it out (it dims), a checkbox only on the device (and the store);
     the whole pack visible on one screen.
-    Timing: wait for further reports (user).
+    Timing: done together with 52–55 (user, after report 55).
+
+55. **Speaking names for formats.** The formats column lists the store pack's screenshots as 1–8: the user cannot tell
+    them apart. They ask that the agent name what it makes, where it makes sense ("1 · Tutti i clienti, una casella"),
+    for every format, not only the store pack.
+    User's decisions: automatic, never over a name the user gave (a name the user set or edited is never changed by the
+    agent; the user can always rename); every format gets a speaking name, also when it is the only one of its kind.
+    Timing: now, together with 52–54.
 
 ## Follow-ups found while working on 12–30
 
