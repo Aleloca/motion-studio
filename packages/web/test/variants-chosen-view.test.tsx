@@ -37,7 +37,9 @@ const api = {
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error { status = 0; } }));
 const { CreativeCanvas } = await import('../src/screens/CreativeCanvas.tsx');
-const { chosenColumns, chosenView, fitChosen, readVariantView, variantViewKey } = await import('../src/screens/variants/variantModel.ts');
+const { chosenSections, chosenView, readVariantView, variantViewKey, CHOSEN_LAYOUT } = await import('../src/screens/variants/variantModel.ts');
+const { fitBoards, fitSections, canvasGroups, FIT_MIN } = await import('../src/screens/canvasModel.ts');
+const { presetFor } = await import('../src/instances.ts');
 const { TopBar } = await import('../src/shell/TopBars.tsx');
 const { ShellContext } = await import('../src/shell/ShellContext.tsx');
 const { I18nProvider } = await import('../src/i18n.tsx');
@@ -80,16 +82,19 @@ describe('chosenView (the model)', () => {
     expect(v.chosen).toEqual([{ format: 'instagram-post-1x1', letter: 'c', slug: `${HOST}~c`, n: 2 }]);
     expect(v.open).toEqual([{ format: 'tiktok-9x16', letter: null, slug: null, n: null }]);
   });
-  it('decision 1334: the opening zoom of "Scelte" puts the widest section\'s boards on one line, within 50%–100%', () => {
-    // 1440 px: 4 chosen boards fit at 100%; 8 need less; 30 stop at 50% and wrap.
-    expect(fitChosen(4, 1440, 0.5)).toBe(1);
-    const z = fitChosen(8, 1440, 0.5)!;
-    expect(z).toBeLessThan(1);
-    expect(chosenColumns(1440 - 2 * 16 - 2 * 12, 8, z).cols).toBe(8);
-    expect(chosenColumns(1440 - 2 * 16 - 2 * 12, 8, z + 0.05).cols).toBeLessThan(8);
-    expect(fitChosen(30, 1440, 0.5)).toBe(0.5);
-    expect(fitChosen(0, 1440, 0.5)).toBeNull();
-    expect(fitChosen(3, 0, 0.5)).toBeNull();
+  it('report 52: "Scelte" is laid out as the plain canvas: its sections\' boards in the canvas\'s groups and lines', () => {
+    const b = (format: string) => ({ id: format, preset: presetFor(DEFAULT_FORMATS, format), out: null });
+    const pack = new Set(['appstore-iphone-69', 'playstore-phone-9x16']);
+    const sections = chosenSections([b('appstore-iphone-69'), b('playstore-phone-9x16'), b('youtube-16x9')], [b('tiktok-9x16')], pack);
+    // The groups of the formats column (a store pack by store, alone on its lines), "Senza scelta" with its hint under it.
+    expect(sections.map((s) => s.groups.map((g) => g.boards.map((x) => x.id)))).toEqual([[['appstore-iphone-69'], ['playstore-phone-9x16'], ['youtube-16x9']], [['tiktok-9x16']]]);
+    expect(sections[0]!.groups).toEqual(canvasGroups([b('appstore-iphone-69'), b('playstore-phone-9x16'), b('youtube-16x9')], pack));
+    expect(sections[1]!.head).toBeGreaterThan(sections[0]!.head);
+    // Nothing without a choice: one section.
+    expect(chosenSections([b('youtube-16x9')], [], pack)).toHaveLength(1);
+    // A single 16:9 opens at the zoom the plain canvas would give it.
+    const one = chosenSections([b('youtube-16x9')], [], pack);
+    expect(fitSections(one, { width: 820, height: 700 }, FIT_MIN, CHOSEN_LAYOUT)).toBe(fitBoards(canvasGroups([b('youtube-16x9')], pack), { width: 820, height: 700 }, FIT_MIN));
   });
   it('the view: "chosen" by default when there are picks, the remembered one otherwise; storage errors are ignored', () => {
     expect(readVariantView('acme', HOST, true)).toBe('chosen');
@@ -118,19 +123,26 @@ describe('the "Scelte" view of a variant group', () => {
     const view = await within(bar).findByRole('radiogroup', { name: 'Vista delle varianti' });
     expect(within(view).getByRole('radio', { name: 'Scelte' }).getAttribute('aria-checked')).toBe('true');
     const chosen = await screen.findByRole('region', { name: 'Scelte' });
-    await waitFor(() => expect(chosen.querySelectorAll('.ms-vchosen-cell')).toHaveLength(1));
-    const cell = chosen.querySelector('.ms-vchosen-cell')!;
-    expect(cell.textContent).toContain('Instagram · Post 1:1');
-    expect(cell.textContent).toContain('C');
-    expect(cell.textContent).toContain('Giocosa');
+    await waitFor(() => expect(chosen.querySelectorAll('.ms-cv-board')).toHaveLength(1));
+    const cell = chosen.querySelector('.ms-cv-board')!;
+    // Report 52: a board of the canvas, its header with the variant's letter and short name above the format's name.
+    expect(cell.querySelector('.ms-cv-board-name')?.getAttribute('title')).toBe('Instagram · Post 1:1');
+    const from = cell.querySelector('.ms-cv-board-from')!;
+    expect(from.querySelector('.ms-vcard-letter')?.textContent).toBe('C');
+    expect(from.textContent).toContain('Giocosa');
     // The chosen version (v2 of C), not the version C's card shows (v3).
     await waitFor(() => expect(cell.querySelector('img')?.getAttribute('src')).toBe(`/f/acme/${HOST}~c/outputs/v2/post.png`));
     const open = screen.getByRole('region', { name: 'Senza scelta' });
-    expect(open.querySelectorAll('.ms-vchosen-cell')).toHaveLength(1);
-    expect(open.textContent).toContain('TikTok · Video 9:16');
-    expect(open.textContent).toContain('Regola predefinita');
-    // No variant card in this view; the final selection is still there.
-    expect(document.querySelectorAll('.ms-vcard[data-variant]')).toHaveLength(0);
+    await waitFor(() => expect(open.querySelectorAll('.ms-cv-board')).toHaveLength(1));
+    expect(open.querySelector('.ms-cv-board-name')?.getAttribute('title')).toBe('TikTok · Video 9:16');
+    expect(open.querySelector('.ms-cv-board-from')?.textContent).toContain('Regola predefinita');
+    expect(open.textContent).toContain('sceglili in Selezione finale');
+    // Report 52: no card at all in this view (the sections are headings on the canvas, the boards in its lines); the final
+    // selection is still there.
+    expect(document.querySelectorAll('.ms-vcard')).toHaveLength(0);
+    expect(document.querySelector('.ms-cv-world')!.classList.contains('ms-cv-lined')).toBe(true);
+    expect(chosen.querySelectorAll('.ms-cv-line')).toHaveLength(1);
+    expect(chosen.compareDocumentPosition(open) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(bar).getByRole('button', { name: 'Selezione finale' })).toBeTruthy();
   });
 
@@ -168,19 +180,24 @@ describe('the "Scelte" view of a variant group', () => {
     expect(localStorage.getItem(variantViewKey('acme', HOST))).toBe('chosen');
   });
 
-  it('decision 1334: "Scelte" opens fitted to its boards, the cards\' view to its cards', async () => {
+  it('report 52: "Scelte" opens fitted as the plain canvas (width and height), the cards\' view to its cards', async () => {
     group = picked();
     plan = [item('instagram-post-1x1', 'c', 2, 'pick'), item('tiktok-9x16', 'a', 2, 'default')];
     const size = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('ms-cv-viewport') ? 800 : 0; });
+    const high = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('ms-cv-viewport') ? 900 : 0; });
     try {
       render(<Harness />);
       await screen.findByRole('region', { name: 'Scelte' });
       const z = () => (document.querySelector('.ms-cv-world') as HTMLElement).style.getPropertyValue('--cv-z');
-      // One board per section: 100% (three cards at 800 px would be 65%).
-      await waitFor(() => expect(z()).toBe('1'));
+      const b = (format: string) => ({ id: format, preset: presetFor(DEFAULT_FORMATS, format), out: null });
+      const want = fitSections(chosenSections([b('instagram-post-1x1')], [b('tiktok-9x16')], new Set()), { width: 800, height: 900 }, FIT_MIN, CHOSEN_LAYOUT)!;
+      // The two sections one above the other fill the height: below 100% (three cards at 800 px would be 65%).
+      expect(want).toBeLessThan(1);
+      expect(want).not.toBe(0.65);
+      await waitFor(() => expect(z()).toBe(String(want)));
       await userEvent.click(within(screen.getByRole('radiogroup', { name: 'Vista delle varianti' })).getByRole('radio', { name: 'Tutte le varianti' }));
       await waitFor(() => expect(z()).toBe('0.65'));
-    } finally { size.mockRestore(); }
+    } finally { size.mockRestore(); high.mockRestore(); }
   });
 
   it('decision 1337: while the chosen variant is still being read its cell says it is loading, never "no variant has this format"', async () => {
@@ -193,11 +210,11 @@ describe('the "Scelte" view of a variant group', () => {
     });
     render(<Harness />);
     const chosen = await screen.findByRole('region', { name: 'Scelte' });
-    const cell = await waitFor(() => { const el = chosen.querySelector('.ms-vchosen-cell'); expect(el).toBeTruthy(); return el!; });
+    const cell = await waitFor(() => { const el = chosen.querySelector('[data-board$="instagram-post-1x1"]'); expect(el).toBeTruthy(); return el!; });
     expect(cell.textContent).not.toContain('Nessuna variante ha ancora questo formato');
     expect(within(cell as HTMLElement).getByRole('status')).toBeTruthy();
     release();
-    await waitFor(() => expect(cell.querySelector('img')).toBeTruthy());
+    await waitFor(() => expect(chosen.querySelector('[data-board] img')).toBeTruthy());
     api.getCreative.mockImplementation(async (_s: string, c: string) => build(c));
   });
 

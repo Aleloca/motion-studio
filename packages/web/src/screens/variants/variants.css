@@ -127,20 +127,23 @@
 .ms-cv-fmt-side[data-source="default"] { opacity: .75; }
 .ms-cv-fmt-side[data-source="pick"] { color: var(--accentText); }
 
-/* Report 49: the "Scelte" view, one card of the chosen formats (each the chosen variant's board) and one of those without a choice. */
+/* Report 49: the "Scelte" view. Report 52: no card: "Scelte" and "Senza scelta" are headings on the canvas, one above the other,
+   each over its boards in the canvas's lines (canvasModel.sectionsAt: a heading is CHOSEN_HEAD px, its hint CHOSEN_HINT more).
+   The world is at least the viewport wide and a heading never widens it (its hint ellipsizes). */
 .ms-vbar-view { flex: none; }
-.ms-vchosen { gap: 10px; }
-.ms-vchosen-title { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 13.5px; font-weight: 600; }
+.ms-cv-world.ms-vchosen-world { min-width: 100%; box-sizing: border-box; }
+.ms-vchosen { display: flex; flex-direction: column; align-items: flex-start; align-self: stretch; }
+.ms-vchosen > .ms-cv-line + .ms-cv-line { margin-top: calc(44px * var(--cv-z)); }
+.ms-vchosen-head { contain: inline-size; align-self: stretch; margin-bottom: 12px; }
+.ms-vchosen-title { display: flex; align-items: center; gap: 6px; height: 20px; margin: 0; font-size: 13.5px; font-weight: 600; }
 .ms-vchosen-title svg { color: var(--accentText); }
 .ms-vchosen-count { font-size: 12px; font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
-.ms-vchosen.ms-vchosen-open { background: transparent; box-shadow: 0 0 0 1px var(--line2); }
-.ms-vchosen-cell { flex: none; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
-.ms-vchosen-cap { display: flex; align-items: center; flex-wrap: wrap; justify-content: center; gap: 4px 8px; margin: 0; max-width: 100%; font-size: 12px; min-width: 0; }
-.ms-vchosen-format { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ms-vchosen-from { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); }
-.ms-vchosen-from .ms-vcard-letter { min-width: 18px; height: 18px; font-size: 11px; }
-.ms-vchosen-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px; }
-.ms-vchosen-none { margin: 0; padding: 18px 8px; font-size: 12px; color: var(--muted); text-align: center; }
-.ms-vchosen .ms-cv-board { min-width: 0; max-width: 100%; }
-.ms-vchosen .ms-cv-board-line { flex-wrap: wrap; height: auto; min-height: 20px; row-gap: 4px; overflow: visible; }
-.ms-vchosen .ms-cv-frame { box-shadow: 0 0 0 1px var(--line2); }
+.ms-vchosen-hint { height: 18px; margin: 2px 0 0; font-size: 12px; line-height: 18px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* A chosen board's first header line: its variant's letter and short name (and, without a choice, the default rule's tag). */
+.ms-cv-board-from { color: var(--muted); }
+.ms-cv-board-from .ms-vcard-letter { min-width: 18px; height: 18px; font-size: 11px; }
+.ms-vchosen-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+.ms-cv-board-from .ms-vfinal-tag { flex: none; }
+/* A format still loading, or that no variant has: its frame, empty, with the reason inside. */
+.ms-vchosen-none { display: flex; align-items: center; justify-content: center; box-sizing: border-box; padding: 8px; border: 1.5px dashed var(--line); border-radius: 10px;
+  font-size: 12px; color: var(--muted); text-align: center; }

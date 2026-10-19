@@ -148,20 +148,29 @@ function itemsOf<B extends BoardModel>(g: BoardGroup<B>): Array<CanvasItem<B>> {
   return [...g.boards.filter(isTall).map((b) => ({ stack: false, boards: [b] })), ...(rest.length ? [{ stack: true, boards: rest }] : [])];
 }
 
+/**
+ * Report 52: how the boards of a canvas are drawn, when not as the plain canvas's: `head`, screen px of header above the usual two
+ * lines (the "Scelte" view's line with the variant); `grouped`, the label floor of a variant group's board (LABEL_MIN_GROUPED).
+ */
+export interface BoardLayout { head?: number; grouped?: boolean }
+
 /** A place's size on screen at zoom `z`, labels at their real size. */
-function itemSize(it: CanvasItem, z: number): { width: number; height: number } {
-  const sizes = it.boards.map(boardFrame).map((f) => ({ width: Math.max(f.width * z, labelMin(z)), height: BOARD_HEAD + f.height * z }));
+function itemSize(it: CanvasItem, z: number, layout: BoardLayout = {}): { width: number; height: number } {
+  const head = BOARD_HEAD + (layout.head ?? 0);
+  const sizes = it.boards.map(boardFrame).map((f) => ({ width: Math.max(f.width * z, labelMin(z, layout.grouped)), height: head + f.height * z }));
   return { width: Math.max(...sizes.map((s) => s.width)), height: sizes.reduce((h, s) => h + s.height, 0) + STACK_GAP * z * (sizes.length - 1) };
 }
 
-const lineWidth = (line: CanvasItem[], z: number) => line.reduce((w, it) => w + itemSize(it, z).width, 0) + WORLD_GAP * z * Math.max(0, line.length - 1);
+const lineWidth = (line: CanvasItem[], z: number, layout?: BoardLayout) => line.reduce((w, it) => w + itemSize(it, z, layout).width, 0) + WORLD_GAP * z * Math.max(0, line.length - 1);
+const linesHeight = (lines: CanvasItem[][], z: number, layout?: BoardLayout) =>
+  lines.reduce((sum, l) => sum + Math.max(...l.map((it) => itemSize(it, z, layout).height)), 0) + LINE_GAP * z * Math.max(0, lines.length - 1);
 
 /**
  * The lines of the canvas at zoom `z` in a viewport `width` px wide (null: not laid out, nothing wraps). Report 40: each group
  * starts a line unless it fits whole after the previous one; a group too long for a line wraps, and its last line takes no other
  * group; a store of a store pack has its lines to itself.
  */
-export function canvasLines<B extends BoardModel>(groups: Array<BoardGroup<B>>, z: number, width: number | null): Array<Array<CanvasItem<B>>> {
+export function canvasLines<B extends BoardModel>(groups: Array<BoardGroup<B>>, z: number, width: number | null, layout?: BoardLayout): Array<Array<CanvasItem<B>>> {
   const room = width === null ? Infinity : width - 2 * WORLD_PAD_X * z;
   const gap = WORLD_GAP * z;
   const lines: Array<Array<CanvasItem<B>>> = [];
@@ -170,7 +179,7 @@ export function canvasLines<B extends BoardModel>(groups: Array<BoardGroup<B>>, 
     const items = itemsOf(g);
     if (!items.length) continue;
     const last = lines.at(-1);
-    if (open && !g.alone && last && lineWidth(last, z) + gap + lineWidth(items, z) <= room + 1e-6) {
+    if (open && !g.alone && last && lineWidth(last, z, layout) + gap + lineWidth(items, z, layout) <= room + 1e-6) {
       last.push(...items);
       continue;
     }
@@ -178,7 +187,7 @@ export function canvasLines<B extends BoardModel>(groups: Array<BoardGroup<B>>, 
     let line: Array<CanvasItem<B>> = [];
     lines.push(line);
     for (const it of items) {
-      if (line.length && lineWidth(line, z) + gap + itemSize(it, z).width > room + 1e-6) { line = []; lines.push(line); }
+      if (line.length && lineWidth(line, z, layout) + gap + itemSize(it, z, layout).width > room + 1e-6) { line = []; lines.push(line); }
       line.push(it);
     }
     open = !g.alone && lines.length - start === 1;
@@ -186,12 +195,28 @@ export function canvasLines<B extends BoardModel>(groups: Array<BoardGroup<B>>, 
   return lines;
 }
 
+/** Report 52: a section of a canvas: its groups' lines (`canvasLines`) under a heading `head` screen px high (0: none). */
+export interface CanvasSection<B extends BoardModel = BoardModel> { groups: Array<BoardGroup<B>>; head: number }
+
+/**
+ * Report 52: a canvas of sections one above the other (the "Scelte" view: "Scelte", then "Senza scelta"), on screen at zoom `z` in
+ * a viewport `width` px wide, with the world's padding. Each section is its heading and its own lines; between two sections the
+ * lines' gap. One section without a heading is the plain canvas (`worldAt`).
+ */
+export function sectionsAt(sections: CanvasSection[], z: number, width: number | null = null, layout?: BoardLayout): { width: number; height: number } {
+  let w = 0;
+  let h = LINE_GAP * z * Math.max(0, sections.length - 1);
+  for (const s of sections) {
+    const lines = canvasLines(s.groups, z, width, layout);
+    w = Math.max(w, ...lines.map((l) => lineWidth(l, z, layout)));
+    h += s.head + linesHeight(lines, z, layout);
+  }
+  return { width: w + 2 * WORLD_PAD_X * z, height: h + (WORLD_PAD_TOP + WORLD_PAD_BOTTOM) * z };
+}
+
 /** The canvas world on screen at zoom `z` in a viewport `width` px wide (`canvasLines`), with its padding. */
 export function worldAt(groups: BoardGroup[], z: number, width: number | null = null): { width: number; height: number } {
-  const lines = canvasLines(groups, z, width);
-  const w = Math.max(0, ...lines.map((l) => lineWidth(l, z)));
-  const h = lines.reduce((sum, l) => sum + Math.max(...l.map((it) => itemSize(it, z).height)), 0) + LINE_GAP * z * Math.max(0, lines.length - 1);
-  return { width: w + 2 * WORLD_PAD_X * z, height: h + (WORLD_PAD_TOP + WORLD_PAD_BOTTOM) * z };
+  return sectionsAt([{ groups, head: 0 }], z, width);
 }
 
 /** The size of the canvas world at 100%, nothing wrapped. */
@@ -216,10 +241,15 @@ export function fitZoom(world: { width: number; height: number }, view: { width:
  * laid out.
  */
 export function fitBoards(groups: BoardGroup[], view: { width: number; height: number }, min: number): number | null {
-  if (!groups.some((g) => g.boards.length) || view.width <= 0 || view.height <= 0) return null;
+  return fitSections([{ groups, head: 0 }], view, min);
+}
+
+/** Report 52: `fitBoards` for a canvas of sections (`sectionsAt`): the same search, the headings at their real size. */
+export function fitSections(sections: CanvasSection[], view: { width: number; height: number }, min: number, layout?: BoardLayout): number | null {
+  if (!sections.some((s) => s.groups.some((g) => g.boards.length)) || view.width <= 0 || view.height <= 0) return null;
   let z = 1;
   while (z > min + 1e-9) {
-    const w = worldAt(groups, z, view.width);
+    const w = sectionsAt(sections, z, view.width, layout);
     if (w.width <= view.width + 1e-6 && w.height <= view.height + 1e-6) break;
     // 5% steps down to 50%, then 1% (review B: at a store pack's 20–30% a 5% step is a fifth of the boards' size).
     z = z > 0.5 + 1e-9 ? Math.max(min, Math.round((z - 0.05) * 20) / 20) : Math.max(min, Math.round((z - 0.01) * 100) / 100);
