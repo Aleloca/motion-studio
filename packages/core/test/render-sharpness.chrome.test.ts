@@ -83,10 +83,38 @@ const backdrop = (rig: string) => `<!doctype html><html><head><style>html,body{m
 .bg{position:absolute;left:0;top:0;width:320px;height:180px;background:repeating-linear-gradient(45deg,#fff 0 10px,#f00 10px 20px)}
 #rig{position:absolute;left:30px;top:20px;width:260px;height:140px;${rig}}.glass{position:absolute;left:20px;top:20px;width:200px;height:100px;backdrop-filter:blur(8px)}
 </style></head><body><div class="bg"></div><div id="rig"><div class="glass"></div></div></body></html>`;
+/**
+ * Decisions 1250–1251: a `translate` that starts to match a hinted box later, without a class or id change on it: a sibling
+ * inserted before it (`.s + #c`), a `:has()` flag added elsewhere, a rule added with `insertRule`, and a box whose layer
+ * rewrites its inline hint before a class change gives it a translate (`.t #d`), and the layer's own cascade layers (one
+ * declared in its sheet, one in a sheet it puts first in the head later). Each box must land where its rule puts it.
+ */
+const late = (hint: boolean) => `<!doctype html><html><head><style>html,body{margin:0;background:#000}
+.b{position:absolute;top:20px;width:30px;height:30px;background:#fff}
+#c{left:10px;${hint ? 'will-change:transform' : ''}}.s + #c{translate:40px}
+#e{left:90px;${hint ? 'will-change:transform' : ''}}body:has(.flag) #e{translate:0 60px}
+#f{left:170px;${hint ? 'will-change:transform' : ''}}
+.t #d{translate:30px 90px}#d{left:240px}
+#g{left:280px;${hint ? 'will-change:transform' : ''}}@layer x{#g{translate:0 40px}}
+#h{left:200px;top:130px;${hint ? 'will-change:transform' : ''}}
+</style></head><body><div id="c" class="b"></div><div id="e" class="b"></div><div id="f" class="b"></div><div id="d" class="b"${hint ? ' style="will-change: transform"' : ''}></div><div id="g" class="b"></div><div id="h" class="b"></div><script>
+const step = new Set();
+const once = (k, t, at, f) => { if (t >= at && !step.has(k)) { step.add(k); f(); } };
+window.msSeek = (t) => {
+  // Each change in its own frame: no class or id change comes with the first three.
+  once('sibling', t, 0.3, () => { const s = document.createElement('i'); s.className = 's'; document.getElementById('c').before(s); });
+  once('has', t, 0.3, () => { const f = document.createElement('b'); f.className = 'flag'; document.body.append(f); });
+  once('rule', t, 0.3, () => document.styleSheets[0].insertRule('#f{translate:0 100px}', document.styleSheets[0].cssRules.length));
+  once('first', t, 0.3, () => { const st = document.createElement('style'); st.textContent = '@layer y{#h{translate:-60px}}'; document.head.prepend(st); });
+  once('rewrite', t, 0.3, () => document.getElementById('d').style.setProperty('will-change', 'opacity'));
+  once('class', t, 0.6, () => document.body.classList.add('t'));
+};
+</script></body></html>`;
 const STRUCTURE: Record<string, string> = {
   hint: structure('will-change:transform'), reference: structure('transform:translate(0)'),
   hint3d: threeD('will-change:transform'), reference3d: threeD(''),
   hintBackdrop: backdrop('will-change:transform'), referenceBackdrop: backdrop(''),
+  hintLate: late(true), referenceLate: late(false),
 };
 
 describe.skipIf(!tools.ok)('renderer: text in a scaled layer stays sharp (report 38)', { timeout: 300_000 }, () => {
@@ -141,15 +169,21 @@ describe.skipIf(!tools.ok)('renderer: text in a scaled layer stays sharp (report
   });
 
   /** The largest grey difference between the first frames of two layers. */
-  const maxDiff = async (a: string, b: string) => {
-    const [x, y] = [grey((await frames(a, [0]))[0]!.data, a), grey((await frames(b, [0]))[0]!.data, b)];
-    let diff = 0;
-    for (let i = 0; i < x.length; i++) diff = Math.max(diff, Math.abs(x[i]! - y[i]!));
-    return diff;
+  /** The largest grey difference between the frames of two layers at `times` (one number per time when several). */
+  const maxDiff = async (a: string, b: string, times = [0]) => {
+    const [fa, fb] = [await frames(a, times), await frames(b, times)];
+    const diffs = fa.map((f, k) => {
+      const [x, y] = [grey(f.data, `${a}-${k}`), grey(fb[k]!.data, `${b}-${k}`)];
+      let diff = 0;
+      for (let i = 0; i < x.length; i++) diff = Math.max(diff, Math.abs(x[i]! - y[i]!));
+      return diff;
+    });
+    return diffs.length === 1 ? diffs[0]! : diffs;
   };
   it('what the hint makes is kept: stacking context, blend group, containing block, 3D planes and a backdrop-filter child', async () => {
-    const diffs = { structure: await maxDiff('hint', 'reference'), threeD: await maxDiff('hint3d', 'reference3d'), backdrop: await maxDiff('hintBackdrop', 'referenceBackdrop') };
+    const diffs = { structure: await maxDiff('hint', 'reference'), threeD: await maxDiff('hint3d', 'reference3d'), backdrop: await maxDiff('hintBackdrop', 'referenceBackdrop'),
+      late: await maxDiff('hintLate', 'referenceLate', [0, 0.35, 0.7]) };
     console.info('[sharpness] structure differences:', JSON.stringify(diffs));
-    expect(diffs).toEqual({ structure: 0, threeD: 0, backdrop: 0 });
+    expect(diffs).toEqual({ structure: 0, threeD: 0, backdrop: 0, late: [0, 0, 0] });
   });
 });
