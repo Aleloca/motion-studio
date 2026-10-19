@@ -12,9 +12,14 @@ const api = {
   getConversation: vi.fn(async () => []),
   sendCreativeTurn: vi.fn(),
   fileUrl: (s: string, c: string, rel: string) => `/files/${s}/${c}/${rel}`,
+  getStoryboard: vi.fn(async (_s: string, _c: string, _n: number, f: string) => storyboardOf(f)),
 };
+const storyboardOf = (format: string) => ({ format, hash: 'a'.repeat(64), width: 270, expiresAt: new Date(Date.now() + 600_000).toISOString(),
+  frames: [{ t: 3, kind: 'poster', url: `/sb/${format}/poster.jpg`, width: 270, height: 480 }] });
+
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { ProjectCreatives } = await import('../src/screens/ProjectCreatives.tsx');
+const { __resetStills } = await import('../src/components/compositionStill.ts');
 
 const at = '2026-10-08T10:00:00.000Z';
 const item = (slug: string, title: string, status: string, over: Record<string, unknown> = {}): CreativeListItem =>
@@ -46,7 +51,7 @@ const radio = (name: RegExp) => screen.getByRole('radio', { name });
 const cards = () => screen.getAllByRole('article');
 const card = (title: string) => cards().find((c) => within(c).queryByText(title))!;
 
-beforeEach(() => { history.replaceState(null, '', '/#/p/acme'); });
+beforeEach(() => { __resetStills(); history.replaceState(null, '', '/#/p/acme'); });
 afterEach(() => { vi.clearAllMocks(); history.replaceState(null, '', '/'); });
 
 describe('ProjectCreatives filters', () => {
@@ -252,6 +257,23 @@ describe('ProjectCreatives cards', () => {
     expect(ratio(frames[1]!)).toBeCloseTo(1, 2);
     // Formats as tags with the channel mark.
     expect(within(card('App Store screenshots')).getByText('Story/Reel 9:16')).toBeTruthy();
+  });
+
+  it('reports 45/47: a never-rendered creative shows a still of its composition; without one the dashed frames stay', async () => {
+    const still = item('desk', 'Audin Desk', 'ready', { cover: null, coverFrame: { n: 1, format: 'instagram-reel-9x16', hash: 'a'.repeat(64) } });
+    api.listCreatives.mockResolvedValue([still]);
+    const { unmount } = en(<ProjectCreatives slug="acme" live={live()} />);
+    await screen.findByText('Audin Desk');
+    await waitFor(() => expect(card('Audin Desk').querySelector('.ms-ccard-frame-out img')?.getAttribute('src')).toBe('/sb/instagram-reel-9x16/poster.jpg'));
+    expect(card('Audin Desk').querySelector('.ms-ccard-frame-empty')).toBeNull();
+    unmount();
+    __resetStills();
+    api.getStoryboard.mockRejectedValueOnce(Object.assign(new Error('none'), { status: 404 }));
+    en(<ProjectCreatives slug="acme" live={live()} />);
+    await screen.findByText('Audin Desk');
+    await waitFor(() => expect(api.getStoryboard).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(card('Audin Desk').querySelector('.ms-ccard-frame-empty')).toBeTruthy());
+    expect(card('Audin Desk').querySelector('img')).toBeNull();
   });
 
   it('links each card to its creative', async () => {

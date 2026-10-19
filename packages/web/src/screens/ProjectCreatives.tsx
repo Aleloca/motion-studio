@@ -12,6 +12,7 @@ import { Button, ChannelMark, CountdownRing, Empty, Icon, Pill, Segmented, Tag, 
 import { CREATIVE_FILTERS, channelOf, frames, liveCreative, matches, retryTurn, type CreativeFilter, type LiveCreative } from './creativeState.ts';
 import './creatives.css';
 import { message } from './common.tsx';
+import { useCompositionStill, useSeen } from '../components/compositionStill.ts';
 import { CoverMedia } from '../components/MediaThumb.tsx';
 import { coverVideo } from '../media.ts';
 import { missingList } from './variants/variantModel.ts';
@@ -303,12 +304,16 @@ function CreativeCard({ slug, c, info, presets, index, fresh, onChanged }: CardP
 function Previews({ slug, c, presets, state }: { slug: string; c: CreativeSummary; presets: FormatPreset[]; state: LiveCreative['state'] }) {
   const s = useT().web.creatives;
   const [natural, setNatural] = useState<number | null>(null);
-  if (c.cover && c.versions > 0) {
+  // Reports 45/47: without a file, a still of the latest version's composition, asked once the card is on screen.
+  const { ref, seen } = useSeen<HTMLDivElement>();
+  const still = !c.cover && c.coverFrame && c.versions > 0 ? { ...c.coverFrame, slug, creative: c.slug } : null;
+  const frame = useCompositionStill(still, seen);
+  if ((c.cover || (still && frame.state !== 'none')) && c.versions > 0) {
     const preset = c.formats[0] ? presetFor(presets, c.formats[0]) : null;
     const aspect = natural ?? (preset ? preset.width / preset.height : 1);
     const h = Math.min(STAGE.height, STAGE.maxWidth / aspect);
-    const src = api.fileUrl(slug, c.slug, c.cover);
-    const moving = coverVideo(c.cover);
+    const src = c.cover ? api.fileUrl(slug, c.slug, c.cover) : frame.url;
+    const moving = c.cover ? coverVideo(c.cover) : null;
     const video = moving ? api.fileUrl(slug, c.slug, moving) : null;
     const onLoad = (e: SyntheticEvent<HTMLImageElement | HTMLVideoElement>) => {
       const el = e.currentTarget;
@@ -317,8 +322,8 @@ function Previews({ slug, c, presets, state }: { slug: string; c: CreativeSummar
     };
     return (
       <>
-        <div className="ms-ccard-frame ms-ccard-frame-out" style={{ width: Math.round(h * aspect), height: Math.round(h) }}>
-          <CoverMedia src={src} video={video} onLoad={onLoad} />
+        <div ref={ref} className="ms-ccard-frame ms-ccard-frame-out" style={{ width: Math.round(h * aspect), height: Math.round(h) }}>
+          {src ? <CoverMedia src={src} video={video} onLoad={onLoad} /> : null}
           {state === 'running' ? <span className="ms-shimmer" aria-hidden="true" /> : null}
           {state === 'failed' || state === 'interrupted' ? <span className="ms-ccard-frame-warn" aria-hidden="true"><Icon name="warn" size={16} strokeWidth={1.6} /></span> : null}
         </div>
