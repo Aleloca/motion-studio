@@ -321,6 +321,13 @@ arrives and worked on later together.
     without a render file, a thumbnail is a frame of the composition. Done (decisions 1302–1304): the ★ export and the
     group export show the storyboard poster of each format rendered first.
 
+48. **The store pack export cannot export a part of the pack.** "Export the store pack" (2026-10-19, after decision
+    1300 moved it to the top bar Export) has only the destination and "Export the pack": everything or nothing. The
+    user wants to pick by hand what to export from a pack.
+    User's call: above the destination, the pack's files grouped by store and device, each with its thumbnail and a
+    checkbox, plus a checkbox per group; everything checked by default; the store folders and the store checks stay
+    the same; the button counts the files ("Esporta 18 file"). To do with the next reports.
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
