@@ -50,6 +50,12 @@ export function exportActivity(jobs: readonly JobSummary[], jobKey: string | nul
   return { kind: 'render', pct: renders.some((j) => j.state === 'running') ? renderJobsPct(renders) : null };
 }
 
+/** The control's running width animations (its `stretch`), not its other transitions. */
+function widthAnimations(el: Element): Animation[] {
+  if (typeof el.getAnimations !== 'function') return [];
+  return el.getAnimations().filter((a) => (a.effect as KeyframeEffect | null)?.getKeyframes?.().some((k) => 'width' in k) === true);
+}
+
 export function ExportButton({ jobs, jobKey, scope, disabled, secondary, onClick }: ExportButtonProps) {
   const t = useT();
   const x = t.web.exportUi;
@@ -60,16 +66,23 @@ export function ExportButton({ jobs, jobKey, scope, disabled, secondary, onClick
     : a.pct !== null ? r.rendering({ pct: a.pct }) : r.queued;
   const widest = [x.exportingPct({ pct: 100 }), x.running, r.rendering({ pct: 100 }), r.queued];
   const working = a !== null;
-  // The width it had at its last layout: when it starts or stops working it moves from there to its new width.
+  // Its laid-out width (never an in-flight one): when it starts or stops working it moves from there to its new width, or from
+  // where a stretch still running has got to (an export that fails mid-grow shrinks back from there: decision 1335).
   const ref = useRef<HTMLButtonElement>(null);
   const width = useRef<number | null>(null);
   const was = useRef(working);
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    if (was.current !== working && width.current !== null) void stretch(el, width.current);
+    const moving = widthAnimations(el);
+    if (was.current !== working) {
+      const shown = el.getBoundingClientRect().width;
+      for (const m of moving) m.cancel();
+      const now = el.getBoundingClientRect().width;
+      if (width.current !== null) void stretch(el, moving.length ? shown : width.current);
+      width.current = now;
+    } else if (!moving.length) width.current = el.getBoundingClientRect().width;
     was.current = working;
-    width.current = el.getBoundingClientRect().width;
   });
   return (
     <Button ref={ref} variant={secondary ? 'outline' : 'ink'} className={cx('ms-cv-export ms-exp-ctl', a && 'ms-working')} disabled={disabled} onClick={onClick}>
