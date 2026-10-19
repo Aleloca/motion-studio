@@ -231,10 +231,38 @@ describe('createUnfreezer', () => {
     u.run();
     expect(wc(d, 'a')).toBe('auto|important|u');
     const spy = vi.spyOn(d.defaultView!, 'getComputedStyle');
-    a.removeAttribute('data-ms-u'); // a record our filter drops: no scan
+    // Decision 1261: a mark the layer strips comes back at the next run, without computing any style.
+    a.removeAttribute('data-ms-u');
     u.run();
+    expect(wc(d, 'a')).toBe('auto|important|u');
+    a.setAttribute('data-ms-u', 'x');
+    a.removeAttribute('data-ms-u');
+    u.run();
+    expect(wc(d, 'a')).toBe('auto|important|u');
     expect(spy).toHaveBeenCalledTimes(0);
     spy.mockRestore();
+  });
+  it('decision 1260: removed elements are let go (their own hint given back); one put back is decided again', () => {
+    const d = doc('<div id="w"></div>');
+    const u = createUnfreezer(d);
+    u.run();
+    const w = d.getElementById('w')!;
+    for (let f = 0; f < 50; f++) {
+      const p = d.createElement('i'); p.style.setProperty('will-change', 'transform'); w.append(p);
+      u.run();
+      expect(p.hasAttribute('data-ms-u')).toBe(true);
+      p.remove();
+    }
+    u.run();
+    expect(u.tracked()).toBe(0);
+    const p = d.createElement('i'); p.id = 'p'; p.style.setProperty('will-change', 'transform'); w.append(p);
+    u.run();
+    p.remove();
+    u.run();
+    expect(wc({ getElementById: () => p } as unknown as Document, 'p')).toBe('transform||');
+    w.append(p);
+    u.run();
+    expect([wc(d, 'p'), u.tracked()]).toEqual(['auto|important|u', 1]);
   });
   it('decision 1256: a mark copied by cloneNode or markup goes; a full scan strips every mark it did not write', () => {
     const d = doc('<div id="a" style="will-change: transform"><i>x</i></div><div id="w"></div>');
