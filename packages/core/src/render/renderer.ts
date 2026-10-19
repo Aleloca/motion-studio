@@ -213,7 +213,7 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
     const scaled = size.width !== c.width || size.height !== c.height;
     const dsf = size.width / c.width;
     const openPage = async () => {
-      const p = await o.provider.open({ width: c.width, height: c.height, url: session!.url, signal: ctl.signal, purpose: 'render', ...(clock ? { clockSource: clock } : {}),
+      const p = await o.provider.open({ width: c.width, height: c.height, url: session!.url, signal: ctl.signal, purpose: 'render', ...(still ? {} : { rawFrames: true }), ...(clock ? { clockSource: clock } : {}),
         ...(scaled ? { deviceScaleFactor: dsf } : {}) });
       pages.push(p);
       const bad = failing(p.info.errors);

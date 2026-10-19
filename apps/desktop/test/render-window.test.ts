@@ -15,13 +15,13 @@ vi.mock('electron', () => ({
   BrowserWindow: vi.fn(),
   session: { fromPartition: vi.fn() },
   // The raw frame check (report 56) decodes the PNG with nativeImage: here the "PNG" is the BGRA bytes themselves.
-  nativeImage: { createFromBuffer: vi.fn((b: Buffer) => ({ toBitmap: () => b, getSize: () => ({ width: b.length / 4, height: 1 }) })) },
+  nativeImage: { createFromBuffer: vi.fn((b: Buffer) => ({ toBitmap: () => b, isEmpty: () => b.length === 0, getSize: () => ({ width: b.length / 4, height: b.length ? 1 : 0 }) })) },
 }));
 
 const {
   renderWindowOptions, renderProxyConfig, renderRequestAllowed, lockRenderSession, closeRenderWindow, DebuggerCdpClient,
   ElectronProvider, RENDER_PARTITION_PREFIX, desktopRenderOptions, DESKTOP_RENDER_PARALLEL, rawFrames, captureWindowFrame, guardedRawCapture,
-  compareRawFrame, checkRawFrames, rawFramesChecked, rawFrameChecks, resetRawFrameChecks,
+  compareRawFrame, checkRawFrames, rawFramesChecked, rawFrameChecks, resetRawFrameChecks, pageRawFrames, evaluateValue, RawCheckCleanupError,
 } = await import('../src/render-window.ts');
 
 const PREFIX = 'http://127.0.0.1:43210/abcdefghijklmnop0123/';
@@ -350,16 +350,70 @@ describe('ElectronProvider', () => {
     expect(compareRawFrame({ data: px(10, 20, 30, 255), width: 1, height: 1 }, png).same).toBe(false);
   });
 
-  it('report 56: the check paints its pattern, seeks, reads the PNG first, then raw, and always takes the pattern away', async () => {
+  it('report 56: the check paints its pattern (no seek of the composition), reads the PNG first, then raw, and always takes the pattern away', async () => {
     const steps: string[] = [];
     const bgra = Buffer.from([1, 2, 3, 255]);
-    const page = { seek: async (t: number) => { steps.push(`seek ${t}`); }, capture: async () => { steps.push('png'); return bgra; } };
-    const evaluate = async (e: string) => { steps.push(e.includes('remove()') ? 'unpaint' : 'paint'); return true; };
-    await expect(checkRawFrames(page as never, evaluate, async () => { steps.push('raw'); return { data: bgra, width: 1, height: 1 }; })).resolves.toMatchObject({ same: true });
-    expect(steps).toEqual(['paint', 'seek 0', 'png', 'raw', 'unpaint']);
+    let removal: () => unknown = () => true;
+    const page = { seek: async () => { steps.push('seek'); }, capture: async () => { steps.push('png'); return png; } };
+    let png = bgra;
+    const evaluate = async (e: string) => { const remove = e.includes('remove()'); steps.push(remove ? 'unpaint' : 'paint'); return remove ? removal() : true; };
+    const read = async () => { steps.push('raw'); return { data: bgra, width: 1, height: 1 }; };
+    await expect(checkRawFrames(page as never, evaluate, read)).resolves.toMatchObject({ same: true });
+    expect(steps).toEqual(['paint', 'png', 'raw', 'unpaint']);
+    // An error of the check is thrown after the removal; an empty PNG is an error, not a difference.
     steps.length = 0;
     await expect(checkRawFrames(page as never, evaluate, async () => { throw new Error('gone'); })).rejects.toThrow('gone');
     expect(steps.at(-1)).toBe('unpaint');
+    png = Buffer.alloc(0);
+    await expect(checkRawFrames(page as never, evaluate, read)).rejects.toThrow(/empty/);
+    png = bgra;
+    // A removal that finds the pattern still there, or throws (a timeout, an exception in the page): a cleanup error,
+    // even when the comparison passed or failed for another reason.
+    removal = () => false;
+    await expect(checkRawFrames(page as never, evaluate, read)).rejects.toBeInstanceOf(RawCheckCleanupError);
+    removal = () => { throw new Error('timed out'); };
+    await expect(checkRawFrames(page as never, evaluate, async () => { throw new Error('gone'); })).rejects.toBeInstanceOf(RawCheckCleanupError);
+  });
+
+  it('report 56: an evaluate that threw in the page is an error, not a value', async () => {
+    await expect(evaluateValue(async () => ({ result: { value: true } }), 'x')).resolves.toBe(true);
+    await expect(evaluateValue(async () => ({ result: { type: 'object' }, exceptionDetails: { text: 'Uncaught', exception: { description: 'TypeError: boom' } } }), 'x')).rejects.toThrow('TypeError: boom');
+  });
+
+  it('report 56: which pages read raw: only a caller asking for them, at a raw scale, after a passed check; a dirty check fails the open', async () => {
+    resetRawFrameChecks();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const same = { same: true, differing: 0, max: 0, opaque: true, width: 4, height: 4 };
+      const check = vi.fn(async () => same);
+      // A storyboard or a still (no `rawFrames`), a scale below 1, a transparent page: no check, no raw frames.
+      expect(await pageRawFrames({ purpose: 'frames' } as never, check)).toBe(false);
+      expect(await pageRawFrames({}, check)).toBe(false);
+      expect(await pageRawFrames({ rawFrames: true, deviceScaleFactor: 0.5 }, check)).toBe(false);
+      expect(await pageRawFrames({ rawFrames: true, transparentBackground: true }, check)).toBe(false);
+      expect(check).not.toHaveBeenCalled();
+      expect(await pageRawFrames({ rawFrames: true }, check)).toBe(true);
+      // Not the same: PNG frames; a check that rejects: PNG frames for this page, the page still usable.
+      expect(await pageRawFrames({ rawFrames: true, deviceScaleFactor: 2 }, async () => ({ ...same, same: false }))).toBe(false);
+      expect(await pageRawFrames({ rawFrames: true, deviceScaleFactor: 3 }, async () => { throw new Error('timeout'); })).toBe(false);
+      // The pattern left on the page: the open fails (the provider closes the window), and the next page checks again.
+      await expect(pageRawFrames({ rawFrames: true, deviceScaleFactor: 4 }, async () => { throw new RawCheckCleanupError('still there'); })).rejects.toMatchObject({ code: 'loadFailed' });
+      expect(await pageRawFrames({ rawFrames: true, deviceScaleFactor: 4 }, check)).toBe(true);
+    } finally {
+      warn.mockRestore();
+      resetRawFrameChecks();
+    }
+  });
+
+  it('report 56: the provider opens through pageRawFrames inside its failure path (a dirty check closes the window)', () => {
+    const src = readFileSync(join(import.meta.dirname, '..', 'src', 'render-window.ts'), 'utf8');
+    const start = src.indexOf('private async drive(');
+    const drive = src.slice(start, src.indexOf('  close(): Promise<void> {', start));
+    const tryAt = drive.indexOf('try {'), checkAt = drive.indexOf('await pageRawFrames('), catchAt = drive.indexOf('} catch (e) {');
+    expect(tryAt).toBeGreaterThan(-1);
+    expect(checkAt).toBeGreaterThan(tryAt);
+    expect(catchAt).toBeGreaterThan(checkAt);
+    expect(drive.slice(catchAt)).toContain('await end();');
   });
 
   it('report 56: one check per scale for the app\'s life; a difference keeps PNG frames there, a failed check is made again', async () => {

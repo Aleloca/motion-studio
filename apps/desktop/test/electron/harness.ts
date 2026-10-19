@@ -616,7 +616,7 @@ async function run(): Promise<void> {
       try {
         const comp = c.composition!;
         const s = await server.mintSession({ creativeDir: c.creative!, versionDir: 'outputs/v1', format: c.format!, composition: comp, mode: 'render' });
-        const page = await provider.open({ width: comp.width, height: comp.height, url: s.url, signal: new AbortController().signal });
+        const page = await provider.open({ width: comp.width, height: comp.height, url: s.url, signal: new AbortController().signal, rawFrames: true });
         if (!page.captureRaw) throw new Error('raw-check: the page has no raw frames');
         const rows: unknown[] = [];
         for (const t of c.rawCheck!.times) {
