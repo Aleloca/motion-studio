@@ -36,6 +36,20 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
     ctx.broadcast({ type: 'library', project: slug });
     if (brandToo) ctx.broadcast({ type: 'brand', project: slug });
   };
+  /**
+   * Report 44: the project's icon chosen from the image `from` follows it: to its new name `to`, or back to automatic when it
+   * was deleted (null). Best effort: the asset change already went through, so a failure here is only logged.
+   */
+  const followIcon = async (ws: WorkspaceStore, slug: string, from: string, to: string | null) => {
+    try {
+      const icon = (await ws.getProject(slug)).icon;
+      if (typeof icon !== 'object' || icon.asset !== from) return;
+      await ws.updateProject(slug, { icon: to === null ? null : { asset: to } });
+      ctx.broadcast({ type: 'project', project: slug });
+    } catch (e) {
+      console.warn(`Motion Studio: the project icon of ${slug} did not follow ${from}: ${message(e)}`);
+    }
+  };
   /** Saved files whose registration failed must not stay behind as unregistered leftovers. */
   const registerOrRemove = async <T>(dir: string, saved: string[], register: () => Promise<T>): Promise<T> => {
     try { return await register(); }
@@ -99,14 +113,8 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
       if (renamed) await done(projectDir, req.params.slug, t().jobs.renameAssetCommit({ from: renamed.from, to: file }), renamed.brand).catch(() => {});
     }
     if (!renamed) await done(projectDir, req.params.slug, t().jobs.updateAssetCommit({ file: entry!.file }));
-    // Report 44: the project's icon chosen from this image follows its new name.
-    else {
-      const icon = (await ws.getProject(req.params.slug)).icon;
-      if (typeof icon === 'object' && icon.asset === renamed.from) {
-        await ws.updateProject(req.params.slug, { icon: { asset: file } });
-        ctx.broadcast({ type: 'project', project: req.params.slug });
-      }
-    }
+    // Report 44: the project's icon chosen from this image follows its new name (never failing the rename, review 7).
+    else await followIcon(ws, req.params.slug, renamed.from, file);
     for (const creative of renamed?.creatives ?? []) ctx.broadcast({ type: 'creative', project: req.params.slug, creative });
     return entry;
   });
@@ -123,9 +131,11 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
   });
 
   app.delete<{ Params: { slug: string; '*': string } }>('/api/projects/:slug/assets/item/*', async (req) => {
-    const { lib, projectDir } = await project(req.params.slug);
+    const { ws, lib, projectDir } = await project(req.params.slug);
     await lib.removeAsset(req.params['*']);
     await done(projectDir, req.params.slug, t().jobs.deleteAssetCommit({ file: req.params['*'] }));
+    // Review 5: an icon chosen from this image goes back to automatic.
+    await followIcon(ws, req.params.slug, req.params['*'], null);
     return { ok: true };
   });
 

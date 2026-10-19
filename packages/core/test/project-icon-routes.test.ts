@@ -1,14 +1,15 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import { EMPTY_BRAND_KIT } from '@motion-studio/shared';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AppConfigStore } from '../src/app-config.ts';
 import { Git } from '../src/git.ts';
 import { buildServer } from '../src/server/app.ts';
+import { WorkspaceStore } from '../src/workspace-store.ts';
 import { multipart } from './helpers/multipart.ts';
 
 // Report 44: the project's icon, automatic from the brand and the library, or chosen in Project settings.
@@ -29,7 +30,7 @@ beforeEach(async () => {
   await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Acme' } });
   await app.inject({ method: 'POST', url: `${P}/assets`, ...multipart([{ name: 'mark.png', content: 'p' }, { name: 'pick.png', content: 'p' }, { name: 'Inter.woff2', content: 'f' }]) });
 });
-afterEach(async () => { await app.close(); });
+afterEach(async () => { vi.restoreAllMocks(); await app.close(); });
 
 describe('project icon', () => {
   it('automatic: the brand\'s icon logo, in the list and the detail; the initials (null) when its file is gone', async () => {
@@ -69,6 +70,56 @@ describe('project icon', () => {
     const r = await app.inject({ method: 'PATCH', url: `${P}/assets/item/pick.png`, payload: { name: 'chosen.png' } });
     expect(r.json(), r.body).toMatchObject({ file: 'chosen.png' });
     expect((await detail())).toMatchObject({ project: { icon: { asset: 'chosen.png' } }, icon: 'assets/chosen.png' });
+  });
+
+  it('review 7: the icon failing to follow a rename never fails the rename', async () => {
+    await put({ icon: { asset: 'pick.png' } });
+    vi.spyOn(WorkspaceStore.prototype, 'updateProject').mockRejectedValue(new Error('disk full'));
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = await app.inject({ method: 'PATCH', url: `${P}/assets/item/pick.png`, payload: { name: 'chosen.png' } });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ file: 'chosen.png' });
+  });
+
+  it('review 4: an icon logo whose file is gone gives way to the next candidate', async () => {
+    await mkdir(join(dir(), 'brand'), { recursive: true });
+    await writeFile(join(dir(), 'brand', 'brand-kit.json'), JSON.stringify({ ...EMPTY_BRAND_KIT, logos: [
+      { id: 'gone', file: 'assets/gone.png', variant: 'icon', background: 'any', source: { kind: 'manual', ref: null } },
+      { id: 'refs', file: 'references/icon.png', variant: 'icon', background: 'any', source: { kind: 'manual', ref: null } },
+    ] }));
+    await app.inject({ method: 'POST', url: `${P}/assets`, ...multipart([{ name: 'favicon.png', content: 'p' }]) });
+    expect((await listed()).icon).toBe('assets/favicon.png');
+  });
+
+  it('review 1: a bad icon in project.json leaves the project readable (automatic)', async () => {
+    const file = join(dir(), 'project.json');
+    await writeFile(file, JSON.stringify({ ...JSON.parse(await readFile(file, 'utf8')), icon: { asset: '../../x.png' } }));
+    const item = await listed();
+    expect(item.ok).toBe(true);
+    expect(item.project.icon).toBeUndefined();
+  });
+
+  it('review 5: deleting the chosen image resets the icon to automatic', async () => {
+    await put({ icon: { asset: 'pick.png' } });
+    expect((await app.inject({ method: 'DELETE', url: `${P}/assets/item/pick.png` })).statusCode).toBe(200);
+    expect((await detail()).project.icon).toBeUndefined();
+    // Another image chosen is kept when an unrelated one is deleted.
+    await put({ icon: { asset: 'mark.png' } });
+    await app.inject({ method: 'DELETE', url: `${P}/assets/item/Inter.woff2` });
+    expect((await detail()).project.icon).toEqual({ asset: 'mark.png' });
+  });
+
+  it('a symlinked image of the library is never the icon', async () => {
+    await writeFile(join(base, 'outside.png'), 'p');
+    await symlink(join(base, 'outside.png'), join(dir(), 'assets', 'link.png'));
+    const json = join(dir(), 'assets', 'assets.json');
+    const lib = JSON.parse(await readFile(json, 'utf8'));
+    lib.assets.push({ ...lib.assets[0], file: 'link.png' });
+    await writeFile(json, JSON.stringify(lib));
+    expect((await put({ icon: { asset: 'link.png' } })).statusCode).toBe(400);
+    const file = join(dir(), 'project.json');
+    await writeFile(file, JSON.stringify({ ...JSON.parse(await readFile(file, 'utf8')), icon: { asset: 'link.png' } }));
+    expect((await detail()).icon).toBeNull();
   });
 
   it('refuses a file that is not an image of the library', async () => {

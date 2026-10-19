@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { autoProjectIcon, EMPTY_BRAND_KIT, projectFileSchema, type AssetEntry, type BrandKit } from '../src/index.ts';
+import { autoProjectIcon, projectIconCandidates, EMPTY_BRAND_KIT, projectFileSchema, projectIconSchema, type AssetEntry, type BrandKit } from '../src/index.ts';
 
 // Report 44: the project's icon, automatic from the brand and the library, or chosen.
 const at = '2026-10-19T10:00:00.000Z';
@@ -15,8 +15,10 @@ describe('project icon', () => {
     expect(projectFileSchema.parse(base).icon).toBeUndefined();
     expect(projectFileSchema.parse({ ...base, icon: { asset: 'brand/icon.png' } }).icon).toEqual({ asset: 'brand/icon.png' });
     expect(projectFileSchema.parse({ ...base, icon: 'initials' }).icon).toBe('initials');
-    expect(projectFileSchema.safeParse({ ...base, icon: { asset: '../x.png' } }).success).toBe(false);
-    expect(projectFileSchema.safeParse({ ...base, icon: 'logo' }).success).toBe(false);
+    // Review 1: a bad icon never makes the project unreadable: it reads as automatic.
+    expect(projectFileSchema.parse({ ...base, icon: { asset: '../x.png' } }).icon).toBeUndefined();
+    expect(projectFileSchema.parse({ ...base, icon: 'logo' }).icon).toBeUndefined();
+    expect(projectIconSchema.safeParse('logo').success).toBe(false);
   });
 
   it('automatic: the brand\'s icon logo first, then an app icon or favicon of the library, then a square logo', () => {
@@ -28,6 +30,13 @@ describe('project icon', () => {
     expect(autoProjectIcon(kit([logo('assets/brand/wide-logo.png', 'primary'), logo('assets/brand/mark.png', 'secondary')]), [lib[0]!, lib[3]!])).toBe('assets/brand/mark.png');
     expect(autoProjectIcon(kit([logo('assets/brand/wide-logo.png', 'primary')]), [lib[0]!])).toBeNull();
     expect(autoProjectIcon(EMPTY_BRAND_KIT, [])).toBeNull();
+  });
+
+  it('review 4: the candidates in order, only under assets/; an icon logo elsewhere does not hide the next rules', () => {
+    const lib = [asset('brand/favicon.png', { width: 64, height: 64 }), asset('brand/mark.png', { width: 300, height: 300 })];
+    const k = kit([logo('references/icon.png', 'icon'), logo('assets/brand/gone.png', 'icon'), logo('assets/brand/mark.png', 'secondary')]);
+    expect(projectIconCandidates(k, lib)).toEqual(['assets/brand/gone.png', 'assets/brand/favicon.png', 'assets/brand/mark.png']);
+    expect(autoProjectIcon(kit([logo('references/icon.png', 'icon')]), lib)).toBe('assets/brand/favicon.png');
   });
 
   it('automatic: a wide app icon is not one, and fonts or videos never are', () => {

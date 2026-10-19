@@ -112,8 +112,9 @@ export const projectFileSchema = z.object({
   linkedCodebases: z.array(linkedCodebaseSchema),
   /**
    * Report 44: the project's icon. Absent: automatic (`autoProjectIcon`, else the initials); `{ asset }`: an image of the
-   * library (its path relative to `assets/`); `'initials'`: the initials, even when the brand has an icon.
+   * library (its path relative to `assets/`); `'initials'`: the initials, even when the brand has an icon. A bad value
+   * reads as absent (review 1): it never makes the project unreadable.
    */
-  icon: projectIconSchema.optional(),
+  icon: projectIconSchema.optional().catch(undefined),
 });
 export type ProjectFile = z.infer<typeof projectFileSchema>;
