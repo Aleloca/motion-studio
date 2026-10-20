@@ -515,7 +515,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   const panelSnapshot = useCallback(() => ({ form: snap.current, userEdited: [...owned.current], baseRevision: revision.current }), []);
 
   /** "Agente" beside a field's label while the field is the agent's. */
-  const agentMark = (f: BriefField) => (agentFields.has(f) ? <Pill tone="accent" className="ms-nc-agent">{t.web.briefSession.agentMark}</Pill> : null);
+  const agentMark = (f: BriefField) => (agentFields.has(f) ? <Pill tone="accent" className="ms-nc-agentmark">{t.web.briefSession.agentMark}</Pill> : null);
 
   return (
     <div className={cx('ms-nc', mode === 'agent' && 'ms-nc-agent')} ref={root}>
