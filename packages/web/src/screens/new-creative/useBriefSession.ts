@@ -100,6 +100,15 @@ export function useBriefSession(slug: string, live: EventsState | undefined): Br
     void load(fill && fill.seq !== state.lastFill?.seq ? { seq: fill.seq, written: fill.written, reclaimed: fill.reclaimed } : null);
   }, [tick, fillSeq]); // eslint-disable-line react-hooks/exhaustive-deps -- a tick (each brief-session message) is the trigger
 
+  // A reconnection (a new snapshot) may have missed brief-session messages: the session is read again.
+  const snapshots = live?.snapshots ?? 0;
+  const lastSnapshots = useRef(snapshots);
+  useEffect(() => {
+    if (snapshots === lastSnapshots.current) return;
+    lastSnapshots.current = snapshots;
+    void load(null);
+  }, [snapshots, load]);
+
   // The latest brief job of this project that belongs to the session (its own job, one of its turns, or one this page started).
   const job = useMemo(() => {
     const s = state.session;

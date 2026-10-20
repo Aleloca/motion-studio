@@ -37,6 +37,13 @@ describe('useBriefSession (decision 1422)', () => {
     expect(api.getBriefSession).toHaveBeenCalledTimes(2);
   });
 
+  it('a reconnection (new snapshot) reads the session again', async () => {
+    const { result, rerender } = renderHook(({ l }) => useBriefSession('acme', l), { initialProps: { l: live({ snapshots: 1 }) } });
+    await waitFor(() => expect(result.current.session?.id).toBe('s1'));
+    rerender({ l: live({ snapshots: 2 }) });
+    await waitFor(() => expect(api.getBriefSession).toHaveBeenCalledTimes(2));
+  });
+
   it('a fill tick refetches and then says which fields the agent wrote', async () => {
     const { result, rerender } = renderHook(({ l }) => useBriefSession('acme', l), { initialProps: { l: live() } });
     await waitFor(() => expect(result.current.session?.id).toBe('s1'));
