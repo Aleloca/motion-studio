@@ -13,7 +13,11 @@ import { DEFAULT_ALLOWED_DOMAINS, sensitiveHomeEntries, sensitiveHomePaths } fro
  * the project and acts through its `studio` tools (it hands the work on files to the variants' own turns): no editing tool,
  * no Bash, no paid tool.
  */
-export type AgentJobKind = 'creative' | 'brand-analysis' | 'describe' | 'console' | 'localize' | 'variant-directions' | 'creative-group';
+/**
+ * `brief` (decision 1421): a project's brief session. It reads the project and the linked folders (secrets scanned as a brand
+ * analysis does) and writes only the New creative form, through `fill_brief`: no editing tool, no Bash, no Grep, no network.
+ */
+export type AgentJobKind = 'creative' | 'brand-analysis' | 'describe' | 'console' | 'localize' | 'variant-directions' | 'creative-group' | 'brief';
 export interface PolicyInput {
   kind: AgentJobKind; sandbox: boolean; projectDir?: string; home: string; configDir: string;
   codebases: string[]; protectedFiles: string[];
@@ -27,8 +31,9 @@ export interface PolicyInput {
   /** Workspace setting: sandboxed Bash runs without asking (only meaningful with `sandbox`). */
   autoApproveSandboxed: boolean;
   /**
-   * Brand analysis of codebases (Phase 14): the secret files and folders found in them when the job starts (absolute, every
-   * spelling; see findCodebaseSecrets). Denied to Read by exact path and, with the sandbox, listed in denyRead.
+   * Brand analysis of codebases (Phase 14) and brief sessions (decision 1421): the secret files and folders found in them when
+   * the job starts (absolute, every spelling; see findCodebaseSecrets). Denied to Read by exact path and, with the sandbox,
+   * listed in denyRead.
    */
   codebaseSecrets?: { files: string[]; dirs: string[] };
   /**
@@ -81,8 +86,10 @@ export const sandboxPath = (p: string): string => p.replace(/[[*?]/g, (c) => (c 
 const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 /** Phase 3: the coordinator reads the project (its own folders, the variants' compositions) and nothing else. */
 const COORDINATOR_TOOLS = ['Read', 'Glob', 'Grep'];
-const SANDBOXED_TOOLS: Record<AgentJobKind, readonly string[]> = { creative: [], console: [], 'brand-analysis': BRAND_ANALYSIS_TOOLS, describe: DESCRIBE_TOOLS, localize: LOCALIZE_TOOLS, 'variant-directions': [], 'creative-group': COORDINATOR_TOOLS };
-const LEGACY_TOOLS: Record<AgentJobKind, readonly string[]> = { creative: AGENT_ALLOWED_TOOLS, console: [], 'brand-analysis': BRAND_ANALYSIS_TOOLS, describe: DESCRIBE_TOOLS, localize: LOCALIZE_TOOLS, 'variant-directions': [], 'creative-group': COORDINATOR_TOOLS };
+const SANDBOXED_TOOLS: Record<AgentJobKind, readonly string[]> = { creative: [], console: [], 'brand-analysis': BRAND_ANALYSIS_TOOLS, describe: DESCRIBE_TOOLS, localize: LOCALIZE_TOOLS, 'variant-directions': [], 'creative-group': COORDINATOR_TOOLS, brief: [] };
+const LEGACY_TOOLS: Record<AgentJobKind, readonly string[]> = { creative: AGENT_ALLOWED_TOOLS, console: [], 'brand-analysis': BRAND_ANALYSIS_TOOLS, describe: DESCRIBE_TOOLS, localize: LOCALIZE_TOOLS, 'variant-directions': [], 'creative-group': COORDINATOR_TOOLS, brief: [] };
+/** Decision 1421: what a brief session never uses, wherever (it only reads and fills the form; Grep could cross a secret file). */
+const BRIEF_DENIED_TOOLS = [...EDIT_TOOLS, 'Bash', 'Grep', 'WebFetch', 'WebSearch'];
 const unique = (xs: string[]) => [...new Set(xs)];
 
 export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
@@ -91,11 +98,14 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
   // Phase 14 (spec §2.2): a brand analysis reads its codebases whole, read-only, never their secret files. Every editing tool
   // is denied there (not only Edit), and Read is denied on the secret patterns (both cases) and on the secrets found now.
   const brandCodebases = i.kind === 'brand-analysis' && i.codebases.length > 0;
-  const secretFiles = brandCodebases ? i.codebaseSecrets?.files ?? [] : [];
-  const secretDirs = brandCodebases ? i.codebaseSecrets?.dirs ?? [] : [];
+  // Decision 1421: a brief session's codebases get the same read-only treatment and secrets scan as a brand analysis's.
+  const scansSecrets = (i.kind === 'brand-analysis' || i.kind === 'brief') && i.codebases.length > 0;
+  const brief = i.kind === 'brief';
+  const secretFiles = scansSecrets ? i.codebaseSecrets?.files ?? [] : [];
+  const secretDirs = scansSecrets ? i.codebaseSecrets?.dirs ?? [] : [];
   const disallowedTools = [
     ...readOnlyRules(i.codebases),
-    ...(brandCodebases ? [
+    ...(scansSecrets ? [
       ...dirDenyRules(EDIT_TOOLS.filter((t) => t !== 'Edit'), i.codebases),
       ...i.codebases.flatMap(secretReadRules),
       ...dirDenyRules(['Read'], secretDirs),
@@ -122,10 +132,12 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
     ...(i.kind === 'variant-directions' ? [...EDIT_TOOLS, 'Bash'] : []),
     // Phase 3 of the single agent: the coordinator never edits a file nor runs a command; its helpers do the work.
     ...(i.kind === 'creative-group' ? [...EDIT_TOOLS, 'Bash', 'WebFetch', 'WebSearch'] : []),
+    ...(brief ? BRIEF_DENIED_TOOLS : []),
   ];
-  // Neither the directions turn nor the coordinator takes the project's "Always" rules: nothing of theirs may run a command.
-  const directions = i.kind === 'variant-directions' || i.kind === 'creative-group';
-  const extra = [...(brandCodebases ? codebaseReadAllowRules(i.codebases) : []), ...(directions ? [] : i.projectAllowRules), ...i.mcpTools];
+  // Neither the directions turn nor the coordinator (nor a brief session) takes the project's "Always" rules: nothing of
+  // theirs may run a command.
+  const directions = i.kind === 'variant-directions' || i.kind === 'creative-group' || brief;
+  const extra = [...(scansSecrets ? codebaseReadAllowRules(i.codebases) : []), ...(directions ? [] : i.projectAllowRules), ...i.mcpTools];
   // With codebases the brand tools keep only WebFetch, and only with a website source: Bash(mkdir/ffprobe) are dropped.
   // Phase 3 of the single agent (review minor 1): the coordinator reads the project without asking, nothing else (a read
   // elsewhere reaches the permission prompt, which refuses it for this kind).
@@ -151,7 +163,7 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
       filesystem: {
         denyRead: [
           ...[...sensitiveHomePaths(i.home), i.configDir].map(sandboxPath),
-          ...(brandCodebases ? [...[...secretDirs, ...secretFiles].map(sandboxPath), ...i.codebases.flatMap((c) => secretSandboxGlobs(c, sandboxPath))] : []),
+          ...(scansSecrets ? [...[...secretDirs, ...secretFiles].map(sandboxPath), ...i.codebases.flatMap((c) => secretSandboxGlobs(c, sandboxPath))] : []),
         ],
         denyWrite: [...[...i.codebases, ...i.protectedFiles, ...i.protectedDirs].map(sandboxPath), ...(i.sandboxGlobs ?? [])] },
       ...(network ? { network } : {}),

@@ -36,6 +36,11 @@ export interface PromptInput {
   pinsVersion?: { n: number; gone: boolean };
   /** Phase 13: this turn resumes a turn the user stopped (spec §3): the prompt says files in work/ may be partial. */
   stoppedNote?: boolean;
+  /**
+   * Decision 1423, first turns: the digest of the brief session the creative was made from, when its Claude session could not
+   * be resumed (the turn otherwise forks it and remembers the conversation itself).
+   */
+  briefChat?: string;
   context?: CreativeContext;
   /** Language of the user's texts, captured when the job started: a running job keeps it even if the setting changes. */
   locale: Locale;
@@ -628,6 +633,7 @@ export function buildCreativePrompt(i: PromptInput): string {
       brief.notes && `- Notes: ${brief.notes}`,
     ].filter((l): l is string => typeof l === 'string' && l !== '');
     parts.push(`Create the creative "${i.creative.title}" (version ${i.version}).`, ...(i.stoppedNote ? ['', STOPPED_TURN_NOTE] : []), '', '## Brief', ...briefLines);
+    if (i.briefChat) parts.push('', '## The brief session (summary)', 'The user wrote this brief with an agent in Motion Studio; this is that conversation.', i.briefChat);
     if (i.userText) parts.push('', '## Additional notes', i.userText);
     if (i.liveMessages?.length) parts.push('', ...laterMessagesSection(i.liveMessages));
   } else if (i.kind === 'iteration') {

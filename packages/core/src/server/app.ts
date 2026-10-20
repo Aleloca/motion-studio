@@ -13,7 +13,7 @@ import fastifyMultipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import fastifyWebsocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
-import { isLocale, workspaceSettingsSchema, type DoctorCheck, type UpdatesState, type UsageBilling, type LinkedCodebase, type ProjectDetail, type ServerMessage, type WorkspaceInfo, type WorkspaceProblem, type WorkspaceSettings } from '@motion-studio/shared';
+import { isLocale, workspaceSettingsSchema, type DoctorCheck, type UpdatesState, type UsageBilling, type ProjectDetail, type ServerMessage, type WorkspaceInfo, type WorkspaceProblem, type WorkspaceSettings } from '@motion-studio/shared';
 import { BrandService } from '../brand/brand-analysis.ts';
 import { UPLOAD_LIMITS } from '../library/upload.ts';
 import { CreativeTurnService, type CreativeRef } from '../creatives/creative-turns.ts';
@@ -37,7 +37,7 @@ import { VariantFanout } from '../creatives/variant-fanout.ts';
 import { COORDINATOR_LANE, GroupTurnService } from '../creatives/group-turn.ts';
 import { LocalizeService, ProjectActivity } from '../localization/localize-turn.ts';
 import type { LookupFn, Transport } from '../providers/safe-fetch.ts';
-import { checkCodebases, codebaseGlobCharsMessage, codebaseHasGlobChars, codebaseOverlapMessage, codebaseOverlaps, normalizeCodebaseList } from '../codebases.ts';
+import { agentCodebases } from '../codebases.ts';
 import type { Git } from '../git.ts';
 import { JobConflictError, JobQueue } from '../jobs/job-queue.ts';
 import { JsonFileError } from '../json-file.ts';
@@ -72,6 +72,9 @@ import { CONSOLE_REDIRECT_NOTE, defuseTags, interruptedRedirectText, pinLine, US
 import { stopJob } from '../jobs/stop.ts';
 import { randomUUID } from 'node:crypto';
 import { CreativeSideStateStore } from '../creatives/creative-side-state.ts';
+import { BriefSessionStore } from '../brief/brief-session-store.ts';
+import { BriefSessionService } from '../brief/brief-session.ts';
+import { registerBriefRoutes } from './brief-routes.ts';
 import { SettingsHoldStore } from '../settings-hold.ts';
 import { z } from 'zod';
 import { LIVE_LIMITS, pinSchema, SESSION_ID_RE, type RedirectOutcome } from '@motion-studio/shared';
@@ -103,6 +106,8 @@ export interface ServerDeps {
   /** Extra env for the MCP server process (see LauncherDeps.mcpEnv). */
   mcpEnv?: Record<string, string>;
   configDir?: string;
+  /** Test seam: also told every message the event hub broadcasts. */
+  onBroadcast?: (m: ServerMessage) => void;
   /** Phase 13: the creatives' queue and remembered sessions (default: one in `configDir`, in memory without it). Test seam. */
   sideState?: CreativeSideStateStore;
   /** Network of the Google Fonts catalog, previews and add (tests inject a fake fetch; default: the real one through the safe transport). */
@@ -195,24 +200,6 @@ function describeWorkspaceProblem(err: unknown): WorkspaceProblem {
   return { code: 'invalid', message: err instanceof Error ? err.message : String(err) };
 }
 
-/**
- * The project's linked codebases the console may read: existing folders that do not overlap the project or the workspace and
- * whose path has no glob characters (decision 781). `ignored`: one line per folder left out for a reason the user can fix.
- */
-async function consoleCodebases(list: LinkedCodebase[], forbidden: string[]): Promise<{ paths: string[]; ignored: string[] }> {
-  const kept: LinkedCodebase[] = [];
-  const ignored: string[] = [];
-  for (const c of list) {
-    try {
-      const [n] = normalizeCodebaseList([c]);
-      if (n && await codebaseHasGlobChars(n.path)) ignored.push(t().jobs.codebaseIgnored({ path: n.path, reason: codebaseGlobCharsMessage(n.path) }));
-      else if (n && await codebaseOverlaps(n.path, forbidden)) ignored.push(t().jobs.codebaseIgnored({ path: n.path, reason: codebaseOverlapMessage() }));
-      else if (n) kept.push(n);
-    } catch { /* an invalid entry is skipped */ }
-  }
-  return { paths: (await checkCodebases(normalizeCodebaseList(kept))).filter((c) => c.exists).map((c) => c.path), ignored };
-}
-
 /** Phase 13: a console message or a redirect (the text limit is the core's translated 409; this cap bounds the request). */
 const liveBodySchema = z.object({ clientId: z.uuid(), text: z.string().max(20_000), pins: z.array(pinSchema).max(50).optional() }).strict();
 type LiveBody = z.infer<typeof liveBodySchema>;
@@ -268,6 +255,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // requestTimeout 0: /api/bridge/approve stays pending while the user decides (up to 10 min); Node's default would cut it at 5.
   const app = Fastify({ logger: false, requestTimeout: 0, connectionTimeout: 0 });
   const hub = new EventHub();
+  if (deps.onBroadcast) hub.listen(deps.onBroadcast);
   const approvals = deps.approvals ?? new ApprovalBroker({ broadcast: (m) => hub.broadcast(m) });
   // Render jobs have their own lane of one slot (Task 5 M3): a render never blocks an agent turn, nor waits for one.
   /** Phase 13: a creative's translation turn ended: the creative's queue may start (set once the turn service exists). */
@@ -394,6 +382,14 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     broadcast: (msg) => hub.broadcast(msg),
     ...(deps.agentContract ? { agentContract: deps.agentContract } : {}),
     ...(deps.previewFramesPerTurn !== undefined ? { previewFramesPerTurn: deps.previewFramesPerTurn } : {}),
+  });
+
+  // Decisions 1421–1422: the brief sessions, in the config folder (in memory without an explicit one, like the side state).
+  const briefs = new BriefSessionService({
+    queue, launcher, store: new BriefSessionStore(deps.configDir ?? null), broadcast: (msg) => hub.broadcast(msg),
+    presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
+    model: async () => (await requireWorkspace().readSettings()).model,
+    side: turns.side,
   });
 
   afterOtherJob = (key, state) => { void turns.otherJobEndedByKey(key, state); };
@@ -662,7 +658,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
               let sawSession = false;
               let run: Awaited<ReturnType<typeof launcher.start>>;
               try {
-                const codebases = await consoleCodebases(project.linkedCodebases, [projectDir, ws.root]);
+                const codebases = await agentCodebases(project.linkedCodebases, [projectDir, ws.root]);
                 // Decision 781: a folder left out is said in the console, once per turn.
                 for (const line of codebases.ignored) {
                   if (ignoredSaid.has(line)) continue;
@@ -806,7 +802,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     model: async () => (await requireWorkspace().readSettings()).model,
   });
   groupsRef = groups;
-  registerCreativeRoutes(app, { requireWorkspace, turns, edits, renders, exports: new ExportJobService({ queue }), previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m), git: deps.git, variantRuns, groups, jobs: () => queue.list(), trash: deps.trash ?? noTrash });
+  registerCreativeRoutes(app, { requireWorkspace, turns, edits, renders, exports: new ExportJobService({ queue }), previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m), git: deps.git, variantRuns, groups, jobs: () => queue.list(), trash: deps.trash ?? noTrash, briefs, configDir });
   registerStorePackRoutes(app, { requireWorkspace, turns, renders, media });
 
   const routeCtx = { requireWorkspace, brand: brandService, media, git: deps.git, broadcast: (m: ServerMessage) => hub.broadcast(m), configDir };
@@ -850,8 +846,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       download_file: downloadTool({ media, broadcast: (m) => hub.broadcast(m) }),
       import_codebase_file: importCodebaseTool({ media, broadcast: (m) => hub.broadcast(m) }),
       ...agentActions.tools(),
+      ...briefs.tools(),
     },
   });
+  registerBriefRoutes(app, { requireWorkspace, briefs, configDir });
   registerSettingsRoutes(app, { vault, approvals, requireWorkspace, keyChecks, keyCheckHttp: deps.keyCheckHttp ?? { fetch: globalThis.fetch } });
   registerRenderEngineRoutes(app, {
     engine: deps.render,

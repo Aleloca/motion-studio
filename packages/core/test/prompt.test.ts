@@ -16,6 +16,12 @@ const base = { slug: '2026-10-07-lancio-app', creative, presets: DEFAULT_FORMATS
 const v2 = { ...base, contract: undefined };
 
 describe('buildCreativePrompt', () => {
+  it('a first turn without the brief\'s memory gets its summary (decision 1423)', () => {
+    const p = buildCreativePrompt({ ...base, kind: 'first', briefChat: 'User: video di lancio' });
+    expect(p).toContain('## The brief session (summary)\nThe user wrote this brief with an agent in Motion Studio; this is that conversation.\nUser: video di lancio');
+    expect(p.indexOf('## The brief session (summary)')).toBeGreaterThan(p.indexOf('## Brief'));
+    expect(buildCreativePrompt({ ...base, kind: 'first' })).not.toContain('## The brief session');
+  });
   it('first turn: brief, formats, paths and the machine block', () => {
     const p = buildCreativePrompt({ ...base, kind: 'first' });
     expect(p).toContain('Far capire che prenotare è immediato');

@@ -773,3 +773,45 @@ describe('AgentLauncher Phase 13 capabilities (fallback-first, decisions log 610
     expect(() => run2.endInput!()).not.toThrow();
   });
 });
+
+describe('a brief session launch (decision 1421)', () => {
+  it('a brief launch scans the codebases for secrets and registers its scope', async () => {
+    const { ControlledRunner } = await import('./helpers/controlled-runner.ts');
+    const projectDir = await newProject();
+    const codebase = await mkdtemp(join(tmpdir(), 'ms-brief-code-'));
+    cleanup.push(codebase);
+    await writeFile(join(codebase, '.env'), 'X=1');
+    await writeFile(join(codebase, 'index.ts'), 'export {}');
+    const runner = new ControlledRunner();
+    const bridge = new AgentBridge();
+    bridge.setOrigin('http://127.0.0.1:4317');
+    const launcher = testLauncher(runner, { bridge, mcpCommand: ['node', '/x/server.mjs'], claudeVersion: async () => '2.1.301' });
+    const briefScope = { root: dirname(projectDir), projectSlug: 'acme', projectDir, sessionId: 'sess-1' };
+    const run = await launcher.start({ kind: 'brief', jobId: 'b1', projectSlug: 'acme', projectDir, codebases: [codebase], briefScope, request: { prompt: 'ciao' }, onEvent: () => {} });
+    const r = runner.runs[0]!;
+    expect(r.req.disallowedTools).toEqual(expect.arrayContaining([`Read(/${escapeGlob(join(codebase, '.env'))})`, 'Bash', 'Grep', 'Edit']));
+    expect(r.req.addDirs).toEqual([codebase]);
+    const cfg = JSON.parse(readFileSync(r.req.mcpConfigPath!, 'utf8'));
+    expect(cfg.mcpServers.studio.env.MOTION_STUDIO_TOOLS).toBe('report_progress,read_brand_kit,list_formats,fill_brief');
+    const ctx = bridge.resolve(readFileSync(cfg.mcpServers.studio.env.MOTION_STUDIO_BRIDGE_TOKEN_FILE, 'utf8'));
+    expect(ctx).toMatchObject({ kind: 'brief', creativeSlug: null, briefScope });
+    // A live kind: the run takes messages while it works when the version and the settings allow it.
+    expect(run.capabilities).toEqual({ liveInput: true, interrupt: true });
+    r.finish({ write: false });
+    await run.done;
+  });
+  it('a scope is given to a brief job only', async () => {
+    const { ControlledRunner } = await import('./helpers/controlled-runner.ts');
+    const projectDir = await newProject();
+    const runner = new ControlledRunner();
+    const bridge = new AgentBridge();
+    bridge.setOrigin('http://127.0.0.1:4317');
+    const launcher = testLauncher(runner, { bridge, mcpCommand: ['node', '/x/server.mjs'] });
+    const briefScope = { root: dirname(projectDir), projectSlug: 'acme', projectDir, sessionId: 'sess-1' };
+    const run = await launcher.start({ kind: 'console', jobId: 'c1', projectSlug: 'acme', projectDir, briefScope, request: { prompt: 'ciao' }, onEvent: () => {} });
+    const cfg = JSON.parse(readFileSync(runner.runs[0]!.req.mcpConfigPath!, 'utf8'));
+    expect(bridge.resolve(readFileSync(cfg.mcpServers.studio.env.MOTION_STUDIO_BRIDGE_TOKEN_FILE, 'utf8'))?.briefScope).toBeUndefined();
+    runner.runs[0]!.finish({ write: false });
+    await run.done;
+  });
+});

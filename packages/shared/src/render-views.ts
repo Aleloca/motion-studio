@@ -3,6 +3,8 @@ import type { JobSummary } from './events.ts';
 
 /** The job key of a creative's turns (core creative-turns): `creative:<root>:<project>:<creative>`; the root may hold ':'. */
 export const creativeJobKey = (root: string, projectSlug: string, creativeSlug: string): string => `creative:${root}:${projectSlug}:${creativeSlug}`;
+/** The job key of a project's brief session (decision 1421): one open session, so one key, per project. */
+export const briefJobKey = (root: string, projectSlug: string): string => `brief:${root}:${projectSlug}`;
 /** The job key of the render jobs of version n (core render-jobs): `render:<root>:<project>:<creative>:v<n>`. */
 export const renderJobKey = (root: string, projectSlug: string, creativeSlug: string, n: number): string => `render:${root}:${projectSlug}:${creativeSlug}:v${n}`;
 /** `renderJobKey` from a creative's job key (the creative detail's `jobKey`); null for another kind of key. */

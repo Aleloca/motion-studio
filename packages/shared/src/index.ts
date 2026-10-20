@@ -25,4 +25,5 @@ export * from './render-views.ts';
 export * from './export-quality.ts';
 export * from './svg-edit/index.ts';
 export * from './brief-duration.ts';
+export * from './brief-session.ts';
 export * from './project-icon.ts';

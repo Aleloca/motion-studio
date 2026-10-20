@@ -1088,6 +1088,13 @@ export class CreativeTurnService {
       const baseCandidate = creative.resumeFrom?.sessionId ?? latest?.sessionId ?? undefined;
       const baseSessionId = isSessionId(baseCandidate) ? baseCandidate : undefined;
       let resumeSessionId = stopped?.sessionId ?? baseSessionId;
+      // Decision 1423: the first turn of a creative made from a brief session forks the brief agent's session (it remembers
+      // the conversation); a helper of a group turn or a sister never does (the group's coordinator does, group-turn.ts).
+      const briefLink = versions.length === 0 && !this.helpers.has(jobId) && !creative.variantOf ? await this.side.briefResume(ref.projectDir, slug) : null;
+      if (briefLink && resumeSessionId === undefined) resumeSessionId = briefLink.sessionId;
+      const fromBrief = briefLink !== null && resumeSessionId === briefLink.sessionId;
+      /** The brief chat's digest, when its session could not be resumed (the one fallback). */
+      let briefChat: string | undefined;
       // Durations of the base the agent keeps without being told to bring them back to the brief (decisions log 262).
       let accepted: ReadonlyMap<string, number> = new Map();
       let result = null as ValidationResult | null;
@@ -1131,9 +1138,9 @@ export class CreativeTurnService {
         // Decision 917: the user's kept durations hold only against the brief duration they were chosen for.
         const acceptedNow = () => (checkDuration() === creative.brief.durationSec || turnContract !== 'compositions' ? accepted : acceptedDurationsOf(base, targets, presets, checkDuration()));
         const uncheckable = new Set<string>();
-        let forkSession = Boolean(creative.resumeFrom || stopped);
+        let forkSession = Boolean(creative.resumeFrom || stopped) || fromBrief;
         /** A remembered session is resumed (stopped turn, or a redirect's live session): a resume error falls back once. */
-        let remembered: 'stopped' | 'redirect' | null = stopped ? 'stopped' : null;
+        let remembered: 'stopped' | 'redirect' | 'brief' | null = stopped ? 'stopped' : fromBrief ? 'brief' : null;
         /** The resume fallback happens at most once per turn (fix round 1, C1): a second resume error is a failure. */
         let resumeFallbackUsed = false;
         let kind: PromptKind = versions.length === 0 ? 'first' : 'iteration';
@@ -1294,6 +1301,7 @@ export class CreativeTurnService {
             userWords: resumed ? resumed.text : kind === 'fix' ? message?.text || undefined : undefined,
             liveMessages: resumed ? (earlierWords?.length ? earlierWords : undefined) : liveWords,
             stoppedNote: Boolean(stopped) && !resumed && kind !== 'fix',
+            ...(briefChat && kind === 'first' && !resumed ? { briefChat } : {}),
             pins: resumed ? resumed.pins : kind === 'iteration' ? message?.pins : undefined,
             pinsVersion: !resumed && kind === 'iteration' ? pinsVersionNote : undefined,
             attachments: kind === 'iteration' && !resumed ? attachments : undefined,
@@ -1392,6 +1400,9 @@ export class CreativeTurnService {
             resumeFallbackUsed = true;
             // Only the CLI's own "session not found" clears the remembered session; the backup guess keeps it.
             if (remembered === 'stopped' && resumeError === 'not-found') await this.side.update(ref.projectDir, slug, () => ({ stoppedSession: undefined }));
+            // Decision 1423: the brief's session is gone: the turn starts afresh with the brief chat's digest, said once.
+            const lostBrief = remembered === 'brief';
+            if (lostBrief) { briefChat = briefLink?.summary; await this.side.setBriefSession(ref.projectDir, slug, null); }
             if (remembered === 'redirect') {
               // The live session cannot be resumed: the redirect starts afresh from the base session, with the request
               // and every message of the turn in the prompt (C1: never the same resume again).
@@ -1402,7 +1413,7 @@ export class CreativeTurnService {
             const gone = resumeSessionId;
             resumeSessionId = baseSessionId === gone ? undefined : baseSessionId;
             forkSession = resumeSessionId !== undefined && Boolean(creative.resumeFrom);
-            await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: t().live.stoppedSessionUnavailable });
+            await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: lostBrief ? t().briefSession.memoryUnavailable : t().live.stoppedSessionUnavailable });
             this.changed(ref);
             attempt++;
             await live.serial(async () => { live.lastAttempt = attempt >= this.maxAttempts; });
@@ -1523,6 +1534,8 @@ export class CreativeTurnService {
       // A saved version ends the stopped turn's memory (Phase 13): the next turn builds on this version's session.
       await store.update(slug, { status: status === 'complete' ? 'ready' : 'incomplete', error: null, resumeFrom });
       await this.side.update(ref.projectDir, slug, () => ({ stoppedSession: undefined }));
+      // Decision 1423: a version exists: the brief session's memory now lives in this version's session.
+      await this.side.setBriefSession(ref.projectDir, slug, null);
       if (signal.aborted) {
         await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: t().jobs.lateCancel({ n }) });
       }
@@ -1592,6 +1605,7 @@ export class CreativeTurnService {
     const resumeFrom = o.noAgent && creative.resumeFrom ? { version: latest.n, sessionId: creative.resumeFrom.sessionId } : null;
     await store.update(slug, { status: latest.status === 'complete' ? 'ready' : 'incomplete', error: null, resumeFrom });
     await this.side.update(ref.projectDir, slug, () => ({ stoppedSession: undefined }));
+    await this.side.setBriefSession(ref.projectDir, slug, null);
     await this.commitState(ref, j.versionStateCommit({ title: creative.title, n: latest.n }));
     this.changed(ref);
   }

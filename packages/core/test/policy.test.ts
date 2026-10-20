@@ -224,3 +224,27 @@ describe('sandboxPath', () => {
     expect(denyRead.some((d) => /\[x\]|\[1\]/.test(d))).toBe(false);
   });
 });
+
+describe('buildAgentPolicy for a brief session (decision 1421)', () => {
+  const brief: PolicyInput = { ...base, kind: 'brief', projectDir: '/w/acme', codebases: ['/c/app'], codebaseSecrets: { files: ['/c/app/.env'], dirs: [] }, mcpTools: ['mcp__studio__fill_brief'] };
+  it('brief: read-only codebases with the secrets scan, no Bash/Grep/Edit, no network', () => {
+    const p = buildAgentPolicy(brief);
+    const s = p.settings as Sb;
+    expect(p.disallowedTools).toEqual(expect.arrayContaining(['Bash', 'Grep', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Read(//c/app/.env)', 'Edit(//c/app/**)']));
+    expect(p.allowedTools).toEqual(['Read(//c/app/**)', 'Glob(//c/app/**)', 'mcp__studio__fill_brief']);
+    expect(s.sandbox.network).toBeUndefined();
+    expect(s.sandbox.autoAllowBashIfSandboxed).toBe(false);
+    expect(s.sandbox.filesystem.denyRead).toEqual(expect.arrayContaining(['/c/app/.env']));
+    expect(p.addDirs).toEqual(['/c/app']);
+  });
+  it('brief without the sandbox: the same tools, never the project rules', () => {
+    const p = buildAgentPolicy({ ...brief, sandbox: false });
+    expect(p.allowedTools).toEqual(['Read(//c/app/**)', 'Glob(//c/app/**)', 'mcp__studio__fill_brief']);
+    expect(p.disallowedTools).toEqual(expect.arrayContaining(['Bash', 'Grep', 'Edit', 'Read(//c/app/.env)']));
+  });
+  it('brief with no codebase: still nothing but reads and its tools', () => {
+    const p = buildAgentPolicy({ ...brief, codebases: [], codebaseSecrets: undefined });
+    expect(p.allowedTools).toEqual(['mcp__studio__fill_brief']);
+    expect(p.disallowedTools).toEqual(expect.arrayContaining(['Bash', 'Grep', 'Edit', 'Write', 'WebFetch']));
+  });
+});
