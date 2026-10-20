@@ -120,6 +120,11 @@ Calls marked "orchestrator's call" below were settled without the user; they are
   such a field; the tool result tells the agent which fields were kept and why, so it can mention it.
 - Same idea as decision 1389 / `agentFormatLabels` for format names. For list fields (assets, codebases, formats): once
   the user adds or removes an item by hand, the whole list counts as the user's. Orchestrator's call.
+- User's call (2026-10-20, decision 1422): the user can hand a field back from the chat. When their latest message
+  explicitly asks the agent to rewrite a field ("riscrivi l'obiettivo"), the agent passes it in `fill_brief`'s optional
+  `reclaim` list with the new value: the core writes it and the field stops being the user's. Never on the agent's own
+  initiative; without `reclaim` the rule above is unchanged. Each reclaim writes a visible line in the session chat
+  ("L'agente ha riscritto <campo> su tua richiesta"), and the agent says which fields it rewrote. No control on the field.
 
 ### 5.4 Context: the "+" menu (1414)
 
