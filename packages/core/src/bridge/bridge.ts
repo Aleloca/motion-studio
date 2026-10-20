@@ -58,7 +58,15 @@ export interface BridgeContext {
    * `add_variants`), bound by the group turn to its plan. Absent for every other job.
    */
   readonly groupTools?: Readonly<GroupTools>;
+  /**
+   * Decision 1421, `brief` jobs only: the brief session the run fills (`fill_brief`). Set by the brief service when it
+   * launches the agent, frozen with the context: no tool argument ever names a project or a session.
+   */
+  readonly briefScope?: Readonly<BriefScope>;
 }
+
+/** Decision 1421: see `BridgeContext.briefScope`. */
+export interface BriefScope { root: string; projectSlug: string; projectDir: string; sessionId: string }
 
 /**
  * Decision 917: see `BridgeContext.appScope`. Phase 3 of the single agent: `group` is the coordinator's scope (the host of
@@ -87,6 +95,7 @@ export class AgentBridge {
       ...(ctx.codebases ? { codebases: Object.freeze([...ctx.codebases]) } : {}),
       ...(ctx.appScope ? { appScope: Object.freeze({ ...ctx.appScope }) } : {}),
       ...(ctx.groupTools ? { groupTools: Object.freeze({ ...ctx.groupTools }) } : {}),
+      ...(ctx.briefScope ? { briefScope: Object.freeze({ ...ctx.briefScope }) } : {}),
     }));
     return t;
   }

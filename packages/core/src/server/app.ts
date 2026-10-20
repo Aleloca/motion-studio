@@ -13,7 +13,7 @@ import fastifyMultipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import fastifyWebsocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
-import { isLocale, workspaceSettingsSchema, type DoctorCheck, type UpdatesState, type UsageBilling, type LinkedCodebase, type ProjectDetail, type ServerMessage, type WorkspaceInfo, type WorkspaceProblem, type WorkspaceSettings } from '@motion-studio/shared';
+import { isLocale, workspaceSettingsSchema, type DoctorCheck, type UpdatesState, type UsageBilling, type ProjectDetail, type ServerMessage, type WorkspaceInfo, type WorkspaceProblem, type WorkspaceSettings } from '@motion-studio/shared';
 import { BrandService } from '../brand/brand-analysis.ts';
 import { UPLOAD_LIMITS } from '../library/upload.ts';
 import { CreativeTurnService, type CreativeRef } from '../creatives/creative-turns.ts';
@@ -37,7 +37,7 @@ import { VariantFanout } from '../creatives/variant-fanout.ts';
 import { COORDINATOR_LANE, GroupTurnService } from '../creatives/group-turn.ts';
 import { LocalizeService, ProjectActivity } from '../localization/localize-turn.ts';
 import type { LookupFn, Transport } from '../providers/safe-fetch.ts';
-import { checkCodebases, codebaseGlobCharsMessage, codebaseHasGlobChars, codebaseOverlapMessage, codebaseOverlaps, normalizeCodebaseList } from '../codebases.ts';
+import { agentCodebases } from '../codebases.ts';
 import type { Git } from '../git.ts';
 import { JobConflictError, JobQueue } from '../jobs/job-queue.ts';
 import { JsonFileError } from '../json-file.ts';
@@ -193,24 +193,6 @@ function isLoopbackOrigin(origin: string): boolean {
 function describeWorkspaceProblem(err: unknown): WorkspaceProblem {
   if (err instanceof WorkspaceError && err.code) return { code: err.code, message: err.message };
   return { code: 'invalid', message: err instanceof Error ? err.message : String(err) };
-}
-
-/**
- * The project's linked codebases the console may read: existing folders that do not overlap the project or the workspace and
- * whose path has no glob characters (decision 781). `ignored`: one line per folder left out for a reason the user can fix.
- */
-async function consoleCodebases(list: LinkedCodebase[], forbidden: string[]): Promise<{ paths: string[]; ignored: string[] }> {
-  const kept: LinkedCodebase[] = [];
-  const ignored: string[] = [];
-  for (const c of list) {
-    try {
-      const [n] = normalizeCodebaseList([c]);
-      if (n && await codebaseHasGlobChars(n.path)) ignored.push(t().jobs.codebaseIgnored({ path: n.path, reason: codebaseGlobCharsMessage(n.path) }));
-      else if (n && await codebaseOverlaps(n.path, forbidden)) ignored.push(t().jobs.codebaseIgnored({ path: n.path, reason: codebaseOverlapMessage() }));
-      else if (n) kept.push(n);
-    } catch { /* an invalid entry is skipped */ }
-  }
-  return { paths: (await checkCodebases(normalizeCodebaseList(kept))).filter((c) => c.exists).map((c) => c.path), ignored };
 }
 
 /** Phase 13: a console message or a redirect (the text limit is the core's translated 409; this cap bounds the request). */
@@ -662,7 +644,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
               let sawSession = false;
               let run: Awaited<ReturnType<typeof launcher.start>>;
               try {
-                const codebases = await consoleCodebases(project.linkedCodebases, [projectDir, ws.root]);
+                const codebases = await agentCodebases(project.linkedCodebases, [projectDir, ws.root]);
                 // Decision 781: a folder left out is said in the console, once per turn.
                 for (const line of codebases.ignored) {
                   if (ignoredSaid.has(line)) continue;

@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { basename, isAbsolute, join, normalize, parse, relative } from 'node:path';
 import { isSecretPath, SECRET_PATTERNS, type LinkedCodebase } from '@motion-studio/shared';
 import { messages, type Locale } from '@motion-studio/shared';
-import { codebaseOverlaps, expandHome, normalizeCodebasePath, pathHasGlobChars } from './workspace-store.ts';
+import { codebaseGlobCharsMessage, codebaseHasGlobChars, codebaseOverlapMessage, codebaseOverlaps, expandHome, normalizeCodebaseList, normalizeCodebasePath, pathHasGlobChars } from './workspace-store.ts';
 import { currentLocale } from './i18n.ts';
 import { sensitiveHomeEntries } from './agent/sandbox.ts';
 
@@ -24,6 +24,26 @@ export async function checkCodebases(list: LinkedCodebase[]): Promise<CodebaseCh
     out.push({ path: c.path, ...(c.note ? { note: c.note } : {}), exists });
   }
   return out;
+}
+
+/**
+ * The project's linked codebases an agent job may read (the console's and, decision 1421, a brief session's): existing
+ * folders that do not overlap the project or the workspace and whose path has no glob characters (decision 781). `ignored`:
+ * one line per folder left out for a reason the user can fix.
+ */
+export async function agentCodebases(list: LinkedCodebase[], forbidden: string[]): Promise<{ paths: string[]; ignored: string[] }> {
+  const kept: LinkedCodebase[] = [];
+  const ignored: string[] = [];
+  const said = messages(currentLocale()).jobs;
+  for (const c of list) {
+    try {
+      const [n] = normalizeCodebaseList([c]);
+      if (n && await codebaseHasGlobChars(n.path)) ignored.push(said.codebaseIgnored({ path: n.path, reason: codebaseGlobCharsMessage(n.path) }));
+      else if (n && await codebaseOverlaps(n.path, forbidden)) ignored.push(said.codebaseIgnored({ path: n.path, reason: codebaseOverlapMessage() }));
+      else if (n) kept.push(n);
+    } catch { /* an invalid entry is skipped */ }
+  }
+  return { paths: (await checkCodebases(normalizeCodebaseList(kept))).filter((c) => c.exists).map((c) => c.path), ignored };
 }
 
 /** Claude Code permission rule syntax: an absolute path is written with a leading '//'. */

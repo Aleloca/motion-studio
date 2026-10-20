@@ -400,3 +400,26 @@ describe('approve for a brand analysis of codebases (Phase 14, fix round 1)', ()
     expect((await pending).json().behavior).toBe('deny');
   });
 });
+
+describe('a brief session job (decision 1421)', () => {
+  const QUESTION = { questions: [{ question: 'Quanto dura?', header: 'Durata', multiSelect: false, options: [{ label: '15 s', description: 'Breve' }, { label: '30 s', description: 'Lungo' }] }] };
+  it('a brief job asks questions but gets nothing approved', async () => {
+    const brief = bridge.register({ jobId: 'b1', kind: 'brief', projectSlug: 'acme', projectDir, creativeSlug: null, sandboxed: true, autoApproveAtStart: true, emit: (e) => events.push(e), signal: new AbortController().signal, briefScope: { root: dirname(projectDir), projectSlug: 'acme', projectDir, sessionId: 's1' } });
+    expect(bridge.resolve(brief)?.briefScope?.sessionId).toBe('s1');
+    expect(Object.isFrozen(bridge.resolve(brief)?.briefScope)).toBe(true);
+    const asked = call('approve', { tool_name: 'AskUserQuestion', input: QUESTION, tool_use_id: 'q1' }, brief);
+    let req = approvals.pending()[0];
+    for (let i = 0; !req && i < 100; i++) { await new Promise((r) => setTimeout(r, 10)); req = approvals.pending()[0]; }
+    expect(req).toMatchObject({ jobId: 'b1', kind: 'question' });
+    await approvals.decide(req!.id, 'deny');
+    expect((await asked).json()).toMatchObject({ behavior: 'deny' });
+    for (const [tool_name, input] of [['Read', { file_path: '/etc/hosts' }], ['Bash', { command: 'ls' }], ['Write', { file_path: join(projectDir, 'x') }]] as const) {
+      expect((await call('approve', { tool_name, input, tool_use_id: 't' }, brief)).json()).toEqual({ behavior: 'deny', message: "L'agente del brief legge solo le cartelle collegate e il progetto: nient'altro si può approvare." });
+    }
+    expect(approvals.pending()).toEqual([]);
+    // Only its own tools (the paid and app-action tools are not in this bare server: the kind check is the same).
+    expect((await call('validate_composition', {}, brief)).statusCode).toBe(403);
+    expect((await call('list_variants', {}, brief)).statusCode).toBe(403);
+    expect((await call('report_progress', { message: 'Leggo il codice' }, brief)).statusCode).toBe(200);
+  });
+});

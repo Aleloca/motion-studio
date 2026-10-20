@@ -30,6 +30,8 @@ export const MCP_SERVER = 'studio';
 /** Phase 3 of the single agent: the coordinator's own tools (`group-turn.ts`); no other job has them. */
 export const GROUP_TOOLS = ['list_variants', 'work_on_variants', 'add_variants'] as const;
 export const APP_ACTION_TOOLS = ['update_brief', 'add_format', 'duplicate_format', 'name_formats', 'add_language', 'add_variant', 'discard_variant', 'restore_variant', 'set_pick', 'render_version', 'prepare_export'] as const;
+/** Decision 1421: a brief session's own tools (`brief-session.ts`); no other job has them. */
+export const BRIEF_TOOLS = ['list_formats', 'fill_brief'] as const;
 export const MCP_TOOLS: Record<AgentJobKind, string[]> = {
   creative: ['report_progress', 'validate_composition', 'preview_frames', 'read_brand_kit', 'generate_image', 'tts', 'sound_effect', 'music', 'list_voices', 'stock_search', 'stock_download', 'fonts_fetch', ...APP_ACTION_TOOLS],
   console: ['report_progress', 'read_brand_kit', 'generate_image', 'tts', 'sound_effect', 'music', 'list_voices', 'stock_search', 'stock_download', 'fonts_fetch'],
@@ -43,6 +45,8 @@ export const MCP_TOOLS: Record<AgentJobKind, string[]> = {
   // approval prompt) and hands the work to the variants' turns; the group-level app actions are its own. No paid tool.
   // Review minor 7: the brief-wide changes (brief, formats, languages) are the coordinator's, never a helper's.
   'creative-group': ['report_progress', 'read_brand_kit', ...GROUP_TOOLS, 'update_brief', 'add_format', 'name_formats', 'add_language', 'discard_variant', 'restore_variant', 'set_pick', 'render_version', 'prepare_export'],
+  // Decision 1421: a brief session reads and fills the New creative form; it creates, renders and pays for nothing.
+  brief: ['report_progress', 'read_brand_kit', ...BRIEF_TOOLS],
 };
 
 /** Characters that make Claude Code's sandbox read a path as a glob. */
@@ -92,7 +96,8 @@ export interface LauncherDeps {
 
 /** Phase 13: the jobs whose turns can take messages or an interrupt while they run (spec §2; never brand analysis, describe, localize). */
 /** Phase 3 of the single agent: the coordinator of a group takes messages while it runs, as a creative turn does. */
-const LIVE_JOB_KINDS: ReadonlySet<AgentJobKind> = new Set(['creative', 'console', 'creative-group']);
+/** Decision 1421: so does a brief session. */
+const LIVE_JOB_KINDS: ReadonlySet<AgentJobKind> = new Set(['creative', 'console', 'creative-group', 'brief']);
 export interface LaunchInput {
   kind: AgentJobKind; jobId: string; projectSlug: string; projectDir: string; creativeSlug?: string | null;
   codebases?: string[]; protectedFiles?: string[];
@@ -117,6 +122,8 @@ export interface LaunchInput {
   appScope?: BridgeContext['appScope'];
   /** Phase 3: the coordinator's own tools (`creative-group` jobs only, see BridgeContext). */
   groupTools?: BridgeContext['groupTools'];
+  /** Decision 1421: the brief session the run fills (`brief` jobs only, see BridgeContext). */
+  briefScope?: BridgeContext['briefScope'];
   /** What the run's ledger line is about (a creative's version and fix-loop attempt); null for other jobs. */
   usage?: { version: number | null; attempt: number | null };
   /**
@@ -239,13 +246,14 @@ export class AgentLauncher {
     let tools = new AbortController();
     let toolSignal = AbortSignal.any([abort.signal, tools.signal]);
     const abortTools = () => { tools.abort(); tools = new AbortController(); toolSignal = AbortSignal.any([abort.signal, tools.signal]); };
-    // Phase 14: a brand analysis of codebases gets their secret files denied by exact path too (any case, every platform).
+    // Phase 14: a brand analysis of codebases gets their secret files denied by exact path too (any case, every platform);
+    // decision 1421: so does a brief session.
     const codebases = i.codebases ?? [];
     if (codebases.some(hasUnsafePathChars)) throw new Error(t().errors.codebaseUnsafePath);
     // Decision 781, defence in depth: every route refuses such folders and every job leaves stored ones out with a note, so
     // this never fires; a codebase whose path or real path has glob characters would void its Edit/Write/Read rules.
     for (const c of codebases) if (await codebaseHasGlobChars(c)) throw new Error(t().errors.codebaseGlobChars({ path: c }));
-    const secretsScan = i.kind === 'brand-analysis' && codebases.length > 0 ? await codebaseSecrets(codebases) : null;
+    const secretsScan = (i.kind === 'brand-analysis' || i.kind === 'brief') && codebases.length > 0 ? await codebaseSecrets(codebases) : null;
     const policy = buildAgentPolicy({
       kind: i.kind, sandbox, projectDir: i.projectDir, home, configDir,
       codebases, protectedFiles, protectedDirs, protectedGlobs: logGlobs, sandboxGlobs,
@@ -298,6 +306,7 @@ export class AgentLauncher {
           ...(i.kind === 'brand-analysis' && codebases.length > 0 ? { codebases } : {}),
           ...((i.kind === 'creative' || i.kind === 'creative-group') && i.appScope ? { appScope: i.appScope } : {}),
           ...(i.kind === 'creative-group' && i.groupTools ? { groupTools: i.groupTools } : {}),
+          ...(i.kind === 'brief' && i.briefScope ? { briefScope: i.briefScope } : {}),
         });
         // The paths are recorded before writing, so release() also removes a half-written pair.
         const files = await prepareRunFiles(configDir, i.jobId);
@@ -320,8 +329,9 @@ export class AgentLauncher {
       const tracker = new UsageTracker({
         // A translation turn is metered with the creative's turns (the usage report has no kind of its own for it).
         // Phase 15: a variant group's directions turn is metered with the creative's turns (the report has no kind for it).
-        // Phase 3: so is the coordinator of a group (its runs are part of the group's turn).
-        projectDir: i.projectDir, jobId: i.jobId, kind: i.kind === 'variant-directions' || i.kind === 'creative-group' ? 'creative' : i.kind, creativeSlug: i.creativeSlug ?? null,
+        // Phase 3: so is the coordinator of a group (its runs are part of the group's turn). Decision 1421: a brief session's
+        // runs too, with no creative (they are the start of the creative it becomes).
+        projectDir: i.projectDir, jobId: i.jobId, kind: i.kind === 'variant-directions' || i.kind === 'creative-group' || i.kind === 'brief' ? 'creative' : i.kind, creativeSlug: i.kind === 'brief' ? null : i.creativeSlug ?? null,
         version: i.usage?.version ?? null, attempt: i.usage?.attempt ?? null,
         ...(i.request.resumeSessionId ? { resumeSessionId: i.request.resumeSessionId } : {}),
       }, this.usageLedger);
