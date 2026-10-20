@@ -24,7 +24,7 @@ describe('buildBriefPrompt', () => {
   });
   it('shows the form, marking the user\'s fields', () => {
     expect(p).toContain("## The user's form now");
-    expect(p).toMatch(/- goal: "Lancio" \(the user's: never change it\)\n/);
+    expect(p).toMatch(/- goal: "Lancio" \(the user's: never change it unless they ask, see reclaim\)\n/);
     expect(p).toContain('- message: "Prenota"\n');
     expect(p).toContain('- formats: instagram-post-1x1');
   });

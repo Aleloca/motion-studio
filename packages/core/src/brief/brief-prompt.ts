@@ -29,7 +29,7 @@ const formLine = (field: BriefField, form: BriefForm, mine: boolean): string => 
       : typeof v === 'number' ? String(v)
         : field === 'linkedCodebases' ? (form.linkedCodebases.length ? form.linkedCodebases.map((c) => `${quotePromptString(c.path)}${c.note ? ` (${quotePromptString(c.note)})` : ''}`).join(', ') : '(none)')
           : (v as string[]).length ? (v as string[]).join(', ') : '(none)';
-  return `- ${field}: ${shown}${mine ? " (the user's: never change it)" : ''}`;
+  return `- ${field}: ${shown}${mine ? " (the user's: never change it unless they ask, see reclaim)" : ''}`;
 };
 
 function formSection(i: Pick<BriefPromptContext, 'form' | 'userEdited'>): string[] {
