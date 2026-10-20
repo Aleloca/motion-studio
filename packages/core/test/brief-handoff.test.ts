@@ -6,6 +6,8 @@
 import { rm } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { messages, type ConversationEntry } from '@motion-studio/shared';
+import { join } from 'node:path';
+import { BriefSessionStore } from '../src/brief/brief-session-store.ts';
 import { GROUP_BLOCK } from '../src/creatives/coordinator-prompt.ts';
 import { briefApp, briefHelpers, type BriefApp } from './helpers/brief-app.ts';
 import type { ControlledRun } from './helpers/controlled-runner.ts';
@@ -147,6 +149,21 @@ describe('from the brief session to the creative (decision 1423)', () => {
     expect(conv.filter((e) => e.type === 'user').every((e) => e.group === true)).toBe(true);
   });
 
+  it('messages a restart left queued start their turn instead of being lost in the move', async () => {
+    t = await briefApp();
+    const { id } = await session();
+    // As after a restart: a message queued, no turn to take it.
+    await new BriefSessionStore(join(t.base, 'config')).update(t.projectDir, id, () => ({ queued: [{ clientId: 'q-1', text: 'Messaggio in coda', at: new Date().toISOString(), context: { codebases: [], assets: [] } }] }));
+    const res = await create({ generate: true, briefSession: { id } });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('brief-session-busy');
+    const run = await t.runner.next(1);
+    expect(run.req.prompt).toContain('Messaggio in coda');
+    run.finish({ write: false });
+    await h().waitIdle();
+    expect((await create({ generate: false, briefSession: { id } })).statusCode).toBe(201);
+  });
+
   it('busy or gone: nothing is created', async () => {
     t = await briefApp();
     const s = await h().open();
@@ -160,12 +177,18 @@ describe('from the brief session to the creative (decision 1423)', () => {
     expect(gone.statusCode).toBe(409);
     expect(gone.json().code).toBe('brief-session-gone');
     expect((await t.app.inject('/api/projects/acme/creatives')).json()).toEqual([]);
+    // Messages left queued with no turn to take them (a restart came between) start their turn instead of being lost.
+    await t.app.inject({ method: 'POST', url: `/api/projects/acme/brief-session/${s.id}/messages`, payload: { clientId: 'q-1', text: 'In coda', context: { codebases: [], assets: [] }, form: (await h().view())!.form, userEdited: [] } });
+    expect((await h().view())?.queued.map((q) => q.text)).toEqual(['In coda']);
     run.finish({ write: false });
+    const queuedRun = await t.runner.next(1);
+    expect(queuedRun.req.prompt).toContain('In coda');
+    queuedRun.finish({ write: false });
     await h().waitIdle();
     // The session is as it was: a message still works.
     expect((await h().view())?.id).toBe(s.id);
     expect((await h().send(s.id, 'Ancora')).statusCode).toBe(202);
-    (await t.runner.next(1)).finish({ write: false });
+    (await t.runner.next(2)).finish({ write: false });
     await h().waitIdle();
   });
 });

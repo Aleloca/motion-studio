@@ -330,8 +330,14 @@ export class BriefSessionService {
     const key = this.key(ref);
     return this.lock.run(key, async () => {
       if (this.claims.has(key)) throw busy();
-      await this.session(ref, id);
+      const s = await this.session(ref, id);
       if (this.jobOf(ref)) throw busy();
+      // Messages still waiting for a turn (the turn that would take them has not started, or a restart came between) are
+      // never lost in the move: they start their turn now, and the creation waits for it like for any running turn.
+      if (s.queued.length > 0) {
+        await this.startTurn(ref, id, s.queued.map((q) => ({ clientId: q.clientId, text: q.text, context: q.context, mode: 'queued' as const })));
+        throw busy();
+      }
       this.claims.add(key);
       return { ref, sessionId: id, key };
     });
