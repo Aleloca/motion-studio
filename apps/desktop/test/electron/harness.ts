@@ -14,7 +14,7 @@ import type { Composition, FormatPreset } from '../../../../packages/shared/src/
 import { findFfmpeg, renderComposition, RenderError, type FfmpegInfo } from '@motion-studio/core';
 import { startCompositionServer } from '../../../../packages/core/src/compositions/composition-server.ts';
 import { renderFrames } from '../../../../packages/core/src/render/frames.ts';
-import { appKeptAwake, closeAllRenderWindows, createRenderWindow, ElectronProvider, liveRenderWindowCount, rawFrameChecks, shutdownForQuit } from '../../src/render-window.ts';
+import { appKeptAwake, captureWindowFrame, closeAllRenderWindows, createRenderWindow, ElectronProvider, liveRenderWindowCount, rawFrameChecks, shutdownForQuit } from '../../src/render-window.ts';
 import { readdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { hardenUiWindow, installPreviewFilter } from '../../src/preview-filter.ts';
@@ -629,18 +629,23 @@ async function run(): Promise<void> {
         // Report 57: a raw read must show the page as it is when the read is asked for, even when the compositor lags.
         // The page changes (a square in its corner, a new colour each time) with no frame waited for, and is read raw at
         // once, while this app's GPU process (its own pid, `getAppMetrics`) is stopped 8 ms in every 10 (always resumed).
-        const wc = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL() === s.url)!.webContents;
+        // `plain`: the same read without the redraw (`captureWindowFrame` alone), the negative control.
+        const win = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL() === s.url)!;
+        const wc = win.webContents;
         const gpu = app.getAppMetrics().find((m) => m.type === 'GPU')?.pid;
         let stall: NodeJS.Timeout | null = null;
-        const changes: Array<{ i: number; want: number[]; got: number[] }> = [];
+        const changes: Array<{ i: number; mode: 'plain' | 'fresh'; want: number[]; got: number[] }> = [];
         try {
           if (gpu) stall = setInterval(() => { try { process.kill(gpu, 'SIGSTOP'); setTimeout(() => { try { process.kill(gpu, 'SIGCONT'); } catch { /* gone */ } }, 8); } catch { /* gone */ } }, 10);
           for (let i = 0; i < c.rawCheck!.changes; i++) {
-            const want = [(i * 37) % 256, 255 - ((i * 37) % 256), 128];
-            await wc.executeJavaScript(`{ let d = document.getElementById('ms-test-change'); if (!d) { d = document.createElement('div'); d.id = 'ms-test-change'; d.style.cssText = 'position:fixed;left:0;top:0;width:16px;height:16px;z-index:2147483647'; document.documentElement.appendChild(d); } d.style.background = 'rgb(${want.join(',')})'; } 1`);
-            const f = await page.captureRaw();
-            const got = [f.data[8 * f.width * 4 + 8 * 4 + 2]!, f.data[8 * f.width * 4 + 8 * 4 + 1]!, f.data[8 * f.width * 4 + 8 * 4]!];
-            changes.push({ i, want, got });
+            for (const mode of ['plain', 'fresh'] as const) {
+              const k = 2 * i + (mode === 'fresh' ? 1 : 0);
+              const want = [(k * 37) % 256, 255 - ((k * 37) % 256), 128];
+              await wc.executeJavaScript(`{ let d = document.getElementById('ms-test-change'); if (!d) { d = document.createElement('div'); d.id = 'ms-test-change'; d.style.cssText = 'position:fixed;left:0;top:0;width:16px;height:16px;z-index:2147483647'; document.documentElement.appendChild(d); } d.style.background = 'rgb(${want.join(',')})'; } 1`);
+              const f = mode === 'fresh' ? await page.captureRaw() : await captureWindowFrame(win, 90_000);
+              const at = 8 * f.width * 4 + 8 * 4;
+              changes.push({ i, mode, want, got: [f.data[at + 2]!, f.data[at + 1]!, f.data[at]!] });
+            }
           }
         } finally {
           if (stall) clearInterval(stall);

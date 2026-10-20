@@ -477,7 +477,7 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
     expect(by.half).toMatchObject({ frames: 60, width: W / 2, height: H / 2, rawFrames: 0, encodedFrames: 60, windowsAfter: 0 });
   }, 900_000);
 
-  it('report 56: raw frames are the PNG frames of the same state, every frame, and show a change made just before the read (report 57)', async () => {
+  it('report 56: raw frames are the PNG frames of the same state, every frame, and show a change made just before the read (report 57)', async (ctx) => {
     const creative = join(work, 'raw-check');
     const compDir = join(creative, 'outputs', 'v1', 'compositions', 'spike');
     frameCodedVideo(ffmpeg!, join(compDir, 'assets', 'v.mp4'), { fps: 30, frames: 95 });
@@ -490,16 +490,22 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
     expect(rows).toHaveLength(60);
     // A difference in the first read is a frame from before the seek's (the CI runner's, report 57); in the second, after
     // the PNG's own redraw, a difference in the pixels themselves.
-    const changes = (r.lines[0] as { changes: Array<{ i: number; want: number[]; got: number[] }>; gpu: number | null }).changes;
-    const missed = changes.filter((x) => x.want.some((v, k) => Math.abs(v - x.got[k]!) > 1));
-    console.info(`[raw-check] a change read raw at once, the GPU process stalled: ${missed.length}/${changes.length} missed ${JSON.stringify(missed.slice(0, 3))}`);
+    const changes = (r.lines[0] as { changes: Array<{ i: number; mode: 'plain' | 'fresh'; want: number[]; got: number[] }>; gpu: number | null }).changes;
+    const missedBy = (mode: string) => changes.filter((x) => x.mode === mode && x.want.some((v, k) => Math.abs(v - x.got[k]!) > 1));
+    const [plain, fresh] = [missedBy('plain'), missedBy('fresh')];
+    console.info(`[raw-check] a change read raw at once, the GPU process stalled: plain (no redraw) ${plain.length}/30 missed, fresh ${fresh.length}/30 ${JSON.stringify(fresh.slice(0, 3))}`);
     console.info(`[raw-check] stale ${rows.filter((x) => x.raw.differing > 0).length}/60 ${JSON.stringify(rows.filter((x) => x.raw.differing > 0).map((x) => [x.t, x.raw.differing]))}; again ${rows.filter((x) => x.again.differing > 0).length}`);
     expect(rows.filter((x) => !x.raw.sizes || x.raw.differing > 0), 'raw read as the seek ends').toEqual([]);
     expect(rows.filter((x) => x.again.differing > 0), 'raw read after the PNG').toEqual([]);
     // Report 57: a raw read is of a frame drawn after it was asked for (the CI runner read one from before the seek's).
     expect((r.lines[0] as { gpu: number | null }).gpu, 'the GPU process').toBeGreaterThan(0);
-    expect(changes).toHaveLength(30);
-    expect(missed, 'a raw read missed a change made just before it').toEqual([]);
+    expect(changes).toHaveLength(60);
+    if (plain.length === 0) {
+      // The negative control missed nothing: the lag is not reproduced on this machine, so the fresh reads prove nothing.
+      console.warn('[raw-check] skipped: reads without the redraw missed no change (the compositor lag is not reproduced here)');
+      ctx.skip();
+    }
+    expect(fresh, 'a raw read missed a change made just before it').toEqual([]);
   }, 900_000);
 
   it('report 56: under a forced Display P3 colour profile raw and PNG frames still give the same video, and the sRGB one', async () => {
