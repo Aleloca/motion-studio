@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join, posix, win32 } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { DEFAULT_FORMATS } from '@motion-studio/shared';
 import type { JobSummary, StorePack } from '@motion-studio/shared';
 import type { AgentRunner } from '../src/agent/runner.ts';
 import { AppConfigStore } from '../src/app-config.ts';
@@ -20,7 +21,7 @@ import { Git } from '../src/git.ts';
 import { t } from '../src/i18n.ts';
 import { buildServer } from '../src/server/app.ts';
 import { assertAgentFolders, folderWithGlobChars, pathHasGlobChars } from '../src/workspace-store.ts';
-import { H, TOKEN, UI_ORIGIN, startInstanceEnv, type InstanceEnv } from './helpers/instance-server.ts';
+import { H, PRESETS, TOKEN, UI_ORIGIN, startInstanceEnv, type InstanceEnv } from './helpers/instance-server.ts';
 
 const GLOB_NAME = 'p (x) [y]';
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>';
@@ -118,6 +119,8 @@ describe('an existing workspace with glob characters: agent runs refused before 
   beforeEach(async () => {
     starts = 0;
     env = await startInstanceEnv('ms-glob-existing-');
+    // The identity presets must be in the catalog: creation refuses formats it does not hold (decision 1445).
+    expect((await env.app.inject({ method: 'PUT', url: '/api/formats', headers: H, payload: { presets: [...PRESETS, ...DEFAULT_FORMATS] } })).statusCode).toBe(200);
     slug = await env.create(['test-wide'], { locales: { primary: 'en', extra: ['de'] } });
     await env.render(slug, 1);
     expect((await env.app.inject({ method: 'POST', url: '/api/projects/acme/brand/sources', headers: H, payload: { kind: 'website', url: 'https://example.com' } })).statusCode).toBe(201);
