@@ -57,7 +57,7 @@ import { GroupStar } from './variants/GroupStar.tsx';
 import { useVariantMembers } from './variants/useVariantMembers.ts';
 import { VariantCard } from './variants/VariantCard.tsx';
 import type { ChatTarget } from './variants/VariantSelector.tsx';
-import { CARD_PAD, cardColumns, cardWidth, CHOSEN_LAYOUT, chosenSections, chosenView, discardBlock, discardedSelf, fitCards, isRunning, memberLive, readVariantView, readyToChoose, rowState, selectionRows, shortName, shownMembers, thumbZoom, upper, writeVariantView, type ChosenCell, type VariantView } from './variants/variantModel.ts';
+import { cardCells, CHOSEN_LAYOUT, chosenSections, chosenView, discardBlock, discardedSelf, fitCards, isRunning, memberLive, readVariantView, readyToChoose, rowState, selectionRows, shortName, shownMembers, thumbZoom, upper, writeVariantView, type ChosenCell, type VariantView } from './variants/variantModel.ts';
 import { pinchZoom, scrollAfterZoom, stepZoom, ZOOM_MIN, zoomKey } from './canvasZoom.ts';
 import { setMenuZoomHandler } from '../shell/menuZoom.ts';
 import './variants/variants.css';
@@ -797,19 +797,23 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     },
   });
   const stateOf = (m: VariantMember) => rowState(m, group!.missing.includes(m.letter), liveOf(m), detailOfMember(m.slug)?.creative.status ?? null);
-  /** Decision 973: a variant's card, its formats' thumbnails inside it at the zoom that fits them in the card. */
-  const card = (m: VariantMember, width: number) => {
+  /**
+   * Decision 973: a variant's card, its formats' thumbnails inside it at the zoom that fits them in the card. Report 61: the zoom
+   * enlarges the thumbnails, the card's columns come from its opening (`cardCells`) and never grow.
+   */
+  const card = (m: VariantMember, count: number) => {
     const lv = liveOf(m);
     const missingMember = group!.missing.includes(m.letter);
     const list = missingMember ? [] : boardsOfMember(m);
     const hero = list.length === 1;
     const make = missingMember ? null : makeFor(m);
-    const col = cardColumns(width - 2 * CARD_PAD, list.length);
+    const col = cardCells(zoom, viewW, count, list.length);
+    const width = col.width;
     return (
       <VariantCard key={m.letter} member={m} focused={m.slug === creative} hasVersions={hasVersionsOf(m)} busy={vbusy === m.letter} actions={memberActions(m)}
         removal={{ project: slug, onDone: (kind) => { if (kind === 'restored') return; if (m.slug === creative) go(href.creative(slug, hostSlug)); else afterGroupChange(); } }}
         state={stateOf(m)} discardBlock={discardBlock(group!.group, m.letter, isRunning(lv))} width={width} hero={hero}>
-        {make ? list.map((b) => <div key={b.id} className="ms-vcard-cell" style={{ width: col.width }}>{make(b, thumbZoom(b, col.width, hero))}</div>) : null}
+        {make ? list.map((b) => <div key={b.id} className="ms-vcard-cell" style={{ width: col.cell }}>{make(b, thumbZoom(b, col.cell, hero, col.scale))}</div>) : null}
       </VariantCard>
     );
   };
@@ -858,8 +862,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     if (!group) return null;
     if (variantView === 'chosen') return renderChosenWorld();
     const shown = shownMembers(group.group, variantUi.showDiscarded);
-    const width = cardWidth(zoom, viewW, shown.length);
-    return shown.map((m) => card(m, width));
+    return shown.map((m) => card(m, shown.length));
   };
   /**
    * Report 49: the "Scelte" view, per format only the chosen variant at the chosen version (the group's ★: its board, read-only

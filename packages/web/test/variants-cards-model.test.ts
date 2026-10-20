@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { groupOf, HOST } from './support/variants.ts';
 vi.mock('../src/api.ts', () => ({ api: { fileUrl: () => '' } }));
 const { boardsWith } = await import('../src/screens/canvasModel.ts');
-const { CARD_W, cardColumns, cardWidth, fitCards, readyToChoose, shortName, thumbZoom } = await import('../src/screens/variants/variantModel.ts');
+const { CARD_W, cardCells, cardColumns, cardWidth, CELL_READABLE, fitCards, readyToChoose, shortName, thumbZoom } = await import('../src/screens/variants/variantModel.ts');
 const { pinchZoom, scrollAfterZoom, stepZoom, zoomKey } = await import('../src/screens/canvasZoom.ts');
 
 describe('the short name of a variant', () => {
@@ -125,5 +125,37 @@ describe('canvas zoom', () => {
     expect(zoomKey(k('0', { ctrlKey: true }), false)).toBe('fit');
     expect(zoomKey(k('0'), false)).toBeNull();
     expect(zoomKey(k('0', { metaKey: true, altKey: true }), true)).toBeNull();
+  });
+  it('report 61: zooming in enlarges a card\'s thumbnails, its columns never grow (3 variants × 17 formats, a 2000 px window)', () => {
+    const view = 1380;
+    const open = cardCells(1, view, 3, 17);
+    // At the opening zoom: two readable columns (at least CELL_READABLE wide) in a 360 px card.
+    expect(open).toEqual({ width: CARD_W, cols: 2, cell: 162, scale: 1 });
+    let last = open;
+    for (const z of [1.2, 1.5, 2]) {
+      const c = cardCells(z, view, 3, 17);
+      expect(c.cell).toBeCloseTo(162 * z);
+      expect(c.cols).toBeLessThanOrEqual(last.cols);
+      expect(c.scale).toBeCloseTo(z);
+      last = c;
+    }
+    // Zoomed out, the thumbnails shrink with the zoom too (the card keeps its header's width).
+    expect(cardCells(0.5, view, 3, 17).cell).toBeCloseTo(81);
+    expect(cardCells(0.5, view, 3, 17).cols).toBe(2);
+  });
+  it('report 61: a thumbnail never wider than the canvas: past it the columns give way, one at the end', () => {
+    // 600 px canvas: 3 cards open at 50%, one 210 px card a line... inner 186: one column.
+    expect(cardCells(fitCards(3, 600)!, 600, 3, 17).cols).toBe(1);
+    expect(cardCells(5, 1380, 3, 17)).toMatchObject({ cols: 1, cell: 810 });
+    const big = cardCells(10, 1380, 3, 17);
+    expect(big.cols).toBe(1);
+    expect(big.cell).toBe(1380 - 2 * 16 - 2 * 12);
+    expect(big.width).toBe(1380 - 2 * 16);
+  });
+  it('report 61: one format is the hero, the card\'s whole width; the opening columns are readable ones', () => {
+    expect(cardCells(1, 1380, 3, 1)).toEqual({ width: CARD_W, cols: 1, cell: CARD_W - 24, scale: 1 });
+    expect(cardCells(1, 1380, 3, 17).cell).toBeGreaterThanOrEqual(CELL_READABLE);
+    // 1108 px canvas (a 1728 px window): 95% cards, two columns of about 153 px.
+    expect(cardCells(fitCards(3, 1108)!, 1108, 3, 17).cols).toBe(2);
   });
 });
