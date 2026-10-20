@@ -465,6 +465,12 @@ arrives and worked on later together.
     canvas opens at 40%, its rows filling the width, and scrolls down (⌘0 too; ⌘− still goes down to all in view). A store pack
     still opens all in view.
 
+61. **Zoom on the variants canvas does not enlarge the images.** A creative with 3 variants × 17 image formats: zooming
+    in makes the variant cards wider and the boards reflow into more columns (2 → 4 → 9 per row), while each thumbnail
+    stays about the same small size. The user cannot get the images any bigger to look at them.
+    Wanted: zoom enlarges the boards themselves.
+    Timing: now, with 60.
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
