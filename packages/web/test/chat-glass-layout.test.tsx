@@ -189,6 +189,7 @@ const inside = (el, box) => { const b = el.getBoundingClientRect(); return b.wid
 const vis = (el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden' && !el.closest('.ms-sr');
 const tabs = card.querySelector('.ms-tabs');
 const out = { missing: false, col: c, card: k, radius: cs.borderTopLeftRadius, bg: cs.backgroundColor, glass: probe('--glass'), glassField: probe('--glassField'), glassLine: probe('--glassLine'),
+  glassSolid: probe('--glassSolid'), backdrop: cs.backdropFilter || cs.webkitBackdropFilter || 'none',
   tabsIn: !!tabs && inside(tabs, k), tabsLine: tabs ? getComputedStyle(tabs).borderBottomColor : null,
   mid: r(document.querySelector(${JSON.stringify(mid)})).width, scroll: document.documentElement.scrollWidth, inner: innerWidth, cardScroll: card.scrollWidth - card.clientWidth,
   outside: [...card.querySelectorAll('*')].filter((el) => vis(el) && getComputedStyle(el).position !== 'fixed' && !inside(el, k) && !el.closest('.ms-convo-list, .ms-cv-brief-wrap, .ms-comments, [role=tabpanel]'))
@@ -214,6 +215,11 @@ if (${JSON.stringify(tab)} === 'chat') {
   out.dockIn = dock.bottom <= k.bottom + 0.5;
   const bubble = card.querySelector('.ms-msg:not(.ms-you):not(.ms-summary) .ms-msg-bubble');
   out.bubble = bubble ? getComputedStyle(bubble).backgroundColor : null;
+  out.bubbleText = bubble ? getComputedStyle(bubble).color : null;
+  const fieldBox = form.querySelector('.ms-composer-box');
+  out.composerBox = fieldBox ? getComputedStyle(fieldBox).backgroundColor : null;
+  const field = form.querySelector('textarea');
+  out.composerText = field ? getComputedStyle(field).color : null;
   out.composerShadow = getComputedStyle(form).boxShadow;
   out.composerBg = getComputedStyle(form).backgroundColor;
   const fr = form.getBoundingClientRect();
@@ -277,10 +283,21 @@ return out;
 
 type Box = { left: number; top: number; right: number; bottom: number; width: number; height: number };
 type Measure = {
-  missing: boolean; col: Box; card: Box; radius: string; bg: string; glass: string; glassField: string; glassLine: string; tabsIn: boolean; tabsLine: string | null; mid: number;
-  scroll: number; inner: number; cardScroll: number; outside: string[]; scrollable?: boolean; listRight?: boolean; under?: string[]; dockIn?: boolean; bubble?: string | null;
+  missing: boolean; col: Box; card: Box; radius: string; bg: string; glass: string; glassField: string; glassLine: string; glassSolid: string; backdrop: string; tabsIn: boolean; tabsLine: string | null; mid: number;
+  scroll: number; inner: number; cardScroll: number; outside: string[]; scrollable?: boolean; listRight?: boolean; under?: string[]; dockIn?: boolean; bubble?: string | null; bubbleText?: string | null; composerBox?: string | null; composerText?: string | null;
   composerShadow?: string; composerBg?: string; composerGap?: number; buttons?: Array<{ name: string; in: boolean }>; send?: boolean; note?: { clipped: boolean; in: boolean } | null;
   approval?: { in: boolean; overflow: number } | null; panelIn?: boolean; panelScroll?: number; controls?: number; clipped?: string[];
+};
+
+// WCAG contrast of a text colour over a background that may be translucent, laid over an opaque base.
+type Rgba = [number, number, number, number];
+const rgba = (c: string): Rgba => { const n = (c.match(/[\d.]+/g) ?? []).map(Number); return [n[0] ?? 0, n[1] ?? 0, n[2] ?? 0, n[3] ?? 1]; };
+const over = (top: Rgba, base: Rgba): Rgba => [0, 1, 2].map((i) => top[i]! * top[3] + base[i]! * (1 - top[3])).concat(1) as Rgba;
+const lum = ([r, g, b]: Rgba) => [r, g, b].map((v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; }).reduce((a, c, i) => a + c * [0.2126, 0.7152, 0.0722][i]!, 0);
+const contrast = (text: string, bg: string, base: string) => {
+  const b = over(rgba(bg), rgba(base)), t = over(rgba(text), b);
+  const [hi, lo] = [lum(t), lum(b)].sort((x, y) => y - x) as [number, number];
+  return (hi + 0.05) / (lo + 0.05);
 };
 
 const required = process.env.MS_REQUIRE_CHROME === '1';
@@ -295,18 +312,22 @@ run('every chat is the glass card: real Chrome layout', () => {
   beforeAll(async () => { dir = mkdtempSync(join(tmpdir(), 'ms-chat-glass-')); browser = await launchChrome(chrome!); });
   afterAll(async () => { await browser?.close(); rmSync(dir, { recursive: true, force: true }); });
 
-  async function measure(screen: Screen, tab: string, html: string, width: Width, theme: 'light' | 'dark'): Promise<Measure> {
+  async function measure(screen: Screen, tab: string, html: string, width: Width, theme: 'light' | 'dark', transparency: 'no-preference' | 'reduce' = 'no-preference'): Promise<Measure> {
     const height = width === 1440 ? 900 : 700;
     const page = `<!doctype html><html lang="it" data-theme="${theme}"><head><meta charset="utf-8"><style>${FONTS()}\n${ALL_CSS()}
       html,body{margin:0;height:100%;background:var(--bg)} #page{height:100vh}
       /* Focus rings are read at once, not half way through their transition. */ *,*::before,*::after{transition:none !important}</style></head><body><div id="page">${html}</div></body></html>`;
-    const file = join(dir, `${screen}-${tab}-${theme}-${width}.html`);
+    const reduced = transparency === 'reduce' ? '-reduced-transparency' : '';
+    const file = join(dir, `${screen}-${tab}-${theme}-${width}${reduced}.html`);
     writeFileSync(file, page);
     const t = await browser.newPage(width, height);
     try {
+      // Never the machine's setting (the macOS CI runner has Reduce Transparency on): the glass is asserted with transparency
+      // allowed, the opaque card when the case asks for `reduce`.
+      await t.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-transparency', value: transparency }, { name: 'prefers-reduced-motion', value: 'no-preference' }] });
       await t.goto(`file://${file}`);
       const r = await t.eval<Measure>(MEASURE(COL[screen], MID[screen], tab), 30_000);
-      if (shots) writeFileSync(join(shots, `${screen}-${tab}-${theme}-${width}x${height}.png`), await t.screenshot());
+      if (shots) writeFileSync(join(shots, `${screen}-${tab}-${theme}-${width}x${height}${reduced}.png`), await t.screenshot());
       return r;
     } finally { await t.close(); }
   }
@@ -327,6 +348,7 @@ run('every chat is the glass card: real Chrome layout', () => {
         for (const side of ['right', 'bottom'] as const) check(Math.abs(r.col[side] - r.card[side] - 12) < 0.5, `card ${side} inset ${r.col[side] - r.card[side]}`);
         check(r.radius === '20px', `radius ${r.radius}`);
         check(r.bg === r.glass, `card background ${r.bg}, glass ${r.glass}`);
+        check(r.backdrop.includes('blur('), `card backdrop filter ${r.backdrop}`);
         check(r.tabsIn, 'tabs inside the card');
         check(r.tabsLine === null || r.tabsLine === r.glassLine || screen === 'editor', `tabs line ${r.tabsLine}`);
         check(r.scroll <= r.inner, `page scrolls sideways ${r.scroll}`);
@@ -356,4 +378,25 @@ run('every chat is the glass card: real Chrome layout', () => {
       expect(failures).toEqual([]);
     });
   }
+
+  it('with reduced transparency every chat card is the opaque --glassSolid, its composer on it, and the text stays readable', async () => {
+    const failures: string[] = [];
+    for (const screen of ['canvas', 'group', 'format', 'editor'] as const) {
+      const { chat } = await markup(screen);
+      for (const theme of ['light', 'dark'] as const) {
+        const r = await measure(screen, 'chat', chat!, 1440, theme, 'reduce');
+        const at = `${screen} ${theme} reduced transparency`;
+        const check = (ok: boolean, what: string) => { if (!ok) failures.push(`${at}: ${what}`); };
+        if (r.missing) { failures.push(`${at}: no .ms-chat-card in the column`); continue; }
+        check(r.bg === r.glassSolid && rgba(r.bg)[3] === 1, `card background ${r.bg}, glassSolid ${r.glassSolid}`);
+        check(r.backdrop === 'none', `card backdrop filter ${r.backdrop}`);
+        // The composer has no background of its own: it shows the opaque card.
+        check(r.composerBg === 'rgba(0, 0, 0, 0)', `composer background ${r.composerBg}`);
+        const text = contrast(r.bubbleText!, r.bubble!, r.bg), field = contrast(r.composerText!, r.composerBox!, r.bg);
+        check(text >= 4.5, `agent bubble text contrast ${text.toFixed(2)}`);
+        check(field >= 4.5, `composer text contrast ${field.toFixed(2)}`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
 });

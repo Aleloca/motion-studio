@@ -152,6 +152,31 @@ describe('useBriefSession · review round 1', () => {
     expect(result.current.session?.form.goal).toBe('dal core');
   });
 
+  it('a debounced save answered older than the view held: settled first, then the held view is offered again (the form merges it)', async () => {
+    const { result, rerender } = renderHook(({ l }) => useBriefSession('acme', l), { initialProps: { l: live({ snapshots: 1 }) } });
+    await waitFor(() => expect(result.current.session?.revision).toBe(3));
+    const late = deferred<{ ok: true; form: typeof EMPTY_BRIEF_FORM; userEdited: string[]; agentFields: never[]; revision: number }>();
+    api.saveBriefForm.mockImplementationOnce(() => late.promise as never);
+    const order: string[] = [];
+    act(() => {
+      result.current.saveForm(() => ({ form: { ...EMPTY_BRIEF_FORM, goal: 'mio' }, userEdited: ['goal'], baseRevision: 3 }), (ok) => order.push(`settled ${ok}`));
+      result.current.flushSave();
+    });
+    await waitFor(() => expect(api.saveBriefForm).toHaveBeenCalled());
+    api.getBriefSession.mockResolvedValueOnce(view({ revision: 8, form: { ...EMPTY_BRIEF_FORM, goal: 'riscritto' }, agentFields: ['goal'] }));
+    rerender({ l: live({ snapshots: 2 }) });
+    await waitFor(() => expect(result.current.session?.revision).toBe(8));
+    const held = result.current.session;
+    await act(async () => { late.resolve({ ok: true, form: { ...EMPTY_BRIEF_FORM, goal: 'mio' }, userEdited: ['goal'], agentFields: [], revision: 4 }); });
+    await waitFor(() => expect(result.current.session).not.toBe(held));
+    expect(order).toEqual(['settled true']);
+    expect(result.current.session).toEqual(held);
+    // An answer that is not older is adopted as before, and nothing more is offered.
+    act(() => { result.current.saveForm(() => ({ form: { ...EMPTY_BRIEF_FORM, goal: 'mio' }, userEdited: ['goal'], baseRevision: 8 })); result.current.flushSave(); });
+    await waitFor(() => expect(result.current.session?.revision).toBe(9));
+    expect(result.current.session?.form.goal).toBe('mio');
+  });
+
   it('a pending save is sent when the page goes away', async () => {
     const { result, unmount } = renderHook(() => useBriefSession('acme', live()));
     await waitFor(() => expect(result.current.session?.id).toBe('s1'));

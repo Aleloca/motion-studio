@@ -135,6 +135,13 @@ const marks = [...document.querySelectorAll('.ms-nc-agentmark')].map((m) => {
 const clipped = [...document.querySelectorAll('.ms-nc-len button, .ms-nc-boardhead .ms-seg button')].filter((b) => b.scrollWidth > b.clientWidth + 1).map((b) => b.textContent);
 const buttons = [...q('.ms-nc-foot').querySelectorAll('button')].map((b) => { const r = b.getBoundingClientRect(); return r.left >= foot.left && r.right <= foot.right + 0.5 && r.right <= innerWidth; });
 const delays = (s) => { const c = cs(s); const names = c.transitionProperty.split(',').map((x) => x.trim()); const d = c.transitionDelay.split(',').map((x) => x.trim()); return Object.fromEntries(names.map((n, i) => [n, d[i % d.length]])); };
+// The panel's background against the glass tokens resolved where it is (light or dark), and its composer.
+const panelEl = q('.ms-nc-panel');
+const probe = (v) => { const p = document.createElement('i'); p.style.background = 'var(' + v + ')'; panelEl.appendChild(p); const out = getComputedStyle(p).backgroundColor; p.remove(); return out; };
+const pcs = getComputedStyle(panelEl);
+const composer = q('.ms-nc-panel form.ms-composer');
+const glassOf = { bg: pcs.backgroundColor, glass: probe('--glass'), glassSolid: probe('--glassSolid'), backdrop: pcs.backdropFilter || pcs.webkitBackdropFilter || 'none',
+  composerBg: getComputedStyle(composer).backgroundColor, box: box.backgroundColor, text: getComputedStyle(composer.querySelector('textarea')).color };
 const durations = [...document.querySelectorAll('*')].flatMap((el) => getComputedStyle(el).transitionDuration.split(',').map((x) => parseFloat(x) * 1000));
 return {
   main, panel, body, area, foot, scroll: document.documentElement.scrollWidth, inner: innerWidth,
@@ -143,7 +150,7 @@ return {
   padding: box.padding, gap: box.rowGap, ctxGap: ctxBtn.top - form.bottom,
   opacity: cs('.ms-nc-panel').opacity, transform: cs('.ms-nc-panel').transform,
   panelDelays: delays('.ms-nc-panel'), formDelays: delays('.ms-nc-form'), bodyDelays: delays('.ms-nc-body'),
-  marks, buttons, clipped, modeShown, modeOn, under, scrollable, markOnTitle, maxDuration: Math.max(...durations),
+  marks, buttons, clipped, modeShown, modeOn, under, scrollable, markOnTitle, maxDuration: Math.max(...durations), glassOf,
 };
 })()`;
 
@@ -151,6 +158,18 @@ type Measure = {
   main: DOMRect; panel: DOMRect; body: DOMRect; area: DOMRect; foot: DOMRect; scroll: number; inner: number; panelRadius: string; bodyRadius: string; footRadius: string;
   left: number; board: number; padding: string; gap: string; ctxGap: number; opacity: string; transform: string;
   panelDelays: Record<string, string>; formDelays: Record<string, string>; bodyDelays: Record<string, string>; marks: boolean[]; buttons: boolean[]; clipped: string[]; modeShown: boolean; modeOn: string | null; under: string[]; scrollable: boolean; markOnTitle: boolean; maxDuration: number;
+  glassOf: { bg: string; glass: string; glassSolid: string; backdrop: string; composerBg: string; box: string; text: string };
+};
+
+// WCAG contrast of a text colour over a background that may be translucent, laid over an opaque base.
+type Rgba = [number, number, number, number];
+const rgba = (c: string): Rgba => { const n = (c.match(/[\d.]+/g) ?? []).map(Number); return [n[0] ?? 0, n[1] ?? 0, n[2] ?? 0, n[3] ?? 1]; };
+const over = (top: Rgba, base: Rgba): Rgba => [0, 1, 2].map((i) => top[i]! * top[3] + base[i]! * (1 - top[3])).concat(1) as Rgba;
+const lum = ([r, g, b]: Rgba) => [r, g, b].map((v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; }).reduce((a, c, i) => a + c * [0.2126, 0.7152, 0.0722][i]!, 0);
+const contrast = (text: string, bg: string, base: string) => {
+  const b = over(rgba(bg), rgba(base)), t = over(rgba(text), b);
+  const [hi, lo] = [lum(t), lum(b)].sort((x, y) => y - x) as [number, number];
+  return (hi + 0.05) / (lo + 0.05);
 };
 
 const run = chrome ? describe : describe.skip;
@@ -169,20 +188,24 @@ run('the brief with the agent: real Chrome layout', () => {
   }, 120_000);
   afterAll(async () => { await browser?.close(); rmSync(dir, { recursive: true, force: true }); }, 60_000);
 
-  async function measure(html: { bar: string; page: string }, o: { name: string; width: number; height: number; theme: 'light' | 'dark'; reduce?: boolean; font?: string }): Promise<Measure> {
+  async function measure(html: { bar: string; page: string }, o: { name: string; width: number; height: number; theme: 'light' | 'dark'; reduce?: boolean; opaque?: boolean; font?: string }): Promise<Measure> {
     const page = `<!doctype html><html lang="it" data-theme="${o.theme}"><head><meta charset="utf-8"><style>${CSS}
       html,body{height:100%;margin:0}${o.font ? `body,button,input,textarea{font-family:${o.font} !important}` : ''}</style></head>
       <body><div class="ms-app">${html.bar}<div class="ms-main" id="main"><div class="ms-stage"><div class="ms-page">${html.page}</div></div></div></div>
       <script>for (const c of document.querySelectorAll('.ms-convo')) c.style.setProperty('--ms-dock-h', c.querySelector('.ms-convo-dock').offsetHeight + 'px');</script></body></html>`;
-    const file = join(dir, `${o.name}-${o.theme}-${o.width}${o.reduce ? '-reduced' : ''}${o.font ? '-wide' : ''}.html`);
+    const file = join(dir, `${o.name}-${o.theme}-${o.width}${o.reduce ? '-reduced' : ''}${o.opaque ? '-opaque' : ''}${o.font ? '-wide' : ''}.html`);
     writeFileSync(file, page);
     const tab = await browser.newPage(o.width, o.height);
     try {
-      // Never the machine's setting: the timings are asserted with motion allowed, the reduced case asks for `reduce`.
-      await tab.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: o.reduce ? 'reduce' : 'no-preference' }] });
+      // Never the machine's settings: the timings are asserted with motion allowed and the glass with transparency allowed (the
+      // macOS CI runner has Reduce Transparency on); the reduced cases ask for `reduce`.
+      await tab.send('Emulation.setEmulatedMedia', { features: [
+        { name: 'prefers-reduced-motion', value: o.reduce ? 'reduce' : 'no-preference' },
+        { name: 'prefers-reduced-transparency', value: o.opaque ? 'reduce' : 'no-preference' },
+      ] });
       await tab.goto(`file://${file}`);
       const r = await tab.eval<Measure>(MEASURE, 30_000);
-      if (shots) writeFileSync(join(shots, `brief-${o.name}-${o.theme}-${o.width}x${o.height}${o.reduce ? '-reduced' : ''}.png`), await tab.screenshot());
+      if (shots) writeFileSync(join(shots, `brief-${o.name}-${o.theme}-${o.width}x${o.height}${o.reduce ? '-reduced' : ''}${o.opaque ? '-opaque' : ''}.png`), await tab.screenshot());
       return r;
     } finally { await tab.close(); }
   }
@@ -194,6 +217,8 @@ run('the brief with the agent: real Chrome layout', () => {
       expect(r.panel.top - r.main.top).toBeCloseTo(12, 0);
       expect(r.panel.width).toBeCloseTo(448, 0);
       expect(r.panelRadius).toBe('20px');
+      expect(r.glassOf.bg, 'the panel is the glass').toBe(r.glassOf.glass);
+      expect(r.glassOf.backdrop).toContain('blur(');
       // The form's area starts at 472 (12 + 448 + 12) and its card is inset 12 px in it, as in the prototype (decision 1425).
       expect(r.area.left).toBeCloseTo(472, 0);
       expect(r.body.left).toBeCloseTo(484, 0);
@@ -272,6 +297,19 @@ run('the brief with the agent: real Chrome layout', () => {
       expect(r.buttons.every(Boolean), "the footer's buttons are whole").toBe(true);
       expect(r.modeShown).toBe(true);
       expect(r.modeOn).toBe('Compila tu');
+    }, 120_000);
+  }
+
+  for (const theme of ['light', 'dark'] as const) {
+    it(`${theme}: reduced transparency makes the panel the opaque --glassSolid, its composer on it, the text readable`, async () => {
+      const r = await measure(agentHtml, { name: 'agent', width: 1440, height: 900, theme, opaque: true });
+      const g = r.glassOf;
+      expect(g.bg).toBe(g.glassSolid);
+      expect(rgba(g.bg)[3]).toBe(1);
+      expect(g.backdrop).toBe('none');
+      expect(g.composerBg, 'the composer shows the opaque panel').toBe('rgba(0, 0, 0, 0)');
+      expect(contrast(g.text, g.box, g.bg)).toBeGreaterThanOrEqual(4.5);
+      expect(r.under, 'no message under the composer or the context row').toEqual([]);
     }, 120_000);
   }
 
