@@ -50,7 +50,8 @@
   --cv-z: 1; display: flex; align-items: flex-start; gap: calc(40px * var(--cv-z));
   padding: calc(40px * var(--cv-z)) calc(60px * var(--cv-z)) calc(140px * var(--cv-z)); width: max-content;
 }
-.ms-cv-stack { display: flex; flex-direction: column; gap: calc(44px * var(--cv-z)); }
+/* Report 60: a group's boards other than the tall ones, in a grid (its columns from canvasModel.canvasFit; one: the old stack). */
+.ms-cv-stack { display: grid; grid-template-columns: max-content; align-items: start; gap: calc(44px * var(--cv-z)) calc(40px * var(--cv-z)); }
 /* Report 40: the boards in lines (canvasModel.canvasLines), one or more per group of the formats column. */
 /* Report 41: a format the running turn has checked, shown before the version is recorded. */
 .ms-cv-board-state.ms-cv-wip { color: var(--accent); }

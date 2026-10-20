@@ -1,7 +1,7 @@
 import { DEFAULT_FORMATS } from '@motion-studio/shared';
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('../src/api.ts', () => ({ api: { fileUrl: () => '' } }));
-const { boardsWith, canvasGroups, canvasLines, fitBoards, fitSections, fitZoom, labelMin, sectionsAt, toScreen, worldAt, worldSize, FIT_MIN, LABEL_MIN, LABEL_MIN_GROUPED } = await import('../src/screens/canvasModel.ts');
+const { boardsWith, canvasFit, canvasGroups, canvasLines, fitBoards, fitSections, fitZoom, labelMin, sectionsAt, toScreen, worldAt, worldSize, FIT_MIN, LABEL_MIN, LABEL_MIN_GROUPED, READABLE_ZOOM } = await import('../src/screens/canvasModel.ts');
 
 describe('canvas fit to view (CV1)', () => {
   const boards = [{ boards: boardsWith(['tiktok-9x16', 'instagram-post-1x1'], DEFAULT_FORMATS, [], () => ({ format: '', n: null })) }];
@@ -141,6 +141,94 @@ describe('canvas sections (report 52)', () => {
     expect(w.height).toBeLessThanOrEqual(view.height);
     expect(sectionsAt(sections, z + 0.05, view.width, { head: 22, grouped: true }).height).toBeGreaterThan(view.height);
     expect(fitSections([{ groups: [], head: 32 }], view, FIT_MIN)).toBeNull();
+  });
+});
+
+describe('canvas grid (report 60)', () => {
+  const none = () => ({ format: '', n: null });
+  const copies = (id: string, n: number) => Array.from({ length: n }, (_, i) => (i ? `${id}@${i + 1}` : id));
+  const groups = (ids: string[]) => canvasGroups(boardsWith(ids, DEFAULT_FORMATS, [], none), new Set());
+  const view = { width: 1300, height: 1050 };
+  const ids = (lines: Array<Array<{ boards: Array<{ id: string }> }>>) => lines.map((l) => l.map((it) => it.boards.map((b) => b.id)));
+
+  it('lays 17 copies of a 16:9 out in rows, in reading order, and opens them readable (at least the floor)', () => {
+    const g = groups(copies('web-hero-16x9', 17));
+    const fit = canvasFit([{ groups: g, head: 0 }], view, FIT_MIN)!;
+    expect(fit.cols).toBeGreaterThan(1);
+    expect(fit.zoom).toBeGreaterThanOrEqual(READABLE_ZOOM);
+    // The old single column fitted at the 10% floor.
+    const single = sectionsAt([{ groups: g, head: 0 }], fit.zoom, view.width, undefined, 1);
+    expect(single.height).toBeGreaterThan(view.height * 3);
+    const w = sectionsAt([{ groups: g, head: 0 }], fit.zoom, view.width, undefined, fit.cols);
+    expect(w.width).toBeLessThanOrEqual(view.width);
+    expect(w.height).toBeLessThanOrEqual(view.height);
+    const lines = canvasLines(g, fit.zoom, view.width, undefined, fit.cols);
+    expect(lines.length).toBe(1);
+    expect(lines[0]!.length).toBe(1);
+    expect(lines[0]![0]!.cols).toBe(fit.cols);
+    expect(ids(lines)[0]![0]).toEqual(copies('web-hero-16x9', 17));
+    expect(fit.all).toBe(fit.zoom);
+  });
+
+  it('measures a grid: columns as wide as their widest board, rows as tall as their tallest', () => {
+    const g = groups(copies('web-hero-16x9', 5));
+    // 3 columns of 420, 2 rows of 236 (+50 label), gaps 40 across and 44 down, the world's padding.
+    expect(sectionsAt([{ groups: g, head: 0 }], 1, null, undefined, 3)).toEqual({ width: 3 * 420 + 2 * 40 + 120, height: 2 * 286 + 44 + 180 });
+    // One column is the old stack.
+    expect(sectionsAt([{ groups: g, head: 0 }], 1, null, undefined, 1)).toEqual({ width: 420 + 120, height: 5 * 286 + 4 * 44 + 180 });
+  });
+
+  it('keeps two landscape boards as today: one column at 100% when it fits', () => {
+    const g = groups(copies('youtube-16x9', 2));
+    expect(canvasFit([{ groups: g, head: 0 }], view, FIT_MIN)).toEqual({ zoom: 1, cols: 1, all: 1 });
+    expect(fitBoards(g, view, FIT_MIN)).toBe(1);
+  });
+
+  it('a mix: the tall boards one by one on the line, the others in a grid after them', () => {
+    const g = groups(['youtube-16x9', 'youtube-shorts-9x16', 'youtube-16x9@2', 'youtube-thumbnail', 'youtube-shorts-9x16@2']);
+    const fit = canvasFit([{ groups: g, head: 0 }], view, FIT_MIN)!;
+    expect(fit.zoom).toBeGreaterThanOrEqual(READABLE_ZOOM);
+    const lines = canvasLines(g, fit.zoom, view.width, undefined, fit.cols);
+    expect(ids(lines).flat()).toEqual([['youtube-shorts-9x16'], ['youtube-shorts-9x16@2'], ['youtube-16x9', 'youtube-16x9@2', 'youtube-thumbnail']]);
+    const w = sectionsAt([{ groups: g, head: 0 }], fit.zoom, view.width, undefined, fit.cols);
+    expect(w.width).toBeLessThanOrEqual(view.width);
+    expect(w.height).toBeLessThanOrEqual(view.height);
+  });
+
+  it('60 boards: the floor zoom, as many columns as the width takes, the canvas scrolling down', () => {
+    const g = groups(copies('web-hero-16x9', 60));
+    const fit = canvasFit([{ groups: g, head: 0 }], view, FIT_MIN)!;
+    expect(fit.zoom).toBe(READABLE_ZOOM);
+    expect(fit.all).toBeLessThan(READABLE_ZOOM);
+    const w = sectionsAt([{ groups: g, head: 0 }], fit.zoom, view.width, undefined, fit.cols);
+    expect(w.width).toBeLessThanOrEqual(view.width);
+    expect(sectionsAt([{ groups: g, head: 0 }], fit.zoom, view.width, undefined, fit.cols + 1).width).toBeGreaterThan(view.width);
+    expect(w.height).toBeGreaterThan(view.height);
+    // At the zoom the user can go down to, the same layout is all in view.
+    const all = sectionsAt([{ groups: g, head: 0 }], fit.all, view.width, undefined, fit.cols);
+    expect(all.height).toBeLessThanOrEqual(view.height);
+  });
+
+  it('review: zoomed down to `all`, the layout drawn (wrapped at the opening zoom) is all in view, with channels sharing lines', () => {
+    const ids = [...copies('web-hero-16x9', 40), 'youtube-16x9', 'linkedin-16x9', 'x-16x9', 'facebook-feed-1x1', 'instagram-post-1x1', 'pinterest-2x3', 'tiktok-9x16'];
+    const g = groups(ids);
+    const v = { width: 1300, height: 1050 };
+    const fit = canvasFit([{ groups: g, head: 0 }], v, FIT_MIN)!;
+    expect(fit.zoom).toBe(READABLE_ZOOM);
+    // Measured at `all`, wrapped as drawn (at the opening zoom).
+    const drawn = sectionsAt([{ groups: g, head: 0 }], fit.all, v.width, undefined, fit.cols, fit.zoom);
+    expect(drawn.width).toBeLessThanOrEqual(v.width);
+    expect(drawn.height).toBeLessThanOrEqual(v.height);
+    // The same answer twice (memoized), and a fresh copy of the groups gives it too.
+    expect(canvasFit([{ groups: groups(ids), head: 0 }], v, FIT_MIN)).toEqual(fit);
+  });
+
+  it('a store pack keeps opening with all of it in view (report 40), below the floor', () => {
+    const pack = [...copies('appstore-iphone-69', 8), 'appstore-preview', ...copies('playstore-phone-9x16', 8), 'playstore-feature', 'playstore-promo-16x9'];
+    const g = canvasGroups(boardsWith(pack, DEFAULT_FORMATS, [], none), new Set(pack));
+    const v = { width: 660, height: 740 };
+    expect(canvasFit([{ groups: g, head: 0 }], v, FIT_MIN)!.zoom).toBe(fitBoards(g, v, FIT_MIN));
+    expect(fitBoards(g, v, FIT_MIN)).toBeLessThan(READABLE_ZOOM);
   });
 });
 

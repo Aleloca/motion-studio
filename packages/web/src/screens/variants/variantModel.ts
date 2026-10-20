@@ -169,10 +169,30 @@ export function cardWidth(z: number, viewWidth: number, count: number): number {
 export const CELL_MIN = 104;
 export const CELL_GAP = 12;
 
-/** The columns of a card's formats: as many as fit (at most one per format), sharing the card's inner width. */
-export function cardColumns(inner: number, count: number): { cols: number; width: number } {
-  const cols = Math.max(1, Math.min(count, Math.floor((inner + CELL_GAP) / (CELL_MIN + CELL_GAP))));
+/** The columns of a card's formats: as many as fit at least `min` wide (at most one per format), sharing the card's inner width. */
+export function cardColumns(inner: number, count: number, min = CELL_MIN): { cols: number; width: number } {
+  const cols = Math.max(1, Math.min(count, Math.floor((inner + CELL_GAP) / (min + CELL_GAP))));
   return { cols, width: (inner - (cols - 1) * CELL_GAP) / cols };
+}
+
+/** Report 61: the narrowest column a card opens with (a 16:9 thumbnail 150×84 px, about report 60's readable floor). */
+export const CELL_READABLE = 150;
+
+/**
+ * Report 61: a card's formats at zoom `z`. The card opens (at `fitCards`, the zoom of `count` cards in a viewport `viewWidth` px
+ * wide) with as many columns as stay at least CELL_READABLE wide; zooming scales the thumbnails (`cell`, and `scale` for their
+ * height caps) by the zoom from there, and the columns never grow: they give way, one by one, only when the card would get wider
+ * than the canvas, and a single thumbnail stops at the canvas's width. `width`: the card's, never narrower than CARD_MIN.
+ */
+export function cardCells(z: number, viewWidth: number, count: number, formats: number): { width: number; cols: number; cell: number; scale: number } {
+  const z0 = fitCards(count, viewWidth) ?? z;
+  const inner0 = cardWidth(z0, viewWidth, count) - 2 * CARD_PAD;
+  const open = cardColumns(inner0, Math.max(1, formats), CELL_READABLE);
+  const scale = z / z0;
+  const room = viewWidth > 0 ? viewWidth - 2 * CARDS_PAD - 2 * CARD_PAD : Infinity;
+  const cell = Math.min(open.width * scale, room);
+  const cols = Math.max(1, Math.min(open.cols, Math.floor((room + CELL_GAP) / (cell + CELL_GAP))));
+  return { width: Math.max(CARD_MIN, 2 * CARD_PAD + cols * cell + (cols - 1) * CELL_GAP), cols, cell, scale };
 }
 
 /** The tallest thumbnail: the hero of a card, and one among several (a wide card would make a 9:16 a poster). */
@@ -182,11 +202,11 @@ const THUMB_MAX_H = 320;
 /**
  * The zoom of a format's thumbnail in a column `width` px wide: as wide as the column, never cropped. Alone it is the card's hero
  * (a tall format at most 1.25 × the width high); among several, at most 16:9 of the width high (a 9:16 fills its column). Never
- * taller than HERO_MAX_H / THUMB_MAX_H.
+ * taller than HERO_MAX_H / THUMB_MAX_H, times `scale` (report 61: the zoom from the card's opening one).
  */
-export function thumbZoom(b: BoardModel, width: number, hero: boolean): number {
+export function thumbZoom(b: BoardModel, width: number, hero: boolean, scale = 1): number {
   const f = boardFrame(b);
-  const high = hero ? Math.min(width * 1.25, HERO_MAX_H) : Math.min((width * 16) / 9, THUMB_MAX_H);
+  const high = hero ? Math.min(width * 1.25, HERO_MAX_H * scale) : Math.min((width * 16) / 9, THUMB_MAX_H * scale);
   return Math.min(width / f.width, high / f.height);
 }
 

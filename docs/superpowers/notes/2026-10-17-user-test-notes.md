@@ -460,6 +460,19 @@ arrives and worked on later together.
     then fits that 17-board-high column into the viewport (down to 0.1).
     Wanted: the boards fill the space in a grid of several per row, and the first zoom is already readable.
     Timing: now.
+    Done (decisions 1456–1462): a channel's non-tall boards are a grid filled row by row, with the column count that gives the
+    largest fit zoom (17 copies of a 16:9: 4–5 columns at 50–55% instead of one column at 10%); below a 40% readable floor the
+    canvas opens at 40%, its rows filling the width, and scrolls down (⌘0 too; ⌘− still goes down to all in view). A store pack
+    still opens all in view.
+
+61. **Zoom on the variants canvas does not enlarge the images.** A creative with 3 variants × 17 image formats: zooming
+    in makes the variant cards wider and the boards reflow into more columns (2 → 4 → 9 per row), while each thumbnail
+    stays about the same small size. The user cannot get the images any bigger to look at them.
+    Wanted: zoom enlarges the boards themselves.
+    Timing: now, with 60.
+    Done (decisions 1465–1467): a card's columns are set when it opens (at least 150 px each) and never grow; the zoom scales its
+    thumbnails from there (3 × 17 at a 2000 px window: 2 columns of 162 px, 324 px at 200%), the columns giving way only at the
+    canvas's edge. The "Scelte" view already scaled its boards with the zoom.
 
 ## Follow-ups found while working on 12–30
 
