@@ -142,10 +142,10 @@ describe('NewCreative · copies of a format (report 58)', () => {
     for (let i = 0; i < 4; i++) await userEvent.click(more());
     expect(imageTile().getAttribute('aria-pressed')).toBe('true');
     expect(within(copies()).getByText('5')).toBeTruthy();
-    expect(within(copies()).getByRole('status').textContent).toBe('5 copie');
+    expect(within(copies()).getByRole('status').textContent).toBe('Instagram · Immagine 1:1: 5 copie');
     expect(screen.getByText(/^6 formati · 1 render video \+ 5 immagini$/)).toBeTruthy();
     // The channel says tiles and copies apart; the tile keeps its tick.
-    expect(within(ig()).getByText('1 selezionato · 5 copie')).toBeTruthy();
+    expect(within(ig()).getByText('1 selezionato · 5 in totale')).toBeTruthy();
     expect(imageTile().querySelector('.ms-nc-tick')).toBeTruthy();
     expect(document.querySelectorAll('.ms-nc-frames > span')).toHaveLength(5);
     await userEvent.click(screen.getByRole('button', { name: 'Genera' }));
@@ -190,7 +190,7 @@ describe('NewCreative · copies of a format (report 58)', () => {
     await userEvent.keyboard('{Enter}');
     await userEvent.keyboard(' ');
     expect(document.activeElement).toBe(plus);
-    expect(within(ig()).getByRole('group', { name: 'Copie di Instagram · Post 1:1' }).querySelector('[role="status"]')!.textContent).toBe('3 copie');
+    expect(within(ig()).getByRole('group', { name: 'Copie di Instagram · Post 1:1' }).querySelector('[role="status"]')!.textContent).toBe('Instagram · Post 1:1: 3 copie');
     expect(post().getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByText(/^3 formati · 3 render video$/)).toBeTruthy();
     // Facebook's 1:1 follows the first Post 1:1 by default, never a copy, and no copy follows another.
@@ -201,6 +201,19 @@ describe('NewCreative · copies of a format (report 58)', () => {
     expect(createCreative.mock.calls[0]![1]).toMatchObject({
       brief: { formats: ['instagram-post-1x1', 'instagram-post-1x1@2', 'instagram-post-1x1@3', 'facebook-feed-1x1'], durationSec: 6, links: { 'facebook-feed-1x1': 'instagram-post-1x1' } },
     });
+  });
+
+  it('the count is said only on a change; a filter that hides chosen formats says so', async () => {
+    render(<NewCreative slug="acme" />);
+    await board();
+    await userEvent.click(imageTile());
+    expect(within(copies()).getByRole('status').textContent).toBe('');
+    await userEvent.click(more());
+    expect(screen.queryByText(/nascost/)).toBeNull();
+    await userEvent.click(within(screen.getByRole('radiogroup', { name: 'Tipo di formato' })).getByRole('radio', { name: /Video/ }));
+    expect(screen.getByText('2 formati scelti sono nascosti dal filtro')).toBeTruthy();
+    await userEvent.type(screen.getByRole('searchbox'), 'tiktok');
+    expect(screen.getByText('2 formati scelti sono nascosti dal filtro')).toBeTruthy();
   });
 
   it('identity tiles have no counter (their concepts are variants)', async () => {

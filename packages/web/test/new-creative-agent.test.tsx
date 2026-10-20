@@ -75,7 +75,7 @@ describe('NewCreative · the agent fills the form (decision 1422)', () => {
     rerender(page(fillTick(1, ['formats'])));
     const ig = screen.getByRole('group', { name: 'Instagram' });
     const copies = await within(ig).findByRole('group', { name: 'Copie di Instagram · Immagine 1:1' });
-    expect(within(copies).getByRole('status').textContent).toBe('3 copie');
+    expect(copies.querySelector('.ms-nc-copies-n')!.textContent).toBe('3');
     expect(screen.getByText(/^3 formati · 3 immagini$/)).toBeTruthy();
     // The tile springs once for its new copies.
     await waitFor(() => expect(motion.tileIn).toHaveBeenCalledTimes(1));

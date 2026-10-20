@@ -169,7 +169,9 @@
 
 .ms-nc-group { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .ms-nc-ghead { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.ms-nc-ghead b { font-weight: 600; }
+.ms-nc-ghead b { font-weight: 600; flex: 0 0 auto; max-width: 100%; }
+/* The channel's count gives way to its name (its full text is the title). */
+.ms-nc-gcount { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-nc-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 10px; }
 /* Six across when the board is wide enough (the board's width, not the window's: the brief column takes its share). */
 .ms-nc-right { container-type: inline-size; }
@@ -238,10 +240,12 @@ button.ms-nc-link:focus-visible { outline: 2px solid var(--accent); outline-offs
   display: flex; align-items: center; gap: 14px; height: 64px; margin: 12px; padding: 0 20px; min-width: 0; background: var(--panel);
   border-radius: 16px; box-shadow: 0 0 0 1px var(--line), 0 8px 24px var(--shadow);
 }
-.ms-nc-frames { display: flex; align-items: center; gap: 6px; flex: none; }
+/* With little room the drawn frames give way first, then the summary takes two lines (at most; its full text is the title). */
+.ms-nc-frames { display: flex; align-items: center; gap: 6px; flex: 0 100 auto; min-width: 0; overflow: hidden; }
+.ms-nc-frames span { flex: none; }
 .ms-nc-frames span { border-radius: 3px; background: var(--sel); box-shadow: inset 0 0 0 1.5px var(--accent); }
 .ms-nc-sum { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.ms-nc-sum b { font-weight: 600; }
+.ms-nc-sum b { font-weight: 600; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; line-height: 1.25; }
 .ms-nc-sum > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-nc-warn { color: var(--warn); }
 /* Generation error: a strip above the bar, wrapped in full (the remedy is at the end). */

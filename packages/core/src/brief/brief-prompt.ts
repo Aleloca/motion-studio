@@ -73,7 +73,7 @@ export function buildBriefPrompt(i: BriefPromptContext & { projectName: string; 
     '- linkedCodebases: the folders the creative\'s agent will read later, each with a note on what it is for, only among the folders below.',
     '- notes: notes for the agent that will make the creative (style, constraints, what to avoid).',
     '- formats: preset ids of the catalog: call list_formats and use only its ids, never a guessed one.',
-    `- Copies: when the user asks for several images or videos of one format (for example "5 images 1:1"), give its id and then \`<id>@2\`, \`<id>@3\`… up to \`<id>@N\` (N at most ${MAX_INSTANCES}, none left out), so "5 images" of \`instagram-image-1x1\` is \`instagram-image-1x1\`, \`instagram-image-1x1@2\` … \`instagram-image-1x1@5\`. The copies are different images on the same brief, not the same picture repeated; they are not variants (variants are other creative directions).`,
+    `- Copies: when the user asks for several images or videos of one format (for example "5 images 1:1"), give its id and then \`<id>@2\`, \`<id>@3\`… up to \`<id>@N\` (N at most ${MAX_INSTANCES}, none left out), so "5 images" of \`instagram-image-1x1\` is \`instagram-image-1x1\`, \`instagram-image-1x1@2\` … \`instagram-image-1x1@5\`. The copies are different images or videos on the same brief, not the same picture repeated; they are not variants (variants are other creative directions).`,
     `- variants: how many variants to make, 1–${BRIEF_VARIANTS_MAX}: set it only when the user asks for variants.`,
     '',
     ...formSection(i),

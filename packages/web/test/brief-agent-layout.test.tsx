@@ -182,6 +182,10 @@ const copyCheck = () => [...document.querySelectorAll('.ms-nc-copies')].map((c) 
 });
 // Tiles without a counter keep their 112 px.
 const plainHeights = () => [...new Set([...document.querySelectorAll('.ms-nc-tile-wrap:not(.ms-nc-has-copies) > .ms-nc-tile:not(.ms-nc-skel)')].map((t) => Math.round(t.getBoundingClientRect().height)))];
+// The footer's summary whole (two lines at most, never squeezed); every channel's name whole (its count gives way).
+const sumB = q('.ms-nc-sum b');
+const sumWhole = !!sumB && sumB.scrollHeight <= sumB.clientHeight + 1 && sumB.scrollWidth <= sumB.clientWidth + 1 && sumB.getBoundingClientRect().width >= 140;
+const namesCut = [...document.querySelectorAll('.ms-nc-ghead b')].filter((b) => b.scrollWidth > b.clientWidth + 1).map((b) => b.textContent);
 const copies = copyCheck();
 const plain = plainHeights();
 // The narrowest tile the board makes (its 118 px minimum), forced on every group for the same checks.
@@ -192,7 +196,7 @@ const copiesNarrow = copyCheck();
 const plainNarrow = plainHeights();
 narrow.remove();
 return {
-  copies, copiesNarrow, plain, plainNarrow,
+  copies, copiesNarrow, plain, plainNarrow, sumWhole, namesCut,
   main, panel, body, area, foot, scroll: document.documentElement.scrollWidth, inner: innerWidth,
   panelRadius: cs('.ms-nc-panel').borderTopLeftRadius, bodyRadius: cs('.ms-nc-body').borderTopLeftRadius, footRadius: cs('.ms-nc-foot').borderTopLeftRadius,
   left: q('.ms-nc-left').getBoundingClientRect().width, board: q('.ms-nc-right').getBoundingClientRect().width,
@@ -208,7 +212,7 @@ type Measure = {
   left: number; board: number; padding: string; gap: string; ctxGap: number; opacity: string; transform: string;
   panelDelays: Record<string, string>; formDelays: Record<string, string>; bodyDelays: Record<string, string>; marks: boolean[]; buttons: boolean[]; clipped: string[]; modeShown: boolean; modeOn: string | null; under: string[]; scrollable: boolean; markOnTitle: boolean; maxDuration: number;
   glassOf: { bg: string; glass: string; glassSolid: string; backdrop: string; composerBg: string; box: string; text: string };
-  copies: Copy[]; copiesNarrow: Copy[]; plain: number[]; plainNarrow: number[];
+  copies: Copy[]; copiesNarrow: Copy[]; plain: number[]; plainNarrow: number[]; sumWhole: boolean; namesCut: string[];
 };
 type Copy = { id: string; tile: number; height: number; value: string; link: boolean; tick: boolean; overTick: boolean; small: boolean; inside: boolean; linkInside: boolean; overFrame: boolean; overLink: boolean; overText: boolean; linkOverText: boolean; cut: boolean };
 /** Every counter whole and in place; `values`: the counts expected on screen. */
@@ -224,6 +228,8 @@ const allCopiesOk = (r: Measure, values: string[]) => {
   expect(Math.min(...r.copiesNarrow.map((c) => c.tile))).toBe(118);
   expect(r.plain).toEqual([112]);
   expect(r.plainNarrow).toEqual([112]);
+  expect(r.sumWhole, "the footer's summary is whole and not squeezed").toBe(true);
+  expect(r.namesCut, 'every channel name is whole').toEqual([]);
 };
 const AGENT_COPIES = ['2', '1', '1', '2', '1', '12'];
 const YOU_COPIES = ['12', '2'];
@@ -272,7 +278,7 @@ run('the brief with the agent: real Chrome layout', () => {
       ] });
       await tab.goto(`file://${file}`);
       const r = await tab.eval<Measure>(MEASURE, 30_000);
-      if (shots) writeFileSync(join(shots, `brief-${o.name}-${o.theme}-${o.width}x${o.height}${o.reduce ? '-reduced' : ''}${o.opaque ? '-opaque' : ''}.png`), await tab.screenshot());
+      if (shots) writeFileSync(join(shots, `brief-${o.name}-${o.theme}-${o.width}x${o.height}${o.reduce ? '-reduced' : ''}${o.opaque ? '-opaque' : ''}${o.font ? '-wide' : ''}.png`), await tab.screenshot());
       return r;
     } finally { await tab.close(); }
   }

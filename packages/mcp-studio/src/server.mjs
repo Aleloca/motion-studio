@@ -62,7 +62,7 @@ const TOOLS = [
     durationSec: { type: ['integer', 'null'], minimum: 1, maximum: 600, description: 'Video length in seconds' },
     assets: { type: 'array', items: { type: 'string' }, description: 'Project library paths from the attached assets' },
     linkedCodebases: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, note: { type: 'string', description: 'What the folder is for' } }, required: ['path'], additionalProperties: false }, description: 'Folders linked to the session, each with a note' },
-    formats: { type: 'array', items: { type: 'string' }, minItems: 1, description: 'Preset ids from list_formats; N copies of one format (different images on the same brief): the id, then <id>@2 … <id>@N (N at most 20, none left out)' },
+    formats: { type: 'array', items: { type: 'string' }, minItems: 1, description: 'Preset ids from list_formats; N copies of one format (different images or videos on the same brief): the id, then <id>@2 … <id>@N (N at most 20, none left out)' },
     variants: { type: 'integer', minimum: 1, maximum: 5, description: 'Only when the user asks for variants' },
     reclaim: { type: 'array', items: { enum: ['goal', 'message', 'durationSec', 'assets', 'linkedCodebases', 'notes', 'formats', 'variants'] }, description: 'Fields the user edited that their latest message explicitly asks you to rewrite; never on your own initiative' },
   }, additionalProperties: false, minProperties: 1 } },

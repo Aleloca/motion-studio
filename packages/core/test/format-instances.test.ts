@@ -60,7 +60,7 @@ describe('a creative without instances', { timeout: 120_000 }, () => {
 });
 
 
-const SAME_SIZE = 'These are separate designs of the same size on the same brief: make each one a different image (another subject, scene or moment), never the same picture repeated; keep them distinct unless the request says otherwise';
+const SAME_SIZE = 'These are separate designs of the same size on the same brief: make each one a different image or video (another subject, scene or moment), never the same picture repeated; keep them distinct unless the request says otherwise';
 const compsOf = (v: { compositions?: Array<{ format: string; dir: string; hash: string; followsFormat?: string }> } | undefined) =>
   (v?.compositions ?? []).map(({ format, dir, followsFormat }) => ({ format, dir, ...(followsFormat ? { followsFormat } : {}) }));
 const hashOf = (v: { compositions?: Array<{ format: string; hash: string }> } | undefined, f: string) => v?.compositions?.find((c) => c.format === f)?.hash;

@@ -31,7 +31,7 @@ describe('buildBriefPrompt', () => {
   it('says how to ask for several copies of one format (report 58)', () => {
     expect(p).toContain('`<id>@2`');
     expect(p).toContain('at most 20');
-    expect(p).toMatch(/copies[^\n]*different images on the same brief/);
+    expect(p).toMatch(/copies[^\n]*different images or videos on the same brief/);
   });
   it('lets the agent take a field back only when the user asks', () => {
     expect(p).toContain("pass it in fill_brief's `reclaim`");
