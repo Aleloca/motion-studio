@@ -163,3 +163,24 @@ export function stretch(el: Element | null, fromWidth: number): Promise<void> {
   const grows = to > fromWidth;
   return anim(el, [{ width: `${fromWidth}px` }, { width: `${to}px` }], grows ? D.l : D.m, grows ? E.spring : E.std).then(() => undefined);
 }
+
+/**
+ * Decision 1422: a field the brief agent just wrote lights up once (prototype `msGlow`): an accent ring that fades back to the
+ * field's own line, 1.6 s on the standard curve.
+ */
+export function glow(el: Element | null): Promise<boolean> {
+  return anim(
+    el,
+    [
+      { boxShadow: 'inset 0 0 0 1px var(--accent), 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent)' },
+      { boxShadow: 'inset 0 0 0 1px var(--line), 0 0 0 0 transparent' },
+    ],
+    1600,
+    E.std,
+  );
+}
+
+/** Decision 1422: a tile the brief agent added enters with the tile spring (prototype `msTile`); `delay` spaces a row. */
+export function tileIn(el: Element | null, delay = 0): Promise<boolean> {
+  return anim(el, [{ transform: 'scale(.94)', offset: 0 }, { transform: 'scale(1.02)', offset: 0.6 }, { transform: 'none', offset: 1 }], D.l, E.spring, delay);
+}

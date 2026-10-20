@@ -1,6 +1,6 @@
 import { act, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { D, E, anim, enter, exit, flip, reducedMotion, stagger, stretch } from '../src/motion/motion';
+import { D, E, anim, enter, exit, flip, glow, reducedMotion, stagger, stretch, tileIn } from '../src/motion/motion';
 import { useEnter } from '../src/motion/useEnter';
 import { PageHost } from '../src/motion/PageHost';
 
@@ -119,12 +119,27 @@ describe('motion helpers', () => {
     expect(call(1).opts.easing).toBe(E.std);
   });
 
+  it('decision 1422: glow plays the fill glow once (1.6 s, standard curve), tileIn the tile spring; both resolve true without an element', async () => {
+    const el = document.createElement('div');
+    void glow(el);
+    expect(call(0).opts.duration).toBe(1600);
+    expect(call(0).opts.easing).toBe(E.std);
+    expect(String(first(call(0).frames).boxShadow)).toContain('var(--accent)');
+    void tileIn(el, 90);
+    expect(call(1).opts.duration).toBe(D.l);
+    expect(call(1).opts.easing).toBe(E.spring);
+    expect(call(1).opts.delay).toBe(90);
+    expect(call(1).frames.map((f) => f.transform)).toEqual(['scale(.94)', 'scale(1.02)', 'none']);
+    await expect(glow(null)).resolves.toBe(true);
+    await expect(tileIn(null)).resolves.toBe(true);
+  });
+
   it('with reduced motion nothing is animated and promises resolve', async () => {
     reduced = true;
     expect(reducedMotion()).toBe(true);
     const el = document.createElement('div');
     el.getBoundingClientRect = () => ({ left: 0, top: 0, width: 180, height: 32 }) as DOMRect;
-    await Promise.all([enter(el), exit(el), anim(el, []), stagger([el]), flip(el, { left: 1, top: 1, width: 1, height: 1 } as DOMRect), stretch(el, 90)]);
+    await Promise.all([enter(el), exit(el), anim(el, []), stagger([el]), flip(el, { left: 1, top: 1, width: 1, height: 1 } as DOMRect), stretch(el, 90), glow(el), tileIn(el)]);
     expect(calls).toHaveLength(0);
   });
 });

@@ -1997,6 +1997,7 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
       backToCreatives: 'Back to creatives',
     },
     briefSession: {
+      agentMark: 'Agent',
       created: 'Creative created',
     },
     newCreative: {

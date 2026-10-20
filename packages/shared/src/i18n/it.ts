@@ -1976,6 +1976,7 @@ Variabili: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (array JSON)`,
       backToCreatives: 'Torna alle creatività',
     },
     briefSession: {
+      agentMark: 'Agente',
       created: 'Creatività creata',
     },
     newCreative: {
