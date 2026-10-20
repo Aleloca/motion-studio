@@ -435,6 +435,11 @@ arrives and worked on later together.
     User's decision: a counter "− N +" on a selected tile (1–20). The footer summary counts the copies; the first turn
     makes all of them, each with a speaking name (report 55). The brief agent can set the count too.
     Timing: now.
+    Done (decisions 1429–1434): a selected tile (not an identity one) shows "− N +" in place of its tick, a sibling of the tile
+    button (its clicks never deselect); the brief carries `<preset>`, `<preset>@2`… right after the format, counted by the
+    summary, the channel count and the frames; a copy never follows by default. `fill_brief` takes instance ids (no gaps, at
+    most 20) and the brief prompt says how to ask for N copies; the creative's prompt asks a different image and a name of its
+    own for each copy.
 
 ## Follow-ups found while working on 12–30
 
