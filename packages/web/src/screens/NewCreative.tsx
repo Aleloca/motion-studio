@@ -1,4 +1,4 @@
-import { canFollow, channelName, statedDurationSec, formatLabel, formatName, type BriefField, type BriefForm, type StorePack, type AssetEntry, type FollowCheck, type IdentityBrief, type Locale, type BrandKit, type BriefServices, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
+import { canFollow, channelName, statedDurationSec, formatLabel, formatName, instanceIdOf, instanceIndex, instanceLabel, instancePreset, MAX_INSTANCES, presetOf, type BriefField, type BriefForm, type StorePack, type AssetEntry, type FollowCheck, type IdentityBrief, type Locale, type BrandKit, type BriefServices, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { api } from '../api.ts';
 import { CodebaseList } from '../components/CodebaseList.tsx';
@@ -113,6 +113,8 @@ export function similarRange(tokens: number[], locale: Locale): string | null {
  * (`off`); otherwise it is a primary. `candidates`: every format that can follow, with its primary (its toggle);
  * `blocked`: a format of the same size as an earlier primary that cannot follow it, with the reason (said on its tile).
  * `durationSec`: the brief's video length when known (undefined skips the duration check, re-done on the real file).
+ * Report 58: a copy (`<preset>@k`, k ≥ 2) is a different image of its format, so it never follows by default (a link would make
+ * it the same picture as its primary); no instance follows another of its own preset (the core's `defaultLinks`).
  */
 export function planLinks(chosen: FormatPreset[], off: ReadonlySet<string>, durationSec: number | undefined): {
   links: Record<string, string>; candidates: Record<string, string>; blocked: Record<string, { primary: string; reason: Extract<FollowCheck, { ok: false }>['reason'] }>;
@@ -122,7 +124,8 @@ export function planLinks(chosen: FormatPreset[], off: ReadonlySet<string>, dura
   const blocked: Record<string, { primary: string; reason: Extract<FollowCheck, { ok: false }>['reason'] }> = {};
   const primaries: FormatPreset[] = [];
   for (const f of chosen) {
-    const primary = primaries.find((p) => canFollow(p, f, durationSec).ok);
+    if (instanceIndex(f.id) > 1) { primaries.push(f); continue; }
+    const primary = primaries.find((p) => presetOf(p.id) !== presetOf(f.id) && canFollow(p, f, durationSec).ok);
     if (primary) {
       candidates[f.id] = primary.id;
       if (!off.has(f.id)) { links[f.id] = primary.id; continue; }
@@ -249,7 +252,8 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   useNewCreativeAssetsIntent(slug, useCallback((paths: string[]) => { setPicked((p) => [...p, ...paths.filter((x) => !p.includes(x))]); editedRef.current('assets'); }, []));
 
   const presets = catalog.value ?? [];
-  const chosen = useMemo(() => selected.flatMap((id) => presets.filter((p) => p.id === id)), [selected, presets]);
+  // `selected` holds instance ids (report 58): a tile's preset id, then its copies `<preset>@2`… right after it.
+  const chosen = useMemo(() => selected.flatMap((id) => { const p = instancePreset(presets, id); return p ? [p] : []; }), [selected, presets]);
   const videos = chosen.filter((p) => p.kind === 'video');
 
   const durationSec = length === 'custom' ? Number(customSec) : Number(length);
@@ -258,7 +262,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   const [linkOff, setLinkOff] = useState<ReadonlySet<string>>(() => new Set());
   const plan = useMemo(() => planLinks(chosen, linkOff, durationValid ? durationSec : undefined), [chosen, linkOff, durationValid, durationSec]);
   const toggleLink = (id: string) => setLinkOff((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-  const presetLabel = (id: string) => { const p = presets.find((x) => x.id === id); return p ? formatLabel(p, locale) : id; };
+  const presetLabel = (id: string) => { const p = presets.find((x) => x.id === presetOf(id)); return p ? instanceLabel(id, formatLabel(p, locale)) : id; };
   const tooLong = videos.find((p) => p.maxDurationSec !== undefined && durationValid && durationSec > p.maxDurationSec) ?? null;
   // User note 6: the brief's text states another duration than the field (a pasted "60-second" brief kept the default 6 s).
   const stated = useMemo(() => statedDurationSec([goal, message, notes].join('\n')), [goal, message, notes]);
@@ -288,11 +292,24 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
 
   const root = useEnter<HTMLDivElement>([catalog.value !== null]);
 
+  // Deselecting a tile drops its copies too.
   const toggle = (id: string) => {
     edited('formats');
     setFormatError(false);
-    setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+    setSelected((s) => (s.includes(id) ? s.filter((x) => presetOf(x) !== id) : [...s, id]));
   };
+  /** Report 58: `n` instances of a selected tile's preset (1–20), `<preset>`, `<preset>@2`… in place of the ones it had. */
+  const setCopies = (id: string, n: number) => {
+    edited('formats');
+    setSelected((s) => {
+      const at = s.findIndex((x) => presetOf(x) === id);
+      if (at === -1) return s;
+      const rest = s.filter((x) => presetOf(x) !== id);
+      rest.splice(at, 0, ...Array.from({ length: Math.min(MAX_INSTANCES, Math.max(1, n)) }, (_, k) => instanceIdOf(id, k + 1)));
+      return rest;
+    });
+  };
+  const copiesOf = (id: string) => selected.filter((x) => presetOf(x) === id).length;
   const suggest = (k: (typeof SUGGESTIONS)[number]) => {
     edited('goal');
     setGoal(n.suggestions[k].text);
@@ -518,7 +535,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
     };
     for (const f of marks.glow) void glow(box[f] ?? null);
     const byData = (attr: 'asset' | 'format', v: string) => [...at.querySelectorAll<HTMLElement>(`[data-${attr}]`)].find((el) => el.dataset[attr] === v) ?? null;
-    const tiles = [...marks.assets.map((a) => byData('asset', a)), ...marks.formats.map((id) => byData('format', id))];
+    const tiles = [...marks.assets.map((a) => byData('asset', a)), ...[...new Set(marks.formats.map(presetOf))].map((id) => byData('format', id))];
     tiles.forEach((el, i) => void tileIn(el, i * 90));
   }, [marks]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -775,7 +792,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
 
           {/* Channel groups flow on one six-column grid (as on the board): a short group shares its row with the next. */}
           {visibleGroups.length ? <div className="ms-nc-groups">{visibleGroups.map(({ g, items }) => {
-            const count = items.filter((p) => selected.includes(p.id)).length;
+            const count = selected.filter((id) => items.some((p) => p.id === presetOf(id))).length;
             const name = channelName(g, locale);
             return (
               <div key={g} className="ms-nc-group" role="group" aria-label={name} data-enter style={{ '--cols': Math.min(items.length + (packIn(g) ? 1 : 0), TILE_COLUMNS) } as CSSProperties}>
@@ -788,6 +805,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
                   {packIn(g) ? <PackTile pack={pack} onOpen={() => setPackOpen(true)} onRemove={() => setPack(null)} /> : null}
                   {items.map((p) => (
                     <Tile key={p.id} preset={p} on={selected.includes(p.id)} onClick={() => toggle(p.id)}
+                      copies={selected.includes(p.id) && !p.identity ? { n: copiesOf(p.id), onChange: (v) => setCopies(p.id, v) } : null}
                       link={selected.includes(p.id) && plan.candidates[p.id] ? { primary: presetLabel(plan.candidates[p.id]!), on: !linkOff.has(p.id), onToggle: () => toggleLink(p.id) } : null}
                       blocked={selected.includes(p.id) && plan.blocked[p.id] ? { primary: presetLabel(plan.blocked[p.id]!.primary), reason: t.errors.followReason[plan.blocked[p.id]!.reason] } : null} />
                   ))}
@@ -903,10 +921,12 @@ function PackTile({ pack, onOpen, onRemove }: { pack: StorePack | null; onOpen()
 /**
  * One format of the board (prototype Tile): drawn proportion with the kind icon, name, ratio and maximum length. A chosen
  * format that can share an earlier one's file has a link toggle (`link`, a sibling of the tile button, never inside it);
- * one of the same size that cannot says why (`blocked`).
+ * one of the same size that cannot says why (`blocked`). A chosen format (not an identity one) has the copies counter
+ * "− N +" in place of the tick (`copies`, report 58), also a sibling of the tile button, so its clicks never deselect.
  */
-function Tile({ preset: p, on, onClick, link, blocked }: {
+function Tile({ preset: p, on, onClick, copies, link, blocked }: {
   preset: FormatPreset; on: boolean; onClick(): void;
+  copies: { n: number; onChange(n: number): void } | null;
   link: { primary: string; on: boolean; onToggle(): void } | null;
   blocked: { primary: string; reason: string } | null;
 }) {
@@ -939,8 +959,9 @@ function Tile({ preset: p, on, onClick, link, blocked }: {
           <b className="ms-nc-ell">{formatName(p, locale)}</b>
           <span className="ms-nc-tile-meta ms-nc-ell">{ratioLabel(p.width, p.height)} · {note}</span>
         </span>
-        {on ? <span className="ms-nc-tick" aria-hidden="true"><Icon name="check" size={10} strokeWidth={2.4} /></span> : null}
+        {on && !copies ? <span className="ms-nc-tick" aria-hidden="true"><Icon name="check" size={10} strokeWidth={2.4} /></span> : null}
       </button>
+      {copies ? <Copies label={label} n={copies.n} onChange={copies.onChange} /> : null}
       {link ? (
         <button type="button" className={cx('ms-nc-link', link.on && 'ms-on')} aria-pressed={link.on}
           aria-label={n.linkToggle({ label, primary: link.primary })} title={link.on ? n.linkOn({ primary: link.primary }) : n.linkOff({ primary: link.primary })}
@@ -950,6 +971,27 @@ function Tile({ preset: p, on, onClick, link, blocked }: {
       ) : why ? (
         <span className="ms-nc-link ms-nc-link-no" role="img" aria-label={why} title={why}><Icon name="link" size={13} /></span>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Report 58: how many instances of a selected format the brief asks for, 1–20 ("− N +"): copies, more images of the format on
+ * the same brief, not variants. The group names the format (its buttons do not, so a search by the format's name finds only the
+ * tile); the buttons stay focusable at the ends (`aria-disabled`); the count is announced.
+ */
+function Copies({ label, n, onChange }: { label: string; n: number; onChange(n: number): void }) {
+  const c = useT().web.newCreative;
+  const atMin = n <= 1;
+  const atMax = n >= MAX_INSTANCES;
+  return (
+    <div className="ms-nc-copies" role="group" aria-label={c.copiesLabel({ label })} title={c.copiesHint}>
+      <Button variant="ghost" icon className="ms-nc-copy-btn" aria-label={c.copiesLess} aria-disabled={atMin || undefined}
+        onClick={() => { if (!atMin) onChange(n - 1); }}><Icon name="minus" size={10} strokeWidth={2.2} /></Button>
+      <span className="ms-nc-copies-n" aria-hidden="true">{n}</span>
+      <span className="ms-sr" role="status">{c.copiesValue({ n })}</span>
+      <Button variant="ghost" icon className="ms-nc-copy-btn" aria-label={c.copiesMore} aria-disabled={atMax || undefined}
+        onClick={() => { if (!atMax) onChange(n + 1); }}><Icon name="plus" size={10} strokeWidth={2.2} /></Button>
     </div>
   );
 }

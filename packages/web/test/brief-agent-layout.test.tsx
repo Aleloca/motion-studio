@@ -6,6 +6,8 @@
  * card at 12 px with a 480 px brief column. The transitions' delays (the space first, then the panel; the reverse on the way
  * back), instant under reduced motion. At 1024 × 700 the panel is 360 wide and the board keeps 280 px. The markup is rendered in
  * jsdom with the real stylesheets; without Chrome the tests are skipped (MS_REQUIRE_CHROME=1 makes a missing browser a failure).
+ * Report 58: selected tiles carry the copies counter "− N +" (up to two digits): inside the tile, clear of the drawn frame, the
+ * link toggle and the text, nothing cut, also with every tile forced to its narrowest width (118 px).
  * MS_LAYOUT_SHOTS=<folder> also saves a screenshot of each case there.
  */
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -29,7 +31,10 @@ const filled: BriefSessionView = {
     goal: GOAL, message: 'Tutti i clienti, una casella.', notes: 'Tono diretto, niente gergo tecnico. Schermate reali di casella e scheda cliente.', durationSec: 30, variants: 1,
     assets: ['assets/casella.png', 'assets/scheda-cliente.png', 'assets/logo-audin.svg'],
     linkedCodebases: [{ path: '/Users/me/git/audin-desk', note: 'Testi e flussi dell’app desktop' }, { path: '/Users/me/git/audin-web', note: 'Claim e prezzi del sito' }],
-    formats: ['instagram-post-1x1', 'instagram-reel-9x16', 'tiktok-9x16', 'youtube-16x9'].filter((id) => DEFAULT_FORMATS.some((p) => p.id === id)),
+    // Report 58: copies of a square video, of a 16:9 video (the widest drawn frame) and twelve of a square image; Facebook's
+    // Feed 1:1 can follow the Post 1:1, so its tile has the link toggle beside its counter.
+    formats: ['instagram-post-1x1', 'instagram-post-1x1@2', 'instagram-reel-9x16', 'tiktok-9x16', 'youtube-16x9', 'youtube-16x9@2', 'facebook-feed-1x1',
+      'instagram-image-1x1', ...Array.from({ length: 11 }, (_, k) => `instagram-image-1x1@${k + 2}`)].filter((id) => DEFAULT_FORMATS.some((p) => p.id === id.split('@')[0])),
   },
   agentFields: ['goal', 'message', 'durationSec', 'assets', 'linkedCodebases', 'notes', 'formats'],
 };
@@ -86,7 +91,17 @@ async function markup(agent: boolean): Promise<{ bar: string; page: string }> {
     await waitFor(() => expect(container.querySelector('.ms-nc.ms-nc-agent')).toBeTruthy());
     await waitFor(() => expect(container.querySelectorAll('.ms-nc-agentmark').length).toBeGreaterThan(3));
     await waitFor(() => expect(container.querySelector('.ms-brief-ctx')?.textContent).toContain('2 cartelle'));
+  } else {
+    // Report 58: "Compila tu" with copies chosen by hand: twelve square images and two 16:9 videos.
+    const ig = screen.getByRole('group', { name: 'Instagram' });
+    await userEvent.click(within(ig).getByRole('button', { name: /^Immagine 1:1/ }));
+    const more = within(within(ig).getByRole('group', { name: /^Copie di/ })).getByRole('button', { name: 'Una copia in più' });
+    for (let i = 0; i < 11; i++) await userEvent.click(more);
+    const yt = screen.getByRole('group', { name: 'YouTube' });
+    await userEvent.click(within(yt).getByRole('button', { name: /^Video 16:9/ }));
+    await userEvent.click(within(within(yt).getByRole('group', { name: /^Copie di/ })).getByRole('button', { name: 'Una copia in più' }));
   }
+  expect(container.querySelectorAll('.ms-nc-copies').length).toBeGreaterThanOrEqual(2);
   const html = { bar: container.querySelector('#bar')!.innerHTML, page: container.querySelector('#page')!.innerHTML };
   unmount();
   return html;
@@ -143,7 +158,32 @@ const composer = q('.ms-nc-panel form.ms-composer');
 const glassOf = { bg: pcs.backgroundColor, glass: probe('--glass'), glassSolid: probe('--glassSolid'), backdrop: pcs.backdropFilter || pcs.webkitBackdropFilter || 'none',
   composerBg: getComputedStyle(composer).backgroundColor, box: box.backgroundColor, text: getComputedStyle(composer.querySelector('textarea')).color };
 const durations = [...document.querySelectorAll('*')].flatMap((el) => getComputedStyle(el).transitionDuration.split(',').map((x) => parseFloat(x) * 1000));
+// Report 58: each copies counter inside its tile, clear of the frame, the link toggle and the text, its value and buttons whole.
+const hit = (a, b) => !!a && !!b && a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
+const copyCheck = () => [...document.querySelectorAll('.ms-nc-copies')].map((c) => {
+  const wrap = c.closest('.ms-nc-tile-wrap');
+  const tile = wrap.querySelector('.ms-nc-tile').getBoundingClientRect();
+  const r = c.getBoundingClientRect();
+  const link = wrap.querySelector('.ms-nc-link')?.getBoundingClientRect();
+  const n = c.querySelector('.ms-nc-copies-n');
+  return {
+    id: wrap.dataset.format, tile: Math.round(tile.width), value: n.textContent, link: !!link,
+    inside: r.width > 0 && r.left >= tile.left - 0.5 && r.right <= tile.right + 0.5 && r.top >= tile.top - 0.5 && r.bottom <= tile.bottom + 0.5,
+    linkInside: !link || (link.left >= tile.left - 0.5 && link.right <= tile.right + 0.5 && link.bottom <= tile.bottom + 0.5),
+    overFrame: hit(r, wrap.querySelector('.ms-nc-frame').getBoundingClientRect()), overLink: hit(r, link),
+    overText: hit(r, wrap.querySelector('.ms-nc-tile-text').getBoundingClientRect()), linkOverText: hit(link, wrap.querySelector('.ms-nc-tile-text').getBoundingClientRect()),
+    cut: n.scrollWidth > n.clientWidth + 0.5 || [...c.querySelectorAll('button')].some((b) => b.scrollWidth > b.clientWidth + 0.5 || b.getBoundingClientRect().width < 15.5),
+  };
+});
+const copies = copyCheck();
+// The narrowest tile the board makes (its 118 px minimum), forced on every group for the same checks.
+const narrow = document.createElement('style');
+narrow.textContent = '.ms-nc-tiles { grid-template-columns: repeat(auto-fill, 118px) !important; } .ms-nc-groups > .ms-nc-group { flex: 1 1 100% !important; }';
+document.head.appendChild(narrow);
+const copiesNarrow = copyCheck();
+narrow.remove();
 return {
+  copies, copiesNarrow,
   main, panel, body, area, foot, scroll: document.documentElement.scrollWidth, inner: innerWidth,
   panelRadius: cs('.ms-nc-panel').borderTopLeftRadius, bodyRadius: cs('.ms-nc-body').borderTopLeftRadius, footRadius: cs('.ms-nc-foot').borderTopLeftRadius,
   left: q('.ms-nc-left').getBoundingClientRect().width, board: q('.ms-nc-right').getBoundingClientRect().width,
@@ -159,7 +199,16 @@ type Measure = {
   left: number; board: number; padding: string; gap: string; ctxGap: number; opacity: string; transform: string;
   panelDelays: Record<string, string>; formDelays: Record<string, string>; bodyDelays: Record<string, string>; marks: boolean[]; buttons: boolean[]; clipped: string[]; modeShown: boolean; modeOn: string | null; under: string[]; scrollable: boolean; markOnTitle: boolean; maxDuration: number;
   glassOf: { bg: string; glass: string; glassSolid: string; backdrop: string; composerBg: string; box: string; text: string };
+  copies: Copy[]; copiesNarrow: Copy[];
 };
+type Copy = { id: string; tile: number; value: string; link: boolean; inside: boolean; linkInside: boolean; overFrame: boolean; overLink: boolean; overText: boolean; linkOverText: boolean; cut: boolean };
+/** Every counter whole and in place; `values`: the counts expected on screen. */
+const copiesOk = (list: Copy[], values: string[]) => {
+  expect(list.map((c) => c.value).sort()).toEqual([...values].sort());
+  expect(list.filter((c) => !c.inside || !c.linkInside || c.overFrame || c.overLink || c.overText || c.linkOverText || c.cut), 'every copies counter whole, inside its tile, clear of the frame, link and text').toEqual([]);
+};
+const AGENT_COPIES = ['2', '1', '1', '2', '1', '12'];
+const YOU_COPIES = ['12', '2'];
 
 // WCAG contrast of a text colour over a background that may be translucent, laid over an opaque base.
 type Rgba = [number, number, number, number];
@@ -245,6 +294,10 @@ run('the brief with the agent: real Chrome layout', () => {
       expect(r.panelDelays).toMatchObject({ opacity: '0.12s', transform: '0.12s' });
       expect(r.formDelays.left).toBe('0s');
       expect(r.bodyDelays['grid-template-columns']).toBe('0s');
+      copiesOk(r.copies, AGENT_COPIES);
+      expect(r.copies.some((c) => c.link), 'a counter beside a link toggle (the check is not vacuous)').toBe(true);
+      copiesOk(r.copiesNarrow, AGENT_COPIES);
+      expect(Math.min(...r.copiesNarrow.map((c) => c.tile))).toBe(118);
     }, 120_000);
 
     it(`${theme}: Compila tu at 1440 × 900: the panel is out, the form card at 12 px with a 480 px brief column`, async () => {
@@ -259,6 +312,7 @@ run('the brief with the agent: real Chrome layout', () => {
       expect(r.formDelays.left).toBe('0.12s');
       expect(r.modeShown, 'the mode switch is in the top bar').toBe(true);
       expect(r.modeOn).toBe('Compila tu');
+      copiesOk(r.copies, YOU_COPIES);
     }, 120_000);
 
     it(`${theme}: Con l'agente at 1024 × 700: a 360 px panel, the board keeps room, the footer's buttons show`, async () => {
@@ -276,6 +330,8 @@ run('the brief with the agent: real Chrome layout', () => {
       expect(r.buttons.length).toBeGreaterThanOrEqual(2);
       expect(r.buttons.every(Boolean), "the footer's buttons are whole").toBe(true);
       expect(Math.abs(r.panel.bottom - r.foot.bottom)).toBeLessThanOrEqual(1);
+      copiesOk(r.copies, AGENT_COPIES);
+      copiesOk(r.copiesNarrow, AGENT_COPIES);
     }, 120_000);
   }
 
@@ -285,6 +341,8 @@ run('the brief with the agent: real Chrome layout', () => {
       expect(r.left).toBeCloseTo(320, 0);
       expect(r.scroll).toBeLessThanOrEqual(r.inner);
       expect(r.clipped, 'no option of the length or kind controls is cut').toEqual([]);
+      copiesOk(r.copies, AGENT_COPIES);
+      copiesOk(r.copiesNarrow, AGENT_COPIES);
     }, 120_000);
 
     it(`${theme}: Compila tu at 1024 × 700: the form card at 12 px, nothing cut, the board keeps room`, async () => {
@@ -297,6 +355,9 @@ run('the brief with the agent: real Chrome layout', () => {
       expect(r.buttons.every(Boolean), "the footer's buttons are whole").toBe(true);
       expect(r.modeShown).toBe(true);
       expect(r.modeOn).toBe('Compila tu');
+      copiesOk(r.copies, YOU_COPIES);
+      copiesOk(r.copiesNarrow, YOU_COPIES);
+      expect(Math.min(...r.copiesNarrow.map((c) => c.tile))).toBe(118);
     }, 120_000);
   }
 

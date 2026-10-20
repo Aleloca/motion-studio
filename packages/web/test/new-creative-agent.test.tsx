@@ -67,6 +67,26 @@ describe('NewCreative · the agent fills the form (decision 1422)', () => {
     expect(motion.tileIn).toHaveBeenCalled();
   });
 
+  it('a fill with copies of a format sets the tile\'s counter; the counter saves them back (report 58)', async () => {
+    const { rerender } = render(page(live()));
+    await board();
+    await waitFor(() => expect(api.getBriefSession).toHaveBeenCalled());
+    api.getBriefSession.mockResolvedValueOnce(view({ revision: 2, form: { ...EMPTY_BRIEF_FORM, formats: ['instagram-image-1x1', 'instagram-image-1x1@2', 'instagram-image-1x1@3'] }, agentFields: ['formats'] }));
+    rerender(page(fillTick(1, ['formats'])));
+    const ig = screen.getByRole('group', { name: 'Instagram' });
+    const copies = await within(ig).findByRole('group', { name: 'Copie di Instagram · Immagine 1:1' });
+    expect(within(copies).getByRole('status').textContent).toBe('3 copie');
+    expect(screen.getByText(/^3 formati · 3 immagini$/)).toBeTruthy();
+    // The tile springs once for its new copies.
+    await waitFor(() => expect(motion.tileIn).toHaveBeenCalledTimes(1));
+    expect(motion.tileIn.mock.calls[0]![0]).toBe(ig.querySelector('[data-format="instagram-image-1x1"]'));
+    await userEvent.click(within(copies).getByRole('button', { name: 'Una copia in meno' }));
+    expect(within(rowOf('Dove verrà pubblicata?')).queryByText('Agente')).toBeNull();
+    await waitFor(() => expect(api.saveBriefForm).toHaveBeenCalled(), { timeout: 2000 });
+    expect(lastSave().form.formats).toEqual(['instagram-image-1x1', 'instagram-image-1x1@2']);
+    expect(lastSave().userEdited).toContain('formats');
+  });
+
   it('a fill never replaces a field edited locally since the last save', async () => {
     const { rerender } = render(page(live()));
     await board();

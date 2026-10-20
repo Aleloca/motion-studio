@@ -123,6 +123,93 @@ describe('NewCreative · generate', () => {
   });
 });
 
+describe('NewCreative · copies of a format (report 58)', () => {
+  const ig = () => screen.getByRole('group', { name: 'Instagram' });
+  const imageTile = () => within(ig()).getByRole('button', { name: /^Immagine 1:1/ });
+  const copies = () => within(ig()).getByRole('group', { name: 'Copie di Instagram · Immagine 1:1' });
+  const more = () => within(copies()).getByRole('button', { name: 'Una copia in più' });
+  const less = () => within(copies()).getByRole('button', { name: 'Una copia in meno' });
+
+  it('a selected tile has a counter from 1: clicks on it never deselect, the summary and the frames count the copies, Generate sends them in order', async () => {
+    render(<NewCreative slug="acme" />);
+    await board();
+    await userEvent.type(brief(), 'Cinque immagini per il lancio');
+    expect(within(ig()).queryByRole('group', { name: /^Copie di/ })).toBeNull();
+    await userEvent.click(imageTile());
+    expect(within(copies()).getByText('1')).toBeTruthy();
+    expect(less().getAttribute('aria-disabled')).toBe('true');
+    await userEvent.click(within(screen.getByRole('group', { name: 'TikTok' })).getByRole('button', { name: /Video 9:16/ }));
+    for (let i = 0; i < 4; i++) await userEvent.click(more());
+    expect(imageTile().getAttribute('aria-pressed')).toBe('true');
+    expect(within(copies()).getByText('5')).toBeTruthy();
+    expect(within(copies()).getByRole('status').textContent).toBe('5 copie');
+    expect(screen.getByText(/^6 formati · 1 render video \+ 5 immagini$/)).toBeTruthy();
+    expect(document.querySelectorAll('.ms-nc-frames > span')).toHaveLength(5);
+    await userEvent.click(screen.getByRole('button', { name: 'Genera' }));
+    await waitFor(() => expect(createCreative).toHaveBeenCalledOnce());
+    expect(createCreative.mock.calls[0]![1]).toMatchObject({
+      brief: { formats: ['instagram-image-1x1', 'instagram-image-1x1@2', 'instagram-image-1x1@3', 'instagram-image-1x1@4', 'instagram-image-1x1@5', 'tiktok-9x16'], links: {} },
+    });
+  });
+
+  it('lowering to 1 keeps the tile on; deselecting drops its copies; the count stops at 20', async () => {
+    render(<NewCreative slug="acme" />);
+    await board();
+    await userEvent.click(imageTile());
+    await userEvent.click(more());
+    await userEvent.click(more());
+    await userEvent.click(less());
+    await userEvent.click(less());
+    await userEvent.click(less());
+    expect(imageTile().getAttribute('aria-pressed')).toBe('true');
+    expect(within(copies()).getByText('1')).toBeTruthy();
+    await userEvent.click(more());
+    expect(screen.getByText(/^2 formati · 2 immagini$/)).toBeTruthy();
+    await userEvent.click(imageTile());
+    expect(imageTile().getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByText('Scegli almeno un formato')).toBeTruthy();
+    await userEvent.click(imageTile());
+    expect(within(copies()).getByText('1')).toBeTruthy();
+    for (let i = 0; i < 25; i++) fireEvent.click(more());
+    expect(within(copies()).getByText('20')).toBeTruthy();
+    expect(more().getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByText(/^20 formati · 20 immagini$/)).toBeTruthy();
+  });
+
+  it('works from the keyboard and counts video copies as renders, each its own design (no link between copies)', async () => {
+    render(<NewCreative slug="acme" />);
+    await board();
+    await userEvent.type(brief(), 'Lancio');
+    const post = () => within(ig()).getByRole('button', { name: /^Post 1:1/ });
+    await userEvent.click(post());
+    const plus = within(within(ig()).getByRole('group', { name: 'Copie di Instagram · Post 1:1' })).getByRole('button', { name: 'Una copia in più' });
+    plus.focus();
+    await userEvent.keyboard('{Enter}');
+    await userEvent.keyboard(' ');
+    expect(document.activeElement).toBe(plus);
+    expect(within(ig()).getByRole('group', { name: 'Copie di Instagram · Post 1:1' }).querySelector('[role="status"]')!.textContent).toBe('3 copie');
+    expect(post().getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByText(/^3 formati · 3 render video$/)).toBeTruthy();
+    // Facebook's 1:1 follows the first Post 1:1 by default, never a copy, and no copy follows another.
+    await userEvent.click(screen.getByRole('button', { name: /^Facebook/ }));
+    await userEvent.click(within(screen.getByRole('group', { name: 'Facebook' })).getByRole('button', { name: /^Feed 1:1/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Genera' }));
+    await waitFor(() => expect(createCreative).toHaveBeenCalledOnce());
+    expect(createCreative.mock.calls[0]![1]).toMatchObject({
+      brief: { formats: ['instagram-post-1x1', 'instagram-post-1x1@2', 'instagram-post-1x1@3', 'facebook-feed-1x1'], durationSec: 6, links: { 'facebook-feed-1x1': 'instagram-post-1x1' } },
+    });
+  });
+
+  it('identity tiles have no counter (their concepts are variants)', async () => {
+    render(<NewCreative slug="acme" />);
+    await board();
+    await userEvent.click(screen.getByRole('button', { name: /^Identit/ }));
+    const id = screen.getByRole('group', { name: /^Identit/ });
+    await userEvent.click(within(id).getByRole('button', { name: /^Logo/ }));
+    expect(within(id).queryByRole('group', { name: /^Copie di/ })).toBeNull();
+  });
+});
+
 describe('NewCreative · services', () => {
   it('sends the services chosen under More options; untouched, the brief has none (all auto)', async () => {
     render(<NewCreative slug="acme" />);
