@@ -244,6 +244,7 @@ export const en = {
     },
     keptYours: (p: { fields: string }) => ` · kept yours: ${p.fields}`,
     nothingWritten: 'Nothing changed in the brief',
+    reclaimed: (p: { fields: string }) => `The agent rewrote ${p.fields} at your request`,
     fieldNames: {
       goal: 'What you want to make',
       message: 'Key message',

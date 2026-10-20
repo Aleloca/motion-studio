@@ -36,7 +36,8 @@ function formSection(i: Pick<BriefPromptContext, 'form' | 'userEdited'>): string
   return [
     "## The user's form now",
     ...BRIEF_FIELDS.map((f) => formLine(f, i.form, i.userEdited.includes(f))),
-    "A field marked as the user's was changed by them after your last write: fill_brief keeps it as it is and lists it in `kept`. Tell the user if you think it should change; never try to write it again.",
+    "A field marked as the user's was changed by them after your last write: fill_brief keeps it as it is and lists it in `kept`. Tell the user if you think it should change.",
+    "Only when the user's latest message explicitly asks you to rewrite such a field (for example \"rewrite the goal\"), pass it in fill_brief's `reclaim` together with its new value; never on your own initiative. In your reply, say which fields you rewrote.",
   ];
 }
 

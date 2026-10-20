@@ -4,6 +4,9 @@ import { BRIEF_FIELDS, briefContextSchema, briefFillSchema, briefFormSchema, bri
 const form = { goal: '', message: '', notes: '', durationSec: null, assets: [], linkedCodebases: [], formats: [], variants: 1 };
 
 describe('briefFillSchema', () => {
+  it('takes the fields the user asked to rewrite', () => {
+    expect(briefFillSchema.parse({ goal: 'Lancio', reclaim: ['goal'] })).toEqual({ goal: 'Lancio', reclaim: ['goal'] });
+  });
   it('accepts a partial fill', () => {
     expect(briefFillSchema.parse({ goal: 'Lancio', formats: ['instagram-post-1x1'] })).toEqual({ goal: 'Lancio', formats: ['instagram-post-1x1'] });
   });
@@ -15,6 +18,8 @@ describe('briefFillSchema', () => {
     ['zero length', { durationSec: 0 }],
     ['duplicate formats', { formats: ['a', 'a'] }],
     ['unknown key', { extra: 1 }],
+    ['a reclaim alone', { reclaim: ['goal'] }],
+    ['an unknown field to reclaim', { goal: 'x', reclaim: ['nope'] }],
   ])('refuses %s', (_name, raw) => {
     expect(briefFillSchema.safeParse(raw).success).toBe(false);
   });

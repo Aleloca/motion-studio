@@ -242,6 +242,7 @@ export const it: Messages = {
     },
     keptYours: (p) => ` · tenuti i tuoi: ${p.fields}`,
     nothingWritten: 'Nessun campo del brief è cambiato',
+    reclaimed: (p) => `L'agente ha riscritto ${p.fields} su tua richiesta`,
     fieldNames: {
       goal: 'Cosa vuoi realizzare',
       message: 'Messaggio chiave',

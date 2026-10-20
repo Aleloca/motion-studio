@@ -39,11 +39,16 @@ export type BriefForm = z.infer<typeof briefFormSchema>;
 /** An empty form (a session started before the user typed anything). */
 export const EMPTY_BRIEF_FORM: BriefForm = { goal: '', message: '', notes: '', durationSec: null, assets: [], linkedCodebases: [], formats: [], variants: 1 };
 
-/** What the agent writes with `fill_brief`: only what changes, at least one field; a goal it writes is never blank. */
+/**
+ * What the agent writes with `fill_brief`: only what changes, at least one field; a goal it writes is never blank.
+ * `reclaim` (user decision of 2026-10-20, decision 1422): fields the user explicitly asked, in their latest message, to have
+ * rewritten; for those the agent's value replaces the user's and the field is no longer the user's. Not a field itself.
+ */
 export const briefFillSchema = briefFormSchema.extend({
   goal: z.string().trim().min(1).max(BRIEF_TEXT_MAX),
   formats: formatIds.refine((f) => f.length > 0, 'issue.noFormats'),
-}).partial().strict().refine((f) => Object.keys(f).length > 0, 'issue.emptyFill');
+}).partial().extend({ reclaim: z.array(briefFieldSchema).max(BRIEF_FIELDS.length).optional() })
+  .strict().refine((f) => Object.keys(f).some((k) => k !== 'reclaim'), 'issue.emptyFill');
 export type BriefFill = z.infer<typeof briefFillSchema>;
 
 /** What the session may read: the folders the user linked and the library assets they attached. */

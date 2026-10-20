@@ -28,13 +28,18 @@ export interface FillOutcome {
   kept: Array<{ field: BriefField; reason: 'user-edited' }>;
   /** Every field the agent wrote so far (the form marks them). */
   agentFields: BriefField[];
+  /** The user's fields this fill took back because the user asked (`reclaim`): written, and no longer the user's. */
+  reclaimed: BriefField[];
+  /** The fields that stay the user's after this fill. */
+  userEdited: BriefField[];
 }
 
 const bad = (message: string) => new CodedError(400, message, 'brief-fill-invalid');
 
 /**
  * Applies the agent's `raw` fill to the session's form. All or nothing: any invalid value refuses the whole call (400,
- * translated, naming the field). A field in `userEdited` is left as it is and listed in `kept` (a list field counts whole).
+ * translated, naming the field). A field in `userEdited` is left as it is and listed in `kept` (a list field counts whole),
+ * unless the fill names it in `reclaim` (the user asked to have it rewritten): then it is written and is the user's no more.
  */
 export function applyFill(s: { form: BriefForm; userEdited: readonly BriefField[]; agentFields: readonly BriefField[]; context: BriefContext }, raw: unknown, presets: readonly FormatPreset[]): FillOutcome {
   const parsed = briefFillSchema.safeParse(raw);
@@ -43,7 +48,7 @@ export function applyFill(s: { form: BriefForm; userEdited: readonly BriefField[
     const field = issue?.path.length ? String(issue.path[0]) : 'fill_brief';
     throw bad(t().errors.briefBadField({ field, detail: issue?.message ?? 'invalid' }));
   }
-  const fill = parsed.data;
+  const { reclaim = [], ...fill } = parsed.data;
   for (const id of fill.formats ?? []) {
     const preset = presets.find((p) => p.id === presetOf(id));
     if (!preset) throw bad(t().errors.briefUnknownFormat({ id }));
@@ -57,13 +62,27 @@ export function applyFill(s: { form: BriefForm; userEdited: readonly BriefField[
   const form: BriefForm = { ...s.form };
   const written: BriefField[] = [];
   const kept: FillOutcome['kept'] = [];
+  const reclaimed: BriefField[] = [];
   for (const field of BRIEF_FIELDS) {
     if (!Object.hasOwn(fill, field) || fill[field] === undefined) continue;
-    if (s.userEdited.includes(field)) { kept.push({ field, reason: 'user-edited' }); continue; }
+    if (s.userEdited.includes(field)) {
+      if (!reclaim.includes(field)) { kept.push({ field, reason: 'user-edited' }); continue; }
+      reclaimed.push(field);
+    }
     (form as Record<BriefField, unknown>)[field] = fill[field];
     written.push(field);
   }
-  return { form, written, kept, agentFields: BRIEF_FIELDS.filter((f) => s.agentFields.includes(f) || written.includes(f)) };
+  return {
+    form, written, kept, reclaimed,
+    agentFields: BRIEF_FIELDS.filter((f) => s.agentFields.includes(f) || written.includes(f)),
+    userEdited: BRIEF_FIELDS.filter((f) => s.userEdited.includes(f) && !reclaimed.includes(f)),
+  };
+}
+
+/** The chat line of a reclaim: the user sees which of their fields the agent rewrote on their request. */
+export function reclaimLine(fields: readonly BriefField[]): string {
+  const m = t().briefSession;
+  return m.reclaimed({ fields: BRIEF_FIELDS.filter((f) => fields.includes(f)).map((f) => m.fieldNames[f]).join(', ') });
 }
 
 /** The chat line of a fill (prototype: "Compilato il brief: testi, durata, 3 asset, 2 codebase, 4 formati"). */

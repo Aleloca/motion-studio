@@ -1,6 +1,6 @@
 import { DEFAULT_FORMATS, EMPTY_BRIEF_FORM, type BriefField } from '@motion-studio/shared';
 import { describe, expect, it } from 'vitest';
-import { applyFill, fillLine, listFormats } from '../src/brief/brief-tools.ts';
+import { applyFill, fillLine, listFormats, reclaimLine } from '../src/brief/brief-tools.ts';
 import { setLocale } from '../src/i18n.ts';
 
 const session = (o: Partial<Parameters<typeof applyFill>[0]> = {}) => ({
@@ -37,6 +37,25 @@ describe('applyFill', () => {
     expect(r.kept).toEqual([{ field: 'goal', reason: 'user-edited' }]);
     expect(r.written).toEqual(['message']);
   });
+  it('a field the user asked to rewrite is taken back (reclaim) and is no longer theirs', () => {
+    const r = applyFill(session({ form: { ...EMPTY_BRIEF_FORM, goal: 'Mio', message: 'Mio' }, userEdited: ['goal', 'message'] }), { goal: 'Lancio', message: 'Prenota', reclaim: ['goal'] }, DEFAULT_FORMATS);
+    expect(r.form.goal).toBe('Lancio');
+    expect(r.form.message).toBe('Mio');
+    expect(r.written).toEqual(['goal']);
+    expect(r.reclaimed).toEqual(['goal']);
+    expect(r.userEdited).toEqual(['message']);
+    expect(r.kept).toEqual([{ field: 'message', reason: 'user-edited' }]);
+  });
+  it('a reclaim of a field that is not the user\'s is an ordinary write', () => {
+    const r = applyFill(session(), { goal: 'Lancio', reclaim: ['goal', 'notes'] }, DEFAULT_FORMATS);
+    expect(r.form.goal).toBe('Lancio');
+    expect(r.written).toEqual(['goal']);
+    expect(r.reclaimed).toEqual([]);
+    expect(r.userEdited).toEqual([]);
+  });
+  it('a reclaim alone writes nothing and is refused', () => {
+    expect(refusal(() => applyFill(session(), { reclaim: ['goal'] }, DEFAULT_FORMATS))).toMatchObject({ status: 400 });
+  });
   it('a list the user changed stays whole', () => {
     const r = applyFill(session({ userEdited: ['assets'] }), { assets: ['assets/hero.png'] }, DEFAULT_FORMATS);
     expect(r.form.assets).toEqual(['assets/logo.svg']);
@@ -67,6 +86,7 @@ describe('fillLine', () => {
     expect(fillLine(['goal', 'message', 'durationSec', 'assets', 'linkedCodebases', 'formats'], [], form)).toBe('Compilato il brief: testi, durata, 3 asset, 2 codebase, 4 formati');
     expect(fillLine(['message'], ['goal'], form)).toBe('Compilato il brief: testi · tenuti i tuoi: Cosa vuoi realizzare');
     expect(fillLine([], ['goal'], form)).toBe('Nessun campo del brief è cambiato · tenuti i tuoi: Cosa vuoi realizzare');
+    expect(reclaimLine(['goal', 'formats'])).toBe("L'agente ha riscritto Cosa vuoi realizzare, Formati su tua richiesta");
     setLocale('en');
     expect(fillLine(['variants'], [], { ...form, variants: 3 })).toBe('Filled in the brief: 3 variants');
   });

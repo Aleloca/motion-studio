@@ -28,6 +28,10 @@ describe('buildBriefPrompt', () => {
     expect(p).toContain('- message: "Prenota"\n');
     expect(p).toContain('- formats: instagram-post-1x1');
   });
+  it('lets the agent take a field back only when the user asks', () => {
+    expect(p).toContain("pass it in fill_brief's `reclaim`");
+    expect(p).toContain('never on your own initiative');
+  });
   it('lists the folders, the missing ones and the project\'s own', () => {
     expect(p).toContain('## Reference codebases (read-only)');
     expect(p).toContain('- /c/app: App iOS');
