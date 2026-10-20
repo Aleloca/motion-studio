@@ -67,8 +67,8 @@ export function briefHelpers(t: BriefApp) {
     view: async () => (await t.app.inject(S)).json() as BriefSessionView | null,
     open: async (form = EMPTY_BRIEF_FORM) => (await t.app.inject({ method: 'POST', url: S, payload: { form, userEdited: [] } })).json() as BriefSessionView,
     conversation: async (id: string) => (await t.app.inject(`${S}/${id}/conversation`)).json() as ConversationEntry[],
-    send: (id: string, text: string, o: { codebases?: Array<{ path: string; note?: string }>; assets?: string[]; mode?: 'live' | 'queued'; form?: typeof EMPTY_BRIEF_FORM; userEdited?: string[] } = {}) =>
-      t.app.inject({ method: 'POST', url: `${S}/${id}/messages`, payload: { clientId: cid(), text, context: { codebases: o.codebases ?? [], assets: o.assets ?? [] }, form: o.form ?? EMPTY_BRIEF_FORM, userEdited: o.userEdited ?? [], ...(o.mode ? { mode: o.mode } : {}) } }),
+    send: (id: string, text: string, o: { codebases?: Array<{ path: string; note?: string }>; assets?: string[]; mode?: 'live' | 'queued'; form?: typeof EMPTY_BRIEF_FORM; userEdited?: string[]; baseRevision?: number } = {}) =>
+      t.app.inject({ method: 'POST', url: `${S}/${id}/messages`, payload: { clientId: cid(), text, context: { codebases: o.codebases ?? [], assets: o.assets ?? [] }, form: o.form ?? EMPTY_BRIEF_FORM, userEdited: o.userEdited ?? [], baseRevision: o.baseRevision ?? 0, ...(o.mode ? { mode: o.mode } : {}) } }),
     tool: async (run: ControlledRun, name: string, args: Record<string, unknown>): Promise<LightMyRequestResponse> =>
       t.app.inject({ method: 'POST', url: `/api/bridge/${name}`, headers: { 'x-motion-studio-bridge': await tokenOf(run) }, payload: args }),
     briefMessages: () => t.sent.filter((m): m is Extract<ServerMessage, { type: 'brief-session' }> => m.type === 'brief-session'),

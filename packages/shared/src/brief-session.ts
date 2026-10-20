@@ -67,8 +67,8 @@ export const briefMessageSchema = z.object({
   context: briefContextSchema,
   form: briefFormSchema,
   userEdited: z.array(briefFieldSchema).max(BRIEF_FIELDS.length),
-  /** The session's `revision` the client's form is based on (see `BriefSessionView.revision`); absent: 0. */
-  baseRevision: z.number().int().min(0).optional(),
+  /** The session's `revision` the client's form is based on (see `BriefSessionView.revision`). */
+  baseRevision: z.number().int().min(0),
   mode: z.enum(['live', 'queued']).optional(),
 }).strict();
 export type BriefMessageInput = z.infer<typeof briefMessageSchema>;
@@ -77,10 +77,19 @@ export type BriefMessageInput = z.infer<typeof briefMessageSchema>;
 export const briefFormSaveSchema = z.object({
   form: briefFormSchema,
   userEdited: z.array(briefFieldSchema).max(BRIEF_FIELDS.length),
-  /** The session's `revision` the client's form is based on; absent: 0. */
-  baseRevision: z.number().int().min(0).optional(),
+  /** The session's `revision` the client's form is based on. */
+  baseRevision: z.number().int().min(0),
 }).strict();
 export type BriefFormSave = z.infer<typeof briefFormSaveSchema>;
+
+/** POST …/brief-session: the form as the user has it when the session opens (no revision yet). */
+export const briefStartSchema = z.object({
+  form: briefFormSchema,
+  userEdited: z.array(briefFieldSchema).max(BRIEF_FIELDS.length),
+}).strict();
+
+/** PUT …/brief-session/:id/form: the merged form. The client adopts `revision` only together with `form` and `userEdited`. */
+export interface BriefFormSaved { ok: true; form: BriefForm; userEdited: BriefField[]; agentFields: BriefField[]; revision: number }
 
 /** A message waiting for the running brief turn to end. `context`: the items it added (paths). */
 export const briefQueuedSchema = z.object({

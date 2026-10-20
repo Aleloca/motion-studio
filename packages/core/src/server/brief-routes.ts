@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { z } from 'zod';
-import { briefContextSchema, briefFormSaveSchema, briefMessageSchema } from '@motion-studio/shared';
+import { briefContextSchema, briefFormSaveSchema, briefMessageSchema, briefStartSchema, type BriefFormSaved } from '@motion-studio/shared';
 import type { BriefProjectRef, BriefSessionService } from '../brief/brief-session.ts';
 import { WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
 
@@ -30,7 +30,7 @@ export function registerBriefRoutes(app: FastifyInstance, ctx: { requireWorkspac
   app.get<P>('/api/projects/:slug/brief-session', async (req) => ctx.briefs.view(await refOf(req.params.slug)));
   app.post<P>('/api/projects/:slug/brief-session', async (req, reply) => {
     const ref = await refOf(req.params.slug);
-    return reply.status(201).send(await ctx.briefs.start(ref, parse(briefFormSaveSchema, req.body)));
+    return reply.status(201).send(await ctx.briefs.start(ref, parse(briefStartSchema, req.body)));
   });
   app.get<PI>('/api/projects/:slug/brief-session/:id/conversation', async (req) => ctx.briefs.conversation(await refOf(req.params.slug), req.params.id));
   app.post<PI>('/api/projects/:slug/brief-session/:id/messages', async (req, reply) => {
@@ -38,10 +38,9 @@ export function registerBriefRoutes(app: FastifyInstance, ctx: { requireWorkspac
     const out = await ctx.briefs.send(ref, req.params.id, parse(briefMessageSchema, req.body));
     return reply.status(out.outcome === 'started' ? 202 : 200).send(out);
   });
-  app.put<PI>('/api/projects/:slug/brief-session/:id/form', async (req) => {
-    const { revision } = await ctx.briefs.saveForm(await refOf(req.params.slug), req.params.id, parse(briefFormSaveSchema, req.body));
-    return { ok: true, revision };
-  });
+  // The merged form: the client adopts `revision` only together with `form` and `userEdited` (decision 1422).
+  app.put<PI>('/api/projects/:slug/brief-session/:id/form', async (req): Promise<BriefFormSaved> =>
+    ctx.briefs.saveForm(await refOf(req.params.slug), req.params.id, parse(briefFormSaveSchema, req.body)));
   app.put<PI>('/api/projects/:slug/brief-session/:id/context', async (req) => ctx.briefs.setContext(await refOf(req.params.slug), req.params.id, parse(briefContextSchema, req.body)));
   app.delete<{ Params: { slug: string; id: string; clientId: string } }>('/api/projects/:slug/brief-session/:id/queue/:clientId', async (req) =>
     ctx.briefs.removeQueued(await refOf(req.params.slug), req.params.id, req.params.clientId));

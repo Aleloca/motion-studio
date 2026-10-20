@@ -44,6 +44,13 @@ const MAX_SESSION_BYTES = 4 * 1024 * 1024;
 const MAX_LOG_BYTES = 64 * 1024 * 1024;
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const gone = () => new CodedError(409, t().errors.briefSessionGone, 'brief-session-gone');
+/**
+ * The session's files hold what cannot be a session: JSON or schema errors, or a file over the size cap (422
+ * `brief-session-unreadable`; discarding the session removes them). Any other I/O error (EACCES, EMFILE…) is not this: it
+ * stays an ordinary error, and nothing is removed because of it.
+ */
+export const unreadable = () => new CodedError(422, t().errors.briefSessionUnreadable, 'brief-session-unreadable');
+export const isUnreadable = (err: unknown): boolean => err instanceof CodedError && err.apiCode === 'brief-session-unreadable';
 
 export class BriefSessionStore {
   private readonly lock = new KeyedMutex();
@@ -68,9 +75,14 @@ export class BriefSessionStore {
     if (dir === null) return this.memory.get(key)?.session ?? null;
     const r = await readRegularFile(join(dir, SESSION_FILE), MAX_SESSION_BYTES);
     if (r.kind === 'missing') return null;
+    if (r.kind === 'too-large') throw unreadable();
     if (r.kind !== 'file') throw new Error(`brief session is not a regular file (${r.kind})`);
     // A corrupt file is an error, never silently a new session: the user's chat and form would be lost.
-    return sessionSchema.parse(JSON.parse(r.data.toString('utf8')));
+    let json: unknown;
+    try { json = JSON.parse(r.data.toString('utf8')); } catch { throw unreadable(); }
+    const parsed = sessionSchema.safeParse(json);
+    if (!parsed.success) throw unreadable();
+    return parsed.data;
   }
 
   private async save(key: string, s: BriefSessionFile): Promise<void> {
@@ -160,6 +172,7 @@ export class BriefSessionStore {
       if (dir === null) return [...this.memory.get(key)!.entries];
       const r = await readRegularFile(join(dir, LOG_FILE), MAX_LOG_BYTES);
       if (r.kind === 'missing') return [];
+      if (r.kind === 'too-large') throw unreadable();
       if (r.kind !== 'file') throw new Error(`brief conversation is not a regular file (${r.kind})`);
       return parseConversation(r.data.toString('utf8'));
     });

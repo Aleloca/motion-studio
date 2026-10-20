@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BRIEF_FIELDS, briefContextSchema, briefFillSchema, briefFormSchema, briefJobKey, briefMessageSchema } from '../src/index.ts';
+import { BRIEF_FIELDS, briefContextSchema, briefFillSchema, briefFormSaveSchema, briefFormSchema, briefJobKey, briefMessageSchema } from '../src/index.ts';
 
 const form = { goal: '', message: '', notes: '', durationSec: null, assets: [], linkedCodebases: [], formats: [], variants: 1 };
 
@@ -37,8 +37,13 @@ describe('briefFormSchema', () => {
 
 describe('briefMessageSchema', () => {
   it('takes the text, the context, the form and the fields the user owns', () => {
-    const m = { clientId: 'c1', text: 'Un video di lancio', context: { codebases: [{ path: '/c/app' }], assets: [] }, form, userEdited: ['goal'] };
+    const m = { clientId: 'c1', text: 'Un video di lancio', context: { codebases: [{ path: '/c/app' }], assets: [] }, form, userEdited: ['goal'], baseRevision: 0 };
     expect(briefMessageSchema.parse(m)).toEqual(m);
+    // The revision the form is based on is required (decision 1422).
+    const { baseRevision: _b, ...noBase } = m;
+    expect(briefMessageSchema.safeParse(noBase).success).toBe(false);
+    expect(briefFormSaveSchema.safeParse({ form, userEdited: [] }).success).toBe(false);
+    expect(briefFormSaveSchema.safeParse({ form, userEdited: [], baseRevision: 2 }).success).toBe(true);
     expect(briefMessageSchema.safeParse({ ...m, userEdited: ['nope'] }).success).toBe(false);
     expect(briefContextSchema.safeParse({ codebases: [], assets: ['x.png'] }).success).toBe(false);
   });

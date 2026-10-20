@@ -3,7 +3,7 @@
  * Decisions 1421–1422: the brief session. A server on a temp workspace with the controlled runner (no `claude`) and the
  * `studio` bridge active; the test calls the bridge routes with the run's token, as the MCP server would.
  */
-import { rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AgentEvent } from '@motion-studio/shared';
 import type { AgentRun, AgentTurnRequest } from '../src/agent/runner.ts';
@@ -90,8 +90,11 @@ describe('the brief session (decisions 1421–1422)', () => {
     const s = await open();
     await send(s.id, 'Lancio');
     const run = await t.runner.next(0);
-    const put = await t.app.inject({ method: 'PUT', url: `${S}/${s.id}/form`, payload: { form: { ...EMPTY_BRIEF_FORM, goal: 'Il mio obiettivo' }, userEdited: ['goal'] } });
-    expect(put.json()).toEqual({ ok: true, revision: 1 });
+    const put = await t.app.inject({ method: 'PUT', url: `${S}/${s.id}/form`, payload: { form: { ...EMPTY_BRIEF_FORM, goal: 'Il mio obiettivo' }, userEdited: ['goal'], baseRevision: 0 } });
+    expect(put.json()).toEqual({ ok: true, form: { ...EMPTY_BRIEF_FORM, goal: 'Il mio obiettivo' }, userEdited: ['goal'], agentFields: [], revision: 1 });
+    // The revision the form is based on is required.
+    expect((await t.app.inject({ method: 'PUT', url: `${S}/${s.id}/form`, payload: { form: EMPTY_BRIEF_FORM, userEdited: [] } })).statusCode).toBe(400);
+    expect((await t.app.inject({ method: 'POST', url: `${S}/${s.id}/messages`, payload: { clientId: 'x', text: 'x', context: { codebases: [], assets: [] }, form: EMPTY_BRIEF_FORM, userEdited: [] } })).statusCode).toBe(400);
     const kept = await tool(run, 'fill_brief', { goal: 'Altro', message: 'Prenota' });
     expect(kept.json()).toMatchObject({ written: ['message'], kept: [{ field: 'goal', reason: 'user-edited' }] });
     expect((await view())?.form.goal).toBe('Il mio obiettivo');
@@ -345,6 +348,28 @@ describe('the brief session (decisions 1421–1422)', () => {
     expect((await t.app.inject({ method: 'DELETE', url: `${S}/${s.id}` })).statusCode).toBe(204);
     expect(await view()).toBeNull();
     expect((await open()).id).not.toBe(s.id);
+  });
+
+  it('only a session that cannot be a session is unreadable; other I/O errors stay errors and delete nothing', async () => {
+    t = await briefApp();
+    const s = await open();
+    const dir = (await new BriefSessionStore(join(t.base, 'config')).dirFor(t.projectDir))!;
+    const file = join(dir, 'session.json');
+    // A file over the size cap is unreadable (422).
+    const good = await readFile(file, 'utf8');
+    await writeFile(file, ' '.repeat(5 * 1024 * 1024));
+    expect((await t.app.inject(S)).json().code).toBe('brief-session-unreadable');
+    await writeFile(file, good);
+    // A file the core may not read is an I/O error: 500, and a discard removes nothing.
+    await chmod(file, 0o000);
+    try {
+      expect((await t.app.inject(S)).statusCode).toBe(500);
+      expect((await t.app.inject({ method: 'DELETE', url: `${S}/${s.id}` })).statusCode).toBe(500);
+      expect((await stat(file)).isFile()).toBe(true);
+    } finally {
+      await chmod(file, 0o600);
+    }
+    expect((await view())?.id).toBe(s.id);
   });
 
   it('a linked folder reached through a link is read-only under both spellings', async () => {

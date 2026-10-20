@@ -3,7 +3,7 @@
  * Decision 1423: Genera and Salva bozza carry the brief session into the new creative: its chat is copied, the creative's
  * first turn (or its group's coordinator) forks the brief agent's session, with the chat's digest as the fallback.
  */
-import { mkdir, rm } from 'node:fs/promises';
+import { chmod, mkdir, rm } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { messages, type ConversationEntry } from '@motion-studio/shared';
 import { join } from 'node:path';
@@ -199,6 +199,43 @@ describe('from the brief session to the creative (decision 1423)', () => {
     expect((await t.app.inject({ method: 'DELETE', url: `/api/projects/acme/brief-session/${id}` })).statusCode).toBe(204);
   });
 
+  it('during a failed move a concurrent Genera is refused: one creative only', async () => {
+    t = await briefApp();
+    const { id } = await session();
+    const dir = (await new BriefSessionStore(join(t.base, 'config')).dirFor(t.projectDir))!;
+    await rm(join(dir, 'conversation.jsonl'));
+    await mkdir(join(dir, 'conversation.jsonl'));
+    const both = await Promise.all([create({ generate: false, briefSession: { id } }), create({ generate: false, briefSession: { id } })]);
+    expect(both.map((r) => r.statusCode).sort()).toEqual([201, 409]);
+    expect(((await t.app.inject('/api/projects/acme/creatives')).json() as unknown[]).length).toBe(1);
+  });
+
+  it('a move whose mark cannot be written keeps the session refused until it is discarded', async () => {
+    t = await briefApp();
+    const { id } = await session();
+    const dir = (await new BriefSessionStore(join(t.base, 'config')).dirFor(t.projectDir))!;
+    await rm(join(dir, 'conversation.jsonl'));
+    await mkdir(join(dir, 'conversation.jsonl'));
+    // Nothing can be written in the session's folder any more (the mark included).
+    await chmod(dir, 0o500);
+    try {
+      const res = await create({ generate: false, briefSession: { id } });
+      expect(res.statusCode, res.body).toBe(201);
+      expect(res.json().briefError).toBeTruthy();
+      expect((await h().view())?.handedOffTo).toBeUndefined();
+      expect((await create({ generate: false, briefSession: { id } })).json().code).toBe('brief-session-handed-off');
+      expect((await h().send(id, 'ancora')).json().code).toBe('brief-session-handed-off');
+    } finally {
+      await chmod(dir, 0o700);
+    }
+    expect((await t.app.inject({ method: 'DELETE', url: `/api/projects/acme/brief-session/${id}` })).statusCode).toBe(204);
+    // A new session is not refused.
+    const next = await h().open();
+    expect((await h().send(next.id, 'nuova')).statusCode).toBe(202);
+    (await t.runner.next(1)).finish({ write: false });
+    await h().waitIdle();
+  });
+
   it('busy or gone: nothing is created', async () => {
     t = await briefApp();
     const s = await h().open();
@@ -213,7 +250,7 @@ describe('from the brief session to the creative (decision 1423)', () => {
     expect(gone.json().code).toBe('brief-session-gone');
     expect((await t.app.inject('/api/projects/acme/creatives')).json()).toEqual([]);
     // Messages left queued with no turn to take them (a restart came between) start their turn instead of being lost.
-    await t.app.inject({ method: 'POST', url: `/api/projects/acme/brief-session/${s.id}/messages`, payload: { clientId: 'q-1', text: 'In coda', context: { codebases: [], assets: [] }, form: (await h().view())!.form, userEdited: [] } });
+    await t.app.inject({ method: 'POST', url: `/api/projects/acme/brief-session/${s.id}/messages`, payload: { clientId: 'q-1', text: 'In coda', context: { codebases: [], assets: [] }, form: (await h().view())!.form, userEdited: [], baseRevision: 0 } });
     expect((await h().view())?.queued.map((q) => q.text)).toEqual(['In coda']);
     run.finish({ write: false });
     const queuedRun = await t.runner.next(1);

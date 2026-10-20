@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { realpath, stat } from 'node:fs/promises';
 import {
   BRIEF_QUEUE_MAX, briefJobKey, isSessionId, type AgentEvent, type BriefContext, type BriefField, type BriefForm, type BriefMessageInput, type BriefQueued, type BriefSendResult,
-  type BriefSessionView, type ConversationEntry, type FormatPreset, type JobSummary, type LinkedCodebase, type ServerMessage,
+  type BriefFormSaved, type BriefSessionView, type ConversationEntry, type FormatPreset, type JobSummary, type LinkedCodebase, type ServerMessage,
 } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import type { AgentRun } from '../agent/runner.ts';
@@ -18,7 +18,7 @@ import type { JobQueue } from '../jobs/job-queue.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
 import { briefDigest, briefFollowUp, buildBriefPrompt } from './brief-prompt.ts';
-import type { BriefSessionFile, BriefSessionStore } from './brief-session-store.ts';
+import { isUnreadable, type BriefSessionFile, type BriefSessionStore } from './brief-session-store.ts';
 import { applyFill, fillLine, listFormats, mergeClientForm, reclaimLine } from './brief-tools.ts';
 
 /** The most `fill_brief` calls one brief job may make (the app actions' cap idea, decision 917). */
@@ -69,6 +69,11 @@ export class BriefSessionService {
   private readonly fills = new Map<string, number>();
   /** Sessions being handed to a creative (by project job key): no message is taken meanwhile. In memory: a restart ends it. */
   readonly claims = new Set<string>();
+  /**
+   * Sessions half moved into a creative whose mark could not be written (session id by project job key): refused for messages and
+   * moves, in memory, until a discard or a restart.
+   */
+  private readonly blocked = new Map<string, string>();
   /** Serialises the decisions of one project (send, drain, discard, claim). */
   readonly lock = new KeyedMutex();
 
@@ -95,13 +100,12 @@ export class BriefSessionService {
     this.deps.broadcast({ type: 'brief-session', project: ref.projectSlug, sessionId: s.id, ...(extra.ended ? {} : { revision: s.revision }), ...extra });
   }
 
-  /** The project's open session; one that cannot be read is a 422 `brief-session-unreadable` (discard removes it). */
-  private async openSession(ref: BriefProjectRef): Promise<BriefSessionFile | null> {
-    try {
-      return await this.deps.store.open(ref.projectDir);
-    } catch {
-      throw new CodedError(422, t().errors.briefSessionUnreadable, 'brief-session-unreadable');
-    }
+  /**
+   * The project's open session. One whose files cannot be a session is a 422 `brief-session-unreadable` from the store
+   * (discard removes it); any other I/O error stays what it is.
+   */
+  private openSession(ref: BriefProjectRef): Promise<BriefSessionFile | null> {
+    return this.deps.store.open(ref.projectDir);
   }
 
   private async session(ref: BriefProjectRef, id: string): Promise<BriefSessionFile> {
@@ -113,7 +117,7 @@ export class BriefSessionService {
   /** The open session `id`, if it takes messages and moves (not half moved into a creative). */
   private async usable(ref: BriefProjectRef, id: string): Promise<BriefSessionFile> {
     const s = await this.session(ref, id);
-    if (s.handedOffTo) throw new CodedError(409, t().errors.briefHandedOff, 'brief-session-handed-off');
+    if (s.handedOffTo || this.blocked.get(this.key(ref)) === s.id) throw new CodedError(409, t().errors.briefHandedOff, 'brief-session-handed-off');
     return s;
   }
 
@@ -126,8 +130,7 @@ export class BriefSessionService {
 
   /** Opens the project's session with the form as the user has it (the open one when there is one). */
   async start(ref: BriefProjectRef, init: { form: BriefForm; userEdited: BriefField[] }): Promise<BriefSessionView> {
-    let s: BriefSessionFile;
-    try { s = await this.deps.store.create(ref.projectDir, init); } catch { throw new CodedError(422, t().errors.briefSessionUnreadable, 'brief-session-unreadable'); }
+    const s = await this.deps.store.create(ref.projectDir, init);
     this.changed(ref, s);
     return this.toView(ref, s);
   }
@@ -168,7 +171,7 @@ export class BriefSessionService {
    * The form as the user has it (saved, debounced, while they edit), merged by field (`mergeClientForm`, decision 1422): the
    * user's fields come from the client, the others keep the server's value. Returns the revision after the merge.
    */
-  async saveForm(ref: BriefProjectRef, id: string, f: { form: BriefForm; userEdited: BriefField[]; baseRevision?: number }): Promise<{ revision: number }> {
+  async saveForm(ref: BriefProjectRef, id: string, f: { form: BriefForm; userEdited: BriefField[]; baseRevision: number }): Promise<BriefFormSaved> {
     let changed = false;
     const s = await this.deps.store.update(ref.projectDir, id, (cur) => {
       const m = mergeClientForm(cur, f);
@@ -176,7 +179,7 @@ export class BriefSessionService {
       return { form: m.form, userEdited: m.userEdited, agentFields: cur.agentFields.filter((x) => !m.userEdited.includes(x)), revision: m.revision };
     });
     if (changed) this.changed(ref, s);
-    return { revision: s.revision };
+    return { ok: true, form: s.form, userEdited: s.userEdited, agentFields: s.agentFields, revision: s.revision };
   }
 
   async removeQueued(ref: BriefProjectRef, id: string, clientId: string): Promise<BriefSessionView> {
@@ -357,13 +360,14 @@ export class BriefSessionService {
       if (this.claims.has(key)) throw busy();
       let unreadable = false;
       try { await this.session(ref, id); } catch (err) {
-        if ((err as CodedError).apiCode !== 'brief-session-unreadable') throw err;
+        if (!isUnreadable(err)) throw err;
         unreadable = true;
       }
       const job = this.jobOf(ref);
       if (job) this.deps.queue.cancel(job.id);
       if (unreadable) await this.deps.store.removeAny(ref.projectDir);
       else await this.deps.store.remove(ref.projectDir, id);
+      this.blocked.delete(key);
     });
     this.deps.broadcast({ type: 'brief-session', project: ref.projectSlug, sessionId: id, ended: true });
   }
@@ -399,24 +403,23 @@ export class BriefSessionService {
    * session ends.
    */
   async handOff(claim: BriefClaim, creative: CreativeRef, o: { group: boolean; title: string; formats: string }): Promise<void> {
-    try {
-      const { ref, sessionId } = claim;
-      const s = await this.session(ref, sessionId);
-      const entries = await this.deps.store.conversation(ref.projectDir, sessionId);
-      const stamp = (e: ConversationEntry): ConversationEntry => (o.group ? { ...e, group: true } : e);
-      await new CreativeStore(creative.projectDir).appendConversationEntries(creative.creativeSlug, [
-        ...entries.map(stamp),
-        stamp({ type: 'system', at: new Date().toISOString(), level: 'info', origin: 'brief', text: t().briefSession.creativeStarts({ title: o.title, formats: o.formats }) }),
-      ]);
-      if (s.claudeSessionId && isSessionId(s.claudeSessionId)) {
-        await this.deps.side.setBriefSession(creative.projectDir, creative.creativeSlug, { sessionId: s.claudeSessionId, at: new Date().toISOString(), summary: briefDigest(entries) });
-      }
-      await this.deps.store.remove(ref.projectDir, sessionId);
-      this.changed(ref, s, { ended: true });
-      this.deps.broadcast({ type: 'creative', project: creative.projectSlug, creative: creative.creativeSlug });
-    } finally {
-      this.release(claim);
+    // On a failure the claim stays held: the caller marks the session (`markHandedOff`), which releases it, so no second
+    // Genera can claim the session in between.
+    const { ref, sessionId } = claim;
+    const s = await this.session(ref, sessionId);
+    const entries = await this.deps.store.conversation(ref.projectDir, sessionId);
+    const stamp = (e: ConversationEntry): ConversationEntry => (o.group ? { ...e, group: true } : e);
+    await new CreativeStore(creative.projectDir).appendConversationEntries(creative.creativeSlug, [
+      ...entries.map(stamp),
+      stamp({ type: 'system', at: new Date().toISOString(), level: 'info', origin: 'brief', text: t().briefSession.creativeStarts({ title: o.title, formats: o.formats }) }),
+    ]);
+    if (s.claudeSessionId && isSessionId(s.claudeSessionId)) {
+      await this.deps.side.setBriefSession(creative.projectDir, creative.creativeSlug, { sessionId: s.claudeSessionId, at: new Date().toISOString(), summary: briefDigest(entries) });
     }
+    await this.deps.store.remove(ref.projectDir, sessionId);
+    this.changed(ref, s, { ended: true });
+    this.deps.broadcast({ type: 'creative', project: creative.projectSlug, creative: creative.creativeSlug });
+    this.release(claim);
   }
 
   /**
@@ -427,7 +430,10 @@ export class BriefSessionService {
     try {
       const s = await this.deps.store.update(claim.ref.projectDir, claim.sessionId, () => ({ handedOffTo: creativeSlug }));
       this.changed(claim.ref, s);
-    } catch { /* the session is gone already: nothing to mark */ } finally {
+    } catch {
+      // The mark could not be written (the session's files cannot be read or written): it stays refused in memory.
+      this.blocked.set(claim.key, claim.sessionId);
+    } finally {
       this.release(claim);
     }
   }

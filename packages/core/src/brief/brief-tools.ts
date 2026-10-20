@@ -107,9 +107,9 @@ export function fillLine(written: readonly BriefField[], kept: readonly BriefFie
  */
 export function mergeClientForm(
   s: { form: BriefForm; userEdited: readonly BriefField[]; revision: number; reclaimedAt: Readonly<Record<string, number>> },
-  c: { form: BriefForm; userEdited: readonly BriefField[]; baseRevision?: number },
+  c: { form: BriefForm; userEdited: readonly BriefField[]; baseRevision: number },
 ): { form: BriefForm; userEdited: BriefField[]; revision: number } {
-  const base = c.baseRevision ?? 0;
+  const base = c.baseRevision;
   const form: BriefForm = { ...s.form };
   const userEdited: BriefField[] = [];
   for (const f of BRIEF_FIELDS) {
