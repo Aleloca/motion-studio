@@ -771,17 +771,20 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
         ) : null}
       </main>
 
-      <aside className="ms-fv-side ms-fv-panel" aria-label={c.panel} data-part="r">
-        <div className="ms-tabs ms-panel ms-fv-tabs"><span className="ms-tab ms-on">{f.chat}</span></div>
-        {detail ? (
-          <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={chatJob} live={chatLive}
-                self={groupChat.self} memberJobs={groupChat.memberJobs}
-                single={groupChat.single} otherPins={otherPins} onRemoveOtherPin={(p) => dropPins([p])}
-            pins={pins} onRemovePin={removePin} onEditPin={onEditChip} formatName={formatLabel}
-            canGenerate={versions.length === 0} onSent={onSent} onSelectVersion={onSelectVersion} snapshots={live.snapshots} appliesTo={appliesTo}
-            brief={detail.creative.brief} onBriefSaved={reload} queued={detail.creative.queued} onQueueChanged={reload}
-            versionSummary={(vn) => { const v = versions.find((x) => x.n === vn); return v?.origin === 'editor' && v.request ? v.request : null; }} />
-        ) : <div className="ms-cv-state"><Spinner size={16} label={c.loading} /></div>}
+      {/* Decision 1424: the chat is the glass card, inset 12 px in its column (which keeps its width). */}
+      <aside className="ms-fv-side ms-fv-panel ms-chat-col" aria-label={c.panel} data-part="r">
+        <div className="ms-chat-card">
+          <div className="ms-tabs ms-panel ms-fv-tabs"><span className="ms-tab ms-on">{f.chat}</span></div>
+          {detail ? (
+            <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={chatJob} live={chatLive}
+                  self={groupChat.self} memberJobs={groupChat.memberJobs}
+                  single={groupChat.single} otherPins={otherPins} onRemoveOtherPin={(p) => dropPins([p])}
+              pins={pins} onRemovePin={removePin} onEditPin={onEditChip} formatName={formatLabel}
+              canGenerate={versions.length === 0} onSent={onSent} onSelectVersion={onSelectVersion} snapshots={live.snapshots} appliesTo={appliesTo}
+              brief={detail.creative.brief} onBriefSaved={reload} queued={detail.creative.queued} onQueueChanged={reload}
+              versionSummary={(vn) => { const v = versions.find((x) => x.n === vn); return v?.origin === 'editor' && v.request ? v.request : null; }} />
+          ) : <div className="ms-cv-state"><Spinner size={16} label={c.loading} /></div>}
+        </div>
       </aside>
 
       {compare ? (

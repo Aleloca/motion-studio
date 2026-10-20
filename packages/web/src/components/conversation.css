@@ -255,6 +255,18 @@
 .ms-chat-card .ms-convo-dock { position: relative; flex: none; padding-top: 4px; }
 .ms-chat-card .ms-composer { margin: 0 14px; padding: 0; background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
 .ms-chat-card .ms-composer-box { gap: 10px; padding: 12px 10px 10px 14px; border-radius: 16px; background: var(--glassField); box-shadow: inset 0 0 0 1px var(--glassLine); }
+/* Decision 1424: a screen's chat column (canvas, format view, editor, the variant group's chat) holds the card, 12 px of page
+   around it. The column keeps its width, so nothing runs under the card; its side border goes. `aside.` ranks it above the
+   screens' side-column rules, which load later. The card's shadow may fall on the middle column (the card floats). */
+aside.ms-chat-col { padding: 12px; background: var(--bg); border: 0; overflow: visible; }
+.ms-chat-col > .ms-chat-card { flex: 1; min-width: 0; }
+.ms-chat-col > .ms-chat-card > .ms-tabs { flex: none; }
+.ms-chat-col > .ms-chat-card > :not(.ms-tabs) { flex: 1; min-height: 0; }
+.ms-chat-card > .ms-tabs.ms-panel { padding: 8px 10px 0; border-bottom-color: var(--glassLine); }
+/* No context row under it here: the composer keeps the card's 14 px from the bottom edge too. */
+.ms-chat-col .ms-chat-card .ms-composer { margin-bottom: 14px; }
+/* A control reached with the keyboard stops 8 px inside its scrolling panel, so its focus ring is never cut by the panel's edge. */
+.ms-chat-card :is(.ms-convo-list, .ms-cv-brief-wrap, .ms-cv-tabbody, .ms-ed-panel) { scroll-padding-block: 8px; }
 /* Decision 1423: where a creative starts after its brief session (no version yet, so no badge). */
 .ms-convo-briefstart > b { font-size: 13px; }
 .ms-convo-briefstart-mark { color: var(--accent); flex: none; }

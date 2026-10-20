@@ -5,9 +5,7 @@
 .ms-ed-image { grid-template-columns: 248px minmax(0, 1fr) 280px; grid-template-rows: minmax(0, 1fr); }
 .ms-ed-side { min-height: 0; min-width: 0; display: flex; flex-direction: column; background: var(--panel); overflow: hidden; }
 .ms-ed-left { border-right: 1px solid var(--line); }
-.ms-ed-right { border-left: 1px solid var(--line); }
 .ms-ed-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
-.ms-ed-panel > .ms-conv, .ms-ed-panel > section { flex: 1; min-height: 0; }
 .ms-ed-slot { margin: 12px; padding: 14px; border-radius: 10px; border: 1px dashed var(--line); background: var(--bg); }
 .ms-ed-slot p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--muted); text-wrap: pretty; overflow-wrap: anywhere; }
 .ms-ed-timeline { grid-column: 1 / 4; background: var(--panel); border-top: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; overflow: auto; }
@@ -56,6 +54,8 @@
 .ms-tabs.ms-panel.ms-ed-tabs .ms-tab.ms-on { font-weight: 600; color: var(--text); background: var(--panel); box-shadow: 0 0 0 1px var(--line), 0 1px 3px var(--shadow); }
 .ms-tabs.ms-panel.ms-ed-tabs .ms-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ms-ed-tabs .ms-tab .ms-tag.ms-n { background: var(--accent); color: var(--accentText); }
+/* In the glass card (decision 1424): the segmented tabs sit on the glass field. */
+.ms-chat-card > .ms-tabs.ms-panel.ms-ed-tabs { margin: 10px 10px 0; background: var(--glassField); box-shadow: inset 0 0 0 1px var(--glassLine); }
 
 /* Dialogs (leave guard, discard, base changed). */
 .ms-ed-dialog { padding: 20px 22px; display: flex; flex-direction: column; gap: 10px; }

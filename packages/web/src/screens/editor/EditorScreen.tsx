@@ -1025,24 +1025,27 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
         {draft && !video && !otherView ? <ZoomBar zoom={zoom} onZoom={setZoom} /> : null}
       </main>
 
-      <aside className="ms-ed-side ms-ed-right" aria-label={e.panelTabs} data-part="r">
-        <Tabs label={e.panelTabs} value={tab} onChange={setTab} className="ms-fv-tabs ms-ed-tabs"
-          tabs={[{ value: 'chat', label: e.chat, controls: 'ms-ed-panel', ...(sourcePins.length ? { count: sourcePins.length } : {}) }, { value: 'inspector', label: e.inspector, controls: 'ms-ed-panel' }]} />
-        {sourcePins.length ? <span className="ms-sr" role="status">{e.pendingComments({ n: sourcePins.length })}</span> : null}
-        <div id="ms-ed-panel" role="tabpanel" className="ms-ed-panel">
-          {tab === 'chat' ? (
-            detail ? (
-              <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={chatJob} live={chatLive}
-                self={groupChat.self} memberJobs={groupChat.memberJobs}
-                single={groupChat.single} otherPins={otherPins} onRemoveOtherPin={(p) => dropPins([p])}
-                pins={sourcePins.map((p) => p.pin)} onRemovePin={removePin} onEditPin={editPin} onSelectVersion={onSelectVersion}
-                formatName={labelOf} canGenerate={versions.length === 0} onSent={onSent} beforeSend={beforeSend} snapshots={live.snapshots}
-                versionSummary={(vn) => { const v = versions.find((x) => x.n === vn); return v?.origin === 'editor' && v.request ? v.request : null; }} appliesTo={appliesTo}
-                brief={detail.creative.brief} onBriefSaved={reload} queued={detail.creative.queued} onQueueChanged={reload} />
-            ) : <div className="ms-cv-state"><Spinner size={16} label={c.loading} /></div>
-          ) : (
-            ctx ? <Inspector /> : <div className="ms-ed-slot" data-slot="inspector"><p>{e.inspectorSoon}</p></div>
-          )}
+      {/* Decision 1424: chat and inspector share the glass card, inset 12 px in the column (which keeps its width). */}
+      <aside className="ms-ed-side ms-ed-right ms-chat-col" aria-label={e.panelTabs} data-part="r">
+        <div className="ms-chat-card">
+          <Tabs label={e.panelTabs} value={tab} onChange={setTab} className="ms-fv-tabs ms-ed-tabs"
+            tabs={[{ value: 'chat', label: e.chat, controls: 'ms-ed-panel', ...(sourcePins.length ? { count: sourcePins.length } : {}) }, { value: 'inspector', label: e.inspector, controls: 'ms-ed-panel' }]} />
+          {sourcePins.length ? <span className="ms-sr" role="status">{e.pendingComments({ n: sourcePins.length })}</span> : null}
+          <div id="ms-ed-panel" role="tabpanel" className="ms-ed-panel">
+            {tab === 'chat' ? (
+              detail ? (
+                <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={chatJob} live={chatLive}
+                  self={groupChat.self} memberJobs={groupChat.memberJobs}
+                  single={groupChat.single} otherPins={otherPins} onRemoveOtherPin={(p) => dropPins([p])}
+                  pins={sourcePins.map((p) => p.pin)} onRemovePin={removePin} onEditPin={editPin} onSelectVersion={onSelectVersion}
+                  formatName={labelOf} canGenerate={versions.length === 0} onSent={onSent} beforeSend={beforeSend} snapshots={live.snapshots}
+                  versionSummary={(vn) => { const v = versions.find((x) => x.n === vn); return v?.origin === 'editor' && v.request ? v.request : null; }} appliesTo={appliesTo}
+                  brief={detail.creative.brief} onBriefSaved={reload} queued={detail.creative.queued} onQueueChanged={reload} />
+              ) : <div className="ms-cv-state"><Spinner size={16} label={c.loading} /></div>
+            ) : (
+              ctx ? <Inspector /> : <div className="ms-ed-slot" data-slot="inspector"><p>{e.inspectorSoon}</p></div>
+            )}
+          </div>
         </div>
       </aside>
 
