@@ -235,6 +235,27 @@
 .ms-composer-send { border-radius: 50%; box-shadow: none; }
 .ms-composer-error { margin: 0; font-size: 12px; color: var(--warn); overflow-wrap: anywhere; }
 
+/* Decision 1413: the chat as a floating "liquid glass" card (the brief session's panel; decision 1420: every chat later). Its
+   agent bubbles sit on the glass field, and the composer loses its own frame: one field with the pins, the text and its row.
+   Without backdrop-filter, or with prefers-reduced-transparency, the card is opaque. */
+.ms-chat-card {
+  display: flex; flex-direction: column; min-height: 0; border-radius: 20px; overflow: hidden; background: var(--glassSolid);
+  box-shadow: inset 0 0 0 1px var(--glassLine), inset 0 1px 0 var(--glassEdge), 0 24px 60px var(--glassShadow), 0 1px 3px var(--shadow);
+}
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  @media not (prefers-reduced-transparency: reduce) {
+    .ms-chat-card { background: var(--glass); -webkit-backdrop-filter: blur(22px) saturate(1.8); backdrop-filter: blur(22px) saturate(1.8); }
+  }
+}
+.ms-chat-card .ms-msg:not(.ms-you) .ms-msg-bubble { background: var(--glassField); }
+.ms-chat-card .ms-msg.ms-summary .ms-msg-bubble { background: var(--panel); }
+.ms-chat-card .ms-composer { margin: 0 14px; padding: 0; background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.ms-chat-card .ms-composer-box { gap: 10px; padding: 12px 10px 10px 14px; border-radius: 16px; background: var(--glassField); box-shadow: inset 0 0 0 1px var(--glassLine); }
+/* Decision 1423: where a creative starts after its brief session (no version yet, so no badge). */
+.ms-convo-briefstart > b { font-size: 13px; }
+.ms-convo-briefstart-mark { color: var(--accent); flex: none; }
+.ms-msg-pins .ms-msg-folder .ms-pin-ref { font-family: var(--mono); font-size: 11px; }
+
 /* Comment chips: reference (number · format · time), then the comment's words, ellipsized; the chip never overflows. */
 .ms-composer-pin, .ms-msg-pins .ms-chip { max-width: 100%; min-width: 0; }
 .ms-pin-label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }

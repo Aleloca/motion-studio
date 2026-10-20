@@ -17,6 +17,11 @@ export interface QueuedRequestsProps {
   working: boolean;
   /** After any change (the caller reloads the creative). */
   onChanged(): void;
+  /**
+   * Decision 1422 (the brief session): the queue's only operation, remove. Its messages start by themselves after the turn,
+   * all together: no edit, no reorder, no "Run next".
+   */
+  ops?: { remove(clientId: string): Promise<void> };
 }
 
 /**
@@ -24,7 +29,7 @@ export interface QueuedRequestsProps {
  * the move up/down buttons) and "Run next". The queue starts by itself only after a turn that saved a version; after a
  * failure, a stop or a restart nothing runs until the user presses "Run next".
  */
-export function QueuedRequests({ slug, creative, queued, working, onChanged }: QueuedRequestsProps) {
+export function QueuedRequests({ slug, creative, queued, working, onChanged, ops }: QueuedRequestsProps) {
   const t = useT();
   const u = t.web.liveUi;
   const heading = useId();
@@ -131,7 +136,7 @@ export function QueuedRequests({ slug, creative, queued, working, onChanged }: Q
       {keptBlock}
       <div className="ms-queue-head">
         <h3 id={heading} className="ms-queue-title">{u.queueTitle({ count: list.length })}</h3>
-        {!working && !settling && (
+        {!working && !settling && !ops && (
           <>
             <span className="ms-queue-paused">{u.queuePaused}</span>
             <Button size="sm" variant="outline" disabled={busy} onClick={() => void run(() => api.runNext(slug, creative))}>
@@ -145,7 +150,7 @@ export function QueuedRequests({ slug, creative, queued, working, onChanged }: Q
           const n = i + 1;
           const isEditing = editing === q.clientId;
           return (
-            <li key={q.clientId} className={cx('ms-queue-item', over === q.clientId && 'ms-over')} draggable={!isEditing} aria-label={u.item({ n })}
+            <li key={q.clientId} className={cx('ms-queue-item', over === q.clientId && 'ms-over')} draggable={!isEditing && !ops} aria-label={u.item({ n })}
               onDragStart={(e) => { drag.current = q.clientId; if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', q.clientId); } catch { /* some engines refuse */ } } }}
               onDragOver={(e) => { if (drag.current && drag.current !== q.clientId) { e.preventDefault(); setOver(q.clientId); } }}
               onDragLeave={() => setOver((o) => (o === q.clientId ? null : o))}
@@ -156,7 +161,7 @@ export function QueuedRequests({ slug, creative, queued, working, onChanged }: Q
                 if (from >= 0) moveTo(from, i);
               }}
               onDragEnd={() => { drag.current = null; setOver(null); }}>
-              <span className="ms-queue-grip" aria-hidden="true" title={u.drag({ n })}><Icon name="menu" size={12} /></span>
+              {ops ? null : <span className="ms-queue-grip" aria-hidden="true" title={u.drag({ n })}><Icon name="menu" size={12} /></span>}
               <div className="ms-queue-body">
                 {isEditing ? (
                   <>
@@ -176,7 +181,12 @@ export function QueuedRequests({ slug, creative, queued, working, onChanged }: Q
                   </>
                 )}
               </div>
-              {!isEditing && (
+              {!isEditing && ops && (
+                <div className="ms-queue-actions">
+                  <Button size="sm" variant="ghost" icon aria-label={u.remove({ n })} disabled={busy} onClick={() => void run(() => ops.remove(q.clientId))}><Icon name="trash" size={12} /></Button>
+                </div>
+              )}
+              {!isEditing && !ops && (
                 <div className="ms-queue-actions">
                   <Button size="sm" variant="ghost" icon aria-label={u.moveUp({ n })} disabled={busy || i === 0} onClick={() => moveTo(i, i - 1)}><Icon name="chevron" size={12} className="ms-queue-up" /></Button>
                   <Button size="sm" variant="ghost" icon aria-label={u.moveDown({ n })} disabled={busy || i === list.length - 1} onClick={() => moveTo(i, i + 1)}><Icon name="chevron" size={12} /></Button>

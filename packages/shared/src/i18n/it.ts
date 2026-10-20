@@ -1975,6 +1975,9 @@ Variabili: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (array JSON)`,
       archivedOn: (p) => `Archiviata ${p.when}`,
       backToCreatives: 'Torna alle creatività',
     },
+    briefSession: {
+      created: 'Creatività creata',
+    },
     newCreative: {
       secondsShort: (p) => `${p.n} s`,
       goalQuestion: 'Cosa vuoi realizzare?',
