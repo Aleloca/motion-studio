@@ -721,7 +721,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
 
         <div className="ms-nc-right">
           <div className="ms-nc-boardhead" ref={boardHead}>
-            <h2>{n.whereTo}</h2>{agentMark('formats')}
+            <div className="ms-nc-qrow ms-nc-boardtitle"><h2>{n.whereTo}</h2>{agentMark('formats')}</div>
             <div className="ms-grow" />
             <Segmented
               className="ms-nc-kind"

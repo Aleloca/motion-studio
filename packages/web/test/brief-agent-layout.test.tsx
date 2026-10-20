@@ -38,6 +38,7 @@ const entries: ConversationEntry[] = [
     context: { codebases: ['/Users/me/git/audin-desk', '/Users/me/git/audin-web'], assets: ['assets/casella.png', 'assets/scheda-cliente.png', 'assets/logo-audin.svg'] }, jobId: 'b1' } as ConversationEntry,
   { type: 'agent', at, jobId: 'b1', event: { kind: 'text', text: 'Ho capito il prodotto. Una sola domanda prima di scrivere: quanto devono durare i video?' } },
   { type: 'system', at, level: 'info', origin: 'agent', text: 'Compilato il brief: testi, durata, 3 asset, 2 codebase, 4 formati' },
+  ...Array.from({ length: 6 }, (_, i): ConversationEntry => ({ type: 'agent', at, jobId: 'b1', event: { kind: 'text', text: `Leggo ${['il README', 'i testi delle schermate', 'i prezzi', 'le email di benvenuto', 'il logo', 'la scheda cliente'][i]} per capire il tono e cosa mostrare nel video.` } })),
   { type: 'agent', at, jobId: 'b1', event: { kind: 'result', ok: true, text: 'Il brief è pronto qui a fianco: i campi con "Agente" li ho scritti io. Correggi quello che vuoi o chiedimi una modifica; quando ti convince, premi Genera.' } },
 ];
 let session: BriefSessionView | null = filled;
@@ -54,6 +55,8 @@ const api = {
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error { status = 0; } }));
 const { NewCreative } = await import('../src/screens/NewCreative.tsx');
+const { TopBar } = await import('../src/shell/TopBars.tsx');
+const { ShellContext } = await import('../src/shell/ShellContext.tsx');
 
 const src = (p: string) => readFileSync(join(import.meta.dirname, '../src', p), 'utf8');
 const CSS = ['theme.css', 'ui/ui.css', 'components/conversation.css', 'components/codebase.css', 'components/services.css', 'screens/newcreative.css',
@@ -63,9 +66,20 @@ const chrome = required || process.env.MS_LAYOUT_CHROME === '1' ? findChrome() :
 const shots = process.env.MS_LAYOUT_SHOTS ?? null;
 
 /** The page's markup: "Con l'agente" after Riprendi on a filled session, or "Compila tu" with no session. */
-async function markup(agent: boolean): Promise<string> {
+/** The bar and the page, rendered together (the page puts "Compila tu / Con l'agente" in the bar's end slot). */
+async function markup(agent: boolean): Promise<{ bar: string; page: string }> {
   session = agent ? filled : null;
-  const { container, unmount } = render(<I18nProvider locale="it"><NewCreative slug="acme" live={initialEventsState} /></I18nProvider>);
+  const shell = {
+    route: { name: 'new-creative', slug: 'acme' }, live: initialEventsState,
+    catalog: { projects: [{ slug: 'acme', name: 'Audin' }], creatives: {}, refresh: () => {} },
+    activity: { open: false, tab: null, seq: 0, show: () => {}, hide: () => {}, toggle: () => {} }, openPalette: () => {},
+  } as never;
+  const { container, unmount } = render(
+    <I18nProvider locale="it"><ShellContext.Provider value={shell}>
+      <div id="bar"><TopBar /></div><div id="page"><NewCreative slug="acme" live={initialEventsState} /></div>
+    </ShellContext.Provider></I18nProvider>,
+  );
+  await waitFor(() => expect(container.querySelector('header.ms-topbar .ms-nc-mode')).toBeTruthy());
   await waitFor(() => screen.getByRole('group', { name: 'Instagram' }));
   if (agent) {
     await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Riprendi la sessione del brief' }));
@@ -73,7 +87,7 @@ async function markup(agent: boolean): Promise<string> {
     await waitFor(() => expect(container.querySelectorAll('.ms-nc-agentmark').length).toBeGreaterThan(3));
     await waitFor(() => expect(container.querySelector('.ms-brief-ctx')?.textContent).toContain('2 cartelle'));
   }
-  const html = container.innerHTML;
+  const html = { bar: container.querySelector('#bar')!.innerHTML, page: container.querySelector('#page')!.innerHTML };
   unmount();
   return html;
 }
@@ -83,6 +97,29 @@ const q = (s) => document.querySelector(s);
 const rect = (s) => { const r = q(s).getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height }; };
 const cs = (s) => getComputedStyle(q(s));
 const main = rect('#main');
+// "Compila tu / Con l'agente" sits in the real top bar, with the page's mode chosen.
+const mode = document.querySelector('header.ms-topbar .ms-nc-mode');
+const modeShown = !!mode && mode.getBoundingClientRect().width > 0 && mode.getBoundingClientRect().right <= innerWidth;
+const modeOn = mode ? [...mode.querySelectorAll('[role=radio]')].find((r) => r.getAttribute('aria-checked') === 'true')?.textContent : null;
+// The chat's messages never run under the composer and the context row, scrolled to the end or in the middle.
+const list = q('.ms-nc-panel .ms-convo-list');
+const dock = q('.ms-nc-panel .ms-convo-dock').getBoundingClientRect();
+const under = [];
+const scrollable = list.scrollHeight > list.clientHeight + 4;
+for (const at of ['end', 'middle']) {
+  list.scrollTop = at === 'end' ? list.scrollHeight : (list.scrollHeight - list.clientHeight) / 2;
+  const lr = list.getBoundingClientRect();
+  for (const li of list.children) {
+    const r = li.getBoundingClientRect();
+    const top = Math.max(r.top, lr.top), bottom = Math.min(r.bottom, lr.bottom);
+    if (bottom - top <= 0.5) continue;
+    if (bottom > dock.top + 0.5 && top < dock.bottom - 0.5) under.push(at + ': ' + (li.textContent || '').slice(0, 30));
+  }
+}
+// The board's heading keeps its "Agente" mark on its line.
+const title = document.querySelector('.ms-nc-boardtitle h2');
+const titleMark = document.querySelector('.ms-nc-boardtitle .ms-nc-agentmark');
+const markOnTitle = !titleMark || (() => { const h = title.getBoundingClientRect(), m = titleMark.getBoundingClientRect(); const c = (m.top + m.bottom) / 2; return c >= h.top && c <= h.bottom; })();
 const panel = rect('.ms-nc-panel');
 const body = rect('.ms-nc-body');
 const area = rect('.ms-nc-form');
@@ -106,14 +143,14 @@ return {
   padding: box.padding, gap: box.rowGap, ctxGap: ctxBtn.top - form.bottom,
   opacity: cs('.ms-nc-panel').opacity, transform: cs('.ms-nc-panel').transform,
   panelDelays: delays('.ms-nc-panel'), formDelays: delays('.ms-nc-form'), bodyDelays: delays('.ms-nc-body'),
-  marks, buttons, clipped, maxDuration: Math.max(...durations),
+  marks, buttons, clipped, modeShown, modeOn, under, scrollable, markOnTitle, maxDuration: Math.max(...durations),
 };
 })()`;
 
 type Measure = {
   main: DOMRect; panel: DOMRect; body: DOMRect; area: DOMRect; foot: DOMRect; scroll: number; inner: number; panelRadius: string; bodyRadius: string; footRadius: string;
   left: number; board: number; padding: string; gap: string; ctxGap: number; opacity: string; transform: string;
-  panelDelays: Record<string, string>; formDelays: Record<string, string>; bodyDelays: Record<string, string>; marks: boolean[]; buttons: boolean[]; clipped: string[]; maxDuration: number;
+  panelDelays: Record<string, string>; formDelays: Record<string, string>; bodyDelays: Record<string, string>; marks: boolean[]; buttons: boolean[]; clipped: string[]; modeShown: boolean; modeOn: string | null; under: string[]; scrollable: boolean; markOnTitle: boolean; maxDuration: number;
 };
 
 const run = chrome ? describe : describe.skip;
@@ -122,8 +159,8 @@ if (!chrome && required) it('Chrome is required (MS_REQUIRE_CHROME=1)', () => { 
 run('the brief with the agent: real Chrome layout', () => {
   let dir = '';
   let browser: Browser;
-  let agentHtml = '';
-  let youHtml = '';
+  let agentHtml = { bar: '', page: '' };
+  let youHtml = { bar: '', page: '' };
   beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), 'ms-brief-layout-'));
     browser = await launchChrome(chrome!);
@@ -132,12 +169,12 @@ run('the brief with the agent: real Chrome layout', () => {
   }, 120_000);
   afterAll(async () => { await browser?.close(); rmSync(dir, { recursive: true, force: true }); }, 60_000);
 
-  async function measure(html: string, o: { name: string; width: number; height: number; theme: 'light' | 'dark'; reduce?: boolean }): Promise<Measure> {
+  async function measure(html: { bar: string; page: string }, o: { name: string; width: number; height: number; theme: 'light' | 'dark'; reduce?: boolean }): Promise<Measure> {
     const page = `<!doctype html><html lang="it" data-theme="${o.theme}"><head><meta charset="utf-8"><style>${CSS}
-      body{margin:0;background:var(--bg)} #main{position:fixed;left:0;right:0;top:52px;bottom:0}</style></head>
-      <body><header style="height:52px;background:var(--panel)"></header><div id="main">${html}</div>
+      html,body{height:100%;margin:0}</style></head>
+      <body><div class="ms-app">${html.bar}<div class="ms-main" id="main"><div class="ms-stage"><div class="ms-page">${html.page}</div></div></div></div>
       <script>for (const c of document.querySelectorAll('.ms-convo')) c.style.setProperty('--ms-dock-h', c.querySelector('.ms-convo-dock').offsetHeight + 'px');</script></body></html>`;
-    const file = join(dir, `${o.name}-${o.theme}-${o.width}.html`);
+    const file = join(dir, `${o.name}-${o.theme}-${o.width}${o.reduce ? '-reduced' : ''}.html`);
     writeFileSync(file, page);
     const tab = await browser.newPage(o.width, o.height);
     try {
@@ -173,6 +210,11 @@ run('the brief with the agent: real Chrome layout', () => {
       expect(r.marks.every(Boolean), 'every "Agente" mark inside its label row').toBe(true);
       expect(r.clipped, 'no option of the length or kind controls is cut').toEqual([]);
       expect(r.opacity).toBe('1');
+      expect(r.modeShown, 'the mode switch is in the top bar').toBe(true);
+      expect(r.modeOn).toContain("Con l'agente");
+      expect(r.scrollable, 'the chat scrolls (the check below is not vacuous)').toBe(true);
+      expect(r.under, 'no message under the composer or the context row').toEqual([]);
+      expect(r.markOnTitle, 'the board heading keeps its mark on its line').toBe(true);
       // Opening: the space at once, the panel after 0.6 × s (120 ms).
       expect(r.panelDelays).toMatchObject({ opacity: '0.12s', transform: '0.12s' });
       expect(r.formDelays.left).toBe('0s');
@@ -189,6 +231,8 @@ run('the brief with the agent: real Chrome layout', () => {
       // Closing: the panel at once, the space after 0.6 × s.
       expect(r.panelDelays).toMatchObject({ opacity: '0s', transform: '0s' });
       expect(r.formDelays.left).toBe('0.12s');
+      expect(r.modeShown, 'the mode switch is in the top bar').toBe(true);
+      expect(r.modeOn).toBe('Compila tu');
     }, 120_000);
 
     it(`${theme}: Con l'agente at 1024 × 700: a 360 px panel, the board keeps room, the footer's buttons show`, async () => {
@@ -199,9 +243,27 @@ run('the brief with the agent: real Chrome layout', () => {
       expect(r.scroll).toBeLessThanOrEqual(r.inner);
       expect(r.board).toBeGreaterThanOrEqual(280);
       expect(r.clipped, 'no option of the length or kind controls is cut').toEqual([]);
+      expect(r.modeShown).toBe(true);
+      expect(r.scrollable, 'the chat scrolls at this size (the check below is not vacuous)').toBe(true);
+      expect(r.under, 'no message under the composer or the context row').toEqual([]);
+      expect(r.markOnTitle, 'the board heading keeps its mark on its line').toBe(true);
       expect(r.buttons.length).toBeGreaterThanOrEqual(2);
       expect(r.buttons.every(Boolean), "the footer's buttons are whole").toBe(true);
       expect(Math.abs(r.panel.bottom - r.foot.bottom)).toBeLessThanOrEqual(1);
+    }, 120_000);
+  }
+
+  for (const theme of ['light', 'dark'] as const) {
+    it(`${theme}: Compila tu at 1024 × 700: the form card at 12 px, nothing cut, the board keeps room`, async () => {
+      const r = await measure(youHtml, { name: 'you', width: 1024, height: 700, theme });
+      expect(r.body.left).toBeCloseTo(12, 0);
+      expect(r.left).toBeCloseTo(480, 0);
+      expect(r.scroll).toBeLessThanOrEqual(r.inner);
+      expect(r.board).toBeGreaterThanOrEqual(280);
+      expect(r.clipped).toEqual([]);
+      expect(r.buttons.every(Boolean), "the footer's buttons are whole").toBe(true);
+      expect(r.modeShown).toBe(true);
+      expect(r.modeOn).toBe('Compila tu');
     }, 120_000);
   }
 

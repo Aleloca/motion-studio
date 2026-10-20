@@ -249,6 +249,10 @@
 }
 .ms-chat-card .ms-msg:not(.ms-you) .ms-msg-bubble { background: var(--glassField); }
 .ms-chat-card .ms-msg.ms-summary .ms-msg-bubble { background: var(--panel); }
+/* In the card the dock is in the flow, under the list: messages end above the composer and its context row, never under them
+   (the card's composer has no glass of its own to keep them readable). */
+.ms-chat-card .ms-convo-list { padding-bottom: 14px; }
+.ms-chat-card .ms-convo-dock { position: relative; flex: none; padding-top: 4px; }
 .ms-chat-card .ms-composer { margin: 0 14px; padding: 0; background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
 .ms-chat-card .ms-composer-box { gap: 10px; padding: 12px 10px 10px 14px; border-radius: 16px; background: var(--glassField); box-shadow: inset 0 0 0 1px var(--glassLine); }
 /* Decision 1423: where a creative starts after its brief session (no version yet, so no badge). */
