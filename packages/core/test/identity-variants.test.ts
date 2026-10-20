@@ -152,4 +152,5 @@ describe('identity prompt of a grouped creative', () => {
 // Decision 876 added the logo's required "dark" line to the identity section (the only change: without it the old hashes come back).
 // Decision 1132 (report 34) added the outline-from-ttf/otf sentence and the Sandbox "no cd chains" line.
 // Decision 1232 (report 38) added the html layers' "no will-change" line.
-const GOLDEN = { three: '519c3a6cf963498958c1d2a68de2f924aaeeb690add45f1ffdb9e7c483144fdd', instances: '79eee9e6f2b917562c0badef29452bf0cd6d665431a9b489ef6e71a35aeac730' };
+// Decision 1434 (report 58) reworded SAME_SIZE_NOTE (copies are different images): only `instances`, the one with an @2 copy, changes.
+const GOLDEN = { three: '519c3a6cf963498958c1d2a68de2f924aaeeb690add45f1ffdb9e7c483144fdd', instances: 'b5859ed6efa79813064adbdb7651357659eb198cc464ba80200d6d90cc9bfcb4' };
