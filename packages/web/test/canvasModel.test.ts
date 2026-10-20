@@ -209,6 +209,20 @@ describe('canvas grid (report 60)', () => {
     expect(all.height).toBeLessThanOrEqual(view.height);
   });
 
+  it('review: zoomed down to `all`, the layout drawn (wrapped at the opening zoom) is all in view, with channels sharing lines', () => {
+    const ids = [...copies('web-hero-16x9', 40), 'youtube-16x9', 'linkedin-16x9', 'x-16x9', 'facebook-feed-1x1', 'instagram-post-1x1', 'pinterest-2x3', 'tiktok-9x16'];
+    const g = groups(ids);
+    const v = { width: 1300, height: 1050 };
+    const fit = canvasFit([{ groups: g, head: 0 }], v, FIT_MIN)!;
+    expect(fit.zoom).toBe(READABLE_ZOOM);
+    // Measured at `all`, wrapped as drawn (at the opening zoom).
+    const drawn = sectionsAt([{ groups: g, head: 0 }], fit.all, v.width, undefined, fit.cols, fit.zoom);
+    expect(drawn.width).toBeLessThanOrEqual(v.width);
+    expect(drawn.height).toBeLessThanOrEqual(v.height);
+    // The same answer twice (memoized), and a fresh copy of the groups gives it too.
+    expect(canvasFit([{ groups: groups(ids), head: 0 }], v, FIT_MIN)).toEqual(fit);
+  });
+
   it('a store pack keeps opening with all of it in view (report 40), below the floor', () => {
     const pack = [...copies('appstore-iphone-69', 8), 'appstore-preview', ...copies('playstore-phone-9x16', 8), 'playstore-feature', 'playstore-promo-16x9'];
     const g = canvasGroups(boardsWith(pack, DEFAULT_FORMATS, [], none), new Set(pack));

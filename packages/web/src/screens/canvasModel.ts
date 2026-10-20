@@ -223,13 +223,14 @@ export interface CanvasSection<B extends BoardModel = BoardModel> { groups: Arra
 /**
  * Report 52: a canvas of sections one above the other (the "Scelte" view: "Scelte", then "Senza scelta"), on screen at zoom `z` in
  * a viewport `width` px wide, with the world's padding. Each section is its heading and its own lines; between two sections the
- * lines' gap. One section without a heading is the plain canvas (`worldAt`).
+ * lines' gap. One section without a heading is the plain canvas (`worldAt`). `wrapAt`: the zoom the lines were wrapped at (the
+ * user's zoom scales the lines drawn at the opening zoom, it does not wrap them again).
  */
-export function sectionsAt(sections: CanvasSection[], z: number, width: number | null = null, layout?: BoardLayout, cols = 1): { width: number; height: number } {
+export function sectionsAt(sections: CanvasSection[], z: number, width: number | null = null, layout?: BoardLayout, cols = 1, wrapAt = z): { width: number; height: number } {
   let w = 0;
   let h = LINE_GAP * z * Math.max(0, sections.length - 1);
   for (const s of sections) {
-    const lines = canvasLines(s.groups, z, width, layout, cols);
+    const lines = canvasLines(s.groups, wrapAt, width, layout, cols);
     w = Math.max(w, ...lines.map((l) => lineWidth(l, z, layout)));
     h += s.head + linesHeight(lines, z, layout);
   }
@@ -281,11 +282,11 @@ const gridMax = (sections: CanvasSection[]) => Math.max(1, ...sections.flatMap((
  * The largest zoom (from 100%, the steps of `stepDown`, never below `min`) at which the canvas with grids of `cols` columns fits
  * the viewport; with `above`, only a zoom above it counts (null: none).
  */
-function fitAt(sections: CanvasSection[], view: { width: number; height: number }, min: number, layout: BoardLayout | undefined, cols: number, above = -1): number | null {
-  let z = 1;
+function fitAt(sections: CanvasSection[], view: { width: number; height: number }, min: number, layout: BoardLayout | undefined, cols: number, above = -1, from = 1, wrapAt?: number): number | null {
+  let z = from;
   for (;;) {
     if (z <= above + 1e-9) return null;
-    const w = sectionsAt(sections, z, view.width, layout, cols);
+    const w = sectionsAt(sections, z, view.width, layout, cols, wrapAt ?? z);
     if ((w.width <= view.width + 1e-6 && w.height <= view.height + 1e-6) || z <= min + 1e-9) return z;
     z = stepDown(z, min);
   }
@@ -316,13 +317,30 @@ function fitAll(sections: CanvasSection[], view: { width: number; height: number
  * viewport is laid out.
  */
 export function canvasFit(sections: CanvasSection[], view: { width: number; height: number }, min: number, layout?: BoardLayout): { zoom: number; cols: number; all: number } | null {
+  // Review of report 60: the canvas asks on every render; the answer depends only on the boards' sizes, the viewport and the layout.
+  const key = fitKeyOf(sections, view, min, layout);
+  const known = fitMemo.get(key);
+  if (known !== undefined) return known;
+  const fit = computeFit(sections, view, min, layout);
+  if (fitMemo.size >= 32) fitMemo.delete(fitMemo.keys().next().value!);
+  fitMemo.set(key, fit);
+  return fit;
+}
+
+const fitMemo = new Map<string, { zoom: number; cols: number; all: number } | null>();
+const fitKeyOf = (sections: CanvasSection[], view: { width: number; height: number }, min: number, layout?: BoardLayout) =>
+  `${view.width}x${view.height}:${min}:${layout?.head ?? 0}:${layout?.grouped ? 1 : 0}|${sections.map((s) => `${s.head}=${s.groups
+    .map((g) => `${g.alone ? '!' : ''}${g.boards.map((b) => (b.preset ? `${b.preset.width}x${b.preset.height}` : '-')).join(',')}`).join(';')}`).join('|')}`;
+
+function computeFit(sections: CanvasSection[], view: { width: number; height: number }, min: number, layout?: BoardLayout): { zoom: number; cols: number; all: number } | null {
   const fit = fitAll(sections, view, min, layout);
   if (!fit) return null;
   const pack = sections.some((s) => s.groups.some((g) => g.alone));
   if (fit.zoom >= READABLE_ZOOM - 1e-9 || pack || min >= READABLE_ZOOM) return { ...fit, all: fit.zoom };
   let cols = 1;
   while (cols < gridMax(sections) && sectionsAt(sections, READABLE_ZOOM, view.width, layout, cols + 1).width <= view.width + 1e-6) cols++;
-  return { zoom: READABLE_ZOOM, cols, all: fitAt(sections, view, min, layout, cols)! };
+  // `all`: the lines as drawn (wrapped at READABLE_ZOOM, never again) scaled down until they are all in view.
+  return { zoom: READABLE_ZOOM, cols, all: fitAt(sections, view, min, layout, cols, -1, READABLE_ZOOM, READABLE_ZOOM)! };
 }
 
 /** A world point (canvas px at 100%) on screen: scaled by the zoom, moved by the pan (the anchor's screen origin). */
