@@ -460,6 +460,10 @@ arrives and worked on later together.
     then fits that 17-board-high column into the viewport (down to 0.1).
     Wanted: the boards fill the space in a grid of several per row, and the first zoom is already readable.
     Timing: now.
+    Done (decisions 1456–1462): a channel's non-tall boards are a grid filled row by row, with the column count that gives the
+    largest fit zoom (17 copies of a 16:9: 4–5 columns at 50–55% instead of one column at 10%); below a 40% readable floor the
+    canvas opens at 40%, its rows filling the width, and scrolls down (⌘0 too; ⌘− still goes down to all in view). A store pack
+    still opens all in view.
 
 ## Follow-ups found while working on 12–30
 
