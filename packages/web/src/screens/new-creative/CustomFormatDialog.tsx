@@ -152,7 +152,7 @@ export function CustomFormatDialog({ open, onClose, editing, presets, onSaved, o
         <span className="ms-cfd-lbl" aria-hidden="true">{n.customKind}</span>
         <Segmented className="ms-cfd-kind" label={n.customKind} value={draft.kind} disabled={locked} describedBy={locked ? 'ms-cfd-locked' : undefined}
           onChange={(v) => set({ kind: v })}
-          options={[{ value: 'image', label: n.kindImage, icon: 'image' }, { value: 'video', label: n.kindVideo, icon: 'video' }]} />
+          options={[{ value: 'image', label: n.customKindImage, icon: 'image' }, { value: 'video', label: n.customKindVideo, icon: 'video' }]} />
         <div className="ms-cfd-size">
           <div className="ms-cfd-dim">
             <label htmlFor="ms-cfd-w">{n.customWidth}</label>

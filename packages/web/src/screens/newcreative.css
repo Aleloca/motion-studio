@@ -310,4 +310,3 @@ button.ms-nc-link:focus-visible { outline: 2px solid var(--accent); outline-offs
   .ms-nc-left { overflow: visible; border-right: 0; border-bottom: 1px solid var(--line); }
   .ms-nc-right { overflow: visible; }
 }
-.ms-cfd .ms-grow { flex: 1; min-width: 0; }
