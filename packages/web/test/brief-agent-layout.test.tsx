@@ -169,16 +169,17 @@ run('the brief with the agent: real Chrome layout', () => {
   }, 120_000);
   afterAll(async () => { await browser?.close(); rmSync(dir, { recursive: true, force: true }); }, 60_000);
 
-  async function measure(html: { bar: string; page: string }, o: { name: string; width: number; height: number; theme: 'light' | 'dark'; reduce?: boolean }): Promise<Measure> {
+  async function measure(html: { bar: string; page: string }, o: { name: string; width: number; height: number; theme: 'light' | 'dark'; reduce?: boolean; font?: string }): Promise<Measure> {
     const page = `<!doctype html><html lang="it" data-theme="${o.theme}"><head><meta charset="utf-8"><style>${CSS}
-      html,body{height:100%;margin:0}</style></head>
+      html,body{height:100%;margin:0}${o.font ? `body,button,input,textarea{font-family:${o.font} !important}` : ''}</style></head>
       <body><div class="ms-app">${html.bar}<div class="ms-main" id="main"><div class="ms-stage"><div class="ms-page">${html.page}</div></div></div></div>
       <script>for (const c of document.querySelectorAll('.ms-convo')) c.style.setProperty('--ms-dock-h', c.querySelector('.ms-convo-dock').offsetHeight + 'px');</script></body></html>`;
-    const file = join(dir, `${o.name}-${o.theme}-${o.width}${o.reduce ? '-reduced' : ''}.html`);
+    const file = join(dir, `${o.name}-${o.theme}-${o.width}${o.reduce ? '-reduced' : ''}${o.font ? '-wide' : ''}.html`);
     writeFileSync(file, page);
     const tab = await browser.newPage(o.width, o.height);
     try {
-      if (o.reduce) await tab.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+      // Never the machine's setting: the timings are asserted with motion allowed, the reduced case asks for `reduce`.
+      await tab.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: o.reduce ? 'reduce' : 'no-preference' }] });
       await tab.goto(`file://${file}`);
       const r = await tab.eval<Measure>(MEASURE, 30_000);
       if (shots) writeFileSync(join(shots, `brief-${o.name}-${o.theme}-${o.width}x${o.height}${o.reduce ? '-reduced' : ''}.png`), await tab.screenshot());
@@ -254,6 +255,13 @@ run('the brief with the agent: real Chrome layout', () => {
   }
 
   for (const theme of ['light', 'dark'] as const) {
+    it(`${theme}: Con l'agente at 1024 × 700 with a wide font (Verdana): the 320 px brief column cuts no option`, async () => {
+      const r = await measure(agentHtml, { name: 'agent', width: 1024, height: 700, theme, font: 'Verdana, "DejaVu Sans", sans-serif' });
+      expect(r.left).toBeCloseTo(320, 0);
+      expect(r.scroll).toBeLessThanOrEqual(r.inner);
+      expect(r.clipped, 'no option of the length or kind controls is cut').toEqual([]);
+    }, 120_000);
+
     it(`${theme}: Compila tu at 1024 × 700: the form card at 12 px, nothing cut, the board keeps room`, async () => {
       const r = await measure(youHtml, { name: 'you', width: 1024, height: 700, theme });
       expect(r.body.left).toBeCloseTo(12, 0);
