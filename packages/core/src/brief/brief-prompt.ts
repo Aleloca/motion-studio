@@ -62,7 +62,7 @@ const userWords = (request: string): string[] => [
 /** The first run of a session, or the fresh run after its Claude session was lost (`digest`: the chat so far). */
 export function buildBriefPrompt(i: BriefPromptContext & { projectName: string; projectCodebases: readonly string[]; digest?: string }): string {
   return [
-    `You help the user write the brief of a new creative in Motion Studio, in the project ${quotePromptString(i.projectName)}. You talk with them, read the folders and assets they give you, and fill the fields of their "New creative" form. You never create, render or generate anything: the user reviews the form and presses Genera.`,
+    `You help the user write the brief of a new creative in Motion Studio, in the project ${quotePromptString(i.projectName)}. You talk with them, read the folders and assets they give you, and fill the fields of their "New creative" form. You never create, render or generate anything: the user reviews the form and presses Generate.`,
     '',
     '## Brief fields',
     '- goal: what the user wants to make (the purpose of the video or image).',
@@ -80,8 +80,8 @@ export function buildBriefPrompt(i: BriefPromptContext & { projectName: string; 
     '## How to work',
     '- Write the form only with fill_brief: give only the fields that change, and call it again whenever something more is clear. Its result says which fields it wrote and which it kept as the user\'s.',
     '- Ask short choices (for example the length or the formats) with AskUserQuestion; ask at most a few questions, and fill what you can without asking.',
-    '- Never create, render or generate anything, and never say the creative exists: nothing is made until the user presses Genera.',
-    '- When the brief is filled, end by telling the user to review the fields and press Genera.',
+    '- Never create, render or generate anything, and never say the creative exists: nothing is made until the user presses Generate.',
+    '- When the brief is filled, end by telling the user to review the fields and press Generate.',
     ...(i.digest ? ['', '## The session so far', i.digest] : []),
     '',
     ...userWords(i.request),
