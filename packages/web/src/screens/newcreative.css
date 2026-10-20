@@ -211,6 +211,36 @@ button.ms-nc-link:focus-visible { outline: 2px solid var(--accent); outline-offs
 .ms-nc-link-no { cursor: help; color: var(--muted); }
 /* The store pack's tile (Phase 14): its remove button sits under the tick, at the right edge. */
 .ms-nc-pack-remove { left: auto; right: 6px; top: 30px; }
+/* Report 59: the "Personalizzato" tile (dashed, a plus in its frame) and a custom tile's edit button at the bottom right, beside
+   its name (the text leaves it room); with the copies counter it sits right above the counter. */
+.ms-nc-tile.ms-nc-custom-add { box-shadow: inset 0 0 0 1.5px transparent; outline: 1.5px dashed var(--line); outline-offset: -1.5px; }
+.ms-nc-tile.ms-nc-custom-add:hover { outline-color: var(--faint); }
+.ms-nc-tile.ms-nc-custom-add:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ms-nc-custom-add .ms-nc-frame { width: 36px; height: 36px; color: var(--muted); }
+.ms-nc-custom-edit { left: auto; top: auto; right: 6px; bottom: 8px; }
+.ms-nc-has-copies > .ms-nc-custom-edit { bottom: 46px; }
+.ms-nc-is-custom > .ms-nc-tile .ms-nc-tile-text { padding-right: 24px; }
+
+/* Report 59: the custom format dialog. */
+.ms-cfd { display: flex; flex-direction: column; gap: 8px; padding: 20px 22px; }
+.ms-cfd h2 { margin: 0 0 4px; font-size: 16px; }
+.ms-cfd label, .ms-cfd-lbl { font-size: 12px; font-weight: 600; color: var(--muted); }
+.ms-cfd-kind { align-self: flex-start; }
+.ms-cfd-size { display: flex; align-items: flex-end; gap: 8px; }
+.ms-cfd-dim { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
+.ms-cfd-x { height: 36px; display: flex; align-items: center; color: var(--muted); }
+.ms-cfd-px { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; color: var(--muted); }
+.ms-cfd-px .ms-input { flex: 1; min-width: 0; font-variant-numeric: tabular-nums; }
+.ms-cfd-dur { max-width: 200px; }
+.ms-cfd-ratios { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.ms-cfd-ratios .ms-cfd-lbl { margin-right: 4px; }
+.ms-cfd-hint { margin: 0; font-size: 12px; color: var(--muted); }
+.ms-cfd-note { margin: 4px 0 0; padding: 8px 10px; border-radius: 8px; background: var(--field); font-size: 12.5px; color: var(--text); }
+.ms-cfd-err { margin: 0; font-size: 12.5px; color: var(--danger); }
+.ms-cfd-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.ms-cfd-confirm { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; padding: 10px 12px; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--line); }
+.ms-cfd-confirm p { margin: 0; font-size: 13px; }
+.ms-cfd-confirm .ms-cfd-actions { justify-content: flex-end; margin-top: 4px; }
 .ms-nc-tile-text { display: flex; flex-direction: column; min-width: 0; }
 .ms-nc-tile-text b { font-weight: 600; }
 .ms-nc-tile-meta { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
@@ -280,3 +310,4 @@ button.ms-nc-link:focus-visible { outline: 2px solid var(--accent); outline-offs
   .ms-nc-left { overflow: visible; border-right: 0; border-bottom: 1px solid var(--line); }
   .ms-nc-right { overflow: visible; }
 }
+.ms-cfd .ms-grow { flex: 1; min-width: 0; }

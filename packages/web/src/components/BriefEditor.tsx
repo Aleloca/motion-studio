@@ -185,9 +185,10 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged, onRefr
   const packGroup = useMemo(() => packChannel(presets), [presets]);
   const groups = useMemo(() => {
     const m = new Map<string, FormatPreset[]>();
-    for (const p of presets) m.set(p.channel, [...(m.get(p.channel) ?? []), p]);
+    // Report 59: a hidden custom format (deleted while creatives use it) shows only in a brief that still has it.
+    for (const p of presets) if (!p.hidden || brief.formats.some((f) => presetOf(f) === p.id)) m.set(p.channel, [...(m.get(p.channel) ?? []), p]);
     return [...m.entries()];
-  }, [presets]);
+  }, [presets, brief.formats]);
 
   // Final review I4: on a creative made before compositions, "Save and regenerate" converts every format with the agent
   // (more tokens once), unless the save only adds formats linked to existing ones (copied without the agent). The same
