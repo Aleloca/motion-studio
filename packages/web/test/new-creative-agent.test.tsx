@@ -380,10 +380,36 @@ describe('NewCreative · review round 1 (decisions 1422–1423)', () => {
     await userEvent.click(within(panel()).getByRole('button', { name: 'Invia' }));
     await waitFor(() => expect(api.sendBriefMessage).toHaveBeenCalled());
     await userEvent.type(goal(), 'Obiettivo mio');
-    await waitFor(() => expect(api.saveBriefForm).toHaveBeenCalled(), { timeout: 2000 });
+    // The save that carries the whole text, answered (a slow machine may save part of it first: the rest, not saved yet, rightly
+    // keeps the user's text over any view).
+    await waitFor(() => expect(lastSave().form.goal).toBe('Obiettivo mio'), { timeout: 2000 });
+    await act(async () => { await api.saveBriefForm.mock.results.at(-1)!.value; });
     api.getBriefSession.mockResolvedValue(view({ form: { ...EMPTY_BRIEF_FORM, goal: "Riscritto dall'agente" }, userEdited: [], agentFields: ['goal'], revision: 9 }));
     rerender(page(live({ snapshots: 1 })));
     await waitFor(() => expect(goal().value).toBe("Riscritto dall'agente"));
+    api.getBriefSession.mockResolvedValue(view());
+  });
+
+  it('a rewrite seen while a save of the field is out, whose answer comes back older, is not lost when the save is answered', async () => {
+    const { rerender } = render(page(live()));
+    await board();
+    await waitFor(() => expect(api.getBriefSession).toHaveBeenCalled());
+    const real = api.saveBriefForm.getMockImplementation()!;
+    let answer!: () => void;
+    api.saveBriefForm.mockImplementationOnce((...a: Parameters<typeof real>) => new Promise((r) => { answer = () => r(real(...a)); }));
+    await userEvent.type(goal(), 'Obiettivo mio');
+    await waitFor(() => expect(lastSave().form.goal).toBe('Obiettivo mio'), { timeout: 2000 });
+    // While the save is out, a reconnection reads the agent's rewrite (asked by the user): the form keeps the text being saved.
+    const reads = api.getBriefConversation.mock.calls.length;
+    api.getBriefSession.mockResolvedValue(view({ form: { ...EMPTY_BRIEF_FORM, goal: "Riscritto dall'agente" }, userEdited: [], agentFields: ['goal'], revision: 9 }));
+    rerender(page(live({ snapshots: 1 })));
+    await waitFor(() => expect(api.getBriefConversation.mock.calls.length).toBeGreaterThan(reads));
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    expect(goal().value).toBe('Obiettivo mio');
+    // The save's answer (revision 2) is older than the view held: once it is in, the rewrite is what the form shows.
+    await act(async () => { answer(); await new Promise((r) => setTimeout(r, 0)); });
+    await waitFor(() => expect(goal().value).toBe("Riscritto dall'agente"));
+    expect(within(rowOf('Cosa vuoi realizzare?')).getByText('Agente')).toBeTruthy();
     api.getBriefSession.mockResolvedValue(view());
   });
 

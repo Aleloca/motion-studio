@@ -36,7 +36,8 @@ export interface BriefSession {
   send(m: BriefMessageInput, id?: string): Promise<BriefSendResult>;
   /**
    * Saves the form BRIEF_SAVE_MS after the last call, one save at a time; `body` is read when the save goes out (the latest
-   * form, on the latest revision the form adopted). `settle` says whether that save was taken. Nothing without a session.
+   * form, on the latest revision the form adopted). `settle` says whether that save was taken. Nothing without a session. An
+   * answer older than the view held is dropped and, once `settle` ran, that view is offered again (a new `session` object).
    */
   saveForm(body: () => BriefFormSave, settle?: (ok: boolean) => void): void;
   /** A save now, after any save in flight (its answer adopted like the others); null without a session or on a failure. */
@@ -248,8 +249,14 @@ export function useBriefSession(slug: string, live: EventsState | undefined): Br
     const p = pending.current;
     pending.current = null;
     if (!p) return;
-    void enqueue(p.body).then((r) => p.settle?.(r !== null));
-  }, [enqueue]);
+    const sid = sessionRef.current?.id;
+    void enqueue(p.body).then((r) => {
+      p.settle?.(r !== null);
+      // An answer older than the view held was dropped, and that view was merged while this save was out (its fields kept the
+      // user's text): once the save is settled, the view is offered again, so a rewrite it holds is not lost.
+      if (r && sid && alive.current) setState((st) => (st.session && stale(st.session, r, sid) ? { ...st, session: { ...st.session } } : st));
+    });
+  }, [enqueue, setState]);
   const saveForm = useCallback((body: () => BriefFormSave, settle?: (ok: boolean) => void) => {
     pending.current = { body, ...(settle ? { settle } : {}) };
     if (timer.current) clearTimeout(timer.current);
