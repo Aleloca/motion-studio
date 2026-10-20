@@ -31,7 +31,7 @@ const api = {
   getAgentCapabilities: vi.fn(async () => ({ cliVersion: null, liveInput: false, interrupt: false, checkedAt: '2026-10-20T10:00:00.000Z' })),
   getBriefSession: vi.fn(async () => null),
   getBriefConversation: vi.fn(async () => []),
-  customFormatUsage: vi.fn(async () => ({ creatives: 3 })),
+  customFormatUsage: vi.fn(async () => ({ creatives: 3, unreadable: 0, longestSec: 12 })),
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error { status = 0; } }));
 const { NewCreative } = await import('../src/screens/NewCreative.tsx');

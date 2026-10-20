@@ -1,4 +1,4 @@
-import { canFollow, CUSTOM_CHANNEL, isCustomPreset, storePackFormats, channelName, statedDurationSec, formatLabel, formatName, instanceIdOf, instanceIndex, instanceLabel, instancePreset, MAX_INSTANCES, presetOf, type BriefField, type BriefForm, type StorePack, type AssetEntry, type FollowCheck, type IdentityBrief, type Locale, type BrandKit, type BriefServices, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
+import { canFollow, channelGroup, CUSTOM_CHANNEL, isCustomPreset, storePackFormats, channelName, statedDurationSec, formatLabel, formatName, instanceIdOf, instanceIndex, instanceLabel, instancePreset, MAX_INSTANCES, presetOf, type BriefField, type BriefForm, type StorePack, type AssetEntry, type FollowCheck, type IdentityBrief, type Locale, type BrandKit, type BriefServices, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { api } from '../api.ts';
 import { CodebaseList } from '../components/CodebaseList.tsx';
@@ -285,15 +285,16 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   const shown = (p: FormatPreset) => (kind === 'all' || p.kind === kind)
     && (!q || `${channelName(p.channel, locale)} ${formatName(p, locale)} ${p.channel} ${p.name}`.toLocaleLowerCase().includes(q));
   // Report 59: the "Personalizzati" group is always there (its first tile defines a new format), after the catalog's channels.
-  const groups = useMemo(() => [...new Set([...presets.map((p) => p.channel), CUSTOM_CHANNEL])], [presets]);
+  // A channel "Custom" in any casing joins that group (`channelGroup`): never two groups titled "Personalizzati".
+  const groups = useMemo(() => [...new Set([...presets.map((p) => channelGroup(p.channel)), CUSTOM_CHANNEL])], [presets]);
   const primary = groups.some((g) => PRIMARY.includes(g)) ? groups.filter((g) => PRIMARY.includes(g)) : groups.slice(0, 3);
   // The "Store pack" entry is the first tile of the App Store and Play Store groups (decision 1222: no longer a row on top);
   // a set pack keeps them open, and a search by its name shows them with it.
   const packShown = (!q || `${t.web.storePack.entryTitle} ${t.web.storePack.entryHint} ${t.web.storePack.title}`.toLocaleLowerCase().includes(q));
   const packIn = (g: string) => PACK_CHANNELS.includes(g) && packShown;
   const customIn = (g: string) => g === CUSTOM_CHANNEL && (!q || `${n.customTile} ${n.customTileHint} ${channelName(CUSTOM_CHANNEL, locale)}`.toLocaleLowerCase().includes(q));
-  const open = (g: string) => q !== '' || g === CUSTOM_CHANNEL || primary.includes(g) || more.has(g) || presets.some((p) => p.channel === g && selected.includes(p.id)) || (pack !== null && PACK_CHANNELS.includes(g));
-  const visibleGroups = groups.map((g) => ({ g, items: presets.filter((p) => p.channel === g && shown(p)) })).filter(({ g, items }) => open(g) && (items.length > 0 || packIn(g) || customIn(g)));
+  const open = (g: string) => q !== '' || g === CUSTOM_CHANNEL || primary.includes(g) || more.has(g) || presets.some((p) => channelGroup(p.channel) === g && selected.includes(p.id)) || (pack !== null && PACK_CHANNELS.includes(g));
+  const visibleGroups = groups.map((g) => ({ g, items: presets.filter((p) => channelGroup(p.channel) === g && shown(p)) })).filter(({ g, items }) => open(g) && (items.length > 0 || packIn(g) || customIn(g)));
   const hiddenGroups = q ? [] : groups.filter((g) => !open(g));
   // Report 58: chosen formats (copies included) the kind filter or the search hides.
   const hiddenChosen = selected.filter((id) => { const p = presets.find((x) => x.id === presetOf(id)); return p !== undefined && !shown(p); }).length;
@@ -318,6 +319,17 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
     });
   };
   const copiesOf = (id: string) => selected.filter((x) => presetOf(x) === id).length;
+  // Report 59 (review): a restored draft or brief session can name a format no longer offered (a custom format deleted in another
+  // window): it leaves the choice, and a line says so. Only once the catalog is known.
+  const [dropped, setDropped] = useState(0);
+  useEffect(() => {
+    if (catalog.value === null) return;
+    const gone = selected.filter((id) => !instancePreset(presets, id));
+    if (gone.length === 0) return;
+    setDropped(gone.length);
+    edited('formats');
+    setSelected((s) => s.filter((id) => instancePreset(presets, id)));
+  }, [catalog.value, presets, selected]); // eslint-disable-line react-hooks/exhaustive-deps -- `edited` is a fresh closure each render
   /** Report 59: a saved custom format; a new one is chosen at once. */
   const customSaved = (p: FormatPreset, cat: { presets: FormatPreset[]; error: string | null }, created: boolean) => {
     setCatalog({ value: cat.presets, error: null, warning: cat.error });
@@ -808,6 +820,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
             </label>
           </div>
 
+          {dropped > 0 ? <p className="ms-nc-faint ms-nc-small ms-nc-hidden-note" role="status">{n.formatsDropped({ n: dropped })}</p> : null}
           {hiddenChosen > 0 ? <p className="ms-nc-faint ms-nc-small ms-nc-hidden-note" role="status">{n.hiddenChosen({ n: hiddenChosen })}</p> : null}
           {catalog.warning ? <p className="ms-nc-alert" role="status"><Icon name="warn" size={14} /><span>{catalog.warning}</span></p> : null}
           {catalog.error ? (
@@ -866,7 +879,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
                   <Button key={g} variant="outline" className="ms-nc-chbtn" onClick={() => setMore((m) => new Set([...m, g]))}>
                     <ChannelMark channel={channelOf(g)} size={20} />
                     <span className="ms-nc-ell">{channelName(g, locale)}</span>
-                    <span className="ms-nc-faint ms-nc-small">{presets.filter((p) => p.channel === g).length}</span>
+                    <span className="ms-nc-faint ms-nc-small">{presets.filter((p) => channelGroup(p.channel) === g).length}</span>
                   </Button>
                 ))}
               </div>

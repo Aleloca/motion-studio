@@ -246,7 +246,7 @@ export const api = {
   editCustomFormat: (id: string, body: CustomFormatInput) => request<{ preset: FormatPreset; catalog: CatalogState }>('PUT', `/api/formats/custom/${encodeURIComponent(id)}`, body),
   /** `hidden`: creatives use it, so it stays for them and is offered nowhere. */
   deleteCustomFormat: (id: string) => request<{ outcome: 'deleted' | 'hidden'; catalog: CatalogState }>('DELETE', `/api/formats/custom/${encodeURIComponent(id)}`),
-  customFormatUsage: (id: string) => request<{ creatives: number }>('GET', `/api/formats/custom/${encodeURIComponent(id)}/usage`),
+  customFormatUsage: (id: string) => request<{ creatives: number; unreadable: number; longestSec: number }>('GET', `/api/formats/custom/${encodeURIComponent(id)}/usage`),
   recentCreatives: (limit?: number) => request<RecentCreative[]>('GET', `/api/recent-creatives${limit === undefined ? '' : `?limit=${limit}`}`),
   /** Decision 915: the archived creatives are left out (`listArchivedCreatives` lists only them). */
   listCreatives: (slug: string) => request<CreativeListItem[]>('GET', `${p(slug)}/creatives`),

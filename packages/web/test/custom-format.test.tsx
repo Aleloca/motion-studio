@@ -1,16 +1,23 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { customPreset, DEFAULT_FORMATS, EMPTY_BRAND_KIT, type CustomFormatInput, type FormatPreset } from '@motion-studio/shared';
+import { customPreset, DEFAULT_FORMATS, EMPTY_BRAND_KIT, EMPTY_BRIEF_FORM, type BriefSessionView, type CustomFormatInput, type FormatPreset } from '@motion-studio/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../src/i18n.tsx';
+import { initialEventsState } from '../src/eventsReducer.ts';
 
 // Report 59: the "Personalizzati" group of New creative and its dialog.
 let presets: FormatPreset[] = [];
 let used = 0;
+let longest = 0;
+let usageFails = 0;
+let session: BriefSessionView | null = null;
 const state = () => ({ presets, error: null, path: '/x' });
 const createCreative = vi.fn(async (_slug: string, _body: unknown) => ({ slug: 'c', creative: {}, job: null }));
 const api = {
-  getBriefSession: vi.fn(async () => null),
+  getBriefSession: vi.fn(async () => session),
+  getBriefConversation: vi.fn(async () => []),
+  getAgentCapabilities: vi.fn(async () => ({ cliVersion: null, liveInput: false, interrupt: false, checkedAt: '2026-10-20T10:00:00.000Z' })),
+  saveBriefForm: vi.fn(async (_slug: string, _id: string, body: { form: unknown; userEdited: unknown }) => ({ ok: true, ...body, agentFields: [], revision: 2 })),
   getFormats: vi.fn(async () => state()),
   listAssets: vi.fn(async () => ({ assets: [], error: null, unregistered: [] })),
   getBrand: vi.fn(async () => ({ kit: EMPTY_BRAND_KIT, kitError: null, guidelines: '', sources: [], sourcesError: null, proposals: [], jobKey: 'k' })),
@@ -33,13 +40,17 @@ const api = {
     presets = presets.filter((x) => x.id !== id);
     return { outcome: 'deleted' as const, catalog: state() };
   }),
-  customFormatUsage: vi.fn(async () => ({ creatives: used })),
+  customFormatUsage: vi.fn(async () => {
+    if (usageFails > 0) { usageFails--; throw new Error('offline'); }
+    return { creatives: used, unreadable: 0, longestSec: longest };
+  }),
 };
-vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
+class ApiError extends Error { constructor(public status: number, message: string, public code?: string) { super(message); } }
+vi.mock('../src/api.ts', () => ({ api, ApiError }));
 const { NewCreative } = await import('../src/screens/NewCreative.tsx');
-const { customDraftProblems, heightFor } = await import('../src/screens/new-creative/CustomFormatDialog.tsx');
+const { customDraftProblems, heightFor, ratioMatches } = await import('../src/screens/new-creative/CustomFormatDialog.tsx');
 
-beforeEach(() => { vi.clearAllMocks(); presets = [...DEFAULT_FORMATS]; used = 0; location.hash = ''; });
+beforeEach(() => { vi.clearAllMocks(); presets = [...DEFAULT_FORMATS]; used = 0; longest = 0; usageFails = 0; session = null; location.hash = ''; });
 
 const view = () => render(<I18nProvider locale="it"><NewCreative slug="acme" /></I18nProvider>);
 const group = () => screen.getByRole('group', { name: 'Personalizzati' });
@@ -145,6 +156,92 @@ describe('NewCreative · custom formats (report 59)', () => {
     expect(screen.getByText('Scegli almeno un formato')).toBeTruthy();
   });
 
+  it('a video needs even sides: said beside the size, nothing sent; a ratio gives an even height', async () => {
+    view();
+    const dialog = await openNew();
+    await userEvent.type(within(dialog).getByLabelText('Nome'), 'Totem');
+    await userEvent.click(within(dialog).getByRole('radio', { name: 'Video' }));
+    const w = within(dialog).getByLabelText('Larghezza');
+    await userEvent.clear(w); await userEvent.type(w, '1081');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Crea formato' }));
+    expect(api.addCustomFormat).not.toHaveBeenCalled();
+    expect(within(dialog).getByRole('alert').textContent).toBe('Un video vuole un numero pari di pixel per lato');
+    expect(document.activeElement).toBe(w);
+    await userEvent.clear(w); await userEvent.type(w, '1000');
+    await userEvent.click(within(dialog).getByRole('button', { name: '9:16' }));
+    expect((within(dialog).getByLabelText('Altezza') as HTMLInputElement).value).toBe('1778');
+    // 1000 × 1778 is 9:16 give or take the rounding: the chip shows it.
+    expect(within(dialog).getByRole('button', { name: '9:16' }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('editing: type and size stay locked while the use is read, and after a failed read (with Riprova)', async () => {
+    presets = [...DEFAULT_FORMATS, customPreset({ name: 'Totem', kind: 'image', width: 1080, height: 1920 }, 'custom-totem')];
+    usageFails = 1;
+    view();
+    await waitFor(() => group());
+    await userEvent.click(within(group()).getByRole('button', { name: 'Modifica Personalizzati · Totem' }));
+    const dialog = await screen.findByRole('dialog');
+    expect((within(dialog).getByLabelText('Larghezza') as HTMLInputElement).disabled).toBe(true);
+    await waitFor(() => expect(within(dialog).getByText(/Non è stato possibile sapere/)).toBeTruthy());
+    expect((within(dialog).getByLabelText('Larghezza') as HTMLInputElement).disabled).toBe(true);
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Riprova' }));
+    await waitFor(() => expect((within(dialog).getByLabelText('Larghezza') as HTMLInputElement).disabled).toBe(false));
+  });
+
+  it("the core's refusals land on their field: a name taken, a length under a creative's", async () => {
+    presets = [...DEFAULT_FORMATS, customPreset({ name: 'Totem', kind: 'video', width: 1080, height: 1920, maxDurationSec: 60 }, 'custom-totem')];
+    api.editCustomFormat.mockRejectedValueOnce(new ApiError(409, 'Un formato personalizzato si chiama già "Altro": scegli un altro nome', 'custom-format-name-taken'));
+    longest = 20;
+    view();
+    await waitFor(() => group());
+    await userEvent.click(within(group()).getByRole('button', { name: 'Modifica Personalizzati · Totem' }));
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(within(dialog).getByText(/fino a 20 s/)).toBeTruthy());
+    const dur = within(dialog).getByLabelText('Durata massima');
+    await userEvent.clear(dur); await userEvent.type(dur, '10');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Salva' }));
+    expect(api.editCustomFormat).not.toHaveBeenCalled();
+    expect(within(dialog).getByRole('alert').textContent).toBe('Una creatività usa questo formato per 20 s: non meno di così');
+    await userEvent.clear(dur); await userEvent.type(dur, '30');
+    const name = within(dialog).getByLabelText('Nome');
+    await userEvent.clear(name); await userEvent.type(name, 'Altro');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Salva' }));
+    await waitFor(() => expect(name.getAttribute('aria-invalid')).toBe('true'));
+    expect(within(dialog).getByRole('alert').textContent).toContain('si chiama già');
+  });
+
+  it('cancelling the delete question gives the focus back to Elimina', async () => {
+    presets = [...DEFAULT_FORMATS, customPreset({ name: 'Totem', kind: 'image', width: 1080, height: 1920 }, 'custom-totem')];
+    view();
+    await waitFor(() => group());
+    await userEvent.click(within(group()).getByRole('button', { name: 'Modifica Personalizzati · Totem' }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Elimina' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Annulla' }));
+    await waitFor(() => expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Elimina' })));
+  });
+
+  it('(c) a restored brief session naming a hidden format: it leaves the choice, with a line', async () => {
+    presets = [...DEFAULT_FORMATS, { ...customPreset({ name: 'Vecchio', kind: 'image', width: 100, height: 100 }, 'custom-vecchio'), hidden: true }];
+    const at = '2026-10-20T10:00:00.000Z';
+    session = { id: 's1', createdAt: at, updatedAt: at, revision: 1, queued: [], jobId: null, userEdited: [], agentFields: ['formats'], context: { codebases: [], assets: [] },
+      form: { ...EMPTY_BRIEF_FORM, formats: ['instagram-post-1x1', 'custom-vecchio', 'custom-vecchio@2'] } };
+    render(<I18nProvider locale="it"><NewCreative slug="acme" live={initialEventsState} /></I18nProvider>);
+    await waitFor(() => expect(screen.getByText('2 formati scelti non sono più disponibili e sono stati tolti')).toBeTruthy());
+    expect(within(screen.getByRole('group', { name: 'Instagram' })).getByRole('button', { name: /^Post 1:1/ }).getAttribute('aria-pressed')).toBe('true');
+    await waitFor(() => expect(api.saveBriefForm).toHaveBeenCalled());
+    expect((api.saveBriefForm.mock.calls.at(-1)![2] as { form: { formats: string[] } }).form.formats).toEqual(['instagram-post-1x1']);
+  });
+
+  it('a channel "Custom" in another casing joins the Personalizzati group', async () => {
+    presets = [...DEFAULT_FORMATS, customPreset({ name: 'Mio', kind: 'image', width: 100, height: 100 }, 'custom-mio'),
+      { ...customPreset({ name: 'A mano', kind: 'image', width: 200, height: 200 }, 'a-mano'), channel: 'Custom' }];
+    view();
+    await waitFor(() => group());
+    expect(screen.getAllByRole('group', { name: 'Personalizzati' })).toHaveLength(1);
+    expect(within(group()).getByRole('button', { name: /^A mano/ })).toBeTruthy();
+  });
+
   it('a hidden custom format is not on the board', async () => {
     presets = [...DEFAULT_FORMATS, { ...customPreset({ name: 'Vecchio', kind: 'image', width: 100, height: 100 }, 'custom-vecchio'), hidden: true }];
     view();
@@ -171,11 +268,20 @@ describe('custom format rules', () => {
     expect(customDraftProblems({ ...ok, name: 'totem ' }, [mine], null)).toEqual({ name: 'nameTaken' });
     expect(customDraftProblems({ ...ok, name: 'Totem' }, [mine], 'custom-totem')).toEqual({});
     expect(customDraftProblems({ ...ok, name: 'Totem' }, [{ ...mine, hidden: true }], null)).toEqual({});
+    expect(customDraftProblems({ ...ok, name: 'TOTÉM' }, [{ ...mine, name: 'Tote\u0301m' }], null)).toEqual({ name: 'nameTaken' });
+    expect(customDraftProblems({ ...ok, width: '1081', height: '4098' }, [], null)).toEqual({ width: 'even', height: 'videoMax' });
+    expect(customDraftProblems({ ...ok, kind: 'image', width: '1081', height: '4098' }, [], null)).toEqual({});
+    expect(customDraftProblems({ ...ok, duration: '10' }, [], null, 20)).toEqual({ duration: 'durationShort' });
   });
   it('a ratio sets the height from the width, within the limits', () => {
     expect(heightFor(1080, [4, 5])).toBe(1350);
     expect(heightFor(1080, [16, 9])).toBe(608);
     expect(heightFor(8000, [9, 16])).toBe(8192);
     expect(heightFor(20, [16, 9])).toBe(16);
+    expect(heightFor(1000, [9, 16], true)).toBe(1778);
+    expect(heightFor(1081, [1, 1], true)).toBe(1082);
+    expect(heightFor(4000, [9, 16], true)).toBe(4096);
+    expect(ratioMatches(1000, 1778, [9, 16])).toBe(true);
+    expect(ratioMatches(1000, 1780, [9, 16])).toBe(false);
   });
 });

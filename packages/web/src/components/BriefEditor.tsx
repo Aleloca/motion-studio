@@ -1,6 +1,6 @@
 // Brief form of a creative ("Edit the brief" in the canvas panel), built from ui/ controls only: no native select,
 // checkbox or number field, no textarea resize. Saves it, or saves and starts a new generation.
-import { channelName, INSTANCE_ID_RE, legacyTurnKind, linksAfterBriefSave, nextInstanceId, packInstancesOf, presetOf, type StorePack, type Brief, type BriefServices, type CreativeDetail, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
+import { channelGroup, channelName, INSTANCE_ID_RE, legacyTurnKind, linksAfterBriefSave, nextInstanceId, packInstancesOf, presetOf, type StorePack, type Brief, type BriefServices, type CreativeDetail, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
 import { useId, useMemo, useRef, useState, type DragEvent } from 'react';
 import { api } from '../api.ts';
 import { fullSaveLabels, instanceName, presetFor, presetNameOf } from '../instances.ts';
@@ -186,7 +186,8 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged, onRefr
   const groups = useMemo(() => {
     const m = new Map<string, FormatPreset[]>();
     // Report 59: a hidden custom format (deleted while creatives use it) shows only in a brief that still has it.
-    for (const p of presets) if (!p.hidden || brief.formats.some((f) => presetOf(f) === p.id)) m.set(p.channel, [...(m.get(p.channel) ?? []), p]);
+    // A channel "Custom" in any casing is the custom group (`channelGroup`).
+    for (const p of presets) if (!p.hidden || brief.formats.some((f) => presetOf(f) === p.id)) m.set(channelGroup(p.channel), [...(m.get(channelGroup(p.channel)) ?? []), p]);
     return [...m.entries()];
   }, [presets, brief.formats]);
 
@@ -257,7 +258,9 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged, onRefr
             <div className="ms-brief-chips">
               {items.map((p) => (
                 <Chip key={p.id} on={brief.formats.some((f) => presetOf(f) === p.id)} onClick={() => toggle(p.id)} icon={p.kind === 'video' ? 'video' : 'image'}
-                  title={`${p.width}×${p.height}`}>{presetNameOf(p, locale)}</Chip>
+                  title={p.hidden ? `${p.width}×${p.height} · ${t.web.newCreative.formatGone}` : `${p.width}×${p.height}`}>
+                  {presetNameOf(p, locale)}{p.hidden ? <span className="ms-brief-gone"> · {t.web.newCreative.formatGone}</span> : null}
+                </Chip>
               ))}
               {channel === packGroup ? (
                 <span className="ms-brief-pack">

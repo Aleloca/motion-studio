@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { DEFAULT_FORMATS, workspaceSettingsSchema, type Brief, type CreativeDetail, type VersionEntry } from '@motion-studio/shared';
+import { customPreset, DEFAULT_FORMATS, workspaceSettingsSchema, type Brief, type CreativeDetail, type VersionEntry } from '@motion-studio/shared';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../src/i18n.tsx';
@@ -302,5 +302,24 @@ describe('format instances · export rows', () => {
     expect(within(dialog).getAllByText('summer-v3.png').length).toBeGreaterThan(0);
     expect(within(dialog).getByText('summer-v3-instagram-post-1x1-2.png')).toBeTruthy();
     expect(within(dialog).getByRole('button', { name: 'Export 2 files' })).toBeTruthy();
+  });
+});
+
+describe('BriefEditor · custom formats (report 59)', () => {
+  const totem = { ...customPreset({ name: 'Totem', kind: 'image', width: 1080, height: 1920 }, 'custom-totem'), hidden: true as const };
+  const mine = customPreset({ name: 'Mine', kind: 'image', width: 100, height: 100 }, 'custom-mine');
+  const mountWith = (b: Brief) => {
+    serverBrief = b;
+    render(en(<BriefEditor slug="acme" detail={detail(b)} presets={[...DEFAULT_FORMATS, mine, totem]} disabled={false} onChanged={() => {}} onRefresh={vi.fn()} />));
+  };
+  it('a hidden format shows only in a brief that has it, marked as no longer available', () => {
+    mountWith(baseBrief({ formats: [POST, 'custom-totem'] }));
+    const group = screen.getByRole('group', { name: 'Custom' });
+    expect(within(group).getByRole('button', { name: /Totem · no longer available/ }).getAttribute('aria-pressed')).toBe('true');
+    expect(within(group).getByRole('button', { name: /^Mine/ })).toBeTruthy();
+  });
+  it('without it, the hidden format is not offered', () => {
+    mountWith(baseBrief({ formats: [POST] }));
+    expect(within(screen.getByRole('group', { name: 'Custom' })).queryByRole('button', { name: /Totem/ })).toBeNull();
   });
 });
