@@ -1093,28 +1093,31 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
         {commentLock && version && pinSource !== null ? <div className="ms-cv-lockpill" id="ms-cv-comment-lock" role="status" title={c.versions.commentsOn({ n: pinSource })}>{c.versions.commentsOn({ n: pinSource })}</div> : null}
       </main>
 
-      <aside className="ms-cv-side ms-cv-panel" aria-label={c.panel}>
-        <Tabs label={c.panel} value={tab} onChange={setTab}
-          tabs={[{ value: 'chat', label: c.tabs.chat }, { value: 'comments', label: c.tabs.comments, count: sent.count }, { value: 'brief', label: c.tabs.brief }]} />
-        {tab === 'chat' ? (
-          <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={chatJob} live={chatJob ? live.events[chatJob.id] ?? [] : []}
-            pins={pins} onRemovePin={removePin} onEditPin={(i) => editPin(i + 1)} formatName={formatLabel}
-            single={groupChat.single} otherPins={otherPins} onRemoveOtherPin={(p) => dropPins([p])}
-            usageOf={(u) => <UsageBadge usage={u} billing={live.today?.billing ?? null} />}
-            canGenerate={versions.length === 0} onSent={({ pins: sent }) => { dropPins(sent); setViewing({}); reload(); }}
-            onSelectVersion={viewAll} snapshots={live.snapshots}
-            appliesTo={appliesTo} brief={detail.creative.brief} onBriefSaved={reload} queued={detail.creative.queued} onQueueChanged={reload}
-            self={groupChat.self} memberJobs={groupChat.memberJobs} onOpenVariant={(l) => { const m = group?.group.members.find((x) => x.letter === l); if (m) focusMember(m); }}
-            {...(group ? { variants: { group: group.group, current: group.letter, all: variantUi.all, missing: group.missing, onSelect: onChatSelect,
-              runAll: (body: { text?: string; pins?: Pin[]; formats?: string[] } | null) => api.runVariants(slug, hostSlug, { targets: 'all-active', request: body }) } } : {})}
-            versionExtra={(n) => <UsageBadge usage={versions.find((v) => v.n === n)?.usage} billing={live.today?.billing ?? null} />}
-            versionSummary={(n) => { const v = versions.find((x) => x.n === n); return v?.origin === 'editor' && v.request ? v.request : null; }}
-            versionNote={(n) => <OutputWarnings outputs={versions.find((v) => v.n === n)?.outputs ?? []} formatLabel={formatLabel} />} />
-        ) : null}
-        {tab === 'comments' ? <CommentsTab slug={slug} creative={creative} sent={sent} working={working} formatLabel={formatLabel} onStart={() => startComment(null)} /> : null}
-        {/* Kept mounted while hidden, so an unsaved brief draft survives tab switches. */}
-        <div className="ms-cv-brief-wrap" hidden={tab !== 'brief'}>
-          <BriefTab project={slug} detail={detail} presets={presets} disabled={working} readOnly={self.host ? null : readOnly} formatLabel={formatLabel} onChanged={reload} />
+      {/* Decision 1424: the panel is the glass card, inset 12 px in its column (which keeps its width). */}
+      <aside className="ms-cv-side ms-cv-panel ms-chat-col" aria-label={c.panel}>
+        <div className="ms-chat-card">
+          <Tabs label={c.panel} value={tab} onChange={setTab}
+            tabs={[{ value: 'chat', label: c.tabs.chat }, { value: 'comments', label: c.tabs.comments, count: sent.count }, { value: 'brief', label: c.tabs.brief }]} />
+          {tab === 'chat' ? (
+            <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={chatJob} live={chatJob ? live.events[chatJob.id] ?? [] : []}
+              pins={pins} onRemovePin={removePin} onEditPin={(i) => editPin(i + 1)} formatName={formatLabel}
+              single={groupChat.single} otherPins={otherPins} onRemoveOtherPin={(p) => dropPins([p])}
+              usageOf={(u) => <UsageBadge usage={u} billing={live.today?.billing ?? null} />}
+              canGenerate={versions.length === 0} onSent={({ pins: sent }) => { dropPins(sent); setViewing({}); reload(); }}
+              onSelectVersion={viewAll} snapshots={live.snapshots}
+              appliesTo={appliesTo} brief={detail.creative.brief} onBriefSaved={reload} queued={detail.creative.queued} onQueueChanged={reload}
+              self={groupChat.self} memberJobs={groupChat.memberJobs} onOpenVariant={(l) => { const m = group?.group.members.find((x) => x.letter === l); if (m) focusMember(m); }}
+              {...(group ? { variants: { group: group.group, current: group.letter, all: variantUi.all, missing: group.missing, onSelect: onChatSelect,
+                runAll: (body: { text?: string; pins?: Pin[]; formats?: string[] } | null) => api.runVariants(slug, hostSlug, { targets: 'all-active', request: body }) } } : {})}
+              versionExtra={(n) => <UsageBadge usage={versions.find((v) => v.n === n)?.usage} billing={live.today?.billing ?? null} />}
+              versionSummary={(n) => { const v = versions.find((x) => x.n === n); return v?.origin === 'editor' && v.request ? v.request : null; }}
+              versionNote={(n) => <OutputWarnings outputs={versions.find((v) => v.n === n)?.outputs ?? []} formatLabel={formatLabel} />} />
+          ) : null}
+          {tab === 'comments' ? <CommentsTab slug={slug} creative={creative} sent={sent} working={working} formatLabel={formatLabel} onStart={() => startComment(null)} /> : null}
+          {/* Kept mounted while hidden, so an unsaved brief draft survives tab switches. */}
+          <div className="ms-cv-brief-wrap" hidden={tab !== 'brief'}>
+            <BriefTab project={slug} detail={detail} presets={presets} disabled={working} readOnly={self.host ? null : readOnly} formatLabel={formatLabel} onChanged={reload} />
+          </div>
         </div>
       </aside>
 

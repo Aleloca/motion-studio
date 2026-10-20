@@ -28,7 +28,6 @@
 .ms-cv-fmt-text .ms-navitem-label { line-height: 1.3; }
 .ms-cv-fmt-follows { display: flex; align-items: center; gap: 4px; min-width: 0; font-size: 11px; line-height: 1.3; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-cv-fmt-follows svg { flex: none; }
-.ms-cv-panel { border-left: 1px solid var(--line); }
 .ms-cv-panel > .ms-tabs { flex: none; }
 .ms-cv-panel > .ms-conv, .ms-cv-panel > section, .ms-cv-panel > div:not(.ms-tabs) { flex: 1; min-height: 0; }
 .ms-cv-brief-wrap[hidden] { display: none; }
@@ -435,7 +434,7 @@
 @media (max-width: 980px) { .ms-cv { grid-template-columns: minmax(0, 1fr) 340px; } .ms-cv-formats { display: none; } }
 @media (max-width: 760px) {
   .ms-cv { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(420px, 62vh) auto; height: auto; min-height: 100%; }
-  .ms-cv-panel { border-left: 0; border-top: 1px solid var(--line); min-height: 420px; }
+  .ms-cv-panel { min-height: 420px; }
   .ms-cv-legend { width: auto; right: 16px; }
 }
 @media (prefers-reduced-motion: reduce) { .ms-cv-open, .ms-cv-live, .ms-cv-pin, .ms-cv-frame { transition: none; } }
