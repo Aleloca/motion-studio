@@ -29,7 +29,7 @@ import { useCreative } from '../useCreative.ts';
 import { jobLiveTokens, jobUsagePartial } from '../usageLive.ts';
 import { costText, TokenCount, UsageBadge } from '../shell/Tokens.tsx';
 import { boardLabel, boardName, CanvasBoard, type Draft, type Tool } from './CanvasBoard.tsx';
-import { appliesGroups, boardFrame, boardsWith, canvasGroups, canvasLines, fitBoards, fitSections, FIT_MIN, groupByChannel, LABEL_MIN, labelMin, PACK_GROUP, ratioText, type BoardModel, type CanvasItem } from './canvasModel.ts';
+import { appliesGroups, boardFrame, boardsWith, canvasFit, canvasGroups, canvasLines, FIT_MIN, groupByChannel, LABEL_MIN, labelMin, PACK_GROUP, ratioText, type BoardModel, type CanvasItem } from './canvasModel.ts';
 import { CompareDialog } from './CompareDialog.tsx';
 import { channelOf } from './creativeState.ts';
 import { ExportDialog, type ExportSnapshot } from './ExportDialog.tsx';
@@ -441,12 +441,17 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   })() : null;
   const chosenKey = chosenModel?.map((s) => s.groups.map((g) => g.boards.map((b) => b.id).join(',')).join(';')).join('|') ?? '';
   const fitKey = group ? `g:${cardCount}:${variantView}:${chosenKey}` : boards.map((b) => `${b.id}:${b.preset?.width ?? 0}x${b.preset?.height ?? 0}`).join('|');
-  const fitNow = useRef<() => number | null>(() => null);
+  // Report 60: the zoom the canvas opens at, and `all`, the zoom with every board in view (lower when the canvas opens at the
+  // readable floor and scrolls down).
+  const fitNow = useRef<() => { zoom: number; all: number } | null>(() => null);
   fitNow.current = () => {
     const v = viewport.current;
     if (!v) return null;
-    if (chosenModel) return fitSections(chosenModel, { width: v.clientWidth, height: v.clientHeight }, FIT_MIN, CHOSEN_LAYOUT);
-    return group ? fitCards(cardCount, v.clientWidth, ZOOM_MIN) : fitBoards(canvasGroups(boards, packIds), { width: v.clientWidth, height: v.clientHeight }, FIT_MIN);
+    const view = { width: v.clientWidth, height: v.clientHeight };
+    if (chosenModel) return canvasFit(chosenModel, view, FIT_MIN, CHOSEN_LAYOUT);
+    if (!group) return canvasFit([{ groups: canvasGroups(boards, packIds), head: 0 }], view, FIT_MIN);
+    const z = fitCards(cardCount, v.clientWidth, ZOOM_MIN);
+    return z === null ? null : { zoom: z, all: z };
   };
   useLayoutEffect(() => {
     const v = viewport.current;
@@ -454,7 +459,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     const fit = () => {
       setViewSize((w) => (w.width === v.clientWidth && w.height === v.clientHeight ? w : { width: v.clientWidth, height: v.clientHeight }));
       if (userZoomed.current) return;
-      const z = fitNow.current();
+      const z = fitNow.current()?.zoom ?? null;
       if (z !== null) setZoom((cur) => (Math.abs(cur - z) < 1e-6 ? cur : z));
     };
     fit();
@@ -465,11 +470,18 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     return () => { cancelAnimationFrame(frame); ro.disconnect(); };
   }, [fitKey, Boolean(detail)]); // eslint-disable-line react-hooks/exhaustive-deps
   const zoomBy = (next: (z: number) => number) => { userZoomed.current = true; setZoom(next); };
-  // Report 40: a canvas that opened below 50% (many boards) can be zoomed back down to where it opened ("Scelte" too: report 52).
-  const zoomMin = () => Math.min(ZOOM_MIN, group && !chosenModel ? ZOOM_MIN : fitNow.current() ?? ZOOM_MIN);
-  // ⌘+ / ⌘− step, ⌘0 fits again (and lets the canvas refit on resize, as when it opened).
+  // Report 40: a canvas that opened below 50% (many boards) can be zoomed back down to where it opened ("Scelte" too: report 52);
+  // report 60: down to where all of it is in view, when it opened at the readable floor.
+  const zoomMin = () => Math.min(ZOOM_MIN, group && !chosenModel ? ZOOM_MIN : fitNow.current()?.all ?? ZOOM_MIN);
+  // ⌘+ / ⌘− step, ⌘0 fits again (and lets the canvas refit on resize, as when it opened), from the top-left corner.
   const zoomStep = (k: 'in' | 'out' | 'fit') => {
-    if (k === 'fit') { userZoomed.current = false; const z = fitNow.current(); if (z !== null) setZoom(z); return; }
+    if (k === 'fit') {
+      userZoomed.current = false;
+      const z = fitNow.current()?.zoom ?? null;
+      if (z !== null) setZoom(z);
+      viewport.current?.scrollTo?.(0, 0);
+      return;
+    }
     zoomBy((z) => stepZoom(z, k === 'in' ? 1 : -1, zoomMin()));
   };
   usePageShortcut(root, (e) => zoomKey(e) !== null && !inOverlay(e) && Boolean(detail), (e) => zoomStep(zoomKey(e)!));
@@ -586,16 +598,18 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   const columnGroups = groupByChannel(boards, packIds);
   if (storePack && !columnGroups.some(([ch]) => ch === PACK_GROUP)) columnGroups.push([PACK_GROUP, []]);
   // Report 40: the canvas's lines follow the formats column's groups, wrapped at the zoom the canvas opens at (the user's zoom
-  // scales them, it does not wrap them again).
+  // scales them, it does not wrap them again); report 60: with the grids' columns chosen with that zoom (`canvasFit`).
   const lines = (() => {
     const groups = canvasGroups(boards, packIds);
-    const at = fitBoards(groups, viewSize, FIT_MIN);
-    return canvasLines(groups, at ?? 1, at === null ? null : viewSize.width);
+    const fit = canvasFit([{ groups, head: 0 }], viewSize, FIT_MIN);
+    return canvasLines(groups, fit?.zoom ?? 1, fit === null ? null : viewSize.width, undefined, fit?.cols ?? 1);
   })();
-  /** The canvas's lines on screen: a tall board, or a column of stacked boards (report 40), each drawn by `draw`. */
+  /** The canvas's lines on screen: a tall board, or a grid of the group's other boards (reports 40, 60), each drawn by `draw`. */
   const renderLines = <B extends BoardModel>(ls: Array<Array<CanvasItem<B>>>, draw: (b: B) => ReactNode) => ls.map((line, i) => (
     <div key={i} className="ms-cv-line">
-      {line.map((it) => (it.stack ? <div key={it.boards[0]!.id} className="ms-cv-stack">{it.boards.map(draw)}</div> : draw(it.boards[0]!)))}
+      {line.map((it) => (it.stack
+        ? <div key={it.boards[0]!.id} className="ms-cv-stack" style={it.cols > 1 ? { gridTemplateColumns: `repeat(${it.cols}, max-content)` } : undefined}>{it.boards.map(draw)}</div>
+        : draw(it.boards[0]!)))}
     </div>
   ));
   const pinsOf = (id: string) => pins.map((pin, i) => ({ pin, number: i + 1 })).filter((x) => x.pin.format === id);
@@ -855,7 +869,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
    */
   const renderChosenWorld = () => {
     if (!group || !chosenModel) return null;
-    const at = fitSections(chosenModel, viewSize, FIT_MIN, CHOSEN_LAYOUT);
+    const fit = canvasFit(chosenModel, viewSize, FIT_MIN, CHOSEN_LAYOUT);
     const cellOf = (mb: BoardModel & { cell: ChosenCell }, rule: boolean) => {
       const c = mb.cell;
       const m = c.slug ? group.group.members.find((x) => x.slug === c.slug) : undefined;
@@ -901,7 +915,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
             <h3 className="ms-vchosen-title">{rule ? null : <Icon name="star" size={13} fill />}{title}<span className="ms-vchosen-count">{count}</span></h3>
             {rule ? <p className="ms-vchosen-hint" title={vg.noChoiceHint}>{vg.noChoiceHint}</p> : null}
           </div>
-          {renderLines(canvasLines(section.groups, at ?? 1, at === null ? null : viewSize.width, CHOSEN_LAYOUT), (b) => cellOf(b, rule))}
+          {renderLines(canvasLines(section.groups, fit?.zoom ?? 1, fit === null ? null : viewSize.width, CHOSEN_LAYOUT, fit?.cols ?? 1), (b) => cellOf(b, rule))}
         </section>
       );
     });

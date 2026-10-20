@@ -79,6 +79,11 @@ export const LABEL_MIN_GROUPED = 216;
 
 /** The lowest zoom the canvas opens at (report 40: a store pack's 19 boards all in view); the user can zoom down to it too. */
 export const FIT_MIN = 0.1;
+/**
+ * Report 60: the lowest zoom a canvas opens at to show all its boards (a 16:9 is 168×94 px). Below it the canvas opens at this
+ * zoom, its rows filling the width, and scrolls down (`canvasFit`); a store pack keeps opening with all of it in view (report 40).
+ */
+export const READABLE_ZOOM = 0.4;
 /** The narrowest label below 50% (review B): about the channel mark and a screenshot's number. */
 const LABEL_SMALL = 40;
 /** Between the lines of boards: the stack's gap. */
@@ -96,8 +101,11 @@ export function labelMin(z: number, grouped = false): number {
 
 /** A group of boards on the canvas: a group of the formats column. `alone`: its lines take no other group (a store of a pack). */
 export interface BoardGroup<B extends BoardModel = BoardModel> { boards: B[]; alone?: boolean }
-/** A place on a line of the canvas: a tall board, or the group's other boards stacked in a column (`stack`). */
-export interface CanvasItem<B extends BoardModel = BoardModel> { stack: boolean; boards: B[] }
+/**
+ * A place on a line of the canvas: a tall board, or the group's other boards in a grid (`stack`) of `cols` columns, in reading
+ * order (report 60; one column: the stack of report 40).
+ */
+export interface CanvasItem<B extends BoardModel = BoardModel> { stack: boolean; boards: B[]; cols: number }
 
 /** The key of the store pack's group in the formats column (no channel is called this). */
 export const PACK_GROUP = '\u0000store-pack';
@@ -142,10 +150,14 @@ export function appliesGroups(ids: string[], presets: FormatPreset[], brief: { s
   }));
 }
 
-/** A group's places: its tall boards one by one, then its other boards stacked (the layout of the canvas before report 40). */
-function itemsOf<B extends BoardModel>(g: BoardGroup<B>): Array<CanvasItem<B>> {
+/**
+ * A group's places: its tall boards one by one, then its other boards in a grid of at most `cols` columns (the layout of the
+ * canvas before report 40, with report 60's columns).
+ */
+function itemsOf<B extends BoardModel>(g: BoardGroup<B>, cols: number): Array<CanvasItem<B>> {
   const rest = g.boards.filter((b) => !isTall(b));
-  return [...g.boards.filter(isTall).map((b) => ({ stack: false, boards: [b] })), ...(rest.length ? [{ stack: true, boards: rest }] : [])];
+  return [...g.boards.filter(isTall).map((b) => ({ stack: false, boards: [b], cols: 1 })),
+    ...(rest.length ? [{ stack: true, boards: rest, cols: Math.max(1, Math.min(cols, rest.length)) }] : [])];
 }
 
 /**
@@ -154,11 +166,21 @@ function itemsOf<B extends BoardModel>(g: BoardGroup<B>): Array<CanvasItem<B>> {
  */
 export interface BoardLayout { head?: number; grouped?: boolean }
 
-/** A place's size on screen at zoom `z`, labels at their real size. */
+/**
+ * A place's size on screen at zoom `z`, labels at their real size. A grid's columns are as wide as their widest board, its rows
+ * as tall as their tallest; the world's gap between columns, the stack's between rows (canvas.css .ms-cv-stack).
+ */
 function itemSize(it: CanvasItem, z: number, layout: BoardLayout = {}): { width: number; height: number } {
   const head = BOARD_HEAD + (layout.head ?? 0);
   const sizes = it.boards.map(boardFrame).map((f) => ({ width: Math.max(f.width * z, labelMin(z, layout.grouped)), height: head + f.height * z }));
-  return { width: Math.max(...sizes.map((s) => s.width)), height: sizes.reduce((h, s) => h + s.height, 0) + STACK_GAP * z * (sizes.length - 1) };
+  const cols = Math.max(1, Math.min(it.cols, sizes.length));
+  const widths = Array.from({ length: cols }, (_, c) => Math.max(...sizes.filter((_, i) => i % cols === c).map((s) => s.width)));
+  const rows = Math.ceil(sizes.length / cols);
+  const heights = Array.from({ length: rows }, (_, r) => Math.max(...sizes.slice(r * cols, r * cols + cols).map((s) => s.height)));
+  return {
+    width: widths.reduce((w, x) => w + x, 0) + WORLD_GAP * z * (cols - 1),
+    height: heights.reduce((h, x) => h + x, 0) + STACK_GAP * z * (rows - 1),
+  };
 }
 
 const lineWidth = (line: CanvasItem[], z: number, layout?: BoardLayout) => line.reduce((w, it) => w + itemSize(it, z, layout).width, 0) + WORLD_GAP * z * Math.max(0, line.length - 1);
@@ -168,15 +190,15 @@ const linesHeight = (lines: CanvasItem[][], z: number, layout?: BoardLayout) =>
 /**
  * The lines of the canvas at zoom `z` in a viewport `width` px wide (null: not laid out, nothing wraps). Report 40: each group
  * starts a line unless it fits whole after the previous one; a group too long for a line wraps, and its last line takes no other
- * group; a store of a store pack has its lines to itself.
+ * group; a store of a store pack has its lines to itself. Report 60: a group's grid has at most `cols` columns (`canvasFit`).
  */
-export function canvasLines<B extends BoardModel>(groups: Array<BoardGroup<B>>, z: number, width: number | null, layout?: BoardLayout): Array<Array<CanvasItem<B>>> {
+export function canvasLines<B extends BoardModel>(groups: Array<BoardGroup<B>>, z: number, width: number | null, layout?: BoardLayout, cols = 1): Array<Array<CanvasItem<B>>> {
   const room = width === null ? Infinity : width - 2 * WORLD_PAD_X * z;
   const gap = WORLD_GAP * z;
   const lines: Array<Array<CanvasItem<B>>> = [];
   let open = false; // the last line can take another group
   for (const g of groups) {
-    const items = itemsOf(g);
+    const items = itemsOf(g, cols);
     if (!items.length) continue;
     const last = lines.at(-1);
     if (open && !g.alone && last && lineWidth(last, z, layout) + gap + lineWidth(items, z, layout) <= room + 1e-6) {
@@ -203,11 +225,11 @@ export interface CanvasSection<B extends BoardModel = BoardModel> { groups: Arra
  * a viewport `width` px wide, with the world's padding. Each section is its heading and its own lines; between two sections the
  * lines' gap. One section without a heading is the plain canvas (`worldAt`).
  */
-export function sectionsAt(sections: CanvasSection[], z: number, width: number | null = null, layout?: BoardLayout): { width: number; height: number } {
+export function sectionsAt(sections: CanvasSection[], z: number, width: number | null = null, layout?: BoardLayout, cols = 1): { width: number; height: number } {
   let w = 0;
   let h = LINE_GAP * z * Math.max(0, sections.length - 1);
   for (const s of sections) {
-    const lines = canvasLines(s.groups, z, width, layout);
+    const lines = canvasLines(s.groups, z, width, layout, cols);
     w = Math.max(w, ...lines.map((l) => lineWidth(l, z, layout)));
     h += s.head + linesHeight(lines, z, layout);
   }
@@ -246,15 +268,61 @@ export function fitBoards(groups: BoardGroup[], view: { width: number; height: n
 
 /** Report 52: `fitBoards` for a canvas of sections (`sectionsAt`): the same search, the headings at their real size. */
 export function fitSections(sections: CanvasSection[], view: { width: number; height: number }, min: number, layout?: BoardLayout): number | null {
-  if (!sections.some((s) => s.groups.some((g) => g.boards.length)) || view.width <= 0 || view.height <= 0) return null;
+  return fitAll(sections, view, min, layout)?.zoom ?? null;
+}
+
+// 5% steps down to 50%, then 1% (review B: at a store pack's 20–30% a 5% step is a fifth of the boards' size).
+const stepDown = (z: number, min: number) => (z > 0.5 + 1e-9 ? Math.max(min, Math.round((z - 0.05) * 20) / 20) : Math.max(min, Math.round((z - 0.01) * 100) / 100));
+const hasBoards = (sections: CanvasSection[]) => sections.some((s) => s.groups.some((g) => g.boards.length));
+/** The most boards of a grid of the canvas: its columns are tried up to this. */
+const gridMax = (sections: CanvasSection[]) => Math.max(1, ...sections.flatMap((s) => s.groups.map((g) => g.boards.filter((b) => !isTall(b)).length)));
+
+/**
+ * The largest zoom (from 100%, the steps of `stepDown`, never below `min`) at which the canvas with grids of `cols` columns fits
+ * the viewport; with `above`, only a zoom above it counts (null: none).
+ */
+function fitAt(sections: CanvasSection[], view: { width: number; height: number }, min: number, layout: BoardLayout | undefined, cols: number, above = -1): number | null {
   let z = 1;
-  while (z > min + 1e-9) {
-    const w = sectionsAt(sections, z, view.width, layout);
-    if (w.width <= view.width + 1e-6 && w.height <= view.height + 1e-6) break;
-    // 5% steps down to 50%, then 1% (review B: at a store pack's 20–30% a 5% step is a fifth of the boards' size).
-    z = z > 0.5 + 1e-9 ? Math.max(min, Math.round((z - 0.05) * 20) / 20) : Math.max(min, Math.round((z - 0.01) * 100) / 100);
+  for (;;) {
+    if (z <= above + 1e-9) return null;
+    const w = sectionsAt(sections, z, view.width, layout, cols);
+    if ((w.width <= view.width + 1e-6 && w.height <= view.height + 1e-6) || z <= min + 1e-9) return z;
+    z = stepDown(z, min);
   }
-  return z;
+}
+
+/**
+ * Report 60: the zoom that shows every board and the grids' columns that give it: each column count is tried and the largest
+ * zoom kept (a tie keeps the fewer columns, the layout closest to the old stack). Null without boards or before the viewport is
+ * laid out.
+ */
+function fitAll(sections: CanvasSection[], view: { width: number; height: number }, min: number, layout?: BoardLayout): { zoom: number; cols: number } | null {
+  if (!hasBoards(sections) || view.width <= 0 || view.height <= 0) return null;
+  let best = { zoom: fitAt(sections, view, min, layout, 1)!, cols: 1 };
+  for (let c = 2; c <= gridMax(sections); c++) {
+    // More columns only widen the canvas: once they no longer fit the width at the best zoom so far, none will do better.
+    if (sectionsAt(sections, best.zoom, view.width, layout, c).width > view.width + 1e-6) break;
+    const z = fitAt(sections, view, min, layout, c, best.zoom);
+    if (z !== null) best = { zoom: z, cols: c };
+  }
+  return best;
+}
+
+/**
+ * Report 60: how the canvas opens in a viewport: its zoom, its grids' columns (`canvasLines`) and `all`, the zoom at which that
+ * layout is all in view (the lowest the user can zoom down to). Every board in view when that is at least READABLE_ZOOM;
+ * otherwise READABLE_ZOOM, with as many columns as the width takes, the canvas scrolling down. A canvas with a store pack (its
+ * stores' lines, `alone`) keeps fitting all of it as report 40 wants, below the floor too. Null without boards or before the
+ * viewport is laid out.
+ */
+export function canvasFit(sections: CanvasSection[], view: { width: number; height: number }, min: number, layout?: BoardLayout): { zoom: number; cols: number; all: number } | null {
+  const fit = fitAll(sections, view, min, layout);
+  if (!fit) return null;
+  const pack = sections.some((s) => s.groups.some((g) => g.alone));
+  if (fit.zoom >= READABLE_ZOOM - 1e-9 || pack || min >= READABLE_ZOOM) return { ...fit, all: fit.zoom };
+  let cols = 1;
+  while (cols < gridMax(sections) && sectionsAt(sections, READABLE_ZOOM, view.width, layout, cols + 1).width <= view.width + 1e-6) cols++;
+  return { zoom: READABLE_ZOOM, cols, all: fitAt(sections, view, min, layout, cols)! };
 }
 
 /** A world point (canvas px at 100%) on screen: scaled by the zoom, moved by the pan (the anchor's screen origin). */
@@ -269,7 +337,7 @@ export function ratioText(p: { width: number; height: number }): string {
   return p.width / d <= 21 && p.height / d <= 21 ? `${p.width / d}:${p.height / d}` : `${p.width}×${p.height}`;
 }
 
-/** In a group, tall boards sit one by one on its line, the others stack in a column after them (prototype). */
+/** In a group, tall boards sit one by one on its line, the others in a grid after them (prototype; report 60). */
 export const isTall = (b: BoardModel) => (b.preset ? b.preset.width / b.preset.height <= 0.75 : false);
 
 const round3 = (v: number) => Math.round(v * 1000) / 1000;
