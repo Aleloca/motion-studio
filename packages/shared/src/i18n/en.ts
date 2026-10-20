@@ -229,6 +229,7 @@ export const en = {
     briefSessionBusy: 'The agent is still working on the brief: wait for it to finish, or stop it.',
     briefUnknownFormat: (p: { id: string }) => `${p.id} is not a format of the catalog: use an id from list_formats.`,
     briefIdentityFormat: (p: { id: string }) => `${p.id} is an identity format: the brief agent cannot pick identity formats.`,
+    briefFormatGap: (p: { id: string; missing: string }) => `${p.id}: the copies of a format go from its id up, none left out: ${p.missing} is missing.`,
     briefAssetOutside: (p: { path: string }) => `${p.path} is not among the assets attached to this session.`,
     briefCodebaseOutside: (p: { path: string }) => `${p.path} is not among the folders linked to this session.`,
     briefFillLimit: (p: { max: number }) => `fill_brief can be called at most ${p.max} times in a turn.`,

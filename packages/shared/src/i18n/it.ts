@@ -227,6 +227,7 @@ export const it: Messages = {
     briefSessionBusy: 'L’agente sta ancora lavorando al brief: aspetta che finisca, oppure fermalo.',
     briefUnknownFormat: (p) => `${p.id} non è un formato del catalogo: usa un id di list_formats.`,
     briefIdentityFormat: (p) => `${p.id} è un formato di identità: l’agente del brief non può sceglierlo.`,
+    briefFormatGap: (p) => `${p.id}: le copie di un formato vanno dal suo id in su, senza salti: manca ${p.missing}.`,
     briefAssetOutside: (p) => `${p.path} non è tra gli asset allegati a questa sessione.`,
     briefCodebaseOutside: (p) => `${p.path} non è tra le cartelle collegate a questa sessione.`,
     briefFillLimit: (p) => `fill_brief si può chiamare al massimo ${p.max} volte in un turno.`,

@@ -28,6 +28,11 @@ describe('buildBriefPrompt', () => {
     expect(p).toContain('- message: "Prenota"\n');
     expect(p).toContain('- formats: instagram-post-1x1');
   });
+  it('says how to ask for several copies of one format (report 58)', () => {
+    expect(p).toContain('`<id>@2`');
+    expect(p).toContain('at most 20');
+    expect(p).toMatch(/copies[^\n]*different images on the same brief/);
+  });
   it('lets the agent take a field back only when the user asks', () => {
     expect(p).toContain("pass it in fill_brief's `reclaim`");
     expect(p).toContain('never on your own initiative');
