@@ -1,4 +1,4 @@
-import { DEFAULT_FORMATS, EMPTY_BRIEF_FORM, type BriefField } from '@motion-studio/shared';
+import { customPreset, DEFAULT_FORMATS, EMPTY_BRIEF_FORM, type BriefField } from '@motion-studio/shared';
 import { describe, expect, it } from 'vitest';
 import { applyFill, fillLine, listFormats, mergeClientForm, reclaimLine } from '../src/brief/brief-tools.ts';
 import { setLocale } from '../src/i18n.ts';
@@ -138,5 +138,18 @@ describe('mergeClientForm (decision 1422)', () => {
     const r = mergeClientForm(server({ form: { ...EMPTY_BRIEF_FORM, goal: 'Mio' }, userEdited: ['goal'] }), { form: { ...EMPTY_BRIEF_FORM, goal: '' }, userEdited: [], baseRevision: 0 });
     expect(r.form.goal).toBe('');
     expect(r.userEdited).toEqual([]);
+  });
+});
+
+describe('custom formats (report 59)', () => {
+  const totem = customPreset({ name: 'Totem', kind: 'video', width: 1080, height: 1920 }, 'custom-totem');
+  it('fill_brief takes a custom format and its copies like any other', () => {
+    const r = applyFill(session(), { formats: ['custom-totem', 'custom-totem@2'] }, [...DEFAULT_FORMATS, totem]);
+    expect(r.form.formats).toEqual(['custom-totem', 'custom-totem@2']);
+  });
+  it('a hidden one (deleted while in use) is not offered and not taken', () => {
+    const presets = [...DEFAULT_FORMATS, { ...totem, hidden: true as const }];
+    expect(listFormats(presets, 'it').formats.some((f) => f.id === 'custom-totem')).toBe(false);
+    expect(() => applyFill(session(), { formats: ['custom-totem'] }, presets)).toThrow(/custom-totem/);
   });
 });

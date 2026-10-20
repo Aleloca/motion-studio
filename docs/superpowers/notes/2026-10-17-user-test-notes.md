@@ -449,6 +449,10 @@ arrives and worked on later together.
     height in px (with one-click ratios 1:1, 4:5, 9:16, 16:9), and the max duration for videos. No safe zones, file
     limits or bitrate.
     Timing: now, after 58 (same screen).
+    Done (decisions 1436–1455): a "Personalizzati" group, always open, starts with the "Personalizzato" tile; its dialog
+    (name, video or image, width × height with ratios 1:1, 4:5, 9:16, 16:9, a video's maximum length) adds a preset `custom-<slug>`
+    through one-preset routes under the catalog's lock, selected at once and listed to the brief agent. A custom tile has an edit
+    button; a format in use keeps its type and size, and deleting it hides it (the creatives that use it keep it).
 
 ## Follow-ups found while working on 12–30
 

@@ -1,6 +1,6 @@
-import { canFollow, storePackFormats, channelName, statedDurationSec, formatLabel, formatName, instanceIdOf, instanceIndex, instanceLabel, instancePreset, MAX_INSTANCES, presetOf, type BriefField, type BriefForm, type StorePack, type AssetEntry, type FollowCheck, type IdentityBrief, type Locale, type BrandKit, type BriefServices, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
+import { canFollow, channelGroup, CUSTOM_CHANNEL, isCustomPreset, storePackFormats, channelName, statedDurationSec, formatLabel, formatName, instanceIdOf, instanceIndex, instanceLabel, instancePreset, MAX_INSTANCES, presetOf, type BriefField, type BriefForm, type StorePack, type AssetEntry, type FollowCheck, type IdentityBrief, type Locale, type BrandKit, type BriefServices, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { api } from '../api.ts';
+import { api, ApiError } from '../api.ts';
 import { CodebaseList } from '../components/CodebaseList.tsx';
 import { ServicesSelector, useConfiguredProviders, useKeyChecks } from '../components/ServicesSelector.tsx';
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
@@ -29,6 +29,7 @@ import { useBriefSession } from './new-creative/useBriefSession.ts';
 import { BriefSessionPanel } from './new-creative/BriefSessionPanel.tsx';
 import { ResumeBriefDialog } from './new-creative/ResumeBriefDialog.tsx';
 import { AssetFace, LibraryPicker } from './new-creative/LibraryPicker.tsx';
+import { CustomFormatDialog } from './new-creative/CustomFormatDialog.tsx';
 
 
 /** Brief length shown under the field (decisions log 1220: the shared safety cap, no longer 2000). */
@@ -155,7 +156,8 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   const locale = useLocale();
   const shell = useContext(ShellContext);
   // Decisions 1421–1422: the project's brief session; the form below is the one its agent fills.
-  const brief = useBriefSession(slug, live ?? shell?.live);
+  // Report 59: a save refused a format deleted in another window: the catalog is read again and the choice drops it.
+  const brief = useBriefSession(slug, live ?? shell?.live, { onFormatUnavailable: () => setCatalogNonce((x) => x + 1) });
   const projectName = shell?.catalog.projects?.find((p) => p.slug === slug)?.name ?? slug;
 
   const [goal, setGoal] = useState('');
@@ -187,6 +189,8 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   const [brand, setBrand] = useState<Loaded<BrandKit>>({ value: null, error: null });
   const [pickerOpen, setPickerOpen] = useState(false);
   const [packOpen, setPackOpen] = useState(false);
+  // Report 59: the custom format dialog (`editing` null: a new format).
+  const [custom, setCustom] = useState<{ open: boolean; editing: FormatPreset | null }>({ open: false, editing: null });
   // The store pack of the new creative (Phase 14): an entry of the formats list, set from the wizard in a dialog.
   const [pack, setPack] = useState<StorePack | null>(null);
   // "Partenza" of the identity formats (Phase 14): untouched (undefined) follows the brand: from its logo when it has one.
@@ -251,7 +255,8 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   // "Use in a creative" from Assets.
   useNewCreativeAssetsIntent(slug, useCallback((paths: string[]) => { setPicked((p) => [...p, ...paths.filter((x) => !p.includes(x))]); editedRef.current('assets'); }, []));
 
-  const presets = catalog.value ?? [];
+  // Report 59: a hidden preset (a custom format deleted while creatives use it) is offered nowhere.
+  const presets = useMemo(() => (catalog.value ?? []).filter((p) => !p.hidden), [catalog.value]);
   // `selected` holds instance ids (report 58): a tile's preset id, then its copies `<preset>@2`… right after it.
   const chosen = useMemo(() => selected.flatMap((id) => { const p = instancePreset(presets, id); return p ? [p] : []; }), [selected, presets]);
   const videos = chosen.filter((p) => p.kind === 'video');
@@ -280,14 +285,17 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   const q = query.trim().toLocaleLowerCase();
   const shown = (p: FormatPreset) => (kind === 'all' || p.kind === kind)
     && (!q || `${channelName(p.channel, locale)} ${formatName(p, locale)} ${p.channel} ${p.name}`.toLocaleLowerCase().includes(q));
-  const groups = useMemo(() => [...new Set(presets.map((p) => p.channel))], [presets]);
+  // Report 59: the "Personalizzati" group is always there (its first tile defines a new format), after the catalog's channels.
+  // A channel "Custom" in any casing joins that group (`channelGroup`): never two groups titled "Personalizzati".
+  const groups = useMemo(() => [...new Set([...presets.map((p) => channelGroup(p.channel)), CUSTOM_CHANNEL])], [presets]);
   const primary = groups.some((g) => PRIMARY.includes(g)) ? groups.filter((g) => PRIMARY.includes(g)) : groups.slice(0, 3);
   // The "Store pack" entry is the first tile of the App Store and Play Store groups (decision 1222: no longer a row on top);
   // a set pack keeps them open, and a search by its name shows them with it.
   const packShown = (!q || `${t.web.storePack.entryTitle} ${t.web.storePack.entryHint} ${t.web.storePack.title}`.toLocaleLowerCase().includes(q));
   const packIn = (g: string) => PACK_CHANNELS.includes(g) && packShown;
-  const open = (g: string) => q !== '' || primary.includes(g) || more.has(g) || presets.some((p) => p.channel === g && selected.includes(p.id)) || (pack !== null && PACK_CHANNELS.includes(g));
-  const visibleGroups = groups.map((g) => ({ g, items: presets.filter((p) => p.channel === g && shown(p)) })).filter(({ g, items }) => open(g) && (items.length > 0 || packIn(g)));
+  const customIn = (g: string) => g === CUSTOM_CHANNEL && (!q || `${n.customTile} ${n.customTileHint} ${channelName(CUSTOM_CHANNEL, locale)}`.toLocaleLowerCase().includes(q));
+  const open = (g: string) => q !== '' || g === CUSTOM_CHANNEL || primary.includes(g) || more.has(g) || presets.some((p) => channelGroup(p.channel) === g && selected.includes(p.id)) || (pack !== null && PACK_CHANNELS.includes(g));
+  const visibleGroups = groups.map((g) => ({ g, items: presets.filter((p) => channelGroup(p.channel) === g && shown(p)) })).filter(({ g, items }) => open(g) && (items.length > 0 || packIn(g) || customIn(g)));
   const hiddenGroups = q ? [] : groups.filter((g) => !open(g));
   // Report 58: chosen formats (copies included) the kind filter or the search hides.
   const hiddenChosen = selected.filter((id) => { const p = presets.find((x) => x.id === presetOf(id)); return p !== undefined && !shown(p); }).length;
@@ -312,6 +320,34 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
     });
   };
   const copiesOf = (id: string) => selected.filter((x) => presetOf(x) === id).length;
+  // Report 59 (review): a restored draft or brief session can name a format no longer offered (a custom format deleted in another
+  // window): it leaves the choice, and a line says so. Only once the catalog is known.
+  const [dropped, setDropped] = useState(0);
+  useEffect(() => {
+    if (catalog.value === null) return;
+    const gone = selected.filter((id) => !instancePreset(presets, id));
+    if (gone.length === 0) return;
+    setDropped(gone.length);
+    edited('formats');
+    setSelected((s) => s.filter((id) => instancePreset(presets, id)));
+  }, [catalog.value, presets, selected]); // eslint-disable-line react-hooks/exhaustive-deps -- `edited` is a fresh closure each render
+  /** Report 59: a saved custom format; a new one is chosen at once. */
+  const customSaved = (p: FormatPreset, cat: { presets: FormatPreset[]; error: string | null }, created: boolean) => {
+    setCatalog({ value: cat.presets, error: null, warning: cat.error });
+    setCustom((c) => ({ ...c, open: false }));
+    if (!created) return;
+    edited('formats');
+    setFormatError(false);
+    setSelected((s) => (s.includes(p.id) ? s : [...s, p.id]));
+    toast.show(n.customAdded({ name: p.name }), { tone: 'ok' });
+  };
+  /** A deleted (or hidden: creatives use it) custom format leaves the board and the brief, copies too. */
+  const customDeleted = (p: FormatPreset, outcome: 'deleted' | 'hidden', cat: { presets: FormatPreset[]; error: string | null }) => {
+    setCatalog({ value: cat.presets, error: null, warning: cat.error });
+    setCustom((c) => ({ ...c, open: false }));
+    if (selected.some((x) => presetOf(x) === p.id)) { edited('formats'); setSelected((s) => s.filter((x) => presetOf(x) !== p.id)); }
+    toast.show(outcome === 'hidden' ? n.customHidden({ name: p.name }) : n.customDeleted({ name: p.name }), { tone: 'ok' });
+  };
   const suggest = (k: (typeof SUGGESTIONS)[number]) => {
     edited('goal');
     setGoal(n.suggestions[k].text);
@@ -405,6 +441,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
     } catch (e) {
       inFlight.current = false;
       setBusy(null);
+      if (e instanceof ApiError && e.code === 'format-unavailable') setCatalogNonce((x) => x + 1);
       // The session is gone or half moved (decision 1423): read again, and say what can be done beside the error. Gone: the
       // next Genera goes without it.
       brief.report(e);
@@ -785,6 +822,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
             </label>
           </div>
 
+          {dropped > 0 ? <p className="ms-nc-faint ms-nc-small ms-nc-hidden-note" role="status">{n.formatsDropped({ n: dropped })}</p> : null}
           {hiddenChosen > 0 ? <p className="ms-nc-faint ms-nc-small ms-nc-hidden-note" role="status">{n.hiddenChosen({ n: hiddenChosen })}</p> : null}
           {catalog.warning ? <p className="ms-nc-alert" role="status"><Icon name="warn" size={14} /><span>{catalog.warning}</span></p> : null}
           {catalog.error ? (
@@ -811,7 +849,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
             const instances = selected.filter((id) => items.some((p) => p.id === presetOf(id))).length;
             const name = channelName(g, locale);
             return (
-              <div key={g} className="ms-nc-group" role="group" aria-label={name} data-enter style={{ '--cols': Math.min(items.length + (packIn(g) ? 1 : 0), TILE_COLUMNS) } as CSSProperties}>
+              <div key={g} className="ms-nc-group" role="group" aria-label={name} data-enter style={{ '--cols': Math.min(items.length + (packIn(g) ? 1 : 0) + (customIn(g) ? 1 : 0), TILE_COLUMNS) } as CSSProperties}>
                 <div className="ms-nc-ghead">
                   <ChannelMark channel={channelOf(g)} size={20} />
                   <b className="ms-nc-ell">{name}</b>
@@ -822,8 +860,10 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
                 </div>
                 <div className="ms-nc-tiles">
                   {packIn(g) ? <PackTile pack={pack} onOpen={() => setPackOpen(true)} onRemove={() => setPack(null)} /> : null}
+                  {customIn(g) ? <CustomAddTile onOpen={() => setCustom({ open: true, editing: null })} /> : null}
                   {items.map((p) => (
                     <Tile key={p.id} preset={p} on={selected.includes(p.id)} onClick={() => toggle(p.id)}
+                      onEdit={isCustomPreset(p) ? () => setCustom({ open: true, editing: p }) : null}
                       copies={selected.includes(p.id) && !p.identity ? { n: copiesOf(p.id), packTaken: packUse.get(p.id) ?? 0, onChange: (v) => setCopies(p.id, v) } : null}
                       link={selected.includes(p.id) && plan.candidates[p.id] ? { primary: presetLabel(plan.candidates[p.id]!), on: !linkOff.has(p.id), onToggle: () => toggleLink(p.id) } : null}
                       blocked={selected.includes(p.id) && plan.blocked[p.id] ? { primary: presetLabel(plan.blocked[p.id]!.primary), reason: t.errors.followReason[plan.blocked[p.id]!.reason] } : null} />
@@ -841,7 +881,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
                   <Button key={g} variant="outline" className="ms-nc-chbtn" onClick={() => setMore((m) => new Set([...m, g]))}>
                     <ChannelMark channel={channelOf(g)} size={20} />
                     <span className="ms-nc-ell">{channelName(g, locale)}</span>
-                    <span className="ms-nc-faint ms-nc-small">{presets.filter((p) => p.channel === g).length}</span>
+                    <span className="ms-nc-faint ms-nc-small">{presets.filter((p) => channelGroup(p.channel) === g).length}</span>
                   </Button>
                 ))}
               </div>
@@ -889,6 +929,9 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
       <ResumeBriefDialog open={attached === false} onResume={resume} onStartOver={() => void startOver()} />
 
       <StorePackWizard open={packOpen} onClose={() => setPackOpen(false)} slug={slug} {...(pack ? { initial: pack } : {})} onConfirm={(p) => { setPack(p); setFormatError(false); }} />
+
+      <CustomFormatDialog open={custom.open} editing={custom.editing} presets={presets} onClose={() => setCustom((c) => ({ ...c, open: false }))}
+        onSaved={customSaved} onDeleted={customDeleted} />
 
       <LibraryPicker slug={slug} projectName={projectName} open={pickerOpen} onClose={() => setPickerOpen(false)} anchor={pickerAnchor} library={library}
         onRetry={() => { setLibrary({ value: null, error: null }); setLibraryNonce((x) => x + 1); }} chosen={picked} onToggle={togglePicked} />
@@ -938,6 +981,24 @@ function PackTile({ pack, onOpen, onRemove }: { pack: StorePack | null; onOpen()
   );
 }
 
+/** Report 59: the first tile of the "Personalizzati" group: a click opens the dialog of a new custom format. */
+function CustomAddTile({ onOpen }: { onOpen(): void }) {
+  const n = useT().web.newCreative;
+  return (
+    <div className="ms-nc-tile-wrap">
+      <button type="button" className="ms-nc-tile ms-nc-custom-add" aria-label={n.customTileAria} title={n.customTileAria} onClick={onOpen}>
+        <span className="ms-nc-tile-top">
+          <span className="ms-nc-frame" aria-hidden="true"><Icon name="plus" size={14} /></span>
+        </span>
+        <span className="ms-nc-tile-text">
+          <b className="ms-nc-ell">{n.customTile}</b>
+          <span className="ms-nc-tile-meta ms-nc-ell">{n.customTileHint}</span>
+        </span>
+      </button>
+    </div>
+  );
+}
+
 /**
  * One format of the board (prototype Tile): drawn proportion with the kind icon, name, ratio and maximum length. A chosen
  * format that can share an earlier one's file has a link toggle (`link`, a sibling of the tile button, never inside it);
@@ -945,8 +1006,10 @@ function PackTile({ pack, onOpen, onRemove }: { pack: StorePack | null; onOpen()
  * "− N +" as a full-width row at the bottom of the tile, which grows to hold it (`copies`, report 58); the counter is a sibling
  * of the tile button laid over the tile, so its clicks never deselect.
  */
-function Tile({ preset: p, on, onClick, copies, link, blocked }: {
+function Tile({ preset: p, on, onClick, onEdit, copies, link, blocked }: {
   preset: FormatPreset; on: boolean; onClick(): void;
+  /** Report 59: a custom format's "edit" button (a sibling of the tile button, at its bottom right). */
+  onEdit: (() => void) | null;
   copies: { n: number; packTaken: number; onChange(n: number): void } | null;
   link: { primary: string; on: boolean; onToggle(): void } | null;
   blocked: { primary: string; reason: string } | null;
@@ -969,7 +1032,7 @@ function Tile({ preset: p, on, onClick, copies, link, blocked }: {
   const label = formatLabel(p, locale);
   const why = blocked ? n.notLinkable(blocked) : null;
   return (
-    <div className={cx('ms-nc-tile-wrap', copies && 'ms-nc-has-copies')} data-format={p.id}>
+    <div className={cx('ms-nc-tile-wrap', copies && 'ms-nc-has-copies', onEdit && 'ms-nc-is-custom')} data-format={p.id}>
       <button ref={ref} type="button" className={cx('ms-nc-tile', on && 'ms-on')} aria-pressed={on} onClick={onClick} title={`${p.width}×${p.height}`}>
         <span className="ms-nc-tile-top">
           <span className="ms-nc-frame" style={{ width: w, height: fh }} aria-hidden="true">
@@ -983,6 +1046,11 @@ function Tile({ preset: p, on, onClick, copies, link, blocked }: {
         {on ? <span className="ms-nc-tick" aria-hidden="true"><Icon name="check" size={10} strokeWidth={2.4} /></span> : null}
       </button>
       {copies ? <Copies label={label} n={copies.n} packTaken={copies.packTaken} onChange={copies.onChange} /> : null}
+      {onEdit ? (
+        <button type="button" className="ms-nc-link ms-nc-custom-edit" aria-label={n.customEditAria({ label })} title={n.customEditAria({ label })} onClick={onEdit}>
+          <Icon name="edit" size={13} />
+        </button>
+      ) : null}
       {link ? (
         <button type="button" className={cx('ms-nc-link', link.on && 'ms-on')} aria-pressed={link.on}
           aria-label={n.linkToggle({ label, primary: link.primary })} title={link.on ? n.linkOn({ primary: link.primary }) : n.linkOff({ primary: link.primary })}

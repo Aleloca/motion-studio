@@ -30,3 +30,5 @@
 .ms-brief-confirm h3 { margin: 0; font-size: 15px; color: var(--text); }
 .ms-brief-confirm p { margin: 0; font-size: 13px; line-height: 1.45; color: var(--muted); }
 .ms-brief-up { display: inline-flex; transform: rotate(180deg); }
+/* Report 59: a hidden custom format a brief still has. */
+.ms-brief-gone { color: var(--muted); font-weight: 400; }

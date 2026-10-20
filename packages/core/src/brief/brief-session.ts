@@ -20,6 +20,7 @@ import { CodedError, WorkspaceError } from '../workspace-store.ts';
 import { briefDigest, briefFollowUp, buildBriefPrompt } from './brief-prompt.ts';
 import { isUnreadable, type BriefSessionFile, type BriefSessionStore } from './brief-session-store.ts';
 import { applyFill, fillLine, listFormats, mergeClientForm, reclaimLine } from './brief-tools.ts';
+import { assertFormatsOffered } from '../formats/format-catalog.ts';
 
 /** The most `fill_brief` calls one brief job may make (the app actions' cap idea, decision 917). */
 export const BRIEF_FILLS_PER_JOB = 30;
@@ -173,7 +174,10 @@ export class BriefSessionService {
    */
   async saveForm(ref: BriefProjectRef, id: string, f: { form: BriefForm; userEdited: BriefField[]; baseRevision: number }): Promise<BriefFormSaved> {
     let changed = false;
+    const presets = f.userEdited.includes('formats') ? await this.deps.presets() : null;
     const s = await this.deps.store.update(ref.projectDir, id, (cur) => {
+      // Report 59: the user's formats may add only formats still offered (one deleted in another window: 400).
+      if (presets) assertFormatsOffered(f.form.formats, presets, cur.form.formats);
       const m = mergeClientForm(cur, f);
       changed = m.revision !== cur.revision;
       return { form: m.form, userEdited: m.userEdited, agentFields: cur.agentFields.filter((x) => !m.userEdited.includes(x)), revision: m.revision };
@@ -204,7 +208,9 @@ export class BriefSessionService {
         codebases: context.codebases.map((c) => c.path).filter((p) => !cur.context.codebases.some((c) => c.path === p)),
         assets: context.assets.filter((a) => !cur.context.assets.includes(a)),
       };
+      const presets = m.userEdited.includes('formats') ? await this.deps.presets() : null;
       const s = await this.deps.store.update(ref.projectDir, id, (x) => {
+        if (presets) assertFormatsOffered(m.form.formats, presets, x.form.formats);
         const merged = mergeClientForm(x, m);
         return { form: merged.form, userEdited: merged.userEdited, agentFields: x.agentFields.filter((f) => !merged.userEdited.includes(f)), revision: merged.revision, context };
       });

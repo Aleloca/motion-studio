@@ -36,7 +36,8 @@ import { sweepDerivedCaches, sweepEditorStaging } from '../creatives/cache-sweep
 import { editorCompositionView } from '../creatives/editor-staging.ts';
 import { directEditBodySchema, type DirectEditService } from '../creatives/direct-edit.ts';
 import { sweepProjectRenders } from '../render/render-sweep.ts';
-import { FormatCatalog, findPreset } from '../formats/format-catalog.ts';
+import { assertFormatsOffered, FormatCatalog, findPreset } from '../formats/format-catalog.ts';
+import { addCustomFormat, customFormatUsage, deleteCustomFormat, editCustomFormat } from '../formats/custom-formats.ts';
 import { mergeStorePack, verifyScreens } from '../store-pack/brief.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { completeGitignore, sweepProject } from '../project-maintenance.ts';
@@ -391,6 +392,12 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   app.get('/api/formats', async () => catalog().load());
   app.put<{ Body: { presets?: unknown } }>('/api/formats', async (req) => catalog().save((req.body?.presets ?? []) as never));
   app.post('/api/formats/reset', async () => catalog().resetToDefaults());
+  // Report 59: custom formats from New creative, one preset per call (each change read and written under the catalog's lock).
+  const custom = () => ({ catalog: catalog(), ws: ctx.requireWorkspace() });
+  app.post('/api/formats/custom', async (req) => addCustomFormat(custom(), req.body));
+  app.put<{ Params: { id: string } }>('/api/formats/custom/:id', async (req) => editCustomFormat(custom(), req.params.id, req.body));
+  app.delete<{ Params: { id: string } }>('/api/formats/custom/:id', async (req) => deleteCustomFormat(custom(), req.params.id));
+  app.get<{ Params: { id: string } }>('/api/formats/custom/:id/usage', async (req) => customFormatUsage(custom(), req.params.id));
 
   // Decision 915: the archived creatives are left out; `?archived=1` lists only them (the "Archiviate" section).
   app.get<{ Params: { slug: string }; Querystring: { archived?: string } }>('/api/projects/:slug/creatives', async (req) => {
@@ -446,6 +453,8 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
         brief = { ...brief, storePack: { ...pack, instances: slots } };
       }
     }
+    // Report 59: a format deleted in another window (or never in the catalog) is refused before anything is created.
+    assertFormatsOffered(brief.formats, presets);
     const groupSize = identityGroupSize(brief, presets);
     const links = initialLinks(brief, presets);
     // Decision 1423: the brief session is held before anything is created, so a refused claim (gone, or its agent at work)
@@ -475,7 +484,8 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     };
     const withBriefError = () => (briefError ? { briefError } : {});
     try {
-      const created = await store.create({ title: body.title, brief: { ...brief, links } });
+      // Report 59: checked again under the catalog's lock while creative.json is written (a delete cannot slip in between).
+      const created = await catalog().whileOffered(brief.formats, [], () => store.create({ title: body.title, brief: { ...brief, links } }));
       const slug = created.slug;
       // Fix round 1 (M2): its side record exists from the start (nothing written into its creative.json later is trusted).
       await ctx.turns.side.read(ws.projectDir(req.params.slug), slug);
@@ -555,6 +565,8 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   app.put<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c', async (req) => {
     const body = parse(editBody, pruneLabelsOfRemovedFormats(req.body));
     const ref = await refOf(req.params.slug, req.params.c);
+    // Report 59: a full brief may add only formats still offered; the ones it already had stay (a hidden one included).
+    if (body.brief) assertFormatsOffered(body.brief.formats, (await catalog().load()).presets, (await ref.store.get(ref.creativeSlug)).brief.formats);
     return ctx.turns.updateBrief(ref, body);
   });
 

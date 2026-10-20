@@ -1,7 +1,7 @@
 import { join } from 'node:path';
-import { DEFAULT_FORMATS, formatsFileSchema, instancePreset, issuesText, type FormatPreset } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, formatsFileSchema, instancePreset, isCustomPreset, issuesText, MAX_DELETED_CUSTOM, type FormatPreset } from '@motion-studio/shared';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
-import { WorkspaceError } from '../workspace-store.ts';
+import { CodedError, WorkspaceError } from '../workspace-store.ts';
 import { fileLock } from '../file-locks.ts';
 import { currentLocale, t } from '../i18n.ts';
 
@@ -12,6 +12,18 @@ export interface CatalogState { presets: FormatPreset[]; error: string | null; p
  * folders, render files and prompt lines are named after the instance. Every lookup of a brief format goes through here.
  */
 export const findPreset = (presets: readonly FormatPreset[], id: string): FormatPreset | undefined => instancePreset(presets, id);
+
+/**
+ * Report 59: the formats a brief may newly name are visible presets of the catalog. An unknown or hidden one (a custom format
+ * deleted in another window) is refused (400 `format-unavailable`); `kept`: ids the brief already has, which stay allowed.
+ */
+export function assertFormatsOffered(formats: readonly string[], presets: readonly FormatPreset[], kept: readonly string[] = []): void {
+  for (const f of formats) {
+    if (kept.includes(f)) continue;
+    const p = instancePreset(presets, f);
+    if (!p || p.hidden) throw new CodedError(400, t().errors.formatUnavailable({ id: f }), 'format-unavailable');
+  }
+}
 
 /**
  * The built-in preset ids as of commit 1c6cfb9 (before Phase 14), frozen: a formats.json without `seenDefaults` was written
@@ -41,19 +53,12 @@ export class FormatCatalog {
   load(): Promise<CatalogState> {
     return this.locked(async () => {
       try {
-        const file = await readJsonFile(this.path, formatsFileSchema);
-        // New built-in presets reach existing workspaces (ruling AK): a default never offered to this file is appended; one
-        // offered before and missing now was deleted by the user and stays deleted. Written only when something changed.
-        const seen = new Set(file.seenDefaults ?? LEGACY_DEFAULT_IDS);
-        const have = new Set(file.presets.map((p) => p.id));
-        const added = DEFAULT_FORMATS.filter((p) => !have.has(p.id) && !seen.has(p.id));
-        const allSeen = DEFAULT_FORMATS.every((p) => seen.has(p.id));
-        if (added.length === 0 && allSeen && file.seenDefaults !== undefined) return { presets: file.presets, error: null, path: this.path };
-        const presets = [...file.presets, ...added];
+        const { presets, seen, deleted, upgraded } = await this.read();
+        if (!upgraded) return { presets, error: null, path: this.path };
         // Best effort: a workspace that cannot be written still gets the new presets in memory; after one failed write the
         // file is not written again on every load (only a save or a reset, or a new process, tries again).
         if (upgradeFailed.has(this.path)) return { presets, error: null, path: this.path };
-        return await this.write(presets, seenDefaultsOf(seen)).catch(() => {
+        return await this.write(presets, seenDefaultsOf(seen), deleted).catch(() => {
           upgradeFailed.add(this.path);
           return { presets, error: null, path: this.path };
         });
@@ -67,22 +72,94 @@ export class FormatCatalog {
     });
   }
 
+  /**
+   * Reads the file, with the defaults it was never offered appended (ruling AK): a default never offered to this file is
+   * appended; one offered before and missing now was deleted by the user and stays deleted. `upgraded`: the file needs writing.
+   * `deleted`: the custom ids deleted from it (report 59), never given again.
+   */
+  private async read(): Promise<{ presets: FormatPreset[]; seen: Set<string>; deleted: string[]; upgraded: boolean }> {
+    const file = await readJsonFile(this.path, formatsFileSchema);
+    const seen = new Set(file.seenDefaults ?? LEGACY_DEFAULT_IDS);
+    const have = new Set(file.presets.map((p) => p.id));
+    const added = DEFAULT_FORMATS.filter((p) => !have.has(p.id) && !seen.has(p.id));
+    const upgraded = added.length > 0 || !DEFAULT_FORMATS.every((p) => seen.has(p.id)) || file.seenDefaults === undefined;
+    return { presets: [...file.presets, ...added], seen, deleted: file.deletedCustom ?? [], upgraded };
+  }
+
+  /** The file as it is for a write that keeps part of it: an unreadable or missing file keeps nothing. */
+  private async current(): Promise<{ presets: FormatPreset[]; seen: Iterable<string>; deleted: string[] } | null> {
+    try { return await this.read(); } catch (err) { if (err instanceof JsonFileError) return null; throw err; }
+  }
+
+  /**
+   * Report 59: one change of the catalog, read and written under the file's lock, so two windows changing it at once both land
+   * (the client never writes the whole list). The file's `seenDefaults` are kept; `deleted` (the custom ids deleted so far)
+   * can be added to. A file that cannot be read is never written over (409): the user's catalog would be lost for the defaults.
+   */
+  mutate(change: (presets: FormatPreset[], deleted: Set<string>) => FormatPreset[] | Promise<FormatPreset[]>): Promise<CatalogState> {
+    return this.locked(async () => {
+      let current: { presets: FormatPreset[]; seen: Iterable<string>; deleted: string[] };
+      try {
+        current = await this.read();
+      } catch (err) {
+        if (err instanceof JsonFileError && err.reason === 'missing') current = { presets: DEFAULT_FORMATS, seen: DEFAULT_FORMATS.map((p) => p.id), deleted: [] };
+        else if (err instanceof JsonFileError) throw new CodedError(409, t().errors.formatCatalogUnreadable({ detail: err.message }), 'format-catalog-unreadable');
+        else throw err;
+      }
+      const deleted = new Set(current.deleted);
+      const presets = await change(current.presets, deleted);
+      const parsed = formatsFileSchema.safeParse({ schemaVersion: 1, presets, deletedCustom: [...deleted].slice(-MAX_DELETED_CUSTOM) });
+      if (!parsed.success) {
+        throw new WorkspaceError(400, t().errors.formatCatalogInvalid({ detail: issuesText(parsed.error, currentLocale()) }));
+      }
+      return this.write(parsed.data.presets, seenDefaultsOf(current.seen), parsed.data.deletedCustom);
+    });
+  }
+
+  /**
+   * Report 59: runs `write` (a creative.json being written) while the catalog cannot change, right after checking that `formats`
+   * are still offered (`assertFormatsOffered`, `kept` allowed): a delete in another window cannot slip between the two. A delete
+   * that comes after sees the new creative in its scan. `write` must not load the catalog (the lock is not re-entrant).
+   */
+  whileOffered<T>(formats: readonly string[], kept: readonly string[], write: () => Promise<T>): Promise<T> {
+    return this.locked(async () => {
+      assertFormatsOffered(formats, (await this.current())?.presets ?? DEFAULT_FORMATS, kept);
+      return write();
+    });
+  }
+
+  /**
+   * Writes a whole catalog. Report 59: the custom presets of the file that the list leaves out are kept (creatives use them, and
+   * they are edited one at a time), and so are the deleted custom ids.
+   */
   async save(presets: FormatPreset[]): Promise<CatalogState> {
     const parsed = formatsFileSchema.safeParse({ schemaVersion: 1, presets });
     if (!parsed.success) {
       throw new WorkspaceError(400, t().errors.formatCatalogInvalid({ detail: issuesText(parsed.error, currentLocale()) }));
     }
-    return this.locked(() => this.write(parsed.data.presets));
+    return this.locked(async () => {
+      const cur = await this.current();
+      const ids = new Set(parsed.data.presets.map((p) => p.id));
+      const kept = (cur?.presets ?? []).filter((p) => isCustomPreset(p) && !ids.has(p.id));
+      return this.write([...parsed.data.presets, ...kept], undefined, cur?.deleted ?? []);
+    });
   }
 
-  resetToDefaults(): Promise<CatalogState> { return this.locked(() => this.write(DEFAULT_FORMATS)); }
+  /** The defaults again; the custom presets stay (report 59), after them. */
+  resetToDefaults(): Promise<CatalogState> {
+    return this.locked(async () => {
+      const cur = await this.current();
+      const custom = (cur?.presets ?? []).filter((p) => isCustomPreset(p) && !DEFAULT_FORMATS.some((d) => d.id === p.id));
+      return this.write([...DEFAULT_FORMATS, ...custom], undefined, cur?.deleted ?? []);
+    });
+  }
 
   /**
    * Writes the file. `seenDefaults` defaults to every current default id: after a save or a reset the user has seen them
    * all, so a default they removed in the editor is not appended again.
    */
-  private async write(presets: FormatPreset[], seenDefaults: string[] = DEFAULT_FORMATS.map((p) => p.id)): Promise<CatalogState> {
-    await writeJsonFileAtomic(this.path, { schemaVersion: 1, presets, seenDefaults });
+  private async write(presets: FormatPreset[], seenDefaults: string[] = DEFAULT_FORMATS.map((p) => p.id), deleted: readonly string[] = []): Promise<CatalogState> {
+    await writeJsonFileAtomic(this.path, { schemaVersion: 1, presets, seenDefaults, ...(deleted.length ? { deletedCustom: deleted } : {}) });
     upgradeFailed.delete(this.path);
     return { presets, error: null, path: this.path };
   }

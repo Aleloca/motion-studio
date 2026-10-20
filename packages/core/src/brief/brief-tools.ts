@@ -10,10 +10,13 @@ import { CodedError } from '../workspace-store.ts';
 
 export interface BriefFormatItem { id: string; label: string; channel: string; kind: 'video' | 'image'; width: number; height: number; maxDurationSec?: number }
 
-/** Every preset of the catalog the brief may name, in catalog order; identity presets are left out (their own rules). */
+/**
+ * Every preset of the catalog the brief may name, in catalog order; identity presets are left out (their own rules), and so are
+ * hidden ones (report 59: custom formats deleted while creatives use them). Custom formats are listed like any other.
+ */
 export function listFormats(presets: readonly FormatPreset[], locale: Locale): { formats: BriefFormatItem[] } {
   return {
-    formats: presets.filter((p) => !p.identity).map((p) => ({
+    formats: presets.filter((p) => !p.identity && !p.hidden).map((p) => ({
       id: p.id, label: formatLabel(p, locale), channel: channelName(p.channel, locale), kind: p.kind, width: p.width, height: p.height,
       ...(p.maxDurationSec !== undefined ? { maxDurationSec: p.maxDurationSec } : {}),
     })),
@@ -51,7 +54,7 @@ export function applyFill(s: { form: BriefForm; userEdited: readonly BriefField[
   const { reclaim = [], ...fill } = parsed.data;
   const formats = fill.formats ?? [];
   for (const id of formats) {
-    const preset = presets.find((p) => p.id === presetOf(id));
+    const preset = presets.find((p) => p.id === presetOf(id) && !p.hidden);
     if (!preset) throw bad(t().errors.briefUnknownFormat({ id }));
     if (preset.identity) throw bad(t().errors.briefIdentityFormat({ id }));
     // Report 58: copies of a format are `<id>`, `<id>@2`… `<id>@N` with none left out (the schema caps N at 20, no repeats).
