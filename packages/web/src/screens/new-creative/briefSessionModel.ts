@@ -28,7 +28,8 @@ export function formSnapshot(s: FormState): BriefForm {
 
 /** The length control for a duration: a preset when it is one, else `custom` with the seconds (the "use N s" rule). */
 export function lengthOf(durationSec: number | null): { length: LengthChoice; customSec: string } {
-  if (durationSec === null) return { length: '6', customSec: '' };
+  // No duration: the custom choice with no seconds (the form's own "no length" state), so it equals the session's null.
+  if (durationSec === null) return { length: 'custom', customSec: '' };
   const preset = LENGTHS.find((v) => v !== 'custom' && Number(v) === durationSec);
   return preset ? { length: preset, customSec: '' } : { length: 'custom', customSec: String(durationSec) };
 }
@@ -45,13 +46,15 @@ export interface Ownership { userEdited: ReadonlySet<BriefField>; agentFields: R
 
 /**
  * Decision 1422: the form after a view of the session (a refetch, a save's answer, a fill): every field takes the session's
- * value and owner, except a field the user owns here whose value differs (an edit not saved yet, or typed while the save was
- * out): it keeps the user's text and stays theirs, and the next save carries it. A field the agent rewrote on the user's
- * request (`reclaimed`) always takes the session's value: the core dropped the older edit. `taken`: the fields that took the
- * session's value and owner; `changed`: those of them whose value differs from the form's.
+ * value and owner, except a field with an edit the session has not answered yet (`pending`: changed by hand since the last save
+ * went out, or in a save still out) whose value differs: it keeps the user's text and stays theirs, and the next save carries it.
+ * A field the agent rewrote on the user's request (`reclaimed`) always takes the session's value: the core dropped the older
+ * edit. A field the user owns here but the session no longer lists as theirs, with nothing pending, takes the session's value
+ * (a rewrite the user asked for, even when the fill that said so was missed). `taken`: the fields that took the session's value
+ * and owner; `changed`: those of them whose value differs from the form's.
  */
 export function mergeView(
-  local: { form: BriefForm } & Ownership,
+  local: { form: BriefForm; pending: ReadonlySet<BriefField> } & Ownership,
   server: { form: BriefForm; userEdited: readonly BriefField[]; agentFields: readonly BriefField[] },
   reclaimed: readonly BriefField[] = [],
 ): { form: BriefForm; userEdited: Set<BriefField>; agentFields: Set<BriefField>; taken: BriefField[]; changed: BriefField[] } {
@@ -62,7 +65,7 @@ export function mergeView(
   const changed: BriefField[] = [];
   for (const f of BRIEF_FIELDS) {
     const differs = !same(local.form[f], server.form[f]);
-    if (local.userEdited.has(f) && differs && !reclaimed.includes(f)) {
+    if (local.pending.has(f) && differs && !reclaimed.includes(f)) {
       userEdited.add(f);
       continue;
     }

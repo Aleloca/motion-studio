@@ -150,3 +150,23 @@ describe('BriefSessionPanel (decisions 1412–1414)', () => {
     api.getBriefSession.mockResolvedValue(null);
   });
 });
+
+describe('BriefSessionPanel · refusals (review round 1)', () => {
+  it('a send refused because the session is gone reads it again and says why; handed off offers discard without a creative name', async () => {
+    api.getBriefSession.mockResolvedValue(view());
+    render(page());
+    await waitFor(() => expect(api.getBriefSession).toHaveBeenCalledTimes(1));
+    api.sendBriefMessage.mockRejectedValueOnce(new ApiError(409, 'Questa sessione del brief è finita', 'brief-session-gone'));
+    await userEvent.type(box(), 'Ciao');
+    await userEvent.click(screen.getByRole('button', { name: 'Invia' }));
+    await waitFor(() => expect(api.getBriefSession).toHaveBeenCalledTimes(2));
+    const panel = screen.getByRole('complementary', { name: "Sessione con l'agente" });
+    expect(within(panel).getAllByText(/Questa sessione del brief è finita/).length).toBeGreaterThan(0);
+    expect(within(panel).queryByRole('button', { name: 'Scarta la sessione' })).toBeNull();
+    api.sendBriefMessage.mockRejectedValueOnce(new ApiError(409, 'Spostata in una creatività', 'brief-session-handed-off'));
+    await userEvent.click(screen.getByRole('button', { name: 'Invia' }));
+    await userEvent.click(await within(panel).findByRole('button', { name: 'Scarta la sessione' }));
+    await waitFor(() => expect(api.discardBriefSession).toHaveBeenCalledWith('acme', 's1'));
+    api.getBriefSession.mockResolvedValue(null);
+  });
+});

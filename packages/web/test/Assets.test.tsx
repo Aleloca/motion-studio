@@ -12,6 +12,8 @@ const asset = (over: Partial<AssetEntry> & { file: string }): AssetEntry => ({
 });
 let listing: { assets: AssetEntry[]; error: string | null; unregistered: string[] };
 const api = {
+  // New creative reads the project's brief session (decision 1421): none here.
+  getBriefSession: vi.fn(async () => null),
   listAssets: vi.fn(async () => structuredClone(listing)),
   getBrand: vi.fn(async () => ({ jobKey: 'brand:k' })),
   getProject: vi.fn(async () => ({ slug: 'acme', jobKey: 'k', project: { name: 'Acme Studio' } })),

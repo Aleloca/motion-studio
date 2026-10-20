@@ -1,6 +1,6 @@
 import type { JobSummary } from '@motion-studio/shared';
 import { describe, expect, it } from 'vitest';
-import { eventsReducer, initialEventsState, sessionIdOf } from '../src/eventsReducer.ts';
+import { BRIEF_FILLS_KEPT, eventsReducer, initialEventsState, sessionIdOf } from '../src/eventsReducer.ts';
 
 const job = (id: string, state: JobSummary['state']): JobSummary => ({ id, key: 'k', kind: 'creative', label: 'l', state, createdAt: '2026-10-07T10:00:00.000Z' });
 
@@ -117,11 +117,15 @@ describe('eventsReducer · brief sessions (decision 1421)', () => {
     expect(s.briefTicks?.acme).toBe(2);
     expect(s.briefFills?.acme).toBeUndefined();
     s = eventsReducer(s, { type: 'brief-session', project: 'acme', sessionId: 's1', revision: 3, fill: { written: ['goal', 'formats'], kept: [], reclaimed: [] } });
-    const first = s.briefFills!.acme!;
-    expect(first).toMatchObject({ sessionId: 's1', written: ['goal', 'formats'], reclaimed: [] });
     s = eventsReducer(s, { type: 'brief-session', project: 'acme', sessionId: 's1', revision: 4, fill: { written: [], kept: [], reclaimed: ['message'] } });
-    expect(s.briefFills!.acme!.seq).toBeGreaterThan(first.seq);
-    expect(s.briefFills!.acme!.reclaimed).toEqual(['message']);
+    // Both fills are kept (two fills between renders must not lose the first's fields), in order, seq growing.
+    const [first, second] = s.briefFills!.acme!;
+    expect(first).toMatchObject({ sessionId: 's1', written: ['goal', 'formats'], reclaimed: [] });
+    expect(second!.seq).toBeGreaterThan(first!.seq);
+    expect(second!.reclaimed).toEqual(['message']);
+    for (let i = 0; i < 30; i++) s = eventsReducer(s, { type: 'brief-session', project: 'acme', sessionId: 's1', fill: { written: ['notes'], kept: [], reclaimed: [] } });
+    expect(s.briefFills!.acme).toHaveLength(BRIEF_FILLS_KEPT);
+    s = { ...s, briefTicks: { acme: 4 } };
     expect(s.briefTicks?.acme).toBe(4);
     // Another project has its own count.
     s = eventsReducer(s, { type: 'brief-session', project: 'other', sessionId: 's2', ended: true });

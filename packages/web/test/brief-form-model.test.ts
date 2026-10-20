@@ -5,12 +5,14 @@ import { fieldsToApply, formSnapshot, lengthOf, mergeView, type FormState } from
 const state = (over: Partial<FormState> = {}): FormState => ({
   goal: '', message: '', length: '6', customSec: '', picked: [], codebases: [], notes: '', selected: [], variantCount: 1, ...over,
 });
-const own = (u: BriefField[] = [], a: BriefField[] = []) => ({ userEdited: new Set(u), agentFields: new Set(a) });
+const own = (u: BriefField[] = [], a: BriefField[] = [], p: BriefField[] = u) => ({ userEdited: new Set(u), agentFields: new Set(a), pending: new Set(p) });
 
 describe('brief form model (decision 1422)', () => {
   it('maps a duration to the length control', () => {
     expect(lengthOf(30)).toEqual({ length: '30', customSec: '' });
     expect(lengthOf(45)).toEqual({ length: 'custom', customSec: '45' });
+    // No duration in the session: the form's own "no length" state (it then equals the session and never glows again).
+    expect(formSnapshot(state(lengthOf(null))).durationSec).toBeNull();
   });
 
   it('snapshots the form: an invalid length is null, the variants stay within the brief limit', () => {
@@ -39,6 +41,14 @@ describe('brief form model (decision 1422)', () => {
     expect(r.form.goal).toBe("Testo dell'agente");
     expect(r.userEdited.has('goal')).toBe(false);
     expect(r.agentFields.has('goal')).toBe(true);
+  });
+
+  it('a field the user owns with no edit pending takes the session (a rewrite whose fill was missed is not undone)', () => {
+    const local = { form: { ...EMPTY_BRIEF_FORM, goal: 'Il mio testo' }, ...own(['goal'], [], []) };
+    const m = mergeView(local, { form: { ...EMPTY_BRIEF_FORM, goal: "Riscritto dall'agente" }, userEdited: [], agentFields: ['goal'] });
+    expect(m.form.goal).toBe("Riscritto dall'agente");
+    expect(m.userEdited.has('goal')).toBe(false);
+    expect(m.agentFields.has('goal')).toBe(true);
   });
 
   it('a saved field (same value) takes the session owner', () => {

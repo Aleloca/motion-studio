@@ -15,6 +15,8 @@ const asset = (file: string, over: Partial<AssetEntry> = {}): AssetEntry => ({
   file, kind: 'image', origin: 'upload', sourceUrl: null, description: '', tags: [], width: 100, height: 100, addedAt: at, attribution: null, ...over,
 });
 const api = {
+  // New creative reads the project's brief session (decision 1421): none here.
+  getBriefSession: vi.fn(async () => null),
   getFormats: vi.fn(async () => ({ presets: DEFAULT_FORMATS, error: null, path: '/x' })),
   listAssets: vi.fn(async () => ({ assets: [asset('foto.jpg', { description: 'Scena del crimine' }), asset('logo.svg', { kind: 'svg' }), asset('Inter.woff2', { kind: 'font' })], error: null, unregistered: [] })),
   getBrand: vi.fn(async () => ({ kit: EMPTY_BRAND_KIT, kitError: null, guidelines: '', sources: [], sourcesError: null, proposals: [], jobKey: 'k' })),

@@ -351,7 +351,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
         // Decision 1423: the brief session goes into the creative (its chat, and its agent's memory for the first turn).
         ...(sessionOpen && brief.session ? { briefSession: { id: brief.session.id, group: variantCount > 1 } } : {}),
       });
-      if (created.briefError) toast.show(created.briefError, { tone: 'neutral' });
+      if (created.briefError) { toast.show(created.briefError, { tone: 'neutral' }); void brief.refresh(); }
       let problem: string | null = created.groupError ? vg.groupFailed({ detail: created.groupError }) : created.startError ? vg.startFailed({ detail: created.startError }) : null;
       // Residual fix (decisions log 867): no group was made, so nothing is set or started here and the toast says why.
       if (grouped && !(coreGroup && !typed) && !created.groupError) {
@@ -384,6 +384,8 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
     } catch (e) {
       inFlight.current = false;
       setBusy(null);
+      // The session is gone or half moved (decision 1423): read again, and say what can be done beside the error.
+      brief.report(e);
       setError(errText(e));
     }
   };
@@ -418,13 +420,28 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   owned.current = userEdited;
   // The session's revision this form is based on: adopted only with the form of the view it came with (contract).
   const revision = useRef(0);
-  const saveBody = () => ({ form: snap.current, userEdited: [...owned.current], baseRevision: revision.current });
+  // The edits the session has not answered yet: changed by hand since the last save went out (`dirty`), or in the save still out
+  // (`sent`). Only these keep the user's text over a view of the session (briefSessionModel.mergeView).
+  const dirty = useRef(new Set<BriefField>());
+  const sent = useRef(new Set<BriefField>());
+  const pendingEdits = () => new Set([...dirty.current, ...sent.current]);
+  const saveBody = useCallback(() => {
+    sent.current = new Set([...sent.current, ...dirty.current]);
+    dirty.current = new Set();
+    return { form: snap.current, userEdited: [...owned.current], baseRevision: revision.current };
+  }, []);
+  const settleSave = useCallback((ok: boolean) => {
+    // A refused save keeps its edits pending (the next save carries them); a taken one is answered.
+    if (!ok) dirty.current = new Set([...dirty.current, ...sent.current]);
+    sent.current = new Set();
+  }, []);
   const sessionOpen = brief.session !== null && attached === true;
   /** A change by hand: the field is the user's (the agent keeps off it) and loses its "Agente" mark; the form is saved. */
   const edited = (f: BriefField) => {
+    dirty.current.add(f);
     setUserEdited((s) => (s.has(f) ? s : new Set(s).add(f)));
     setAgentFields((s) => { if (!s.has(f)) return s; const next = new Set(s); next.delete(f); return next; });
-    if (sessionOpen) brief.saveForm(saveBody);
+    if (sessionOpen) brief.saveForm(saveBody, settleSave);
   };
   const editedRef = useRef(edited);
   editedRef.current = edited;
@@ -432,7 +449,8 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   // The first load says whose the open session is: none, or one without messages, is this form's; one the agent is working
   // on reopens at once; an idle one with messages waits for the user's choice (Riprendi / Inizia da capo).
   useEffect(() => {
-    if (attached !== null || brief.status === 'loading') return;
+    // A first read that failed decides nothing (the resume question must not be skipped): it is said, with Riprova.
+    if (attached !== null || brief.status === 'loading' || brief.status === 'failed') return;
     const s = brief.session;
     const asked = brief.entries.some((e) => e.type === 'user');
     if (!s || !asked || brief.job?.state === 'running' || brief.job?.state === 'queued') setAttached(true);
@@ -448,7 +466,8 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
     const fill = brief.lastFill && brief.lastFill.seq > appliedFill.current ? brief.lastFill : null;
     if (fill) appliedFill.current = fill.seq;
     const before = snap.current;
-    const m = mergeView({ form: before, userEdited: owned.current, agentFields }, s, fill?.reclaimed ?? []);
+    const m = mergeView({ form: before, userEdited: owned.current, agentFields, pending: pendingEdits() }, s, fill?.reclaimed ?? []);
+    for (const f of fill?.reclaimed ?? []) dirty.current.delete(f);
     applyForm(m.form, m.changed);
     setUserEdited(m.userEdited);
     setAgentFields(m.agentFields);
@@ -469,7 +488,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
       if (k === 'goal') setGoal(f.goal);
       else if (k === 'message') setMessage(f.message);
       else if (k === 'notes') { setNotes(f.notes); if (f.notes) setOptions(true); }
-      else if (k === 'durationSec') { if (f.durationSec !== null) { const l = lengthOf(f.durationSec); setLength(l.length); setCustomSec(l.customSec); setLengthError(false); } }
+      else if (k === 'durationSec') { const l = lengthOf(f.durationSec); setLength(l.length); setCustomSec(l.customSec); setLengthError(false); }
       else if (k === 'assets') setPicked(f.assets);
       else if (k === 'linkedCodebases') { setCodebases(f.linkedCodebases); if (f.linkedCodebases.length) setOptions(true); }
       else if (k === 'formats') { setSelected(f.formats); if (f.formats.length) setFormatError(false); }
@@ -501,11 +520,33 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   /** "Fallo compilare all'agente": opens the panel; the goal's text moves into the composer (decision 1422), not owned. */
   const toAgent = () => {
     setMode('agent');
-    if (!goal.trim()) return;
+    if (!goal.trim()) { focusComposer(); return; }
     setDraft((d) => ({ text: goal.trim(), nonce: (d?.nonce ?? 0) + 1 }));
     setGoal('');
+    dirty.current.delete('goal');
     setUserEdited((s) => { if (!s.has('goal')) return s; const next = new Set(s); next.delete('goal'); return next; });
+    focusComposer();
+    void clearGoal();
   };
+  /**
+   * The emptied goal is saved, not owned (decision 1422), so the next view of the session does not bring the old text back. The
+   * core takes a value only for a field it knows as the user's: a goal the agent owns is first saved as the user's (empty), then
+   * handed back.
+   */
+  const clearGoal = async () => {
+    const s = brief.session;
+    if (!s || attached !== true || !s.form.goal) return;
+    const without = () => [...owned.current].filter((f) => f !== 'goal');
+    let base = revision.current;
+    if (!s.userEdited.includes('goal')) {
+      const first = await brief.saveNow(() => ({ form: { ...snap.current, goal: '' }, userEdited: [...without(), 'goal'], baseRevision: base }));
+      if (!first) return;
+      base = first.revision;
+    }
+    await brief.saveNow(() => ({ form: { ...snap.current, goal: '' }, userEdited: without(), baseRevision: base }));
+  };
+  /** The composer of the panel takes the focus once the panel is open (it is inert while closed). */
+  const focusComposer = () => { setTimeout(() => panelEl.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus(), 0); };
   const resume = () => { setAttached(true); setMode('agent'); };
   const startOver = async () => {
     try { await brief.discard(); } catch (e) { setError(errText(e)); return; }
@@ -759,7 +800,18 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
 
       {/* Above the bar, not inside it: a long error keeps its remedy in full. */}
       <div className="ms-nc-errbar">
-        {error ? <p className="ms-nc-ferr" role="alert"><Icon name="warn" size={14} /><span>{n.createFailed({ detail: error })}</span></p> : null}
+        {error ? (
+          <div className="ms-nc-ferr" role="alert">
+            <Icon name="warn" size={14} /><span>{n.createFailed({ detail: error })}</span>
+            {brief.conflict?.code === 'brief-session-handed-off' ? <ConflictActions brief={brief} onOpen={(c) => go(href.creative(slug, c))} onDone={() => setError(null)} /> : null}
+          </div>
+        ) : null}
+        {brief.status === 'failed' ? (
+          <div className="ms-nc-ferr" role="alert">
+            <Icon name="warn" size={14} /><span>{t.web.briefSession.loadFailed({ detail: brief.error ?? '' })}</span>
+            <Button size="sm" variant="outline" onClick={() => void brief.refresh()}>{n.tryAgain}</Button>
+          </div>
+        ) : null}
       </div>
       <footer className="ms-nc-foot">
         <div className="ms-nc-frames" aria-hidden="true">
@@ -793,6 +845,21 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
       <LibraryPicker slug={slug} projectName={projectName} open={pickerOpen} onClose={() => setPickerOpen(false)} anchor={pickerAnchor} library={library}
         onRetry={() => { setLibrary({ value: null, error: null }); setLibraryNonce((x) => x + 1); }} chosen={picked} onToggle={togglePicked} />
     </div>
+  );
+}
+
+/**
+ * Decision 1423: a session half moved into a creative (`brief-session-handed-off`, with or without the creative's name): open
+ * that creative when the core names it, or discard the session.
+ */
+export function ConflictActions({ brief, onOpen, onDone }: { brief: ReturnType<typeof useBriefSession>; onOpen(creative: string): void; onDone?(): void }) {
+  const b = useT().web.briefSession;
+  const to = brief.session?.handedOffTo;
+  return (
+    <span className="ms-nc-conflict">
+      {to ? <Button size="sm" variant="outline" onClick={() => onOpen(to)}>{b.openCreative}</Button> : null}
+      <Button size="sm" variant="ghost" onClick={() => void brief.discard().then(() => onDone?.(), () => {})}>{b.discard}</Button>
+    </span>
   );
 }
 

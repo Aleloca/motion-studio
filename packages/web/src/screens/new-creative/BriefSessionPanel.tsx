@@ -136,11 +136,16 @@ export function BriefSessionPanel({ slug, projectName, brief, live, snapshot, dr
           <span>{t.errors.briefSessionUnreadable}</span>
           <Button size="sm" variant="outline" onClick={() => void brief.discard().catch((e: unknown) => setProblem(errText(e)))}>{b.startOver}</Button>
         </div>
-      ) : session?.handedOffTo !== undefined ? (
+      ) : brief.conflict || session?.handedOffTo !== undefined ? (
+        // Decision 1423: half moved into a creative (named or not), or gone: the core's words, and what can be done.
         <div className="ms-brief-alert" role="alert">
-          <span>{t.errors.briefHandedOff}</span>
-          {session.handedOffTo && onOpenCreative ? <Button size="sm" variant="outline" onClick={() => onOpenCreative(session.handedOffTo!)}>{b.openCreative}</Button> : null}
-          <Button size="sm" variant="ghost" onClick={() => void brief.discard().catch((e: unknown) => setProblem(errText(e)))}>{b.discard}</Button>
+          <span>{brief.conflict?.message ?? t.errors.briefHandedOff}</span>
+          {brief.conflict?.code !== 'brief-session-gone' ? (
+            <>
+              {session?.handedOffTo && onOpenCreative ? <Button size="sm" variant="outline" onClick={() => onOpenCreative(session.handedOffTo!)}>{b.openCreative}</Button> : null}
+              <Button size="sm" variant="ghost" onClick={() => void brief.discard().catch((e: unknown) => setProblem(errText(e)))}>{b.discard}</Button>
+            </>
+          ) : null}
         </div>
       ) : brief.error ? <p className="ms-brief-alert" role="alert">{brief.error}</p> : null}
       <Conversation

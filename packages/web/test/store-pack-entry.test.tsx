@@ -12,6 +12,8 @@ let serverBrief: unknown = {};
 const updateCreative = vi.fn(async (..._a: unknown[]) => ({ brief: serverBrief }));
 const createStorePack = vi.fn(async () => ({ slug: 'x', creative: {}, job: null }));
 const api = {
+  // New creative reads the project's brief session (decision 1421): none here.
+  getBriefSession: vi.fn(async () => null),
   getFormats: vi.fn(async () => ({ presets: DEFAULT_FORMATS, error: null, path: '/x' })),
   listAssets: vi.fn(async () => ({ assets: [], error: null, unregistered: [] })),
   getBrand: vi.fn(async () => ({ kit: EMPTY_BRAND_KIT, kitError: null, guidelines: '', sources: [], sourcesError: null, proposals: [], jobKey: 'k' })),

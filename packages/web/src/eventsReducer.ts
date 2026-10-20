@@ -18,10 +18,13 @@ export interface EventsState { jobUsage?: Record<string, JobUsage>; /** Jobs who
   /** Decision 1421: `brief-session` messages per project (the brief screen refetches its session on a change). */
   briefTicks?: Record<string, number>;
   /**
-   * The latest `fill_brief` of each project's session (`seq` grows with every fill): the brief screen applies the fields the
-   * agent wrote, and gives back the ones it rewrote on the user's request (`reclaimed`), after refetching the session.
+   * The recent `fill_brief`s of each project (`seq` grows with every fill; the last BRIEF_FILLS_KEPT): the brief screen joins
+   * every fill of its session it has not taken yet (two fills between renders are both kept), applies the fields the agent wrote
+   * and gives back the ones it rewrote on the user's request (`reclaimed`), after refetching the session.
    */
-  briefFills?: Record<string, { sessionId: string; seq: number; written: BriefField[]; reclaimed: BriefField[] }> }
+  briefFills?: Record<string, Array<{ sessionId: string; seq: number; written: BriefField[]; reclaimed: BriefField[] }>> }
+/** The fills kept per project (far more than can arrive between two renders). */
+export const BRIEF_FILLS_KEPT = 20;
 export const initialEventsState: EventsState = { approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} };
 const MAX_EVENTS = 2000;
 const TERMINAL = new Set<JobSummary['state']>(['succeeded', 'failed', 'cancelled']);
@@ -95,8 +98,9 @@ export function eventsReducer(state: EventsState, msg: EventsAction): EventsStat
     case 'brief-session': {
       const briefTicks = { ...state.briefTicks, [msg.project]: (state.briefTicks?.[msg.project] ?? 0) + 1 };
       if (!msg.fill) return { ...state, briefTicks };
-      const seq = Math.max(0, ...Object.values(state.briefFills ?? {}).map((f) => f.seq)) + 1;
-      return { ...state, briefTicks, briefFills: { ...state.briefFills, [msg.project]: { sessionId: msg.sessionId, seq, written: msg.fill.written, reclaimed: msg.fill.reclaimed ?? [] } } };
+      const seq = Math.max(0, ...Object.values(state.briefFills ?? {}).flat().map((f) => f.seq)) + 1;
+      const list = [...(state.briefFills?.[msg.project] ?? []), { sessionId: msg.sessionId, seq, written: msg.fill.written, reclaimed: msg.fill.reclaimed ?? [] }];
+      return { ...state, briefTicks, briefFills: { ...state.briefFills, [msg.project]: list.slice(-BRIEF_FILLS_KEPT) } };
     }
   }
 }

@@ -1976,6 +1976,7 @@ Variabili: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (array JSON)`,
       backToCreatives: 'Torna alle creatività',
     },
     briefSession: {
+      loadFailed: (p) => `La sessione del brief non si è potuta leggere: ${p.detail}`,
       modeLabel: 'Come compilare il brief',
       modeYou: 'Compila tu',
       modeAgent: "Con l'agente",

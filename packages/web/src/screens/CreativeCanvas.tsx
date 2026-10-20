@@ -364,13 +364,14 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   // load) cascade in instead of flying from a stale spot.
   const appeared = useRef(false);
   const [mountedAt] = useState(() => performance.now());
-  // Decision 1419: after Genera with the brief session's panel open, the chat comes from that panel (taken on mount).
-  const [briefOrigin] = useState(() => takeFrameOrigin(`brief-panel:${slug}/${creative}`));
   useLayoutEffect(() => {
     if (appeared.current || !boards.length || !root.current) return;
     appeared.current = true;
     const els = [...root.current.querySelectorAll('.ms-cv-board')];
     const fresh = performance.now() - mountedAt <= FLIP_WINDOW_MS;
+    // Decision 1419: after Genera with the brief session's panel open, the chat comes from that panel. Taken here, in the effect
+    // that uses it once (not in a render-time initializer, which StrictMode may run twice).
+    const briefOrigin = takeFrameOrigin(`brief-panel:${slug}/${creative}`);
     if (briefOrigin && fresh) {
       // The panel moves from the brief's left slot to its own (l, out); its tabs fade in after it, the rest of the canvas
       // after 0.6 × s, the boards one after the other (16 px rise, scale .97, 70 ms apart).

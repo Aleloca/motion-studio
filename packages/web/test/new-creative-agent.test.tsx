@@ -41,7 +41,7 @@ const { takeFrameOrigin } = await import('../src/shell/intents.ts');
 
 const live = (over: Partial<EventsState> = {}): EventsState => ({ ...initialEventsState, ...over });
 const fillTick = (n: number, written: BriefSessionView['agentFields'], reclaimed: BriefSessionView['agentFields'] = []) =>
-  live({ briefTicks: { acme: n }, briefFills: { acme: { sessionId: 's1', seq: n, written, reclaimed } } });
+  live({ briefTicks: { acme: n }, briefFills: { acme: [{ sessionId: 's1', seq: n, written, reclaimed }] } });
 const page = (l: EventsState) => <I18nProvider locale="it"><NewCreative slug="acme" live={l} /></I18nProvider>;
 const goal = () => screen.getByLabelText('Cosa vuoi realizzare?') as HTMLTextAreaElement;
 const board = () => waitFor(() => screen.getByRole('group', { name: 'Instagram' }));
@@ -195,7 +195,7 @@ describe('NewCreative · Con l\'agente (decisions 1410–1411, 1419, 1422)', () 
   });
 
   it('a session the agent is working on reopens in Con l\'agente without asking; Genera waits for it', async () => {
-    api.getBriefSession.mockResolvedValueOnce(view({ jobId: 'b1', form: { ...EMPTY_BRIEF_FORM, goal: 'Lancio', formats: ['instagram-post-1x1'] } }));
+    api.getBriefSession.mockResolvedValueOnce(view({ jobId: 'b1', form: { ...EMPTY_BRIEF_FORM, goal: 'Lancio', formats: ['instagram-post-1x1'], durationSec: 6 } }));
     api.getBriefConversation.mockResolvedValueOnce([userEntry]);
     render(page(live({ jobs: { b1: job() } })));
     await waitFor(() => expect(document.querySelector('.ms-nc')!.classList.contains('ms-nc-agent')).toBe(true));
@@ -208,7 +208,7 @@ describe('NewCreative · Con l\'agente (decisions 1410–1411, 1419, 1422)', () 
   });
 
   it('Genera with a session hands it over, with the panel origin for the canvas; group with variants', async () => {
-    api.getBriefSession.mockResolvedValue(view({ form: { ...EMPTY_BRIEF_FORM, goal: 'Lancio', formats: ['instagram-post-1x1'] }, agentFields: ['goal', 'formats'] }));
+    api.getBriefSession.mockResolvedValue(view({ form: { ...EMPTY_BRIEF_FORM, goal: 'Lancio', formats: ['instagram-post-1x1'], durationSec: 6 }, agentFields: ['goal', 'formats'] }));
     const { rerender } = render(<Shelled l={live()} />);
     await waitFor(() => expect(goal().value).toBe('Lancio'));
     await userEvent.click(within(modes()).getByRole('radio', { name: "Con l'agente" }));
@@ -222,7 +222,7 @@ describe('NewCreative · Con l\'agente (decisions 1410–1411, 1419, 1422)', () 
   });
 
   it('Genera from Compila tu leaves no panel origin; Salva bozza sends the session too', async () => {
-    api.getBriefSession.mockResolvedValue(view({ form: { ...EMPTY_BRIEF_FORM, goal: 'Lancio', formats: ['instagram-post-1x1'] } }));
+    api.getBriefSession.mockResolvedValue(view({ form: { ...EMPTY_BRIEF_FORM, goal: 'Lancio', formats: ['instagram-post-1x1'], durationSec: 6 } }));
     render(page(live()));
     await waitFor(() => expect(goal().value).toBe('Lancio'));
     await userEvent.click(screen.getByRole('button', { name: 'Salva bozza' }));
@@ -233,7 +233,7 @@ describe('NewCreative · Con l\'agente (decisions 1410–1411, 1419, 1422)', () 
   });
 
   it('with Varianti 3 the session goes to the group', async () => {
-    api.getBriefSession.mockResolvedValue(view({ form: { ...EMPTY_BRIEF_FORM, goal: 'Lancio', formats: ['instagram-post-1x1'], variants: 3 } }));
+    api.getBriefSession.mockResolvedValue(view({ form: { ...EMPTY_BRIEF_FORM, goal: 'Lancio', formats: ['instagram-post-1x1'], variants: 3, durationSec: 6 } }));
     (api as Record<string, unknown>).addVariants = vi.fn(async () => ({}));
     (api as Record<string, unknown>).runVariants = vi.fn(async () => ({ jobs: {}, queued: [], skipped: [], failed: {} }));
     render(page(live()));
@@ -242,5 +242,123 @@ describe('NewCreative · Con l\'agente (decisions 1410–1411, 1419, 1422)', () 
     await waitFor(() => expect(api.createCreative).toHaveBeenCalledOnce());
     expect(api.createCreative.mock.calls[0]![1]).toMatchObject({ briefSession: { id: 's1', group: true } });
     api.getBriefSession.mockResolvedValue(view());
+  });
+});
+
+/** A small stand-in for the core's form merge (brief-tools `mergeClientForm`): enough for the save scenarios below. */
+function fakeCore(start: BriefSessionView) {
+  let s = { ...start };
+  api.getBriefSession.mockImplementation(async () => ({ ...s }));
+  api.saveBriefForm.mockImplementation(async (_slug: string, _id: string, b: { form: typeof EMPTY_BRIEF_FORM; userEdited: string[]; baseRevision: number }) => {
+    const form = { ...s.form } as Record<string, unknown>;
+    const userEdited: string[] = [];
+    for (const f of Object.keys(s.form)) {
+      const clientOwns = b.userEdited.includes(f);
+      if (s.userEdited.includes(f as never) || clientOwns) { form[f] = (b.form as Record<string, unknown>)[f]; if (clientOwns) userEdited.push(f); }
+    }
+    const changed = JSON.stringify(form) !== JSON.stringify(s.form) || JSON.stringify(userEdited) !== JSON.stringify(s.userEdited);
+    s = { ...s, form: form as typeof EMPTY_BRIEF_FORM, userEdited: userEdited as never, agentFields: s.agentFields.filter((f) => !userEdited.includes(f)), revision: s.revision + (changed ? 1 : 0) };
+    return { ok: true, form: s.form, userEdited: s.userEdited as string[], agentFields: s.agentFields as never[], revision: s.revision };
+  });
+  return { get: () => s, set: (next: Partial<BriefSessionView>) => { s = { ...s, ...next, revision: s.revision + 1 }; } };
+}
+
+describe('NewCreative · review round 1 (decisions 1422–1423)', () => {
+  it('a rewrite the user asked for is not undone by the next save, even when its fill was missed (reconnection)', async () => {
+    const core = fakeCore(view({ form: { ...EMPTY_BRIEF_FORM, goal: 'Il mio testo', durationSec: 6 }, userEdited: ['goal'], revision: 2 }));
+    const { rerender } = render(page(live()));
+    await waitFor(() => expect(goal().value).toBe('Il mio testo'));
+    // The agent rewrote the goal on the user's request; this page missed the fill (only a reconnection tells).
+    core.set({ form: { ...core.get().form, goal: "Riscritto dall'agente" }, userEdited: [], agentFields: ['goal'] });
+    rerender(page(live({ snapshots: 1 })));
+    await waitFor(() => expect(goal().value).toBe("Riscritto dall'agente"));
+    await userEvent.type(screen.getByLabelText(/Messaggio chiave/), 'Una casella');
+    await waitFor(() => expect(api.saveBriefForm).toHaveBeenCalled(), { timeout: 2000 });
+    expect(lastSave().form.goal).toBe("Riscritto dall'agente");
+    expect(lastSave().userEdited).not.toContain('goal');
+    expect(core.get().form.goal).toBe("Riscritto dall'agente");
+    api.getBriefSession.mockImplementation(async () => view());
+  });
+
+  it('owned goal, a load out, a fill reclaiming the goal then a fill writing the message: the save keeps the rewrite', async () => {
+    const core = fakeCore(view({ form: { ...EMPTY_BRIEF_FORM, goal: 'Il mio testo', durationSec: 6 }, userEdited: ['goal'], revision: 2 }));
+    const { rerender } = render(page(live()));
+    await waitFor(() => expect(goal().value).toBe('Il mio testo'));
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    api.getBriefSession.mockImplementationOnce(async () => { await gate; return { ...core.get() }; });
+    rerender(page(live({ snapshots: 1 })));
+    core.set({ form: { ...core.get().form, goal: "Riscritto dall'agente" }, userEdited: [], agentFields: ['goal'] });
+    const f1 = { sessionId: 's1', seq: 1, written: [] as never[], reclaimed: ['goal' as const] };
+    rerender(page(live({ snapshots: 1, briefTicks: { acme: 1 }, briefFills: { acme: [f1] } })));
+    core.set({ form: { ...core.get().form, message: 'Una casella' }, agentFields: ['goal', 'message'] });
+    const f2 = { sessionId: 's1', seq: 2, written: ['message' as const], reclaimed: [] as never[] };
+    rerender(page(live({ snapshots: 1, briefTicks: { acme: 2 }, briefFills: { acme: [f1, f2] } })));
+    release();
+    await waitFor(() => expect(goal().value).toBe("Riscritto dall'agente"));
+    await waitFor(() => expect((screen.getByLabelText(/Messaggio chiave/) as HTMLInputElement).value).toBe('Una casella'));
+    await userEvent.click(screen.getByRole('button', { name: 'Altre opzioni' }));
+    await userEvent.type(screen.getByLabelText(/Note per l'agente/), 'x');
+    await waitFor(() => expect(api.saveBriefForm).toHaveBeenCalled(), { timeout: 2000 });
+    expect(core.get().form.goal).toBe("Riscritto dall'agente");
+    expect(core.get().userEdited).not.toContain('goal');
+    api.getBriefSession.mockImplementation(async () => view());
+  });
+
+  it("the CTA with a session saves the emptied goal, so the old one never comes back (agent used, back to Compila tu)", async () => {
+    const core = fakeCore(view({ form: { ...EMPTY_BRIEF_FORM, goal: "Testo dell'agente", durationSec: 6 }, agentFields: ['goal'], revision: 2 }));
+    const { rerender } = render(page(live()));
+    await waitFor(() => expect(goal().value).toBe("Testo dell'agente"));
+    await userEvent.clear(goal());
+    await userEvent.type(goal(), 'Video nuovo');
+    await waitFor(() => expect(core.get().form.goal).toBe('Video nuovo'), { timeout: 2000 });
+    await userEvent.click(screen.getByRole('button', { name: "Fallo compilare all'agente" }));
+    expect(draftBox().value).toBe('Video nuovo');
+    await waitFor(() => expect(core.get().form.goal).toBe(''));
+    expect(core.get().userEdited).not.toContain('goal');
+    // The next view of the session leaves the goal empty: the text is only in the composer.
+    rerender(page(live({ briefTicks: { acme: 1 } })));
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+    expect(goal().value).toBe('');
+    expect(draftBox().value).toBe('Video nuovo');
+    // The composer has the focus.
+    await waitFor(() => expect(document.activeElement).toBe(draftBox()));
+    api.getBriefSession.mockImplementation(async () => view());
+  });
+
+  it("the CTA on the agent's own goal: saved empty in two steps (the core takes a value only for the user's field)", async () => {
+    const core = fakeCore(view({ form: { ...EMPTY_BRIEF_FORM, goal: "Testo dell'agente", durationSec: 6 }, agentFields: ['goal'], revision: 2 }));
+    render(page(live()));
+    await waitFor(() => expect(goal().value).toBe("Testo dell'agente"));
+    await userEvent.click(screen.getByRole('button', { name: "Fallo compilare all'agente" }));
+    await waitFor(() => expect(api.saveBriefForm).toHaveBeenCalledTimes(2));
+    expect(core.get().form.goal).toBe('');
+    expect(core.get().userEdited).not.toContain('goal');
+    api.getBriefSession.mockImplementation(async () => view());
+  });
+
+  it('Genera refused because the session was half moved: the error offers to discard it, also in Compila tu; the session is read again', async () => {
+    api.getBriefSession.mockResolvedValue(view({ form: { ...EMPTY_BRIEF_FORM, goal: 'Lancio', formats: ['instagram-post-1x1'], durationSec: 6 } }));
+    api.createCreative.mockRejectedValueOnce(new ApiError(409, 'Questa sessione del brief è stata spostata in una creatività', 'brief-session-handed-off'));
+    render(page(live()));
+    await waitFor(() => expect(goal().value).toBe('Lancio'));
+    const calls = api.getBriefSession.mock.calls.length;
+    await userEvent.click(screen.getByRole('button', { name: 'Genera' }));
+    const alert = await waitFor(() => screen.getAllByRole('alert').find((a) => a.textContent?.includes('spostata'))!);
+    await waitFor(() => expect(api.getBriefSession.mock.calls.length).toBeGreaterThan(calls));
+    await userEvent.click(within(alert).getByRole('button', { name: 'Scarta la sessione' }));
+    await waitFor(() => expect(api.discardBriefSession).toHaveBeenCalledWith('acme', 's1'));
+    api.getBriefSession.mockResolvedValue(view());
+  });
+
+  it('a first read that fails is said with Riprova, and the resume question still comes after it', async () => {
+    api.getBriefSession.mockRejectedValueOnce(new ApiError(500, 'EMFILE'));
+    render(page(live()));
+    const alert = await waitFor(() => screen.getAllByRole('alert').find((a) => a.textContent?.includes('EMFILE'))!);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    api.getBriefSession.mockResolvedValueOnce(view({ form: { ...EMPTY_BRIEF_FORM, goal: 'Lancio' } }));
+    api.getBriefConversation.mockResolvedValueOnce([userEntry]);
+    await userEvent.click(within(alert).getByRole('button', { name: 'Riprova' }));
+    expect(await screen.findByRole('dialog', { name: 'Hai una sessione del brief in corso' })).toBeTruthy();
   });
 });

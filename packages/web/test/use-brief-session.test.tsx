@@ -48,7 +48,7 @@ describe('useBriefSession (decision 1422)', () => {
     const { result, rerender } = renderHook(({ l }) => useBriefSession('acme', l), { initialProps: { l: live() } });
     await waitFor(() => expect(result.current.session?.id).toBe('s1'));
     api.getBriefSession.mockResolvedValueOnce(view({ revision: 5, form: { ...EMPTY_BRIEF_FORM, goal: 'Lancio' }, agentFields: ['goal'] }));
-    rerender({ l: live({ briefTicks: { acme: 1 }, briefFills: { acme: { sessionId: 's1', seq: 1, written: ['goal'], reclaimed: [] } } }) });
+    rerender({ l: live({ briefTicks: { acme: 1 }, briefFills: { acme: [{ sessionId: 's1', seq: 1, written: ['goal'], reclaimed: [] }] } }) });
     await waitFor(() => expect(result.current.lastFill?.seq).toBe(1));
     expect(result.current.lastFill?.written).toEqual(['goal']);
     expect(result.current.session?.form.goal).toBe('Lancio');
@@ -96,5 +96,90 @@ describe('useBriefSession (decision 1422)', () => {
     const { result } = renderHook(() => useBriefSession('acme', live({ jobs })));
     await waitFor(() => expect(result.current.job?.id).toBe('b2'));
     api.getBriefSession.mockResolvedValue(view());
+  });
+});
+
+describe('useBriefSession · review round 1', () => {
+  const deferred = <T,>() => { let resolve!: (v: T) => void; const promise = new Promise<T>((r) => { resolve = r; }); return { promise, resolve }; };
+
+  it('fills that arrive while a load is out are joined: the first fill\'s reclaimed is kept', async () => {
+    const { result, rerender } = renderHook(({ l }) => useBriefSession('acme', l), { initialProps: { l: live({ snapshots: 1 }) } });
+    await waitFor(() => expect(result.current.session?.id).toBe('s1'));
+    const slow = deferred<BriefSessionView | null>();
+    api.getBriefSession.mockImplementationOnce(() => slow.promise);
+    rerender({ l: live({ snapshots: 2 }) });
+    const f1 = { sessionId: 's1', seq: 1, written: [] as never[], reclaimed: ['goal' as const] };
+    const f2 = { sessionId: 's1', seq: 2, written: ['message' as const], reclaimed: [] as never[] };
+    rerender({ l: live({ snapshots: 2, briefTicks: { acme: 1 }, briefFills: { acme: [f1] } }) });
+    rerender({ l: live({ snapshots: 2, briefTicks: { acme: 2 }, briefFills: { acme: [f1, f2] } }) });
+    api.getBriefSession.mockResolvedValue(view({ revision: 5 }));
+    await act(async () => { slow.resolve(view({ revision: 4 })); });
+    await waitFor(() => expect(result.current.lastFill?.seq).toBe(2));
+    expect(result.current.lastFill?.reclaimed).toEqual(['goal']);
+    expect(result.current.lastFill?.written).toEqual(['message']);
+    api.getBriefSession.mockResolvedValue(view());
+  });
+
+  it("a fill of another session is not this form's", async () => {
+    const { result, rerender } = renderHook(({ l }) => useBriefSession('acme', l), { initialProps: { l: live() } });
+    await waitFor(() => expect(result.current.session?.id).toBe('s1'));
+    rerender({ l: live({ briefTicks: { acme: 1 }, briefFills: { acme: [{ sessionId: 'old', seq: 1, written: ['goal'], reclaimed: [] }] } }) });
+    await waitFor(() => expect(api.getBriefSession).toHaveBeenCalledTimes(2));
+    expect(result.current.lastFill).toBeNull();
+  });
+
+  it('an answer older than the view held is ignored (a load that answers after a save, a save that answers after a load)', async () => {
+    const { result, rerender } = renderHook(({ l }) => useBriefSession('acme', l), { initialProps: { l: live({ snapshots: 1 }) } });
+    await waitFor(() => expect(result.current.session?.revision).toBe(3));
+    const slow = deferred<BriefSessionView | null>();
+    api.getBriefSession.mockImplementationOnce(() => slow.promise);
+    rerender({ l: live({ snapshots: 2 }) });
+    await act(async () => { await result.current.saveNow(() => ({ form: { ...EMPTY_BRIEF_FORM, goal: 'nuovo' }, userEdited: ['goal'], baseRevision: 4 })); });
+    expect(result.current.session?.revision).toBe(5);
+    await act(async () => { slow.resolve(view({ revision: 4 })); });
+    expect(result.current.session?.revision).toBe(5);
+    expect(result.current.session?.form.goal).toBe('nuovo');
+    // A save answered after a newer view: dropped too.
+    const late = deferred<{ ok: true; form: typeof EMPTY_BRIEF_FORM; userEdited: never[]; agentFields: never[]; revision: number }>();
+    api.saveBriefForm.mockImplementationOnce(() => late.promise as never);
+    let p!: Promise<unknown>;
+    act(() => { p = result.current.saveNow(() => ({ form: EMPTY_BRIEF_FORM, userEdited: [], baseRevision: 5 })); });
+    api.getBriefSession.mockResolvedValueOnce(view({ revision: 8, form: { ...EMPTY_BRIEF_FORM, goal: 'dal core' } }));
+    rerender({ l: live({ snapshots: 3 }) });
+    await waitFor(() => expect(result.current.session?.revision).toBe(8));
+    await act(async () => { late.resolve({ ok: true, form: EMPTY_BRIEF_FORM, userEdited: [], agentFields: [], revision: 6 }); await p; });
+    expect(result.current.session?.revision).toBe(8);
+    expect(result.current.session?.form.goal).toBe('dal core');
+  });
+
+  it('a pending save is sent when the page goes away', async () => {
+    const { result, unmount } = renderHook(() => useBriefSession('acme', live()));
+    await waitFor(() => expect(result.current.session?.id).toBe('s1'));
+    act(() => { result.current.saveForm(() => ({ form: { ...EMPTY_BRIEF_FORM, goal: 'ultimo' }, userEdited: ['goal'], baseRevision: 3 })); });
+    unmount();
+    await waitFor(() => expect(api.saveBriefForm).toHaveBeenCalledOnce());
+    expect(api.saveBriefForm.mock.calls[0]![2].form.goal).toBe('ultimo');
+  });
+
+  it('a refusal says what it is: unreadable switches the status, gone or handed off is a conflict and the session is read again', async () => {
+    const { result } = renderHook(() => useBriefSession('acme', live()));
+    await waitFor(() => expect(result.current.session?.id).toBe('s1'));
+    api.saveBriefForm.mockRejectedValueOnce(new ApiError(409, 'spostata', 'brief-session-handed-off'));
+    await act(async () => { await result.current.saveNow(() => ({ form: EMPTY_BRIEF_FORM, userEdited: [], baseRevision: 3 })); });
+    expect(result.current.conflict).toMatchObject({ code: 'brief-session-handed-off', sessionId: 's1' });
+    await waitFor(() => expect(api.getBriefSession).toHaveBeenCalledTimes(2));
+    api.saveBriefForm.mockRejectedValueOnce(new ApiError(422, 'illeggibile', 'brief-session-unreadable'));
+    await act(async () => { await result.current.saveNow(() => ({ form: EMPTY_BRIEF_FORM, userEdited: [], baseRevision: 3 })); });
+    expect(result.current.status).toBe('unreadable');
+  });
+
+  it('a first read that fails is "failed" until a read works', async () => {
+    api.getBriefSession.mockRejectedValueOnce(new ApiError(500, 'EMFILE'));
+    const { result } = renderHook(() => useBriefSession('acme', live()));
+    await waitFor(() => expect(result.current.status).toBe('failed'));
+    expect(result.current.error).toBe('EMFILE');
+    await act(async () => { await result.current.refresh(); });
+    expect(result.current.status).toBe('ready');
+    expect(result.current.session?.id).toBe('s1');
   });
 });

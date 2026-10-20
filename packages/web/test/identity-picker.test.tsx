@@ -13,6 +13,8 @@ const withLogo = (kind: 'manual' | 'codebase' = 'manual'): BrandKit => ({
   logos: [{ id: 'logo', file: 'assets/brand/logo.svg', variant: 'primary', background: 'any', source: kind === 'codebase' ? { kind, ref: 'assets/brand/logo.svg' } : { kind, ref: null } }],
 });
 const api = {
+  // New creative reads the project's brief session (decision 1421): none here.
+  getBriefSession: vi.fn(async () => null),
   getFormats: vi.fn(async () => ({ presets: DEFAULT_FORMATS, error: null, path: '/x' })),
   listAssets: vi.fn(async () => ({ assets: [], error: null, unregistered: [] })),
   getBrand: vi.fn(async () => overview(EMPTY_BRAND_KIT)),
