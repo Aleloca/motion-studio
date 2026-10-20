@@ -144,6 +144,9 @@ describe('NewCreative · copies of a format (report 58)', () => {
     expect(within(copies()).getByText('5')).toBeTruthy();
     expect(within(copies()).getByRole('status').textContent).toBe('5 copie');
     expect(screen.getByText(/^6 formati · 1 render video \+ 5 immagini$/)).toBeTruthy();
+    // The channel says tiles and copies apart; the tile keeps its tick.
+    expect(within(ig()).getByText('1 selezionato · 5 copie')).toBeTruthy();
+    expect(imageTile().querySelector('.ms-nc-tick')).toBeTruthy();
     expect(document.querySelectorAll('.ms-nc-frames > span')).toHaveLength(5);
     await userEvent.click(screen.getByRole('button', { name: 'Genera' }));
     await waitFor(() => expect(createCreative).toHaveBeenCalledOnce());

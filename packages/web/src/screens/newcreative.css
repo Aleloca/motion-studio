@@ -199,7 +199,7 @@
 .ms-nc-tile-wrap { position: relative; min-width: 0; }
 .ms-nc-tile-wrap > .ms-nc-tile { width: 100%; }
 .ms-nc-link {
-  position: absolute; left: 76px; top: 30px; width: 24px; height: 24px; margin: 0; padding: 0; border: 0; border-radius: 6px;
+  position: absolute; left: 76px; top: 24px; width: 24px; height: 24px; margin: 0; padding: 0; border: 0; border-radius: 6px;
   display: inline-flex; align-items: center; justify-content: center; background: transparent; color: var(--muted); font: inherit;
 }
 button.ms-nc-link { cursor: pointer; transition: background var(--d-s) var(--e-std), color var(--d-s) var(--e-std); }
@@ -213,18 +213,20 @@ button.ms-nc-link:focus-visible { outline: 2px solid var(--accent); outline-offs
 .ms-nc-tile-text b { font-weight: 600; }
 .ms-nc-tile-meta { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
 .ms-nc-tile .ms-nc-tick { right: 8px; top: 8px; }
-/* Report 58: the copies counter "− N +" of a selected tile, in place of the tick (a sibling of the tile button). 46 px wide, so
-   on the narrowest tile (118 px) it stays clear of the widest drawn frame (56 px); the link toggle sits below it. */
+/* Report 58: a selected tile with the copies counter grows by its row (the others keep 112 px: the grid aligns them to the
+   start); the counter "−  N  +" spans the tile under the name and meta, laid over the tile button (a sibling of it). */
+.ms-nc-tiles { align-items: start; }
+.ms-nc-has-copies > .ms-nc-tile { height: 148px; padding-bottom: 46px; }
 .ms-nc-copies {
-  position: absolute; right: 4px; top: 4px; height: 22px; display: flex; align-items: center; border-radius: 7px;
-  background: var(--sel); color: var(--accentText);
+  position: absolute; left: 8px; right: 8px; bottom: 8px; height: 28px; display: flex; align-items: center; justify-content: space-between;
+  border-radius: 8px; background: var(--sel); color: var(--accentText);
 }
-.ms-btn.ms-icon.ms-nc-copy-btn { width: 16px; height: 22px; border-radius: 6px; color: inherit; }
-.ms-btn.ms-icon.ms-nc-copy-btn:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); color: inherit; }
+.ms-btn.ms-nc-copy-btn { color: inherit; }
+.ms-btn.ms-nc-copy-btn:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); color: inherit; }
 .ms-btn.ms-nc-copy-btn[aria-disabled="true"] { opacity: .4; cursor: default; }
 .ms-btn.ms-nc-copy-btn[aria-disabled="true"]:active { transform: none; }
 .ms-nc-copy-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.ms-nc-copies-n { min-width: 14px; text-align: center; font: 600 11px/1 var(--mono); font-variant-numeric: tabular-nums; }
+.ms-nc-copies-n { flex: 1; min-width: 0; text-align: center; font: 600 13px/1 var(--mono); font-variant-numeric: tabular-nums; }
 .ms-nc-skel { cursor: default; box-shadow: 0 0 0 1px var(--line2); background: var(--panel); }
 
 .ms-nc-more { display: flex; flex-direction: column; gap: 10px; }

@@ -792,14 +792,16 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
 
           {/* Channel groups flow on one six-column grid (as on the board): a short group shares its row with the next. */}
           {visibleGroups.length ? <div className="ms-nc-groups">{visibleGroups.map(({ g, items }) => {
-            const count = selected.filter((id) => items.some((p) => p.id === presetOf(id))).length;
+            // Tiles and copies apart (report 58): "1 selezionato · 12 copie" only when some tile has copies.
+            const count = items.filter((p) => selected.includes(p.id)).length;
+            const instances = selected.filter((id) => items.some((p) => p.id === presetOf(id))).length;
             const name = channelName(g, locale);
             return (
               <div key={g} className="ms-nc-group" role="group" aria-label={name} data-enter style={{ '--cols': Math.min(items.length + (packIn(g) ? 1 : 0), TILE_COLUMNS) } as CSSProperties}>
                 <div className="ms-nc-ghead">
                   <ChannelMark channel={channelOf(g)} size={20} />
                   <b className="ms-nc-ell">{name}</b>
-                  {count ? <span className="ms-nc-faint ms-nc-small">{n.selectedCount({ n: count })}</span> : null}
+                  {count ? <span className="ms-nc-faint ms-nc-small">{n.selectedCount({ n: count })}{instances > count ? ` · ${n.copiesValue({ n: instances })}` : ''}</span> : null}
                 </div>
                 <div className="ms-nc-tiles">
                   {packIn(g) ? <PackTile pack={pack} onOpen={() => setPackOpen(true)} onRemove={() => setPack(null)} /> : null}
@@ -922,7 +924,8 @@ function PackTile({ pack, onOpen, onRemove }: { pack: StorePack | null; onOpen()
  * One format of the board (prototype Tile): drawn proportion with the kind icon, name, ratio and maximum length. A chosen
  * format that can share an earlier one's file has a link toggle (`link`, a sibling of the tile button, never inside it);
  * one of the same size that cannot says why (`blocked`). A chosen format (not an identity one) has the copies counter
- * "− N +" in place of the tick (`copies`, report 58), also a sibling of the tile button, so its clicks never deselect.
+ * "− N +" as a full-width row at the bottom of the tile, which grows to hold it (`copies`, report 58); the counter is a sibling
+ * of the tile button laid over the tile, so its clicks never deselect.
  */
 function Tile({ preset: p, on, onClick, copies, link, blocked }: {
   preset: FormatPreset; on: boolean; onClick(): void;
@@ -948,7 +951,7 @@ function Tile({ preset: p, on, onClick, copies, link, blocked }: {
   const label = formatLabel(p, locale);
   const why = blocked ? n.notLinkable(blocked) : null;
   return (
-    <div className="ms-nc-tile-wrap" data-format={p.id}>
+    <div className={cx('ms-nc-tile-wrap', copies && 'ms-nc-has-copies')} data-format={p.id}>
       <button ref={ref} type="button" className={cx('ms-nc-tile', on && 'ms-on')} aria-pressed={on} onClick={onClick} title={`${p.width}×${p.height}`}>
         <span className="ms-nc-tile-top">
           <span className="ms-nc-frame" style={{ width: w, height: fh }} aria-hidden="true">
@@ -959,7 +962,7 @@ function Tile({ preset: p, on, onClick, copies, link, blocked }: {
           <b className="ms-nc-ell">{formatName(p, locale)}</b>
           <span className="ms-nc-tile-meta ms-nc-ell">{ratioLabel(p.width, p.height)} · {note}</span>
         </span>
-        {on && !copies ? <span className="ms-nc-tick" aria-hidden="true"><Icon name="check" size={10} strokeWidth={2.4} /></span> : null}
+        {on ? <span className="ms-nc-tick" aria-hidden="true"><Icon name="check" size={10} strokeWidth={2.4} /></span> : null}
       </button>
       {copies ? <Copies label={label} n={copies.n} onChange={copies.onChange} /> : null}
       {link ? (
@@ -986,12 +989,12 @@ function Copies({ label, n, onChange }: { label: string; n: number; onChange(n: 
   const atMax = n >= MAX_INSTANCES;
   return (
     <div className="ms-nc-copies" role="group" aria-label={c.copiesLabel({ label })} title={c.copiesHint}>
-      <Button variant="ghost" icon className="ms-nc-copy-btn" aria-label={c.copiesLess} aria-disabled={atMin || undefined}
-        onClick={() => { if (!atMin) onChange(n - 1); }}><Icon name="minus" size={10} strokeWidth={2.2} /></Button>
+      <Button variant="ghost" size="sm" icon className="ms-nc-copy-btn" aria-label={c.copiesLess} aria-disabled={atMin || undefined}
+        onClick={() => { if (!atMin) onChange(n - 1); }}><Icon name="minus" size={14} /></Button>
       <span className="ms-nc-copies-n" aria-hidden="true">{n}</span>
       <span className="ms-sr" role="status">{c.copiesValue({ n })}</span>
-      <Button variant="ghost" icon className="ms-nc-copy-btn" aria-label={c.copiesMore} aria-disabled={atMax || undefined}
-        onClick={() => { if (!atMax) onChange(n + 1); }}><Icon name="plus" size={10} strokeWidth={2.2} /></Button>
+      <Button variant="ghost" size="sm" icon className="ms-nc-copy-btn" aria-label={c.copiesMore} aria-disabled={atMax || undefined}
+        onClick={() => { if (!atMax) onChange(n + 1); }}><Icon name="plus" size={14} /></Button>
     </div>
   );
 }
