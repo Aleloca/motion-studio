@@ -23,6 +23,11 @@ export const formatPresetSchema = z.object({
   targetBitrateKbps: z.number().positive().optional(),
   /** Phase 14: an identity format (a vector composition that writes a whole file set, see `IDENTITY_SETS`). */
   identity: z.enum(['logo', 'favicon', 'app-icon']).optional(),
+  /**
+   * Report 59: a custom preset the user deleted while creatives still use it. It stays in the catalog so they keep working
+   * (renders, previews, export), and is offered nowhere: not on the board, not to the brief agent.
+   */
+  hidden: z.literal(true).optional(),
 });
 export type FormatPreset = z.infer<typeof formatPresetSchema>;
 
@@ -195,4 +200,48 @@ export function servicesForFormats(services: BriefServices | undefined, formatId
   if (!ps.some((p) => p.kind === 'video')) { out.voice = 'none'; out.music = 'none'; out.sfx = 'none'; }
   if (ps.every((p) => p.identity)) out.images = 'none';
   return out;
+}
+
+/** Report 59: the channel of the presets the user defines from New creative ("Personalizzati"). */
+export const CUSTOM_CHANNEL = 'custom';
+export const CUSTOM_NAME_MAX = 60;
+/** Longest maximum duration (seconds) a custom video format may set. */
+export const CUSTOM_DURATION_MAX = 3600;
+export const isCustomPreset = (p: Pick<FormatPreset, 'channel'>): boolean => p.channel === CUSTOM_CHANNEL;
+
+/** What the user gives for a custom format (the dialog's fields); the rest is derived (`customPreset`). */
+export const customFormatInputSchema = z.object({
+  name: z.string().trim().min(1).max(CUSTOM_NAME_MAX),
+  kind: z.enum(['video', 'image']),
+  width: z.number().int().min(16).max(8192),
+  height: z.number().int().min(16).max(8192),
+  /** Videos only (ignored for an image); absent: no limit of its own. */
+  maxDurationSec: z.number().int().min(1).max(CUSTOM_DURATION_MAX).optional(),
+}).strict();
+export type CustomFormatInput = z.infer<typeof customFormatInputSchema>;
+
+/** Longest slug kept from the name: `custom-` plus it plus a `-NNN` suffix stays within the 63 characters of a preset id. */
+const CUSTOM_SLUG_MAX = 40;
+
+/**
+ * A new custom preset's id: `custom-<slug of the name>` (accents dropped, anything else a dash), `custom-format` when nothing is
+ * left, with `-2`, `-3`… when the id is `taken` (every id of the catalog, hidden ones too). The id never changes afterwards.
+ */
+export function customPresetId(name: string, taken: ReadonlySet<string>): string {
+  const slug = name.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+    .slice(0, CUSTOM_SLUG_MAX).replace(/^-+|-+$/g, '');
+  const base = `${CUSTOM_CHANNEL}-${slug || 'format'}`;
+  if (!taken.has(base)) return base;
+  for (let k = 2; ; k++) if (!taken.has(`${base}-${k}`)) return `${base}-${k}`;
+}
+
+/**
+ * The preset of a custom format: the shipped extensions of its kind, a target bitrate for a video (as every shipped video has),
+ * the maximum duration for a video only; no safe zone, no file limit. The name is stored trimmed and shown as stored.
+ */
+export function customPreset(input: CustomFormatInput, id: string): FormatPreset {
+  const name = input.name.trim();
+  return input.kind === 'video'
+    ? v(id, CUSTOM_CHANNEL, name, input.width, input.height, input.maxDurationSec !== undefined ? { maxDurationSec: input.maxDurationSec } : {})
+    : i(id, CUSTOM_CHANNEL, name, input.width, input.height);
 }

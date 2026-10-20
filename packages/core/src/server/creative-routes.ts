@@ -37,6 +37,7 @@ import { editorCompositionView } from '../creatives/editor-staging.ts';
 import { directEditBodySchema, type DirectEditService } from '../creatives/direct-edit.ts';
 import { sweepProjectRenders } from '../render/render-sweep.ts';
 import { FormatCatalog, findPreset } from '../formats/format-catalog.ts';
+import { addCustomFormat, customFormatUsage, deleteCustomFormat, editCustomFormat } from '../formats/custom-formats.ts';
 import { mergeStorePack, verifyScreens } from '../store-pack/brief.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { completeGitignore, sweepProject } from '../project-maintenance.ts';
@@ -391,6 +392,11 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   app.get('/api/formats', async () => catalog().load());
   app.put<{ Body: { presets?: unknown } }>('/api/formats', async (req) => catalog().save((req.body?.presets ?? []) as never));
   app.post('/api/formats/reset', async () => catalog().resetToDefaults());
+  // Report 59: custom formats from New creative, one preset per call (each change read and written under the catalog's lock).
+  app.post('/api/formats/custom', async (req) => addCustomFormat(catalog(), req.body));
+  app.put<{ Params: { id: string } }>('/api/formats/custom/:id', async (req) => editCustomFormat(catalog(), ctx.requireWorkspace(), req.params.id, req.body));
+  app.delete<{ Params: { id: string } }>('/api/formats/custom/:id', async (req) => deleteCustomFormat(catalog(), ctx.requireWorkspace(), req.params.id));
+  app.get<{ Params: { id: string } }>('/api/formats/custom/:id/usage', async (req) => customFormatUsage(catalog(), ctx.requireWorkspace(), req.params.id));
 
   // Decision 915: the archived creatives are left out; `?archived=1` lists only them (the "Archiviate" section).
   app.get<{ Params: { slug: string }; Querystring: { archived?: string } }>('/api/projects/:slug/creatives', async (req) => {

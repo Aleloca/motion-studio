@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { DEFAULT_FORMATS, formatsFileSchema, instancePreset, issuesText, type FormatPreset } from '@motion-studio/shared';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
-import { WorkspaceError } from '../workspace-store.ts';
+import { CodedError, WorkspaceError } from '../workspace-store.ts';
 import { fileLock } from '../file-locks.ts';
 import { currentLocale, t } from '../i18n.ts';
 
@@ -41,15 +41,8 @@ export class FormatCatalog {
   load(): Promise<CatalogState> {
     return this.locked(async () => {
       try {
-        const file = await readJsonFile(this.path, formatsFileSchema);
-        // New built-in presets reach existing workspaces (ruling AK): a default never offered to this file is appended; one
-        // offered before and missing now was deleted by the user and stays deleted. Written only when something changed.
-        const seen = new Set(file.seenDefaults ?? LEGACY_DEFAULT_IDS);
-        const have = new Set(file.presets.map((p) => p.id));
-        const added = DEFAULT_FORMATS.filter((p) => !have.has(p.id) && !seen.has(p.id));
-        const allSeen = DEFAULT_FORMATS.every((p) => seen.has(p.id));
-        if (added.length === 0 && allSeen && file.seenDefaults !== undefined) return { presets: file.presets, error: null, path: this.path };
-        const presets = [...file.presets, ...added];
+        const { presets, seen, upgraded } = await this.read();
+        if (!upgraded) return { presets, error: null, path: this.path };
         // Best effort: a workspace that cannot be written still gets the new presets in memory; after one failed write the
         // file is not written again on every load (only a save or a reset, or a new process, tries again).
         if (upgradeFailed.has(this.path)) return { presets, error: null, path: this.path };
@@ -64,6 +57,42 @@ export class FormatCatalog {
         }
         throw err;
       }
+    });
+  }
+
+  /**
+   * Reads the file, with the defaults it was never offered appended (ruling AK): a default never offered to this file is
+   * appended; one offered before and missing now was deleted by the user and stays deleted. `upgraded`: the file needs writing.
+   */
+  private async read(): Promise<{ presets: FormatPreset[]; seen: Set<string>; upgraded: boolean }> {
+    const file = await readJsonFile(this.path, formatsFileSchema);
+    const seen = new Set(file.seenDefaults ?? LEGACY_DEFAULT_IDS);
+    const have = new Set(file.presets.map((p) => p.id));
+    const added = DEFAULT_FORMATS.filter((p) => !have.has(p.id) && !seen.has(p.id));
+    const upgraded = added.length > 0 || !DEFAULT_FORMATS.every((p) => seen.has(p.id)) || file.seenDefaults === undefined;
+    return { presets: [...file.presets, ...added], seen, upgraded };
+  }
+
+  /**
+   * Report 59: one change of the catalog, read and written under the file's lock, so two windows changing it at once both land
+   * (the client never writes the whole list). The file's `seenDefaults` are kept. A file that cannot be read is never written
+   * over (409): the user's catalog would be lost for the defaults.
+   */
+  mutate(change: (presets: FormatPreset[]) => FormatPreset[] | Promise<FormatPreset[]>): Promise<CatalogState> {
+    return this.locked(async () => {
+      let current: { presets: FormatPreset[]; seen: Iterable<string> };
+      try {
+        current = await this.read();
+      } catch (err) {
+        if (err instanceof JsonFileError && err.reason === 'missing') current = { presets: DEFAULT_FORMATS, seen: DEFAULT_FORMATS.map((p) => p.id) };
+        else if (err instanceof JsonFileError) throw new CodedError(409, t().errors.formatCatalogUnreadable({ detail: err.message }), 'format-catalog-unreadable');
+        else throw err;
+      }
+      const parsed = formatsFileSchema.safeParse({ schemaVersion: 1, presets: await change(current.presets) });
+      if (!parsed.success) {
+        throw new WorkspaceError(400, t().errors.formatCatalogInvalid({ detail: issuesText(parsed.error, currentLocale()) }));
+      }
+      return this.write(parsed.data.presets, seenDefaultsOf(current.seen));
     });
   }
 
