@@ -436,6 +436,14 @@ arrives and worked on later together.
     makes all of them, each with a speaking name (report 55). The brief agent can set the count too.
     Timing: now.
 
+59. **A custom format from New creative.** The user wants a "custom" tile on the format board: a click opens a modal
+    to define the format (video or image, size…), which is then added to the list and passed to the agent.
+    User's decisions: it goes into the catalog for good (a "Personalizzati" group on the board, in every creative and
+    project, editable and deletable from its tile); the modal has the essentials only: name, video or image, width ×
+    height in px (with one-click ratios 1:1, 4:5, 9:16, 16:9), and the max duration for videos. No safe zones, file
+    limits or bitrate.
+    Timing: now, after 58 (same screen).
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
