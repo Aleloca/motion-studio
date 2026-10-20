@@ -10,11 +10,10 @@ import { href } from '../routes.ts';
 import { useNewCreativeAssetsIntent } from '../shell/intents.ts';
 import { go, ShellContext } from '../shell/ShellContext.tsx';
 import { isMac } from '../platform.ts';
-import { Button, ChannelMark, Chip, Empty, Icon, Input, Pill, Popover, Segmented, Spinner, cx, initials, toast } from '../ui/index.ts';
+import { Button, ChannelMark, Chip, Empty, Icon, Input, Pill, Segmented, cx, initials, toast } from '../ui/index.ts';
 import { channelOf } from './creativeState.ts';
 import './newcreative.css';
 import { message as errText } from './common.tsx';
-import { isVideoFile } from '../media.ts';
 import { IdentityStart, identityForBrief, primaryLogoOf, resolveIdentity } from './identity/IdentityStart.tsx';
 import { StorePackWizard } from './new-creative/StorePackWizard.tsx';
 import { packParts } from './new-creative/storePackModel.ts';
@@ -24,6 +23,7 @@ import { BRIEF_TEXT_MAX, variantIdAt } from '@motion-studio/shared';
 import './new-creative/storepack.css';
 import { LENGTHS, formSnapshot, lengthOf, mergeView, type LengthChoice } from './new-creative/briefSessionModel.ts';
 import { useBriefSession } from './new-creative/useBriefSession.ts';
+import { AssetFace, LibraryPicker } from './new-creative/LibraryPicker.tsx';
 
 
 /** Brief length shown under the field (decisions log 1220: the shared safety cap, no longer 2000). */
@@ -41,7 +41,6 @@ const SCREENSHOT_FORMAT = 'appstore-iphone-69';
 const SUMMARY_FRAMES = 5;
 /** Format tiles per row on a wide board (newcreative.css). */
 const TILE_COLUMNS = 6;
-const VISUAL = /^(image|svg|video)$/;
 
 /**
  * Creative title from the brief: its first sentence, at most 60 characters cut on a word boundary, without trailing
@@ -386,7 +385,6 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   const hasBrand = !!kit && (kit.colors.length > 0 || kit.fonts.length > 0 || kit.logos.length > 0 || kit.tone !== null);
   // The brand in one line, as on the board: heading font · main colour · tone.
   const brandLine = kit ? [kit.fonts[0]?.family, kit.colors[0]?.name, kit.tone?.text].filter(Boolean).join(' · ') : '';
-  const libraryItems = (library.value ?? []).filter((a) => a.kind !== 'font');
   const entryOf = (path: string) => library.value?.find((a) => assetPath(a.file) === path) ?? null;
 
   // ---- Decision 1422: the brief session and the form ----
@@ -732,53 +730,10 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
 
       <StorePackWizard open={packOpen} onClose={() => setPackOpen(false)} slug={slug} {...(pack ? { initial: pack } : {})} onConfirm={(p) => { setPack(p); setFormatError(false); }} />
 
-      <Popover open={pickerOpen} onClose={() => setPickerOpen(false)} anchor={pickerAnchor} placement="bottom-end" width={360}>
-        <div role="dialog" aria-label={n.libraryTitle({ project: projectName })} className="ms-nc-picker">
-          <span className="ms-nc-cap ms-nc-ell">{n.libraryTitle({ project: projectName })}</span>
-          {library.value === null && !library.error ? (
-            <div className="ms-nc-pick-state" role="status"><Spinner size={14} decorative />{n.libraryLoading}</div>
-          ) : library.error && library.value === null ? (
-            <div className="ms-nc-pick-state ms-nc-wrap" role="alert">
-              <span>{n.libraryFailed({ detail: library.error })}</span>
-              <Button size="sm" variant="outline" onClick={() => { setLibrary({ value: null, error: null }); setLibraryNonce((x) => x + 1); }}>{n.tryAgain}</Button>
-            </div>
-          ) : null}
-          {library.error && library.value !== null ? (
-            <p className="ms-nc-pick-warn" role="status"><Icon name="warn" size={13} /><span>{n.libraryPartial({ detail: library.error })}</span></p>
-          ) : null}
-          {library.value === null ? null : libraryItems.length === 0 ? (
-            <Empty icon="image" title={n.libraryEmpty} sub={n.libraryEmptyBody} action={<Button size="sm" variant="outline" onClick={() => { setPickerOpen(false); go(href.project(slug, 'assets')); }}>{n.openAssets}</Button>} />
-          ) : (
-            <div className="ms-nc-pick-grid">
-              {libraryItems.map((a) => {
-                const path = assetPath(a.file);
-                const on = picked.includes(path);
-                return (
-                  <button key={a.file} type="button" data-row className={cx('ms-nc-pick', on && 'ms-on')} aria-pressed={on} aria-label={a.file} title={a.description || a.file} onClick={() => togglePicked(path)}>
-                    <AssetFace slug={slug} path={path} entry={a} />
-                    {on ? <span className="ms-nc-tick" aria-hidden="true"><Icon name="check" size={10} strokeWidth={2.4} /></span> : null}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </Popover>
+      <LibraryPicker slug={slug} projectName={projectName} open={pickerOpen} onClose={() => setPickerOpen(false)} anchor={pickerAnchor} library={library}
+        onRetry={() => { setLibrary({ value: null, error: null }); setLibraryNonce((x) => x + 1); }} chosen={picked} onToggle={togglePicked} />
     </div>
   );
-}
-
-/** Thumbnail of a library file: the picture for images, SVGs and videos; an icon and the name otherwise. */
-function AssetFace({ slug, path, entry, small }: { slug: string; path: string; entry: AssetEntry | null; small?: boolean }) {
-  const kind = entry?.kind ?? (isVideoFile(path) ? 'video' : /\.(png|jpe?g|webp|gif|avif|svg)$/i.test(path) ? 'image' : 'other');
-  const url = api.projectFileUrl(slug, path);
-  if (VISUAL.test(kind)) {
-    return kind === 'video'
-      ? <video className={cx('ms-nc-face', small && 'ms-sm')} src={url} muted preload="metadata" aria-hidden="true" />
-      : <img className={cx('ms-nc-face', kind === 'svg' && 'ms-nc-face-svg', small && 'ms-sm')} src={url} alt="" />;
-  }
-  if (small) return <span className="ms-nc-face ms-sm ms-nc-face-file" aria-hidden="true"><Icon name="folder" size={10} /></span>;
-  return <span className="ms-nc-face ms-nc-face-file" aria-hidden="true"><Icon name={kind === 'audio' ? 'play' : 'folder'} size={14} /><span>{baseName(path)}</span></span>;
 }
 
 /**
