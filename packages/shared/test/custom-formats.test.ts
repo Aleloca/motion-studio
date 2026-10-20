@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { channelName, CUSTOM_CHANNEL, customFormatInputSchema, customPreset, customPresetId, DEFAULT_FORMATS, formatLabel, formatName, formatPresetSchema, isCustomPreset, videoTargetBitrateKbps } from '../src/index.ts';
+import { channelGroup, channelName, CUSTOM_CHANNEL, isCustomChannel, sameCustomName, customFormatInputSchema, customPreset, customPresetId, DEFAULT_FORMATS, formatLabel, formatName, formatPresetSchema, isCustomPreset, videoTargetBitrateKbps } from '../src/index.ts';
 
 describe('custom formats (report 59)', () => {
   it('derives an id from the name that matches the preset id rule, with a suffix on a clash', () => {
@@ -55,5 +55,26 @@ describe('custom formats (report 59)', () => {
   it('a hidden preset (deleted while in use) stays a valid preset', () => {
     const p = { ...customPreset({ name: 'A', kind: 'image', width: 100, height: 100 }, 'custom-a'), hidden: true as const };
     expect(formatPresetSchema.safeParse(p).success).toBe(true);
+  });
+
+  it('a video needs even sides of at most 4096 px (H.264 in yuv420p); an image does not', () => {
+    const v = { name: 'A', kind: 'video', width: 1080, height: 1920 };
+    expect(customFormatInputSchema.safeParse(v).success).toBe(true);
+    const odd = customFormatInputSchema.safeParse({ ...v, width: 1081 });
+    expect(odd.success).toBe(false);
+    expect(odd.error!.issues[0]).toMatchObject({ path: ['width'], message: 'issue.customVideoEven' });
+    expect(customFormatInputSchema.safeParse({ ...v, height: 4098 }).error!.issues[0]).toMatchObject({ path: ['height'], message: 'issue.customVideoMax' });
+    expect(customFormatInputSchema.safeParse({ ...v, kind: 'image', width: 1081, height: 8000 }).success).toBe(true);
+  });
+
+  it('no shipped preset id starts with custom-, so a custom id never shadows one', () => {
+    expect(DEFAULT_FORMATS.filter((p) => p.id.startsWith('custom-'))).toEqual([]);
+  });
+
+  it('"Custom" in any casing is the custom group; names compare as NFC, case-insensitive', () => {
+    expect(isCustomChannel(' Custom ')).toBe(true);
+    expect(channelGroup('CUSTOM')).toBe(CUSTOM_CHANNEL);
+    expect(channelGroup('Instagram')).toBe('Instagram');
+    expect(sameCustomName('Caff\u0065\u0301', 'CAFF\u00c9 ')).toBe(true);
   });
 });

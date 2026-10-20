@@ -6,6 +6,8 @@ import type { BriefServices } from './services.ts';
 export type FormatKind = 'video' | 'image';
 
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+/** Most deleted custom ids a catalog file remembers (report 59). */
+export const MAX_DELETED_CUSTOM = 5000;
 
 export const formatPresetSchema = z.object({
   id: z.string().regex(ID_RE),
@@ -40,6 +42,11 @@ export const formatsFileSchema = z.object({
    * written before Phase 14 (the core reads it as the defaults of that time).
    */
   seenDefaults: z.array(z.string().min(1).max(200)).max(1000).optional(),
+  /**
+   * Report 59: the ids of custom presets deleted from this file, never given to a new custom format again (a brief, a draft or
+   * a session that still names one must not find another format under it).
+   */
+  deletedCustom: z.array(z.string().regex(ID_RE)).max(MAX_DELETED_CUSTOM).optional(),
 }).refine((f) => new Set(f.presets.map((p) => p.id)).size === f.presets.length, { message: 'issue.duplicatePresetIds', path: ['presets'] });
 export type FormatsFile = z.infer<typeof formatsFileSchema>;
 
@@ -207,7 +214,16 @@ export const CUSTOM_CHANNEL = 'custom';
 export const CUSTOM_NAME_MAX = 60;
 /** Longest maximum duration (seconds) a custom video format may set. */
 export const CUSTOM_DURATION_MAX = 3600;
-export const isCustomPreset = (p: Pick<FormatPreset, 'channel'>): boolean => p.channel === CUSTOM_CHANNEL;
+/** Largest side of a custom video (the largest shipped video is 3840 × 2160). */
+export const CUSTOM_VIDEO_MAX = 4096;
+/** A channel called "custom" in any casing is the custom group: never two groups both titled "Personalizzati". */
+export const isCustomChannel = (channel: string): boolean => channel.trim().toLowerCase() === CUSTOM_CHANNEL;
+export const isCustomPreset = (p: Pick<FormatPreset, 'channel'>): boolean => isCustomChannel(p.channel);
+/** The group a channel's presets are shown in: the custom group for any casing of "custom", else the channel itself. */
+export const channelGroup = (channel: string): string => (isCustomChannel(channel) ? CUSTOM_CHANNEL : channel);
+/** Names compared as the user reads them: Unicode NFC, trimmed, case-insensitive. */
+export const sameCustomName = (a: string, b: string): boolean =>
+  a.normalize('NFC').trim().toLocaleLowerCase() === b.normalize('NFC').trim().toLocaleLowerCase();
 
 /** What the user gives for a custom format (the dialog's fields); the rest is derived (`customPreset`). */
 export const customFormatInputSchema = z.object({
@@ -217,7 +233,14 @@ export const customFormatInputSchema = z.object({
   height: z.number().int().min(16).max(8192),
   /** Videos only (ignored for an image); absent: no limit of its own. */
   maxDurationSec: z.number().int().min(1).max(CUSTOM_DURATION_MAX).optional(),
-}).strict();
+}).strict().superRefine((f, ctx) => {
+  // An H.264 video in yuv420p needs even sides (ffmpeg refuses 1081 × 1920), and a size it was used at never changes again.
+  if (f.kind !== 'video') return;
+  for (const k of ['width', 'height'] as const) {
+    if (f[k] > CUSTOM_VIDEO_MAX) ctx.addIssue({ code: 'custom', path: [k], message: 'issue.customVideoMax' });
+    else if (f[k] % 2 !== 0) ctx.addIssue({ code: 'custom', path: [k], message: 'issue.customVideoEven' });
+  }
+});
 export type CustomFormatInput = z.infer<typeof customFormatInputSchema>;
 
 /** Longest slug kept from the name: `custom-` plus it plus a `-NNN` suffix stays within the 63 characters of a preset id. */

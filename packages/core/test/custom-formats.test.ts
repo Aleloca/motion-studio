@@ -1,11 +1,12 @@
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
-import { CUSTOM_CHANNEL, DEFAULT_FORMATS, type FormatPreset } from '@motion-studio/shared';
+import { CUSTOM_CHANNEL, DEFAULT_FORMATS, EMPTY_BRIEF_FORM, type FormatPreset } from '@motion-studio/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FormatCatalog } from '../src/formats/format-catalog.ts';
+import { deleteCustomFormat, scanUsage } from '../src/formats/custom-formats.ts';
 import { listFormats } from '../src/brief/brief-tools.ts';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AppConfigStore } from '../src/app-config.ts';
@@ -34,8 +35,9 @@ const add = (body: unknown) => app.inject({ method: 'POST', url: '/api/formats/c
 const edit = (id: string, body: unknown) => app.inject({ method: 'PUT', url: `/api/formats/custom/${id}`, payload: body as object });
 const remove = (id: string) => app.inject({ method: 'DELETE', url: `/api/formats/custom/${id}` });
 const catalog = async (): Promise<FormatPreset[]> => (await app.inject('/api/formats')).json().presets;
-const useIn = (formats: string[]) => app.inject({ method: 'POST', url: '/api/projects/acme/creatives',
-  payload: { title: 'Lancio', brief: { goal: 'Lancio', message: '', formats, durationSec: 10, assets: [], notes: '' }, generate: false } });
+const useIn = (formats: string[], durationSec = 10) => app.inject({ method: 'POST', url: '/api/projects/acme/creatives',
+  payload: { title: 'Lancio', brief: { goal: 'Lancio', message: '', formats, durationSec, assets: [], notes: '' }, generate: false } });
+const ws = () => join(base, 'ws');
 
 describe('custom formats: add', () => {
   it('adds one preset to the catalog, in the custom channel, with a derived id, and keeps the rest', async () => {
@@ -59,7 +61,7 @@ describe('custom formats: add', () => {
 
   it('validates the fields (400, nothing written)', async () => {
     const before = await catalog();
-    for (const bad of [{ ...totem, name: '' }, { ...totem, width: 15 }, { ...totem, height: 9000 }, { ...totem, width: 10.5 }, { ...totem, maxDurationSec: -1 }, { ...totem, kind: 'gif' }, { ...totem, channel: 'x' }]) {
+    for (const bad of [{ ...totem, width: 1081 }, { ...totem, height: 4098 }, { ...totem, name: '' }, { ...totem, width: 15 }, { ...totem, height: 9000 }, { ...totem, width: 10.5 }, { ...totem, maxDurationSec: -1 }, { ...totem, kind: 'gif' }, { ...totem, channel: 'x' }]) {
       expect((await add(bad)).statusCode).toBe(400);
     }
     expect(await catalog()).toEqual(before);
@@ -99,10 +101,20 @@ describe('custom formats: edit', () => {
     expect((await remove('custom-nope')).statusCode).toBe(404);
   });
 
+  it('the maximum length never drops below the longest a creative uses it at (409)', async () => {
+    await add(totem);
+    expect((await useIn(['custom-totem'], 20)).statusCode).toBe(201);
+    const r = await edit('custom-totem', { ...totem, maxDurationSec: 15 });
+    expect(r.statusCode).toBe(409);
+    expect(r.json().code).toBe('custom-format-duration-too-short');
+    expect((await edit('custom-totem', { ...totem, maxDurationSec: 20 })).statusCode).toBe(200);
+    expect((await edit('custom-totem', { ...totem, maxDurationSec: undefined })).statusCode).toBe(200);
+  });
+
   it('a preset in use keeps its kind and size (409) but takes a new name and duration', async () => {
     await add(totem);
     expect((await useIn(['custom-totem', 'custom-totem@2'])).statusCode).toBe(201);
-    expect((await app.inject('/api/formats/custom/custom-totem/usage')).json()).toEqual({ creatives: 1 });
+    expect((await app.inject('/api/formats/custom/custom-totem/usage')).json()).toEqual({ creatives: 1, unreadable: 0, longestSec: 10 });
     const size = await edit('custom-totem', { ...totem, width: 1000 });
     expect(size.statusCode).toBe(409);
     expect(size.json().code).toBe('custom-format-in-use');
@@ -114,11 +126,59 @@ describe('custom formats: edit', () => {
 });
 
 describe('custom formats: delete', () => {
-  it('removes an unused preset from the catalog', async () => {
+  it('removes an unused preset from the catalog; its id is never given again', async () => {
     await add(totem);
     const r = await remove('custom-totem');
     expect(r.json()).toMatchObject({ outcome: 'deleted' });
     expect((await catalog()).some((p) => p.id === 'custom-totem')).toBe(false);
+    expect((await add(totem)).json().preset.id).toBe('custom-totem-2');
+    expect(JSON.parse(await readFile(join(ws(), '.studio', 'presets', 'formats.json'), 'utf8')).deletedCustom).toEqual(['custom-totem']);
+  });
+
+  it('a hidden preset no creative uses any more goes on the next add, its id remembered', async () => {
+    await add(totem);
+    const created = (await useIn(['custom-totem'])).json();
+    expect((await remove('custom-totem')).json().outcome).toBe('hidden');
+    await rm(join(ws(), 'acme', 'creatives', created.slug), { recursive: true });
+    await add({ ...totem, name: 'Altro' });
+    const presets = await catalog();
+    expect(presets.some((p) => p.id === 'custom-totem')).toBe(false);
+    expect((await add(totem)).json().preset.id).toBe('custom-totem-2');
+  });
+
+  it('a folder of creatives it cannot list counts as a use (hidden, kind and size locked)', async () => {
+    await add(totem);
+    await mkdir(join(ws(), 'acme', 'creatives'), { recursive: true });
+    await chmod(join(ws(), 'acme', 'creatives'), 0o000);
+    try {
+      expect((await app.inject('/api/formats/custom/custom-totem/usage')).json()).toMatchObject({ creatives: 0, unreadable: 1 });
+      expect((await edit('custom-totem', { ...totem, width: 1000 })).statusCode).toBe(409);
+      expect((await remove('custom-totem')).json().outcome).toBe('hidden');
+    } finally { await chmod(join(ws(), 'acme', 'creatives'), 0o755); }
+  });
+
+  it('a slug-shaped folder without project.json is scanned too', async () => {
+    await add(totem);
+    const created = (await useIn(['custom-totem'])).json();
+    await rm(join(ws(), 'acme', 'project.json'));
+    expect((await app.inject(`/api/formats/custom/custom-totem/usage`)).json()).toMatchObject({ creatives: 1 });
+    expect(created.slug).toBeTruthy();
+  });
+
+  it('the catalog is not locked while the scan runs (renders and previews keep loading it)', async () => {
+    await add(totem);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let scanning = false;
+    const slow: typeof scanUsage = async (w, prev) => { if (!prev) { scanning = true; await gate; } return scanUsage(w, prev); };
+    const c = new FormatCatalog(ws());
+    const pending = deleteCustomFormat({ catalog: c, ws: { root: ws() }, scan: slow }, 'custom-totem');
+    await vi.waitFor(() => expect(scanning).toBe(true));
+    // A load during the scan answers at once.
+    const loaded = await Promise.race([c.load().then(() => 'loaded'), new Promise((r) => setTimeout(() => r('blocked'), 1000))]);
+    expect(loaded).toBe('loaded');
+    release();
+    expect((await pending).outcome).toBe('deleted');
   });
 
   it('hides a preset a creative uses: the creative keeps it, the board and the agent do not', async () => {
@@ -144,6 +204,52 @@ describe('custom formats: delete', () => {
     const created = (await useIn(['custom-totem'])).json();
     expect((await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${created.slug}/archive` })).statusCode).toBe(200);
     expect((await remove('custom-totem')).json().outcome).toBe('hidden');
+  });
+});
+
+describe('a format no longer offered is refused (400) where a brief names it', () => {
+  it('(a) deleted in one window, a creative made in another with it', async () => {
+    await add(totem);
+    await remove('custom-totem');
+    const r = await useIn(['instagram-post-1x1', 'custom-totem']);
+    expect(r.statusCode).toBe(400);
+    expect(r.json().code).toBe('format-unavailable');
+    expect((await useIn(['never-a-preset'])).json().code).toBe('format-unavailable');
+  });
+
+  it('a brief save may keep a hidden format it has, never add one', async () => {
+    await add(totem);
+    await add({ ...totem, name: 'Due' });
+    const created = (await useIn(['custom-totem'])).json();
+    await useIn(['custom-due']);
+    await remove('custom-totem');
+    await remove('custom-due');
+    const brief = { goal: 'Lancio', message: '', formats: ['custom-totem'], durationSec: 12, assets: [], notes: '' };
+    const put = (formats: string[]) => app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${created.slug}`, payload: { brief: { ...brief, formats } } });
+    expect((await put(['custom-totem'])).statusCode).toBe(200);
+    const bad = await put(['custom-totem', 'custom-due']);
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().code).toBe('format-unavailable');
+  });
+
+  it("the brief session's form: the user's formats may not add a hidden one", async () => {
+    await add(totem);
+    await useIn(['custom-totem']);
+    await remove('custom-totem');
+    const s = (await app.inject({ method: 'POST', url: '/api/projects/acme/brief-session', payload: { form: EMPTY_BRIEF_FORM, userEdited: [] } })).json();
+    const r = await app.inject({ method: 'PUT', url: `/api/projects/acme/brief-session/${s.id}/form`,
+      payload: { form: { ...EMPTY_BRIEF_FORM, formats: ['custom-totem'] }, userEdited: ['formats'], baseRevision: s.revision } });
+    expect(r.statusCode).toBe(400);
+    expect(r.json().code).toBe('format-unavailable');
+  });
+});
+
+describe('a whole-catalog write keeps the custom formats', () => {
+  it('reset and PUT /api/formats keep them', async () => {
+    await add(totem);
+    expect((await app.inject({ method: 'POST', url: '/api/formats/reset' })).json().presets.some((p: FormatPreset) => p.id === 'custom-totem')).toBe(true);
+    const put = await app.inject({ method: 'PUT', url: '/api/formats', payload: { presets: [DEFAULT_FORMATS[0]] } });
+    expect(put.json().presets.map((p: FormatPreset) => p.id)).toEqual([DEFAULT_FORMATS[0]!.id, 'custom-totem']);
   });
 });
 

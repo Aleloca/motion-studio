@@ -5,9 +5,9 @@
  * and labels; the versions of removed instances stay in the history; a pack is edited through `storePack`, and only one exists.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { storePackFormats, withAgentNames, type Brief, type CreativeFile, type StorePack } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, storePackFormats, withAgentNames, type Brief, type CreativeFile, type StorePack } from '@motion-studio/shared';
 import { mergeStorePack, storePackBrief } from '../src/store-pack/brief.ts';
-import { H, startInstanceEnv, type InstanceEnv } from './helpers/instance-server.ts';
+import { H, PRESETS, startInstanceEnv, type InstanceEnv } from './helpers/instance-server.ts';
 
 const shots = (n: number) => Array.from({ length: n }, (_, i) => ({ caption: `Caption ${i + 1}`, screen: null }));
 const pack = (n: number, over: Partial<StorePack> = {}): StorePack => ({
@@ -164,11 +164,17 @@ describe('the routes', { timeout: 60_000 }, () => {
   let env: InstanceEnv;
   afterEach(async () => { await env?.close(); });
   const put = (c: string, payload: object) => env.app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${c}`, headers: H, payload });
+  // Report 59: a brief names only formats of the catalog; these briefs use shipped presets beside the test ones.
+  const start = async () => {
+    const e = await startInstanceEnv('ms-test-store-merge-');
+    expect((await e.app.inject({ method: 'PUT', url: '/api/formats', headers: H, payload: { presets: [...PRESETS, ...DEFAULT_FORMATS] } })).statusCode).toBe(200);
+    return e;
+  };
   const create = (storePack: StorePack, formats: string[]) => env.app.inject({ method: 'POST', url: '/api/projects/acme/creatives', headers: H,
     payload: { title: 'Mixed', generate: false, brief: { goal: 'g', message: '', formats, durationSec: null, assets: [], notes: '', storePack } } });
 
   it('create with a pack: the pack route is not needed; a pack missing its instances is completed; a bad screen is refused', async () => {
-    env = await startInstanceEnv('ms-test-store-merge-');
+    env = await start();
     const bad = await create(pack(2, { screenshots: [{ caption: 'A', screen: 'assets/nope.png' }, ...shots(1)] }), [YT]);
     expect(bad.statusCode, bad.body).toBe(400);
     expect(bad.json().code).toBe('store-pack-screen');
@@ -189,7 +195,7 @@ describe('the routes', { timeout: 60_000 }, () => {
   });
 
   it('edit and remove through PUT { storePack }; versions of removed instances stay; a second pack is refused', async () => {
-    env = await startInstanceEnv('ms-test-store-merge-');
+    env = await start();
     const p5 = pack(5);
     const made = await create(p5, [YT, HAND, ...storePackFormats(p5).formats]);
     const slug = (made.json() as { slug: string }).slug;
@@ -243,7 +249,7 @@ describe('the routes', { timeout: 60_000 }, () => {
   });
 
   it('the old store-pack route still creates a pack creative', async () => {
-    env = await startInstanceEnv('ms-test-store-merge-');
+    env = await start();
     const r = await env.app.inject({ method: 'POST', url: '/api/projects/acme/creatives/store-pack', headers: H, payload: { title: 'Old way', storePack: pack(2) } });
     expect(r.statusCode, r.body).toBe(201);
     const { creative, slug } = r.json() as { creative: CreativeFile; slug: string };
