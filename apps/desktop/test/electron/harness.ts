@@ -14,7 +14,7 @@ import type { Composition, FormatPreset } from '../../../../packages/shared/src/
 import { findFfmpeg, renderComposition, RenderError, type FfmpegInfo } from '@motion-studio/core';
 import { startCompositionServer } from '../../../../packages/core/src/compositions/composition-server.ts';
 import { renderFrames } from '../../../../packages/core/src/render/frames.ts';
-import { appKeptAwake, closeAllRenderWindows, createRenderWindow, ElectronProvider, liveRenderWindowCount, rawFrameChecks, shutdownForQuit } from '../../src/render-window.ts';
+import { appKeptAwake, captureWindowFrame, closeAllRenderWindows, createRenderWindow, ElectronProvider, liveRenderWindowCount, rawFrameChecks, shutdownForQuit } from '../../src/render-window.ts';
 import { readdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { hardenUiWindow, installPreviewFilter } from '../../src/preview-filter.ts';
@@ -50,7 +50,7 @@ interface Config {
   rawRuns?: Array<{ name: string; short?: number; encoded?: boolean; quality?: 'standard' | 'high' | 'max'; background?: string }>;
   probe?: { scale: number; times: number[]; outDir: string };
   /** raw-check (report 56): the times to read raw and as PNG from one page, each from the same state. */
-  rawCheck?: { times: number[] };
+  rawCheck?: { times: number[]; changes: number };
   /** css-pause (report 56): the pages to open, and the layer agent's functions (source) that pause their animation. */
   cssPause?: { runs: number; pause: string; settle: string };
   /** Chromium switches appended before the app is ready (e.g. a forced colour profile). */
@@ -609,8 +609,8 @@ async function run(): Promise<void> {
     }
     case 'raw-check': {
       // Report 56: one page, and at each time the raw frame and the PNG of the same state, compared byte for byte (the
-      // PNG decoded to BGRA). The raw frame is read with the page's renderers stopped as the seek resolves: it can only
-      // show what they had already handed to the compositor. Then raw again, after the PNG's forced redraw.
+      // PNG decoded to BGRA). The raw frame is read as a render reads it, right after the seek; then raw again, after the
+      // PNG. (Report 56 read it with the renderers stopped; the raw read now makes the renderer draw first, report 57.)
       const server = await startCompositionServer({ uiOrigins: [], distDir: c.dist });
       const provider = new ElectronProvider({ limits: { timeLimitMs: 30 * 60_000 } });
       try {
@@ -621,16 +621,37 @@ async function run(): Promise<void> {
         const rows: unknown[] = [];
         for (const t of c.rawCheck!.times) {
           await page.seek(t);
-          // This app's own renderers (getAppMetrics), stopped only for the read and always resumed.
-          const tabs = app.getAppMetrics().filter((m) => m.type === 'Tab').map((m) => m.pid);
-          for (const pid of tabs) try { process.kill(pid, 'SIGSTOP'); } catch { /* gone */ }
-          let raw: Buffer;
-          try { raw = (await page.captureRaw()).data; } finally { for (const pid of tabs) try { process.kill(pid, 'SIGCONT'); } catch { /* gone */ } }
+          const raw = (await page.captureRaw()).data;
           const png = nativeImage.createFromBuffer(await page.capture('png')).toBitmap();
           const again = (await page.captureRaw()).data;
           rows.push({ t, raw: frameDiff(raw, png), again: frameDiff(again, png) });
         }
-        report({ rawCheck: rows });
+        // Report 57: a raw read must show the page as it is when the read is asked for, even when the compositor lags.
+        // The page changes (a square in its corner, a new colour each time) with no frame waited for, and is read raw at
+        // once, while this app's GPU process (its own pid, `getAppMetrics`) is stopped 8 ms in every 10 (always resumed).
+        // `plain`: the same read without the redraw (`captureWindowFrame` alone), the negative control.
+        const win = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL() === s.url)!;
+        const wc = win.webContents;
+        const gpu = app.getAppMetrics().find((m) => m.type === 'GPU')?.pid;
+        let stall: NodeJS.Timeout | null = null;
+        const changes: Array<{ i: number; mode: 'plain' | 'fresh'; want: number[]; got: number[] }> = [];
+        try {
+          if (gpu) stall = setInterval(() => { try { process.kill(gpu, 'SIGSTOP'); setTimeout(() => { try { process.kill(gpu, 'SIGCONT'); } catch { /* gone */ } }, 8); } catch { /* gone */ } }, 10);
+          for (let i = 0; i < c.rawCheck!.changes; i++) {
+            for (const mode of ['plain', 'fresh'] as const) {
+              const k = 2 * i + (mode === 'fresh' ? 1 : 0);
+              const want = [(k * 37) % 256, 255 - ((k * 37) % 256), 128];
+              await wc.executeJavaScript(`{ let d = document.getElementById('ms-test-change'); if (!d) { d = document.createElement('div'); d.id = 'ms-test-change'; d.style.cssText = 'position:fixed;left:0;top:0;width:16px;height:16px;z-index:2147483647'; document.documentElement.appendChild(d); } d.style.background = 'rgb(${want.join(',')})'; } 1`);
+              const f = mode === 'fresh' ? await page.captureRaw() : await captureWindowFrame(win, 90_000);
+              const at = 8 * f.width * 4 + 8 * 4;
+              changes.push({ i, mode, want, got: [f.data[at + 2]!, f.data[at + 1]!, f.data[at]!] });
+            }
+          }
+        } finally {
+          if (stall) clearInterval(stall);
+          if (gpu) try { process.kill(gpu, 'SIGCONT'); } catch { /* gone */ }
+        }
+        report({ rawCheck: rows, changes, gpu: gpu ?? null });
         await page.close();
       } finally {
         await provider.close();
@@ -686,18 +707,20 @@ async function run(): Promise<void> {
         const wc = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL() === s.url)!.webContents;
         const times = c.probe!.times;
         const out: Record<string, unknown> = {};
-        for (const mode of ['png', 'jpeg', 'raw'] as const) {
+        // jpeg1, barrier (report 57): a JPEG at quality 1 alone, and as the redraw before a raw read.
+        for (const mode of ['png', 'jpeg', 'raw', 'jpeg1', 'barrier'] as const) {
           await contentTracing.startRecording({ included_categories: ['toplevel'], excluded_categories: ['*'] });
           const t0 = Date.now();
           let i = 0;
           for (const t of times) {
             await page.seek(t);
-            if (mode === 'raw') {
+            if (mode === 'raw' || mode === 'barrier') {
+              if (mode === 'barrier') await page.capture('jpeg', 1);
               const img = await wc.capturePage(undefined, { stayHidden: true });
               const bmp = img.toBitmap();
               if (i < 2) { writeFileSync(join(c.probe!.outDir, `raw-${i}.bgra`), bmp); out[`size${i}`] = img.getSize(); }
             } else {
-              const buf = await page.capture(mode, mode === 'jpeg' ? 95 : undefined);
+              const buf = await page.capture(mode === 'jpeg1' ? 'jpeg' : mode, mode === 'jpeg' ? 95 : mode === 'jpeg1' ? 1 : undefined);
               if (i < 2 && mode === 'png') writeFileSync(join(c.probe!.outDir, `png-${i}.png`), buf);
             }
             i++;

@@ -21,7 +21,7 @@ vi.mock('electron', () => ({
 const {
   renderWindowOptions, renderProxyConfig, renderRequestAllowed, lockRenderSession, closeRenderWindow, DebuggerCdpClient,
   ElectronProvider, RENDER_PARTITION_PREFIX, desktopRenderOptions, DESKTOP_RENDER_PARALLEL, rawFrames, captureWindowFrame, guardedRawCapture,
-  compareRawFrame, checkRawFrames, rawFramesChecked, rawFrameChecks, resetRawFrameChecks, pageRawFrames, evaluateValue, RawCheckCleanupError,
+  compareRawFrame, checkRawFrames, freshWindowFrame, rawFramesChecked, rawFrameChecks, resetRawFrameChecks, pageRawFrames, evaluateValue, RawCheckCleanupError,
 } = await import('../src/render-window.ts');
 
 const PREFIX = 'http://127.0.0.1:43210/abcdefghijklmnop0123/';
@@ -337,6 +337,16 @@ describe('ElectronProvider', () => {
     await expect(captureWindowFrame({ isDestroyed: () => true } as never, 20)).rejects.toMatchObject({ code: 'crashed' });
     const img = { getSize: () => ({ width: 2, height: 1 }), isEmpty: () => false, toBitmap: () => Buffer.alloc(8) };
     await expect(captureWindowFrame({ isDestroyed: () => false, webContents: { capturePage: async () => img } } as never, 20)).resolves.toMatchObject({ width: 2, height: 1 });
+  });
+
+  it('report 57: a raw read comes after a redraw the renderer is asked for; a redraw that fails fails the read', async () => {
+    const steps: string[] = [];
+    const frame = { data: Buffer.alloc(4), width: 1, height: 1 };
+    await expect(freshWindowFrame(async () => { steps.push('redraw'); }, async () => { steps.push('read'); return frame; })).resolves.toBe(frame);
+    expect(steps).toEqual(['redraw', 'read']);
+    const read = vi.fn(async () => frame);
+    await expect(freshWindowFrame(async () => { throw new Error('isolation'); }, read)).rejects.toThrow('isolation');
+    expect(read).not.toHaveBeenCalled();
   });
 
   it('report 56: a raw frame is the PNG\'s only when every byte matches and every pixel is opaque', () => {

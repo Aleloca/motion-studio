@@ -33,7 +33,8 @@ import {
  *   start them anyway; popups are denied by the handler.
  * - a video's frames are read raw (`capturePage`, `rawFrames`; report 53), not with `Page.captureScreenshot`, whose
  *   PNG/JPEG encode runs on this process's UI thread, the app's; only once this machine's raw frames proved to be a
- *   PNG's pixels (`checkRawFrames`, report 56), else the PNG/JPEG frames stay.
+ *   PNG's pixels (`checkRawFrames`, report 56), else the PNG/JPEG frames stay; each read after a redraw the renderer is
+ *   asked for (`freshWindowFrame`, report 57), so it is never a frame from before the seek.
  *
  * **Closing.** `destroy()` followed at once by a new window's `loadURL` fails with `ERR_FAILED` in Electron 44 (spike
  * §3a): a window is closed with `close()` (with `beforeunload` ignored) and the provider waits for `closed`, falling back
@@ -534,6 +535,22 @@ export async function rawFrameChecks(): Promise<Record<string, RawCheck | null>>
 /** Tests: forgets every check. */
 export function resetRawFrameChecks(): void { rawChecks.clear(); }
 
+/**
+ * Report 57: a raw frame of the page as it is now. `capturePage` copies the surface's latest frame and does not ask for a
+ * new one: on a slow machine (the macOS CI runner) the frame the seek painted had not reached it yet, and 12 frames of a
+ * video were from before their seek. `Page.captureScreenshot` makes the renderer draw again on a new surface and copies
+ * that, so it runs first (`redraw`), as a JPEG at quality 1 (the cheapest encode; the image is dropped), then the raw
+ * read copies that frame. Measured at 2560 × 1440 (capture probe, 12 frames): UI thread per frame 15 ms (raw alone 0,
+ * JPEG q95 28, PNG 95), wall per frame 107 ms (raw alone 57, PNG 164). An export of 6 s at 60 fps, 2560 × 1440, max
+ * (`ui-load`, two runs each): 18.5 / 17.9 s against 13.0 / 12.9 s without the redraw (44 s with PNG frames, decision
+ * 1360), main event loop p99 41 / 37 ms against 17 / 13, no scroll stall either way. With the GPU process stalled, a
+ * change made just before a read was missed 10 and 12 times in 30 by raw reads alone, 0 with this (decision 1409).
+ */
+export async function freshWindowFrame(redraw: () => Promise<unknown>, read: () => Promise<RawFrame>): Promise<RawFrame> {
+  await redraw();
+  return read();
+}
+
 /** The window's surface as BGRA pixels (`toBitmap`: Skia's N32 order, BGRA on every platform the app ships on). */
 export async function captureWindowFrame(win: Pick<BrowserWindow, 'isDestroyed' | 'webContents'>, timeoutMs: number): Promise<RawFrame> {
   if (win.isDestroyed()) throw new RenderError('crashed', 'the render window is gone');
@@ -689,7 +706,7 @@ export class ElectronProvider implements ChromiumProvider {
       });
       cdp.onEvent((e) => { if (e.method === 'Inspector.targetCrashed') this.fail({ code: 'crashed', message: 'a renderer crashed (inspector)' }); });
       const close = page.close;
-      const captureRaw = () => guardedRawCapture(() => captureWindowFrame(rw.win, this.o.timeouts?.captureMs ?? CAPTURE_MS),
+      const captureRaw = () => guardedRawCapture(() => freshWindowFrame(() => page.capture('jpeg', 1), () => captureWindowFrame(rw.win, this.o.timeouts?.captureMs ?? CAPTURE_MS)),
         () => (page.interception.failure ? new RenderError('isolation', page.interception.failure.message) : this.failureError()));
       // Report 56: the check runs in an isolated world of its own (its canvas and native frames out of the page's reach).
       const raw = await pageRawFrames(o, async () => {
