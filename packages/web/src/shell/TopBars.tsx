@@ -268,7 +268,8 @@ export function TopBar() {
       content = <ProjectTop slug={r.slug} tab={r.tab} />;
       break;
     case 'new-creative':
-      content = <CreativeTop links={[projectLink(r.slug)]} current={t.web.shell.newCreative} />;
+      // Decision 1410: the page puts "Compila tu / Con l'agente" in the bar's end slot; its title stays the bar's.
+      content = <CreativeTop links={[projectLink(r.slug)]} current={t.web.shell.newCreative} slots />;
       break;
     case 'creative': {
       // The creative page puts its editable title in the bar; until it does, the crumb shows the known title.

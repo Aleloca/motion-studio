@@ -1,19 +1,22 @@
-import { canFollow, channelName, statedDurationSec, formatLabel, formatName, type StorePack, type AssetEntry, type FollowCheck, type IdentityBrief, type Locale, type BrandKit, type BriefServices, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
+import { canFollow, channelName, statedDurationSec, formatLabel, formatName, type BriefField, type BriefForm, type StorePack, type AssetEntry, type FollowCheck, type IdentityBrief, type Locale, type BrandKit, type BriefServices, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { api } from '../api.ts';
 import { CodebaseList } from '../components/CodebaseList.tsx';
 import { ServicesSelector, useConfiguredProviders, useKeyChecks } from '../components/ServicesSelector.tsx';
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
-import { anim, E, flash, isSubmitChord, useEnter, usePageShortcut } from '../motion/index.ts';
-import { href } from '../routes.ts';
+import { anim, D, E, flash, glow, isSubmitChord, recede, tileIn, useEnter, usePageShortcut } from '../motion/index.ts';
+import type { EventsState } from '../eventsReducer.ts';
+import { href, routeKey } from '../routes.ts';
+import { createPortal } from 'react-dom';
+import { useBarClaim } from '../shell/barSlots.ts';
+import { setFrameOrigin } from '../shell/intents.ts';
 import { useNewCreativeAssetsIntent } from '../shell/intents.ts';
 import { go, ShellContext } from '../shell/ShellContext.tsx';
 import { isMac } from '../platform.ts';
-import { Button, ChannelMark, Chip, Empty, Icon, Input, Popover, Segmented, Spinner, cx, initials, toast } from '../ui/index.ts';
+import { Button, ChannelMark, Chip, Empty, Icon, Input, Pill, Segmented, cx, initials, toast } from '../ui/index.ts';
 import { channelOf } from './creativeState.ts';
 import './newcreative.css';
 import { message as errText } from './common.tsx';
-import { isVideoFile } from '../media.ts';
 import { IdentityStart, identityForBrief, primaryLogoOf, resolveIdentity } from './identity/IdentityStart.tsx';
 import { StorePackWizard } from './new-creative/StorePackWizard.tsx';
 import { packParts } from './new-creative/storePackModel.ts';
@@ -21,13 +24,16 @@ import { VariantsField } from './variants/VariantsField.tsx';
 import { defaultVariantCount, directionsFor } from './variants/variantModel.ts';
 import { BRIEF_TEXT_MAX, variantIdAt } from '@motion-studio/shared';
 import './new-creative/storepack.css';
+import { LENGTHS, formSnapshot, lengthOf, mergeView, type LengthChoice } from './new-creative/briefSessionModel.ts';
+import { useBriefSession } from './new-creative/useBriefSession.ts';
+import { BriefSessionPanel } from './new-creative/BriefSessionPanel.tsx';
+import { ResumeBriefDialog } from './new-creative/ResumeBriefDialog.tsx';
+import { AssetFace, LibraryPicker } from './new-creative/LibraryPicker.tsx';
 
 
 /** Brief length shown under the field (decisions log 1220: the shared safety cap, no longer 2000). */
 const GOAL_MAX = BRIEF_TEXT_MAX;
 const TITLE_MAX = 60;
-const LENGTHS = ['6', '15', '30', '60', 'custom'] as const;
-type LengthChoice = (typeof LENGTHS)[number];
 type Kind = 'all' | 'video' | 'image';
 /** Channels open on arrival (prototype): the rest sit behind "More channels" until asked for, searched or selected. */
 const PRIMARY = ['Instagram', 'TikTok', 'YouTube'];
@@ -40,7 +46,6 @@ const SCREENSHOT_FORMAT = 'appstore-iphone-69';
 const SUMMARY_FRAMES = 5;
 /** Format tiles per row on a wide board (newcreative.css). */
 const TILE_COLUMNS = 6;
-const VISUAL = /^(image|svg|video)$/;
 
 /**
  * Creative title from the brief: its first sentence, at most 60 characters cut on a word boundary, without trailing
@@ -141,11 +146,13 @@ interface Loaded<T> { value: T | null; error: string | null }
  * suggestions, key message, video length, asset picker from the library, brand, the format board from the real catalog
  * (channels, kind, drawn proportion, maximum length, filter, search, more channels), and the summary bar with Generate.
  */
-export function NewCreative({ slug }: { slug: string }) {
+export function NewCreative({ slug, live }: { slug: string; /** The app's live state (the shell's when absent). */ live?: EventsState }) {
   const t = useT();
   const n = t.web.newCreative;
   const locale = useLocale();
   const shell = useContext(ShellContext);
+  // Decisions 1421–1422: the project's brief session; the form below is the one its agent fills.
+  const brief = useBriefSession(slug, live ?? shell?.live);
   const projectName = shell?.catalog.projects?.find((p) => p.slug === slug)?.name ?? slug;
 
   const [goal, setGoal] = useState('');
@@ -186,6 +193,20 @@ export function NewCreative({ slug }: { slug: string }) {
   const [directions, setDirections] = useState<string[]>([]);
   // Token totals of the workspace's earlier first generations: the estimate line, absent until there are 3.
   const [history, setHistory] = useState<number[]>([]);
+  // Decision 1422: the fields the user changed by hand since the agent's last write (the agent never changes them), and the
+  // fields the agent wrote (marked "Agente" until the user edits them).
+  const [userEdited, setUserEdited] = useState<ReadonlySet<BriefField>>(() => new Set());
+  const [agentFields, setAgentFields] = useState<ReadonlySet<BriefField>>(() => new Set());
+  // Whether the open session is this form's (null until the first load says): a session left from before waits for Riprendi.
+  const [attached, setAttached] = useState<boolean | null>(null);
+  // Decisions 1410–1411: "Compila tu" (the form alone, the default) or "Con l'agente" (the session's panel at the left).
+  const [mode, setMode] = useState<'you' | 'agent'>('you');
+  // The composer's draft from "Fallo compilare all'agente" (decision 1422: the goal's text moves there, never sent by itself).
+  const [draft, setDraft] = useState<{ text: string; nonce: number } | undefined>(undefined);
+  const formArea = useRef<HTMLDivElement>(null);
+  const panelEl = useRef<HTMLElement>(null);
+  const ownKey = routeKey({ name: 'new-creative', slug });
+  const bar = useBarClaim(ownKey, !shell?.route || routeKey(shell.route) === ownKey);
 
   const goalRef = useRef<HTMLTextAreaElement>(null);
   const goalBox = useRef<HTMLDivElement>(null);
@@ -225,7 +246,7 @@ export function NewCreative({ slug }: { slug: string }) {
   const similar = similarRange(history, locale);
 
   // "Use in a creative" from Assets.
-  useNewCreativeAssetsIntent(slug, useCallback((paths: string[]) => setPicked((p) => [...p, ...paths.filter((x) => !p.includes(x))]), []));
+  useNewCreativeAssetsIntent(slug, useCallback((paths: string[]) => { setPicked((p) => [...p, ...paths.filter((x) => !p.includes(x))]); editedRef.current('assets'); }, []));
 
   const presets = catalog.value ?? [];
   const chosen = useMemo(() => selected.flatMap((id) => presets.filter((p) => p.id === id)), [selected, presets]);
@@ -243,6 +264,7 @@ export function NewCreative({ slug }: { slug: string }) {
   const stated = useMemo(() => statedDurationSec([goal, message, notes].join('\n')), [goal, message, notes]);
   const statedOther = videos.length > 0 && stated !== null && (!durationValid || stated !== durationSec) ? stated : null;
   const applyStated = (n: number) => {
+    edited('durationSec');
     const preset = LENGTHS.find((v) => v !== 'custom' && Number(v) === n);
     if (preset) setLength(preset);
     else { setLength('custom'); setCustomSec(String(n)); }
@@ -267,26 +289,28 @@ export function NewCreative({ slug }: { slug: string }) {
   const root = useEnter<HTMLDivElement>([catalog.value !== null]);
 
   const toggle = (id: string) => {
+    edited('formats');
     setFormatError(false);
     setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   };
   const suggest = (k: (typeof SUGGESTIONS)[number]) => {
+    edited('goal');
     setGoal(n.suggestions[k].text);
     setGoalError(false);
     if (k === 'screenshots') {
       const shot = presets.find((p) => p.id === SCREENSHOT_FORMAT);
-      if (shot) { setSelected([shot.id]); setMore((m) => new Set([...m, shot.channel])); setFormatError(false); }
+      if (shot) { edited('formats'); setSelected([shot.id]); setMore((m) => new Set([...m, shot.channel])); setFormatError(false); }
     }
     void flash(goalBox.current);
   };
-  const togglePicked = (path: string) => setPicked((p) => (p.includes(path) ? p.filter((x) => x !== path) : [...p, path]));
+  const togglePicked = (path: string) => { edited('assets'); setPicked((p) => (p.includes(path) ? p.filter((x) => x !== path) : [...p, path])); };
   const openPicker = (el: HTMLElement) => { pickerAnchor.current = el; setPickerOpen(true); };
 
   // One creative per Generate: set before the request and cleared only on failure, so a second press (while the
   // request runs, or while the page is leaving after success) never creates a duplicate and starts a second agent.
   const inFlight = useRef(false);
   const submit = async (generate: boolean) => {
-    if (inFlight.current) return;
+    if (inFlight.current || briefBusy) return;
     // The start mode defaults to the brand's logo when it has one: wait for the brand before sending an identity brief.
     if (identityPending) return;
     if (!goal.trim()) {
@@ -324,7 +348,10 @@ export function NewCreative({ slug }: { slug: string }) {
         },
         generate: generate && (!grouped || (coreGroup && !typed)),
         linkedCodebases: codebases,
+        // Decision 1423: the brief session goes into the creative (its chat, and its agent's memory for the first turn).
+        ...(sessionOpen && brief.session ? { briefSession: { id: brief.session.id, group: variantCount > 1 } } : {}),
       });
+      if (created.briefError) { toast.show(created.briefError, { tone: 'neutral' }); void brief.refresh(); }
       let problem: string | null = created.groupError ? vg.groupFailed({ detail: created.groupError }) : created.startError ? vg.startFailed({ detail: created.startError }) : null;
       // Residual fix (decisions log 867): no group was made, so nothing is set or started here and the toast says why.
       if (grouped && !(coreGroup && !typed) && !created.groupError) {
@@ -341,7 +368,14 @@ export function NewCreative({ slug }: { slug: string }) {
         }
       }
       if (problem) toast.show(problem, { tone: 'neutral' });
-      if (generate) go(href.creative(slug, created.slug));
+      if (generate) {
+        // Decision 1419: with the panel open the chat moves to the canvas's panel (shared element); the form recedes.
+        if (mode === 'agent' && panelEl.current) {
+          setFrameOrigin(`brief-panel:${slug}/${created.slug}`, panelEl.current.getBoundingClientRect());
+          void recede(formArea.current, D.m);
+        }
+        go(href.creative(slug, created.slug));
+      }
       else {
         toast.show(n.draftSaved({ title }), { tone: 'ok', action: { label: n.open, run: () => go(href.creative(slug, created.slug)) } });
         go(href.project(slug));
@@ -350,7 +384,10 @@ export function NewCreative({ slug }: { slug: string }) {
     } catch (e) {
       inFlight.current = false;
       setBusy(null);
-      setError(errText(e));
+      // The session is gone or half moved (decision 1423): read again, and say what can be done beside the error. Gone: the
+      // next Genera goes without it.
+      brief.report(e);
+      setError((e as { code?: unknown } | null)?.code === 'brief-session-gone' ? t.web.briefSession.goneOnCreate : errText(e));
     }
   };
   usePageShortcut(root, isSubmitChord, () => { void submit(true); });
@@ -374,20 +411,188 @@ export function NewCreative({ slug }: { slug: string }) {
   const hasBrand = !!kit && (kit.colors.length > 0 || kit.fonts.length > 0 || kit.logos.length > 0 || kit.tone !== null);
   // The brand in one line, as on the board: heading font · main colour · tone.
   const brandLine = kit ? [kit.fonts[0]?.family, kit.colors[0]?.name, kit.tone?.text].filter(Boolean).join(' · ') : '';
-  const libraryItems = (library.value ?? []).filter((a) => a.kind !== 'font');
   const entryOf = (path: string) => library.value?.find((a) => assetPath(a.file) === path) ?? null;
 
+  // ---- Decision 1422: the brief session and the form ----
+  const snapshot = formSnapshot({ goal, message, length, customSec, picked, codebases, notes, selected, variantCount });
+  const snap = useRef(snapshot);
+  snap.current = snapshot;
+  const owned = useRef(userEdited);
+  owned.current = userEdited;
+  // The session's revision this form is based on: adopted only with the form of the view it came with (contract).
+  const revision = useRef(0);
+  // The edits the session has not answered yet: changed by hand since the last save went out (`dirty`), or in the save still out
+  // (`sent`). Only these keep the user's text over a view of the session (briefSessionModel.mergeView).
+  const dirty = useRef(new Set<BriefField>());
+  const sent = useRef(new Set<BriefField>());
+  const pendingEdits = () => new Set([...dirty.current, ...sent.current]);
+  // "Fallo compilare all'agente" gives the emptied goal back (decision 1422): until a view says it is not the user's any more,
+  // no save marks it as theirs, and a view that still does is answered with one more save.
+  const givingBack = useRef(false);
+  const ownedForSave = () => [...owned.current].filter((f) => !(givingBack.current && f === 'goal'));
+  const saveBody = useCallback(() => {
+    sent.current = new Set([...sent.current, ...dirty.current]);
+    dirty.current = new Set();
+    return { form: snap.current, userEdited: ownedForSave(), baseRevision: revision.current };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- reads refs only
+  const settleSave = useCallback((ok: boolean) => {
+    // A refused save keeps its edits pending (the next save carries them); a taken one is answered.
+    if (!ok) dirty.current = new Set([...dirty.current, ...sent.current]);
+    sent.current = new Set();
+  }, []);
+  const sessionOpen = brief.session !== null && attached === true;
+  /** A change by hand: the field is the user's (the agent keeps off it) and loses its "Agente" mark; the form is saved. */
+  const edited = (f: BriefField) => {
+    dirty.current.add(f);
+    if (f === 'goal') givingBack.current = false;
+    setUserEdited((s) => (s.has(f) ? s : new Set(s).add(f)));
+    setAgentFields((s) => { if (!s.has(f)) return s; const next = new Set(s); next.delete(f); return next; });
+    if (sessionOpen) brief.saveForm(saveBody, settleSave);
+  };
+  const editedRef = useRef(edited);
+  editedRef.current = edited;
+
+  // The first load says whose the open session is: none, or one without messages, is this form's; one the agent is working
+  // on reopens at once; an idle one with messages waits for the user's choice (Riprendi / Inizia da capo).
+  useEffect(() => {
+    // A first read that failed decides nothing (the resume question must not be skipped): it is said, with Riprova.
+    if (attached !== null || brief.status === 'loading' || brief.status === 'failed') return;
+    const s = brief.session;
+    const asked = brief.entries.some((e) => e.type === 'user');
+    if (!s || !asked || brief.job?.state === 'running' || brief.job?.state === 'queued') setAttached(true);
+    else setAttached(false);
+  }, [attached, brief.status, brief.session, brief.entries, brief.job]);
+
+  // Every view of the session (a refetch, a save's answer, a fill) merges into the form (briefSessionModel.mergeView).
+  const appliedFill = useRef(0);
+  const [marks, setMarks] = useState<{ seq: number; glow: BriefField[]; assets: string[]; formats: string[] } | null>(null);
+  useEffect(() => {
+    const s = brief.session;
+    if (!s || attached !== true) return;
+    const fill = brief.lastFill && brief.lastFill.seq > appliedFill.current ? brief.lastFill : null;
+    if (fill) appliedFill.current = fill.seq;
+    const before = snap.current;
+    const m = mergeView({ form: before, userEdited: owned.current, agentFields, pending: pendingEdits() }, s, fill?.reclaimed ?? []);
+    // A field that took the session's value (equal, or nothing pending) has no edit left to keep.
+    for (const f of m.taken) dirty.current.delete(f);
+    if (givingBack.current) {
+      if (s.userEdited.includes('goal')) { m.userEdited.delete('goal'); brief.saveForm(saveBody, settleSave); }
+      else givingBack.current = false;
+    }
+    applyForm(m.form, m.changed);
+    setUserEdited(m.userEdited);
+    setAgentFields(m.agentFields);
+    revision.current = s.revision;
+    if (fill) {
+      const lit = [...fill.written, ...fill.reclaimed].filter((f) => m.taken.includes(f));
+      setMarks({
+        seq: fill.seq, glow: lit.filter((f) => f !== 'assets' && f !== 'formats'),
+        assets: lit.includes('assets') ? m.form.assets.filter((a) => !before.assets.includes(a)) : [],
+        formats: lit.includes('formats') ? m.form.formats.filter((x) => !before.formats.includes(x)) : [],
+      });
+    }
+  }, [brief.session, attached]); // eslint-disable-line react-hooks/exhaustive-deps -- a new view (with its fill) is the trigger
+
+  /** Puts the session's values of `fields` into the form's own controls. */
+  function applyForm(f: BriefForm, fields: readonly BriefField[]) {
+    for (const k of fields) {
+      if (k === 'goal') setGoal(f.goal);
+      else if (k === 'message') setMessage(f.message);
+      else if (k === 'notes') { setNotes(f.notes); if (f.notes) setOptions(true); }
+      else if (k === 'durationSec') { const l = lengthOf(f.durationSec); setLength(l.length); setCustomSec(l.customSec); setLengthError(false); }
+      else if (k === 'assets') setPicked(f.assets);
+      else if (k === 'linkedCodebases') { setCodebases(f.linkedCodebases); if (f.linkedCodebases.length) setOptions(true); }
+      else if (k === 'formats') { setSelected(f.formats); if (f.formats.length) setFormatError(false); }
+      else if (k === 'variants') setVariantsChoice(f.variants);
+    }
+    if (fields.includes('goal') && f.goal.trim()) setGoalError(false);
+  }
+
+  // The fill's marks, once the fields are on screen: the glow on what the agent wrote, the tile spring on new tiles (90 ms apart).
+  useEffect(() => {
+    if (!marks || !root.current) return;
+    const at = root.current;
+    const box: Partial<Record<BriefField, Element | null>> = {
+      goal: goalBox.current, message: at.querySelector('#ms-nc-msg'), durationSec: at.querySelector('.ms-nc-len'), notes: at.querySelector('#ms-nc-notes'),
+      linkedCodebases: at.querySelector('[data-brief-field="linkedCodebases"]'), variants: at.querySelector('.ms-nc-variants'),
+    };
+    for (const f of marks.glow) void glow(box[f] ?? null);
+    const byData = (attr: 'asset' | 'format', v: string) => [...at.querySelectorAll<HTMLElement>(`[data-${attr}]`)].find((el) => el.dataset[attr] === v) ?? null;
+    const tiles = [...marks.assets.map((a) => byData('asset', a)), ...marks.formats.map((id) => byData('format', id))];
+    tiles.forEach((el, i) => void tileIn(el, i * 90));
+  }, [marks]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const briefBusy = brief.job?.state === 'queued' || brief.job?.state === 'running';
+  // A session the agent is working on reopens in "Con l'agente" (decision 1422).
+  const reopened = useRef(false);
+  useEffect(() => {
+    if (attached === true && !reopened.current && brief.session && briefBusy) { reopened.current = true; setMode('agent'); }
+  }, [attached, brief.session, briefBusy]);
+  /** "Fallo compilare all'agente": opens the panel; the goal's text moves into the composer (decision 1422), not owned. */
+  const toAgent = () => {
+    setMode('agent');
+    if (!goal.trim()) { focusComposer(); return; }
+    setDraft((d) => ({ text: goal.trim(), nonce: (d?.nonce ?? 0) + 1 }));
+    setGoal('');
+    dirty.current.delete('goal');
+    setUserEdited((s) => { if (!s.has('goal')) return s; const next = new Set(s); next.delete('goal'); return next; });
+    focusComposer();
+    void clearGoal();
+  };
+  /**
+   * The emptied goal is saved, not owned (decision 1422), so the next view of the session does not bring the old text back. The
+   * core takes a value only for a field it knows as the user's: a goal the agent owns is first saved as the user's (empty), then
+   * handed back.
+   */
+  const clearGoal = async () => {
+    const s = brief.session;
+    if (!s || attached !== true || !s.form.goal) return;
+    const without = () => [...owned.current].filter((f) => f !== 'goal');
+    let base = revision.current;
+    if (!s.userEdited.includes('goal')) {
+      const first = await brief.saveNow(() => ({ form: { ...snap.current, goal: '' }, userEdited: [...without(), 'goal'], baseRevision: base }));
+      if (!first) return;
+      base = first.revision;
+    }
+    givingBack.current = true;
+    const second = await brief.saveNow(() => ({ form: { ...snap.current, goal: '' }, userEdited: without(), baseRevision: base }));
+    // Refused: the goal would stay the user's and empty; the next save gives it back (and the views keep asking for it).
+    if (!second) brief.saveForm(saveBody, settleSave);
+  };
+  /** The composer of the panel takes the focus once the panel is open (it is inert while closed). */
+  const focusComposer = () => { setTimeout(() => panelEl.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus(), 0); };
+  const resume = () => { setAttached(true); setMode('agent'); };
+  const startOver = async () => {
+    try { await brief.discard(); } catch (e) { setError(errText(e)); return; }
+    setAttached(true);
+    setMode('you');
+  };
+  // A message carries the form like a save: its edits are answered when the core takes it (`onCarried`).
+  const panelSnapshot = useCallback(() => saveBody(), [saveBody]);
+
+  /** "Agente" beside a field's label while the field is the agent's. */
+  const agentMark = (f: BriefField) => (agentFields.has(f) ? <Pill tone="accent" className="ms-nc-agentmark">{t.web.briefSession.agentMark}</Pill> : null);
+
   return (
-    <div className="ms-nc" ref={root}>
+    <div className={cx('ms-nc', mode === 'agent' && 'ms-nc-agent')} ref={root}>
+      {bar?.end ? createPortal(
+        <Segmented className="ms-nc-mode" label={t.web.briefSession.modeLabel} value={mode} onChange={(v) => (v === 'agent' ? setMode('agent') : setMode('you'))}
+          options={[{ value: 'you', label: t.web.briefSession.modeYou }, { value: 'agent', label: t.web.briefSession.modeAgent, icon: 'sparkle' }]} />,
+        bar.end,
+      ) : null}
+      <BriefSessionPanel slug={slug} projectName={projectName} brief={brief} live={live ?? shell?.live} snapshot={panelSnapshot} onCarried={settleSave} draft={draft}
+        library={library} onRetryLibrary={() => { setLibrary({ value: null, error: null }); setLibraryNonce((x) => x + 1); }} onLibraryChanged={() => setLibraryNonce((x) => x + 1)}
+        hidden={mode !== 'agent'} panelRef={panelEl} className="ms-nc-panel" onOpenCreative={(c) => go(href.creative(slug, c))} />
+      <div className="ms-nc-form" ref={formArea}>
       <div className="ms-nc-body">
         <div className="ms-nc-left">
           <section className="ms-nc-sec ms-nc-brief" data-enter>
-            <label htmlFor="ms-nc-goal" className="ms-nc-q">{n.goalQuestion}</label>
+            <div className="ms-nc-qrow"><label htmlFor="ms-nc-goal" className="ms-nc-q">{n.goalQuestion}</label>{agentMark('goal')}</div>
             <div ref={goalBox} className={cx('ms-nc-goalbox', goalError && 'ms-invalid')}>
               <textarea
                 id="ms-nc-goal" ref={goalRef} rows={4} maxLength={GOAL_MAX} value={goal} placeholder={n.goalPlaceholder}
                 aria-invalid={goalError || undefined} aria-describedby={goalError ? 'ms-nc-goal-err' : undefined}
-                onChange={(e) => { setGoal(e.target.value); if (e.target.value.trim()) setGoalError(false); }}
+                onChange={(e) => { edited('goal'); setGoal(e.target.value); if (e.target.value.trim()) setGoalError(false); }}
               />
               <div className="ms-nc-goalbar">
                 {hasBrand ? <Chip className="ms-nc-kit"><span className="ms-nc-mono" aria-hidden="true">{initials(projectName)}</span>{n.brandKit}</Chip> : null}
@@ -398,6 +603,9 @@ export function NewCreative({ slug }: { slug: string }) {
                   </Chip>
                 ) : null}
                 <Button size="sm" variant="ghost" icon aria-label={n.addAssets} title={n.addAssets} onClick={(e) => openPicker(e.currentTarget)}><Icon name="plus" size={14} /></Button>
+                {mode === 'you' ? (
+                  <button type="button" className="ms-chip ms-nc-cta" onClick={toAgent}><Icon name="sparkle" size={13} fill />{t.web.briefSession.cta}</button>
+                ) : null}
                 <span className="ms-nc-count">{n.goalCount({ n: goal.length, max: GOAL_MAX })}</span>
               </div>
             </div>
@@ -412,13 +620,13 @@ export function NewCreative({ slug }: { slug: string }) {
           </section>
 
           <section className="ms-nc-sec" data-enter>
-            <label className="ms-nc-lbl" htmlFor="ms-nc-msg">{n.keyMessage} <span className="ms-nc-faint">{n.keyMessageHint}</span></label>
-            <Input id="ms-nc-msg" className="ms-nc-msg" value={message} onChange={(e) => setMessage(e.target.value)} />
+            <div className="ms-nc-qrow"><label className="ms-nc-lbl" htmlFor="ms-nc-msg">{n.keyMessage} <span className="ms-nc-faint">{n.keyMessageHint}</span></label>{agentMark('message')}</div>
+            <Input id="ms-nc-msg" className="ms-nc-msg" value={message} onChange={(e) => { edited('message'); setMessage(e.target.value); }} />
           </section>
 
           <div className={cx('ms-nc-sec', videos.length === 0 && 'ms-nc-off')} data-enter>
             <div className="ms-nc-row">
-              <span className="ms-nc-lbl">{n.videoLength}</span>
+              <span className="ms-nc-qrow"><span className="ms-nc-lbl">{n.videoLength}</span>{agentMark('durationSec')}</span>
               <span id="ms-nc-len-why" className="ms-nc-faint ms-nc-small">{videos.length ? n.lengthFor({ count: videos.length }) : n.noVideo}</span>
             </div>
             <Segmented
@@ -427,14 +635,14 @@ export function NewCreative({ slug }: { slug: string }) {
               disabled={videos.length === 0}
               describedBy="ms-nc-len-why"
               value={length}
-              onChange={(v) => { setLength(v); setLengthError(false); }}
+              onChange={(v) => { edited('durationSec'); setLength(v); setLengthError(false); }}
               options={LENGTHS.map((v) => ({ value: v, label: v === 'custom' ? n.custom : n.secondsShort({ n: Number(v) }) }))}
             />
             {length === 'custom' && videos.length > 0 ? (
               <Input
                 className="ms-nc-custom" inputMode="numeric" aria-label={n.customSeconds} placeholder={n.customSeconds} value={customSec}
                 aria-invalid={lengthError || undefined}
-                onChange={(e) => { setCustomSec(e.target.value.replace(/\D/g, '').slice(0, 3)); setLengthError(false); }}
+                onChange={(e) => { edited('durationSec'); setCustomSec(e.target.value.replace(/\D/g, '').slice(0, 3)); setLengthError(false); }}
               />
             ) : null}
             {lengthError ? <p className="ms-nc-err"><Icon name="warn" size={13} />{n.customInvalid}</p> : null}
@@ -452,12 +660,12 @@ export function NewCreative({ slug }: { slug: string }) {
 
           <section className="ms-nc-sec" data-enter>
             <div className="ms-nc-row">
-              <span className="ms-nc-lbl" id="ms-nc-assets-lbl">{n.assetsToUse}</span>
+              <span className="ms-nc-qrow"><span className="ms-nc-lbl" id="ms-nc-assets-lbl">{n.assetsToUse}</span>{agentMark('assets')}</span>
               <Button size="sm" variant="ghost" className="ms-nc-browse" onClick={(e) => openPicker(e.currentTarget)}>{n.browse}</Button>
             </div>
             <div className="ms-nc-assets" role="list" aria-labelledby="ms-nc-assets-lbl">
               {picked.map((path) => (
-                <div role="listitem" key={path} className="ms-nc-asset-item">
+                <div role="listitem" key={path} className="ms-nc-asset-item" data-asset={path}>
                   <button type="button" className="ms-nc-asset ms-on" aria-label={n.removeAsset({ name: baseName(path) })} title={n.removeAsset({ name: baseName(path) })} onClick={() => togglePicked(path)}>
                     <AssetFace slug={slug} path={path} entry={entryOf(path)} />
                     <span className="ms-nc-tick" aria-hidden="true"><Icon name="check" size={10} strokeWidth={2.4} /></span>
@@ -498,7 +706,7 @@ export function NewCreative({ slug }: { slug: string }) {
 
           {identityOn ? (
             <section className="ms-nc-sec" data-enter>
-              <IdentityStart value={{ ...identityNow, concepts: variantCount }} onChange={(v) => { setIdentity(v); if (v.concepts !== undefined && v.concepts !== variantCount) setVariantsChoice(v.concepts); }} hasBrandLogo={hasBrandLogo} fromCodebase={primaryLogoOf(kit?.logos ?? [])?.source.kind === 'codebase'}
+              <IdentityStart value={{ ...identityNow, concepts: variantCount }} onChange={(v) => { setIdentity(v); if (v.concepts !== undefined && v.concepts !== variantCount) { edited('variants'); setVariantsChoice(v.concepts); } }} hasBrandLogo={hasBrandLogo} fromCodebase={primaryLogoOf(kit?.logos ?? [])?.source.kind === 'codebase'}
                 withConcepts />
             </section>
           ) : null}
@@ -506,7 +714,7 @@ export function NewCreative({ slug }: { slug: string }) {
           {coreGroup ? (variantCount >= 2 ? (
             <section className="ms-nc-sec" data-enter><VariantsField count={variantCount} directions={directions} onDirections={setDirections} /></section>
           ) : null) : (
-            <section className="ms-nc-sec" data-enter><VariantsField count={variantCount} onCount={setVariantsChoice} directions={directions} onDirections={setDirections} /></section>
+            <section className="ms-nc-sec" data-enter><VariantsField count={variantCount} onCount={(v) => { edited('variants'); setVariantsChoice(v); }} directions={directions} onDirections={setDirections} /></section>
           )}
 
           <section className="ms-nc-sec ms-nc-options" data-enter>
@@ -515,10 +723,10 @@ export function NewCreative({ slug }: { slug: string }) {
             </button>
             {options ? (
               <div id="ms-nc-options" className="ms-nc-options-body">
-                <label className="ms-nc-lbl" htmlFor="ms-nc-notes">{n.notesForAgent} <span className="ms-nc-faint">{n.optional}</span></label>
-                <Input id="ms-nc-notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
-                <span className="ms-nc-lbl">{n.codebases} <span className="ms-nc-faint">{n.codebasesHint}</span></span>
-                <CodebaseList value={codebases} onChange={setCodebases} />
+                <div className="ms-nc-qrow"><label className="ms-nc-lbl" htmlFor="ms-nc-notes">{n.notesForAgent} <span className="ms-nc-faint">{n.optional}</span></label>{agentMark('notes')}</div>
+                <Input id="ms-nc-notes" value={notes} onChange={(e) => { edited('notes'); setNotes(e.target.value); }} />
+                <div className="ms-nc-qrow"><span className="ms-nc-lbl">{n.codebases} <span className="ms-nc-faint">{n.codebasesHint}</span></span>{agentMark('linkedCodebases')}</div>
+                <div data-brief-field="linkedCodebases"><CodebaseList value={codebases} onChange={(v) => { edited('linkedCodebases'); setCodebases(v); }} /></div>
                 <span className="ms-nc-lbl">{t.web.services.title} <span className="ms-nc-faint">{t.web.services.hint}</span></span>
                 <ServicesSelector value={services} configured={configured} checks={keyChecks} onChange={setServices} />
               </div>
@@ -528,7 +736,7 @@ export function NewCreative({ slug }: { slug: string }) {
 
         <div className="ms-nc-right">
           <div className="ms-nc-boardhead" ref={boardHead}>
-            <h2>{n.whereTo}</h2>
+            <div className="ms-nc-qrow ms-nc-boardtitle"><h2>{n.whereTo}</h2>{agentMark('formats')}</div>
             <div className="ms-grow" />
             <Segmented
               className="ms-nc-kind"
@@ -607,7 +815,13 @@ export function NewCreative({ slug }: { slug: string }) {
 
       {/* Above the bar, not inside it: a long error keeps its remedy in full. */}
       <div className="ms-nc-errbar">
-        {error ? <p className="ms-nc-ferr" role="alert"><Icon name="warn" size={14} /><span>{n.createFailed({ detail: error })}</span></p> : null}
+        {error ? (
+          <div className="ms-nc-ferr" role="alert">
+            <Icon name="warn" size={14} /><span>{n.createFailed({ detail: error })}</span>
+            {brief.conflict?.code === 'brief-session-handed-off' ? <ConflictActions brief={brief} onOpen={(c) => go(href.creative(slug, c))} onDone={() => setError(null)} /> : null}
+          </div>
+        ) : null}
+
       </div>
       <footer className="ms-nc-foot">
         <div className="ms-nc-frames" aria-hidden="true">
@@ -627,61 +841,36 @@ export function NewCreative({ slug }: { slug: string }) {
           {similar ? <span className="ms-nc-muted ms-nc-small ms-nc-estimate">{n.similar({ range: similar })}</span> : null}
         </div>
         <div className="ms-grow" />
-        <Button size="lg" variant="ghost" loading={busy === 'draft'} disabled={busy !== null || identityPending} onClick={() => void submit(false)}>{n.saveDraft}</Button>
-        <Button size="lg" variant="accent" aria-label={n.generate} loading={busy === 'generate'} disabled={busy !== null || identityPending} onClick={() => void submit(true)}>
+        <Button size="lg" variant="ghost" loading={busy === 'draft'} disabled={busy !== null || identityPending || briefBusy} title={briefBusy ? t.web.briefSession.agentWorking : undefined} onClick={() => void submit(false)}>{n.saveDraft}</Button>
+        <Button size="lg" variant="accent" aria-label={n.generate} loading={busy === 'generate'} disabled={busy !== null || identityPending || briefBusy} title={briefBusy ? t.web.briefSession.agentWorking : undefined} onClick={() => void submit(true)}>
           <Icon name="sparkle" size={14} />{n.generate}<kbd className="ms-nc-kbd" aria-hidden="true">{isMac() ? '⌘↵' : 'Ctrl ↵'}</kbd>
         </Button>
       </footer>
+      </div>
+
+      <ResumeBriefDialog open={attached === false} onResume={resume} onStartOver={() => void startOver()} />
 
       <StorePackWizard open={packOpen} onClose={() => setPackOpen(false)} slug={slug} {...(pack ? { initial: pack } : {})} onConfirm={(p) => { setPack(p); setFormatError(false); }} />
 
-      <Popover open={pickerOpen} onClose={() => setPickerOpen(false)} anchor={pickerAnchor} placement="bottom-end" width={360}>
-        <div role="dialog" aria-label={n.libraryTitle({ project: projectName })} className="ms-nc-picker">
-          <span className="ms-nc-cap ms-nc-ell">{n.libraryTitle({ project: projectName })}</span>
-          {library.value === null && !library.error ? (
-            <div className="ms-nc-pick-state" role="status"><Spinner size={14} decorative />{n.libraryLoading}</div>
-          ) : library.error && library.value === null ? (
-            <div className="ms-nc-pick-state ms-nc-wrap" role="alert">
-              <span>{n.libraryFailed({ detail: library.error })}</span>
-              <Button size="sm" variant="outline" onClick={() => { setLibrary({ value: null, error: null }); setLibraryNonce((x) => x + 1); }}>{n.tryAgain}</Button>
-            </div>
-          ) : null}
-          {library.error && library.value !== null ? (
-            <p className="ms-nc-pick-warn" role="status"><Icon name="warn" size={13} /><span>{n.libraryPartial({ detail: library.error })}</span></p>
-          ) : null}
-          {library.value === null ? null : libraryItems.length === 0 ? (
-            <Empty icon="image" title={n.libraryEmpty} sub={n.libraryEmptyBody} action={<Button size="sm" variant="outline" onClick={() => { setPickerOpen(false); go(href.project(slug, 'assets')); }}>{n.openAssets}</Button>} />
-          ) : (
-            <div className="ms-nc-pick-grid">
-              {libraryItems.map((a) => {
-                const path = assetPath(a.file);
-                const on = picked.includes(path);
-                return (
-                  <button key={a.file} type="button" data-row className={cx('ms-nc-pick', on && 'ms-on')} aria-pressed={on} aria-label={a.file} title={a.description || a.file} onClick={() => togglePicked(path)}>
-                    <AssetFace slug={slug} path={path} entry={a} />
-                    {on ? <span className="ms-nc-tick" aria-hidden="true"><Icon name="check" size={10} strokeWidth={2.4} /></span> : null}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </Popover>
+      <LibraryPicker slug={slug} projectName={projectName} open={pickerOpen} onClose={() => setPickerOpen(false)} anchor={pickerAnchor} library={library}
+        onRetry={() => { setLibrary({ value: null, error: null }); setLibraryNonce((x) => x + 1); }} chosen={picked} onToggle={togglePicked} />
     </div>
   );
 }
 
-/** Thumbnail of a library file: the picture for images, SVGs and videos; an icon and the name otherwise. */
-function AssetFace({ slug, path, entry, small }: { slug: string; path: string; entry: AssetEntry | null; small?: boolean }) {
-  const kind = entry?.kind ?? (isVideoFile(path) ? 'video' : /\.(png|jpe?g|webp|gif|avif|svg)$/i.test(path) ? 'image' : 'other');
-  const url = api.projectFileUrl(slug, path);
-  if (VISUAL.test(kind)) {
-    return kind === 'video'
-      ? <video className={cx('ms-nc-face', small && 'ms-sm')} src={url} muted preload="metadata" aria-hidden="true" />
-      : <img className={cx('ms-nc-face', kind === 'svg' && 'ms-nc-face-svg', small && 'ms-sm')} src={url} alt="" />;
-  }
-  if (small) return <span className="ms-nc-face ms-sm ms-nc-face-file" aria-hidden="true"><Icon name="folder" size={10} /></span>;
-  return <span className="ms-nc-face ms-nc-face-file" aria-hidden="true"><Icon name={kind === 'audio' ? 'play' : 'folder'} size={14} /><span>{baseName(path)}</span></span>;
+/**
+ * Decision 1423: a session half moved into a creative (`brief-session-handed-off`, with or without the creative's name): open
+ * that creative when the core names it, or discard the session.
+ */
+export function ConflictActions({ brief, onOpen, onDone }: { brief: ReturnType<typeof useBriefSession>; onOpen(creative: string): void; onDone?(): void }) {
+  const b = useT().web.briefSession;
+  const to = brief.session?.handedOffTo;
+  return (
+    <span className="ms-nc-conflict">
+      {to ? <Button size="sm" variant="outline" onClick={() => onOpen(to)}>{b.openCreative}</Button> : null}
+      <Button size="sm" variant="ghost" onClick={() => void brief.discard().then(() => onDone?.(), () => {})}>{b.discard}</Button>
+    </span>
+  );
 }
 
 /**
@@ -739,7 +928,7 @@ function Tile({ preset: p, on, onClick, link, blocked }: {
   const label = formatLabel(p, locale);
   const why = blocked ? n.notLinkable(blocked) : null;
   return (
-    <div className="ms-nc-tile-wrap">
+    <div className="ms-nc-tile-wrap" data-format={p.id}>
       <button ref={ref} type="button" className={cx('ms-nc-tile', on && 'ms-on')} aria-pressed={on} onClick={onClick} title={`${p.width}×${p.height}`}>
         <span className="ms-nc-tile-top">
           <span className="ms-nc-frame" style={{ width: w, height: fh }} aria-hidden="true">

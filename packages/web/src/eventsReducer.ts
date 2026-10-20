@@ -1,4 +1,4 @@
-import type { AgentEvent, ApprovalRequest, JobSummary, LanguageSetting, Locale, ServerMessage } from '@motion-studio/shared';
+import type { AgentEvent, ApprovalRequest, BriefField, JobSummary, LanguageSetting, Locale, ServerMessage } from '@motion-studio/shared';
 import { applyToday, applyUsage, keepJobUsage, partialAfterSnapshot, type JobUsage, type TodayUsage, type UsageTodayAction } from './usageLive.ts';
 
 /**
@@ -14,7 +14,17 @@ export interface EventsState { jobUsage?: Record<string, JobUsage>; /** Jobs who
    * Report 41: per creative job, the formats of the version it is writing whose check passed (`formatReady`), with that
    * version's number and the hash checked. Read only while the job runs; dropped when it ends and on a snapshot.
    */
-  ready?: Record<string, Record<string, { n: number; hash: string }>> }
+  ready?: Record<string, Record<string, { n: number; hash: string }>>;
+  /** Decision 1421: `brief-session` messages per project (the brief screen refetches its session on a change). */
+  briefTicks?: Record<string, number>;
+  /**
+   * The recent `fill_brief`s of each project (`seq` grows with every fill; the last BRIEF_FILLS_KEPT): the brief screen joins
+   * every fill of its session it has not taken yet (two fills between renders are both kept), applies the fields the agent wrote
+   * and gives back the ones it rewrote on the user's request (`reclaimed`), after refetching the session.
+   */
+  briefFills?: Record<string, Array<{ sessionId: string; seq: number; written: BriefField[]; reclaimed: BriefField[] }>> }
+/** The fills kept per project (far more than can arrive between two renders). */
+export const BRIEF_FILLS_KEPT = 20;
 export const initialEventsState: EventsState = { approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} };
 const MAX_EVENTS = 2000;
 const TERMINAL = new Set<JobSummary['state']>(['succeeded', 'failed', 'cancelled']);
@@ -85,9 +95,13 @@ export function eventsReducer(state: EventsState, msg: EventsAction): EventsStat
     case 'brand':
     case 'library':
       return { ...state, projectTicks: { ...state.projectTicks, [msg.project]: (state.projectTicks[msg.project] ?? 0) + 1 } };
-    case 'brief-session':
-      // Decision 1421: the brief screen follows its session through its own subscription, not the shared state.
-      return state;
+    case 'brief-session': {
+      const briefTicks = { ...state.briefTicks, [msg.project]: (state.briefTicks?.[msg.project] ?? 0) + 1 };
+      if (!msg.fill) return { ...state, briefTicks };
+      const seq = Math.max(0, ...Object.values(state.briefFills ?? {}).flat().map((f) => f.seq)) + 1;
+      const list = [...(state.briefFills?.[msg.project] ?? []), { sessionId: msg.sessionId, seq, written: msg.fill.written, reclaimed: msg.fill.reclaimed ?? [] }];
+      return { ...state, briefTicks, briefFills: { ...state.briefFills, [msg.project]: list.slice(-BRIEF_FILLS_KEPT) } };
+    }
   }
 }
 

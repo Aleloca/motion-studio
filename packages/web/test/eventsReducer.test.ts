@@ -1,6 +1,6 @@
 import type { JobSummary } from '@motion-studio/shared';
 import { describe, expect, it } from 'vitest';
-import { eventsReducer, initialEventsState, sessionIdOf } from '../src/eventsReducer.ts';
+import { BRIEF_FILLS_KEPT, eventsReducer, initialEventsState, sessionIdOf } from '../src/eventsReducer.ts';
 
 const job = (id: string, state: JobSummary['state']): JobSummary => ({ id, key: 'k', kind: 'creative', label: 'l', state, createdAt: '2026-10-07T10:00:00.000Z' });
 
@@ -107,5 +107,28 @@ describe('report 41: formats ready during a turn', () => {
     // A snapshot that carries the core's list replaces it (a reloaded window).
     expect(eventsReducer(initialEventsState, { type: 'snapshot', jobs: [job('j1', 'running'), job('j2', 'succeeded')], approvals: [], locale: 'it', languageSetting: 'system', systemLocale: 'it',
       ready: { j1: { a: { n: 4, hash: 'h' } }, j2: { b: { n: 1, hash: 'g' } } } }).ready).toEqual({ j1: { a: { n: 4, hash: 'h' } } });
+  });
+});
+
+describe('eventsReducer · brief sessions (decision 1421)', () => {
+  it('counts brief-session messages per project and keeps the latest fill with an increasing seq', () => {
+    let s = eventsReducer(initialEventsState, { type: 'brief-session', project: 'acme', sessionId: 's1', revision: 1 });
+    s = eventsReducer(s, { type: 'brief-session', project: 'acme', sessionId: 's1', revision: 2 });
+    expect(s.briefTicks?.acme).toBe(2);
+    expect(s.briefFills?.acme).toBeUndefined();
+    s = eventsReducer(s, { type: 'brief-session', project: 'acme', sessionId: 's1', revision: 3, fill: { written: ['goal', 'formats'], kept: [], reclaimed: [] } });
+    s = eventsReducer(s, { type: 'brief-session', project: 'acme', sessionId: 's1', revision: 4, fill: { written: [], kept: [], reclaimed: ['message'] } });
+    // Both fills are kept (two fills between renders must not lose the first's fields), in order, seq growing.
+    const [first, second] = s.briefFills!.acme!;
+    expect(first).toMatchObject({ sessionId: 's1', written: ['goal', 'formats'], reclaimed: [] });
+    expect(second!.seq).toBeGreaterThan(first!.seq);
+    expect(second!.reclaimed).toEqual(['message']);
+    for (let i = 0; i < 30; i++) s = eventsReducer(s, { type: 'brief-session', project: 'acme', sessionId: 's1', fill: { written: ['notes'], kept: [], reclaimed: [] } });
+    expect(s.briefFills!.acme).toHaveLength(BRIEF_FILLS_KEPT);
+    s = { ...s, briefTicks: { acme: 4 } };
+    expect(s.briefTicks?.acme).toBe(4);
+    // Another project has its own count.
+    s = eventsReducer(s, { type: 'brief-session', project: 'other', sessionId: 's2', ended: true });
+    expect(s.briefTicks?.other).toBe(1);
   });
 });

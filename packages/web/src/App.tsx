@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type 
 import { api } from './api.ts';
 import { WorkspacePathContext } from './components/commandLog.ts';
 import { detectedLocale, I18nProvider, useLocale, type LanguageState } from './i18n.tsx';
-import { PageHost, type PageMode } from './motion/index.ts';
+import { PageHost } from './motion/index.ts';
 import { depthOf, href, parseRoute, projectOf, redirectOf, routeKey, type Route } from './routes.ts';
 import { AppSettings } from './screens/AppSettings.tsx';
 import { Assets } from './screens/Assets.tsx';
@@ -25,6 +25,7 @@ import { DragStrip } from './shell/DragStrip.tsx';
 import { go, ShellContext, type ActivityTab, type Shell } from './shell/ShellContext.tsx';
 import { isMac } from './platform.ts';
 import { TopBar } from './shell/TopBars.tsx';
+import { sharedElement } from './shell/sharedElement.ts';
 import { useAttention, useDraftCloseGuard, useExportNotice, useReadyNotice, useRenderCloseGuard } from './shell/useAttention.ts';
 import { installMenuZoom } from './shell/menuZoom.ts';
 import { applyTheme } from './theme.ts';
@@ -260,7 +261,7 @@ function AppShell({ route, live, settings, checks, activity, setActivity, langua
     switch (r.name) {
       case 'projects': return <Projects live={live} />;
       case 'project': return <ProjectHost route={r} live={live} settings={settings} checks={checks} onSettings={onSettings} />;
-      case 'new-creative': return <NewCreative key={r.slug} slug={r.slug} />;
+      case 'new-creative': return <NewCreative key={r.slug} slug={r.slug} live={live} />;
       case 'creative': return <CreativeCanvas key={`${r.slug}/${r.creative}`} slug={r.slug} creative={r.creative} live={live} exportNamePattern={settings?.exportNamePattern} onSettings={onSettings} />;
       // A format's page is its editor (one screen, decision 916); without a composition it shows the viewer inside.
       case 'format': return <EditorScreen key={`${r.slug}/${r.creative}/${r.format}`} slug={r.slug} creative={r.creative} format={r.format} live={live} exportNamePattern={settings?.exportNamePattern} onSettings={onSettings} />;
@@ -286,11 +287,6 @@ function AppShell({ route, live, settings, checks, activity, setActivity, langua
   );
 }
 
-/** T3/T4: a board of the canvas and its format view share an element; the pages fade and recede instead of sliding. */
-function sharedElement(a: Route, b: Route): PageMode {
-  const pair = (x: Route, y: Route) => x.name === 'creative' && y.name === 'format' && x.slug === y.slug && x.creative === y.creative;
-  return pair(a, b) || pair(b, a) ? 'shared' : undefined;
-}
 
 /** A project page: its tabs (in the project bar) change in place with T2 (soft fade and 6 px lift). */
 interface TabProps { live: EventsState; settings: WorkspaceInfo['settings']; checks: DoctorCheck[] | null; onSettings(next: WorkspaceSettings): void }
