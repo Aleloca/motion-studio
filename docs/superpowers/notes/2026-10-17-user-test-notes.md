@@ -470,6 +470,9 @@ arrives and worked on later together.
     stays about the same small size. The user cannot get the images any bigger to look at them.
     Wanted: zoom enlarges the boards themselves.
     Timing: now, with 60.
+    Done (decisions 1465–1467): a card's columns are set when it opens (at least 150 px each) and never grow; the zoom scales its
+    thumbnails from there (3 × 17 at a 2000 px window: 2 columns of 162 px, 324 px at 200%), the columns giving way only at the
+    canvas's edge. The "Scelte" view already scaled its boards with the zoom.
 
 ## Follow-ups found while working on 12–30
 
