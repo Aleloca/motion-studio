@@ -435,6 +435,12 @@ arrives and worked on later together.
     User's decision: a counter "− N +" on a selected tile (1–20). The footer summary counts the copies; the first turn
     makes all of them, each with a speaking name (report 55). The brief agent can set the count too.
     Timing: now.
+    Done (decisions 1429–1435): a selected tile (not an identity one) grows a bottom row "−  N  +" (28 px buttons; the tick
+    stays), a sibling of the tile button (its clicks never deselect); the brief carries `<preset>`, `<preset>@2`… right after
+    the format, counted by the summary and the frames; the channel says "1 selezionato · 12 in totale"; a copy never follows by
+    default; copies and a store pack share the format's 20 instances. `fill_brief` takes instance ids (no gaps, at
+    most 20) and the brief prompt says how to ask for N copies; the creative's prompt asks a different image and a name of its
+    own for each copy.
 
 59. **A custom format from New creative.** The user wants a "custom" tile on the format board: a click opens a modal
     to define the format (video or image, size…), which is then added to the list and passed to the agent.

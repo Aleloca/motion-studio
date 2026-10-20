@@ -459,4 +459,19 @@ describe('format names in the prompt (report 55)', () => {
     expect(buildCreativePrompt({ ...v2, creative: named, kind: 'fix', problems: ['x'], appActions: true })).not.toContain('## Format names');
     expect(buildCreativePrompt({ ...v2, creative: named, kind: 'first', appActions: true, helper: { request: null } })).not.toContain('## Format names');
   });
+  it('asks a different name for each copy of one format, and different images (report 58)', () => {
+    const copies = { ...creative, brief: { ...creative.brief, formats: ['instagram-image-1x1', 'instagram-image-1x1@2', 'instagram-image-1x1@3'] } };
+    const p = buildCreativePrompt({ ...v2, creative: copies, kind: 'first', appActions: true });
+    expect(p).toContain('- Formats with no name yet: instagram-image-1x1, instagram-image-1x1@2, instagram-image-1x1@3.');
+    expect(p).toContain('- instagram-image-1x1, instagram-image-1x1@2, instagram-image-1x1@3: copies of one format show different images or videos: give each a name of its own that says what it shows (another subject, theme or moment), never the same name with a number.');
+    // A copy the user named is theirs: left out of the line.
+    const named = { ...copies, brief: { ...copies.brief, formatLabels: { 'instagram-image-1x1@2': 'La mia' } } };
+    expect(buildCreativePrompt({ ...v2, creative: named, kind: 'first', appActions: true })).toContain('- instagram-image-1x1, instagram-image-1x1@3: copies of one format');
+    expect(p).toContain('make each one a different image');
+    // In a group the copies are named the same way (the names are the group's, still one per copy).
+    const variant = { letter: 'b' as const, count: 2, direction: null, others: [] };
+    expect(buildCreativePrompt({ ...v2, creative: copies, kind: 'first', appActions: true, variant })).toContain('copies of one format show different images or videos');
+    // No copies: no such line.
+    expect(buildCreativePrompt({ ...v2, kind: 'first', appActions: true })).not.toContain('copies of one format');
+  });
 });

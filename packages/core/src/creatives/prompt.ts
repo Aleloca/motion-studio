@@ -536,6 +536,13 @@ export function appActionsSection(brief: CreativeFile['brief'], helper = false):
   ];
 }
 
+/** The instances of each preset that has more than one, in brief order (report 58). */
+const copiesOf = (formats: readonly string[]): string[][] => {
+  const by = new Map<string, string[]>();
+  for (const id of formats) by.set(presetOf(id), [...(by.get(presetOf(id)) ?? []), id]);
+  return [...by.values()].filter((ids) => ids.length > 1);
+};
+
 /**
  * Report 55: the agent names every format it makes (`name_formats`), in the user's language, and never a format the user named
  * (listed; Motion Studio refuses it anyway). Not for a helper: the brief is its coordinator's.
@@ -552,6 +559,9 @@ export function formatNamesSection(brief: CreativeFile['brief'], locale: Locale,
       // Review: in a group the names are the group's (the formats' common content); only the coordinator renames them.
       ? '- The names are the group\'s: name only formats with no name yet; never rename a named one (the agent the user talks to does that). Say what the format shows in every variant, not this variant\'s look. One name_formats call can name them all.'
       : '- Name each format you make in this turn that has no name yet, and rename a format you named when what it shows changes. Keep the names distinct within the creative. One name_formats call can name them all.',
+    // Report 58: copies of one format (`<id>`, `<id>@2`…) are different images or videos, so their names differ too; the user's
+    // names are left out (they are theirs).
+    ...copiesOf(mine).map((ids) => `- ${ids.join(', ')}: copies of one format show different images or videos: give each a name of its own that says what it shows (another subject, theme or moment), never the same name with a number.`),
     // Review: the formats of an existing creative get their names at its next turn, also those the turn does not change.
     ...(unnamed.length > 0 ? [`- Formats with no name yet: ${unnamed.join(', ')}. Name every one of them in this turn, also those you do not change.`] : []),
     theirs.length > 0
@@ -590,7 +600,7 @@ function durationFixLines(d: { duration: number; target: number }, helper = fals
 }
 
 /** Said of two or more instances of one preset in a turn (Phase 12, spec §2). */
-export const SAME_SIZE_NOTE = 'These are separate designs of the same size; keep each one distinct unless the request says otherwise';
+export const SAME_SIZE_NOTE = 'These are separate designs of the same size on the same brief: make each one a different image or video (another subject, scene or moment), never the same picture repeated; keep them distinct unless the request says otherwise';
 
 export function buildCreativePrompt(i: PromptInput): string {
   const { locale } = i;

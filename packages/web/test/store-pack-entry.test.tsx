@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DEFAULT_FORMATS, EMPTY_BRAND_KIT, storePackFormats, type StorePack } from '@motion-studio/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -120,6 +120,54 @@ describe('New creative · the store pack is an entry of the formats list', () =>
     expect(body.brief.storePack.instances).toEqual(['appstore-iphone-69@2', 'appstore-iphone-69@3', 'appstore-iphone-69@4']);
     expect(body.brief.formatLabels['appstore-iphone-69@2']).toBe('1 · Didascalia 1');
     expect(body.brief.formatLabels['appstore-iphone-69']).toBeUndefined();
+  });
+
+  // Report 58: the pack's instances and the tile's copies of one format share its 20 instances.
+  const iphone = async () => {
+    await userEvent.type(screen.getByRole('searchbox'), 'iPhone 6');
+    await userEvent.click(within(await screen.findByRole('group', { name: 'App Store' })).getByRole('button', { name: /iPhone 6\.9/ }));
+    await userEvent.clear(screen.getByRole('searchbox'));
+  };
+  const counter = () => within(screen.getByRole('group', { name: 'App Store' })).getByRole('group', { name: /^Copie di/ });
+  const plus = () => within(counter()).getByRole('button', { name: 'Una copia in più' });
+  const value = () => counter().querySelector('.ms-nc-copies-n')!.textContent;
+
+  it('with a pack, the copies of its format stop at 20 minus its instances, and say why', async () => {
+    await open();
+    await openStores();
+    await userEvent.click(entry());
+    await fillWizard(await screen.findByRole('dialog', { name: 'Pacchetto App Store' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Aggiungi ai formati' }));
+    await iphone();
+    for (let i = 0; i < 20; i++) fireEvent.click(plus());
+    expect(value()).toBe('17');
+    expect(plus().getAttribute('aria-disabled')).toBe('true');
+    expect(plus().getAttribute('title')).toBe('Il pacchetto store ne usa altre 3 di questo formato: 20 in tutto');
+    expect(within(counter()).getByRole('status').textContent).toContain('Il pacchetto store ne usa altre 3');
+  });
+
+  it('copies picked before a pack that goes over 20: a specific message, Genera and Salva bozza blocked until fewer copies', async () => {
+    await open();
+    await userEvent.type(screen.getByLabelText('Cosa vuoi realizzare?'), 'Lancio di Tasky');
+    await iphone();
+    for (let i = 0; i < 18; i++) fireEvent.click(plus());
+    expect(value()).toBe('19');
+    await userEvent.click(entry());
+    await fillWizard(await screen.findByRole('dialog', { name: 'Pacchetto App Store' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Aggiungi ai formati' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('le copie e il pacchetto store superano 20');
+    expect(screen.getByRole('button', { name: 'Genera' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Salva bozza' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+    expect(createCreative).not.toHaveBeenCalled();
+    for (let i = 0; i < 2; i++) await userEvent.click(within(counter()).getByRole('button', { name: 'Una copia in meno' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Salva bozza' }));
+    await waitFor(() => expect(createCreative).toHaveBeenCalledOnce());
+    const body = createCreative.mock.calls[0]![1] as { brief: { formats: string[] } };
+    expect(body.brief.formats).toHaveLength(20);
+    expect(new Set(body.brief.formats).size).toBe(20);
   });
 
   it('a pack alone is enough to create; taking it out brings back the "pick a format" state', async () => {

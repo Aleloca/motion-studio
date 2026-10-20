@@ -77,6 +77,24 @@ describe('applyFill', () => {
     expect(refusal(() => applyFill(s, { variants: 9 }, DEFAULT_FORMATS)).message).toContain('variants');
     expect(JSON.stringify(s)).toBe(before);
   });
+  it('takes copies of a format as its instance ids, in the order given (report 58)', () => {
+    const formats = ['instagram-image-1x1', 'instagram-image-1x1@2', 'tiktok-9x16', 'instagram-image-1x1@3'];
+    const r = applyFill(session(), { formats }, DEFAULT_FORMATS);
+    expect(r.form.formats).toEqual(formats);
+    expect(r.written).toEqual(['formats']);
+  });
+  it('refuses copies with a gap, a copy without its format, more than 20, a repeat, an unknown or an identity base', () => {
+    const s = session();
+    setLocale('it');
+    expect(refusal(() => applyFill(s, { formats: ['instagram-image-1x1@2'] }, DEFAULT_FORMATS))).toMatchObject({ status: 400, message: expect.stringContaining('instagram-image-1x1@2') });
+    expect(refusal(() => applyFill(s, { formats: ['instagram-image-1x1', 'instagram-image-1x1@3'] }, DEFAULT_FORMATS)).message).toContain('instagram-image-1x1@2');
+    expect(refusal(() => applyFill(s, { formats: ['instagram-image-1x1', 'instagram-image-1x1@21'] }, DEFAULT_FORMATS))).toMatchObject({ status: 400 });
+    expect(refusal(() => applyFill(s, { formats: ['instagram-image-1x1', 'instagram-image-1x1'] }, DEFAULT_FORMATS))).toMatchObject({ status: 400 });
+    expect(refusal(() => applyFill(s, { formats: ['nope-1x1', 'nope-1x1@2'] }, DEFAULT_FORMATS)).message).toContain('nope-1x1');
+    expect(refusal(() => applyFill(s, { formats: ['identity-logo@2'] }, DEFAULT_FORMATS)).message).toContain('identità');
+    const twenty = Array.from({ length: 20 }, (_, k) => (k === 0 ? 'instagram-image-1x1' : `instagram-image-1x1@${k + 1}`));
+    expect(applyFill(s, { formats: twenty }, DEFAULT_FORMATS).form.formats).toHaveLength(20);
+  });
 });
 
 describe('fillLine', () => {

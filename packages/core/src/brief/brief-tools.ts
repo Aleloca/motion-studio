@@ -1,4 +1,4 @@
-import { BRIEF_FIELDS, briefFillSchema, channelName, formatLabel, presetOf, type BriefContext, type BriefField, type BriefForm, type FormatPreset, type Locale } from '@motion-studio/shared';
+import { BRIEF_FIELDS, briefFillSchema, channelName, formatLabel, instanceIdOf, instanceIndex, presetOf, type BriefContext, type BriefField, type BriefForm, type FormatPreset, type Locale } from '@motion-studio/shared';
 import { t } from '../i18n.ts';
 import { CodedError } from '../workspace-store.ts';
 
@@ -49,10 +49,16 @@ export function applyFill(s: { form: BriefForm; userEdited: readonly BriefField[
     throw bad(t().errors.briefBadField({ field, detail: issue?.message ?? 'invalid' }));
   }
   const { reclaim = [], ...fill } = parsed.data;
-  for (const id of fill.formats ?? []) {
+  const formats = fill.formats ?? [];
+  for (const id of formats) {
     const preset = presets.find((p) => p.id === presetOf(id));
     if (!preset) throw bad(t().errors.briefUnknownFormat({ id }));
     if (preset.identity) throw bad(t().errors.briefIdentityFormat({ id }));
+    // Report 58: copies of a format are `<id>`, `<id>@2`… `<id>@N` with none left out (the schema caps N at 20, no repeats).
+    for (let k = 1; k < instanceIndex(id); k++) {
+      const missing = instanceIdOf(preset.id, k);
+      if (!formats.includes(missing)) throw bad(t().errors.briefFormatGap({ id, missing }));
+    }
   }
   const assets = new Set([...s.context.assets, ...s.form.assets]);
   for (const a of fill.assets ?? []) if (!assets.has(a)) throw bad(t().errors.briefAssetOutside({ path: a }));

@@ -169,7 +169,9 @@
 
 .ms-nc-group { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .ms-nc-ghead { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.ms-nc-ghead b { font-weight: 600; }
+.ms-nc-ghead b { font-weight: 600; flex: 0 0 auto; max-width: 100%; }
+/* The channel's count gives way to its name (its full text is the title). */
+.ms-nc-gcount { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-nc-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 10px; }
 /* Six across when the board is wide enough (the board's width, not the window's: the brief column takes its share). */
 .ms-nc-right { container-type: inline-size; }
@@ -213,6 +215,20 @@ button.ms-nc-link:focus-visible { outline: 2px solid var(--accent); outline-offs
 .ms-nc-tile-text b { font-weight: 600; }
 .ms-nc-tile-meta { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
 .ms-nc-tile .ms-nc-tick { right: 8px; top: 8px; }
+/* Report 58: a selected tile with the copies counter grows by its row (the others keep 112 px: the grid aligns them to the
+   start); the counter "−  N  +" spans the tile under the name and meta, laid over the tile button (a sibling of it). */
+.ms-nc-tiles { align-items: start; }
+.ms-nc-has-copies > .ms-nc-tile { height: 148px; padding-bottom: 46px; }
+.ms-nc-copies {
+  position: absolute; left: 8px; right: 8px; bottom: 8px; height: 28px; display: flex; align-items: center; justify-content: space-between;
+  border-radius: 8px; background: var(--sel); color: var(--accentText);
+}
+.ms-btn.ms-nc-copy-btn { color: inherit; }
+.ms-btn.ms-nc-copy-btn:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); color: inherit; }
+.ms-btn.ms-nc-copy-btn[aria-disabled="true"] { opacity: .4; cursor: default; }
+.ms-btn.ms-nc-copy-btn[aria-disabled="true"]:active { transform: none; }
+.ms-nc-copy-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ms-nc-copies-n { flex: 1; min-width: 0; text-align: center; font: 600 13px/1 var(--mono); font-variant-numeric: tabular-nums; }
 .ms-nc-skel { cursor: default; box-shadow: 0 0 0 1px var(--line2); background: var(--panel); }
 
 .ms-nc-more { display: flex; flex-direction: column; gap: 10px; }
@@ -224,10 +240,12 @@ button.ms-nc-link:focus-visible { outline: 2px solid var(--accent); outline-offs
   display: flex; align-items: center; gap: 14px; height: 64px; margin: 12px; padding: 0 20px; min-width: 0; background: var(--panel);
   border-radius: 16px; box-shadow: 0 0 0 1px var(--line), 0 8px 24px var(--shadow);
 }
-.ms-nc-frames { display: flex; align-items: center; gap: 6px; flex: none; }
+/* With little room the drawn frames give way first, then the summary takes two lines (at most; its full text is the title). */
+.ms-nc-frames { display: flex; align-items: center; gap: 6px; flex: 0 100 auto; min-width: 0; overflow: hidden; }
+.ms-nc-frames span { flex: none; }
 .ms-nc-frames span { border-radius: 3px; background: var(--sel); box-shadow: inset 0 0 0 1.5px var(--accent); }
 .ms-nc-sum { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.ms-nc-sum b { font-weight: 600; }
+.ms-nc-sum b { font-weight: 600; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; line-height: 1.25; }
 .ms-nc-sum > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-nc-warn { color: var(--warn); }
 /* Generation error: a strip above the bar, wrapped in full (the remedy is at the end). */

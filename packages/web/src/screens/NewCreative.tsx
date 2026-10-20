@@ -1,4 +1,4 @@
-import { canFollow, channelName, statedDurationSec, formatLabel, formatName, type BriefField, type BriefForm, type StorePack, type AssetEntry, type FollowCheck, type IdentityBrief, type Locale, type BrandKit, type BriefServices, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
+import { canFollow, storePackFormats, channelName, statedDurationSec, formatLabel, formatName, instanceIdOf, instanceIndex, instanceLabel, instancePreset, MAX_INSTANCES, presetOf, type BriefField, type BriefForm, type StorePack, type AssetEntry, type FollowCheck, type IdentityBrief, type Locale, type BrandKit, type BriefServices, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { api } from '../api.ts';
 import { CodebaseList } from '../components/CodebaseList.tsx';
@@ -113,6 +113,8 @@ export function similarRange(tokens: number[], locale: Locale): string | null {
  * (`off`); otherwise it is a primary. `candidates`: every format that can follow, with its primary (its toggle);
  * `blocked`: a format of the same size as an earlier primary that cannot follow it, with the reason (said on its tile).
  * `durationSec`: the brief's video length when known (undefined skips the duration check, re-done on the real file).
+ * Report 58: stricter than the core's `defaultLinks` on purpose: a copy (`<preset>@k`, k ≥ 2) never follows anything, since a
+ * link would make it the same picture as its primary; and, as there, no instance follows another of its own preset.
  */
 export function planLinks(chosen: FormatPreset[], off: ReadonlySet<string>, durationSec: number | undefined): {
   links: Record<string, string>; candidates: Record<string, string>; blocked: Record<string, { primary: string; reason: Extract<FollowCheck, { ok: false }>['reason'] }>;
@@ -122,7 +124,8 @@ export function planLinks(chosen: FormatPreset[], off: ReadonlySet<string>, dura
   const blocked: Record<string, { primary: string; reason: Extract<FollowCheck, { ok: false }>['reason'] }> = {};
   const primaries: FormatPreset[] = [];
   for (const f of chosen) {
-    const primary = primaries.find((p) => canFollow(p, f, durationSec).ok);
+    if (instanceIndex(f.id) > 1) { primaries.push(f); continue; }
+    const primary = primaries.find((p) => presetOf(p.id) !== presetOf(f.id) && canFollow(p, f, durationSec).ok);
     if (primary) {
       candidates[f.id] = primary.id;
       if (!off.has(f.id)) { links[f.id] = primary.id; continue; }
@@ -249,7 +252,8 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   useNewCreativeAssetsIntent(slug, useCallback((paths: string[]) => { setPicked((p) => [...p, ...paths.filter((x) => !p.includes(x))]); editedRef.current('assets'); }, []));
 
   const presets = catalog.value ?? [];
-  const chosen = useMemo(() => selected.flatMap((id) => presets.filter((p) => p.id === id)), [selected, presets]);
+  // `selected` holds instance ids (report 58): a tile's preset id, then its copies `<preset>@2`… right after it.
+  const chosen = useMemo(() => selected.flatMap((id) => { const p = instancePreset(presets, id); return p ? [p] : []; }), [selected, presets]);
   const videos = chosen.filter((p) => p.kind === 'video');
 
   const durationSec = length === 'custom' ? Number(customSec) : Number(length);
@@ -258,7 +262,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   const [linkOff, setLinkOff] = useState<ReadonlySet<string>>(() => new Set());
   const plan = useMemo(() => planLinks(chosen, linkOff, durationValid ? durationSec : undefined), [chosen, linkOff, durationValid, durationSec]);
   const toggleLink = (id: string) => setLinkOff((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-  const presetLabel = (id: string) => { const p = presets.find((x) => x.id === id); return p ? formatLabel(p, locale) : id; };
+  const presetLabel = (id: string) => { const p = presets.find((x) => x.id === presetOf(id)); return p ? instanceLabel(id, formatLabel(p, locale)) : id; };
   const tooLong = videos.find((p) => p.maxDurationSec !== undefined && durationValid && durationSec > p.maxDurationSec) ?? null;
   // User note 6: the brief's text states another duration than the field (a pasted "60-second" brief kept the default 6 s).
   const stated = useMemo(() => statedDurationSec([goal, message, notes].join('\n')), [goal, message, notes]);
@@ -285,14 +289,29 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   const open = (g: string) => q !== '' || primary.includes(g) || more.has(g) || presets.some((p) => p.channel === g && selected.includes(p.id)) || (pack !== null && PACK_CHANNELS.includes(g));
   const visibleGroups = groups.map((g) => ({ g, items: presets.filter((p) => p.channel === g && shown(p)) })).filter(({ g, items }) => open(g) && (items.length > 0 || packIn(g)));
   const hiddenGroups = q ? [] : groups.filter((g) => !open(g));
+  // Report 58: chosen formats (copies included) the kind filter or the search hides.
+  const hiddenChosen = selected.filter((id) => { const p = presets.find((x) => x.id === presetOf(id)); return p !== undefined && !shown(p); }).length;
 
   const root = useEnter<HTMLDivElement>([catalog.value !== null]);
 
+  // Deselecting a tile drops its copies too.
   const toggle = (id: string) => {
     edited('formats');
     setFormatError(false);
-    setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+    setSelected((s) => (s.includes(id) ? s.filter((x) => presetOf(x) !== id) : [...s, id]));
   };
+  /** Report 58: `n` instances of a selected tile's preset (1–20), `<preset>`, `<preset>@2`… in place of the ones it had. */
+  const setCopies = (id: string, n: number) => {
+    edited('formats');
+    setSelected((s) => {
+      const at = s.findIndex((x) => presetOf(x) === id);
+      if (at === -1) return s;
+      const rest = s.filter((x) => presetOf(x) !== id);
+      rest.splice(at, 0, ...Array.from({ length: Math.min(MAX_INSTANCES, Math.max(1, n)) }, (_, k) => instanceIdOf(id, k + 1)));
+      return rest;
+    });
+  };
+  const copiesOf = (id: string) => selected.filter((x) => presetOf(x) === id).length;
   const suggest = (k: (typeof SUGGESTIONS)[number]) => {
     edited('goal');
     setGoal(n.suggestions[k].text);
@@ -313,6 +332,8 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
     if (inFlight.current || briefBusy) return;
     // The start mode defaults to the brand's logo when it has one: wait for the brand before sending an identity brief.
     if (identityPending) return;
+    // Report 58: the pack and the copies of one format ask for more than 20 instances: said beside the footer, nothing sent.
+    if (packFull) return;
     if (!goal.trim()) {
       setGoalError(true);
       goalRef.current?.focus();
@@ -401,6 +422,14 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   const handPicked = chosen;
   const handIds = handPicked.map((p) => p.id);
   const parts = packParts(pack, presets, handIds);
+  // Report 58: the instances the pack takes of each preset, so a tile's copies stop at 20 with them; `packFull`: the format whose
+  // copies and pack instances still go over (copies picked before the pack).
+  const packUse = useMemo(() => {
+    const m = new Map<string, number>();
+    if (pack) for (const id of storePackFormats(pack, presets).formats) m.set(presetOf(id), (m.get(presetOf(id)) ?? 0) + 1);
+    return m;
+  }, [pack, presets]);
+  const packFull = parts.full ? presetLabel(parts.full) : null;
   const packExtra = parts.formats.length;
   // Variants: a logo from scratch asks the count inside "Partenza" and the core makes that group; any other creative has the field here.
   const coreGroup = identityOn && identityNow.start === 'scratch';
@@ -408,6 +437,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   const vg = t.web.variantGroup;
   const allVideos = handPicked.filter((p) => p.kind === 'video').length + parts.videos;
   const allImages = handPicked.filter((p) => p.kind === 'image').length + parts.images;
+  const summaryText = n.summary({ formats: handPicked.length + packExtra, videos: allVideos, images: allImages });
   const hasBrand = !!kit && (kit.colors.length > 0 || kit.fonts.length > 0 || kit.logos.length > 0 || kit.tone !== null);
   // The brand in one line, as on the board: heading font · main colour · tone.
   const brandLine = kit ? [kit.fonts[0]?.family, kit.colors[0]?.name, kit.tone?.text].filter(Boolean).join(' · ') : '';
@@ -518,7 +548,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
     };
     for (const f of marks.glow) void glow(box[f] ?? null);
     const byData = (attr: 'asset' | 'format', v: string) => [...at.querySelectorAll<HTMLElement>(`[data-${attr}]`)].find((el) => el.dataset[attr] === v) ?? null;
-    const tiles = [...marks.assets.map((a) => byData('asset', a)), ...marks.formats.map((id) => byData('format', id))];
+    const tiles = [...marks.assets.map((a) => byData('asset', a)), ...[...new Set(marks.formats.map(presetOf))].map((id) => byData('format', id))];
     tiles.forEach((el, i) => void tileIn(el, i * 90));
   }, [marks]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -755,6 +785,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
             </label>
           </div>
 
+          {hiddenChosen > 0 ? <p className="ms-nc-faint ms-nc-small ms-nc-hidden-note" role="status">{n.hiddenChosen({ n: hiddenChosen })}</p> : null}
           {catalog.warning ? <p className="ms-nc-alert" role="status"><Icon name="warn" size={14} /><span>{catalog.warning}</span></p> : null}
           {catalog.error ? (
             <div className="ms-nc-alert" role="alert">
@@ -775,19 +806,25 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
 
           {/* Channel groups flow on one six-column grid (as on the board): a short group shares its row with the next. */}
           {visibleGroups.length ? <div className="ms-nc-groups">{visibleGroups.map(({ g, items }) => {
+            // Tiles and copies apart (report 58): "1 selezionato · 12 copie" only when some tile has copies.
             const count = items.filter((p) => selected.includes(p.id)).length;
+            const instances = selected.filter((id) => items.some((p) => p.id === presetOf(id))).length;
             const name = channelName(g, locale);
             return (
               <div key={g} className="ms-nc-group" role="group" aria-label={name} data-enter style={{ '--cols': Math.min(items.length + (packIn(g) ? 1 : 0), TILE_COLUMNS) } as CSSProperties}>
                 <div className="ms-nc-ghead">
                   <ChannelMark channel={channelOf(g)} size={20} />
                   <b className="ms-nc-ell">{name}</b>
-                  {count ? <span className="ms-nc-faint ms-nc-small">{n.selectedCount({ n: count })}</span> : null}
+                  {count ? (() => {
+                    const text = `${n.selectedCount({ n: count })}${instances > count ? ` · ${n.copiesTotal({ n: instances })}` : ''}`;
+                    return <span className="ms-nc-faint ms-nc-small ms-nc-gcount" title={text}>{text}</span>;
+                  })() : null}
                 </div>
                 <div className="ms-nc-tiles">
                   {packIn(g) ? <PackTile pack={pack} onOpen={() => setPackOpen(true)} onRemove={() => setPack(null)} /> : null}
                   {items.map((p) => (
                     <Tile key={p.id} preset={p} on={selected.includes(p.id)} onClick={() => toggle(p.id)}
+                      copies={selected.includes(p.id) && !p.identity ? { n: copiesOf(p.id), packTaken: packUse.get(p.id) ?? 0, onChange: (v) => setCopies(p.id, v) } : null}
                       link={selected.includes(p.id) && plan.candidates[p.id] ? { primary: presetLabel(plan.candidates[p.id]!), on: !linkOff.has(p.id), onToggle: () => toggleLink(p.id) } : null}
                       blocked={selected.includes(p.id) && plan.blocked[p.id] ? { primary: presetLabel(plan.blocked[p.id]!.primary), reason: t.errors.followReason[plan.blocked[p.id]!.reason] } : null} />
                   ))}
@@ -815,6 +852,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
 
       {/* Above the bar, not inside it: a long error keeps its remedy in full. */}
       <div className="ms-nc-errbar">
+        {packFull ? <div className="ms-nc-ferr" role="alert"><Icon name="warn" size={14} /><span>{n.packFull({ label: packFull, max: MAX_INSTANCES })}</span></div> : null}
         {error ? (
           <div className="ms-nc-ferr" role="alert">
             <Icon name="warn" size={14} /><span>{n.createFailed({ detail: error })}</span>
@@ -833,7 +871,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
         </div>
         <div className="ms-nc-sum">
           {chosen.length + packExtra ? (
-            <b>{n.summary({ formats: handPicked.length + packExtra, videos: allVideos, images: allImages })}</b>
+            <b title={summaryText}>{summaryText}</b>
           ) : (
             <b className={cx(formatError && 'ms-nc-warn')}>{n.pickFormat}</b>
           )}
@@ -841,8 +879,8 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
           {similar ? <span className="ms-nc-muted ms-nc-small ms-nc-estimate">{n.similar({ range: similar })}</span> : null}
         </div>
         <div className="ms-grow" />
-        <Button size="lg" variant="ghost" loading={busy === 'draft'} disabled={busy !== null || identityPending || briefBusy} title={briefBusy ? t.web.briefSession.agentWorking : undefined} onClick={() => void submit(false)}>{n.saveDraft}</Button>
-        <Button size="lg" variant="accent" aria-label={n.generate} loading={busy === 'generate'} disabled={busy !== null || identityPending || briefBusy} title={briefBusy ? t.web.briefSession.agentWorking : undefined} onClick={() => void submit(true)}>
+        <Button size="lg" variant="ghost" loading={busy === 'draft'} disabled={busy !== null || identityPending || briefBusy || packFull !== null} title={briefBusy ? t.web.briefSession.agentWorking : undefined} onClick={() => void submit(false)}>{n.saveDraft}</Button>
+        <Button size="lg" variant="accent" aria-label={n.generate} loading={busy === 'generate'} disabled={busy !== null || identityPending || briefBusy || packFull !== null} title={briefBusy ? t.web.briefSession.agentWorking : undefined} onClick={() => void submit(true)}>
           <Icon name="sparkle" size={14} />{n.generate}<kbd className="ms-nc-kbd" aria-hidden="true">{isMac() ? '⌘↵' : 'Ctrl ↵'}</kbd>
         </Button>
       </footer>
@@ -903,10 +941,13 @@ function PackTile({ pack, onOpen, onRemove }: { pack: StorePack | null; onOpen()
 /**
  * One format of the board (prototype Tile): drawn proportion with the kind icon, name, ratio and maximum length. A chosen
  * format that can share an earlier one's file has a link toggle (`link`, a sibling of the tile button, never inside it);
- * one of the same size that cannot says why (`blocked`).
+ * one of the same size that cannot says why (`blocked`). A chosen format (not an identity one) has the copies counter
+ * "− N +" as a full-width row at the bottom of the tile, which grows to hold it (`copies`, report 58); the counter is a sibling
+ * of the tile button laid over the tile, so its clicks never deselect.
  */
-function Tile({ preset: p, on, onClick, link, blocked }: {
+function Tile({ preset: p, on, onClick, copies, link, blocked }: {
   preset: FormatPreset; on: boolean; onClick(): void;
+  copies: { n: number; packTaken: number; onChange(n: number): void } | null;
   link: { primary: string; on: boolean; onToggle(): void } | null;
   blocked: { primary: string; reason: string } | null;
 }) {
@@ -928,7 +969,7 @@ function Tile({ preset: p, on, onClick, link, blocked }: {
   const label = formatLabel(p, locale);
   const why = blocked ? n.notLinkable(blocked) : null;
   return (
-    <div className="ms-nc-tile-wrap" data-format={p.id}>
+    <div className={cx('ms-nc-tile-wrap', copies && 'ms-nc-has-copies')} data-format={p.id}>
       <button ref={ref} type="button" className={cx('ms-nc-tile', on && 'ms-on')} aria-pressed={on} onClick={onClick} title={`${p.width}×${p.height}`}>
         <span className="ms-nc-tile-top">
           <span className="ms-nc-frame" style={{ width: w, height: fh }} aria-hidden="true">
@@ -941,6 +982,7 @@ function Tile({ preset: p, on, onClick, link, blocked }: {
         </span>
         {on ? <span className="ms-nc-tick" aria-hidden="true"><Icon name="check" size={10} strokeWidth={2.4} /></span> : null}
       </button>
+      {copies ? <Copies label={label} n={copies.n} packTaken={copies.packTaken} onChange={copies.onChange} /> : null}
       {link ? (
         <button type="button" className={cx('ms-nc-link', link.on && 'ms-on')} aria-pressed={link.on}
           aria-label={n.linkToggle({ label, primary: link.primary })} title={link.on ? n.linkOn({ primary: link.primary }) : n.linkOff({ primary: link.primary })}
@@ -950,6 +992,37 @@ function Tile({ preset: p, on, onClick, link, blocked }: {
       ) : why ? (
         <span className="ms-nc-link ms-nc-link-no" role="img" aria-label={why} title={why}><Icon name="link" size={13} /></span>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Report 58: how many instances of a selected format the brief asks for, 1–20 ("− N +"): copies, more images of the format on
+ * the same brief, not variants. The group names the format (its buttons do not, so a search by the format's name finds only the
+ * tile); the buttons stay focusable at the ends (`aria-disabled`); the count is announced.
+ */
+function Copies({ label, n, packTaken, onChange }: { label: string; n: number; packTaken: number; onChange(n: number): void }) {
+  const c = useT().web.newCreative;
+  // The store pack's instances of this format count toward the 20.
+  const max = Math.max(1, MAX_INSTANCES - packTaken);
+  const atMin = n <= 1;
+  const atMax = n >= max;
+  const why = atMax && packTaken > 0 ? c.copiesPackLimit({ n: packTaken }) : undefined;
+  // Announced only on a change, with the format's name (and why "+" stops, when the pack is the reason).
+  const [said, setSaid] = useState('');
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) { first.current = false; return; }
+    setSaid(`${c.copiesSaid({ label, n })}${why ? `. ${why}` : ''}`);
+  }, [n]); // eslint-disable-line react-hooks/exhaustive-deps -- only a change of the count is said
+  return (
+    <div className="ms-nc-copies" role="group" aria-label={c.copiesLabel({ label })} title={c.copiesHint}>
+      <Button variant="ghost" size="sm" icon className="ms-nc-copy-btn" aria-label={c.copiesLess} aria-disabled={atMin || undefined}
+        onClick={() => { if (!atMin) onChange(n - 1); }}><Icon name="minus" size={14} /></Button>
+      <span className="ms-nc-copies-n" aria-hidden="true">{n}</span>
+      <span className="ms-sr" role="status">{said}</span>
+      <Button variant="ghost" size="sm" icon className="ms-nc-copy-btn" aria-label={c.copiesMore} aria-disabled={atMax || undefined} title={why}
+        onClick={() => { if (!atMax) onChange(n + 1); }}><Icon name="plus" size={14} /></Button>
     </div>
   );
 }
