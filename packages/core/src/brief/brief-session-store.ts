@@ -28,8 +28,6 @@ const sessionSchema = z.object({
   /** The Claude session of the latest brief run: the next turn resumes it, the creative's first turn forks it. */
   claudeSessionId: z.string().min(1).optional(),
   queued: z.array(briefQueuedSchema),
-  /** Set while Genera / Salva bozza move the session into a creative: no message is taken meanwhile. */
-  handingOff: z.literal(true).optional(),
 });
 export type BriefSessionFile = z.infer<typeof sessionSchema>;
 

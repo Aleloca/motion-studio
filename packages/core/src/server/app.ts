@@ -72,6 +72,9 @@ import { CONSOLE_REDIRECT_NOTE, defuseTags, interruptedRedirectText, pinLine, US
 import { stopJob } from '../jobs/stop.ts';
 import { randomUUID } from 'node:crypto';
 import { CreativeSideStateStore } from '../creatives/creative-side-state.ts';
+import { BriefSessionStore } from '../brief/brief-session-store.ts';
+import { BriefSessionService } from '../brief/brief-session.ts';
+import { registerBriefRoutes } from './brief-routes.ts';
 import { SettingsHoldStore } from '../settings-hold.ts';
 import { z } from 'zod';
 import { LIVE_LIMITS, pinSchema, SESSION_ID_RE, type RedirectOutcome } from '@motion-studio/shared';
@@ -103,6 +106,8 @@ export interface ServerDeps {
   /** Extra env for the MCP server process (see LauncherDeps.mcpEnv). */
   mcpEnv?: Record<string, string>;
   configDir?: string;
+  /** Test seam: also told every message the event hub broadcasts. */
+  onBroadcast?: (m: ServerMessage) => void;
   /** Phase 13: the creatives' queue and remembered sessions (default: one in `configDir`, in memory without it). Test seam. */
   sideState?: CreativeSideStateStore;
   /** Network of the Google Fonts catalog, previews and add (tests inject a fake fetch; default: the real one through the safe transport). */
@@ -250,6 +255,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // requestTimeout 0: /api/bridge/approve stays pending while the user decides (up to 10 min); Node's default would cut it at 5.
   const app = Fastify({ logger: false, requestTimeout: 0, connectionTimeout: 0 });
   const hub = new EventHub();
+  if (deps.onBroadcast) hub.listen(deps.onBroadcast);
   const approvals = deps.approvals ?? new ApprovalBroker({ broadcast: (m) => hub.broadcast(m) });
   // Render jobs have their own lane of one slot (Task 5 M3): a render never blocks an agent turn, nor waits for one.
   /** Phase 13: a creative's translation turn ended: the creative's queue may start (set once the turn service exists). */
@@ -376,6 +382,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     broadcast: (msg) => hub.broadcast(msg),
     ...(deps.agentContract ? { agentContract: deps.agentContract } : {}),
     ...(deps.previewFramesPerTurn !== undefined ? { previewFramesPerTurn: deps.previewFramesPerTurn } : {}),
+  });
+
+  // Decisions 1421–1422: the brief sessions, in the config folder (in memory without an explicit one, like the side state).
+  const briefs = new BriefSessionService({
+    queue, launcher, store: new BriefSessionStore(deps.configDir ?? null), broadcast: (msg) => hub.broadcast(msg),
+    presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
+    model: async () => (await requireWorkspace().readSettings()).model,
   });
 
   afterOtherJob = (key, state) => { void turns.otherJobEndedByKey(key, state); };
@@ -832,8 +845,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       download_file: downloadTool({ media, broadcast: (m) => hub.broadcast(m) }),
       import_codebase_file: importCodebaseTool({ media, broadcast: (m) => hub.broadcast(m) }),
       ...agentActions.tools(),
+      ...briefs.tools(),
     },
   });
+  registerBriefRoutes(app, { requireWorkspace, briefs, configDir });
   registerSettingsRoutes(app, { vault, approvals, requireWorkspace, keyChecks, keyCheckHttp: deps.keyCheckHttp ?? { fetch: globalThis.fetch } });
   registerRenderEngineRoutes(app, {
     engine: deps.render,

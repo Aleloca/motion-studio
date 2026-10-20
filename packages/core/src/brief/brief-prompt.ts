@@ -1,4 +1,4 @@
-import { BRIEF_FIELDS, BRIEF_VARIANTS_MAX, type BriefField, type BriefForm, type Locale } from '@motion-studio/shared';
+import { BRIEF_FIELDS, BRIEF_VARIANTS_MAX, type BriefField, type BriefForm, type ConversationEntry, type Locale } from '@motion-studio/shared';
 import { replyInstruction } from '../i18n.ts';
 import { defuseTags, quotePromptString, USER_REQUEST_CLOSE, USER_REQUEST_OPEN } from '../creatives/prompt.ts';
 
@@ -100,4 +100,28 @@ export function briefFollowUp(i: BriefPromptContext): string {
     '',
     replyInstruction(i.locale),
   ].join('\n');
+}
+
+/** The longest digest of a brief chat (the fresh run's memory, the creative's fallback). */
+const DIGEST_MAX_CHARS = 12_000;
+const oneLine = (s: string, max: number) => s.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').trim().slice(0, max);
+
+/**
+ * A brief chat as text, oldest first: the user's messages, the agent's last text of each turn and what it filled (decision
+ * 1423). The fresh run after a lost Claude session reads it, and so does a creative's first turn when it cannot fork the
+ * brief's session. The oldest lines go first when it is too long.
+ */
+export function briefDigest(entries: readonly ConversationEntry[], maxChars = DIGEST_MAX_CHARS): string {
+  const lastText = new Map<string, number>();
+  entries.forEach((e, k) => { if (e.type === 'agent' && e.event.kind === 'text' && e.event.text.trim()) lastText.set(e.jobId, k); });
+  const lines: string[] = [];
+  entries.forEach((e, k) => {
+    if (e.type === 'user' && e.text.trim()) lines.push(`User: ${defuseTags(oneLine(e.text, 2000))}`);
+    else if (e.type === 'agent' && e.event.kind === 'text' && lastText.get(e.jobId) === k) lines.push(`You: ${defuseTags(oneLine(e.event.text, 2000))}`);
+    else if (e.type === 'system' && e.origin === 'agent') lines.push(`(${oneLine(e.text, 300)})`);
+  });
+  let size = lines.reduce((n, l) => n + l.length + 1, 0);
+  let dropped = 0;
+  while (lines.length > 0 && size > maxChars) { size -= lines.shift()!.length + 1; dropped++; }
+  return [...(dropped > 0 ? [`(${dropped} earlier entries left out)`] : []), ...lines].join('\n');
 }
