@@ -48,6 +48,14 @@ const groupStateSchema = z.object({
   queued: z.array(queuedRequestSchema).optional(),
 });
 export type GroupSideState = z.infer<typeof groupStateSchema>;
+/**
+ * Decision 1423: the brief session the creative was made from (Genera / Salva bozza). `sessionId`: the brief agent's Claude
+ * session, which the creative's first turn (or its group's coordinator) resumes as a fork; `summary`: the brief chat's digest,
+ * the fallback when that session can no longer be resumed. Cleared once used. Not `creative.resumeFrom`: that one needs a
+ * version and lives in the agent-readable creative.json.
+ */
+const briefSessionSchema = z.object({ sessionId: z.string().min(1), at: z.iso.datetime(), summary: z.string().max(50_000) });
+export type BriefSessionLink = z.infer<typeof briefSessionSchema>;
 const recordSchema = z.object({
   schemaVersion: z.literal(1),
   queued: z.array(queuedRequestSchema).optional(),
@@ -61,6 +69,8 @@ const recordSchema = z.object({
   pendingBrief: pendingBriefSchema.optional(),
   /** Phase 3 of the single agent: see `groupStateSchema`. */
   group: groupStateSchema.optional(),
+  /** Decision 1423: see `briefSessionSchema`. */
+  briefSession: briefSessionSchema.optional(),
 });
 type SideRecord = z.infer<typeof recordSchema>;
 
@@ -183,6 +193,7 @@ export class CreativeSideStateStore {
       if (validStopped(stopped)) next.stoppedSession = stopped;
       if (rec.pendingBrief) next.pendingBrief = rec.pendingBrief;
       if (rec.group) next.group = rec.group;
+      if (rec.briefSession) next.briefSession = rec.briefSession;
       await this.save(key, next);
       return { ...(next.queued ? { queued: next.queued } : {}), ...(next.stoppedSession ? { stoppedSession: next.stoppedSession } : {}) };
     });
@@ -202,6 +213,27 @@ export class CreativeSideStateStore {
       const next: SideRecord = { ...rec };
       if (pending) next.pendingBrief = pendingBriefSchema.parse(pending); else delete next.pendingBrief;
       if (!pending && rec.pendingBrief === undefined) return;
+      await this.save(key, next);
+    });
+  }
+
+  /** Decision 1423: the brief session this creative may resume, or null (none, or not a resumable id). */
+  async briefResume(projectDir: string, slug: string): Promise<BriefSessionLink | null> {
+    const key = await this.key(projectDir, slug);
+    return this.lock.run(key, async () => {
+      const b = (await this.ensure(projectDir, slug, key)).briefSession;
+      return b && isSessionId(b.sessionId) ? b : null;
+    });
+  }
+
+  /** Decision 1423: records (the create route's handoff) or clears (`null`: used, or gone) the brief session to resume. */
+  async setBriefSession(projectDir: string, slug: string, link: BriefSessionLink | null): Promise<void> {
+    const key = await this.key(projectDir, slug);
+    await this.lock.run(key, async () => {
+      const rec = await this.ensure(projectDir, slug, key);
+      if (!link && rec.briefSession === undefined) return;
+      const next: SideRecord = { ...rec };
+      if (link) next.briefSession = briefSessionSchema.parse(link); else delete next.briefSession;
       await this.save(key, next);
     });
   }

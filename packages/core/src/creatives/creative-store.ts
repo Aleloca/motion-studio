@@ -425,19 +425,31 @@ export class CreativeStore {
    * (`variantGroup.chat: 'single'`), its own log until then (merged on read). Every caller keeps passing its own slug.
    */
   appendConversation(slug: string, entry: ConversationEntry): Promise<void> {
+    return this.appendConversationEntries(slug, [entry]);
+  }
+
+  /**
+   * Appends `entries` to `slug`'s conversation in one write, in order, each placed and stamped as `appendConversation` does
+   * (decision 1423: the brief session's chat copied into a new creative).
+   */
+  appendConversationEntries(slug: string, entries: readonly ConversationEntry[]): Promise<void> {
     // Process-wide per file (M7): a render job and a turn append through their own stores.
     return conversationLock.run(this.chatKey(slug), async () => {
+      if (entries.length === 0) return;
       const place = await this.finishedPlace(slug);
       const target = place?.single ? place.host : slug;
       const file = this.file(target, 'conversation.jsonl');
-      // Phase 3 of the single agent: the group's own entries (the coordinator's) carry no variant; a helper's carry its group turn.
-      const tag = !entry.group && entry.groupJobId === undefined ? helperTagOf(this.projectDir, slug) : undefined;
-      const withTag = tag ? { ...entry, groupJobId: tag } : entry;
-      const stamped = place && withTag.variant === undefined && !withTag.group ? { ...withTag, variant: place.letter } : withTag;
+      const lines = entries.map((entry) => {
+        // Phase 3 of the single agent: the group's own entries (the coordinator's) carry no variant; a helper's carry its group turn.
+        const tag = !entry.group && entry.groupJobId === undefined ? helperTagOf(this.projectDir, slug) : undefined;
+        const withTag = tag ? { ...entry, groupJobId: tag } : entry;
+        const stamped = place && withTag.variant === undefined && !withTag.group ? { ...withTag, variant: place.letter } : withTag;
+        return `${JSON.stringify(stamped)}\n`;
+      });
       // Creating the log (an old or hand-made creative, or one git removed) adds an entry to the creative folder: note it
       // so the post-run tripwire does not read it as a move (FP3).
       const existed = await lstat(file).then(() => true, () => false);
-      await appendFile(file, `${JSON.stringify(stamped)}\n`);
+      await appendFile(file, lines.join(''));
       if (!existed) await noteCoreChange(this.dir(target));
     });
   }

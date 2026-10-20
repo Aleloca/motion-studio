@@ -376,7 +376,12 @@ export class GroupTurnService implements GroupRouter {
       attempt++;
       if (signal.aborted) return 'cancelled';
       const stored = (await side.group(host.projectDir, host.creativeSlug)).session?.sessionId;
-      const session = !fresh && isSessionId(stored) ? stored : undefined;
+      const groupSession = !fresh && isSessionId(stored) ? stored : undefined;
+      // Decision 1423: a group made from a brief session has no coordinator session yet: its first run forks the brief
+      // agent's (the coordinator is the agent the user talks to; the helpers get the brief as always).
+      const briefLink = !groupSession && !fresh ? await side.briefResume(host.projectDir, host.creativeSlug) : null;
+      const session = groupSession ?? briefLink?.sessionId;
+      const fork = !groupSession && briefLink !== null;
       const { group, info } = await this.variantsInfo(host, r);
       const creative = await store.get(host.creativeSlug);
       const redirect = r.redirect;
@@ -411,7 +416,7 @@ export class GroupTurnService implements GroupRouter {
         kind: 'creative-group', jobId: r.jobId, projectSlug: host.projectSlug, projectDir: host.projectDir, creativeSlug: host.creativeSlug,
         // Defence in depth: every editing tool and Bash are denied to this kind anyway.
         protectedDirs: [join(host.projectDir, 'creatives'), join(host.projectDir, 'assets')],
-        request: { prompt, ...(session ? { resumeSessionId: session } : {}), forkSession: false, ...(model ? { model } : {}) },
+        request: { prompt, ...(session ? { resumeSessionId: session } : {}), forkSession: fork, ...(model ? { model } : {}) },
         usage: { version: null, attempt }, sandboxed: await this.deps.launcher.sandboxed(),
         appScope: { root: host.root, projectSlug: host.projectSlug, projectDir: host.projectDir, creativeSlug: host.creativeSlug, version: 0, group: true },
         groupTools: this.toolsFor(r),
@@ -423,6 +428,8 @@ export class GroupTurnService implements GroupRouter {
           if (sid && isSessionId(sid)) {
             this.deps.queue.patch(r.jobId, { sessionId: sid });
             sessionWrite = sessionWrite.then(() => side.updateGroup(host.projectDir, host.creativeSlug, () => ({ session: { sessionId: sid, at: now() } }))).catch(() => {});
+            // The group has its own session now: the brief's is not resumed again.
+            if (fork) sessionWrite = sessionWrite.then(() => side.setBriefSession(host.projectDir, host.creativeSlug, null)).catch(() => {});
           }
           // Decision 979: the variants the user picked answering this turn's question may take work.
           if (event.kind === 'question_answered' && event.outcome === 'answered') {
@@ -458,8 +465,10 @@ export class GroupTurnService implements GroupRouter {
         const lost = session && !fresh ? resumeErrorOf(outcome, { session: seenSession, output: seenOutput }) : null;
         if (lost) {
           fresh = true;
-          if (lost === 'not-found') await side.updateGroup(host.projectDir, host.creativeSlug, () => ({ session: undefined }));
-          await this.write(r, this.groupLine('info', t().live.stoppedSessionUnavailable));
+          if (lost === 'not-found' && !fork) await side.updateGroup(host.projectDir, host.creativeSlug, () => ({ session: undefined }));
+          // Decision 1423: the brief's session is gone: the fresh run reads the whole chat, the brief's included.
+          if (fork) await side.setBriefSession(host.projectDir, host.creativeSlug, null);
+          await this.write(r, this.groupLine('info', fork ? t().briefSession.memoryUnavailable : t().live.stoppedSessionUnavailable));
           continue;
         }
         throw new Error(outcome.error ?? t().errors.turnFailed);

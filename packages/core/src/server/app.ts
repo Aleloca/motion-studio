@@ -389,6 +389,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     queue, launcher, store: new BriefSessionStore(deps.configDir ?? null), broadcast: (msg) => hub.broadcast(msg),
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
     model: async () => (await requireWorkspace().readSettings()).model,
+    side: turns.side,
   });
 
   afterOtherJob = (key, state) => { void turns.otherJobEndedByKey(key, state); };
@@ -801,7 +802,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     model: async () => (await requireWorkspace().readSettings()).model,
   });
   groupsRef = groups;
-  registerCreativeRoutes(app, { requireWorkspace, turns, edits, renders, exports: new ExportJobService({ queue }), previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m), git: deps.git, variantRuns, groups, jobs: () => queue.list(), trash: deps.trash ?? noTrash });
+  registerCreativeRoutes(app, { requireWorkspace, turns, edits, renders, exports: new ExportJobService({ queue }), previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m), git: deps.git, variantRuns, groups, jobs: () => queue.list(), trash: deps.trash ?? noTrash, briefs, configDir });
   registerStorePackRoutes(app, { requireWorkspace, turns, renders, media });
 
   const routeCtx = { requireWorkspace, brand: brandService, media, git: deps.git, broadcast: (m: ServerMessage) => hub.broadcast(m), configDir };

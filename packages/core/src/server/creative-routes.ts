@@ -3,9 +3,10 @@ import { recoverRenameJournal } from '../library/rename-recovery.ts';
 import { lstat, readdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, join, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { DEFAULT_EXPORT_QUALITY, EXPORT_FPS, EXPORT_QUALITIES, isDefaultProfile, EXPORT_RESOLUTIONS, type ExportFps, type ExportQuality, type RenderProfile, type VersionEntry, messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow, activeMembers, hostOf, isVariantId, letterOfSlug, MAX_NEW_VARIANTS, variantIdSchema, type VariantDetail, type VariantId } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_QUALITY, EXPORT_FPS, EXPORT_QUALITIES, isDefaultProfile, EXPORT_RESOLUTIONS, type ExportFps, type ExportQuality, type RenderProfile, type VersionEntry, messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow, activeMembers, hostOf, isVariantId, letterOfSlug, MAX_NEW_VARIANTS, variantIdSchema, type VariantDetail, type VariantId, briefSessionRefSchema, singleAgentOn } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
+import type { BriefClaim, BriefSessionService } from '../brief/brief-session.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
 import { CreativeStore } from '../creatives/creative-store.ts';
 import type { CreativeSideStateStore, StoppedSession } from '../creatives/creative-side-state.ts';
@@ -75,6 +76,10 @@ export interface CreativeRoutesContext {
   groups?: GroupTurnService;
   /** Decision 915: the job queue now (archive and delete are refused while a job of the creative is queued or running). */
   jobs: () => JobSummary[];
+  /** Decision 1423: the brief sessions (Genera / Salva bozza carry one into the new creative). Absent: no handoff. */
+  briefs?: BriefSessionService;
+  /** Motion Studio's config folder (a brief session's folders are checked against it). */
+  configDir?: string;
   /** Decision 915: where a deleted creative's folder goes (the desktop's Electron Trash, the CLI's own; none: refused). */
   trash: TrashFn;
 }
@@ -87,7 +92,9 @@ const isInsideDir = (p: string, base: string | null) => Boolean(base && p.starts
  * Retry): the variant's own turn even in a group with one agent.
  */
 export const turnBodySchema = z.object({ text: z.string().max(10_000).optional(), pins: z.array(pinSchema).max(50).optional(), formats: z.array(z.string().min(1).max(200)).max(100).optional(), direct: z.literal(true).optional() });
-const createBody = z.object({ title: z.string(), brief: briefWriteSchema, generate: z.boolean().optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
+/** `briefSession` (decision 1423): the brief session this creative is made from; `group` when the brief asks for variants. */
+const createBody = z.object({ title: z.string(), brief: briefWriteSchema, generate: z.boolean().optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional(),
+  briefSession: briefSessionRefSchema.optional() });
 // `services` alone changes only that field of the stored brief (the composer's Services chip); `brief` replaces the brief.
 // `formatLabels` / `formats` alone merge into the stored brief the same way (Phase 12: inline labels, reorder, removal).
 // `formatLabels` merges per key (an omitted key is kept; `''` or `null` clears that key), so a stale tab cannot drop a newer label.
@@ -441,32 +448,56 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     }
     const groupSize = identityGroupSize(brief, presets);
     const links = initialLinks(brief, presets);
-    const created = await store.create({ title: body.title, brief: { ...brief, links } });
-    const slug = created.slug;
-    // Fix round 1 (M2): its side record exists from the start (nothing written into its creative.json later is trusted).
-    await ctx.turns.side.read(ws.projectDir(req.params.slug), slug);
-    const creative = linkedCodebases ? await store.update(slug, { linkedCodebases }) : created.creative;
-    const ref = { root: ws.root, projectSlug: req.params.slug, projectDir: ws.projectDir(req.params.slug), creativeSlug: slug };
-    // Phase 15: an identity creative with several concepts is a group of that many variants (the host is A), made here and
-    // started like any grouped creative's first generation (`ctx.variantRuns`, the same orchestration as `…/variants/run`).
-    if (groupSize > 1) {
-      // Final wave M4 (as decisions log 847): the creative exists from here, so a group that cannot be made must not lose the
-      // slug either: 201 with `groupError`, nothing started (addVariants leaves no sister behind); the canvas can add variants.
-      try {
-        await new VariantGroupService({ store, turns: ctx.turns }).addVariants(ref, Array.from({ length: groupSize - 1 }, () => ({ direction: null })), { hostDirection: null });
-      } catch (err) {
-        return reply.status(201).send({ slug, creative: await store.get(slug), job: null, groupError: err instanceof Error ? err.message : String(err) });
-      }
-      // The group exists from here: a start that throws must not lose the slug (the client opens the creative and can retry).
-      let variantRun: Awaited<ReturnType<typeof ctx.variantRuns.run>> | null = null;
-      let startError: string | null = null;
-      if (body.generate) {
-        try { variantRun = await ctx.variantRuns.run(ref, 'all-active', null); } catch (err) { startError = err instanceof Error ? err.message : String(err); }
-      }
-      return reply.status(201).send({ slug, creative: await store.get(slug), job: null, ...(variantRun ? { variantRun } : {}), ...(startError ? { startError } : {}) });
+    // Decision 1423: the brief session is held before anything is created, so a refused claim (gone, or its agent at work)
+    // creates nothing; any failure before the handoff gives it back.
+    const projectDir = ws.projectDir(req.params.slug);
+    let claim: BriefClaim | null = null;
+    if (body.briefSession) {
+      if (!ctx.briefs) throw new CodedError(409, t().errors.briefSessionGone, 'brief-session-gone');
+      const project = await ws.getProject(req.params.slug);
+      claim = await ctx.briefs.claim({ root: ws.root, projectSlug: req.params.slug, projectDir, projectName: project.name, projectCodebases: project.linkedCodebases, configDir: ctx.configDir ?? '' }, body.briefSession.id);
     }
-    const job = body.generate ? await ctx.turns.start(ref) : null;
-    return reply.status(201).send({ slug, creative: job ? await store.get(slug) : creative, job });
+    let handed = false;
+    const handOff = async (slug: string) => {
+      if (!claim) return;
+      const group = (body.briefSession?.group === true && singleAgentOn(await ws.readSettings())) || groupSize > 1;
+      await ctx.briefs!.handOff(claim, { root: ws.root, projectSlug: req.params.slug, projectDir, creativeSlug: slug },
+        { group, title: body.title, formats: t().briefSession.parts.formats({ count: brief.formats.length }) });
+      handed = true;
+    };
+    try {
+      const created = await store.create({ title: body.title, brief: { ...brief, links } });
+      const slug = created.slug;
+      // Fix round 1 (M2): its side record exists from the start (nothing written into its creative.json later is trusted).
+      await ctx.turns.side.read(ws.projectDir(req.params.slug), slug);
+      const creative = linkedCodebases ? await store.update(slug, { linkedCodebases }) : created.creative;
+      const ref = { root: ws.root, projectSlug: req.params.slug, projectDir: ws.projectDir(req.params.slug), creativeSlug: slug };
+      // Phase 15: an identity creative with several concepts is a group of that many variants (the host is A), made here and
+      // started like any grouped creative's first generation (`ctx.variantRuns`, the same orchestration as `…/variants/run`).
+      if (groupSize > 1) {
+        // Final wave M4 (as decisions log 847): the creative exists from here, so a group that cannot be made must not lose the
+        // slug either: 201 with `groupError`, nothing started (addVariants leaves no sister behind); the canvas can add variants.
+        try {
+          await new VariantGroupService({ store, turns: ctx.turns }).addVariants(ref, Array.from({ length: groupSize - 1 }, () => ({ direction: null })), { hostDirection: null });
+        } catch (err) {
+          await handOff(slug);
+          return reply.status(201).send({ slug, creative: await store.get(slug), job: null, groupError: err instanceof Error ? err.message : String(err) });
+        }
+        await handOff(slug);
+        // The group exists from here: a start that throws must not lose the slug (the client opens the creative and can retry).
+        let variantRun: Awaited<ReturnType<typeof ctx.variantRuns.run>> | null = null;
+        let startError: string | null = null;
+        if (body.generate) {
+          try { variantRun = await ctx.variantRuns.run(ref, 'all-active', null); } catch (err) { startError = err instanceof Error ? err.message : String(err); }
+        }
+        return reply.status(201).send({ slug, creative: await store.get(slug), job: null, ...(variantRun ? { variantRun } : {}), ...(startError ? { startError } : {}) });
+      }
+      await handOff(slug);
+      const job = body.generate ? await ctx.turns.start(ref) : null;
+      return reply.status(201).send({ slug, creative: job ? await store.get(slug) : creative, job });
+    } finally {
+      if (claim && !handed) ctx.briefs!.release(claim);
+    }
   });
 
   /**

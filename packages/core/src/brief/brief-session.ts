@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import {
-  briefJobKey, type AgentEvent, type BriefContext, type BriefField, type BriefForm, type BriefMessageInput, type BriefQueued, type BriefSendResult,
+  briefJobKey, isSessionId, type AgentEvent, type BriefContext, type BriefField, type BriefForm, type BriefMessageInput, type BriefQueued, type BriefSendResult,
   type BriefSessionView, type ConversationEntry, type FormatPreset, type JobSummary, type LinkedCodebase, type ServerMessage,
 } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
@@ -9,7 +9,10 @@ import type { AgentRun } from '../agent/runner.ts';
 import { probeConfinedFile } from '../brand/agent-guard.ts';
 import type { BridgeHandler } from '../bridge/bridge-routes.ts';
 import { agentCodebases, codebaseProblemText, resolveBrandCodebase } from '../codebases.ts';
+import type { CreativeSideStateStore } from '../creatives/creative-side-state.ts';
+import { CreativeStore } from '../creatives/creative-store.ts';
 import { resumeErrorOf } from '../creatives/creative-turns.ts';
+import type { CreativeRef } from '../creatives/creative-turns.ts';
 import { currentLocale, t } from '../i18n.ts';
 import type { JobQueue } from '../jobs/job-queue.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
@@ -37,7 +40,12 @@ export interface BriefSessionDeps {
   broadcast(m: ServerMessage): void;
   presets(): Promise<FormatPreset[]>;
   model(): Promise<string | null | undefined>;
+  /** The creatives' side state (the handoff records the brief's session there, decision 1423). */
+  side: CreativeSideStateStore;
 }
+
+/** A session held for Genera / Salva bozza (`claim`): no message, discard or other claim until `handOff` or `release`. */
+export interface BriefClaim { ref: BriefProjectRef; sessionId: string; key: string }
 
 /** A message the next turn carries (the one just sent, or those queued). */
 interface TurnMessage { clientId: string; text: string; context: { codebases: string[]; assets: string[] }; mode?: 'queued' }
@@ -312,6 +320,51 @@ export class BriefSessionService {
       await this.deps.store.remove(ref.projectDir, id);
     });
     this.changed(ref, id, { ended: true });
+  }
+
+  /**
+   * Genera / Salva bozza, before anything is created: the session must be the open one (409 `brief-session-gone`) and its
+   * agent must not be working (409 `brief-session-busy`). From here no message is taken until `handOff` or `release`.
+   */
+  async claim(ref: BriefProjectRef, id: string): Promise<BriefClaim> {
+    const key = this.key(ref);
+    return this.lock.run(key, async () => {
+      if (this.claims.has(key)) throw busy();
+      await this.session(ref, id);
+      if (this.jobOf(ref)) throw busy();
+      this.claims.add(key);
+      return { ref, sessionId: id, key };
+    });
+  }
+
+  /** The creation failed before the handoff: the session goes on as it was. */
+  release(claim: BriefClaim): void { this.claims.delete(claim.key); }
+
+  /**
+   * Decision 1423: moves the session into `creative`: its chat is copied in order, each entry with its own time (`group`:
+   * stamped as the group's, for the group's one chat), then a line marks where the creative starts; the brief agent's Claude
+   * session is recorded for the first turn (or the coordinator) to fork, with the chat's digest as the fallback; the
+   * session ends.
+   */
+  async handOff(claim: BriefClaim, creative: CreativeRef, o: { group: boolean; title: string; formats: string }): Promise<void> {
+    try {
+      const { ref, sessionId } = claim;
+      const s = await this.session(ref, sessionId);
+      const entries = await this.deps.store.conversation(ref.projectDir, sessionId);
+      const stamp = (e: ConversationEntry): ConversationEntry => (o.group ? { ...e, group: true } : e);
+      await new CreativeStore(creative.projectDir).appendConversationEntries(creative.creativeSlug, [
+        ...entries.map(stamp),
+        stamp({ type: 'system', at: new Date().toISOString(), level: 'info', origin: 'brief', text: t().briefSession.creativeStarts({ title: o.title, formats: o.formats }) }),
+      ]);
+      if (s.claudeSessionId && isSessionId(s.claudeSessionId)) {
+        await this.deps.side.setBriefSession(creative.projectDir, creative.creativeSlug, { sessionId: s.claudeSessionId, at: new Date().toISOString(), summary: briefDigest(entries) });
+      }
+      await this.deps.store.remove(ref.projectDir, sessionId);
+      this.changed(ref, sessionId, { ended: true });
+      this.deps.broadcast({ type: 'creative', project: creative.projectSlug, creative: creative.creativeSlug });
+    } finally {
+      this.release(claim);
+    }
   }
 
   /** The brief job's `studio` tools (`MCP_TOOLS.brief`): the bridge checks the job's kind, the handlers check it again. */
