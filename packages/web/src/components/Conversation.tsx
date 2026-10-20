@@ -144,6 +144,8 @@ export interface ConversationProps {
   draft?: { text: string; nonce: number };
   /** The caller's own items (the context pins) make a message even without words. */
   extraContent?: boolean;
+  /** Nothing can be sent (the brief session could not be read yet). */
+  composerDisabled?: boolean;
   /** A first agent bubble that is not an entry (the brief's welcome). */
   intro?: ReactNode;
   /** The queue's only operation (the brief session's queue cannot be edited, reordered or run by hand). */
@@ -291,7 +293,7 @@ function turnItems(interruptedText: string, jobId: string, events: { at: string;
  * only in "Activity details", the job's approvals in the flow, typing dots while the agent works (T9), and the
  * composer with the pending comment chips and ⌘↵.
  */
-export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, onSelectVersion, versionExtra, versionNote, versionSummary, snapshots, appliesTo, brief, onBriefSaved, queued, onQueueChanged, variants, self, onOpenVariant, memberJobs, single, otherPins, onRemoveOtherPin, usageOf, transport, composerTop, composerTools, composerBelow, composerLabel, placeholder, draft, extraContent, intro, queueOps }: ConversationProps) {
+export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, onSelectVersion, versionExtra, versionNote, versionSummary, snapshots, appliesTo, brief, onBriefSaved, queued, onQueueChanged, variants, self, onOpenVariant, memberJobs, single, otherPins, onRemoveOtherPin, usageOf, transport, composerTop, composerTools, composerBelow, composerLabel, placeholder, draft, extraContent, composerDisabled, intro, queueOps }: ConversationProps) {
   const t = useT();
   const c = t.web.chat;
   const working = active(job);
@@ -618,7 +620,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
         {job?.waitReason ? <p className="ms-convo-wait" role="status"><Icon name="clock" size={12} />{t.web.variantGroup.waitReasons[job.waitReason]}</p> : null}
         {/* Always mounted (it renders nothing for an empty queue): an edit the queue overtook is kept even when the queue empties. */}
         <QueuedRequests slug={slug} creative={creative} queued={queued ?? []} working={working} onChanged={() => onQueueChanged?.()} {...(queueOps ? { ops: queueOps } : {})} />
-        <Composer transport={transport} top={composerTop} tools={composerTools} label={composerLabel} placeholderText={placeholder} draft={draft} extraContent={extraContent} outbox={outboxApi} onQueueChanged={onQueueChanged} slug={slug} creative={creative} job={working && (single || !variants?.all) ? job : undefined} fanout={variants?.all && !single ? variants.runAll : undefined} latestJobId={job?.id} snapshots={snapshots} pins={pins} onRemovePin={onRemovePin} onEditPin={onEditPin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} beforeSend={beforeSend} appliesTo={single ? undefined : appliesTo} brief={brief} onBriefSaved={onBriefSaved}
+        <Composer transport={transport} top={composerTop} tools={composerTools} label={composerLabel} placeholderText={placeholder} draft={draft} extraContent={extraContent} sendOff={composerDisabled} outbox={outboxApi} onQueueChanged={onQueueChanged} slug={slug} creative={creative} job={working && (single || !variants?.all) ? job : undefined} fanout={variants?.all && !single ? variants.runAll : undefined} latestJobId={job?.id} snapshots={snapshots} pins={pins} onRemovePin={onRemovePin} onEditPin={onEditPin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} beforeSend={beforeSend} appliesTo={single ? undefined : appliesTo} brief={brief} onBriefSaved={onBriefSaved}
           {...(single ? { single: { others: otherPins ?? [], ...(onRemoveOtherPin ? { onRemoveOther: onRemoveOtherPin } : {}) } } : {})} />
         {composerBelow}
       </div>
@@ -971,14 +973,14 @@ const SEND_CODES = new Set(['formats-not-in-brief', 'job-running']);
 /** Longest wait for the job a send started before the composer unlocks anyway. */
 export const AWAIT_JOB_MS = 10_000;
 
-function Composer({ transport, top, tools, label, placeholderText, draft, extraContent, outbox, onQueueChanged, slug, creative, job, fanout, latestJobId, snapshots, pins: ownPins, onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, appliesTo, brief, onBriefSaved, single }: {
+function Composer({ transport, top, tools, label, placeholderText, draft, extraContent, sendOff, outbox, onQueueChanged, slug, creative, job, fanout, latestJobId, snapshots, pins: ownPins, onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, appliesTo, brief, onBriefSaved, single }: {
   outbox: OutboxApi; onQueueChanged?(): void;
   /** Phase 3 of the single agent: the composer is the group's; `others`: the other variants' pending comments, sent too. */
   single?: { others: Pin[]; onRemoveOther?(p: Pin): void };
   slug: string; creative: string; job: JobSummary | undefined; /** Phase 15 "Tutte": sends to every active variant instead of this creative. */ fanout?: ConversationVariants['runAll']; latestJobId: string | undefined; snapshots: number | undefined; pins: Pin[]; onRemovePin?(i: number): void; onEditPin?(i: number): void; formatName?(id: string): string; canGenerate?: boolean; onSent?(sent: { pins: Pin[] }): void; beforeSend?(): boolean | Promise<boolean>;
   appliesTo?: AppliesTo; brief?: Brief; onBriefSaved?(): void;
   /** Decision 1422 (the brief session): see ConversationProps. */
-  transport?: ConversationTransport; top?: ReactNode; tools?: ReactNode; label?: string; placeholderText?: string; draft?: { text: string; nonce: number }; extraContent?: boolean;
+  transport?: ConversationTransport; top?: ReactNode; tools?: ReactNode; label?: string; placeholderText?: string; draft?: { text: string; nonce: number }; extraContent?: boolean; sendOff?: boolean;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -1052,7 +1054,7 @@ function Composer({ transport, top, tools, label, placeholderText, draft, extraC
   const hasContent = text.trim().length > 0 || (fanout ? handFormats : pins.length > 0) || Boolean(extraContent);
   const idleBusy = sending || awaiting !== null;
   const busy = working || idleBusy;
-  const canSend = working ? hasContent && !sending && (capsNow !== null || redirect) : !idleBusy && hasContent;
+  const canSend = !sendOff && (working ? hasContent && !sending && (capsNow !== null || redirect) : !idleBusy && hasContent);
   const primaryIds = appliesTo?.primaries.map((p) => p.id) ?? [];
   const primaryOf = (id: string) => appliesTo?.followerOf(id) ?? id;
   // Phase 15 (final wave M2): the comments are the open variant's own; "Tutte" never sends them, nor the formats they chose.

@@ -351,14 +351,69 @@ describe('NewCreative · review round 1 (decisions 1422–1423)', () => {
     api.getBriefSession.mockResolvedValue(view());
   });
 
-  it('a first read that fails is said with Riprova, and the resume question still comes after it', async () => {
+  it('a first read that fails: nothing in Compila tu; in Con l\'agente the panel says it with Riprova, nothing can be sent, and the resume question still comes', async () => {
     api.getBriefSession.mockRejectedValueOnce(new ApiError(500, 'EMFILE'));
     render(page(live()));
-    const alert = await waitFor(() => screen.getAllByRole('alert').find((a) => a.textContent?.includes('EMFILE'))!);
+    await board();
+    await waitFor(() => expect(api.getBriefSession).toHaveBeenCalled());
+    expect(screen.queryAllByRole('alert').filter((a) => a.textContent?.includes('EMFILE'))).toEqual([]);
+    await userEvent.click(screen.getByRole('button', { name: "Fallo compilare all'agente" }));
+    const alert = await waitFor(() => within(panel()).getAllByRole('alert').find((a) => a.textContent?.includes('EMFILE'))!);
     expect(screen.queryByRole('dialog')).toBeNull();
+    await userEvent.type(draftBox(), 'Ciao');
+    expect(within(panel()).getByRole('button', { name: 'Invia' }).hasAttribute('disabled')).toBe(true);
+    expect(within(panel()).getByRole('button', { name: 'Aggiungi cartelle o asset' }).hasAttribute('disabled')).toBe(true);
     api.getBriefSession.mockResolvedValueOnce(view({ form: { ...EMPTY_BRIEF_FORM, goal: 'Lancio' } }));
     api.getBriefConversation.mockResolvedValueOnce([userEntry]);
     await userEvent.click(within(alert).getByRole('button', { name: 'Riprova' }));
     expect(await screen.findByRole('dialog', { name: 'Hai una sessione del brief in corso' })).toBeTruthy();
+  });
+
+  it('an edit made before the session existed, carried by the first message, does not hold off a rewrite seen after a reconnection', async () => {
+    api.getBriefSession.mockResolvedValueOnce(null);
+    api.startBriefSession.mockImplementationOnce((async (_s: string, b: { form: typeof EMPTY_BRIEF_FORM; userEdited: never[] }) => view({ form: b.form, userEdited: b.userEdited, revision: 1 })) as never);
+    const { rerender } = render(page(live()));
+    await board();
+    await userEvent.type(goal(), 'Il mio testo');
+    await userEvent.click(screen.getByRole('button', { name: "Fallo compilare all'agente" }));
+    await userEvent.type(draftBox(), 'Scrivi tu');
+    await userEvent.click(within(panel()).getByRole('button', { name: 'Invia' }));
+    await waitFor(() => expect(api.sendBriefMessage).toHaveBeenCalled());
+    await userEvent.type(goal(), 'Obiettivo mio');
+    await waitFor(() => expect(api.saveBriefForm).toHaveBeenCalled(), { timeout: 2000 });
+    api.getBriefSession.mockResolvedValue(view({ form: { ...EMPTY_BRIEF_FORM, goal: "Riscritto dall'agente" }, userEdited: [], agentFields: ['goal'], revision: 9 }));
+    rerender(page(live({ snapshots: 1 })));
+    await waitFor(() => expect(goal().value).toBe("Riscritto dall'agente"));
+    api.getBriefSession.mockResolvedValue(view());
+  });
+
+  it('the CTA: when giving the goal back fails, it is given back by the next save (never left the user\'s and empty)', async () => {
+    const core = fakeCore(view({ form: { ...EMPTY_BRIEF_FORM, goal: "Testo dell'agente", durationSec: 6 }, agentFields: ['goal'], revision: 2 }));
+    const real = api.saveBriefForm.getMockImplementation()!;
+    let n = 0;
+    api.saveBriefForm.mockImplementation(async (...a: Parameters<typeof real>) => { n += 1; if (n === 2) throw new ApiError(500, 'EIO'); return real(...a); });
+    render(page(live()));
+    await waitFor(() => expect(goal().value).toBe("Testo dell'agente"));
+    await userEvent.click(screen.getByRole('button', { name: "Fallo compilare all'agente" }));
+    await waitFor(() => expect(n).toBeGreaterThanOrEqual(3), { timeout: 3000 });
+    await waitFor(() => expect(core.get().userEdited).not.toContain('goal'));
+    expect(core.get().form.goal).toBe('');
+    expect(goal().value).toBe('');
+    api.getBriefSession.mockImplementation(async () => view());
+  });
+
+  it('Genera refused because the session is gone: the footer says Genera now goes without it, and the next one does', async () => {
+    api.getBriefSession.mockResolvedValueOnce(view({ form: { ...EMPTY_BRIEF_FORM, goal: 'Lancio', formats: ['instagram-post-1x1'], durationSec: 6 } }));
+    api.createCreative.mockRejectedValueOnce(new ApiError(409, 'finita', 'brief-session-gone'));
+    render(page(live()));
+    await waitFor(() => expect(goal().value).toBe('Lancio'));
+    api.getBriefSession.mockResolvedValue(null);
+    await userEvent.click(screen.getByRole('button', { name: 'Genera' }));
+    await waitFor(() => expect(screen.getByText(/premi di nuovo Genera per creare la creatività senza/)).toBeTruthy());
+    expect(within(panel()).queryAllByRole('alert', { hidden: true }).filter((a) => a.textContent?.includes('finita'))).toEqual([]);
+    await userEvent.click(screen.getByRole('button', { name: 'Genera' }));
+    await waitFor(() => expect(api.createCreative).toHaveBeenCalledTimes(2));
+    expect((api.createCreative.mock.calls[1]![1] as { briefSession?: unknown }).briefSession).toBeUndefined();
+    api.getBriefSession.mockResolvedValue(view());
   });
 });

@@ -1976,6 +1976,7 @@ Variabili: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (array JSON)`,
       backToCreatives: 'Torna alle creatività',
     },
     briefSession: {
+      goneOnCreate: 'La sessione del brief è finita altrove (ricominciata o diventata una creatività): premi di nuovo Genera per creare la creatività senza.',
       loadFailed: (p) => `La sessione del brief non si è potuta leggere: ${p.detail}`,
       modeLabel: 'Come compilare il brief',
       modeYou: 'Compila tu',

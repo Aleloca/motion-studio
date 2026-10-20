@@ -19,6 +19,8 @@ export interface BriefSessionPanelProps {
   live: EventsState | undefined;
   /** The form as it is now, the fields the user owns and the revision the form adopted (sent with every message). */
   snapshot(): { form: BriefForm; userEdited: BriefField[]; baseRevision: number };
+  /** Whether the core took the form a message carried (its edits are then answered, as by a save). */
+  onCarried?(ok: boolean): void;
   /** Text put in the composer once per nonce ("Fallo compilare all'agente"). */
   draft?: { text: string; nonce: number };
   library: { value: AssetEntry[] | null; error: string | null };
@@ -39,7 +41,7 @@ const ACTIVE = new Set<JobSummary['state']>(['queued', 'running']);
  * Decisions 1412–1414: the brief session as a floating glass card: a header with its state, the session's chat
  * (`<Conversation>` with the brief's transport), the "+" menu and the pins inside the composer, the context row below.
  */
-export function BriefSessionPanel({ slug, projectName, brief, live, snapshot, draft, library, onRetryLibrary, onLibraryChanged, hidden, panelRef, className, onOpenCreative }: BriefSessionPanelProps) {
+export function BriefSessionPanel({ slug, projectName, brief, live, snapshot, onCarried, draft, library, onRetryLibrary, onLibraryChanged, hidden, panelRef, className, onOpenCreative }: BriefSessionPanelProps) {
   const t = useT();
   const b = t.web.briefSession;
   const [pins, setPins] = useState<ContextPin[]>([]);
@@ -99,22 +101,29 @@ export function BriefSessionPanel({ slug, projectName, brief, live, snapshot, dr
     start: async ({ clientId, text }) => {
       const now = snapshot();
       const had = brief.session;
-      const view = await brief.ensure({ form: now.form, userEdited: now.userEdited });
-      const sent = pinsRef.current;
-      const r = await brief.send({ clientId, text, context: contextWith(view.context, sent).context, form: now.form, userEdited: now.userEdited, baseRevision: had ? now.baseRevision : view.revision }, view.id);
-      setPins((list) => list.filter((p) => !sent.includes(p)));
-      return r.outcome === 'started' ? r.job : null;
+      try {
+        const view = await brief.ensure({ form: now.form, userEdited: now.userEdited });
+        const sent = pinsRef.current;
+        const r = await brief.send({ clientId, text, context: contextWith(view.context, sent).context, form: now.form, userEdited: now.userEdited, baseRevision: had ? now.baseRevision : view.revision }, view.id);
+        onCarried?.(true);
+        setPins((list) => list.filter((p) => !sent.includes(p)));
+        return r.outcome === 'started' ? r.job : null;
+      } catch (e) { onCarried?.(false); throw e; }
     },
     post: async ({ clientId, text, mode }) => {
       const now = snapshot();
       const view = brief.session;
       if (!view) throw new Error(t.errors.briefSessionGone);
       const sent = pinsRef.current;
-      const r = await brief.send({ clientId, text, context: contextWith(view.context, sent).context, form: now.form, userEdited: now.userEdited, baseRevision: now.baseRevision, mode });
+      let r;
+      try {
+        r = await brief.send({ clientId, text, context: contextWith(view.context, sent).context, form: now.form, userEdited: now.userEdited, baseRevision: now.baseRevision, mode });
+      } catch (e) { onCarried?.(false); throw e; }
+      onCarried?.(true);
       setPins((list) => list.filter((p) => !sent.includes(p)));
       return { outcome: r.outcome === 'started' ? 'delivered-pending' : r.outcome };
     },
-  }), [brief, snapshot, t]); // eslint-disable-line react-hooks/exhaustive-deps -- contextWith is pure
+  }), [brief, snapshot, onCarried, t]); // eslint-disable-line react-hooks/exhaustive-deps -- contextWith is pure
 
   const approvals = useMemo(() => Object.values(live?.approvals ?? {}).filter((a) => job && a.jobId === job.id), [live?.approvals, job]);
   const queued = useMemo<QueuedRequest[]>(() => (session?.queued ?? []).map((q) => ({ clientId: q.clientId, text: q.text, pins: [], at: q.at })), [session?.queued]);
@@ -147,12 +156,18 @@ export function BriefSessionPanel({ slug, projectName, brief, live, snapshot, dr
             </>
           ) : null}
         </div>
+      ) : brief.status === 'failed' ? (
+        // The first read failed: nothing is known yet (a session left from before must be asked about), so nothing can be sent.
+        <div className="ms-brief-alert" role="alert">
+          <span>{b.loadFailed({ detail: brief.error ?? '' })}</span>
+          <Button size="sm" variant="outline" onClick={() => void brief.refresh()}>{t.web.newCreative.tryAgain}</Button>
+        </div>
       ) : brief.error ? <p className="ms-brief-alert" role="alert">{brief.error}</p> : null}
       <Conversation
         slug={slug} creative="" entries={brief.entries} approvals={approvals} job={job} live={brief.live} snapshots={live?.snapshots}
         queued={queued} queueOps={{ remove: brief.removeQueued }} onQueueChanged={() => void brief.refresh()}
         transport={transport} draft={draft} composerLabel={b.composerLabel} placeholder={asked ? b.placeholderFollowUp : b.placeholderFirst}
-        extraContent={pins.length > 0}
+        extraContent={pins.length > 0} composerDisabled={brief.status === 'failed'}
         intro={b.intro}
         composerTop={
           <>
@@ -171,7 +186,7 @@ export function BriefSessionPanel({ slug, projectName, brief, live, snapshot, dr
         }
         composerTools={
           <>
-            <AddContextMenu onFolder={() => void onFolder()} onLibrary={(el) => { pickerAnchor.current = el; setPickerOpen(true); }} onUpload={() => fileInput.current?.click()} />
+            <AddContextMenu disabled={brief.status === 'failed'} onFolder={() => void onFolder()} onLibrary={(el) => { pickerAnchor.current = el; setPickerOpen(true); }} onUpload={() => fileInput.current?.click()} />
             <input ref={fileInput} type="file" multiple hidden aria-hidden="true" tabIndex={-1}
               onChange={(e) => { const files = [...(e.target.files ?? [])]; e.target.value = ''; void onUpload(files); }} />
           </>

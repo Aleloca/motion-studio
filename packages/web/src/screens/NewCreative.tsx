@@ -384,9 +384,10 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
     } catch (e) {
       inFlight.current = false;
       setBusy(null);
-      // The session is gone or half moved (decision 1423): read again, and say what can be done beside the error.
+      // The session is gone or half moved (decision 1423): read again, and say what can be done beside the error. Gone: the
+      // next Genera goes without it.
       brief.report(e);
-      setError(errText(e));
+      setError((e as { code?: unknown } | null)?.code === 'brief-session-gone' ? t.web.briefSession.goneOnCreate : errText(e));
     }
   };
   usePageShortcut(root, isSubmitChord, () => { void submit(true); });
@@ -425,11 +426,15 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   const dirty = useRef(new Set<BriefField>());
   const sent = useRef(new Set<BriefField>());
   const pendingEdits = () => new Set([...dirty.current, ...sent.current]);
+  // "Fallo compilare all'agente" gives the emptied goal back (decision 1422): until a view says it is not the user's any more,
+  // no save marks it as theirs, and a view that still does is answered with one more save.
+  const givingBack = useRef(false);
+  const ownedForSave = () => [...owned.current].filter((f) => !(givingBack.current && f === 'goal'));
   const saveBody = useCallback(() => {
     sent.current = new Set([...sent.current, ...dirty.current]);
     dirty.current = new Set();
-    return { form: snap.current, userEdited: [...owned.current], baseRevision: revision.current };
-  }, []);
+    return { form: snap.current, userEdited: ownedForSave(), baseRevision: revision.current };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- reads refs only
   const settleSave = useCallback((ok: boolean) => {
     // A refused save keeps its edits pending (the next save carries them); a taken one is answered.
     if (!ok) dirty.current = new Set([...dirty.current, ...sent.current]);
@@ -439,6 +444,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   /** A change by hand: the field is the user's (the agent keeps off it) and loses its "Agente" mark; the form is saved. */
   const edited = (f: BriefField) => {
     dirty.current.add(f);
+    if (f === 'goal') givingBack.current = false;
     setUserEdited((s) => (s.has(f) ? s : new Set(s).add(f)));
     setAgentFields((s) => { if (!s.has(f)) return s; const next = new Set(s); next.delete(f); return next; });
     if (sessionOpen) brief.saveForm(saveBody, settleSave);
@@ -467,7 +473,12 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
     if (fill) appliedFill.current = fill.seq;
     const before = snap.current;
     const m = mergeView({ form: before, userEdited: owned.current, agentFields, pending: pendingEdits() }, s, fill?.reclaimed ?? []);
-    for (const f of fill?.reclaimed ?? []) dirty.current.delete(f);
+    // A field that took the session's value (equal, or nothing pending) has no edit left to keep.
+    for (const f of m.taken) dirty.current.delete(f);
+    if (givingBack.current) {
+      if (s.userEdited.includes('goal')) { m.userEdited.delete('goal'); brief.saveForm(saveBody, settleSave); }
+      else givingBack.current = false;
+    }
     applyForm(m.form, m.changed);
     setUserEdited(m.userEdited);
     setAgentFields(m.agentFields);
@@ -543,7 +554,10 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
       if (!first) return;
       base = first.revision;
     }
-    await brief.saveNow(() => ({ form: { ...snap.current, goal: '' }, userEdited: without(), baseRevision: base }));
+    givingBack.current = true;
+    const second = await brief.saveNow(() => ({ form: { ...snap.current, goal: '' }, userEdited: without(), baseRevision: base }));
+    // Refused: the goal would stay the user's and empty; the next save gives it back (and the views keep asking for it).
+    if (!second) brief.saveForm(saveBody, settleSave);
   };
   /** The composer of the panel takes the focus once the panel is open (it is inert while closed). */
   const focusComposer = () => { setTimeout(() => panelEl.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus(), 0); };
@@ -553,7 +567,8 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
     setAttached(true);
     setMode('you');
   };
-  const panelSnapshot = useCallback(() => ({ form: snap.current, userEdited: [...owned.current], baseRevision: revision.current }), []);
+  // A message carries the form like a save: its edits are answered when the core takes it (`onCarried`).
+  const panelSnapshot = useCallback(() => saveBody(), [saveBody]);
 
   /** "Agente" beside a field's label while the field is the agent's. */
   const agentMark = (f: BriefField) => (agentFields.has(f) ? <Pill tone="accent" className="ms-nc-agentmark">{t.web.briefSession.agentMark}</Pill> : null);
@@ -565,7 +580,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
           options={[{ value: 'you', label: t.web.briefSession.modeYou }, { value: 'agent', label: t.web.briefSession.modeAgent, icon: 'sparkle' }]} />,
         bar.end,
       ) : null}
-      <BriefSessionPanel slug={slug} projectName={projectName} brief={brief} live={live ?? shell?.live} snapshot={panelSnapshot} draft={draft}
+      <BriefSessionPanel slug={slug} projectName={projectName} brief={brief} live={live ?? shell?.live} snapshot={panelSnapshot} onCarried={settleSave} draft={draft}
         library={library} onRetryLibrary={() => { setLibrary({ value: null, error: null }); setLibraryNonce((x) => x + 1); }} onLibraryChanged={() => setLibraryNonce((x) => x + 1)}
         hidden={mode !== 'agent'} panelRef={panelEl} className="ms-nc-panel" onOpenCreative={(c) => go(href.creative(slug, c))} />
       <div className="ms-nc-form" ref={formArea}>
@@ -806,12 +821,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
             {brief.conflict?.code === 'brief-session-handed-off' ? <ConflictActions brief={brief} onOpen={(c) => go(href.creative(slug, c))} onDone={() => setError(null)} /> : null}
           </div>
         ) : null}
-        {brief.status === 'failed' ? (
-          <div className="ms-nc-ferr" role="alert">
-            <Icon name="warn" size={14} /><span>{t.web.briefSession.loadFailed({ detail: brief.error ?? '' })}</span>
-            <Button size="sm" variant="outline" onClick={() => void brief.refresh()}>{n.tryAgain}</Button>
-          </div>
-        ) : null}
+
       </div>
       <footer className="ms-nc-foot">
         <div className="ms-nc-frames" aria-hidden="true">

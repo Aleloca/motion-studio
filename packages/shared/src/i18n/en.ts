@@ -1997,6 +1997,7 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
       backToCreatives: 'Back to creatives',
     },
     briefSession: {
+      goneOnCreate: 'The brief session ended elsewhere (started over or turned into a creative): press Generate again to create the creative without it.',
       loadFailed: (p: { detail: string }) => `The brief session could not be read: ${p.detail}`,
       modeLabel: 'How to fill in the brief',
       modeYou: 'Fill it in yourself',

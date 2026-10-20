@@ -95,7 +95,9 @@ export function useBriefSession(slug: string, live: EventsState | undefined): Br
     }
     if (e.code === 'brief-session-gone' || e.code === 'brief-session-handed-off') {
       setConflict({ code: e.code, message: e.message, sessionId: sessionRef.current?.id ?? null });
-      void loadRef.current(null);
+      // Gone: once the session is read again there is nothing left to offer (the caller says what happened where it acts).
+      const gone = e.code === 'brief-session-gone';
+      void loadRef.current(null).then(() => { if (gone && alive.current) setConflict((c) => (c?.code === 'brief-session-gone' ? null : c)); });
       return true;
     }
     return false;
