@@ -230,7 +230,8 @@ export class AgentActionService {
     const presets = await this.deps.presets();
     const preset = findPreset(presets, a.format);
     const x = t().agentActions;
-    if (!preset || preset.id !== a.format) throw new CodedError(400, x.formatUnknown({ format: oneLine(a.format).slice(0, 100) }), 'format-unknown');
+    // Report 59: a hidden preset (a custom format deleted while creatives use it) is offered nowhere, the agent included.
+    if (!preset || preset.id !== a.format || preset.hidden) throw new CodedError(400, x.formatUnknown({ format: oneLine(a.format).slice(0, 100) }), 'format-unknown');
     if (preset.identity) throw new CodedError(400, x.formatIdentity, 'format-identity');
     const name = formatDisplayName(presets, preset.id, currentLocale());
     await this.deps.turns.briefFromAgent(s.ref, (current) => {

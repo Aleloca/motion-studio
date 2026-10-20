@@ -30,6 +30,11 @@ export const formatPresetSchema = z.object({
    * (renders, previews, export), and is offered nowhere: not on the board, not to the brief agent.
    */
   hidden: z.literal(true).optional(),
+  /**
+   * Report 59: when a custom preset was added. A creative that cannot be read and was last written before it cannot use it;
+   * absent (a preset from before): unknown, every unreadable creative might.
+   */
+  createdAt: z.iso.datetime().optional(),
 });
 export type FormatPreset = z.infer<typeof formatPresetSchema>;
 

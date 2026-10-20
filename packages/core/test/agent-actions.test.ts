@@ -193,6 +193,22 @@ describe('update_brief during the turn (user note 6)', () => {
 });
 
 describe('formats and languages', () => {
+  it('add_format: a hidden custom format (deleted while a creative uses it) is unknown to the agent (report 59)', async () => {
+    const add = await app.inject({ method: 'POST', url: '/api/formats/custom', payload: { name: 'Totem', kind: 'image', width: 1080, height: 1920 } });
+    expect(add.statusCode, add.body).toBe(200);
+    await create(false, { ...brief, formats: ['custom-totem'] });
+    expect((await app.inject({ method: 'DELETE', url: '/api/formats/custom/custom-totem' })).json().outcome).toBe('hidden');
+    const slug = await create();
+    const run = await runOf(slug);
+    const r = await bridge(run, 'add_format', { format: 'custom-totem' });
+    expect(r.statusCode).toBe(400);
+    // The bridge answers the agent with the text alone: the same as for an id that never existed (`format-unknown`).
+    expect(r.json()).toEqual({ error: t().agentActions.formatUnknown({ format: 'custom-totem' }) });
+    writeCompositions(run, 6);
+    run.finish({ write: false });
+    await waitIdle();
+  });
+
   it('add_format: the brief has it after the turn and ONE follow-up turn makes it (never a second one)', async () => {
     const slug = await create();
     const run = await runOf(slug);

@@ -1,6 +1,6 @@
 import { canFollow, channelGroup, CUSTOM_CHANNEL, isCustomPreset, storePackFormats, channelName, statedDurationSec, formatLabel, formatName, instanceIdOf, instanceIndex, instanceLabel, instancePreset, MAX_INSTANCES, presetOf, type BriefField, type BriefForm, type StorePack, type AssetEntry, type FollowCheck, type IdentityBrief, type Locale, type BrandKit, type BriefServices, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { api } from '../api.ts';
+import { api, ApiError } from '../api.ts';
 import { CodebaseList } from '../components/CodebaseList.tsx';
 import { ServicesSelector, useConfiguredProviders, useKeyChecks } from '../components/ServicesSelector.tsx';
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
@@ -156,7 +156,8 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   const locale = useLocale();
   const shell = useContext(ShellContext);
   // Decisions 1421–1422: the project's brief session; the form below is the one its agent fills.
-  const brief = useBriefSession(slug, live ?? shell?.live);
+  // Report 59: a save refused a format deleted in another window: the catalog is read again and the choice drops it.
+  const brief = useBriefSession(slug, live ?? shell?.live, { onFormatUnavailable: () => setCatalogNonce((x) => x + 1) });
   const projectName = shell?.catalog.projects?.find((p) => p.slug === slug)?.name ?? slug;
 
   const [goal, setGoal] = useState('');
@@ -440,6 +441,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
     } catch (e) {
       inFlight.current = false;
       setBusy(null);
+      if (e instanceof ApiError && e.code === 'format-unavailable') setCatalogNonce((x) => x + 1);
       // The session is gone or half moved (decision 1423): read again, and say what can be done beside the error. Gone: the
       // next Genera goes without it.
       brief.report(e);

@@ -258,7 +258,13 @@ export function CustomFormatDialog({ open, onClose, editing, presets, onSaved, o
             <Button size="sm" variant="outline" onClick={() => setUsageNonce((x) => x + 1)}>{n.tryAgain}</Button>
           </p>
         ) : null}
-        {known && users > 0 ? <p className="ms-cfd-note" id="ms-cfd-locked">{n.customInUse({ count: users })}</p> : null}
+        {/* "N creatività usano" counts the creatives that do; those that cannot be read (and might) are said apart. */}
+        {known && users > 0 ? (
+          <div id="ms-cfd-locked" className="ms-cfd-notes">
+            {known.creatives > 0 ? <p className="ms-cfd-note">{n.customInUse({ count: known.creatives })}</p> : null}
+            {known.unreadable > 0 ? <p className="ms-cfd-note">{n.customUnreadable({ n: known.unreadable })}</p> : null}
+          </div>
+        ) : null}
         {error ? <p className="ms-cfd-err" role="alert">{error}</p> : null}
         {confirming && editing ? (
           <div className="ms-cfd-confirm" role="group" aria-labelledby="ms-cfd-ask">

@@ -9,6 +9,7 @@ import { initialEventsState } from '../src/eventsReducer.ts';
 let presets: FormatPreset[] = [];
 let used = 0;
 let longest = 0;
+let unreadable = 0;
 let usageFails = 0;
 let session: BriefSessionView | null = null;
 const state = () => ({ presets, error: null, path: '/x' });
@@ -42,7 +43,7 @@ const api = {
   }),
   customFormatUsage: vi.fn(async () => {
     if (usageFails > 0) { usageFails--; throw new Error('offline'); }
-    return { creatives: used, unreadable: 0, longestSec: longest };
+    return { creatives: used, unreadable, longestSec: longest };
   }),
 };
 class ApiError extends Error { constructor(public status: number, message: string, public code?: string) { super(message); } }
@@ -50,7 +51,7 @@ vi.mock('../src/api.ts', () => ({ api, ApiError }));
 const { NewCreative } = await import('../src/screens/NewCreative.tsx');
 const { customDraftProblems, heightFor, ratioMatches } = await import('../src/screens/new-creative/CustomFormatDialog.tsx');
 
-beforeEach(() => { vi.clearAllMocks(); presets = [...DEFAULT_FORMATS]; used = 0; longest = 0; usageFails = 0; session = null; location.hash = ''; });
+beforeEach(() => { vi.clearAllMocks(); presets = [...DEFAULT_FORMATS]; used = 0; longest = 0; unreadable = 0; usageFails = 0; session = null; location.hash = ''; });
 
 const view = () => render(<I18nProvider locale="it"><NewCreative slug="acme" /></I18nProvider>);
 const group = () => screen.getByRole('group', { name: 'Personalizzati' });
@@ -208,6 +209,49 @@ describe('NewCreative · custom formats (report 59)', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: 'Salva' }));
     await waitFor(() => expect(name.getAttribute('aria-invalid')).toBe('true'));
     expect(within(dialog).getByRole('alert').textContent).toContain('si chiama già');
+  });
+
+  it('unreadable creatives get a note of their own; the in-use note counts only creatives that use it', async () => {
+    presets = [...DEFAULT_FORMATS, customPreset({ name: 'Totem', kind: 'image', width: 1080, height: 1920 }, 'custom-totem')];
+    used = 1;
+    unreadable = 2;
+    view();
+    await waitFor(() => group());
+    await userEvent.click(within(group()).getByRole('button', { name: 'Modifica Personalizzati · Totem' }));
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(within(dialog).getByText(/^Una creatività usa questo formato/)).toBeTruthy());
+    expect(within(dialog).getByText(/^2 creatività non si leggono e potrebbero usare/)).toBeTruthy();
+    expect((within(dialog).getByLabelText('Larghezza') as HTMLInputElement).disabled).toBe(true);
+  });
+
+  it('a create refused for a format no longer available reads the catalog again, and the choice drops it', async () => {
+    presets = [...DEFAULT_FORMATS, customPreset({ name: 'Totem', kind: 'image', width: 1080, height: 1920 }, 'custom-totem')];
+    view();
+    await waitFor(() => group());
+    await userEvent.click(within(group()).getByRole('button', { name: /^Totem/ }));
+    await userEvent.type(screen.getByLabelText('Cosa vuoi realizzare?'), 'Lancio');
+    // Deleted in another window meanwhile.
+    presets = presets.map((p) => (p.id === 'custom-totem' ? { ...p, hidden: true as const } : p));
+    createCreative.mockRejectedValueOnce(new ApiError(400, 'Il formato "custom-totem" non è più disponibile: toglilo dal brief', 'format-unavailable'));
+    const before = api.getFormats.mock.calls.length;
+    await userEvent.click(screen.getByRole('button', { name: 'Genera' }));
+    await waitFor(() => expect(api.getFormats.mock.calls.length).toBe(before + 1));
+    await waitFor(() => expect(screen.getByText('Un formato scelto non è più disponibile ed è stato tolto')).toBeTruthy());
+    expect(within(group()).queryByRole('button', { name: /^Totem/ })).toBeNull();
+  });
+
+  it('a brief-session save refused for a format no longer available reads the catalog again', async () => {
+    presets = [...DEFAULT_FORMATS, customPreset({ name: 'Totem', kind: 'image', width: 1080, height: 1920 }, 'custom-totem')];
+    const at = '2026-10-20T10:00:00.000Z';
+    session = { id: 's1', createdAt: at, updatedAt: at, revision: 1, queued: [], jobId: null, userEdited: [], agentFields: [], context: { codebases: [], assets: [] }, form: { ...EMPTY_BRIEF_FORM } };
+    render(<I18nProvider locale="it"><NewCreative slug="acme" live={initialEventsState} /></I18nProvider>);
+    await waitFor(() => group());
+    presets = presets.map((p) => (p.id === 'custom-totem' ? { ...p, hidden: true as const } : p));
+    api.saveBriefForm.mockRejectedValueOnce(new ApiError(400, 'Il formato "custom-totem" non è più disponibile: toglilo dal brief', 'format-unavailable'));
+    const before = api.getFormats.mock.calls.length;
+    await userEvent.click(within(group()).getByRole('button', { name: /^Totem/ }));
+    await waitFor(() => expect(api.getFormats.mock.calls.length).toBe(before + 1), { timeout: 3000 });
+    await waitFor(() => expect(screen.getByText('Un formato scelto non è più disponibile ed è stato tolto')).toBeTruthy());
   });
 
   it('cancelling the delete question gives the focus back to Elimina', async () => {

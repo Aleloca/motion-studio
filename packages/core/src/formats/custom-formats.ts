@@ -15,14 +15,20 @@ import type { CatalogState, FormatCatalog } from './format-catalog.ts';
  * only the creatives whose files changed meanwhile.
  */
 
-/** What one creative folder says: the presets it uses with the longest duration it uses each at; null: it cannot be read. */
-interface FolderUse { stamp: string; uses: Map<string, number> | null }
+/**
+ * What one creative folder says: the presets it uses with the longest duration it uses each at; null: it cannot be read.
+ * `mtimeMs`: when it was last written (an unreadable one written before a preset existed cannot use it).
+ */
+interface FolderUse { stamp: string; mtimeMs: number; uses: Map<string, number> | null }
 /** A scan of every creative of the workspace. `failed`: the folders whose creatives could not be listed. */
 export interface UsageScan { folders: Map<string, FolderUse>; failed: number }
 export interface PresetUsage {
   /** Creatives that use the preset, in their brief or in a version (archived ones and variant sisters too). */
   creatives: number;
-  /** Creatives (or whole folders of them) that could not be read: they might use it. */
+  /**
+   * Creatives (or whole folders of them) that could not be read and might use it: written since the preset was added (every
+   * one, for a preset without `createdAt`).
+   */
   unreadable: number;
   /** The longest duration (s) a creative uses it at: its brief's, or a version's file's. */
   longestSec: number;
@@ -49,32 +55,44 @@ async function creativeFolders(root: string): Promise<{ folders: string[]; faile
   return { folders, failed };
 }
 
-/** The identity of a folder's two files (an atomic write is a new inode): equal stamps, same contents. */
-async function stampOf(dir: string): Promise<string> {
+/**
+ * The identity of a folder's two files (an atomic write is a new inode): equal stamps, same contents; and when the folder was
+ * last written (a file that cannot be stat'ed counts as now).
+ */
+async function stampOf(dir: string): Promise<{ stamp: string; mtimeMs: number }> {
   const parts: string[] = [];
+  let mtimeMs = 0;
   for (const f of ['creative.json', 'versions.json']) {
-    try { const s = await stat(join(dir, f)); parts.push(`${s.ino}:${s.size}:${s.mtimeMs}:${s.ctimeMs}`); } catch (err) { parts.push(missing(err) ? '-' : `?${Math.random()}`); }
+    try {
+      const s = await stat(join(dir, f));
+      parts.push(`${s.ino}:${s.size}:${s.mtimeMs}:${s.ctimeMs}`);
+      mtimeMs = Math.max(mtimeMs, s.mtimeMs);
+    } catch (err) {
+      parts.push(missing(err) ? '-' : `?${Math.random()}`);
+      if (!missing(err)) mtimeMs = Infinity;
+    }
   }
-  return parts.join('|');
+  return { stamp: parts.join('|'), mtimeMs };
 }
 
 /** Reads creative.json and versions.json once (nothing else: no covers, no stills); undefined: not a creative. */
-async function readFolder(dir: string, stamp: string): Promise<FolderUse | undefined> {
+async function readFolder(dir: string, { stamp, mtimeMs }: { stamp: string; mtimeMs: number }): Promise<FolderUse | undefined> {
   try {
     const c = await readJsonFile(join(dir, 'creative.json'), creativeFileSchema);
-    let versions: Array<{ outputs: Array<{ format: string; durationSec: number | null }>; compositions?: Array<{ format: string }> }> = [];
+    let versions: Array<{ outputs: Array<{ format: string; durationSec: number | null }>; compositions?: Array<{ format: string; userDuration?: { durationSec: number } }> }> = [];
     try { versions = (await readJsonFile(join(dir, 'versions.json'), versionsFileSchema)).versions; } catch (err) { if (!(err instanceof JsonFileError && err.reason === 'missing')) throw err; }
     const uses = new Map<string, number>();
     const add = (format: string, sec: number | null | undefined) => { const id = presetOf(format); uses.set(id, Math.max(uses.get(id) ?? 0, sec ?? 0)); };
     for (const f of c.brief.formats) add(f, c.brief.durationSec);
     for (const v of versions) {
       for (const o of v.outputs) add(o.format, o.durationSec);
-      for (const k of v.compositions ?? []) add(k.format, 0);
+      // A composition's own length (one the user chose in the editor) counts too.
+      for (const k of v.compositions ?? []) add(k.format, k.userDuration?.durationSec);
     }
-    return { stamp, uses };
+    return { stamp, mtimeMs, uses };
   } catch (err) {
     if (err instanceof JsonFileError && err.reason === 'missing') return undefined;
-    return { stamp, uses: null };
+    return { stamp, mtimeMs, uses: null };
   }
 }
 
@@ -83,20 +101,24 @@ export async function scanUsage(ws: Pick<WorkspaceStore, 'root'>, prev?: UsageSc
   const { folders, failed } = await creativeFolders(ws.root);
   const out = new Map<string, FolderUse>();
   for (const dir of folders) {
-    const stamp = await stampOf(dir);
+    const st = await stampOf(dir);
     const before = prev?.folders.get(dir);
-    const use = before && before.stamp === stamp ? before : await readFolder(dir, stamp);
+    const use = before && before.stamp === st.stamp ? before : await readFolder(dir, st);
     if (use) out.set(dir, use);
   }
   return { folders: out, failed };
 }
 
-export function usageOf(scan: UsageScan, id: string): PresetUsage {
+/** The use of `preset`: an unreadable creative counts only when written since the preset was added (always, without `createdAt`). */
+export function usageOf(scan: UsageScan, preset: Pick<FormatPreset, 'id' | 'createdAt'>): PresetUsage {
+  const id = preset.id;
+  const since = preset.createdAt ? Date.parse(preset.createdAt) : -Infinity;
   let creatives = 0;
+  // A folder that cannot be listed always counts: its date changes when a creative is added, not when one is rewritten.
   let unreadable = scan.failed;
   let longestSec = 0;
   for (const f of scan.folders.values()) {
-    if (f.uses === null) { unreadable++; continue; }
+    if (f.uses === null) { if (f.mtimeMs >= since) unreadable++; continue; }
     const sec = f.uses.get(id);
     if (sec === undefined) continue;
     creatives++;
@@ -137,7 +159,7 @@ const customAt = (presets: readonly FormatPreset[], id: string): number => {
 function purgeHidden(presets: FormatPreset[], scan: UsageScan | null, deleted: Set<string>): FormatPreset[] {
   if (!scan) return presets;
   return presets.filter((p) => {
-    if (!p.hidden || inUse(usageOf(scan, p.id))) return true;
+    if (!p.hidden || inUse(usageOf(scan, p))) return true;
     deleted.add(p.id);
     return false;
   });
@@ -169,7 +191,7 @@ export async function addCustomFormat(d: CustomFormatDeps, body: unknown): Promi
     assertNameFree(presets, input.name);
     // Only a scan already made is brought up to date here: an add never waits for a full scan under the lock.
     const kept = s.scanned() ? purgeHidden(presets, await s.inside(), deleted) : presets;
-    preset = customPreset(input, customPresetId(input.name, new Set([...presets.map((p) => p.id), ...deleted])));
+    preset = { ...customPreset(input, customPresetId(input.name, new Set([...presets.map((p) => p.id), ...deleted]))), createdAt: new Date().toISOString() };
     return [...kept, preset];
   });
   return { preset: preset!, catalog: state };
@@ -198,13 +220,17 @@ export async function editCustomFormat(d: CustomFormatDeps, id: string, body: un
     const c = changes(before);
     if (c.shape || c.shorter) {
       // Scanned before the lock when the change was visible then; a full scan here only when another window changed it meanwhile.
-      const use = usageOf(await s.inside(), id);
-      if (c.shape && inUse(use)) throw new CodedError(409, t().errors.customFormatInUse({ count: use.creatives + use.unreadable }), 'custom-format-in-use');
+      const use = usageOf(await s.inside(), before);
+      if (c.shape && inUse(use)) {
+        // "N creatività usano" counts the creatives that do; the unreadable ones are said apart.
+        const text = use.creatives > 0 ? t().errors.customFormatInUse({ count: use.creatives }) : t().errors.customFormatMaybeInUse({ count: use.unreadable });
+        throw new CodedError(409, text, 'custom-format-in-use');
+      }
       if (c.shorter && input.maxDurationSec! < use.longestSec) {
         throw new CodedError(409, t().errors.customFormatDurationShort({ sec: use.longestSec }), 'custom-format-duration-too-short');
       }
     }
-    preset = customPreset(input, id);
+    preset = { ...customPreset(input, id), ...(before.createdAt ? { createdAt: before.createdAt } : {}) };
     return presets.map((p, i) => (i === at ? preset! : p));
   });
   return { preset: preset!, catalog: state };
@@ -221,10 +247,10 @@ export async function deleteCustomFormat(d: CustomFormatDeps, id: string): Promi
   await s.early(true);
   let outcome: 'deleted' | 'hidden' = 'deleted';
   const state = await d.catalog.mutate(async (presets, deleted) => {
-    customAt(presets, id);
+    const target = presets[customAt(presets, id)]!;
     const scan = await s.inside();
     const kept = purgeHidden(presets, scan, deleted);
-    if (!inUse(usageOf(scan, id))) { deleted.add(id); return kept.filter((p) => p.id !== id); }
+    if (!inUse(usageOf(scan, target))) { deleted.add(id); return kept.filter((p) => p.id !== id); }
     outcome = 'hidden';
     return kept.map((p) => (p.id === id ? { ...p, hidden: true as const } : p));
   });
@@ -233,6 +259,6 @@ export async function deleteCustomFormat(d: CustomFormatDeps, id: string): Promi
 
 /** The usage the dialog shows before a change (it locks kind and size of a format in use). */
 export async function customFormatUsage(d: CustomFormatDeps, id: string): Promise<PresetUsage> {
-  customAt((await d.catalog.load()).presets, id);
-  return usageOf(await (d.scan ?? scanUsage)(d.ws), id);
+  const presets = (await d.catalog.load()).presets;
+  return usageOf(await (d.scan ?? scanUsage)(d.ws), presets[customAt(presets, id)]!);
 }

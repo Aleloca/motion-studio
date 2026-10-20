@@ -73,7 +73,10 @@ const stale = (held: BriefSessionView | null, view: { revision: number }, id: st
  * the debounced form save. An answer older than the view held (a lower revision of the same session) is ignored. The revision is
  * never adopted here on its own: the page adopts it with the form of the view it applies.
  */
-export function useBriefSession(slug: string, live: EventsState | undefined): BriefSession {
+/** `onFormatUnavailable` (report 59): a save refused a format no longer offered: the page reloads its catalog to drop it. */
+export function useBriefSession(slug: string, live: EventsState | undefined, opts: { onFormatUnavailable?(): void } = {}): BriefSession {
+  const onUnavailable = useRef(opts.onFormatUnavailable);
+  onUnavailable.current = opts.onFormatUnavailable;
   const [state, setStateRaw] = useState<State>({ session: null, entries: [], status: 'loading', lastFill: null });
   const [error, setError] = useState<string | null>(null);
   const [conflict, setConflict] = useState<BriefConflict | null>(null);
@@ -90,6 +93,7 @@ export function useBriefSession(slug: string, live: EventsState | undefined): Br
 
   const report = useCallback((e: unknown): boolean => {
     if (!(e instanceof ApiError)) return false;
+    if (e.code === 'format-unavailable' && onUnavailable.current) { onUnavailable.current(); return true; }
     if (e.code === 'brief-session-unreadable') {
       setState(() => ({ session: null, entries: [], status: 'unreadable', lastFill: null }));
       return true;

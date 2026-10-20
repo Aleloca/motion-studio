@@ -484,7 +484,8 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     };
     const withBriefError = () => (briefError ? { briefError } : {});
     try {
-      const created = await store.create({ title: body.title, brief: { ...brief, links } });
+      // Report 59: checked again under the catalog's lock while creative.json is written (a delete cannot slip in between).
+      const created = await catalog().whileOffered(brief.formats, [], () => store.create({ title: body.title, brief: { ...brief, links } }));
       const slug = created.slug;
       // Fix round 1 (M2): its side record exists from the start (nothing written into its creative.json later is trusted).
       await ctx.turns.side.read(ws.projectDir(req.params.slug), slug);

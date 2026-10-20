@@ -117,6 +117,18 @@ export class FormatCatalog {
   }
 
   /**
+   * Report 59: runs `write` (a creative.json being written) while the catalog cannot change, right after checking that `formats`
+   * are still offered (`assertFormatsOffered`, `kept` allowed): a delete in another window cannot slip between the two. A delete
+   * that comes after sees the new creative in its scan. `write` must not load the catalog (the lock is not re-entrant).
+   */
+  whileOffered<T>(formats: readonly string[], kept: readonly string[], write: () => Promise<T>): Promise<T> {
+    return this.locked(async () => {
+      assertFormatsOffered(formats, (await this.current())?.presets ?? DEFAULT_FORMATS, kept);
+      return write();
+    });
+  }
+
+  /**
    * Writes a whole catalog. Report 59: the custom presets of the file that the list leaves out are kept (creatives use them, and
    * they are edited one at a time), and so are the deleted custom ids.
    */

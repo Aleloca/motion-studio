@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -111,6 +111,17 @@ describe('custom formats: edit', () => {
     expect((await edit('custom-totem', { ...totem, maxDurationSec: undefined })).statusCode).toBe(200);
   });
 
+  it("a composition's own length in versions.json counts for the maximum length", async () => {
+    await add(totem);
+    const created = (await useIn(['custom-totem'], 10)).json();
+    const file = join(ws(), 'acme', 'creatives', created.slug, 'versions.json');
+    const v = { n: 1, commit: null, sessionId: null, status: 'complete', createdAt: '2026-10-20T10:00:00.000Z', request: '', outputs: [], problems: [], tools: [],
+      renderCommand: null, basedOn: null, compositions: [{ format: 'custom-totem', dir: 'compositions/custom-totem', hash: 'a'.repeat(64), userDuration: { durationSec: 25, briefDurationSec: 10 } }] };
+    await writeFile(file, JSON.stringify({ schemaVersion: 1, versions: [v] }));
+    expect((await app.inject('/api/formats/custom/custom-totem/usage')).json()).toEqual({ creatives: 1, unreadable: 0, longestSec: 25 });
+    expect((await edit('custom-totem', { ...totem, maxDurationSec: 20 })).json().code).toBe('custom-format-duration-too-short');
+  });
+
   it('a preset in use keeps its kind and size (409) but takes a new name and duration', async () => {
     await add(totem);
     expect((await useIn(['custom-totem', 'custom-totem@2'])).statusCode).toBe(201);
@@ -155,6 +166,65 @@ describe('custom formats: delete', () => {
       expect((await edit('custom-totem', { ...totem, width: 1000 })).statusCode).toBe(409);
       expect((await remove('custom-totem')).json().outcome).toBe('hidden');
     } finally { await chmod(join(ws(), 'acme', 'creatives'), 0o755); }
+  });
+
+  it('an unreadable creative written before the format was added does not lock it; one written after does', async () => {
+    const dir = join(ws(), 'acme', 'creatives', 'rotta');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'creative.json'), '{ broken');
+    const old = new Date('2020-01-01T00:00:00.000Z');
+    await utimes(join(dir, 'creative.json'), old, old);
+    const { preset } = (await add(totem)).json();
+    expect(preset.createdAt).toEqual(expect.any(String));
+    expect((await app.inject('/api/formats/custom/custom-totem/usage')).json()).toEqual({ creatives: 0, unreadable: 0, longestSec: 0 });
+    expect((await edit('custom-totem', { ...totem, width: 1000 })).statusCode).toBe(200);
+    // The edit keeps when it was added.
+    expect((await catalog()).find((p) => p.id === 'custom-totem')!.createdAt).toBe(preset.createdAt);
+    // Written again now: it might use the format.
+    await writeFile(join(dir, 'creative.json'), '{ broken again');
+    const r = await edit('custom-totem', { ...totem, width: 1080 });
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error).toContain('non si legge');
+    expect((await remove('custom-totem')).json().outcome).toBe('hidden');
+  });
+
+  it('a custom preset without createdAt (from before): every unreadable creative counts', async () => {
+    const dir = join(ws(), 'acme', 'creatives', 'rotta');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'creative.json'), '{ broken');
+    const old = new Date('2020-01-01T00:00:00.000Z');
+    await utimes(join(dir, 'creative.json'), old, old);
+    const legacy = { id: 'custom-vecchio', channel: CUSTOM_CHANNEL, name: 'Vecchio', kind: 'image', width: 100, height: 100, extensions: ['png'] };
+    await app.inject({ method: 'PUT', url: '/api/formats', payload: { presets: [...DEFAULT_FORMATS, legacy] } });
+    expect((await app.inject('/api/formats/custom/custom-vecchio/usage')).json()).toMatchObject({ creatives: 0, unreadable: 1 });
+  });
+
+  it('a delete scanning while a creative is made with the format: the creative lands first and the format is hidden', async () => {
+    await add(totem);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let scanned = false;
+    // The scan before the lock is done (no creative yet), then held: the creative is made meanwhile.
+    const slow: typeof scanUsage = async (w, prev) => { const r = await scanUsage(w, prev); if (!prev) { scanned = true; await gate; } return r; };
+    const pending = deleteCustomFormat({ catalog: new FormatCatalog(ws()), ws: { root: ws() }, scan: slow }, 'custom-totem');
+    await vi.waitFor(() => expect(scanned).toBe(true));
+    expect((await useIn(['custom-totem'])).statusCode).toBe(201);
+    release();
+    expect((await pending).outcome).toBe('hidden');
+  });
+
+  it('the format check of a creation and a catalog change never interleave (whileOffered holds the lock)', async () => {
+    await add(totem);
+    const c = new FormatCatalog(ws());
+    const order: string[] = [];
+    await c.whileOffered(['custom-totem'], [], async () => {
+      const change = c.mutate((ps) => { order.push('delete'); return ps.filter((p) => p.id !== 'custom-totem'); });
+      await new Promise((r) => setTimeout(r, 50));
+      order.push('write');
+      void change;
+    });
+    await vi.waitFor(() => expect(order).toEqual(['write', 'delete']));
+    await expect(c.whileOffered(['custom-totem'], [], async () => 'written')).rejects.toMatchObject({ apiCode: 'format-unavailable' });
   });
 
   it('a slug-shaped folder without project.json is scanned too', async () => {
