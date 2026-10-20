@@ -364,12 +364,25 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   // load) cascade in instead of flying from a stale spot.
   const appeared = useRef(false);
   const [mountedAt] = useState(() => performance.now());
+  // Decision 1419: after Genera with the brief session's panel open, the chat comes from that panel (taken on mount).
+  const [briefOrigin] = useState(() => takeFrameOrigin(`brief-panel:${slug}/${creative}`));
   useLayoutEffect(() => {
     if (appeared.current || !boards.length || !root.current) return;
     appeared.current = true;
     const els = [...root.current.querySelectorAll('.ms-cv-board')];
+    const fresh = performance.now() - mountedAt <= FLIP_WINDOW_MS;
+    if (briefOrigin && fresh) {
+      // The panel moves from the brief's left slot to its own (l, out); its tabs fade in after it, the rest of the canvas
+      // after 0.6 × s, the boards one after the other (16 px rise, scale .97, 70 ms apart).
+      const panel = root.current.querySelector('.ms-cv-panel');
+      void flip(panel, briefOrigin, D.l);
+      void enter(panel?.querySelector('.ms-tabs') ?? null, { y: 0, delay: D.m });
+      root.current.querySelectorAll('.ms-cv-side:not(.ms-cv-panel)').forEach((el) => void enter(el, { y: 0, delay: 0.6 * D.s }));
+      void stagger(els, { y: 16, scale: 0.97, delay: 0.6 * D.s }, 70);
+      return;
+    }
     const rects = boards.map((b) => ({ id: b.id, rect: takeFrameOrigin(`canvas:${slug}/${creative}/${b.id}`) }));
-    const back = performance.now() - mountedAt <= FLIP_WINDOW_MS ? rects.find((x) => x.rect) : undefined;
+    const back = fresh ? rects.find((x) => x.rect) : undefined;
     if (back?.rect) {
       const frame = boardEl(back.id)?.querySelector('.ms-cv-frame') ?? null;
       void flip(frame, back.rect, D.m);

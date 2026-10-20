@@ -4,9 +4,12 @@ import { api } from '../api.ts';
 import { CodebaseList } from '../components/CodebaseList.tsx';
 import { ServicesSelector, useConfiguredProviders, useKeyChecks } from '../components/ServicesSelector.tsx';
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
-import { anim, E, flash, glow, isSubmitChord, tileIn, useEnter, usePageShortcut } from '../motion/index.ts';
+import { anim, D, E, flash, glow, isSubmitChord, recede, tileIn, useEnter, usePageShortcut } from '../motion/index.ts';
 import type { EventsState } from '../eventsReducer.ts';
-import { href } from '../routes.ts';
+import { href, routeKey } from '../routes.ts';
+import { createPortal } from 'react-dom';
+import { useBarClaim } from '../shell/barSlots.ts';
+import { setFrameOrigin } from '../shell/intents.ts';
 import { useNewCreativeAssetsIntent } from '../shell/intents.ts';
 import { go, ShellContext } from '../shell/ShellContext.tsx';
 import { isMac } from '../platform.ts';
@@ -23,6 +26,8 @@ import { BRIEF_TEXT_MAX, variantIdAt } from '@motion-studio/shared';
 import './new-creative/storepack.css';
 import { LENGTHS, formSnapshot, lengthOf, mergeView, type LengthChoice } from './new-creative/briefSessionModel.ts';
 import { useBriefSession } from './new-creative/useBriefSession.ts';
+import { BriefSessionPanel } from './new-creative/BriefSessionPanel.tsx';
+import { ResumeBriefDialog } from './new-creative/ResumeBriefDialog.tsx';
 import { AssetFace, LibraryPicker } from './new-creative/LibraryPicker.tsx';
 
 
@@ -194,6 +199,14 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   const [agentFields, setAgentFields] = useState<ReadonlySet<BriefField>>(() => new Set());
   // Whether the open session is this form's (null until the first load says): a session left from before waits for Riprendi.
   const [attached, setAttached] = useState<boolean | null>(null);
+  // Decisions 1410–1411: "Compila tu" (the form alone, the default) or "Con l'agente" (the session's panel at the left).
+  const [mode, setMode] = useState<'you' | 'agent'>('you');
+  // The composer's draft from "Fallo compilare all'agente" (decision 1422: the goal's text moves there, never sent by itself).
+  const [draft, setDraft] = useState<{ text: string; nonce: number } | undefined>(undefined);
+  const formArea = useRef<HTMLDivElement>(null);
+  const panelEl = useRef<HTMLElement>(null);
+  const ownKey = routeKey({ name: 'new-creative', slug });
+  const bar = useBarClaim(ownKey, !shell?.route || routeKey(shell.route) === ownKey);
 
   const goalRef = useRef<HTMLTextAreaElement>(null);
   const goalBox = useRef<HTMLDivElement>(null);
@@ -297,7 +310,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   // request runs, or while the page is leaving after success) never creates a duplicate and starts a second agent.
   const inFlight = useRef(false);
   const submit = async (generate: boolean) => {
-    if (inFlight.current) return;
+    if (inFlight.current || briefBusy) return;
     // The start mode defaults to the brand's logo when it has one: wait for the brand before sending an identity brief.
     if (identityPending) return;
     if (!goal.trim()) {
@@ -335,7 +348,10 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
         },
         generate: generate && (!grouped || (coreGroup && !typed)),
         linkedCodebases: codebases,
+        // Decision 1423: the brief session goes into the creative (its chat, and its agent's memory for the first turn).
+        ...(sessionOpen && brief.session ? { briefSession: { id: brief.session.id, group: variantCount > 1 } } : {}),
       });
+      if (created.briefError) toast.show(created.briefError, { tone: 'neutral' });
       let problem: string | null = created.groupError ? vg.groupFailed({ detail: created.groupError }) : created.startError ? vg.startFailed({ detail: created.startError }) : null;
       // Residual fix (decisions log 867): no group was made, so nothing is set or started here and the toast says why.
       if (grouped && !(coreGroup && !typed) && !created.groupError) {
@@ -352,7 +368,14 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
         }
       }
       if (problem) toast.show(problem, { tone: 'neutral' });
-      if (generate) go(href.creative(slug, created.slug));
+      if (generate) {
+        // Decision 1419: with the panel open the chat moves to the canvas's panel (shared element); the form recedes.
+        if (mode === 'agent' && panelEl.current) {
+          setFrameOrigin(`brief-panel:${slug}/${created.slug}`, panelEl.current.getBoundingClientRect());
+          void recede(formArea.current, D.m);
+        }
+        go(href.creative(slug, created.slug));
+      }
       else {
         toast.show(n.draftSaved({ title }), { tone: 'ok', action: { label: n.open, run: () => go(href.creative(slug, created.slug)) } });
         go(href.project(slug));
@@ -469,11 +492,42 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
     tiles.forEach((el, i) => void tileIn(el, i * 90));
   }, [marks]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const briefBusy = brief.job?.state === 'queued' || brief.job?.state === 'running';
+  // A session the agent is working on reopens in "Con l'agente" (decision 1422).
+  const reopened = useRef(false);
+  useEffect(() => {
+    if (attached === true && !reopened.current && brief.session && briefBusy) { reopened.current = true; setMode('agent'); }
+  }, [attached, brief.session, briefBusy]);
+  /** "Fallo compilare all'agente": opens the panel; the goal's text moves into the composer (decision 1422), not owned. */
+  const toAgent = () => {
+    setMode('agent');
+    if (!goal.trim()) return;
+    setDraft((d) => ({ text: goal.trim(), nonce: (d?.nonce ?? 0) + 1 }));
+    setGoal('');
+    setUserEdited((s) => { if (!s.has('goal')) return s; const next = new Set(s); next.delete('goal'); return next; });
+  };
+  const resume = () => { setAttached(true); setMode('agent'); };
+  const startOver = async () => {
+    try { await brief.discard(); } catch (e) { setError(errText(e)); return; }
+    setAttached(true);
+    setMode('you');
+  };
+  const panelSnapshot = useCallback(() => ({ form: snap.current, userEdited: [...owned.current], baseRevision: revision.current }), []);
+
   /** "Agente" beside a field's label while the field is the agent's. */
   const agentMark = (f: BriefField) => (agentFields.has(f) ? <Pill tone="accent" className="ms-nc-agent">{t.web.briefSession.agentMark}</Pill> : null);
 
   return (
-    <div className="ms-nc" ref={root}>
+    <div className={cx('ms-nc', mode === 'agent' && 'ms-nc-agent')} ref={root}>
+      {bar?.end ? createPortal(
+        <Segmented className="ms-nc-mode" label={t.web.briefSession.modeLabel} value={mode} onChange={(v) => (v === 'agent' ? setMode('agent') : setMode('you'))}
+          options={[{ value: 'you', label: t.web.briefSession.modeYou }, { value: 'agent', label: t.web.briefSession.modeAgent, icon: 'sparkle' }]} />,
+        bar.end,
+      ) : null}
+      <BriefSessionPanel slug={slug} projectName={projectName} brief={brief} live={live ?? shell?.live} snapshot={panelSnapshot} draft={draft}
+        library={library} onRetryLibrary={() => { setLibrary({ value: null, error: null }); setLibraryNonce((x) => x + 1); }} onLibraryChanged={() => setLibraryNonce((x) => x + 1)}
+        hidden={mode !== 'agent'} panelRef={panelEl} className="ms-nc-panel" onOpenCreative={(c) => go(href.creative(slug, c))} />
+      <div className="ms-nc-form" ref={formArea}>
       <div className="ms-nc-body">
         <div className="ms-nc-left">
           <section className="ms-nc-sec ms-nc-brief" data-enter>
@@ -493,6 +547,9 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
                   </Chip>
                 ) : null}
                 <Button size="sm" variant="ghost" icon aria-label={n.addAssets} title={n.addAssets} onClick={(e) => openPicker(e.currentTarget)}><Icon name="plus" size={14} /></Button>
+                {mode === 'you' ? (
+                  <button type="button" className="ms-chip ms-nc-cta" onClick={toAgent}><Icon name="sparkle" size={13} fill />{t.web.briefSession.cta}</button>
+                ) : null}
                 <span className="ms-nc-count">{n.goalCount({ n: goal.length, max: GOAL_MAX })}</span>
               </div>
             </div>
@@ -722,11 +779,14 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
           {similar ? <span className="ms-nc-muted ms-nc-small ms-nc-estimate">{n.similar({ range: similar })}</span> : null}
         </div>
         <div className="ms-grow" />
-        <Button size="lg" variant="ghost" loading={busy === 'draft'} disabled={busy !== null || identityPending} onClick={() => void submit(false)}>{n.saveDraft}</Button>
-        <Button size="lg" variant="accent" aria-label={n.generate} loading={busy === 'generate'} disabled={busy !== null || identityPending} onClick={() => void submit(true)}>
+        <Button size="lg" variant="ghost" loading={busy === 'draft'} disabled={busy !== null || identityPending || briefBusy} title={briefBusy ? t.web.briefSession.agentWorking : undefined} onClick={() => void submit(false)}>{n.saveDraft}</Button>
+        <Button size="lg" variant="accent" aria-label={n.generate} loading={busy === 'generate'} disabled={busy !== null || identityPending || briefBusy} title={briefBusy ? t.web.briefSession.agentWorking : undefined} onClick={() => void submit(true)}>
           <Icon name="sparkle" size={14} />{n.generate}<kbd className="ms-nc-kbd" aria-hidden="true">{isMac() ? '⌘↵' : 'Ctrl ↵'}</kbd>
         </Button>
       </footer>
+      </div>
+
+      <ResumeBriefDialog open={attached === false} onResume={resume} onStartOver={() => void startOver()} />
 
       <StorePackWizard open={packOpen} onClose={() => setPackOpen(false)} slug={slug} {...(pack ? { initial: pack } : {})} onConfirm={(p) => { setPack(p); setFormatError(false); }} />
 

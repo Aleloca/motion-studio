@@ -36,3 +36,9 @@
 .ms-brief-ctx-list > li { display: flex; align-items: center; gap: 6px; min-width: 0; padding-left: 8px; }
 .ms-brief-ctx-item { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .ms-brief-ctx-item.ms-mono { font-family: var(--mono); font-size: 11.5px; }
+
+/* Resume or start over (decision 1422). */
+.ms-brief-resume { display: flex; flex-direction: column; gap: 10px; padding: 22px 24px 20px; }
+.ms-brief-resume h2 { margin: 0; font-size: 17px; letter-spacing: -.01em; }
+.ms-brief-resume p { margin: 0; color: var(--muted); line-height: 1.5; }
+.ms-brief-resume-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; flex-wrap: wrap; }

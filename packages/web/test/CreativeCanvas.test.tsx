@@ -51,12 +51,18 @@ const api = {
   getPinFrames: vi.fn(async (_s: string, _c: string, n: number) => ({ n, expiresAt: new Date(Date.now() + 600_000).toISOString(), frames: [{ file: `${n}-1.jpg`, url: `/pf/${n}-1.jpg?s=1` }] })),
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error { status = 0; } }));
+// Decision 1419: the arrival from the brief panel is checked through these two helpers (they still run for real).
+vi.mock('../src/motion/motion.ts', async (orig) => {
+  const m = await orig<typeof import('../src/motion/motion.ts')>();
+  return { ...m, flip: vi.fn(m.flip), stagger: vi.fn(m.stagger) };
+});
+const motion = await import('../src/motion/motion.ts');
 const { CreativeCanvas } = await import('../src/screens/CreativeCanvas.tsx');
 const { __resetPreviewSessions, RELEASE_GRACE_MS } = await import('../src/components/compositionPreview.ts');
 const { TopBar } = await import('../src/shell/TopBars.tsx');
 const { ShellContext } = await import('../src/shell/ShellContext.tsx');
 const { __resetPendingPins } = await import('../src/screens/pendingPins.ts');
-const { takeFrameOrigin } = await import('../src/shell/intents.ts');
+const { setFrameOrigin, takeFrameOrigin } = await import('../src/shell/intents.ts');
 const { getToasts } = await import('../src/ui/toast.tsx');
 
 /** The export job the core answers with (decision 974). */
@@ -101,6 +107,31 @@ afterEach(() => {
   platform?.mockRestore();
   platform = null;
   delete (window as unknown as { motionStudio?: unknown }).motionStudio;
+});
+
+describe('CreativeCanvas · arrives from the brief panel (decision 1419)', () => {
+  it('the chat panel moves from the brief panel, its tabs come after it, the boards rise one after the other', async () => {
+    setFrameOrigin('brief-panel:acme/lancio', { left: 12, top: 64, width: 448, height: 800, right: 460, bottom: 864, x: 12, y: 64, toJSON: () => ({}) } as DOMRect);
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    await waitFor(() => expect(motion.flip).toHaveBeenCalled());
+    const [el, from, ms] = vi.mocked(motion.flip).mock.calls[0]!;
+    expect((el as Element).classList.contains('ms-cv-panel')).toBe(true);
+    expect(from).toMatchObject({ left: 12, width: 448 });
+    expect(ms).toBe(motion.D.l);
+    const [, opts, step] = vi.mocked(motion.stagger).mock.calls[0]!;
+    expect(opts).toMatchObject({ y: 16, scale: 0.97 });
+    expect(step).toBe(70);
+    expect(takeFrameOrigin('brief-panel:acme/lancio')).toBeNull();
+  });
+
+  it('without it the boards cascade in as always', async () => {
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    await waitFor(() => expect(motion.stagger).toHaveBeenCalled());
+    expect(vi.mocked(motion.stagger).mock.calls[0]!.slice(1)).toEqual([{ y: 12 }, 40]);
+    expect(motion.flip).not.toHaveBeenCalled();
+  });
 });
 
 describe('CreativeCanvas · fit to view', () => {

@@ -35,6 +35,9 @@ vi.mock('../src/api.ts', () => ({ api, ApiError }));
 const motion = vi.hoisted(() => ({ glow: vi.fn(async (_el: Element | null) => true), tileIn: vi.fn(async (_el: Element | null, _d?: number) => true) }));
 vi.mock('../src/motion/motion.ts', async (orig) => ({ ...(await orig<typeof import('../src/motion/motion.ts')>()), glow: motion.glow, tileIn: motion.tileIn }));
 const { NewCreative } = await import('../src/screens/NewCreative.tsx');
+const { TopBar } = await import('../src/shell/TopBars.tsx');
+const { ShellContext } = await import('../src/shell/ShellContext.tsx');
+const { takeFrameOrigin } = await import('../src/shell/intents.ts');
 
 const live = (over: Partial<EventsState> = {}): EventsState => ({ ...initialEventsState, ...over });
 const fillTick = (n: number, written: BriefSessionView['agentFields'], reclaimed: BriefSessionView['agentFields'] = []) =>
@@ -116,5 +119,128 @@ describe('NewCreative · the agent fills the form (decision 1422)', () => {
     await userEvent.type(goal(), 'Lancio');
     await act(async () => { await new Promise((r) => setTimeout(r, 500)); });
     expect(api.saveBriefForm).not.toHaveBeenCalled();
+  });
+});
+
+const job = (state: 'running' | 'queued' | 'succeeded' = 'running') => ({ id: 'b1', key: 'brief:/w:acme', kind: 'brief' as const, label: 'l', state, createdAt: at });
+const userEntry = { type: 'user', at, text: 'Video di lancio', pins: [], attachments: [] } as unknown as ConversationEntry;
+function Shelled({ l }: { l: EventsState }) {
+  const shell = {
+    route: { name: 'new-creative', slug: 'acme' }, live: l,
+    catalog: { projects: [{ slug: 'acme', name: 'Acme' }], creatives: {}, refresh: () => {} },
+    activity: { open: false, tab: null, seq: 0, show: () => {}, hide: () => {}, toggle: () => {} }, openPalette: () => {},
+  } as never;
+  return <I18nProvider locale="it"><ShellContext.Provider value={shell}><TopBar /><NewCreative slug="acme" live={l} /></ShellContext.Provider></I18nProvider>;
+}
+const modes = () => within(document.querySelector('header.ms-topbar') as HTMLElement).getByRole('radiogroup', { name: 'Come compilare il brief' });
+const panel = () => document.querySelector('.ms-nc-panel') as HTMLElement;
+const draftBox = () => within(panel()).getByRole('textbox', { name: "Messaggio all'agente" }) as HTMLTextAreaElement;
+
+describe('NewCreative · Con l\'agente (decisions 1410–1411, 1419, 1422)', () => {
+  it('the mode switch sits in the bar, "Compila tu" first; "Con l\'agente" opens the panel', async () => {
+    api.getBriefSession.mockResolvedValueOnce(null);
+    render(<Shelled l={live()} />);
+    await board();
+    const seg = await waitFor(() => modes());
+    expect(within(seg).getByRole('radio', { name: 'Compila tu' }).getAttribute('aria-checked')).toBe('true');
+    expect(panel().getAttribute('aria-hidden')).toBe('true');
+    await userEvent.click(within(seg).getByRole('radio', { name: "Con l'agente" }));
+    expect(document.querySelector('.ms-nc')!.classList.contains('ms-nc-agent')).toBe(true);
+    expect(panel().getAttribute('aria-hidden')).toBeNull();
+    await userEvent.click(within(modes()).getByRole('radio', { name: 'Compila tu' }));
+    expect(panel().getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('"Fallo compilare all\'agente" moves the goal into the composer, not sent, and the goal is not the user\'s', async () => {
+    api.getBriefSession.mockResolvedValueOnce(null);
+    render(page(live()));
+    await board();
+    await userEvent.type(goal(), 'Video di lancio');
+    await userEvent.click(screen.getByRole('button', { name: "Fallo compilare all'agente" }));
+    expect(document.querySelector('.ms-nc')!.classList.contains('ms-nc-agent')).toBe(true);
+    expect(goal().value).toBe('');
+    expect(draftBox().value).toBe('Video di lancio');
+    expect(screen.queryByRole('button', { name: "Fallo compilare all'agente" })).toBeNull();
+    expect(api.sendBriefMessage).not.toHaveBeenCalled();
+    // The first message opens the session with the goal not marked as the user's.
+    await userEvent.click(within(panel()).getByRole('button', { name: 'Invia' }));
+    await waitFor(() => expect(api.startBriefSession).toHaveBeenCalled());
+    expect((api.startBriefSession.mock.calls[0] as unknown[])[1]).toMatchObject({ userEdited: [] });
+  });
+
+  it('an idle session with messages asks: Riprendi brings back the form in Con l\'agente', async () => {
+    api.getBriefSession.mockResolvedValue(view({ form: { ...EMPTY_BRIEF_FORM, goal: 'Lancio di Audin' }, agentFields: ['goal'] }));
+    api.getBriefConversation.mockResolvedValue([userEntry]);
+    render(page(live()));
+    const dialog = await screen.findByRole('dialog', { name: 'Hai una sessione del brief in corso' });
+    expect(goal().value).toBe('');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Riprendi la sessione del brief' }));
+    await waitFor(() => expect(goal().value).toBe('Lancio di Audin'));
+    expect(document.querySelector('.ms-nc')!.classList.contains('ms-nc-agent')).toBe(true);
+    expect(within(rowOf('Cosa vuoi realizzare?')).getByText('Agente')).toBeTruthy();
+    api.getBriefSession.mockResolvedValue(view());
+    api.getBriefConversation.mockResolvedValue([]);
+  });
+
+  it('Inizia da capo discards the session and stays in Compila tu with an empty form', async () => {
+    api.getBriefSession.mockResolvedValueOnce(view({ form: { ...EMPTY_BRIEF_FORM, goal: 'Lancio di Audin' } }));
+    api.getBriefConversation.mockResolvedValueOnce([userEntry]);
+    render(page(live()));
+    const dialog = await screen.findByRole('dialog', { name: 'Hai una sessione del brief in corso' });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Inizia da capo' }));
+    await waitFor(() => expect(api.discardBriefSession).toHaveBeenCalledWith('acme', 's1'));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Hai una sessione del brief in corso' })).toBeNull());
+    expect(goal().value).toBe('');
+    expect(document.querySelector('.ms-nc')!.classList.contains('ms-nc-agent')).toBe(false);
+  });
+
+  it('a session the agent is working on reopens in Con l\'agente without asking; Genera waits for it', async () => {
+    api.getBriefSession.mockResolvedValueOnce(view({ jobId: 'b1', form: { ...EMPTY_BRIEF_FORM, goal: 'Lancio', formats: ['instagram-post-1x1'] } }));
+    api.getBriefConversation.mockResolvedValueOnce([userEntry]);
+    render(page(live({ jobs: { b1: job() } })));
+    await waitFor(() => expect(document.querySelector('.ms-nc')!.classList.contains('ms-nc-agent')).toBe(true));
+    expect(screen.queryByRole('dialog', { name: 'Hai una sessione del brief in corso' })).toBeNull();
+    await waitFor(() => expect(goal().value).toBe('Lancio'));
+    const genera = screen.getByRole('button', { name: 'Genera' });
+    expect(genera.hasAttribute('disabled')).toBe(true);
+    expect(genera.getAttribute('title')).toBe("L'agente sta compilando il brief");
+    expect(screen.getByRole('button', { name: 'Salva bozza' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('Genera with a session hands it over, with the panel origin for the canvas; group with variants', async () => {
+    api.getBriefSession.mockResolvedValue(view({ form: { ...EMPTY_BRIEF_FORM, goal: 'Lancio', formats: ['instagram-post-1x1'] }, agentFields: ['goal', 'formats'] }));
+    const { rerender } = render(<Shelled l={live()} />);
+    await waitFor(() => expect(goal().value).toBe('Lancio'));
+    await userEvent.click(within(modes()).getByRole('radio', { name: "Con l'agente" }));
+    await userEvent.click(screen.getByRole('button', { name: 'Genera' }));
+    await waitFor(() => expect(api.createCreative).toHaveBeenCalledOnce());
+    expect((api.createCreative.mock.calls[0]![1] as { briefSession: unknown }).briefSession).toEqual({ id: 's1', group: false });
+    expect(takeFrameOrigin('brief-panel:acme/2026-10-20-lancio')).not.toBeNull();
+    await waitFor(() => expect(location.hash).toBe('#/p/acme/c/2026-10-20-lancio'));
+    rerender(<div />);
+    api.getBriefSession.mockResolvedValue(view());
+  });
+
+  it('Genera from Compila tu leaves no panel origin; Salva bozza sends the session too', async () => {
+    api.getBriefSession.mockResolvedValue(view({ form: { ...EMPTY_BRIEF_FORM, goal: 'Lancio', formats: ['instagram-post-1x1'] } }));
+    render(page(live()));
+    await waitFor(() => expect(goal().value).toBe('Lancio'));
+    await userEvent.click(screen.getByRole('button', { name: 'Salva bozza' }));
+    await waitFor(() => expect(api.createCreative).toHaveBeenCalledOnce());
+    expect(api.createCreative.mock.calls[0]![1]).toMatchObject({ generate: false, briefSession: { id: 's1', group: false } });
+    expect(takeFrameOrigin('brief-panel:acme/2026-10-20-lancio')).toBeNull();
+    api.getBriefSession.mockResolvedValue(view());
+  });
+
+  it('with Varianti 3 the session goes to the group', async () => {
+    api.getBriefSession.mockResolvedValue(view({ form: { ...EMPTY_BRIEF_FORM, goal: 'Lancio', formats: ['instagram-post-1x1'], variants: 3 } }));
+    (api as Record<string, unknown>).addVariants = vi.fn(async () => ({}));
+    (api as Record<string, unknown>).runVariants = vi.fn(async () => ({ jobs: {}, queued: [], skipped: [], failed: {} }));
+    render(page(live()));
+    await waitFor(() => expect(goal().value).toBe('Lancio'));
+    await userEvent.click(screen.getByRole('button', { name: 'Genera' }));
+    await waitFor(() => expect(api.createCreative).toHaveBeenCalledOnce());
+    expect(api.createCreative.mock.calls[0]![1]).toMatchObject({ briefSession: { id: 's1', group: true } });
+    api.getBriefSession.mockResolvedValue(view());
   });
 });

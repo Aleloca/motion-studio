@@ -60,11 +60,17 @@ export function useNewCreativeAssetsIntent(slug: string, onAssets: (paths: strin
 
 // Shared-element transitions (T3 board → editor, T4 back): the page that leaves stores the rect of the element the
 // next page grows from, keyed by the target (`format:<project>/<creative>/<format>` for the format view,
-// `canvas:<project>/<creative>/<format>` for the board on the way back). The next page takes it once, on mount.
+// `canvas:<project>/<creative>/<format>` for the board on the way back, `brief-panel:<project>/<creative>` for the brief session's
+// panel after Genera, decision 1419). The next page takes it once, on mount.
 const frameOrigins = new Map<string, DOMRect>();
 
 export function setFrameOrigin(key: string, rect: DOMRect): void {
   frameOrigins.set(key, rect);
+}
+
+/** The stored rect for `key`, left in place (the page host asks before the next page takes it). */
+export function peekFrameOrigin(key: string): DOMRect | null {
+  return frameOrigins.get(key) ?? null;
 }
 
 /** The stored rect for `key`, removed: a later visit of the same page starts without a shared element. */
