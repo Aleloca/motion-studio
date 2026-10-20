@@ -216,9 +216,10 @@ export type ServerMessage =
   | { type: 'project'; project: string }
   /**
    * The project's brief session changed (decision 1421): clients refetch it. `fill`: the agent's `fill_brief` wrote `written`
-   * and left `kept` as the user's; `ended`: the session was discarded or handed to a creative.
+   * and left `kept` as the user's, and took back `reclaimed` (the user asked); `ended`: the session was discarded or handed to
+   * a creative. `revision`: the form's revision after the change (absent on `ended`).
    */
-  | { type: 'brief-session'; project: string; sessionId: string; fill?: { written: BriefField[]; kept: BriefField[] }; ended?: true };
+  | { type: 'brief-session'; project: string; sessionId: string; revision?: number; fill?: { written: BriefField[]; kept: BriefField[]; reclaimed: BriefField[] }; ended?: true };
 
 /** Whether the desktop app updates itself: 'off' in a development run or an unsigned build, 'unknown' where there is no updater (browser, CLI) or before it has settled. */
 export type UpdatesState = 'active' | 'off' | 'unknown';

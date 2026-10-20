@@ -3,10 +3,14 @@
  * Decisions 1421–1422: the brief session. A server on a temp workspace with the controlled runner (no `claude`) and the
  * `studio` bridge active; the test calls the bridge routes with the run's token, as the MCP server would.
  */
-import { rm } from 'node:fs/promises';
+import { rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { AgentEvent } from '@motion-studio/shared';
+import type { AgentRun, AgentTurnRequest } from '../src/agent/runner.ts';
+import { BriefSessionStore } from '../src/brief/brief-session-store.ts';
+import { ControlledRunner } from './helpers/controlled-runner.ts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { briefJobKey, EMPTY_BRIEF_FORM } from '@motion-studio/shared';
+import { BRIEF_QUEUE_MAX, briefJobKey, EMPTY_BRIEF_FORM } from '@motion-studio/shared';
 import { setLocale } from '../src/i18n.ts';
 import { briefApp, briefHelpers, S, type BriefApp } from './helpers/brief-app.ts';
 
@@ -76,7 +80,7 @@ describe('the brief session (decisions 1421–1422)', () => {
     expect(v?.agentFields).toEqual(['goal', 'assets', 'formats']);
     const lines = (await conversation(s.id)).filter((e) => e.type === 'system');
     expect(lines).toEqual([expect.objectContaining({ level: 'info', origin: 'agent', text: 'Filled in the brief: texts, 1 asset, 1 format' })]);
-    expect(briefMessages()).toContainEqual({ type: 'brief-session', project: 'acme', sessionId: s.id, fill: { written: ['goal', 'assets', 'formats'], kept: [] } });
+    expect(briefMessages()).toContainEqual({ type: 'brief-session', project: 'acme', sessionId: s.id, revision: 1, fill: { written: ['goal', 'assets', 'formats'], kept: [], reclaimed: [] } });
     run.finish({ write: false });
     await waitIdle();
   });
@@ -87,7 +91,7 @@ describe('the brief session (decisions 1421–1422)', () => {
     await send(s.id, 'Lancio');
     const run = await t.runner.next(0);
     const put = await t.app.inject({ method: 'PUT', url: `${S}/${s.id}/form`, payload: { form: { ...EMPTY_BRIEF_FORM, goal: 'Il mio obiettivo' }, userEdited: ['goal'] } });
-    expect(put.json()).toEqual({ ok: true });
+    expect(put.json()).toEqual({ ok: true, revision: 1 });
     const kept = await tool(run, 'fill_brief', { goal: 'Altro', message: 'Prenota' });
     expect(kept.json()).toMatchObject({ written: ['message'], kept: [{ field: 'goal', reason: 'user-edited' }] });
     expect((await view())?.form.goal).toBe('Il mio obiettivo');
@@ -138,7 +142,7 @@ describe('the brief session (decisions 1421–1422)', () => {
     await send(s.id, 'Lancio');
     const run = await t.runner.next(0);
     await vi.waitFor(async () => expect((await view())?.jobId).toBeTruthy());
-    const res = await send(s.id, 'Più corto', { mode: 'live', form: { ...EMPTY_BRIEF_FORM, goal: 'Lancio breve' } });
+    const res = await send(s.id, 'Più corto', { mode: 'live', form: { ...EMPTY_BRIEF_FORM, goal: 'Lancio breve' }, userEdited: ['goal'] });
     expect(res.json()).toEqual({ outcome: 'delivered-pending' });
     expect(run.sent[0]!.text).toContain('Più corto');
     expect(run.sent[0]!.text).toContain("## The user's form now");
@@ -283,5 +287,105 @@ describe('the brief session (decisions 1421–1422)', () => {
     await waitIdle();
     expect((await t.app.inject('/api/projects/acme/creatives')).json()).toEqual([]);
     expect((await jobs()).some((j) => j.kind === 'creative')).toBe(false);
+  });
+
+  it('form ownership is merged by field on the server, with a revision', async () => {
+    t = await briefApp();
+    const s = await open();
+    await send(s.id, 'Lancio');
+    const run = await t.runner.next(0);
+    const put = (form: typeof EMPTY_BRIEF_FORM, userEdited: string[], baseRevision: number) => t.app.inject({ method: 'PUT', url: `${S}/${s.id}/form`, payload: { form, userEdited, baseRevision } });
+    // The user owns the goal (revision 1); the agent writes the message (2).
+    expect((await put({ ...EMPTY_BRIEF_FORM, goal: 'Mio' }, ['goal'], 0)).json().revision).toBe(1);
+    await tool(run, 'fill_brief', { message: 'Prenota' });
+    // An older save (based on 1) does not revert the agent's message.
+    await put({ ...EMPTY_BRIEF_FORM, goal: 'Mio' }, ['goal'], 1);
+    expect((await view())?.form).toMatchObject({ goal: 'Mio', message: 'Prenota' });
+    // The user asks to rewrite the goal: the agent takes it back (revision 3).
+    const back = await tool(run, 'fill_brief', { goal: 'Riscritto', reclaim: ['goal'] });
+    expect(back.json().reclaimed).toEqual(['goal']);
+    expect(briefMessages().at(-1)).toMatchObject({ revision: 3, fill: { written: ['goal'], reclaimed: ['goal'] } });
+    // A save based on an older revision that still lists the goal as the user's does not revert the reclaim.
+    await put({ ...EMPTY_BRIEF_FORM, goal: 'Mio' }, ['goal'], 2);
+    expect(await view()).toMatchObject({ form: { goal: 'Riscritto' }, userEdited: [], revision: 3 });
+    // A message based on that older revision neither.
+    await send(s.id, 'Ancora', { form: { ...EMPTY_BRIEF_FORM, goal: 'Mio' }, userEdited: ['goal'] });
+    expect((await view())?.form.goal).toBe('Riscritto');
+    // A user edit made after the fill (based on its revision) wins, and the field is the user's again.
+    expect((await put({ ...EMPTY_BRIEF_FORM, goal: 'Di nuovo mio', message: 'x' }, ['goal'], 3)).json().revision).toBe(4);
+    expect(await view()).toMatchObject({ form: { goal: 'Di nuovo mio', message: 'Prenota' }, userEdited: ['goal'] });
+    run.finish({ write: false });
+    await t.runner.next(1).then((r) => r.finish({ write: false }));
+    await waitIdle();
+  });
+
+  it('at most BRIEF_QUEUE_MAX messages wait', async () => {
+    t = await briefApp();
+    const s = await open();
+    await send(s.id, 'Lancio');
+    const run = await t.runner.next(0);
+    await vi.waitFor(async () => expect((await view())?.jobId).toBeTruthy());
+    for (let i = 0; i < BRIEF_QUEUE_MAX; i++) expect((await send(s.id, `m${i}`)).json()).toEqual({ outcome: 'queued' });
+    const full = await send(s.id, 'una di troppo');
+    expect(full.statusCode).toBe(409);
+    expect(full.json().code).toBe('brief-queue-full');
+    run.finish({ write: false });
+    await t.runner.next(1).then((r) => r.finish({ write: false }));
+    await waitIdle();
+  });
+
+  it('a session that cannot be read is said, and discarded whatever its id', async () => {
+    t = await briefApp();
+    const s = await open();
+    const dir = (await new BriefSessionStore(join(t.base, 'config')).dirFor(t.projectDir))!;
+    await writeFile(join(dir, 'session.json'), '{ rotto');
+    const get = await t.app.inject(S);
+    expect(get.statusCode).toBe(422);
+    expect(get.json().code).toBe('brief-session-unreadable');
+    expect((await t.app.inject({ method: 'DELETE', url: `${S}/${s.id}` })).statusCode).toBe(204);
+    expect(await view()).toBeNull();
+    expect((await open()).id).not.toBe(s.id);
+  });
+
+  it('a linked folder reached through a link is read-only under both spellings', async () => {
+    t = await briefApp();
+    const link = join(t.base, 'code-link');
+    await symlink(t.code, link);
+    const s = await open();
+    await send(s.id, 'Lancio', { codebases: [{ path: link }] });
+    const run = await t.runner.next(0);
+    expect(run.req.addDirs).toEqual([link, t.code]);
+    expect(run.req.disallowedTools).toEqual(expect.arrayContaining([`Read(/${join(link, '.env')})`, `Read(/${join(t.code, '.env')})`, `Edit(/${link}/**)`, `Edit(/${t.code}/**)`]));
+    expect(run.req.allowedTools).toEqual(expect.arrayContaining([`Read(/${link}/**)`, `Read(/${t.code}/**)`]));
+    run.finish({ write: false });
+    await waitIdle();
+  });
+
+  it('after a discard the queued messages of the new session start when the old turn ends', async () => {
+    /** Cancels take effect only when the test lets them (the old turn is still ending meanwhile). */
+    class SlowCancel extends ControlledRunner {
+      gate: Promise<void> = Promise.resolve();
+      override start(req: AgentTurnRequest, onEvent: (e: AgentEvent) => void): AgentRun {
+        const run = super.start(req, onEvent);
+        return { ...run, cancel: () => { void this.gate.then(() => run.cancel()); } };
+      }
+    }
+    const runner = new SlowCancel();
+    let open1!: () => void;
+    runner.gate = new Promise((r) => { open1 = r; });
+    t = await briefApp({ runner });
+    const a = await open();
+    await send(a.id, 'Prima sessione');
+    await t.runner.next(0);
+    await vi.waitFor(async () => expect((await view())?.jobId).toBeTruthy());
+    expect((await t.app.inject({ method: 'DELETE', url: `${S}/${a.id}` })).statusCode).toBe(204);
+    const b = await open();
+    expect((await send(b.id, 'Seconda sessione')).json()).toEqual({ outcome: 'queued' });
+    open1();
+    const next = await t.runner.next(1);
+    expect(next.req.prompt).toContain('Seconda sessione');
+    expect(next.req.prompt).not.toContain('Prima sessione');
+    next.finish({ write: false });
+    await waitIdle();
   });
 });

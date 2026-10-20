@@ -45,12 +45,13 @@ function contextSection(i: Pick<BriefPromptContext, 'codebases' | 'missingCodeba
   const out: string[] = [];
   if (i.codebases.length || i.missingCodebases.length || projectCodebases.length) {
     out.push('', '## Reference codebases (read-only)',
-      ...i.codebases.map((c) => `- ${c.path}${c.note ? `: ${c.note}` : ''}`),
+      // The user's notes and the library's file names are quoted: neither can end the line or open a section.
+      ...i.codebases.map((c) => `- ${c.path}${c.note ? `: ${quotePromptString(c.note)}` : ''}`),
       ...i.missingCodebases.map((p) => `- ${p}: not available in this turn`),
       ...projectCodebases.map((p) => `- ${p} (already linked to the project: do not add them)`),
       'Only read these folders (Read and Glob): you cannot change them, run commands or search file contents. Never read or quote secrets (keys, tokens, .env files).');
   }
-  out.push('', '## Attached assets', ...(i.assets.length ? i.assets.map((a) => `- ${a}`) : ['(none yet)']));
+  out.push('', '## Attached assets', ...(i.assets.length ? i.assets.map((a) => `- ${quotePromptString(a)}`) : ['(none yet)']));
   return out;
 }
 

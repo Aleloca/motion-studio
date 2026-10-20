@@ -1,6 +1,6 @@
 import { DEFAULT_FORMATS, EMPTY_BRIEF_FORM, type BriefField } from '@motion-studio/shared';
 import { describe, expect, it } from 'vitest';
-import { applyFill, fillLine, listFormats, reclaimLine } from '../src/brief/brief-tools.ts';
+import { applyFill, fillLine, listFormats, mergeClientForm, reclaimLine } from '../src/brief/brief-tools.ts';
 import { setLocale } from '../src/i18n.ts';
 
 const session = (o: Partial<Parameters<typeof applyFill>[0]> = {}) => ({
@@ -89,5 +89,36 @@ describe('fillLine', () => {
     expect(reclaimLine(['goal', 'formats'])).toBe("L'agente ha riscritto Cosa vuoi realizzare, Formati su tua richiesta");
     setLocale('en');
     expect(fillLine(['variants'], [], { ...form, variants: 3 })).toBe('Filled in the brief: 3 variants');
+  });
+});
+
+describe('mergeClientForm (decision 1422)', () => {
+  const server = (o: Partial<Parameters<typeof mergeClientForm>[0]> = {}) => ({
+    form: { ...EMPTY_BRIEF_FORM, goal: 'Agente', message: 'Agente' }, userEdited: [] as BriefField[], revision: 5, reclaimedAt: {} as Record<string, number>, ...o,
+  });
+  it('takes only the fields the user owns from the client', () => {
+    const r = mergeClientForm(server(), { form: { ...EMPTY_BRIEF_FORM, goal: 'Mio', message: 'vecchio' }, userEdited: ['goal'], baseRevision: 3 });
+    expect(r.form).toMatchObject({ goal: 'Mio', message: 'Agente' });
+    expect(r.userEdited).toEqual(['goal']);
+    expect(r.revision).toBe(6);
+  });
+  it('an older save never reverts what the agent wrote', () => {
+    const r = mergeClientForm(server(), { form: EMPTY_BRIEF_FORM, userEdited: [], baseRevision: 2 });
+    expect(r.form).toMatchObject({ goal: 'Agente', message: 'Agente' });
+    expect(r.revision).toBe(5);
+  });
+  it('a field taken back stays the agent\'s against a save based on an older revision, not against a newer edit', () => {
+    const s = server({ reclaimedAt: { goal: 5 } });
+    const stale = mergeClientForm(s, { form: { ...EMPTY_BRIEF_FORM, goal: 'Vecchio mio' }, userEdited: ['goal'], baseRevision: 4 });
+    expect(stale.form.goal).toBe('Agente');
+    expect(stale.userEdited).toEqual([]);
+    const newer = mergeClientForm(s, { form: { ...EMPTY_BRIEF_FORM, goal: 'Nuovo mio' }, userEdited: ['goal'], baseRevision: 5 });
+    expect(newer.form.goal).toBe('Nuovo mio');
+    expect(newer.userEdited).toEqual(['goal']);
+  });
+  it('a field the user owns follows the client, ownership included', () => {
+    const r = mergeClientForm(server({ form: { ...EMPTY_BRIEF_FORM, goal: 'Mio' }, userEdited: ['goal'] }), { form: { ...EMPTY_BRIEF_FORM, goal: '' }, userEdited: [], baseRevision: 0 });
+    expect(r.form.goal).toBe('');
+    expect(r.userEdited).toEqual([]);
   });
 });

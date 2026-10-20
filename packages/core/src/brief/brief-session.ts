@@ -1,14 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { stat } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
 import {
-  briefJobKey, isSessionId, type AgentEvent, type BriefContext, type BriefField, type BriefForm, type BriefMessageInput, type BriefQueued, type BriefSendResult,
+  BRIEF_QUEUE_MAX, briefJobKey, isSessionId, type AgentEvent, type BriefContext, type BriefField, type BriefForm, type BriefMessageInput, type BriefQueued, type BriefSendResult,
   type BriefSessionView, type ConversationEntry, type FormatPreset, type JobSummary, type LinkedCodebase, type ServerMessage,
 } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import type { AgentRun } from '../agent/runner.ts';
 import { probeConfinedFile } from '../brand/agent-guard.ts';
 import type { BridgeHandler } from '../bridge/bridge-routes.ts';
-import { agentCodebases, codebaseProblemText, resolveBrandCodebase } from '../codebases.ts';
+import { agentCodebases, codebaseProblemText, codebaseSpellings, resolveBrandCodebase } from '../codebases.ts';
 import type { CreativeSideStateStore } from '../creatives/creative-side-state.ts';
 import { CreativeStore } from '../creatives/creative-store.ts';
 import { resumeErrorOf } from '../creatives/creative-turns.ts';
@@ -19,7 +19,7 @@ import { KeyedMutex } from '../keyed-mutex.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
 import { briefDigest, briefFollowUp, buildBriefPrompt } from './brief-prompt.ts';
 import type { BriefSessionFile, BriefSessionStore } from './brief-session-store.ts';
-import { applyFill, fillLine, listFormats, reclaimLine } from './brief-tools.ts';
+import { applyFill, fillLine, listFormats, mergeClientForm, reclaimLine } from './brief-tools.ts';
 
 /** The most `fill_brief` calls one brief job may make (the app actions' cap idea, decision 917). */
 export const BRIEF_FILLS_PER_JOB = 30;
@@ -85,22 +85,40 @@ export class BriefSessionService {
   private toView(ref: BriefProjectRef, s: BriefSessionFile): BriefSessionView {
     return {
       id: s.id, createdAt: s.createdAt, updatedAt: s.updatedAt, context: s.context, form: s.form,
-      userEdited: s.userEdited, agentFields: s.agentFields, queued: s.queued, jobId: this.jobOf(ref)?.id ?? null,
+      userEdited: s.userEdited, agentFields: s.agentFields, queued: s.queued, jobId: this.jobOf(ref)?.id ?? null, revision: s.revision,
+      ...(s.handedOffTo ? { handedOffTo: s.handedOffTo } : {}),
     };
   }
 
-  private changed(ref: BriefProjectRef, sessionId: string, extra: Partial<Extract<ServerMessage, { type: 'brief-session' }>> = {}): void {
-    this.deps.broadcast({ type: 'brief-session', project: ref.projectSlug, sessionId, ...extra });
+  /** Tells the clients the session changed; `s`: the session after the change (its form revision goes with it). */
+  private changed(ref: BriefProjectRef, s: Pick<BriefSessionFile, 'id' | 'revision'>, extra: Partial<Extract<ServerMessage, { type: 'brief-session' }>> = {}): void {
+    this.deps.broadcast({ type: 'brief-session', project: ref.projectSlug, sessionId: s.id, ...(extra.ended ? {} : { revision: s.revision }), ...extra });
+  }
+
+  /** The project's open session; one that cannot be read is a 422 `brief-session-unreadable` (discard removes it). */
+  private async openSession(ref: BriefProjectRef): Promise<BriefSessionFile | null> {
+    try {
+      return await this.deps.store.open(ref.projectDir);
+    } catch {
+      throw new CodedError(422, t().errors.briefSessionUnreadable, 'brief-session-unreadable');
+    }
   }
 
   private async session(ref: BriefProjectRef, id: string): Promise<BriefSessionFile> {
-    const s = await this.deps.store.open(ref.projectDir);
+    const s = await this.openSession(ref);
     if (!s || s.id !== id) throw gone();
     return s;
   }
 
+  /** The open session `id`, if it takes messages and moves (not half moved into a creative). */
+  private async usable(ref: BriefProjectRef, id: string): Promise<BriefSessionFile> {
+    const s = await this.session(ref, id);
+    if (s.handedOffTo) throw new CodedError(409, t().errors.briefHandedOff, 'brief-session-handed-off');
+    return s;
+  }
+
   async view(ref: BriefProjectRef): Promise<BriefSessionView | null> {
-    const s = await this.deps.store.open(ref.projectDir);
+    const s = await this.openSession(ref);
     return s ? this.toView(ref, s) : null;
   }
 
@@ -108,8 +126,9 @@ export class BriefSessionService {
 
   /** Opens the project's session with the form as the user has it (the open one when there is one). */
   async start(ref: BriefProjectRef, init: { form: BriefForm; userEdited: BriefField[] }): Promise<BriefSessionView> {
-    const s = await this.deps.store.create(ref.projectDir, init);
-    this.changed(ref, s.id);
+    let s: BriefSessionFile;
+    try { s = await this.deps.store.create(ref.projectDir, init); } catch { throw new CodedError(422, t().errors.briefSessionUnreadable, 'brief-session-unreadable'); }
+    this.changed(ref, s);
     return this.toView(ref, s);
   }
 
@@ -141,18 +160,28 @@ export class BriefSessionService {
     const cur = await this.session(ref, id);
     const context = await this.checkContext(ref, c, cur.context);
     const s = await this.deps.store.update(ref.projectDir, id, () => ({ context }));
-    this.changed(ref, id);
+    this.changed(ref, s);
     return this.toView(ref, s);
   }
 
-  /** The form as the user has it (saved, debounced, while they edit): the agent's next fill respects `userEdited`. */
-  async saveForm(ref: BriefProjectRef, id: string, f: { form: BriefForm; userEdited: BriefField[] }): Promise<void> {
-    await this.deps.store.update(ref.projectDir, id, () => ({ form: f.form, userEdited: [...new Set(f.userEdited)] }));
+  /**
+   * The form as the user has it (saved, debounced, while they edit), merged by field (`mergeClientForm`, decision 1422): the
+   * user's fields come from the client, the others keep the server's value. Returns the revision after the merge.
+   */
+  async saveForm(ref: BriefProjectRef, id: string, f: { form: BriefForm; userEdited: BriefField[]; baseRevision?: number }): Promise<{ revision: number }> {
+    let changed = false;
+    const s = await this.deps.store.update(ref.projectDir, id, (cur) => {
+      const m = mergeClientForm(cur, f);
+      changed = m.revision !== cur.revision;
+      return { form: m.form, userEdited: m.userEdited, agentFields: cur.agentFields.filter((x) => !m.userEdited.includes(x)), revision: m.revision };
+    });
+    if (changed) this.changed(ref, s);
+    return { revision: s.revision };
   }
 
   async removeQueued(ref: BriefProjectRef, id: string, clientId: string): Promise<BriefSessionView> {
     const s = await this.lock.run(this.key(ref), () => this.deps.store.update(ref.projectDir, id, (cur) => ({ queued: cur.queued.filter((q) => q.clientId !== clientId) })));
-    this.changed(ref, id);
+    this.changed(ref, s);
     return this.toView(ref, s);
   }
 
@@ -163,16 +192,19 @@ export class BriefSessionService {
    */
   async send(ref: BriefProjectRef, id: string, m: BriefMessageInput): Promise<BriefSendResult> {
     const key = this.key(ref);
-    const before = await this.session(ref, id);
+    const before = await this.usable(ref, id);
     const context = await this.checkContext(ref, m.context, before.context);
     return this.lock.run(key, async () => {
       if (this.claims.has(key)) throw busy();
-      const cur = await this.session(ref, id);
+      const cur = await this.usable(ref, id);
       const added = {
         codebases: context.codebases.map((c) => c.path).filter((p) => !cur.context.codebases.some((c) => c.path === p)),
         assets: context.assets.filter((a) => !cur.context.assets.includes(a)),
       };
-      const s = await this.deps.store.update(ref.projectDir, id, () => ({ form: m.form, userEdited: [...new Set(m.userEdited)], context }));
+      const s = await this.deps.store.update(ref.projectDir, id, (x) => {
+        const merged = mergeClientForm(x, m);
+        return { form: merged.form, userEdited: merged.userEdited, agentFields: x.agentFields.filter((f) => !merged.userEdited.includes(f)), revision: merged.revision, context };
+      });
       const job = this.jobOf(ref);
       if (job) {
         const act = this.active.get(key);
@@ -181,13 +213,15 @@ export class BriefSessionService {
           const text = briefFollowUp({ locale: currentLocale(), form: s.form, userEdited: s.userEdited, ...(await this.readable(ref, s)), assets: s.context.assets, request: m.text });
           if (await act.run.send?.({ text, clientId: m.clientId }) === 'written') {
             await this.deps.store.append(ref.projectDir, id, { type: 'user', at: new Date().toISOString(), text: m.text, pins: [], attachments: [], jobId: act.jobId, mode: 'live', clientId: m.clientId, deliveredAt: new Date().toISOString() });
-            this.changed(ref, id);
+            this.changed(ref, s);
             return { outcome: 'delivered-pending' };
           }
         }
         const q: BriefQueued = { clientId: m.clientId, text: m.text, at: new Date().toISOString(), context: added };
-        await this.deps.store.update(ref.projectDir, id, (x) => ({ queued: [...x.queued.filter((y) => y.clientId !== m.clientId), q] }));
-        this.changed(ref, id);
+        const others = s.queued.filter((y) => y.clientId !== m.clientId);
+        if (others.length >= BRIEF_QUEUE_MAX) throw new CodedError(409, t().errors.briefQueueFull({ max: BRIEF_QUEUE_MAX }), 'brief-queue-full');
+        const after = await this.deps.store.update(ref.projectDir, id, (x) => ({ queued: [...x.queued.filter((y) => y.clientId !== m.clientId), q] }));
+        this.changed(ref, after);
         return { outcome: 'queued' };
       }
       // After a restart, messages queued for a turn that never came go first, in order.
@@ -224,18 +258,22 @@ export class BriefSessionService {
       id: jobId, key, kind: 'brief', label: t().jobs.briefLabel({ name: ref.projectName }),
       run: (signal, id) => this.runTurn(ref, sessionId, id, request, signal),
     });
-    void this.deps.queue.whenSettled(jobId).then(() => this.drain(ref, sessionId)).catch(() => {});
-    this.changed(ref, sessionId);
+    void this.deps.queue.whenSettled(jobId).then(() => this.drain(ref)).catch(() => {});
+    const s = await this.deps.store.open(ref.projectDir).catch(() => null);
+    if (s) this.changed(ref, s);
     return job;
   }
 
-  /** After a turn: the messages queued meanwhile start the next one, all together, in order. */
-  private async drain(ref: BriefProjectRef, sessionId: string): Promise<void> {
+  /**
+   * After a turn: the messages queued meanwhile start the next one, all together, in order. The session open now (not the
+   * turn's): a session started over while the old turn was still ending may already hold messages waiting for it.
+   */
+  private async drain(ref: BriefProjectRef): Promise<void> {
     await this.lock.run(this.key(ref), async () => {
       if (this.claims.has(this.key(ref)) || this.jobOf(ref)) return;
-      const s = await this.deps.store.open(ref.projectDir);
-      if (!s || s.id !== sessionId || s.queued.length === 0) return;
-      await this.startTurn(ref, sessionId, s.queued.map((q) => ({ clientId: q.clientId, text: q.text, context: q.context, mode: 'queued' as const })));
+      const s = await this.deps.store.open(ref.projectDir).catch(() => null);
+      if (!s || s.handedOffTo || s.queued.length === 0) return;
+      await this.startTurn(ref, s.id, s.queued.map((q) => ({ clientId: q.clientId, text: q.text, context: q.context, mode: 'queued' as const })));
     });
   }
 
@@ -253,9 +291,12 @@ export class BriefSessionService {
         const s = await this.deps.store.open(ref.projectDir);
         if (!s || s.id !== sessionId || signal.aborted) return 'cancelled';
         const { codebases, missingCodebases } = await this.readable(ref, s);
-        const project = await agentCodebases(ref.projectCodebases, [ref.projectDir, ref.root]);
+        // The project's own folders: never one around the config folder either (the agent's tokens live there).
+        const project = await agentCodebases(ref.projectCodebases, [ref.projectDir, ref.root, ref.configDir]);
         for (const line of project.ignored) this.deps.broadcast({ type: 'agent', jobId, event: { kind: 'progress', text: line } });
-        const paths = [...new Set([...codebases.map((c) => c.path), ...project.paths])];
+        // Every spelling of each folder (the linked one and its real path): the read-only, secret and allow rules hold
+        // whichever path the agent uses (as brand analysis does, `codebaseSpellings`).
+        const paths = [...new Set(await Promise.all([...codebases.map((c) => c.path), ...project.paths].map(async (p) => codebaseSpellings({ path: p, real: await realpath(p).catch(() => p) }))).then((x) => x.flat()))];
         const resume = fresh ? undefined : s.claudeSessionId;
         const common = { locale: currentLocale(), form: s.form, userEdited: s.userEdited, codebases, missingCodebases, assets: s.context.assets, request };
         const prompt = resume ? briefFollowUp(common)
@@ -309,17 +350,22 @@ export class BriefSessionService {
     }
   }
 
-  /** Ends the session: its job is cancelled, its files removed. */
+  /** Ends the session: its job is cancelled, its files removed. A session that cannot be read is removed whatever `id`. */
   async discard(ref: BriefProjectRef, id: string): Promise<void> {
     const key = this.key(ref);
     await this.lock.run(key, async () => {
       if (this.claims.has(key)) throw busy();
-      await this.session(ref, id);
+      let unreadable = false;
+      try { await this.session(ref, id); } catch (err) {
+        if ((err as CodedError).apiCode !== 'brief-session-unreadable') throw err;
+        unreadable = true;
+      }
       const job = this.jobOf(ref);
       if (job) this.deps.queue.cancel(job.id);
-      await this.deps.store.remove(ref.projectDir, id);
+      if (unreadable) await this.deps.store.removeAny(ref.projectDir);
+      else await this.deps.store.remove(ref.projectDir, id);
     });
-    this.changed(ref, id, { ended: true });
+    this.deps.broadcast({ type: 'brief-session', project: ref.projectSlug, sessionId: id, ended: true });
   }
 
   /**
@@ -330,7 +376,7 @@ export class BriefSessionService {
     const key = this.key(ref);
     return this.lock.run(key, async () => {
       if (this.claims.has(key)) throw busy();
-      const s = await this.session(ref, id);
+      const s = await this.usable(ref, id);
       if (this.jobOf(ref)) throw busy();
       // Messages still waiting for a turn (the turn that would take them has not started, or a restart came between) are
       // never lost in the move: they start their turn now, and the creation waits for it like for any running turn.
@@ -366,9 +412,22 @@ export class BriefSessionService {
         await this.deps.side.setBriefSession(creative.projectDir, creative.creativeSlug, { sessionId: s.claudeSessionId, at: new Date().toISOString(), summary: briefDigest(entries) });
       }
       await this.deps.store.remove(ref.projectDir, sessionId);
-      this.changed(ref, sessionId, { ended: true });
+      this.changed(ref, s, { ended: true });
       this.deps.broadcast({ type: 'creative', project: creative.projectSlug, creative: creative.creativeSlug });
     } finally {
+      this.release(claim);
+    }
+  }
+
+  /**
+   * The move into `creativeSlug` did not finish (the creative exists): the session is marked so no second Genera makes a
+   * duplicate and no message goes to it; the user keeps its chat and can discard it. Best effort.
+   */
+  async markHandedOff(claim: BriefClaim, creativeSlug: string): Promise<void> {
+    try {
+      const s = await this.deps.store.update(claim.ref.projectDir, claim.sessionId, () => ({ handedOffTo: creativeSlug }));
+      this.changed(claim.ref, s);
+    } catch { /* the session is gone already: nothing to mark */ } finally {
       this.release(claim);
     }
   }
@@ -388,9 +447,12 @@ export class BriefSessionService {
         if (calls > BRIEF_FILLS_PER_JOB) throw new CodedError(429, t().errors.briefFillLimit({ max: BRIEF_FILLS_PER_JOB }), 'brief-fill-limit');
         const presets = await this.deps.presets();
         let out: ReturnType<typeof applyFill> | null = null;
-        await this.deps.store.update(scope.projectDir, scope.sessionId, (s) => {
+        const after = await this.deps.store.update(scope.projectDir, scope.sessionId, (s) => {
           out = applyFill(s, a, presets);
-          return { form: out.form, agentFields: out.agentFields, userEdited: out.userEdited };
+          // Decision 1422: a write is a new revision; a field taken back is the agent's against any save based on an older one.
+          const revision = out.written.length > 0 ? s.revision + 1 : s.revision;
+          const reclaimedAt = { ...s.reclaimedAt, ...Object.fromEntries(out.reclaimed.map((f) => [f, revision])) };
+          return { form: out.form, agentFields: out.agentFields, userEdited: out.userEdited, revision, reclaimedAt };
         });
         const o = out as unknown as ReturnType<typeof applyFill>;
         const at = new Date().toISOString();
@@ -400,7 +462,7 @@ export class BriefSessionService {
           await this.deps.store.append(scope.projectDir, scope.sessionId, { type: 'system', at, level: 'info', origin: 'agent', text: fillLine(plain, kept, o.form) });
         }
         if (o.reclaimed.length > 0) await this.deps.store.append(scope.projectDir, scope.sessionId, { type: 'system', at, level: 'info', origin: 'agent', text: reclaimLine(o.reclaimed) });
-        this.deps.broadcast({ type: 'brief-session', project: scope.projectSlug, sessionId: scope.sessionId, fill: { written: o.written, kept } });
+        this.deps.broadcast({ type: 'brief-session', project: scope.projectSlug, sessionId: scope.sessionId, revision: after.revision, fill: { written: o.written, kept, reclaimed: o.reclaimed } });
         return { ok: true, written: o.written, kept: o.kept, reclaimed: o.reclaimed };
       },
     };

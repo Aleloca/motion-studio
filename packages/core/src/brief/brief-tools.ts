@@ -98,3 +98,29 @@ export function fillLine(written: readonly BriefField[], kept: readonly BriefFie
   const keptText = kept.length ? m.keptYours({ fields: BRIEF_FIELDS.filter((f) => kept.includes(f)).map((f) => m.fieldNames[f]).join(', ') }) : '';
   return `${parts.length ? m.filled({ parts: parts.join(', ') }) : m.nothingWritten}${keptText}`;
 }
+
+/**
+ * Decision 1422: the form a client sends (a save or a message), merged by field into the session's. The client's value is
+ * taken for a field the user owns on the server (with the ownership the client now says), or one the client marks as the
+ * user's, unless the agent took it back (`reclaim`) after the revision the client's form is based on; every other field
+ * keeps the server's value (an older save never reverts an agent's write). `revision` grows when anything changed.
+ */
+export function mergeClientForm(
+  s: { form: BriefForm; userEdited: readonly BriefField[]; revision: number; reclaimedAt: Readonly<Record<string, number>> },
+  c: { form: BriefForm; userEdited: readonly BriefField[]; baseRevision?: number },
+): { form: BriefForm; userEdited: BriefField[]; revision: number } {
+  const base = c.baseRevision ?? 0;
+  const form: BriefForm = { ...s.form };
+  const userEdited: BriefField[] = [];
+  for (const f of BRIEF_FIELDS) {
+    const clientOwns = c.userEdited.includes(f);
+    const at = Object.hasOwn(s.reclaimedAt, f) ? s.reclaimedAt[f] : undefined;
+    const takenBack = at !== undefined && at > base;
+    if (s.userEdited.includes(f) || (clientOwns && !takenBack)) {
+      (form as Record<BriefField, unknown>)[f] = c.form[f];
+      if (clientOwns) userEdited.push(f);
+    }
+  }
+  const same = JSON.stringify(form) === JSON.stringify(s.form) && JSON.stringify(userEdited) === JSON.stringify(BRIEF_FIELDS.filter((f) => s.userEdited.includes(f)));
+  return { form, userEdited, revision: same ? s.revision : s.revision + 1 };
+}

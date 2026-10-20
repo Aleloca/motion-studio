@@ -18,6 +18,8 @@ export const briefFieldSchema = z.enum(BRIEF_FIELDS);
 export const BRIEF_VARIANTS_MAX = 5;
 /** The longest message the user sends to the brief agent. */
 export const BRIEF_MESSAGE_MAX = 10_000;
+/** The most messages waiting for a running brief turn. */
+export const BRIEF_QUEUE_MAX = 20;
 
 const assetPath = z.string().min(1).max(1024).regex(/^assets\//);
 const codebases = z.array(linkedCodebaseSchema).max(20);
@@ -65,6 +67,8 @@ export const briefMessageSchema = z.object({
   context: briefContextSchema,
   form: briefFormSchema,
   userEdited: z.array(briefFieldSchema).max(BRIEF_FIELDS.length),
+  /** The session's `revision` the client's form is based on (see `BriefSessionView.revision`); absent: 0. */
+  baseRevision: z.number().int().min(0).optional(),
   mode: z.enum(['live', 'queued']).optional(),
 }).strict();
 export type BriefMessageInput = z.infer<typeof briefMessageSchema>;
@@ -73,6 +77,8 @@ export type BriefMessageInput = z.infer<typeof briefMessageSchema>;
 export const briefFormSaveSchema = z.object({
   form: briefFormSchema,
   userEdited: z.array(briefFieldSchema).max(BRIEF_FIELDS.length),
+  /** The session's `revision` the client's form is based on; absent: 0. */
+  baseRevision: z.number().int().min(0).optional(),
 }).strict();
 export type BriefFormSave = z.infer<typeof briefFormSaveSchema>;
 
@@ -98,6 +104,15 @@ export interface BriefSessionView {
   agentFields: BriefField[];
   queued: BriefQueued[];
   jobId: string | null;
+  /**
+   * The form's revision (decision 1422): it grows with every change of the form or of who owns a field. The client sends the
+   * revision its form is based on (`baseRevision`); the core merges by field: it takes the client's value only for the fields
+   * the user owns (or newly marks as theirs), keeps its own for the rest, and a field the agent took back (`reclaim`) after
+   * that revision is not the user's again until the client sends an edit based on a newer revision.
+   */
+  revision: number;
+  /** A creative the session was moved into, when the move did not finish (the chat is still here; discard it). */
+  handedOffTo?: string;
 }
 
 /** POST …/brief-session/:id/messages: a new turn, a message given to the running one, or queued for after it. */

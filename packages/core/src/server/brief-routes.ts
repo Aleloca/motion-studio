@@ -39,8 +39,8 @@ export function registerBriefRoutes(app: FastifyInstance, ctx: { requireWorkspac
     return reply.status(out.outcome === 'started' ? 202 : 200).send(out);
   });
   app.put<PI>('/api/projects/:slug/brief-session/:id/form', async (req) => {
-    await ctx.briefs.saveForm(await refOf(req.params.slug), req.params.id, parse(briefFormSaveSchema, req.body));
-    return { ok: true };
+    const { revision } = await ctx.briefs.saveForm(await refOf(req.params.slug), req.params.id, parse(briefFormSaveSchema, req.body));
+    return { ok: true, revision };
   });
   app.put<PI>('/api/projects/:slug/brief-session/:id/context', async (req) => ctx.briefs.setContext(await refOf(req.params.slug), req.params.id, parse(briefContextSchema, req.body)));
   app.delete<{ Params: { slug: string; id: string; clientId: string } }>('/api/projects/:slug/brief-session/:id/queue/:clientId', async (req) =>

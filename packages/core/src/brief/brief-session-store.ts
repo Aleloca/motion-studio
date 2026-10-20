@@ -28,6 +28,12 @@ const sessionSchema = z.object({
   /** The Claude session of the latest brief run: the next turn resumes it, the creative's first turn forks it. */
   claudeSessionId: z.string().min(1).optional(),
   queued: z.array(briefQueuedSchema),
+  /** The form's revision (decision 1422): +1 at every change of the form or of who owns a field. */
+  revision: z.number().int().min(0).default(0),
+  /** Per field the agent took back on the user's request (`reclaim`), the revision it happened at. */
+  reclaimedAt: z.record(z.string(), z.number().int().min(0)).default({}),
+  /** A creative the session was moved into when the move did not finish: no message or new move is taken. */
+  handedOffTo: z.string().min(1).optional(),
 });
 export type BriefSessionFile = z.infer<typeof sessionSchema>;
 
@@ -107,6 +113,7 @@ export class BriefSessionStore {
       const s: BriefSessionFile = {
         schemaVersion: 1, id: randomUUID(), createdAt: now, updatedAt: now,
         context: init.context ?? { codebases: [], assets: [] }, form: init.form, userEdited: [...new Set(init.userEdited)], agentFields: [], queued: [],
+        revision: 0, reclaimedAt: {},
       };
       await this.save(key, s);
       const dir = this.dir(key);
@@ -155,6 +162,16 @@ export class BriefSessionStore {
       if (r.kind === 'missing') return [];
       if (r.kind !== 'file') throw new Error(`brief conversation is not a regular file (${r.kind})`);
       return parseConversation(r.data.toString('utf8'));
+    });
+  }
+
+  /** Removes the project's session folder whatever it holds (a session that cannot be read any more is discarded so). */
+  async removeAny(projectDir: string): Promise<void> {
+    const key = await this.key(projectDir);
+    await this.lock.run(key, async () => {
+      const dir = this.dir(key);
+      if (dir === null) { this.memory.delete(key); return; }
+      await rm(dir, { recursive: true, force: true });
     });
   }
 

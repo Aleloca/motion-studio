@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
@@ -23,9 +23,10 @@ export interface BriefApp {
   app: FastifyInstance; runner: ControlledRunner; base: string; code: string; projectDir: string; sent: ServerMessage[];
 }
 
-export async function briefApp(o: { live?: boolean; settings?: Record<string, unknown> } = {}): Promise<BriefApp> {
-  const base = await mkdtemp(join(tmpdir(), 'ms-brief-'));
-  const runner = new ControlledRunner();
+export async function briefApp(o: { live?: boolean; settings?: Record<string, unknown>; runner?: ControlledRunner } = {}): Promise<BriefApp> {
+  // The real path (macOS: /var → /private/var), so a folder has one spelling unless a test makes a link on purpose.
+  const base = await realpath(await mkdtemp(join(tmpdir(), 'ms-brief-')));
+  const runner = o.runner ?? new ControlledRunner();
   const bridge = new AgentBridge();
   // Never contacted: the controlled runner starts no MCP server; the bridge only needs an origin to hand out tokens.
   bridge.setOrigin('http://127.0.0.1:9');

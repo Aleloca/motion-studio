@@ -458,13 +458,22 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       claim = await ctx.briefs.claim({ root: ws.root, projectSlug: req.params.slug, projectDir, projectName: project.name, projectCodebases: project.linkedCodebases, configDir: ctx.configDir ?? '' }, body.briefSession.id);
     }
     let handed = false;
+    /** The move's error, when it did not finish: the creative exists anyway (201 with `briefError`). */
+    let briefError: string | null = null;
     const handOff = async (slug: string) => {
       if (!claim) return;
-      const group = (body.briefSession?.group === true && singleAgentOn(await ws.readSettings())) || groupSize > 1;
-      await ctx.briefs!.handOff(claim, { root: ws.root, projectSlug: req.params.slug, projectDir, creativeSlug: slug },
-        { group, title: body.title, formats: t().briefSession.parts.formats({ count: brief.formats.length }) });
       handed = true;
+      try {
+        const group = (body.briefSession?.group === true && singleAgentOn(await ws.readSettings())) || groupSize > 1;
+        await ctx.briefs!.handOff(claim, { root: ws.root, projectSlug: req.params.slug, projectDir, creativeSlug: slug },
+          { group, title: body.title, formats: t().briefSession.parts.formats({ count: brief.formats.length }) });
+      } catch (err) {
+        // The session is marked as moved into this creative, so a second Genera cannot make a duplicate; its chat stays.
+        briefError = err instanceof Error ? err.message : String(err);
+        await ctx.briefs!.markHandedOff(claim, slug);
+      }
     };
+    const withBriefError = () => (briefError ? { briefError } : {});
     try {
       const created = await store.create({ title: body.title, brief: { ...brief, links } });
       const slug = created.slug;
@@ -481,7 +490,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
           await new VariantGroupService({ store, turns: ctx.turns }).addVariants(ref, Array.from({ length: groupSize - 1 }, () => ({ direction: null })), { hostDirection: null });
         } catch (err) {
           await handOff(slug);
-          return reply.status(201).send({ slug, creative: await store.get(slug), job: null, groupError: err instanceof Error ? err.message : String(err) });
+          return reply.status(201).send({ slug, creative: await store.get(slug), job: null, groupError: err instanceof Error ? err.message : String(err), ...withBriefError() });
         }
         await handOff(slug);
         // The group exists from here: a start that throws must not lose the slug (the client opens the creative and can retry).
@@ -490,11 +499,11 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
         if (body.generate) {
           try { variantRun = await ctx.variantRuns.run(ref, 'all-active', null); } catch (err) { startError = err instanceof Error ? err.message : String(err); }
         }
-        return reply.status(201).send({ slug, creative: await store.get(slug), job: null, ...(variantRun ? { variantRun } : {}), ...(startError ? { startError } : {}) });
+        return reply.status(201).send({ slug, creative: await store.get(slug), job: null, ...(variantRun ? { variantRun } : {}), ...(startError ? { startError } : {}), ...withBriefError() });
       }
       await handOff(slug);
       const job = body.generate ? await ctx.turns.start(ref) : null;
-      return reply.status(201).send({ slug, creative: job ? await store.get(slug) : creative, job });
+      return reply.status(201).send({ slug, creative: job ? await store.get(slug) : creative, job, ...withBriefError() });
     } finally {
       if (claim && !handed) ctx.briefs!.release(claim);
     }

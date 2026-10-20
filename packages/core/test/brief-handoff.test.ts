@@ -3,12 +3,13 @@
  * Decision 1423: Genera and Salva bozza carry the brief session into the new creative: its chat is copied, the creative's
  * first turn (or its group's coordinator) forks the brief agent's session, with the chat's digest as the fallback.
  */
-import { rm } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { messages, type ConversationEntry } from '@motion-studio/shared';
 import { join } from 'node:path';
 import { BriefSessionStore } from '../src/brief/brief-session-store.ts';
 import { GROUP_BLOCK } from '../src/creatives/coordinator-prompt.ts';
+import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { briefApp, briefHelpers, type BriefApp } from './helpers/brief-app.ts';
 import type { ControlledRun } from './helpers/controlled-runner.ts';
 
@@ -162,6 +163,40 @@ describe('from the brief session to the creative (decision 1423)', () => {
     run.finish({ write: false });
     await h().waitIdle();
     expect((await create({ generate: false, briefSession: { id } })).statusCode).toBe(201);
+  });
+
+  it('a restart before the first turn reports its session never takes the brief\'s session as the turn\'s', async () => {
+    t = await briefApp();
+    const { id } = await session();
+    const { slug } = (await create({ generate: false, briefSession: { id } })).json() as { slug: string };
+    const store = new CreativeStore(t.projectDir);
+    // The copied chat holds the brief run's session events; the creative's own turn reported none yet.
+    expect(await store.lastTurnSession(slug)).toBeNull();
+    await store.update(slug, { status: 'working' });
+    const remembered: string[] = [];
+    expect(await store.recoverInterrupted(() => false, async (_s, x) => { remembered.push(x.sessionId); })).toEqual([slug]);
+    expect(remembered).toEqual([]);
+  });
+
+  it('a move that does not finish answers 201 with briefError, and a second Genera cannot duplicate', async () => {
+    t = await briefApp();
+    const { id } = await session();
+    // The session's chat cannot be read any more (a folder where the log was).
+    const dir = (await new BriefSessionStore(join(t.base, 'config')).dirFor(t.projectDir))!;
+    await rm(join(dir, 'conversation.jsonl'));
+    await mkdir(join(dir, 'conversation.jsonl'));
+    const res = await create({ generate: false, briefSession: { id } });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(res.json().briefError).toBeTruthy();
+    const { slug } = res.json() as { slug: string };
+    expect((await h().view())?.handedOffTo).toBe(slug);
+    const again = await create({ generate: false, briefSession: { id } });
+    expect(again.statusCode).toBe(409);
+    expect(again.json().code).toBe('brief-session-handed-off');
+    expect((await h().send(id, 'ancora')).json().code).toBe('brief-session-handed-off');
+    expect(((await t.app.inject('/api/projects/acme/creatives')).json() as unknown[]).length).toBe(1);
+    // Discard still works.
+    expect((await t.app.inject({ method: 'DELETE', url: `/api/projects/acme/brief-session/${id}` })).statusCode).toBe(204);
   });
 
   it('busy or gone: nothing is created', async () => {

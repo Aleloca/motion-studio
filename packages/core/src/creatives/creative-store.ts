@@ -695,6 +695,8 @@ export class CreativeStore {
       const e = entries[i]!;
       // Decision 1060: a turn that ended without a version (nothing changed) is over too.
       if (turnEndOf(e)) return null;
+      // Decision 1423: the brief session's chat copied before the creative starts is not a turn of this creative.
+      if (e.type === 'system' && e.origin === 'brief') return null;
       if (e.type !== 'agent' || typeof e.jobId !== 'string' || !e.jobId) continue;
       cut ??= e.jobId;
       if (e.jobId !== cut) return null;
