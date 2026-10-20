@@ -428,6 +428,14 @@ arrives and worked on later together.
     wizard captions), also through stale full brief saves and wizard edits. A store screenshot shows "N · name"; export
     file names are unchanged. In a variant group only the coordinator renames; a variant names only unnamed formats.
 
+58. **Several images of one format from New creative.** On "Nuova creatività" the user wants to ask for, say, 5 images
+    1:1 with the same brief: not variants (other creative directions) but just more images of that format. Today a
+    tile is on or off; copies (`<preset>@k`, up to 20) can only be added after creation (Duplica formato, the brief tab,
+    or the chat).
+    User's decision: a counter "− N +" on a selected tile (1–20). The footer summary counts the copies; the first turn
+    makes all of them, each with a speaking name (report 55). The brief agent can set the count too.
+    Timing: now.
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
