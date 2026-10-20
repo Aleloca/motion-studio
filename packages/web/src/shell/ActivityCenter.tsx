@@ -42,7 +42,7 @@ export function activityLists(live: EventsState) {
 /**
  * Where a job belongs, from its key. The core's keys are `creative:<root>:<project>:<creative>`,
  * `render:<root>:<project>:<creative>:v<n>` (a follow-up: `…:v<n>:<k>`), `brand:<root>:<project>` (analysis and asset descriptions) and
- * `project:<root>:<project>` and `generate:<id>:<project>` (Assets Generate); the root may contain ':' (Windows), slugs never do.
+ * `project:<root>:<project>`, `generate:<id>:<project>` (Assets Generate) and `brief:<root>:<project>` (decision 1421); the root may contain ':' (Windows), slugs never do.
  * Phase 15: a group's directions turn is `variant-directions:creative:<root>:<project>:<host>`, the host's creative key behind
  * a prefix: it belongs to the host (its link and its variant tag).
  */
@@ -61,7 +61,8 @@ export function jobPlace(job: JobSummary): { project: string; creative: string |
     const end = /^\d+$/.test(parts.at(-1)!) && /^v\d+$/.test(parts.at(-2)!) ? -1 : 0;
     return { project: parts.at(-3 + end)!, creative: parts.at(-2 + end)! };
   }
-  if ((kind === 'brand' || kind === 'project' || kind === 'generate') && parts.length >= 3) return { project: parts.at(-1)!, creative: null };
+  // Decision 1421: a brief session's turn `brief:<root>:<project>` belongs to its project (its New creative page).
+  if ((kind === 'brand' || kind === 'project' || kind === 'generate' || kind === 'brief') && parts.length >= 3) return { project: parts.at(-1)!, creative: null };
   return null;
 }
 
@@ -72,6 +73,7 @@ export function jobHref(job: JobSummary): string | null {
   if (at.creative) return href.creative(at.project, at.creative);
   if (job.kind === 'brand-analysis') return href.project(at.project, 'brand');
   if (job.kind === 'asset-description' || job.kind === 'asset-generation') return href.project(at.project, 'assets');
+  if (job.kind === 'brief') return href.newCreative(at.project);
   return href.project(at.project);
 }
 

@@ -109,3 +109,22 @@ describe('report 41: formats ready during a turn', () => {
       ready: { j1: { a: { n: 4, hash: 'h' } }, j2: { b: { n: 1, hash: 'g' } } } }).ready).toEqual({ j1: { a: { n: 4, hash: 'h' } } });
   });
 });
+
+describe('eventsReducer · brief sessions (decision 1421)', () => {
+  it('counts brief-session messages per project and keeps the latest fill with an increasing seq', () => {
+    let s = eventsReducer(initialEventsState, { type: 'brief-session', project: 'acme', sessionId: 's1', revision: 1 });
+    s = eventsReducer(s, { type: 'brief-session', project: 'acme', sessionId: 's1', revision: 2 });
+    expect(s.briefTicks?.acme).toBe(2);
+    expect(s.briefFills?.acme).toBeUndefined();
+    s = eventsReducer(s, { type: 'brief-session', project: 'acme', sessionId: 's1', revision: 3, fill: { written: ['goal', 'formats'], kept: [], reclaimed: [] } });
+    const first = s.briefFills!.acme!;
+    expect(first).toMatchObject({ sessionId: 's1', written: ['goal', 'formats'], reclaimed: [] });
+    s = eventsReducer(s, { type: 'brief-session', project: 'acme', sessionId: 's1', revision: 4, fill: { written: [], kept: [], reclaimed: ['message'] } });
+    expect(s.briefFills!.acme!.seq).toBeGreaterThan(first.seq);
+    expect(s.briefFills!.acme!.reclaimed).toEqual(['message']);
+    expect(s.briefTicks?.acme).toBe(4);
+    // Another project has its own count.
+    s = eventsReducer(s, { type: 'brief-session', project: 'other', sessionId: 's2', ended: true });
+    expect(s.briefTicks?.other).toBe(1);
+  });
+});

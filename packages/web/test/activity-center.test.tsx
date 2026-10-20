@@ -20,6 +20,14 @@ const en = (l: EventsState, tab: 'done' | 'running' = 'done') =>
   render(<I18nProvider locale="en"><ActivityCenter live={l} initialTab={tab} where={where} /></I18nProvider>);
 afterEach(() => vi.clearAllMocks());
 
+describe('Activity center · the brief session (decision 1421)', () => {
+  it('a brief job belongs to its project and its row opens New creative', () => {
+    const brief = job({ id: 'b1', key: 'brief:/Users/me/Motion Studio:acme', kind: 'brief', label: 'Acme · brief con l\'agente' });
+    expect(jobPlace(brief)).toEqual({ project: 'acme', creative: null });
+    expect(jobHref(brief)).toBe('#/p/acme/new');
+  });
+});
+
 describe('Activity center · exports in the background (decision 974, user report 20)', () => {
   const exp = (over: Partial<JobSummary> = {}) => job({ id: 'e1', key: 'export:C:\\Users\\me\\ws:acme:lancio:0a1b2c3d', kind: 'export', label: 'Export · Lancio estivo', state: 'running', ...over });
 

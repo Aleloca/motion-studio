@@ -1,4 +1,4 @@
-import type { LocaleTag, Localization, LocalizationIssue, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StagedSvgEdit, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, ExportFps, ExportQuality, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, AgentCapabilities, ApprovalDecision, ApprovalRequest, QuestionAnswers, LiveMessageOutcome, RedirectOutcome, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, CreativeRemovalInfo, RecentCreative, DoctorCheck, UpdatesState, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIcon, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings, StorePack, VariantId, VariantPick } from '@motion-studio/shared';
+import type { LocaleTag, Localization, LocalizationIssue, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StagedSvgEdit, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, ExportFps, ExportQuality, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, AgentCapabilities, ApprovalDecision, ApprovalRequest, QuestionAnswers, LiveMessageOutcome, RedirectOutcome, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, CreativeRemovalInfo, RecentCreative, DoctorCheck, UpdatesState, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIcon, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings, StorePack, VariantId, VariantPick, BriefContext, BriefField, BriefForm, BriefFormSave, BriefFormSaved, BriefMessageInput, BriefSendResult, BriefSessionRef, BriefSessionView } from '@motion-studio/shared';
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
 
@@ -195,7 +195,8 @@ export const api = {
     request<{ kit: BrandKit; proposal: BrandProposal }>('POST', `${p(slug)}/brand/proposals/${encodeURIComponent(id)}/apply`, { acceptedIds, applyGuidelines }),
   discardProposal: (slug: string, id: string) => request<BrandProposal>('POST', `${p(slug)}/brand/proposals/${encodeURIComponent(id)}/discard`),
   listAssets: (slug: string) => request<{ assets: AssetEntry[]; error: string | null; unregistered: string[] }>('GET', `${p(slug)}/assets`),
-  uploadFiles: (slug: string, kind: 'assets' | 'references', files: File[]) => upload<unknown>(`${p(slug)}/${kind}`, files),
+  /** The route answers the new entries (201 `{ assets }` for the library; references answer their own list). */
+  uploadFiles: (slug: string, kind: 'assets' | 'references', files: File[]) => upload<{ assets?: AssetEntry[] }>(`${p(slug)}/${kind}`, files),
   registerAssets: (slug: string, files: string[]) => request<{ assets: AssetEntry[] }>('POST', `${p(slug)}/assets/register`, { files }),
   describeAssets: (slug: string, files?: string[]) => request<JobSummary>('POST', `${p(slug)}/assets/describe`, { files }),
   updateAsset: (slug: string, file: string, patch: { name?: string; description?: string; tags?: string[] }) => request<AssetEntry>('PATCH', `${p(slug)}/assets/item/${enc(file)}`, patch),
@@ -229,6 +230,16 @@ export const api = {
   redirectJob: (id: string, body: { clientId: string; text: string; pins?: Pin[] }) => request<{ outcome: RedirectOutcome }>('POST', `/api/jobs/${encodeURIComponent(id)}/redirect`, body),
   /** A message to a turn console (live input only; the console has no queue). */
   sendConsoleMessage: (jobId: string, body: { clientId: string; text: string; pins?: Pin[] }) => request<{ outcome: LiveMessageOutcome }>('POST', `/api/console/${encodeURIComponent(jobId)}/messages`, body),
+  // Decisions 1421–1423: the project's brief session (one open session; any id removes an unreadable one).
+  getBriefSession: (slug: string) => request<BriefSessionView | null>('GET', `${p(slug)}/brief-session`),
+  startBriefSession: (slug: string, body: { form: BriefForm; userEdited: BriefField[] }) => request<BriefSessionView>('POST', `${p(slug)}/brief-session`, body),
+  getBriefConversation: (slug: string, id: string) => request<ConversationEntry[]>('GET', `${p(slug)}/brief-session/${encodeURIComponent(id)}/conversation`),
+  sendBriefMessage: (slug: string, id: string, body: BriefMessageInput) => request<BriefSendResult>('POST', `${p(slug)}/brief-session/${encodeURIComponent(id)}/messages`, body),
+  /** The merged form comes back: the client adopts its `revision` only together with `form` and `userEdited`. */
+  saveBriefForm: (slug: string, id: string, body: BriefFormSave) => request<BriefFormSaved>('PUT', `${p(slug)}/brief-session/${encodeURIComponent(id)}/form`, body),
+  setBriefContext: (slug: string, id: string, context: BriefContext) => request<BriefSessionView>('PUT', `${p(slug)}/brief-session/${encodeURIComponent(id)}/context`, context),
+  removeBriefQueued: (slug: string, id: string, clientId: string) => request<BriefSessionView>('DELETE', `${p(slug)}/brief-session/${encodeURIComponent(id)}/queue/${encodeURIComponent(clientId)}`),
+  discardBriefSession: (slug: string, id: string) => request<unknown>('DELETE', `${p(slug)}/brief-session/${encodeURIComponent(id)}`),
   getFormats: () => request<CatalogState>('GET', '/api/formats'),
   recentCreatives: (limit?: number) => request<RecentCreative[]>('GET', `/api/recent-creatives${limit === undefined ? '' : `?limit=${limit}`}`),
   /** Decision 915: the archived creatives are left out (`listArchivedCreatives` lists only them). */
@@ -241,8 +252,9 @@ export const api = {
   unarchiveCreative: (slug: string, creative: string) => request<{ restored: string[] }>('POST', `${c(slug, creative)}/unarchive`),
   /** Moves the creative's folder (every variant's with `all`) to the Trash. */
   deleteCreative: (slug: string, creative: string, all = false) => request<{ deleted: string[] }>('DELETE', `${c(slug, creative)}${all ? '?all=1' : ''}`),
-  createCreative: (slug: string, body: { title: string; brief: Brief; generate: boolean; linkedCodebases?: LinkedCodebase[] }) =>
-    request<{ slug: string; creative: CreativeFile; job: JobSummary | null; /** Phase 15: an identity creative with concepts > 1 starts its variants (no single job). */ variantRun?: VariantRunResult; /** The start failed after the group existed: the slug is still good. */ startError?: string; /** The group could not be made after the creative existed (nothing started): the slug is still good. */ groupError?: string }>('POST', `${p(slug)}/creatives`, body),
+  /** `briefSession` (decision 1423): the brief session the creative takes over (its chat and its agent's memory). */
+  createCreative: (slug: string, body: { title: string; brief: Brief; generate: boolean; linkedCodebases?: LinkedCodebase[]; briefSession?: BriefSessionRef }) =>
+    request<{ slug: string; creative: CreativeFile; job: JobSummary | null; /** The creative exists but the brief session did not move into it entirely. */ briefError?: string; /** Phase 15: an identity creative with concepts > 1 starts its variants (no single job). */ variantRun?: VariantRunResult; /** The start failed after the group existed: the slug is still good. */ startError?: string; /** The group could not be made after the creative existed (nothing started): the slug is still good. */ groupError?: string }>('POST', `${p(slug)}/creatives`, body),
   /** Phase 15: creates sisters (no turn starts). With no group, `count` is the whole group size, A included (2..5), and `directions[0]` is A's. */
   addVariants: (slug: string, creative: string, body: { count?: number; directions?: Array<string | null>; baseFrom?: VariantPick }) =>
     request<CreativeDetail>('POST', `${c(slug, creative)}/variants`, body),
