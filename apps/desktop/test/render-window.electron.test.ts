@@ -26,7 +26,7 @@
  *   frames; at 0.5 the PNG frames stay. Measurements (`MS_UI_LOAD=1`): a dialog-like list scrolled while an export runs,
  *   raw against JPEG frames, the cost of each capture on the UI thread.
  * - **raw frames checked (report 56):** the provider's check of raw against PNG frames per scale; every frame of a render
- *   read raw (with the renderers stopped as the seek ends) and as PNG from the same state; the same video under a forced
+ *   read raw and as PNG from the same state, and a change read raw at once (report 57); the same video under a forced
  *   Display P3 profile; a layer's CSS animation paused while it starts on the compositor shows the paused time.
  *
  * Runs on macOS when the Electron binary is installed; elsewhere (a display is needed) only with MS_REQUIRE_ELECTRON=1,
@@ -477,21 +477,29 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
     expect(by.half).toMatchObject({ frames: 60, width: W / 2, height: H / 2, rawFrames: 0, encodedFrames: 60, windowsAfter: 0 });
   }, 900_000);
 
-  it('report 56: raw frames are the PNG frames of the same state, every frame, read with the renderers stopped as the seek ends', async () => {
+  it('report 56: raw frames are the PNG frames of the same state, every frame, and show a change made just before the read (report 57)', async () => {
     const creative = join(work, 'raw-check');
     const compDir = join(creative, 'outputs', 'v1', 'compositions', 'spike');
     frameCodedVideo(ffmpeg!, join(compDir, 'assets', 'v.mp4'), { fps: 30, frames: 95 });
     put(join(compDir, 'layers', 'outro.html'), OUTRO_LAYER);
     put(join(compDir, 'assets', 'mono.woff2'), readFileSync(FONT));
     const times = Array.from({ length: 60 }, (_, i) => i / 30);
-    const r = await runHarness({ scenario: 'raw-check', creative, composition: spikeComposition(), format: 'spike', rawCheck: { times } });
+    const r = await runHarness({ scenario: 'raw-check', creative, composition: spikeComposition(), format: 'spike', rawCheck: { times, changes: 30 } });
     expect(r.ok, r.output).toBe(true);
     const rows = (r.lines[0] as { rawCheck: Array<{ t: number; raw: { sizes: boolean; differing: number }; again: { differing: number } }> }).rawCheck;
     expect(rows).toHaveLength(60);
-    // A difference with the renderers stopped would be a frame read before the seek's last one was drawn (a stale read);
-    // after the PNG's forced redraw, a difference in the pixels themselves.
+    // A difference in the first read is a frame from before the seek's (the CI runner's, report 57); in the second, after
+    // the PNG's own redraw, a difference in the pixels themselves.
+    const changes = (r.lines[0] as { changes: Array<{ i: number; want: number[]; got: number[] }>; gpu: number | null }).changes;
+    const missed = changes.filter((x) => x.want.some((v, k) => Math.abs(v - x.got[k]!) > 1));
+    console.info(`[raw-check] a change read raw at once, the GPU process stalled: ${missed.length}/${changes.length} missed ${JSON.stringify(missed.slice(0, 3))}`);
+    console.info(`[raw-check] stale ${rows.filter((x) => x.raw.differing > 0).length}/60 ${JSON.stringify(rows.filter((x) => x.raw.differing > 0).map((x) => [x.t, x.raw.differing]))}; again ${rows.filter((x) => x.again.differing > 0).length}`);
     expect(rows.filter((x) => !x.raw.sizes || x.raw.differing > 0), 'raw read as the seek ends').toEqual([]);
     expect(rows.filter((x) => x.again.differing > 0), 'raw read after the PNG').toEqual([]);
+    // Report 57: a raw read is of a frame drawn after it was asked for (the CI runner read one from before the seek's).
+    expect((r.lines[0] as { gpu: number | null }).gpu, 'the GPU process').toBeGreaterThan(0);
+    expect(changes).toHaveLength(30);
+    expect(missed, 'a raw read missed a change made just before it').toEqual([]);
   }, 900_000);
 
   it('report 56: under a forced Display P3 colour profile raw and PNG frames still give the same video, and the sRGB one', async () => {
