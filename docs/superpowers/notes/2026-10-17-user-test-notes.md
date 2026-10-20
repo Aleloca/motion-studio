@@ -454,6 +454,13 @@ arrives and worked on later together.
     through one-preset routes under the catalog's lock, selected at once and listed to the brief agent. A custom tile has an edit
     button; a format in use keeps its type and size, and deleting it hides it (the creatives that use it keep it).
 
+60. **Tiny boards in one column on the canvas.** Right after Generate with 17 copies of "Hero 16:9", the canvas shows
+    one column of 17 boards zoomed out to almost nothing: the user has to zoom by hand and most of the space is empty.
+    Cause: the non-tall boards of a channel all go into one vertical stack that never wraps (`itemsOf`), and the fit zoom
+    then fits that 17-board-high column into the viewport (down to 0.1).
+    Wanted: the boards fill the space in a grid of several per row, and the first zoom is already readable.
+    Timing: now.
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
