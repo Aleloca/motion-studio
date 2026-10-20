@@ -5,14 +5,16 @@
  * keeps its width (canvas 368/340, format view 320/300, editor 320/288) and the screen's middle keeps its own, the card is inset
  * 12 px on every side with a 20 px radius on the glass background, the tabs sit inside it, the agent's bubbles are on
  * --glassField, the composer has no frame of its own, and every composer button is inside the card. No message runs under the
- * dock, scrolled to the end or to the middle, and nothing scrolls sideways. The canvas's Comments and Brief tabs stay inside the
- * card too. Without Chrome the tests are skipped (MS_REQUIRE_CHROME=1 makes a missing browser a failure); MS_LAYOUT_SHOTS=<folder>
+ * dock, scrolled to the end or to the middle, and nothing scrolls sideways. The canvas's Comments and Brief tabs (also while the
+ * brief is edited) and the editor's inspector stay inside the card: every control, scrolled into view, lies inside what clips it,
+ * and the first and last focusable controls show their focus ring whole. The canvas (panel stacked under it) and the editor are
+ * also measured at 700 px, light. Without Chrome the tests are skipped (MS_REQUIRE_CHROME=1 makes a missing browser a failure); MS_LAYOUT_SHOTS=<folder>
  * saves a screenshot of each case.
  */
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { cleanup, render, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DEFAULT_FORMATS, type ApprovalRequest, type ConversationEntry, type CreativeDetail, type JobSummary, type OutputFileInfo, type VersionEntry } from '@motion-studio/shared';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -113,15 +115,23 @@ const ROOT: Record<Screen, string> = { canvas: '.ms-cv', group: '.ms-cv', format
 /** The chat column of each screen, and the screen's middle (which must keep main's width). */
 const COL: Record<Screen, string> = { canvas: '.ms-cv-panel', group: '.ms-cv-panel', format: '.ms-fv-panel', editor: '.ms-ed-right' };
 const MID: Record<Screen, string> = { canvas: '.ms-cv-main', group: '.ms-cv-main', format: '.ms-fv-main', editor: '.ms-ed-main' };
-/** main's column widths (canvas.css, format.css, editor.css), at 1440 and 1024 px. */
-const WIDTH: Record<Screen, Record<1440 | 1024, number>> = { canvas: { 1440: 368, 1024: 340 }, group: { 1440: 368, 1024: 340 }, format: { 1440: 320, 1024: 300 }, editor: { 1440: 320, 1024: 288 } };
+type Width = 1440 | 1024 | 700;
+/** main's column widths (canvas.css, format.css, editor.css), at 1440 and 1024 px, and at 700 px for the canvas (the panel
+ * stacked under the canvas, the whole width) and the editor (its grid stays). */
+const WIDTH: Record<Screen, Partial<Record<Width, number>>> = { canvas: { 1440: 368, 1024: 340, 700: 700 }, group: { 1440: 368, 1024: 340 }, format: { 1440: 320, 1024: 300 }, editor: { 1440: 320, 1024: 288, 700: 288 } };
 /** The middle's width on main: the window less the side columns (the format view of an image has no scenes column). */
-const MIDDLE: Record<Screen, Record<1440 | 1024, number>> = {
-  canvas: { 1440: 1440 - 252 - 368, 1024: 1024 - 200 - 340 }, group: { 1440: 1440 - 252 - 368, 1024: 1024 - 200 - 340 },
-  format: { 1440: 1440 - 320, 1024: 1024 - 300 }, editor: { 1440: 1440 - 224 - 320, 1024: 1024 - 224 - 288 },
+const MIDDLE: Record<Screen, Partial<Record<Width, number>>> = {
+  canvas: { 1440: 1440 - 252 - 368, 1024: 1024 - 200 - 340, 700: 700 }, group: { 1440: 1440 - 252 - 368, 1024: 1024 - 200 - 340 },
+  format: { 1440: 1440 - 320, 1024: 1024 - 300 }, editor: { 1440: 1440 - 224 - 320, 1024: 1024 - 224 - 288, 700: 700 - 224 - 288 },
 };
+/** The cases measured: both themes at 1440 and 1024; light at 700 for the canvas and the editor. */
+const CASES = (screen: Screen): Array<{ theme: 'light' | 'dark'; width: Width }> => [
+  ...(['light', 'dark'] as const).flatMap((theme) => ([1440, 1024] as const).map((width) => ({ theme, width }))),
+  ...(screen === 'canvas' || screen === 'editor' ? [{ theme: 'light' as const, width: 700 as const }] : []),
+];
 
-/** The screen's markup: the chat tab, and on the canvas also the Comments and Brief tabs. */
+/** The screen's markup: the chat tab; on the canvas also the Comments and Brief tabs and the brief being edited; in the editor
+ * also the inspector of the title clip. */
 async function markup(screen: Screen): Promise<Record<string, string>> {
   mode = screen === 'group' ? 'group' : 'single';
   const hashBefore = location.hash;
@@ -152,6 +162,14 @@ async function markup(screen: Screen): Promise<Record<string, string>> {
       await userEvent.click(within(col()!).getByRole('tab', { name: /Brief/ }));
       await waitFor(() => expect(col()!.querySelector('.ms-cv-brief-wrap:not([hidden]) *')).toBeTruthy());
       html.brief = root();
+      await userEvent.click(within(col()!).getByRole('button', { name: /Modifica il brief/ }));
+      await waitFor(() => expect(col()!.querySelector('.ms-cv-brief-edit')).toBeTruthy());
+      html.briefEdit = root();
+    }
+    if (screen === 'editor') {
+      fireEvent.keyDown(container.querySelector('[data-clip="c1"]')!, { key: 'Enter' });
+      await waitFor(() => expect(col()!.querySelector('.ms-insp')).toBeTruthy());
+      html.inspector = root();
     }
     return html;
   } finally { cleanup(); location.hash = hashBefore; }
@@ -210,6 +228,49 @@ if (${JSON.stringify(tab)} === 'chat') {
   const panel = [...card.children].find((el) => !el.classList.contains('ms-tabs') && vis(el));
   out.panelIn = !!panel && panel.getBoundingClientRect().left >= k.left - 0.5 && panel.getBoundingClientRect().right <= k.right + 0.5;
   out.panelScroll = panel ? panel.scrollWidth - panel.clientWidth : -1;
+  // Every control, scrolled into view, lies inside what clips it (its scrolling panel and the card); the focus rings of the
+  // first and the last control too. The card itself never scrolls to show one.
+  const clipOf = (el) => {
+    let box = { left: -1e9, top: -1e9, right: 1e9, bottom: 1e9 };
+    for (let p = el.parentElement; p && p !== col; p = p.parentElement) {
+      const s = getComputedStyle(p);
+      if (s.overflowX === 'visible' && s.overflowY === 'visible') continue;
+      const b = p.getBoundingClientRect();
+      box = { left: Math.max(box.left, b.left + p.clientLeft), top: Math.max(box.top, b.top + p.clientTop), right: Math.min(box.right, b.left + p.clientLeft + p.clientWidth), bottom: Math.min(box.bottom, b.top + p.clientTop + p.clientHeight) };
+    }
+    return box;
+  };
+  const ring = (el) => {
+    const s = getComputedStyle(el);
+    let ext = s.outlineStyle !== 'none' ? parseFloat(s.outlineWidth) + parseFloat(s.outlineOffset) : 0;
+    for (const sh of s.boxShadow === 'none' ? [] : s.boxShadow.split(/,(?![^(]*\\))/)) {
+      if (sh.includes('inset')) continue;
+      const n = (sh.match(/-?[\\d.]+px/g) || []).map(parseFloat);
+      ext = Math.max(ext, (n[3] || 0) + Math.max(Math.abs(n[0] || 0), Math.abs(n[1] || 0)));
+    }
+    return ext;
+  };
+  const name = (el) => (el.getAttribute('aria-label') || el.textContent || el.getAttribute('name') || el.className || el.tagName).toString().trim().slice(0, 30);
+  const controls = [...card.querySelectorAll('button, input:not([type=hidden]), select, textarea, a[href], [role=switch], [role=slider], [role=tab]')].filter(vis)
+    .filter((el) => el.getBoundingClientRect().width > 1 && getComputedStyle(el).opacity !== '0');
+  out.controls = controls.length;
+  out.clipped = [];
+  for (const el of controls) {
+    el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    const b = el.getBoundingClientRect(), x = clipOf(el);
+    if (b.left < x.left - 0.5 || b.right > x.right + 0.5 || b.top < x.top - 0.5 || b.bottom > x.bottom + 0.5) out.clipped.push(name(el) + ' [' + [b.left - x.left, x.right - b.right, b.top - x.top, x.bottom - b.bottom].map(Math.round) + ']');
+  }
+  const focusable = controls.filter((el) => !el.disabled && el.getAttribute('aria-disabled') !== 'true' && el.tabIndex >= 0);
+  for (const el of [focusable[0], focusable[focusable.length - 1]].filter(Boolean)) {
+    el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    el.focus();
+    const e = ring(el), b = el.getBoundingClientRect(), x = clipOf(el);
+    if (document.activeElement !== el) { out.clipped.push('not focusable: ' + name(el)); continue; }
+    if (e <= 0) out.clipped.push('no focus ring: ' + name(el) + ' <' + el.tagName + ' ' + el.className + ' ' + (el.getAttribute('role') || '') + '>');
+    if (b.left - e < x.left - 0.5 || b.right + e > x.right + 0.5 || b.top - e < x.top - 0.5 || b.bottom + e > x.bottom + 0.5) out.clipped.push('focus ring clipped: ' + name(el) + ' (' + e + ' px; room ' + [b.left - x.left, x.right - b.right, b.top - x.top, x.bottom - b.bottom].map(Math.round) + ')');
+    el.blur();
+  }
+  if (card.scrollTop || card.scrollLeft) out.clipped.push('the card scrolled to show a control');
 }
 return out;
 })()`;
@@ -219,7 +280,7 @@ type Measure = {
   missing: boolean; col: Box; card: Box; radius: string; bg: string; glass: string; glassField: string; glassLine: string; tabsIn: boolean; tabsLine: string | null; mid: number;
   scroll: number; inner: number; cardScroll: number; outside: string[]; scrollable?: boolean; listRight?: boolean; under?: string[]; dockIn?: boolean; bubble?: string | null;
   composerShadow?: string; composerBg?: string; composerGap?: number; buttons?: Array<{ name: string; in: boolean }>; send?: boolean; note?: { clipped: boolean; in: boolean } | null;
-  approval?: { in: boolean; overflow: number } | null; panelIn?: boolean; panelScroll?: number;
+  approval?: { in: boolean; overflow: number } | null; panelIn?: boolean; panelScroll?: number; controls?: number; clipped?: string[];
 };
 
 const required = process.env.MS_REQUIRE_CHROME === '1';
@@ -234,10 +295,11 @@ run('every chat is the glass card: real Chrome layout', () => {
   beforeAll(async () => { dir = mkdtempSync(join(tmpdir(), 'ms-chat-glass-')); browser = await launchChrome(chrome!); });
   afterAll(async () => { await browser?.close(); rmSync(dir, { recursive: true, force: true }); });
 
-  async function measure(screen: Screen, tab: string, html: string, width: 1440 | 1024, theme: 'light' | 'dark'): Promise<Measure> {
+  async function measure(screen: Screen, tab: string, html: string, width: Width, theme: 'light' | 'dark'): Promise<Measure> {
     const height = width === 1440 ? 900 : 700;
     const page = `<!doctype html><html lang="it" data-theme="${theme}"><head><meta charset="utf-8"><style>${FONTS()}\n${ALL_CSS()}
-      html,body{margin:0;height:100%;background:var(--bg)} #page{height:100vh}</style></head><body><div id="page">${html}</div></body></html>`;
+      html,body{margin:0;height:100%;background:var(--bg)} #page{height:100vh}
+      /* Focus rings are read at once, not half way through their transition. */ *,*::before,*::after{transition:none !important}</style></head><body><div id="page">${html}</div></body></html>`;
     const file = join(dir, `${screen}-${tab}-${theme}-${width}.html`);
     writeFileSync(file, page);
     const t = await browser.newPage(width, height);
@@ -250,16 +312,17 @@ run('every chat is the glass card: real Chrome layout', () => {
   }
 
   for (const screen of ['canvas', 'group', 'format', 'editor'] as const) {
-    it(`${screen}: the chat is the glass card in its column, light and dark, 1440 × 900 and 1024 × 700`, async () => {
+    it(`${screen}: the chat is the glass card in its column, light and dark, 1440 × 900 and 1024 × 700${screen === 'canvas' || screen === 'editor' ? ', light at 700 × 700' : ''}`, async () => {
       const html = await markup(screen);
       const failures: string[] = [];
-      for (const theme of ['light', 'dark'] as const) for (const width of [1440, 1024] as const) for (const [tab, markupOf] of Object.entries(html)) {
+      for (const { theme, width } of CASES(screen)) for (const [tab, markupOf] of Object.entries(html)) {
         const r = await measure(screen, tab, markupOf, width, theme);
         const at = `${screen} ${tab} ${theme} @${width}`;
         const check = (ok: boolean, what: string) => { if (!ok) failures.push(`${at}: ${what}`); };
         if (r.missing) { failures.push(`${at}: no .ms-chat-card in the column`); continue; }
-        check(Math.abs(r.col.width - WIDTH[screen][width]) < 0.5, `column ${r.col.width}, main ${WIDTH[screen][width]}`);
-        check(Math.abs(r.mid - MIDDLE[screen][width]) < 0.5, `middle ${r.mid}, main ${MIDDLE[screen][width]}`);
+        const colW = WIDTH[screen][width]!, midW = MIDDLE[screen][width]!;
+        check(Math.abs(r.col.width - colW) < 0.5, `column ${r.col.width}, main ${colW}`);
+        check(Math.abs(r.mid - midW) < 0.5, `middle ${r.mid}, main ${midW}`);
         for (const side of ['left', 'top'] as const) check(Math.abs(r.card[side] - r.col[side] - 12) < 0.5, `card ${side} inset ${r.card[side] - r.col[side]}`);
         for (const side of ['right', 'bottom'] as const) check(Math.abs(r.col[side] - r.card[side] - 12) < 0.5, `card ${side} inset ${r.col[side] - r.card[side]}`);
         check(r.radius === '20px', `radius ${r.radius}`);
@@ -270,7 +333,8 @@ run('every chat is the glass card: real Chrome layout', () => {
         check(r.cardScroll <= 0, `card scrolls sideways ${r.cardScroll}`);
         check(r.outside.length === 0, `outside the card: ${r.outside.join(' | ')}`);
         if (tab === 'chat') {
-          check(r.scrollable === true, 'the list scrolls (the dock check is not vacuous)');
+          // Stacked under the canvas (700 px), the panel's list may grow with the page instead of scrolling.
+          check(r.scrollable === true || (screen === 'canvas' && width === 700), 'the list scrolls (the dock check is not vacuous)');
           check(r.under!.length === 0, `under the dock: ${r.under!.join(' | ')}`);
           check(r.dockIn === true, 'dock inside the card');
           check(r.listRight === true, 'list inside the card');
@@ -285,6 +349,8 @@ run('every chat is the glass card: real Chrome layout', () => {
         } else {
           check(r.panelIn === true, `${tab} panel inside the card`);
           check(r.panelScroll! <= 0, `${tab} panel scrolls sideways ${r.panelScroll}`);
+          check(r.controls! > (tab === 'comments' ? 0 : 3), `${tab}: only ${r.controls} controls (the check is not vacuous)`);
+          check(r.clipped!.length === 0, `${tab}: clipped by the card: ${r.clipped!.join(' | ')}`);
         }
       }
       expect(failures).toEqual([]);

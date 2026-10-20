@@ -265,6 +265,8 @@ aside.ms-chat-col { padding: 12px; background: var(--bg); border: 0; overflow: v
 .ms-chat-card > .ms-tabs.ms-panel { padding: 8px 10px 0; border-bottom-color: var(--glassLine); }
 /* No context row under it here: the composer keeps the card's 14 px from the bottom edge too. */
 .ms-chat-col .ms-chat-card .ms-composer { margin-bottom: 14px; }
+/* A control reached with the keyboard stops 8 px inside its scrolling panel, so its focus ring is never cut by the panel's edge. */
+.ms-chat-card :is(.ms-convo-list, .ms-cv-brief-wrap, .ms-cv-tabbody, .ms-ed-panel) { scroll-padding-block: 8px; }
 /* Decision 1423: where a creative starts after its brief session (no version yet, so no badge). */
 .ms-convo-briefstart > b { font-size: 13px; }
 .ms-convo-briefstart-mark { color: var(--accent); flex: none; }
