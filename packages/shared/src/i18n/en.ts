@@ -243,6 +243,7 @@ export const en = {
       variants: (p: { count: number }) => (p.count === 1 ? '1 variant' : `${p.count} variants`),
     },
     keptYours: (p: { fields: string }) => ` · kept yours: ${p.fields}`,
+    nothingWritten: 'Nothing changed in the brief',
     fieldNames: {
       goal: 'What you want to make',
       message: 'Key message',

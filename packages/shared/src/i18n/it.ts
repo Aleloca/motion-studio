@@ -241,6 +241,7 @@ export const it: Messages = {
       variants: (p) => (p.count === 1 ? '1 variante' : `${p.count} varianti`),
     },
     keptYours: (p) => ` · tenuti i tuoi: ${p.fields}`,
+    nothingWritten: 'Nessun campo del brief è cambiato',
     fieldNames: {
       goal: 'Cosa vuoi realizzare',
       message: 'Messaggio chiave',

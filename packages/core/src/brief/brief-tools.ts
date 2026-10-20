@@ -1,0 +1,81 @@
+import { BRIEF_FIELDS, briefFillSchema, channelName, formatLabel, presetOf, type BriefContext, type BriefField, type BriefForm, type FormatPreset, type Locale } from '@motion-studio/shared';
+import { t } from '../i18n.ts';
+import { CodedError } from '../workspace-store.ts';
+
+/**
+ * Decision 1421: the brief agent's two tools. `list_formats` gives it the catalog so it never guesses an id; `fill_brief`
+ * writes fields of the New creative form, never one the user edited after the agent's last write (spec §5.3). Nothing here
+ * creates anything: the user reviews the form and presses Genera.
+ */
+
+export interface BriefFormatItem { id: string; label: string; channel: string; kind: 'video' | 'image'; width: number; height: number; maxDurationSec?: number }
+
+/** Every preset of the catalog the brief may name, in catalog order; identity presets are left out (their own rules). */
+export function listFormats(presets: readonly FormatPreset[], locale: Locale): { formats: BriefFormatItem[] } {
+  return {
+    formats: presets.filter((p) => !p.identity).map((p) => ({
+      id: p.id, label: formatLabel(p, locale), channel: channelName(p.channel, locale), kind: p.kind, width: p.width, height: p.height,
+      ...(p.maxDurationSec !== undefined ? { maxDurationSec: p.maxDurationSec } : {}),
+    })),
+  };
+}
+
+export interface FillOutcome {
+  form: BriefForm;
+  /** The fields this fill changed, in form order. */
+  written: BriefField[];
+  /** The fields it named that stay the user's. */
+  kept: Array<{ field: BriefField; reason: 'user-edited' }>;
+  /** Every field the agent wrote so far (the form marks them). */
+  agentFields: BriefField[];
+}
+
+const bad = (message: string) => new CodedError(400, message, 'brief-fill-invalid');
+
+/**
+ * Applies the agent's `raw` fill to the session's form. All or nothing: any invalid value refuses the whole call (400,
+ * translated, naming the field). A field in `userEdited` is left as it is and listed in `kept` (a list field counts whole).
+ */
+export function applyFill(s: { form: BriefForm; userEdited: readonly BriefField[]; agentFields: readonly BriefField[]; context: BriefContext }, raw: unknown, presets: readonly FormatPreset[]): FillOutcome {
+  const parsed = briefFillSchema.safeParse(raw);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const field = issue?.path.length ? String(issue.path[0]) : 'fill_brief';
+    throw bad(t().errors.briefBadField({ field, detail: issue?.message ?? 'invalid' }));
+  }
+  const fill = parsed.data;
+  for (const id of fill.formats ?? []) {
+    const preset = presets.find((p) => p.id === presetOf(id));
+    if (!preset) throw bad(t().errors.briefUnknownFormat({ id }));
+    if (preset.identity) throw bad(t().errors.briefIdentityFormat({ id }));
+  }
+  const assets = new Set([...s.context.assets, ...s.form.assets]);
+  for (const a of fill.assets ?? []) if (!assets.has(a)) throw bad(t().errors.briefAssetOutside({ path: a }));
+  const folders = new Set([...s.context.codebases, ...s.form.linkedCodebases].map((c) => c.path));
+  for (const c of fill.linkedCodebases ?? []) if (!folders.has(c.path)) throw bad(t().errors.briefCodebaseOutside({ path: c.path }));
+
+  const form: BriefForm = { ...s.form };
+  const written: BriefField[] = [];
+  const kept: FillOutcome['kept'] = [];
+  for (const field of BRIEF_FIELDS) {
+    if (!Object.hasOwn(fill, field) || fill[field] === undefined) continue;
+    if (s.userEdited.includes(field)) { kept.push({ field, reason: 'user-edited' }); continue; }
+    (form as Record<BriefField, unknown>)[field] = fill[field];
+    written.push(field);
+  }
+  return { form, written, kept, agentFields: BRIEF_FIELDS.filter((f) => s.agentFields.includes(f) || written.includes(f)) };
+}
+
+/** The chat line of a fill (prototype: "Compilato il brief: testi, durata, 3 asset, 2 codebase, 4 formati"). */
+export function fillLine(written: readonly BriefField[], kept: readonly BriefField[], form: BriefForm): string {
+  const m = t().briefSession;
+  const parts: string[] = [];
+  if (written.some((f) => f === 'goal' || f === 'message' || f === 'notes')) parts.push(m.parts.texts);
+  if (written.includes('durationSec')) parts.push(m.parts.length);
+  if (written.includes('assets')) parts.push(m.parts.assets({ count: form.assets.length }));
+  if (written.includes('linkedCodebases')) parts.push(m.parts.codebases({ count: form.linkedCodebases.length }));
+  if (written.includes('formats')) parts.push(m.parts.formats({ count: form.formats.length }));
+  if (written.includes('variants')) parts.push(m.parts.variants({ count: form.variants }));
+  const keptText = kept.length ? m.keptYours({ fields: BRIEF_FIELDS.filter((f) => kept.includes(f)).map((f) => m.fieldNames[f]).join(', ') }) : '';
+  return `${parts.length ? m.filled({ parts: parts.join(', ') }) : m.nothingWritten}${keptText}`;
+}
