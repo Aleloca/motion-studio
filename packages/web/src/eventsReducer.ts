@@ -85,6 +85,9 @@ export function eventsReducer(state: EventsState, msg: EventsAction): EventsStat
     case 'brand':
     case 'library':
       return { ...state, projectTicks: { ...state.projectTicks, [msg.project]: (state.projectTicks[msg.project] ?? 0) + 1 } };
+    case 'brief-session':
+      // Decision 1421: the brief screen follows its session through its own subscription, not the shared state.
+      return state;
   }
 }
 

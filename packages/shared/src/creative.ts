@@ -477,7 +477,9 @@ type ConversationEntryBody =
    */
   | { type: 'user'; at: string; text: string; pins: Pin[]; attachments: string[]; jobId?: string; mode?: 'live' | 'queued' | 'redirect'; clientId?: string; deliveredAt?: string;
     /** Decision 1166: the one request id of a message sent to several variants at once (one entry per variant). */
-    fanout?: string }
+    fanout?: string;
+    /** Decision 1422: in a brief session, the folders and library assets this message added to the session (paths). */
+    context?: { codebases: string[]; assets: string[] } }
   | { type: 'agent'; at: string; jobId: string; event: AgentEvent }
   | { type: 'version'; at: string; n: number; status: 'complete' | 'incomplete' }
   /**
@@ -485,8 +487,9 @@ type ConversationEntryBody =
    * `origin: 'agent'` (decision 917): the line says what the agent did in the app with its tools (absent: the core's own).
    * `keptVersion` (decision 1060): the turn ended without a version because no output changed; version `keptVersion` (the
    * latest) still holds its content. The turn's boundary, like a `version` entry, for the readers that look for one.
+   * `origin: 'brief'` (decision 1423): the line that marks where a creative starts after its brief session's conversation.
    */
-  | { type: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string; origin?: 'agent'; keptVersion?: number }
+  | { type: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string; origin?: 'agent' | 'brief'; keptVersion?: number }
   /**
    * Phase 3 of the single agent (spec §4.1): a group turn settled. `outcome`: per variant it worked on; `usage`: the turn's
    * whole cost (the coordinator's runs and every helper's), when known. Written once, with `group: true`.
