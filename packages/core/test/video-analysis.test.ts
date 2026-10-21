@@ -79,8 +79,9 @@ describe.skipIf(!hasFfmpeg)('VideoAnalysisService', () => {
     expect(s!.body).toContain('- [00:00–00:08] Logo on white');
     const log = await execCommand('git', ['-C', t.projectDir, 'log', '-1', '--format=%s']);
     expect(log.stdout.trim()).toBe(it_.videoAnalysis.commit({ file: 'clip.mp4' }));
-    expect(h.views().filter((m) => m.file === 'assets/clip.mp4').at(-1)!.view.state).toBe('ready');
-    expect((await h.analysisJobs())[0]!.state).toBe('succeeded');
+    // The job settles before its last broadcast reaches the socket: wait for it.
+    await vi.waitFor(() => expect(h.views().filter((m) => m.file === 'assets/clip.mp4').at(-1)!.view.state).toBe('ready'), { timeout: 10_000 });
+    await vi.waitFor(async () => expect((await h.analysisJobs())[0]!.state).toBe('succeeded'), { timeout: 10_000 });
   }, 60_000);
 
   it('speech without a transcription method: none-skipped', async () => {
