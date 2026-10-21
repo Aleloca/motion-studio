@@ -525,11 +525,17 @@ arrives and worked on later together.
     Wanted (user's choices): a separate "Servizi a pagamento" card under Claude's, with each service's real unit (OpenAI image
     tokens, voice characters, seconds of music and sound effects, minutes transcribed) and a cost estimated at list price,
     shown as an estimate; no admin key, no billing APIs.
+    Done (decisions 1606–1625, 1631–1635): every successful paid call (OpenAI images and voice, ElevenLabs voice, music and
+    sound effects, paid transcription) writes a `paid` line in the project's ledger; Settings → Usage has Claude's card (Claude
+    runs only) and a "Servizi a pagamento" card by day, service, kind and project, with units and "≈" list-price costs. The
+    ElevenLabs prices are to be checked against the official list.
 
 67. **The analysed video's player scrolls away.** In the asset panel of an analysed video, the player is at the top and the
     analysis (summary, scenes, moments) below it; clicking a moment far down seeks the player, but the user must scroll
     back up to watch it.
     Wanted: the player stays pinned at the top of the panel while the analysis scrolls under it.
+    Done (decisions 1626–1629): a video's picture and controls are sticky at the top of the panel's body, the picture capped
+    at min(260px, 36vh).
 
 ## Follow-ups found while working on 12–30
 
