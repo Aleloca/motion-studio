@@ -2026,8 +2026,10 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
           services: { openai: 'OpenAI', elevenlabs: 'ElevenLabs' },
           kinds: { images: 'Images', voice: 'Voice', music: 'Music', sfx: 'Sound effects', transcription: 'Transcription' },
           estimate: (p: { cost: string }) => `≈ ${p.cost}`,
+          /** An amount that is partly a guess (a sound effect with no duration asked). */
+          approx: (p: { text: string }) => `≈ ${p.text}`,
           units: {
-            tokens: (p: { n: number; count: string }) => `${p.count} ${p.n === 1 ? 'token' : 'tokens'}`,
+            tokens: (p: { n: number; count: string }) => `${p.count} ${p.n === 1 ? 'image token' : 'image tokens'}`,
             characters: (p: { n: number; count: string }) => `${p.count} ${p.n === 1 ? 'character' : 'characters'}`,
             seconds: (p: { n: number; count: string }) => `${p.count} s`,
             minutes: (p: { n: number; count: string }) => `${p.count} min`,

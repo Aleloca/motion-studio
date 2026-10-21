@@ -601,7 +601,10 @@ function Usage() {
       ) : !report ? (
         <Card className="ms-set-card" data-enter><div className="ms-set-pad ms-set-inline" role="status"><Spinner decorative size={14} />{s.loading}</div></Card>
       ) : report.trackedSince === null ? (
-        <Card className="ms-set-card" data-enter><Empty icon="sparkle" title={s.empty} sub={s.emptySub} /></Card>
+        <>
+          <Card className="ms-set-card" data-enter><Empty icon="sparkle" title={s.empty} sub={s.emptySub} /></Card>
+          {report.paid.calls > 0 ? <PaidUsageCard paid={report.paid} utcOffsetMinutes={report.utcOffsetMinutes} /> : null}
+        </>
       ) : (
         <>
           <UsageCard report={report} />
@@ -701,8 +704,12 @@ function PaidUsageCard({ paid, utcOffsetMinutes }: { paid: PaidUsageReport; utcO
   const p = s.paid;
   const locale = useLocale();
   const today = new Date(Date.now() + utcOffsetMinutes * 60_000).toISOString().slice(0, 10);
-  const estimate = (usd: number) => p.estimate({ cost: formatCost(locale, usd) });
-  const units = (list: PaidUnits[]) => list.map((u) => p.units[u.unit]({ n: u.amount, count: u.unit === 'tokens' ? formatTokens(locale, u.amount) : formatNumber(locale, u.amount, { maximumFractionDigits: 1 }) })).join(' · ');
+  // "≈ $0.42"; a cost under a tenth of a cent already reads "< $0.001".
+  const estimate = (usd: number) => (usd > 0 && usd < 0.001 ? formatCost(locale, usd) : p.estimate({ cost: formatCost(locale, usd) }));
+  const units = (list: PaidUnits[]) => list.map((u) => {
+    const text = p.units[u.unit]({ n: u.amount, count: u.unit === 'tokens' ? formatTokens(locale, u.amount) : formatNumber(locale, u.amount, { maximumFractionDigits: 1 }) });
+    return u.estimated ? p.approx({ text }) : text;
+  }).join(' · ');
   const max = Math.max(0, ...paid.byDay.map((d) => d.costUsd));
   const short = (day: string) => (day === today ? s.today : formatDate(locale, dayDate(day), { weekday: 'short', timeZone: 'UTC' }));
   const long = (day: string) => (day === today ? s.today : formatDate(locale, dayDate(day), { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }));

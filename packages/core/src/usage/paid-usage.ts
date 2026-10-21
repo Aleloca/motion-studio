@@ -2,26 +2,36 @@ import type { PaidProvider, PaidUsage, UsageRecord } from '@motion-studio/shared
 import type { UsageLedger } from './usage-ledger.ts';
 
 /**
- * Report 66 (decisions 1606–1625): every list price the app estimates the paid services with, in USD, checked on 2026-10-22
- * from what was known then (no billing API is ever called). The estimate is shown as such: the bill is on the user's own
- * provider account. A price marked "da verificare" in the decisions log is the closest published figure known.
+ * OpenAI speech per character, from its token prices: $12 per million audio output tokens at about $0.015 a minute is 1,250
+ * audio tokens a minute; a minute of speech is about 1,000 characters (1.25 audio tokens a character); the text input,
+ * $0.60 per million tokens at about 4 characters a token, adds $0.15 per million characters.
+ */
+const OPENAI_TTS_USD_PER_CHAR = (12 / 1e6) * (1250 / 1000) + 0.60 / 1e6 / 4;
+
+/**
+ * Report 66 (decisions 1606–1625 and 1631–1635): every list price the app estimates the paid services with, in USD, checked
+ * in October 2026 against the published figures (no billing API is ever called). The estimate is shown as such: the bill is
+ * on the user's own provider account. A price marked "da verificare" in the decisions log has sources that disagree.
  */
 export const PAID_PRICES = {
   checkedOn: '2026-10-22',
-  /** OpenAI image tokens (gpt-image list prices, per million): text and image input, image output. */
+  /** OpenAI image tokens (gpt-image-2 list prices, per million): text and image input, image output. */
   openaiImages: {
-    model: 'gpt-image-2', usdPerMTokens: { textInput: 5, imageInput: 10, output: 40 },
+    model: 'gpt-image-2', usdPerMTokens: { textInput: 5, imageInput: 8, output: 30 },
     /** Without `usage` in the answer: per picture of 1024×1024 by quality (`auto` counts as high), scaled by its pixels. */
-    usdPerImage1024: { low: 0.011, medium: 0.042, high: 0.167 },
+    usdPerImage1024: { low: 0.006, medium: 0.053, high: 0.211 },
   },
-  /** OpenAI speech: about $0.015 a minute of speech, a minute being about 1,000 characters of input. */
-  openaiTts: { model: 'gpt-4o-mini-tts', usdPerChar: 0.015 / 1000 },
-  /** ElevenLabs speech: Multilingual v2, $0.10 per 1,000 characters (one credit a character). */
-  elevenlabsTts: { model: 'eleven_multilingual_v2', usdPerChar: 0.10 / 1000 },
-  /** ElevenLabs music: per second of music asked. */
-  elevenlabsMusic: { model: 'music_v1', usdPerSec: 0.80 / 60 },
-  /** ElevenLabs sound effects: 40 credits a second; with no duration asked the provider picks one, counted as 5 s (200 credits). */
-  elevenlabsSfx: { model: 'eleven_text_to_sound_v2', usdPerSec: 0.004, defaultSeconds: 5 },
+  /** OpenAI speech (about $0.015 a minute), per character of input: see OPENAI_TTS_USD_PER_CHAR. */
+  openaiTts: { model: 'gpt-4o-mini-tts', usdPerChar: OPENAI_TTS_USD_PER_CHAR },
+  /** ElevenLabs speech: Multilingual v2, $0.08 per 1,000 characters (one credit a character). */
+  elevenlabsTts: { model: 'eleven_multilingual_v2', usdPerChar: 0.08 / 1000 },
+  /** ElevenLabs music: $0.15 a minute of music asked. */
+  elevenlabsMusic: { model: 'music_v1', usdPerSec: 0.15 / 60 },
+  /**
+   * ElevenLabs sound effects: $0.12 a generation, whatever its length. The seconds asked are the unit shown; with no duration
+   * asked the provider picks one, shown as 5 s marked as an estimate.
+   */
+  elevenlabsSfx: { model: 'eleven_text_to_sound_v2', usdPerGeneration: 0.12, defaultSeconds: 5 },
   /** Decision 1509: transcription per minute of audio. OpenAI `whisper-1`; ElevenLabs Scribe v2 at $0.22 an hour. */
   stt: {
     openai: { model: 'whisper-1', usdPerMin: 0.006 },
@@ -73,8 +83,8 @@ export function musicBill(seconds: number): PaidBill {
 
 export function sfxBill(seconds: number | undefined): PaidBill {
   const p = PAID_PRICES.elevenlabsSfx;
-  const s = seconds ?? p.defaultSeconds;
-  return { provider: 'elevenlabs', service: 'sfx', model: p.model, units: { amount: s, unit: 'seconds' }, costUsd: round(s * p.usdPerSec) };
+  const units = seconds === undefined ? { amount: p.defaultSeconds, unit: 'seconds' as const, estimated: true as const } : { amount: seconds, unit: 'seconds' as const };
+  return { provider: 'elevenlabs', service: 'sfx', model: p.model, units, costUsd: p.usdPerGeneration };
 }
 
 /** Transcription, billed on whole minutes (an upper bound of the bill). */

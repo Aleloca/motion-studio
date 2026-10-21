@@ -32,7 +32,8 @@ export type PaidUnit = z.infer<typeof paidUnitSchema>;
  */
 export const paidUsageSchema = z.object({
   provider: paidProviderSchema, service: paidServiceSchema, model: z.string().min(1),
-  units: z.object({ amount: z.number().min(0), unit: paidUnitSchema }),
+  /** `estimated`: the amount is a guess (a sound effect with no duration asked: the provider picks it). */
+  units: z.object({ amount: z.number().min(0), unit: paidUnitSchema, estimated: z.literal(true).optional() }),
 });
 export type PaidUsage = z.infer<typeof paidUsageSchema>;
 
@@ -78,7 +79,8 @@ export function addTokens(a: TokenCounts, b: TokenCounts): TokenCounts {
   return { input: a.input + b.input, output: a.output + b.output, cacheRead: a.cacheRead + b.cacheRead, cacheWrite: a.cacheWrite + b.cacheWrite };
 }
 
-export interface PaidUnits { unit: PaidUnit; amount: number }
+/** `estimated`: part of the amount is a guess (see `paidUsageSchema`). */
+export interface PaidUnits { unit: PaidUnit; amount: number; estimated?: true }
 /**
  * Report 66: the paid services of the range, apart from Claude's runs. Every cost is the app's estimate at list price.
  * `units`: summed per unit (a provider may measure in several, e.g. OpenAI tokens, characters and minutes).

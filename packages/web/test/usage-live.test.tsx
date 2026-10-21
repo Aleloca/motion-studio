@@ -258,6 +258,9 @@ describe('Tokens button and formats', () => {
     expect(formatCost('en', 0.42)).toBe('$0.42');
     expect(formatCost('en', 0)).toBe('$0.00');
     expect(formatCost('it', 0.05)).toMatch(/^0,050\s\$$/);
+    // Report 66: a positive cost under a tenth of a cent is never "$0.000".
+    expect(formatCost('en', 0.0004)).toBe('< $0.001');
+    expect(formatCost('it', 0.0004)).toMatch(/^< 0,001\s\$$/);
   });
 });
 

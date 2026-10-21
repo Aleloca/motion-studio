@@ -936,7 +936,7 @@ describe('paid usage in the ledger (report 66)', () => {
       ['paid', 'j1', 'c1', { provider: 'elevenlabs', service: 'sfx', model: 'eleven_text_to_sound_v2', units: { amount: 2, unit: 'seconds' } }],
       ['paid', 'j1', 'c1', { provider: 'elevenlabs', service: 'music', model: 'music_v1', units: { amount: 20, unit: 'seconds' } }],
     ]);
-    expect(got.map((l) => l.costUsd)).toEqual([0.042, 0.00015, 0.0004, 0.008, expect.closeTo(0.266667, 6)]);
+    expect(got.map((l) => l.costUsd)).toEqual([0.053, expect.closeTo(0.0001515, 6), 0.00032, 0.12, 0.05]);
     expect(got.every((l) => JSON.stringify(l.tokens) === JSON.stringify({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }))).toBe(true);
   });
 

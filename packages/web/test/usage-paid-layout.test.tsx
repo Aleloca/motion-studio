@@ -22,14 +22,14 @@ const report: UsageReport = {
     byDay: days.map((day, i) => ({ day, costUsd: [0.12, 0, 0.4, 0, 0.05, 0.3, 0.4][i]!, calls: [1, 0, 4, 0, 1, 3, 5][i]! })),
     byService: [
       { provider: 'openai', costUsd: 0.86, calls: 9, units: [{ unit: 'tokens', amount: 12_400 }, { unit: 'characters', amount: 3210 }, { unit: 'minutes', amount: 2 }] },
-      { provider: 'elevenlabs', costUsd: 0.41, calls: 5, units: [{ unit: 'characters', amount: 1840 }, { unit: 'seconds', amount: 45 }] },
+      { provider: 'elevenlabs', costUsd: 0.41, calls: 5, units: [{ unit: 'characters', amount: 1840 }, { unit: 'seconds', amount: 22, estimated: true }] },
     ],
     byKind: [
       { service: 'images', costUsd: 0.78, calls: 5, units: [{ unit: 'tokens', amount: 12_400 }] },
       { service: 'voice', costUsd: 0.23, calls: 5, units: [{ unit: 'characters', amount: 5050 }] },
-      { service: 'music', costUsd: 0.2, calls: 1, units: [{ unit: 'seconds', amount: 15 }] },
-      { service: 'sfx', costUsd: 0.12, calls: 2, units: [{ unit: 'seconds', amount: 30 }] },
-      { service: 'transcription', costUsd: 0.012, calls: 1, units: [{ unit: 'minutes', amount: 2 }] },
+      { service: 'music', costUsd: 0.0375, calls: 1, units: [{ unit: 'seconds', amount: 15 }] },
+      { service: 'sfx', costUsd: 0.24, calls: 2, units: [{ unit: 'seconds', amount: 7, estimated: true }] },
+      { service: 'transcription', costUsd: 0.0004, calls: 1, units: [{ unit: 'minutes', amount: 2 }] },
     ],
     byProject: [{ slug: 'acme', name: 'Acme Corporation — campagna autunno', costUsd: 1.1, calls: 11 }, { slug: 'beta', name: 'Beta', costUsd: 0.17, calls: 3 }],
   },

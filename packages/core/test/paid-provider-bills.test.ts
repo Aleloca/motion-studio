@@ -12,11 +12,11 @@ describe('paid provider bills', () => {
   it('images: the tokens of `usage` when the answer has it', async () => {
     const r = await generateImage({ fetch: fetchOf(image({ usage: { input_tokens: 50, output_tokens: 1000, total_tokens: 1050, input_tokens_details: { text_tokens: 50, image_tokens: 0 } } })), apiKey: 'sk' }, { prompt: 'p', width: 1024, height: 1024, quality: 'low' });
     expect(r.bill).toMatchObject({ provider: 'openai', service: 'images', units: { amount: 1050, unit: 'tokens' } });
-    expect(r.bill.costUsd).toBeCloseTo((50 * 5 + 1000 * 40) / 1e6, 9);
+    expect(r.bill.costUsd).toBeCloseTo((50 * 5 + 1000 * 30) / 1e6, 9);
   });
   it('images: a price per picture by quality without `usage`', async () => {
     const r = await generateImage({ fetch: fetchOf(image({})), apiKey: 'sk' }, { prompt: 'p', width: 1024, height: 1024, quality: 'low' });
-    expect(r.bill).toMatchObject({ units: { amount: 1, unit: 'images' }, costUsd: 0.011 });
+    expect(r.bill).toMatchObject({ units: { amount: 1, unit: 'images' }, costUsd: 0.006 });
   });
   it('OpenAI voice: the characters of the input', async () => {
     const r = await openaiSpeech({ fetch: fetchOf(audio()), apiKey: 'sk' }, { text: 'Ciao mondo', format: 'mp3' });
@@ -33,6 +33,6 @@ describe('paid provider bills', () => {
   it('music: the seconds asked; sound effects: the seconds asked or the default', async () => {
     expect((await elevenlabsMusic({ fetch: fetchOf(audio()), apiKey: 'xi' }, { prompt: 'p', durationSec: 45 })).bill).toMatchObject({ service: 'music', units: { amount: 45, unit: 'seconds' } });
     expect((await elevenlabsSoundEffect({ fetch: fetchOf(audio()), apiKey: 'xi' }, { prompt: 'p', durationSec: 2 })).bill).toMatchObject({ service: 'sfx', units: { amount: 2, unit: 'seconds' } });
-    expect((await elevenlabsSoundEffect({ fetch: fetchOf(audio()), apiKey: 'xi' }, { prompt: 'p' })).bill.units).toEqual({ amount: 5, unit: 'seconds' });
+    expect((await elevenlabsSoundEffect({ fetch: fetchOf(audio()), apiKey: 'xi' }, { prompt: 'p' })).bill.units).toEqual({ amount: 5, unit: 'seconds', estimated: true });
   });
 });

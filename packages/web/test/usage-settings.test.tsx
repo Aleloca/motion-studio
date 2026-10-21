@@ -46,8 +46,8 @@ const full = (): UsageReport => ({
       { service: 'images', costUsd: 0.37, calls: 3, units: [{ unit: 'tokens', amount: 12_400 }] },
       { service: 'voice', costUsd: 0.05, calls: 1, units: [{ unit: 'characters', amount: 3210 }] },
       { service: 'music', costUsd: 0.19, calls: 1, units: [{ unit: 'seconds', amount: 45 }] },
-      { service: 'sfx', costUsd: 0, calls: 0, units: [] },
-      { service: 'transcription', costUsd: 0.007, calls: 1, units: [{ unit: 'minutes', amount: 2 }] },
+      { service: 'sfx', costUsd: 0.12, calls: 1, units: [{ unit: 'seconds', amount: 5, estimated: true }] },
+      { service: 'transcription', costUsd: 0.0004, calls: 1, units: [{ unit: 'minutes', amount: 2 }] },
     ],
     byProject: [{ slug: 'acme', name: 'Acme', costUsd: 0.62, calls: 6 }, { slug: 'beta', name: 'Beta', costUsd: 0, calls: 0 }],
   },
@@ -147,14 +147,22 @@ describe('Settings · Usage', () => {
     expect(bars.map((b) => b.style.height)).toEqual(['', '', '62.5%', '', '', '31.25%', '100%']);
     expect(within(card).getByRole('table', { name: 'Estimated cost per day, last 7 days' })).toBeTruthy();
     const services = within(card).getByRole('list', { name: 'By service' });
-    expect(within(services).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['OpenAI12.4k tokens · 3,210 characters≈ $0.42', 'ElevenLabs45 s · 2 min≈ $0.20']);
+    expect(within(services).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['OpenAI12.4k image tokens · 3,210 characters≈ $0.42', 'ElevenLabs45 s · 2 min≈ $0.20']);
     const kinds = within(card).getByRole('list', { name: 'By kind' });
-    expect(within(kinds).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Images12.4k tokens≈ $0.37', 'Voice3,210 characters≈ $0.050', 'Music45 s≈ $0.19', 'Transcription2 min≈ $0.007']);
+    expect(within(kinds).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Images12.4k image tokens≈ $0.37', 'Voice3,210 characters≈ $0.050', 'Music45 s≈ $0.19', 'Sound effects≈ 5 s≈ $0.12', 'Transcription2 min< $0.001']);
     const projects = within(card).getByRole('list', { name: 'By project' });
     expect(within(projects).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Acme≈ $0.62']);
     expect(within(card).getByText(/estimated at list prices/)).toBeTruthy();
     // The Claude card keeps its own lists.
     expect(container.querySelectorAll('.ms-usage-card')).toHaveLength(2);
+  });
+
+  it('with paid calls and no Claude run yet: Claude\'s empty state, then the paid card', async () => {
+    report = { ...full(), trackedSince: null, total: { tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, costUsd: null },
+      byDay: days.map((day) => ({ day, tokens: 0, costUsd: null })), byProject: [], byKind: [] };
+    page();
+    expect(await screen.findByText('Usage appears here after your first generation')).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Paid services · last 7 days' }).querySelector('.ms-usage-total')!.textContent).toBe('≈ $0.62');
   });
 
   it('says plainly when no paid service was used in the 7 days', async () => {
