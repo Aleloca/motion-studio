@@ -150,6 +150,8 @@ export interface ConversationProps {
   intro?: ReactNode;
   /** The queue's only operation (the brief session's queue cannot be edited, reordered or run by hand). */
   queueOps?: QueueOps;
+  /** The caller's own cards at the end of the flow, after the approvals (the brief's video analysis questions, spec 1479). */
+  cards?: ReadonlyArray<{ key: string; node: ReactNode }>;
 }
 
 /** Decision 1422: the routes of a chat that is not a creative's (the brief session). */
@@ -194,6 +196,8 @@ type Item =
   | { key: string; kind: 'briefStart'; at: string; text: string }
   /** Decision 1422: the caller's first agent bubble (not an entry). */
   | { key: string; kind: 'intro'; node: ReactNode }
+  /** The caller's card (a video analysis question in the brief's chat). */
+  | { key: string; kind: 'card'; node: ReactNode }
   /** `agent`: a line about something the agent did in the app with its tools (decision 917). */
   | { key: string; kind: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string; agent?: boolean; variant?: VariantId }
   | { key: string; kind: 'approval'; shown: ShownApproval }
@@ -293,7 +297,7 @@ function turnItems(interruptedText: string, jobId: string, events: { at: string;
  * only in "Activity details", the job's approvals in the flow, typing dots while the agent works (T9), and the
  * composer with the pending comment chips and ⌘↵.
  */
-export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, onSelectVersion, versionExtra, versionNote, versionSummary, snapshots, appliesTo, brief, onBriefSaved, queued, onQueueChanged, variants, self, onOpenVariant, memberJobs, single, otherPins, onRemoveOtherPin, usageOf, transport, composerTop, composerTools, composerBelow, composerLabel, placeholder, draft, extraContent, composerDisabled, intro, queueOps }: ConversationProps) {
+export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, onSelectVersion, versionExtra, versionNote, versionSummary, snapshots, appliesTo, brief, onBriefSaved, queued, onQueueChanged, variants, self, onOpenVariant, memberJobs, single, otherPins, onRemoveOtherPin, usageOf, transport, composerTop, composerTools, composerBelow, composerLabel, placeholder, draft, extraContent, composerDisabled, intro, queueOps, cards }: ConversationProps) {
   const t = useT();
   const c = t.web.chat;
   const working = active(job);
@@ -538,11 +542,12 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
     }
     out.push(...approvalsOf(null));
     out.push(...outItems);
+    for (const c of cards ?? []) out.push({ key: `card-${c.key}`, kind: 'card', node: c.node });
     const waiting = shownApprovals.some((s) => !s.leaving && s.approval.jobId === job?.id);
     if (working && !waiting) out.push({ key: 'typing', kind: 'typing' });
     if (intro) out.unshift({ key: 'intro', kind: 'intro', node: intro });
     return out;
-  }, [entries, job, live, working, unfolded, detailsOpen, helpersOpen, shownApprovals, ctx, outbox, queued, t, memberJobs, intro]);
+  }, [entries, job, live, working, unfolded, detailsOpen, helpersOpen, shownApprovals, ctx, outbox, queued, t, memberJobs, intro, cards]);
 
   // Items present at the first render appear with the panel; later ones enter from +8 px (T9).
   const mounted = useRef(false);
@@ -855,6 +860,8 @@ function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetai
           <span className="ms-convo-version-summary">{item.text}</span>
         </div>
       );
+    case 'card':
+      return <div className="ms-convo-card">{item.node}</div>;
     case 'intro':
       return (
         <article className="ms-msg" aria-label={c.agent}>

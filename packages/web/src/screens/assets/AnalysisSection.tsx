@@ -3,6 +3,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { ApiError, api } from '../../api.ts';
 import { useT } from '../../i18n.tsx';
 import { Button, Icon, Pill, Tag, Textarea, clockText, toast, type PillTone } from '../../ui/index.ts';
+import { AnalysisQuestionDialog } from '../../components/TranscriptionDialog.tsx';
 import { message } from '../common.tsx';
 import './analysis.css';
 
@@ -15,22 +16,23 @@ export interface AnalysisSectionProps {
   onSeek(sec: number): void;
   /** The view after an action (Analizza, Modifica…), before the live message arrives. */
   onView?(view: VideoAnalysisView): void;
-  /** A held analysis's question (long video, transcription): the screen opens its dialog. */
-  onAnswer?(view: VideoAnalysisView): void;
 }
 
 /**
  * Spec §9: a video's Analisi in the library's detail panel. State pill; when the analysis exists, the summary, the scenes
  * (with their on-screen text and speech), the usable moments, the transcript and the tags, each timed row a button that seeks
  * the player. A body the user reshaped (no `## Timeline`) is shown as it is. Analizza / Rianalizza (an edited analysis asks
- * first, decision 1480), Modifica (the body as text; the header stays the core's), Ferma while it is queued or running.
+ * first, decision 1480), Modifica (the body as text; the header stays the core's), Ferma while it is queued or running, and
+ * "Scegli…" for a held analysis's question (its dialog).
  */
-export function AnalysisSection({ slug, view, onSeek, onView, onAnswer }: AnalysisSectionProps) {
+export function AnalysisSection({ slug, view, onSeek, onView }: AnalysisSectionProps) {
   const t = useT();
   const v = t.videoAnalysis;
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [draft, setDraft] = useState<string | null>(null);
+  // Spec §6: a held analysis's question (long video, transcription) opens its dialog from here.
+  const [asking, setAsking] = useState(false);
   const edited = view.header?.edited === true;
   const fail = (e: unknown) => toast.show(v.actionFailed({ detail: message(e) }));
   const act = async (fn: () => Promise<VideoAnalysisView | void>) => {
@@ -69,7 +71,7 @@ export function AnalysisSection({ slug, view, onSeek, onView, onAnswer }: Analys
         {edited ? <span className="ms-lib-faint ms-lib-small">{v.edited}</span> : null}
         <span className="ms-ana-actions">
           {active ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act(async () => { await api.cancelVideoAnalysis(slug, view.file); })}>{v.stop}</Button> : null}
-          {view.state === 'waiting' && view.pending && onAnswer ? <Button size="sm" variant="ink" onClick={() => onAnswer(view)}>{v.answer}</Button> : null}
+          {view.state === 'waiting' && view.pending ? <Button size="sm" variant="ink" onClick={() => setAsking(true)}>{v.answer}</Button> : null}
           {view.state === 'ready' ? <Button size="sm" variant="outline" loading={busy && !confirm} disabled={busy || draft !== null} onClick={reanalyze}><Icon name="refresh" size={12} />{v.reanalyze}</Button>
             : view.state === 'none' || view.state === 'error' || view.state === 'stale'
               ? <Button size="sm" variant="outline" loading={busy && !confirm} disabled={busy || draft !== null} onClick={() => (view.state === 'stale' && edited ? setConfirm(true) : void analyze(false))}><Icon name="sparkle" size={12} />{view.state === 'none' ? v.analyze : v.reanalyze}</Button>
@@ -98,6 +100,7 @@ export function AnalysisSection({ slug, view, onSeek, onView, onAnswer }: Analys
           </div>
         </div>
       ) : hasBody ? <AnalysisBodyView body={view.body!} header={view.header} onSeek={onSeek} /> : null}
+      <AnalysisQuestionDialog slug={slug} view={view} open={asking} onClose={() => setAsking(false)} />
     </section>
   );
 }

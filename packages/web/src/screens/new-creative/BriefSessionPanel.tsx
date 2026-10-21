@@ -1,7 +1,8 @@
-import type { AssetEntry, BriefContext, BriefField, BriefForm, JobSummary, QueuedRequest } from '@motion-studio/shared';
+import type { AssetEntry, BriefContext, BriefField, BriefForm, JobSummary, QueuedRequest, VideoAnalysisView } from '@motion-studio/shared';
 import { useMemo, useRef, useState, type Ref } from 'react';
 import { api } from '../../api.ts';
 import { Conversation, type ConversationTransport } from '../../components/Conversation.tsx';
+import { TranscriptionCard } from '../../components/TranscriptionCard.tsx';
 import { message as errText } from '../../errors.ts';
 import type { EventsState } from '../../eventsReducer.ts';
 import { useT } from '../../i18n.tsx';
@@ -33,6 +34,8 @@ export interface BriefSessionPanelProps {
   className?: string;
   /** Opens a creative the session half moved into (decision 1423, `handedOffTo`). */
   onOpenCreative?(creative: string): void;
+  /** Spec 1479: the held analyses of this brief's videos, asked as cards in the chat. */
+  analysisQuestions?: VideoAnalysisView[];
 }
 
 const ACTIVE = new Set<JobSummary['state']>(['queued', 'running']);
@@ -41,7 +44,7 @@ const ACTIVE = new Set<JobSummary['state']>(['queued', 'running']);
  * Decisions 1412–1414: the brief session as a floating glass card: a header with its state, the session's chat
  * (`<Conversation>` with the brief's transport), the "+" menu and the pins inside the composer, the context row below.
  */
-export function BriefSessionPanel({ slug, projectName, brief, live, snapshot, onCarried, draft, library, onRetryLibrary, onLibraryChanged, hidden, panelRef, className, onOpenCreative }: BriefSessionPanelProps) {
+export function BriefSessionPanel({ slug, projectName, brief, live, snapshot, onCarried, draft, library, onRetryLibrary, onLibraryChanged, hidden, panelRef, className, onOpenCreative, analysisQuestions }: BriefSessionPanelProps) {
   const t = useT();
   const b = t.web.briefSession;
   const [pins, setPins] = useState<ContextPin[]>([]);
@@ -132,6 +135,8 @@ export function BriefSessionPanel({ slug, projectName, brief, live, snapshot, on
     return entry && (entry.kind === 'image' || entry.kind === 'svg') ? api.projectFileUrl(slug, path) : null;
   };
   const pinnedAssets = pins.filter((p) => p.kind === 'asset').map((p) => p.path);
+  // A card leaves once its analysis no longer asks (the live view); while Whisper installs the analysis still asks.
+  const cards = useMemo(() => (analysisQuestions ?? []).map((v) => ({ key: v.file, node: <TranscriptionCard slug={slug} view={v} /> })), [analysisQuestions, slug]);
 
   return (
     <aside ref={panelRef} className={cx('ms-brief-panel ms-chat-card', className)} aria-label={b.panelLabel} aria-hidden={hidden || undefined} inert={hidden || undefined}>
@@ -169,6 +174,7 @@ export function BriefSessionPanel({ slug, projectName, brief, live, snapshot, on
         transport={transport} draft={draft} composerLabel={b.composerLabel} placeholder={asked ? b.placeholderFollowUp : b.placeholderFirst}
         extraContent={pins.length > 0} composerDisabled={brief.status === 'failed'}
         intro={b.intro}
+        cards={cards}
         composerTop={
           <>
             {folderOpen ? (
