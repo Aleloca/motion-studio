@@ -126,7 +126,7 @@ export const STAGING_WAIT_MS = 5000;
  */
 export function stagingEncodeLimitMs(durationSec: number | null | undefined): number {
   const cap = 20 * 60_000;
-  return typeof durationSec === 'number' && Number.isFinite(durationSec) && durationSec > 0 ? Math.min(cap, 60_000 + durationSec * 10_000) : cap;
+  return typeof durationSec === 'number' && Number.isFinite(durationSec) && durationSec > 0 ? Math.min(cap, Math.ceil(60_000 + durationSec * 10_000)) : cap;
 }
 
 export interface VersionFormatRef { projectDir: string; creativeDir: string; creativeSlug: string; n: number }
@@ -723,7 +723,8 @@ export class PreviewService {
     // Its own time limit, from the video's duration (decisions log 265): an encode that runs away never holds the session's
     // staging (and a save waiting on it) for long.
     const limitMs = (this.deps.stagingEncodeLimitMs ?? stagingEncodeLimitMs)(asset.durationSec);
-    const limit = AbortSignal.timeout(limitMs);
+    // Whole milliseconds: AbortSignal.timeout throws on a fractional delay (decision 1560).
+    const limit = AbortSignal.timeout(Math.ceil(limitMs));
     try {
       // Stops at app close, when this session ends (revoke, eviction, expiry) and at the time limit.
       prepared = await this.deps.normalizer.prepare({ projectDir: s.projectDir, compDir: staging.root, composition: c, signal: AbortSignal.any([this.closing.signal, s.ended.signal, limit]) });

@@ -1,4 +1,4 @@
-import type { AssetEntry, VideoAnalysisView } from '@motion-studio/shared';
+import type { AssetEntry, JobWaitReason, VideoAnalysisView } from '@motion-studio/shared';
 import { useContext, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { api } from '../../api.ts';
 import { formatNumber, formatWhen, useLocale, useT } from '../../i18n.tsx';
@@ -16,10 +16,12 @@ export interface DetailProps {
   onClose(): void; onSaved(entry: AssetEntry): void; onRenamed(from: string, entry: AssetEntry): void; onDescribe(): void; onUse(): void; onDelete(): void;
   /** A video's analysis (spec §9), when the library knows it. */
   analysis?: VideoAnalysisView;
+  /** Why the analysis's queued job waits (its live job). */
+  analysisWaitReason?: JobWaitReason | undefined;
 }
 
 /** The detail panel (prototype AssetDetail, point 19): enters from +16 px; description and tag chips save themselves. */
-export function AssetDetail({ slug, asset: x, describing, busy, onClose, onSaved, onRenamed, onDescribe, onUse, onDelete, analysis }: DetailProps) {
+export function AssetDetail({ slug, asset: x, describing, busy, onClose, onSaved, onRenamed, onDescribe, onUse, onDelete, analysis, analysisWaitReason }: DetailProps) {
   const t = useT();
   const locale = useLocale();
   const a = t.web.library.assets;
@@ -141,7 +143,7 @@ export function AssetDetail({ slug, asset: x, describing, busy, onClose, onSaved
               : <Thumb slug={slug} asset={x} big />}
         </div>
         {x.kind === 'video' && analysisView ? (
-          <AnalysisSection slug={slug} view={analysisView} onSeek={(sec) => player.current?.seek(sec)} onView={setActedView} />
+          <AnalysisSection slug={slug} view={analysisView} waitReason={analysisWaitReason} onSeek={(sec) => player.current?.seek(sec)} onView={setActedView} />
         ) : null}
         <div className="ms-adetail-field">
           <div className="ms-lib-row">

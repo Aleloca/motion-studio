@@ -170,6 +170,8 @@ export interface ServerDeps {
   chromeInstaller?: ChromeInstaller | null;
   /** The ffmpeg runner of the video analyses (default: the system's). Test seam. */
   analysisFfExec?: CommandExec;
+  /** The base time limit of the video analyses' audio check (default 60 s). Test seam. */
+  analysisPrecheckMaxMs?: number;
   /** Test seam: told the video analysis service once it exists. */
   onVideoAnalyses?: (s: VideoAnalysisService) => void;
   /** Spec §7: the folder of the bundled `whisper-cli` (and its VAD model); absent: none bundled. */
@@ -427,6 +429,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     queue, launcher, media, git: deps.git, broadcast: (msg) => hub.broadcast(msg), transcriber: transcription,
     model: async () => (await requireWorkspace().readSettings()).model,
     ...(deps.analysisFfExec ? { ffExec: deps.analysisFfExec } : {}),
+    ...(deps.analysisPrecheckMaxMs !== undefined ? { precheckMaxMs: deps.analysisPrecheckMaxMs } : {}),
   });
   turns.videoAnalyses = analyses;
   briefs.videoAnalyses = analyses;

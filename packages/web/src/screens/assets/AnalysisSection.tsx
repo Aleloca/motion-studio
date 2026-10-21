@@ -1,4 +1,4 @@
-import { parseAnalysisBody, type AnalysisBody, type SidecarHeader, type VideoAnalysisState, type VideoAnalysisView } from '@motion-studio/shared';
+import { parseAnalysisBody, type AnalysisBody, type JobWaitReason, type SidecarHeader, type VideoAnalysisState, type VideoAnalysisView } from '@motion-studio/shared';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ApiError, api } from '../../api.ts';
 import { useT } from '../../i18n.tsx';
@@ -12,6 +12,8 @@ const TONE: Record<VideoAnalysisState, PillTone> = { none: 'neutral', queued: 'n
 export interface AnalysisSectionProps {
   slug: string;
   view: VideoAnalysisView;
+  /** Why its queued job waits (the live job's `waitReason`): the audio check has its own hint (report 63). */
+  waitReason?: JobWaitReason | undefined;
   /** Seeks the player above to a time in seconds (a row of the timeline, the transcript or the moments). */
   onSeek(sec: number): void;
   /** The view after an action (Analizza, Modifica…), before the live message arrives. */
@@ -25,7 +27,7 @@ export interface AnalysisSectionProps {
  * first, decision 1480), Modifica (the body as text; the header stays the core's), Ferma while it is queued or running, and
  * "Scegli…" for a held analysis's question (its dialog).
  */
-export function AnalysisSection({ slug, view, onSeek, onView }: AnalysisSectionProps) {
+export function AnalysisSection({ slug, view, waitReason, onSeek, onView }: AnalysisSectionProps) {
   const t = useT();
   const v = t.videoAnalysis;
   const [busy, setBusy] = useState(false);
@@ -59,7 +61,7 @@ export function AnalysisSection({ slug, view, onSeek, onView }: AnalysisSectionP
   const active = view.state === 'queued' || view.state === 'running';
   const hasBody = view.body !== null;
   const hint = view.state === 'none' ? v.hints.none
-    : view.state === 'queued' ? v.hints.queued
+    : view.state === 'queued' ? (waitReason === 'transcription-check' ? v.hints.checkingAudio : v.hints.queued)
       : view.state === 'running' ? v.hints.running
         : view.state === 'stale' ? (edited ? v.hints.staleEdited : v.hints.stale)
           : view.state === 'waiting' && view.pending ? (view.pending.kind === 'long' ? v.hints.long : v.hints.transcription)

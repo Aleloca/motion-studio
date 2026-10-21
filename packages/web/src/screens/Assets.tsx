@@ -389,7 +389,8 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
         {detail ? (
           <AssetDetail key={detail.file} slug={slug} asset={detail} describing={describing.has(detail.file)} busy={busy}
             onClose={() => setOpen(null)} onSaved={saved} onRenamed={renamed} onDescribe={() => void describe([detail.file])}
-            onUse={() => useInCreative([detail.file])} onDelete={() => void remove([detail.file])} analysis={analyses.byFile[`assets/${detail.file}`]} />
+            onUse={() => useInCreative([detail.file])} onDelete={() => void remove([detail.file])} analysis={analyses.byFile[`assets/${detail.file}`]}
+            analysisWaitReason={live.jobs[analyses.byFile[`assets/${detail.file}`]?.jobId ?? '']?.waitReason} />
         ) : null}
       </div>
       {sel.size ? (
