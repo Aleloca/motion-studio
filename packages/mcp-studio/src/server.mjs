@@ -66,6 +66,24 @@ const TOOLS = [
     variants: { type: 'integer', minimum: 1, maximum: 5, description: 'Only when the user asks for variants' },
     reclaim: { type: 'array', items: { enum: ['goal', 'message', 'durationSec', 'assets', 'linkedCodebases', 'notes', 'formats', 'variants'] }, description: 'Fields the user edited that their latest message explicitly asks you to rewrite; never on your own initiative' },
   }, additionalProperties: false, minProperties: 1 } },
+  // Decision 1468: a video analysis run writes its description of the frames it was given; the core checks the times and frames.
+  { name: 'write_video_analysis', description: 'Video analysis jobs only: writes the analysis of the frames you were given. Give exactly the fields your instructions ask for; times are seconds from the start of the video. Calling it again replaces the previous write.', inputSchema: { type: 'object', properties: {
+    summary: str('3 to 5 lines: what the video is, its style, what it is good for in a motion graphic', { minLength: 1, maxLength: 2000 }),
+    timeline: { type: 'array', maxItems: 200, description: 'The scenes in order', items: { type: 'object', properties: {
+      from: { type: 'number', minimum: 0 }, to: { type: 'number', minimum: 0 },
+      onScreen: str('What is on screen', { minLength: 1, maxLength: 1000 }),
+      onScreenText: { type: 'array', maxItems: 20, items: { type: 'string', maxLength: 300 }, description: 'Text visible on screen, verbatim' },
+      frame: str('The file name of the frame that shows the scene best, e.g. f-00012000.jpg'),
+    }, required: ['from', 'to', 'onScreen'], additionalProperties: false } },
+    usableMoments: { type: 'array', maxItems: 30, description: 'Clips worth reusing, with exact in/out times', items: { type: 'object', properties: {
+      from: { type: 'number', minimum: 0 }, to: { type: 'number', minimum: 0 }, why: str('Why it is worth reusing', { minLength: 1, maxLength: 300 }),
+    }, required: ['from', 'to', 'why'], additionalProperties: false } },
+    look: { type: 'object', properties: {
+      colours: { type: 'array', maxItems: 12, items: { type: 'string', pattern: '^#[0-9a-fA-F]{6}$' }, description: 'Dominant colours as #rrggbb' },
+      typography: str('Typography seen', { maxLength: 300 }), framing: str('Framing: screen recording, talking head, b-roll…', { maxLength: 300 }), audio: str('Audio character: voice, music, silence', { maxLength: 300 }),
+    }, required: ['colours', 'typography', 'framing', 'audio'], additionalProperties: false },
+    tags: { type: 'array', maxItems: 30, items: { type: 'string', minLength: 1, maxLength: 40 } },
+  }, additionalProperties: false, minProperties: 1 } },
   { name: 'generate_image', description: 'Generates or edits an image with gpt-image-2 (paid; may ask the user for confirmation). Returns the path of the file saved in the assets.', inputSchema: { type: 'object', properties: { prompt: str('Description'), width: { type: 'integer' }, height: { type: 'integer' }, quality: { enum: ['low', 'medium', 'high', 'auto'] }, background: { enum: ['transparent', 'opaque', 'auto'] }, references: { type: 'array', items: { type: 'string' }, maxItems: 16, description: 'Project images to use as references' }, name: str('File name (optional)') }, required: ['prompt', 'width', 'height'] } },
   { name: 'tts', description: 'Generates a voice-over (paid; may ask for confirmation). Returns the path of the audio file.', inputSchema: { type: 'object', properties: { text: str('Text to read'), provider: { enum: ['openai', 'elevenlabs'] }, voice: str('Voice: an OpenAI voice name, or an ElevenLabs voice id from list_voices (then provider \'elevenlabs\')'), instructions: str('Tone and style (OpenAI only)'), format: { enum: ['mp3', 'wav'] }, name: str('File name (optional)') }, required: ['text'] } },
   { name: 'sound_effect', description: 'Generates a sound effect with ElevenLabs (paid; may ask for confirmation). Returns the path of the audio file saved in the assets. Leave the duration out to let the service choose.', inputSchema: { type: 'object', properties: { prompt: str('Description of the sound (up to 1000 characters)'), durationSec: { type: 'number', minimum: 0.5, maximum: 30 }, loop: { type: 'boolean', description: 'Seamless loop' }, promptInfluence: { type: 'number', minimum: 0, maximum: 1 }, name: str('File name (optional)') }, required: ['prompt'] } },

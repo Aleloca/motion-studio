@@ -135,6 +135,21 @@ describe('mcp-studio server', () => {
     await rpc(5, 'tools/call', { name: 'list_formats', arguments: {} });
     expect(calls.at(-1)).toMatchObject({ url: '/api/bridge/list_formats' });
   });
+  it('lists write_video_analysis alone for a video analysis and forwards it (decision 1468)', async () => {
+    child.kill();
+    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,write_video_analysis' });
+    const tools = (await rpc(3, 'tools/list')).result.tools as Array<{ name: string; description: string; inputSchema: { additionalProperties?: boolean; minProperties?: number; properties: Record<string, unknown> } }>;
+    expect(tools.map((t) => t.name)).toEqual(['approve', 'report_progress', 'write_video_analysis']);
+    const w = tools.find((t) => t.name === 'write_video_analysis')!;
+    expect(w.description).toMatch(/^Video analysis jobs only: writes the analysis of the frames you were given/);
+    expect(w.inputSchema).toMatchObject({ additionalProperties: false, minProperties: 1 });
+    expect(Object.keys(w.inputSchema.properties)).toEqual(['summary', 'timeline', 'usableMoments', 'look', 'tags']);
+    await rpc(4, 'tools/call', { name: 'write_video_analysis', arguments: { tags: ['demo'] } });
+    expect(calls.at(-1)).toMatchObject({ url: '/api/bridge/write_video_analysis', body: { tags: ['demo'] } });
+    child.kill();
+    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,fill_brief' });
+    expect(((await rpc(5, 'tools/list')).result.tools as Array<{ name: string }>).map((t) => t.name)).not.toContain('write_video_analysis');
+  });
   it('describes every tool in English', async () => {
     child.kill();
     startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,validate_composition,preview_frames,read_brand_kit,generate_image,tts,stock_search,stock_download,fonts_fetch,download_file,inspect_site_fonts,list_formats,fill_brief' });

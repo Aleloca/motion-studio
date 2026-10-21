@@ -76,6 +76,7 @@ import { BriefSessionStore } from '../brief/brief-session-store.ts';
 import { BriefSessionService } from '../brief/brief-session.ts';
 import { registerBriefRoutes } from './brief-routes.ts';
 import { SettingsHoldStore } from '../settings-hold.ts';
+import { videoAnalysisTools } from '../analysis/analysis-tool.ts';
 import { z } from 'zod';
 import { LIVE_LIMITS, pinSchema, SESSION_ID_RE, type RedirectOutcome } from '@motion-studio/shared';
 
@@ -847,6 +848,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       import_codebase_file: importCodebaseTool({ media, broadcast: (m) => hub.broadcast(m) }),
       ...agentActions.tools(),
       ...briefs.tools(),
+      ...videoAnalysisTools(),
     },
   });
   registerBriefRoutes(app, { requireWorkspace, briefs, configDir });
