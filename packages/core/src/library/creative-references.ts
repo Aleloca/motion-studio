@@ -1,5 +1,7 @@
 import type { CreativeReferenceEntry } from '@motion-studio/shared';
+import { BrandStore } from '../brand/brand-store.ts';
 import { CreativeStore } from '../creatives/creative-store.ts';
+import type { TrashFn } from '../trash.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { LibraryStore } from './library-store.ts';
 
@@ -27,42 +29,63 @@ export async function listCreativeReferences(projectDir: string, media: MediaToo
   });
 }
 
-/** The new creative `slug` takes the references among `paths` (its brief's assets and its brief session's files). */
+/** The new creative `slug` takes the references among `paths` (its brief's files and its brief session's). */
 export async function claimCreativeReferences(projectDir: string, media: MediaTools, slug: string, paths: readonly string[]): Promise<void> {
   const wanted = new Set(paths);
-  await new LibraryStore(projectDir, media).settleReferences((a) => (
+  await new LibraryStore(projectDir, media).settleReferences(async () => (a) => (
     wanted.has(pathOf(a.file)) && !a.referenceFor!.includes(slug) ? [...a.referenceFor!, slug] : a.referenceFor!
   ));
 }
 
 /**
- * The creatives `deleted` are gone (their folders already moved): each reference they had (added for them, or listed in
- * `deletedPaths`, their briefs' assets) goes too, unless another creative still has it or uses it. Nothing is deleted while
- * some creative cannot be read (its brief is unknown). Returns the files deleted.
+ * What uses the project's files now, read under the assets lock (decision 1585): every creative (folders, briefs), the brand
+ * kit's logos and fonts, and the open brief session's files (`inBrief`). `blocked`: something could not be read (a creative,
+ * the kit, the session), so nothing may be taken as unused.
  */
-export async function releaseCreativeReferences(projectDir: string, media: MediaTools, deleted: readonly string[], deletedPaths: ReadonlySet<string>): Promise<string[]> {
+async function usage(projectDir: string, inBrief: () => Promise<readonly string[]>) {
   const { slugs, uses, unreadable } = await new CreativeStore(projectDir).briefAssetUses();
-  return new LibraryStore(projectDir, media).settleReferences((a) => {
-    const had = a.referenceFor!;
-    if (!had.some((s) => deleted.includes(s)) && !deletedPaths.has(pathOf(a.file))) return had;
-    const owners = [...new Set([...had.filter((s) => !deleted.includes(s) && slugs.has(s)), ...(uses.get(pathOf(a.file)) ?? [])])];
-    return owners.length === 0 && !unreadable ? null : owners;
-  });
+  const kit = await new BrandStore(projectDir).readKit().catch(() => null);
+  const session = await inBrief().then((x) => new Set(x), () => null);
+  const held = (path: string) => uses.has(path) || Boolean(session?.has(path))
+    || Boolean(kit && (kit.logos.some((l) => l.file === path) || kit.fonts.some((f) => f.file === path)));
+  return { slugs, uses, held, blocked: unreadable || kit === null || session === null };
+}
+
+export interface ReferenceRemoval {
+  /** Where removed files go (the Trash, like the creative: decision 1582). */
+  trash: TrashFn;
+  /** The project paths the open brief session holds (decision 1584); a failure keeps every file. */
+  inBrief?: () => Promise<readonly string[]>;
 }
 
 /**
- * Startup (decision 1571): references no creative has or uses and no open brief holds (`inUse`, project paths), added more
- * than `maxAgeMs` ago, are deleted: a brief abandoned without making its creative. Returns the files deleted.
+ * The creatives `deleted` are gone (their folders already moved): each reference they had (added for them, or listed in
+ * `deletedPaths`, their briefs' files) goes to the Trash too, unless another creative has or uses it, the brand uses it or the
+ * open brief holds it. Nothing is removed while something of that cannot be read. Returns the files removed.
  */
-export async function sweepCreativeReferences(projectDir: string, media: MediaTools, o: { inUse: ReadonlySet<string>; now?: number; maxAgeMs?: number }): Promise<string[]> {
-  const lib = new LibraryStore(projectDir, media);
-  if (!(await lib.listAssets().catch(() => [])).some((a) => a.referenceFor !== undefined)) return [];
-  const { slugs, uses, unreadable } = await new CreativeStore(projectDir).briefAssetUses();
-  if (unreadable) return [];
+export async function releaseCreativeReferences(projectDir: string, media: MediaTools, deleted: readonly string[], deletedPaths: ReadonlySet<string>, o: ReferenceRemoval): Promise<string[]> {
+  return new LibraryStore(projectDir, media).settleReferences(async () => {
+    const { slugs, uses, held, blocked } = await usage(projectDir, o.inBrief ?? (async () => []));
+    return (a) => {
+      const had = a.referenceFor!;
+      if (!had.some((s) => deleted.includes(s)) && !deletedPaths.has(pathOf(a.file))) return had;
+      const owners = [...new Set([...had.filter((s) => !deleted.includes(s) && slugs.has(s)), ...(uses.get(pathOf(a.file)) ?? [])])];
+      return owners.length === 0 && !blocked && !held(pathOf(a.file)) ? null : owners;
+    };
+  }, o.trash);
+}
+
+/**
+ * Startup (decision 1571): references no creative has or uses, the brand does not use and the open brief does not hold,
+ * added more than `maxAgeMs` ago, go to the Trash: a brief abandoned without making its creative. Returns the files removed.
+ */
+export async function sweepCreativeReferences(projectDir: string, media: MediaTools, o: ReferenceRemoval & { now?: number; maxAgeMs?: number }): Promise<string[]> {
   const cutoff = (o.now ?? Date.now()) - (o.maxAgeMs ?? REFERENCE_MAX_AGE_MS);
-  return lib.settleReferences((a) => {
-    const path = pathOf(a.file);
-    const owned = a.referenceFor!.some((s) => slugs.has(s)) || uses.has(path) || o.inUse.has(path);
-    return owned || Date.parse(a.addedAt) > cutoff ? a.referenceFor! : null;
-  });
+  return new LibraryStore(projectDir, media).settleReferences(async () => {
+    const { slugs, held, blocked } = await usage(projectDir, o.inBrief ?? (async () => []));
+    return (a) => {
+      const owned = blocked || a.referenceFor!.some((s) => slugs.has(s)) || held(pathOf(a.file));
+      return owned || Date.parse(a.addedAt) > cutoff ? a.referenceFor! : null;
+    };
+  }, o.trash);
 }

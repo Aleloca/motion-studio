@@ -15,7 +15,8 @@ import { fileLock } from '../file-locks.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 import { t } from '../i18n.ts';
-import { moveSidecar, removeSidecar, sidecarPathOf } from '../analysis/sidecar.ts';
+import { moveSidecar, removeSidecar, sidecarPathOf, trashSidecar } from '../analysis/sidecar.ts';
+import type { TrashFn } from '../trash.ts';
 
 /** The steps of a rename, in order. */
 export type RenameStep = 'journal' | 'file' | 'sidecar' | 'assets' | 'brand' | 'briefs';
@@ -371,34 +372,48 @@ export class LibraryStore {
   }
 
   /**
-   * Report 62: settles the creative references under the metadata lock: `decide` gets each one and answers the creatives it
-   * now belongs to, or null to delete it (its file, its entry and its analysis file go). Returns the files deleted.
+   * Report 62: settles the creative references under the metadata lock. `plan` runs inside it (what uses the files is read
+   * there, so a rename cannot slip in between) and answers, for each reference, the creatives it now belongs to, or null to
+   * remove it. A removed file and its analysis file go to the Trash (`trash`; decision 1582): one the Trash refuses keeps its
+   * entry. Without `trash` nothing is removed. Returns the files removed.
    */
-  settleReferences(decide: (entry: AssetEntry) => string[] | null): Promise<string[]> {
+  settleReferences(plan: () => Promise<(entry: AssetEntry) => string[] | null>, trash?: TrashFn): Promise<string[]> {
     return this.lock.run('assets', async () => {
       const assets = await this.listAssets();
+      if (!assets.some((a) => a.referenceFor !== undefined)) return [];
+      const decide = await plan();
       const keep: AssetEntry[] = [];
       const gone: string[] = [];
       let changed = false;
       for (const a of assets) {
         if (a.referenceFor === undefined) { keep.push(a); continue; }
         const owners = decide(a);
-        if (owners === null) { gone.push(a.file); changed = true; continue; }
-        const same = owners.length === a.referenceFor.length && owners.every((o, k) => o === a.referenceFor![k]);
-        keep.push(same ? a : { ...a, referenceFor: owners });
+        if (owners === null && trash && await this.trashFile(a.file, trash)) { gone.push(a.file); changed = true; continue; }
+        const next = owners ?? a.referenceFor;
+        const same = next.length === a.referenceFor.length && next.every((o, k) => o === a.referenceFor![k]);
+        keep.push(same ? a : { ...a, referenceFor: next });
         changed ||= !same;
       }
-      if (!changed) return [];
-      await this.writeAssets(keep);
-      for (const file of gone) {
-        const abs = this.resolve('assets', file);
-        const realAbs = await realpath(abs).catch(() => null);
-        const realLib = await realpath(this.dir('assets')).catch(() => this.dir('assets'));
-        if (realAbs && realAbs.startsWith(realLib + sep)) await rm(abs).catch(() => {});
-        await removeSidecar(this.projectDir, `assets/${file}`).catch(() => false);
-      }
+      if (changed) await this.writeAssets(keep);
       return gone;
     });
+  }
+
+  /** A library file (confined to the folder, no link) and then its analysis file to the Trash; false when the file stays. */
+  private async trashFile(file: string, trash: TrashFn): Promise<boolean> {
+    const abs = this.resolve('assets', file);
+    const info = await lstat(abs).catch(() => null);
+    const realAbs = await realpath(abs).catch(() => null);
+    const realLib = await realpath(this.dir('assets')).catch(() => this.dir('assets'));
+    if (info) {
+      if (!info.isFile() || !realAbs || !realAbs.startsWith(realLib + sep)) return false;
+      try { await trash(abs); } catch (err) {
+        console.warn(`Motion Studio: ${file} could not go to the Trash and stays: ${(err as Error).message}`);
+        return false;
+      }
+    }
+    await trashSidecar(this.projectDir, `assets/${file}`, trash).catch(() => false);
+    return true;
   }
 
   registerReferences(files: string[]): Promise<ReferenceEntry[]> {

@@ -7,7 +7,7 @@ import { NoMediaTools, type MediaTools } from '../media/media-tools.ts';
 import { t } from '../i18n.ts';
 import type { TrashFn } from '../trash.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
-import { CreativeStore } from './creative-store.ts';
+import { briefFilePaths, CreativeStore } from './creative-store.ts';
 import type { CreativeRef, CreativeTurnService } from './creative-turns.ts';
 import { memberRef, VariantGroupService } from './variant-group.ts';
 
@@ -36,6 +36,8 @@ export interface CreativeRemovalDeps {
   /** Report 62: the deleted creatives' references go with them (read with these tools; the library is told). */
   media?: MediaTools;
   broadcast?: (m: ServerMessage) => void;
+  /** The project paths the project's open brief session holds (its files are never removed; decision 1584). */
+  briefAssets?: (projectDir: string) => Promise<string[]>;
 }
 
 /** What blocks the creative `slug` now in the job queue: one of its turns (or its group's directions turn), or a render of it. */
@@ -139,7 +141,7 @@ export class CreativeRemoval {
       let failure: unknown = null;
       // Report 62: what their briefs list, read before their folders go (their references go with them).
       const briefPaths = new Set<string>();
-      for (const slug of p.targets) for (const a of (await store.get(slug).catch(() => null))?.brief.assets ?? []) briefPaths.add(a);
+      for (const slug of p.targets) { const c = await store.get(slug).catch(() => null); for (const a of c ? briefFilePaths(c.brief) : []) briefPaths.add(a); }
       for (const slug of p.targets) {
         const dir = store.dir(slug);
         if (!(await lstat(dir).catch(() => null))) continue;
@@ -166,7 +168,10 @@ export class CreativeRemoval {
    */
   private async releaseReferences(ref: CreativeRef, moved: string[], briefPaths: ReadonlySet<string>): Promise<void> {
     try {
-      const gone = await releaseCreativeReferences(ref.projectDir, this.deps.media ?? NoMediaTools, moved, briefPaths);
+      const { briefAssets } = this.deps;
+      const gone = await releaseCreativeReferences(ref.projectDir, this.deps.media ?? NoMediaTools, moved, briefPaths, {
+        trash: this.deps.trash, ...(briefAssets ? { inBrief: () => briefAssets(ref.projectDir) } : {}),
+      });
       if (gone.length === 0) return;
       await this.deps.turns.commitFolder(ref, [join(ref.projectDir, 'assets')], t().jobs.deleteReferencesCommit({ count: gone.length })).catch(() => null);
       this.deps.broadcast?.({ type: 'library', project: ref.projectSlug });

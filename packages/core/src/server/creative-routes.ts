@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import type { BriefClaim, BriefSessionService } from '../brief/brief-session.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
-import { CreativeStore } from '../creatives/creative-store.ts';
+import { briefFilePaths, CreativeStore } from '../creatives/creative-store.ts';
 import type { CreativeSideStateStore, StoppedSession } from '../creatives/creative-side-state.ts';
 import { checkDestination, exportResolved, exportVersion, pendingRenders, profiledRenders, resolveExportPicks, resolveLocalizedItems, type ExportItem, type ExportResult } from '../creatives/export.ts';
 import { makeOwnedTempDir } from '../render/owner.ts';
@@ -84,6 +84,8 @@ export interface CreativeRoutesContext {
   configDir?: string;
   /** Decision 915: where a deleted creative's folder goes (the desktop's Electron Trash, the CLI's own; none: refused). */
   trash: TrashFn;
+  /** Report 62: the project paths the project's open brief session holds (a deleted creative's references never take them). */
+  briefAssets?: (projectDir: string) => Promise<string[]>;
 }
 
 const isInsideDir = (p: string, base: string | null) => Boolean(base && p.startsWith(base.endsWith(sep) ? base : base + sep));
@@ -293,6 +295,8 @@ export interface RecoverOptions {
   briefAssets?: (projectDir: string) => Promise<string[]>;
   /** The media tools the library reads with (the sweep of abandoned references). */
   media?: MediaTools;
+  /** Where swept references go (decision 1582); without it none is removed. */
+  trash?: TrashFn;
 }
 
 export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: string) => boolean = () => false, ro: RecoverOptions = {}): Promise<void> {
@@ -342,9 +346,9 @@ export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: st
     await sweepStoryboardTemps(dir).catch(() => []);
     // Report 62 (decision 1571): the references of a brief abandoned more than 7 days ago (no creative, no open session).
     // Skipped when the open session cannot be read: its files are unknown.
-    const inBrief = ro.briefAssets ? await ro.briefAssets(dir).catch(() => null) : [];
-    if (inBrief) {
-      const swept = await sweepCreativeReferences(dir, ro.media ?? NoMediaTools, { inUse: new Set(inBrief) }).catch((err: Error) => {
+    const { briefAssets, trash } = ro;
+    if (trash) {
+      const swept = await sweepCreativeReferences(dir, ro.media ?? NoMediaTools, { trash, ...(briefAssets ? { inBrief: () => briefAssets(dir) } : {}) }).catch((err: Error) => {
         console.warn(`Motion Studio: the brief references of project ${p.slug} were not swept: ${err.message}`);
         return [];
       });
@@ -512,7 +516,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       ctx.turns.briefAssetsAdded(ref, brief.assets);
       // Report 62: the files added from the computer in this brief (and in its session's chat) become this creative's.
       const session = claim ? await ctx.briefs!.view(claim.ref).catch(() => null) : null;
-      await claimCreativeReferences(projectDir, ctx.media, slug, [...brief.assets, ...(session ? [...session.context.assets, ...session.form.assets] : [])])
+      await claimCreativeReferences(projectDir, ctx.media, slug, [...briefFilePaths(brief), ...(session ? [...session.context.assets, ...session.form.assets] : [])])
         .catch((err: Error) => console.warn(`Motion Studio: the brief's references were not given to ${slug}: ${err.message}`));
       // Phase 15: an identity creative with several concepts is a group of that many variants (the host is A), made here and
       // started like any grouped creative's first generation (`ctx.variantRuns`, the same orchestration as `…/variants/run`).
@@ -595,7 +599,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
 
   // Decision 915: archive, restore from the archive, and delete (to the Trash). `?all=1` acts on a whole variant group from
   // its variant A (required there: 409 `creative-group` without it). Never reachable by the agent's tools (decision 917).
-  const removal = () => new CreativeRemoval({ turns: ctx.turns, jobs: ctx.jobs, trash: ctx.trash, media: ctx.media, ...(ctx.broadcast ? { broadcast: ctx.broadcast } : {}) });
+  const removal = () => new CreativeRemoval({ turns: ctx.turns, jobs: ctx.jobs, trash: ctx.trash, media: ctx.media, ...(ctx.broadcast ? { broadcast: ctx.broadcast } : {}), ...(ctx.briefAssets ? { briefAssets: ctx.briefAssets } : {}) });
   const plainRef = ({ store: _store, ...ref }: CreativeRef & { store: CreativeStore }): CreativeRef => ref;
   app.get<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/removal', async (req) =>
     removal().info(plainRef(await refOf(req.params.slug, req.params.c))));
