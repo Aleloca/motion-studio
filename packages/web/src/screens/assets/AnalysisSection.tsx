@@ -4,6 +4,7 @@ import { ApiError, api } from '../../api.ts';
 import { useT } from '../../i18n.tsx';
 import { Button, Icon, Pill, Tag, Textarea, clockText, toast, type PillTone } from '../../ui/index.ts';
 import { AnalysisQuestionDialog } from '../../components/TranscriptionDialog.tsx';
+import { useAnalysisQuestions } from '../../components/AnalysisQuestionHost.tsx';
 import { message } from '../common.tsx';
 import './analysis.css';
 
@@ -35,6 +36,7 @@ export function AnalysisSection({ slug, view, waitReason, onSeek, onView }: Anal
   const [draft, setDraft] = useState<string | null>(null);
   // Spec §6: a held analysis's question (long video, transcription) opens its dialog from here.
   const [asking, setAsking] = useState(false);
+  const questions = useAnalysisQuestions();
   // Answered elsewhere: the dialog closes (while Whisper installs the analysis still asks).
   useEffect(() => { if (asking && !view.pending) setAsking(false); }, [asking, view.pending]);
   const edited = view.header?.edited === true;
@@ -104,7 +106,9 @@ export function AnalysisSection({ slug, view, waitReason, onSeek, onView }: Anal
           </div>
         </div>
       ) : hasBody ? <AnalysisBodyView body={view.body!} header={view.header} onSeek={onSeek} /> : null}
-      <AnalysisQuestionDialog slug={slug} view={view} open={asking} onClose={() => setAsking(false)} />
+      {/* Closed with Chiudi: the app's own dialog never opens this question by itself again (report 65). */}
+      <AnalysisQuestionDialog slug={slug} view={view} open={asking} onClose={() => { questions.dismiss(slug, view); setAsking(false); }}
+        onSettings={() => { questions.park(slug, view); setAsking(false); }} />
     </section>
   );
 }

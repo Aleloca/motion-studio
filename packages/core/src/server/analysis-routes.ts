@@ -13,6 +13,7 @@ import { CodedError, WorkspaceError, type WorkspaceStore } from '../workspace-st
 const fileSchema = z.string().min(1).max(1024);
 const startSchema = z.object({ file: fileSchema, overwrite: z.boolean().optional() }).strict();
 const confirmSchema = z.object({ file: fileSchema, density: z.enum(['full', 'reduced']) }).strict();
+const fileOnlySchema = z.object({ file: fileSchema }).strict();
 const bodySchema = z.object({ file: fileSchema, body: z.string().max(1024 * 1024) }).strict();
 
 function parse<T>(schema: z.ZodType<T>, body: unknown): T {
@@ -76,6 +77,14 @@ export function registerAnalysisRoutes(app: FastifyInstance, ctx: { requireWorks
     const ref = await refOf(req.params.slug);
     const body = parse(transcriptionChoiceSchema, req.body);
     const view = await ctx.analyses.chooseTranscription(ref, { ...body, file: await videoOf(ref, body.file) });
+    if (!view) throw new CodedError(409, t().errors.transcriptionNothingAsks, 'transcription-not-asked');
+    return view;
+  });
+  // Decision 1591: "Ricontrolla" — the Whispers looked for again and the held question asked with the new offer (409 as above).
+  app.post<P>('/api/projects/:slug/video-analyses/transcription-recheck', async (req) => {
+    const ref = await refOf(req.params.slug);
+    const body = parse(fileOnlySchema, req.body);
+    const view = await ctx.analyses.recheckTranscription(ref, await videoOf(ref, body.file));
     if (!view) throw new CodedError(409, t().errors.transcriptionNothingAsks, 'transcription-not-asked');
     return view;
   });

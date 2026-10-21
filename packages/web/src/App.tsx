@@ -30,6 +30,7 @@ import { useAttention, useDraftCloseGuard, useExportNotice, useReadyNotice, useR
 import { installMenuZoom } from './shell/menuZoom.ts';
 import { applyTheme } from './theme.ts';
 import { Spinner, Toasts } from './ui/index.ts';
+import { AnalysisQuestionHost } from './components/AnalysisQuestionHost.tsx';
 import { usePairingNeeded } from './uiToken.ts';
 import type { EventsState } from './eventsReducer.ts';
 import { useServerEvents } from './useServerEvents.ts';
@@ -276,13 +277,16 @@ function AppShell({ route, live, settings, checks, activity, setActivity, langua
 
   return (
     <ShellContext.Provider value={shell}>
-      <div className={bare ? 'ms-app ms-bare' : 'ms-app'}>
-        {bare ? null : <TopBar />}
-        <div className="ms-main">
-          <PageHost route={route} keyOf={routeKey} depthOf={depthOf} modeOf={sharedElement} render={render} />
+      {/* Report 65: a held analysis's question opens its dialog by itself on any screen (not during the setup). */}
+      <AnalysisQuestionHost live={live} enabled={!bare}>
+        <div className={bare ? 'ms-app ms-bare' : 'ms-app'}>
+          {bare ? null : <TopBar />}
+          <div className="ms-main">
+            <PageHost route={route} keyOf={routeKey} depthOf={depthOf} modeOf={sharedElement} render={render} />
+          </div>
         </div>
-      </div>
-      <CommandPalette open={palette} onClose={() => setPalette(false)} catalog={catalog} route={route} />
+        <CommandPalette open={palette} onClose={() => setPalette(false)} catalog={catalog} route={route} />
+      </AnalysisQuestionHost>
     </ShellContext.Provider>
   );
 }

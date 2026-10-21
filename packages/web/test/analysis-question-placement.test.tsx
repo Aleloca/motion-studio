@@ -29,22 +29,26 @@ const api = {
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { NewCreative } = await import('../src/screens/NewCreative.tsx');
+const { AnalysisQuestionHost } = await import('../src/components/AnalysisQuestionHost.tsx');
 const { Assets } = await import('../src/screens/Assets.tsx');
 afterEach(() => vi.clearAllMocks());
 
 const page = (live: EventsState) => {
   const shell = { live, catalog: { projects: [{ slug: 'acme', name: 'Acme' }], creatives: {}, refresh: () => {} } } as unknown as Shell;
-  return <I18nProvider locale="it"><ShellContext.Provider value={shell}><NewCreative slug="acme" live={live} /></ShellContext.Provider></I18nProvider>;
+  // The app's host opens the held questions' dialogs (report 65).
+  return <I18nProvider locale="it"><ShellContext.Provider value={shell}><AnalysisQuestionHost live={live}><NewCreative slug="acme" live={live} /></AnalysisQuestionHost></ShellContext.Provider></I18nProvider>;
 };
+/** The analysis job held for the user's answer (what the host follows). */
+const held = eventsReducer(initialEventsState, { type: 'job', job: { id: 'j1', key: `video-analysis:/root:acme:${'a'.repeat(64)}`, kind: 'video-analysis', label: 'Analisi video', state: 'queued', createdAt: at, waitReason: 'transcription-choice' } });
 const msg = (l: EventsState, v: VideoAnalysisView) => eventsReducer(l, { type: 'video-analysis', project: 'acme', file: v.file, view: v });
 
 describe('New creative asks about each video of its brief in turn (review of phase 3)', () => {
-  it('after Installa on the first video, the second video\'s dialog shows its own choices', async () => {
+  it('after Trascrivi con Whisper on the first video, the second video\'s dialog shows its own choices', async () => {
     requestNewCreativeWithAssets('acme', ['assets/a.mp4', 'assets/b.mp4']);
-    let live = initialEventsState;
+    let live = held;
     const { rerender } = render(page(live));
     const first = await screen.findByRole('dialog', { name: 'Trascrivere il parlato di a.mp4?' });
-    await userEvent.click(within(first).getByRole('button', { name: /Installa Whisper/ }));
+    await userEvent.click(within(first).getByRole('button', { name: /Trascrivi con Whisper/ }));
     expect(api.transcriptionChoice).toHaveBeenCalledWith('acme', { file: 'assets/a.mp4', choice: 'whisper', remember: false, sizeBytes: 487_601_967 });
     await waitFor(() => expect(within(first).getByRole('progressbar')).toBeTruthy());
     // The download ended: a.mp4 asks no more, the analysis goes on.
@@ -52,13 +56,13 @@ describe('New creative asks about each video of its brief in turn (review of pha
     act(() => rerender(page(live)));
     const second = await screen.findByRole('dialog', { name: 'Trascrivere il parlato di b.mp4?' });
     expect(within(second).queryByRole('progressbar')).toBeNull();
-    expect(within(second).getByRole('button', { name: /Installa Whisper/ })).toBeTruthy();
+    expect(within(second).getByRole('button', { name: /Trascrivi con Whisper/ })).toBeTruthy();
   });
 
   it('a question answered elsewhere closes its dialog', async () => {
     api.listVideoAnalyses.mockResolvedValueOnce([view('assets/a.mp4')]);
     requestNewCreativeWithAssets('acme', ['assets/a.mp4']);
-    let live = initialEventsState;
+    let live = held;
     const { rerender } = render(page(live));
     await screen.findByRole('dialog', { name: 'Trascrivere il parlato di a.mp4?' });
     live = msg(live, view('assets/a.mp4', { state: 'running', pending: null }));

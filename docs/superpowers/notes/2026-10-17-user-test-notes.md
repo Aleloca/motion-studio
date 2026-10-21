@@ -504,6 +504,21 @@ arrives and worked on later together.
     Cause: the dev tree had no bundled whisper-cli (built only by the release workflow), so `canInstall` was false.
     Wanted: Whisper is the main option, free and recommended, with a direct install; the paid ones are secondary.
     Timing: now.
+    Done (decisions 1591–1595): Whisper always comes first, recommended ("Consigliato"), with "Gratis · l'audio resta sul Mac ·
+    modello Small, 488 MB una volta sola" and a one-click install with its progress. Without a Whisper the app can run, the
+    same first option shows the two commands as code chips with "Copia", a link to Settings → Video transcription and
+    "Ricontrolla" (new `POST …/video-analyses/transcription-recheck`: detection again, the offer refreshed in place). The paid
+    ones follow under "A pagamento" only with a key; "Continua senza trascrizione" is a quiet text button beside "Chiudi". Same
+    body in the brief chat's card.
+
+65. **The transcription choice waits unseen.** The user found the pending transcription choice only by clicking a button;
+    the notice that the app waits for a choice is barely visible, and a distracted user never notices it.
+    Wanted: the dialog opens by itself as soon as a decision is needed.
+    Done (decisions 1596–1600): an app-level host opens the dialog of a held analysis's question (transcription choice and
+    long video) on any screen, once per question, one at a time (the next when the current one is answered or closed); it
+    waits while the user types in a text field or another dialog or popover is open. Closed with "Chiudi" it does not open
+    again by itself (it stays in "Needs you" and on the video's card); answered elsewhere, it closes. In the brief agent's chat
+    the questions stay cards.
 
 ## Follow-ups found while working on 12–30
 
