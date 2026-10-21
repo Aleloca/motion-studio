@@ -4,6 +4,7 @@ import {
   ANALYSIS_DIR, sidecarHeaderSchema,
   type SidecarHeader, type TranscriptSegment, type VideoAnalysisLook, type VideoAnalysisMoment,
 } from '@motion-studio/shared';
+import { fileLock } from '../file-locks.ts';
 import { writeTextFileAtomic } from '../json-file.ts';
 import { readRegularFile } from '../safe-read.ts';
 
@@ -176,6 +177,14 @@ async function assertPlainPath(projectDir: string, rel: string): Promise<string>
 }
 
 export interface SidecarFile { header: SidecarHeader; body: string; text: string }
+
+/**
+ * Runs `fn` under the lock the asset library takes for its renames and deletes (the lock of `assets/assets.json`, decision
+ * 1540): an analysis file is written, or edited by the user, never in the middle of a rename or a delete of its video.
+ */
+export function withLibraryLock<T>(projectDir: string, fn: () => Promise<T>): Promise<T> {
+  return fileLock.run(join(projectDir, 'assets', 'assets.json'), fn);
+}
 
 /** The video's sidecar, when it is a regular file of ours; null when missing or not ours. */
 export async function readSidecar(projectDir: string, assetRel: string): Promise<SidecarFile | null> {

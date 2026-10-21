@@ -107,8 +107,9 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
     let entry: AssetEntry | undefined;
     try {
       if (name !== undefined) {
-        ctx.analyses?.cancel({ root: ws.root, projectSlug: req.params.slug, projectDir }, `assets/${file}`);
         const r = await lib.renameAsset(file, name);
+        // Decision 1537: only a rename that happened stops the old name's analysis.
+        if (r.entry.file !== file) ctx.analyses?.cancel({ root: ws.root, projectSlug: req.params.slug, projectDir }, `assets/${file}`);
         if (r.entry.file !== file) renamed = { from: file, brand: r.brand, creatives: r.creatives };
         file = r.entry.file;
         entry = r.entry;
@@ -138,8 +139,8 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
 
   app.delete<{ Params: { slug: string; '*': string } }>('/api/projects/:slug/assets/item/*', async (req) => {
     const { ws, lib, projectDir } = await project(req.params.slug);
-    ctx.analyses?.cancel({ root: ws.root, projectSlug: req.params.slug, projectDir }, `assets/${req.params['*']}`);
     await lib.removeAsset(req.params['*']);
+    ctx.analyses?.cancel({ root: ws.root, projectSlug: req.params.slug, projectDir }, `assets/${req.params['*']}`);
     await done(projectDir, req.params.slug, t().jobs.deleteAssetCommit({ file: req.params['*'] }));
     // Review 5: an icon chosen from this image goes back to automatic.
     await followIcon(ws, req.params.slug, req.params['*'], null);

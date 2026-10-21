@@ -1,8 +1,8 @@
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { execCommand } from '../src/exec.ts';
+import { execCommand, type CommandExec } from '../src/exec.ts';
 import { detectScenes, extractFrames, planFrames } from '../src/analysis/frames.ts';
 import { extractWav, silenceRatio } from '../src/analysis/audio.ts';
 import { hasFfmpeg, makeAnalysisFixtures, probe } from './helpers/analysis-fixtures.ts';
@@ -62,4 +62,36 @@ describe.skipIf(!hasFfmpeg)('scenes, frames and audio with ffmpeg', () => {
     expect(await extractWav(execCommand, fx.silent, silentWav)).toBe(true);
     expect(await silenceRatio(execCommand, silentWav, 12)).toBeGreaterThanOrEqual(0.95);
   }, 60_000);
+});
+
+describe('the ffmpeg passes stop on abort (decision 1536)', () => {
+  it('execCommand kills its own child when the signal aborts', async () => {
+    const ac = new AbortController();
+    const started = Date.now();
+    setTimeout(() => ac.abort(), 50);
+    const r = await execCommand('sleep', ['10'], { signal: ac.signal, timeoutMs: 20_000 });
+    expect(r.aborted).toBe(true);
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+  it('every pass hands its signal to the runner and ends with an AbortError', async () => {
+    const seen: Array<AbortSignal | undefined> = [];
+    // A runner that never ends by itself: only the abort ends it, as a killed child would.
+    const hang: CommandExec = (_cmd, _args, o) => { seen.push(o?.signal); return new Promise((res) => o?.signal?.addEventListener('abort', () => res({ code: -1, stdout: '', stderr: '', notFound: false, aborted: true }))); };
+    const dir = await mkdtemp(join(tmpdir(), 'ms-abort-'));
+    const video = join(dir, 'v.mp4');
+    await writeFile(video, 'x');
+    const passes: Array<(s: AbortSignal) => Promise<unknown>> = [
+      (s) => detectScenes(hang, video, 10, s),
+      (s) => extractFrames(hang, video, [0], join(dir, 'f'), s),
+      (s) => extractWav(hang, video, join(dir, 'a.wav'), s, 10),
+      (s) => silenceRatio(hang, video, 10, s),
+    ];
+    for (const pass of passes) {
+      const ac = new AbortController();
+      const p = pass(ac.signal);
+      setTimeout(() => ac.abort(), 10);
+      await expect(p).rejects.toMatchObject({ name: 'AbortError' });
+      expect(seen.at(-1)).toBe(ac.signal);
+    }
+  });
 });

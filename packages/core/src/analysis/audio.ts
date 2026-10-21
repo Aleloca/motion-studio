@@ -11,7 +11,7 @@ import { abortError, passTimeoutMs } from './frames.ts';
 export async function extractWav(exec: CommandExec, video: string, outWav: string, signal?: AbortSignal, durationSec = 0): Promise<boolean> {
   if (signal?.aborted) throw abortError();
   if (!isRegularFileNow(video)) return false;
-  const r = await execFfVia(exec, 'ffmpeg', ['-y', '-loglevel', 'error', '-nostdin', ...mediaInput({ file: video }), '-vn', '-map', '0:a:0', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', '-f', 'wav', outWav], { timeoutMs: passTimeoutMs(durationSec) });
+  const r = await execFfVia(exec, 'ffmpeg', ['-y', '-loglevel', 'error', '-nostdin', ...mediaInput({ file: video }), '-vn', '-map', '0:a:0', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', '-f', 'wav', outWav], { timeoutMs: passTimeoutMs(durationSec), ...(signal ? { signal } : {}) });
   if (signal?.aborted) throw abortError();
   return r.code === 0 && ((await stat(outWav).catch(() => null))?.size ?? 0) > 44;
 }
@@ -22,7 +22,7 @@ export async function extractWav(exec: CommandExec, video: string, outWav: strin
  */
 export async function silenceRatio(exec: CommandExec, wav: string, durationSec: number, signal?: AbortSignal): Promise<number> {
   if (durationSec <= 0) return 1;
-  const r = await execFfVia(exec, 'ffmpeg', ['-hide_banner', '-nostdin', '-loglevel', 'info', ...ownInput(wav, { formats: ['wav'], force: true }), silenceDetectFilter(-50, 0.5), '-f', 'null', '-'], { timeoutMs: passTimeoutMs(durationSec) });
+  const r = await execFfVia(exec, 'ffmpeg', ['-hide_banner', '-nostdin', '-loglevel', 'info', ...ownInput(wav, { formats: ['wav'], force: true }), silenceDetectFilter(-50, 0.5), '-f', 'null', '-'], { timeoutMs: passTimeoutMs(durationSec), ...(signal ? { signal } : {}) });
   if (signal?.aborted) throw abortError();
   if (r.code !== 0) throw new Error(`silence detection failed (${r.code})`);
   let silent = 0;

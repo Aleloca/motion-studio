@@ -431,7 +431,8 @@ describe('a video analysis job (decision 1493)', () => {
     const job = bridge.register({ jobId: 'v1', kind: 'video-analysis', projectSlug: 'acme', projectDir, creativeSlug: null, sandboxed: true, autoApproveAtStart: true, emit: (e) => events.push(e), signal: new AbortController().signal, videoAnalysisScope: scope });
     expect(bridge.resolve(job)?.videoAnalysisScope?.sha256).toBe('ab'.repeat(32));
     expect(Object.isFrozen(bridge.resolve(job)?.videoAnalysisScope?.frames)).toBe(true);
-    for (const [tool_name, input] of [['Read', { file_path: '/etc/hosts' }], ['Bash', { command: 'ls' }], ['AskUserQuestion', { questions: [] }]] as const) {
+    // Decision 1541: a project file (it runs in the frames' folder, so a project read reaches this prompt) is refused too.
+    for (const [tool_name, input] of [['Read', { file_path: '/etc/hosts' }], ['Read', { file_path: join(projectDir, 'brand', '.env') }], ['Read', { file_path: join(projectDir, 'assets', 'clip.mp4') }], ['Bash', { command: 'ls' }], ['AskUserQuestion', { questions: [] }]] as const) {
       expect((await call('approve', { tool_name, input, tool_use_id: 't' }, job)).json()).toEqual({ behavior: 'deny', message: "L'analisi video guarda solo i fotogrammi estratti: nient'altro si può approvare." });
     }
     expect(approvals.pending()).toEqual([]);
