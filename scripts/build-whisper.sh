@@ -13,7 +13,7 @@ WHISPER_CPP_REPO="https://github.com/ggml-org/whisper.cpp.git"
 WHISPER_CPP_TAG="v1.9.5"
 # The commit the tag points at, checked after the clone (a moved tag fails the build). Record it when the pin changes:
 #   git ls-remote https://github.com/ggml-org/whisper.cpp.git 'refs/tags/v1.9.5^{}'
-WHISPER_CPP_COMMIT="${WHISPER_CPP_COMMIT_OVERRIDE:-RECORD-THE-V1.9.5-COMMIT}"
+WHISPER_CPP_COMMIT="${WHISPER_CPP_COMMIT_OVERRIDE:-d1be6fde11ac6e0407606b4e42fe72d34add8037}"
 # Silero VAD v6.2.0, pinned to the Hugging Face commit the core's manifest uses (packages/core/src/transcription/models.ts).
 VAD_FILE="ggml-silero-v6.2.0.bin"
 VAD_URL="https://huggingface.co/ggml-org/whisper-vad/resolve/9ffd54a1e1ee413ddf265af9913beaf518d1639b/${VAD_FILE}"
