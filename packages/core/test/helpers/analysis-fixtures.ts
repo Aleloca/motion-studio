@@ -24,3 +24,11 @@ export async function makeAnalysisFixtures(into: string) {
   return { clip, silent, noaudio, big };
 }
 
+
+/** An 8 s video of two scenes (red, blue) at 320×240, with a silent track or a tone. */
+export async function twoScenes(out: string, audio: 'silent' | 'tone' | 'none' = 'silent') {
+  const a = audio === 'none' ? [] : ['-f', 'lavfi', '-i', audio === 'tone' ? 'sine=f=440:d=8:r=16000' : 'anullsrc=r=16000:cl=mono'];
+  await ff(['-f', 'lavfi', '-i', 'color=c=red:s=320x240:d=4:r=25', '-f', 'lavfi', '-i', 'color=c=blue:s=320x240:d=4:r=25', ...a,
+    '-filter_complex', '[0:v][1:v]concat=n=2:v=1:a=0[v]', '-map', '[v]', ...(a.length ? ['-map', '2:a'] : []), '-t', '8', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', ...(a.length ? ['-c:a', 'aac'] : []), out]);
+  return out;
+}

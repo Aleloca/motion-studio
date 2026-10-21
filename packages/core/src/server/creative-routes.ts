@@ -3,7 +3,7 @@ import { recoverRenameJournal } from '../library/rename-recovery.ts';
 import { lstat, readdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, join, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { DEFAULT_EXPORT_QUALITY, EXPORT_FPS, EXPORT_QUALITIES, isDefaultProfile, EXPORT_RESOLUTIONS, type ExportFps, type ExportQuality, type RenderProfile, type VersionEntry, messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow, activeMembers, hostOf, isVariantId, letterOfSlug, MAX_NEW_VARIANTS, variantIdSchema, type VariantDetail, type VariantId, briefSessionRefSchema, singleAgentOn } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_QUALITY, EXPORT_FPS, EXPORT_QUALITIES, isDefaultProfile, EXPORT_RESOLUTIONS, type ExportFps, type ExportQuality, type RenderProfile, type VersionEntry, messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow, activeMembers, hostOf, isVariantId, letterOfSlug, MAX_NEW_VARIANTS, variantIdSchema, type VariantDetail, type VariantId, briefSessionRefSchema, singleAgentOn, videoAnalysisJobKey } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import type { BriefClaim, BriefSessionService } from '../brief/brief-session.ts';
@@ -32,7 +32,7 @@ import { creativeJobKey, PICK_RETRY_AFTER_SEC, type CreativeRef, type CreativeTu
 import type { RenderJobService } from '../creatives/render-jobs.ts';
 import { tmpdir } from 'node:os';
 import { reconcileRenders, renderFileMatches } from '../creatives/render-stamps.ts';
-import { sweepDerivedCaches, sweepEditorStaging } from '../creatives/cache-sweep.ts';
+import { sweepAnalysisFrames, sweepDerivedCaches, sweepEditorStaging } from '../creatives/cache-sweep.ts';
 import { editorCompositionView } from '../creatives/editor-staging.ts';
 import { directEditBodySchema, type DirectEditService } from '../creatives/direct-edit.ts';
 import { sweepProjectRenders } from '../render/render-sweep.ts';
@@ -339,6 +339,8 @@ export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: st
     await sweepDerivedCaches(dir, { skipCreative: (slug) => isJobActive(creativeJobKey(ws.root, p.slug, slug)) }).catch(() => []);
     // The editor's staging folders a quit or a crash left behind (older than 24 h; never a live session's).
     await sweepEditorStaging(dir, { ...(ro.stagingInUse ? { inUse: ro.stagingInUse } : {}) }).catch(() => []);
+    // Decision 1476: the video analyses' key frames, old ones (never a content being analysed now).
+    await sweepAnalysisFrames(dir, { inUse: (sha) => isJobActive(videoAnalysisJobKey(ws.root, p.slug, sha)) }).catch(() => []);
     await Promise.all([sweepProject(dir, !isJobActive(brandJobKey(ws.root, p.slug))), completeGitignore(dir)]).catch((err: Error) => {
       console.warn(`Motion Studio: cleanup failed in project ${p.slug}: ${err.message}`);
     });

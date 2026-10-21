@@ -77,6 +77,8 @@ import { BriefSessionService } from '../brief/brief-session.ts';
 import { registerBriefRoutes } from './brief-routes.ts';
 import { SettingsHoldStore } from '../settings-hold.ts';
 import { videoAnalysisTools } from '../analysis/analysis-tool.ts';
+import { ANALYSIS_LANE, VideoAnalysisService } from '../analysis/video-analysis.ts';
+import type { CommandExec } from '../exec.ts';
 import { z } from 'zod';
 import { LIVE_LIMITS, pinSchema, SESSION_ID_RE, type RedirectOutcome } from '@motion-studio/shared';
 
@@ -162,6 +164,10 @@ export interface ServerDeps {
    * there is a renderer and a config folder; null: none (tests inject a fake: no test downloads anything).
    */
   chromeInstaller?: ChromeInstaller | null;
+  /** The ffmpeg runner of the video analyses (default: the system's). Test seam. */
+  analysisFfExec?: CommandExec;
+  /** Test seam: told the video analysis service once it exists. */
+  onVideoAnalyses?: (s: VideoAnalysisService) => void;
 }
 
 /** How long the billing method (one `claude auth status`) is reused; 'unknown' is retried sooner. */
@@ -265,7 +271,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // `export` (decision 974): an export waits for its renders without taking an agent turn's slot or the render lane.
     // `coordinator` (phase 3 of the single agent): a group turn waits for its helpers without taking the main slots they need;
     // two at a time (review minor 4): with the main lane's default two, at most four Claude processes.
-    concurrency: 2, lanes: { render: 1, generate: 2, export: 2, [COORDINATOR_LANE]: 2 },
+    // `video-analysis` (decision 1481): the videos' analyses, one at a time per project (a slot group), never in a turn's slot:
+    // a creative's first turn waits for them.
+    concurrency: 2, lanes: { render: 1, generate: 2, export: 2, [COORDINATOR_LANE]: 2, [ANALYSIS_LANE]: 2 },
     onUpdate: (job) => {
       hub.broadcast({ type: 'job', job });
       if (job.kind === 'localize' && job.state !== 'queued' && job.state !== 'running') afterOtherJob?.(job.key, job.state);
@@ -392,6 +400,14 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     model: async () => (await requireWorkspace().readSettings()).model,
     side: turns.side,
   });
+
+  // Decision 1468: the analyses of the videos that enter a brief.
+  const analyses = new VideoAnalysisService({
+    queue, launcher, media, git: deps.git, broadcast: (msg) => hub.broadcast(msg),
+    model: async () => (await requireWorkspace().readSettings()).model,
+    ...(deps.analysisFfExec ? { ffExec: deps.analysisFfExec } : {}),
+  });
+  deps.onVideoAnalyses?.(analyses);
 
   afterOtherJob = (key, state) => { void turns.otherJobEndedByKey(key, state); };
   turnsRef = turns;
