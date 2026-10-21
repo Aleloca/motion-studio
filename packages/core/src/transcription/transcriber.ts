@@ -234,10 +234,14 @@ export class TranscriptionService {
       const apiKey = await this.deps.vault.get(method);
       if (!apiKey) return skipped;
       const http = { fetch: this.deps.fetch, apiKey };
-      const r = method === 'openai' ? await openaiTranscribe(http, i.wav, { language: null, signal: i.signal }) : await elevenlabsTranscribe(http, i.wav, { language: null, signal: i.signal });
-      await recordTranscriptionUsage(this.deps.ledger, i.ref.projectDir, {
-        jobId: i.jobId, provider: method, model: STT_PRICES_USD_PER_MIN[method].model, audioSec: i.durationSec, costUsd: estimateSttCost(method, i.durationSec),
+      // Decision 1549: each OpenAI piece is billed when it is answered, so a later failure keeps the earlier cost recorded.
+      const bill = (seconds: number) => recordTranscriptionUsage(this.deps.ledger, i.ref.projectDir, {
+        jobId: i.jobId, provider: method as SttProvider, model: STT_PRICES_USD_PER_MIN[method as SttProvider].model, audioSec: seconds, costUsd: estimateSttCost(method as SttProvider, seconds),
       }).catch((err: Error) => console.warn(`Motion Studio: the transcription usage was not recorded: ${err.message}`));
+      const r = method === 'openai'
+        ? await openaiTranscribe(http, i.wav, { language: null, signal: i.signal, onPiece: (p) => bill(p.seconds) })
+        : await elevenlabsTranscribe(http, i.wav, { language: null, signal: i.signal });
+      if (method === 'elevenlabs') await bill(i.durationSec);
       return { kind: method, segments: r.segments, language: r.language ?? hint };
     } catch (err) {
       if (i.signal.aborted || (err as Error).name === 'AbortError') throw abortError();

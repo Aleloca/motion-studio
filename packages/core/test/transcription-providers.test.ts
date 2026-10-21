@@ -5,6 +5,9 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { usageRecordSchema } from '@motion-studio/shared';
 import { UsageLedger, usageLedgerFile } from '../src/usage/usage-ledger.ts';
+import { AppConfigStore } from '../src/app-config.ts';
+import { MemoryVault } from '../src/secrets/vault.ts';
+import { TranscriptionService } from '../src/transcription/transcriber.ts';
 import { elevenlabsTranscribe, groupWords } from '../src/transcription/elevenlabs-stt.ts';
 import { openaiTranscribe, OPENAI_CHUNK_SEC } from '../src/transcription/openai-stt.ts';
 import { estimateSttCost, recordTranscriptionUsage, STT_PRICES_USD_PER_MIN } from '../src/transcription/pricing.ts';
@@ -58,6 +61,27 @@ describe('openaiTranscribe', () => {
     expect((await wavData(f)).durationSec).toBe(100);
     expect(r.segments).toHaveLength(6);
     expect(r.segments[4]).toEqual({ from: 1200, to: 1202.5, text: 'Ciao a tutti.' });
+  }, 30_000);
+  it('a tail under a second joins the previous piece: 1200.5 s → two requests, the second 600.5 s', async () => {
+    const { calls, fetchImpl } = recorder(() => ok(verbose()));
+    const pieces: Array<{ index: number; seconds: number }> = [];
+    await openaiTranscribe({ fetch: fetchImpl, apiKey: 'k' }, await wav(1200.5), { language: null, signal: signal(), onPiece: (p) => { pieces.push(p); } });
+    expect(calls.map((c) => (c.form.get('file') as File).size)).toEqual([44 + 600 * 32000, 44 + 600.5 * 32000]);
+    expect(pieces).toEqual([{ index: 0, seconds: 600 }, { index: 1, seconds: 600.5 }]);
+  }, 30_000);
+  it('the pieces already transcribed are billed when a later one fails', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ms-stt-'));
+    const cfg = new AppConfigStore(join(dir, 'config'));
+    await cfg.setTranscription({ method: 'openai' });
+    const vault = new MemoryVault({});
+    await vault.set('openai', 'k');
+    const { fetchImpl } = recorder((n) => (n === 0 ? ok(verbose()) : new Response('{"error":{"message":"boom"}}', { status: 500 })));
+    const svc = new TranscriptionService({ config: cfg, vault, ledger: new UsageLedger(), appDataDir: null, fetch: fetchImpl, detect: async () => [] });
+    const r = await svc.transcribe({ ref: { projectDir: dir }, jobId: 'j9', wav: await wav(700), durationSec: 700, signal: signal(), method: 'openai' });
+    expect(r.kind).toBe('none-skipped');
+    const lines = (await readFile(usageLedgerFile(dir), 'utf8')).trim().split('\n').map((l) => usageRecordSchema.parse(JSON.parse(l)));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ jobId: 'j9', kind: 'transcription', costUsd: estimateSttCost('openai', 600) });
   }, 30_000);
   it('a 401: the error never contains the key', async () => {
     const { fetchImpl } = recorder(() => new Response(JSON.stringify({ error: { message: 'Incorrect API key provided: sk-secret-123' } }), { status: 401 }));

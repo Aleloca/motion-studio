@@ -12,6 +12,8 @@ const URL_ = 'https://api.openai.com/v1/audio/transcriptions';
  */
 export const OPENAI_CHUNK_SEC = 600;
 const BYTES_PER_SEC = 32_000;
+/** A last piece shorter than this joins the previous one (decision 1549): no request, and no billed minute, for a sliver. */
+const MIN_TAIL_SEC = 1;
 /** One piece can take a while to transcribe: a deadline well above the default. */
 const PIECE_TIMEOUT_MS = 10 * 60_000;
 
@@ -38,18 +40,24 @@ interface Verbose { language?: unknown; segments?: Array<{ start?: unknown; end?
  * a hint when set. Through `requestJson` (no redirects, the key redacted from every error). Longer audio goes in 600 s
  * pieces (decision 1510).
  */
-export async function openaiTranscribe(deps: HttpDeps & { apiKey: string }, wav: string, o: { language: string | null; signal: AbortSignal }): Promise<{ segments: TranscriptSegment[]; language: string | null }> {
+export async function openaiTranscribe(
+  deps: HttpDeps & { apiKey: string }, wav: string,
+  o: { language: string | null; signal: AbortSignal; onPiece?: (p: { index: number; seconds: number }) => void | Promise<void> },
+): Promise<{ segments: TranscriptSegment[]; language: string | null }> {
   const data = await wavData(wav);
   const http: HttpDeps = { ...deps, timeoutMs: deps.timeoutMs ?? PIECE_TIMEOUT_MS };
-  const pieces = Math.max(1, Math.ceil(data.durationSec / OPENAI_CHUNK_SEC));
+  const pieceBytes = OPENAI_CHUNK_SEC * BYTES_PER_SEC;
+  let pieces = Math.max(1, Math.ceil(data.bytes / pieceBytes));
+  if (pieces > 1 && data.bytes - (pieces - 1) * pieceBytes < MIN_TAIL_SEC * BYTES_PER_SEC) pieces--;
   const segments: TranscriptSegment[] = [];
   let language: string | null = null;
   for (let k = 0; k < pieces; k++) {
     let file: Blob;
+    const start = k * pieceBytes;
+    const length = k === pieces - 1 ? data.bytes - start : pieceBytes;
     if (pieces === 1) file = await openAsBlob(wav, { type: 'audio/wav' });
     else {
-      const start = k * OPENAI_CHUNK_SEC * BYTES_PER_SEC;
-      const pcm = await readRange(wav, data.offset + start, Math.min(OPENAI_CHUNK_SEC * BYTES_PER_SEC, data.bytes - start));
+      const pcm = await readRange(wav, data.offset + start, length);
       file = new Blob([new Uint8Array(wavHeader(pcm.length)), new Uint8Array(pcm)], { type: 'audio/wav' });
     }
     const form = new FormData();
@@ -59,6 +67,7 @@ export async function openaiTranscribe(deps: HttpDeps & { apiKey: string }, wav:
     form.append('timestamp_granularities[]', 'segment');
     if (o.language) form.append('language', o.language);
     const out = await requestJson<Verbose>(http, URL_, { method: 'POST', headers: { Authorization: `Bearer ${deps.apiKey}` }, body: form, signal: o.signal }, { provider: 'OpenAI', secrets: [deps.apiKey] });
+    await o.onPiece?.({ index: k, seconds: length / BYTES_PER_SEC });
     language ??= langOf(out.language);
     const offset = k * OPENAI_CHUNK_SEC;
     for (const s of Array.isArray(out.segments) ? out.segments : []) {
