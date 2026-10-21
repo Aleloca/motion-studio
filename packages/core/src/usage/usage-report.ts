@@ -56,14 +56,18 @@ class PaidBucket {
   costUsd = 0;
   calls = 0;
   private units = new Map<PaidUnit, number>();
+  private guessed = new Set<PaidUnit>();
   add(r: UsageRecord, p: PaidUsage) {
     this.costUsd += r.costUsd ?? 0;
     this.calls++;
     this.units.set(p.units.unit, (this.units.get(p.units.unit) ?? 0) + p.units.amount);
+    if (p.units.estimated) this.guessed.add(p.units.unit);
   }
   view() { return { costUsd: this.costUsd, calls: this.calls }; }
-  /** Summed per unit, in a fixed order (tokens, characters, seconds, minutes, images). */
-  unitsView(): PaidUnits[] { return paidUnitSchema.options.flatMap((unit) => (this.units.has(unit) ? [{ unit, amount: this.units.get(unit)! }] : [])); }
+  /** Summed per unit, in a fixed order (tokens, characters, seconds, minutes, images); `estimated` when part of it is a guess. */
+  unitsView(): PaidUnits[] {
+    return paidUnitSchema.options.flatMap((unit) => (this.units.has(unit) ? [{ unit, amount: this.units.get(unit)!, ...(this.guessed.has(unit) ? { estimated: true as const } : {}) }] : []));
+  }
 }
 
 /** Builds the usage report from the projects' ledgers. Never throws on bad ledger content (bad lines are skipped). */
@@ -74,7 +78,8 @@ export async function buildUsageReport(i: UsageReportInput): Promise<UsageReport
   ]);
   const match = (r: UsageRecord) => i.creative === undefined || r.creativeSlug === i.creative;
   let firstMs = Infinity;
-  for (const all of ledgers) for (const r of all) if (match(r)) firstMs = Math.min(firstMs, Date.parse(r.at));
+  // Claude's runs only (report 66): a paid call never moves the start of Claude's figures.
+  for (const all of ledgers) for (const r of all) if (match(r) && !isPaidRecord(r)) firstMs = Math.min(firstMs, Date.parse(r.at));
   const from = i.from ?? localMidnight(Number.isFinite(firstMs) && firstMs < i.to.getTime() ? new Date(firstMs) : new Date(i.to.getTime() - 1));
   const days = localDays(from, i.to);
   const byDay = new Map(days.map((d) => [d, new Bucket()]));
@@ -90,7 +95,7 @@ export async function buildUsageReport(i: UsageReportInput): Promise<UsageReport
     const paidProject = new PaidBucket();
     for (const r of all) {
       const ms = Date.parse(r.at);
-      if (!trackedSince || ms < trackedSince.ms) trackedSince = { at: r.at, ms };
+      if (!isPaidRecord(r) && (!trackedSince || ms < trackedSince.ms)) trackedSince = { at: r.at, ms };
       if (!match(r) || ms < from.getTime() || ms >= i.to.getTime()) continue;
       // Report 66: a paid service's call never counts toward Claude's figures; one with no readable measure is left out.
       if (isPaidRecord(r)) {

@@ -1,5 +1,6 @@
 import { addTokens, type AgentEvent, type ModelUsage, type TokenCounts, type UsageRecord, type UsageSummary } from '@motion-studio/shared';
 import type { AgentRunResult } from '../agent/runner.ts';
+import { isPaidRecord } from './paid-usage.ts';
 import type { LastOfSession, UsageLedger } from './usage-ledger.ts';
 
 type UsageEvent = Extract<AgentEvent, { kind: 'usage' }>;
@@ -138,9 +139,12 @@ export class UsageTracker {
 
 const modelTotal = (models: ModelUsage[]) => models.reduce((s, m) => addTokens(s, m.tokens), ZERO);
 
-/** Usage of several runs (e.g. a version's attempts): tokens add up; the cost is known only if every run's cost is. */
+/**
+ * Usage of several runs (e.g. a version's attempts): tokens add up; the cost is known only if every run's cost is. Claude's
+ * runs only: a paid service's record (report 66, e.g. a helper's picture under its job id) is left out.
+ */
 export function sumUsage(records: Array<UsageRecord | null | undefined>): UsageSummary | undefined {
-  const known = records.filter((r): r is UsageRecord => Boolean(r));
+  const known = records.filter((r): r is UsageRecord => Boolean(r) && !isPaidRecord(r!));
   if (known.length === 0) return undefined;
   const tokens = known.reduce((s, r) => addTokens(s, r.tokens), ZERO);
   const costUsd = known.every((r) => r.costUsd !== null) ? known.reduce((s, r) => s + r.costUsd!, 0) : null;
