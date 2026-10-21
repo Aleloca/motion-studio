@@ -70,8 +70,8 @@ const abortedError = () => Object.assign(new Error('aborted'), { name: 'AbortErr
  */
 export class VideoAnalysisService {
   private readonly active = new Map<string, Active>();
-  /** The last failure per video (cleared when it is analysed again). */
-  private readonly failures = new Map<string, string>();
+  /** The last failure per video and the content it was about (cleared when it is analysed again). */
+  private readonly failures = new Map<string, { message: string; sha: string }>();
   private readonly ff: CommandExec;
 
   constructor(private readonly deps: VideoAnalysisDeps) {
@@ -104,7 +104,7 @@ export class VideoAnalysisService {
     return out;
   }
 
-  private async ensureOne(ref: ProjectRef, file: string, o: { overwrite?: boolean; retried?: boolean }): Promise<VideoAnalysisView> {
+  private async ensureOne(ref: ProjectRef, file: string, o: { from?: 'brief' | 'library'; overwrite?: boolean; retried?: boolean }): Promise<VideoAnalysisView> {
     const running = this.activeOf(ref, file);
     if (running && !o.overwrite) return this.view(ref, file);
     const abs = join(ref.projectDir, file);
@@ -113,6 +113,8 @@ export class VideoAnalysisService {
     const sidecar = await readSidecar(ref.projectDir, file);
     const fresh = sidecar?.header.sha256 === hash.sha256;
     if (sidecar && !o.overwrite && (fresh || sidecar.header.edited)) return this.view(ref, file);
+    // A brief does not retry the content whose analysis just failed (the library's Analizza does): a failure never loops.
+    if (o.from === 'brief' && this.failures.get(fileKey(ref, file))?.sha === hash.sha256) return this.view(ref, file);
     if (!this.canAnalyse()) return this.view(ref, file);
     const same = this.active.get(shaKey(ref, hash.sha256));
     if (same) {
@@ -208,7 +210,7 @@ export class VideoAnalysisService {
       const state = this.jobState(a.jobId);
       if (state) return { ...base, jobId: a.jobId, pending: a.pending, state: a.pending ? 'waiting' : state };
     }
-    const failure = this.failures.get(fileKey(ref, file)) ?? null;
+    const failure = this.failures.get(fileKey(ref, file))?.message ?? null;
     if (sidecar) {
       const hash = await hashVideo(join(ref.projectDir, file)).catch(() => null);
       if (hash && hash.sha256 === sidecar.header.sha256) return { ...base, state: 'ready' };
@@ -298,7 +300,7 @@ export class VideoAnalysisService {
       for (const file of [...entry.files]) {
         const now = await hashVideo(join(ref.projectDir, file)).catch(() => null);
         if (!now) continue;
-        if (now.sha256 !== entry.sha) { await this.again(entry, file); this.failures.set(fileKey(ref, file), t().errors.analysisChanged); continue; }
+        if (now.sha256 !== entry.sha) { await this.again(entry, file); this.failures.set(fileKey(ref, file), { message: t().errors.analysisChanged, sha: entry.sha }); continue; }
         const existing = await readSidecar(ref.projectDir, file);
         if (existing?.header.edited && !entry.overwrite && file !== primary) continue;
         const header: SidecarHeader = {
@@ -321,7 +323,7 @@ export class VideoAnalysisService {
     } catch (err) {
       if (signal.aborted || (err as Error).name === 'AbortError') return 'cancelled';
       const message = errText(err);
-      for (const f of entry.files) if (!this.failures.has(fileKey(ref, f))) this.failures.set(fileKey(ref, f), message);
+      for (const f of entry.files) if (!this.failures.has(fileKey(ref, f))) this.failures.set(fileKey(ref, f), { message, sha: entry.sha });
       throw new JobFailedError(t().videoAnalysis.failed({ file: basename(primary), reason: message }));
     } finally {
       if (tmp) await rm(tmp, { recursive: true, force: true }).catch(() => {});

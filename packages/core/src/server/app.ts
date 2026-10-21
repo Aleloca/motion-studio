@@ -78,6 +78,7 @@ import { registerBriefRoutes } from './brief-routes.ts';
 import { SettingsHoldStore } from '../settings-hold.ts';
 import { videoAnalysisTools } from '../analysis/analysis-tool.ts';
 import { ANALYSIS_LANE, VideoAnalysisService } from '../analysis/video-analysis.ts';
+import { registerAnalysisRoutes } from './analysis-routes.ts';
 import type { CommandExec } from '../exec.ts';
 import { z } from 'zod';
 import { LIVE_LIMITS, pinSchema, SESSION_ID_RE, type RedirectOutcome } from '@motion-studio/shared';
@@ -407,6 +408,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     model: async () => (await requireWorkspace().readSettings()).model,
     ...(deps.analysisFfExec ? { ffExec: deps.analysisFfExec } : {}),
   });
+  turns.videoAnalyses = analyses;
+  briefs.videoAnalyses = analyses;
   deps.onVideoAnalyses?.(analyses);
 
   afterOtherJob = (key, state) => { void turns.otherJobEndedByKey(key, state); };
@@ -868,6 +871,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     },
   });
   registerBriefRoutes(app, { requireWorkspace, briefs, configDir });
+  registerAnalysisRoutes(app, { requireWorkspace, analyses, media, git: deps.git });
   registerSettingsRoutes(app, { vault, approvals, requireWorkspace, keyChecks, keyCheckHttp: deps.keyCheckHttp ?? { fetch: globalThis.fetch } });
   registerRenderEngineRoutes(app, {
     engine: deps.render,

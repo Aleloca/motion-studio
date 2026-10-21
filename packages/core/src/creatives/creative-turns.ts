@@ -1,4 +1,5 @@
 import { activeMembers, briefSchema, keptAgentLabels, withAgentNames, compositionProblemText, creativeJobKey, issuesText, isSessionId, letterOfSlug, LIVE_LIMITS, MAX_RUNNING_VARIANTS, type JobWaitReason, type ConversationEntry, type LiveMessageOutcome, type QueuedRequest, type RedirectOutcome, type VariantGroup, type VariantId, type VariantMember } from '@motion-studio/shared';
+import type { VideoAnalysisService } from '../analysis/video-analysis.ts';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { mergeStorePack, verifyScreens } from '../store-pack/brief.ts';
@@ -316,6 +317,8 @@ export class CreativeTurnService {
   private readonly queuedHere = new Set<string>();
   /** Phase 13: each creative's queue and remembered session (creative-side-state.ts). */
   readonly side: CreativeSideStateStore;
+  /** Decision 1469: the video analyses (set once they exist): a video entering a brief is analysed. */
+  videoAnalyses: VideoAnalysisService | null = null;
   /** Phase 13: the live side of each creative turn, by job id, from its start until it settles. */
   private readonly live = new Map<string, LiveTurn>();
   /** Phase 13: creatives whose last turn was stopped or cancelled: their queue waits for "Run next" (decisions log). */
@@ -388,6 +391,15 @@ export class CreativeTurnService {
    * a variant group (its host or a real sister) the edit is the GROUP's: it goes through `VariantGroupService` and reaches
    * every active variant, a working one at its next turn (spec §2, "Brief comune").
    */
+  /**
+   * Decision 1469: videos that entered a creative's brief are analysed (in the background: never awaited, never failing the
+   * brief's own save).
+   */
+  briefAssetsAdded(ref: CreativeRef, files: readonly string[]): void {
+    if (!this.videoAnalyses || files.length === 0) return;
+    void this.videoAnalyses.ensure(ref, files, { from: 'brief' }).catch((err: Error) => console.warn(`Motion Studio: video analysis not queued: ${err.message}`));
+  }
+
   async updateBrief(ref: CreativeRef, patch: BriefPatch): Promise<CreativeFile> {
     // Phase 14: the pack's screens are checked before anything is locked or written (the same check as the pack create route).
     if (patch.storePack) await verifyScreens(ref.projectDir, this.deps.media, patch.storePack);
@@ -414,6 +426,7 @@ export class CreativeTurnService {
         ...(linkedCodebases ? { linkedCodebases } : {}),
       });
       await this.commitState(ref, t().jobs.briefUpdatedCommit({ title: updated.title }));
+      if (change.brief) this.briefAssetsAdded(ref, change.brief.assets.filter((a) => !stored.brief.assets.includes(a)));
       // User note 6: a new duration is checked again on the latest version at once, with no new turn.
       if (change.brief && change.brief.durationSec !== stored.brief.durationSec) return (await this.recheckLatest(ref, store, change.brief.durationSec)) ?? updated;
       return updated;
@@ -452,6 +465,7 @@ export class CreativeTurnService {
       });
       // Any job of this creative that ends applies it (`briefAfterJob`).
       this.rememberRef(ref);
+      this.briefAssetsAdded(ref, after.assets.filter((a) => !before.assets.includes(a)));
       return { before, after };
     });
   }
@@ -684,6 +698,7 @@ export class CreativeTurnService {
     });
     await this.side.setPendingBrief(ref.projectDir, ref.creativeSlug, null);
     this.changed(ref);
+    this.briefAssetsAdded(ref, shared.assets.filter((a) => !current.assets.includes(a)));
     // User note 6: a new duration is checked again on the latest version at once, with no new turn.
     if (shared.durationSec !== current.durationSec) return (await this.recheckLatest(ref, store, shared.durationSec)) ?? updated;
     return updated;

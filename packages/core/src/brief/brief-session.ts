@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { VideoAnalysisService } from '../analysis/video-analysis.ts';
 import { realpath, stat } from 'node:fs/promises';
 import {
   BRIEF_QUEUE_MAX, briefJobKey, isSessionId, type AgentEvent, type BriefContext, type BriefField, type BriefForm, type BriefMessageInput, type BriefQueued, type BriefSendResult,
@@ -77,6 +78,8 @@ export class BriefSessionService {
   private readonly blocked = new Map<string, string>();
   /** Serialises the decisions of one project (send, drain, discard, claim). */
   readonly lock = new KeyedMutex();
+  /** Decision 1469: the video analyses (set once they exist): a video added to the session is analysed. */
+  videoAnalyses: VideoAnalysisService | null = null;
 
   constructor(readonly deps: BriefSessionDeps) {}
 
@@ -97,6 +100,14 @@ export class BriefSessionService {
   }
 
   /** Tells the clients the session changed; `s`: the session after the change (its form revision goes with it). */
+  /** Decision 1469: the session's videos (attached or in the form) are analysed, in the background. */
+  private analyse(ref: Pick<BriefProjectRef, 'root' | 'projectSlug' | 'projectDir'>, s: Pick<BriefSessionFile, 'context' | 'form'>): void {
+    const files = [...new Set([...s.context.assets, ...s.form.assets])];
+    if (!this.videoAnalyses || files.length === 0) return;
+    void this.videoAnalyses.ensure({ root: ref.root, projectSlug: ref.projectSlug, projectDir: ref.projectDir }, files, { from: 'brief' })
+      .catch((err: Error) => console.warn(`Motion Studio: video analysis not queued: ${err.message}`));
+  }
+
   private changed(ref: BriefProjectRef, s: Pick<BriefSessionFile, 'id' | 'revision'>, extra: Partial<Extract<ServerMessage, { type: 'brief-session' }>> = {}): void {
     this.deps.broadcast({ type: 'brief-session', project: ref.projectSlug, sessionId: s.id, ...(extra.ended ? {} : { revision: s.revision }), ...extra });
   }
@@ -165,6 +176,7 @@ export class BriefSessionService {
     const context = await this.checkContext(ref, c, cur.context);
     const s = await this.deps.store.update(ref.projectDir, id, () => ({ context }));
     this.changed(ref, s);
+    this.analyse(ref, s);
     return this.toView(ref, s);
   }
 
@@ -182,7 +194,7 @@ export class BriefSessionService {
       changed = m.revision !== cur.revision;
       return { form: m.form, userEdited: m.userEdited, agentFields: cur.agentFields.filter((x) => !m.userEdited.includes(x)), revision: m.revision };
     });
-    if (changed) this.changed(ref, s);
+    if (changed) { this.changed(ref, s); this.analyse(ref, s); }
     return { ok: true, form: s.form, userEdited: s.userEdited, agentFields: s.agentFields, revision: s.revision };
   }
 
@@ -214,6 +226,7 @@ export class BriefSessionService {
         const merged = mergeClientForm(x, m);
         return { form: merged.form, userEdited: merged.userEdited, agentFields: x.agentFields.filter((f) => !merged.userEdited.includes(f)), revision: merged.revision, context };
       });
+      this.analyse(ref, s);
       const job = this.jobOf(ref);
       if (job) {
         const act = this.active.get(key);
@@ -475,6 +488,7 @@ export class BriefSessionService {
         }
         if (o.reclaimed.length > 0) await this.deps.store.append(scope.projectDir, scope.sessionId, { type: 'system', at, level: 'info', origin: 'agent', text: reclaimLine(o.reclaimed) });
         this.deps.broadcast({ type: 'brief-session', project: scope.projectSlug, sessionId: scope.sessionId, revision: after.revision, fill: { written: o.written, kept, reclaimed: o.reclaimed } });
+        if (o.written.includes('assets')) this.analyse(scope, after);
         return { ok: true, written: o.written, kept: o.kept, reclaimed: o.reclaimed };
       },
     };

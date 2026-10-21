@@ -493,6 +493,8 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       await ctx.turns.side.read(ws.projectDir(req.params.slug), slug);
       const creative = linkedCodebases ? await store.update(slug, { linkedCodebases }) : created.creative;
       const ref = { root: ws.root, projectSlug: req.params.slug, projectDir: ws.projectDir(req.params.slug), creativeSlug: slug };
+      // Decision 1469: the brief's videos are analysed from now (the first turn waits for them, decision 1478).
+      ctx.turns.briefAssetsAdded(ref, brief.assets);
       // Phase 15: an identity creative with several concepts is a group of that many variants (the host is A), made here and
       // started like any grouped creative's first generation (`ctx.variantRuns`, the same orchestration as `…/variants/run`).
       if (groupSize > 1) {
