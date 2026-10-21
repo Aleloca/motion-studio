@@ -1370,7 +1370,7 @@ Variabili: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (array JSON)`,
       listMissing: (p) => `mancante: ${p.letters}`,
       stateLabel: (p) => `Stato della variante ${p.letter}`,
       /** Fase 15: perché una variante in coda aspetta (`JobSummary.waitReason`). */
-      waitReasons: { 'variant-directions': 'in attesa delle direzioni', 'variant-confirm': 'in attesa della conferma', 'variant-slot': 'in coda: due varianti già al lavoro', 'video-long': 'in attesa di conferma: video lungo', 'video-queue': 'in coda: si sta analizzando un altro video del progetto', 'transcription-choice': 'in attesa della scelta sulla trascrizione' },
+      waitReasons: { 'variant-directions': 'in attesa delle direzioni', 'variant-confirm': 'in attesa della conferma', 'variant-slot': 'in coda: due varianti già al lavoro', 'video-long': 'in attesa di conferma: video lungo', 'video-queue': 'in coda: si sta analizzando un altro video del progetto', 'transcription-choice': 'in attesa della scelta sulla trascrizione', 'transcription-check': 'controllo del parlato nell\'audio' },
     },
     theme: { aria: 'Tema', system: 'Sistema', light: 'Chiaro', dark: 'Scuro' },
     instances: {

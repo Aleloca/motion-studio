@@ -24,6 +24,8 @@ export type { ProjectRef };
 
 /** The queue lane of the analyses (spec §5): they never take an agent turn's slot, so a turn can wait for them. */
 export const ANALYSIS_LANE = 'video-analysis';
+/** The audio check before a transcription choice gives up after this long (plus 0.2 s per second of video). */
+const PRECHECK_MAX_MS = 60_000;
 
 /**
  * The transcription (Phase 2, `TranscriptionService`): what to do with a video's speech (`plan`: run a method, ask the user,
@@ -62,6 +64,8 @@ interface Active {
   transcribe: TranscribeMethod | 'none' | null;
   /** A long video that will ask about its transcription once its length is confirmed. */
   askTranscription: TranscriptionPending | null;
+  /** The audio check before the transcription choice, while it runs (decision 1547): aborted when the analysis stops. */
+  precheck: AbortController | null;
   /** Stopped (a rename, a delete, Stop): never joined again, a new analysis waits for it to settle (decision 1537). */
   cancelled: boolean;
   /** Each file's analysis file as it was when the file joined (decision 1539): a later edit by the user is never overwritten. */
@@ -157,41 +161,38 @@ export class VideoAnalysisService {
     const meanwhile = await this.liveEntry(shaKey(ref, hash.sha256));
     if (meanwhile) return join_(meanwhile);
     const duration = info?.durationSec ?? 0;
-    // Decision 1514: with speech and no method to run, the user is asked before the job is queued (one dialog per analysis).
-    let ask: TranscriptionPending | null = null;
-    if (info?.audio && this.deps.transcriber) {
-      const plan = await this.deps.transcriber.plan(duration).catch(() => null);
-      if (plan && 'ask' in plan && await this.hasSpeech(abs, duration)) ask = plan.ask;
-      const queued = await this.liveEntry(shaKey(ref, hash.sha256));
-      if (queued) return join_(queued);
-    }
+    // Decisions 1514, 1547: a video with audio is queued held (`transcription-check`) while its audio is checked in the
+    // background; with speech and no method to run, the hold becomes the user's choice. Nothing here waits for it.
+    const check = info?.audio === true && this.deps.transcriber !== undefined;
     const long = duration > LONG_VIDEO_SEC;
     const pending: VideoAnalysisPending | null = long ? (() => {
       // Before the scene detection only the time-based frames are known: the estimate counts those (decision 1491).
       const frames = planFrames([], duration, 'full').length, reducedFrames = planFrames([], duration, 'reduced').length;
       return { kind: 'long', frames, reducedFrames, tokens: frames * TOKENS_PER_FRAME, reducedTokens: reducedFrames * TOKENS_PER_FRAME };
-    })() : ask;
+    })() : null;
     const entry: Active = {
       ref, sha: hash.sha256, jobId: '', files: [file], density: long ? null : 'full', pending, overwrite: o.overwrite === true, retried: o.retried === true,
-      cancelled: false, baseline: new Map([[file, sidecar?.text ?? null]]), transcribe: null, askTranscription: long ? ask : null,
+      cancelled: false, baseline: new Map([[file, sidecar?.text ?? null]]), transcribe: null, askTranscription: null, precheck: check ? new AbortController() : null,
     };
     this.failures.delete(fileKey(ref, file));
     const job = this.deps.queue.enqueue({
       key: shaKey(ref, hash.sha256), kind: 'video-analysis', label: t().jobs.videoAnalysisLabel({ file: basename(file) }),
       lane: ANALYSIS_LANE, slot: { group: `video-analysis:${ref.root}:${ref.projectSlug}`, limit: 1, reason: 'video-queue' },
-      ...(long ? { hold: 'video-long' as const } : ask ? { hold: 'transcription-choice' as const } : {}),
+      ...(long ? { hold: 'video-long' as const } : check ? { hold: 'transcription-check' as const } : {}),
       run: (signal, jobId) => this.run(entry, signal, jobId),
       onCancelledBeforeStart: () => { this.forget(entry); },
     });
     entry.jobId = job.id;
     this.active.set(shaKey(ref, hash.sha256), entry);
     void this.deps.queue.whenSettled(job.id).then(() => this.forget(entry));
+    if (check) void this.precheck(entry, abs, duration);
     const v = await this.view(ref, file);
     this.say(ref, file, v);
     return v;
   }
 
   private forget(entry: Active): void {
+    entry.precheck?.abort();
     const k = shaKey(entry.ref, entry.sha);
     if (this.active.get(k) !== entry) return;
     this.active.delete(k);
@@ -203,23 +204,49 @@ export class VideoAnalysisService {
     const a = this.activeOf(ref, file);
     if (a?.pending?.kind === 'long') {
       a.density = density;
-      // A long video with speech asks about its transcription next.
+      // A long video with speech asks about its transcription next (or once its audio check ends).
       a.pending = a.askTranscription;
       a.askTranscription = null;
-      this.deps.queue.setHold(a.jobId, a.pending ? 'transcription-choice' : null);
+      this.deps.queue.setHold(a.jobId, a.pending ? 'transcription-choice' : a.precheck ? 'transcription-check' : null);
     }
     const v = await this.view(ref, file);
     this.say(ref, file, v);
     return v;
   }
 
+  /**
+   * Decision 1547: the check of a queued analysis's audio, in the background. With speech and no method that runs now, the
+   * job's hold becomes the user's choice (`pending` of kind `transcription`); otherwise it is released (the job then
+   * transcribes with the method the settings give, or not at all). Bounded (PRECHECK_MAX_MS) and stopped with the analysis;
+   * a check that fails or runs out of time asks nothing.
+   */
+  private async precheck(entry: Active, abs: string, duration: number): Promise<void> {
+    const own = entry.precheck;
+    const tr = this.deps.transcriber;
+    if (!own || !tr) return;
+    const signal = AbortSignal.any([own.signal, AbortSignal.timeout(PRECHECK_MAX_MS + duration * 200)]);
+    let ask: TranscriptionPending | null = null;
+    try {
+      const plan = await tr.plan(duration);
+      if ('ask' in plan && !signal.aborted && await this.hasSpeech(abs, duration, signal)) ask = plan.ask;
+    } catch { /* no question */ }
+    if (own.signal.aborted || entry.precheck !== own || this.active.get(shaKey(entry.ref, entry.sha)) !== entry) return;
+    entry.precheck = null;
+    if (entry.pending?.kind === 'long') entry.askTranscription = ask;
+    else {
+      entry.pending = ask;
+      this.deps.queue.setHold(entry.jobId, ask ? 'transcription-choice' : null);
+    }
+    for (const f of entry.files) void this.view(entry.ref, f).then((v) => this.say(entry.ref, f, v), () => {});
+  }
+
   /** Whether the video's audio has speech (less than 95 % silence); false when it cannot be read. */
-  private async hasSpeech(abs: string, duration: number): Promise<boolean> {
+  private async hasSpeech(abs: string, duration: number, signal: AbortSignal): Promise<boolean> {
     const tmp = await mkdtemp(join(tmpdir(), 'ms-analysis-pre-'));
     try {
       const wav = join(tmp, 'audio.wav');
-      if (!await extractWav(this.ff, abs, wav, undefined, duration)) return false;
-      return (await silenceRatio(this.ff, wav, duration)) < SILENCE_NO_SPEECH;
+      if (!await extractWav(this.ff, abs, wav, signal, duration)) return false;
+      return (await silenceRatio(this.ff, wav, duration, signal)) < SILENCE_NO_SPEECH;
     } catch {
       return false;
     } finally {
@@ -349,8 +376,10 @@ export class VideoAnalysisService {
    * gets the plain path). `aborted`: the turn was cancelled meanwhile.
    */
   async waitForBrief(ref: ProjectRef, creativeSlug: string, files: readonly string[], signal: AbortSignal, o: { note(e: { text: string; analysisWait?: { files: string[] } }): Promise<void> }): Promise<'none' | 'done' | 'skipped' | 'aborted'> {
-    // Queued here too when no trigger did (the brief of an older creative): a no-op for fresh, active or failed ones.
-    await this.ensure(ref, files, { from: 'brief' }).catch(() => []);
+    // Queued here too when no trigger did (the brief of an older creative): a no-op for fresh, active or failed ones. A Stop
+    // meanwhile answers at once (decision 1547).
+    const stopped = new Promise<void>((r) => { if (signal.aborted) r(); else signal.addEventListener('abort', () => r(), { once: true }); });
+    await Promise.race([this.ensure(ref, files, { from: 'brief' }).catch(() => []), stopped]);
     if (this.activeFor(ref, files).length === 0 || signal.aborted) return signal.aborted ? 'aborted' : 'none';
     const names = [...new Set(this.activeFor(ref, files).map((a) => basename(a.file)))];
     const key = this.waitKey(ref, creativeSlug);

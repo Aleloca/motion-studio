@@ -8,7 +8,7 @@ import { copyFile, mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { usageRecordSchema, type TranscriptionStatus, type VideoAnalysisView } from '@motion-studio/shared';
+import { usageRecordSchema, type JobSummary, type TranscriptionStatus, type VideoAnalysisView } from '@motion-studio/shared';
 import { parseSidecar } from '../src/analysis/sidecar.ts';
 import { WHISPER_MODELS, type WhisperModelManifest } from '../src/transcription/models.ts';
 import { estimateSttCost } from '../src/transcription/pricing.ts';
@@ -54,6 +54,15 @@ const sidecarOf = async (t: AnalysisApp, name: string) => {
   return text === null ? null : parseSidecar(text);
 };
 const choose = (t: AnalysisApp, payload: Record<string, unknown>) => t.app.inject({ method: 'POST', url: '/api/projects/acme/video-analyses/transcription-choice', payload });
+/** Queues the analysis of `file` and waits for its audio check to end (decision 1547): the view once it asks, or is released. */
+async function ensured(t: AnalysisApp, file: string): Promise<VideoAnalysisView> {
+  await t.analyses.ensure(t.ref, [file], { from: 'brief' });
+  await vi.waitFor(async () => {
+    const jobs = (await t.app.inject('/api/jobs')).json() as JobSummary[];
+    expect(jobs.some((j) => j.kind === 'video-analysis' && j.waitReason === 'transcription-check')).toBe(false);
+  }, { timeout: 10_000 });
+  return t.analyses.view(t.ref, file);
+}
 /** Lets the agent run of an analysis write and end, then waits for the job. */
 async function finishRun(t: AnalysisApp, h: ReturnType<typeof analysisHelpers>, jobId: string, index = 0) {
   const run = await t.runner.next(index);
@@ -70,39 +79,39 @@ describe.skipIf(!hasFfmpeg)('transcription in the analysis', () => {
     const h = analysisHelpers(t);
     await t.vault.set('openai', 'sk-test');
     await copyFile(fx.tone, join(t.projectDir, 'assets', 'tone.mp4'));
-    const [v] = await t.analyses.ensure(t.ref, ['assets/tone.mp4'], { from: 'brief' });
-    expect(v!.state).toBe('waiting');
-    expect(v!.pending).toMatchObject({ kind: 'transcription', openai: { costUsd: estimateSttCost('openai', 8) }, elevenlabs: null, whisper: { available: false, installed: false, canInstall: false, sizeBytes: WHISPER_MODELS.small.sizeBytes } });
+    const v = await ensured(t, 'assets/tone.mp4');
+    expect(v.state).toBe('waiting');
+    expect(v.pending).toMatchObject({ kind: 'transcription', openai: { costUsd: estimateSttCost('openai', 8) }, elevenlabs: null, whisper: { available: false, installed: false, canInstall: false, sizeBytes: WHISPER_MODELS.small.sizeBytes } });
     expect((await h.analysisJobs())[0]).toMatchObject({ state: 'queued', waitReason: 'transcription-choice' });
     // A held analysis never holds a creative's first turn.
     expect(t.analyses.activeFor(t.ref, ['assets/tone.mp4'])).toEqual([]);
     const r = await choose(t, { file: 'assets/tone.mp4', choice: 'openai', remember: false });
     expect(r.statusCode).toBe(200);
     expect((r.json() as VideoAnalysisView).pending).toBeNull();
-    await finishRun(t, h, v!.jobId!);
+    await finishRun(t, h, v.jobId!);
     expect(net.calls.map((c) => c.url)).toEqual(['https://api.openai.com/v1/audio/transcriptions']);
     const s = await sidecarOf(t, 'tone.mp4');
     expect(s!.header).toMatchObject({ transcript: 'openai', language: 'it' });
     expect(s!.body).toContain('Ciao a tutti.');
     const lines = (await readFile(usageLedgerFile(t.projectDir), 'utf8')).trim().split('\n').map((l) => usageRecordSchema.parse(JSON.parse(l)));
-    expect(lines.filter((l) => l.kind === 'transcription')).toMatchObject([{ jobId: v!.jobId, costUsd: estimateSttCost('openai', 8) }]);
+    expect(lines.filter((l) => l.kind === 'transcription')).toMatchObject([{ jobId: v.jobId, costUsd: estimateSttCost('openai', 8) }]);
   }, 60_000);
 
   it('"none" remembered: settings never, sidecar none-skipped, the next video is not held', async () => {
     const t = await analysisApp({ transcription: { method: 'ask' } });
     const h = analysisHelpers(t);
     await copyFile(fx.tone, join(t.projectDir, 'assets', 'a.mp4'));
-    const [v] = await t.analyses.ensure(t.ref, ['assets/a.mp4'], { from: 'brief' });
-    expect(v!.pending?.kind).toBe('transcription');
+    const v = await ensured(t, 'assets/a.mp4');
+    expect(v.pending?.kind).toBe('transcription');
     expect((await choose(t, { file: 'assets/a.mp4', choice: 'none', remember: true })).statusCode).toBe(200);
     expect(((await t.app.inject('/api/transcription')).json() as TranscriptionStatus).settings.method).toBe('never');
-    await finishRun(t, h, v!.jobId!);
+    await finishRun(t, h, v.jobId!);
     expect((await sidecarOf(t, 'a.mp4'))!.header.transcript).toBe('none-skipped');
     await copyFile(fx.tone, join(t.projectDir, 'assets', 'b.mp4'));
     await (await import('node:fs/promises')).appendFile(join(t.projectDir, 'assets', 'b.mp4'), Buffer.from([0]));
-    const [w] = await t.analyses.ensure(t.ref, ['assets/b.mp4'], { from: 'brief' });
-    expect(w!.pending).toBeNull();
-    expect(w!.state).not.toBe('waiting');
+    const w = await ensured(t, 'assets/b.mp4');
+    expect(w.pending).toBeNull();
+    expect(w.state).not.toBe('waiting');
   }, 60_000);
 
   it('remember on one dialog answers the other analyses still asking', async () => {
@@ -111,7 +120,8 @@ describe.skipIf(!hasFfmpeg)('transcription in the analysis', () => {
     const { appendFile } = await import('node:fs/promises');
     await copyFile(fx.tone, join(t.projectDir, 'assets', 'b.mp4'));
     await appendFile(join(t.projectDir, 'assets', 'b.mp4'), Buffer.from([0]));
-    await t.analyses.ensure(t.ref, ['assets/a.mp4', 'assets/b.mp4'], { from: 'brief' });
+    await ensured(t, 'assets/a.mp4');
+    await ensured(t, 'assets/b.mp4');
     expect((await t.analyses.view(t.ref, 'assets/b.mp4')).pending?.kind).toBe('transcription');
     await choose(t, { file: 'assets/a.mp4', choice: 'none', remember: true });
     await vi.waitFor(async () => expect((await t.analyses.view(t.ref, 'assets/b.mp4')).pending).toBeNull());
@@ -126,9 +136,9 @@ describe.skipIf(!hasFfmpeg)('transcription in the analysis', () => {
     expect(put.statusCode).toBe(200);
     expect((put.json() as TranscriptionStatus).whisper).toMatchObject({ engine: 'openai-whisper', program, model: 'small', source: 'settings' });
     await copyFile(fx.tone, join(t.projectDir, 'assets', 'tone.mp4'));
-    const [v] = await t.analyses.ensure(t.ref, ['assets/tone.mp4'], { from: 'brief' });
-    expect(v!.pending).toBeNull();
-    await finishRun(t, h, v!.jobId!);
+    const v = await ensured(t, 'assets/tone.mp4');
+    expect(v.pending).toBeNull();
+    await finishRun(t, h, v.jobId!);
     const s = await sidecarOf(t, 'tone.mp4');
     expect(s!.header).toMatchObject({ transcript: 'whisper-small', language: 'en' });
     expect(s!.body).toMatch(/Hello everyone, welcome\./);
@@ -137,8 +147,8 @@ describe.skipIf(!hasFfmpeg)('transcription in the analysis', () => {
   it('a saved ElevenLabs method whose key was deleted asks again', async () => {
     const t = await analysisApp({ transcription: { method: 'elevenlabs' } });
     await copyFile(fx.tone, join(t.projectDir, 'assets', 'tone.mp4'));
-    const [v] = await t.analyses.ensure(t.ref, ['assets/tone.mp4'], { from: 'brief' });
-    expect(v!.pending).toMatchObject({ kind: 'transcription', elevenlabs: null });
+    const v = await ensured(t, 'assets/tone.mp4');
+    expect(v.pending).toMatchObject({ kind: 'transcription', elevenlabs: null });
     const r = await choose(t, { file: 'assets/tone.mp4', choice: 'elevenlabs', remember: false });
     expect(r.statusCode).toBe(409);
     expect(r.json()).toMatchObject({ code: 'transcription-no-key' });
@@ -148,9 +158,9 @@ describe.skipIf(!hasFfmpeg)('transcription in the analysis', () => {
     const t = await analysisApp({ transcription: { method: 'ask' } });
     const h = analysisHelpers(t);
     await copyFile(fx.silent, join(t.projectDir, 'assets', 'silent.mp4'));
-    const [v] = await t.analyses.ensure(t.ref, ['assets/silent.mp4'], { from: 'brief' });
-    expect(v!.pending).toBeNull();
-    await finishRun(t, h, v!.jobId!);
+    const v = await ensured(t, 'assets/silent.mp4');
+    expect(v.pending).toBeNull();
+    await finishRun(t, h, v.jobId!);
     expect((await sidecarOf(t, 'silent.mp4'))!.header.transcript).toBe('none-no-speech');
   }, 60_000);
 
@@ -161,13 +171,13 @@ describe.skipIf(!hasFfmpeg)('transcription in the analysis', () => {
     const t = await analysisApp({ transcription: { method: 'ask', whisperDir: bundled, models, redirectHosts: [] } });
     const h = analysisHelpers(t);
     await copyFile(fx.tone, join(t.projectDir, 'assets', 'tone.mp4'));
-    const [v] = await t.analyses.ensure(t.ref, ['assets/tone.mp4'], { from: 'brief' });
-    expect(v!.pending).toMatchObject({ whisper: { available: true, installed: false, canInstall: true, sizeBytes: model.length } });
+    const v = await ensured(t, 'assets/tone.mp4');
+    expect(v.pending).toMatchObject({ whisper: { available: true, installed: false, canInstall: true, sizeBytes: model.length } });
     const wrong = await choose(t, { file: 'assets/tone.mp4', choice: 'whisper', remember: true, sizeBytes: model.length + 1 });
     expect(wrong.statusCode).toBe(409);
     expect(wrong.json()).toMatchObject({ code: 'download-size-changed' });
     expect((await choose(t, { file: 'assets/tone.mp4', choice: 'whisper', remember: true, sizeBytes: model.length })).statusCode).toBe(200);
-    await finishRun(t, h, v!.jobId!);
+    await finishRun(t, h, v.jobId!);
     expect((await sidecarOf(t, 'tone.mp4'))!.header).toMatchObject({ transcript: 'whisper-small', language: 'it' });
     const st = (await t.app.inject('/api/transcription')).json() as TranscriptionStatus;
     expect(st.settings.method).toBe('whisper');
@@ -183,7 +193,7 @@ describe.skipIf(!hasFfmpeg)('transcription in the analysis', () => {
     const t = await analysisApp({ transcription: { method: 'ask', whisperDir: bundled, models, redirectHosts: [] } });
     const h = analysisHelpers(t);
     await copyFile(fx.tone, join(t.projectDir, 'assets', 'tone.mp4'));
-    await t.analyses.ensure(t.ref, ['assets/tone.mp4'], { from: 'brief' });
+    await ensured(t, 'assets/tone.mp4');
     await choose(t, { file: 'assets/tone.mp4', choice: 'whisper', remember: false, sizeBytes: model.length });
     await vi.waitFor(async () => expect((await t.analyses.view(t.ref, 'assets/tone.mp4')).pending).toMatchObject({ kind: 'transcription', error: expect.stringMatching(/sha256/) }));
     expect((await h.analysisJobs())[0]).toMatchObject({ state: 'queued', waitReason: 'transcription-choice' });
