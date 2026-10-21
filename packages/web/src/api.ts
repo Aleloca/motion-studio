@@ -1,4 +1,4 @@
-import type { CustomFormatInput, LocaleTag, Localization, LocalizationIssue, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StagedSvgEdit, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, ExportFps, ExportQuality, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, AgentCapabilities, ApprovalDecision, ApprovalRequest, QuestionAnswers, LiveMessageOutcome, RedirectOutcome, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, CreativeRemovalInfo, RecentCreative, DoctorCheck, UpdatesState, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIcon, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings, StorePack, VariantId, VariantPick, BriefContext, BriefField, BriefForm, BriefFormSave, BriefFormSaved, BriefMessageInput, BriefSendResult, BriefSessionRef, BriefSessionView } from '@motion-studio/shared';
+import type { CustomFormatInput, LocaleTag, Localization, LocalizationIssue, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StagedSvgEdit, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, ExportFps, ExportQuality, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, AgentCapabilities, ApprovalDecision, ApprovalRequest, QuestionAnswers, LiveMessageOutcome, RedirectOutcome, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, CreativeRemovalInfo, RecentCreative, DoctorCheck, UpdatesState, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIcon, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings, StorePack, VariantId, VariantPick, BriefContext, BriefField, BriefForm, BriefFormSave, BriefFormSaved, BriefMessageInput, BriefSendResult, BriefSessionRef, BriefSessionView, TranscriptionChoice, TranscriptionModelId, TranscriptionSettingsPatch, TranscriptionStatus, VideoAnalysisView, WhisperEngine, WhisperFound } from '@motion-studio/shared';
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
 
@@ -406,6 +406,31 @@ export const api = {
   getChromeDownloadInfo: () => request<ChromeDownloadOffer>('GET', '/api/render-engine/download-info'),
   /** Starts the download the user agreed to: `sizeBytes` is the size shown to them. */
   downloadChrome: (sizeBytes: number) => request<RenderEngineStatus>('POST', '/api/render-engine/download', { consent: true, sizeBytes }),
+  /** Decision 1468: every video of the library with its analysis (state, held question, sidecar). */
+  listVideoAnalyses: (slug: string) => request<VideoAnalysisView[]>('GET', `${p(slug)}/video-analyses`),
+  videoAnalysis: (slug: string, file: string) => request<VideoAnalysisView>('GET', `${p(slug)}/video-analyses/view?file=${encodeURIComponent(file)}`),
+  /** Analizza / Rianalizza: an edited sidecar answers 409 `analysis-edited` unless `overwrite` (decision 1480). */
+  analyzeVideo: (slug: string, file: string, overwrite?: boolean) =>
+    request<VideoAnalysisView>('POST', `${p(slug)}/video-analyses`, overwrite ? { file, overwrite: true } : { file }),
+  /** A video over 20 minutes: "Analizza tutto" (`full`) or "Analizza a densità ridotta" (`reduced`). */
+  confirmLongVideo: (slug: string, file: string, density: 'full' | 'reduced') => request<VideoAnalysisView>('POST', `${p(slug)}/video-analyses/confirm-long`, { file, density }),
+  /** Modifica: the body only (the header stays the core's); the sidecar is marked edited. */
+  saveAnalysisBody: (slug: string, file: string, body: string) => request<VideoAnalysisView>('PUT', `${p(slug)}/video-analyses/body`, { file, body }),
+  cancelVideoAnalysis: (slug: string, file: string) => request<{ cancelled: boolean }>('DELETE', `${p(slug)}/video-analyses?file=${encodeURIComponent(file)}`),
+  /** The answer to the transcription dialog (spec §6); 409 with a code when it cannot be honoured. */
+  transcriptionChoice: (slug: string, body: TranscriptionChoice) => request<VideoAnalysisView>('POST', `${p(slug)}/video-analyses/transcription-choice`, body),
+  /** Decision 1478: the videos a creative's first turn is waiting for (empty: no wait), and Salta. */
+  analysisWait: (slug: string, creative: string) => request<{ files: string[] }>('GET', `${c(slug, creative)}/analysis-wait`),
+  skipAnalysisWait: (slug: string, creative: string) => request<void>('POST', `${c(slug, creative)}/analysis-wait/skip`),
+  /** Settings → Trascrizione video. */
+  getTranscription: () => request<TranscriptionStatus>('GET', '/api/transcription'),
+  /** A partial change; a program is test-run first (400 `whisper-probe-failed`). */
+  saveTranscription: (patch: TranscriptionSettingsPatch) => request<TranscriptionStatus>('PUT', '/api/transcription', patch),
+  probeWhisper: (body: { program: string; engine?: WhisperEngine; modelFile?: string }) => request<WhisperFound | { problem: string }>('POST', '/api/transcription/probe', body),
+  /** Starts a model's download the user agreed to: `sizeBytes` is the size shown to them (409 `download-size-changed`). */
+  downloadWhisperModel: (id: TranscriptionModelId, sizeBytes: number) =>
+    request<TranscriptionStatus['download']>('POST', `/api/transcription/models/${id}/download`, { consent: true, sizeBytes }),
+  removeWhisperModel: (id: TranscriptionModelId) => request<void>('DELETE', `/api/transcription/models/${id}`),
   fileUrl: (slug: string, creative: string, rel: string) => `${c(slug, creative)}/files/${rel.split('/').map(encodeURIComponent).join('/')}`,
   /** The size of a creative's file (a HEAD of its files URL: the record of a render has no size); null when unknown. */
   fileBytes: async (url: string): Promise<number | null> => {
