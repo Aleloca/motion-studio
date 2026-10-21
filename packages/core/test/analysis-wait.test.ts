@@ -2,9 +2,9 @@ import { copyFile, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { messages, type ConversationEntry, type MediaInfo } from '@motion-studio/shared';
+import { messages, type ConversationEntry } from '@motion-studio/shared';
 import type { CommandExec, CommandResult } from '../src/exec.ts';
-import type { MediaTools } from '../src/media/media-tools.ts';
+import type { MediaInfo, MediaTools } from '../src/media/media-tools.ts';
 import { analysisApp, analysisHelpers, wholeWrite, type AnalysisApp } from './helpers/analysis-app.ts';
 import { hasFfmpeg, twoScenes } from './helpers/analysis-fixtures.ts';
 
