@@ -238,3 +238,59 @@ describe('sweepAnalysisFrames', () => {
     expect(existsSync(join(root, 'c'.repeat(64)))).toBe(true);
   });
 });
+
+describe('review round (decisions 1536-1540)', () => {
+  const media = (durationSec: number) => (real: MediaTools): MediaTools => ({ ...real, available: true, probe: async () => ({ width: 640, height: 360, durationSec, fps: 25, audio: false }) });
+
+  it('a cancel stops the scene detection at once: the job settles cancelled and frees the slot', async () => {
+    const signals: AbortSignal[] = [];
+    const hang: CommandExec = (_cmd, _args, o) => new Promise((res) => {
+      if (o?.signal) signals.push(o.signal);
+      o?.signal?.addEventListener('abort', () => res({ code: -1, stdout: '', stderr: '', notFound: false, aborted: true }));
+    });
+    const t = await analysisApp({ media: media(600), ffExec: hang });
+    const h = analysisHelpers(t);
+    const file = await h.put('clip.mp4', 'fake');
+    const [v] = await t.analyses.ensure(t.ref, [file]);
+    await vi.waitFor(() => expect(signals).toHaveLength(1));
+    expect(t.analyses.cancel(t.ref, file)).toBe(true);
+    await t.analyses.settled(v!.jobId!);
+    expect((await h.analysisJobs())[0]!.state).toBe('cancelled');
+    expect(signals[0]!.aborted).toBe(true);
+  });
+
+  it('a video renamed during its analysis: the new name gets a new analysis, never the cancelled one', async () => {
+    const t = await analysisApp({ media: media(8), ffExec: stubFf([]) });
+    const h = analysisHelpers(t);
+    const file = await h.put('a.mp4', 'same content');
+    await t.analyses.ensure(t.ref, [file]);
+    const first = await t.runner.next(0);
+    const { rename } = await import('node:fs/promises');
+    await rename(join(t.projectDir, 'assets', 'a.mp4'), join(t.projectDir, 'assets', 'b.mp4'));
+    t.analyses.cancel(t.ref, file);
+    const [b] = await t.analyses.ensure(t.ref, ['assets/b.mp4']);
+    expect(first.cancelled).toBe(true);
+    expect(b).toMatchObject({ state: expect.stringMatching(/queued|running/) });
+    const states = (await h.analysisJobs()).map((j) => j.state);
+    expect(states).toHaveLength(2);
+    expect(states).toContain('cancelled');
+    const second = await t.runner.next(1);
+    expect((await h.tool(second, 'write_video_analysis', wholeWrite(8))).statusCode).toBe(200);
+    second.finish({ write: false });
+    await t.analyses.settled(b!.jobId!);
+    expect((await sidecarOf(t, 'b.mp4'))!.header.asset).toBe('assets/b.mp4');
+    expect(await sidecarOf(t, 'a.mp4')).toBeNull();
+  });
+
+  it('a wait aborted while its chat line is written ends aborted', async () => {
+    const t = await analysisApp({ media: media(8), ffExec: stubFf([]) });
+    const h = analysisHelpers(t);
+    const file = await h.put('clip.mp4', 'x');
+    await t.analyses.ensure(t.ref, [file]);
+    const ac = new AbortController();
+    const r = await t.analyses.waitForBrief(t.ref, 'c1', [file], ac.signal, { note: async () => { ac.abort(); } });
+    expect(r).toBe('aborted');
+    expect(t.analyses.waitingFiles(t.ref, 'c1')).toEqual([]);
+    t.analyses.cancel(t.ref, file);
+  });
+});

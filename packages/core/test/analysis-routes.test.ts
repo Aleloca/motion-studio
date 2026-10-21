@@ -113,6 +113,34 @@ describe.skipIf(!hasFfmpeg)('video analysis routes and triggers', () => {
     expect(await readFile(join(t.projectDir, 'assets/.analysis/intro.mp4.md'), 'utf8').catch(() => null)).toBeNull();
   }, 60_000);
 
+  it('a user edit made while an analysis runs is kept (decision 1539)', async () => {
+    const { t, h } = await setup();
+    await t.app.inject({ method: 'POST', url: A, payload: { file: 'assets/clip.mp4' } });
+    await finishRun(t, h, 0);
+    expect((await t.app.inject({ method: 'POST', url: A, payload: { file: 'assets/clip.mp4' } })).statusCode).toBe(202);
+    const run = await t.runner.next(1);
+    expect((await t.app.inject({ method: 'PUT', url: `${A}/body`, payload: { file: 'assets/clip.mp4', body: '## Summary\nMine.' } })).statusCode).toBe(200);
+    expect((await h.tool(run, 'write_video_analysis', wholeWrite(8))).statusCode).toBe(200);
+    run.finish({ write: false });
+    await vi.waitFor(async () => expect((await h.analysisJobs()).every((j) => j.state !== 'queued' && j.state !== 'running')).toBe(true));
+    expect((await h.analysisJobs()).map((j) => j.state)).toEqual(['succeeded', 'succeeded']);
+    const kept = parseSidecar(await readFile(join(t.projectDir, 'assets/.analysis/clip.mp4.md'), 'utf8'))!;
+    expect(kept.header.edited).toBe(true);
+    expect(kept.body).toBe('## Summary\nMine.\n');
+  }, 60_000);
+
+  it('a rename that fails stops nothing (decision 1537)', async () => {
+    const { t, h } = await setup();
+    await t.app.inject({ method: 'POST', url: '/api/projects/acme/assets/register', payload: { files: ['clip.mp4', 'second.mp4'] } });
+    await t.app.inject({ method: 'POST', url: A, payload: { file: 'assets/clip.mp4' } });
+    await t.runner.next(0);
+    const refused = await t.app.inject({ method: 'PATCH', url: '/api/projects/acme/assets/item/clip.mp4', payload: { name: 'second.mp4' } });
+    expect(refused.statusCode).toBe(409);
+    expect((await h.analysisJobs())[0]!.state).toBe('running');
+    await finishRun(t, h, 0);
+    expect((await t.app.inject(`${A}/view?file=assets/clip.mp4`)).json()).toMatchObject({ state: 'ready' });
+  }, 60_000);
+
   it('lists the library videos and refuses what is not one', async () => {
     const { t } = await setup();
     await t.app.inject({ method: 'POST', url: '/api/projects/acme/assets/register', payload: { files: ['clip.mp4', 'logo.png'] } });

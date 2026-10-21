@@ -16,7 +16,7 @@ import { assertAgentFolders } from '../workspace-store.ts';
 import { buildAnalysisPrompt } from './analysis-prompt.ts';
 import { extractWav, silenceRatio } from './audio.ts';
 import { detectScenes, extractFrames, planFrames } from './frames.ts';
-import { frameName, framesDirOf, mergeTranscript, readSidecar, renderSidecar, sidecarPathOf, writeSidecar, type SidecarScene } from './sidecar.ts';
+import { frameName, framesDirOf, mergeTranscript, readSidecar, renderSidecar, sidecarPathOf, withLibraryLock, writeSidecar, type SidecarScene } from './sidecar.ts';
 import { hashVideo } from './video-hash.ts';
 
 export type { ProjectRef };
@@ -53,6 +53,10 @@ interface Active {
   overwrite: boolean;
   /** Already queued again once because the video changed during an analysis. */
   retried: boolean;
+  /** Stopped (a rename, a delete, Stop): never joined again, a new analysis waits for it to settle (decision 1537). */
+  cancelled: boolean;
+  /** Each file's analysis file as it was when the file joined (decision 1539): a later edit by the user is never overwritten. */
+  baseline: Map<string, string | null>;
 }
 
 const fileKey = (ref: ProjectRef, file: string) => `${ref.root}\0${ref.projectSlug}\0${file}`;
@@ -86,8 +90,18 @@ export class VideoAnalysisService {
   canAnalyse(): boolean { return this.deps.media.available && this.deps.launcher.mcpActive(); }
 
   private activeOf(ref: ProjectRef, file: string): Active | null {
-    for (const a of this.active.values()) if (a.ref.root === ref.root && a.ref.projectSlug === ref.projectSlug && a.files.includes(file)) return a;
+    for (const a of this.active.values()) if (!a.cancelled && a.ref.root === ref.root && a.ref.projectSlug === ref.projectSlug && a.files.includes(file)) return a;
     return null;
+  }
+
+  /** The analysis queued or running for this content, never a cancelled one: that one is waited for until it settles. */
+  private async liveEntry(k: string): Promise<Active | null> {
+    for (;;) {
+      const same = this.active.get(k);
+      if (!same?.cancelled) return same ?? null;
+      await this.deps.queue.whenSettled(same.jobId);
+      if (this.active.get(k) === same) this.active.delete(k);
+    }
   }
 
   private jobState(jobId: string): 'queued' | 'running' | null {
@@ -121,17 +135,17 @@ export class VideoAnalysisService {
     if (o.from === 'brief' && this.failures.get(fileKey(ref, file))?.sha === hash.sha256) return this.view(ref, file);
     if (!this.canAnalyse()) return this.view(ref, file);
     const join_ = async (same: Active) => {
-      if (!same.files.includes(file)) same.files.push(file);
+      if (!same.files.includes(file)) { same.files.push(file); same.baseline.set(file, sidecar?.text ?? null); }
       same.overwrite ||= o.overwrite === true;
       const v = await this.view(ref, file);
       this.say(ref, file, v);
       return v;
     };
-    const same = this.active.get(shaKey(ref, hash.sha256));
+    const same = await this.liveEntry(shaKey(ref, hash.sha256));
     if (same) return join_(same);
     const info = await this.deps.media.probe(abs).catch(() => null);
     // Two triggers at once (a creative made and its first turn): the one that queued first is joined.
-    const meanwhile = this.active.get(shaKey(ref, hash.sha256));
+    const meanwhile = await this.liveEntry(shaKey(ref, hash.sha256));
     if (meanwhile) return join_(meanwhile);
     const duration = info?.durationSec ?? 0;
     const long = duration > LONG_VIDEO_SEC;
@@ -140,7 +154,8 @@ export class VideoAnalysisService {
       const frames = planFrames([], duration, 'full').length, reducedFrames = planFrames([], duration, 'reduced').length;
       return { kind: 'long', frames, reducedFrames, tokens: frames * TOKENS_PER_FRAME, reducedTokens: reducedFrames * TOKENS_PER_FRAME };
     })() : null;
-    const entry: Active = { ref, sha: hash.sha256, jobId: '', files: [file], density: long ? null : 'full', pending, overwrite: o.overwrite === true, retried: o.retried === true };
+    const entry: Active = { ref, sha: hash.sha256, jobId: '', files: [file], density: long ? null : 'full', pending, overwrite: o.overwrite === true, retried: o.retried === true,
+      cancelled: false, baseline: new Map([[file, sidecar?.text ?? null]]) };
     this.failures.delete(fileKey(ref, file));
     const job = this.deps.queue.enqueue({
       key: shaKey(ref, hash.sha256), kind: 'video-analysis', label: t().jobs.videoAnalysisLabel({ file: basename(file) }),
@@ -185,7 +200,7 @@ export class VideoAnalysisService {
     const a = this.activeOf(ref, file);
     if (!a) return false;
     a.files = a.files.filter((f) => f !== file);
-    if (a.files.length === 0) this.deps.queue.cancel(a.jobId);
+    if (a.files.length === 0) { a.cancelled = true; this.deps.queue.cancel(a.jobId); }
     return true;
   }
 
@@ -263,16 +278,19 @@ export class VideoAnalysisService {
     const names = [...new Set(this.activeFor(ref, files).map((a) => basename(a.file)))];
     const key = this.waitKey(ref, creativeSlug);
     const tell = (list: string[]) => { try { this.deps.broadcast({ type: 'analysis-wait', project: ref.projectSlug, creative: creativeSlug, files: list }); } catch { /* listener */ } };
-    await o.note({ text: t().videoAnalysis.waiting({ files: names.join(', ') }), analysisWait: { files: names } }).catch(() => {});
-    tell(names);
     let end!: (r: 'done' | 'skipped' | 'aborted') => void;
     const outcome = new Promise<'done' | 'skipped' | 'aborted'>((r) => { end = r; });
     const check = () => { if (this.activeFor(ref, files).length === 0) end('done'); };
     const onAbort = () => end('aborted');
+    // Listening before anything is awaited (decision 1538): an abort, a Salta or the end of an analysis while the chat line is
+    // written is never missed.
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) end('aborted');
     this.listeners.add(check);
     this.waits.set(key, { files: names, skip: () => end('skipped') });
-    signal.addEventListener('abort', onAbort, { once: true });
     for (const a of this.activeFor(ref, files)) void this.settled(a.jobId).then(check);
+    await o.note({ text: t().videoAnalysis.waiting({ files: names.join(', ') }), analysisWait: { files: names } }).catch(() => {});
+    tell(names);
     check();
     const r = await outcome;
     this.listeners.delete(check);
@@ -300,6 +318,7 @@ export class VideoAnalysisService {
     const { ref } = entry;
     const primary = entry.files[0];
     if (!primary) return 'cancelled';
+    signal.addEventListener('abort', () => { entry.cancelled = true; }, { once: true });
     for (const f of entry.files) this.say(ref, f, await this.view(ref, f));
     let tmp: string | null = null;
     try {
@@ -366,25 +385,39 @@ export class VideoAnalysisService {
 
       // The video may have changed (or gone) while the agent looked at it: no sidecar for content it did not see (review focus 1).
       const written: string[] = [];
+      let keptEdit = false;
       for (const file of [...entry.files]) {
-        const now = await hashVideo(join(ref.projectDir, file)).catch(() => null);
-        if (!now) continue;
-        if (now.sha256 !== entry.sha) { await this.again(entry, file); this.failures.set(fileKey(ref, file), { message: t().errors.analysisChanged, sha: entry.sha }); continue; }
-        const existing = await readSidecar(ref.projectDir, file);
-        if (existing?.header.edited && !entry.overwrite && file !== primary) continue;
-        const header: SidecarHeader = {
+        // Under the library's lock (decision 1540): a rename or a delete of the file is either over (its file is gone, its
+        // analysis file moved or removed) or not started, and a user edit of the analysis file is not half written.
+        const outcome = await withLibraryLock(ref.projectDir, async (): Promise<'written' | 'skipped' | 'edited'> => {
+          if (entry.cancelled || signal.aborted || !entry.files.includes(file)) return 'skipped';
+          const now = await hashVideo(join(ref.projectDir, file)).catch(() => null);
+          if (!now) return 'skipped';
+          if (now.sha256 !== entry.sha) { await this.again(entry, file); this.failures.set(fileKey(ref, file), { message: t().errors.analysisChanged, sha: entry.sha }); return 'skipped'; }
+          // A file the user edited is kept (decision 1494), unless they confirmed overwriting exactly that edit (decision 1539).
+          const existing = await readSidecar(ref.projectDir, file);
+          if (existing?.header.edited && (!entry.overwrite || existing.text !== entry.baseline.get(file))) return 'edited';
+          const header: SidecarHeader = {
           format: 'motion-studio-video-analysis/1', asset: file, sha256: entry.sha, bytes: now.bytes, durationSec: Number(duration.toFixed(3)),
           width: info.width, height: info.height, fps: info.fps ? Number(info.fps.toFixed(3)) : null, hasAudio: info.audio === true,
           transcript: kind, language, generator: `Motion Studio · ${model ?? 'default model'}`, createdAt: new Date().toISOString(), edited: false,
         };
-        await writeSidecar(ref.projectDir, file, renderSidecar(header, {
-          summary: content.final.summary ?? '', timeline: content.timeline, usableMoments: content.final.usableMoments ?? [],
-          look: content.final.look ?? null, transcript, tags: content.final.tags ?? [],
-        }));
+          await writeSidecar(ref.projectDir, file, renderSidecar(header, {
+            summary: content.final.summary ?? '', timeline: content.timeline, usableMoments: content.final.usableMoments ?? [],
+            look: content.final.look ?? null, transcript, tags: content.final.tags ?? [],
+          }));
+          return 'written';
+        });
+        if (outcome === 'edited') keptEdit = true;
+        if (outcome !== 'written') continue;
         this.failures.delete(fileKey(ref, file));
         written.push(file);
       }
-      if (written.length === 0) throw new Error(t().errors.analysisChanged);
+      if (entry.cancelled || signal.aborted) return 'cancelled';
+      if (written.length === 0) {
+        if (keptEdit) return;
+        throw new Error(t().errors.analysisChanged);
+      }
       await this.deps.git.commitAll(ref.projectDir, t().videoAnalysis.commit({ file: written.map((f) => basename(f)).join(', ') })).catch((err: Error) => {
         console.warn(`Motion Studio: the video analysis could not be committed in project ${ref.projectSlug}: ${err.message}`);
       });

@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { assetKindOf, type VideoAnalysisView } from '@motion-studio/shared';
 import type { ProjectRef, VideoAnalysisService } from '../analysis/video-analysis.ts';
-import { readSidecar, replaceBody, writeSidecar } from '../analysis/sidecar.ts';
+import { readSidecar, replaceBody, withLibraryLock, writeSidecar } from '../analysis/sidecar.ts';
 import { hashVideo } from '../analysis/video-hash.ts';
 import type { Git } from '../git.ts';
 import { t } from '../i18n.ts';
@@ -75,11 +75,14 @@ export function registerAnalysisRoutes(app: FastifyInstance, ctx: { requireWorks
     const ref = await refOf(req.params.slug);
     const body = parse(bodySchema, req.body);
     const file = await videoOf(ref, body.file);
-    const sidecar = await readSidecar(ref.projectDir, file);
-    if (!sidecar) throw new CodedError(404, t().errors.notFound, 'analysis-not-found');
-    let text: string;
-    try { text = replaceBody(sidecar.text, body.body); } catch (err) { throw new WorkspaceError(400, err instanceof Error ? err.message : String(err)); }
-    await writeSidecar(ref.projectDir, file, text);
+    // Under the library's lock, as the analysis's own write (decision 1540).
+    await withLibraryLock(ref.projectDir, async () => {
+      const sidecar = await readSidecar(ref.projectDir, file);
+      if (!sidecar) throw new CodedError(404, t().errors.notFound, 'analysis-not-found');
+      let text: string;
+      try { text = replaceBody(sidecar.text, body.body); } catch (err) { throw new WorkspaceError(400, err instanceof Error ? err.message : String(err)); }
+      await writeSidecar(ref.projectDir, file, text);
+    });
     await ctx.git.commitAll(ref.projectDir, t().videoAnalysis.editedCommit({ file: file.slice(file.lastIndexOf('/') + 1) })).catch(() => null);
     return ctx.analyses.view(ref, file);
   });
