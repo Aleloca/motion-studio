@@ -2,7 +2,8 @@ import { mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
-import type { JobSummary, ServerMessage } from '@motion-studio/shared';
+import type { JobSummary, ServerMessage, TranscriptionMethod, WhisperFound } from '@motion-studio/shared';
+import type { WhisperModelManifest } from '../../src/transcription/models.ts';
 import { AppConfigStore } from '../../src/app-config.ts';
 import { ApprovalBroker } from '../../src/approvals/broker.ts';
 import { AgentBridge } from '../../src/bridge/bridge.ts';
@@ -21,10 +22,18 @@ import { ControlledRunner, type ControlledRun } from './controlled-runner.ts';
  */
 export interface AnalysisApp {
   app: FastifyInstance; runner: ControlledRunner; base: string; projectDir: string; sent: ServerMessage[]; analyses: VideoAnalysisService;
+  vault: MemoryVault; configDir: string;
   ref: { root: string; projectSlug: string; projectDir: string };
 }
 
-export async function analysisApp(o: { media?: (real: MediaTools) => MediaTools; ffExec?: CommandExec; mcp?: boolean } = {}): Promise<AnalysisApp> {
+/**
+ * `transcription`: the method saved before the server starts (default `never`: the Phase 1 tests never meet the dialog) and
+ * the transcription seams (a fake fetch, the detected Whispers: none by default, a bundled folder, a test model manifest).
+ */
+export async function analysisApp(o: {
+  media?: (real: MediaTools) => MediaTools; ffExec?: CommandExec; mcp?: boolean;
+  transcription?: { method?: TranscriptionMethod; fetch?: typeof fetch; detect?: () => Promise<WhisperFound[]>; whisperDir?: string; models?: WhisperModelManifest; redirectHosts?: string[] };
+} = {}): Promise<AnalysisApp> {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'ms-analysis-')));
   const runner = new ControlledRunner();
   const bridge = new AgentBridge();
@@ -32,12 +41,18 @@ export async function analysisApp(o: { media?: (real: MediaTools) => MediaTools;
   const sent: ServerMessage[] = [];
   const real = await createFfmpegTools(execCommand);
   let analyses: VideoAnalysisService | null = null;
+  const tr = o.transcription ?? {};
+  await new AppConfigStore(join(base, 'config')).setTranscription({ method: tr.method ?? 'never' });
+  const vault = new MemoryVault({});
   const app = await buildServer({
     uiToken: null, sandbox: async () => ({ available: false, reason: 'test' }),
     appConfig: new AppConfigStore(join(base, 'config')), configDir: join(base, 'config'), git: new Git(), runner,
     doctor: async () => [], claudeVersion: async () => '2.1.0', bridge, approvals: new ApprovalBroker({ broadcast: () => {} }),
     onBroadcast: (m) => sent.push(m), media: o.media ? o.media(real) : real,
-    mcpCommand: o.mcp === false ? null : [process.execPath, join(base, 'never-started-mcp.mjs')], vault: new MemoryVault({}), agentContract: 'media',
+    mcpCommand: o.mcp === false ? null : [process.execPath, join(base, 'never-started-mcp.mjs')], vault, agentContract: 'media',
+    whisperDetect: tr.detect ?? (async () => []),
+    ...(tr.fetch ? { transcriptionHttp: { fetch: tr.fetch } } : {}), ...(tr.whisperDir ? { whisperDir: tr.whisperDir } : {}),
+    ...(tr.models ? { whisperModels: tr.models } : {}), ...(tr.redirectHosts ? { whisperRedirectHosts: tr.redirectHosts } : {}),
     ...(o.ffExec ? { analysisFfExec: o.ffExec } : {}),
     onVideoAnalyses: (s) => { analyses = s; },
   });
@@ -45,7 +60,7 @@ export async function analysisApp(o: { media?: (real: MediaTools) => MediaTools;
   await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Acme' } });
   const projectDir = join(base, 'ws', 'acme');
   await mkdir(join(projectDir, 'assets'), { recursive: true });
-  return { app, runner, base, projectDir, sent, analyses: analyses!, ref: { root: join(base, 'ws'), projectSlug: 'acme', projectDir } };
+  return { app, runner, base, projectDir, sent, analyses: analyses!, vault, configDir: join(base, 'config'), ref: { root: join(base, 'ws'), projectSlug: 'acme', projectDir } };
 }
 
 export function analysisHelpers(t: AnalysisApp) {

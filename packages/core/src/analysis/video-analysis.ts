@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import {
   assetKindOf, CHUNK_FRAMES, LONG_VIDEO_SEC, SILENCE_NO_SPEECH, TOKENS_PER_FRAME, videoAnalysisJobKey,
-  type ServerMessage, type SidecarHeader, type TranscriptKind, type TranscriptSegment, type VideoAnalysisPending, type VideoAnalysisView, type VideoAnalysisWrite,
+  type ServerMessage, type SidecarHeader, type TranscribeMethod, type TranscriptionChoice, type TranscriptionPending, type TranscriptKind, type TranscriptSegment,
+  type VideoAnalysisPending, type VideoAnalysisView, type VideoAnalysisWrite,
 } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import type { ProjectRef } from '../brand/brand-analysis.ts';
@@ -25,11 +26,15 @@ export type { ProjectRef };
 export const ANALYSIS_LANE = 'video-analysis';
 
 /**
- * Phase 2's transcription, behind one call: given the extracted audio, what was said (or why nothing is). Absent (Phase 1):
- * every video with speech gets `none-skipped`.
+ * The transcription (Phase 2, `TranscriptionService`): what to do with a video's speech (`plan`: run a method, ask the user,
+ * skip), the user's answer (`prepareChoice`: refused with a CodedError, or ready, `wait` while a model downloads), and the
+ * run itself (`method`: the user's choice; absent: what the settings resolve to then). Absent: every video with speech
+ * gets `none-skipped`.
  */
 export interface Transcriber {
-  transcribe(i: { ref: ProjectRef; file: string; jobId: string; wav: string; durationSec: number; signal: AbortSignal }): Promise<{ kind: TranscriptKind; segments: TranscriptSegment[]; language: string | null }>;
+  plan(audioSec: number): Promise<{ run: TranscribeMethod } | { ask: TranscriptionPending } | { skip: true }>;
+  prepareChoice(c: TranscriptionChoice): Promise<{ wait?: Promise<void> }>;
+  transcribe(i: { ref: ProjectRef; file: string; jobId: string; wav: string; durationSec: number; signal: AbortSignal; method?: TranscribeMethod }): Promise<{ kind: TranscriptKind; segments: TranscriptSegment[]; language: string | null }>;
 }
 
 export interface VideoAnalysisDeps {
@@ -53,6 +58,10 @@ interface Active {
   overwrite: boolean;
   /** Already queued again once because the video changed during an analysis. */
   retried: boolean;
+  /** The user's transcription choice (`none`: without); null: what the settings resolve to when it runs. */
+  transcribe: TranscribeMethod | 'none' | null;
+  /** A long video that will ask about its transcription once its length is confirmed. */
+  askTranscription: TranscriptionPending | null;
 }
 
 const fileKey = (ref: ProjectRef, file: string) => `${ref.root}\0${ref.projectSlug}\0${file}`;
@@ -134,18 +143,29 @@ export class VideoAnalysisService {
     const meanwhile = this.active.get(shaKey(ref, hash.sha256));
     if (meanwhile) return join_(meanwhile);
     const duration = info?.durationSec ?? 0;
+    // Decision 1514: with speech and no method to run, the user is asked before the job is queued (one dialog per analysis).
+    let ask: TranscriptionPending | null = null;
+    if (info?.audio && this.deps.transcriber) {
+      const plan = await this.deps.transcriber.plan(duration).catch(() => null);
+      if (plan && 'ask' in plan && await this.hasSpeech(abs, duration)) ask = plan.ask;
+      const queued = this.active.get(shaKey(ref, hash.sha256));
+      if (queued) return join_(queued);
+    }
     const long = duration > LONG_VIDEO_SEC;
     const pending: VideoAnalysisPending | null = long ? (() => {
       // Before the scene detection only the time-based frames are known: the estimate counts those (decision 1491).
       const frames = planFrames([], duration, 'full').length, reducedFrames = planFrames([], duration, 'reduced').length;
       return { kind: 'long', frames, reducedFrames, tokens: frames * TOKENS_PER_FRAME, reducedTokens: reducedFrames * TOKENS_PER_FRAME };
-    })() : null;
-    const entry: Active = { ref, sha: hash.sha256, jobId: '', files: [file], density: long ? null : 'full', pending, overwrite: o.overwrite === true, retried: o.retried === true };
+    })() : ask;
+    const entry: Active = {
+      ref, sha: hash.sha256, jobId: '', files: [file], density: long ? null : 'full', pending, overwrite: o.overwrite === true, retried: o.retried === true,
+      transcribe: null, askTranscription: long ? ask : null,
+    };
     this.failures.delete(fileKey(ref, file));
     const job = this.deps.queue.enqueue({
       key: shaKey(ref, hash.sha256), kind: 'video-analysis', label: t().jobs.videoAnalysisLabel({ file: basename(file) }),
       lane: ANALYSIS_LANE, slot: { group: `video-analysis:${ref.root}:${ref.projectSlug}`, limit: 1, reason: 'video-queue' },
-      ...(long ? { hold: 'video-long' as const } : {}),
+      ...(long ? { hold: 'video-long' as const } : ask ? { hold: 'transcription-choice' as const } : {}),
       run: (signal, jobId) => this.run(entry, signal, jobId),
       onCancelledBeforeStart: () => { this.forget(entry); },
     });
@@ -169,11 +189,69 @@ export class VideoAnalysisService {
     const a = this.activeOf(ref, file);
     if (a?.pending?.kind === 'long') {
       a.density = density;
-      a.pending = null;
-      this.deps.queue.setHold(a.jobId, null);
+      // A long video with speech asks about its transcription next.
+      a.pending = a.askTranscription;
+      a.askTranscription = null;
+      this.deps.queue.setHold(a.jobId, a.pending ? 'transcription-choice' : null);
     }
     const v = await this.view(ref, file);
     this.say(ref, file, v);
+    return v;
+  }
+
+  /** Whether the video's audio has speech (less than 95 % silence); false when it cannot be read. */
+  private async hasSpeech(abs: string, duration: number): Promise<boolean> {
+    const tmp = await mkdtemp(join(tmpdir(), 'ms-analysis-pre-'));
+    try {
+      const wav = join(tmp, 'audio.wav');
+      if (!await extractWav(this.ff, abs, wav, undefined, duration)) return false;
+      return (await silenceRatio(this.ff, wav, duration)) < SILENCE_NO_SPEECH;
+    } catch {
+      return false;
+    } finally {
+      await rm(tmp, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  /**
+   * The user's answer to the transcription dialog of `file`'s analysis (spec §6). Null when the analysis does not ask. A
+   * refusal throws the transcriber's CodedError and the dialog stays. A model download keeps the job held until it ends: done,
+   * the analysis goes ahead; failed, the dialog stays with the error (decision 1520). `remember`: the other analyses still
+   * asking are planned again with the saved method.
+   */
+  async chooseTranscription(ref: ProjectRef, c: TranscriptionChoice): Promise<VideoAnalysisView | null> {
+    const a = this.activeOf(ref, c.file);
+    const tr = this.deps.transcriber;
+    if (!a || a.pending?.kind !== 'transcription' || !tr) return null;
+    const { wait } = await tr.prepareChoice(c);
+    const release = (entry: Active, how: TranscribeMethod | 'none' | null) => {
+      entry.transcribe = how;
+      entry.pending = null;
+      this.deps.queue.setHold(entry.jobId, null);
+    };
+    const sayAll = (entry: Active) => { for (const f of entry.files) void this.view(entry.ref, f).then((v) => this.say(entry.ref, f, v), () => {}); };
+    if (wait) {
+      const { error: _old, ...rest } = a.pending;
+      a.pending = rest;
+      void wait.then(() => {
+        if (this.active.get(shaKey(a.ref, a.sha)) === a && a.pending?.kind === 'transcription') release(a, 'whisper');
+        sayAll(a);
+      }, (err: Error) => {
+        if (a.pending?.kind === 'transcription') a.pending = { ...a.pending, error: err.message };
+        sayAll(a);
+      });
+    } else release(a, c.choice);
+    if (c.remember) {
+      for (const other of [...this.active.values()]) {
+        if (other === a || other.pending?.kind !== 'transcription') continue;
+        const plan = await tr.plan(other.pending.audioSec).catch(() => null);
+        if (!plan || 'ask' in plan) continue;
+        release(other, 'run' in plan ? plan.run : 'none');
+        sayAll(other);
+      }
+    }
+    const v = await this.view(ref, c.file);
+    this.say(ref, c.file, v);
     return v;
   }
 
@@ -196,7 +274,7 @@ export class VideoAnalysisService {
       const a = this.activeOf(ref, file);
       if (!a || a.pending || this.jobState(a.jobId) === null) continue;
       const j = this.deps.queue.list().find((x) => x.id === a.jobId);
-      if (j?.waitReason === 'video-long') continue;
+      if (j?.waitReason === 'video-long' || j?.waitReason === 'transcription-choice') continue;
       out.push({ file, jobId: a.jobId });
     }
     return out;
@@ -332,8 +410,8 @@ export class VideoAnalysisService {
         const wav = join(tmp, 'audio.wav');
         if (await extractWav(this.ff, abs, wav, signal, duration)) {
           if ((await silenceRatio(this.ff, wav, duration, signal)) >= SILENCE_NO_SPEECH) kind = 'none-no-speech';
-          else if (this.deps.transcriber) {
-            const tr = await this.deps.transcriber.transcribe({ ref, file: primary, jobId, wav, durationSec: duration, signal });
+          else if (this.deps.transcriber && entry.transcribe !== 'none') {
+            const tr = await this.deps.transcriber.transcribe({ ref, file: primary, jobId, wav, durationSec: duration, signal, ...(entry.transcribe ? { method: entry.transcribe } : {}) });
             ({ kind, language } = tr);
             transcript = tr.segments;
           } else kind = 'none-skipped';

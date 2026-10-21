@@ -13,7 +13,7 @@ import fastifyMultipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import fastifyWebsocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
-import { isLocale, workspaceSettingsSchema, type DoctorCheck, type UpdatesState, type UsageBilling, type ProjectDetail, type ServerMessage, type WorkspaceInfo, type WorkspaceProblem, type WorkspaceSettings } from '@motion-studio/shared';
+import { isLocale, workspaceSettingsSchema, type DoctorCheck, type UpdatesState, type UsageBilling, type ProjectDetail, type ServerMessage, type WorkspaceInfo, type WhisperFound, type WorkspaceProblem, type WorkspaceSettings } from '@motion-studio/shared';
 import { BrandService } from '../brand/brand-analysis.ts';
 import { UPLOAD_LIMITS } from '../library/upload.ts';
 import { CreativeTurnService, type CreativeRef } from '../creatives/creative-turns.ts';
@@ -79,6 +79,9 @@ import { SettingsHoldStore } from '../settings-hold.ts';
 import { videoAnalysisTools } from '../analysis/analysis-tool.ts';
 import { ANALYSIS_LANE, VideoAnalysisService } from '../analysis/video-analysis.ts';
 import { registerAnalysisRoutes } from './analysis-routes.ts';
+import { TranscriptionService } from '../transcription/transcriber.ts';
+import type { WhisperModelManifest } from '../transcription/models.ts';
+import { registerTranscriptionRoutes } from './transcription-routes.ts';
 import type { CommandExec } from '../exec.ts';
 import { z } from 'zod';
 import { LIVE_LIMITS, pinSchema, SESSION_ID_RE, type RedirectOutcome } from '@motion-studio/shared';
@@ -171,6 +174,13 @@ export interface ServerDeps {
   onVideoAnalyses?: (s: VideoAnalysisService) => void;
   /** Spec §7: the folder of the bundled `whisper-cli` (and its VAD model); absent: none bundled. */
   whisperDir?: string;
+  /** Network of the transcription providers and the Whisper model downloads (tests inject a fake fetch; default: the real one). */
+  transcriptionHttp?: { fetch: typeof fetch };
+  /** The Whispers on the PATH and in Homebrew (test seam; default: detected on `PATH`, none under vitest). */
+  whisperDetect?: () => Promise<WhisperFound[]>;
+  /** Test seam: the Whisper model manifest and the hosts its downloads may be redirected to. */
+  whisperModels?: WhisperModelManifest;
+  whisperRedirectHosts?: readonly string[];
 }
 
 /** How long the billing method (one `claude auth status`) is reused; 'unknown' is retried sooner. */
@@ -404,9 +414,15 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     side: turns.side,
   });
 
+  // Spec §6–§7: the transcription of the analyses (settings app-wide in config.json, decision 1503).
+  const transcription = new TranscriptionService({
+    config: deps.appConfig, vault, ledger: usageLedger, appDataDir: deps.configDir ?? null, fetch: deps.transcriptionHttp?.fetch ?? globalThis.fetch,
+    ...(deps.whisperDir ? { whisperDir: deps.whisperDir } : {}), ...(deps.whisperDetect ? { detect: deps.whisperDetect } : {}),
+    ...(deps.whisperModels ? { manifest: deps.whisperModels } : {}), ...(deps.whisperRedirectHosts ? { redirectHosts: deps.whisperRedirectHosts } : {}),
+  });
   // Decision 1468: the analyses of the videos that enter a brief.
   const analyses = new VideoAnalysisService({
-    queue, launcher, media, git: deps.git, broadcast: (msg) => hub.broadcast(msg),
+    queue, launcher, media, git: deps.git, broadcast: (msg) => hub.broadcast(msg), transcriber: transcription,
     model: async () => (await requireWorkspace().readSettings()).model,
     ...(deps.analysisFfExec ? { ffExec: deps.analysisFfExec } : {}),
   });
@@ -874,6 +890,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
   registerBriefRoutes(app, { requireWorkspace, briefs, configDir });
   registerAnalysisRoutes(app, { requireWorkspace, analyses, media, git: deps.git });
+  registerTranscriptionRoutes(app, { transcription });
   registerSettingsRoutes(app, { vault, approvals, requireWorkspace, keyChecks, keyCheckHttp: deps.keyCheckHttp ?? { fetch: globalThis.fetch } });
   registerRenderEngineRoutes(app, {
     engine: deps.render,

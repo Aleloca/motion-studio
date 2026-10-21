@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { assetKindOf, type VideoAnalysisView } from '@motion-studio/shared';
+import { assetKindOf, transcriptionChoiceSchema, type VideoAnalysisView } from '@motion-studio/shared';
 import type { ProjectRef, VideoAnalysisService } from '../analysis/video-analysis.ts';
 import { readSidecar, replaceBody, writeSidecar } from '../analysis/sidecar.ts';
 import { hashVideo } from '../analysis/video-hash.ts';
@@ -70,6 +70,14 @@ export function registerAnalysisRoutes(app: FastifyInstance, ctx: { requireWorks
     const ref = await refOf(req.params.slug);
     const body = parse(confirmSchema, req.body);
     return ctx.analyses.confirmLong(ref, await videoOf(ref, body.file), body.density);
+  });
+  // Spec §6: the answer to the transcription dialog (409 when nothing asks, or the choice cannot be honoured).
+  app.post<P>('/api/projects/:slug/video-analyses/transcription-choice', async (req) => {
+    const ref = await refOf(req.params.slug);
+    const body = parse(transcriptionChoiceSchema, req.body);
+    const view = await ctx.analyses.chooseTranscription(ref, { ...body, file: await videoOf(ref, body.file) });
+    if (!view) throw new CodedError(409, t().errors.transcriptionNothingAsks, 'transcription-not-asked');
+    return view;
   });
   app.put<P>('/api/projects/:slug/video-analyses/body', async (req) => {
     const ref = await refOf(req.params.slug);
