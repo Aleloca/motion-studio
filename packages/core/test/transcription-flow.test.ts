@@ -240,6 +240,24 @@ describe.skipIf(!hasFfmpeg)('transcription in the analysis', () => {
     expect(none.statusCode).toBe(409);
     expect(none.json()).toMatchObject({ code: 'transcription-not-asked' });
   }, 60_000);
+
+  it('a download that fails while Ricontrolla searches keeps its error: the recheck does not overwrite a question that changed (decision 1603)', async () => {
+    const bundled = await mkdtemp(join(tmpdir(), 'ms-tf-bundled-'));
+    await fakeWhisper(bundled, 'whisper-cli', {});
+    const models: WhisperModelManifest = { ...WHISPER_MODELS, small: { file: 'ggml-small.bin', sizeBytes: model.length, sha256: '0'.repeat(64), url: `${base}/ggml-small.bin` } };
+    let gate: Promise<void> | null = null;
+    const t = await analysisApp({ transcription: { method: 'ask', whisperDir: bundled, models, redirectHosts: [], detect: async () => { if (gate) await gate; return []; } } });
+    await copyFile(fx.tone, join(t.projectDir, 'assets', 'tone.mp4'));
+    await ensured(t, 'assets/tone.mp4');
+    let release!: () => void;
+    gate = new Promise<void>((r) => { release = r; });
+    const recheck = t.app.inject({ method: 'POST', url: '/api/projects/acme/video-analyses/transcription-recheck', payload: { file: 'assets/tone.mp4' } });
+    await choose(t, { file: 'assets/tone.mp4', choice: 'whisper', remember: false, sizeBytes: model.length });
+    await vi.waitFor(async () => expect((await t.analyses.view(t.ref, 'assets/tone.mp4')).pending).toMatchObject({ error: expect.stringMatching(/sha256/) }), { timeout: 10_000 });
+    release();
+    expect((await recheck).statusCode).toBe(200);
+    expect((await t.analyses.view(t.ref, 'assets/tone.mp4')).pending).toMatchObject({ kind: 'transcription', error: expect.stringMatching(/sha256/) });
+  }, 60_000);
 });
 
 describe('transcription settings routes', () => {

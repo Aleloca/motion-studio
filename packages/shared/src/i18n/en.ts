@@ -261,6 +261,7 @@ export const en = {
     downloadHashMismatch: 'The downloaded file is not the expected one (sha256 check failed): it was deleted.',
     transcriptionNoKey: (p: { provider: string }) => `There is no saved ${p.provider} key: add it in Settings → Services.`,
     transcriptionNothingAsks: 'This video is not waiting for a transcription choice.',
+    transcriptionRecheckTimeout: 'The search for Whispers did not answer in time: try again.',
     transcriptionNoBundled: 'This app has no Whisper of its own: install one or point to it in Settings → Video transcription.',
   },
   videoAnalysis: {

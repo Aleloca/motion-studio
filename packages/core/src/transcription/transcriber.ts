@@ -41,7 +41,12 @@ export interface TranscriptionDeps {
   /** Test seam: the model manifest and the redirect hosts of its downloads. */
   manifest?: WhisperModelManifest;
   redirectHosts?: readonly string[];
+  /** Test seam: the bound of "Ricontrolla" (default RECHECK_MAX_MS). */
+  recheckMaxMs?: number;
 }
+
+/** "Ricontrolla" answers within this bound (decision 1602): a detection that never ends gives an error, not a spinner. */
+export const RECHECK_MAX_MS = 60_000;
 
 const PROVIDER_LABEL: Record<SttProvider, string> = { openai: 'OpenAI', elevenlabs: 'ElevenLabs' };
 const isExecutable = (p: string) => access(p, constants.X_OK).then(() => true, () => false);
@@ -80,7 +85,10 @@ export class TranscriptionService {
    * second of silence with the model of the setting (without one it `needsModel`), a Python engine only answers `--help`.
    * One that fails is listed with its `problem` and never used. A detection already running is joined.
    */
-  detect(): Promise<WhisperFound[]> {
+  detect(o: { fresh?: boolean } = {}): Promise<WhisperFound[]> {
+    // `fresh` (Ricontrolla, decision 1602): a detection already running may have started before the user installed a
+    // Whisper; it is waited for, then a new one runs (or one started meanwhile, after it, is joined).
+    if (this.detection.running && o.fresh) return this.detection.running.then(() => this.detect(), () => this.detect());
     if (this.detection.running) return this.detection.running;
     const run = async (): Promise<WhisperFound[]> => {
       if (this.deps.detect) return this.deps.detect();
@@ -173,12 +181,18 @@ export class TranscriptionService {
   }
 
   /**
-   * "Ricontrolla" in the dialog (decision 1591): the Whispers are looked for again (joining a detection already running) and
-   * the offer is built anew, so a Whisper installed while the dialog is open shows up without reopening it.
+   * "Ricontrolla" in the dialog (decision 1591): the Whispers are looked for afresh (after a detection already running,
+   * decision 1602) and the offer is built anew, so a Whisper installed while the dialog is open shows up without reopening
+   * it. Bounded by RECHECK_MAX_MS: past it, 503 `transcription-recheck-timeout`.
    */
   async recheck(audioSec: number): Promise<TranscriptionPending> {
-    await this.detect();
-    return this.offer(audioSec);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const bound = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new CodedError(503, t().errors.transcriptionRecheckTimeout, 'transcription-recheck-timeout')), this.deps.recheckMaxMs ?? RECHECK_MAX_MS);
+    });
+    try {
+      return await Promise.race([this.detect({ fresh: true }).then(() => this.offer(audioSec)), bound]);
+    } finally { clearTimeout(timer); }
   }
 
   /** Spec §6: `never` → skip; a saved method that works → run; `ask`, or a saved method that does not work now → ask. */

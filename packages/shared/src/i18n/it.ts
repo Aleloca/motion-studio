@@ -259,6 +259,7 @@ export const it: Messages = {
     downloadHashMismatch: 'Il file scaricato non è quello atteso (controllo sha256 non riuscito): è stato eliminato.',
     transcriptionNoKey: (p) => `Non c'è una chiave ${p.provider} salvata: aggiungila in Impostazioni → Servizi.`,
     transcriptionNothingAsks: 'Questo video non sta aspettando una scelta sulla trascrizione.',
+    transcriptionRecheckTimeout: 'La ricerca dei Whisper non ha risposto in tempo: riprova.',
     transcriptionNoBundled: 'Questa app non ha un Whisper suo: installane uno o indicalo in Impostazioni → Trascrizione video.',
   },
   videoAnalysis: {

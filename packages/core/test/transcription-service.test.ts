@@ -91,3 +91,34 @@ describe('no program runs unless detection is asked for', () => {
     expect((await svc.status()).whisper).toMatchObject({ program, source: 'settings' });
   });
 });
+
+describe('Ricontrolla (decisions 1591, 1602)', () => {
+  const svcWith = async (detect: () => Promise<import('@motion-studio/shared').WhisperFound[]>, recheckMaxMs?: number) => {
+    const app = await temp();
+    const config = new AppConfigStore(join(app, 'config'));
+    await config.setTranscription({ method: 'ask' });
+    return new TranscriptionService({
+      config, vault: new MemoryVault({}), ledger: new UsageLedger(), appDataDir: app, fetch: (async () => { throw new Error('no network'); }) as typeof fetch,
+      detect, ...(recheckMaxMs ? { recheckMaxMs } : {}),
+    });
+  };
+  const cpp = { engine: 'whisper.cpp' as const, program: '/opt/homebrew/bin/whisper-cli', version: null, model: '', gpu: null, source: 'detected' as const, problem: 'no model', needsModel: true as const };
+
+  it('a detection already running (started before the install) is waited for, then a fresh one runs', async () => {
+    let calls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const svc = await svcWith(async () => { calls++; if (calls === 1) { await gate; return []; } return [cpp]; });
+    const old = svc.detect();
+    const offer = svc.recheck(10);
+    release();
+    await old;
+    expect((await offer).whisper).toMatchObject({ available: true, canInstall: true });
+    expect(calls).toBe(2);
+  });
+
+  it('a detection that never ends: the recheck fails within its bound (transcription-recheck-timeout)', async () => {
+    const svc = await svcWith(() => new Promise(() => {}), 50);
+    await expect(svc.recheck(10)).rejects.toMatchObject({ status: 503, apiCode: 'transcription-recheck-timeout' });
+  });
+});

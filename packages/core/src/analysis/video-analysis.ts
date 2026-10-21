@@ -331,9 +331,11 @@ export class VideoAnalysisService {
     const a = this.activeOf(ref, file);
     const tr = this.deps.transcriber;
     if (!a || a.pending?.kind !== 'transcription' || !tr) return null;
-    const offer = await tr.recheck(a.pending.audioSec);
-    // Answered meanwhile (another screen): the answer stands.
-    if (a.pending?.kind === 'transcription') a.pending = offer;
+    const asked = a.pending;
+    const offer = await tr.recheck(asked.audioSec);
+    // The question changed meanwhile (answered elsewhere, a download started or failed with its error, decision 1603): it
+    // stands as it is now.
+    if (a.pending === asked) a.pending = offer;
     for (const f of a.files) if (f !== file) void this.view(a.ref, f).then((v) => this.say(a.ref, f, v), () => {});
     const v = await this.view(ref, file);
     this.say(ref, file, v);
