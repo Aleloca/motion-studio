@@ -47,6 +47,8 @@ export const MCP_TOOLS: Record<AgentJobKind, string[]> = {
   'creative-group': ['report_progress', 'read_brand_kit', ...GROUP_TOOLS, 'update_brief', 'add_format', 'name_formats', 'add_language', 'discard_variant', 'restore_variant', 'set_pick', 'render_version', 'prepare_export'],
   // Decision 1421: a brief session reads and fills the New creative form; it creates, renders and pays for nothing.
   brief: ['report_progress', 'read_brand_kit', ...BRIEF_TOOLS],
+  // Decision 1493: a video analysis run writes its description of the frames, nothing else.
+  'video-analysis': ['report_progress', 'write_video_analysis'],
 };
 
 /** Characters that make Claude Code's sandbox read a path as a glob. */
@@ -124,6 +126,10 @@ export interface LaunchInput {
   groupTools?: BridgeContext['groupTools'];
   /** Decision 1421: the brief session the run fills (`brief` jobs only, see BridgeContext). */
   briefScope?: BridgeContext['briefScope'];
+  /** Decision 1468: the analysis run's scope (`video-analysis` jobs only, see BridgeContext). */
+  videoAnalysisScope?: BridgeContext['videoAnalysisScope'];
+  /** `video-analysis` jobs: the absolute folders the run may read (the frames), see PolicyInput.readDirs. */
+  readDirs?: string[];
   /** What the run's ledger line is about (a creative's version and fix-loop attempt); null for other jobs. */
   usage?: { version: number | null; attempt: number | null };
   /**
@@ -259,6 +265,7 @@ export class AgentLauncher {
       codebases, protectedFiles, protectedDirs, protectedGlobs: logGlobs, sandboxGlobs,
       ...(secretsScan ? { codebaseSecrets: { files: secretsScan.files, dirs: secretsScan.dirs } } : {}),
       brandWebsite: i.brandWebsite === true,
+      ...(i.kind === 'video-analysis' ? { readDirs: i.readDirs ?? [] } : {}),
       extraDomains: settings.extraAllowedDomains, projectAllowRules: rules,
       mcpTools: mcpOn ? MCP_TOOLS[i.kind].map((t) => `mcp__${MCP_SERVER}__${t}`) : [],
       autoApproveSandboxed: autoApproveAtStart,
@@ -307,6 +314,7 @@ export class AgentLauncher {
           ...((i.kind === 'creative' || i.kind === 'creative-group') && i.appScope ? { appScope: i.appScope } : {}),
           ...(i.kind === 'creative-group' && i.groupTools ? { groupTools: i.groupTools } : {}),
           ...(i.kind === 'brief' && i.briefScope ? { briefScope: i.briefScope } : {}),
+          ...(i.kind === 'video-analysis' && i.videoAnalysisScope ? { videoAnalysisScope: i.videoAnalysisScope } : {}),
         });
         // The paths are recorded before writing, so release() also removes a half-written pair.
         const files = await prepareRunFiles(configDir, i.jobId);
@@ -330,7 +338,7 @@ export class AgentLauncher {
         // A translation turn is metered with the creative's turns (the usage report has no kind of its own for it).
         // Phase 15: a variant group's directions turn is metered with the creative's turns (the report has no kind for it).
         // Phase 3: so is the coordinator of a group (its runs are part of the group's turn). Decision 1421: a brief session's
-        // runs too, with no creative (they are the start of the creative it becomes).
+        // runs too, with no creative (they are the start of the creative it becomes). A video analysis has its own kind (1468).
         projectDir: i.projectDir, jobId: i.jobId, kind: i.kind === 'variant-directions' || i.kind === 'creative-group' || i.kind === 'brief' ? 'creative' : i.kind, creativeSlug: i.kind === 'brief' ? null : i.creativeSlug ?? null,
         version: i.usage?.version ?? null, attempt: i.usage?.attempt ?? null,
         ...(i.request.resumeSessionId ? { resumeSessionId: i.request.resumeSessionId } : {}),

@@ -423,3 +423,19 @@ describe('a brief session job (decision 1421)', () => {
     expect((await call('report_progress', { message: 'Leggo il codice' }, brief)).statusCode).toBe(200);
   });
 });
+
+describe('a video analysis job (decision 1493)', () => {
+  it('a video-analysis job gets nothing approved and only its own tools', async () => {
+    const writes: unknown[] = [];
+    const scope = { root: dirname(projectDir), projectSlug: 'acme', projectDir, file: 'assets/clip.mp4', sha256: 'ab'.repeat(32), pass: 'whole' as const, from: 0, to: 8, frames: ['f-00000000.jpg'], write: (w: unknown) => { writes.push(w); } };
+    const job = bridge.register({ jobId: 'v1', kind: 'video-analysis', projectSlug: 'acme', projectDir, creativeSlug: null, sandboxed: true, autoApproveAtStart: true, emit: (e) => events.push(e), signal: new AbortController().signal, videoAnalysisScope: scope });
+    expect(bridge.resolve(job)?.videoAnalysisScope?.sha256).toBe('ab'.repeat(32));
+    expect(Object.isFrozen(bridge.resolve(job)?.videoAnalysisScope?.frames)).toBe(true);
+    for (const [tool_name, input] of [['Read', { file_path: '/etc/hosts' }], ['Bash', { command: 'ls' }], ['AskUserQuestion', { questions: [] }]] as const) {
+      expect((await call('approve', { tool_name, input, tool_use_id: 't' }, job)).json()).toEqual({ behavior: 'deny', message: "L'analisi video guarda solo i fotogrammi estratti: nient'altro si può approvare." });
+    }
+    expect(approvals.pending()).toEqual([]);
+    expect((await call('validate_composition', {}, job)).statusCode).toBe(403);
+    expect((await call('report_progress', { message: 'Guardo i fotogrammi' }, job)).statusCode).toBe(200);
+  });
+});
