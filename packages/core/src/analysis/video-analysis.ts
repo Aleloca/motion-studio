@@ -271,25 +271,32 @@ export class VideoAnalysisService {
       this.deps.queue.setHold(entry.jobId, null);
     };
     const sayAll = (entry: Active) => { for (const f of entry.files) void this.view(entry.ref, f).then((v) => this.say(entry.ref, f, v), () => {}); };
+    // `remember`: the other analyses still asking are planned again with the saved method, once it works (decision 1548:
+    // after the model download when there is one; a failed download leaves them asking).
+    const replanOthers = async () => {
+      if (!c.remember) return;
+      for (const other of [...this.active.values()]) {
+        if (other === a || other.cancelled || other.pending?.kind !== 'transcription') continue;
+        const plan = await tr.plan(other.pending.audioSec).catch(() => null);
+        if (!plan || 'ask' in plan || other.pending?.kind !== 'transcription') continue;
+        release(other, 'run' in plan ? plan.run : 'none');
+        sayAll(other);
+      }
+    };
     if (wait) {
       const { error: _old, ...rest } = a.pending;
       a.pending = rest;
-      void wait.then(() => {
+      void wait.then(async () => {
         if (this.active.get(shaKey(a.ref, a.sha)) === a && a.pending?.kind === 'transcription') release(a, 'whisper');
         sayAll(a);
+        await replanOthers();
       }, (err: Error) => {
         if (a.pending?.kind === 'transcription') a.pending = { ...a.pending, error: err.message };
         sayAll(a);
       });
-    } else release(a, c.choice);
-    if (c.remember) {
-      for (const other of [...this.active.values()]) {
-        if (other === a || other.pending?.kind !== 'transcription') continue;
-        const plan = await tr.plan(other.pending.audioSec).catch(() => null);
-        if (!plan || 'ask' in plan) continue;
-        release(other, 'run' in plan ? plan.run : 'none');
-        sayAll(other);
-      }
+    } else {
+      release(a, c.choice);
+      await replanOthers();
     }
     const v = await this.view(ref, c.file);
     this.say(ref, c.file, v);

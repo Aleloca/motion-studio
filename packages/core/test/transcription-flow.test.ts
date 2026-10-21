@@ -186,6 +186,28 @@ describe.skipIf(!hasFfmpeg)('transcription in the analysis', () => {
     expect(st.download).toMatchObject({ state: 'done', model: 'small' });
   }, 60_000);
 
+  it('remember + a model download: the other analyses asking go ahead once the model is there, not before', async () => {
+    const bundled = await mkdtemp(join(tmpdir(), 'ms-tf-bundled-'));
+    await fakeWhisper(bundled, 'whisper-cli', { fixture: fixturePath('whisper-cpp.json') });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const gated = (async (input: string | URL | Request, init?: RequestInit) => { await gate; return fetch(input, init); }) as typeof fetch;
+    const models: WhisperModelManifest = { ...WHISPER_MODELS, small: { file: 'ggml-small.bin', sizeBytes: model.length, sha256: createHash('sha256').update(model).digest('hex'), url: `${base}/ggml-small.bin` } };
+    const t = await analysisApp({ transcription: { method: 'ask', whisperDir: bundled, models, redirectHosts: [], fetch: gated } });
+    const { appendFile } = await import('node:fs/promises');
+    await copyFile(fx.tone, join(t.projectDir, 'assets', 'a.mp4'));
+    await copyFile(fx.tone, join(t.projectDir, 'assets', 'b.mp4'));
+    await appendFile(join(t.projectDir, 'assets', 'b.mp4'), Buffer.from([0]));
+    await ensured(t, 'assets/a.mp4');
+    await ensured(t, 'assets/b.mp4');
+    expect((await choose(t, { file: 'assets/a.mp4', choice: 'whisper', remember: true, sizeBytes: model.length })).statusCode).toBe(200);
+    await new Promise((r) => setTimeout(r, 200));
+    expect((await t.analyses.view(t.ref, 'assets/b.mp4')).pending?.kind).toBe('transcription');
+    release();
+    await vi.waitFor(async () => expect((await t.analyses.view(t.ref, 'assets/b.mp4')).pending).toBeNull(), { timeout: 10_000 });
+    await vi.waitFor(async () => expect((await t.analyses.view(t.ref, 'assets/a.mp4')).pending).toBeNull());
+  }, 60_000);
+
   it('a failed model download keeps the dialog with the error', async () => {
     const bundled = await mkdtemp(join(tmpdir(), 'ms-tf-bundled-'));
     await fakeWhisper(bundled, 'whisper-cli', {});
