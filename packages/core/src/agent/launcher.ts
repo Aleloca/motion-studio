@@ -4,7 +4,7 @@ import { chmod, lstat, mkdir, readdir, realpath, rm, writeFile } from 'node:fs/p
 import { homedir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import type { AgentEvent, WorkspaceSettings } from '@motion-studio/shared';
-import { PROVIDER_ENV } from '../secrets/vault.ts';
+import { SECRET_ENV } from '../secrets/vault.ts';
 import type { ApprovalBroker } from '../approvals/broker.ts';
 import { isAllowedRule, PermissionsStore } from '../approvals/permissions-store.ts';
 import type { AgentBridge, BridgeContext } from '../bridge/bridge.ts';
@@ -65,7 +65,7 @@ export const RENAME_JOURNAL_FILE = '.studio/rename-journal.json';
  * Protected for every job, for every creative and proposal.
  */
 /** Secrets the core reads from its own environment: never inherited by the agent (nor by the MCP server it starts). */
-const AGENT_UNSET_ENV = [...Object.values(PROVIDER_ENV), 'MOTION_STUDIO_BRIDGE_TOKEN'];
+const AGENT_UNSET_ENV = [...SECRET_ENV];
 
 export interface LauncherDeps {
   runner: AgentRunner; bridge: AgentBridge; approvals: ApprovalBroker;

@@ -1459,7 +1459,7 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
       listMissing: (p: { letters: string }) => `missing: ${p.letters}`,
       stateLabel: (p: { letter: string }) => `State of variant ${p.letter}`,
       /** Phase 15: why a queued variant turn waits (`JobSummary.waitReason`). */
-      waitReasons: { 'variant-directions': 'waiting for directions', 'variant-confirm': 'waiting for confirmation', 'variant-slot': 'queued: two variants already working', 'video-long': 'waiting for confirmation: long video', 'video-queue': 'queued: another video of the project is being analysed', 'transcription-choice': 'waiting for the transcription choice' },
+      waitReasons: { 'variant-directions': 'waiting for directions', 'variant-confirm': 'waiting for confirmation', 'variant-slot': 'queued: two variants already working', 'video-long': 'waiting for confirmation: long video', 'video-queue': 'queued: another video of the project is being analysed', 'transcription-choice': 'waiting for the transcription choice', 'transcription-check': 'checking the audio for speech' },
     },
     theme: { aria: 'Theme', system: 'System', light: 'Light', dark: 'Dark' },
     instances: {

@@ -420,6 +420,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     ...(deps.whisperDir ? { whisperDir: deps.whisperDir } : {}), ...(deps.whisperDetect ? { detect: deps.whisperDetect } : {}),
     ...(deps.whisperModels ? { manifest: deps.whisperModels } : {}), ...(deps.whisperRedirectHosts ? { redirectHosts: deps.whisperRedirectHosts } : {}),
   });
+  // Decision 1553: the installed Whispers are looked for once in the background; reading the status never runs a program.
+  transcription.startDetection();
   // Decision 1468: the analyses of the videos that enter a brief.
   const analyses = new VideoAnalysisService({
     queue, launcher, media, git: deps.git, broadcast: (msg) => hub.broadcast(msg), transcriber: transcription,

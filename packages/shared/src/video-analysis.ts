@@ -111,8 +111,12 @@ export interface TranscriptionPending {
     /** The model of the setting: what "Installa Whisper" downloads. */
     model: TranscriptionModelId;
     sizeBytes: number;
-    /** A bundled whisper-cli exists: the model alone makes Whisper work. */
+    /** Downloading the model alone makes Whisper work (a bundled whisper-cli, or a whisper.cpp set or detected). */
     canInstall: boolean;
+    /** The engine "Whisper" would use (null: none found). */
+    engine: WhisperEngine | null;
+    /** A Python engine that downloads its own model on its first run: the dialog says so (`transcription.pythonCache`). */
+    downloadsOwnModel: boolean;
   };
   openai: { costUsd: number } | null;
   elevenlabs: { costUsd: number } | null;
@@ -175,6 +179,12 @@ export interface WhisperFound {
   /** Metal/GPU in use (whisper.cpp's own report); null: unknown (the Python engines). */
   gpu: boolean | null;
   source: 'settings' | 'bundled' | 'detected';
+  /** A detected program that failed its check (decision 1551): listed with the reason, never used. */
+  problem?: string;
+  /** A whisper.cpp that can only be checked once a model is downloaded (it is then usable with it). */
+  needsModel?: boolean;
+  /** A Python engine whose model is not in its own cache: its first transcription downloads it (`transcription.pythonCache`). */
+  downloadsOwnModel?: boolean;
 }
 
 /** `GET /api/transcription`: what Settings → Trascrizione video shows. */
@@ -183,8 +193,10 @@ export interface TranscriptionStatus {
   models: Array<{ id: TranscriptionModelId; sizeBytes: number; installed: boolean; bytesOnDisk: number }>;
   /** The Whisper the analyses would use now (lookup order §7), or null. */
   whisper: WhisperFound | null;
-  /** Every Whisper found on the PATH and in the Homebrew folders (not test-run). */
+  /** Every Whisper the last detection found on the PATH and in the Homebrew folders, checked (`problem`: not usable). */
   detected: WhisperFound[];
+  /** The detection (decision 1553): at server start and on `POST /api/transcription/detect`; reading the status runs nothing. */
+  detection: { state: 'idle' | 'running' | 'done'; at: string | null };
   /** A bundled whisper-cli exists (the dialog can offer "Installa Whisper"). */
   bundled: boolean;
   download: { state: 'idle' | 'running' | 'done' | 'failed'; model: TranscriptionModelId | null; bytes: number; total: number; error?: string };

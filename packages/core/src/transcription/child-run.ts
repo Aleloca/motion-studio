@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { withoutSecrets } from '../secrets/vault.ts';
 
 /** Output kept per stream; past it the rest is dropped (an engine's progress chatter must not grow without bound). */
 const MAX_OUTPUT = 10 * 1024 * 1024;
@@ -8,7 +9,8 @@ const KILL_GRACE_MS = 3000;
 export interface ChildResult { code: number | null; stdout: string; stderr: string; timedOut: boolean; cancelled: boolean }
 
 /**
- * Runs a program (a Whisper engine, spec §7) with no shell, its output capped, a deadline and a cancel signal. On timeout or
+ * Runs a program (a Whisper engine, spec §7) with no shell, without the core's secrets in its environment (SECRET_ENV:
+ * provider keys, the bridge token), its output capped, a deadline and a cancel signal. On timeout or
  * abort it kills ONLY its own child, by its PID (SIGTERM, then SIGKILL after 3 s): never a name or a pattern. A program
  * that cannot start resolves with `code: null` and the reason in `stderr`; it never throws.
  */
@@ -35,7 +37,7 @@ export function runChild(cmd: string, args: string[], o: { timeoutMs: number; si
     const onAbort = () => { cancelled = true; stop(); };
     const deadline = setTimeout(() => { timedOut = true; stop(); }, o.timeoutMs);
     try {
-      child = spawn(cmd, args, { shell: false, cwd: o.cwd, env: o.env ?? process.env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+      child = spawn(cmd, args, { shell: false, cwd: o.cwd, env: withoutSecrets(o.env ?? process.env), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     } catch (e) {
       finish(null, String((e as Error).message));
       return;

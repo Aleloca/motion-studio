@@ -87,6 +87,21 @@ describe('runChild', () => {
     const r = await runChild(process.execPath, ['-e', 'process.stdout.write("a;b $HOME"); process.stderr.write("e"); process.exit(3)'], { timeoutMs: 10_000 });
     expect(r).toMatchObject({ code: 3, stdout: 'a;b $HOME', stderr: 'e', timedOut: false, cancelled: false });
   });
+  it('the core\'s secrets never reach the child, even when the caller passes an env', async () => {
+    const names = ['OPENAI_API_KEY', 'ELEVENLABS_API_KEY', 'PEXELS_API_KEY', 'UNSPLASH_ACCESS_KEY', 'MOTION_STUDIO_BRIDGE_TOKEN'];
+    const saved = names.map((n) => [n, process.env[n]] as const);
+    for (const n of names) process.env[n] = `secret-${n}`;
+    try {
+      const print = ['-e', 'process.stdout.write(JSON.stringify(process.env))'];
+      const own = JSON.parse((await runChild(process.execPath, print, { timeoutMs: 10_000 })).stdout) as Record<string, string>;
+      const given = JSON.parse((await runChild(process.execPath, print, { timeoutMs: 10_000, env: { ...process.env, KEEP: 'yes' } })).stdout) as Record<string, string>;
+      for (const n of names) { expect(own[n]).toBeUndefined(); expect(given[n]).toBeUndefined(); }
+      expect(given.KEEP).toBe('yes');
+      expect(own.PATH).toBe(process.env.PATH);
+    } finally {
+      for (const [n, v] of saved) { if (v === undefined) delete process.env[n]; else process.env[n] = v; }
+    }
+  });
   it('a missing program: no throw, a null code and the reason', async () => {
     const r = await runChild('/nonexistent/whisper-cli', [], { timeoutMs: 5000 });
     expect(r.code).toBeNull();
