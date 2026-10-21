@@ -17,6 +17,13 @@ const q: TranscriptionPending = {
   whisper: { available: true, installed: false, model: 'large-v3-turbo', sizeBytes: 1_624_555_275, canInstall: true, engine: 'whisper.cpp', downloadsOwnModel: false },
   error: 'Il file scaricato non è quello atteso (controllo sha256 non riuscito): è stato eliminato.',
 };
+/** Report 64: no Whisper the app can run (a dev tree, a platform without the bundled binary): the steps with the commands. */
+const missing: TranscriptionPending = { kind: 'transcription', audioSec: 754, openai: null, elevenlabs: null,
+  whisper: { available: false, installed: false, model: 'small', sizeBytes: 487_601_967, canInstall: false, engine: null, downloadsOwnModel: false } };
+/** The same with one paid provider's key saved. */
+const missingPaid: TranscriptionPending = { ...missing, openai: { costUsd: 0.078 } };
+const QUESTIONS = { transcription: q, missing, 'missing-paid': missingPaid } as const;
+type Variant = keyof typeof QUESTIONS;
 const view = (pending: VideoAnalysisView['pending']): VideoAnalysisView => ({ file: FILE, state: 'waiting', jobId: 'j', error: null, pending, header: null, body: null });
 const api = {
   getBriefSession: vi.fn(async (): Promise<BriefSessionView | null> => ({ id: 's1', createdAt: at, updatedAt: at, context: { codebases: [], assets: [FILE] }, form: EMPTY_BRIEF_FORM, userEdited: [], agentFields: [], queued: [], jobId: null, revision: 1 })),
@@ -30,24 +37,24 @@ const { LongVideoDialog } = await import('../src/components/LongVideoDialog.tsx'
 const { BriefSessionPanel } = await import('../src/screens/new-creative/BriefSessionPanel.tsx');
 const { useBriefSession } = await import('../src/screens/new-creative/useBriefSession.ts');
 
-function dialog(kind: 'transcription' | 'long'): string {
+function dialog(kind: Variant | 'long'): string {
   const long = { kind: 'long' as const, frames: 182, reducedFrames: 61, tokens: 145_600, reducedTokens: 48_800 };
   const { unmount } = render(<I18nProvider locale="it">{kind === 'long'
     ? <LongVideoDialog slug="acme" view={view(long)} question={long} open onClose={() => {}} />
-    : <TranscriptionDialog slug="acme" view={view(q)} question={q} open onClose={() => {}} />}</I18nProvider>);
+    : <TranscriptionDialog slug="acme" view={view(QUESTIONS[kind])} question={QUESTIONS[kind]} open onClose={() => {}} />}</I18nProvider>);
   const html = document.querySelector('.ms-modal')!.outerHTML;
   unmount();
   return html;
 }
-function Panel() {
+function Panel({ question }: { question: TranscriptionPending }) {
   const brief = useBriefSession('acme', initialEventsState);
   return (
     <BriefSessionPanel slug="acme" projectName="Acme" brief={brief} live={initialEventsState} snapshot={() => ({ form: EMPTY_BRIEF_FORM, userEdited: [], baseRevision: 1 })}
-      library={{ value: [], error: null }} onRetryLibrary={() => {}} onLibraryChanged={() => {}} className="ms-nc-panel" analysisQuestions={[view(q)]} />
+      library={{ value: [], error: null }} onRetryLibrary={() => {}} onLibraryChanged={() => {}} className="ms-nc-panel" analysisQuestions={[view(question)]} />
   );
 }
-async function card(): Promise<string> {
-  const { container, unmount } = render(<I18nProvider locale="it"><div className="ms-nc ms-nc-agent"><Panel /></div></I18nProvider>);
+async function card(question: TranscriptionPending = q): Promise<string> {
+  const { container, unmount } = render(<I18nProvider locale="it"><div className="ms-nc ms-nc-agent"><Panel question={question} /></div></I18nProvider>);
   await screen.findByText('Usa il video del fondatore per un reel di 15 secondi.');
   const html = container.innerHTML;
   unmount();
@@ -77,8 +84,12 @@ if (!chromePath && chromeRequired) it('Chrome is required (MS_REQUIRE_CHROME=1)'
 
 run('the analysis questions: real Chrome layout (Task 20)', () => {
   const rig = new LayoutRig();
-  const html = { transcription: '', long: '', card: '' };
-  beforeAll(async () => { await rig.start(); html.transcription = dialog('transcription'); html.long = dialog('long'); html.card = await card(); }, 120_000);
+  const html = { transcription: '', missing: '', 'missing-paid': '', long: '', card: '', 'card-missing': '' };
+  beforeAll(async () => {
+    await rig.start();
+    html.transcription = dialog('transcription'); html.missing = dialog('missing'); html['missing-paid'] = dialog('missing-paid'); html.long = dialog('long');
+    html.card = await card(); html['card-missing'] = await card(missing);
+  }, 120_000);
   afterAll(() => rig.stop(), 60_000);
   const dialogOk = (r: D) => {
     expect(r.left).toBeGreaterThanOrEqual(16);
@@ -96,11 +107,14 @@ run('the analysis questions: real Chrome layout (Task 20)', () => {
       it(`${theme} ${width}: the transcription dialog with every choice and an error`, async () => {
         dialogOk(await rig.measure<D>(html.transcription, DIALOG, { name: 'tdialog', width, height, theme }, 'va-transcription-dialog'));
       }, 120_000);
+      for (const v of ['missing', 'missing-paid'] as const) it(`${theme} ${width}: the transcription dialog without a Whisper to install (${v})`, async () => {
+        dialogOk(await rig.measure<D>(html[v], DIALOG, { name: 'tdialog', width, height, theme }, `va-transcription-dialog-${v}`));
+      }, 120_000);
       it(`${theme} ${width}: the long-video dialog`, async () => {
         dialogOk(await rig.measure<D>(html.long, DIALOG, { name: 'long', width, height, theme }, 'va-long-video-dialog'));
       }, 120_000);
-      it(`${theme} ${width}: the card in the brief agent's chat`, async () => {
-        const r = await rig.measure<C>(`<div class="ms-app ms-bare"><div class="ms-main"><div class="ms-stage" style="position:relative;height:100vh">${html.card}</div></div></div>`, CARD, { name: 'card', width, height, theme }, 'va-transcription-card');
+      for (const [name, shot] of [['card', 'va-transcription-card'], ['card-missing', 'va-transcription-card-missing']] as const) it(`${theme} ${width}: the card in the brief agent's chat (${name})`, async () => {
+        const r = await rig.measure<C>(`<div class="ms-app ms-bare"><div class="ms-main"><div class="ms-stage" style="position:relative;height:100vh">${html[name]}</div></div></div>`, CARD, { name: 'card', width, height, theme }, shot);
         expect(r.panelW).toBe(width >= 1440 ? 448 : 360);
         expect(r.inside).toBe(true);
         expect(r.cut).toEqual([]);

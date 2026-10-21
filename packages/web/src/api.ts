@@ -426,6 +426,8 @@ export const api = {
   cancelVideoAnalysis: (slug: string, file: string) => request<{ cancelled: boolean }>('DELETE', `${p(slug)}/video-analyses?file=${encodeURIComponent(file)}`),
   /** The answer to the transcription dialog (spec §6); 409 with a code when it cannot be honoured. */
   transcriptionChoice: (slug: string, body: TranscriptionChoice) => request<VideoAnalysisView>('POST', `${p(slug)}/video-analyses/transcription-choice`, body),
+  /** "Ricontrolla": the Whispers looked for again, the held question asked with the new offer (decision 1591). */
+  recheckTranscription: (slug: string, file: string) => request<VideoAnalysisView>('POST', `${p(slug)}/video-analyses/transcription-recheck`, { file }),
   /** Decision 1478: the videos a creative's first turn is waiting for (empty: no wait), and Salta. */
   analysisWait: (slug: string, creative: string) => request<{ files: string[] }>('GET', `${c(slug, creative)}/analysis-wait`),
   skipAnalysisWait: (slug: string, creative: string) => request<void>('POST', `${c(slug, creative)}/analysis-wait/skip`),

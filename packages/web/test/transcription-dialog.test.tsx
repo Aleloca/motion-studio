@@ -18,6 +18,7 @@ const status = (download: Partial<TranscriptionStatus['download']>): Transcripti
 });
 const api = {
   transcriptionChoice: vi.fn(async (_s: string, b: { file: string; choice: string }): Promise<VideoAnalysisView> => ({ ...waiting(null, b.file), state: 'queued' })),
+  recheckTranscription: vi.fn(async (_s: string, file: string): Promise<VideoAnalysisView> => waiting(ask(), file)),
   confirmLongVideo: vi.fn(async (_s: string, file: string) => ({ ...waiting(null, file), state: 'queued' })),
   getTranscription: vi.fn(async () => status({ bytes: 243_800_983 })),
   // The brief panel and New creative.
@@ -38,20 +39,71 @@ afterEach(() => { vi.clearAllMocks(); vi.useRealTimers(); });
 
 const it_ = (node: React.ReactNode) => render(<I18nProvider locale="it">{node}</I18nProvider>);
 
-describe('the transcription choices (Task 20, spec §6)', () => {
-  it('no keys and no Whisper to install: only "Continua senza trascrizione", what transcription is for, and how to get a Whisper', () => {
-    const q = ask();
+const installable = (over: Partial<TranscriptionPending['whisper']> = {}): TranscriptionPending['whisper'] =>
+  ({ available: true, installed: false, model: 'small', sizeBytes: 487_601_967, canInstall: true, engine: 'whisper.cpp', downloadsOwnModel: false, ...over });
+
+describe('the transcription choices (Task 20, spec §6; report 64: Whisper first)', () => {
+  it('Whisper installable and both keys: Whisper first and primary with "Consigliato" and its facts; the paid ones after, under "A pagamento"', () => {
+    const q = ask({ whisper: installable(), openai: { costUsd: 0.018 }, elevenlabs: { costUsd: 0.011 } });
     it_(<TranscriptionChoices slug="acme" view={waiting(q)} question={q} />);
     const list = screen.getByRole('group', { name: 'Come trascrivere il parlato' });
-    expect(within(list).getAllByRole('button').map((b) => b.textContent)).toEqual(['Continua senza trascrizione']);
-    expect(screen.getByText(/l'agente sa cosa viene detto e quando/)).toBeTruthy();
-    expect(screen.getByText(/brew install whisper-cpp/)).toBeTruthy();
+    const buttons = within(list).getAllByRole('button');
+    expect(buttons.map((b) => /^Trascrivi con (Whisper|OpenAI|ElevenLabs)/.exec(b.textContent!)?.[1])).toEqual(['Whisper', 'OpenAI', 'ElevenLabs']);
+    expect(buttons[0]!.classList.contains('ms-tchoice-primary')).toBe(true);
+    expect(buttons[0]!.textContent).toContain('Gratis · l\'audio resta sul Mac · modello Small, 488 MB una volta sola');
+    expect(buttons[1]!.classList.contains('ms-tchoice-primary')).toBe(false);
+    expect(within(list).getByText('A pagamento')).toBeTruthy();
+    // "Continua senza trascrizione" is a quiet action outside the options.
+    const skip = screen.getByRole('button', { name: 'Continua senza trascrizione' });
+    expect(list.contains(skip)).toBe(false);
+    expect(skip.classList.contains('ms-tchoices-skip')).toBe(true);
+  });
+
+  it('Whisper installed: no download size; no keys: no "A pagamento" heading', () => {
+    const q = ask({ whisper: installable({ installed: true }) });
+    it_(<TranscriptionChoices slug="acme" view={waiting(q)} question={q} />);
+    const line = screen.getByRole('button', { name: /^Trascrivi con Whisper/ });
+    expect(line.textContent).toMatch(/modello Small$/);
+    expect(screen.queryByText('A pagamento')).toBeNull();
+  });
+
+  it('no Whisper to install: still first, with the commands to copy, the Settings link and Ricontrolla; nothing paid without keys', async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const q = ask();
+    const onDone = vi.fn();
+    it_(<TranscriptionChoices slug="acme" view={waiting(q)} question={q} onDone={onDone} />);
+    const list = screen.getByRole('group', { name: 'Come trascrivere il parlato' });
+    expect(within(list).getByText('Trascrivi con Whisper')).toBeTruthy();
+    expect(within(list).getByText('Consigliato')).toBeTruthy();
+    expect(screen.queryByText('A pagamento')).toBeNull();
+    expect(screen.queryByText(/`/)).toBeNull();
+    expect(within(list).getByText('brew install whisper-cpp').tagName).toBe('CODE');
+    expect(within(list).getByText('pip install openai-whisper').tagName).toBe('CODE');
+    await userEvent.click(within(list).getByRole('button', { name: 'Copia brew install whisper-cpp' }));
+    expect(writeText).toHaveBeenCalledWith('brew install whisper-cpp');
+    expect(within(list).getByRole('link', { name: /Indicalo in Impostazioni/ }).getAttribute('href')).toBe('#/settings/transcription');
+    // Ricontrolla: still nothing → says so; then whisper.cpp found → the install option appears.
+    api.recheckTranscription.mockImplementationOnce(async () => waiting(q));
+    const recheck = within(list).getByRole('button', { name: 'Ricontrolla' });
+    // The focus order: the Whisper steps come before the quiet "Continua senza trascrizione".
+    expect(recheck.compareDocumentPosition(screen.getByRole('button', { name: 'Continua senza trascrizione' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await userEvent.click(recheck);
+    expect(api.recheckTranscription).toHaveBeenCalledWith('acme', 'assets/demo.mp4');
+    expect(await screen.findByText('Ancora nessun Whisper trovato su questo Mac.')).toBeTruthy();
+    api.recheckTranscription.mockImplementationOnce(async () => waiting(ask({ whisper: installable() })));
+    await userEvent.click(within(list).getByRole('button', { name: 'Ricontrolla' }));
+    const install = await screen.findByRole('button', { name: /^Trascrivi con Whisper.*488 MB una volta sola/ });
+    expect(screen.queryByRole('button', { name: 'Ricontrolla' })).toBeNull();
+    await userEvent.click(install);
+    expect(api.transcriptionChoice).toHaveBeenCalledWith('acme', { file: 'assets/demo.mp4', choice: 'whisper', remember: false, sizeBytes: 487_601_967 });
   });
 
   it('an OpenAI key: its line with the cost and the audio leaving the Mac; a click posts the choice without remember', async () => {
     const q = ask({ openai: { costUsd: 0.018 } });
     const onDone = vi.fn();
     it_(<TranscriptionChoices slug="acme" view={waiting(q)} question={q} onDone={onDone} />);
+    expect(screen.getByText('A pagamento')).toBeTruthy();
     const line = screen.getByRole('button', { name: /Trascrivi con OpenAI · ~/ });
     expect(line.textContent).toMatch(/0,018\s\$/);
     expect(line.textContent).toContain('L\'audio lascia il Mac.');
@@ -60,40 +112,43 @@ describe('the transcription choices (Task 20, spec §6)', () => {
     expect(onDone).toHaveBeenCalled();
   });
 
-  it('Installa Whisper posts the size shown, then shows the download until the analysis goes on; "Ricorda la scelta" is sent', async () => {
-    const q = ask({ whisper: { available: true, installed: false, model: 'small', sizeBytes: 487_601_967, canInstall: true, engine: 'whisper.cpp', downloadsOwnModel: false } });
+  it('Trascrivi con Whisper posts the size shown, then shows the download until the analysis goes on; "Ricorda la scelta" is sent', async () => {
+    const q = ask({ whisper: installable() });
     api.transcriptionChoice.mockImplementationOnce(async (_s, b) => waiting(q, b.file));
     const onDone = vi.fn();
     const { rerender } = it_(<TranscriptionChoices slug="acme" view={waiting(q)} question={q} onDone={onDone} />);
     await userEvent.click(screen.getByRole('checkbox', { name: 'Ricorda la scelta' }));
-    await userEvent.click(screen.getByRole('button', { name: /Installa Whisper \(gratis, sul tuo Mac\) · 488 MB/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Trascrivi con Whisper.*488 MB/ }));
     expect(api.transcriptionChoice).toHaveBeenCalledWith('acme', { file: 'assets/demo.mp4', choice: 'whisper', remember: true, sizeBytes: 487_601_967 });
     await waitFor(() => expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('50'));
+    expect(screen.queryByRole('button', { name: 'Continua senza trascrizione' })).toBeNull();
     expect(onDone).not.toHaveBeenCalled();
     rerender(<I18nProvider locale="it"><TranscriptionChoices slug="acme" view={{ ...waiting(null), state: 'running' }} question={q} onDone={onDone} /></I18nProvider>);
     await waitFor(() => expect(onDone).toHaveBeenCalled());
   });
 
-  it('a Python engine that downloads its own model: plain Whisper with the note, chosen without a download size', async () => {
-    const q = ask({ whisper: { available: true, installed: false, model: 'small', sizeBytes: 487_601_967, canInstall: false, engine: 'openai-whisper', downloadsOwnModel: true } });
+  it('a Python engine that downloads its own model: Whisper with the note, chosen without a download size', async () => {
+    const q = ask({ whisper: installable({ canInstall: false, engine: 'openai-whisper', downloadsOwnModel: true }) });
     it_(<TranscriptionChoices slug="acme" view={waiting(q)} question={q} />);
-    const line = screen.getByRole('button', { name: /^Whisper sul Mac/ });
-    expect(line.textContent).toContain('Questo Whisper scarica i modelli nella sua cartella al primo uso.');
+    const line = screen.getByRole('button', { name: /^Trascrivi con Whisper/ });
+    expect(line.textContent).toContain('scarica il suo modello al primo uso');
     await userEvent.click(line);
     expect(api.transcriptionChoice).toHaveBeenCalledWith('acme', { file: 'assets/demo.mp4', choice: 'whisper', remember: false });
   });
 
   it('a failed download shows the core\'s reason above the choices again', async () => {
-    const q = ask({ whisper: { available: true, installed: false, model: 'small', sizeBytes: 487_601_967, canInstall: true, engine: 'whisper.cpp', downloadsOwnModel: false }, error: 'sha256 non riuscito' });
+    const q = ask({ whisper: installable(), error: 'sha256 non riuscito' });
     it_(<TranscriptionChoices slug="acme" view={waiting(q)} question={q} />);
     expect(screen.getByRole('alert').textContent).toContain('sha256 non riuscito');
-    expect(screen.getByRole('button', { name: /Installa Whisper/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Trascrivi con Whisper/ })).toBeTruthy();
   });
 
   it('the dialog is a modal with the question', () => {
     const q = ask();
     it_(<TranscriptionDialog slug="acme" view={waiting(q)} question={q} open onClose={() => {}} />);
-    expect(screen.getByRole('dialog', { name: 'Trascrivere il parlato di demo.mp4?' })).toBeTruthy();
+    const d = screen.getByRole('dialog', { name: 'Trascrivere il parlato di demo.mp4?' });
+    // "Continua senza trascrizione" sits quietly next to Chiudi.
+    expect(within(d).getByRole('button', { name: 'Continua senza trascrizione' }).parentElement).toBe(within(d).getByRole('button', { name: 'Chiudi' }).parentElement);
   });
 
   it('the long video: both densities with frames and tokens; Analizza a densità ridotta posts reduced', async () => {

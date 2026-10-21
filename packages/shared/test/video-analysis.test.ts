@@ -67,7 +67,8 @@ describe('transcription settings and choice', () => {
     expect(usageKindSchema.parse('transcription')).toBe('transcription');
     const it_ = messages('it').transcription;
     expect(it_.methods).toEqual({ ask: 'Chiedi ogni volta', whisper: 'Whisper sul Mac', openai: 'OpenAI', elevenlabs: 'ElevenLabs', never: 'Mai' });
-    expect(it_.installWhisper({ size: '488 MB' })).toBe('Installa Whisper (gratis, sul tuo Mac) · 488 MB');
+    expect(it_.whisperTitle).toBe('Trascrivi con Whisper');
+    expect(it_.modelOnce({ model: 'Small', size: '488 MB' })).toBe('modello Small, 488 MB una volta sola');
     expect(it_.withOpenai({ cost: '$0.01' })).toBe('Trascrivi con OpenAI · ~$0.01');
     expect(it_.withElevenlabs({ cost: '$0.01' })).toBe('Trascrivi con ElevenLabs · ~$0.01');
     expect(it_.continueWithout).toBe('Continua senza trascrizione');

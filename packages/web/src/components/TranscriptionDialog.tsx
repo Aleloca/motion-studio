@@ -12,8 +12,8 @@ export function TranscriptionDialog({ slug, view, question, open, onClose }: { s
   return (
     <Modal open={open} onClose={onClose} label={transcriptionTitle(t, view.file)} width={480}>
       <div className="ms-tdialog">
-        <TranscriptionChoices slug={slug} view={view} question={question} onDone={onClose} headingId={id} />
-        <div className="ms-tdialog-foot"><Button size="sm" variant="ghost" onClick={onClose}>{t.common.close}</Button></div>
+        <TranscriptionChoices slug={slug} view={view} question={question} onDone={onClose} headingId={id}
+          footer={<Button size="sm" variant="ghost" onClick={onClose}>{t.common.close}</Button>} />
       </div>
     </Modal>
   );
