@@ -20,7 +20,7 @@ const q: TranscriptionPending = {
 const view = (pending: VideoAnalysisView['pending']): VideoAnalysisView => ({ file: FILE, state: 'waiting', jobId: 'j', error: null, pending, header: null, body: null });
 const api = {
   getBriefSession: vi.fn(async (): Promise<BriefSessionView | null> => ({ id: 's1', createdAt: at, updatedAt: at, context: { codebases: [], assets: [FILE] }, form: EMPTY_BRIEF_FORM, userEdited: [], agentFields: [], queued: [], jobId: null, revision: 1 })),
-  getBriefConversation: vi.fn(async (): Promise<ConversationEntry[]> => [{ type: 'user', at, text: 'Usa il video del fondatore per un reel di 15 secondi.', pins: [] } as ConversationEntry]),
+  getBriefConversation: vi.fn(async (): Promise<ConversationEntry[]> => [{ type: 'user', at, text: 'Usa il video del fondatore per un reel di 15 secondi.', pins: [], attachments: [] } as ConversationEntry]),
   getAgentCapabilities: vi.fn(async () => ({ cliVersion: null, liveInput: false, interrupt: false, checkedAt: at })),
   projectFileUrl: () => 'data:,',
 };
