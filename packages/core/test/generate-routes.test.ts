@@ -235,3 +235,33 @@ describe('generate route', () => {
     expect((await post({ kind: 'voice', provider: 'elevenlabs', text: 'Ciao', options: { voice: 'ALLOY' } })).statusCode).toBe(400);
   });
 });
+
+describe('generate route · paid usage (report 66)', () => {
+  const lines = async () => (await readFile(join(base, 'ws', 'acme', '.studio', 'usage.jsonl'), 'utf8').catch(() => '')).split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
+  it('each generation that succeeds writes one paid record; the Usage report shows it apart from Claude', async () => {
+    await boot();
+    for (const p of [
+      { kind: 'image', provider: 'openai', prompt: 'A blue banner', options: { width: 1024, height: 1024, quality: 'low' } },
+      { kind: 'voice', provider: 'elevenlabs', text: 'Ciao a tutti', options: { voice: 'v1' } },
+      { kind: 'sfx', provider: 'elevenlabs', prompt: 'Door slam', options: {} },
+      { kind: 'music', provider: 'elevenlabs', prompt: 'Calm piano', options: { durationSec: 30 } },
+    ]) expect((await settle((await post(p)).json().jobId)).state).toBe('succeeded');
+    expect((await lines()).map((l) => [l.kind, l.creativeSlug, l.paid])).toEqual([
+      ['paid', null, { provider: 'openai', service: 'images', model: 'gpt-image-2', units: { amount: 1, unit: 'images' } }],
+      ['paid', null, { provider: 'elevenlabs', service: 'voice', model: 'eleven_multilingual_v2', units: { amount: 12, unit: 'characters' } }],
+      ['paid', null, { provider: 'elevenlabs', service: 'sfx', model: 'eleven_text_to_sound_v2', units: { amount: 5, unit: 'seconds', estimated: true } }],
+      ['paid', null, { provider: 'elevenlabs', service: 'music', model: 'music_v1', units: { amount: 30, unit: 'seconds' } }],
+    ]);
+    const report = (await app.inject('/api/usage')).json();
+    expect(report.total.tokens).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+    expect(report.total.costUsd).toBeNull();
+    expect(report.paid).toMatchObject({ calls: 4, costUsd: expect.closeTo(0.006 + 0.00096 + 0.12 + 0.075, 6) });
+    expect(report.paid.byProject).toEqual([{ slug: 'acme', name: 'Acme', calls: 4, costUsd: expect.closeTo(0.20196, 6) }]);
+  });
+  it('a failed generation writes nothing', async () => {
+    await boot();
+    status = 500;
+    expect((await settle((await post({ kind: 'music', provider: 'elevenlabs', prompt: 'Calm piano', options: { durationSec: 30 } })).json().jobId)).state).toBe('failed');
+    expect(await lines()).toEqual([]);
+  });
+});

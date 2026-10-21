@@ -138,7 +138,7 @@ describe('top bar bell', () => {
   });
 
   it("shows today's tokens: \"—\" until the day total arrives, then live, and opens Settings → Usage", async () => {
-    vi.mocked(api.getUsage).mockResolvedValue({ from: '', to: '', total: { tokens: { input: 38_000, output: 200, cacheRead: 5_000_000, cacheWrite: 40 }, costUsd: 1 }, byDay: [], byProject: [], byKind: [], trackedSince: null, billing: 'subscription', utcOffsetMinutes: 0 });
+    vi.mocked(api.getUsage).mockResolvedValue({ from: '', to: '', total: { tokens: { input: 38_000, output: 200, cacheRead: 5_000_000, cacheWrite: 40 }, costUsd: 1 }, byDay: [], byProject: [], byKind: [], paid: { costUsd: 0, calls: 0, byDay: [], byService: [], byKind: [], byProject: [] }, trackedSince: null, billing: 'subscription', utcOffsetMinutes: 0 });
     await startApp();
     const tokens = screen.getByRole('button', { name: 'Token usati oggi: —. Apri Utilizzo' });
     expect(tokens.textContent).toBe('— token');

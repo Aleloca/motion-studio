@@ -1,5 +1,6 @@
 import { ProviderError, requestBytes, requestJson, type HttpDeps } from './http.ts';
 import { t } from '../i18n.ts';
+import { musicBill, sfxBill, type PaidBill } from '../usage/paid-usage.ts';
 
 const BASE = 'https://api.elevenlabs.io';
 const FORMAT = 'mp3_44100_128';
@@ -43,7 +44,7 @@ export function validateMusic(req: MusicRequest): string {
   return prompt;
 }
 
-export async function elevenlabsSoundEffect(deps: Deps, req: SfxRequest): Promise<{ bytes: Uint8Array; format: 'mp3' }> {
+export async function elevenlabsSoundEffect(deps: Deps, req: SfxRequest): Promise<{ bytes: Uint8Array; format: 'mp3'; bill: PaidBill }> {
   const text = validateSoundEffect(req);
   const body = {
     text,
@@ -53,14 +54,14 @@ export async function elevenlabsSoundEffect(deps: Deps, req: SfxRequest): Promis
     model_id: SFX_MODEL,
   };
   const { bytes } = await post(deps, '/v1/sound-generation', body);
-  return { bytes, format: 'mp3' };
+  return { bytes, format: 'mp3', bill: sfxBill(req.durationSec) };
 }
 
-export async function elevenlabsMusic(deps: Deps, req: MusicRequest): Promise<{ bytes: Uint8Array; format: 'mp3' }> {
+export async function elevenlabsMusic(deps: Deps, req: MusicRequest): Promise<{ bytes: Uint8Array; format: 'mp3'; bill: PaidBill }> {
   const prompt = validateMusic(req);
   const body = { prompt, music_length_ms: Math.round(req.durationSec * 1000), ...(req.instrumental !== undefined ? { force_instrumental: req.instrumental } : {}), model_id: MUSIC_MODEL };
   const { bytes } = await post(deps, '/v1/music', body);
-  return { bytes, format: 'mp3' };
+  return { bytes, format: 'mp3', bill: musicBill(req.durationSec) };
 }
 
 export async function elevenlabsVoices(deps: Deps, req: { search?: string; pageSize?: number }): Promise<{ id: string; name: string; labels: Record<string, string>; previewUrl: string | null }[]> {

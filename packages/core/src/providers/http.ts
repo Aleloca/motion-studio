@@ -146,10 +146,11 @@ export async function requestJson<T>(deps: HttpDeps, url: string, init: RequestI
   try { return JSON.parse(buf.toString('utf8')) as T; } catch { throw new ProviderError(502, t().providers.invalidResponse({ provider: o.provider })); }
 }
 
-export async function requestBytes(deps: HttpDeps, url: string, init: RequestInit, o: Opts & { maxBytes: number }): Promise<{ bytes: Buffer; contentType: string }> {
+/** `headers`: the answer's headers (e.g. what the provider says it charged). */
+export async function requestBytes(deps: HttpDeps, url: string, init: RequestInit, o: Opts & { maxBytes: number }): Promise<{ bytes: Buffer; contentType: string; headers: Headers }> {
   const { res } = await send(deps, url, init, o);
   if (!res.body) throw new ProviderError(502, t().providers.invalidResponse({ provider: o.provider }));
   const bytes = await readBody(res, o, o.maxBytes);
   if (bytes.length === 0) throw new ProviderError(502, t().providers.invalidResponse({ provider: o.provider }));
-  return { bytes, contentType: res.headers.get('content-type') ?? '' };
+  return { bytes, contentType: res.headers.get('content-type') ?? '', headers: res.headers };
 }

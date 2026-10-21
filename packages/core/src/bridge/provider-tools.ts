@@ -21,6 +21,8 @@ import { ELEVENLABS_TTS_MODEL, elevenlabsDefaultVoice, elevenlabsSpeech, OPENAI_
 import { canonicalVoice, voiceProviderOf } from '../providers/voices.ts';
 import type { SecretsVault } from '../secrets/vault.ts';
 import { overrideNote, refusalText, resolveService, type MissingCapabilities } from '../services/service-policy.ts';
+import { recordPaidUsage, type PaidBill } from '../usage/paid-usage.ts';
+import { UsageLedger } from '../usage/usage-ledger.ts';
 import type { BridgeContext } from './bridge.ts';
 import type { BridgeHandler } from './bridge-routes.ts';
 import { t } from '../i18n.ts';
@@ -32,6 +34,8 @@ export interface ProviderToolsDeps {
   transport?: Transport; lookup?: LookupFn;
   /** What the app has learned about the keys' capabilities (core memory only). */
   keyChecks?: KeyCheckCache;
+  /** Report 66: where each paid call that succeeded is recorded (the project's `usage.jsonl`); default: a ledger of its own. */
+  ledger?: UsageLedger;
 }
 
 /** Network access of one job: every request (API call or download) also stops when the job is cancelled. */
@@ -75,7 +79,7 @@ async function readBrandVoice(projectDir: string) {
 }
 
 /** The helpers every paid path shares (the agent tools and the localize turn's voices): keys, services, key checks, files. */
-function paidHelpers(deps: Pick<ProviderToolsDeps, 'vault' | 'keyChecks'>) {
+function paidHelpers(deps: Pick<ProviderToolsDeps, 'vault' | 'keyChecks' | 'ledger'>) {
   const keyOf = async (p: keyof typeof LABEL) => {
     const k = await deps.vault.get(p);
     if (!k) throw new ProviderError(400, t().providers.configureKey({ provider: LABEL[p] }));
@@ -107,7 +111,14 @@ function paidHelpers(deps: Pick<ProviderToolsDeps, 'vault' | 'keyChecks'>) {
   };
   const removeFiles = (projectDir: string, files: string[]) =>
     Promise.all(files.map((f) => rm(join(projectDir, 'assets', ...f.split('/')), { force: true }).catch(() => {})));
-  return { keyOf, configured, keyChecks, missingFor, withKeyCheck, removeFiles };
+  const ledger = deps.ledger ?? new UsageLedger();
+  /**
+   * Report 66: a paid call the provider answered is recorded at once, before anything else can fail (saving the file, a
+   * cancel): it is billed. A call that failed is not recorded (decision 1611).
+   */
+  const recordPaid = (c: { projectDir: string; jobId: string; creativeSlug: string | null }, bill: PaidBill) =>
+    recordPaidUsage(ledger, c.projectDir, { jobId: c.jobId, creativeSlug: c.creativeSlug, bill });
+  return { keyOf, configured, keyChecks, missingFor, withKeyCheck, removeFiles, recordPaid };
 }
 
 export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHandler> {
@@ -118,7 +129,7 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
     if (!MCP_TOOLS[c.kind].includes(tool)) throw new ProviderError(403, t().errors.toolUnavailable);
   };
   const alive = (c: BridgeContext) => { if (c.signal.aborted) throw new ProviderError(499, cancelled()); };
-  const { keyOf, configured, keyChecks, missingFor, withKeyCheck, removeFiles: removeIn } = paidHelpers(deps);
+  const { keyOf, configured, keyChecks, missingFor, withKeyCheck, removeFiles: removeIn, recordPaid } = paidHelpers(deps);
   const confirmPaid = (c: BridgeContext, rule: string, title: string, detail: string) => confirmPaidShared(deps, c, rule, title, detail);
   /**
    * The brief's word on this call (Task 7), checked first: a refusal comes before any argument check, confirmation, file
@@ -175,6 +186,7 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       await confirmPaid(c, 'provider:openai-images', t().approvals.generateImage, t().approvals.imageDetail({ width: size.width, height: size.height, refs: refs.length, prompt: prompt.slice(0, 300) }));
       alive(c);
       const img = await withKeyCheck('openai', apiKey, 'images', () => generateImage({ ...httpFor(c), apiKey }, { prompt, width: size.width, height: size.height, quality, background, references: refs }));
+      await recordPaid(c, img.bill);
       alive(c);
       const file = await saveGeneratedFile(c.projectDir, 'generated', `${s(a.name, 60) || slug(prompt)}.png`, img.bytes);
       await register(c, [file], (f) => ({ file: f, origin: 'generated', description: prompt.slice(0, 2000), tags: ['gpt-image-2'], provider: 'openai', model: OPENAI_IMAGE_MODEL }));
@@ -218,6 +230,7 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       alive(c);
       const req = { text, voice: resolved, instructions: s(a.instructions, 1000) || undefined, format } as const;
       const out = await withKeyCheck(provider, apiKey, 'tts', () => (provider === 'openai' ? openaiSpeech(http, req) : elevenlabsSpeech(http, req)));
+      await recordPaid(c, out.bill);
       alive(c);
       const file = await saveGeneratedFile(c.projectDir, 'audio', `${s(a.name, 60) || slug(text)}.${format}`, out.bytes);
       const model = provider === 'openai' ? OPENAI_TTS_MODEL : ELEVENLABS_TTS_MODEL;
@@ -237,6 +250,7 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       await confirmPaid(c, 'provider:sfx-elevenlabs', t().approvals.generateSfx({ provider: LABEL.elevenlabs }), t().approvals.audioDetail({ provider: LABEL.elevenlabs, seconds: req.durationSec ?? null, prompt: prompt.slice(0, 300) }));
       alive(c);
       const out = await withKeyCheck('elevenlabs', apiKey, 'sfx', () => elevenlabsSoundEffect({ ...httpFor(c), apiKey }, { ...req, prompt }));
+      await recordPaid(c, out.bill);
       alive(c);
       const file = await saveGeneratedFile(c.projectDir, 'audio', `${s(a.name, 60) || slug(prompt)}.mp3`, Buffer.from(out.bytes));
       await register(c, [file], (f) => ({ file: f, origin: 'generated', description: prompt, tags: [t().providers.soundTag, 'elevenlabs'], attribution: t().providers.audioAttribution({ provider: LABEL.elevenlabs }), provider: 'elevenlabs', model: SFX_MODEL, ...(req.loop !== undefined ? { loop: req.loop } : {}) }));
@@ -251,6 +265,7 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       await confirmPaid(c, 'provider:music-elevenlabs', t().approvals.generateMusic({ provider: LABEL.elevenlabs }), t().approvals.audioDetail({ provider: LABEL.elevenlabs, seconds: req.durationSec, prompt: prompt.slice(0, 300) }));
       alive(c);
       const out = await withKeyCheck('elevenlabs', apiKey, 'music', () => elevenlabsMusic({ ...httpFor(c), apiKey }, { ...req, prompt }));
+      await recordPaid(c, out.bill);
       alive(c);
       const file = await saveGeneratedFile(c.projectDir, 'audio', `${s(a.name, 60) || slug(prompt)}.mp3`, Buffer.from(out.bytes));
       await register(c, [file], (f) => ({ file: f, origin: 'generated', description: prompt, tags: [t().providers.musicTag, 'elevenlabs'], attribution: t().providers.audioAttribution({ provider: LABEL.elevenlabs }), provider: 'elevenlabs', model: MUSIC_MODEL }));
@@ -423,6 +438,7 @@ export function voiceBatch(deps: ProviderToolsDeps): (c: VoiceBatchContext, item
       try {
         const req = { text: item.text, voice, format: 'mp3' } as const;
         const out = await h.withKeyCheck(provider, apiKey, 'tts', () => (provider === 'openai' ? openaiSpeech(http, req) : elevenlabsSpeech(http, req)));
+        await h.recordPaid(c, out.bill);
         alive();
         const file = await saveGeneratedFile(c.projectDir, 'audio', `${slug(item.name)}.mp3`, out.bytes);
         try {

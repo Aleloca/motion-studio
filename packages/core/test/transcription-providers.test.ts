@@ -143,5 +143,7 @@ describe('cost and usage', () => {
     const rec = usageRecordSchema.parse(line);
     expect(rec).toMatchObject({ jobId: 'j1', kind: 'transcription', costUsd: 0.012, outcome: 'ok', tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } });
     expect(rec.models).toEqual([{ model: 'whisper-1', tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, costUsd: 0.012 }]);
+    // Report 66: the paid measure, in minutes.
+    expect(rec.paid).toEqual({ provider: 'openai', service: 'transcription', model: 'whisper-1', units: { amount: 2, unit: 'minutes' } });
   });
 });

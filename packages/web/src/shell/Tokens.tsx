@@ -19,8 +19,12 @@ export function formatTokens(locale: Locale, n: number): string {
   return `${formatNumber(locale, n / 1000, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}k`;
 }
 
-/** "$0.42"; under 10 cents always three decimals ("$0.010", "$0.015"), so neighbouring small costs read alike. The one cost formatter. */
+/**
+ * "$0.42"; under 10 cents always three decimals ("$0.010", "$0.015"), so neighbouring small costs read alike; a positive cost
+ * under a tenth of a cent is "< $0.001", never "$0.000". The one cost formatter.
+ */
 export function formatCost(locale: Locale, usd: number): string {
+  if (usd > 0 && usd < 0.001) return `< ${formatCost(locale, 0.001)}`;
   const digits = usd > 0 && usd < 0.1 ? 3 : 2;
   return formatNumber(locale, usd, { style: 'currency', currency: 'USD', currencyDisplay: 'narrowSymbol', minimumFractionDigits: digits, maximumFractionDigits: digits });
 }

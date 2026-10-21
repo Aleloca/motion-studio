@@ -912,3 +912,43 @@ describe('OpenAI voice names in any case (review minor)', () => {
     expect(sent.some((u) => u.startsWith('https://api.elevenlabs.io/'))).toBe(false);
   });
 });
+
+describe('paid usage in the ledger (report 66)', () => {
+  const lines = async () => {
+    const raw = await readFile(join(projectDir, '.studio', 'usage.jsonl'), 'utf8').catch(() => '');
+    return raw.split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
+  };
+  const noConfirm = { confirmPaidProviders: false };
+  const both = { OPENAI_API_KEY: 'k', ELEVENLABS_API_KEY: 'e' };
+
+  it('each paid tool that succeeds writes one record with its provider, service, units, cost and creative', async () => {
+    const t = tools(noConfirm, both);
+    await t.generate_image!(ctx, { prompt: 'x', width: 1024, height: 1024, quality: 'medium' });
+    await t.tts!(ctx, { text: 'Ciao mondo', provider: 'openai' });
+    await t.tts!(ctx, { text: 'Ciao', provider: 'elevenlabs' });
+    await t.sound_effect!(ctx, { prompt: 'door', durationSec: 2 });
+    await t.music!(ctx, { prompt: 'calm', durationSec: 20 });
+    const got = await lines();
+    expect(got.map((l) => [l.kind, l.jobId, l.creativeSlug, l.paid])).toEqual([
+      ['paid', 'j1', 'c1', { provider: 'openai', service: 'images', model: 'gpt-image-2', units: { amount: 1, unit: 'images' } }],
+      ['paid', 'j1', 'c1', { provider: 'openai', service: 'voice', model: 'gpt-4o-mini-tts', units: { amount: 10, unit: 'characters' } }],
+      ['paid', 'j1', 'c1', { provider: 'elevenlabs', service: 'voice', model: 'eleven_multilingual_v2', units: { amount: 4, unit: 'characters' } }],
+      ['paid', 'j1', 'c1', { provider: 'elevenlabs', service: 'sfx', model: 'eleven_text_to_sound_v2', units: { amount: 2, unit: 'seconds' } }],
+      ['paid', 'j1', 'c1', { provider: 'elevenlabs', service: 'music', model: 'music_v1', units: { amount: 20, unit: 'seconds' } }],
+    ]);
+    expect(got.map((l) => l.costUsd)).toEqual([0.053, expect.closeTo(0.0001515, 6), 0.00032, 0.12, 0.05]);
+    expect(got.every((l) => JSON.stringify(l.tokens) === JSON.stringify({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }))).toBe(true);
+  });
+
+  it('a failed or declined call writes nothing', async () => {
+    const failing = (async () => new Response('boom', { status: 500 })) as unknown as typeof fetch;
+    const t = tools(noConfirm, both, failing);
+    expect(await t.generate_image!(ctx, { prompt: 'x', width: 1024, height: 1024 }).catch((e) => status(e))).toBe(502);
+    expect(await t.music!(ctx, { prompt: 'calm', durationSec: 20 }).catch((e) => status(e))).toBe(502);
+    const denied = tools({}, both).sound_effect!(ctx, { prompt: 'door' }).catch((e) => status(e));
+    await waitForPending();
+    await approvals.decide(approvals.pending()[0]!.id, 'deny');
+    expect(await denied).toBe(403);
+    expect(await lines()).toEqual([]);
+  });
+});

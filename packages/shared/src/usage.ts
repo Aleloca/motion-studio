@@ -14,7 +14,28 @@ export const usageSummarySchema = z.object({
 });
 export type UsageSummary = z.infer<typeof usageSummarySchema>;
 
-export const usageKindSchema = z.enum(['creative', 'brand-analysis', 'describe', 'console', 'localize', 'video-analysis', 'transcription']);
+export const usageKindSchema = z.enum(['creative', 'brand-analysis', 'describe', 'console', 'localize', 'video-analysis', 'transcription', 'paid']);
+/** The kinds of Claude's runs: `transcription` and `paid` are paid services billed on the user's own provider accounts. */
+export type ClaudeUsageKind = Exclude<z.infer<typeof usageKindSchema>, 'transcription' | 'paid'>;
+export const CLAUDE_USAGE_KINDS = usageKindSchema.options.filter((k): k is ClaudeUsageKind => k !== 'transcription' && k !== 'paid');
+
+export const paidProviderSchema = z.enum(['openai', 'elevenlabs']);
+export type PaidProvider = z.infer<typeof paidProviderSchema>;
+export const paidServiceSchema = z.enum(['images', 'voice', 'music', 'sfx', 'transcription']);
+export type PaidService = z.infer<typeof paidServiceSchema>;
+/** `images`: a count of pictures, only when the provider gave no token usage for them. */
+export const paidUnitSchema = z.enum(['tokens', 'characters', 'seconds', 'minutes', 'images']);
+export type PaidUnit = z.infer<typeof paidUnitSchema>;
+/**
+ * Report 66: what a paid call measured, in the provider's own unit. The record's `costUsd` is then the app's estimate at list
+ * price (never the provider's bill); its `tokens` stay zero (they are Claude's).
+ */
+export const paidUsageSchema = z.object({
+  provider: paidProviderSchema, service: paidServiceSchema, model: z.string().min(1),
+  /** `estimated`: the amount is a guess (a sound effect with no duration asked: the provider picks it). */
+  units: z.object({ amount: z.number().min(0), unit: paidUnitSchema, estimated: z.literal(true).optional() }),
+});
+export type PaidUsage = z.infer<typeof paidUsageSchema>;
 
 /**
  * One ledger line. `tokens`/`costUsd`/`models` are PER RUN. The agent's `total_cost_usd` and `modelUsage` are
@@ -44,6 +65,8 @@ export const usageRecordSchema = z.object({
   sessionId: z.string().nullable().default(null),
   cumulativeCostUsd: z.number().min(0).nullable().default(null),
   cumulativeModels: z.array(modelUsageSchema).default([]),
+  /** Report 66: present on a paid service's record (kind `paid` or `transcription`); older transcription lines lack it. */
+  paid: paidUsageSchema.optional(),
 });
 export type UsageRecord = z.infer<typeof usageRecordSchema>;
 
@@ -56,12 +79,28 @@ export function addTokens(a: TokenCounts, b: TokenCounts): TokenCounts {
   return { input: a.input + b.input, output: a.output + b.output, cacheRead: a.cacheRead + b.cacheRead, cacheWrite: a.cacheWrite + b.cacheWrite };
 }
 
+/** `estimated`: part of the amount is a guess (see `paidUsageSchema`). */
+export interface PaidUnits { unit: PaidUnit; amount: number; estimated?: true }
+/**
+ * Report 66: the paid services of the range, apart from Claude's runs. Every cost is the app's estimate at list price.
+ * `units`: summed per unit (a provider may measure in several, e.g. OpenAI tokens, characters and minutes).
+ */
+export interface PaidUsageReport {
+  costUsd: number; calls: number;
+  byDay: { day: string; costUsd: number; calls: number }[];
+  byService: { provider: PaidProvider; costUsd: number; calls: number; units: PaidUnits[] }[];
+  byKind: { service: PaidService; costUsd: number; calls: number; units: PaidUnits[] }[];
+  byProject: { slug: string; name: string; costUsd: number; calls: number }[];
+}
+
+/** Claude's runs only (`total`, `byDay`, `byProject`, `byKind`); the paid services are in `paid`. */
 export interface UsageReport {
   from: string; to: string; total: UsageSummary;
   /** `estimated`: some run of the bucket has no known cost (or only a live estimate), so `costUsd` is partial. */
   byDay: { day: string; tokens: number; costUsd: number | null; estimated?: boolean }[];
   byProject: { slug: string; name: string; tokens: number; costUsd: number | null; estimated?: boolean }[];
-  byKind: { kind: UsageRecord['kind']; tokens: number; costUsd: number | null; estimated?: boolean }[];
+  byKind: { kind: ClaudeUsageKind; tokens: number; costUsd: number | null; estimated?: boolean }[];
+  paid: PaidUsageReport;
   trackedSince: string | null;
   billing: UsageBilling;
   /**

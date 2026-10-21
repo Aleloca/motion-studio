@@ -1,5 +1,6 @@
 import { ProviderError, requestJson, type HttpDeps } from './http.ts';
 import { t } from '../i18n.ts';
+import { imageBill, type ImageApiUsage } from '../usage/paid-usage.ts';
 
 const MIN_PIXELS = 655_360, MAX_PIXELS = 8_294_400, MAX_EDGE = 3840;
 const r16 = (v: number) => Math.max(16, Math.round(v / 16) * 16);
@@ -30,7 +31,7 @@ export async function generateImage(deps: HttpDeps & { apiKey: string }, req: Im
   const { width, height } = normalizeImageSize(req.width, req.height);
   const common = { model: OPENAI_IMAGE_MODEL, prompt: req.prompt.slice(0, 32_000), size: `${width}x${height}`, quality: req.quality ?? 'auto', background: req.background ?? 'auto', output_format: 'png' };
   const auth = { authorization: `Bearer ${deps.apiKey}` };
-  type Out = { data?: Array<{ b64_json?: string; revised_prompt?: string }> };
+  type Out = { data?: Array<{ b64_json?: string; revised_prompt?: string }>; usage?: ImageApiUsage | null };
   let out: Out;
   if (!req.references?.length) {
     out = await requestJson<Out>(deps, 'https://api.openai.com/v1/images/generations', { method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify({ ...common, n: 1 }) }, { provider: 'OpenAI', secrets: [deps.apiKey] });
@@ -45,5 +46,7 @@ export async function generateImage(deps: HttpDeps & { apiKey: string }, req: Im
   }
   const b64 = out.data?.[0]?.b64_json;
   if (typeof b64 !== 'string' || !b64) throw new ProviderError(502, t().providers.invalidResponse({ provider: 'OpenAI' }));
-  return { bytes: Buffer.from(b64, 'base64'), width, height, revisedPrompt: out.data?.[0]?.revised_prompt ?? null };
+  // Report 66: what the picture is billed on (the answer's token usage, else its quality and size).
+  const bill = imageBill(out.usage, { quality: common.quality, width, height });
+  return { bytes: Buffer.from(b64, 'base64'), width, height, revisedPrompt: out.data?.[0]?.revised_prompt ?? null, bill };
 }

@@ -860,7 +860,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const fontsHttp = deps.fontsHttp ?? { fetch: globalThis.fetch };
   registerFontsRoutes(app, { ...routeCtx, catalog: new GoogleFontsCatalog({ configDir, http: fontsHttp }), http: fontsHttp, signer: new UrlSigner(deps.signedUrlTtlMs), ...(deps.fontsInstallIo ? { installIo: deps.fontsInstallIo } : {}) });
   // Localize turns (Phase 12, Task 4): the agent translates through submit_localization; the core makes the voices.
-  const voiceDeps = { vault, approvals, media, keyChecks, settings: () => requireWorkspace().readSettings(), broadcast: (m: ServerMessage) => hub.broadcast(m), ...deps.localizeHttp };
+  const voiceDeps = { vault, approvals, media, keyChecks, ledger: usageLedger, settings: () => requireWorkspace().readSettings(), broadcast: (m: ServerMessage) => hub.broadcast(m), ...deps.localizeHttp };
   const activity = new ProjectActivity();
   hub.listen((m) => activity.note(m));
   const localize = new LocalizeService({
@@ -875,7 +875,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   registerLocalizationRoutes(app, { requireWorkspace, turns, media, presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets, fontsHttp,
     ...(deps.fontsInstallIo ? { fontsIo: deps.fontsInstallIo } : {}), localize, previews });
   registerVoicesRoutes(app, { vault, http: deps.voicesHttp ?? { fetch: globalThis.fetch }, signer: new UrlSigner(deps.signedUrlTtlMs), keyChecks });
-  registerGenerateRoutes(app, { requireWorkspace, vault, approvals, media, queue, keyChecks, http: deps.generateHttp ?? { fetch: globalThis.fetch }, broadcast: (m) => hub.broadcast(m) });
+  registerGenerateRoutes(app, { requireWorkspace, vault, approvals, media, queue, keyChecks, http: deps.generateHttp ?? { fetch: globalThis.fetch }, broadcast: (m) => hub.broadcast(m), ledger: usageLedger });
   registerProjectRoutes(app, { requireWorkspace, jobKeyOf: projectJobKey, broadcast: (m) => hub.broadcast(m) });
 
   // Decision 917: the agent's actions on the app (creative turns only), through the same services as the routes above.
@@ -891,7 +891,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // Read on every permission prompt: a setting changed mid-job applies to the next one.
     settings: () => requireWorkspace().readSettings(),
     extraTools: {
-      ...providerTools({ vault, approvals, media, keyChecks, settings: () => requireWorkspace().readSettings(), broadcast: (m) => hub.broadcast(m), ...deps.providerHttp }),
+      ...providerTools({ vault, approvals, media, keyChecks, ledger: usageLedger, settings: () => requireWorkspace().readSettings(), broadcast: (m) => hub.broadcast(m), ...deps.providerHttp }),
       download_file: downloadTool({ media, broadcast: (m) => hub.broadcast(m) }),
       import_codebase_file: importCodebaseTool({ media, broadcast: (m) => hub.broadcast(m) }),
       ...agentActions.tools(),

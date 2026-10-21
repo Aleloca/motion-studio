@@ -930,7 +930,7 @@ describe('CreativeCanvas · tokens (Phase 8)', () => {
 
   const ledger = (tokens: Partial<UsageReport['total']['tokens']>, costUsd: number | null, estimated?: boolean): UsageReport => ({
     from: at, to: at, total: { tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, ...tokens }, costUsd, ...(estimated ? { estimated } : {}) },
-    byDay: [], byProject: [], byKind: [], trackedSince: at, billing: 'subscription', utcOffsetMinutes: 0,
+    byDay: [], byProject: [], byKind: [], paid: { costUsd: 0, calls: 0, byDay: [], byService: [], byKind: [], byProject: [] }, trackedSince: at, billing: 'subscription', utcOffsetMinutes: 0,
   });
 
   it('the Brief panel shows the ledger total of the creative (failed and cancelled runs included), asked for this creative only', async () => {

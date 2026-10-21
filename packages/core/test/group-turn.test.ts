@@ -15,6 +15,8 @@ import { CreativeSideStateStore } from '../src/creatives/creative-side-state.ts'
 import { recoverGroupTurns } from '../src/creatives/group-turn.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { cid } from './helpers/live-app.ts';
+import { musicBill, paidRecord } from '../src/usage/paid-usage.ts';
+import { UsageLedger } from '../src/usage/usage-ledger.ts';
 import type { ControlledRun } from './helpers/controlled-runner.ts';
 import { variantApp, type VariantApp } from './helpers/variant-app.ts';
 
@@ -111,6 +113,8 @@ describe('the group turn', () => {
     const add = await v.bridge(b, 'add_variant', { direction: 'Notturna' });
     expect(add.statusCode).toBe(409);
     expect(add.json().error).toBe(messages('it').agentActions.helperGroupAction);
+    // Report 66: the helper made paid music; its estimated cost is the provider's, never the turn's Claude usage.
+    await new UsageLedger().append(v.projectDir, paidRecord({ jobId: helper.id, creativeSlug: `${slug}~b`, bill: musicBill(30) }));
     b.emit({ kind: 'usage', live: false, tokens: { input: 10, output: 100, cacheRead: 0, cacheWrite: 0 }, costUsd: 0.01 });
     b.finish();
     // The report run: the same session, resumed, with B's outcome.
@@ -128,8 +132,9 @@ describe('the group turn', () => {
     expect(end).toMatchObject({ jobId: job.id, group: true, outcome: [{ variant: 'b', jobId: helper.id, version: 1, kept: false, status: 'complete', instruction: 'Ingrandisci il titolo del 20%' }] });
     // The turn's usage sums its runs': the coordinator's two and the helper's (one ledger line each).
     const ledger = (await import('node:fs/promises')).readFile(`${v.projectDir}/.studio/usage.jsonl`, 'utf8');
-    const lines = (await ledger).trim().split('\n').map((l) => JSON.parse(l) as { jobId: string; costUsd: number | null });
-    const mine = lines.filter((l) => l.jobId === job.id || l.jobId === helper.id);
+    const lines = (await ledger).trim().split('\n').map((l) => JSON.parse(l) as { jobId: string; kind: string; costUsd: number | null });
+    expect(lines.filter((l) => l.kind === 'paid' && l.jobId === helper.id)).toHaveLength(1);
+    const mine = lines.filter((l) => l.kind !== 'paid' && (l.jobId === job.id || l.jobId === helper.id));
     expect(mine.filter((l) => l.jobId === job.id)).toHaveLength(2);
     expect(mine.filter((l) => l.jobId === helper.id)).toHaveLength(1);
     expect(end && end.type === 'group-turn' ? end.usage?.costUsd : null).toBeCloseTo(mine.reduce((n, l) => n + (l.costUsd ?? 0), 0), 6);

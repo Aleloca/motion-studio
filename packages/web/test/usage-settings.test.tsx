@@ -35,11 +35,29 @@ const full = (): UsageReport => ({
     { kind: 'console', tokens: 0, costUsd: null },
     { kind: 'localize', tokens: 800, costUsd: null },
   ],
+  paid: {
+    costUsd: 0.62, calls: 6,
+    byDay: days.map((day, i) => ({ day, costUsd: [0, 0, 0.2, 0, 0, 0.1, 0.32][i]!, calls: [0, 0, 2, 0, 0, 1, 3][i]! })),
+    byService: [
+      { provider: 'openai', costUsd: 0.42, calls: 4, units: [{ unit: 'tokens', amount: 12_400 }, { unit: 'characters', amount: 3210 }] },
+      { provider: 'elevenlabs', costUsd: 0.2, calls: 2, units: [{ unit: 'seconds', amount: 45 }, { unit: 'minutes', amount: 2 }] },
+    ],
+    byKind: [
+      { service: 'images', costUsd: 0.37, calls: 3, units: [{ unit: 'tokens', amount: 12_400 }] },
+      { service: 'voice', costUsd: 0.05, calls: 1, units: [{ unit: 'characters', amount: 3210 }] },
+      { service: 'music', costUsd: 0.19, calls: 1, units: [{ unit: 'seconds', amount: 45 }] },
+      { service: 'sfx', costUsd: 0.12, calls: 1, units: [{ unit: 'seconds', amount: 5, estimated: true }] },
+      { service: 'transcription', costUsd: 0.0004, calls: 1, units: [{ unit: 'minutes', amount: 2 }] },
+    ],
+    byProject: [{ slug: 'acme', name: 'Acme', costUsd: 0.62, calls: 6 }, { slug: 'beta', name: 'Beta', costUsd: 0, calls: 0 }],
+  },
   trackedSince: '2026-09-01T09:00:00.000Z',
   billing: 'subscription',
   utcOffsetMinutes: 120,
 });
 
+/** Claude's card (the first; the paid services have their own card below). */
+const claudeCard = () => screen.findByRole('region', { name: 'Claude · last 7 days' });
 const page = () => render(
   <I18nProvider locale="en">
     <AppSettings section="usage" settings={settings} checks={[]} checking={false} checksRun={1} loadError={null} onRecheck={() => {}}
@@ -57,7 +75,8 @@ afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); });
 
 describe('Settings · Usage', () => {
   it('draws the 7 days scaled to the busiest, today in accent, empty days as a hairline', async () => {
-    const { container } = page();
+    page();
+    const container = await claudeCard();
     await waitFor(() => expect(container.querySelectorAll('.ms-usage-bar')).toHaveLength(7));
     const bars = [...container.querySelectorAll<HTMLElement>('.ms-usage-bar')];
     expect(bars.map((b) => b.dataset.day)).toEqual(days);
@@ -79,9 +98,10 @@ describe('Settings · Usage', () => {
 
   it('shows the week total, projects and kinds with tokens first, the billing note, estimates marked and the start of tracking', async () => {
     page();
+    const card = await claudeCard();
     // input + output + cache write; cache reads are left out.
-    expect(await screen.findByText('10.5k tokens')).toBeTruthy();
-    const projects = screen.getByRole('list', { name: 'By project' });
+    expect(within(card).getByText('10.5k tokens')).toBeTruthy();
+    const projects = within(card).getByRole('list', { name: 'By project' });
     expect(within(projects).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Acme7.0k tokens$0.20', 'Beta3.5k tokens']);
     const kinds = screen.getByRole('list', { name: 'By kind of work' });
     expect(within(kinds).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Creatives9.0k tokens≥ $0.15', 'Brand analyses1.5k tokens$0.050', 'Translations800 tokens']);
@@ -92,7 +112,8 @@ describe('Settings · Usage', () => {
 
   it('today with 0 tokens keeps the accent (hairline in accent); weekday labels use --muted (AA)', async () => {
     report = { ...full(), byDay: days.map((day, i) => ({ day, tokens: i === 6 ? 0 : perDay[i]!, costUsd: null })) };
-    const { container } = page();
+    page();
+    const container = await claudeCard();
     await waitFor(() => expect(container.querySelectorAll('.ms-usage-bar')).toHaveLength(7));
     const todayBar = container.querySelector<HTMLElement>('.ms-usage-bar[data-day="2026-10-09"]')!;
     expect(todayBar.classList.contains('ms-zero')).toBe(true);
@@ -108,12 +129,49 @@ describe('Settings · Usage', () => {
 
   it('shows the empty state before the first generation', async () => {
     report = { ...full(), trackedSince: null, total: { tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, costUsd: null },
-      byDay: days.map((day) => ({ day, tokens: 0, costUsd: null })), byProject: [], byKind: [] };
+      byDay: days.map((day) => ({ day, tokens: 0, costUsd: null })), byProject: [], byKind: [], paid: { costUsd: 0, calls: 0, byDay: [], byService: [], byKind: [], byProject: [] } };
     const { container } = page();
     expect(await screen.findByText('Usage appears here after your first generation')).toBeTruthy();
     expect(container.querySelector('.ms-usage-bar')).toBeNull();
     expect(screen.queryByText(/Tracked since/)).toBeNull();
     expect(screen.queryByText(/tokens/)).toBeNull();
+  });
+
+  it('shows the paid services in their own card: estimated costs by day, by service with their units, by kind and by project', async () => {
+    const { container } = page();
+    const card = (await screen.findByRole('region', { name: 'Paid services · last 7 days' }));
+    // Not summed into Claude's figures.
+    expect(screen.getByText('10.5k tokens')).toBeTruthy();
+    expect(card.querySelector('.ms-usage-total')!.textContent).toBe('≈ $0.62');
+    const bars = [...card.querySelectorAll<HTMLElement>('.ms-usage-bar')];
+    expect(bars.map((b) => b.style.height)).toEqual(['', '', '62.5%', '', '', '31.25%', '100%']);
+    expect(within(card).getByRole('table', { name: 'Estimated cost per day, last 7 days' })).toBeTruthy();
+    const services = within(card).getByRole('list', { name: 'By service' });
+    expect(within(services).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['OpenAI12.4k image tokens · 3,210 characters≈ $0.42', 'ElevenLabs45 s · 2 min≈ $0.20']);
+    const kinds = within(card).getByRole('list', { name: 'By kind' });
+    expect(within(kinds).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Images12.4k image tokens≈ $0.37', 'Voice3,210 characters≈ $0.050', 'Music45 s≈ $0.19', 'Sound effects≈ 5 s≈ $0.12', 'Transcription2 min< $0.001']);
+    const projects = within(card).getByRole('list', { name: 'By project' });
+    expect(within(projects).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Acme≈ $0.62']);
+    expect(within(card).getByText(/estimated at list prices/)).toBeTruthy();
+    // The Claude card keeps its own lists.
+    expect(container.querySelectorAll('.ms-usage-card')).toHaveLength(2);
+  });
+
+  it('with paid calls and no Claude run yet: Claude\'s empty state, then the paid card', async () => {
+    report = { ...full(), trackedSince: null, total: { tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, costUsd: null },
+      byDay: days.map((day) => ({ day, tokens: 0, costUsd: null })), byProject: [], byKind: [] };
+    page();
+    expect(await screen.findByText('Usage appears here after your first generation')).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Paid services · last 7 days' }).querySelector('.ms-usage-total')!.textContent).toBe('≈ $0.62');
+  });
+
+  it('says plainly when no paid service was used in the 7 days', async () => {
+    report = { ...full(), paid: { costUsd: 0, calls: 0, byDay: days.map((day) => ({ day, costUsd: 0, calls: 0 })), byService: [], byKind: [], byProject: [] } };
+    page();
+    const card = await screen.findByRole('region', { name: 'Paid services · last 7 days' });
+    expect(within(card).getByText('No paid services used in the last 7 days.')).toBeTruthy();
+    expect(card.querySelector('.ms-usage-bar')).toBeNull();
+    expect(within(card).queryByText(/≈/)).toBeNull();
   });
 
   it('says so when the report cannot load, without numbers', async () => {
