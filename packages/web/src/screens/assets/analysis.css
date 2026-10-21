@@ -1,0 +1,31 @@
+/* The library's Analisi section (video analysis, spec §9): under the player in the detail panel. Tokens only. */
+.ms-ana { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding-top: 12px; border-top: 1px solid var(--line2); }
+.ms-ana-head { flex-wrap: wrap; row-gap: 6px; }
+.ms-ana-actions { margin-left: auto; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.ms-ana-hint { margin: 0; font-size: 12px; line-height: 1.45; color: var(--muted); overflow-wrap: anywhere; }
+.ms-ana-error { color: var(--danger); }
+.ms-ana-confirm { display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: 10px; border: 1px solid var(--warnLine); background: var(--warnBg); }
+.ms-ana-confirm p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text); }
+.ms-ana-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.ms-ana-editor { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ms-ana-editor .ms-textarea { font-family: var(--mono); font-size: 11.5px; line-height: 1.5; border-radius: 8px; min-height: 220px; }
+.ms-ana-block { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ms-ana-title { font-size: 11px; font-weight: 600; color: var(--muted); }
+.ms-ana-summary { margin: 0; font-size: 12.5px; line-height: 1.5; white-space: pre-line; overflow-wrap: anywhere; }
+.ms-ana-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ms-ana-row {
+  width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: baseline; padding: 6px 8px; margin: 0;
+  border: 0; border-radius: 7px; background: transparent; text-align: left; font-size: 12px; line-height: 1.45; cursor: pointer;
+  transition: background-color var(--d-s) var(--e-std);
+}
+.ms-ana-row:hover { background: var(--field); }
+.ms-ana-time { font-family: var(--mono); font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ms-ana-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.ms-ana-ost { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: baseline; color: var(--muted); }
+.ms-ana-ost-label { font-size: 10.5px; font-weight: 600; }
+.ms-ana-ost q, .ms-ana-speech q { min-width: 0; overflow-wrap: anywhere; }
+.ms-ana-speech { display: flex; gap: 6px; align-items: baseline; color: var(--muted); font-style: italic; min-width: 0; }
+.ms-ana-raw { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--field); font-family: var(--mono); font-size: 11px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* The tile's "analizzato" mark: top right of the picture, on the media scrim like the other badges. */
+.ms-acard-analysed { position: absolute; right: 8px; top: 8px; width: 20px; height: 20px; border-radius: 5px; display: inline-flex; align-items: center; justify-content: center; background: var(--mediaScrim); color: var(--onMediaScrim); }

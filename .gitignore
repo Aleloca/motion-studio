@@ -5,6 +5,8 @@ coverage/
 .DS_Store
 apps/desktop/release/
 apps/desktop/resources/
+# whisper-cli built by scripts/build-whisper.sh (release workflow, or a maintainer's Mac)
+apps/desktop/vendor/
 apps/cli/*.tgz
 apps/cli/README.md
 apps/cli/LICENSE

@@ -1,4 +1,4 @@
-import type { AgentEvent, ApprovalRequest, BriefField, JobSummary, LanguageSetting, Locale, ServerMessage } from '@motion-studio/shared';
+import type { AgentEvent, ApprovalRequest, BriefField, JobSummary, LanguageSetting, Locale, ServerMessage, VideoAnalysisView } from '@motion-studio/shared';
 import { applyToday, applyUsage, keepJobUsage, partialAfterSnapshot, type JobUsage, type TodayUsage, type UsageTodayAction } from './usageLive.ts';
 
 /**
@@ -22,7 +22,15 @@ export interface EventsState { jobUsage?: Record<string, JobUsage>; /** Jobs who
    * every fill of its session it has not taken yet (two fills between renders are both kept), applies the fields the agent wrote
    * and gives back the ones it rewrote on the user's request (`reclaimed`), after refetching the session.
    */
-  briefFills?: Record<string, Array<{ sessionId: string; seq: number; written: BriefField[]; reclaimed: BriefField[] }>> }
+  briefFills?: Record<string, Array<{ sessionId: string; seq: number; written: BriefField[]; reclaimed: BriefField[] }>>;
+  /**
+   * Decision 1468: the latest view of each video's analysis received live, per project and file; `seq` (from `analysisSeq`,
+   * which grows with every analysis message) lets a screen tell a view newer than its listing from an older one.
+   */
+  analyses?: Record<string, Record<string, { view: VideoAnalysisView; seq: number }>>;
+  /** Decision 1478: per `project/creative`, the videos its first turn waits for (empty: the wait ended), with `seq`. */
+  analysisWaits?: Record<string, { files: string[]; seq: number }>;
+  analysisSeq?: number }
 /** The fills kept per project (far more than can arrive between two renders). */
 export const BRIEF_FILLS_KEPT = 20;
 export const initialEventsState: EventsState = { approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} };
@@ -88,7 +96,17 @@ export function eventsReducer(state: EventsState, msg: EventsAction): EventsStat
       return e.kind === 'usage' ? applyUsage(next, msg.jobId, e) : next;
     }
     // Decision 1478: a creative's first turn waits for (or stopped waiting for) its videos' analyses: its chat refetches.
-    case 'analysis-wait':
+    case 'analysis-wait': {
+      const key = `${msg.project}/${msg.creative}`;
+      const seq = (state.analysisSeq ?? 0) + 1;
+      return { ...state, analysisSeq: seq, analysisWaits: { ...state.analysisWaits, [key]: { files: msg.files, seq } },
+        creativeTicks: { ...state.creativeTicks, [key]: (state.creativeTicks[key] ?? 0) + 1 } };
+    }
+    // Decision 1468: a video's analysis changed state (the library and the dialogs read it through useVideoAnalyses).
+    case 'video-analysis': {
+      const seq = (state.analysisSeq ?? 0) + 1;
+      return { ...state, analysisSeq: seq, analyses: { ...state.analyses, [msg.project]: { ...state.analyses?.[msg.project], [msg.file]: { view: msg.view, seq } } } };
+    }
     case 'creative': {
       const key = `${msg.project}/${msg.creative}`;
       return { ...state, creativeTicks: { ...state.creativeTicks, [key]: (state.creativeTicks[key] ?? 0) + 1 } };
@@ -96,8 +114,6 @@ export function eventsReducer(state: EventsState, msg: EventsAction): EventsStat
     case 'project':
     case 'brand':
     case 'library':
-    // Decision 1468: a video's analysis changed state (the library shows it).
-    case 'video-analysis':
       return { ...state, projectTicks: { ...state.projectTicks, [msg.project]: (state.projectTicks[msg.project] ?? 0) + 1 } };
     case 'brief-session': {
       const briefTicks = { ...state.briefTicks, [msg.project]: (state.briefTicks?.[msg.project] ?? 0) + 1 };

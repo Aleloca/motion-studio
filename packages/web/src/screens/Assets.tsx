@@ -7,8 +7,9 @@ import { useT } from '../i18n.tsx';
 import { brandJobFailedText, isActiveJob, isDescribeJob } from '../labels.ts';
 import { D, enter, exit, useEnter } from '../motion/index.ts';
 import { href } from '../routes.ts';
-import { requestNewCreativeWithAssets } from '../shell/intents.ts';
+import { requestNewCreativeWithAssets, useAssetFocusIntent, type AssetFocus } from '../shell/intents.ts';
 import { go } from '../shell/ShellContext.tsx';
+import { useVideoAnalyses } from '../useVideoAnalyses.ts';
 import { Button, Check, Chip, Empty, Icon, Input, NavItem, Pill, Popover, Select, Spinner, Tag, clockText, cx, toast, type IconName } from '../ui/index.ts';
 import { Alert, UNDO_MS, message } from './common.tsx';
 import { KEEPALIVE, deferRemoval, isPendingRemoval, removalKey, usePendingRemovals } from './deferred.ts';
@@ -84,6 +85,7 @@ interface BodyProps {
 function AssetsBody({ slug, live, listing, setListing, reload, job, projectName }: BodyProps) {
   const t = useT();
   const integrity = useIntegrity(slug, live);
+  const analyses = useVideoAnalyses(slug, live);
   const a = t.web.library.assets;
   const root = useEnter<HTMLDivElement>([]);
   const [type, setType] = useState<AssetKind | 'all'>('all');
@@ -129,6 +131,20 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
     setSel((s) => ([...s].every((f) => files.has(f)) ? s : new Set([...s].filter((f) => files.has(f)))));
     setOpen((o) => (o && !files.has(o) ? null : o));
   }, [assets]);
+
+  // Decision 1468: a video analysis's row in the activity centre opens this page with its video selected: by the job (its
+  // analysis view), else by the name in the row's label when one video has it. Resolved once the analyses answered: before,
+  // the job is not known yet (review of phase 3).
+  const [focus, setFocus] = useState<AssetFocus | null>(null);
+  useAssetFocusIntent(slug, setFocus);
+  useEffect(() => {
+    if (!focus || assets.length === 0 || !analyses.loaded) return;
+    const byJob = Object.values(analyses.byFile).find((v) => v.jobId === focus.jobId)?.file;
+    const named = assets.filter((x) => x.kind === 'video' && baseName(x.file) === focus.name);
+    const file = byJob?.startsWith('assets/') ? byJob.slice('assets/'.length) : named.length === 1 ? named[0]!.file : null;
+    if (file && assets.some((x) => x.file === file)) setOpen(file);
+    setFocus(null);
+  }, [focus, assets, analyses.byFile, analyses.loaded]);
 
   // Description: the assets this page asked to describe, until their job ends; otherwise, while a description job
   // started elsewhere runs, the assets without a description (what the core describes by default).
@@ -354,7 +370,7 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
           <div className="ms-assets-grid">
             {shown.map((x, i) => (
               <AssetCard key={x.file} slug={slug} asset={x} index={i} cascade={firstPaint.current} fresh={fresh.has(x.file)}
-                selected={sel.has(x.file)} active={open === x.file} describing={describing.has(x.file)}
+                selected={sel.has(x.file)} active={open === x.file} describing={describing.has(x.file)} analysed={analyses.byFile[`assets/${x.file}`]?.state === 'ready'}
                 onSelect={() => toggle(x.file)} onOpen={() => setOpen(x.file)} />
             ))}
             {uploading.map((name, i) => <UploadingCard key={`${name}-${i}`} name={name} />)}
@@ -373,7 +389,7 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
         {detail ? (
           <AssetDetail key={detail.file} slug={slug} asset={detail} describing={describing.has(detail.file)} busy={busy}
             onClose={() => setOpen(null)} onSaved={saved} onRenamed={renamed} onDescribe={() => void describe([detail.file])}
-            onUse={() => useInCreative([detail.file])} onDelete={() => void remove([detail.file])} />
+            onUse={() => useInCreative([detail.file])} onDelete={() => void remove([detail.file])} analysis={analyses.byFile[`assets/${detail.file}`]} />
         ) : null}
       </div>
       {sel.size ? (
@@ -417,10 +433,12 @@ function DescribeCard({ count, total, describing, busy, onDescribe }: { count: n
 
 interface CardProps {
   slug: string; asset: AssetEntry; index: number; cascade: boolean; fresh: boolean; selected: boolean; active: boolean; describing: boolean;
+  /** Spec §9: a video with a ready analysis shows the "analizzato" mark. */
+  analysed?: boolean;
   onSelect(): void; onOpen(): void;
 }
 
-function AssetCard({ slug, asset: x, index, cascade, fresh, selected, active, describing, onSelect, onOpen }: CardProps) {
+function AssetCard({ slug, asset: x, index, cascade, fresh, selected, active, describing, analysed, onSelect, onOpen }: CardProps) {
   const t = useT();
   const a = t.web.library.assets;
   const ref = useRef<HTMLDivElement>(null);
@@ -435,6 +453,7 @@ function AssetCard({ slug, asset: x, index, cascade, fresh, selected, active, de
       <div className="ms-acard-media">
         <Thumb slug={slug} asset={x} />
         {x.width && x.height && (x.kind === 'image' || x.kind === 'video') ? <span className="ms-acard-dims">{x.width}×{x.height}</span> : null}
+        {analysed ? <span className="ms-acard-analysed" role="img" aria-label={t.videoAnalysis.analyzedMark} title={t.videoAnalysis.analyzedMark}><Icon name="sparkle" size={11} /></span> : null}
         {x.durationSec && (x.kind === 'video' || x.kind === 'audio') ? <span className="ms-acard-dur" title={a.durationBadge({ time: clockText(x.durationSec) })}>{clockText(x.durationSec)}</span> : null}
         {describing ? (
           <>

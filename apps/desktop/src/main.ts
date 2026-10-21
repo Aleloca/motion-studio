@@ -1,12 +1,12 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, session, shell, type IpcMainInvokeEvent } from 'electron';
 import { execFile } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { AlreadyRunningError, answersHealth, defaultConfigDir, resolveLocale, resolveLoginShellPath, setLocale, startServer, t } from '@motion-studio/core';
-import { absolutePathArg, openableFolder, attachedGone, attachedGoneAction, attachedLocale, bootLocale, focusOnReady, readSavedLanguage, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, USER_DATA_ENV, userDataDir, userDataOverride } from './helpers.ts';
+import { absolutePathArg, openableFolder, attachedGone, attachedGoneAction, attachedLocale, bootLocale, focusOnReady, readSavedLanguage, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, whisperDirOf, tokenFromAppUrl, USER_DATA_ENV, userDataDir, userDataOverride } from './helpers.ts';
 import { menuTemplate } from './menu.ts';
 import { applyWindowZoom, registerZoomWindow, sendZoom, type ZoomKind } from './zoom.ts';
 import { notificationOptions, registerAttention, sendAttentionClick, showKept } from './notify.ts';
@@ -48,14 +48,17 @@ if (overrideDir) {
  * built composition runtime (the bundled core cannot find it next to its own file).
  */
 function resourcePaths() {
+  const root = join(__dirname, '..', '..', '..');
+  // Spec §7: the bundled whisper-cli (video analysis); none in a dev tree where scripts/build-whisper.sh did not run.
+  const whisperDir = whisperDirOf({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, repoRoot: root, arch: process.arch, exists: existsSync });
+  const whisper = whisperDir ? { whisperDir } : {};
   if (app.isPackaged) {
     // extraResources: outside the asar so the MCP server can be run by plain node.
-    return { webDir: join(process.resourcesPath, 'web'), mcpServerPath: join(process.resourcesPath, 'mcp-studio.mjs'), runtimeDir: join(process.resourcesPath, 'runtime') };
+    return { webDir: join(process.resourcesPath, 'web'), mcpServerPath: join(process.resourcesPath, 'mcp-studio.mjs'), runtimeDir: join(process.resourcesPath, 'runtime'), ...whisper };
   }
-  const root = join(__dirname, '..', '..', '..');
   return {
     webDir: join(root, 'packages', 'web', 'dist'), mcpServerPath: join(root, 'packages', 'mcp-studio', 'src', 'server.mjs'),
-    runtimeDir: join(root, 'packages', 'composition-runtime', 'dist'),
+    runtimeDir: join(root, 'packages', 'composition-runtime', 'dist'), ...whisper,
   };
 }
 
@@ -187,6 +190,13 @@ async function run() {
     const args = trusted(e) ? pickFolderArgs(arg) : null;
     if (!args) throw new Error(t().desktop.invalidRequest);
     const r = await dialog.showOpenDialog({ ...args, properties: ['openDirectory', 'createDirectory'] });
+    return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
+  });
+  // Settings → Trascrizione video: a file (a Whisper program, a ggml model). Hidden files shown: programs live in /opt, /usr/local.
+  ipcMain.handle('ms:pick-file', async (e, arg: unknown) => {
+    const args = trusted(e) ? pickFolderArgs(arg) : null;
+    if (!args) throw new Error(t().desktop.invalidRequest);
+    const r = await dialog.showOpenDialog({ ...args, properties: ['openFile', 'showHiddenFiles', 'treatPackageAsDirectory'] });
     return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
   });
   ipcMain.handle('ms:reveal', (e, arg: unknown) => {

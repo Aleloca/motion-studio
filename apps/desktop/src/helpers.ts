@@ -46,11 +46,22 @@ export async function openableFolder(p: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * Spec §7: the folder of the bundled whisper-cli (and its Silero VAD model), passed to the core as `whisperDir`. Packaged: the
+ * app's `whisper` extraResources (on macOS; the core checks the program is there). Dev: `apps/desktop/vendor/whisper/<arch>`
+ * when scripts/build-whisper.sh built it there, else none (the app then uses an installed Whisper).
+ */
+export function whisperDirOf(o: { packaged: boolean; resourcesPath: string; repoRoot: string; arch: string; exists(p: string): boolean }): string | undefined {
+  if (o.packaged) return join(o.resourcesPath, 'whisper');
+  const dev = join(o.repoRoot, 'apps', 'desktop', 'vendor', 'whisper', o.arch);
+  return o.exists(dev) ? dev : undefined;
+}
+
 /** A slow rc file (nvm, conda…) is common on real Macs: 15 s before falling back to the fixed folders. */
 export const loginShellOptions = () => ({ timeoutMs: 15_000 });
 
 /** startServer options of the desktop app: port 4318 (or a free one), bundled UI and MCP server, PATH origin for the Doctor. */
-export function serverOptions(opts: { resources: { webDir: string; mcpServerPath: string }; configDir?: string; shellPath: LoginShellPath }) {
+export function serverOptions(opts: { resources: { webDir: string; mcpServerPath: string; whisperDir?: string }; configDir?: string; shellPath: LoginShellPath }) {
   const { source, error } = opts.shellPath;
   return {
     port: 'auto' as const,

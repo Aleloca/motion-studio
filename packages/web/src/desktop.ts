@@ -5,6 +5,8 @@ export interface DesktopBridge {
   isDesktop: true;
   platform: string;
   pickFolder(title: string, defaultPath?: string): Promise<string | null>;
+  /** A file chosen in the system dialog (Settings → Trascrizione video); null when cancelled. Missing in older desktop builds. */
+  pickFile?(title: string, defaultPath?: string): Promise<string | null>;
   revealPath(path: string): Promise<void>;
   /** Opens a folder itself in the file manager (user report 21; a plain folder only). Missing in older desktop builds. */
   openFolder?(path: string): Promise<void>;

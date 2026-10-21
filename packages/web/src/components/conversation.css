@@ -146,6 +146,9 @@
 /* Decision 917: a line about something the agent did in the app (a brief edit, a new variant, a render). */
 .ms-convo-system.ms-convo-action { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; color: var(--text); }
 .ms-convo-system.ms-convo-action svg { color: var(--accent); flex: none; align-self: center; }
+/* Decision 1478: Salta on the wait line, a link-button in the accent text colour. */
+.ms-convo-skip { padding: 0; margin: 0; border: 0; background: transparent; font: inherit; font-weight: 600; color: var(--accentText); cursor: pointer; border-radius: 4px; }
+.ms-convo-skip:hover:not(:disabled) { text-decoration: underline; }
 .ms-convo-action-tag { font-size: 11px; color: var(--muted); }
 .ms-convo-error { margin-left: 36px; font-size: 12.5px; padding: 8px 10px; border-radius: 8px; background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); }
 .ms-convo-approval { margin-left: 36px; }

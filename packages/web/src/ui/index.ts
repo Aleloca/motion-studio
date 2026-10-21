@@ -35,5 +35,5 @@ export { Toasts } from './Toasts.tsx';
 export { toast, TOAST_MAX, TOAST_MS, type ToastAction, type ToastOptions, type ToastTone } from './toast.tsx';
 export { anyLayerOpen } from './layers.ts';
 export { AudioPlayer } from './AudioPlayer.tsx';
-export { VideoPlayer } from './VideoPlayer.tsx';
+export { VideoPlayer, type VideoPlayerHandle } from './VideoPlayer.tsx';
 export { clockText } from './PlayerControls.tsx';

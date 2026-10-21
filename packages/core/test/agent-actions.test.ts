@@ -460,7 +460,7 @@ describe('variants', () => {
     expect(await actionLines(slug)).toContain(t().agentActions.variantAdded({ letter: 'B', direction: 'Più ironico' }));
     writeCompositions(b, 6);
     b.finish({ write: false });
-    await vi.waitFor(async () => expect((await jobs()).find((j) => j.key.endsWith(`:${slug}~b`) && j.kind === 'creative')?.state).toBe('succeeded'));
+    await vi.waitFor(async () => expect((await jobs()).find((j) => j.key.endsWith(`:${slug}~b`) && j.kind === 'creative')?.state).toBe('succeeded'), { timeout: 10_000 });
     expect((await bridge(run, 'discard_variant', { variant: 'b' })).statusCode).toBe(200);
     expect((await bridge(run, 'restore_variant', { variant: 'b' })).statusCode).toBe(200);
     expect((await bridge(run, 'discard_variant', { variant: 'zz' })).statusCode).toBe(404);

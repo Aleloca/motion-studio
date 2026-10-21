@@ -5,7 +5,7 @@ import { CodebaseList } from '../components/CodebaseList.tsx';
 import { ServicesSelector, useConfiguredProviders, useKeyChecks } from '../components/ServicesSelector.tsx';
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { anim, D, E, flash, glow, isSubmitChord, recede, tileIn, useEnter, usePageShortcut } from '../motion/index.ts';
-import type { EventsState } from '../eventsReducer.ts';
+import { initialEventsState, type EventsState } from '../eventsReducer.ts';
 import { href, routeKey } from '../routes.ts';
 import { createPortal } from 'react-dom';
 import { useBarClaim } from '../shell/barSlots.ts';
@@ -22,11 +22,13 @@ import { StorePackWizard } from './new-creative/StorePackWizard.tsx';
 import { packParts } from './new-creative/storePackModel.ts';
 import { VariantsField } from './variants/VariantsField.tsx';
 import { defaultVariantCount, directionsFor } from './variants/variantModel.ts';
-import { BRIEF_TEXT_MAX, variantIdAt } from '@motion-studio/shared';
+import { BRIEF_TEXT_MAX, variantIdAt, type VideoAnalysisView } from '@motion-studio/shared';
 import './new-creative/storepack.css';
 import { LENGTHS, formSnapshot, lengthOf, mergeView, type LengthChoice } from './new-creative/briefSessionModel.ts';
 import { useBriefSession } from './new-creative/useBriefSession.ts';
 import { BriefSessionPanel } from './new-creative/BriefSessionPanel.tsx';
+import { AnalysisQuestionDialog } from '../components/TranscriptionDialog.tsx';
+import { useVideoAnalyses } from '../useVideoAnalyses.ts';
 import { ResumeBriefDialog } from './new-creative/ResumeBriefDialog.tsx';
 import { AssetFace, LibraryPicker } from './new-creative/LibraryPicker.tsx';
 import { CustomFormatDialog } from './new-creative/CustomFormatDialog.tsx';
@@ -637,6 +639,32 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   // A message carries the form like a save: its edits are answered when the core takes it (`onCarried`).
   const panelSnapshot = useCallback(() => saveBody(), [saveBody]);
 
+  // Spec §6 / 1479: a held analysis of a video of this brief asks here: as a card in the brief agent's chat while it is open,
+  // else as a dialog over the form (one at a time; closing it leaves the analysis waiting and Generate does not wait for it).
+  const analyses = useVideoAnalyses(slug, live ?? shell?.live ?? initialEventsState);
+  const briefVideos = new Set([...picked, ...(brief.session?.context.assets ?? [])]);
+  const asking = analyses.pending.filter((v) => briefVideos.has(v.file));
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
+  const [asked, setAsked] = useState<string | null>(null);
+  const askKey = (v: VideoAnalysisView) => `${v.pending?.kind}:${v.file}`;
+  const nextAsk = mode === 'agent' ? null : asking.find((v) => !dismissed.has(askKey(v))) ?? null;
+  useEffect(() => { if (asked === null && nextAsk !== null) setAsked(askKey(nextAsk)); }, [asked, nextAsk]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** Closes the dialog of question `key` (only that one: a late close of a dialog going away never closes the next). */
+  const closeAsk = (key: string | null) => {
+    if (!key) return;
+    setDismissed((d) => new Set([...d, key]));
+    setAsked((a) => (a === key ? null : a));
+  };
+  // Answered elsewhere (a remembered choice answers the others, another window): the dialog closes. While Whisper installs
+  // the analysis still asks, so the dialog stays with its progress (review of phase 3).
+  const stillAsking = asked !== null && asking.some((v) => askKey(v) === asked);
+  useEffect(() => { if (asked !== null && analyses.loaded && !stillAsking) setAsked(null); }, [asked, stillAsking, analyses.loaded]);
+  // The dialog is one per question: the next video's question never inherits the previous one's state (an install in
+  // progress, the remember tick). The last question stays shown while its dialog closes.
+  const [shownAsk, setShownAsk] = useState<string | null>(null);
+  useEffect(() => { if (asked !== null) setShownAsk(asked); }, [asked]);
+  const shownFile = shownAsk ? shownAsk.slice(shownAsk.indexOf(':') + 1) : null;
+
   /** "Agente" beside a field's label while the field is the agent's. */
   const agentMark = (f: BriefField) => (agentFields.has(f) ? <Pill tone="accent" className="ms-nc-agentmark">{t.web.briefSession.agentMark}</Pill> : null);
 
@@ -649,7 +677,8 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
       ) : null}
       <BriefSessionPanel slug={slug} projectName={projectName} brief={brief} live={live ?? shell?.live} snapshot={panelSnapshot} onCarried={settleSave} draft={draft}
         library={library} onRetryLibrary={() => { setLibrary({ value: null, error: null }); setLibraryNonce((x) => x + 1); }} onLibraryChanged={() => setLibraryNonce((x) => x + 1)}
-        hidden={mode !== 'agent'} panelRef={panelEl} className="ms-nc-panel" onOpenCreative={(c) => go(href.creative(slug, c))} />
+        hidden={mode !== 'agent'} panelRef={panelEl} className="ms-nc-panel" onOpenCreative={(c) => go(href.creative(slug, c))} analysisQuestions={asking} />
+      <AnalysisQuestionDialog key={shownAsk ?? ''} slug={slug} view={shownFile ? analyses.byFile[shownFile] ?? null : null} open={asked !== null && asked === shownAsk} onClose={() => closeAsk(shownAsk)} />
       <div className="ms-nc-form" ref={formArea}>
       <div className="ms-nc-body">
         <div className="ms-nc-left">
