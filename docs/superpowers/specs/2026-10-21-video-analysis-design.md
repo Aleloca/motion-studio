@@ -1,6 +1,6 @@
 # Video analysis for the agent (user request of 2026-10-21)
 
-Status: design, awaiting the user's approval; not built. Decisions: 1468–1486 in `docs/decisions-log.md`.
+Status: design, awaiting the user's approval; not built. Decisions: 1468–1490 in `docs/decisions-log.md`.
 Inspiration: CDAF, "Cached Descriptive Asset Files" (https://github.com/UditAkhourii/cdaf, MIT). We take its ideas, not
 its tool nor, strictly, its format (§4).
 
@@ -22,6 +22,9 @@ with that video read the description instead of the footage.
 | 1469 | A video is analysed when it **enters a brief** (not on upload, not only on demand): only the videos actually used get a sidecar. |
 | 1470 | Speech is transcribed with **Whisper on the Mac** (whisper.cpp). Model chosen in Settings: **Small** by default (~490 MB), **Large v3 Turbo** (~1.6 GB) as the precise option. |
 | 1486 | Our own format, inspired by CDAF, improved for the agent (§4). |
+| 1487 | No fixed frame cap: one per scene plus one every 10 s in static scenes; analysis in chunks of ~40 frames; videos over 20 min ask first. |
+| 1488 | An already installed Whisper is found by itself (login-shell PATH, Homebrew folders) or pointed to in Settings, program and model; test-run before saving. |
+| 1489 | The Python Whisper engines are supported too (openai-whisper, faster-whisper), beside whisper.cpp. |
 | 1471 | Transcription is **never mandatory**. The rest of the analysis (scenes, frames, on-screen text, summary) always runs. When a video has an audio track and no transcription method is available, a dialog explains what transcription is for and offers: **Install Whisper** (free, local, shows the download size), **OpenAI** or **ElevenLabs** (paid, estimated cost shown, audio leaves the Mac; only providers with a saved key are offered), **Continue without transcription**. |
 
 ## 3. Goals, non-goals, anti-goals
@@ -36,7 +39,7 @@ with that video read the description instead of the footage.
 
 **Non-goals**
 - No analysis of images or audio-only assets (later, if asked).
-- No Linux/Windows local Whisper binary in this round (they get the providers and "without transcription"; §7).
+- No bundled Whisper for Linux/Windows in this round (an installed one works there; §7).
 - No speaker identification, no translation of the transcript.
 - No MCP server or external CDAF tool integration.
 
@@ -80,15 +83,19 @@ When a video enters a brief (brief editor, "Nuova creatività" form, the brief a
 existing creative's brief), the core queues an analysis for it unless a fresh sidecar exists. One queue per project, one
 video at a time, deduplicated by sha256.
 
-1. **Frames (no agent).** ffmpeg scene detection picks the cuts; one frame per scene, plus one every N seconds for long
-   static scenes; at most 24 frames (orchestrator's call 1477), scaled to 768 px on the long side, into
-   `.studio/tmp/analysis/<sha>/`. A video with no detectable cuts gets evenly spaced frames.
+1. **Frames (no agent).** No fixed cap (the user's call 1487): ffmpeg scene detection picks the cuts, one frame per scene,
+   plus one every 10 s inside long static scenes (a screen recording that barely changes still gets frames), scaled to
+   768 px on the long side, into `.studio/cache/analysis/<sha>/` named by timestamp. A video with no detectable cuts gets one
+   frame every 10 s. Videos over 20 minutes ask first (frames and estimated tokens, "Analizza tutto" / "Analizza a densità
+   ridotta" = one frame per scene, at most one every 30 s).
 2. **Audio (no agent).** If the video has an audio stream: `ffmpeg -nostdin -i in -vn -map 0:a:0 -ac 1 -ar 16000 -c:a
    pcm_s16le -f wav out.wav`. Silence-only audio (ffmpeg `silencedetect` covering ≥ 95%) counts as "no speech" and skips
    transcription and the dialog.
 3. **Transcript (no agent)**, with the method resolved in §6: whisper.cpp with built-in Silero VAD and `-sns`, JSON segments;
    or the provider's API with segment timestamps. Language: the project/app language, with auto-detect as fallback.
-4. **Description (agent).** A new job kind `video-analysis`: read-only, no network, no Bash, sees only the frames (with their
+4. **Description (agent), in chunks.** Frames go to the agent in chunks of about 40 (with their timestamps and the
+   transcript of that span); each chunk writes its part of the timeline; a last pass writes Summary, Usable moments, Look and
+   Tags over the whole timeline. A short video is one chunk plus nothing else. A new job kind `video-analysis`: read-only, no network, no Bash, sees only the frames (with their
    timestamps), the transcript and the video's metadata. It writes the body sections through one MCP tool
    `write_video_analysis` (structured: summary, timeline[{from,to,onScreen,onScreenText,frame}], usableMoments[{from,to,why}],
    look{colours,typography,framing,audio}, tags; the core merges the transcript into the timeline by time). The core
@@ -131,8 +138,22 @@ redaction and the fake fetch in tests. No real calls in tests.
   embedded and static libs (`-DGGML_METAL_EMBED_LIBRARY=ON -DBUILD_SHARED_LIBS=OFF`), shipped in the desktop app's
   `extraResources` so it is signed and notarized with the app. The Silero VAD model (`ggml-silero-v6.2.0.bin`, 885 KB) ships
   with it. whisper.cpp's licence goes into the app's third-party notices.
-- **Lookup order:** the bundled binary → `whisper-cli` on PATH (Homebrew `whisper-cpp`, for the dev app and the npm CLI). With
-  neither, "Installa Whisper" is not offered (the dialog shows the providers and "without"); Settings says how to get it.
+- **An existing Whisper (the user's call 1488–1489):** the app finds one by itself, or the user points to it.
+  - Auto-detect: whisper.cpp under its usual names (`whisper-cli`, older `whisper-cpp` / `main`) and the Python CLIs
+    (`whisper` from openai-whisper, `faster-whisper` / `whisper-ctranslate2`), on the login-shell PATH the app already
+    resolves (`LoginShellPath`) and in the Homebrew folders (`/opt/homebrew/bin`, `/usr/local/bin`).
+  - Settings → Trascrizione video → **Usa un Whisper già installato**: "Scegli…" for the program and, for whisper.cpp, for a
+    ggml model file the user already has (no re-download). Python engines use their own model names (small,
+    large-v3-turbo…), picked from the same Small / Large v3 Turbo setting; they download models into their own cache, which
+    the app says before the first run.
+  - Before saving, the app test-runs it on one second of generated audio and shows "Whisper trovato: engine, version, model,
+    Metal/GPU yes/no" or what is wrong. Works on macOS, Linux and Windows.
+  - Each engine has its own runner and output parser (whisper.cpp JSON `transcription[].offsets`; openai-whisper
+    `--output_format json` `segments[].start/end`; faster-whisper CLI JSON), all mapped to one segment list; tests use
+    recorded output fixtures, never real models.
+- **Lookup order:** the path set in Settings → the bundled binary → auto-detected. With none, "Installa Whisper" downloads the
+  model for the bundled binary; where there is no bundled binary (dev app, npm CLI, Linux, Windows) the dialog explains how to
+  install or point to one.
 - **Models:** downloaded only from the dialog or Settings, after showing the size, into `<appData>/whisper/`, reusing the
   Chrome for Testing download flow (`render/cft-download.ts`: consent required, https only, no redirects, exact
   Content-Length, progress, staging then rename) **plus a streaming sha256 check** before the rename. Manifest hardcoded, URLs
@@ -165,13 +186,14 @@ redaction and the fake fetch in tests. No real calls in tests.
 ## 10. Orchestrator's calls (for the user's review)
 
 - 1476 Analysis files in `assets/.analysis/<file name>.md`; key frames cached unversioned.
-- 1477 At most 24 frames, 768 px.
+- 1477 Frames at 768 px; chunks of ~40 frames; the 20-minute threshold; 10 s static interval.
+- 1490 Python engines use the Small / Large v3 Turbo setting by model name and their own model cache.
 - 1478 Generate waits for the brief's analyses with "Salta".
 - 1479 In the brief agent the dialog is a card in the chat.
 - 1480 The sidecar is editable; Rianalizza asks before overwriting an edited one.
 - 1481 Analysis queue per project, one at a time, dedup by sha256.
 - 1482 Silence-only audio skips transcription and the dialog.
-- 1483 Local Whisper only on macOS in this round; the PATH binary works anywhere.
+- 1483 The bundled Whisper only on macOS in this round; an installed one works anywhere.
 - 1484 Transcription language = app language, auto-detect fallback.
 - 1485 The creative agent cannot write analysis files.
 
