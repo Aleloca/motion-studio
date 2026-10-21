@@ -8,12 +8,12 @@ import { I18nProvider } from '../src/i18n.tsx';
 const at = '2026-10-21T10:00:00.000Z';
 export const ask = (over: Partial<TranscriptionPending> = {}): TranscriptionPending => ({
   kind: 'transcription', audioSec: 125, openai: null, elevenlabs: null,
-  whisper: { available: false, installed: false, model: 'small', sizeBytes: 487_601_967, canInstall: false }, ...over,
+  whisper: { available: false, installed: false, model: 'small', sizeBytes: 487_601_967, canInstall: false, engine: null, downloadsOwnModel: false }, ...over,
 });
 const waiting = (pending: VideoAnalysisView['pending'], file = 'assets/demo.mp4'): VideoAnalysisView =>
   ({ file, state: 'waiting', jobId: 'j1', error: null, pending, header: null, body: null });
 const status = (download: Partial<TranscriptionStatus['download']>): TranscriptionStatus => ({
-  settings: { method: 'ask', model: 'small', custom: null }, models: [], whisper: null, detected: [], bundled: true, providers: { openai: false, elevenlabs: false },
+  settings: { method: 'ask', model: 'small', custom: null }, models: [], whisper: null, detected: [], bundled: true, detection: { state: 'done', at }, providers: { openai: false, elevenlabs: false },
   prices: { openai: 0.006, elevenlabs: 0.0037 }, download: { state: 'running', model: 'small', bytes: 0, total: 487_601_967, ...download },
 });
 const api = {
@@ -61,7 +61,7 @@ describe('the transcription choices (Task 20, spec §6)', () => {
   });
 
   it('Installa Whisper posts the size shown, then shows the download until the analysis goes on; "Ricorda la scelta" is sent', async () => {
-    const q = ask({ whisper: { available: true, installed: false, model: 'small', sizeBytes: 487_601_967, canInstall: true } });
+    const q = ask({ whisper: { available: true, installed: false, model: 'small', sizeBytes: 487_601_967, canInstall: true, engine: 'whisper.cpp', downloadsOwnModel: false } });
     api.transcriptionChoice.mockImplementationOnce(async (_s, b) => waiting(q, b.file));
     const onDone = vi.fn();
     const { rerender } = it_(<TranscriptionChoices slug="acme" view={waiting(q)} question={q} onDone={onDone} />);
@@ -74,8 +74,17 @@ describe('the transcription choices (Task 20, spec §6)', () => {
     await waitFor(() => expect(onDone).toHaveBeenCalled());
   });
 
+  it('a Python engine that downloads its own model: plain Whisper with the note, chosen without a download size', async () => {
+    const q = ask({ whisper: { available: true, installed: false, model: 'small', sizeBytes: 487_601_967, canInstall: false, engine: 'openai-whisper', downloadsOwnModel: true } });
+    it_(<TranscriptionChoices slug="acme" view={waiting(q)} question={q} />);
+    const line = screen.getByRole('button', { name: /^Whisper sul Mac/ });
+    expect(line.textContent).toContain('Questo Whisper scarica i modelli nella sua cartella al primo uso.');
+    await userEvent.click(line);
+    expect(api.transcriptionChoice).toHaveBeenCalledWith('acme', { file: 'assets/demo.mp4', choice: 'whisper', remember: false });
+  });
+
   it('a failed download shows the core\'s reason above the choices again', async () => {
-    const q = ask({ whisper: { available: true, installed: false, model: 'small', sizeBytes: 487_601_967, canInstall: true }, error: 'sha256 non riuscito' });
+    const q = ask({ whisper: { available: true, installed: false, model: 'small', sizeBytes: 487_601_967, canInstall: true, engine: 'whisper.cpp', downloadsOwnModel: false }, error: 'sha256 non riuscito' });
     it_(<TranscriptionChoices slug="acme" view={waiting(q)} question={q} />);
     expect(screen.getByRole('alert').textContent).toContain('sha256 non riuscito');
     expect(screen.getByRole('button', { name: /Installa Whisper/ })).toBeTruthy();

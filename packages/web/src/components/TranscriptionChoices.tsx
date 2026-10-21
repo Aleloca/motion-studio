@@ -28,7 +28,8 @@ export interface TranscriptionChoicesProps {
 
 /**
  * Spec §6: the transcription question, shared by the dialog (New creative, the library) and the brief chat's card. In order:
- * Whisper on the Mac (to install, with its size, when a model download makes it work; plain when it works already), the
+ * Whisper on the Mac (to install, with its size, when a model download makes it work; plain when it works already, saying so
+ * when a Python engine will download its own model), the
  * providers with a saved key with their estimated cost and the "audio leaves the Mac" line, "Continua senza trascrizione";
  * "Ricorda la scelta"; what transcription is for; how to get a Whisper when nothing local is possible. Installing shows the
  * download's progress (read from the transcription status) until the analysis goes on or the download fails.
@@ -59,7 +60,8 @@ export function TranscriptionChoices({ slug, view, question: p, onDone, headingI
   const choose = async (choice: TranscriptionChoice['choice']) => {
     setBusy(choice);
     setError(null);
-    const install = choice === 'whisper' && !p.whisper.installed;
+    // A Python engine that downloads its own model needs no download from us (decision 1551 of the review).
+    const install = choice === 'whisper' && !p.whisper.installed && !p.whisper.downloadsOwnModel;
     try {
       const r = await api.transcriptionChoice(slug, { file: view.file, choice, remember, ...(install ? { sizeBytes: p.whisper.sizeBytes } : {}) });
       // Installing: the job stays held until the model is in place; the live view then drops its question.
@@ -71,7 +73,8 @@ export function TranscriptionChoices({ slug, view, question: p, onDone, headingI
   // The live view without a question any more: the install finished and the analysis went on.
   useEffect(() => { if (installing && view.pending?.kind !== 'transcription') onDone?.(); }, [installing, view.pending, onDone]);
 
-  const local = p.whisper.installed || p.whisper.canInstall;
+  const ready = p.whisper.installed || p.whisper.downloadsOwnModel;
+  const local = ready || p.whisper.canInstall;
   const pendingError = liveError ?? p.error;
   const shownError = error ?? (pendingError ? tr.installFailed({ detail: pendingError }) : null);
   const percent = download && download.total > 0 ? Math.round((download.bytes / download.total) * 100) : 0;
@@ -94,7 +97,7 @@ export function TranscriptionChoices({ slug, view, question: p, onDone, headingI
         </div>
       ) : (
         <div className="ms-tchoices-list" role="group" aria-label={tr.choicesLabel}>
-          {local ? option('whisper', p.whisper.installed ? 'check' : 'download', p.whisper.installed ? tr.methods.whisper : tr.installWhisper({ size }), tr.free) : null}
+          {local ? option('whisper', ready ? 'check' : 'download', ready ? tr.methods.whisper : tr.installWhisper({ size }), p.whisper.downloadsOwnModel ? `${tr.free} ${tr.pythonCache}` : tr.free) : null}
           {p.openai ? option('openai', 'globe', tr.withOpenai({ cost: cost(p.openai.costUsd) }), tr.leavesMac, 'paid') : null}
           {p.elevenlabs ? option('elevenlabs', 'globe', tr.withElevenlabs({ cost: cost(p.elevenlabs.costUsd) }), tr.leavesMac, 'paid') : null}
           {option('none', 'close', tr.continueWithout, null)}

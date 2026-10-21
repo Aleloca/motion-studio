@@ -14,7 +14,7 @@ const at = '2026-10-21T10:00:00.000Z';
 const FILE = 'assets/Intervista al fondatore - versione lunga definitiva #2.mp4';
 const q: TranscriptionPending = {
   kind: 'transcription', audioSec: 754, openai: { costUsd: 0.078 }, elevenlabs: { costUsd: 0.047 },
-  whisper: { available: true, installed: false, model: 'large-v3-turbo', sizeBytes: 1_624_555_275, canInstall: true },
+  whisper: { available: true, installed: false, model: 'large-v3-turbo', sizeBytes: 1_624_555_275, canInstall: true, engine: 'whisper.cpp', downloadsOwnModel: false },
   error: 'Il file scaricato non è quello atteso (controllo sha256 non riuscito): è stato eliminato.',
 };
 const view = (pending: VideoAnalysisView['pending']): VideoAnalysisView => ({ file: FILE, state: 'waiting', jobId: 'j', error: null, pending, header: null, body: null });
