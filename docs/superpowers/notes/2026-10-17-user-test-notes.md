@@ -520,6 +520,17 @@ arrives and worked on later together.
     again by itself (it stays in "Needs you" and on the video's card); answered elsewhere, it closes. In the brief agent's chat
     the questions stay cards.
 
+66. **Usage shows only Claude.** Settings → Usage counts Claude's tokens only; the paid services (OpenAI, ElevenLabs) are not
+    shown, and only the paid transcriptions are even recorded (images, voice, music and sound effects are not).
+    Wanted (user's choices): a separate "Servizi a pagamento" card under Claude's, with each service's real unit (OpenAI image
+    tokens, voice characters, seconds of music and sound effects, minutes transcribed) and a cost estimated at list price,
+    shown as an estimate; no admin key, no billing APIs.
+
+67. **The analysed video's player scrolls away.** In the asset panel of an analysed video, the player is at the top and the
+    analysis (summary, scenes, moments) below it; clicking a moment far down seeks the player, but the user must scroll
+    back up to watch it.
+    Wanted: the player stays pinned at the top of the panel while the analysis scrolls under it.
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
