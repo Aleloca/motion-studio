@@ -99,10 +99,12 @@ describe('NewCreative · files from the computer (report 62)', () => {
     render(<NewCreative slug="acme" />);
     await board();
     await userEvent.upload(screen.getByLabelText('File da aggiungere al brief'), [png('enorme.png')]);
-    const alert = await within(section()).findByRole('alert');
+    const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('enorme.png non è stato caricato: File troppo grande');
+    expect(within(section()).getByTitle('enorme.png non è stato caricato: File troppo grande')).toBeTruthy();
     await userEvent.click(within(alert).getByRole('button', { name: "Chiudi l'errore di enorme.png" }));
-    expect(within(section()).queryByRole('alert')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(within(section()).queryByTitle(/enorme\.png/)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Rimuovi enorme.png' })).toBeNull();
   });
 

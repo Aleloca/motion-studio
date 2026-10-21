@@ -813,9 +813,8 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
                       <Spinner size={16} decorative /><span className="ms-nc-upname">{name}</span>
                     </span>
                   ) : (
-                    <span className="ms-nc-asset ms-nc-upfailed" role="alert" title={n.uploadAssetFailed({ name, detail: u.error })}>
-                      <Icon name="warn" size={16} /><span className="ms-nc-upname">{n.uploadAssetFailed({ name, detail: u.error })}</span>
-                      {i === 0 ? <button type="button" className="ms-nc-updismiss" aria-label={n.dismissUpload({ name })} onClick={() => references.dismiss(u.id)}><Icon name="close" size={10} /></button> : null}
+                    <span className="ms-nc-asset ms-nc-upfailed" title={n.uploadAssetFailed({ name, detail: u.error })}>
+                      <Icon name="warn" size={16} /><span className="ms-nc-upname">{name}</span>
                     </span>
                   )}
                 </div>
@@ -824,6 +823,13 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
                 <button type="button" className="ms-nc-asset ms-nc-add" aria-label={n.addAssets} title={n.addAssets} aria-haspopup="menu" onClick={(e) => openAdd(e.currentTarget)}><Icon name="plus" size={16} /></button>
               </div>
             </div>
+            {references.pending.filter((u) => u.error !== null).map((u) => (
+              <p key={u.id} className="ms-nc-err ms-nc-uperr" role="alert">
+                <Icon name="warn" size={13} />
+                <span>{u.names.map((name) => n.uploadAssetFailed({ name, detail: u.error! })).join(' · ')}</span>
+                <Button size="sm" variant="ghost" icon aria-label={n.dismissUpload({ name: u.names.join(', ') })} title={n.dismissUpload({ name: u.names.join(', ') })} onClick={() => references.dismiss(u.id)}><Icon name="close" size={11} /></Button>
+              </p>
+            ))}
             <span className="ms-nc-faint ms-nc-small">{n.brandAuto}</span>
             {dropping ? <div className="ms-nc-dropzone" aria-hidden="true"><Icon name="upload" size={16} /><span>{n.dropHere}</span></div> : null}
           </section>

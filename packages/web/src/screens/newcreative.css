@@ -131,19 +131,15 @@
 }
 .ms-nc-refmark > svg { flex: none; margin-top: 1px; }
 .ms-nc-refmark:hover { color: var(--text); }
-.ms-nc-refmark.ms-saved { color: var(--accentText); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.ms-nc-refmark.ms-saved { color: var(--accentText); background: color-mix(in srgb, var(--accent) 5%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent); }
 .ms-nc-refmark:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ms-nc-refmark:disabled { opacity: .6; cursor: progress; }
 .ms-nc-uploading, .ms-nc-upfailed { flex-direction: column; gap: 4px; padding: 6px; cursor: default; font-size: 9px; font-weight: 600; line-height: 1.2; text-align: center; }
 .ms-nc-upfailed { color: var(--danger); background: var(--dangerBg); }
 .ms-nc-upname { max-width: 100%; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
 .ms-nc-uploading .ms-nc-upname { -webkit-line-clamp: 2; }
-.ms-nc-updismiss {
-  position: absolute; right: 2px; top: 2px; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; cursor: pointer;
-  display: flex; align-items: center; justify-content: center; background: var(--panel); color: var(--muted);
-}
-.ms-nc-updismiss:hover { color: var(--text); }
-.ms-nc-updismiss:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ms-nc-uperr { align-items: center; }
+.ms-nc-uperr > span { min-width: 0; overflow-wrap: anywhere; }
 .ms-nc-dropzone {
   position: absolute; inset: -6px; z-index: 2; display: flex; align-items: center; justify-content: center; gap: 8px; pointer-events: none;
   border: 2px dashed var(--accent); border-radius: 12px; background: color-mix(in srgb, var(--panel) 85%, var(--accent)); color: var(--text);
