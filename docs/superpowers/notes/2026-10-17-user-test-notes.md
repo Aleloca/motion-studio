@@ -508,5 +508,11 @@ arrives and worked on later together.
 - **Flaky on Linux CI:** `core/test/render-media.chrome.test.ts` "lenient (untrusted): a VFR WebM … renders and never fails"
   failed once on ubuntu (run 39141011457, frame index list off by one) with no render code changed, and passed on rerun.
   Make the frame-index assertion tolerant of the container-default-duration rounding, or pin the expected sequence per platform.
+- **Flaky on macOS CI:** `composition-runtime/test/chrome.integration.test.ts` "render mode ignores setComposition" failed once
+  (run 39638356088, part 3/3: diff ratio 0.0073 against < 0.002 between two shots of the same frame) and passed on rerun.
+  Find what differs between the two shots (a video or animated pixel not settled on the frozen clock) or compare only the
+  logo's region.
+- **CI on macOS waits for runners:** with 3 parts plus the Electron job, 3 macOS jobs started 10 minutes after the run
+  (run 39638356088). If it keeps happening, go to 2 macOS parts.
 - **"Replace with a text layer"** for outlined SVG lettering (report 13): not built (decision 1024).
 - **Electron at deviceScaleFactor > 1:** the desktop render windows were only tested with system Chrome (decision 1002).
