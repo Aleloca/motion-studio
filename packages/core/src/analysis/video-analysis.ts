@@ -120,15 +120,19 @@ export class VideoAnalysisService {
     // A brief does not retry the content whose analysis just failed (the library's Analizza does): a failure never loops.
     if (o.from === 'brief' && this.failures.get(fileKey(ref, file))?.sha === hash.sha256) return this.view(ref, file);
     if (!this.canAnalyse()) return this.view(ref, file);
-    const same = this.active.get(shaKey(ref, hash.sha256));
-    if (same) {
+    const join_ = async (same: Active) => {
       if (!same.files.includes(file)) same.files.push(file);
       same.overwrite ||= o.overwrite === true;
       const v = await this.view(ref, file);
       this.say(ref, file, v);
       return v;
-    }
+    };
+    const same = this.active.get(shaKey(ref, hash.sha256));
+    if (same) return join_(same);
     const info = await this.deps.media.probe(abs).catch(() => null);
+    // Two triggers at once (a creative made and its first turn): the one that queued first is joined.
+    const meanwhile = this.active.get(shaKey(ref, hash.sha256));
+    if (meanwhile) return join_(meanwhile);
     const duration = info?.durationSec ?? 0;
     const long = duration > LONG_VIDEO_SEC;
     const pending: VideoAnalysisPending | null = long ? (() => {
