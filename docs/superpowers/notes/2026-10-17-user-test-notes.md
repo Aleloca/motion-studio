@@ -474,6 +474,24 @@ arrives and worked on later together.
     thumbnails from there (3 × 17 at a 2000 px window: 2 columns of 162 px, 324 px at 200%), the columns giving way only at the
     canvas's edge. The "Scelte" view already scaled its boards with the zoom.
 
+62. **The brief can only pick assets already in the library.** In "Assets to use", "Browse library" on an empty project says
+    "No assets in this project yet" and sends the user to Assets first.
+    Wanted: add files from the computer straight from the brief, and for each one choose whether it is only a reference for
+    this creative or is also saved in the project's Assets.
+    Timing: now.
+    Decided: a file added from the computer is "only for this creative" by default (one click saves it in Assets, also
+    later); those files are hidden from the library and from the other creatives' "Browse library", with an Assets filter
+    "Creative references" to see and save them; they are deleted with their creative unless saved or used by another.
+
+63. **A video's analysis stays on "checking the audio for speech" with nothing happening.** Video_Codecs_101.mp4 (2:29,
+    with audio) uploaded in Assets: the activity centre shows "Video analysis · checking the audio for speech" and the
+    asset panel "Analysis · Queued — Starts as soon as the project's other analyses finish", for minutes. No ffmpeg or
+    Whisper process runs and no keychain prompt is open.
+    Found so far: the background audio check bounds only its ffmpeg part by time (`PRECHECK_MAX_MS` + 0.2 × duration);
+    `transcriber.plan()` before it (settings, Whisper lookup, keychain reads) has no bound, so a stuck step holds the job
+    forever. The panel's text is the one of `video-queue`, not of the audio check.
+    Timing: now, with 62.
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
