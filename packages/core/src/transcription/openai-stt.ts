@@ -50,7 +50,7 @@ export async function openaiTranscribe(deps: HttpDeps & { apiKey: string }, wav:
     else {
       const start = k * OPENAI_CHUNK_SEC * BYTES_PER_SEC;
       const pcm = await readRange(wav, data.offset + start, Math.min(OPENAI_CHUNK_SEC * BYTES_PER_SEC, data.bytes - start));
-      file = new Blob([wavHeader(pcm.length), pcm], { type: 'audio/wav' });
+      file = new Blob([new Uint8Array(wavHeader(pcm.length)), new Uint8Array(pcm)], { type: 'audio/wav' });
     }
     const form = new FormData();
     form.append('file', file, 'audio.wav');
