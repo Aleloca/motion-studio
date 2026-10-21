@@ -18,8 +18,12 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+        # The suite in three parts per system, side by side (the macOS suite alone took about 30 minutes; the repo is public,
+        # so the extra runners cost nothing). Typecheck, i18n and build run once per system, in part 1.
+        shard: [1, 2, 3]
+    name: test (${{ matrix.os }}, ${{ matrix.shard }}/3)
     runs-on: ${{ matrix.os }}
-    # A normal run takes about 10 minutes (Ubuntu: tests 5 min); a hang must not hold a runner for GitHub's 6 hours.
+    # A part takes about 10 minutes on macOS; a hang must not hold a runner for GitHub's 6 hours.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -58,9 +62,12 @@ jobs:
           echo "CHROME_PATH=$CHROME" >> "$GITHUB_ENV"
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
+        if: matrix.shard == 1
       - run: pnpm check:i18n
-      - run: pnpm test
+        if: matrix.shard == 1
+      - run: pnpm test --shard=${{ matrix.shard }}/3
         env:
           # The Chrome and ffmpeg integration tests (composition runtime, server and renderer) fail instead of skipping.
           MS_REQUIRE_CHROME: '1'
       - run: pnpm build
+        if: matrix.shard == 1
