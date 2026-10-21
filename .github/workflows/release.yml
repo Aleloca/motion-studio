@@ -65,16 +65,10 @@ jobs:
           fi
       # Video analysis (spec §7): whisper.cpp's whisper-cli (pinned tag, Metal embedded, static) and the Silero VAD model for
       # both Mac architectures, shipped in the app's extraResources. macOS only: Windows and Linux use an installed Whisper.
-      # Cached by the build script's content (it pins the tag, its commit and the model's sha256).
-      - name: Cache whisper-cli
-        if: runner.os == 'macOS'
-        id: whisper-cache
-        uses: actions/cache@v4
-        with:
-          path: apps/desktop/vendor/whisper
-          key: whisper-cli-${{ hashFiles('scripts/build-whisper.sh') }}
+      # Built and verified on every release (tag, architecture, system libraries only, the model's sha256): no cache, which
+      # could not hit across tags and would skip the checks.
       - name: Build whisper-cli (arm64, x64)
-        if: runner.os == 'macOS' && steps.whisper-cache.outputs.cache-hit != 'true'
+        if: runner.os == 'macOS'
         shell: bash
         run: |
           command -v cmake >/dev/null || brew install cmake
