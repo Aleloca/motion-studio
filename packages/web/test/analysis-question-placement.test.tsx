@@ -76,6 +76,8 @@ describe('the activity centre\'s focus waits for the analyses (review of phase 3
     await screen.findAllByRole('button', { name: /^Apri clip\.mp4/ });
     // The row is clicked while the page is open and the analyses have not answered yet.
     act(() => requestAssetFocus('acme', { jobId: 'job-2', name: 'clip.mp4' }));
+    // The analyses may be asked for after the list shows (slower CI): answer once they have been.
+    await waitFor(() => expect(resolve).toBeTypeOf('function'));
     await act(async () => resolve([view('assets/one/clip.mp4', { state: 'ready', pending: null }), view('assets/two/clip.mp4', { state: 'running', pending: null, jobId: 'job-2' })]));
     await waitFor(() => expect(document.querySelector('[data-file="two/clip.mp4"] .ms-acard-open')?.getAttribute('aria-expanded')).toBe('true'));
     api.listAssets.mockReset();
