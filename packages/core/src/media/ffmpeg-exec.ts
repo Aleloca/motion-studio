@@ -213,6 +213,6 @@ export function execFf<const A extends readonly FfArg[]>(cmd: string, args: A & 
 }
 
 /** Runs `ffmpeg`/`ffprobe` from PATH through an injected `CommandExec` (media tools, doctor), arguments checked by `ffArgv`. */
-export function execFfVia<const A extends readonly FfArg[]>(exec: CommandExec, kind: FfKind, args: A & CheckedFfArgs<A>, opts?: { timeoutMs?: number }): Promise<CommandResult> {
+export function execFfVia<const A extends readonly FfArg[]>(exec: CommandExec, kind: FfKind, args: A & CheckedFfArgs<A>, opts?: { timeoutMs?: number; signal?: AbortSignal }): Promise<CommandResult> {
   return exec(kind, ffArgv(kind, args), opts);
 }

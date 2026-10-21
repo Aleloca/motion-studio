@@ -25,7 +25,7 @@ const checkAbort = (signal?: AbortSignal) => { if (signal?.aborted) throw abortE
 export async function detectScenes(exec: CommandExec, video: string, durationSec: number, signal?: AbortSignal): Promise<number[]> {
   checkAbort(signal);
   if (!isRegularFileNow(video)) throw new Error('not a regular file');
-  const r = await execFfVia(exec, 'ffmpeg', ['-hide_banner', '-nostdin', '-loglevel', 'info', ...mediaInput({ file: video }), '-an', sceneDetectFilter(SCENE_THRESHOLD), '-f', 'null', '-'], { timeoutMs: passTimeoutMs(durationSec) });
+  const r = await execFfVia(exec, 'ffmpeg', ['-hide_banner', '-nostdin', '-loglevel', 'info', ...mediaInput({ file: video }), '-an', sceneDetectFilter(SCENE_THRESHOLD), '-f', 'null', '-'], { timeoutMs: passTimeoutMs(durationSec), ...(signal ? { signal } : {}) });
   checkAbort(signal);
   if (r.code !== 0) throw new Error(`scene detection failed (${r.code})`);
   const times = [...r.stderr.matchAll(/Parsed_showinfo[^\n]*?pts_time:\s*([0-9.]+)/g)].map((m) => Number(m[1])).filter((t) => Number.isFinite(t) && t > 0);
@@ -68,7 +68,7 @@ export async function extractFrames(exec: CommandExec, video: string, times: num
     const name = frameName(t);
     const out = join(outDir, name);
     // The JPEG muxer is named: the image2 muxer would read `%` in the output path as a pattern.
-    const r = await execFfVia(exec, 'ffmpeg', ['-y', '-nostdin', '-loglevel', 'error', '-ss', String(t), ...mediaInput({ file: video }), '-frames:v', '1', longSideScaleFilter(FRAME_LONG_SIDE), '-q:v', '3', '-f', 'mjpeg', out], { timeoutMs: 60_000 });
+    const r = await execFfVia(exec, 'ffmpeg', ['-y', '-nostdin', '-loglevel', 'error', '-ss', String(t), ...mediaInput({ file: video }), '-frames:v', '1', longSideScaleFilter(FRAME_LONG_SIDE), '-q:v', '3', '-f', 'mjpeg', out], { timeoutMs: 60_000, ...(signal ? { signal } : {}) });
     if (r.code === 0 && ((await stat(out).catch(() => null))?.size ?? 0) > 0) written.push(name);
   }
   checkAbort(signal);
