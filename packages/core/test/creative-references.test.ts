@@ -13,6 +13,9 @@ import type { AssetEntry, CreativeReferenceEntry } from '@motion-studio/shared';
 import { sidecarPathOf } from '../src/analysis/sidecar.ts';
 import { sweepCreativeReferences, REFERENCE_MAX_AGE_MS } from '../src/library/creative-references.ts';
 import { NoMediaTools } from '../src/media/media-tools.ts';
+import { Git } from '../src/git.ts';
+import { recoverWorkspace } from '../src/server/creative-routes.ts';
+import { WorkspaceStore } from '../src/workspace-store.ts';
 import { multipart } from './helpers/multipart.ts';
 import { variantApp, variantBrief, type VariantApp } from './helpers/variant-app.ts';
 
@@ -139,5 +142,21 @@ describe('abandoned brief references (report 62)', () => {
     expect(await exists('assets/old.png')).toBe(false);
     expect((await meta()).map((a) => a.file).sort()).toEqual(['new.png', 'owned.png', 'session.png']);
     expect((await meta()).find((a) => a.file === 'owned.png')?.referenceFor).toEqual([slug]);
+  });
+
+  it('runs when the workspace opens: an open brief keeps its files; an unreadable session keeps everything', async () => {
+    await start();
+    for (const f of ['held.png', 'gone.png']) await upload(f, 'reference');
+    const file = join(s.projectDir, 'assets', 'assets.json');
+    const json = JSON.parse(await readFile(file, 'utf8')) as { assets: AssetEntry[] };
+    for (const a of json.assets) a.addedAt = new Date(Date.now() - REFERENCE_MAX_AGE_MS - 60_000).toISOString();
+    await writeFile(file, JSON.stringify(json));
+    const ws = await WorkspaceStore.open(join(s.base, 'ws'), new Git());
+    await recoverWorkspace(ws, () => false, { briefAssets: async () => { throw new Error('unreadable'); }, git: new Git() });
+    expect((await meta()).map((a) => a.file).sort()).toEqual(['gone.png', 'held.png']);
+    await recoverWorkspace(ws, () => false, { briefAssets: async () => ['assets/held.png'], git: new Git() });
+    expect((await meta()).map((a) => a.file)).toEqual(['held.png']);
+    expect(await exists('assets/gone.png')).toBe(false);
+    expect(await git('status', '--porcelain', '--', 'assets')).toBe('');
   });
 });
