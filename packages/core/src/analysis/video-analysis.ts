@@ -26,6 +26,21 @@ export type { ProjectRef };
 export const ANALYSIS_LANE = 'video-analysis';
 /** The audio check before a transcription choice gives up after this long (plus 0.2 s per second of video). */
 const PRECHECK_MAX_MS = 60_000;
+/**
+ * The audio check's whole time limit, in whole milliseconds (report 63, decision 1558): `AbortSignal.timeout` throws on a
+ * fractional delay, and a video's duration is rarely a whole number of seconds.
+ */
+export const precheckLimitMs = (baseMs: number, durationSec: number): number =>
+  Math.min(2 ** 31 - 1, Math.ceil(baseMs + (Number.isFinite(durationSec) && durationSec > 0 ? durationSec * 200 : 0)));
+/** `p`, or an AbortError as soon as `signal` aborts (the step itself may never settle). */
+function untilAborted<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(abortedError());
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortedError());
+    signal.addEventListener('abort', onAbort, { once: true });
+    p.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
+}
 
 /**
  * The transcription (Phase 2, `TranscriptionService`): what to do with a video's speech (`plan`: run a method, ask the user,
@@ -49,6 +64,8 @@ export interface VideoAnalysisDeps {
   broadcast(m: ServerMessage): void;
   model(): Promise<string | null | undefined>;
   transcriber?: Transcriber;
+  /** The audio check's base time limit (default PRECHECK_MAX_MS). Test seam. */
+  precheckMaxMs?: number;
 }
 
 /** An analysis queued or running: one per content (sha256) and project; every file with that content waits for it. */
@@ -218,17 +235,18 @@ export class VideoAnalysisService {
    * Decision 1547: the check of a queued analysis's audio, in the background. With speech and no method that runs now, the
    * job's hold becomes the user's choice (`pending` of kind `transcription`); otherwise it is released (the job then
    * transcribes with the method the settings give, or not at all). Bounded (PRECHECK_MAX_MS) and stopped with the analysis;
-   * a check that fails or runs out of time asks nothing.
+   * a check that fails or runs out of time asks nothing. Every awaited step races the bound (decision 1559): the plan too
+   * (settings, Whisper lookup, keychain reads), so a step that never settles cannot hold the job.
    */
   private async precheck(entry: Active, abs: string, duration: number): Promise<void> {
     const own = entry.precheck;
     const tr = this.deps.transcriber;
     if (!own || !tr) return;
-    const signal = AbortSignal.any([own.signal, AbortSignal.timeout(PRECHECK_MAX_MS + duration * 200)]);
     let ask: TranscriptionPending | null = null;
     try {
-      const plan = await tr.plan(duration);
-      if ('ask' in plan && !signal.aborted && await this.hasSpeech(abs, duration, signal)) ask = plan.ask;
+      const signal = AbortSignal.any([own.signal, AbortSignal.timeout(precheckLimitMs(this.deps.precheckMaxMs ?? PRECHECK_MAX_MS, duration))]);
+      const plan = await untilAborted(tr.plan(duration), signal);
+      if ('ask' in plan && await untilAborted(this.hasSpeech(abs, duration, signal), signal)) ask = plan.ask;
     } catch { /* no question */ }
     if (own.signal.aborted || entry.precheck !== own || this.active.get(shaKey(entry.ref, entry.sha)) !== entry) return;
     entry.precheck = null;

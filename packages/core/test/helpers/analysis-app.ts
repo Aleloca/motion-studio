@@ -32,6 +32,8 @@ export interface AnalysisApp {
  */
 export async function analysisApp(o: {
   media?: (real: MediaTools) => MediaTools; ffExec?: CommandExec; mcp?: boolean;
+  /** The audio check's base time limit (default the service's). */
+  precheckMaxMs?: number;
   transcription?: { method?: TranscriptionMethod; fetch?: typeof fetch; detect?: () => Promise<WhisperFound[]>; whisperDir?: string; models?: WhisperModelManifest; redirectHosts?: string[] };
 } = {}): Promise<AnalysisApp> {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'ms-analysis-')));
@@ -53,7 +55,7 @@ export async function analysisApp(o: {
     whisperDetect: tr.detect ?? (async () => []),
     ...(tr.fetch ? { transcriptionHttp: { fetch: tr.fetch } } : {}), ...(tr.whisperDir ? { whisperDir: tr.whisperDir } : {}),
     ...(tr.models ? { whisperModels: tr.models } : {}), ...(tr.redirectHosts ? { whisperRedirectHosts: tr.redirectHosts } : {}),
-    ...(o.ffExec ? { analysisFfExec: o.ffExec } : {}),
+    ...(o.ffExec ? { analysisFfExec: o.ffExec } : {}), ...(o.precheckMaxMs !== undefined ? { analysisPrecheckMaxMs: o.precheckMaxMs } : {}),
     onVideoAnalyses: (s) => { analyses = s; },
   });
   await app.inject({ method: 'PUT', url: '/api/workspace', payload: { path: join(base, 'ws') } });
