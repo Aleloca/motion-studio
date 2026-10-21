@@ -19,13 +19,18 @@ function parse<T>(schema: z.ZodType<T>, body: unknown): T {
 
 /**
  * Settings → Trascrizione video (spec §6–§7), app-wide: the status (settings, models, the Whisper in use and the ones
- * detected, the download, the providers with a key, list prices), a change of the settings (a program is test-run first),
- * the test-run alone, and a model's download (consent and the size shown: 409 `download-size-changed`) or removal.
+ * detected, the download, the providers with a key, list prices; it runs no program), a new detection, a change of the
+ * settings (a program is checked first), the check alone, and a model's download (consent and the size shown: 409 `download-size-changed`) or removal.
  */
 export function registerTranscriptionRoutes(app: FastifyInstance, ctx: { transcription: TranscriptionService }) {
   app.get('/api/transcription', async (): Promise<TranscriptionStatus> => ctx.transcription.status());
   app.put('/api/transcription', async (req): Promise<TranscriptionStatus> => {
     await ctx.transcription.update(parse(transcriptionSettingsPatchSchema, req.body));
+    return ctx.transcription.status();
+  });
+  // Decision 1553: "Cerca di nuovo": the only route that looks for Whispers (reading the status runs no program).
+  app.post('/api/transcription/detect', async (): Promise<TranscriptionStatus> => {
+    await ctx.transcription.detect();
     return ctx.transcription.status();
   });
   app.post('/api/transcription/probe', async (req) => ctx.transcription.probe(parse(probeSchema, req.body)));

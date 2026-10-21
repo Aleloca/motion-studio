@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { access } from 'node:fs/promises';
+import { access, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type {
   TranscribeMethod, TranscriptionChoice, TranscriptionModelId, TranscriptionPending, TranscriptionSettings, TranscriptionSettingsPatch,
@@ -10,7 +10,7 @@ import { currentLocale, t } from '../i18n.ts';
 import type { SecretsVault } from '../secrets/vault.ts';
 import type { UsageLedger } from '../usage/usage-ledger.ts';
 import { CodedError } from '../workspace-store.ts';
-import { detectWhispers, identifyWhisper, modelFileOf, probeWhisper, resolveWhisper, WHISPER_NAMES, type ResolvedWhisper } from './detect.ts';
+import { detectWhispers, identifyWhisper, modelFileOf, probeWhisper, pythonModelCached, resolveWhisper, WHISPER_NAMES, type ResolvedWhisper } from './detect.ts';
 import { elevenlabsTranscribe } from './elevenlabs-stt.ts';
 import { pythonModelName, runWhisper } from './engines.ts';
 import { installedModels, installWhisperModel, removeWhisperModel, WHISPER_MODELS, WHISPER_REDIRECT_HOSTS, type WhisperModelManifest } from './models.ts';
@@ -30,15 +30,19 @@ export interface TranscriptionDeps {
   whisperDir?: string;
   /** Network of the providers and of the model downloads (tests: a fake fetch). */
   fetch: typeof fetch;
-  /** The Whispers on the PATH and in Homebrew (default: `detectWhispers` on `process.env.PATH`; none under vitest). */
+  /** Replaces the whole detection (test seam). Default: `detectWhispers` on `pathEnv`, each found program checked once. */
   detect?: () => Promise<WhisperFound[]>;
+  /** The PATH searched (default `process.env.PATH`, the login shell's in the desktop app); under vitest, none unless given. */
+  pathEnv?: string;
+  /** Folders searched besides the PATH (default: the Homebrew ones). */
+  extraDirs?: string[];
+  /** Where the Python engines' caches are looked for (HOME, XDG_CACHE_HOME, HF_HOME…; default `process.env`). */
+  env?: NodeJS.ProcessEnv;
   /** Test seam: the model manifest and the redirect hosts of its downloads. */
   manifest?: WhisperModelManifest;
   redirectHosts?: readonly string[];
 }
 
-/** How long the detected Whispers are reused (each one is asked its version). */
-const DETECT_TTL_MS = 60_000;
 const PROVIDER_LABEL: Record<SttProvider, string> = { openai: 'OpenAI', elevenlabs: 'ElevenLabs' };
 const isExecutable = (p: string) => access(p, constants.X_OK).then(() => true, () => false);
 const abortError = () => Object.assign(new Error('aborted'), { name: 'AbortError' });
@@ -51,7 +55,10 @@ const abortError = () => Object.assign(new Error('aborted'), { name: 'AbortError
  * (decision 1503).
  */
 export class TranscriptionService {
-  private detected: { at: number; list: Promise<WhisperFound[]> } | null = null;
+  /** Decision 1553: what the last detection found; read by every call, refreshed only in the background or on request. */
+  private detection: { list: WhisperFound[]; state: 'idle' | 'running' | 'done'; at: string | null; running: Promise<WhisperFound[]> | null } = { list: [], state: 'idle', at: null, running: null };
+  /** Each detected program's check, by path, size, mtime, engine and model (decision 1551): a binary is test-run once. */
+  private readonly checks = new Map<string, Promise<WhisperFound | null>>();
   private download: TranscriptionStatus['download'] = { state: 'idle', model: null, bytes: 0, total: 0 };
   private running: { model: TranscriptionModelId; done: Promise<void> } | null = null;
   private readonly manifest: WhisperModelManifest;
@@ -62,13 +69,59 @@ export class TranscriptionService {
 
   settings(): Promise<TranscriptionSettings> { return this.deps.config.readTranscription(); }
 
-  /** The Whispers detected on the PATH and in Homebrew, cached for a minute. */
-  detectedWhispers(fresh = false): Promise<WhisperFound[]> {
-    if (fresh || !this.detected || Date.now() - this.detected.at > DETECT_TTL_MS) {
-      const run = this.deps.detect ?? (async () => (process.env.VITEST ? [] : detectWhispers({ pathEnv: process.env.PATH ?? '', probe: identifyWhisper })));
-      this.detected = { at: Date.now(), list: run().catch(() => []) };
+  /** The Whispers the last detection found (decision 1553): runs nothing. */
+  detectedWhispers(): Promise<WhisperFound[]> { return Promise.resolve(this.detection.list); }
+
+  /** Detection in the background (server start; after a setting or a model changes). */
+  startDetection(): void { void this.detect().catch(() => {}); }
+
+  /**
+   * Looks for Whispers on the PATH and in Homebrew and checks each one (decision 1551): a whisper.cpp is test-run on one
+   * second of silence with the model of the setting (without one it `needsModel`), a Python engine only answers `--help`.
+   * One that fails is listed with its `problem` and never used. A detection already running is joined.
+   */
+  detect(): Promise<WhisperFound[]> {
+    if (this.detection.running) return this.detection.running;
+    const run = async (): Promise<WhisperFound[]> => {
+      if (this.deps.detect) return this.deps.detect();
+      if (this.deps.pathEnv === undefined && process.env.VITEST) return [];
+      const s = await this.settings();
+      const modelFile = this.deps.appDataDir ? modelFileOf(this.deps.appDataDir, s.model) : undefined;
+      return detectWhispers({
+        pathEnv: this.deps.pathEnv ?? process.env.PATH ?? '', ...(this.deps.extraDirs ? { extraDirs: this.deps.extraDirs } : {}),
+        probe: (program, engine) => this.checkDetected(program, engine, modelFile, pythonModelName(s.model)),
+      });
+    };
+    this.detection.state = 'running';
+    const running = run().catch(() => [] as WhisperFound[]).then((list) => {
+      this.detection = { list, state: 'done', at: new Date().toISOString(), running: null };
+      return list;
+    });
+    this.detection.running = running;
+    return running;
+  }
+
+  private async checkDetected(program: string, engine: WhisperEngine, modelFile: string | undefined, modelName: string): Promise<WhisperFound | null> {
+    const st = await stat(program).catch(() => null);
+    const mst = modelFile ? await stat(modelFile).catch(() => null) : null;
+    const key = [program, st?.size, st?.mtimeMs, engine, modelFile, mst?.size, mst?.mtimeMs, modelName].join('\0');
+    let p = this.checks.get(key);
+    if (!p) {
+      p = (async (): Promise<WhisperFound | null> => {
+        // An old whisper.cpp `main` that is not whisper is never test-run.
+        if (!(await identifyWhisper(program, engine))) return null;
+        const r = await probeWhisper(program, engine, { ...(modelFile ? { modelFile } : {}), modelName, ...(this.deps.env ? { env: this.deps.env } : {}) });
+        if (!isProblem(r)) return { ...r, source: 'detected' };
+        return { engine, program, version: null, model: '', gpu: null, source: 'detected', problem: r.problem, ...(r.needsModel ? { needsModel: true } : {}) };
+      })();
+      this.checks.set(key, p);
     }
-    return this.detected.list;
+    return p;
+  }
+
+  /** A Python engine's first transcription downloads its model when it is not in its cache (looked up, nothing run). */
+  private async downloadsOwnModel(w: WhisperFound): Promise<boolean> {
+    return w.engine !== 'whisper.cpp' && !(await pythonModelCached(w.engine, w.model, this.deps.env));
   }
 
   /** The Whisper that would run now, with its model (lookup order §7), or null. */
@@ -90,7 +143,7 @@ export class TranscriptionService {
     const bundled = this.bundledProgram();
     if (bundled && await isExecutable(bundled)) return true;
     if (settings.custom?.engine === 'whisper.cpp' && !settings.custom.modelFile && await isExecutable(settings.custom.program)) return true;
-    return (await this.detectedWhispers()).some((d) => d.engine === 'whisper.cpp');
+    return this.detection.list.some((d) => d.engine === 'whisper.cpp' && (d.problem === undefined || d.needsModel));
   }
 
   private async hasKey(p: SttProvider): Promise<boolean> { return (await this.deps.vault.get(p).catch(() => null)) !== null; }
@@ -103,11 +156,17 @@ export class TranscriptionService {
   async offer(audioSec: number, settings?: TranscriptionSettings): Promise<TranscriptionPending> {
     const s = settings ?? await this.settings();
     const found = await this.whisper(s);
-    const engine = found !== null || (await this.detectedWhispers()).length > 0 || (s.custom !== null && await isExecutable(s.custom.program))
-      || (this.bundledProgram() !== null && await isExecutable(this.bundledProgram()!));
+    const bundled = this.bundledProgram();
+    const usable = this.detection.list.filter((d) => d.problem === undefined || d.needsModel);
+    const custom = s.custom !== null && await isExecutable(s.custom.program);
+    const engine = found?.engine ?? (custom ? s.custom!.engine : null) ?? (bundled && await isExecutable(bundled) ? 'whisper.cpp' : null) ?? usable[0]?.engine ?? null;
+    const ownModel = found ? await this.downloadsOwnModel(found) : engine !== null && engine !== 'whisper.cpp';
     return {
       kind: 'transcription', audioSec: Number(audioSec.toFixed(3)),
-      whisper: { available: engine, installed: found !== null, model: s.model, sizeBytes: this.manifest[s.model].sizeBytes, canInstall: await this.canInstall(s) },
+      whisper: {
+        available: engine !== null, installed: found !== null && !ownModel, model: s.model, sizeBytes: this.manifest[s.model].sizeBytes,
+        canInstall: await this.canInstall(s), engine, downloadsOwnModel: ownModel,
+      },
       openai: await this.hasKey('openai') ? { costUsd: estimateSttCost('openai', audioSec) } : null,
       elevenlabs: await this.hasKey('elevenlabs') ? { costUsd: estimateSttCost('elevenlabs', audioSec) } : null,
     };
@@ -117,7 +176,11 @@ export class TranscriptionService {
   async plan(audioSec: number): Promise<TranscriptionPlan> {
     const s = await this.settings();
     if (s.method === 'never') return { skip: true };
-    if (s.method !== 'ask' && await this.available(s.method, s)) return { run: s.method };
+    if (s.method === 'whisper') {
+      // A detected Python engine whose first run would download its model waits for the user's choice (decision 1552).
+      const w = await this.whisper(s);
+      if (w && !(w.source === 'detected' && await this.downloadsOwnModel(w))) return { run: 'whisper' };
+    } else if (s.method !== 'ask' && await this.available(s.method, s)) return { run: s.method };
     return { ask: await this.offer(audioSec, s) };
   }
 
@@ -157,7 +220,11 @@ export class TranscriptionService {
       id: model, appDataDir: this.deps.appDataDir, consent: true, sizeBytes, fetchImpl: this.deps.fetch, manifest: this.manifest,
       allowRedirectHosts: this.deps.redirectHosts ?? WHISPER_REDIRECT_HOSTS,
       onProgress: (p) => { this.download = { state: 'running', model, bytes: p.bytes, total }; },
-    }).then(() => { this.download = { state: 'done', model, bytes: total, total }; }, (err: Error & { code?: string }) => {
+    }).then(async () => {
+      // A detected whisper.cpp is checked again with the new model before the analyses that waited for it go on.
+      await this.detect().catch(() => []);
+      this.download = { state: 'done', model, bytes: total, total };
+    }, (err: Error & { code?: string }) => {
       const error = err.code === 'hashMismatch' ? t().errors.downloadHashMismatch : err.message;
       this.download = { state: 'failed', model, bytes: this.download.bytes, total, error };
       throw new Error(error);
@@ -181,7 +248,8 @@ export class TranscriptionService {
       settings,
       models: this.deps.appDataDir ? await installedModels(this.deps.appDataDir, this.manifest) : (['small', 'large-v3-turbo'] as const).map((id) => ({ id, sizeBytes: this.manifest[id].sizeBytes, installed: false, bytesOnDisk: 0 })),
       whisper: await this.whisper(settings),
-      detected: await this.detectedWhispers(),
+      detected: [...this.detection.list],
+      detection: { state: this.detection.state, at: this.detection.at },
       bundled: bundled !== null && await isExecutable(bundled),
       download: { ...this.download },
       providers: { openai: await this.hasKey('openai'), elevenlabs: await this.hasKey('elevenlabs') },
@@ -190,22 +258,24 @@ export class TranscriptionService {
   }
 
   /** The test-run of a program (spec §7), with the model of the setting (or the given ggml file for whisper.cpp). */
-  async probe(i: { program: string; engine?: WhisperEngine; modelFile?: string }): Promise<WhisperFound | { problem: string }> {
+  async probe(i: { program: string; engine?: WhisperEngine; modelFile?: string }): Promise<WhisperFound | { problem: string; needsModel?: true }> {
     const engine = i.engine ?? engineOfName(i.program);
     if (!engine) return { problem: t().errors.whisperNotFound };
     const s = await this.settings();
     const modelFile = i.modelFile ?? (this.deps.appDataDir ? modelFileOf(this.deps.appDataDir, s.model) : undefined);
-    return probeWhisper(i.program, engine, { ...(modelFile ? { modelFile } : {}), modelName: pythonModelName(s.model) });
+    return probeWhisper(i.program, engine, { ...(modelFile ? { modelFile } : {}), modelName: pythonModelName(s.model), ...(this.deps.env ? { env: this.deps.env } : {}) });
   }
 
   /** Saves settings; a program set in `custom` is test-run first (400 with the problem when it fails, spec §7). */
   async update(patch: TranscriptionSettingsPatch): Promise<TranscriptionSettings> {
     if (patch.custom) {
       const r = await this.probe(patch.custom);
-      if ('problem' in r) throw new CodedError(400, t().errors.whisperProbeFailed({ detail: r.problem }), 'whisper-probe-failed');
+      if (isProblem(r)) throw new CodedError(400, t().errors.whisperProbeFailed({ detail: r.problem }), 'whisper-probe-failed');
     }
+    const before = await this.settings();
     const saved = await this.deps.config.setTranscription(patch);
-    this.detected = null;
+    // The detected programs are checked with the model of the setting: a new model, a new check.
+    if (saved.model !== before.model) this.startDetection();
     return saved;
   }
 
@@ -250,6 +320,8 @@ export class TranscriptionService {
     }
   }
 }
+
+const isProblem = (r: WhisperFound | { problem: string }): r is { problem: string; needsModel?: true } => !('engine' in r);
 
 /** The engine a program's name says (`whisper-cli` → whisper.cpp…); null when the name is none of them. */
 export function engineOfName(program: string): WhisperEngine | null {

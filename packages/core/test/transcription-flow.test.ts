@@ -225,12 +225,23 @@ describe.skipIf(!hasFfmpeg)('transcription in the analysis', () => {
 describe('transcription settings routes', () => {
   it('PUT a custom program that fails its test-run → 400 naming the problem; nothing saved', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ms-tf-'));
-    const program = await fakeWhisper(dir, 'whisper', { stderr: 'Traceback\nModuleNotFoundError: No module named torch\n', exit: 1 });
+    const program = await fakeWhisper(dir, 'whisper', { stderr: 'Traceback\nModuleNotFoundError: No module named torch\n', exit: 1, broken: true });
     const t = await analysisApp({ transcription: { method: 'ask' } });
     const r = await t.app.inject({ method: 'PUT', url: '/api/transcription', payload: { custom: { program, engine: 'openai-whisper' } } });
     expect(r.statusCode).toBe(400);
     expect(r.json()).toMatchObject({ code: 'whisper-probe-failed', error: expect.stringContaining('No module named torch') });
     expect(((await t.app.inject('/api/transcription')).json() as TranscriptionStatus).settings.custom).toBeNull();
+  });
+  it('"Cerca di nuovo": POST detect runs the detection and answers the status with it', async () => {
+    const found = { engine: 'openai-whisper' as const, program: '/opt/homebrew/bin/whisper', version: null, model: 'small', gpu: null, source: 'detected' as const, problem: 'No module named torch' };
+    let calls = 0;
+    const t = await analysisApp({ transcription: { detect: async () => { calls++; return [found]; } } });
+    const atStart = calls;
+    expect(((await t.app.inject('/api/transcription')).json() as TranscriptionStatus).detection.state).not.toBe('idle');
+    expect(calls).toBe(atStart);
+    const r = (await t.app.inject({ method: 'POST', url: '/api/transcription/detect' })).json() as TranscriptionStatus;
+    expect(calls).toBe(atStart + 1);
+    expect(r).toMatchObject({ detected: [found], detection: { state: 'done' }, whisper: null });
   });
   it('probe infers the engine from the name; a relative program is refused', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ms-tf-'));

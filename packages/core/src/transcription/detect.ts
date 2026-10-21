@@ -1,11 +1,13 @@
 import { constants } from 'node:fs';
-import { access, lstat, mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { access, lstat, mkdtemp, readdir, readFile, realpath, rm, stat } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
 import { basename, delimiter, join } from 'node:path';
 import type { TranscriptionSettings, WhisperEngine, WhisperFound } from '@motion-studio/shared';
 import { t } from '../i18n.ts';
 import { lastLine, runChild } from './child-run.ts';
-import { parseFasterWhisper, parseOpenAiWhisper, parseWhisperCpp, pythonModelName, whisperArgs } from './engines.ts';
+import { engineFlags, parseWhisperCpp, pythonModelName, versionOf, whisperArgs, whisperHelp } from './engines.ts';
+
+export { engineFlags, versionOf } from './engines.ts';
 import { writeSilentWav } from './wav.ts';
 
 /** Spec §7: the names each engine's CLI goes by. `main` (old whisper.cpp builds) only when its help mentions whisper. */
@@ -18,36 +20,34 @@ export const WHISPER_NAMES: Record<WhisperEngine, string[]> = {
 export const HOMEBREW_DIRS = ['/opt/homebrew/bin', '/usr/local/bin'];
 /** The bundled VAD model's file name (whisper.cpp's Silero, spec §7). */
 export const SILERO_FILE = 'ggml-silero-v6.2.0.bin';
-/** The first whisper.cpp release with `--vad` (an older one would refuse the flag). */
-const VAD_SINCE = [1, 7, 6];
-
 const IDENTIFY_TIMEOUT_MS = 10_000;
-/** A test-run: whisper.cpp loads its model; a Python engine may download its model into its own cache first. */
-const PROBE_TIMEOUT_MS: Record<WhisperEngine, number> = { 'whisper.cpp': 120_000, 'openai-whisper': 15 * 60_000, 'faster-whisper': 15 * 60_000 };
+/** The test-run of a whisper.cpp (it loads its model and transcribes one second). */
+const PROBE_TIMEOUT_MS = 120_000;
 
 export const modelFileOf = (appDataDir: string, model: string) => join(appDataDir, 'whisper', `ggml-${model}.bin`);
 const isFile = async (p: string) => (await stat(p).catch(() => null))?.isFile() === true;
 const isExecutable = async (p: string) => (await isFile(p)) && (await access(p, constants.X_OK).then(() => true, () => false));
-const versionIn = (text: string) => text.match(/\bv?(\d+\.\d+(?:\.\d+)?)\b/)?.[1] ?? null;
-const atLeast = (v: string | null, min: number[]) => {
-  if (!v) return false;
-  const p = v.split('.').map(Number);
-  for (let i = 0; i < min.length; i++) if ((p[i] ?? 0) !== min[i]) return (p[i] ?? 0) > min[i]!;
-  return true;
-};
-
 /**
- * Who a program on the PATH is, without running a transcription: its version (`--version`, when it answers), and for an
- * old whisper.cpp `main` whether its help mentions whisper (null: not a Whisper). The model is not known yet ('').
+ * Who a program on the PATH is, without running a transcription: an old whisper.cpp `main` only when its `--help` mentions
+ * whisper (null: not a Whisper); the version only when `--version` really prints one (decision 1550). The model is not
+ * known yet ('').
  */
 export async function identifyWhisper(program: string, engine: WhisperEngine): Promise<WhisperFound | null> {
-  if (/^main(\.exe)?$/i.test(basename(program))) {
-    const help = await runChild(program, ['--help'], { timeoutMs: IDENTIFY_TIMEOUT_MS });
-    if (!/whisper/i.test(`${help.stdout}\n${help.stderr}`)) return null;
-  }
+  if (/^main(\.exe)?$/i.test(basename(program)) && !/whisper/i.test((await whisperHelp(program)).text)) return null;
   const v = await runChild(program, ['--version'], { timeoutMs: IDENTIFY_TIMEOUT_MS });
-  const version = v.code === 0 ? versionIn(`${v.stdout}\n${v.stderr}`) : null;
+  const version = v.code === 0 ? versionOf(`${v.stdout}\n${v.stderr}`) : null;
   return { engine, program, version, model: '', gpu: null, source: 'detected' };
+}
+
+/**
+ * Whether a Python engine already has `model` in its own cache (decision 1552; looked up, never downloaded): openai-whisper
+ * keeps `<cache>/whisper/<name>.pt`, faster-whisper the Hugging Face hub's `models--*--faster-whisper-<name>*` folders.
+ */
+export async function pythonModelCached(engine: WhisperEngine, model: string, env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
+  const cache = env.XDG_CACHE_HOME || join(env.HOME || homedir(), '.cache');
+  if (engine === 'openai-whisper') return isFile(join(cache, 'whisper', `${model}.pt`));
+  const hub = env.HF_HUB_CACHE || (env.HF_HOME ? join(env.HF_HOME, 'hub') : join(cache, 'huggingface', 'hub'));
+  return (await readdir(hub).catch(() => [] as string[])).some((d) => d.startsWith('models--') && d.toLowerCase().includes(`faster-whisper-${model}`));
 }
 
 /**
@@ -76,32 +76,35 @@ export async function detectWhispers(o: { pathEnv: string; extraDirs?: string[];
 }
 
 /**
- * The test-run before a Whisper is saved (spec §7): one second of generated silence through the engine, as a real
- * transcription would run. Gives what was found (version, model, GPU from whisper.cpp's own report; null for the Python
- * engines) or `{ problem }` (the engine's last stderr line).
+ * The check of a Whisper before it is saved or offered (spec §7, decisions 1551–1552). A whisper.cpp transcribes one second
+ * of generated silence with the flags its `--help` lists (no VAD): version, model and GPU from its own report, or
+ * `{ problem }` (its last stderr line); without a model file it cannot be checked (`needsModel`). A Python engine is never
+ * made to transcribe here (it would download its model): its `--help` must work, and its cache says whether the model is
+ * already there (`downloadsOwnModel` otherwise).
  */
-export async function probeWhisper(program: string, engine: WhisperEngine, o: { modelFile?: string; modelName: string; vadModel?: string; signal?: AbortSignal }): Promise<WhisperFound | { problem: string }> {
+export async function probeWhisper(program: string, engine: WhisperEngine, o: { modelFile?: string; modelName: string; signal?: AbortSignal; env?: NodeJS.ProcessEnv }): Promise<WhisperFound | { problem: string; needsModel?: true }> {
   if (!(await isExecutable(program))) return { problem: t().errors.whisperNotFound };
-  if (engine === 'whisper.cpp' && !(o.modelFile && await isFile(o.modelFile))) return { problem: t().errors.whisperModelMissing };
+  if (engine !== 'whisper.cpp') {
+    const help = await whisperHelp(program);
+    if (!help.ok || !/whisper|--model/i.test(help.text)) return { problem: lastLine(help.text) || t().errors.whisperNotFound };
+    const id = await identifyWhisper(program, engine).catch(() => null);
+    return { engine, program, version: id?.version ?? null, model: o.modelName, gpu: null, source: 'settings', downloadsOwnModel: !(await pythonModelCached(engine, o.modelName, o.env)) };
+  }
+  if (!(o.modelFile && await isFile(o.modelFile))) return { problem: t().errors.whisperModelMissing, needsModel: true };
   const dir = await mkdtemp(join(tmpdir(), 'ms-whisper-probe-'));
   try {
     const wav = join(dir, 'probe.wav');
     await writeSilentWav(wav, 1);
-    const model = engine === 'whisper.cpp' ? o.modelFile! : o.modelName;
-    const r = await runChild(program, whisperArgs(engine, { program, wav, outDir: dir, model, ...(o.vadModel ? { vadModel: o.vadModel } : {}), language: null }), { timeoutMs: PROBE_TIMEOUT_MS[engine], cwd: dir, ...(o.signal ? { signal: o.signal } : {}) });
+    const flags = engineFlags((await whisperHelp(program)).text);
+    const r = await runChild(program, whisperArgs(engine, { program, wav, outDir: dir, model: o.modelFile, language: null, flags }), { timeoutMs: PROBE_TIMEOUT_MS, cwd: dir, ...(o.signal ? { signal: o.signal } : {}) });
     if (r.cancelled) return { problem: 'cancelled' };
-    if (r.timedOut) return { problem: t().errors.timedOut({ seconds: PROBE_TIMEOUT_MS[engine] / 1000 }) };
+    if (r.timedOut) return { problem: t().errors.timedOut({ seconds: PROBE_TIMEOUT_MS / 1000 }) };
     if (r.code !== 0) return { problem: lastLine(r.stderr) || t().errors.exitCode({ code: r.code ?? -1 }) };
-    const out = engine === 'whisper.cpp' ? join(dir, 'out.json') : join(dir, 'probe.json');
-    try {
-      const json = JSON.parse(await readFile(out, 'utf8')) as unknown;
-      if (engine === 'whisper.cpp') parseWhisperCpp(json); else if (engine === 'openai-whisper') parseOpenAiWhisper(json); else parseFasterWhisper(json);
-    } catch {
-      return { problem: `${engine}: no usable output` };
-    }
-    const gpu = engine !== 'whisper.cpp' ? null : /use gpu\s*=\s*1|ggml_metal_init/.test(r.stderr) ? true : false;
+    try { parseWhisperCpp(JSON.parse(await readFile(join(dir, 'out.json'), 'utf8')) as unknown); }
+    catch { return { problem: `${engine}: no usable output` }; }
+    const gpu = /use gpu\s*=\s*1|ggml_metal_init/.test(r.stderr);
     const id = await identifyWhisper(program, engine).catch(() => null);
-    return { engine, program, version: id?.version ?? null, model, gpu, source: 'settings' };
+    return { engine, program, version: id?.version ?? null, model: o.modelFile, gpu, source: 'settings' };
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
@@ -112,13 +115,11 @@ export type ResolvedWhisper = WhisperFound & { vadModel?: string };
 /**
  * The Whisper an analysis uses now (spec §7, lookup order): the program set in Settings → the bundled `whisper-cli`
  * (`whisperDir`) with the model downloaded into `<appData>/whisper/` → the first one detected. A whisper.cpp without a
- * model file counts as not available. VAD: the bundled Silero model for the bundled binary; for another whisper.cpp only a
- * downloaded one, and only from the release that knows `--vad`.
+ * model file counts as not available, and so does a detected one that failed its check. VAD only with the bundled binary and
+ * its bundled Silero model (decision 1550; the run drops it when the binary's `--help` lacks `--vad`). Runs no program.
  */
 export async function resolveWhisper(o: { settings: TranscriptionSettings; whisperDir?: string; appDataDir: string; detected: () => Promise<WhisperFound[]> }): Promise<ResolvedWhisper | null> {
   const ownModel = modelFileOf(o.appDataDir, o.settings.model);
-  const downloadedVad = join(o.appDataDir, 'whisper', SILERO_FILE);
-  const vadFor = async (version: string | null) => (atLeast(version, VAD_SINCE) && await isFile(downloadedVad) ? { vadModel: downloadedVad } : {});
   const c = o.settings.custom;
   if (c && await isExecutable(c.program)) {
     if (c.engine !== 'whisper.cpp') return { engine: c.engine, program: c.program, version: null, model: pythonModelName(o.settings.model), gpu: null, source: 'settings' };
@@ -133,8 +134,9 @@ export async function resolveWhisper(o: { settings: TranscriptionSettings; whisp
     }
   }
   for (const d of await o.detected().catch(() => [])) {
+    if (d.problem !== undefined || d.needsModel) continue;
     if (d.engine !== 'whisper.cpp') return { ...d, model: pythonModelName(o.settings.model), source: 'detected' };
-    if (await isFile(ownModel)) return { ...d, model: ownModel, source: 'detected', ...(await vadFor(d.version)) };
+    if (await isFile(ownModel)) return { ...d, model: ownModel, source: 'detected' };
   }
   return null;
 }

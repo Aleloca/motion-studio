@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { TranscriptionModelId, TranscriptSegment, WhisperEngine, WhisperFound } from '@motion-studio/shared';
@@ -48,11 +48,41 @@ export const parseFasterWhisper = (json: unknown): EngineTranscript => parseOpen
  */
 export const pythonModelName = (id: TranscriptionModelId): string => (id === 'large-v3-turbo' ? 'large-v3-turbo' : 'small');
 
+/** What a whisper.cpp build accepts, read from its `--help` (decision 1550): an older one refuses an unknown flag. */
+export interface EngineFlags { vad: boolean; sns: boolean; np: boolean }
+export function engineFlags(help: string): EngineFlags {
+  return { vad: /(^|\s)--vad\b/m.test(help), sns: /(^|\s)(-sns|--suppress-nst)\b/m.test(help), np: /(^|\s)(-np|--no-prints)\b/m.test(help) };
+}
+
+/** A version only from a version line ("version: 1.9.5", "v1.7.6"): usage text full of numbers is no version (decision 1550). */
+export function versionOf(text: string): string | null {
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/\bversion\b\W{0,4}v?(\d+\.\d+\.\d+)\b/i) ?? line.trim().match(/^v?(\d+\.\d+\.\d+)$/);
+    if (m && !/error|unknown|usage/i.test(line)) return m[1]!;
+  }
+  return null;
+}
+
+const HELP_TIMEOUT_MS = 10_000;
+/** `--help` of a program, by path, size and mtime (a replaced binary is asked again). */
+const helps = new Map<string, Promise<{ ok: boolean; text: string }>>();
+export async function whisperHelp(program: string): Promise<{ ok: boolean; text: string }> {
+  const st = await stat(program).catch(() => null);
+  const key = `${program}\0${st?.size ?? -1}\0${st?.mtimeMs ?? -1}`;
+  let p = helps.get(key);
+  if (!p) {
+    p = runChild(program, ['--help'], { timeoutMs: HELP_TIMEOUT_MS }).then((r) => ({ ok: r.code === 0, text: `${r.stdout}\n${r.stderr}` }));
+    helps.set(key, p);
+  }
+  return p;
+}
+
 /** The argv of one transcription. `model`: a ggml file for whisper.cpp, a name for the Python engines. `language` null: auto. */
-export function whisperArgs(e: WhisperEngine, i: { program: string; wav: string; outDir: string; model: string; vadModel?: string; language: string | null }): string[] {
+export function whisperArgs(e: WhisperEngine, i: { program: string; wav: string; outDir: string; model: string; vadModel?: string; language: string | null; flags?: EngineFlags }): string[] {
   if (e === 'whisper.cpp') {
-    return ['-m', i.model, '-f', i.wav, '-oj', '-of', join(i.outDir, 'out'), '-np', '-sns',
-      ...(i.vadModel ? ['--vad', '--vad-model', i.vadModel] : []), '-l', i.language ?? 'auto'];
+    const f = i.flags ?? { vad: true, sns: true, np: true };
+    return ['-m', i.model, '-f', i.wav, '-oj', '-of', join(i.outDir, 'out'), ...(f.np ? ['-np'] : []), ...(f.sns ? ['-sns'] : []),
+      ...(i.vadModel && f.vad ? ['--vad', '--vad-model', i.vadModel] : []), '-l', i.language ?? 'auto'];
   }
   return [i.wav, '--model', i.model, '--output_format', 'json', '--output_dir', i.outDir, ...(i.language ? ['--language', i.language] : [])];
 }
@@ -69,7 +99,8 @@ export async function runWhisper(found: WhisperFound & { vadModel?: string }, wa
   if (o.signal.aborted) throw abortError();
   const outDir = await mkdtemp(join(tmpdir(), 'ms-whisper-'));
   try {
-    const args = whisperArgs(found.engine, { program: found.program, wav, outDir, model: found.model, ...(found.vadModel ? { vadModel: found.vadModel } : {}), language: o.language });
+    const flags = found.engine === 'whisper.cpp' ? engineFlags((await whisperHelp(found.program)).text) : undefined;
+    const args = whisperArgs(found.engine, { program: found.program, wav, outDir, model: found.model, ...(found.vadModel ? { vadModel: found.vadModel } : {}), language: o.language, ...(flags ? { flags } : {}) });
     const r = await runChild(found.program, args, { timeoutMs: o.timeoutMs, signal: o.signal, cwd: outDir });
     if (r.cancelled || o.signal.aborted) throw abortError();
     if (r.timedOut) throw new Error(t().errors.transcriptionFailed({ reason: t().errors.timedOut({ seconds: Math.round(o.timeoutMs / 1000) }) }));
