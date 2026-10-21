@@ -169,6 +169,8 @@ export interface ServerDeps {
   analysisFfExec?: CommandExec;
   /** Test seam: told the video analysis service once it exists. */
   onVideoAnalyses?: (s: VideoAnalysisService) => void;
+  /** Spec §7: the folder of the bundled `whisper-cli` (and its VAD model); absent: none bundled. */
+  whisperDir?: string;
 }
 
 /** How long the billing method (one `claude auth status`) is reused; 'unknown' is retried sooner. */
