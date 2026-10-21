@@ -498,6 +498,13 @@ arrives and worked on later together.
     forever. The panel's text is the one of `video-queue`, not of the audio check.
     Timing: now, with 62.
 
+64. **The transcription dialog has no Whisper to install, and looks bad.** Dev app, Video_Codecs_101.mp4: the dialog lists
+    "Transcribe with OpenAI · ~$0.018", "Transcribe with ElevenLabs · ~$0.011", "Continue without transcription" and a grey
+    note with backticks ("This app has no Whisper of its own. Install whisper.cpp (e.g. `brew install whisper-cpp`)…").
+    Cause: the dev tree had no bundled whisper-cli (built only by the release workflow), so `canInstall` was false.
+    Wanted: Whisper is the main option, free and recommended, with a direct install; the paid ones are secondary.
+    Timing: now.
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
