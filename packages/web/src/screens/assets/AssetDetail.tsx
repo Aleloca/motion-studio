@@ -137,7 +137,7 @@ export function AssetDetail({ slug, asset: x, describing, busy, onClose, onSaved
             <span className="ms-lib-faint ms-lib-small">{d.renameHint}</span>
           </form>
         ) : null}
-        <div className={cx('ms-adetail-media', (x.kind === 'video' || x.kind === 'audio') && 'ms-adetail-player')}>
+        <div className={cx('ms-adetail-media', (x.kind === 'video' || x.kind === 'audio') && 'ms-adetail-player', x.kind === 'video' && 'ms-adetail-sticky')}>
           {x.kind === 'video' ? <VideoPlayer src={url} name={baseName(x.file)} durationSec={x.durationSec} handle={player} />
             : x.kind === 'audio' ? <AudioPlayer src={url} name={baseName(x.file)} peaks={peaks} durationSec={x.durationSec} />
               : <Thumb slug={slug} asset={x} big />}
