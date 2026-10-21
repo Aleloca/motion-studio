@@ -28,3 +28,4 @@ export * from './brief-duration.ts';
 export * from './brief-session.ts';
 export * from './project-icon.ts';
 export * from './video-analysis.ts';
+export * from './video-analysis-body.ts';

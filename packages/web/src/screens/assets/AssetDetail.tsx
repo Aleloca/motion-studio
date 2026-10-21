@@ -1,22 +1,25 @@
-import type { AssetEntry } from '@motion-studio/shared';
+import type { AssetEntry, VideoAnalysisView } from '@motion-studio/shared';
 import { useContext, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { api } from '../../api.ts';
 import { formatNumber, formatWhen, useLocale, useT } from '../../i18n.tsx';
 import { enter } from '../../motion/index.ts';
 import { externalLinkRel } from '../../desktop.ts';
-import { AudioPlayer, Button, Icon, Input, Textarea, Typing, VideoPlayer, clockText, cx, toast } from '../../ui/index.ts';
+import { AudioPlayer, Button, Icon, Input, Textarea, Typing, VideoPlayer, clockText, cx, toast, type VideoPlayerHandle } from '../../ui/index.ts';
 import { ShellContext } from '../../shell/ShellContext.tsx';
 import { message } from '../common.tsx';
 import { MAX_TAG, MAX_TAGS, baseName, formatBytes, mergeTags, splitTags } from './model.ts';
+import { AnalysisSection } from './AnalysisSection.tsx';
 import { Thumb } from './Thumb.tsx';
 
 export interface DetailProps {
   slug: string; asset: AssetEntry; describing: boolean; busy: boolean;
   onClose(): void; onSaved(entry: AssetEntry): void; onRenamed(from: string, entry: AssetEntry): void; onDescribe(): void; onUse(): void; onDelete(): void;
+  /** A video's analysis (spec §9), when the library knows it. */
+  analysis?: VideoAnalysisView;
 }
 
 /** The detail panel (prototype AssetDetail, point 19): enters from +16 px; description and tag chips save themselves. */
-export function AssetDetail({ slug, asset: x, describing, busy, onClose, onSaved, onRenamed, onDescribe, onUse, onDelete }: DetailProps) {
+export function AssetDetail({ slug, asset: x, describing, busy, onClose, onSaved, onRenamed, onDescribe, onUse, onDelete, analysis }: DetailProps) {
   const t = useT();
   const locale = useLocale();
   const a = t.web.library.assets;
@@ -32,6 +35,11 @@ export function AssetDetail({ slug, asset: x, describing, busy, onClose, onSaved
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameBusy, setRenameBusy] = useState(false);
   const [peaks, setPeaks] = useState<number[] | null>(null);
+  const player = useRef<VideoPlayerHandle>(null);
+  // The view an action answered with shows until the next live view of the analysis replaces it.
+  const [actedView, setActedView] = useState<VideoAnalysisView | null>(null);
+  useEffect(() => { setActedView(null); }, [analysis]);
+  const analysisView = actedView ?? analysis;
   // The waveform of an audio file, from the core (cached there); a failure leaves the plain bar.
   useEffect(() => {
     setPeaks(null);
@@ -128,10 +136,13 @@ export function AssetDetail({ slug, asset: x, describing, busy, onClose, onSaved
           </form>
         ) : null}
         <div className={cx('ms-adetail-media', (x.kind === 'video' || x.kind === 'audio') && 'ms-adetail-player')}>
-          {x.kind === 'video' ? <VideoPlayer src={url} name={baseName(x.file)} durationSec={x.durationSec} />
+          {x.kind === 'video' ? <VideoPlayer src={url} name={baseName(x.file)} durationSec={x.durationSec} handle={player} />
             : x.kind === 'audio' ? <AudioPlayer src={url} name={baseName(x.file)} peaks={peaks} durationSec={x.durationSec} />
               : <Thumb slug={slug} asset={x} big />}
         </div>
+        {x.kind === 'video' && analysisView ? (
+          <AnalysisSection slug={slug} view={analysisView} onSeek={(sec) => player.current?.seek(sec)} onView={setActedView} />
+        ) : null}
         <div className="ms-adetail-field">
           <div className="ms-lib-row">
             <span className="ms-lib-label">{d.description}</span>
