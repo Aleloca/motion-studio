@@ -92,8 +92,107 @@ export type VideoAnalysisMoment = z.infer<typeof usableMomentSchema>;
  */
 export type VideoAnalysisState = 'none' | 'queued' | 'running' | 'waiting' | 'ready' | 'stale' | 'error';
 
-/** What a held analysis asks the user (Phase 2 adds `transcription`). `tokens`: frames × TOKENS_PER_FRAME. */
-export type VideoAnalysisPending = { kind: 'long'; frames: number; reducedFrames: number; tokens: number; reducedTokens: number };
+/**
+ * What a held analysis asks the user. `long`: a video over 20 minutes (`tokens`: frames × TOKENS_PER_FRAME). `transcription`:
+ * the video has speech and no transcription method is set or available (spec §6): the dialog offers Whisper (its model's
+ * size; `canInstall` only with a bundled binary), the providers with a saved key (estimated cost in USD) and "without".
+ */
+export type VideoAnalysisPending =
+  | { kind: 'long'; frames: number; reducedFrames: number; tokens: number; reducedTokens: number }
+  | TranscriptionPending;
+export interface TranscriptionPending {
+  kind: 'transcription';
+  audioSec: number;
+  whisper: {
+    /** An engine was found (settings, bundled or detected). */
+    available: boolean;
+    /** The model it needs is present (always true for a Python engine: it keeps its own models). */
+    installed: boolean;
+    /** The model of the setting: what "Installa Whisper" downloads. */
+    model: TranscriptionModelId;
+    sizeBytes: number;
+    /** A bundled whisper-cli exists: the model alone makes Whisper work. */
+    canInstall: boolean;
+  };
+  openai: { costUsd: number } | null;
+  elevenlabs: { costUsd: number } | null;
+  /** The last attempt of this dialog failed (a model download): shown above the choices. */
+  error?: string;
+}
+
+// ---------- transcription (Phase 2, spec §6–§7) ----------
+
+export const whisperEngineSchema = z.enum(['whisper.cpp', 'openai-whisper', 'faster-whisper']);
+export type WhisperEngine = z.infer<typeof whisperEngineSchema>;
+export const transcriptionModelIdSchema = z.enum(['small', 'large-v3-turbo']);
+export type TranscriptionModelId = z.infer<typeof transcriptionModelIdSchema>;
+export const transcriptionMethodSchema = z.enum(['ask', 'whisper', 'openai', 'elevenlabs', 'never']);
+export type TranscriptionMethod = z.infer<typeof transcriptionMethodSchema>;
+/** A method that transcribes (what a choice or a saved method runs). */
+export type TranscribeMethod = 'whisper' | 'openai' | 'elevenlabs';
+
+/** An absolute path (POSIX or Windows), at most 4096 characters. */
+const absolutePath = z.string().min(2).max(4096).refine((p) => /^(\/|[A-Za-z]:[\\/])/.test(p) && !p.includes('\0'), { message: 'must be an absolute path' });
+
+/** "Usa un Whisper già installato": the program, its engine, and (whisper.cpp) a ggml model file the user already has. */
+export const customWhisperSchema = z.object({ program: absolutePath, engine: whisperEngineSchema, modelFile: absolutePath.optional() }).strict();
+export type CustomWhisper = z.infer<typeof customWhisperSchema>;
+
+/** Settings → Trascrizione video (app-wide, in `config.json`; decision 1503). Older files parse with the defaults. */
+export const transcriptionSettingsSchema = z.object({
+  method: transcriptionMethodSchema.default('ask'),
+  model: transcriptionModelIdSchema.default('small'),
+  custom: customWhisperSchema.nullable().default(null),
+}).strict();
+export type TranscriptionSettings = z.infer<typeof transcriptionSettingsSchema>;
+/** A change of the settings: any of the keys (`custom: null` removes the program). */
+export const transcriptionSettingsPatchSchema = z.object({
+  method: transcriptionMethodSchema.optional(),
+  model: transcriptionModelIdSchema.optional(),
+  custom: customWhisperSchema.nullable().optional(),
+}).strict();
+export type TranscriptionSettingsPatch = z.infer<typeof transcriptionSettingsPatchSchema>;
+
+/**
+ * The answer to the transcription dialog. `sizeBytes`: the model size the user saw (the consent for its download: it must
+ * equal the manifest's); `remember` writes the method into the settings (`none` → `never`).
+ */
+export const transcriptionChoiceSchema = z.object({
+  file: z.string().min(1).max(1024),
+  choice: z.enum(['whisper', 'openai', 'elevenlabs', 'none']),
+  remember: z.boolean(),
+  sizeBytes: z.number().int().positive().optional(),
+}).strict();
+export type TranscriptionChoice = z.infer<typeof transcriptionChoiceSchema>;
+
+/** A Whisper that works: found through the settings, bundled with the app, or detected on the PATH / in Homebrew. */
+export interface WhisperFound {
+  engine: WhisperEngine;
+  program: string;
+  version: string | null;
+  /** The model it runs: a file for whisper.cpp, a name for the Python engines. */
+  model: string;
+  /** Metal/GPU in use (whisper.cpp's own report); null: unknown (the Python engines). */
+  gpu: boolean | null;
+  source: 'settings' | 'bundled' | 'detected';
+}
+
+/** `GET /api/transcription`: what Settings → Trascrizione video shows. */
+export interface TranscriptionStatus {
+  settings: TranscriptionSettings;
+  models: Array<{ id: TranscriptionModelId; sizeBytes: number; installed: boolean; bytesOnDisk: number }>;
+  /** The Whisper the analyses would use now (lookup order §7), or null. */
+  whisper: WhisperFound | null;
+  /** Every Whisper found on the PATH and in the Homebrew folders (not test-run). */
+  detected: WhisperFound[];
+  /** A bundled whisper-cli exists (the dialog can offer "Installa Whisper"). */
+  bundled: boolean;
+  download: { state: 'idle' | 'running' | 'done' | 'failed'; model: TranscriptionModelId | null; bytes: number; total: number; error?: string };
+  /** Providers with a saved key. */
+  providers: { openai: boolean; elevenlabs: boolean };
+  /** List prices used for the estimates (USD per minute). */
+  prices: { openai: number; elevenlabs: number };
+}
 
 export interface VideoAnalysisView {
   /** The video, as a project path (`assets/…`). */

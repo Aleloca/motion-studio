@@ -1,11 +1,14 @@
 import { z } from 'zod';
 import { LOCALES } from './i18n/index.ts';
 import { relativeFileSchema } from './library.ts';
+import { transcriptionSettingsSchema } from './video-analysis.ts';
 
 export const appConfigSchema = z.object({
   schemaVersion: z.literal(1),
   workspacePath: z.string().min(1).nullable().default(null),
   language: z.enum(['system', ...LOCALES]).default('system'),
+  /** Settings → Trascrizione video (Phase 2 of the video analysis); absent in older files: the defaults. */
+  transcription: transcriptionSettingsSchema.optional(),
 });
 export type AppConfig = z.infer<typeof appConfigSchema>;
 

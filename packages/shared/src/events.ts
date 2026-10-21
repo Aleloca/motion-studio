@@ -121,10 +121,11 @@ export interface ExportJobInfo {
  */
 /**
  * Video analysis (decisions 1481, 1487): `video-long`, a video over 20 minutes waits for the user's confirmation;
- * `video-queue`, another analysis of the same project runs (one at a time per project).
+ * `video-queue`, another analysis of the same project runs (one at a time per project); `transcription-choice`, the video
+ * has speech and waits for the user's transcription choice (spec §6).
  */
-export type JobWaitReason = 'variant-directions' | 'variant-confirm' | 'variant-slot' | 'video-long' | 'video-queue';
-export const JOB_WAIT_REASONS: readonly JobWaitReason[] = ['variant-directions', 'variant-confirm', 'variant-slot', 'video-long', 'video-queue'];
+export type JobWaitReason = 'variant-directions' | 'variant-confirm' | 'variant-slot' | 'video-long' | 'video-queue' | 'transcription-choice';
+export const JOB_WAIT_REASONS: readonly JobWaitReason[] = ['variant-directions', 'variant-confirm', 'variant-slot', 'video-long', 'video-queue', 'transcription-choice'];
 
 /**
  * Progress of a render job (Task 5), per format: `media` while the video sources are normalised ("Preparing media…",
