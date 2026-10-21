@@ -828,6 +828,8 @@ describe('a video analysis launch (decision 1493)', () => {
     const scope = { root: dirname(projectDir), projectSlug: 'acme', projectDir, file: 'assets/clip.mp4', sha256: 'ab'.repeat(32), pass: 'whole' as const, from: 0, to: 8, frames: ['f-00000000.jpg'], write: () => {} };
     const run = await launcher.start({ kind: 'video-analysis', jobId: 'v1', projectSlug: 'acme', projectDir, readDirs: [frames], videoAnalysisScope: scope, request: { prompt: 'x' }, onEvent: () => {} });
     const r = runner.runs[0]!;
+    // Decision 1541: the frames' folder is its working folder, never the project.
+    expect(r.req.cwd).toBe(frames);
     expect(r.req.addDirs).toEqual([frames]);
     expect(r.req.allowedTools).toEqual([`Read(/${escapeGlob(frames)}/**)`, 'mcp__studio__report_progress', 'mcp__studio__write_video_analysis']);
     const cfg = JSON.parse(readFileSync(r.req.mcpConfigPath!, 'utf8'));

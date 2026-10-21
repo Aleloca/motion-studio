@@ -385,8 +385,12 @@ export class AgentLauncher {
         await warn(detail);
         throw new ProjectQuarantinedError(detail, between);
       }
+      // Decision 1541: a video analysis runs in its frames' folder, so the project is not its working folder (whose reads
+      // Claude Code allows without asking): any read outside the frames reaches the permission prompt, which refuses it.
+      const framesCwd = i.kind === 'video-analysis' ? (i.readDirs ?? []).find((d) => d.startsWith(`${i.projectDir}/`)) : undefined;
+      if (i.kind === 'video-analysis' && !framesCwd) throw new Error('a video analysis needs its frames folder inside the project');
       const run = this.deps.runner.start({
-        cwd: i.projectDir, ...i.request,
+        cwd: framesCwd ?? i.projectDir, ...i.request,
         addDirs: policy.addDirs, allowedTools: policy.allowedTools, disallowedTools: policy.disallowedTools,
         ...(policy.settings ? { settings: policy.settings } : {}), ...mcp,
         env: { MCP_TOOL_TIMEOUT: '900000', ...policy.env }, unsetEnv: AGENT_UNSET_ENV,
