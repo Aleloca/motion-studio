@@ -106,6 +106,36 @@ describe('the held questions open by themselves (report 65)', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
+  it('the Settings link closes the dialog; it stays closed while in Settings and opens once more on leaving them (decision 1601)', async () => {
+    location.hash = '#/';
+    const missing: TranscriptionPending = { ...q, whisper: { ...q.whisper, available: false, canInstall: false, engine: null } };
+    const live = liveWith([{ project: 'acme', v: view('assets/a.mp4', 'j1', missing) }]);
+    render(host(live));
+    const d = await screen.findByRole('dialog', { name: 'Trascrivere il parlato di a.mp4?' });
+    await userEvent.click(within(d).getByRole('link', { name: /Indicalo in Impostazioni/ }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(location.hash).toBe('#/settings/transcription');
+    await new Promise((r) => setTimeout(r, 700));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    act(() => { location.hash = '#/p/acme'; window.dispatchEvent(new HashChangeEvent('hashchange')); });
+    const again = await screen.findByRole('dialog', { name: 'Trascrivere il parlato di a.mp4?' });
+    // Closed with Chiudi this time: it does not come back.
+    await userEvent.click(within(again).getByRole('button', { name: 'Chiudi' }));
+    act(() => { location.hash = '#/settings/transcription'; window.dispatchEvent(new HashChangeEvent('hashchange')); });
+    act(() => { location.hash = '#/'; window.dispatchEvent(new HashChangeEvent('hashchange')); });
+    await new Promise((r) => setTimeout(r, 700));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('a question claimed by a screen while its dialog is open: the dialog closes, the card takes over (decision 1604)', async () => {
+    function Claim({ on }: { on: boolean }) { const qs = useAnalysisQuestions(); useEffect_(() => (on ? qs.claim('acme', ['assets/a.mp4']) : undefined), [qs, on]); return null; }
+    const live = liveWith([{ project: 'acme', v: view('assets/a.mp4', 'j1') }]);
+    const { rerender } = render(host(live, <Claim on={false} />));
+    await screen.findByRole('dialog', { name: 'Trascrivere il parlato di a.mp4?' });
+    rerender(host(live, <Claim on />));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
   it('a listing fetched for a held job whose view never came live (a reload) opens its question too', async () => {
     server = { acme: { 'assets/a.mp4': view('assets/a.mp4', 'j1') } };
     const live = eventsReducer(initialEventsState, { type: 'job', job: job('j1', 'acme', 'transcription-choice') } as never);

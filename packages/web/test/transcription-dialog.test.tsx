@@ -99,6 +99,19 @@ describe('the transcription choices (Task 20, spec §6; report 64: Whisper first
     expect(api.transcriptionChoice).toHaveBeenCalledWith('acme', { file: 'assets/demo.mp4', choice: 'whisper', remember: false, sizeBytes: 487_601_967 });
   });
 
+  it('the copy status clears when the label reverts, so a second copy is announced again (decision 1605)', async () => {
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: vi.fn(async () => {}) }, configurable: true });
+    const q = ask();
+    it_(<TranscriptionChoices slug="acme" view={waiting(q)} question={q} />);
+    const copy = screen.getByRole('button', { name: 'Copia brew install whisper-cpp' });
+    await userEvent.click(copy);
+    expect(screen.getByText('Comando copiato.')).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText('Comando copiato.')).toBeNull(), { timeout: 3000 });
+    expect(copy.textContent).toBe('Copia');
+    await userEvent.click(copy);
+    expect(screen.getByText('Comando copiato.')).toBeTruthy();
+  });
+
   it('an OpenAI key: its line with the cost and the audio leaving the Mac; a click posts the choice without remember', async () => {
     const q = ask({ openai: { costUsd: 0.018 } });
     const onDone = vi.fn();

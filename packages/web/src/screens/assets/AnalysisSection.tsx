@@ -107,7 +107,8 @@ export function AnalysisSection({ slug, view, waitReason, onSeek, onView }: Anal
         </div>
       ) : hasBody ? <AnalysisBodyView body={view.body!} header={view.header} onSeek={onSeek} /> : null}
       {/* Closed with Chiudi: the app's own dialog never opens this question by itself again (report 65). */}
-      <AnalysisQuestionDialog slug={slug} view={view} open={asking} onClose={() => { questions.dismiss(slug, view); setAsking(false); }} />
+      <AnalysisQuestionDialog slug={slug} view={view} open={asking} onClose={() => { questions.dismiss(slug, view); setAsking(false); }}
+        onSettings={() => { questions.park(slug, view); setAsking(false); }} />
     </section>
   );
 }

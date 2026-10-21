@@ -28,6 +28,8 @@ export interface TranscriptionChoicesProps {
   headingId?: string;
   /** Beside "Continua senza trascrizione" at the bottom (the dialog's Chiudi). */
   footer?: ReactNode;
+  /** The Settings link was followed (a dialog closes, decision 1601). */
+  onSettings?(): void;
 }
 
 /** The commands that get a Whisper the app can run (report 64): whisper.cpp from Homebrew, or the Python one. */
@@ -45,7 +47,7 @@ function selectText(el: HTMLElement | null) {
 }
 
 /** A command as a code chip with its Copia button (the Pairing page's pattern: a failed copy selects it and says how). */
-function CommandChip({ command, onCopied }: { command: string; onCopied(state: 'copied' | 'manual'): void }) {
+function CommandChip({ command, onCopied }: { command: string; onCopied(state: 'idle' | 'copied' | 'manual'): void }) {
   const tr = useT().transcription;
   const code = useRef<HTMLElement>(null);
   const [copied, setCopied] = useState(false);
@@ -58,7 +60,8 @@ function CommandChip({ command, onCopied }: { command: string; onCopied(state: '
       await navigator.clipboard.writeText(command);
       setCopied(true);
       onCopied('copied');
-      timer.current = setTimeout(() => setCopied(false), COPIED_MS);
+      // The status clears with the label, so a second copy is announced again (decision 1605).
+      timer.current = setTimeout(() => { setCopied(false); onCopied('idle'); }, COPIED_MS);
     } catch {
       selectText(code.current);
       onCopied('manual');
@@ -85,7 +88,7 @@ function CommandChip({ command, onCopied }: { command: string; onCopied(state: '
  * "Ricorda la scelta" and "Continua senza trascrizione" (beside the dialog's Chiudi, `footer`). Installing shows the
  * download's progress (read from the transcription status) until the analysis goes on or the download fails.
  */
-export function TranscriptionChoices({ slug, view, question, onDone, headingId, footer }: TranscriptionChoicesProps) {
+export function TranscriptionChoices({ slug, view, question, onDone, headingId, footer, onSettings }: TranscriptionChoicesProps) {
   const t = useT();
   const tr = t.transcription;
   const locale = useLocale();
@@ -198,7 +201,7 @@ export function TranscriptionChoices({ slug, view, question, onDone, headingId, 
                   <Button size="sm" variant="outline" disabled={rechecking} aria-busy={rechecking || undefined} onClick={() => void recheck()}>
                     <Icon name="refresh" size={13} />{rechecking ? tr.rechecking : tr.recheck}
                   </Button>
-                  <a className="ms-tsteps-link" href={href.settings('transcription')}>{tr.pickInstalled}</a>
+                  <a className="ms-tsteps-link" href={href.settings('transcription')} onClick={() => onSettings?.()}>{tr.pickInstalled}</a>
                 </div>
                 {recheckNote ? <p className="ms-tsteps-note" role="status">{recheckNote}</p> : null}
               </div>

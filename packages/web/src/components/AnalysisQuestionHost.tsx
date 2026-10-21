@@ -21,8 +21,11 @@ export interface AnalysisQuestions {
   claim(slug: string, files: readonly string[]): () => void;
   /** A question closed with Chiudi in a screen's own dialog: it never opens by itself again. */
   dismiss(slug: string, view: VideoAnalysisView): void;
+  /** A question whose dialog the Settings link closed: it opens once more when the user leaves Settings (decision 1601). */
+  park(slug: string, view: VideoAnalysisView): void;
 }
-const NONE: AnalysisQuestions = { claim: () => () => {}, dismiss: () => {} };
+const NONE: AnalysisQuestions = { claim: () => () => {}, dismiss: () => {}, park: () => {} };
+const inSettings = () => location.hash.startsWith('#/settings');
 const Ctx = createContext<AnalysisQuestions>(NONE);
 export const useAnalysisQuestions = () => useContext(Ctx);
 
@@ -72,6 +75,15 @@ export function AnalysisQuestionHost({ live, enabled = true, children }: { live:
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
   const [claims, setClaims] = useState<ReadonlyArray<{ id: number; slug: string; files: readonly string[] }>>([]);
   const claimSeq = useRef(0);
+  // Decision 1601: the questions left for Settings (their link). A page change that is not Settings releases them: each opens
+  // once more, then the usual rules apply.
+  const [parked, setParked] = useState<ReadonlySet<string>>(() => new Set());
+  const parkKey = useCallback((key: string) => setParked((p) => new Set([...p, key])), []);
+  useEffect(() => {
+    const on = () => { if (!inSettings()) setParked((p) => (p.size === 0 ? p : new Set())); };
+    addEventListener('hashchange', on);
+    return () => removeEventListener('hashchange', on);
+  }, []);
   const api = useMemo<AnalysisQuestions>(() => ({
     claim: (slug, files) => {
       const id = ++claimSeq.current;
@@ -79,13 +91,17 @@ export function AnalysisQuestionHost({ live, enabled = true, children }: { live:
       return () => setClaims((c) => c.filter((x) => x.id !== id));
     },
     dismiss: (slug, view) => { if (view.pending) setDismissed((d) => new Set([...d, questionKey(slug, view)])); },
-  }), []);
+    park: (slug, view) => { if (view.pending) parkKey(questionKey(slug, view)); },
+  }), [parkKey]);
 
   const questions = useMemo(() => projects.flatMap((slug) => Object.values(views[slug] ?? {})
     .filter((v) => v.pending !== null)
     .map((v) => ({ slug, view: v, key: questionKey(slug, v) }))), [projects, views]);
   const claimed = (slug: string, file: string) => claims.some((c) => c.slug === slug && c.files.includes(file));
-  const next = questions.find((q) => !dismissed.has(q.key) && !claimed(q.slug, q.view.file)) ?? null;
+  const next = questions.find((q) => !dismissed.has(q.key) && !parked.has(q.key) && !claimed(q.slug, q.view.file)) ?? null;
+  // Read when a waiting question tries to open (decision 1604): a screen may claim it between the render and the try.
+  const claimedNow = useRef(claimed);
+  claimedNow.current = claimed;
 
   const [current, setCurrent] = useState<{ key: string; slug: string; file: string } | null>(null);
   // The last key pressed in the page: a text field with the focus and a recent key means the user is typing.
@@ -100,6 +116,7 @@ export function AnalysisQuestionHost({ live, enabled = true, children }: { live:
     if (current !== null || next === null) return;
     const target = { key: next.key, slug: next.slug, file: next.view.file };
     const tryOpen = () => {
+      if (claimedNow.current(target.slug, target.file)) return true;
       if (anyLayerOpen() || (inTextField() && Date.now() - lastKey.current < TYPING_IDLE_MS)) return false;
       setCurrent(target);
       return true;
@@ -112,6 +129,9 @@ export function AnalysisQuestionHost({ live, enabled = true, children }: { live:
   // still asks, so the dialog stays with its progress.
   const stillAsking = current !== null && questions.some((q) => q.key === current.key);
   useEffect(() => { if (current !== null && !stillAsking) setCurrent(null); }, [current, stillAsking]);
+  // A screen took the question over (the brief chat's card, decision 1604): the dialog closes, the question is not dismissed.
+  const takenOver = current !== null && claimed(current.slug, current.file);
+  useEffect(() => { if (takenOver) setCurrent(null); }, [takenOver]);
   // The last question stays shown while its dialog closes; each question its own dialog (keyed).
   const [shown, setShown] = useState<{ key: string; slug: string; file: string } | null>(null);
   useEffect(() => { if (current !== null) setShown(current); }, [current]);
@@ -126,7 +146,8 @@ export function AnalysisQuestionHost({ live, enabled = true, children }: { live:
       {projects.map((slug) => <HeldProject key={slug} slug={slug} live={live} onViews={onViews} />)}
       {shown ? (
         <AnalysisQuestionDialog key={shown.key} slug={shown.slug} view={views[shown.slug]?.[shown.file] ?? null}
-          open={current?.key === shown.key} onClose={() => close(shown.key)} />
+          open={current?.key === shown.key} onClose={() => close(shown.key)}
+          onSettings={() => { parkKey(shown.key); setCurrent((c) => (c?.key === shown.key ? null : c)); }} />
       ) : null}
     </Ctx.Provider>
   );
