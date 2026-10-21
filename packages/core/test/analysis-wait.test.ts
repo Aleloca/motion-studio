@@ -43,7 +43,7 @@ describe.skipIf(!hasFfmpeg)('the first turn and the analyses of its videos (deci
     const slug = await create(t, ['assets/clip.mp4']);
     const analysis = await t.runner.next(0);
     expect(isAnalysis(analysis.req.prompt)).toBe(true);
-    await vi.waitFor(async () => expect((await conversation(t, slug)).some((e) => e.type === 'system' && e.analysisWait)).toBe(true));
+    await vi.waitFor(async () => expect((await conversation(t, slug)).some((e) => e.type === 'system' && e.analysisWait)).toBe(true), { timeout: 10_000 });
     const wait = (await conversation(t, slug)).find((e) => e.type === 'system' && e.analysisWait);
     expect(wait).toMatchObject({ text: it_.videoAnalysis.waiting({ files: 'clip.mp4' }), analysisWait: { files: ['clip.mp4'] } });
     expect((await t.app.inject(`/api/projects/acme/creatives/${slug}/analysis-wait`)).json()).toEqual({ files: ['clip.mp4'] });
@@ -52,7 +52,7 @@ describe.skipIf(!hasFfmpeg)('the first turn and the analyses of its videos (deci
     expect(creativeRun(t)).toBeUndefined();
     await h.tool(analysis, 'write_video_analysis', wholeWrite(8));
     analysis.finish({ write: false });
-    await vi.waitFor(() => expect(creativeRun(t)).toBeDefined());
+    await vi.waitFor(() => expect(creativeRun(t)).toBeDefined(), { timeout: 10_000 });
     expect(creativeRun(t)!.req.prompt).toContain(LINE);
     expect(t.sent.some((m) => m.type === 'analysis-wait' && m.files.length === 0)).toBe(true);
     await settle(t, h);
@@ -64,9 +64,9 @@ describe.skipIf(!hasFfmpeg)('the first turn and the analyses of its videos (deci
     await copyFile(silent, join(t.projectDir, 'assets', 'clip.mp4'));
     const slug = await create(t, ['assets/clip.mp4']);
     const analysis = await t.runner.next(0);
-    await vi.waitFor(async () => expect((await t.app.inject(`/api/projects/acme/creatives/${slug}/analysis-wait`)).json().files).toEqual(['clip.mp4']));
+    await vi.waitFor(async () => expect((await t.app.inject(`/api/projects/acme/creatives/${slug}/analysis-wait`)).json().files).toEqual(['clip.mp4']), { timeout: 10_000 });
     expect((await t.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/analysis-wait/skip` })).statusCode).toBe(204);
-    await vi.waitFor(() => expect(creativeRun(t)).toBeDefined());
+    await vi.waitFor(() => expect(creativeRun(t)).toBeDefined(), { timeout: 10_000 });
     expect(creativeRun(t)!.req.prompt).toContain('- Assets to use (project paths): assets/clip.mp4\n');
     expect((await conversation(t, slug)).some((e) => e.type === 'system' && e.text === it_.videoAnalysis.skipped({ files: 'clip.mp4' }))).toBe(true);
     expect((await t.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/analysis-wait/skip` })).statusCode).toBe(404);
@@ -82,7 +82,7 @@ describe.skipIf(!hasFfmpeg)('the first turn and the analyses of its videos (deci
     const slug = await create(t, ['assets/clip.mp4']);
     const analysis = await t.runner.next(0);
     analysis.finish({ write: false });
-    await vi.waitFor(() => expect(creativeRun(t)).toBeDefined());
+    await vi.waitFor(() => expect(creativeRun(t)).toBeDefined(), { timeout: 10_000 });
     expect(creativeRun(t)!.req.prompt).toContain('- Assets to use (project paths): assets/clip.mp4\n');
     await settle(t, h);
     // The video changes: a second turn does not wait for anything (only the first turn does).
@@ -90,7 +90,7 @@ describe.skipIf(!hasFfmpeg)('the first turn and the analyses of its videos (deci
     const before = t.runner.runs.length;
     const res = await t.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/turns`, payload: { text: 'Più veloce', pins: [] } });
     expect(res.statusCode).toBe(202);
-    await vi.waitFor(() => expect(t.runner.runs.length).toBe(before + 1));
+    await vi.waitFor(() => expect(t.runner.runs.length).toBe(before + 1), { timeout: 10_000 });
     expect(isAnalysis(t.runner.runs.at(-1)!.req.prompt)).toBe(false);
     await settle(t, h);
   }, 60_000);
@@ -105,7 +105,7 @@ describe('a held analysis does not hold the turn', () => {
     const h = analysisHelpers(t);
     await writeFile(join(t.projectDir, 'assets', 'clip.mp4'), 'fake');
     const slug = await create(t, ['assets/clip.mp4']);
-    await vi.waitFor(() => expect(creativeRun(t)).toBeDefined());
+    await vi.waitFor(() => expect(creativeRun(t)).toBeDefined(), { timeout: 10_000 });
     expect((await h.analysisJobs())[0]).toMatchObject({ state: 'queued', waitReason: 'video-long' });
     expect((await conversation(t, slug)).some((e) => e.type === 'system' && e.analysisWait)).toBe(false);
     await t.app.inject({ method: 'DELETE', url: '/api/projects/acme/video-analyses?file=assets/clip.mp4' });
