@@ -1,4 +1,4 @@
-import type { CustomFormatInput, LocaleTag, Localization, LocalizationIssue, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StagedSvgEdit, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, ExportFps, ExportQuality, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, AgentCapabilities, ApprovalDecision, ApprovalRequest, QuestionAnswers, LiveMessageOutcome, RedirectOutcome, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, CreativeRemovalInfo, RecentCreative, DoctorCheck, UpdatesState, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIcon, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings, StorePack, VariantId, VariantPick, BriefContext, BriefField, BriefForm, BriefFormSave, BriefFormSaved, BriefMessageInput, BriefSendResult, BriefSessionRef, BriefSessionView, TranscriptionChoice, TranscriptionModelId, TranscriptionSettingsPatch, TranscriptionStatus, VideoAnalysisView, WhisperEngine, WhisperFound } from '@motion-studio/shared';
+import type { CustomFormatInput, LocaleTag, Localization, LocalizationIssue, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StagedSvgEdit, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, ExportFps, ExportQuality, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, AgentCapabilities, ApprovalDecision, ApprovalRequest, QuestionAnswers, LiveMessageOutcome, RedirectOutcome, ProposalActivity, LanguageSetting, Locale, AssetEntry, CreativeReferenceEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, CreativeRemovalInfo, RecentCreative, DoctorCheck, UpdatesState, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIcon, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings, StorePack, VariantId, VariantPick, BriefContext, BriefField, BriefForm, BriefFormSave, BriefFormSaved, BriefMessageInput, BriefSendResult, BriefSessionRef, BriefSessionView, TranscriptionChoice, TranscriptionModelId, TranscriptionSettingsPatch, TranscriptionStatus, VideoAnalysisView, WhisperEngine, WhisperFound } from '@motion-studio/shared';
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
 
@@ -194,9 +194,16 @@ export const api = {
   applyProposal: (slug: string, id: string, acceptedIds: string[], applyGuidelines: boolean) =>
     request<{ kit: BrandKit; proposal: BrandProposal }>('POST', `${p(slug)}/brand/proposals/${encodeURIComponent(id)}/apply`, { acceptedIds, applyGuidelines }),
   discardProposal: (slug: string, id: string) => request<BrandProposal>('POST', `${p(slug)}/brand/proposals/${encodeURIComponent(id)}/discard`),
-  listAssets: (slug: string) => request<{ assets: AssetEntry[]; error: string | null; unregistered: string[] }>('GET', `${p(slug)}/assets`),
-  /** The route answers the new entries (201 `{ assets }` for the library; references answer their own list). */
-  uploadFiles: (slug: string, kind: 'assets' | 'references', files: File[]) => upload<{ assets?: AssetEntry[] }>(`${p(slug)}/${kind}`, files),
+  /** Report 62: `assets` is the library; the creatives' own references (files added in a brief) come apart. */
+  listAssets: (slug: string) => request<{ assets: AssetEntry[]; error: string | null; unregistered: string[]; creativeReferences?: CreativeReferenceEntry[] }>('GET', `${p(slug)}/assets`),
+  /**
+   * The route answers the new entries (201 `{ assets }` for the library; references answer their own list). `reference`
+   * (report 62): files added in a brief, only for its creative until saved in Assets.
+   */
+  uploadFiles: (slug: string, kind: 'assets' | 'references', files: File[], opts: { reference?: boolean } = {}) =>
+    upload<{ assets?: AssetEntry[] }>(`${p(slug)}/${kind}${kind === 'assets' && opts.reference ? '?scope=reference' : ''}`, files),
+  /** Report 62: false saves a creative's reference in Assets; true makes it only for its brief again (while no creative uses it). */
+  setAssetReference: (slug: string, file: string, reference: boolean) => request<AssetEntry>('PATCH', `${p(slug)}/assets/item/${enc(file)}`, { reference }),
   registerAssets: (slug: string, files: string[]) => request<{ assets: AssetEntry[] }>('POST', `${p(slug)}/assets/register`, { files }),
   describeAssets: (slug: string, files?: string[]) => request<JobSummary>('POST', `${p(slug)}/assets/describe`, { files }),
   updateAsset: (slug: string, file: string, patch: { name?: string; description?: string; tags?: string[] }) => request<AssetEntry>('PATCH', `${p(slug)}/assets/item/${enc(file)}`, patch),

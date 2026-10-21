@@ -1,5 +1,5 @@
-import { canFollow, channelGroup, CUSTOM_CHANNEL, isCustomPreset, storePackFormats, channelName, statedDurationSec, formatLabel, formatName, instanceIdOf, instanceIndex, instanceLabel, instancePreset, MAX_INSTANCES, presetOf, type BriefField, type BriefForm, type StorePack, type AssetEntry, type FollowCheck, type IdentityBrief, type Locale, type BrandKit, type BriefServices, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
-import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { canFollow, channelGroup, isCreativeReference, CUSTOM_CHANNEL, isCustomPreset, storePackFormats, channelName, statedDurationSec, formatLabel, formatName, instanceIdOf, instanceIndex, instanceLabel, instancePreset, MAX_INSTANCES, presetOf, type BriefField, type BriefForm, type StorePack, type AssetEntry, type FollowCheck, type IdentityBrief, type Locale, type BrandKit, type BriefServices, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent } from 'react';
 import { api, ApiError } from '../api.ts';
 import { CodebaseList } from '../components/CodebaseList.tsx';
 import { ServicesSelector, useConfiguredProviders, useKeyChecks } from '../components/ServicesSelector.tsx';
@@ -13,7 +13,7 @@ import { setFrameOrigin } from '../shell/intents.ts';
 import { useNewCreativeAssetsIntent } from '../shell/intents.ts';
 import { go, ShellContext } from '../shell/ShellContext.tsx';
 import { isMac } from '../platform.ts';
-import { Button, ChannelMark, Chip, Empty, Icon, Input, Pill, Segmented, cx, initials, toast } from '../ui/index.ts';
+import { Button, ChannelMark, Chip, Empty, Icon, Input, Pill, Segmented, Spinner, cx, initials, toast } from '../ui/index.ts';
 import { channelOf } from './creativeState.ts';
 import './newcreative.css';
 import { message as errText } from './common.tsx';
@@ -31,6 +31,7 @@ import { AnalysisQuestionDialog } from '../components/TranscriptionDialog.tsx';
 import { useVideoAnalyses } from '../useVideoAnalyses.ts';
 import { ResumeBriefDialog } from './new-creative/ResumeBriefDialog.tsx';
 import { AssetFace, LibraryPicker } from './new-creative/LibraryPicker.tsx';
+import { AddAssetMenu, ReferenceToggle, useBriefReferences } from './new-creative/BriefAssets.tsx';
 import { CustomFormatDialog } from './new-creative/CustomFormatDialog.tsx';
 
 
@@ -190,6 +191,13 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   const [libraryNonce, setLibraryNonce] = useState(0);
   const [brand, setBrand] = useState<Loaded<BrandKit>>({ value: null, error: null });
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Report 62: "Aggiungi asset" offers the computer or the library; files can also be dropped on the section.
+  const [addOpen, setAddOpen] = useState(false);
+  const [dropping, setDropping] = useState(false);
+  const dropDepth = useRef(0);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const references = useBriefReferences(slug, { onLibraryChanged: () => setLibraryNonce((x) => x + 1) });
+  const setReferences = references.setRefs;
   const [packOpen, setPackOpen] = useState(false);
   // Report 59: the custom format dialog (`editing` null: a new format).
   const [custom, setCustom] = useState<{ open: boolean; editing: FormatPreset | null }>({ open: false, editing: null });
@@ -232,10 +240,10 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   useEffect(() => {
     let alive = true;
     Promise.resolve().then(() => api.listAssets(slug))
-      .then((r) => { if (alive) setLibrary({ value: r.assets, error: r.error }); })
+      .then((r) => { if (alive) { setLibrary({ value: r.assets, error: r.error }); setReferences(r.creativeReferences ?? []); } })
       .catch((e: unknown) => { if (alive) setLibrary({ value: null, error: errText(e) }); });
     return () => { alive = false; };
-  }, [slug, libraryNonce]);
+  }, [slug, libraryNonce, setReferences]);
   useEffect(() => {
     let alive = true;
     Promise.resolve().then(() => api.getBrand(slug))
@@ -362,6 +370,21 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   };
   const togglePicked = (path: string) => { edited('assets'); setPicked((p) => (p.includes(path) ? p.filter((x) => x !== path) : [...p, path])); };
   const openPicker = (el: HTMLElement) => { pickerAnchor.current = el; setPickerOpen(true); };
+  const openAdd = (el: HTMLElement) => { pickerAnchor.current = el; setAddOpen(true); };
+  /** Report 62: files from the computer join the brief as references of this creative only. */
+  const addFiles = async (files: File[]) => {
+    const { paths } = await references.upload(files);
+    if (paths.length === 0) return;
+    edited('assets');
+    setPicked((p) => [...p, ...paths.filter((x) => !p.includes(x))]);
+  };
+  const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+  const drop = {
+    onDragEnter: (e: DragEvent) => { if (!hasFiles(e)) return; e.preventDefault(); dropDepth.current += 1; setDropping(true); },
+    onDragOver: (e: DragEvent) => { if (hasFiles(e)) e.preventDefault(); },
+    onDragLeave: (e: DragEvent) => { if (!hasFiles(e)) return; dropDepth.current = Math.max(0, dropDepth.current - 1); if (dropDepth.current === 0) setDropping(false); },
+    onDrop: (e: DragEvent) => { if (!hasFiles(e)) return; e.preventDefault(); dropDepth.current = 0; setDropping(false); void addFiles(Array.from(e.dataTransfer.files)); },
+  };
 
   // One creative per Generate: set before the request and cleared only on failure, so a second press (while the
   // request runs, or while the page is leaving after success) never creates a duplicate and starts a second agent.
@@ -480,7 +503,13 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   const hasBrand = !!kit && (kit.colors.length > 0 || kit.fonts.length > 0 || kit.logos.length > 0 || kit.tone !== null);
   // The brand in one line, as on the board: heading font · main colour · tone.
   const brandLine = kit ? [kit.fonts[0]?.family, kit.colors[0]?.name, kit.tone?.text].filter(Boolean).join(' · ') : '';
-  const entryOf = (path: string) => library.value?.find((a) => assetPath(a.file) === path) ?? null;
+  const entryOf = (path: string) => references.entryOf(path, library.value);
+  // Report 62: a file of this brief from the computer (or a creative reference already in it) shows where it is kept.
+  const markOf = (path: string) => {
+    const entry = entryOf(path);
+    if (!entry || !(isCreativeReference(entry) || references.here.has(path))) return null;
+    return <ReferenceToggle path={path} reference={isCreativeReference(entry)} busy={references.busy.has(entry.file)} onToggle={() => void references.toggle(entry)} />;
+  };
 
   // ---- Decision 1422: the brief session and the form ----
   const snapshot = formSnapshot({ goal, message, length, customSec, picked, codebases, notes, selected, variantCount });
@@ -677,7 +706,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
       ) : null}
       <BriefSessionPanel slug={slug} projectName={projectName} brief={brief} live={live ?? shell?.live} snapshot={panelSnapshot} onCarried={settleSave} draft={draft}
         library={library} onRetryLibrary={() => { setLibrary({ value: null, error: null }); setLibraryNonce((x) => x + 1); }} onLibraryChanged={() => setLibraryNonce((x) => x + 1)}
-        hidden={mode !== 'agent'} panelRef={panelEl} className="ms-nc-panel" onOpenCreative={(c) => go(href.creative(slug, c))} analysisQuestions={asking} />
+        references={references} hidden={mode !== 'agent'} panelRef={panelEl} className="ms-nc-panel" onOpenCreative={(c) => go(href.creative(slug, c))} analysisQuestions={asking} />
       <AnalysisQuestionDialog key={shownAsk ?? ''} slug={slug} view={shownFile ? analyses.byFile[shownFile] ?? null : null} open={asked !== null && asked === shownAsk} onClose={() => closeAsk(shownAsk)} />
       <div className="ms-nc-form" ref={formArea}>
       <div className="ms-nc-body">
@@ -698,7 +727,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
                     {n.assetCount({ count: picked.length })}
                   </Chip>
                 ) : null}
-                <Button size="sm" variant="ghost" icon aria-label={n.addAssets} title={n.addAssets} onClick={(e) => openPicker(e.currentTarget)}><Icon name="plus" size={14} /></Button>
+                <Button size="sm" variant="ghost" icon aria-label={n.addAssets} title={n.addAssets} aria-haspopup="menu" onClick={(e) => openAdd(e.currentTarget)}><Icon name="plus" size={14} /></Button>
                 {mode === 'you' ? (
                   <button type="button" className="ms-chip ms-nc-cta" onClick={toAgent}><Icon name="sparkle" size={13} fill />{t.web.briefSession.cta}</button>
                 ) : null}
@@ -754,25 +783,49 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
             ) : null}
           </div>
 
-          <section className="ms-nc-sec" data-enter>
+          <section className={cx('ms-nc-sec ms-nc-assetsec', dropping && 'ms-dropping')} data-enter {...drop}>
             <div className="ms-nc-row">
               <span className="ms-nc-qrow"><span className="ms-nc-lbl" id="ms-nc-assets-lbl">{n.assetsToUse}</span>{agentMark('assets')}</span>
-              <Button size="sm" variant="ghost" className="ms-nc-browse" onClick={(e) => openPicker(e.currentTarget)}>{n.browse}</Button>
+              <span className="ms-nc-assetbtns">
+                <Button size="sm" variant="ghost" className="ms-nc-browse" onClick={() => fileInput.current?.click()}>{n.fromComputer}</Button>
+                <Button size="sm" variant="ghost" className="ms-nc-browse" onClick={(e) => openPicker(e.currentTarget)}>{n.browse}</Button>
+              </span>
             </div>
+            <input ref={fileInput} type="file" multiple hidden aria-label={n.uploadInput}
+              onChange={(e) => { const files = Array.from(e.target.files ?? []); e.target.value = ''; void addFiles(files); }} />
             <div className="ms-nc-assets" role="list" aria-labelledby="ms-nc-assets-lbl">
-              {picked.map((path) => (
-                <div role="listitem" key={path} className="ms-nc-asset-item" data-asset={path}>
-                  <button type="button" className="ms-nc-asset ms-on" aria-label={n.removeAsset({ name: baseName(path) })} title={n.removeAsset({ name: baseName(path) })} onClick={() => togglePicked(path)}>
-                    <AssetFace slug={slug} path={path} entry={entryOf(path)} />
-                    <span className="ms-nc-tick" aria-hidden="true"><Icon name="check" size={10} strokeWidth={2.4} /></span>
-                  </button>
+              {picked.map((path) => {
+                const mark = markOf(path);
+                return (
+                  <div role="listitem" key={path} className={cx('ms-nc-asset-item', mark && 'ms-nc-asset-col')} data-asset={path}>
+                    <button type="button" className="ms-nc-asset ms-on" aria-label={n.removeAsset({ name: baseName(path) })} title={n.removeAsset({ name: baseName(path) })} onClick={() => togglePicked(path)}>
+                      <AssetFace slug={slug} path={path} entry={entryOf(path)} />
+                      <span className="ms-nc-tick" aria-hidden="true"><Icon name="check" size={10} strokeWidth={2.4} /></span>
+                    </button>
+                    {mark}
+                  </div>
+                );
+              })}
+              {references.pending.flatMap((u) => u.names.map((name, i) => (
+                <div role="listitem" key={`${u.id}:${i}`} className="ms-nc-asset-item ms-nc-asset-col">
+                  {u.error === null ? (
+                    <span className="ms-nc-asset ms-nc-uploading" role="status" aria-label={n.uploadingAsset({ name })} title={n.uploadingAsset({ name })}>
+                      <Spinner size={16} decorative /><span className="ms-nc-upname">{name}</span>
+                    </span>
+                  ) : (
+                    <span className="ms-nc-asset ms-nc-upfailed" role="alert" title={n.uploadAssetFailed({ name, detail: u.error })}>
+                      <Icon name="warn" size={16} /><span className="ms-nc-upname">{n.uploadAssetFailed({ name, detail: u.error })}</span>
+                      {i === 0 ? <button type="button" className="ms-nc-updismiss" aria-label={n.dismissUpload({ name })} onClick={() => references.dismiss(u.id)}><Icon name="close" size={10} /></button> : null}
+                    </span>
+                  )}
                 </div>
-              ))}
+              )))}
               <div role="listitem" className="ms-nc-asset-item">
-                <button type="button" className="ms-nc-asset ms-nc-add" aria-label={n.addAssets} onClick={(e) => openPicker(e.currentTarget)}><Icon name="plus" size={16} /></button>
+                <button type="button" className="ms-nc-asset ms-nc-add" aria-label={n.addAssets} title={n.addAssets} aria-haspopup="menu" onClick={(e) => openAdd(e.currentTarget)}><Icon name="plus" size={16} /></button>
               </div>
             </div>
             <span className="ms-nc-faint ms-nc-small">{n.brandAuto}</span>
+            {dropping ? <div className="ms-nc-dropzone" aria-hidden="true"><Icon name="upload" size={16} /><span>{n.dropHere}</span></div> : null}
           </section>
 
           <section className="ms-nc-sec" data-enter>
@@ -962,8 +1015,10 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
       <CustomFormatDialog open={custom.open} editing={custom.editing} presets={presets} onClose={() => setCustom((c) => ({ ...c, open: false }))}
         onSaved={customSaved} onDeleted={customDeleted} />
 
+      <AddAssetMenu open={addOpen} onClose={() => setAddOpen(false)} anchor={pickerAnchor} onComputer={() => fileInput.current?.click()} onLibrary={() => setPickerOpen(true)} />
       <LibraryPicker slug={slug} projectName={projectName} open={pickerOpen} onClose={() => setPickerOpen(false)} anchor={pickerAnchor} library={library}
-        onRetry={() => { setLibrary({ value: null, error: null }); setLibraryNonce((x) => x + 1); }} chosen={picked} onToggle={togglePicked} />
+        onRetry={() => { setLibrary({ value: null, error: null }); setLibraryNonce((x) => x + 1); }} chosen={picked} onToggle={togglePicked}
+        extra={references.refs.filter((a) => picked.includes(assetPath(a.file)))} onUpload={() => fileInput.current?.click()} />
     </div>
   );
 }

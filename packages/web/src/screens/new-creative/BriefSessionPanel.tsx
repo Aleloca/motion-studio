@@ -1,4 +1,4 @@
-import type { AssetEntry, BriefContext, BriefField, BriefForm, JobSummary, QueuedRequest, VideoAnalysisView } from '@motion-studio/shared';
+import { isCreativeReference, type AssetEntry, type BriefContext, type BriefField, type BriefForm, type JobSummary, type QueuedRequest, type VideoAnalysisView } from '@motion-studio/shared';
 import { useMemo, useRef, useState, type Ref } from 'react';
 import { api } from '../../api.ts';
 import { Conversation, type ConversationTransport } from '../../components/Conversation.tsx';
@@ -10,6 +10,7 @@ import { desktop } from '../../desktop.ts';
 import { Button, Icon, Input, Pill, cx } from '../../ui/index.ts';
 import { AddContextMenu, ContextPins, ContextRow, folderProblem, type ContextPin } from './BriefContext.tsx';
 import { LibraryPicker, assetPath } from './LibraryPicker.tsx';
+import { ReferenceToggle, type BriefReferences } from './BriefAssets.tsx';
 import type { BriefSession } from './useBriefSession.ts';
 import './briefsession.css';
 
@@ -36,6 +37,8 @@ export interface BriefSessionPanelProps {
   onOpenCreative?(creative: string): void;
   /** Spec 1479: the held analyses of this brief's videos, asked as cards in the chat. */
   analysisQuestions?: VideoAnalysisView[];
+  /** Report 62: the brief's files from the computer (uploads here are this creative's only, like in the form). */
+  references?: BriefReferences;
 }
 
 const ACTIVE = new Set<JobSummary['state']>(['queued', 'running']);
@@ -44,7 +47,7 @@ const ACTIVE = new Set<JobSummary['state']>(['queued', 'running']);
  * Decisions 1412–1414: the brief session as a floating glass card: a header with its state, the session's chat
  * (`<Conversation>` with the brief's transport), the "+" menu and the pins inside the composer, the context row below.
  */
-export function BriefSessionPanel({ slug, projectName, brief, live, snapshot, onCarried, draft, library, onRetryLibrary, onLibraryChanged, hidden, panelRef, className, onOpenCreative, analysisQuestions }: BriefSessionPanelProps) {
+export function BriefSessionPanel({ slug, projectName, brief, live, snapshot, onCarried, draft, library, onRetryLibrary, onLibraryChanged, hidden, panelRef, className, onOpenCreative, analysisQuestions, references }: BriefSessionPanelProps) {
   const t = useT();
   const b = t.web.briefSession;
   const [pins, setPins] = useState<ContextPin[]>([]);
@@ -82,8 +85,15 @@ export function BriefSessionPanel({ slug, projectName, brief, live, snapshot, on
   const onUpload = async (files: File[]) => {
     if (files.length === 0) return;
     setProblem(null);
+    // Report 62: only for this creative until saved in Assets (the pin's mark switches it).
+    if (references) {
+      const r = await references.upload(files, { tiles: false });
+      for (const path of r.paths) addPin({ kind: 'asset', path });
+      if (r.error !== null) setProblem(b.uploadFailed({ detail: r.error }));
+      return;
+    }
     try {
-      const r = await api.uploadFiles(slug, 'assets', files);
+      const r = await api.uploadFiles(slug, 'assets', files, { reference: true });
       for (const a of r.assets ?? []) addPin({ kind: 'asset', path: assetPath(a.file) });
       onLibraryChanged();
     } catch (e) { setProblem(b.uploadFailed({ detail: errText(e) })); }
@@ -130,8 +140,14 @@ export function BriefSessionPanel({ slug, projectName, brief, live, snapshot, on
 
   const approvals = useMemo(() => Object.values(live?.approvals ?? {}).filter((a) => job && a.jobId === job.id), [live?.approvals, job]);
   const queued = useMemo<QueuedRequest[]>(() => (session?.queued ?? []).map((q) => ({ clientId: q.clientId, text: q.text, pins: [], at: q.at })), [session?.queued]);
+  const entryOf = (path: string) => (references ? references.entryOf(path, library.value) : library.value?.find((a) => assetPath(a.file) === path) ?? null);
+  const mark = (path: string) => {
+    const entry = entryOf(path);
+    if (!references || !entry || !(isCreativeReference(entry) || references.here.has(path))) return null;
+    return <ReferenceToggle path={path} reference={isCreativeReference(entry)} busy={references.busy.has(entry.file)} onToggle={() => void references.toggle(entry)} className="ms-brief-refmark" />;
+  };
   const thumb = (path: string) => {
-    const entry = library.value?.find((a) => assetPath(a.file) === path);
+    const entry = entryOf(path);
     return entry && (entry.kind === 'image' || entry.kind === 'svg') ? api.projectFileUrl(slug, path) : null;
   };
   const pinnedAssets = pins.filter((p) => p.kind === 'asset').map((p) => p.path);
@@ -187,7 +203,7 @@ export function BriefSessionPanel({ slug, projectName, brief, live, snapshot, on
               </div>
             ) : null}
             {problem ? <p className="ms-composer-error" role="alert">{problem}</p> : null}
-            <ContextPins pins={pins} onRemove={removePin} thumb={thumb} />
+            <ContextPins pins={pins} onRemove={removePin} thumb={thumb} mark={mark} />
           </>
         }
         composerTools={
@@ -200,7 +216,7 @@ export function BriefSessionPanel({ slug, projectName, brief, live, snapshot, on
         composerBelow={session ? <ContextRow context={session.context} onChange={(c) => void brief.setContext(c).catch((e: unknown) => setProblem(errText(e)))} /> : <ContextRow context={{ codebases: [], assets: [] }} onChange={() => {}} disabled />}
       />
       <LibraryPicker slug={slug} projectName={projectName} open={pickerOpen} onClose={() => setPickerOpen(false)} anchor={pickerAnchor} placement="top-start" library={library}
-        onRetry={onRetryLibrary} chosen={pinnedAssets}
+        onRetry={onRetryLibrary} chosen={pinnedAssets} {...(references ? { extra: references.refs.filter((a) => pinnedAssets.includes(assetPath(a.file))) } : {})}
         onToggle={(path) => (pinnedAssets.includes(path) ? removePin({ kind: 'asset', path }) : addPin({ kind: 'asset', path }))} />
     </aside>
   );
