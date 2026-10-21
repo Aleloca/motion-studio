@@ -338,6 +338,25 @@ export class CreativeStore {
   }
 
   /**
+   * Report 62: every creative folder now (`slugs`, unreadable ones too), the creatives whose brief lists each project path
+   * (`uses`), their titles, and whether some creative.json could not be read (its brief is unknown: nothing may be taken
+   * as unused then).
+   */
+  async briefAssetUses(): Promise<{ slugs: Set<string>; uses: Map<string, string[]>; titles: Map<string, string>; unreadable: boolean }> {
+    const slugs = new Set<string>(), uses = new Map<string, string[]>(), titles = new Map<string, string>();
+    let unreadable = false;
+    for (const e of await readdir(this.root, { withFileTypes: true }).catch(() => [])) {
+      if (!e.isDirectory() || !(await isAcceptedCreative(this.projectDir, e.name))) continue;
+      slugs.add(e.name);
+      const c = await readJsonFile(this.file(e.name, 'creative.json'), creativeFileSchema).catch(() => null);
+      if (!c) { unreadable = true; continue; }
+      titles.set(e.name, c.title);
+      for (const a of new Set(c.brief.assets)) uses.set(a, [...(uses.get(a) ?? []), e.name]);
+    }
+    return { slugs, uses, titles, unreadable };
+  }
+
+  /**
    * Replaces the project path `from` with `to` in every creative's brief `assets`, each creative under its own lock. A
    * creative that cannot be read is left alone (it cannot be opened either). `only` limits it to those creatives. Returns what each changed brief held before,
    * exactly, so `restoreBriefAssets` can put it back. The record of a creative is made BEFORE its write: when a write fails,

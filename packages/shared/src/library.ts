@@ -36,6 +36,12 @@ export const assetEntrySchema = z.object({
   durationSec: z.number().nonnegative().nullable().optional(),
   bytes: z.number().int().nonnegative().optional(),
   loop: z.boolean().optional(),
+  /**
+   * Report 62: a file added from the computer in a brief as a reference for that creative only (absent: a library asset). It
+   * holds the creatives it was added for; empty while its brief is not a creative yet. Such files stay in `assets/` (analysis,
+   * prompt and composition copy work unchanged) but are left out of the library's lists, and go with their last creative.
+   */
+  referenceFor: z.array(z.string().min(1).max(200)).max(500).optional(),
 });
 export type AssetEntry = z.infer<typeof assetEntrySchema>;
 
@@ -44,6 +50,11 @@ const uniqueFiles = <T extends { file: string }>(items: T[]) => new Set(items.ma
 export const assetsFileSchema = z.object({ schemaVersion: z.literal(1), assets: z.array(assetEntrySchema).default([]) })
   .refine((f) => uniqueFiles(f.assets), { message: 'issue.duplicateFiles', path: ['assets'] });
 export type AssetsFile = z.infer<typeof assetsFileSchema>;
+
+/** Report 62: whether the entry is a creative's reference only (hidden from the library). */
+export const isCreativeReference = (a: Pick<AssetEntry, 'referenceFor'>): boolean => a.referenceFor !== undefined;
+/** A creative reference as the Assets screen lists it: with the creatives whose brief holds it, or that it was added for. */
+export interface CreativeReferenceEntry extends AssetEntry { usedBy: Array<{ slug: string; title: string }> }
 
 export const referenceEntrySchema = z.object({
   file: relativeFileSchema, note: z.string().max(2000), useForBrand: z.boolean(), addedAt: z.iso.datetime(),

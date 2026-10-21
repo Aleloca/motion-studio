@@ -1,7 +1,7 @@
 import { rm } from 'node:fs/promises';
 import { join, posix } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import type { AssetEntry, ServerMessage } from '@motion-studio/shared';
+import { isCreativeReference, type AssetEntry, type ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
 import type { BrandService } from '../brand/brand-analysis.ts';
 import { BrandStore } from '../brand/brand-store.ts';
@@ -11,7 +11,9 @@ import { LibraryStore } from '../library/library-store.ts';
 import { saveUploads } from '../library/upload.ts';
 import { assetWaveform } from '../library/asset-meta.ts';
 import type { MediaTools } from '../media/media-tools.ts';
-import { WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
+import { CodedError, WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
+import { CreativeStore } from '../creatives/creative-store.ts';
+import { listCreativeReferences } from '../library/creative-references.ts';
 import { sendConfinedFile } from './serve-file.ts';
 import { t } from '../i18n.ts';
 import type { VideoAnalysisService } from '../analysis/video-analysis.ts';
@@ -22,7 +24,12 @@ export interface LibraryRoutesContext {
   analyses?: Pick<VideoAnalysisService, 'cancel'>;
 }
 
-const assetPatch = z.object({ name: z.string().min(1).max(200).optional(), description: z.string().max(2000).optional(), tags: z.array(z.string().min(1).max(40)).max(30).optional() });
+const assetPatch = z.object({
+  name: z.string().min(1).max(200).optional(), description: z.string().max(2000).optional(), tags: z.array(z.string().min(1).max(40)).max(30).optional(),
+  /** Report 62: true makes the file a creative reference only (while no creative uses it), false saves it into the library. */
+  reference: z.boolean().optional(),
+});
+const uploadQuery = z.object({ scope: z.enum(['library', 'reference']).default('library') });
 const refPatch = z.object({ note: z.string().max(2000).optional(), useForBrand: z.boolean().optional() });
 const filesBody = z.object({ files: z.array(z.string()).min(1).max(500) });
 const describeBody = z.object({ files: z.array(z.string()).max(500).optional() });
@@ -67,20 +74,28 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
   };
 
   app.get<{ Params: { slug: string } }>('/api/projects/:slug/assets', async (req) => {
-    const { lib } = await project(req.params.slug);
+    const { lib, projectDir } = await project(req.params.slug);
     try {
       // Entries from before the metadata existed get it once (stored in assets.json); a failure here never hides the list.
       const filled = await lib.fillMissingMeta().catch(() => null);
-      return { assets: filled?.assets ?? await lib.listAssets(), error: null, unregistered: await lib.unregisteredAssets() };
+      const all = filled?.assets ?? await lib.listAssets();
+      // Report 62: a creative's references are not the library's (listed apart, with the creatives using them).
+      return {
+        assets: all.filter((a) => !isCreativeReference(a)), error: null, unregistered: await lib.unregisteredAssets(),
+        creativeReferences: all.some(isCreativeReference) ? await listCreativeReferences(projectDir, ctx.media) : [],
+      };
     }
-    catch (e) { if (e instanceof JsonFileError) return { assets: [], error: e.message, unregistered: [] }; throw e; }
+    catch (e) { if (e instanceof JsonFileError) return { assets: [], error: e.message, unregistered: [], creativeReferences: [] }; throw e; }
   });
 
   app.post<{ Params: { slug: string } }>('/api/projects/:slug/assets', async (req, reply) => {
+    const { scope } = parse(uploadQuery, req.query);
     const { lib, projectDir } = await project(req.params.slug);
     await lib.listAssets(); // corrupt assets.json → 422 before any file is written
     const saved = await saveUploads(req, lib.dir('assets'));
-    const assets = await registerOrRemove(lib.dir('assets'), saved, () => lib.registerAssets(saved.map((file) => ({ file, origin: 'upload' as const }))));
+    // Report 62: a file added from the computer in a brief is that brief's reference only (its creative claims it when made).
+    const marker = scope === 'reference' ? { referenceFor: [] as string[] } : {};
+    const assets = await registerOrRemove(lib.dir('assets'), saved, () => lib.registerAssets(saved.map((file) => ({ file, origin: 'upload' as const, ...marker }))));
     await done(projectDir, req.params.slug, t().jobs.uploadAssetsCommit({ count: saved.length }));
     return reply.status(201).send({ assets });
   });
@@ -101,10 +116,23 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
 
   app.patch<{ Params: { slug: string; '*': string } }>('/api/projects/:slug/assets/item/*', async (req) => {
     const { ws, lib, projectDir } = await project(req.params.slug);
-    const { name, ...patch } = parse(assetPatch, req.body);
-    let file = req.params['*'];
-    let renamed: { from: string; brand: boolean; creatives: string[] } | null = null;
     let entry: AssetEntry | undefined;
+    const { name, reference, ...patch } = parse(assetPatch, req.body);
+    let file = req.params['*'];
+    if (reference !== undefined) {
+      if (reference) {
+        // Only a file no creative's brief and no brand uses goes back to "only for this creative" (the brief being filled).
+        const used = (await new CreativeStore(projectDir).briefSlugsUsing(`assets/${file}`)).length > 0 || await new BrandStore(projectDir).usesFile(`assets/${file}`);
+        if (used) throw new CodedError(409, t().errors.assetReferenceInUse({ file }), 'asset-in-use');
+      }
+      const before = (await lib.listAssets()).find((a) => a.file === file);
+      entry = await lib.setReferenceOnly(file, reference);
+      if (before && isCreativeReference(before) !== reference) {
+        await done(projectDir, req.params.slug, reference ? t().jobs.referenceOnlyCommit({ file }) : t().jobs.saveReferenceCommit({ file }));
+      }
+      if (name === undefined && Object.keys(patch).length === 0) return entry;
+    }
+    let renamed: { from: string; brand: boolean; creatives: string[] } | null = null;
     try {
       if (name !== undefined) {
         const r = await lib.renameAsset(file, name);

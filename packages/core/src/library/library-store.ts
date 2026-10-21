@@ -103,7 +103,7 @@ export class LibraryStore {
     fileLock.noteWrite(this.metadataPath('references'));
   }
 
-  registerAssets(items: Array<{ file: string; origin: AssetOrigin; sourceUrl?: string | null; description?: string; tags?: string[]; attribution?: string | null; bytes?: number; provider?: string; model?: string; loop?: boolean }>): Promise<AssetEntry[]> {
+  registerAssets(items: Array<{ file: string; origin: AssetOrigin; sourceUrl?: string | null; description?: string; tags?: string[]; attribution?: string | null; bytes?: number; provider?: string; model?: string; loop?: boolean; referenceFor?: string[] }>): Promise<AssetEntry[]> {
     return this.lock.run('assets', async () => {
       const assets = await this.listAssets();
       const out: AssetEntry[] = [];
@@ -121,6 +121,9 @@ export class LibraryStore {
           addedAt: existing?.addedAt ?? now(), attribution: item.attribution ?? existing?.attribution ?? null,
           ...((item.provider ?? existing?.provider) ? { provider: (item.provider ?? existing?.provider)! } : {}), ...((item.model ?? existing?.model) ? { model: (item.model ?? existing?.model)! } : {}),
           ...((item.loop ?? existing?.loop) !== undefined ? { loop: (item.loop ?? existing?.loop)! } : {}),
+          // Report 62: a creative reference stays one when registered again (a library asset is never made one so).
+          ...((item.referenceFor ?? existing?.referenceFor) !== undefined && (existing === undefined || existing.referenceFor !== undefined)
+            ? { referenceFor: existing?.referenceFor ?? item.referenceFor! } : {}),
         };
         if (existing) assets[assets.indexOf(existing)] = entry; else assets.push(entry);
         out.push(entry);
@@ -348,6 +351,53 @@ export class LibraryStore {
       }
       // Decision 1495: its analysis file goes with it (the key frames stay in the cache until the sweep).
       await removeSidecar(this.projectDir, `assets/${file}`).catch(() => false);
+    });
+  }
+
+  /**
+   * Report 62: makes `file` a creative reference only (`on`, kept with the creatives it already had) or a library asset (the
+   * marker cleared). The route checks that no creative uses a file before it goes back to "only for this creative".
+   */
+  setReferenceOnly(file: string, on: boolean): Promise<AssetEntry> {
+    return this.lock.run('assets', async () => {
+      const assets = await this.listAssets();
+      const i = assets.findIndex((a) => a.file === file);
+      if (i < 0) throw new WorkspaceError(404, t().errors.assetNotFound({ file }));
+      const { referenceFor, ...rest } = assets[i]!;
+      const next: AssetEntry = on ? { ...rest, referenceFor: referenceFor ?? [] } : rest;
+      if ((referenceFor !== undefined) !== on) await this.writeAssets(assets.map((a, k) => (k === i ? next : a)));
+      return next;
+    });
+  }
+
+  /**
+   * Report 62: settles the creative references under the metadata lock: `decide` gets each one and answers the creatives it
+   * now belongs to, or null to delete it (its file, its entry and its analysis file go). Returns the files deleted.
+   */
+  settleReferences(decide: (entry: AssetEntry) => string[] | null): Promise<string[]> {
+    return this.lock.run('assets', async () => {
+      const assets = await this.listAssets();
+      const keep: AssetEntry[] = [];
+      const gone: string[] = [];
+      let changed = false;
+      for (const a of assets) {
+        if (a.referenceFor === undefined) { keep.push(a); continue; }
+        const owners = decide(a);
+        if (owners === null) { gone.push(a.file); changed = true; continue; }
+        const same = owners.length === a.referenceFor.length && owners.every((o, k) => o === a.referenceFor![k]);
+        keep.push(same ? a : { ...a, referenceFor: owners });
+        changed ||= !same;
+      }
+      if (!changed) return [];
+      await this.writeAssets(keep);
+      for (const file of gone) {
+        const abs = this.resolve('assets', file);
+        const realAbs = await realpath(abs).catch(() => null);
+        const realLib = await realpath(this.dir('assets')).catch(() => this.dir('assets'));
+        if (realAbs && realAbs.startsWith(realLib + sep)) await rm(abs).catch(() => {});
+        await removeSidecar(this.projectDir, `assets/${file}`).catch(() => false);
+      }
+      return gone;
     });
   }
 
