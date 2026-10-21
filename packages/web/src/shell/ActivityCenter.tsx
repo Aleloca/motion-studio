@@ -53,6 +53,8 @@ export function jobPlace(job: JobSummary): { project: string; creative: string |
   const parts = job.key.split(':');
   const kind = parts[0];
   if (kind === 'creative' && parts.length >= 4) return { project: parts.at(-2)!, creative: parts.at(-1)! };
+  // Decision 1468: a video's analysis `video-analysis:<root>:<project>:<sha256>` belongs to its project (the assets).
+  if (kind === 'video-analysis' && parts.length >= 4) return { project: parts.at(-2)!, creative: null };
   // Decision 974: an export `export:<root>:<project>:<creative>:<id>`, a render for one export `render-export:…:v<n>:<id>`.
   if (kind === 'export' && parts.length >= 5) return { project: parts.at(-3)!, creative: parts.at(-2)! };
   if (kind === 'render-export' && parts.length >= 6) return { project: parts.at(-4)!, creative: parts.at(-3)! };
@@ -72,7 +74,7 @@ export function jobHref(job: JobSummary): string | null {
   if (!at || !at.project) return null;
   if (at.creative) return href.creative(at.project, at.creative);
   if (job.kind === 'brand-analysis') return href.project(at.project, 'brand');
-  if (job.kind === 'asset-description' || job.kind === 'asset-generation') return href.project(at.project, 'assets');
+  if (job.kind === 'asset-description' || job.kind === 'asset-generation' || job.kind === 'video-analysis') return href.project(at.project, 'assets');
   if (job.kind === 'brief') return href.newCreative(at.project);
   return href.project(at.project);
 }

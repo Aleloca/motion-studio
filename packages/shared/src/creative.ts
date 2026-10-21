@@ -488,8 +488,9 @@ type ConversationEntryBody =
    * `keptVersion` (decision 1060): the turn ended without a version because no output changed; version `keptVersion` (the
    * latest) still holds its content. The turn's boundary, like a `version` entry, for the readers that look for one.
    * `origin: 'brief'` (decision 1423): the line that marks where a creative starts after its brief session's conversation.
+   * `analysisWait` (decision 1478): the first turn waits for the analyses of these videos (names); the chat offers "Skip".
    */
-  | { type: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string; origin?: 'agent' | 'brief'; keptVersion?: number }
+  | { type: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string; origin?: 'agent' | 'brief'; keptVersion?: number; analysisWait?: { files: string[] } }
   /**
    * Phase 3 of the single agent (spec §4.1): a group turn settled. `outcome`: per variant it worked on; `usage`: the turn's
    * whole cost (the coordinator's runs and every helper's), when known. Written once, with `group: true`.

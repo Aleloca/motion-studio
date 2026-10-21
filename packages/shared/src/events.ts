@@ -7,6 +7,7 @@ import type { PaidBatch } from './permissions.ts';
 import type { AgentQuestion } from './questions.ts';
 import type { ProjectFile, WorkspaceSettings, WorkspaceSettingsView } from './schemas.ts';
 import type { BriefField } from './brief-session.ts';
+import type { VideoAnalysisView } from './video-analysis.ts';
 
 /** Agent-neutral event stream produced by any AgentRunner. */
 export type AgentEvent =
@@ -85,7 +86,8 @@ export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelle
 /** `variant-directions` (Phase 15): the short agent turn that proposes the missing directions of a variant group (no file written). */
 /** `creative-group` (phase 3 of the single agent): a variant group's turn: the coordinator, its helpers, its closing message. */
 /** `brief` (decision 1421): a turn of a project's brief session: a read-only agent that fills the New creative form. */
-export type JobKind = 'creative' | 'brand-analysis' | 'asset-description' | 'console' | 'render' | 'asset-generation' | 'localize' | 'variant-directions' | 'export' | 'creative-group' | 'brief';
+/** `video-analysis` (decision 1468): the analysis of one video of a brief, its runs read only the extracted frames. */
+export type JobKind = 'creative' | 'brand-analysis' | 'asset-description' | 'console' | 'render' | 'asset-generation' | 'localize' | 'variant-directions' | 'export' | 'creative-group' | 'brief' | 'video-analysis';
 
 /**
  * An export job (decision 974, user report 20): the export runs in the background, so the dialog may close. `stage`
@@ -117,8 +119,12 @@ export interface ExportJobInfo {
  * `variant-slot`, its group already has `MAX_RUNNING_VARIANTS` turns running. Absent: it waits only for a free slot of the
  * queue, or it is not queued. Stable codes: the web shows them (`web.variantGroup.waitReasons`).
  */
-export type JobWaitReason = 'variant-directions' | 'variant-confirm' | 'variant-slot';
-export const JOB_WAIT_REASONS: readonly JobWaitReason[] = ['variant-directions', 'variant-confirm', 'variant-slot'];
+/**
+ * Video analysis (decisions 1481, 1487): `video-long`, a video over 20 minutes waits for the user's confirmation;
+ * `video-queue`, another analysis of the same project runs (one at a time per project).
+ */
+export type JobWaitReason = 'variant-directions' | 'variant-confirm' | 'variant-slot' | 'video-long' | 'video-queue';
+export const JOB_WAIT_REASONS: readonly JobWaitReason[] = ['variant-directions', 'variant-confirm', 'variant-slot', 'video-long', 'video-queue'];
 
 /**
  * Progress of a render job (Task 5), per format: `media` while the video sources are normalised ("Preparing media…",
@@ -219,7 +225,14 @@ export type ServerMessage =
    * and left `kept` as the user's, and took back `reclaimed` (the user asked); `ended`: the session was discarded or handed to
    * a creative. `revision`: the form's revision after the change (absent on `ended`).
    */
-  | { type: 'brief-session'; project: string; sessionId: string; revision?: number; fill?: { written: BriefField[]; kept: BriefField[]; reclaimed: BriefField[] }; ended?: true };
+  | { type: 'brief-session'; project: string; sessionId: string; revision?: number; fill?: { written: BriefField[]; kept: BriefField[]; reclaimed: BriefField[] }; ended?: true }
+  /** A video's analysis changed state (decision 1468): its view as `GET …/video-analyses/view` returns it. */
+  | { type: 'video-analysis'; project: string; file: string; view: VideoAnalysisView }
+  /**
+   * A creative's first turn waits for the analyses of its brief's videos (decision 1478): `files` are their names; empty: the
+   * wait ended (done or skipped).
+   */
+  | { type: 'analysis-wait'; project: string; creative: string; files: string[] };
 
 /** Whether the desktop app updates itself: 'off' in a development run or an unsigned build, 'unknown' where there is no updater (browser, CLI) or before it has settled. */
 export type UpdatesState = 'active' | 'off' | 'unknown';

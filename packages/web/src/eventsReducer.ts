@@ -87,6 +87,8 @@ export function eventsReducer(state: EventsState, msg: EventsAction): EventsStat
       const next = { ...state, liveUsage, events: { ...state.events, [msg.jobId]: list.length > MAX_EVENTS ? list.slice(-MAX_EVENTS) : list } };
       return e.kind === 'usage' ? applyUsage(next, msg.jobId, e) : next;
     }
+    // Decision 1478: a creative's first turn waits for (or stopped waiting for) its videos' analyses: its chat refetches.
+    case 'analysis-wait':
     case 'creative': {
       const key = `${msg.project}/${msg.creative}`;
       return { ...state, creativeTicks: { ...state.creativeTicks, [key]: (state.creativeTicks[key] ?? 0) + 1 } };
@@ -94,6 +96,8 @@ export function eventsReducer(state: EventsState, msg: EventsAction): EventsStat
     case 'project':
     case 'brand':
     case 'library':
+    // Decision 1468: a video's analysis changed state (the library shows it).
+    case 'video-analysis':
       return { ...state, projectTicks: { ...state.projectTicks, [msg.project]: (state.projectTicks[msg.project] ?? 0) + 1 } };
     case 'brief-session': {
       const briefTicks = { ...state.briefTicks, [msg.project]: (state.briefTicks?.[msg.project] ?? 0) + 1 };

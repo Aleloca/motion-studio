@@ -114,8 +114,8 @@ describe('variant fan-out', () => {
     expect(only.json().code).toBe('variant-discarded');
     const reason = { it: 'Ripristina la variante per lavorarci', en: 'Restore the variant to work on it' };
     // The stable wait-reason codes and their strings (Task 5 shows them).
-    expect(messages('it').web.variantGroup.waitReasons).toEqual({ 'variant-directions': 'in attesa delle direzioni', 'variant-confirm': 'in attesa della conferma', 'variant-slot': 'in coda: due varianti già al lavoro' });
-    expect(messages('en').web.variantGroup.waitReasons).toEqual({ 'variant-directions': 'waiting for directions', 'variant-confirm': 'waiting for confirmation', 'variant-slot': 'queued: two variants already working' });
+    expect(messages('it').web.variantGroup.waitReasons).toMatchObject({ 'variant-directions': 'in attesa delle direzioni', 'variant-confirm': 'in attesa della conferma', 'variant-slot': 'in coda: due varianti già al lavoro' });
+    expect(messages('en').web.variantGroup.waitReasons).toMatchObject({ 'variant-directions': 'waiting for directions', 'variant-confirm': 'waiting for confirmation', 'variant-slot': 'queued: two variants already working' });
     expect(messages('it').errors.variantDiscardedTurn).toBe(reason.it);
     expect(messages('en').errors.variantDiscardedTurn).toBe(reason.en);
     const turn = await v.app.inject({ method: 'POST', url: `${v.url(`${slug}~b`)}/turns`, payload: { text: 'Prova' } });

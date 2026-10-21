@@ -27,3 +27,4 @@ export * from './svg-edit/index.ts';
 export * from './brief-duration.ts';
 export * from './brief-session.ts';
 export * from './project-icon.ts';
+export * from './video-analysis.ts';
