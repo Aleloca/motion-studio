@@ -96,4 +96,40 @@ describe('the transcription pre-check is off the turn\'s path', () => {
     expect(after.pending).toMatchObject({ kind: 'transcription', audioSec: 1300 });
     expect((await h.analysisJobs())[0]!.waitReason).toBe('transcription-choice');
   });
+
+  it('a video whose length is not a whole number of seconds: the check ends and the hold is released (report 63)', async () => {
+    // 149.315938 s gave a fractional time limit, which AbortSignal.timeout refuses: the check threw before it began.
+    const silentFf: CommandExec = async (cmd, args) => {
+      const ok: CommandResult = { code: 0, stdout: '', stderr: '', notFound: false };
+      if (cmd === 'ffmpeg' && args.includes('pcm_s16le')) await writeFile(args.at(-1)!, Buffer.alloc(1000));
+      if (cmd === 'ffmpeg' && args.some((a) => a.startsWith('silencedetect'))) return { ...ok, stderr: 'silence_start: 0\n' };
+      return ok;
+    };
+    const oddMedia = (real: MediaTools): MediaTools => ({ ...real, available: true, probe: async () => ({ width: 1920, height: 1188, durationSec: 149.315938, fps: 25, audio: true }) });
+    const t = await analysisApp({ media: oddMedia, ffExec: silentFf, transcription: { method: 'ask' } });
+    const h = analysisHelpers(t);
+    const file = await h.put('codecs.mp4', 'fake video');
+    await t.analyses.ensure(t.ref, [file], { from: 'library' });
+    await vi.waitFor(async () => expect((await h.analysisJobs())[0]!.waitReason).not.toBe('transcription-check'), { timeout: 3000 });
+    expect((await t.analyses.view(t.ref, file)).pending).toBeNull();
+  });
+
+  it('a transcription plan that never settles (a keychain read that hangs): the hold is released within the bound, asking nothing', async () => {
+    const ff = hangingFf();
+    const short = (real: MediaTools): MediaTools => ({ ...real, available: true, probe: async () => ({ width: 640, height: 360, durationSec: 1, fps: 25, audio: true }) });
+    const t = await analysisApp({ media: short, ffExec: ff.exec, precheckMaxMs: 300, transcription: { method: 'ask' } });
+    // The offer reads the providers' keys: here that read never answers.
+    t.vault.get = () => new Promise<string | null>(() => {});
+    const h = analysisHelpers(t);
+    const file = await h.put('clip.mp4', 'fake video');
+    const at = Date.now();
+    await t.analyses.ensure(t.ref, [file], { from: 'library' });
+    expect((await h.analysisJobs())[0]!.waitReason).toBe('transcription-check');
+    await vi.waitFor(async () => expect((await h.analysisJobs())[0]!.waitReason).not.toBe('transcription-check'), { timeout: 3000 });
+    // 300 ms plus 0.2 s per second of video, give or take the timers.
+    expect(Date.now() - at).toBeLessThan(2500);
+    expect((await t.analyses.view(t.ref, file)).pending).toBeNull();
+    expect(ff.state.started).toBe(0);
+    await vi.waitFor(() => expect(h.views().at(-1)!.view.pending).toBeNull());
+  });
 });

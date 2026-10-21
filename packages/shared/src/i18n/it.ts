@@ -294,6 +294,7 @@ export const it: Messages = {
     hints: {
       none: 'Il video si analizza quando entra in un brief, o subito con Analizza.',
       queued: 'Parte appena finiscono le altre analisi del progetto.',
+      checkingAudio: 'Prima controlla se nell\'audio si parla.',
       running: 'L\'agente sta guardando i fotogrammi del video…',
       stale: 'Il video è cambiato dopo l\'analisi.',
       staleEdited: 'Il video è cambiato dopo la tua modifica: Rianalizza per aggiornarla.',

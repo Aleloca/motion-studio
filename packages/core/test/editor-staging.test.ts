@@ -656,6 +656,9 @@ describe('a staged video never holds a save for long (decisions log 265)', () =>
     expect(stagingEncodeLimitMs(3600)).toBe(20 * 60_000);
     expect(stagingEncodeLimitMs(null)).toBe(20 * 60_000);
     expect(stagingEncodeLimitMs(undefined)).toBe(20 * 60_000);
+    // Whole milliseconds (decision 1560): AbortSignal.timeout throws on a fractional delay (a 149.315938 s video).
+    expect(stagingEncodeLimitMs(14.9315938)).toBe(209_316);
+    expect(() => AbortSignal.timeout(stagingEncodeLimitMs(14.9315938))).not.toThrow();
   });
 
   it('an encode past its time limit is stopped: translated 422, its slot free, nothing staged', async () => {
