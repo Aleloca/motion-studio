@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { messages, sidecarHeaderSchema, videoAnalysisJobKey, writeVideoAnalysisSchema, JOB_WAIT_REASONS, usageKindSchema } from '../src/index.ts';
+import { appConfigSchema, messages, sidecarHeaderSchema, transcriptionChoiceSchema, transcriptionSettingsSchema, videoAnalysisJobKey, writeVideoAnalysisSchema, JOB_WAIT_REASONS, usageKindSchema } from '../src/index.ts';
 
 const SHA = 'ab'.repeat(32);
 const header = {
@@ -42,5 +42,39 @@ describe('video analysis job and copy', () => {
     expect(messages('it').videoAnalysis.waiting({ files: 'clip.mp4' })).toBe('Analisi del video in corso (clip.mp4)…');
     expect(messages('it').videoAnalysis.states).toEqual({ none: 'Non analizzato', queued: 'In coda', running: 'In corso', waiting: 'In attesa', ready: 'Pronta', stale: 'Non aggiornata', error: 'Errore' });
     expect(messages('en').jobs.videoAnalysisLabel({ file: 'clip.mp4' })).toBe('Video analysis · clip.mp4');
+  });
+});
+
+describe('transcription settings and choice', () => {
+  it('defaults to asking, the small model and no custom Whisper; an older config.json has none', () => {
+    expect(transcriptionSettingsSchema.parse({})).toEqual({ method: 'ask', model: 'small', custom: null });
+    expect(appConfigSchema.parse({ schemaVersion: 1, workspacePath: null, language: 'it' }).transcription).toBeUndefined();
+  });
+  it('takes an absolute custom program and model file, refuses a relative one or an unknown engine', () => {
+    const custom = { program: '/opt/homebrew/bin/whisper-cli', engine: 'whisper.cpp', modelFile: '/models/ggml-small.bin' };
+    expect(transcriptionSettingsSchema.parse({ custom }).custom).toEqual(custom);
+    expect(transcriptionSettingsSchema.safeParse({ custom: { ...custom, program: 'bin/whisper-cli' } }).success).toBe(false);
+    expect(transcriptionSettingsSchema.safeParse({ custom: { ...custom, modelFile: 'ggml-small.bin' } }).success).toBe(false);
+    expect(transcriptionSettingsSchema.safeParse({ custom: { ...custom, engine: 'whisperx' } }).success).toBe(false);
+    expect(transcriptionSettingsSchema.safeParse({ method: 'always' }).success).toBe(false);
+  });
+  it('a choice names a video and one of four answers', () => {
+    expect(transcriptionChoiceSchema.parse({ file: 'assets/clip.mp4', choice: 'whisper', remember: false, sizeBytes: 487601967 }).choice).toBe('whisper');
+    expect(transcriptionChoiceSchema.safeParse({ file: 'assets/clip.mp4', choice: 'google', remember: false }).success).toBe(false);
+  });
+  it('adds the wait reason, the usage kind and the copy', () => {
+    expect(JOB_WAIT_REASONS).toContain('transcription-choice');
+    expect(usageKindSchema.parse('transcription')).toBe('transcription');
+    const it_ = messages('it').transcription;
+    expect(it_.methods).toEqual({ ask: 'Chiedi ogni volta', whisper: 'Whisper sul Mac', openai: 'OpenAI', elevenlabs: 'ElevenLabs', never: 'Mai' });
+    expect(it_.installWhisper({ size: '488 MB' })).toBe('Installa Whisper (gratis, sul tuo Mac) · 488 MB');
+    expect(it_.withOpenai({ cost: '$0.01' })).toBe('Trascrivi con OpenAI · ~$0.01');
+    expect(it_.withElevenlabs({ cost: '$0.01' })).toBe('Trascrivi con ElevenLabs · ~$0.01');
+    expect(it_.continueWithout).toBe('Continua senza trascrizione');
+    expect(it_.remember).toBe('Ricorda la scelta');
+    expect(it_.why).toBe('Con la trascrizione l\'agente sa cosa viene detto e quando: può citarlo o sincronizzare i testi.');
+    expect(it_.leavesMac).toBe('L\'audio lascia il Mac.');
+    expect(it_.found({ engine: 'whisper.cpp', version: '1.9.5', model: 'small', gpu: 'sì' })).toBe('Whisper trovato: whisper.cpp, 1.9.5, small, Metal/GPU sì');
+    expect(messages('en').web.variantGroup.waitReasons['transcription-choice']).toBeTruthy();
   });
 });

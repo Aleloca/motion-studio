@@ -97,6 +97,11 @@ export interface StartServerOptions {
    * core's own `moveToTrash` (macOS `~/.Trash`, the freedesktop Trash on Linux, refused elsewhere).
    */
   trash?: TrashFn;
+  /**
+   * Spec §7: the folder of the bundled `whisper-cli` and its Silero VAD model (the desktop app's resources). Absent (dev app,
+   * npm CLI): no bundled Whisper; an installed one is still found or pointed to.
+   */
+  whisperDir?: string;
 }
 
 /**
@@ -197,6 +202,7 @@ async function startLocked(configDir: string, opts: StartServerOptions) {
     openPath: revealFolder,
     trash: opts.trash ?? ((p) => moveToTrash(p)),
     uiOrigins: () => uiOrigins,
+    ...(opts.whisperDir ? { whisperDir: opts.whisperDir } : {}),
   });
   const host = opts.host ?? '127.0.0.1';
   const url = opts.port === 'auto' ? await listenAuto(app, host) : await app.listen({ port: opts.port ?? 4317, host });

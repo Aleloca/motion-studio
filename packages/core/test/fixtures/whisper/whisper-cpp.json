@@ -1,0 +1,31 @@
+{
+	"systeminfo": "WHISPER : COREML = 0 | OPENVINO = 0 | Metal : EMBED_LIBRARY = 1 | CPU : NEON = 1 | ARM_FMA = 1 | ACCELERATE = 1 |",
+	"model": {
+		"type": "small",
+		"multilingual": true,
+		"vocab": 51865,
+		"audio": { "ctx": 1500, "state": 768, "head": 12, "layer": 12 },
+		"text": { "ctx": 448, "state": 768, "head": 12, "layer": 12 },
+		"mels": 80,
+		"ftype": 1
+	},
+	"params": { "model": "ggml-small.bin", "language": "auto", "translate": false },
+	"result": { "language": "it" },
+	"transcription": [
+		{
+			"timestamps": { "from": "00:00:00,000", "to": "00:00:02,500" },
+			"offsets": { "from": 0, "to": 2500 },
+			"text": " Ciao a tutti, benvenuti."
+		},
+		{
+			"timestamps": { "from": "00:00:02,500", "to": "00:00:03,000" },
+			"offsets": { "from": 2500, "to": 3000 },
+			"text": " "
+		},
+		{
+			"timestamps": { "from": "00:00:03,000", "to": "00:00:06,120" },
+			"offsets": { "from": 3000, "to": 6120 },
+			"text": " Questo è il nuovo prodotto."
+		}
+	]
+}

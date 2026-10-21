@@ -1,6 +1,6 @@
 import { homedir, tmpdir, userInfo } from 'node:os';
 import { join, resolve, sep } from 'node:path';
-import { appConfigSchema, type AppConfig, type LanguageSetting } from '@motion-studio/shared';
+import { appConfigSchema, transcriptionSettingsSchema, type AppConfig, type LanguageSetting, type TranscriptionSettings, type TranscriptionSettingsPatch } from '@motion-studio/shared';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from './json-file.ts';
 import { KeyedMutex } from './keyed-mutex.ts';
 
@@ -54,6 +54,22 @@ export class AppConfigStore {
 
   setLanguage(setting: LanguageSetting): Promise<AppConfig> {
     return this.update({ language: setting });
+  }
+
+  /** Settings → Trascrizione video (app-wide, decision 1503): an older file without them reads the defaults. */
+  async readTranscription(): Promise<TranscriptionSettings> {
+    return transcriptionSettingsSchema.parse((await this.read()).transcription ?? {});
+  }
+
+  /** Changes some of the transcription settings, keeping the rest of the file. A bad value (a relative program) throws. */
+  async setTranscription(patch: TranscriptionSettingsPatch): Promise<TranscriptionSettings> {
+    let saved!: TranscriptionSettings;
+    await writes.run(this.file, async () => {
+      const current = await this.read();
+      saved = transcriptionSettingsSchema.parse({ ...transcriptionSettingsSchema.parse(current.transcription ?? {}), ...patch });
+      await writeJsonFileAtomic(this.file, { ...current, transcription: saved });
+    });
+    return saved;
   }
 
   private update(patch: Partial<AppConfig>): Promise<AppConfig> {

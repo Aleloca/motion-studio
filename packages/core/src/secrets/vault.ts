@@ -3,6 +3,14 @@ import { WorkspaceError } from '../workspace-store.ts';
 import { t } from '../i18n.ts';
 
 export const PROVIDER_ENV: Record<ProviderId, string> = { openai: 'OPENAI_API_KEY', elevenlabs: 'ELEVENLABS_API_KEY', pexels: 'PEXELS_API_KEY', unsplash: 'UNSPLASH_ACCESS_KEY' };
+/** Secrets the core reads from its own environment: never inherited by a program it starts (the agent, the MCP server, a Whisper). */
+export const SECRET_ENV: readonly string[] = [...Object.values(PROVIDER_ENV), 'MOTION_STUDIO_BRIDGE_TOKEN'];
+/** `env` without the core's secrets (SECRET_ENV). */
+export function withoutSecrets(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out = { ...env };
+  for (const name of SECRET_ENV) delete out[name];
+  return out;
+}
 
 export interface SecretsVault {
   get(p: ProviderId): Promise<string | null>;
