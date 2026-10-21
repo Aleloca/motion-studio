@@ -710,10 +710,11 @@ function PaidUsageCard({ paid, utcOffsetMinutes }: { paid: PaidUsageReport; utcO
   useEffect(() => {
     bars.current?.querySelectorAll('.ms-usage-bar').forEach((el, i) => { void anim(el, [{ transform: 'scaleY(0)' }, { transform: 'scaleY(1)' }], D.l, E.out, i * 40); });
   }, []);
-  const row = (key: string, label: string, detail: string | null, usd: number) => (
-    <li key={key} className="ms-usage-row">
+  // `wrap`: the units go on their own line under the name (a service lists several).
+  const row = (key: string, label: string, detail: string | null, usd: number, wrap = false) => (
+    <li key={key} className={cx('ms-usage-row', wrap && 'ms-usage-wrap')}>
       <span className="ms-usage-name">{label}</span>
-      {detail ? <span className="ms-usage-num">{detail}</span> : null}
+      {detail ? <span className={wrap ? 'ms-usage-units' : 'ms-usage-num'}>{detail}</span> : null}
       <span className="ms-usage-cost">{estimate(usd)}</span>
     </li>
   );
@@ -749,7 +750,7 @@ function PaidUsageCard({ paid, utcOffsetMinutes }: { paid: PaidUsageReport; utcO
           <div className="ms-usage-groups">
             <div className="ms-usage-group">
               <span className="ms-usage-cap" id="ms-paid-services">{p.byService}</span>
-              <ul aria-labelledby="ms-paid-services">{services.map((x) => row(x.provider, p.services[x.provider], units(x.units), x.costUsd))}</ul>
+              <ul aria-labelledby="ms-paid-services">{services.map((x) => row(x.provider, p.services[x.provider], units(x.units), x.costUsd, true))}</ul>
             </div>
             <div className="ms-usage-group">
               <span className="ms-usage-cap" id="ms-paid-kinds">{p.byKind}</span>
