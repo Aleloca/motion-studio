@@ -65,9 +65,31 @@ jobs:
         if: matrix.shard == 1
       - run: pnpm check:i18n
         if: matrix.shard == 1
-      - run: pnpm test --shard=${{ matrix.shard }}/3
+      # The real-Electron render tests (about 7 minutes, macOS only) run in their own job below.
+      - run: pnpm test --shard=${{ matrix.shard }}/3 --exclude '**/render-window.electron.test.ts'
         env:
           # The Chrome and ffmpeg integration tests (composition runtime, server and renderer) fail instead of skipping.
           MS_REQUIRE_CHROME: '1'
       - run: pnpm build
         if: matrix.shard == 1
+
+  # The desktop's real-Electron render tests, one file that takes about 7 minutes on macOS (skipped on Linux): on their own
+  # runner, side by side with the three parts above, instead of lengthening one of them.
+  electron:
+    name: test (macos-latest, electron)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install ffmpeg
+        run: brew install ffmpeg
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm vitest run apps/desktop/test/render-window.electron.test.ts
+        env:
+          # A missing Electron binary or ffmpeg fails the job instead of skipping the file.
+          MS_REQUIRE_ELECTRON: '1'
