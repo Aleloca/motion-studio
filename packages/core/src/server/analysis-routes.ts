@@ -83,6 +83,13 @@ export function registerAnalysisRoutes(app: FastifyInstance, ctx: { requireWorks
     await ctx.git.commitAll(ref.projectDir, t().videoAnalysis.editedCommit({ file: file.slice(file.lastIndexOf('/') + 1) })).catch(() => null);
     return ctx.analyses.view(ref, file);
   });
+  // Decision 1478: the first turn's wait for its videos' analyses, and Salta.
+  type PC = { Params: { slug: string; c: string } };
+  app.get<PC>('/api/projects/:slug/creatives/:c/analysis-wait', async (req) => ({ files: ctx.analyses.waitingFiles(await refOf(req.params.slug), req.params.c) }));
+  app.post<PC>('/api/projects/:slug/creatives/:c/analysis-wait/skip', async (req, reply) => {
+    if (!ctx.analyses.skip(await refOf(req.params.slug), req.params.c)) throw new CodedError(404, t().errors.analysisNothingWaits, 'analysis-wait-none');
+    return reply.status(204).send();
+  });
   app.delete<P & { Querystring: { file?: string } }>('/api/projects/:slug/video-analyses', async (req) => {
     const ref = await refOf(req.params.slug);
     const file = typeof req.query.file === 'string' ? req.query.file : '';

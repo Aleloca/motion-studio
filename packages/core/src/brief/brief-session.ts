@@ -232,7 +232,8 @@ export class BriefSessionService {
         const act = this.active.get(key);
         const adds = added.codebases.length + added.assets.length > 0;
         if (m.mode === 'live' && !adds && act?.run && act.liveInput && act.sessionId === id) {
-          const text = briefFollowUp({ locale: currentLocale(), form: s.form, userEdited: s.userEdited, ...(await this.readable(ref, s)), assets: s.context.assets, request: m.text });
+          const analyses = await this.videoAnalyses?.analysisRefs(ref, s.context.assets).catch(() => ({})) ?? {};
+          const text = briefFollowUp({ locale: currentLocale(), form: s.form, userEdited: s.userEdited, ...(await this.readable(ref, s)), assets: s.context.assets, analyses, request: m.text });
           if (await act.run.send?.({ text, clientId: m.clientId }) === 'written') {
             await this.deps.store.append(ref.projectDir, id, { type: 'user', at: new Date().toISOString(), text: m.text, pins: [], attachments: [], jobId: act.jobId, mode: 'live', clientId: m.clientId, deliveredAt: new Date().toISOString() });
             this.changed(ref, s);
@@ -320,7 +321,8 @@ export class BriefSessionService {
         // whichever path the agent uses (as brand analysis does, `codebaseSpellings`).
         const paths = [...new Set(await Promise.all([...codebases.map((c) => c.path), ...project.paths].map(async (p) => codebaseSpellings({ path: p, real: await realpath(p).catch(() => p) }))).then((x) => x.flat()))];
         const resume = fresh ? undefined : s.claudeSessionId;
-        const common = { locale: currentLocale(), form: s.form, userEdited: s.userEdited, codebases, missingCodebases, assets: s.context.assets, request };
+        const analyses = await this.videoAnalyses?.analysisRefs(ref, s.context.assets).catch(() => ({})) ?? {};
+        const common = { locale: currentLocale(), form: s.form, userEdited: s.userEdited, codebases, missingCodebases, assets: s.context.assets, analyses, request };
         const prompt = resume ? briefFollowUp(common)
           : buildBriefPrompt({ ...common, projectName: ref.projectName, projectCodebases: project.paths.filter((p) => !codebases.some((c) => c.path === p)),
             ...(fresh ? { digest: briefDigest((await this.deps.store.conversation(ref.projectDir, sessionId)).filter((e) => !('jobId' in e && e.jobId === jobId && e.type === 'user'))) } : {}) });

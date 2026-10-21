@@ -16,6 +16,15 @@ const base = { slug: '2026-10-07-lancio-app', creative, presets: DEFAULT_FORMATS
 const v2 = { ...base, contract: undefined };
 
 describe('buildCreativePrompt', () => {
+  it('a first turn points at the analysis of an analysed video, and says how to use it (decision 1468)', () => {
+    const c = { ...creative, brief: { ...creative.brief, assets: ['assets/clip.mp4', 'assets/logo.png'] } };
+    const p = buildCreativePrompt({ ...v2, creative: c, kind: 'first', analyses: { 'assets/clip.mp4': 'assets/.analysis/clip.mp4.md' } });
+    expect(p).toContain('- Assets to use (project paths): assets/clip.mp4 (analysis: assets/.analysis/clip.mp4.md — read it before opening the video), assets/logo.png\n');
+    expect(p).toContain('- Video analyses: read the analysis file first; open the video or extract frames only for what it does not answer (e.g. an exact frame to reuse). Its frames are in .studio/cache/analysis/; if missing, extract the frame yourself. An automatic transcript may misspell names.');
+    const plain = buildCreativePrompt({ ...v2, creative: c, kind: 'first' });
+    expect(plain).toContain('- Assets to use (project paths): assets/clip.mp4, assets/logo.png\n');
+    expect(plain).not.toContain('Video analyses:');
+  });
   it('a first turn without the brief\'s memory gets its summary (decision 1423)', () => {
     const p = buildCreativePrompt({ ...base, kind: 'first', briefChat: 'User: video di lancio' });
     expect(p).toContain('## The brief session (summary)\nThe user wrote this brief with an agent in Motion Studio; this is that conversation.\nUser: video di lancio');

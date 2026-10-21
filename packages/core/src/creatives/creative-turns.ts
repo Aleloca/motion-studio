@@ -1125,6 +1125,15 @@ export class CreativeTurnService {
       const turnServices = paidOff ? { ...fitted, images: fitted?.images === 'none' ? 'none' as const : 'stock' as const, voice: 'none' as const, music: 'none' as const, sfx: 'none' as const } : fitted;
 
       if (!noAgent) {
+        // Decision 1478: the first turn waits for the analyses of its brief's videos (running, never held ones), so its prompt
+        // can point at them; Salta ends the wait, a failed analysis too (the agent then gets the plain path).
+        if (versions.length === 0 && this.videoAnalyses) {
+          await this.videoAnalyses.waitForBrief(ref, slug, creative.brief.assets, signal, {
+            note: async (e) => { await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', ...e }); this.changed(ref); },
+          });
+          if (signal.aborted) return await this.cancelled(ref, store, previous, false, this.stoppedOf(jobId));
+        }
+        const analyses = versions.length === 0 && this.videoAnalyses ? await this.videoAnalyses.analysisRefs(ref, creative.brief.assets).catch(() => ({})) : {};
         const { context, existing } = await this.buildContext(ref, store, creative.linkedCodebases, turnServices, paidOff);
         // Phase 15 (spec §3): a variant's own direction and the other active variants', as they are when the turn starts.
         const variant = promptVariant(await this.memberOf(ref));
@@ -1317,6 +1326,7 @@ export class CreativeTurnService {
             liveMessages: resumed ? (earlierWords?.length ? earlierWords : undefined) : liveWords,
             stoppedNote: Boolean(stopped) && !resumed && kind !== 'fix',
             ...(briefChat && kind === 'first' && !resumed ? { briefChat } : {}),
+            ...(kind === 'first' && Object.keys(analyses).length ? { analyses } : {}),
             pins: resumed ? resumed.pins : kind === 'iteration' ? message?.pins : undefined,
             pinsVersion: !resumed && kind === 'iteration' ? pinsVersionNote : undefined,
             attachments: kind === 'iteration' && !resumed ? attachments : undefined,

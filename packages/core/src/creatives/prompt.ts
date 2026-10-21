@@ -41,6 +41,8 @@ export interface PromptInput {
    * be resumed (the turn otherwise forks it and remembers the conversation itself).
    */
   briefChat?: string;
+  /** Decision 1468, first turns: the brief's videos with a fresh analysis file (asset → its analysis file, project paths). */
+  analyses?: Record<string, string>;
   context?: CreativeContext;
   /** Language of the user's texts, captured when the job started: a running job keeps it even if the setting changes. */
   locale: Locale;
@@ -602,6 +604,12 @@ function durationFixLines(d: { duration: number; target: number }, helper = fals
 /** Said of two or more instances of one preset in a turn (Phase 12, spec §2). */
 export const SAME_SIZE_NOTE = 'These are separate designs of the same size on the same brief: make each one a different image or video (another subject, scene or moment), never the same picture repeated; keep them distinct unless the request says otherwise';
 
+/** Decision 1468: an asset with its analysis file, as the prompts list it. */
+export const withAnalysis = (asset: string, analyses?: Record<string, string>): string =>
+  (analyses?.[asset] ? `${asset} (analysis: ${analyses[asset]} — read it before opening the video)` : asset);
+/** Decision 1468: how the agent uses a video's analysis file (said once, when the prompt lists one). */
+export const VIDEO_ANALYSIS_RULE = '- Video analyses: read the analysis file first; open the video or extract frames only for what it does not answer (e.g. an exact frame to reuse). Its frames are in .studio/cache/analysis/; if missing, extract the frame yourself. An automatic transcript may misspell names.';
+
 export function buildCreativePrompt(i: PromptInput): string {
   const { locale } = i;
   const contract = i.contract ?? 'compositions';
@@ -639,7 +647,8 @@ export function buildCreativePrompt(i: PromptInput): string {
       `- Goal: ${brief.goal}`,
       brief.message && `- Key message: ${brief.message}`,
       brief.durationSec && `- Video duration: about ${brief.durationSec} seconds`,
-      brief.assets.length > 0 && `- Assets to use (project paths): ${brief.assets.join(', ')}`,
+      brief.assets.length > 0 && `- Assets to use (project paths): ${brief.assets.map((a) => withAnalysis(a, i.analyses)).join(', ')}`,
+      brief.assets.some((a) => i.analyses?.[a]) && VIDEO_ANALYSIS_RULE,
       brief.notes && `- Notes: ${brief.notes}`,
     ].filter((l): l is string => typeof l === 'string' && l !== '');
     parts.push(`Create the creative "${i.creative.title}" (version ${i.version}).`, ...(i.stoppedNote ? ['', STOPPED_TURN_NOTE] : []), '', '## Brief', ...briefLines);

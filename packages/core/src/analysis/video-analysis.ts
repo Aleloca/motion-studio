@@ -16,7 +16,7 @@ import { assertAgentFolders } from '../workspace-store.ts';
 import { buildAnalysisPrompt } from './analysis-prompt.ts';
 import { extractWav, silenceRatio } from './audio.ts';
 import { detectScenes, extractFrames, planFrames } from './frames.ts';
-import { frameName, framesDirOf, mergeTranscript, readSidecar, renderSidecar, writeSidecar, type SidecarScene } from './sidecar.ts';
+import { frameName, framesDirOf, mergeTranscript, readSidecar, renderSidecar, sidecarPathOf, writeSidecar, type SidecarScene } from './sidecar.ts';
 import { hashVideo } from './video-hash.ts';
 
 export type { ProjectRef };
@@ -73,6 +73,10 @@ export class VideoAnalysisService {
   /** The last failure per video and the content it was about (cleared when it is analysed again). */
   private readonly failures = new Map<string, { message: string; sha: string }>();
   private readonly ff: CommandExec;
+  /** Told of every change of an analysis (the first turns' waits check again). */
+  private readonly listeners = new Set<() => void>();
+  /** The first turns waiting now, by project and creative: their files and how to end the wait (Salta). */
+  private readonly waits = new Map<string, { files: string[]; skip: () => void }>();
 
   constructor(private readonly deps: VideoAnalysisDeps) {
     this.ff = deps.ffExec ?? execCommand;
@@ -225,6 +229,67 @@ export class VideoAnalysisService {
 
   private say(ref: ProjectRef, file: string, view: VideoAnalysisView): void {
     try { this.deps.broadcast({ type: 'video-analysis', project: ref.projectSlug, file, view }); } catch { /* a faulty listener must not stop an analysis */ }
+    for (const l of [...this.listeners]) l();
+  }
+
+  /** Decision 1468: the videos among `files` with a fresh analysis file (asset → its analysis file), what the prompts annotate. */
+  async analysisRefs(ref: ProjectRef, files: readonly string[]): Promise<Record<string, string>> {
+    const out: Record<string, string> = {};
+    for (const file of [...new Set(files)].filter(isVideoAsset)) {
+      const sidecar = await readSidecar(ref.projectDir, file).catch(() => null);
+      if (!sidecar) continue;
+      const hash = await hashVideo(join(ref.projectDir, file)).catch(() => null);
+      if (hash?.sha256 === sidecar.header.sha256) out[file] = sidecarPathOf(file);
+    }
+    return out;
+  }
+
+  private waitKey = (ref: ProjectRef, creativeSlug: string) => `${ref.root}\0${ref.projectSlug}\0${creativeSlug}`;
+
+  /**
+   * Decision 1478: a creative's first turn waits for the analyses of its brief's videos (queued or running, never a held one:
+   * a long video waiting for the user's confirmation does not hold a turn). While it waits, `note` writes the chat line and
+   * `analysis-wait` says which videos; `skip` (Salta) ends the wait at once. A failed analysis ends it too (the agent then
+   * gets the plain path). `aborted`: the turn was cancelled meanwhile.
+   */
+  async waitForBrief(ref: ProjectRef, creativeSlug: string, files: readonly string[], signal: AbortSignal, o: { note(e: { text: string; analysisWait?: { files: string[] } }): Promise<void> }): Promise<'none' | 'done' | 'skipped' | 'aborted'> {
+    // Queued here too when no trigger did (the brief of an older creative): a no-op for fresh, active or failed ones.
+    await this.ensure(ref, files, { from: 'brief' }).catch(() => []);
+    if (this.activeFor(ref, files).length === 0 || signal.aborted) return signal.aborted ? 'aborted' : 'none';
+    const names = [...new Set(this.activeFor(ref, files).map((a) => basename(a.file)))];
+    const key = this.waitKey(ref, creativeSlug);
+    const tell = (list: string[]) => { try { this.deps.broadcast({ type: 'analysis-wait', project: ref.projectSlug, creative: creativeSlug, files: list }); } catch { /* listener */ } };
+    await o.note({ text: t().videoAnalysis.waiting({ files: names.join(', ') }), analysisWait: { files: names } }).catch(() => {});
+    tell(names);
+    let end!: (r: 'done' | 'skipped' | 'aborted') => void;
+    const outcome = new Promise<'done' | 'skipped' | 'aborted'>((r) => { end = r; });
+    const check = () => { if (this.activeFor(ref, files).length === 0) end('done'); };
+    const onAbort = () => end('aborted');
+    this.listeners.add(check);
+    this.waits.set(key, { files: names, skip: () => end('skipped') });
+    signal.addEventListener('abort', onAbort, { once: true });
+    for (const a of this.activeFor(ref, files)) void this.settled(a.jobId).then(check);
+    check();
+    const r = await outcome;
+    this.listeners.delete(check);
+    if (this.waits.get(key)?.files === names) this.waits.delete(key);
+    signal.removeEventListener('abort', onAbort);
+    tell([]);
+    if (r === 'skipped') await o.note({ text: t().videoAnalysis.skipped({ files: names.join(', ') }) }).catch(() => {});
+    return r;
+  }
+
+  /** Salta: the creative's first turn stops waiting; false when it waits for nothing. */
+  skip(ref: ProjectRef, creativeSlug: string): boolean {
+    const w = this.waits.get(this.waitKey(ref, creativeSlug));
+    if (!w) return false;
+    w.skip();
+    return true;
+  }
+
+  /** The videos a creative's first turn waits for now (names; empty: none). */
+  waitingFiles(ref: ProjectRef, creativeSlug: string): string[] {
+    return [...(this.waits.get(this.waitKey(ref, creativeSlug))?.files ?? [])];
   }
 
   private async run(entry: Active, signal: AbortSignal, jobId: string): Promise<void | 'cancelled'> {
