@@ -30,7 +30,7 @@ export function filterArgv(x: unknown): readonly string[] | undefined {
 export const BUILT_FILTERS: readonly string[] = [
   'setpts', 'fps', 'colorspace', 'zscale', 'format', 'tonemap', 'scale', 'setsar', 'setparams',
   'aresample', 'aformat', 'atrim', 'asetpts', 'volume', 'afade', 'adelay', 'amix', 'apad', 'alimiter',
-  'ssim', 'testsrc', 'overlay', 'color', 'anullsrc',
+  'ssim', 'testsrc', 'overlay', 'color', 'anullsrc', 'select', 'showinfo', 'silencedetect',
 ];
 
 // ---------- values ----------
@@ -197,4 +197,28 @@ export function silentAudioInput(totalSamples: number, sampleRate: number): Filt
   const sr = int(sampleRate, 8000, 192_000, 'sample rate');
   const total = int(totalSamples, 1, MAX_SAMPLES, 'total samples');
   return mint(['-protocol_whitelist', 'file', '-format_whitelist', 'lavfi', '-f', 'lavfi', '-i', `anullsrc=r=${sr}:cl=stereo,atrim=end_sample=${total}`]);
+}
+
+// ---------- video analysis (decision 1468) ----------
+
+/**
+ * The `-vf` of the analysis's scene detection: frames whose scene score passes `threshold` are selected and printed by
+ * `showinfo` (their `pts_time` on stderr).
+ */
+export function sceneDetectFilter(threshold: number): FilterArg {
+  if (!Number.isFinite(threshold) || threshold < 0.05 || threshold > 0.9) throw new RangeError('ffmpeg filter: the scene threshold must be a number in 0.05..0.9');
+  return mint(['-vf', `select='gt(scene,${Number(threshold.toFixed(3))})',showinfo`]);
+}
+
+/** The `-vf` of an analysis frame: the longer side scaled to `px` (never enlarged), the other side kept in proportion, both even. */
+export function longSideScaleFilter(px: number): FilterArg {
+  const p = int(px, 16, 4096, 'long side');
+  return mint(['-vf', `scale=w='if(gte(iw,ih),trunc(min(${p},iw)/2)*2,-2)':h='if(gte(iw,ih),-2,trunc(min(${p},ih)/2)*2)'`]);
+}
+
+/** The `-af` that reports silences (below `noiseDb` dB for at least `minSec` seconds) on stderr. */
+export function silenceDetectFilter(noiseDb: number, minSec: number): FilterArg {
+  const n = int(noiseDb, -90, -10, 'noise level');
+  if (!Number.isFinite(minSec) || minSec < 0.1 || minSec > 10) throw new RangeError('ffmpeg filter: the silence duration must be a number in 0.1..10');
+  return mint(['-af', `silencedetect=n=${n}dB:d=${Number(minSec.toFixed(3))}`]);
 }
