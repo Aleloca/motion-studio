@@ -1,0 +1,42 @@
+{
+  "text": " Hola a todos. Este es el producto.",
+  "segments": [
+    {
+      "id": 1,
+      "seek": 0,
+      "start": 0.0,
+      "end": 1.92,
+      "text": " Hola a todos.",
+      "tokens": [50364, 22637, 257, 7624, 13, 50464],
+      "temperature": 0.0,
+      "avg_logprob": -0.18,
+      "compression_ratio": 0.82,
+      "no_speech_prob": 0.02
+    },
+    {
+      "id": 2,
+      "seek": 0,
+      "start": 2.24,
+      "end": 4.5,
+      "text": " Este es el producto.",
+      "tokens": [50476, 16105, 785, 806, 47583, 13, 50590],
+      "temperature": 0.0,
+      "avg_logprob": -0.18,
+      "compression_ratio": 0.82,
+      "no_speech_prob": 0.02
+    },
+    {
+      "id": 3,
+      "seek": 0,
+      "start": 4.5,
+      "end": 5.0,
+      "text": "",
+      "tokens": [],
+      "temperature": 0.0,
+      "avg_logprob": -0.9,
+      "compression_ratio": 0.0,
+      "no_speech_prob": 0.9
+    }
+  ],
+  "language": "es"
+}
