@@ -1,4 +1,4 @@
-import type { AssetEntry, JobSummary } from '@motion-studio/shared';
+import type { AssetEntry, CreativeReferenceEntry, JobSummary } from '@motion-studio/shared';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -10,7 +10,7 @@ const at = '2026-10-07T10:00:00.000Z';
 const asset = (over: Partial<AssetEntry> & { file: string }): AssetEntry => ({
   kind: 'image', origin: 'upload', sourceUrl: null, description: '', tags: [], width: null, height: null, addedAt: at, attribution: null, ...over,
 });
-let listing: { assets: AssetEntry[]; error: string | null; unregistered: string[] };
+let listing: { assets: AssetEntry[]; error: string | null; unregistered: string[]; creativeReferences?: CreativeReferenceEntry[] };
 const api = {
   // New creative reads the project's brief session (decision 1421): none here.
   getBriefSession: vi.fn(async () => null),
@@ -26,6 +26,13 @@ const api = {
     return structuredClone(a);
   }),
   deleteAsset: vi.fn(async () => ({ ok: true })),
+  setAssetReference: vi.fn(async (_s: string, file: string) => {
+    const r = listing.creativeReferences!.find((x) => x.file === file)!;
+    listing.creativeReferences = listing.creativeReferences!.filter((x) => x !== r);
+    const { usedBy: _u, referenceFor: _f, ...entry } = r;
+    listing.assets.push(entry);
+    return structuredClone(entry);
+  }),
   assetWaveform: vi.fn(async (): Promise<{ peaks: number[] }> => ({ peaks: [0.1, 0.5, 1, 0.3] })),
   projectFileUrl: (s: string, r: string) => `/f/${s}/${r}`,
 };
@@ -533,5 +540,34 @@ describe('Assets · rename and playback', () => {
     await user.click(await screen.findByRole('button', { name: 'Open tune.mp3' }));
     expect(await screen.findByRole('slider', { name: 'Position' })).toBeTruthy();
     expect(document.querySelector('.ms-player-wave')).toBeNull();
+  });
+});
+
+describe('Assets · creative references (report 62)', () => {
+  it('"Creative references" lists the files added in briefs, with the creatives using them, and saves one in Assets', async () => {
+    listing.creativeReferences = [
+      { ...asset({ file: 'moodboard.png' }), referenceFor: ['2026-10-20-lancio'], usedBy: [{ slug: '2026-10-20-lancio', title: 'Lancio' }] },
+      { ...asset({ file: 'bozza.png' }), referenceFor: [], usedBy: [] },
+    ];
+    en(<Assets slug="acme" live={live()} />);
+    await screen.findByText('Wordmark for dark backgrounds');
+    // Not in the library's grid.
+    expect(card('moodboard.png')).toBeNull();
+    const filter = screen.getByRole('button', { name: /Creative references/ });
+    expect(filter.textContent).toContain('2');
+    await userEvent.click(filter);
+    expect(filter.getAttribute('aria-pressed')).toBe('true');
+    const list = screen.getByRole('list', { name: 'Creative references' });
+    const mood = within(list).getAllByRole('listitem').find((li) => li.dataset.file === 'moodboard.png')!;
+    expect(within(mood).getByRole('link', { name: 'Lancio' }).getAttribute('href')).toBe('#/p/acme/c/2026-10-20-lancio');
+    const draft = within(list).getAllByRole('listitem').find((li) => li.dataset.file === 'bozza.png')!;
+    expect(within(draft).getByText('Brief not created yet')).toBeTruthy();
+    await userEvent.click(within(mood).getByRole('button', { name: 'Save in Assets: moodboard.png' }));
+    expect(api.setAssetReference).toHaveBeenCalledWith('acme', 'moodboard.png', false);
+    await waitFor(() => expect(getToasts().some((x) => x.text === 'moodboard.png saved in Assets')).toBe(true));
+    await waitFor(() => expect(within(screen.getByRole('list', { name: 'Creative references' })).getAllByRole('listitem')).toHaveLength(1));
+    // Back to the library: the saved file is there.
+    await userEvent.click(screen.getByRole('button', { name: /^All/ }));
+    expect(await screen.findByRole('button', { name: 'Open moodboard.png' })).toBeTruthy();
   });
 });

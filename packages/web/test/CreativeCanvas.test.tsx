@@ -29,6 +29,9 @@ const api = {
   sendCreativeTurn: vi.fn(async () => ({ id: 'j9', key: 'creative:/w:acme:lancio', kind: 'creative', label: 'x', state: 'queued', createdAt: at })),
   updateCreative: vi.fn(async () => detail.creative),
   restoreVersion: vi.fn(async () => detail.creative),
+  // Report 62: the brief's own references (files from the computer) and "Salva negli Assets".
+  listAssets: vi.fn(async (_s: string): Promise<{ assets: unknown[]; error: null; unregistered: string[]; creativeReferences?: Array<{ file: string }> }> => ({ assets: [], error: null, unregistered: [] })),
+  setAssetReference: vi.fn(async (_s: string, file: string, _r: boolean) => ({ file })),
   revealVersion: vi.fn(async () => ({ ok: true })),
   exportStorePack: vi.fn(async (..._a: unknown[]) => ({ folder: '/out/pack', written: ['AppStore/en/iphone-69/01-a.png'], failed: [] as Array<{ file: string; reason: string }> })),
   exportPicksJob: vi.fn(async (_s: string, _c: string, _body: { destination: string; picks: Record<string, number> }) => ({ job: exportJob({ state: 'queued' }) })),
@@ -839,6 +842,20 @@ describe('CreativeCanvas · review round 1', () => {
     // On the resume version itself there is nothing to restart.
     await pickVersion(1);
     expect(within(await openBadge(/^Instagram · Post 1:1: si esporta/)).queryByRole('button', { name: 'Riparti da qui' })).toBeNull();
+  });
+
+  it('the brief tab says which assets are only for this creative and saves one in Assets (report 62)', async () => {
+    detail = makeDetail([version(1, 'Dal brief')], { brief: { ...detail.creative.brief, assets: ['assets/mood.png', 'assets/logo.png'] } });
+    api.listAssets.mockResolvedValueOnce({ assets: [], error: null, unregistered: [], creativeReferences: [{ file: 'mood.png' }] });
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    await userEvent.click(screen.getByRole('tab', { name: 'Brief' }));
+    const save = await screen.findByRole('button', { name: 'Salva negli Assets: mood.png' });
+    expect(screen.getByText('Solo per questa creatività')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Salva negli Assets: logo.png' })).toBeNull();
+    await userEvent.click(save);
+    expect(api.setAssetReference).toHaveBeenCalledWith('acme', 'mood.png', false);
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Salva negli Assets: mood.png' })).toBeNull());
   });
 
   it('a legacy creative: adding a non-linked format warns before "Save and regenerate" that it converts with the agent; a linked one does not (I4)', async () => {
