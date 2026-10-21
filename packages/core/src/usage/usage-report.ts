@@ -1,4 +1,5 @@
-import { addTokens, shownTotal, usageKindSchema, type TokenCounts, type UsageBilling, type UsageRecord, type UsageReport } from '@motion-studio/shared';
+import { addTokens, CLAUDE_USAGE_KINDS, paidProviderSchema, paidServiceSchema, paidUnitSchema, shownTotal, type PaidUnit, type PaidUnits, type PaidUsage, type TokenCounts, type UsageBilling, type UsageRecord, type UsageReport } from '@motion-studio/shared';
+import { isPaidRecord, paidUsageOf } from './paid-usage.ts';
 import type { UsageLedger } from './usage-ledger.ts';
 
 export interface UsageProject { slug: string; name: string; dir: string }
@@ -50,6 +51,21 @@ class Bucket {
   view() { return { tokens: shownTotal(this.tokens), costUsd: this.costUsd, ...(this.estimated ? { estimated: true } : {}) }; }
 }
 
+/** Report 66: a paid bucket. Every paid record has an estimated cost, so the sum is the estimate (no "unknown" part). */
+class PaidBucket {
+  costUsd = 0;
+  calls = 0;
+  private units = new Map<PaidUnit, number>();
+  add(r: UsageRecord, p: PaidUsage) {
+    this.costUsd += r.costUsd ?? 0;
+    this.calls++;
+    this.units.set(p.units.unit, (this.units.get(p.units.unit) ?? 0) + p.units.amount);
+  }
+  view() { return { costUsd: this.costUsd, calls: this.calls }; }
+  /** Summed per unit, in a fixed order (tokens, characters, seconds, minutes, images). */
+  unitsView(): PaidUnits[] { return paidUnitSchema.options.flatMap((unit) => (this.units.has(unit) ? [{ unit, amount: this.units.get(unit)! }] : [])); }
+}
+
 /** Builds the usage report from the projects' ledgers. Never throws on bad ledger content (bad lines are skipped). */
 export async function buildUsageReport(i: UsageReportInput): Promise<UsageReport> {
   const [billing, ledgers] = await Promise.all([
@@ -62,23 +78,34 @@ export async function buildUsageReport(i: UsageReportInput): Promise<UsageReport
   const from = i.from ?? localMidnight(Number.isFinite(firstMs) && firstMs < i.to.getTime() ? new Date(firstMs) : new Date(i.to.getTime() - 1));
   const days = localDays(from, i.to);
   const byDay = new Map(days.map((d) => [d, new Bucket()]));
-  const byKind = new Map(usageKindSchema.options.map((k) => [k, new Bucket()]));
+  const byKind = new Map(CLAUDE_USAGE_KINDS.map((k) => [k, new Bucket()]));
   const total = new Bucket();
+  const paid = { total: new PaidBucket(), byDay: new Map(days.map((d) => [d, new PaidBucket()])), byProject: [] as UsageReport['paid']['byProject'],
+    byService: new Map(paidProviderSchema.options.map((p) => [p, new PaidBucket()])), byKind: new Map(paidServiceSchema.options.map((k) => [k, new PaidBucket()])) };
   let trackedSince: { at: string; ms: number } | null = null;
   const byProject: UsageReport['byProject'] = [];
   for (const [k, p] of i.projects.entries()) {
     const all = ledgers[k]!;
     const project = new Bucket();
+    const paidProject = new PaidBucket();
     for (const r of all) {
       const ms = Date.parse(r.at);
       if (!trackedSince || ms < trackedSince.ms) trackedSince = { at: r.at, ms };
       if (!match(r) || ms < from.getTime() || ms >= i.to.getTime()) continue;
+      // Report 66: a paid service's call never counts toward Claude's figures; one with no readable measure is left out.
+      if (isPaidRecord(r)) {
+        const p = paidUsageOf(r);
+        if (!p) continue;
+        for (const b of [paid.total, paidProject, paid.byService.get(p.provider)!, paid.byKind.get(p.service)!, paid.byDay.get(localDay(new Date(ms)))]) b?.add(r, p);
+        continue;
+      }
       project.add(r);
       total.add(r);
       byKind.get(r.kind)!.add(r);
       byDay.get(localDay(new Date(ms)))?.add(r);
     }
     byProject.push({ slug: p.slug, name: p.name, ...project.view() });
+    paid.byProject.push({ slug: p.slug, name: p.name, ...paidProject.view() });
   }
   return {
     from: from.toISOString(), to: i.to.toISOString(),
@@ -86,6 +113,13 @@ export async function buildUsageReport(i: UsageReportInput): Promise<UsageReport
     byDay: days.map((day) => ({ day, ...byDay.get(day)!.view() })),
     byProject,
     byKind: [...byKind].map(([kind, b]) => ({ kind, ...b.view() })),
+    paid: {
+      ...paid.total.view(),
+      byDay: days.map((day) => ({ day, ...paid.byDay.get(day)!.view() })),
+      byService: [...paid.byService].map(([provider, b]) => ({ provider, ...b.view(), units: b.unitsView() })),
+      byKind: [...paid.byKind].map(([service, b]) => ({ service, ...b.view(), units: b.unitsView() })),
+      byProject: paid.byProject,
+    },
     trackedSince: trackedSince?.at ?? null,
     billing,
     utcOffsetMinutes: -new Date(i.to.getTime() - 1).getTimezoneOffset() || 0, // never -0
