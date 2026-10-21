@@ -15,7 +15,8 @@ import { fileLock } from '../file-locks.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 import { t } from '../i18n.ts';
-import { moveSidecar, removeSidecar, sidecarPathOf } from '../analysis/sidecar.ts';
+import { moveSidecar, removeSidecar, sidecarPathOf, trashSidecar } from '../analysis/sidecar.ts';
+import type { TrashFn } from '../trash.ts';
 
 /** The steps of a rename, in order. */
 export type RenameStep = 'journal' | 'file' | 'sidecar' | 'assets' | 'brand' | 'briefs';
@@ -103,7 +104,7 @@ export class LibraryStore {
     fileLock.noteWrite(this.metadataPath('references'));
   }
 
-  registerAssets(items: Array<{ file: string; origin: AssetOrigin; sourceUrl?: string | null; description?: string; tags?: string[]; attribution?: string | null; bytes?: number; provider?: string; model?: string; loop?: boolean }>): Promise<AssetEntry[]> {
+  registerAssets(items: Array<{ file: string; origin: AssetOrigin; sourceUrl?: string | null; description?: string; tags?: string[]; attribution?: string | null; bytes?: number; provider?: string; model?: string; loop?: boolean; referenceFor?: string[] }>): Promise<AssetEntry[]> {
     return this.lock.run('assets', async () => {
       const assets = await this.listAssets();
       const out: AssetEntry[] = [];
@@ -121,6 +122,9 @@ export class LibraryStore {
           addedAt: existing?.addedAt ?? now(), attribution: item.attribution ?? existing?.attribution ?? null,
           ...((item.provider ?? existing?.provider) ? { provider: (item.provider ?? existing?.provider)! } : {}), ...((item.model ?? existing?.model) ? { model: (item.model ?? existing?.model)! } : {}),
           ...((item.loop ?? existing?.loop) !== undefined ? { loop: (item.loop ?? existing?.loop)! } : {}),
+          // Report 62: a creative reference stays one when registered again (a library asset is never made one so).
+          ...((item.referenceFor ?? existing?.referenceFor) !== undefined && (existing === undefined || existing.referenceFor !== undefined)
+            ? { referenceFor: existing?.referenceFor ?? item.referenceFor! } : {}),
         };
         if (existing) assets[assets.indexOf(existing)] = entry; else assets.push(entry);
         out.push(entry);
@@ -349,6 +353,67 @@ export class LibraryStore {
       // Decision 1495: its analysis file goes with it (the key frames stay in the cache until the sweep).
       await removeSidecar(this.projectDir, `assets/${file}`).catch(() => false);
     });
+  }
+
+  /**
+   * Report 62: makes `file` a creative reference only (`on`, kept with the creatives it already had) or a library asset (the
+   * marker cleared). The route checks that no creative uses a file before it goes back to "only for this creative".
+   */
+  setReferenceOnly(file: string, on: boolean): Promise<AssetEntry> {
+    return this.lock.run('assets', async () => {
+      const assets = await this.listAssets();
+      const i = assets.findIndex((a) => a.file === file);
+      if (i < 0) throw new WorkspaceError(404, t().errors.assetNotFound({ file }));
+      const { referenceFor, ...rest } = assets[i]!;
+      const next: AssetEntry = on ? { ...rest, referenceFor: referenceFor ?? [] } : rest;
+      if ((referenceFor !== undefined) !== on) await this.writeAssets(assets.map((a, k) => (k === i ? next : a)));
+      return next;
+    });
+  }
+
+  /**
+   * Report 62: settles the creative references under the metadata lock. `plan` runs inside it (what uses the files is read
+   * there, so a rename cannot slip in between) and answers, for each reference, the creatives it now belongs to, or null to
+   * remove it. A removed file and its analysis file go to the Trash (`trash`; decision 1582): one the Trash refuses keeps its
+   * entry. Without `trash` nothing is removed. Returns the files removed.
+   */
+  settleReferences(plan: () => Promise<(entry: AssetEntry) => string[] | null>, trash?: TrashFn): Promise<string[]> {
+    return this.lock.run('assets', async () => {
+      const assets = await this.listAssets();
+      if (!assets.some((a) => a.referenceFor !== undefined)) return [];
+      const decide = await plan();
+      const keep: AssetEntry[] = [];
+      const gone: string[] = [];
+      let changed = false;
+      for (const a of assets) {
+        if (a.referenceFor === undefined) { keep.push(a); continue; }
+        const owners = decide(a);
+        if (owners === null && trash && await this.trashFile(a.file, trash)) { gone.push(a.file); changed = true; continue; }
+        const next = owners ?? a.referenceFor;
+        const same = next.length === a.referenceFor.length && next.every((o, k) => o === a.referenceFor![k]);
+        keep.push(same ? a : { ...a, referenceFor: next });
+        changed ||= !same;
+      }
+      if (changed) await this.writeAssets(keep);
+      return gone;
+    });
+  }
+
+  /** A library file (confined to the folder, no link) and then its analysis file to the Trash; false when the file stays. */
+  private async trashFile(file: string, trash: TrashFn): Promise<boolean> {
+    const abs = this.resolve('assets', file);
+    const info = await lstat(abs).catch(() => null);
+    const realAbs = await realpath(abs).catch(() => null);
+    const realLib = await realpath(this.dir('assets')).catch(() => this.dir('assets'));
+    if (info) {
+      if (!info.isFile() || !realAbs || !realAbs.startsWith(realLib + sep)) return false;
+      try { await trash(abs); } catch (err) {
+        console.warn(`Motion Studio: ${file} could not go to the Trash and stays: ${(err as Error).message}`);
+        return false;
+      }
+    }
+    await trashSidecar(this.projectDir, `assets/${file}`, trash).catch(() => false);
+    return true;
   }
 
   registerReferences(files: string[]): Promise<ReferenceEntry[]> {

@@ -1,4 +1,4 @@
-import { activeMembers, briefSchema, keptAgentLabels, withAgentNames, compositionProblemText, creativeJobKey, issuesText, isSessionId, letterOfSlug, LIVE_LIMITS, MAX_RUNNING_VARIANTS, type JobWaitReason, type ConversationEntry, type LiveMessageOutcome, type QueuedRequest, type RedirectOutcome, type VariantGroup, type VariantId, type VariantMember } from '@motion-studio/shared';
+import { activeMembers, briefSchema, isCreativeReference, keptAgentLabels, withAgentNames, compositionProblemText, creativeJobKey, issuesText, isSessionId, letterOfSlug, LIVE_LIMITS, MAX_RUNNING_VARIANTS, type JobWaitReason, type ConversationEntry, type LiveMessageOutcome, type QueuedRequest, type RedirectOutcome, type VariantGroup, type VariantId, type VariantMember } from '@motion-studio/shared';
 import type { VideoAnalysisService } from '../analysis/video-analysis.ts';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -1955,7 +1955,8 @@ export class CreativeTurnService {
     let hasGuidelines = false;
     try { hasGuidelines = (await brand.readGuidelines()).trim() !== ''; } catch (e) { await note(t().jobs.guidelinesUnreadable({ detail: (e as Error).message })); }
     let assets = 0;
-    try { assets = (await library.listAssets()).length; } catch (e) { await note(t().jobs.assetListUnreadable({ detail: (e as Error).message })); }
+    // Report 62: other creatives' references are not the library's (this creative's own come with its brief).
+    try { assets = (await library.listAssets()).filter((a) => !isCreativeReference(a)).length; } catch (e) { await note(t().jobs.assetListUnreadable({ detail: (e as Error).message })); }
     let references = 0;
     try { references = (await library.listReferences()).length; } catch (e) { await note(t().jobs.referenceListUnreadable({ detail: (e as Error).message })); }
     const project = await readJsonFile(join(ref.projectDir, 'project.json'), projectFileSchema);

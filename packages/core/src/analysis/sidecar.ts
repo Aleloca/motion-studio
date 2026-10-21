@@ -217,6 +217,14 @@ export async function removeSidecar(projectDir: string, assetRel: string): Promi
   return true;
 }
 
+/** Report 62: the sidecar of `assetRel` goes to the Trash (with its creative's reference file); true when there was one. */
+export async function trashSidecar(projectDir: string, assetRel: string, trash: (abs: string) => Promise<void>): Promise<boolean> {
+  const path = await assertPlainPath(projectDir, sidecarPathOf(assetRel)).catch(() => null);
+  if (!path || !(await lstat(path).catch(() => null))?.isFile()) return false;
+  await trash(path);
+  return true;
+}
+
 /** Moves the sidecar of `from` to `to` (its header names `to`); true when there was one. */
 export async function moveSidecar(projectDir: string, from: string, to: string): Promise<boolean> {
   const src = await assertPlainPath(projectDir, sidecarPathOf(from)).catch(() => null);

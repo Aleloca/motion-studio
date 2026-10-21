@@ -37,15 +37,21 @@ export interface LibraryPickerProps {
   /** The project paths (`assets/…`) chosen now. */
   chosen: readonly string[];
   onToggle(path: string): void;
+  /** Report 62: this brief's own references already picked (not in the library): shown as picked tiles. */
+  extra?: readonly AssetEntry[];
+  /** Report 62: "Carica dal computer" (the empty library offers it before Assets). */
+  onUpload?(): void;
 }
 
 /**
  * The project's library as a 4-column grid in a popover, multi-select (New creative's asset picker; decision 1414: also the
  * brief session's "Asset dalla libreria"). Fonts are left out.
  */
-export function LibraryPicker({ slug, projectName, open, onClose, anchor, placement = 'bottom-end', library, onRetry, chosen, onToggle }: LibraryPickerProps) {
+export function LibraryPicker({ slug, projectName, open, onClose, anchor, placement = 'bottom-end', library, onRetry, chosen, onToggle, extra = [], onUpload }: LibraryPickerProps) {
   const n = useT().web.newCreative;
-  const items = (library.value ?? []).filter((a) => a.kind !== 'font');
+  const own = library.value ?? [];
+  const items = [...own, ...extra.filter((x) => !own.some((a) => a.file === x.file))].filter((a) => a.kind !== 'font');
+  const toAssets = () => { onClose(); go(href.project(slug, 'assets')); };
   return (
     <Popover open={open} onClose={onClose} anchor={anchor} placement={placement} width={360}>
       <div role="dialog" aria-label={n.libraryTitle({ project: projectName })} className="ms-nc-picker">
@@ -62,7 +68,12 @@ export function LibraryPicker({ slug, projectName, open, onClose, anchor, placem
           <p className="ms-nc-pick-warn" role="status"><Icon name="warn" size={13} /><span>{n.libraryPartial({ detail: library.error })}</span></p>
         ) : null}
         {library.value === null ? null : items.length === 0 ? (
-          <Empty icon="image" title={n.libraryEmpty} sub={n.libraryEmptyBody} action={<Button size="sm" variant="outline" onClick={() => { onClose(); go(href.project(slug, 'assets')); }}>{n.openAssets}</Button>} />
+          <Empty icon="image" title={n.libraryEmpty} sub={n.libraryEmptyBody} action={onUpload ? (
+            <span className="ms-nc-pick-actions">
+              <Button size="sm" variant="ink" onClick={() => { onClose(); onUpload(); }}><Icon name="upload" size={13} />{n.uploadFromComputer}</Button>
+              <Button size="sm" variant="ghost" onClick={toAssets}>{n.openAssets}</Button>
+            </span>
+          ) : <Button size="sm" variant="outline" onClick={toAssets}>{n.openAssets}</Button>} />
         ) : (
           <div className="ms-nc-pick-grid">
             {items.map((a) => {

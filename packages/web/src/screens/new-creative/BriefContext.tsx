@@ -1,5 +1,5 @@
 import type { BriefContext } from '@motion-studio/shared';
-import { useRef, useState, type KeyboardEvent } from 'react';
+import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useT } from '../../i18n.tsx';
 import { Button, Icon, Popover, cx, type IconName } from '../../ui/index.ts';
 import { rovingIndex } from '../../ui/roving.ts';
@@ -59,7 +59,7 @@ export function AddContextMenu({ onFolder, onLibrary, onUpload, disabled }: { on
 }
 
 /** The items added in the composer, each removable; folders in mono (decision 1414). */
-export function ContextPins({ pins, onRemove, thumb }: { pins: readonly ContextPin[]; onRemove(pin: ContextPin): void; thumb(path: string): string | null }) {
+export function ContextPins({ pins, onRemove, thumb, mark }: { pins: readonly ContextPin[]; onRemove(pin: ContextPin): void; thumb(path: string): string | null; /** Report 62: where an uploaded file is kept. */ mark?(path: string): ReactNode }) {
   const b = useT().web.briefSession;
   if (pins.length === 0) return null;
   return (
@@ -71,6 +71,7 @@ export function ContextPins({ pins, onRemove, thumb }: { pins: readonly ContextP
           <span key={`${p.kind}:${p.path}`} className={cx('ms-chip ms-on ms-composer-pin ms-brief-pin', p.kind === 'folder' && 'ms-brief-folder')} title={p.path}>
             {p.kind === 'asset' ? <span className="ms-brief-swatch" aria-hidden="true" style={url ? { backgroundImage: `url("${url}")` } : undefined} /> : null}
             <span className="ms-brief-pin-name">{name}</span>
+            {p.kind === 'asset' ? mark?.(p.path) : null}
             <button type="button" className="ms-x" aria-label={b.removePin({ name })} onClick={() => onRemove(p)}><Icon name="close" size={10} /></button>
           </span>
         );

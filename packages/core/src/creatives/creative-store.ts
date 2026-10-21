@@ -138,6 +138,10 @@ export interface ChatMigrationHooks {
 /** yyyy-mm-dd in the user's local time zone (a creative made at 23:30 belongs to that day). */
 const localDay = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 
+/** The project files a brief uses: its assets and its store pack's app screens (report 62, decision 1583), each once. */
+export const briefFilePaths = (b: Pick<Brief, 'assets' | 'storePack'>): string[] =>
+  [...new Set([...b.assets, ...(b.storePack?.screenshots ?? []).map((s) => s.screen).filter((x): x is string => typeof x === 'string')])];
+
 /** Per-creative and create locks for the whole process, keyed by the creatives folder: every store instance of a project shares them. */
 const creativeLocks = new KeyedMutex();
 
@@ -332,9 +336,28 @@ export class CreativeStore {
       // Phase 15: a real sister's brief is a creative's brief too (ruling R2).
       if (!e.isDirectory() || !(await isAcceptedCreative(this.projectDir, e.name))) continue;
       const c = await readJsonFile(this.file(e.name, 'creative.json'), creativeFileSchema).catch(() => null);
-      if (c?.brief.assets.includes(path)) out.push(e.name);
+      if (c && briefFilePaths(c.brief).includes(path)) out.push(e.name);
     }
     return out;
+  }
+
+  /**
+   * Report 62: every creative folder now (`slugs`, unreadable ones too), the creatives whose brief lists each project path
+   * (`uses`), their titles, and whether some creative.json could not be read (its brief is unknown: nothing may be taken
+   * as unused then).
+   */
+  async briefAssetUses(): Promise<{ slugs: Set<string>; uses: Map<string, string[]>; titles: Map<string, string>; unreadable: boolean }> {
+    const slugs = new Set<string>(), uses = new Map<string, string[]>(), titles = new Map<string, string>();
+    let unreadable = false;
+    for (const e of await readdir(this.root, { withFileTypes: true }).catch(() => [])) {
+      if (!e.isDirectory() || !(await isAcceptedCreative(this.projectDir, e.name))) continue;
+      slugs.add(e.name);
+      const c = await readJsonFile(this.file(e.name, 'creative.json'), creativeFileSchema).catch(() => null);
+      if (!c) { unreadable = true; continue; }
+      titles.set(e.name, c.title);
+      for (const a of briefFilePaths(c.brief)) uses.set(a, [...(uses.get(a) ?? []), e.name]);
+    }
+    return { slugs, uses, titles, unreadable };
   }
 
   /**

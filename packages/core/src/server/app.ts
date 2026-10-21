@@ -307,7 +307,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     renderActive: (project, creative) => queue.list().some((j) => (j.state === 'queued' || j.state === 'running') && j.key.startsWith(`render:${root}:${project}:${creative}:`)),
     mediaInUse: normalizer.inUse,
     stagingInUse: (dir) => previewsRef?.stagingInUse(dir) ?? false,
-    git: deps.git, sideState,
+    git: deps.git, sideState, media,
+    // Report 62: an open brief's files are never swept (an unreadable session: null, nothing swept in that project).
+    briefAssets: briefAssetsOf, trash: deps.trash ?? noTrash,
     ...(deps.mediaCacheMaxBytes !== undefined ? { mediaCacheMaxBytes: deps.mediaCacheMaxBytes } : {}),
   });
   let workspace: WorkspaceStore | null = null;
@@ -330,6 +332,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // Phase 13 (final review I1): each creative's queue and remembered session, in the config folder the agent is denied
   // (in memory without an explicit one, like the integrity records). Made before the workspace recovery, which uses it.
   const sideState = deps.sideState ?? new CreativeSideStateStore(deps.configDir ?? null);
+  // Decision 1421: the projects' brief sessions (made before the workspace recovery, which reads their files: report 62).
+  const briefStore = new BriefSessionStore(deps.configDir ?? null);
+  /** Report 62: the project paths the project's open brief session holds (an unreadable session throws: nothing is removed). */
+  const briefAssetsOf = async (dir: string) => { const s = await briefStore.open(dir); return s ? [...s.context.assets, ...s.form.assets] : []; };
   // Fix round 1 (I-A): a workspace settings change an unsandboxed agent made and the core could not undo stays held across
   // restarts (config folder; in memory without an explicit one).
   const settingsHold = new SettingsHoldStore(deps.configDir ?? null);
@@ -410,7 +416,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   // Decisions 1421–1422: the brief sessions, in the config folder (in memory without an explicit one, like the side state).
   const briefs = new BriefSessionService({
-    queue, launcher, store: new BriefSessionStore(deps.configDir ?? null), broadcast: (msg) => hub.broadcast(msg),
+    queue, launcher, store: briefStore, broadcast: (msg) => hub.broadcast(msg),
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
     model: async () => (await requireWorkspace().readSettings()).model,
     side: turns.side,
@@ -845,7 +851,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     model: async () => (await requireWorkspace().readSettings()).model,
   });
   groupsRef = groups;
-  registerCreativeRoutes(app, { requireWorkspace, turns, edits, renders, exports: new ExportJobService({ queue }), previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m), git: deps.git, variantRuns, groups, jobs: () => queue.list(), trash: deps.trash ?? noTrash, briefs, configDir });
+  registerCreativeRoutes(app, { requireWorkspace, turns, edits, renders, exports: new ExportJobService({ queue }), previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m), git: deps.git, variantRuns, groups, jobs: () => queue.list(), trash: deps.trash ?? noTrash, briefAssets: briefAssetsOf, briefs, configDir });
   registerStorePackRoutes(app, { requireWorkspace, turns, renders, media });
 
   const routeCtx = { requireWorkspace, brand: brandService, media, git: deps.git, broadcast: (m: ServerMessage) => hub.broadcast(m), configDir };

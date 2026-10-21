@@ -119,6 +119,33 @@
   position: absolute; right: 4px; top: 4px; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); color: var(--onAccent);
   display: flex; align-items: center; justify-content: center;
 }
+/* Report 62: files from the computer. The section takes dropped files; a file of this brief shows where it is kept under its
+   tile (one click switches it); an upload is a tile with a spinner, a failed one says why until dismissed. */
+.ms-nc-assetsec { position: relative; }
+.ms-nc-assetbtns { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 2px; min-width: 0; }
+.ms-nc-asset-col { display: flex; flex-direction: column; gap: 4px; width: 72px; }
+.ms-nc-refmark {
+  display: flex; align-items: flex-start; gap: 3px; width: 100%; padding: 3px 4px; margin: 0; border: 0; border-radius: 6px; cursor: pointer;
+  background: var(--field); color: var(--muted); font: inherit; font-size: 10px; font-weight: 600; line-height: 1.2; text-align: left; overflow-wrap: anywhere;
+  transition: background var(--d-s) var(--e-std), color var(--d-s) var(--e-std);
+}
+.ms-nc-refmark > svg { flex: none; margin-top: 1px; }
+.ms-nc-refmark:hover { color: var(--text); }
+.ms-nc-refmark.ms-saved { color: var(--accentText); background: color-mix(in srgb, var(--accent) 5%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent); }
+.ms-nc-refmark:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ms-nc-refmark:disabled { opacity: .6; cursor: progress; }
+.ms-nc-uploading, .ms-nc-upfailed { flex-direction: column; gap: 4px; padding: 6px; cursor: default; font-size: 9px; font-weight: 600; line-height: 1.2; text-align: center; }
+.ms-nc-upfailed { color: var(--danger); background: var(--dangerBg); }
+.ms-nc-upname { max-width: 100%; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.ms-nc-uploading .ms-nc-upname { -webkit-line-clamp: 2; }
+.ms-nc-uperr { align-items: center; }
+.ms-nc-uperr > span { min-width: 0; overflow-wrap: anywhere; }
+.ms-nc-dropzone {
+  position: absolute; inset: -6px; z-index: 2; display: flex; align-items: center; justify-content: center; gap: 8px; pointer-events: none;
+  border: 2px dashed var(--accent); border-radius: 12px; background: color-mix(in srgb, var(--panel) 85%, var(--accent)); color: var(--text);
+  font-size: 13px; font-weight: 600; text-align: center; padding: 8px;
+}
+.ms-nc-pick-actions { display: inline-flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
 
 /* Brand. */
 .ms-nc-brand { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 12px; box-shadow: inset 0 0 0 1px var(--line2); min-width: 0; }

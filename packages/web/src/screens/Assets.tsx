@@ -1,5 +1,5 @@
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
-import type { AssetEntry, AssetKind, AssetOrigin, JobSummary } from '@motion-studio/shared';
+import type { AssetEntry, AssetKind, AssetOrigin, CreativeReferenceEntry, JobSummary } from '@motion-studio/shared';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from 'react';
 import { api } from '../api.ts';
 import type { EventsState } from '../eventsReducer.ts';
@@ -23,7 +23,7 @@ export { baseName, mergeTags };
 
 const ORIGINS: AssetOrigin[] = ['website', 'upload', 'generated', 'stock', 'google-fonts', 'codebase'];
 
-type Listing = { assets: AssetEntry[]; error: string | null; unregistered: string[] };
+type Listing = { assets: AssetEntry[]; error: string | null; unregistered: string[]; creativeReferences?: CreativeReferenceEntry[] };
 const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
 
 /** The newest job of this project's brand key (analysis or description). Without the key, an active brand job of the slug. */
@@ -93,6 +93,9 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
   const [tag, setTag] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<AssetSort>('date');
+  // Report 62: "Riferimenti delle creatività", the files added in a brief only for its creative (out of the library's lists).
+  const [refsView, setRefsView] = useState(false);
+  const refs = listing.creativeReferences ?? [];
   const [sel, setSel] = useState<Set<string>>(() => new Set());
   const [open, setOpen] = useState<string | null>(null);
   // Deletes waiting for their Undo time: the cards are hidden until the delete goes out (or Undo brings them back).
@@ -305,18 +308,22 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
         <nav className="ms-assets-filters" aria-label={a.filters}>
           <div className="ms-lib-group">
             <span className="ms-lib-cap">{a.type}</span>
-            <FilterItem on={type === 'all'} icon="grid" count={assets.length} onClick={() => setType('all')}>{a.kinds.all}</FilterItem>
+            <FilterItem on={!refsView && type === 'all'} icon="grid" count={assets.length} onClick={() => { setRefsView(false); setType('all'); }}>{a.kinds.all}</FilterItem>
             {KINDS.map((k) => {
               const n = assets.filter((x) => x.kind === k).length;
-              return <FilterItem key={k} on={type === k} icon={KIND_ICON[k]} count={n} dim={n === 0} onClick={() => setType(k)}>{a.kinds[k]}</FilterItem>;
+              return <FilterItem key={k} on={!refsView && type === k} icon={KIND_ICON[k]} count={n} dim={n === 0} onClick={() => { setRefsView(false); setType(k); }}>{a.kinds[k]}</FilterItem>;
             })}
           </div>
           <div className="ms-lib-group">
             <span className="ms-lib-cap">{a.origin}</span>
             {ORIGINS.map((o) => {
               const n = assets.filter((x) => x.origin === o).length;
-              return <FilterItem key={o} on={origin === o} count={n} dim={n === 0} onClick={() => setOrigin(origin === o ? null : o)}>{a.origins[o]}</FilterItem>;
+              return <FilterItem key={o} on={!refsView && origin === o} count={n} dim={n === 0} onClick={() => { setRefsView(false); setOrigin(origin === o ? null : o); }}>{a.origins[o]}</FilterItem>;
             })}
+          </div>
+          <div className="ms-lib-group">
+            <span className="ms-lib-cap">{a.refsGroup}</span>
+            <FilterItem on={refsView} icon="pin" count={refs.length} dim={refs.length === 0} onClick={() => setRefsView((v) => !v)}>{a.refsFilter}</FilterItem>
           </div>
           {tags.length > 0 ? (
             <div className="ms-lib-group">
@@ -332,6 +339,7 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
           onDescribe={() => void describe(undescribed)} />
       </aside>
 
+      {refsView ? <CreativeRefs slug={slug} refs={refs} reload={reload} /> : (
       <main className="ms-assets-main">
         <div className="ms-assets-head" data-enter>
           <h1>{a.title}</h1>
@@ -384,9 +392,10 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
           </div>
         )}
       </main>
+      )}
 
       <div className="ms-assets-detail">
-        {detail ? (
+        {detail && !refsView ? (
           <AssetDetail key={detail.file} slug={slug} asset={detail} describing={describing.has(detail.file)} busy={busy}
             onClose={() => setOpen(null)} onSaved={saved} onRenamed={renamed} onDescribe={() => void describe([detail.file])}
             onUse={() => useInCreative([detail.file])} onDelete={() => void remove([detail.file])} analysis={analyses.byFile[`assets/${detail.file}`]}
@@ -400,6 +409,64 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
       ) : null}
       {drag && canUpload ? <div className="ms-lib-dropzone" aria-hidden="true"><span>{a.dropOverlay({ project: projectName })}</span></div> : null}
     </div>
+  );
+}
+
+/**
+ * Report 62: the creatives' references, each with the creatives using it and "Salva negli Assets" (then it is a library asset
+ * like the others, and stays when its creative is deleted).
+ */
+function CreativeRefs({ slug, refs, reload }: { slug: string; refs: CreativeReferenceEntry[]; reload(): void }) {
+  const a = useT().web.library.assets;
+  const [saving, setSaving] = useState<ReadonlySet<string>>(() => new Set());
+  const save = async (x: CreativeReferenceEntry) => {
+    setSaving((s) => new Set([...s, x.file]));
+    try {
+      await api.setAssetReference(slug, x.file, false);
+      toast.show(a.savedToAssets({ name: baseName(x.file) }), { tone: 'ok' });
+      reload();
+    } catch (e) {
+      toast.show(a.saveToAssetsFailed({ detail: message(e) }));
+    } finally {
+      setSaving((s) => new Set([...s].filter((f) => f !== x.file)));
+    }
+  };
+  return (
+    <main className="ms-assets-main">
+      <div className="ms-assets-head" data-enter>
+        <h1>{a.refsFilter}</h1>
+        <span className="ms-lib-muted">{refs.length}</span>
+      </div>
+      <p className="ms-lib-muted ms-assets-refs-intro">{a.refsIntro}</p>
+      {refs.length === 0 ? (
+        <div className="ms-lib-empty"><Empty icon="pin" title={a.refsEmpty} sub={a.refsEmptyBody} /></div>
+      ) : (
+        <div className="ms-assets-grid" role="list" aria-label={a.refsFilter}>
+          {refs.map((x) => {
+            const name = baseName(x.file);
+            return (
+              <div key={x.file} role="listitem" data-file={x.file} className="ms-acard ms-acard-ref">
+                <div className="ms-acard-media"><Thumb slug={slug} asset={x} /></div>
+                <div className="ms-acard-body">
+                  <b className="ms-acard-name" title={x.file}>{name}</b>
+                  <span className="ms-acard-desc">
+                    {x.usedBy.length === 0 ? <span className="ms-lib-faint">{a.refsUnused}</span> : (
+                      <>
+                        {a.refsUsedBy}{' '}
+                        {x.usedBy.map((c, i) => <span key={c.slug}>{i > 0 ? ', ' : ''}<a className="ms-link" href={href.creative(slug, c.slug)}>{c.title}</a></span>)}
+                      </>
+                    )}
+                  </span>
+                  <Button size="sm" variant="outline" className="ms-acard-save" loading={saving.has(x.file)} aria-label={`${a.saveToAssets}: ${name}`} onClick={() => void save(x)}>
+                    <Icon name="check" size={12} />{a.saveToAssets}
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </main>
   );
 }
 

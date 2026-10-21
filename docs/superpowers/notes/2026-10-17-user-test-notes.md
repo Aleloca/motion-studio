@@ -482,6 +482,12 @@ arrives and worked on later together.
     Decided: a file added from the computer is "only for this creative" by default (one click saves it in Assets, also
     later); those files are hidden from the library and from the other creatives' "Browse library", with an Assets filter
     "Creative references" to see and save them; they are deleted with their creative unless saved or used by another.
+    Done (decisions 1563–1585): "Dal computer…" (file picker or drop on the section) and "Dalla libreria" in "Asset da usare",
+    also from the empty library and from the brief chat's "Carica dal Mac"; the files stay in `assets/`, marked in assets.json
+    (`referenceFor`), with "Solo per questa creatività" / "Salvato negli Assets" under each tile (one click switches it). Assets
+    has the "Riferimenti delle creatività" filter, the canvas's Brief tab "Salva negli Assets". A deleted creative's references
+    go to the Trash with it unless saved, used by another creative (store pack screens too), by the brand, or held by the open
+    brief; an abandoned brief's go after 7 days, at startup.
 
 63. **A video's analysis stays on "checking the audio for speech" with nothing happening.** Video_Codecs_101.mp4 (2:29,
     with audio) uploaded in Assets: the activity centre shows "Video analysis · checking the audio for speech" and the

@@ -61,7 +61,7 @@ describe('BriefSessionPanel (decisions 1412–1414)', () => {
     expect(items.map((i) => i.textContent)).toEqual([
       'Collega una cartellaCodice sul tuo Mac, letto in sola lettura',
       'Asset dalla libreriaImmagini, video e loghi del progetto',
-      'Carica dal MacFinisce anche nella libreria del progetto',
+      'Carica dal MacSolo per questa creatività, se non lo salvi negli Assets',
     ]);
     await userEvent.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
@@ -94,12 +94,12 @@ describe('BriefSessionPanel (decisions 1412–1414)', () => {
     expect(screen.getByRole('button', { name: 'Togli logo.svg' })).toBeTruthy();
   });
 
-  it('an upload goes to the library and its file is pinned', async () => {
+  it('an upload is only for this creative (decision 1576) and its file is pinned', async () => {
     const { container } = render(page());
     const input = container.querySelector('input[type="file"]') as HTMLInputElement;
     const file = new File(['x'], 'demo-app.mov', { type: 'video/quicktime' });
     await userEvent.upload(input, file);
-    await waitFor(() => expect(api.uploadFiles).toHaveBeenCalledWith('acme', 'assets', [file]));
+    await waitFor(() => expect(api.uploadFiles).toHaveBeenCalledWith('acme', 'assets', [file], { reference: true }));
     expect(await screen.findByRole('button', { name: 'Togli demo-app.mov' })).toBeTruthy();
     expect(onLibraryChanged).toHaveBeenCalled();
   });

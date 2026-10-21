@@ -1414,6 +1414,52 @@ function CreativeTokens({ project, creative, versions, refresh }: { project: str
   );
 }
 
+/**
+ * The brief's assets; report 62: a file added from the computer only for this creative says so, with "Salva negli Assets"
+ * (then it stays when the creative is deleted).
+ */
+function BriefAssetTags({ project, assets }: { project: string; assets: string[] }) {
+  const t = useT();
+  const lib = t.web.library.assets;
+  const [refs, setRefs] = useState<ReadonlySet<string>>(() => new Set());
+  const [saving, setSaving] = useState<string | null>(null);
+  const [nonce, setNonce] = useState(0);
+  const key = assets.join('\n');
+  useEffect(() => {
+    let alive = true;
+    // A failure only leaves the action out: the list of the brief is what matters here.
+    Promise.resolve().then(() => api.listAssets(project))
+      .then((r) => { if (alive) setRefs(new Set((r.creativeReferences ?? []).map((x) => `assets/${x.file}`))); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [project, key, nonce]);
+  const save = async (path: string) => {
+    const file = path.replace(/^assets\//, '');
+    setSaving(path);
+    try {
+      await api.setAssetReference(project, file, false);
+      toast.show(lib.savedToAssets({ name: file }), { tone: 'ok' });
+      setNonce((x) => x + 1);
+    } catch (e) {
+      toast.show(lib.saveToAssetsFailed({ detail: message(e) }));
+    } finally { setSaving(null); }
+  };
+  return (
+    <span className="ms-cv-brief-tags">
+      {assets.map((a) => {
+        const name = a.replace(/^assets\//, '');
+        return refs.has(a) ? (
+          <span key={a} className="ms-cv-brief-ref">
+            <Tag>{name}</Tag>
+            <span className="ms-cv-brief-refnote"><Icon name="pin" size={10} />{t.web.newCreative.referenceOnly}</span>
+            <Button size="sm" variant="ghost" loading={saving === a} aria-label={`${lib.saveToAssets}: ${name}`} onClick={() => void save(a)}>{lib.saveToAssets}</Button>
+          </span>
+        ) : <Tag key={a}>{name}</Tag>;
+      })}
+    </span>
+  );
+}
+
 /** `readOnly`: why the brief cannot be edited here (a discarded variant, phase 15): "Modifica il brief" is disabled and says it. */
 function BriefTab({ project, detail, presets, disabled, readOnly, formatLabel, onChanged }: {
   project: string; detail: NonNullable<ReturnType<typeof useCreative>['detail']>; presets: FormatPreset[]; disabled: boolean; readOnly: string | null; formatLabel(id: string): string; onChanged(): void;
@@ -1440,7 +1486,7 @@ function BriefTab({ project, detail, presets, disabled, readOnly, formatLabel, o
       {row(c.message, b.message || c.none)}
       {row(c.length, b.durationSec ? t.web.canvas.seconds({ n: formatNumber(locale, b.durationSec) }) : c.none)}
       {row(c.formats, <span className="ms-cv-brief-tags">{b.formats.map((f) => <Tag key={f}>{formatLabel(f)}</Tag>)}</span>)}
-      {b.assets.length ? row(c.assets, <span className="ms-cv-brief-tags">{b.assets.map((a) => <Tag key={a}>{a.replace(/^assets\//, '')}</Tag>)}</span>) : null}
+      {b.assets.length ? row(c.assets, <BriefAssetTags project={project} assets={b.assets} />) : null}
       {b.notes ? row(c.notes, b.notes) : null}
       {row(c.services, servicesSummary(b.services, t))}
       <CreativeTokens project={project} creative={detail.slug} versions={detail.versions}
