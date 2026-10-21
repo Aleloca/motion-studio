@@ -525,7 +525,8 @@ describe('desktop wiring', () => {
     const dir = join(import.meta.dirname, '..');
     expect(readFileSync(join(dir, 'electron-builder.yml'), 'utf8')).toMatch(/- \{ from: resources\/runtime, to: runtime \}/);
     const scripts = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).scripts as Record<string, string>;
-    expect(scripts['prepare-resources']).toContain("fs.cpSync('../../packages/composition-runtime/dist','resources/runtime'");
+    expect(scripts['prepare-resources']).toBe('node scripts/prepare-resources.mjs');
+    expect(readFileSync(join(dir, 'scripts', 'prepare-resources.mjs'), 'utf8')).toContain("cpSync(join(root, 'packages/composition-runtime/dist'), join(out, 'runtime')");
     // main.ts hands the packaged copy to the core.
     expect(readFileSync(join(dir, 'src', 'main.ts'), 'utf8')).toContain("runtimeDir: join(process.resourcesPath, 'runtime')");
   });
