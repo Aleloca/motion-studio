@@ -146,6 +146,13 @@ describe('voiceBatch', { timeout: 30_000 }, () => {
     expect(speechCalls().map((c) => c.url)).toEqual([expect.stringContaining('/v1/text-to-speech/brandvoice1')]);
   });
 
+  it('records each voice it made in the ledger (report 66), with the creative', async () => {
+    const out = await batch({ settings: { confirmPaidProviders: false } })(ctx(), items.slice(0, 2));
+    expect(out.status).toBe('done');
+    const lines = (await readFile(join(projectDir, '.studio', 'usage.jsonl'), 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines.map((l) => [l.kind, l.creativeSlug, l.paid])).toEqual(items.slice(0, 2).map((i) => ['paid', 'launch', { provider: 'openai', service: 'voice', model: 'gpt-4o-mini-tts', units: { amount: i.text.length, unit: 'characters' } }]));
+  });
+
   it('a text over the provider limit is refused alone, before the confirmation, never sent', async () => {
     const long = { key: 'x', label: 'Long', text: 'a'.repeat(4097), name: 'long' };
     const pending = batch()(ctx(), [long, items[0]!]);

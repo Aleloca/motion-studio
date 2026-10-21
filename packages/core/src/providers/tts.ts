@@ -1,5 +1,6 @@
 import { ProviderError, requestBytes, requestJson, type HttpDeps } from './http.ts';
 import { t } from '../i18n.ts';
+import { voiceBill } from '../usage/paid-usage.ts';
 
 /** The OpenAI speech model Motion Studio uses (the key check reads it, read-only). */
 export const OPENAI_TTS_MODEL = 'gpt-4o-mini-tts';
@@ -20,7 +21,7 @@ export async function openaiSpeech(deps: HttpDeps & { apiKey: string }, req: Tts
   const { bytes } = await requestBytes(deps, 'https://api.openai.com/v1/audio/speech', {
     method: 'POST', headers: { authorization: `Bearer ${deps.apiKey}`, 'content-type': 'application/json' }, body: JSON.stringify(body),
   }, { provider: 'OpenAI', secrets: [deps.apiKey], maxBytes: MAX });
-  return { bytes, voice };
+  return { bytes, voice, bill: voiceBill('openai', req.text.length) };
 }
 
 /**
@@ -40,8 +41,10 @@ export async function elevenlabsSpeech(deps: HttpDeps & { apiKey: string }, req:
   if (req.voice !== undefined && !VOICE.test(req.voice)) throw new ProviderError(400, t().providers.invalidVoice);
   const voice = req.voice || await elevenlabsDefaultVoice(deps);
   const format = req.format === 'wav' ? 'wav_44100' : 'mp3_44100_128';
-  const { bytes } = await requestBytes(deps, `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}?output_format=${format}`, {
+  const { bytes, headers: answer } = await requestBytes(deps, `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}?output_format=${format}`, {
     method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ text: req.text, model_id: ELEVENLABS_TTS_MODEL }),
   }, { provider: 'ElevenLabs', secrets: [deps.apiKey], maxBytes: MAX });
-  return { bytes, voice };
+  // Report 66: the characters ElevenLabs says it charged (`character-cost`), else the ones sent.
+  const charged = /^\d+$/.test(answer.get('character-cost')?.trim() ?? '') ? Number(answer.get('character-cost')!.trim()) : req.text.length;
+  return { bytes, voice, bill: voiceBill('elevenlabs', charged) };
 }

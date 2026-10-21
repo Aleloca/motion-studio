@@ -18,12 +18,16 @@ import { generateImage, normalizeImageSize, OPENAI_IMAGE_MODEL } from '../provid
 import { ELEVENLABS_TTS_MODEL, elevenlabsDefaultVoice, elevenlabsSpeech, OPENAI_TTS_MODEL, openaiSpeech, TTS_MAX_CHARS } from '../providers/tts.ts';
 import { canonicalVoice, voiceProviderOf } from '../providers/voices.ts';
 import type { SecretsVault } from '../secrets/vault.ts';
+import { recordPaidUsage, type PaidBill } from '../usage/paid-usage.ts';
+import type { UsageLedger } from '../usage/usage-ledger.ts';
 import { WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
 import { t } from '../i18n.ts';
 
 export interface GenerateRoutesContext {
   requireWorkspace: () => WorkspaceStore; vault: SecretsVault; approvals: ApprovalBroker; media: MediaTools; queue: JobQueue;
   keyChecks: KeyCheckCache; http: Pick<HttpDeps, 'fetch' | 'transport' | 'lookup' | 'timeoutMs'>; broadcast: (m: ServerMessage) => void;
+  /** Report 66: each generation the provider answered is recorded in the project's `usage.jsonl`. */
+  ledger: UsageLedger;
 }
 
 const LABEL = { openai: 'OpenAI', elevenlabs: 'ElevenLabs' } as const;
@@ -128,6 +132,12 @@ export function registerGenerateRoutes(app: FastifyInstance, ctx: GenerateRoutes
       await keyChecks.recordUse(ctx.vault, { ...lease, provider }, capability, 'ok');
       return out;
     };
+    /** A paid call: billed once answered, so recorded before saving the file or a cancel can fail the job (report 66, decision 1611). */
+    const paidCall = async <T extends { bill: PaidBill }>(provider: Provider, capability: KeyCapability, call: () => Promise<T>): Promise<T> => {
+      const out = await checkedCall(provider, capability, call);
+      await recordPaidUsage(ctx.ledger, projectDir, { jobId: r.jobId, creativeSlug: null, bill: out.bill });
+      return out;
+    };
     const fileName = (ext: string) => `${b.options.name || slug(checked.prompt)}.${ext}`;
     const store = async (dir: 'generated' | 'audio', ext: string, bytes: Uint8Array, item: (f: string) => Parameters<LibraryStore['registerAssets']>[0][number]) => {
       alive();
@@ -148,7 +158,7 @@ export function registerGenerateRoutes(app: FastifyInstance, ctx: GenerateRoutes
         const size = checked.size!;
         await paid('provider:openai-images', t().approvals.generateImage, t().approvals.imageDetail({ width: size.width, height: size.height, refs: 0, prompt: checked.prompt.slice(0, 300) }));
         alive();
-        const img = await checkedCall('openai', 'images', () => generateImage(http, { prompt: checked.prompt, width: size.width, height: size.height, quality: b.options.quality, background: b.options.background }));
+        const img = await paidCall('openai', 'images', () => generateImage(http, { prompt: checked.prompt, width: size.width, height: size.height, quality: b.options.quality, background: b.options.background }));
         await store('generated', 'png', img.bytes, (f) => ({ file: f, origin: 'generated', description: checked.prompt.slice(0, 2000), tags: ['gpt-image-2'], provider: 'openai', model: OPENAI_IMAGE_MODEL }));
       } else if (b.kind === 'voice') {
         const text = checked.prompt;
@@ -160,20 +170,20 @@ export function registerGenerateRoutes(app: FastifyInstance, ctx: GenerateRoutes
         alive();
         const speech = { text, voice, instructions: b.options.instructions || undefined, format: b.options.format } as const;
         const out = b.provider === 'openai'
-          ? await checkedCall('openai', 'tts', () => openaiSpeech(http, speech))
-          : await checkedCall('elevenlabs', 'tts', () => elevenlabsSpeech(http, speech));
+          ? await paidCall('openai', 'tts', () => openaiSpeech(http, speech))
+          : await paidCall('elevenlabs', 'tts', () => elevenlabsSpeech(http, speech));
         const model = b.provider === 'openai' ? OPENAI_TTS_MODEL : ELEVENLABS_TTS_MODEL;
         await store('audio', b.options.format, out.bytes, (f) => ({ file: f, origin: 'generated', description: text.slice(0, 2000), tags: [t().providers.voiceTag, b.provider], attribution: t().providers.voiceAttribution({ provider: LABEL[b.provider] }), provider: b.provider, model }));
       } else if (b.kind === 'sfx') {
         await paid('provider:sfx-elevenlabs', t().approvals.generateSfx({ provider: LABEL.elevenlabs }), t().approvals.audioDetail({ provider: LABEL.elevenlabs, seconds: b.options.durationSec ?? null, prompt: checked.prompt.slice(0, 300) }));
         alive();
         const { name: _n, ...o } = b.options;
-        const out = await checkedCall('elevenlabs', 'sfx', () => elevenlabsSoundEffect(http, { ...o, prompt: checked.prompt }));
+        const out = await paidCall('elevenlabs', 'sfx', () => elevenlabsSoundEffect(http, { ...o, prompt: checked.prompt }));
         await store('audio', 'mp3', out.bytes, (f) => ({ file: f, origin: 'generated', description: checked.prompt, tags: [t().providers.soundTag, 'elevenlabs'], attribution: attribution('elevenlabs'), provider: 'elevenlabs', model: SFX_MODEL, ...(b.options.loop !== undefined ? { loop: b.options.loop } : {}) }));
       } else {
         await paid('provider:music-elevenlabs', t().approvals.generateMusic({ provider: LABEL.elevenlabs }), t().approvals.audioDetail({ provider: LABEL.elevenlabs, seconds: b.options.durationSec, prompt: checked.prompt.slice(0, 300) }));
         alive();
-        const out = await checkedCall('elevenlabs', 'music', () => elevenlabsMusic(http, { prompt: checked.prompt, durationSec: b.options.durationSec, instrumental: b.options.instrumental }));
+        const out = await paidCall('elevenlabs', 'music', () => elevenlabsMusic(http, { prompt: checked.prompt, durationSec: b.options.durationSec, instrumental: b.options.instrumental }));
         await store('audio', 'mp3', out.bytes, (f) => ({ file: f, origin: 'generated', description: checked.prompt, tags: [t().providers.musicTag, 'elevenlabs'], attribution: attribution('elevenlabs'), provider: 'elevenlabs', model: MUSIC_MODEL }));
       }
     } catch (e) {

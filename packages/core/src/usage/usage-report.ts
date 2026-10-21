@@ -1,4 +1,4 @@
-import { addTokens, CLAUDE_USAGE_KINDS, paidProviderSchema, paidServiceSchema, paidUnitSchema, shownTotal, type PaidUnit, type PaidUnits, type PaidUsage, type TokenCounts, type UsageBilling, type UsageRecord, type UsageReport } from '@motion-studio/shared';
+import { addTokens, CLAUDE_USAGE_KINDS, type ClaudeUsageKind, paidProviderSchema, paidServiceSchema, paidUnitSchema, shownTotal, type PaidUnit, type PaidUnits, type PaidUsage, type TokenCounts, type UsageBilling, type UsageRecord, type UsageReport } from '@motion-studio/shared';
 import { isPaidRecord, paidUsageOf } from './paid-usage.ts';
 import type { UsageLedger } from './usage-ledger.ts';
 
@@ -101,7 +101,7 @@ export async function buildUsageReport(i: UsageReportInput): Promise<UsageReport
       }
       project.add(r);
       total.add(r);
-      byKind.get(r.kind)!.add(r);
+      byKind.get(r.kind as ClaudeUsageKind)!.add(r);
       byDay.get(localDay(new Date(ms)))?.add(r);
     }
     byProject.push({ slug: p.slug, name: p.name, ...project.view() });
