@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { constants, existsSync } from 'node:fs';
 import { lstat, mkdir, open, readdir, rename, rm, symlink } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
@@ -32,7 +32,7 @@ const VERSION_RE = /^\d{1,5}\.\d{1,5}\.\d{1,6}\.\d{1,6}$/;
 export type CftPlatform = 'mac-arm64' | 'mac-x64' | 'linux64' | 'win64' | 'win32';
 
 export class CftError extends Error {
-  constructor(readonly code: 'consentRequired' | 'unsupportedPlatform' | 'badManifest' | 'badUrl' | 'download' | 'sizeMismatch' | 'tooLarge' | 'unsafeArchive' | 'badArchive' | 'noExecutable', message: string) {
+  constructor(readonly code: 'consentRequired' | 'unsupportedPlatform' | 'badManifest' | 'badUrl' | 'download' | 'sizeMismatch' | 'tooLarge' | 'unsafeArchive' | 'badArchive' | 'noExecutable' | 'hashMismatch', message: string) {
     super(message);
     this.name = 'CftError';
   }
@@ -148,30 +148,84 @@ export async function installCft(o: InstallCftOptions): Promise<{ exe: string; v
 }
 
 async function download(url: string, to: string, o: InstallCftOptions & { expected: number }): Promise<void> {
+  await streamDownload({ url, dest: to, expectedBytes: o.expected, maxBytes: o.maxBytes ?? CFT_MAX_DOWNLOAD_BYTES, ...(o.fetchImpl ? { fetchImpl: o.fetchImpl } : {}), ...(o.signal ? { signal: o.signal } : {}), ...(o.onProgress ? { onProgress: o.onProgress } : {}) });
+}
+
+const REDIRECTS = new Set([301, 302, 303, 307, 308]);
+/** At most this many redirects are followed (only with `allowRedirectHosts`). */
+const MAX_REDIRECT_HOPS = 3;
+
+export interface StreamDownloadOptions {
+  url: string;
+  /** The exact size the user agreed to: the server's `Content-Length` must be this, and so must the bytes received. */
+  expectedBytes: number;
+  maxBytes: number;
+  /** Created with `O_EXCL | O_NOFOLLOW`, mode 0600; removed on any failure. */
+  dest: string;
+  fetchImpl?: FetchLike;
+  signal?: AbortSignal;
+  onProgress?: (p: { bytes: number; total: number | null }) => void;
+  /** Hex sha256 the file must have, computed while streaming and checked before the caller renames it into place. */
+  sha256?: string;
+  /**
+   * Hosts a redirect may lead to (exact host names; `https:` only, plain `http:` on loopback for tests), at most 3 hops.
+   * Absent: no redirect at all (`redirect: 'error'`, Chrome for Testing).
+   */
+  allowRedirectHosts?: readonly string[];
+}
+
+/**
+ * The streaming download shared by Chrome for Testing and the Whisper models: https only, redirects refused unless to an
+ * allowed host, an exact and capped `Content-Length` that must equal the size shown to the user, progress, and an optional
+ * streaming sha256 check. Nothing is left at `dest` when it fails.
+ */
+export async function streamDownload(o: StreamDownloadOptions): Promise<void> {
   const f = o.fetchImpl ?? fetch;
-  const max = o.maxBytes ?? CFT_MAX_DOWNLOAD_BYTES;
-  const res = await f(url, { signal: o.signal, redirect: 'error' }).catch((e: Error) => { throw new CftError('download', e.message); });
+  let current = checkUrl(o.url);
+  let res: Response | null = null;
+  for (let hop = 0; ; hop++) {
+    res = await f(current.href, { signal: o.signal, redirect: o.allowRedirectHosts ? 'manual' : 'error' }).catch((e: Error) => { throw new CftError('download', e.message); });
+    if (!o.allowRedirectHosts || !REDIRECTS.has(res.status)) break;
+    await res.body?.cancel().catch(() => {});
+    if (hop >= MAX_REDIRECT_HOPS) throw new CftError('badUrl', 'too many redirects');
+    const location = res.headers.get('location');
+    if (!location) throw new CftError('download', `HTTP ${res.status} without a location`);
+    let next: URL;
+    try { next = new URL(location, current); } catch { throw new CftError('badUrl', 'bad redirect'); }
+    next = checkUrl(next.href);
+    if (!o.allowRedirectHosts.includes(next.hostname)) throw new CftError('badUrl', `refused redirect to ${next.origin}`);
+    current = next;
+  }
   if (!res.ok || !res.body) throw new CftError('download', `HTTP ${res.status}`);
   const len = Number(res.headers.get('content-length'));
   if (!Number.isSafeInteger(len) || len <= 0) throw new CftError('sizeMismatch', 'no Content-Length');
-  if (len > max) throw new CftError('tooLarge', `${len} bytes > ${max}`);
-  if (o.expected !== len) throw new CftError('sizeMismatch', `expected ${o.expected} bytes, the server sends ${len}`);
-  const fh = await open(to, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+  if (len > o.maxBytes) throw new CftError('tooLarge', `${len} bytes > ${o.maxBytes}`);
+  if (o.expectedBytes !== len) throw new CftError('sizeMismatch', `expected ${o.expectedBytes} bytes, the server sends ${len}`);
+  const fh = await open(o.dest, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+  const hash = createHash('sha256');
   let bytes = 0;
+  let ok = false;
   try {
-    const reader = res.body.getReader();
-    for (;;) {
-      const { done, value } = await reader.read().catch((e: Error) => { throw new CftError('download', e.message); });
-      if (done) break;
-      bytes += value.length;
-      if (bytes > len) { await reader.cancel().catch(() => {}); throw new CftError('sizeMismatch', 'more bytes than announced'); }
-      await fh.write(value);
-      o.onProgress?.({ bytes, total: len });
+    try {
+      const reader = res.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read().catch((e: Error) => { throw new CftError('download', e.message); });
+        if (done) break;
+        bytes += value.length;
+        if (bytes > len) { await reader.cancel().catch(() => {}); throw new CftError('sizeMismatch', 'more bytes than announced'); }
+        hash.update(value);
+        await fh.write(value);
+        o.onProgress?.({ bytes, total: len });
+      }
+    } finally {
+      await fh.close();
     }
+    if (bytes !== len) throw new CftError('sizeMismatch', `downloaded ${bytes} of ${len} bytes`);
+    if (o.sha256 !== undefined && hash.digest('hex') !== o.sha256.toLowerCase()) throw new CftError('hashMismatch', 'the sha256 of the download is not the expected one');
+    ok = true;
   } finally {
-    await fh.close();
+    if (!ok) await rm(o.dest, { force: true }).catch(() => {});
   }
-  if (bytes !== len) throw new CftError('sizeMismatch', `downloaded ${bytes} of ${len} bytes`);
 }
 
 interface ZipEntry { name: string; method: number; crc: number; compSize: number; size: number; offset: number; mode: number; unix: boolean; dir: boolean; link: boolean }
