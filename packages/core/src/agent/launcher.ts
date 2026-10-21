@@ -47,6 +47,8 @@ export const MCP_TOOLS: Record<AgentJobKind, string[]> = {
   'creative-group': ['report_progress', 'read_brand_kit', ...GROUP_TOOLS, 'update_brief', 'add_format', 'name_formats', 'add_language', 'discard_variant', 'restore_variant', 'set_pick', 'render_version', 'prepare_export'],
   // Decision 1421: a brief session reads and fills the New creative form; it creates, renders and pays for nothing.
   brief: ['report_progress', 'read_brand_kit', ...BRIEF_TOOLS],
+  // Decision 1493: a video analysis run writes its description of the frames, nothing else.
+  'video-analysis': ['report_progress', 'write_video_analysis'],
 };
 
 /** Characters that make Claude Code's sandbox read a path as a glob. */
@@ -124,6 +126,10 @@ export interface LaunchInput {
   groupTools?: BridgeContext['groupTools'];
   /** Decision 1421: the brief session the run fills (`brief` jobs only, see BridgeContext). */
   briefScope?: BridgeContext['briefScope'];
+  /** Decision 1468: the analysis run's scope (`video-analysis` jobs only, see BridgeContext). */
+  videoAnalysisScope?: BridgeContext['videoAnalysisScope'];
+  /** `video-analysis` jobs: the absolute folders the run may read (the frames), see PolicyInput.readDirs. */
+  readDirs?: string[];
   /** What the run's ledger line is about (a creative's version and fix-loop attempt); null for other jobs. */
   usage?: { version: number | null; attempt: number | null };
   /**
@@ -221,6 +227,9 @@ export class AgentLauncher {
     const spellings = (f: string) => (f.startsWith(`${i.projectDir}/`) && realDir !== i.projectDir ? [f, join(realDir, f.slice(i.projectDir.length + 1))] : [f]);
     const protectedFiles = [...(i.protectedFiles ?? []).flatMap(spellings), ...roots.flatMap((d) => [...PROTECTED_PROJECT_FILES, RENAME_JOURNAL_FILE].map((n) => join(d, n)))];
     protectedDirs.push(...(i.protectedDirs ?? []).flatMap(spellings));
+    // Spec 1485 (decision 1499): the video analyses are the core's (and the user's, from the library): no agent job writes them,
+    // except the user's own console.
+    if (i.kind !== 'console') protectedDirs.push(...roots.map((d) => join(d, 'assets', '.analysis')));
     const logGlobs = roots.flatMap((d) => [
       ...CREATIVE_CORE_FILES.map((n) => `${escapeGlob(join(d, 'creatives'))}/*/${n}`),
       `${escapeGlob(join(d, 'creatives'))}/*/${CREATIVE_CORE_COPY_GLOB}`,
@@ -259,6 +268,7 @@ export class AgentLauncher {
       codebases, protectedFiles, protectedDirs, protectedGlobs: logGlobs, sandboxGlobs,
       ...(secretsScan ? { codebaseSecrets: { files: secretsScan.files, dirs: secretsScan.dirs } } : {}),
       brandWebsite: i.brandWebsite === true,
+      ...(i.kind === 'video-analysis' ? { readDirs: i.readDirs ?? [] } : {}),
       extraDomains: settings.extraAllowedDomains, projectAllowRules: rules,
       mcpTools: mcpOn ? MCP_TOOLS[i.kind].map((t) => `mcp__${MCP_SERVER}__${t}`) : [],
       autoApproveSandboxed: autoApproveAtStart,
@@ -307,6 +317,7 @@ export class AgentLauncher {
           ...((i.kind === 'creative' || i.kind === 'creative-group') && i.appScope ? { appScope: i.appScope } : {}),
           ...(i.kind === 'creative-group' && i.groupTools ? { groupTools: i.groupTools } : {}),
           ...(i.kind === 'brief' && i.briefScope ? { briefScope: i.briefScope } : {}),
+          ...(i.kind === 'video-analysis' && i.videoAnalysisScope ? { videoAnalysisScope: i.videoAnalysisScope } : {}),
         });
         // The paths are recorded before writing, so release() also removes a half-written pair.
         const files = await prepareRunFiles(configDir, i.jobId);
@@ -330,7 +341,7 @@ export class AgentLauncher {
         // A translation turn is metered with the creative's turns (the usage report has no kind of its own for it).
         // Phase 15: a variant group's directions turn is metered with the creative's turns (the report has no kind for it).
         // Phase 3: so is the coordinator of a group (its runs are part of the group's turn). Decision 1421: a brief session's
-        // runs too, with no creative (they are the start of the creative it becomes).
+        // runs too, with no creative (they are the start of the creative it becomes). A video analysis has its own kind (1468).
         projectDir: i.projectDir, jobId: i.jobId, kind: i.kind === 'variant-directions' || i.kind === 'creative-group' || i.kind === 'brief' ? 'creative' : i.kind, creativeSlug: i.kind === 'brief' ? null : i.creativeSlug ?? null,
         version: i.usage?.version ?? null, attempt: i.usage?.attempt ?? null,
         ...(i.request.resumeSessionId ? { resumeSessionId: i.request.resumeSessionId } : {}),
@@ -374,8 +385,12 @@ export class AgentLauncher {
         await warn(detail);
         throw new ProjectQuarantinedError(detail, between);
       }
+      // Decision 1541: a video analysis runs in its frames' folder, so the project is not its working folder (whose reads
+      // Claude Code allows without asking): any read outside the frames reaches the permission prompt, which refuses it.
+      const framesCwd = i.kind === 'video-analysis' ? (i.readDirs ?? []).find((d) => d.startsWith(`${i.projectDir}/`)) : undefined;
+      if (i.kind === 'video-analysis' && !framesCwd) throw new Error('a video analysis needs its frames folder inside the project');
       const run = this.deps.runner.start({
-        cwd: i.projectDir, ...i.request,
+        cwd: framesCwd ?? i.projectDir, ...i.request,
         addDirs: policy.addDirs, allowedTools: policy.allowedTools, disallowedTools: policy.disallowedTools,
         ...(policy.settings ? { settings: policy.settings } : {}), ...mcp,
         env: { MCP_TOOL_TIMEOUT: '900000', ...policy.env }, unsetEnv: AGENT_UNSET_ENV,

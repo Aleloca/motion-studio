@@ -17,7 +17,11 @@ import { DEFAULT_ALLOWED_DOMAINS, sensitiveHomeEntries, sensitiveHomePaths } fro
  * `brief` (decision 1421): a project's brief session. It reads the project and the linked folders (secrets scanned as a brand
  * analysis does) and writes only the New creative form, through `fill_brief`: no editing tool, no Bash, no Grep, no network.
  */
-export type AgentJobKind = 'creative' | 'brand-analysis' | 'describe' | 'console' | 'localize' | 'variant-directions' | 'creative-group' | 'brief';
+/**
+ * `video-analysis` (decision 1493): one run of a video's analysis. It reads only the extracted frames (`readDirs`) and writes
+ * only through `write_video_analysis`: no editing tool, no Bash, no search, no network, no project "Always" rule.
+ */
+export type AgentJobKind = 'creative' | 'brand-analysis' | 'describe' | 'console' | 'localize' | 'variant-directions' | 'creative-group' | 'brief' | 'video-analysis';
 export interface PolicyInput {
   kind: AgentJobKind; sandbox: boolean; projectDir?: string; home: string; configDir: string;
   codebases: string[]; protectedFiles: string[];
@@ -36,6 +40,8 @@ export interface PolicyInput {
    * listed in denyRead.
    */
   codebaseSecrets?: { files: string[]; dirs: string[] };
+  /** `video-analysis` jobs (decision 1493): the absolute folders the job may Read (the frames), and nothing else. */
+  readDirs?: string[];
   /**
    * Brand analysis of codebases (Phase 14, fix round 1): whether the analysis also has a website source. Without one,
    * WebFetch is neither allowed nor reachable (denied): nothing read in a codebase can be sent out. Ignored otherwise.
@@ -86,10 +92,13 @@ export const sandboxPath = (p: string): string => p.replace(/[[*?]/g, (c) => (c 
 const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 /** Phase 3: the coordinator reads the project (its own folders, the variants' compositions) and nothing else. */
 const COORDINATOR_TOOLS = ['Read', 'Glob', 'Grep'];
-const SANDBOXED_TOOLS: Record<AgentJobKind, readonly string[]> = { creative: [], console: [], 'brand-analysis': BRAND_ANALYSIS_TOOLS, describe: DESCRIBE_TOOLS, localize: LOCALIZE_TOOLS, 'variant-directions': [], 'creative-group': COORDINATOR_TOOLS, brief: [] };
-const LEGACY_TOOLS: Record<AgentJobKind, readonly string[]> = { creative: AGENT_ALLOWED_TOOLS, console: [], 'brand-analysis': BRAND_ANALYSIS_TOOLS, describe: DESCRIBE_TOOLS, localize: LOCALIZE_TOOLS, 'variant-directions': [], 'creative-group': COORDINATOR_TOOLS, brief: [] };
+// A video analysis's only read rules are scoped to its `readDirs` (buildAgentPolicy).
+const SANDBOXED_TOOLS: Record<AgentJobKind, readonly string[]> = { creative: [], console: [], 'brand-analysis': BRAND_ANALYSIS_TOOLS, describe: DESCRIBE_TOOLS, localize: LOCALIZE_TOOLS, 'variant-directions': [], 'creative-group': COORDINATOR_TOOLS, brief: [], 'video-analysis': [] };
+const LEGACY_TOOLS: Record<AgentJobKind, readonly string[]> = { creative: AGENT_ALLOWED_TOOLS, console: [], 'brand-analysis': BRAND_ANALYSIS_TOOLS, describe: DESCRIBE_TOOLS, localize: LOCALIZE_TOOLS, 'variant-directions': [], 'creative-group': COORDINATOR_TOOLS, brief: [], 'video-analysis': [] };
 /** Decision 1421: what a brief session never uses, wherever (it only reads and fills the form; Grep could cross a secret file). */
 const BRIEF_DENIED_TOOLS = [...EDIT_TOOLS, 'Bash', 'Grep', 'WebFetch', 'WebSearch'];
+/** Decision 1493: what a video analysis never uses (it looks at the frames it is given and writes through its tool). */
+const VIDEO_ANALYSIS_DENIED_TOOLS = [...EDIT_TOOLS, 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'Task'];
 const unique = (xs: string[]) => [...new Set(xs)];
 
 export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
@@ -133,18 +142,21 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
     // Phase 3 of the single agent: the coordinator never edits a file nor runs a command; its helpers do the work.
     ...(i.kind === 'creative-group' ? [...EDIT_TOOLS, 'Bash', 'WebFetch', 'WebSearch'] : []),
     ...(brief ? BRIEF_DENIED_TOOLS : []),
+    ...(i.kind === 'video-analysis' ? VIDEO_ANALYSIS_DENIED_TOOLS : []),
   ];
   // Neither the directions turn nor the coordinator (nor a brief session) takes the project's "Always" rules: nothing of
   // theirs may run a command.
-  const directions = i.kind === 'variant-directions' || i.kind === 'creative-group' || brief;
+  const directions = i.kind === 'variant-directions' || i.kind === 'creative-group' || brief || i.kind === 'video-analysis';
   const extra = [...(scansSecrets ? codebaseReadAllowRules(i.codebases) : []), ...(directions ? [] : i.projectAllowRules), ...i.mcpTools];
   // With codebases the brand tools keep only WebFetch, and only with a website source: Bash(mkdir/ffprobe) are dropped.
   // Phase 3 of the single agent (review minor 1): the coordinator reads the project without asking, nothing else (a read
   // elsewhere reaches the permission prompt, which refuses it for this kind).
-  const coordinatorReads = i.kind === 'creative-group' && i.projectDir ? COORDINATOR_TOOLS.map((t) => `${t}(/${escapeGlob(i.projectDir!)}/**)`) : null;
+  const coordinatorReads = i.kind === 'creative-group' && i.projectDir ? COORDINATOR_TOOLS.map((t) => `${t}(/${escapeGlob(i.projectDir!)}/**)`)
+    // Decision 1493: a video analysis reads its frames' folders without asking, nothing else.
+    : i.kind === 'video-analysis' ? (i.readDirs ?? []).map((d) => `Read(/${escapeGlob(d)}/**)`) : null;
   const kindTools = (list: readonly string[]) => (coordinatorReads ?? (brandCodebases ? (i.brandWebsite ? list.filter((t) => t === 'WebFetch') : []) : list));
   if (!i.sandbox) {
-    return { settings: null, allowedTools: unique([...kindTools(LEGACY_TOOLS[i.kind]), ...extra]), disallowedTools, addDirs: [...i.codebases], env: {} };
+    return { settings: null, allowedTools: unique([...kindTools(LEGACY_TOOLS[i.kind]), ...extra]), disallowedTools, addDirs: unique([...i.codebases, ...(i.readDirs ?? [])]), env: {} };
   }
   // Only creative/console jobs get sandbox network. Brand analysis reads pages with WebFetch (a tool, not Bash)
   // and downloads files through the Motion Studio `download_file` MCP tool.
@@ -169,5 +181,5 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
       ...(network ? { network } : {}),
     },
   };
-  return { settings, allowedTools: unique([...kindTools(SANDBOXED_TOOLS[i.kind]), ...extra]), disallowedTools, addDirs: [...i.codebases], env: i.projectDir ? sandboxCacheEnv(i.projectDir) : {} };
+  return { settings, allowedTools: unique([...kindTools(SANDBOXED_TOOLS[i.kind]), ...extra]), disallowedTools, addDirs: unique([...i.codebases, ...(i.readDirs ?? [])]), env: i.projectDir ? sandboxCacheEnv(i.projectDir) : {} };
 }

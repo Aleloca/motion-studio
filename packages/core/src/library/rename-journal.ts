@@ -22,6 +22,8 @@ export const renameJournalSchema = z.object({
    * whether it is still a real sister is checked when the briefs are changed (`CreativeStore.renameBriefAsset`).
    */
   briefSlugs: z.array(z.string().refine(isCreativeFolderShape)).max(10_000),
+  /** Decision 1495: whether the video had an analysis file (`assets/.analysis/…`) when the rename started (older journals: no). */
+  sidecar: z.boolean().default(false),
 });
 export type RenameJournal = z.infer<typeof renameJournalSchema>;
 

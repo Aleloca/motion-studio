@@ -815,3 +815,53 @@ describe('a brief session launch (decision 1421)', () => {
     await run.done;
   });
 });
+
+describe('a video analysis launch (decision 1493)', () => {
+  it('a video-analysis launch registers its scope and records usage under its kind', async () => {
+    const { ControlledRunner } = await import('./helpers/controlled-runner.ts');
+    const projectDir = await newProject();
+    const runner = new ControlledRunner();
+    const bridge = new AgentBridge();
+    bridge.setOrigin('http://127.0.0.1:4317');
+    const launcher = testLauncher(runner, { bridge, mcpCommand: ['node', '/x/server.mjs'], claudeVersion: async () => '2.1.301' });
+    const frames = join(projectDir, '.studio', 'cache', 'analysis', 'ab'.repeat(32));
+    const scope = { root: dirname(projectDir), projectSlug: 'acme', projectDir, file: 'assets/clip.mp4', sha256: 'ab'.repeat(32), pass: 'whole' as const, from: 0, to: 8, frames: ['f-00000000.jpg'], write: () => {} };
+    const run = await launcher.start({ kind: 'video-analysis', jobId: 'v1', projectSlug: 'acme', projectDir, readDirs: [frames], videoAnalysisScope: scope, request: { prompt: 'x' }, onEvent: () => {} });
+    const r = runner.runs[0]!;
+    // Decision 1541: the frames' folder is its working folder, never the project.
+    expect(r.req.cwd).toBe(frames);
+    expect(r.req.addDirs).toEqual([frames]);
+    expect(r.req.allowedTools).toEqual([`Read(/${escapeGlob(frames)}/**)`, 'mcp__studio__report_progress', 'mcp__studio__write_video_analysis']);
+    const cfg = JSON.parse(readFileSync(r.req.mcpConfigPath!, 'utf8'));
+    expect(cfg.mcpServers.studio.env.MOTION_STUDIO_TOOLS).toBe('report_progress,write_video_analysis');
+    const ctx = bridge.resolve(readFileSync(cfg.mcpServers.studio.env.MOTION_STUDIO_BRIDGE_TOKEN_FILE, 'utf8'));
+    expect(ctx?.videoAnalysisScope?.sha256).toBe('ab'.repeat(32));
+    // Not a live kind: nobody talks to an analysis while it runs.
+    expect(run.capabilities).toEqual({ liveInput: false, interrupt: false });
+    r.emit({ kind: 'usage', live: false, tokens: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0 }, costUsd: 0.01 });
+    r.finish({ write: false });
+    await run.done;
+    const lines = (await readFile(join(projectDir, '.studio', 'usage.jsonl'), 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as { kind: string; jobId: string });
+    expect(lines.at(-1)).toMatchObject({ kind: 'video-analysis', jobId: 'v1' });
+  });
+});
+
+describe('the video analyses are read-only for the agents (spec 1485, decision 1499)', () => {
+  it('a creative launch denies writing assets/.analysis; the console does not', async () => {
+    const { ControlledRunner } = await import('./helpers/controlled-runner.ts');
+    const projectDir = await newProject();
+    const runner = new ControlledRunner();
+    const launcher = testLauncher(runner, { sandbox: async () => ({ available: true, reason: '' }) });
+    const analysis = join(projectDir, 'assets', '.analysis');
+    const run = await launcher.start({ kind: 'creative', jobId: 'c1', projectSlug: 'acme', projectDir, creativeSlug: 'x', request: { prompt: 'x' }, onEvent: () => {} });
+    const r = runner.runs[0]!;
+    expect(r.req.disallowedTools).toEqual(expect.arrayContaining([`Edit(/${escapeGlob(analysis)}/**)`, `Write(/${escapeGlob(analysis)}/**)`]));
+    expect((r.req.settings as { sandbox: { filesystem: { denyWrite: string[] } } }).sandbox.filesystem.denyWrite).toContain(analysis);
+    r.finish({ write: false });
+    await run.done;
+    const console_ = await launcher.start({ kind: 'console', jobId: 'k1', projectSlug: 'acme', projectDir, request: { prompt: 'x' }, onEvent: () => {} });
+    expect(runner.runs[1]!.req.disallowedTools).not.toContain(`Edit(/${escapeGlob(analysis)}/**)`);
+    runner.runs[1]!.finish({ write: false });
+    await console_.done;
+  });
+});

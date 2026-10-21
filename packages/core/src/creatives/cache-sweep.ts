@@ -111,3 +111,27 @@ export async function sweepEditorStaging(projectDir: string, o: { now?: number; 
   }
   return removed;
 }
+
+/**
+ * Decision 1476: the video analyses' key frames (`.studio/cache/analysis/<sha256>/`, regenerable) whose newest file is older
+ * than `maxAgeMs` (default: the derived caches' 30 days), never a content an analysis uses now (`inUse`, by its sha256).
+ * Links are never followed.
+ */
+export async function sweepAnalysisFrames(projectDir: string, o: { now?: number; maxAgeMs?: number; inUse?: (sha: string) => boolean } = {}): Promise<string[]> {
+  const now = o.now ?? Date.now();
+  const maxAge = o.maxAgeMs ?? DERIVED_CACHE_MAX_AGE_MS;
+  const root = join(projectDir, '.studio', 'cache', 'analysis');
+  const removed: string[] = [];
+  if (!(await lstat(root).catch(() => null))?.isDirectory()) return removed;
+  for (const sha of await readdir(root).catch(() => [] as string[])) {
+    if (o.inUse?.(sha)) continue;
+    const dir = join(root, sha);
+    const st = await lstat(dir).catch(() => null);
+    if (!st) continue;
+    const newest = st.isDirectory() ? (await measure(dir)).newestMs : st.mtimeMs;
+    if (now - newest <= maxAge) continue;
+    await rm(dir, { recursive: true, force: true }).then(() => { removed.push(dir); }, () => {});
+  }
+  if (removed.length) await noteCoreChange(root).catch(() => {});
+  return removed;
+}

@@ -14,7 +14,7 @@ export const usageSummarySchema = z.object({
 });
 export type UsageSummary = z.infer<typeof usageSummarySchema>;
 
-export const usageKindSchema = z.enum(['creative', 'brand-analysis', 'describe', 'console', 'localize']);
+export const usageKindSchema = z.enum(['creative', 'brand-analysis', 'describe', 'console', 'localize', 'video-analysis']);
 
 /**
  * One ledger line. `tokens`/`costUsd`/`models` are PER RUN. The agent's `total_cost_usd` and `modelUsage` are

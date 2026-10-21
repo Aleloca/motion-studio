@@ -1,6 +1,6 @@
 import { BRIEF_FIELDS, BRIEF_VARIANTS_MAX, MAX_INSTANCES, type BriefField, type BriefForm, type ConversationEntry, type Locale } from '@motion-studio/shared';
 import { replyInstruction } from '../i18n.ts';
-import { defuseTags, quotePromptString, USER_REQUEST_CLOSE, USER_REQUEST_OPEN } from '../creatives/prompt.ts';
+import { defuseTags, quotePromptString, USER_REQUEST_CLOSE, USER_REQUEST_OPEN, VIDEO_ANALYSIS_RULE } from '../creatives/prompt.ts';
 
 /**
  * Decision 1421: the prompts of a brief session. The first run (and the fresh restart after a lost session, with the digest
@@ -18,6 +18,8 @@ export interface BriefPromptContext {
   missingCodebases: readonly string[];
   /** Library paths attached to the session. */
   assets: readonly string[];
+  /** Decision 1468: the attached videos with a fresh analysis file (asset → its analysis file). */
+  analyses?: Record<string, string>;
   /** The user's words of this message (or of the queued messages, joined). */
   request: string;
 }
@@ -41,7 +43,7 @@ function formSection(i: Pick<BriefPromptContext, 'form' | 'userEdited'>): string
   ];
 }
 
-function contextSection(i: Pick<BriefPromptContext, 'codebases' | 'missingCodebases' | 'assets'>, projectCodebases: readonly string[] = []): string[] {
+function contextSection(i: Pick<BriefPromptContext, 'codebases' | 'missingCodebases' | 'assets' | 'analyses'>, projectCodebases: readonly string[] = []): string[] {
   const out: string[] = [];
   if (i.codebases.length || i.missingCodebases.length || projectCodebases.length) {
     out.push('', '## Reference codebases (read-only)',
@@ -51,7 +53,8 @@ function contextSection(i: Pick<BriefPromptContext, 'codebases' | 'missingCodeba
       ...projectCodebases.map((p) => `- ${p} (already linked to the project: do not add them)`),
       'Only read these folders (Read and Glob): you cannot change them, run commands or search file contents. Never read or quote secrets (keys, tokens, .env files).');
   }
-  out.push('', '## Attached assets', ...(i.assets.length ? i.assets.map((a) => `- ${quotePromptString(a)}`) : ['(none yet)']));
+  out.push('', '## Attached assets', ...(i.assets.length ? i.assets.map((a) => `- ${quotePromptString(a)}${i.analyses?.[a] ? ` (analysis: ${quotePromptString(i.analyses[a])} — read it before opening the video)` : ''}`) : ['(none yet)']));
+  if (i.assets.some((a) => i.analyses?.[a])) out.push(VIDEO_ANALYSIS_RULE);
   return out;
 }
 

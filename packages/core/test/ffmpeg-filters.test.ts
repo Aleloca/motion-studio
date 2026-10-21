@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   audioMixFilter, filterArgv, flattenFilter, frameScaleFilter, silentAudioInput, gamutStage, h264ColourFilter, hdrStage, normalizeVideoFilter, ssimCompareFilter, testPatternInput,
+  longSideScaleFilter, sceneDetectFilter, silenceDetectFilter,
   type ColourStage, type FilterArg,
 } from '../src/media/ffmpeg-filters.ts';
 import { mixGraph } from '../src/render/audio-mix.ts';
@@ -88,6 +89,19 @@ describe('ffmpeg filter builders: the real graphs', () => {
       + `[a0][a1]amix=inputs=2:${end}`]);
     // A non-finite value from a composition counts as 0 before the builder (the mix's own policy).
     expect(argv(mixGraph([{ start: Number.NaN, duration: 1, trimStart: 0, volume: Number.NaN, fadeIn: 0, fadeOut: 0 }], 48_000))?.[1]).toContain('volume=0,adelay=delays=0S:all=1');
+  });
+});
+
+describe('ffmpeg filter builders: the video analysis (decision 1468)', () => {
+  it('scene detection, the long-side scale and the silence report', () => {
+    expect(argv(sceneDetectFilter(0.3))).toEqual(['-vf', "select='gt(scene,0.3)',showinfo"]);
+    expect(argv(longSideScaleFilter(768))).toEqual(['-vf', "scale=w='if(gte(iw,ih),trunc(min(768,iw)/2)*2,-2)':h='if(gte(iw,ih),-2,trunc(min(768,ih)/2)*2)'"]);
+    expect(argv(silenceDetectFilter(-50, 0.5))).toEqual(['-af', 'silencedetect=n=-50dB:d=0.5']);
+  });
+  it('refuses values out of range', () => {
+    for (const v of [0, 0.01, 1, Number.NaN, Number.POSITIVE_INFINITY]) expect(() => sceneDetectFilter(v), String(v)).toThrow(RangeError);
+    for (const v of [8, 768.5, 5000, Number.NaN]) expect(() => longSideScaleFilter(v), String(v)).toThrow(RangeError);
+    for (const [n, d] of [[-5, 0.5], [-100, 0.5], [-50.5, 0.5], [-50, 0], [-50, 11], [-50, Number.NaN]] as const) expect(() => silenceDetectFilter(n, d), `${n} ${d}`).toThrow(RangeError);
   });
 });
 

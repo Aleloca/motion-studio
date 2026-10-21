@@ -248,3 +248,21 @@ describe('buildAgentPolicy for a brief session (decision 1421)', () => {
     expect(p.disallowedTools).toEqual(expect.arrayContaining(['Bash', 'Grep', 'Edit', 'Write', 'WebFetch']));
   });
 });
+
+describe('buildAgentPolicy for a video analysis (decision 1493)', () => {
+  const analysis: PolicyInput = { ...base, kind: 'video-analysis', projectDir: '/p', codebases: [], readDirs: ['/p/.studio/cache/analysis/ab'], mcpTools: ['mcp__studio__report_progress', 'mcp__studio__write_video_analysis'] };
+  it('video-analysis: reads only the frames, no Bash, no network', () => {
+    const p = buildAgentPolicy(analysis);
+    const s = p.settings as Sb;
+    expect(p.allowedTools).toEqual(['Read(//p/.studio/cache/analysis/ab/**)', 'mcp__studio__report_progress', 'mcp__studio__write_video_analysis']);
+    expect(p.disallowedTools).toEqual(expect.arrayContaining(['Bash', 'Grep', 'Glob', 'Edit', 'Write', 'WebFetch', 'WebSearch', 'Task']));
+    expect(s.sandbox.network).toBeUndefined();
+    expect(s.sandbox.autoAllowBashIfSandboxed).toBe(false);
+    expect(p.addDirs).toEqual(['/p/.studio/cache/analysis/ab']);
+  });
+  it('without the sandbox: the same tools, never the project rules', () => {
+    const p = buildAgentPolicy({ ...analysis, sandbox: false });
+    expect(p.allowedTools).toEqual(['Read(//p/.studio/cache/analysis/ab/**)', 'mcp__studio__report_progress', 'mcp__studio__write_video_analysis']);
+    expect(p.disallowedTools).toEqual(expect.arrayContaining(['Bash', 'Edit']));
+  });
+});

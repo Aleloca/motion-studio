@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import type { AgentEvent, BriefServices, Locale } from '@motion-studio/shared';
+import type { AgentEvent, BriefServices, Locale, VideoAnalysisWrite } from '@motion-studio/shared';
 import type { AgentJobKind } from '../agent/policy.ts';
 
 /** What a bridge token gives access to: the job that owns it. */
@@ -63,6 +63,22 @@ export interface BridgeContext {
    * launches the agent, frozen with the context: no tool argument ever names a project or a session.
    */
   readonly briefScope?: Readonly<BriefScope>;
+  /**
+   * Decision 1468, `video-analysis` jobs only: the video, the span and the frames the run describes, and where its
+   * `write_video_analysis` goes. Set by the analysis service when it launches the agent, frozen with the context.
+   */
+  readonly videoAnalysisScope?: Readonly<VideoAnalysisScope>;
+}
+
+/**
+ * Decision 1468: see `BridgeContext.videoAnalysisScope`. `pass`: `whole` (a short video, every field), `chunk` (one span's
+ * timeline), `final` (summary, moments, look, tags from the whole timeline). `from`/`to`: the span (s); `frames`: the frame
+ * names the run was given; `write`: keeps the validated write (the last one wins).
+ */
+export interface VideoAnalysisScope {
+  root: string; projectSlug: string; projectDir: string; file: string; sha256: string;
+  pass: 'whole' | 'chunk' | 'final'; from: number; to: number; frames: readonly string[];
+  write: (w: VideoAnalysisWrite) => void;
 }
 
 /** Decision 1421: see `BridgeContext.briefScope`. */
@@ -96,6 +112,7 @@ export class AgentBridge {
       ...(ctx.appScope ? { appScope: Object.freeze({ ...ctx.appScope }) } : {}),
       ...(ctx.groupTools ? { groupTools: Object.freeze({ ...ctx.groupTools }) } : {}),
       ...(ctx.briefScope ? { briefScope: Object.freeze({ ...ctx.briefScope }) } : {}),
+      ...(ctx.videoAnalysisScope ? { videoAnalysisScope: Object.freeze({ ...ctx.videoAnalysisScope, frames: Object.freeze([...ctx.videoAnalysisScope.frames]) }) } : {}),
     }));
     return t;
   }
