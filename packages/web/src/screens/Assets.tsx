@@ -133,17 +133,18 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
   }, [assets]);
 
   // Decision 1468: a video analysis's row in the activity centre opens this page with its video selected: by the job (its
-  // analysis view), else by the name in the row's label when one video has it.
+  // analysis view), else by the name in the row's label when one video has it. Resolved once the analyses answered: before,
+  // the job is not known yet (review of phase 3).
   const [focus, setFocus] = useState<AssetFocus | null>(null);
   useAssetFocusIntent(slug, setFocus);
   useEffect(() => {
-    if (!focus || assets.length === 0) return;
+    if (!focus || assets.length === 0 || !analyses.loaded) return;
     const byJob = Object.values(analyses.byFile).find((v) => v.jobId === focus.jobId)?.file;
     const named = assets.filter((x) => x.kind === 'video' && baseName(x.file) === focus.name);
     const file = byJob?.startsWith('assets/') ? byJob.slice('assets/'.length) : named.length === 1 ? named[0]!.file : null;
     if (file && assets.some((x) => x.file === file)) setOpen(file);
     setFocus(null);
-  }, [focus, assets, analyses.byFile]);
+  }, [focus, assets, analyses.byFile, analyses.loaded]);
 
   // Description: the assets this page asked to describe, until their job ends; otherwise, while a description job
   // started elsewhere runs, the assets without a description (what the core describes by default).

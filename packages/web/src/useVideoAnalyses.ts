@@ -9,16 +9,21 @@ import type { EventsState } from './eventsReducer.ts';
  * for (`seq`), so a message older than the listing never hides its newer state. `pending`: the views holding a question
  * for the user (a long video, the transcription choice).
  */
-export function useVideoAnalyses(slug: string, live: EventsState): { byFile: Record<string, VideoAnalysisView>; pending: VideoAnalysisView[]; reload(): void } {
+export function useVideoAnalyses(slug: string, live: EventsState): {
+  byFile: Record<string, VideoAnalysisView>; pending: VideoAnalysisView[]; reload(): void;
+  /** The listing answered (or failed): what is not in `byFile` now is not known to be analysed. */
+  loaded: boolean;
+} {
   const [listed, setListed] = useState<{ views: VideoAnalysisView[]; seq: number } | null>(null);
+  const [failed, setFailed] = useState(false);
   const [nonce, setNonce] = useState(0);
   const tick = live.projectTicks[slug] ?? 0;
   useEffect(() => {
     let alive = true;
     const seq = live.analysisSeq ?? 0;
     Promise.resolve().then(() => api.listVideoAnalyses(slug))
-      .then((views) => { if (alive) setListed({ views, seq }); })
-      .catch(() => { /* the live views still show; the next change refetches */ });
+      .then((views) => { if (alive) { setListed({ views, seq }); setFailed(false); } })
+      .catch(() => { if (alive) setFailed(true); /* the live views still show; the next change refetches */ });
     return () => { alive = false; };
   }, [slug, tick, live.snapshots, nonce]); // eslint-disable-line react-hooks/exhaustive-deps
   const mine = live.analyses?.[slug];
@@ -26,8 +31,8 @@ export function useVideoAnalyses(slug: string, live: EventsState): { byFile: Rec
     const byFile: Record<string, VideoAnalysisView> = {};
     for (const v of listed?.views ?? []) byFile[v.file] = v;
     for (const [file, e] of Object.entries(mine ?? {})) if (!listed || e.seq > listed.seq) byFile[file] = e.view;
-    return { byFile, pending: Object.values(byFile).filter((v) => v.pending !== null), reload: () => setNonce((n) => n + 1) };
-  }, [listed, mine]);
+    return { byFile, pending: Object.values(byFile).filter((v) => v.pending !== null), reload: () => setNonce((n) => n + 1), loaded: listed !== null || failed };
+  }, [listed, mine, failed]);
 }
 
 /**
