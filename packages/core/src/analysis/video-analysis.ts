@@ -51,6 +51,7 @@ function untilAborted<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
 export interface Transcriber {
   plan(audioSec: number): Promise<{ run: TranscribeMethod } | { ask: TranscriptionPending } | { skip: true }>;
   prepareChoice(c: TranscriptionChoice): Promise<{ wait?: Promise<void> }>;
+  recheck(audioSec: number): Promise<TranscriptionPending>;
   transcribe(i: { ref: ProjectRef; file: string; jobId: string; wav: string; durationSec: number; signal: AbortSignal; method?: TranscribeMethod }): Promise<{ kind: TranscriptKind; segments: TranscriptSegment[]; language: string | null }>;
 }
 
@@ -318,6 +319,24 @@ export class VideoAnalysisService {
     }
     const v = await this.view(ref, c.file);
     this.say(ref, c.file, v);
+    return v;
+  }
+
+  /**
+   * Decision 1591: "Ricontrolla" in the transcription dialog of `file`'s analysis. The Whispers are looked for again and the
+   * question is asked anew with the new offer (a stale download error dropped), told to every screen. Null when the analysis
+   * does not ask about its transcription.
+   */
+  async recheckTranscription(ref: ProjectRef, file: string): Promise<VideoAnalysisView | null> {
+    const a = this.activeOf(ref, file);
+    const tr = this.deps.transcriber;
+    if (!a || a.pending?.kind !== 'transcription' || !tr) return null;
+    const offer = await tr.recheck(a.pending.audioSec);
+    // Answered meanwhile (another screen): the answer stands.
+    if (a.pending?.kind === 'transcription') a.pending = offer;
+    for (const f of a.files) if (f !== file) void this.view(a.ref, f).then((v) => this.say(a.ref, f, v), () => {});
+    const v = await this.view(ref, file);
+    this.say(ref, file, v);
     return v;
   }
 

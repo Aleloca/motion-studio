@@ -172,6 +172,15 @@ export class TranscriptionService {
     };
   }
 
+  /**
+   * "Ricontrolla" in the dialog (decision 1591): the Whispers are looked for again (joining a detection already running) and
+   * the offer is built anew, so a Whisper installed while the dialog is open shows up without reopening it.
+   */
+  async recheck(audioSec: number): Promise<TranscriptionPending> {
+    await this.detect();
+    return this.offer(audioSec);
+  }
+
   /** Spec §6: `never` → skip; a saved method that works → run; `ask`, or a saved method that does not work now → ask. */
   async plan(audioSec: number): Promise<TranscriptionPlan> {
     const s = await this.settings();

@@ -220,6 +220,26 @@ describe.skipIf(!hasFfmpeg)('transcription in the analysis', () => {
     await vi.waitFor(async () => expect((await t.analyses.view(t.ref, 'assets/tone.mp4')).pending).toMatchObject({ kind: 'transcription', error: expect.stringMatching(/sha256/) }));
     expect((await h.analysisJobs())[0]).toMatchObject({ state: 'queued', waitReason: 'transcription-choice' });
   }, 60_000);
+
+  it('"Ricontrolla": POST transcription-recheck runs the detection again and answers the held analysis with the new offer', async () => {
+    const found: Array<{ engine: 'whisper.cpp'; program: string; version: null; model: string; gpu: null; source: 'detected'; problem: string; needsModel: true }> = [];
+    const t = await analysisApp({ transcription: { method: 'ask', detect: async () => [...found] } });
+    await copyFile(fx.tone, join(t.projectDir, 'assets', 'tone.mp4'));
+    const v = await ensured(t, 'assets/tone.mp4');
+    expect(v.pending).toMatchObject({ kind: 'transcription', whisper: { available: false, canInstall: false } });
+    // The user installs whisper.cpp from Homebrew while the dialog is open.
+    found.push({ engine: 'whisper.cpp', program: '/opt/homebrew/bin/whisper-cli', version: null, model: '', gpu: null, source: 'detected', problem: 'no model', needsModel: true });
+    const r = await t.app.inject({ method: 'POST', url: '/api/projects/acme/video-analyses/transcription-recheck', payload: { file: 'assets/tone.mp4' } });
+    expect(r.statusCode).toBe(200);
+    expect((r.json() as VideoAnalysisView).pending).toMatchObject({ kind: 'transcription', audioSec: v.pending!.kind === 'transcription' ? v.pending!.audioSec : 0, whisper: { available: true, canInstall: true, engine: 'whisper.cpp' } });
+    expect((await t.analyses.view(t.ref, 'assets/tone.mp4')).pending).toMatchObject({ whisper: { canInstall: true } });
+    expect((await analysisHelpers(t).analysisJobs())[0]).toMatchObject({ state: 'queued', waitReason: 'transcription-choice' });
+    // Nothing asks about another video: 409.
+    await copyFile(fx.silent, join(t.projectDir, 'assets', 'silent.mp4'));
+    const none = await t.app.inject({ method: 'POST', url: '/api/projects/acme/video-analyses/transcription-recheck', payload: { file: 'assets/silent.mp4' } });
+    expect(none.statusCode).toBe(409);
+    expect(none.json()).toMatchObject({ code: 'transcription-not-asked' });
+  }, 60_000);
 });
 
 describe('transcription settings routes', () => {
