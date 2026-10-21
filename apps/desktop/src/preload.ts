@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('motionStudio', {
   isDesktop: true,
   platform: process.platform,
   pickFolder: (title: string, defaultPath?: string): Promise<string | null> => ipcRenderer.invoke('ms:pick-folder', { title, defaultPath }),
+  // A file (Settings → Trascrizione video: a Whisper program or a model file); null when cancelled.
+  pickFile: (title: string, defaultPath?: string): Promise<string | null> => ipcRenderer.invoke('ms:pick-file', { title, defaultPath }),
   revealPath: (path: string): Promise<void> => ipcRenderer.invoke('ms:reveal', path),
   // Opens a folder itself in the file manager (a plain folder only; the main process checks it).
   openFolder: (path: string): Promise<void> => ipcRenderer.invoke('ms:open-folder', path),

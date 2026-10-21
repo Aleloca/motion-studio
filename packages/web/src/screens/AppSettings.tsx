@@ -13,9 +13,10 @@ import { Button, Card, Empty, Icon, Input, Pill, ProgressBar, Select, Spinner, T
 import { rovingIndex } from '../ui/roving.ts';
 import { Alert, Head, Row, SectionMain, message } from './common.tsx';
 import { SystemChecks } from './Welcome.tsx';
+import { TranscriptionSettings } from './settings/TranscriptionSettings.tsx';
 import './settings.css';
 
-const SECTIONS: readonly SettingsSection[] = ['general', 'system', 'paid', 'usage', 'notifications', 'updates'];
+const SECTIONS: readonly SettingsSection[] = ['general', 'system', 'paid', 'transcription', 'usage', 'notifications', 'updates'];
 /** Provider, display name, the environment variable that overrides the Keychain, and the mark's letters. */
 const PROVIDERS: ReadonlyArray<[ProviderId, string, string, string]> = [
   ['openai', 'OpenAI', 'OPENAI_API_KEY', 'AI'],
@@ -81,6 +82,7 @@ export function AppSettings(props: AppSettingsProps) {
         {section === 'general' ? <General {...props} />
           : section === 'system' ? <System {...props} />
           : section === 'paid' ? <Paid secrets={secrets} error={secretsError} onChange={(next) => setSecrets((all) => (all ?? []).map((x) => (x.provider === next.provider ? next : x)))} reload={setSecrets} />
+          : section === 'transcription' ? <TranscriptionSettings />
           : section === 'usage' ? <Usage />
           : section === 'notifications' ? <Notifications />
           : <Updates />}

@@ -372,6 +372,12 @@ export const it: Messages = {
     removeFailed: (p) => `Non rimosso: ${p.detail}`,
     loadFailed: (p) => `Impossibile leggere le impostazioni della trascrizione: ${p.detail}`,
     pickFailed: (p) => `Impossibile aprire la scelta del file: ${p.detail}`,
+    searching: 'Ricerca dei Whisper sul Mac…',
+    searchAgain: 'Cerca di nuovo',
+    needsModel: 'Funziona con un modello scaricato dall\'app.',
+    downloadsOwn: 'Scarica da solo il suo modello al primo uso.',
+    custom: 'Indicato da te',
+    whyTitle: 'A cosa serve',
   },
   briefSession: {
     filled: (p) => `Compilato il brief: ${p.parts}`,

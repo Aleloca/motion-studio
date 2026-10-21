@@ -1,0 +1,28 @@
+/* Settings → Trascrizione video (spec §6–§7). Blocks follow the settings rows (padding, separators); tokens only. */
+.ms-tset-loading { display: flex; justify-content: center; padding: 24px; }
+.ms-tset-block { display: flex; flex-direction: column; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line2); min-width: 0; }
+.ms-set-card > .ms-tset-block:last-child { border-bottom: 0; }
+.ms-tset-methods, .ms-tset-seg { align-self: flex-start; max-width: 100%; flex-wrap: wrap; }
+.ms-tset-headrow { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
+.ms-tset-cap { margin-top: 2px; }
+.ms-tset-models, .ms-tset-found-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ms-tset-model, .ms-tset-detected {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 12px; border-radius: 10px;
+  background: var(--bg); box-shadow: inset 0 0 0 1px var(--line2); min-width: 0;
+}
+.ms-tset-model-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ms-tset-model-text b { font-weight: 600; overflow-wrap: anywhere; }
+.ms-tset-model-text > span { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.ms-tset-progress { flex-basis: 100%; display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.ms-tset-error { margin: 0; font-size: 12px; line-height: 1.45; color: var(--danger); overflow-wrap: anywhere; }
+.ms-tset-model-text > .ms-tset-error { color: var(--danger); }
+.ms-tset-note { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 12px; line-height: 1.5; color: var(--muted); }
+.ms-tset-found { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ok); overflow-wrap: anywhere; }
+.ms-tset-found svg { flex: none; }
+.ms-tset-mono { font-family: var(--mono); font-size: 11.5px; }
+.ms-tset-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.ms-tset-field > label, .ms-tset-lbl { font-size: 12px; font-weight: 600; color: var(--muted); }
+.ms-tset-field > .ms-select, .ms-tset-field > div > .ms-select { align-self: flex-start; min-width: 200px; }
+.ms-tset-pick { display: flex; gap: 8px; min-width: 0; }
+.ms-tset-pick > .ms-input { flex: 1; min-width: 0; }
+.ms-tset-actions { display: flex; justify-content: flex-end; gap: 8px; }

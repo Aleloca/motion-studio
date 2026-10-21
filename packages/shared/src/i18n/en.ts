@@ -374,6 +374,12 @@ export const en = {
     removeFailed: (p: { detail: string }) => `Not removed: ${p.detail}`,
     loadFailed: (p: { detail: string }) => `Could not read the transcription settings: ${p.detail}`,
     pickFailed: (p: { detail: string }) => `Could not open the file chooser: ${p.detail}`,
+    searching: 'Looking for Whispers on the Mac…',
+    searchAgain: 'Search again',
+    needsModel: 'Works with a model downloaded by the app.',
+    downloadsOwn: 'Downloads its own model on first use.',
+    custom: 'Set by you',
+    whyTitle: 'What it is for',
   },
   briefSession: {
     filled: (p: { parts: string }) => `Filled in the brief: ${p.parts}`,

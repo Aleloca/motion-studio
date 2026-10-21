@@ -189,6 +189,13 @@ async function run() {
     const r = await dialog.showOpenDialog({ ...args, properties: ['openDirectory', 'createDirectory'] });
     return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
   });
+  // Settings → Trascrizione video: a file (a Whisper program, a ggml model). Hidden files shown: programs live in /opt, /usr/local.
+  ipcMain.handle('ms:pick-file', async (e, arg: unknown) => {
+    const args = trusted(e) ? pickFolderArgs(arg) : null;
+    if (!args) throw new Error(t().desktop.invalidRequest);
+    const r = await dialog.showOpenDialog({ ...args, properties: ['openFile', 'showHiddenFiles', 'treatPackageAsDirectory'] });
+    return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
+  });
   ipcMain.handle('ms:reveal', (e, arg: unknown) => {
     const p = trusted(e) ? absolutePathArg(arg) : null;
     if (!p) throw new Error(t().desktop.invalidPath);

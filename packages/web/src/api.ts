@@ -426,6 +426,8 @@ export const api = {
   getTranscription: () => request<TranscriptionStatus>('GET', '/api/transcription'),
   /** A partial change; a program is test-run first (400 `whisper-probe-failed`). */
   saveTranscription: (patch: TranscriptionSettingsPatch) => request<TranscriptionStatus>('PUT', '/api/transcription', patch),
+  /** "Cerca di nuovo": runs the detection of installed Whispers again and answers the whole status. */
+  detectWhisper: () => request<TranscriptionStatus>('POST', '/api/transcription/detect'),
   probeWhisper: (body: { program: string; engine?: WhisperEngine; modelFile?: string }) => request<WhisperFound | { problem: string }>('POST', '/api/transcription/probe', body),
   /** Starts a model's download the user agreed to: `sizeBytes` is the size shown to them (409 `download-size-changed`). */
   downloadWhisperModel: (id: TranscriptionModelId, sizeBytes: number) =>
