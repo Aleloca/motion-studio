@@ -649,8 +649,21 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   const askKey = (v: VideoAnalysisView) => `${v.pending?.kind}:${v.file}`;
   const nextAsk = mode === 'agent' ? null : asking.find((v) => !dismissed.has(askKey(v))) ?? null;
   useEffect(() => { if (asked === null && nextAsk !== null) setAsked(askKey(nextAsk)); }, [asked, nextAsk]); // eslint-disable-line react-hooks/exhaustive-deps
-  const closeAsk = () => { if (asked) setDismissed((d) => new Set([...d, asked])); setAsked(null); };
-  const askedFile = asked ? asked.slice(asked.indexOf(':') + 1) : null;
+  /** Closes the dialog of question `key` (only that one: a late close of a dialog going away never closes the next). */
+  const closeAsk = (key: string | null) => {
+    if (!key) return;
+    setDismissed((d) => new Set([...d, key]));
+    setAsked((a) => (a === key ? null : a));
+  };
+  // Answered elsewhere (a remembered choice answers the others, another window): the dialog closes. While Whisper installs
+  // the analysis still asks, so the dialog stays with its progress (review of phase 3).
+  const stillAsking = asked !== null && asking.some((v) => askKey(v) === asked);
+  useEffect(() => { if (asked !== null && analyses.loaded && !stillAsking) setAsked(null); }, [asked, stillAsking, analyses.loaded]);
+  // The dialog is one per question: the next video's question never inherits the previous one's state (an install in
+  // progress, the remember tick). The last question stays shown while its dialog closes.
+  const [shownAsk, setShownAsk] = useState<string | null>(null);
+  useEffect(() => { if (asked !== null) setShownAsk(asked); }, [asked]);
+  const shownFile = shownAsk ? shownAsk.slice(shownAsk.indexOf(':') + 1) : null;
 
   /** "Agente" beside a field's label while the field is the agent's. */
   const agentMark = (f: BriefField) => (agentFields.has(f) ? <Pill tone="accent" className="ms-nc-agentmark">{t.web.briefSession.agentMark}</Pill> : null);
@@ -665,7 +678,7 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
       <BriefSessionPanel slug={slug} projectName={projectName} brief={brief} live={live ?? shell?.live} snapshot={panelSnapshot} onCarried={settleSave} draft={draft}
         library={library} onRetryLibrary={() => { setLibrary({ value: null, error: null }); setLibraryNonce((x) => x + 1); }} onLibraryChanged={() => setLibraryNonce((x) => x + 1)}
         hidden={mode !== 'agent'} panelRef={panelEl} className="ms-nc-panel" onOpenCreative={(c) => go(href.creative(slug, c))} analysisQuestions={asking} />
-      <AnalysisQuestionDialog slug={slug} view={askedFile ? analyses.byFile[askedFile] ?? null : null} open={asked !== null} onClose={closeAsk} />
+      <AnalysisQuestionDialog key={shownAsk ?? ''} slug={slug} view={shownFile ? analyses.byFile[shownFile] ?? null : null} open={asked !== null && asked === shownAsk} onClose={() => closeAsk(shownAsk)} />
       <div className="ms-nc-form" ref={formArea}>
       <div className="ms-nc-body">
         <div className="ms-nc-left">

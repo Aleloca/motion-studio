@@ -113,4 +113,14 @@ describe('the library\'s Analisi section (Task 19)', () => {
     it_(<Assets slug="acme" live={live} />);
     await waitFor(() => expect(screen.getByRole('button', { name: /^Apri other\.mp4/ }).getAttribute('aria-expanded')).toBe('true'));
   });
+
+  it('Scegli… opens the question; answered elsewhere, the dialog closes', async () => {
+    const pending = { kind: 'long' as const, frames: 150, reducedFrames: 50, tokens: 120_000, reducedTokens: 40_000 };
+    const waiting = ready({ state: 'waiting', pending, header: null, body: null });
+    const { rerender } = it_(<AnalysisSection slug="acme" view={waiting} onSeek={() => {}} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Scegli…' }));
+    expect(screen.getByRole('dialog', { name: 'Video lungo: intro.mp4' })).toBeTruthy();
+    rerender(<I18nProvider locale="it"><AnalysisSection slug="acme" view={ready({ state: 'queued', header: null, body: null })} onSeek={() => {}} /></I18nProvider>);
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
 });

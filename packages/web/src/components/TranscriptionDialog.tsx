@@ -30,7 +30,9 @@ export function AnalysisQuestionDialog({ slug, view, open, onClose }: { slug: st
     setLast((l) => (view.pending ? { view, question: view.pending } : l && l.view.file === view.file ? { ...l, view } : l));
   }, [view]);
   if (!last) return null;
+  // Keyed by the video and its question: another question never inherits this one's state (review of phase 3).
+  const key = `${last.question.kind}:${last.view.file}`;
   return last.question.kind === 'long'
-    ? <LongVideoDialog slug={slug} view={last.view} question={last.question} open={open} onClose={onClose} />
-    : <TranscriptionDialog slug={slug} view={last.view} question={last.question} open={open} onClose={onClose} />;
+    ? <LongVideoDialog key={key} slug={slug} view={last.view} question={last.question} open={open} onClose={onClose} />
+    : <TranscriptionDialog key={key} slug={slug} view={last.view} question={last.question} open={open} onClose={onClose} />;
 }

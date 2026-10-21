@@ -1,5 +1,5 @@
 import { parseAnalysisBody, type AnalysisBody, type SidecarHeader, type VideoAnalysisState, type VideoAnalysisView } from '@motion-studio/shared';
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ApiError, api } from '../../api.ts';
 import { useT } from '../../i18n.tsx';
 import { Button, Icon, Pill, Tag, Textarea, clockText, toast, type PillTone } from '../../ui/index.ts';
@@ -33,6 +33,8 @@ export function AnalysisSection({ slug, view, onSeek, onView }: AnalysisSectionP
   const [draft, setDraft] = useState<string | null>(null);
   // Spec §6: a held analysis's question (long video, transcription) opens its dialog from here.
   const [asking, setAsking] = useState(false);
+  // Answered elsewhere: the dialog closes (while Whisper installs the analysis still asks).
+  useEffect(() => { if (asking && !view.pending) setAsking(false); }, [asking, view.pending]);
   const edited = view.header?.edited === true;
   const fail = (e: unknown) => toast.show(v.actionFailed({ detail: message(e) }));
   const act = async (fn: () => Promise<VideoAnalysisView | void>) => {
