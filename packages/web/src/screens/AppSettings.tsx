@@ -1,4 +1,4 @@
-import { KEY_CAPABILITIES, KEY_PERMISSIONS, LOCALES, shownTotal, type ChromeDownloadOffer, type KeyCheckResult, type RenderEngineStatus, type DoctorCheck, type LanguageSetting, type Locale, type ProviderId, type SecretStatus, type UpdatesState, type UsageReport, type WorkspaceSettings, type WorkspaceSettingsView } from '@motion-studio/shared';
+import { KEY_CAPABILITIES, KEY_PERMISSIONS, LOCALES, shownTotal, type ChromeDownloadOffer, type KeyCheckResult, type RenderEngineStatus, type DoctorCheck, type LanguageSetting, type Locale, type PaidUnits, type PaidUsageReport, type ProviderId, type SecretStatus, type UpdatesState, type UsageReport, type WorkspaceSettings, type WorkspaceSettingsView } from '@motion-studio/shared';
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { api } from '../api.ts';
 import { formatDate, formatNumber, useLocale, useT, type LanguageState } from '../i18n.tsx';
@@ -6,7 +6,7 @@ import { anim, D, E, enter } from '../motion/index.ts';
 import { href, type SettingsSection } from '../routes.ts';
 import { notificationStatus, notifyApprovalsEnabled, notifyReadyEnabled, notifySoundEnabled, sendNotification, setNotifyApprovals, setNotifyReady, setNotifySound, type NotificationResult, type NotificationStatus } from '../shell/notify.ts';
 import { go } from '../shell/ShellContext.tsx';
-import { billingNote, costText, formatTokens } from '../shell/Tokens.tsx';
+import { billingNote, costText, formatCost, formatTokens } from '../shell/Tokens.tsx';
 import type { Theme } from '../theme.ts';
 import { desktop } from '../desktop.ts';
 import { Button, Card, Empty, Icon, Input, Pill, ProgressBar, Select, Spinner, Toggle, cx, toast, type PillTone } from '../ui/index.ts';
@@ -603,7 +603,10 @@ function Usage() {
       ) : report.trackedSince === null ? (
         <Card className="ms-set-card" data-enter><Empty icon="sparkle" title={s.empty} sub={s.emptySub} /></Card>
       ) : (
-        <UsageCard report={report} />
+        <>
+          <UsageCard report={report} />
+          <PaidUsageCard paid={report.paid} utcOffsetMinutes={report.utcOffsetMinutes} />
+        </>
       )}
     </div>
   );
@@ -640,9 +643,9 @@ function UsageCard({ report }: { report: UsageReport }) {
     );
   };
   return (
-    <Card className="ms-usage-card" data-enter>
+    <Card className="ms-usage-card" data-enter role="region" aria-labelledby="ms-usage-title">
       <div className="ms-usage-head">
-        <b>{s.week}</b>
+        <b id="ms-usage-title">{s.week}</b>
         <span className="ms-usage-total">{tokens(shownTotal(total.tokens))}</span>
       </div>
       <div ref={bars} className="ms-usage-bars" aria-hidden="true">
@@ -682,6 +685,86 @@ function UsageCard({ report }: { report: UsageReport }) {
       {note ? <p className="ms-usage-billing">{note}</p> : null}
       {estimated && total.costUsd !== null ? <p className="ms-usage-note">{u.costUnknown}</p> : null}
       <p className="ms-usage-note">{s.trackedSince({ date: formatDate(locale, report.trackedSince!, { dateStyle: 'medium' }) })}</p>
+    </Card>
+  );
+}
+
+/**
+ * Report 66: the paid services (OpenAI, ElevenLabs) apart from Claude's card, never summed into its totals: Claude counts
+ * toward the plan, these are billed on the user's own provider accounts. Same layout as Claude's card (7 bars, today in
+ * accent), scaled on the estimated cost; rows by service with each unit summed, by kind and by project, every cost marked
+ * as an estimate. Nothing used in the range: one plain line.
+ */
+function PaidUsageCard({ paid, utcOffsetMinutes }: { paid: PaidUsageReport; utcOffsetMinutes: number }) {
+  const t = useT();
+  const s = t.web.appSettings.usage;
+  const p = s.paid;
+  const locale = useLocale();
+  const today = new Date(Date.now() + utcOffsetMinutes * 60_000).toISOString().slice(0, 10);
+  const estimate = (usd: number) => p.estimate({ cost: formatCost(locale, usd) });
+  const units = (list: PaidUnits[]) => list.map((u) => p.units[u.unit]({ n: u.amount, count: u.unit === 'tokens' ? formatTokens(locale, u.amount) : formatNumber(locale, u.amount, { maximumFractionDigits: 1 }) })).join(' · ');
+  const max = Math.max(0, ...paid.byDay.map((d) => d.costUsd));
+  const short = (day: string) => (day === today ? s.today : formatDate(locale, dayDate(day), { weekday: 'short', timeZone: 'UTC' }));
+  const long = (day: string) => (day === today ? s.today : formatDate(locale, dayDate(day), { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }));
+  const bars = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    bars.current?.querySelectorAll('.ms-usage-bar').forEach((el, i) => { void anim(el, [{ transform: 'scaleY(0)' }, { transform: 'scaleY(1)' }], D.l, E.out, i * 40); });
+  }, []);
+  const row = (key: string, label: string, detail: string | null, usd: number) => (
+    <li key={key} className="ms-usage-row">
+      <span className="ms-usage-name">{label}</span>
+      {detail ? <span className="ms-usage-num">{detail}</span> : null}
+      <span className="ms-usage-cost">{estimate(usd)}</span>
+    </li>
+  );
+  const services = paid.byService.filter((x) => x.calls > 0);
+  const kinds = paid.byKind.filter((x) => x.calls > 0);
+  const projects = paid.byProject.filter((x) => x.calls > 0);
+  return (
+    <Card className="ms-usage-card" data-enter role="region" aria-labelledby="ms-paid-title">
+      <div className="ms-usage-head">
+        <b id="ms-paid-title">{p.title}</b>
+        {paid.calls > 0 ? <span className="ms-usage-total">{estimate(paid.costUsd)}</span> : null}
+      </div>
+      {paid.calls === 0 ? <p className="ms-usage-note">{p.none}</p> : (
+        <>
+          <div ref={bars} className="ms-usage-bars" aria-hidden="true">
+            {paid.byDay.map((d) => (
+              <div key={d.day} className="ms-usage-col" title={p.barTitle({ day: long(d.day), cost: formatCost(locale, d.costUsd) })}>
+                {d.day === today && d.calls > 0 ? <span className="ms-usage-val">{estimate(d.costUsd)}</span> : null}
+                <span data-day={d.day} className={cx('ms-usage-bar', d.costUsd <= 0 && 'ms-zero', d.day === today && 'ms-today')}
+                  style={d.costUsd > 0 && max > 0 ? { height: `${(d.costUsd / max) * 100}%` } : undefined} />
+              </div>
+            ))}
+          </div>
+          <div className="ms-usage-days" aria-hidden="true">
+            {paid.byDay.map((d) => <span key={d.day} className={cx(d.day === today && 'ms-today')}>{short(d.day)}</span>)}
+          </div>
+          <table className="ms-sr" aria-label={p.chart}>
+            <thead><tr><th scope="col">{s.day}</th><th scope="col">{p.cost}</th></tr></thead>
+            <tbody>
+              {paid.byDay.map((d) => <tr key={d.day}><th scope="row">{long(d.day)}</th><td>{estimate(d.costUsd)}</td></tr>)}
+            </tbody>
+          </table>
+          <div className="ms-usage-groups">
+            <div className="ms-usage-group">
+              <span className="ms-usage-cap" id="ms-paid-services">{p.byService}</span>
+              <ul aria-labelledby="ms-paid-services">{services.map((x) => row(x.provider, p.services[x.provider], units(x.units), x.costUsd))}</ul>
+            </div>
+            <div className="ms-usage-group">
+              <span className="ms-usage-cap" id="ms-paid-kinds">{p.byKind}</span>
+              <ul aria-labelledby="ms-paid-kinds">{kinds.map((x) => row(x.service, p.kinds[x.service], units(x.units), x.costUsd))}</ul>
+            </div>
+            {projects.length ? (
+              <div className="ms-usage-group">
+                <span className="ms-usage-cap" id="ms-paid-projects">{p.byProject}</span>
+                <ul aria-labelledby="ms-paid-projects">{projects.map((x) => row(x.slug, x.name, null, x.costUsd))}</ul>
+              </div>
+            ) : null}
+          </div>
+          <p className="ms-usage-billing">{p.note}</p>
+        </>
+      )}
     </Card>
   );
 }

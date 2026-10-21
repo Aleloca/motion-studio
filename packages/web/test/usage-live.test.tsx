@@ -21,7 +21,7 @@ const { I18nProvider } = await import('../src/i18n.tsx');
 function report(tokens: number, billing: UsageReport['billing'] = 'subscription'): UsageReport {
   return {
     from: '', to: '', total: { tokens: { input: tokens, output: 0, cacheRead: 0, cacheWrite: 0 }, costUsd: 0 },
-    byDay: [], byProject: [], byKind: [], trackedSince: null, billing, utcOffsetMinutes: 0,
+    byDay: [], byProject: [], byKind: [], paid: { costUsd: 0, calls: 0, byDay: [], byService: [], byKind: [], byProject: [] }, trackedSince: null, billing, utcOffsetMinutes: 0,
   };
 }
 const tk = (n: number, cacheRead = 0): TokenCounts => ({ input: n, output: 0, cacheRead, cacheWrite: 0 });
