@@ -98,6 +98,24 @@ describe('the library\'s Analisi section (Task 19)', () => {
     expect(api.cancelVideoAnalysis).toHaveBeenCalledWith('acme', 'assets/intro.mp4');
   });
 
+  it('queued for the audio check: the hint says so, not that other analyses run first (report 63)', () => {
+    const queued = ready({ state: 'queued', jobId: 'job-3', header: null, body: null });
+    const { rerender } = it_(<AnalysisSection slug="acme" view={queued} waitReason="transcription-check" onSeek={() => {}} />);
+    expect(screen.getByText('Prima controlla se nell\'audio si parla.')).toBeTruthy();
+    expect(screen.queryByText('Parte appena finiscono le altre analisi del progetto.')).toBeNull();
+    rerender(<I18nProvider locale="it"><AnalysisSection slug="acme" view={queued} waitReason="video-queue" onSeek={() => {}} /></I18nProvider>);
+    expect(screen.getByText('Parte appena finiscono le altre analisi del progetto.')).toBeTruthy();
+  });
+
+  it('the detail panel takes the wait reason from the analysis\'s job', async () => {
+    api.listVideoAnalyses.mockResolvedValueOnce([ready({ state: 'queued', jobId: 'job-3', header: null, body: null }), ready({ file: 'assets/other.mp4', state: 'none', header: null, body: null })]);
+    requestAssetFocus('acme', { jobId: 'job-3', name: 'intro.mp4' });
+    const job = { id: 'job-3', key: 'k', kind: 'video-analysis', label: 'intro.mp4', state: 'queued', waitReason: 'transcription-check' } as unknown as EventsState['jobs'][string];
+    const live: EventsState = { approvals: {}, jobs: { 'job-3': job }, events: {}, creativeTicks: {}, projectTicks: {} };
+    it_(<Assets slug="acme" live={live} />);
+    await waitFor(() => expect(screen.getByText('Prima controlla se nell\'audio si parla.')).toBeTruthy());
+  });
+
   it('the tile shows the "analizzato" mark only for a ready analysis', async () => {
     const live: EventsState = { approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} };
     it_(<Assets slug="acme" live={live} />);

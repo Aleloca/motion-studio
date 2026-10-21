@@ -295,6 +295,7 @@ export const en = {
     hints: {
       none: 'The video is analysed when it enters a brief, or now with Analyse.',
       queued: 'Starts as soon as the project\'s other analyses finish.',
+      checkingAudio: 'Checking the audio for speech first.',
       running: 'The agent is looking at the video\'s frames…',
       stale: 'The video changed after the analysis.',
       staleEdited: 'The video changed after your edit: Analyse again to update it.',
