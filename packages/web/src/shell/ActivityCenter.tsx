@@ -16,6 +16,7 @@ import { renderPct } from '../screens/renderModel.ts';
 import { stageText } from '../screens/exportModel.ts';
 import { message } from '../errors.ts';
 import { canAskNotifications } from './notify.ts';
+import { requestAssetFocus, type AssetFocus } from './intents.ts';
 import { go, ShellContext, type ActivityTab } from './ShellContext.tsx';
 import { lastStep } from '../jobEvents.ts';
 import { jobFinalTokens, jobLiveTokens, jobUsagePartial, todayTokens } from '../usageLive.ts';
@@ -77,6 +78,16 @@ export function jobHref(job: JobSummary): string | null {
   if (job.kind === 'asset-description' || job.kind === 'asset-generation' || job.kind === 'video-analysis') return href.project(at.project, 'assets');
   if (job.kind === 'brief') return href.newCreative(at.project);
   return href.project(at.project);
+}
+
+/**
+ * Decision 1468: what a video analysis's row selects in the library: its job, and the video's name from the label the core
+ * gave it ("<label> · <file name>"; null when the label has no name).
+ */
+export function analysisJobTarget(job: JobSummary): AssetFocus | null {
+  if (job.kind !== 'video-analysis') return null;
+  const at = job.label.indexOf(' · ');
+  return { jobId: job.id, name: at >= 0 ? job.label.slice(at + 3) || null : null };
 }
 
 /**
@@ -240,9 +251,12 @@ function NeedsYou({ approval, leaving, onGone, where }: { approval: ApprovalRequ
  */
 function Row({ job, className, children, after, nested }: { job: JobSummary; className?: string; children: ReactNode; after?: ReactNode; nested?: ReactNode[] }) {
   const to = jobHref(job);
+  const focus = analysisJobTarget(job);
+  const place = focus ? jobPlace(job) : null;
+  const onClick = focus && place ? () => requestAssetFocus(place.project, focus) : undefined;
   return (
     <li className={cx('ms-activity-item', after !== undefined && 'ms-activity-with-after', Boolean(nested?.length) && 'ms-activity-parent')}>
-      {to ? <a className={cx('ms-activity-row ms-activity-link', className)} href={to}>{children}</a> : <div className={cx('ms-activity-row', className)}>{children}</div>}
+      {to ? <a className={cx('ms-activity-row ms-activity-link', className)} href={to} onClick={onClick}>{children}</a> : <div className={cx('ms-activity-row', className)}>{children}</div>}
       {after}
       {nested?.length ? <ul className="ms-activity-children">{nested}</ul> : null}
     </li>

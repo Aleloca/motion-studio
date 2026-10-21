@@ -7,7 +7,10 @@ import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.
 import { enter, isSubmitChord } from '../motion/index.ts';
 import { isMac } from '../platform.ts';
 import { clipRangeChip } from '../screens/pinModel.ts';
-import { Button, Empty, Icon, Markdown, Spinner, Textarea, Tooltip, Typing, cx, type IconName } from '../ui/index.ts';
+import { Button, Empty, Icon, Markdown, Spinner, Textarea, Tooltip, Typing, cx, toast, type IconName } from '../ui/index.ts';
+import { initialEventsState } from '../eventsReducer.ts';
+import { ShellContext } from '../shell/ShellContext.tsx';
+import { useAnalysisWait } from '../useVideoAnalyses.ts';
 import { lastStep } from '../jobEvents.ts';
 import { liveErrorText, newClientId } from './liveErrors.ts';
 import { QueuedRequests } from './QueuedRequests.tsx';
@@ -199,7 +202,7 @@ type Item =
   /** The caller's card (a video analysis question in the brief's chat). */
   | { key: string; kind: 'card'; node: ReactNode }
   /** `agent`: a line about something the agent did in the app with its tools (decision 917). */
-  | { key: string; kind: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string; agent?: boolean; variant?: VariantId }
+  | { key: string; kind: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string; agent?: boolean; variant?: VariantId; wait?: { slug: string; creative: string } }
   | { key: string; kind: 'approval'; shown: ShownApproval }
   | { key: string; kind: 'typing' }
   | { key: string; kind: 'retried'; at: string }
@@ -517,7 +520,8 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
         out.push({ key, kind: 'briefStart', at: e.at, text: e.text });
       } else if (e.type === 'system') {
         if (lastUser && e.level === 'error') lastUser.failed = true;
-        out.push({ key, kind: 'system', at: e.at, level: e.level, text: e.text, ...(e.origin === 'agent' ? { agent: true } : {}), ...(e.variant ? { variant: e.variant } : {}) });
+        out.push({ key, kind: 'system', at: e.at, level: e.level, text: e.text, ...(e.origin === 'agent' ? { agent: true } : {}), ...(e.variant ? { variant: e.variant } : {}),
+          ...(e.analysisWait && creative ? { wait: { slug, creative } } : {}) });
       } else if (e.type === 'group-turn') {
         out.push({ key, kind: 'groupTurn', at: e.at, outcome: e.outcome, stopped: e.stopped === true, ...(e.usage ? { usage: e.usage } : {}) });
       }
@@ -832,6 +836,7 @@ function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetai
       if (item.level === 'warning') return <p className="ms-convo-system ms-warning"><Icon name="warn" size={13} />{chip}<span>{item.text}</span></p>;
       // Decision 917: what the agent did in the app, said apart from the core's own notes.
       if (item.agent) return <p className="ms-convo-system ms-convo-action"><Icon name="sparkle" size={12} />{chip}<span className="ms-convo-action-tag">{t.web.conversation.agentAction}</span><span>{item.text}</span></p>;
+      if (item.wait) return <AnalysisWaitLine slug={item.wait.slug} creative={item.wait.creative} chip={chip} text={item.text} />;
       return <p className="ms-convo-system">{chip}{item.text}</p>;
     }
     case 'approval':
@@ -880,6 +885,29 @@ function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetai
         </div>
       );
   }
+}
+
+/**
+ * Decision 1478: the first turn waits for its videos' analyses: "Analisi del video in corso (clip.mp4)… · Salta" while the
+ * core says it waits; Salta starts the turn without them. Once the wait is over the line stays, as plain text.
+ */
+function AnalysisWaitLine({ slug, creative, chip, text }: { slug: string; creative: string; chip: ReactNode; text: string }) {
+  const t = useT();
+  const live = useContext(ShellContext)?.live ?? initialEventsState;
+  const waiting = useAnalysisWait(slug, creative, live).length > 0;
+  const [busy, setBusy] = useState(false);
+  const skip = async () => {
+    setBusy(true);
+    try { await api.skipAnalysisWait(slug, creative); }
+    catch (e) { toast.show(t.videoAnalysis.skipFailed({ detail: message(e) })); }
+    finally { setBusy(false); }
+  };
+  return (
+    <p className="ms-convo-system ms-convo-wait">
+      {chip}<span>{text}</span>
+      {waiting ? <>{' · '}<button type="button" className="ms-convo-skip" disabled={busy} onClick={() => void skip()}>{t.videoAnalysis.skip}</button></> : null}
+    </p>
+  );
 }
 
 /**

@@ -30,18 +30,23 @@ export function useVideoAnalyses(slug: string, live: EventsState): { byFile: Rec
   }, [listed, mine]);
 }
 
-/** Decision 1478: the videos a creative's first turn waits for (empty: no wait), fetched first and then followed live. */
-export function useAnalysisWait(slug: string, creative: string, live: EventsState): string[] {
+/**
+ * Decision 1478: the videos a creative's first turn waits for (empty: no wait), fetched first and then followed live.
+ * `enabled` false asks nothing (a chat without a wait line).
+ */
+export function useAnalysisWait(slug: string, creative: string, live: EventsState, enabled = true): string[] {
   const [fetched, setFetched] = useState<{ files: string[]; seq: number } | null>(null);
   useEffect(() => {
+    if (!enabled) return;
     let alive = true;
     const seq = live.analysisSeq ?? 0;
     Promise.resolve().then(() => api.analysisWait(slug, creative))
       .then((r) => { if (alive) setFetched({ files: r.files, seq }); })
       .catch(() => { /* no wait shown */ });
     return () => { alive = false; };
-  }, [slug, creative, live.snapshots]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [slug, creative, live.snapshots, enabled]); // eslint-disable-line react-hooks/exhaustive-deps
   const msg = live.analysisWaits?.[`${slug}/${creative}`];
+  if (!enabled) return [];
   if (msg && msg.seq > (fetched?.seq ?? 0)) return msg.files;
   return fetched?.files ?? msg?.files ?? [];
 }

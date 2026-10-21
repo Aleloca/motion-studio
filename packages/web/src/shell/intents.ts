@@ -95,3 +95,32 @@ export function takeShownVersions(key: string): Record<string, number> {
   shownVersions.delete(key);
   return v;
 }
+
+// Decision 1468: a video analysis's row in the activity centre selects its video in the library. The row knows the job and
+// the file's name from its label; the library finds the video by the job (its analysis view) or, after the job, by name.
+export interface AssetFocus { jobId: string; name: string | null }
+const assetFocus = new Map<string, AssetFocus>();
+const focusListeners = new Set<() => void>();
+
+/** Selects the video of `target` on the next Assets page of `slug` (set it, then navigate to the project's assets). */
+export function requestAssetFocus(slug: string, target: AssetFocus): void {
+  assetFocus.set(slug, target);
+  for (const l of focusListeners) l();
+}
+
+/** Runs `onFocus` with the pending target of `slug`, now if one is pending or when one arrives while mounted. */
+export function useAssetFocusIntent(slug: string, onFocus: (target: AssetFocus) => void): void {
+  const cb = useRef(onFocus);
+  cb.current = onFocus;
+  useEffect(() => {
+    const take = () => {
+      const target = assetFocus.get(slug);
+      if (!target) return;
+      assetFocus.delete(slug);
+      cb.current(target);
+    };
+    take();
+    focusListeners.add(take);
+    return () => { focusListeners.delete(take); };
+  }, [slug]);
+}

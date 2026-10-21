@@ -33,6 +33,7 @@ const api = {
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error { constructor(public status: number, m: string, public code?: string) { super(m); } } }));
 const { AnalysisSection } = await import('../src/screens/assets/AnalysisSection.tsx');
 const { Assets } = await import('../src/screens/Assets.tsx');
+const { requestAssetFocus } = await import('../src/shell/intents.ts');
 afterEach(() => vi.clearAllMocks());
 
 function video(file: string): AssetEntry {
@@ -103,5 +104,13 @@ describe('the library\'s Analisi section (Task 19)', () => {
     await waitFor(() => expect(screen.getAllByRole('img', { name: 'Analizzato' })).toHaveLength(1));
     const card = screen.getByRole('img', { name: 'Analizzato' }).closest('[data-file]') as HTMLElement;
     expect(card.dataset.file).toBe('intro.mp4');
+  });
+
+  it('the activity centre\'s row selects its video: by the job of its analysis', async () => {
+    api.listVideoAnalyses.mockResolvedValueOnce([ready(), ready({ file: 'assets/other.mp4', state: 'running', jobId: 'job-9', header: null, body: null })]);
+    requestAssetFocus('acme', { jobId: 'job-9', name: 'altro.mp4' });
+    const live: EventsState = { approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} };
+    it_(<Assets slug="acme" live={live} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Apri other\.mp4/ }).getAttribute('aria-expanded')).toBe('true'));
   });
 });

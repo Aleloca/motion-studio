@@ -7,7 +7,7 @@ import { useT } from '../i18n.tsx';
 import { brandJobFailedText, isActiveJob, isDescribeJob } from '../labels.ts';
 import { D, enter, exit, useEnter } from '../motion/index.ts';
 import { href } from '../routes.ts';
-import { requestNewCreativeWithAssets } from '../shell/intents.ts';
+import { requestNewCreativeWithAssets, useAssetFocusIntent, type AssetFocus } from '../shell/intents.ts';
 import { go } from '../shell/ShellContext.tsx';
 import { useVideoAnalyses } from '../useVideoAnalyses.ts';
 import { Button, Check, Chip, Empty, Icon, Input, NavItem, Pill, Popover, Select, Spinner, Tag, clockText, cx, toast, type IconName } from '../ui/index.ts';
@@ -131,6 +131,19 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
     setSel((s) => ([...s].every((f) => files.has(f)) ? s : new Set([...s].filter((f) => files.has(f)))));
     setOpen((o) => (o && !files.has(o) ? null : o));
   }, [assets]);
+
+  // Decision 1468: a video analysis's row in the activity centre opens this page with its video selected: by the job (its
+  // analysis view), else by the name in the row's label when one video has it.
+  const [focus, setFocus] = useState<AssetFocus | null>(null);
+  useAssetFocusIntent(slug, setFocus);
+  useEffect(() => {
+    if (!focus || assets.length === 0) return;
+    const byJob = Object.values(analyses.byFile).find((v) => v.jobId === focus.jobId)?.file;
+    const named = assets.filter((x) => x.kind === 'video' && baseName(x.file) === focus.name);
+    const file = byJob?.startsWith('assets/') ? byJob.slice('assets/'.length) : named.length === 1 ? named[0]!.file : null;
+    if (file && assets.some((x) => x.file === file)) setOpen(file);
+    setFocus(null);
+  }, [focus, assets, analyses.byFile]);
 
   // Description: the assets this page asked to describe, until their job ends; otherwise, while a description job
   // started elsewhere runs, the assets without a description (what the core describes by default).
