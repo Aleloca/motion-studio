@@ -827,7 +827,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   const routeCtx = { requireWorkspace, brand: brandService, media, git: deps.git, broadcast: (m: ServerMessage) => hub.broadcast(m), configDir };
   registerBrandRoutes(app, routeCtx);
-  registerLibraryRoutes(app, routeCtx);
+  registerLibraryRoutes(app, { ...routeCtx, analyses });
   const fontsHttp = deps.fontsHttp ?? { fetch: globalThis.fetch };
   registerFontsRoutes(app, { ...routeCtx, catalog: new GoogleFontsCatalog({ configDir, http: fontsHttp }), http: fontsHttp, signer: new UrlSigner(deps.signedUrlTtlMs), ...(deps.fontsInstallIo ? { installIo: deps.fontsInstallIo } : {}) });
   // Localize turns (Phase 12, Task 4): the agent translates through submit_localization; the core makes the voices.

@@ -13,6 +13,7 @@ import { Git } from '../src/git.ts';
 import { LibraryStore, RenameInterrupted, type RenameStep } from '../src/library/library-store.ts';
 import { journalPathOf } from '../src/library/rename-journal.ts';
 import { recoverRenameJournal } from '../src/library/rename-recovery.ts';
+import { readSidecar, renderSidecar, writeSidecar } from '../src/analysis/sidecar.ts';
 import { NoMediaTools } from '../src/media/media-tools.ts';
 import { WorkspaceStore } from '../src/workspace-store.ts';
 import { recoverWorkspace } from '../src/server/creative-routes.ts';
@@ -539,5 +540,47 @@ describe('renaming an asset (API)', () => {
     expect((await app.inject(`${P}/assets/item/nope.wav/waveform`)).statusCode).toBe(404);
     expect((await app.inject(`${P}/assets/item/a.png/waveform`)).statusCode).toBe(422);
     expect((await app.inject(`${P}/assets/item/a.png`)).statusCode).toBe(404);
+  });
+});
+
+describe('a video and its analysis file (decision 1495)', () => {
+  let project: string;
+  let lib: LibraryStore;
+  const SHA = 'ab'.repeat(32);
+  const header = (asset: string) => ({ format: 'motion-studio-video-analysis/1' as const, asset, sha256: SHA, bytes: 1, durationSec: 1, width: 2, height: 2, fps: null, hasAudio: false, transcript: 'none-no-speech' as const, language: null, generator: 'g', createdAt: '2026-10-21T10:00:00.000Z', edited: false });
+  const content = { summary: 's', timeline: [], usableMoments: [], look: null, transcript: [], tags: [] };
+  beforeEach(async () => {
+    project = await mkdtemp(join(tmpdir(), 'ms-ren-va-'));
+    await mkdir(join(project, 'assets'), { recursive: true });
+    lib = new LibraryStore(project, { ...NoMediaTools, available: true });
+    await writeFile(join(project, 'assets', 'clip.mp4'), 'video');
+    await lib.registerAssets([{ file: 'clip.mp4', origin: 'upload' }]);
+    await writeSidecar(project, 'assets/clip.mp4', renderSidecar(header('assets/clip.mp4'), content));
+  });
+  const sidecar = (name: string) => readSidecar(project, `assets/${name}`);
+
+  it('a rename moves the analysis file and names the new asset in it', async () => {
+    await lib.renameAsset('clip.mp4', 'intro.mp4');
+    expect(await sidecar('clip.mp4')).toBeNull();
+    expect((await sidecar('intro.mp4'))!.header).toEqual(header('assets/intro.mp4'));
+  });
+  it('a crash after the file moved is finished with the analysis file moved; one before is undone', async () => {
+    await expect(lib.renameAsset('clip.mp4', 'intro.mp4', { afterStep: (s) => { if (s === 'file') throw new RenameInterrupted(); } })).rejects.toBeInstanceOf(RenameInterrupted);
+    expect(JSON.parse(await readFile(journalPathOf(project), 'utf8'))).toMatchObject({ sidecar: true });
+    expect(await recoverRenameJournal(project)).toBe('completed');
+    expect((await sidecar('intro.mp4'))!.header.asset).toBe('assets/intro.mp4');
+    expect(await sidecar('clip.mp4')).toBeNull();
+    await expect(lib.renameAsset('intro.mp4', 'again.mp4', { afterStep: (s) => { if (s === 'sidecar') throw new RenameInterrupted(); } })).rejects.toBeInstanceOf(RenameInterrupted);
+    expect(await recoverRenameJournal(project)).toBe('completed');
+    expect((await sidecar('again.mp4'))!.header.asset).toBe('assets/again.mp4');
+  });
+  it('a failure after the move undoes it, analysis file included', async () => {
+    await expect(lib.renameAsset('clip.mp4', 'intro.mp4', { afterStep: (s) => { if (s === 'assets') throw new Error('disk'); } })).rejects.toThrow();
+    expect((await sidecar('clip.mp4'))!.header.asset).toBe('assets/clip.mp4');
+    expect(await sidecar('intro.mp4')).toBeNull();
+  });
+  it('a delete removes the analysis file', async () => {
+    await lib.removeAsset('clip.mp4');
+    expect(await sidecar('clip.mp4')).toBeNull();
   });
 });

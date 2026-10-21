@@ -227,6 +227,9 @@ export class AgentLauncher {
     const spellings = (f: string) => (f.startsWith(`${i.projectDir}/`) && realDir !== i.projectDir ? [f, join(realDir, f.slice(i.projectDir.length + 1))] : [f]);
     const protectedFiles = [...(i.protectedFiles ?? []).flatMap(spellings), ...roots.flatMap((d) => [...PROTECTED_PROJECT_FILES, RENAME_JOURNAL_FILE].map((n) => join(d, n)))];
     protectedDirs.push(...(i.protectedDirs ?? []).flatMap(spellings));
+    // Spec 1485 (decision 1499): the video analyses are the core's (and the user's, from the library): no agent job writes them,
+    // except the user's own console.
+    if (i.kind !== 'console') protectedDirs.push(...roots.map((d) => join(d, 'assets', '.analysis')));
     const logGlobs = roots.flatMap((d) => [
       ...CREATIVE_CORE_FILES.map((n) => `${escapeGlob(join(d, 'creatives'))}/*/${n}`),
       `${escapeGlob(join(d, 'creatives'))}/*/${CREATIVE_CORE_COPY_GLOB}`,

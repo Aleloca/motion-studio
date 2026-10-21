@@ -97,6 +97,22 @@ describe.skipIf(!hasFfmpeg)('video analysis routes and triggers', () => {
     expect((await t.app.inject(`${A}/view?file=assets/clip.mp4`)).json()).toMatchObject({ state: 'ready', header: { edited: false } });
   }, 60_000);
 
+  it('rename during a running analysis: the job is cancelled and no analysis file is written under either name', async () => {
+    const { t, h } = await setup();
+    await t.app.inject({ method: 'POST', url: '/api/projects/acme/assets/register', payload: { files: ['clip.mp4'] } });
+    await t.app.inject({ method: 'POST', url: A, payload: { file: 'assets/clip.mp4' } });
+    const run = await t.runner.next(0);
+    const renamed = await t.app.inject({ method: 'PATCH', url: '/api/projects/acme/assets/item/clip.mp4', payload: { name: 'intro.mp4' } });
+    expect(renamed.statusCode).toBe(200);
+    await vi.waitFor(async () => expect((await h.analysisJobs())[0]!.state).toBe('cancelled'));
+    // The run's bridge access ended with the job: a late write reaches nothing.
+    await h.tool(run, 'write_video_analysis', wholeWrite(8)).catch(() => null);
+    run.finish({ write: false });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(await readFile(join(t.projectDir, 'assets/.analysis/clip.mp4.md'), 'utf8').catch(() => null)).toBeNull();
+    expect(await readFile(join(t.projectDir, 'assets/.analysis/intro.mp4.md'), 'utf8').catch(() => null)).toBeNull();
+  }, 60_000);
+
   it('lists the library videos and refuses what is not one', async () => {
     const { t } = await setup();
     await t.app.inject({ method: 'POST', url: '/api/projects/acme/assets/register', payload: { files: ['clip.mp4', 'logo.png'] } });

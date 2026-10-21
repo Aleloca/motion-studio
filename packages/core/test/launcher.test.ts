@@ -843,3 +843,23 @@ describe('a video analysis launch (decision 1493)', () => {
     expect(lines.at(-1)).toMatchObject({ kind: 'video-analysis', jobId: 'v1' });
   });
 });
+
+describe('the video analyses are read-only for the agents (spec 1485, decision 1499)', () => {
+  it('a creative launch denies writing assets/.analysis; the console does not', async () => {
+    const { ControlledRunner } = await import('./helpers/controlled-runner.ts');
+    const projectDir = await newProject();
+    const runner = new ControlledRunner();
+    const launcher = testLauncher(runner, { sandbox: async () => ({ available: true, reason: '' }) });
+    const analysis = join(projectDir, 'assets', '.analysis');
+    const run = await launcher.start({ kind: 'creative', jobId: 'c1', projectSlug: 'acme', projectDir, creativeSlug: 'x', request: { prompt: 'x' }, onEvent: () => {} });
+    const r = runner.runs[0]!;
+    expect(r.req.disallowedTools).toEqual(expect.arrayContaining([`Edit(/${escapeGlob(analysis)}/**)`, `Write(/${escapeGlob(analysis)}/**)`]));
+    expect((r.req.settings as { sandbox: { filesystem: { denyWrite: string[] } } }).sandbox.filesystem.denyWrite).toContain(analysis);
+    r.finish({ write: false });
+    await run.done;
+    const console_ = await launcher.start({ kind: 'console', jobId: 'k1', projectSlug: 'acme', projectDir, request: { prompt: 'x' }, onEvent: () => {} });
+    expect(runner.runs[1]!.req.disallowedTools).not.toContain(`Edit(/${escapeGlob(analysis)}/**)`);
+    runner.runs[1]!.finish({ write: false });
+    await console_.done;
+  });
+});

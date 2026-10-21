@@ -14,8 +14,13 @@ import type { MediaTools } from '../media/media-tools.ts';
 import { WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
 import { sendConfinedFile } from './serve-file.ts';
 import { t } from '../i18n.ts';
+import type { VideoAnalysisService } from '../analysis/video-analysis.ts';
 
-export interface LibraryRoutesContext { requireWorkspace: () => WorkspaceStore; brand: BrandService; media: MediaTools; git: Git; broadcast: (m: ServerMessage) => void }
+export interface LibraryRoutesContext {
+  requireWorkspace: () => WorkspaceStore; brand: BrandService; media: MediaTools; git: Git; broadcast: (m: ServerMessage) => void;
+  /** Decision 1495: a renamed or deleted video's running analysis stops. */
+  analyses?: Pick<VideoAnalysisService, 'cancel'>;
+}
 
 const assetPatch = z.object({ name: z.string().min(1).max(200).optional(), description: z.string().max(2000).optional(), tags: z.array(z.string().min(1).max(40)).max(30).optional() });
 const refPatch = z.object({ note: z.string().max(2000).optional(), useForBrand: z.boolean().optional() });
@@ -102,6 +107,7 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
     let entry: AssetEntry | undefined;
     try {
       if (name !== undefined) {
+        ctx.analyses?.cancel({ root: ws.root, projectSlug: req.params.slug, projectDir }, `assets/${file}`);
         const r = await lib.renameAsset(file, name);
         if (r.entry.file !== file) renamed = { from: file, brand: r.brand, creatives: r.creatives };
         file = r.entry.file;
@@ -132,6 +138,7 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
 
   app.delete<{ Params: { slug: string; '*': string } }>('/api/projects/:slug/assets/item/*', async (req) => {
     const { ws, lib, projectDir } = await project(req.params.slug);
+    ctx.analyses?.cancel({ root: ws.root, projectSlug: req.params.slug, projectDir }, `assets/${req.params['*']}`);
     await lib.removeAsset(req.params['*']);
     await done(projectDir, req.params.slug, t().jobs.deleteAssetCommit({ file: req.params['*'] }));
     // Review 5: an icon chosen from this image goes back to automatic.

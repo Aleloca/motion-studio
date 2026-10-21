@@ -15,9 +15,10 @@ import { fileLock } from '../file-locks.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 import { t } from '../i18n.ts';
+import { moveSidecar, removeSidecar, sidecarPathOf } from '../analysis/sidecar.ts';
 
 /** The steps of a rename, in order. */
-export type RenameStep = 'journal' | 'file' | 'assets' | 'brand' | 'briefs';
+export type RenameStep = 'journal' | 'file' | 'sidecar' | 'assets' | 'brand' | 'briefs';
 /** Thrown by a test seam to stand for the process dying: nothing is undone and the journal stays. */
 export class RenameInterrupted extends Error {}
 export interface RenameOptions { /** Called after each step (a test seam: throw `RenameInterrupted` to simulate a crash). */ afterStep?(step: RenameStep): void | Promise<void> }
@@ -196,7 +197,9 @@ export class LibraryStore {
       // What is affected, known before anything moves (a corrupt brand kit refuses here, with nothing changed).
       const brandRefs = await brand.usesFile(fromRef);
       const briefSlugs = await creatives.briefSlugsUsing(fromRef);
-      if (!(await writeRenameJournal(this.projectDir, { schemaVersion: 1, from: file, to: toFile, startedAt: now(), brandRefs, briefSlugs }))) {
+      // Decision 1495: a video's analysis file follows it (moved after the file, journaled with it).
+      const sidecar = Boolean(await lstat(join(this.projectDir, sidecarPathOf(fromRef))).catch(() => null));
+      if (!(await writeRenameJournal(this.projectDir, { schemaVersion: 1, from: file, to: toFile, startedAt: now(), brandRefs, briefSlugs, sidecar }))) {
         throw new WorkspaceError(500, t().errors.assetRenameFailed);
       }
       const undo: Array<() => Promise<unknown>> = [];
@@ -220,6 +223,8 @@ export class LibraryStore {
         }
         undo.unshift(() => rename(to, from));
         await step('file');
+        if (sidecar && await moveSidecar(this.projectDir, fromRef, toRef)) undo.unshift(() => moveSidecar(this.projectDir, toRef, fromRef));
+        await step('sidecar');
         const renamed = { ...entry, file: toFile };
         await this.writeAssets(assets.map((a, k) => (k === i ? renamed : a)));
         undo.unshift(() => this.writeAssets(assets));
@@ -285,12 +290,19 @@ export class LibraryStore {
       await brand.renameAllRefs(`assets/${a}`, `assets/${b}`, { kit: journal.brandRefs }).catch((e) => { if (journal.brandRefs) throw e; });
       if (journal.briefSlugs.length) await creatives.renameBriefAsset(`assets/${a}`, `assets/${b}`, journal.briefSlugs);
     };
+    // Decision 1495: the analysis file goes where the video is (only when the rename had one and the other name has none).
+    const sidecarTo = async (a: string, b: string) => {
+      if (!journal.sidecar) return;
+      const has = async (f: string) => Boolean(await lstat(join(this.projectDir, sidecarPathOf(`assets/${f}`))).catch(() => null));
+      if (await has(a) && !(await has(b))) await moveSidecar(this.projectDir, `assets/${a}`, `assets/${b}`);
+    };
     if (toInfo) {
       if (fromInfo) {
         // Both names exist: only the hard link the crash left between link and unlink is a rename in progress.
         if (!(fromInfo.ino === toInfo.ino && fromInfo.dev === toInfo.dev)) return discard('the old name is a different file');
         await unlink(fromPath);
       }
+      await sidecarTo(from, to);
       await retarget(from, to);
       await refs(from, to);
       await removeRenameJournal(this.projectDir);
@@ -298,6 +310,7 @@ export class LibraryStore {
     }
     if (!fromInfo) return discard('neither name exists');
     // The file never moved: every reference goes back to the old name.
+    await sidecarTo(to, from);
     await retarget(to, from);
     await refs(to, from);
     await removeRenameJournal(this.projectDir);
@@ -333,6 +346,8 @@ export class LibraryStore {
       if (realAbs && realAbs.startsWith(realLib + sep)) {
         await rm(abs).catch(() => { /* file already gone or inaccessible */ });
       }
+      // Decision 1495: its analysis file goes with it (the key frames stay in the cache until the sweep).
+      await removeSidecar(this.projectDir, `assets/${file}`).catch(() => false);
     });
   }
 

@@ -213,6 +213,13 @@ export async function moveSidecar(projectDir: string, from: string, to: string):
   const src = await assertPlainPath(projectDir, sidecarPathOf(from)).catch(() => null);
   if (!src || !(await lstat(src).catch(() => null))) return false;
   const current = await readSidecar(projectDir, from);
+  const dst = join(projectDir, sidecarPathOf(to));
+  if (current && src.toLowerCase() === dst.toLowerCase()) {
+    // A change of letter case only (one file on a case-insensitive volume): rewritten in place, then renamed.
+    await writeSidecar(projectDir, from, `${renderHeader({ ...current.header, asset: to })}\n${current.body}`);
+    await rename(src, await assertPlainPath(projectDir, sidecarPathOf(to)));
+    return true;
+  }
   if (current) {
     await writeSidecar(projectDir, to, `${renderHeader({ ...current.header, asset: to })}\n${current.body}`);
     await unlink(src);
