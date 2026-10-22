@@ -473,6 +473,12 @@ export const api = {
    */
   saveSubtitleSet: (slug: string, creative: string, lang: LocaleTag, body: { baseHash: string; cues: SubtitleCue[] }, opts?: RequestOptions) =>
     request<{ hash: string }>('PUT', `${subs(slug, creative)}/${encodeURIComponent(lang)}`, body, opts),
+  /**
+   * "Tempi controllati" (final review, M3): the set's timing marked as checked on the latest version's audio, the cues
+   * untouched; 409 `subtitles-conflict` when the set changed since `baseHash`.
+   */
+  subtitleTimingChecked: (slug: string, creative: string, lang: LocaleTag, body: { baseHash: string }) =>
+    request<{ hash: string; timing: SubtitleSet['timing'] }>('POST', `${subs(slug, creative)}/${encodeURIComponent(lang)}/timing-checked`, body),
   /** A subtitle set's `.srt` / `.vtt`, fetched with the UI token (the caller saves it). */
   subtitleFile: (slug: string, creative: string, lang: LocaleTag, ext: 'srt' | 'vtt') => fetchBlob(subtitleFileUrl(slug, creative, lang, ext)),
   fileUrl: (slug: string, creative: string, rel: string) => `${c(slug, creative)}/files/${rel.split('/').map(encodeURIComponent).join('/')}`,
