@@ -27,11 +27,17 @@ const api = {
   confirmLongVideo: vi.fn(async (_s: string, file: string) => view(file, 'x', null)),
   getTranscription: vi.fn(async () => ({ download: { state: 'idle', model: null, bytes: 0, total: 0 } })),
   recheckTranscription: vi.fn(),
+  // A subtitles job's question (decision 1640): the overview, the creative's title, the answer and "Ricontrolla".
+  subtitles: vi.fn(async (_s: string, _c: string) => ({ sets: [], job: null, pending: subtitlesAsk as TranscriptionPending | null })),
+  getCreative: vi.fn(async () => ({ creative: { title: 'Lancio estivo' } })),
+  subtitlesChoice: vi.fn(async () => ({ job: null, pending: null })),
+  subtitlesRecheck: vi.fn(async () => ({ job: null, pending: subtitlesAsk })),
 };
+let subtitlesAsk: TranscriptionPending = q;
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { AnalysisQuestionHost, useAnalysisQuestions } = await import('../src/components/AnalysisQuestionHost.tsx');
 const { Modal } = await import('../src/ui/index.ts');
-afterEach(() => { vi.clearAllMocks(); server = {}; });
+afterEach(() => { vi.clearAllMocks(); server = {}; subtitlesAsk = q; });
 
 /** The live state with the held jobs and their views (as the core broadcasts them). */
 function liveWith(items: Array<{ project: string; v: VideoAnalysisView; hold?: JobSummary['waitReason'] }>, base: EventsState = initialEventsState): EventsState {
@@ -142,6 +148,65 @@ describe('the held questions open by themselves (report 65)', () => {
     render(host(live));
     expect(await screen.findByRole('dialog', { name: 'Trascrivere il parlato di a.mp4?' })).toBeTruthy();
     expect(api.listVideoAnalyses).toHaveBeenCalledWith('acme');
+  });
+});
+
+describe('a subtitles job held on its transcription question (decision 1640)', () => {
+  const held = (id: string, project: string, creative: string, waitReason: JobSummary['waitReason'] | undefined): JobSummary =>
+    ({ id, key: `subtitles:/root:${project}:${creative}`, kind: 'subtitles', label: 'Sottotitoli · Lancio estivo', state: waitReason ? 'queued' : 'running', createdAt: at, ...(waitReason ? { waitReason } : {}) });
+  const withJob = (j: JobSummary, base: EventsState = initialEventsState) => eventsReducer(base, { type: 'job', job: j } as never);
+  const installed: TranscriptionPending = { ...q, whisper: { ...q.whisper, installed: true } };
+
+  it('opens its dialog by itself; Whisper answers through the subtitles route; released, the dialog closes', async () => {
+    subtitlesAsk = installed;
+    let live = withJob(held('s1', 'acme', 'lancio', 'transcription-choice'));
+    const { rerender } = render(host(live));
+    const d = await screen.findByRole('dialog', { name: 'Sottotitoli di Lancio estivo: trascrivere il parlato?' });
+    expect(api.subtitles).toHaveBeenCalledWith('acme', 'lancio');
+    expect(within(d).getByText('I sottotitoli si fanno dal parlato del video: per farli bisogna trascriverlo.')).toBeTruthy();
+    await userEvent.click(within(d).getByRole('button', { name: /^Trascrivi con Whisper/ }));
+    expect(api.subtitlesChoice).toHaveBeenCalledWith('acme', 'lancio', { choice: 'whisper', remember: false });
+    expect(api.transcriptionChoice).not.toHaveBeenCalled();
+    live = withJob(held('s1', 'acme', 'lancio', undefined), live);
+    act(() => rerender(host(live)));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('"Ricontrolla" asks the subtitles route; closed with Chiudi, it does not open again', async () => {
+    const missing: TranscriptionPending = { ...q, whisper: { ...q.whisper, available: false, canInstall: false, engine: null } };
+    subtitlesAsk = missing;
+    const live = withJob(held('s1', 'acme', 'lancio', 'transcription-choice'));
+    const { rerender } = render(host(live));
+    const d = await screen.findByRole('dialog', { name: 'Sottotitoli di Lancio estivo: trascrivere il parlato?' });
+    await userEvent.click(within(d).getByRole('button', { name: 'Ricontrolla' }));
+    expect(api.subtitlesRecheck).toHaveBeenCalledWith('acme', 'lancio');
+    expect(api.recheckTranscription).not.toHaveBeenCalled();
+    await userEvent.click(within(d).getByRole('button', { name: 'Chiudi' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    act(() => rerender(host(withJob({ ...held('s1', 'acme', 'lancio', 'transcription-choice'), label: 'x' }, live))));
+    await new Promise((r) => setTimeout(r, 700));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('one at a time with a video\'s question: the subtitles one opens once the video\'s is answered', async () => {
+    subtitlesAsk = installed;
+    let live = liveWith([{ project: 'acme', v: view('assets/a.mp4', 'j1') }]);
+    live = withJob(held('s1', 'beta', 'lancio', 'transcription-choice'), live);
+    const { rerender } = render(host(live));
+    const first = await screen.findByRole('dialog', { name: 'Trascrivere il parlato di a.mp4?' });
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    await userEvent.click(within(first).getByRole('button', { name: 'Continua senza trascrizione' }));
+    live = liveWith([{ project: 'acme', v: view('assets/a.mp4', 'j1', null) }], live);
+    act(() => rerender(host(live)));
+    expect(await screen.findByRole('dialog', { name: 'Sottotitoli di Lancio estivo: trascrivere il parlato?' })).toBeTruthy();
+  });
+
+  it('a held job whose question the core no longer has opens nothing', async () => {
+    api.subtitles.mockResolvedValueOnce({ sets: [], job: null, pending: null });
+    render(host(withJob(held('s1', 'acme', 'lancio', 'transcription-choice'))));
+    await waitFor(() => expect(api.subtitles).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 400));
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 });
 
