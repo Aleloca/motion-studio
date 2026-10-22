@@ -378,6 +378,40 @@ describe('saving a subtitle set (PUT, decision 1654)', () => {
   });
 });
 
+describe('"Tempi controllati": the timing marked as checked (final review, M3)', () => {
+  const checked = (slug: string, body: unknown, lang = 'en') => app.inject({ method: 'POST', url: `${P}/${slug}/subtitles/${lang}/timing-checked`, payload: body as object });
+
+  it('with the stored hash: the timing becomes the latest version\'s audio, the cues stay, the commit is touched and it broadcasts', async () => {
+    const slug = await made();
+    const creativeDir = join(projectDir(), 'creatives', slug);
+    const before = set('0'.repeat(64));
+    const hash = await writeSubtitleSet(creativeDir, before);
+    const touch = vi.spyOn(SubtitleCommits.prototype, 'touch');
+    broadcasts.length = 0;
+    const res = await checked(slug, { baseHash: hash });
+    expect(res.statusCode, res.body).toBe(200);
+    const after: SubtitleSet = { ...before, timing: { version: 1, format: 'youtube-16x9', fingerprint: audioFingerprint(composition(1920, 1080, 6)) } };
+    expect(res.json()).toEqual({ hash: subtitleSetHash(after), timing: after.timing });
+    expect(await readSubtitleSet(creativeDir, 'en')).toEqual({ set: after, hash: subtitleSetHash(after) });
+    expect(((await app.inject(`${P}/${slug}/subtitles`)).json() as { sets: SubtitlesSummary[] }).sets[0]).toMatchObject({ timingChanged: false });
+    expect(touch).toHaveBeenCalledTimes(1);
+    expect(broadcasts.filter((m) => m.type === 'subtitles')).toEqual([{ type: 'subtitles', project: 'acme', creative: slug, lang: 'en' }]);
+  });
+
+  it('a stale baseHash gets 409 subtitles-conflict and changes nothing; a bad body 400, no set 404', async () => {
+    const slug = await made();
+    const creativeDir = join(projectDir(), 'creatives', slug);
+    const hash = await writeSubtitleSet(creativeDir, set('0'.repeat(64)));
+    const stale = await checked(slug, { baseHash: 'f'.repeat(64) });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json()).toMatchObject({ code: 'subtitles-conflict', hash });
+    expect((await readSubtitleSet(creativeDir, 'en'))!.hash).toBe(hash);
+    expect((await checked(slug, { baseHash: 'nope' })).statusCode).toBe(400);
+    expect((await checked(slug, {})).statusCode).toBe(400);
+    expect((await checked(slug, { baseHash: hash }, 'fr')).statusCode).toBe(404);
+  });
+});
+
 describe('the start_subtitles tool (decision 1703)', () => {
   const create = async (b: Record<string, unknown> = brief) => ((await app.inject({ method: 'POST', url: P, payload: { title: 'Lancio', brief: b, generate: true } })).json() as { slug: string }).slug;
   const say = async (slug: string, n: number, text: string) => {

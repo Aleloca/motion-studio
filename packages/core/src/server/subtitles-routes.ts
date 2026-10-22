@@ -18,6 +18,7 @@ const waveformQuery = z.object({ version: z.coerce.number().int().positive() });
 const choiceSchema = transcriptionChoiceSchema.omit({ file: true });
 /** The editor's save: the whole cue list, checked against the stored set's fields with `subtitleSetSchema`. */
 const saveSchema = z.strictObject({ baseHash: z.string().regex(/^[0-9a-f]{64}$/), cues: z.array(z.unknown()).max(SUBTITLE_LIMITS.cues) });
+const checkedSchema = z.strictObject({ baseHash: z.string().regex(/^[0-9a-f]{64}$/) });
 
 function parse<T>(schema: z.ZodType<T>, body: unknown): T {
   const r = schema.safeParse(body ?? {});
@@ -142,6 +143,30 @@ export function registerSubtitlesRoutes(app: FastifyInstance, ctx: {
     ctx.commits.touch(ref, t().subtitles.commit({ title: (await store.get(ref.creativeSlug)).title, lang }));
     try { ctx.broadcast({ type: 'subtitles', project: ref.projectSlug, creative: ref.creativeSlug, lang }); } catch { /* a faulty listener */ }
     return { hash: saved.hash };
+  });
+  // "Tempi controllati" (final review, M3): the user looked at the timing after the video changed and keeps it. The set's
+  // timing becomes the latest version's main format and audio fingerprint (so "Il video è cambiato" goes); the cues are not
+  // touched. Over `baseHash` and under the set lock, as the save: 409 `subtitles-conflict` with the stored hash when the set
+  // changed since; 409 `subtitles-no-video` when the latest version has no video format.
+  app.post<PL>('/api/projects/:slug/creatives/:c/subtitles/:lang/timing-checked', async (req, reply) => {
+    const lang = langOf(req.params.lang);
+    const ref = await refOf(req.params.slug, req.params.c);
+    const body = parse(checkedSchema, req.body);
+    const store = new CreativeStore(ref.projectDir);
+    const creativeDir = store.dir(ref.creativeSlug);
+    const done = await subtitleSetLocks.run(creativeDir, async () => {
+      const stored = await setOf(ref, lang);
+      if (stored.hash !== body.baseHash) return { conflict: stored.hash };
+      const latest = (await store.readVersions(ref.creativeSlug)).at(-1);
+      const now = latest ? await subtitleTimingOf(creativeDir, latest, (await store.get(ref.creativeSlug)).brief, await ctx.presets()) : null;
+      if (!latest || !now) throw new CodedError(409, t().errors.subtitlesNoVideo, 'subtitles-no-video');
+      const set: SubtitleSet = { ...stored.set, timing: { version: latest.n, format: now.format, fingerprint: now.fingerprint } };
+      return { hash: await writeSubtitleSet(creativeDir, set), timing: set.timing };
+    });
+    if ('conflict' in done) return reply.status(409).send({ error: t().errors.subtitlesConflict, code: 'subtitles-conflict', hash: done.conflict });
+    ctx.commits.touch(ref, t().subtitles.commit({ title: (await store.get(ref.creativeSlug)).title, lang }));
+    try { ctx.broadcast({ type: 'subtitles', project: ref.projectSlug, creative: ref.creativeSlug, lang }); } catch { /* a faulty listener */ }
+    return done;
   });
   // The cues clamped to the latest version's main format (a cue past its end is left out); no video: as they are.
   const download = async (req: { params: PL['Params'] }, reply: FastifyReply, ext: 'srt' | 'vtt') => {
