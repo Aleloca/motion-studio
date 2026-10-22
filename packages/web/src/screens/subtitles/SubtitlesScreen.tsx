@@ -360,7 +360,8 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
       <Head slug={slug} creative={creative} langs={<LangSwitcher slug={slug} creative={creative} lang={lang} sets={detail?.subtitles ?? []} brief={detail?.creative.brief ?? null}
         edited={edited} onSwitch={switchTo} onLeave={(to) => go(href.subtitles(slug, creative, to ?? undefined))} />}>
         <SaveState status={save.status} notice={save.notice} retry={() => void save.flush()} />
-        <RedoTranscription slug={slug} creative={creative} />
+        {/* A translation's lines come from its source, never from speech (final review I3). */}
+        {translation ? null : <RedoTranscription slug={slug} creative={creative} />}
         <span className="ms-subs-undo">
           <Tooltip label={s.undo}><Button size="sm" variant="ghost" icon aria-label={s.undo} disabled={state.past.length === 0} onClick={() => dispatch({ type: 'undo' })}><Icon name="undo" size={14} /></Button></Tooltip>
           <Tooltip label={s.redo}><Button size="sm" variant="ghost" icon aria-label={s.redo} disabled={state.future.length === 0} onClick={() => dispatch({ type: 'redo' })}><Icon name="redo" size={14} /></Button></Tooltip>

@@ -204,6 +204,11 @@ describe('a translation in the editor (Task 26)', () => {
     expect(api.retranslateSubtitles).toHaveBeenCalledWith('acme', 'lancio', 'en', {});
   });
 
+  it('a translation\'s editor has no "Rifai la trascrizione…": its lines come from the source, not from speech (final review I3)', async () => {
+    await open('en');
+    expect(screen.queryByRole('button', { name: 'Rifai la trascrizione…' })).toBeNull();
+  });
+
   it('a translation can be deleted, after a confirmation when it has corrected lines; the original speech cannot', async () => {
     SETS = [sum('it'), sum('en', { origin: 'translation', sourceLang: 'it', edited: 2 })];
     TRANSLATED = TRANSLATED.map((c) => (c.id === 'c2' ? c : { ...c, edited: true }));

@@ -391,6 +391,35 @@ describe('SubtitlesService', { timeout: 60_000 }, () => {
     ]);
   });
 
+  it('one set from the original video\'s speech (final review I3): a new transcription refuses a language that is a translation, or a second one', async () => {
+    await creative([audioClip()]);
+    await run();
+    const en: SubtitleSet = {
+      $schema: SUBTITLES_SCHEMA_ID, lang: 'en', origin: 'translation', sourceLang: 'it', transcript: 'whisper-small', detected: null,
+      timing: (await readSubtitleSet(creativeDir(), 'it'))!.set.timing, cues: [{ id: 'c1', start: 200, end: 1800, text: 'Hi all', edited: true, source: { text: 'Ciao a tutti.' } }],
+    };
+    await writeSubtitleSet(creativeDir(), en);
+    await expect(service.start(ref, { mode: 'new', lang: 'en' })).rejects.toMatchObject({
+      status: 409, apiCode: 'subtitles-lang-translated', message: t().errors.subtitlesLangTranslated({ lang: languageName('en') }),
+    });
+    await expect(service.start(ref, { mode: 'new', lang: 'fr' })).rejects.toMatchObject({
+      status: 409, apiCode: 'subtitles-other-speech', message: t().errors.subtitlesOtherSpeech({ lang: languageName('fr'), other: languageName('it') }),
+    });
+    // The language recognised by the transcription: refused once it is known, nothing written.
+    for (const language of ['en', 'fr']) {
+      fake.result = { kind: 'whisper-small', words: words([[0.2, 1.0, 'Hello'], [1.1, 1.8, 'everyone.']]), language };
+      const job = await service.start(ref, { mode: 'new' });
+      const done = await queue.whenSettled(job.id);
+      expect(done?.state).toBe('failed');
+      expect(subtitleEntries().at(-1)).toMatchObject({ level: 'error', subtitles: { state: 'failed' } });
+    }
+    expect((await readSubtitleSet(creativeDir(), 'en'))!.set).toEqual(en);
+    expect(await readSubtitleSet(creativeDir(), 'fr')).toBeNull();
+    // The original video's language again: as before.
+    fake.result = { kind: 'whisper-small', words: HELLO, language: 'it' };
+    await run({ mode: 'new', lang: 'it' });
+  });
+
   it('refuses a second job for the creative, and a creative whose latest version has no video format', async () => {
     await creative([audioClip()]);
     fake.gate = new Promise(() => {});
@@ -642,6 +671,20 @@ describe('a language with its own voice (Task 24, spec §6.5)', { timeout: 60_00
     expect(heard.at(-1)).toBeGreaterThan(0.3);
     expect(transcribed.at(-1)!.language).toBe('de');
     expect((await readSubtitleSet(creativeDir(), 'de'))!.set.timing.locale).toBe('de');
+  });
+
+  it('a language whose own voice went back to the original: its set is not made again from speech (final review Minor 4)', async () => {
+    const { hash } = await localized();
+    await run();
+    fake.result = { kind: 'whisper-small', words: GERMAN, language: 'de' };
+    await run({ mode: 'new', lang: 'de' });
+    await setLocalizationRow(store, ref.creativeSlug, 1, { locale: 'de', instanceId: 'test-wide', hash, origin: 'agent', stale: [], voice: 'original' });
+    const gone = { status: 409, apiCode: 'subtitles-voice-gone', message: t().errors.subtitlesVoiceGone({ lang: languageName('de') }) };
+    await expect(service.start(ref, { mode: 'retime', lang: 'de' })).rejects.toMatchObject(gone);
+    await expect(service.start(ref, { mode: 'new', lang: 'de' })).rejects.toMatchObject(gone);
+    // "Rifai i tempi" with no language picks the set whose audio changed: the German one, refused too.
+    await expect(service.start(ref, { mode: 'retime' })).rejects.toMatchObject(gone);
+    expect(transcribed).toHaveLength(2);
   });
 
   it('the waveform with a language is the audio that language\'s set is timed on', async () => {

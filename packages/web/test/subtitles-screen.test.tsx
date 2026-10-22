@@ -578,11 +578,11 @@ describe('final review fixes', () => {
     expect((await within(banner).findByRole('alert')).textContent).toBe('I tempi non sono stati segnati come controllati: I sottotitoli sono stati modificati altrove: ricaricali.');
   });
 
-  it('M4: "Rifai la trascrizione…" says that another language makes a separate set', async () => {
+  it('M4, final review I3: "Rifai la trascrizione…" says that the video\'s speech has one set and another language is added with "+ Lingua"', async () => {
     await open();
     await userEvent.click(screen.getByRole('button', { name: 'Rifai la trascrizione…' }));
     const dialog = await screen.findByRole('dialog', { name: 'Rifai la trascrizione' });
-    expect(within(dialog).getByText('Con un\'altra lingua nasce un insieme di sottotitoli a parte.')).toBeTruthy();
+    expect(within(dialog).getByText('Il parlato del video ha un solo insieme di sottotitoli: per un\'altra lingua usa «+ Lingua», che lo traduce.')).toBeTruthy();
   });
 });
 

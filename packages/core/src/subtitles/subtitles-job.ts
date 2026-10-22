@@ -175,6 +175,23 @@ export async function localizedVoiceOf(creativeDir: string, version: VersionEntr
 }
 
 /**
+ * Final review I3 and Minor 4: why a set in `lang` may not be made from speech heard on `audio` (a language's own localized
+ * video, or the original: undefined), or null. 409 `subtitles-lang-translated`: the language's set is a translation (the user
+ * deletes it first); `subtitles-voice-gone`: its set was made from that language's own voice, which its video no longer has
+ * (only a translation fits it now); `subtitles-other-speech`: the original video's speech already has a set in another
+ * language (one set from it: the source of the translations).
+ */
+export function speechSetRefusal(sets: readonly SubtitleSet[], lang: LocaleTag, audio: LocaleTag | undefined): CodedError | null {
+  const name = languageName(lang);
+  const existing = sets.find((s) => s.lang === lang);
+  if (existing?.origin === 'translation') return new CodedError(409, t().errors.subtitlesLangTranslated({ lang: name }), 'subtitles-lang-translated');
+  if (audio === undefined && existing?.timing.locale !== undefined) return new CodedError(409, t().errors.subtitlesVoiceGone({ lang: name }), 'subtitles-voice-gone');
+  const other = audio === undefined ? sets.find((s) => s.origin === 'speech' && s.timing.locale === undefined && s.lang !== lang) : undefined;
+  if (other) return new CodedError(409, t().errors.subtitlesOtherSpeech({ lang: name, other: languageName(other.lang) }), 'subtitles-other-speech');
+  return null;
+}
+
+/**
  * The folder the mix reads `t`'s audio from: the composition folder, or, when localized voices live in the project, a private
  * copy in `workDir` of every file the mix plays, each from where the localized render takes it.
  */
@@ -388,7 +405,17 @@ export class SubtitlesService {
       if (!set) throw new CodedError(409, t().errors.subtitlesNoSet, 'subtitles-no-set');
       o = { ...o, lang: set.lang };
       audio = set.timing.locale;
-    } else if (o.lang && latest && await localizedVoiceOf(dir, latest, creative.brief, presets, o.lang)) audio = o.lang;
+      // A language's own voice its video no longer has (Minor 4): never its original audio under its name.
+      if (audio && !(latest && await localizedVoiceOf(dir, latest, creative.brief, presets, audio))) {
+        throw new CodedError(409, t().errors.subtitlesVoiceGone({ lang: languageName(audio) }), 'subtitles-voice-gone');
+      }
+    } else {
+      if (o.lang && latest && await localizedVoiceOf(dir, latest, creative.brief, presets, o.lang)) audio = o.lang;
+      // One set from the original video's speech (final review I3); a language picked is checked now, one recognised when the
+      // job knows it (`run`).
+      const refusal = o.lang ? speechSetRefusal(await listSubtitleSets(dir), o.lang, audio) : null;
+      if (refusal) throw refusal;
+    }
     // The audio the check before the choice listens to (the job itself looks again when it runs).
     if (audio) timing = (await timingOf(audio)) ?? timing;
     const { ic } = timing;
@@ -672,6 +699,8 @@ export class SubtitlesService {
       // has its own voices now; else the original video.
       const audio = o.mode === 'retime' ? entry.audio
         : o.lang && version && await localizedVoiceOf(creativeDir, version, creative.brief, presets, o.lang) ? o.lang : undefined;
+      // A language's own voice its video no longer has since the job was asked for (Minor 4).
+      if (audio && !(version && await localizedVoiceOf(creativeDir, version, creative.brief, presets, audio))) throw new Error(t().errors.subtitlesVoiceGone({ lang: languageName(audio) }));
       const timing = version ? await subtitleTimingOf(creativeDir, version, creative.brief, presets, audio) : null;
       if (!version || !timing) throw new Error(t().errors.subtitlesNoVideo);
       const { format, ic } = timing;
@@ -732,6 +761,9 @@ export class SubtitlesService {
       // translations of the original speech set follow its new times (Task 25, `followSource`), under the same lock.
       let followed: LocaleTag[] = [];
       await subtitleSetLocks.run(creativeDir, async () => {
+        // One set from the original video's speech, never over a translation (final review I3): the language is known now.
+        const refusal = speechSetRefusal(await listSubtitleSets(creativeDir), lang, audio);
+        if (refusal) throw new Error(refusal.message);
         const existing = await readSubtitleSet(creativeDir, lang);
         // A file there that is not a valid set may hold the user's corrections: never overwritten (anti-goal 1).
         if (!existing && await lstat(subtitlePath(creativeDir, lang)).then(() => true, () => false)) {
