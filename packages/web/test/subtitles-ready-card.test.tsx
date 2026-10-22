@@ -112,6 +112,25 @@ describe('the subtitles card in the chat (Task 8)', () => {
     expect(within(c).getByRole('link', { name: "Apri l'editor" })).toBeTruthy();
   });
 
+  it('several old notices of one creative share one read of its subtitles per change of the creative (final review)', async () => {
+    const tree = (tick: number) => {
+      const shell = { live: { ...initialEventsState, creativeTicks: { 'acme/lancio': tick } } } as never;
+      const notice = entry({ state: 'timing-changed', lang: 'it' }, 'Il video è cambiato: ricontrolla i tempi', 'warning');
+      return (
+        <I18nProvider locale="it"><ShellContext.Provider value={shell}>
+          {[1, 2, 3].map((k) => <SubtitlesReadyCard key={k} slug="acme" creative="lancio" entry={notice} />)}
+        </ShellContext.Provider></I18nProvider>
+      );
+    };
+    const r = render(tree(0));
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Rifai i tempi' })).toHaveLength(3));
+    expect(api.subtitles).toHaveBeenCalledTimes(1);
+    api.subtitles.mockResolvedValueOnce({ sets: [{ lang: 'it', timingChanged: false }], job: null, pending: null });
+    r.rerender(tree(1));
+    await waitFor(() => expect(screen.getAllByText('I tempi sono di nuovo allineati al video.')).toHaveLength(3));
+    expect(api.subtitles).toHaveBeenCalledTimes(2);
+  });
+
   it('the chat shows a subtitles entry as the card', () => {
     const shell = { live: initialEventsState, route: { name: 'creative', slug: 'acme', creative: 'lancio' }, catalog: { projects: [], creatives: {}, refresh: () => {} } } as never;
     render(

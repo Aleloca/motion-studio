@@ -1,4 +1,4 @@
-import type { ConversationEntry, LocaleTag } from '@motion-studio/shared';
+import type { ConversationEntry, LocaleTag, SubtitlesSummary } from '@motion-studio/shared';
 import { useContext, useEffect, useState } from 'react';
 import { api } from '../api.ts';
 import { saveBlob } from '../download.ts';
@@ -43,6 +43,23 @@ export function RetimeAction({ slug, creative, lang, className }: { slug: string
 }
 
 /**
+ * The creative's subtitle sets, read once per change of the creative (`tick`) for every notice that shows (final review):
+ * the reads in flight or done are shared while a notice of that creative is mounted. Null when the read failed.
+ */
+const sharedReads = new Map<string, { tick: number; users: number; sets: Promise<SubtitlesSummary[] | null> }>();
+function readSetsShared(slug: string, creative: string, tick: number): { sets: Promise<SubtitlesSummary[] | null>; release(): void } {
+  const key = `${slug}/${creative}`;
+  let read = sharedReads.get(key);
+  if (!read || read.tick !== tick) {
+    read = { tick, users: 0, sets: Promise.resolve().then(() => api.subtitles(slug, creative)).then((r) => r.sets, () => null) };
+    sharedReads.set(key, read);
+  }
+  const mine = read;
+  mine.users++;
+  return { sets: mine.sets, release: () => { if (--mine.users === 0 && sharedReads.get(key) === mine) sharedReads.delete(key); } };
+}
+
+/**
  * Task 14: a new version moved the audio under set `lang`: "Rifai i tempi", or the editor to check the lines by hand. The set's
  * state is read again (on each change of the creative): once it is aligned again (retimed, or the audio put back), an old
  * notice offers no retime, which would only transcribe again (decision 1717). A read that fails leaves the button.
@@ -54,10 +71,9 @@ function TimingChangedCard({ slug, creative, lang }: { slug: string; creative: s
   const [changed, setChanged] = useState<boolean | null>(null);
   useEffect(() => {
     let alive = true;
-    Promise.resolve().then(() => api.subtitles(slug, creative)).then(
-      (r) => { if (alive) setChanged(r.sets.find((x) => x.lang === lang)?.timingChanged ?? false); },
-      () => { if (alive) setChanged(true); });
-    return () => { alive = false; };
+    const read = readSetsShared(slug, creative, tick);
+    void read.sets.then((sets) => { if (alive) setChanged(sets === null ? true : sets.find((x) => x.lang === lang)?.timingChanged ?? false); });
+    return () => { alive = false; read.release(); };
   }, [slug, creative, lang, tick]);
   return (
     <div className="ms-convo-version ms-convo-subtitles" role="group" aria-label={t.subtitles.timingChanged}>
