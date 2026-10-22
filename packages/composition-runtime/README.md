@@ -286,7 +286,8 @@ end, text, words? }] }`, composition milliseconds). `readCompositionData` checks
 `start < end`, cues sorted by start, a text of at most 200 characters, at most 60 words per cue); a bad block is left out
 with a `subtitlesInvalid` warning, which never fails a render. The `subtitles` clip (one, on the subtitles track) then
 draws the line at each time (`subtitles.ts`): `activeCue` finds it (of overlapping cues, the one that started last) and
-`drawSubtitles` lays it out inside the format's safe zone (`position`, `margin`), at most `maxWidth` of the frame wide,
+`drawSubtitles` lays it out inside the format's safe zone (`position`, `margin`), centred on the frame (the lane keeps the
+larger side inset on both sides), at most `maxWidth` of the frame wide, never past the opposite safe edge,
 with its box, outline, shadow, entrance (over `entranceSec` from the cue start) and the spoken-word highlight (only when the
 cue's words still match its text). Everything is a function of the time alone, so render frames are exact. Its font is a
 composition font, loaded with the others before the first frame. With a `template`, the built-in look is off (Task 17).

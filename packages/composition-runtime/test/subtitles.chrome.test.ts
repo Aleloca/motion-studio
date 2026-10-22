@@ -29,7 +29,9 @@ const SUBS: RuntimeSubtitles = {
   cues: [{ start: 1000, end: 3500, text: 'Motion Studio disegna\ni sottotitoli', words: [
     { start: 1000, end: 1400, text: 'Motion' }, { start: 1400, end: 1800, text: 'Studio' }, { start: 1900, end: 2400, text: 'disegna' },
     { start: 2500, end: 2700, text: 'i' }, { start: 2700, end: 3400, text: 'sottotitoli' },
-  ] }],
+  ] },
+  // Taller than the lane (17 lines of 64 px): it may give up the margin, never cross the top safe edge.
+  { start: 3600, end: 4000, text: Array.from({ length: 17 }, () => 'ab').join('\n') }],
 };
 
 describe.skipIf(!chrome)('drawn subtitles in Chrome', () => {
@@ -84,6 +86,8 @@ describe.skipIf(!chrome)('drawn subtitles in Chrome', () => {
       expect(r.top).toBeGreaterThanOrEqual(SAFE.top);
       expect(r.left).toBeGreaterThanOrEqual(SAFE.left);
       expect(r.right).toBeLessThanOrEqual(W - SAFE.right);
+      // Centred on the frame, though the safe zone is not (Reels-like insets 60 / 120).
+      expect(Math.abs((r.left + r.right) / 2 - W / 2)).toBeLessThanOrEqual(1);
       const png = await page.screenshot();
       const img = decodePng(png);
       // The box's dark background is drawn over the blue frame, inside its rectangle.
@@ -94,8 +98,14 @@ describe.skipIf(!chrome)('drawn subtitles in Chrome', () => {
       mkdirSync(out, { recursive: true });
       writeFileSync(join(out, 'subs-runtime-9x16-t2.png'), png);
       // Past the cue: nothing.
-      await page.eval('window.__ms.seek(3.6)');
+      await page.eval('window.__ms.seek(3.55)');
       expect(await page.eval('document.querySelector(".ms-subs").style.display')).toBe('none');
+      // A box taller than the lane: kept inside the safe zone, eating into the margin.
+      await page.eval('window.__ms.seek(3.8)');
+      const tall = await page.eval<{ top: number; bottom: number }>('(() => { const b = document.querySelector(".ms-subs-box").getBoundingClientRect(); return { top: b.top, bottom: b.bottom }; })()');
+      expect(tall.bottom - tall.top).toBeGreaterThan(H - SAFE.top - SAFE.bottom - MARGIN);
+      expect(tall.top).toBeGreaterThanOrEqual(SAFE.top - 0.5);
+      expect(tall.bottom).toBeLessThanOrEqual(H - SAFE.bottom + 0.5);
     } finally {
       await page.close();
     }

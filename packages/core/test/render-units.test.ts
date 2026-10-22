@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -11,7 +11,8 @@ import { binaryArch, concatLine, h264Args, targetKbps } from '../src/render/enco
 import { filterArgv } from '../src/media/ffmpeg-filters.ts';
 import { startWatchdog, type GroupMemory } from '../src/render/watchdog.ts';
 import { chromeCandidates, findSystemChrome } from '../src/render/system-chrome.ts';
-import { ChromeProvider } from '../src/render/chromium-provider.ts';
+import { ChromeProvider, type ChromiumProvider } from '../src/render/chromium-provider.ts';
+import { renderComposition } from '../src/render/renderer.ts';
 
 const work = mkdtempSync(join(tmpdir(), 'ms-test-render-units-'));
 afterAll(() => rmSync(work, { recursive: true, force: true }));
@@ -196,6 +197,29 @@ describe('page evaluation errors', () => {
     expect(e).toMatchObject({ code: 'runtimeErrors', details: [{ code: 'videoSeekTimeout' }] });
     await expect(evaluate(thrower('FrameTimeoutError: frameTimeout'), 'P', 'x', 1000)).rejects.toMatchObject({ code: 'frameTimeout' });
     await expect(evaluate(thrower('TypeError: x'), 'P', 'x', 1000)).rejects.toMatchObject({ code: 'loadFailed' });
+  });
+});
+
+describe('runtime warnings that never fail a render', () => {
+  it('a still whose page reports subtitlesInvalid (the subtitles left out) is rendered, while a layerError still fails it', async () => {
+    const dir = join(work, 'subs-warning');
+    mkdirSync(join(dir, 'outputs', 'v1', 'compositions', 'f'), { recursive: true });
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x00, 0x00, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x00, 0xb4, 0x01, 0x40, 0x03, 0, 0, 0, 0, 0]);
+    const composition = { $schema: 'motion-studio/composition@1', width: 320, height: 180, fps: 30, duration: 0, background: '#000000', fonts: [], scenes: [], tracks: [] } as unknown as Composition;
+    const format = { id: 'f', channel: 'Test', name: 'F', width: 320, height: 180, kind: 'image', extensions: ['jpg'] } as never;
+    const providerWith = (code: string): ChromiumProvider => ({
+      kind: 'system', failure: null, close: async () => {},
+      open: async () => ({
+        info: { duration: 0, fps: 30, width: 320, height: 180, frames: 1, errors: [{ code, message: 'the subtitles were left out: cue 1 is out of order' }] },
+        seek: async () => {}, capture: async () => jpeg, errors: async () => [], close: async () => {},
+      }),
+    });
+    const out = join(dir, 'outputs', 'v1', 'f.jpg');
+    const r = await renderComposition({ dir, versionDir: 'outputs/v1', composition, format, out, provider: providerWith('subtitlesInvalid'), signal: new AbortController().signal });
+    expect(r.file).toBe(out);
+    expect(readFileSync(out).equals(jpeg)).toBe(true);
+    await expect(renderComposition({ dir, versionDir: 'outputs/v1', composition, format, out: join(dir, 'outputs', 'v1', 'g.jpg'), provider: providerWith('layerError'), signal: new AbortController().signal }))
+      .rejects.toMatchObject({ code: 'runtimeErrors' });
   });
 });
 

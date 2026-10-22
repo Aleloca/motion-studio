@@ -58,8 +58,9 @@ export function readRuntimeSubtitles(v: unknown): { ok: true; subtitles: Runtime
 
 /**
  * The index of the cue shown at `ms`, or -1: of the cues whose span holds it (start inclusive, end exclusive), the one
- * that started last (a line that starts over another one replaces it). Binary search for the last cue started by `ms`;
- * when that one has ended, a few earlier ones are tried (an overlap is between neighbours).
+ * that started last (a line that starts over another one replaces it; when it ends, a longer one under it shows again).
+ * A binary search finds the last cue started by `ms`; a max tree of the cues' ends (`endTree`, built once per array) then
+ * finds the last cue up to it that still runs, in O(log n) however many short cues lie over a long one.
  */
 export function activeCue(cues: ReadonlyArray<{ start: number; end: number }>, ms: number): number {
   let lo = 0;
@@ -69,11 +70,34 @@ export function activeCue(cues: ReadonlyArray<{ start: number; end: number }>, m
     const mid = (lo + hi) >> 1;
     if (cues[mid]!.start <= ms) { at = mid; lo = mid + 1; } else hi = mid - 1;
   }
-  for (let i = at; i >= 0 && i > at - LOOK_BACK; i--) if (ms < cues[i]!.end) return i;
-  return -1;
+  if (at < 0) return -1;
+  if (ms < cues[at]!.end) return at;
+  const t = endTree(cues);
+  // The rightmost leaf in [0, at] whose end is past `ms`: descend from the root, right child first.
+  const find = (node: number, l: number, r: number): number => {
+    if (l > at || !(t.max[node]! > ms)) return -1;
+    if (l === r) return l;
+    const m = (l + r) >> 1;
+    const right = find(node * 2 + 1, m + 1, r);
+    return right >= 0 ? right : find(node * 2, l, m);
+  };
+  return find(1, 0, t.size - 1);
 }
-/** How many cues before the last one started `activeCue` looks at. */
-const LOOK_BACK = 8;
+
+/** A max tree over the cues' ends (leaves from `size`; past the last cue, -Infinity), cached per cue array. */
+const endTrees = new WeakMap<object, { n: number; size: number; max: Float64Array }>();
+function endTree(cues: ReadonlyArray<{ end: number }>): { size: number; max: Float64Array } {
+  const had = endTrees.get(cues);
+  if (had && had.n === cues.length) return had;
+  let size = 1;
+  while (size < cues.length) size *= 2;
+  const max = new Float64Array(size * 2).fill(Number.NEGATIVE_INFINITY);
+  for (let i = 0; i < cues.length; i++) max[size + i] = cues[i]!.end;
+  for (let i = size - 1; i >= 1; i--) max[i] = Math.max(max[i * 2]!, max[i * 2 + 1]!);
+  const t = { n: cues.length, size, max };
+  endTrees.set(cues, t);
+  return t;
+}
 
 export interface SubtitleFrame { width: number; height: number; safeZone?: { top: number; bottom: number; left: number; right: number } }
 /** Drawing options the mount gives: the font chain of the composition (its fonts and fallbacks). */
@@ -107,9 +131,11 @@ function wordRanges(cue: RuntimeCue): Array<[number, number]> | null {
 /**
  * Draws `cue` at `tMs` in `el` (the clip's lane), or hides it when `cue` is null.
  *
- * `el` is absolutely positioned across the safe zone's width (the frame without the format's insets), `margin` px inside
- * its bottom or top edge, or centred on its middle; the line's box (`.ms-subs-box`) is at most `maxWidth` of the frame
- * wide and is aligned in the lane by `align`. The text keeps its line breaks (`white-space: pre-line`) and wraps inside
+ * `el` is an absolutely positioned lane centred on the frame and as wide as the safe zone allows on both sides (the frame
+ * less twice its larger side inset), from the safe zone's far edge to `margin` px inside its bottom or top edge (or the
+ * whole safe height for `middle`); the line's box (`.ms-subs-box`) sits at the lane's near end (or middle), at most
+ * `maxWidth` of the frame wide, aligned in the lane by `align`. A box taller than the lane eats into the margin, never past
+ * the opposite safe edge. The text keeps its line breaks (`white-space: pre-line`) and wraps inside
  * the box. `background` draws a box behind it (`boxPadding`, `boxRadius`), `outlineColor` / `outlineWidth` an outline
  * painted under the fill, `shadow` a soft drop shadow. The entrance (`fade`, `pop`, `slideUp`) runs over `entranceSec`
  * from the cue start. With `highlight` and words that match the text, the word whose span holds `tMs` takes the
@@ -124,17 +150,20 @@ export function drawSubtitles(el: HTMLElement, clip: SubtitlesClip, cue: Runtime
     return;
   }
   const sz = frame.safeZone ?? { top: 0, bottom: 0, left: 0, right: 0 };
-  const roomW = Math.max(0, frame.width - sz.left - sz.right);
-  const roomH = Math.max(0, frame.height - sz.top - sz.bottom);
+  // Centred on the frame, not on the safe zone: the lane keeps the larger side inset on both sides.
+  const inset = Math.max(sz.left, sz.right);
+  const laneW = Math.max(0, frame.width - 2 * inset);
   const align = p.align ?? 'center';
+  // The lane runs from the safe zone's far edge to `margin` inside its near edge. `safe` alignment: a box taller than the
+  // lane is placed from the far edge instead (it gives up some of the margin, never crosses the opposite safe edge).
+  // `top` reverses the column, so its overflow also goes into the margin rather than past the bottom edge.
+  const near = p.position === 'top' ? { top: sz.top + p.margin, bottom: sz.bottom } : p.position === 'bottom' ? { top: sz.top, bottom: sz.bottom + p.margin } : sz;
   Object.assign(el.style, {
-    display: 'flex', position: 'absolute', left: `${sz.left}px`, width: `${roomW}px`, pointerEvents: 'none',
-    justifyContent: align === 'left' ? 'flex-start' : align === 'right' ? 'flex-end' : 'center',
-    top: '', bottom: '', transform: '',
+    display: 'flex', position: 'absolute', left: `${inset}px`, width: `${laneW}px`, top: `${near.top}px`, bottom: `${near.bottom}px`,
+    pointerEvents: 'none', flexDirection: p.position === 'top' ? 'column-reverse' : 'column',
+    justifyContent: p.position === 'middle' ? 'safe center' : 'safe flex-end',
+    alignItems: align === 'left' ? 'flex-start' : align === 'right' ? 'flex-end' : 'center',
   });
-  if (p.position === 'bottom') el.style.bottom = `${sz.bottom + p.margin}px`;
-  else if (p.position === 'top') el.style.top = `${sz.top + p.margin}px`;
-  else { el.style.top = `${sz.top + roomH / 2}px`; el.style.transform = 'translateY(-50%)'; }
 
   // The box and its text: rebuilt only when the cue, its words or the word lit change.
   const ranges = p.highlight ? wordRanges(cue) : null;
@@ -168,7 +197,7 @@ export function drawSubtitles(el: HTMLElement, clip: SubtitlesClip, cue: Runtime
   const fs = p.fontSize;
   const outline = p.outlineColor && (p.outlineWidth ?? 0) > 0 ? { color: p.outlineColor, width: p.outlineWidth! } : null;
   Object.assign(box.style, {
-    boxSizing: 'border-box', maxWidth: `${Math.min(roomW, p.maxWidth * frame.width)}px`,
+    boxSizing: 'border-box', maxWidth: `${Math.min(laneW, p.maxWidth * frame.width)}px`,
     fontFamily: o.fontFamily ?? 'sans-serif', fontSize: `${fs}px`, fontWeight: String(p.fontWeight ?? 'normal'),
     lineHeight: String(p.lineHeight ?? 1.2), color: p.color, textAlign: align,
     whiteSpace: 'pre-line', overflowWrap: 'break-word',

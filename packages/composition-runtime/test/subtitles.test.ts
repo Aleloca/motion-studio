@@ -74,6 +74,24 @@ describe('activeCue', () => {
     expect(activeCue(overlap, 1500)).toBe(1);
     expect(activeCue(overlap, 2500)).toBe(0); // the earlier cue still holds it
   });
+  it('a long cue under many short ones shows wherever no later cue runs, however far back it started', () => {
+    const cues = [{ start: 0, end: 600_000, text: 'long' }, ...Array.from({ length: 1500 }, (_, i) => ({ start: 1000 + i * 300, end: 1000 + i * 300 + 100, text: String(i) }))];
+    expect(activeCue(cues, 500)).toBe(0);
+    expect(activeCue(cues, 1000 + 1200 * 300 + 50)).toBe(1201); // inside short cue 1200
+    expect(activeCue(cues, 1000 + 1200 * 300 + 150)).toBe(0); // between short cues: the long one
+    expect(activeCue(cues, 599_999)).toBe(0);
+    expect(activeCue(cues, 600_000)).toBe(-1); // past the long cue, between short ones
+    // A brute force agrees on a random set with overlaps.
+    let seed = 7;
+    const rnd = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
+    const starts = Array.from({ length: 300 }, () => Math.floor(rnd() * 100_000)).sort((a, b) => a - b);
+    const set = starts.map((st) => ({ start: st, end: st + 1 + Math.floor(rnd() * (rnd() < 0.1 ? 20_000 : 900)), text: 'x' }));
+    for (let ms = 0; ms < 101_000; ms += 37) {
+      let want = -1;
+      for (let i = set.length - 1; i >= 0; i--) if (set[i]!.start <= ms && ms < set[i]!.end) { want = i; break; }
+      expect(activeCue(set, ms)).toBe(want);
+    }
+  });
 });
 
 describe('readRuntimeSubtitles and the page data', () => {
@@ -175,13 +193,17 @@ describe('drawSubtitles', () => {
     const el = document.createElement('div');
     const cue = SUBS.cues[0]!;
     drawSubtitles(el, subsClip({ position: 'bottom', margin: 40, maxWidth: 0.5 }), cue, 2000, frame);
-    expect(el.style.bottom).toBe('100px'); // 60 + 40
-    expect(el.style.left).toBe('20px');
-    expect(el.style.width).toBe('950px');
+    // Centred on the frame: the larger side inset (30) on both sides.
+    expect([el.style.left, el.style.width]).toEqual(['30px', '940px']);
+    // From the far safe edge to the margin above the near one; the box at the near end.
+    expect([el.style.top, el.style.bottom, el.style.flexDirection, el.style.justifyContent]).toEqual(['10px', '100px', 'column', 'safe flex-end']);
     expect(el.querySelector<HTMLElement>('.ms-subs-box')!.style.maxWidth).toBe('500px');
+    drawSubtitles(el, subsClip({ position: 'bottom', margin: 40, maxWidth: 1 }), cue, 2000, frame);
+    expect(el.querySelector<HTMLElement>('.ms-subs-box')!.style.maxWidth).toBe('940px'); // never wider than the lane
     drawSubtitles(el, subsClip({ position: 'top', margin: 15 }), cue, 2000, frame);
-    expect(el.style.top).toBe('25px');
-    expect(el.style.bottom).toBe('');
+    expect([el.style.top, el.style.bottom, el.style.flexDirection, el.style.justifyContent]).toEqual(['25px', '60px', 'column-reverse', 'safe flex-end']);
+    drawSubtitles(el, subsClip({ position: 'middle', margin: 15 }), cue, 2000, frame);
+    expect([el.style.top, el.style.bottom, el.style.justifyContent]).toEqual(['10px', '60px', 'safe center']);
   });
   it('box, outline and shadow; the entrance runs over entranceSec from the cue start', () => {
     const el = document.createElement('div');
