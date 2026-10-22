@@ -6,6 +6,7 @@ import { basename, dirname, extname, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { DEFAULT_EXPORT_QUALITY, scaledSize, type Composition, type ExportQuality, type FormatPreset } from '@motion-studio/shared';
 import { RUNTIME_DIST_DIR } from '@motion-studio/composition-runtime/dist';
+import type { RuntimeSubtitles } from '@motion-studio/composition-runtime/page';
 import { startCompositionServer, type CompositionServer, type CompositionSession, type SessionMedia } from '../compositions/composition-server.ts';
 import { readRegularFile } from '../safe-read.ts';
 import { noteCoreTemp } from '../core-temps.ts';
@@ -118,6 +119,11 @@ export interface RenderCompositionOptions {
    * and encoder setting (the target bitrate +50% above 45 fps) follows it; the duration and the audio mix do not change.
    */
   fps?: Composition['fps'];
+  /**
+   * The subtitle set the composition's `subtitles` clip draws (subtitles Task 18, `stageSubtitles`), inlined in the page's
+   * data by the composition server. Absent (a composition without the track): the session is minted as before.
+   */
+  subtitles?: RuntimeSubtitles;
 }
 
 /** The hidden temp file a render writes next to its output (`.<name>.render-<hex>.tmp`): the startup sweep removes old ones. */
@@ -209,7 +215,7 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
     const distDir = o.distDir ?? RUNTIME_DIST_DIR;
     server = o.server ?? await startCompositionServer({ uiOrigins: [], distDir });
     session = await server.mintSession({ creativeDir: o.dir, versionDir: o.versionDir, format: o.format.id, composition: c, mode: 'render', ttlMs: (o.timeLimitMs ?? 300_000 + frames * 5_000) + 60_000,
-      ...(o.media ? { media: o.media } : {}), ...(o.format.safeZone ? { safeZone: o.format.safeZone } : {}) });
+      ...(o.media ? { media: o.media } : {}), ...(o.format.safeZone ? { safeZone: o.format.safeZone } : {}), ...(o.subtitles ? { subtitles: o.subtitles } : {}) });
     const clock = await clockSource(distDir);
     // A video at another resolution (decision 974): the output size, and the page's raster scale to reach it.
     const size = still ? { width: c.width, height: c.height } : scaledSize(c, o.short);

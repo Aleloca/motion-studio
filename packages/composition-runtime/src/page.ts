@@ -11,6 +11,8 @@
 import type { RuntimeError } from './protocol.ts';
 import { readRuntimeSubtitles, type RuntimeSubtitles } from './subtitles.ts';
 
+export type { RuntimeCue, RuntimeSubtitles, RuntimeWord } from './subtitles.ts';
+
 /** The comment in `dist/index.html` that `renderRuntimePage` replaces. */
 export const COMPOSITION_PLACEHOLDER = '<!--ms-composition-->';
 /** Id of the data block. */

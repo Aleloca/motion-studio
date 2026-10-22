@@ -19,7 +19,9 @@ export async function outputFileExists(creativeDir: string, versions: VersionEnt
  * `starFileMissing`: a legacy file that is unusable, or a follower with no qualifying version at all. A v2 composition is
  * never "missing" for want of a render: `starRender` says `notRendered` (or `stale`) and export renders it first (Task 5b).
  */
-export async function formatSummaries(creativeDir: string, creative: CreativeFile, versions: VersionEntry[], presets: FormatPreset[]): Promise<FormatSummary[]> {
+export async function formatSummaries(creativeDir: string, creative: CreativeFile, versions: VersionEntry[], presets: FormatPreset[],
+  /** The creative's subtitle sets' hashes by language (subtitles Task 18): a render drawn with a changed set is `stale`. */
+  subtitleHashes?: Readonly<Record<string, string>>): Promise<FormatSummary[]> {
   const { brief } = creative;
   const links = effectiveLinks(brief.links, brief.formats);
   return Promise.all(brief.formats.map(async (id) => {
@@ -33,7 +35,7 @@ export async function formatSummaries(creativeDir: string, creative: CreativeFil
     const missing = star.follows !== null
       ? primaryStar !== null && (exported === null || (!v2 && !fileOk))
       : exported !== null && !v2 && !fileOk;
-    const rs = version && v2 ? renderState(version, id) : null;
+    const rs = version && v2 ? renderState(version, id, subtitleHashes) : null;
     const starRender: FormatSummary['starRender'] = !version ? null : !v2 ? (fileOk ? 'rendered' : 'missing')
       : rs === 'rendered' ? (fileOk ? 'rendered' : 'notRendered') : rs === 'stale' ? 'stale' : 'notRendered';
     return {

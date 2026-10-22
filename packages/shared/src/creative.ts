@@ -182,6 +182,10 @@ export const outputIssueSchema = z.object({
 });
 export type OutputIssue = z.infer<typeof outputIssueSchema>;
 
+/** The subtitle set a render drew (subtitles Task 18): its language and the set file's hash. */
+export const renderedSubtitlesSchema = z.object({ lang: localeTag, hash: z.string().regex(HEX64) }).strict();
+export type RenderedSubtitles = z.infer<typeof renderedSubtitlesSchema>;
+
 export const outputFileInfoSchema = z.object({
   format: z.string(), file: z.string(), width: z.number(), height: z.number(),
   durationSec: z.number().nullable(), verified: z.boolean(), preview: z.string().nullable(),
@@ -213,6 +217,12 @@ export const outputFileInfoSchema = z.object({
   identitySet: identitySetInfoSchema.optional(),
   /** A core render (decision 974): its quality, size and encoder; absent on older renders (`standard`) and on agent files. */
   render: renderInfoSchema.optional(),
+  /**
+   * Subtitles Task 18 (spec §6.1): the subtitle set this render drew (its language and the hash of the set file), whose
+   * snapshot is `outputs/vN/subtitles/<lang>.<hash first 12>.json`. The render is stale once the creative's set of that
+   * language has another hash (`renderState`). Absent: it drew no subtitles.
+   */
+  subtitles: renderedSubtitlesSchema.optional(),
 });
 export type OutputFileInfo = z.infer<typeof outputFileInfoSchema>;
 
@@ -313,6 +323,8 @@ export const versionEntrySchema = z.object({
       width: z.number().int().positive(), height: z.number().int().positive(), durationSec: z.number().positive().nullable(),
       sha256: z.string().regex(HEX64), fromComposition: z.string().regex(HEX64), overlayHash: z.string().regex(HEX64),
       forced: z.boolean(), stale: z.array(z.string()), problems: z.array(z.string()).optional(), renderedAt: z.iso.datetime(),
+      /** Subtitles Task 18: the set this render drew (its own language's, when there is one), as `OutputFileInfo.subtitles`. */
+      subtitles: renderedSubtitlesSchema.optional(),
     }).optional(),
   })).optional(),
 });
@@ -365,6 +377,8 @@ export const manifestV2Schema = z.object({
     locale: localeTag.optional(),
     forced: z.boolean().optional(),
     stale: z.array(z.string()).optional(),
+    /** Subtitles Task 18: the subtitle set the render drew (its snapshot is in `outputs/vN/subtitles/`). Absent: none. */
+    subtitles: renderedSubtitlesSchema.optional(),
   })),
 });
 export type ManifestV2 = z.infer<typeof manifestV2Schema>;

@@ -8,6 +8,7 @@ import { findPreset } from '../formats/format-catalog.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
 import { t } from '../i18n.ts';
 import { RenderError } from '../render/errors.ts';
+import { subtitleHashes } from '../subtitles/store.ts';
 
 export interface ExportResult {
   destination: string; files: Array<{ from: string; to: string }>; skipped: string[];
@@ -319,6 +320,8 @@ export async function resolveLocalizedItems(creativeDir: string, versions: Versi
   const out: ExportItem[] = [];
   const missing: Array<{ format: string; n: number; locale: string }> = [];
   const pending = new Map<number, { formats: string[]; locales: string[] }>();
+  // Subtitles Task 18: a render drawn with a subtitle set changed (or removed) since is not current.
+  const subtitles = await subtitleHashes(creativeDir);
   for (const it of items) {
     const v = versions.find((x) => x.n === it.n);
     const comp = v?.compositions?.find((c) => c.format === it.format);
@@ -327,6 +330,7 @@ export async function resolveLocalizedItems(creativeDir: string, versions: Versi
       if (!v || !comp || !row) { missing.push({ format: it.format, n: it.n, locale }); continue; }
       const r = row.render;
       const current = r !== undefined && r.overlayHash === row.hash && r.fromComposition === comp.hash && plainName(r.file)
+        && (r.subtitles === undefined || (Object.hasOwn(subtitles, r.subtitles.lang) && subtitles[r.subtitles.lang] === r.subtitles.hash))
         && (await probeConfinedFile(creativeDir, `outputs/v${it.n}/${r.file}`)) === true && (!matches || await matches(it.n, r.file, r.sha256))
         && (!assetsOk || await assetsOk(it.n, row));
       if (!current) {
@@ -379,6 +383,8 @@ export function exportResolved(items: ExportItem[], opts: ExportCommon): Promise
  */
 export async function pendingRenders(creativeDir: string, versions: VersionEntry[], items: ExportItem[], o: ExportProfileOptions = {}): Promise<Map<number, string[]>> {
   const out = new Map<number, string[]>();
+  // Subtitles Task 18: a render drawn with a subtitle set changed since is rendered again.
+  const subtitles = await subtitleHashes(creativeDir);
   for (const it of items) {
     const v = versions.find((x) => x.n === it.n);
     if (!v?.compositions?.some((c) => c.format === it.format)) continue;
@@ -387,7 +393,7 @@ export async function pendingRenders(creativeDir: string, versions: VersionEntry
     if (o.profile && !isDefaultProfile(profileFor(preset, it.format, o.profile))) continue;
     // At the default profile a video render made before the quality choice (`standard`) is rendered again, at `high`.
     const stale = o.profile !== undefined && profileApplies(preset, it.format) && recordedQuality(v.outputs.find((x) => x.format === it.format)) !== DEFAULT_EXPORT_QUALITY;
-    const fresh = !stale && renderState(v, it.format) === 'rendered' && it.file !== '' && plainName(it.file)
+    const fresh = !stale && renderState(v, it.format, subtitles) === 'rendered' && it.file !== '' && plainName(it.file)
       && (await probeConfinedFile(creativeDir, `outputs/v${it.n}/${it.file}`)) === true;
     if (!fresh) out.set(it.n, [...(out.get(it.n) ?? []), it.format]);
   }
@@ -398,10 +404,10 @@ export async function pendingRenders(creativeDir: string, versions: VersionEntry
  * Whether the version's current render of `format` was made at `wanted` (its size, and the quality it recorded: `standard`
  * for a render made before the choice), so an export at that profile copies it as it is.
  */
-export function recordedMatches(v: VersionEntry, format: string, wanted: RenderProfile): boolean {
+export function recordedMatches(v: VersionEntry, format: string, wanted: RenderProfile, subtitleHashes?: Readonly<Record<string, string>>): boolean {
   const out = v.outputs.find((x) => x.format === format);
   // Report 39 (decision 1234): an fps asked for is matched only by a render that recorded it (older records name none).
-  return wanted.short === undefined && renderState(v, format) === 'rendered' && recordedQuality(out) === wanted.quality
+  return wanted.short === undefined && renderState(v, format, subtitleHashes) === 'rendered' && recordedQuality(out) === wanted.quality
     && (wanted.fps === undefined || out?.render?.fps === wanted.fps);
 }
 
@@ -416,6 +422,7 @@ export interface ExportProfileOptions { profile?: RenderProfile; presets?: Forma
  */
 export async function profiledRenders(creativeDir: string, versions: VersionEntry[], items: ExportItem[], o: Required<ExportProfileOptions>): Promise<Map<number, string[]>> {
   const out = new Map<number, string[]>();
+  const subtitles = await subtitleHashes(creativeDir);
   for (const it of items) {
     if (it.localized) continue;
     const v = versions.find((x) => x.n === it.n);
@@ -423,7 +430,7 @@ export async function profiledRenders(creativeDir: string, versions: VersionEntr
     const wanted = profileFor(findPreset(o.presets, it.format), it.format, o.profile);
     if (isDefaultProfile(wanted)) continue;
     const file = v.outputs.find((x) => x.format === it.format)?.file ?? '';
-    if (recordedMatches(v, it.format, wanted) && file !== '' && plainName(file) && (await probeConfinedFile(creativeDir, `outputs/v${it.n}/${file}`)) === true) continue;
+    if (recordedMatches(v, it.format, wanted, subtitles) && file !== '' && plainName(file) && (await probeConfinedFile(creativeDir, `outputs/v${it.n}/${file}`)) === true) continue;
     out.set(it.n, [...(out.get(it.n) ?? []), it.format]);
   }
   return out;

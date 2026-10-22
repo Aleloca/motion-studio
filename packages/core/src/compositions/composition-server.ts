@@ -6,7 +6,7 @@ import { pipeline } from 'node:stream/promises';
 import type { FileHandle } from 'node:fs/promises';
 import type { Stats } from 'node:fs';
 import { COMPOSITION_MAX_BYTES, INSTANCE_FOLDER_RE, isCompositionPath } from '@motion-studio/shared';
-import { injectLayerBootstrap, renderRuntimePage, RUNTIME_FILES, safeZoneOf, type SafeZone } from '@motion-studio/composition-runtime/page';
+import { injectLayerBootstrap, renderRuntimePage, RUNTIME_FILES, safeZoneOf, type RuntimeSubtitles, type SafeZone } from '@motion-studio/composition-runtime/page';
 import { RUNTIME_DIST_DIR } from '@motion-studio/composition-runtime/dist';
 import { withConfinedFile } from '../brand/agent-guard.ts';
 import { readRegularFile } from '../safe-read.ts';
@@ -141,6 +141,12 @@ export interface MintSessionOptions {
    * render-mode text measure bounds a text clip without an explicit box by it.
    */
   safeZone?: { top: number; bottom: number; left: number; right: number };
+  /**
+   * The subtitle set the composition's `subtitles` clip draws (subtitles Task 18, `stageSubtitles`): inlined in the page's data
+   * with the composition, so the renderer never reads a file from outside the composition folder. A preview's editor sends
+   * later changes with `setSubtitles`. Absent: no `subtitles` key in the page (a composition without the track).
+   */
+  subtitles?: RuntimeSubtitles;
 }
 
 /** One normalised video file and the values ffprobe read from it (media-normalize.ts). */
@@ -244,6 +250,8 @@ interface Session {
   locale: { dir: string; dev: number; ino: number; files: Map<string, string> } | null;
   /** The format's safe zone, inlined in the runtime page (checked by `safeZoneOf`). */
   safeZone: SafeZone | undefined;
+  /** The staged subtitle set, inlined in the runtime page (checked by the runtime's `readRuntimeSubtitles`). */
+  subtitles: RuntimeSubtitles | undefined;
 }
 
 /** Project folders a localized preview may serve from, and the largest such file. */
@@ -591,7 +599,7 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
         if (page.kind !== 'file') return notFound();
         const html = renderRuntimePage(page.data.toString('utf8'), {
           base: `../${session.versionDir}/compositions/${session.format}/`, composition: session.composition,
-          ...(session.safeZone ? { safeZone: session.safeZone } : {}),
+          ...(session.safeZone ? { safeZone: session.safeZone } : {}), ...(session.subtitles ? { subtitles: session.subtitles } : {}),
         });
         const body = Buffer.from(html, 'utf8');
         const pageHeaders: Record<string, string | string[]> = {
@@ -722,6 +730,7 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
         versionSegments: segs, versionDir: segs.join('/'), format: o.format, compDir, compDev: dirInfo.dev, compIno: dirInfo.ino,
         composition: media ? withSessionMedia(o.composition, media.bySrc) : o.composition, frameAncestors, sandboxed: o.mode === 'preview',
         media: media?.session ?? null, realCreative, staging: null, locale: null, safeZone: safeZoneOf(o.safeZone),
+        subtitles: typeof o.subtitles === 'object' && o.subtitles !== null ? o.subtitles : undefined,
       };
       const { token, expiresAt } = tokens.mint(data, ttl);
       const preview = o.mode === 'preview';

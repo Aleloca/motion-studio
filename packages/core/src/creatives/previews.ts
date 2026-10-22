@@ -17,6 +17,7 @@ import { frameTime } from '../render/frames.ts';
 import { sessionMediaOf, type MediaNormalizer, type PreparedMedia } from '../render/media-normalize.ts';
 import { PreviewLane, PreviewLaneBusyError } from '../render/preview-lane.ts';
 import type { RenderEngine } from '../render/renderer.ts';
+import type { RuntimeSubtitles } from '@motion-studio/composition-runtime/page';
 import { CodedError } from '../workspace-store.ts';
 import { isRealDirChain, realDirChain } from './core-files.ts';
 import { readSvgForEdit, removeStaging, stageFile, stageSvgEdit, stagingDirOf, type StageSource, type SvgEditSource } from './editor-staging.ts';
@@ -422,7 +423,8 @@ export class PreviewService {
    * re-hashed and validated (it must still be the recorded one), its media normalised, and a preview-mode session minted
    * for `parentOrigin` (one of the UI origins, else 403). The media lease ends when the session expires.
    */
-  async mintPreview(ref: VersionFormatRef, version: Pick<VersionEntry, 'n' | 'compositions'>, format: string, parentOrigin: string, locale: Locale, o: { renewFrom?: string } = {}): Promise<PreviewSessionInfo> {
+  async mintPreview(ref: VersionFormatRef, version: Pick<VersionEntry, 'n' | 'compositions'>, format: string, parentOrigin: string, locale: Locale,
+    o: { renewFrom?: string; subtitles?: (c: Composition) => Promise<RuntimeSubtitles | null> } = {}): Promise<PreviewSessionInfo> {
     const e = messages(locale).errors;
     const entry = entryOf(version, format);
     if (!entry) throw new CodedError(404, e.compositionNotFound({ format, n: version.n }), 'composition-not-found');
@@ -432,12 +434,14 @@ export class PreviewService {
     const compDir = join(ref.creativeDir, 'outputs', `v${ref.n}`, 'compositions', entry.folder);
     const loaded = await loadComposition(compDir, preset);
     if (!loaded.ok || loaded.hash !== entry.hash) throw new CodedError(409, e.compositionUnusable({ format, n: version.n }), 'composition-unusable');
+    // The subtitles the version's render would draw (subtitles Task 18); the editor sends its changes with `setSubtitles`.
+    const subtitles = o.subtitles ? await o.subtitles(loaded.composition) : null;
     const prepared = await this.deps.normalizer.prepare({ projectDir: ref.projectDir, compDir, composition: loaded.composition, signal: this.closing.signal });
     try {
       const server = await this.compositionServer();
       const session = await server.mintSession({
         creativeDir: ref.creativeDir, versionDir: `outputs/v${ref.n}`, format: entry.folder, composition: loaded.composition,
-        mode: 'preview', parentOrigin, ...withMedia(prepared),
+        mode: 'preview', parentOrigin, ...withMedia(prepared), ...(subtitles ? { subtitles } : {}),
       });
       const ttl = Math.max(0, session.expiresAt - Date.now());
       const timer = setTimeout(() => { this.endSession(session.token); }, ttl + 1000);

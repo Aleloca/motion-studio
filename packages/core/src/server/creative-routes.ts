@@ -3,7 +3,7 @@ import { recoverRenameJournal } from '../library/rename-recovery.ts';
 import { lstat, readdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, join, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { DEFAULT_EXPORT_QUALITY, EXPORT_FPS, EXPORT_QUALITIES, isDefaultProfile, EXPORT_RESOLUTIONS, type ExportFps, type ExportQuality, type RenderProfile, type VersionEntry, messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow, activeMembers, hostOf, isVariantId, letterOfSlug, MAX_NEW_VARIANTS, variantIdSchema, type VariantDetail, type VariantId, type SubtitleSet, briefSessionRefSchema, singleAgentOn, videoAnalysisJobKey } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_QUALITY, EXPORT_FPS, EXPORT_QUALITIES, isDefaultProfile, EXPORT_RESOLUTIONS, type ExportFps, type ExportQuality, type RenderProfile, type VersionEntry, messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type Composition, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow, activeMembers, hostOf, isVariantId, letterOfSlug, MAX_NEW_VARIANTS, variantIdSchema, type VariantDetail, type VariantId, type SubtitleSet, briefSessionRefSchema, singleAgentOn, subtitleHashesOf, videoAnalysisJobKey } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import type { BriefClaim, BriefSessionService } from '../brief/brief-session.ts';
@@ -46,7 +46,7 @@ import { CodedError, expandHome, WorkspaceError, type WorkspaceStore } from '../
 import { sendConfinedFile } from './serve-file.ts';
 import { localizedCompositionView } from './localization-routes.ts';
 import { subtitleSummaries, subtitleTimingNow } from './subtitles-routes.ts';
-import { readSubtitleSet } from '../subtitles/store.ts';
+import { readSubtitleSet, stageDefaultSubtitles } from '../subtitles/store.ts';
 import { currentLocale, t } from '../i18n.ts';
 import { BrandStore } from '../brand/brand-store.ts';
 import { readConfinedFile } from '../brand/agent-guard.ts';
@@ -567,14 +567,15 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     // Phase 3 of the single agent: every member of a group with one agent shows the group's queue (the one composer's).
     const single = ctx.groups && await ctx.groups.enabled(ref) ? await ctx.groups.queued(ref) : null;
     if (single) { if (single.length > 0) merged.queued = single; else delete merged.queued; }
+    // Decision 1636: the creative's subtitle sets (absent: none); their hashes tell a render drawn with an older set (Task 18).
+    const subtitles = await subtitleSummaries(ref.projectDir, ref.creativeSlug, async () => (await catalog().load()).presets);
     return {
       // Phase 13: the queue and remembered session are kept by the core outside the project (final review I1).
       slug: ref.creativeSlug, creative: merged, versions,
       jobKey: creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug),
-      formats: await formatSummaries(creativeDir, creative, versions, (await catalog().load()).presets),
+      formats: await formatSummaries(creativeDir, creative, versions, (await catalog().load()).presets, subtitleHashesOf(subtitles)),
       ...await variantDetail(ref).then((variants) => (variants ? { variants } : {})),
-      // Decision 1636: the creative's subtitle sets (absent: none).
-      ...await subtitleSummaries(ref.projectDir, ref.creativeSlug, async () => (await catalog().load()).presets).then((subtitles) => (subtitles.length ? { subtitles } : {})),
+      ...(subtitles.length ? { subtitles } : {}),
     };
   };
 
@@ -1241,8 +1242,11 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     // Report 41: a format of the version a running turn is writing, once the agent's check passed on it.
     const version = recorded ?? inProgress(ref, n, body.format);
     if (!version) throw new WorkspaceError(404, t().errors.versionNotFound);
-    return ctx.previews.mintPreview({ projectDir: ref.projectDir, creativeDir: ref.store.dir(ref.creativeSlug), creativeSlug: ref.creativeSlug, n }, version, body.format, body.parentOrigin, currentLocale(),
-      body.renewFrom !== undefined ? { renewFrom: body.renewFrom } : {});
+    const creativeDir = ref.store.dir(ref.creativeSlug);
+    // The subtitles the version's render draws by default (subtitles Task 18, U8), staged into the session's page.
+    const subtitles = async (c: Composition) => (await stageDefaultSubtitles(creativeDir, (await ref.store.get(ref.creativeSlug)).brief, c))?.data ?? null;
+    return ctx.previews.mintPreview({ projectDir: ref.projectDir, creativeDir, creativeSlug: ref.creativeSlug, n }, version, body.format, body.parentOrigin, currentLocale(),
+      { ...(body.renewFrom !== undefined ? { renewFrom: body.renewFrom } : {}), subtitles });
   });
 
   /**

@@ -520,6 +520,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
     broadcast: (msg) => hub.broadcast(msg),
     ...(deps.renderOptions ? { renderOptions: deps.renderOptions } : {}),
+    subtitleCommits,
   });
 
   const brandService = new BrandService({

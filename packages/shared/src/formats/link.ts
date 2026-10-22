@@ -230,12 +230,25 @@ export function sameDelivery(latest: VersionEntry, next: Pick<VersionEntry, 'out
  * Old renders are never deleted: an edit always makes a new version, so a render stays valid in its own version.
  */
 export type RenderState = 'none' | 'rendered' | 'stale';
-export function renderState(v: VersionEntry, formatId: string): RenderState {
+/**
+ * `subtitleHashes` (subtitles Task 18): the hash of each subtitle set of the creative now, by language
+ * (`CreativeDetail.subtitles`). With it, a v2 render that drew subtitles is also `stale` when its set's hash is not the one
+ * there (changed or removed). Absent: the composition hash alone, as before.
+ */
+export function renderState(v: VersionEntry, formatId: string, subtitleHashes?: Readonly<Record<string, string>>): RenderState {
   const comp = v.compositions?.find((c) => c.format === formatId);
   const out = v.outputs.find((o) => o.format === formatId);
   if (!comp) return out ? 'rendered' : 'none';
   if (!out || out.sha256 === undefined) return 'none';
-  return out.fromComposition === comp.hash ? 'rendered' : 'stale';
+  if (out.fromComposition !== comp.hash) return 'stale';
+  if (!out.subtitles || !subtitleHashes) return 'rendered';
+  const now = Object.hasOwn(subtitleHashes, out.subtitles.lang) ? subtitleHashes[out.subtitles.lang] : undefined;
+  return now === out.subtitles.hash ? 'rendered' : 'stale';
+}
+
+/** The hash of each subtitle set of a creative by language (`renderState`'s map), from its detail's summaries. */
+export function subtitleHashesOf(sets: ReadonlyArray<{ lang: string; hash: string }> | undefined): Record<string, string> {
+  return Object.fromEntries((sets ?? []).map((s) => [s.lang, s.hash]));
 }
 
 /**
