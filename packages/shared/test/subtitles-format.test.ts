@@ -102,9 +102,9 @@ describe('SRT and VTT', () => {
     expect(fromVtt(toVtt(x, { durationMs: 5000 }))?.[0]?.text).toBe('a --> b <i>&');
   });
   it('reads CRLF and a BOM', () => {
-    const t = '﻿1\r\n00:00:01,000 --> 00:00:02,000\r\nCiao\r\n\r\n';
+    const t = '\uFEFF1\r\n00:00:01,000 --> 00:00:02,000\r\nCiao\r\n\r\n';
     expect(fromSrt(t)).toEqual([{ start: 1000, end: 2000, text: 'Ciao' }]);
-    expect(fromVtt('﻿WEBVTT\r\n\r\n00:01.000 --> 00:02.000\r\nCiao\r\n')).toEqual([{ start: 1000, end: 2000, text: 'Ciao' }]);
+    expect(fromVtt('\uFEFFWEBVTT\r\n\r\n00:01.000 --> 00:02.000\r\nCiao\r\n')).toEqual([{ start: 1000, end: 2000, text: 'Ciao' }]);
   });
   it('returns null on garbage', () => {
     expect(fromSrt('hello')).toBeNull();

@@ -37,7 +37,7 @@ function parseTiming(line: string): [number, number] | null {
 }
 
 function readBlocks(text: string, unescape: (t: string) => string): PlainCue[] | null {
-  const lines = text.replace(/^﻿/, '').replace(/\r\n?/g, '\n').split('\n');
+  const lines = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n');
   const out: PlainCue[] = [];
   let i = 0;
   while (i < lines.length) {
@@ -54,6 +54,6 @@ function readBlocks(text: string, unescape: (t: string) => string): PlainCue[] |
 export const fromSrt = (text: string): PlainCue[] | null => readBlocks(text, (t) => t);
 
 export function fromVtt(text: string): PlainCue[] | null {
-  if (!/^﻿?WEBVTT/.test(text)) return null;
+  if (!/^\uFEFF?WEBVTT/.test(text)) return null;
   return readBlocks(text, (t) => t.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'));
 }
