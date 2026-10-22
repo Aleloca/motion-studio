@@ -260,6 +260,9 @@ export const it: Messages = {
     transcriptionNoKey: (p) => `Non c'è una chiave ${p.provider} salvata: aggiungila in Impostazioni → Servizi.`,
     transcriptionNothingAsks: 'Questo video non sta aspettando una scelta sulla trascrizione.',
     transcriptionRecheckTimeout: 'La ricerca dei Whisper non ha risposto in tempo: riprova.',
+    subtitlesRunning: 'I sottotitoli di questa creatività sono già in preparazione.',
+    subtitlesNoVideo: 'L\'ultima versione non ha un formato video: non c\'è niente da sottotitolare.',
+    noFfmpegSubtitles: 'Per i sottotitoli serve ffmpeg, che non è stato trovato su questo Mac.',
     transcriptionNoBundled: 'Questa app non ha un Whisper suo: installane uno o indicalo in Impostazioni → Trascrizione video.',
   },
   videoAnalysis: {
@@ -403,6 +406,11 @@ export const it: Messages = {
   },
   subtitles: {
     commit: (p) => `Sottotitoli: ${p.title} (${p.lang})`,
+    ready: (p) => `Sottotitoli pronti (${p.lang}).`,
+    readyOtherLang: (p) => `Sottotitoli pronti in ${p.lang}: è la lingua parlata nel video, non quella del brief (${p.brief}).`,
+    noSpeech: 'Nessun parlato nel video: nessun sottotitolo.',
+    unsupported: (p) => `Nessun sottotitolo: la lingua parlata nel video (${p.detected}) non è supportata.`,
+    failed: (p) => `I sottotitoli non sono riusciti: ${p.reason}`,
   },
   briefSession: {
     filled: (p) => `Compilato il brief: ${p.parts}`,

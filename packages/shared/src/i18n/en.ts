@@ -262,6 +262,9 @@ export const en = {
     transcriptionNoKey: (p: { provider: string }) => `There is no saved ${p.provider} key: add it in Settings → Services.`,
     transcriptionNothingAsks: 'This video is not waiting for a transcription choice.',
     transcriptionRecheckTimeout: 'The search for Whispers did not answer in time: try again.',
+    subtitlesRunning: 'The subtitles of this creative are already being made.',
+    subtitlesNoVideo: 'The latest version has no video format: there is nothing to subtitle.',
+    noFfmpegSubtitles: 'Subtitles need ffmpeg, which was not found on this Mac.',
     transcriptionNoBundled: 'This app has no Whisper of its own: install one or point to it in Settings → Video transcription.',
   },
   videoAnalysis: {
@@ -405,6 +408,11 @@ export const en = {
   },
   subtitles: {
     commit: (p: { title: string; lang: string }) => `Subtitles: ${p.title} (${p.lang})`,
+    ready: (p: { lang: string }) => `Subtitles ready (${p.lang}).`,
+    readyOtherLang: (p: { lang: string; brief: string }) => `Subtitles ready in ${p.lang}: it is the language spoken in the video, not the brief's (${p.brief}).`,
+    noSpeech: 'No speech in the video: no subtitles.',
+    unsupported: (p: { detected: string }) => `No subtitles: the language spoken in the video (${p.detected}) is not supported.`,
+    failed: (p: { reason: string }) => `The subtitles could not be made: ${p.reason}`,
   },
   briefSession: {
     filled: (p: { parts: string }) => `Filled in the brief: ${p.parts}`,
