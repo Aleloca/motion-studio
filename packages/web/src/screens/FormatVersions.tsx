@@ -168,6 +168,8 @@ export interface FormatBadgeProps {
   bar?: boolean;
   /** The badge's button (the bar pops it when a new version arrives, T11). */
   buttonRef?: RefObject<HTMLButtonElement | null>;
+  /** The creative's subtitle sets now (`subtitleHashesOf`): a render that drew a set since changed shows a still (subtitles Task 22). */
+  subtitleHashes?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -199,7 +201,7 @@ export function FormatBadge(p: FormatBadgeProps) {
   );
 }
 
-function VersionsPopover({ slug, creative, label, state, versions, shown, resumeFrom, labelOf, actions, busy, onView, onCompare, close }: FormatBadgeProps & { close(): void }) {
+function VersionsPopover({ slug, creative, label, state, versions, shown, resumeFrom, labelOf, actions, busy, onView, onCompare, subtitleHashes, close }: FormatBadgeProps & { close(): void }) {
   const t = useT();
   const fv = t.web.formatVersions;
   const v = t.web.canvas.versions;
@@ -235,7 +237,7 @@ function VersionsPopover({ slug, creative, label, state, versions, shown, resume
         {rows.map(({ ver, out, last }) => {
           // Report 45: a composition without a current render shows a still of it (the canvas's poster); a render its file.
           const comp = ver.compositions?.find((c) => c.format === state.id);
-          const still = comp && renderState(ver, state.id) !== 'rendered' ? { slug, creative, n: ver.n, format: state.id, hash: comp.hash } : null;
+          const still = comp && renderState(ver, state.id, subtitleHashes) !== 'rendered' ? { slug, creative, n: ver.n, format: state.id, hash: comp.hash } : null;
           const thumb = !still && out ? outputMedia(slug, creative, ver.n, out) : null;
           const note = ver.request.trim() || v.fromBrief;
           const isStar = inRun(star, ver.n, last);

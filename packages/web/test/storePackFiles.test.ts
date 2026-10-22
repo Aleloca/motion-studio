@@ -82,6 +82,14 @@ describe('pack thumbnails', () => {
     expect(versionThumb('acme', 'c1', undefined, 'x')).toBeNull();
   });
 
+  it('Task 22: a render whose drawn subtitles are no longer the creative\'s is a still', () => {
+    const comp = { format: 'playstore-promo', hash: 'h1' };
+    const out = { format: 'playstore-promo', file: 'playstore-promo.mp4', width: 1, height: 1, durationSec: 5, verified: true, preview: null, sha256: 'x', fromComposition: 'h1', subtitles: { lang: 'it', hash: 'a'.repeat(64) } };
+    const ver = v({ compositions: [comp] as VersionEntry['compositions'], outputs: [out] as VersionEntry['outputs'] });
+    expect(versionThumb('acme', 'c1', ver, 'playstore-promo', { it: 'a'.repeat(64) })).toHaveProperty('media');
+    expect(versionThumb('acme', 'c1', ver, 'playstore-promo', { it: 'b'.repeat(64) })).toEqual({ still: { slug: 'acme', creative: 'c1', n: 2, format: 'playstore-promo', hash: 'h1' } });
+  });
+
   it('a group: the member and version of its selection', () => {
     const g = { format: 'appstore-iphone-69', slug: 'c1~b', letter: 'b' as const, version: 3, source: 'pick' as const, file: '', width: 1, height: 1, state: 'needs-render' as const, hash: 'h' };
     expect(groupThumb('acme', g)).toEqual({ still: { slug: 'acme', creative: 'c1~b', n: 3, format: 'appstore-iphone-69', hash: 'h' } });

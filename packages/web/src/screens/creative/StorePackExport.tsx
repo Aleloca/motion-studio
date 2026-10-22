@@ -51,6 +51,8 @@ export interface StorePackExportProps {
   labels?: Record<string, string>;
   /** The version the pack is made from (its thumbnails); a group reads its selection instead. */
   entry?: VersionEntry;
+  /** The creative's subtitle sets now: a thumbnail of a render that drew a set since changed is a still (subtitles Task 22). */
+  subtitleHashes?: Readonly<Record<string, string>>;
 }
 
 const readFolder = () => { try { return localStorage.getItem(EXPORT_FOLDER_KEY) ?? ''; } catch { return ''; } };
@@ -70,7 +72,7 @@ export function StorePackExport(p: StorePackExportProps) {
   );
 }
 
-function Body({ onClose, slug, creative, version, group, locales, untranslated = [], needsReview = [], formats: ownFormats, presets, labels: ownLabels, entry, onBusy }: StorePackExportProps & { onBusy(busy: boolean): void }) {
+function Body({ onClose, slug, creative, version, group, locales, untranslated = [], needsReview = [], formats: ownFormats, presets, labels: ownLabels, entry, subtitleHashes, onBusy }: StorePackExportProps & { onBusy(busy: boolean): void }) {
   const t = useT();
   const x = t.web.storePack.export;
   const ui = useLocale();
@@ -99,8 +101,8 @@ function Body({ onClose, slug, creative, version, group, locales, untranslated =
   const labels = files?.labels;
   const stores = useMemo(() => packFileGroups(formats, {
     presets, ...(labels ? { labels } : {}), locale: ui, deviceName: (d) => t.web.storePack.devices[d],
-    thumbOf: (id) => (group ? groupThumb(slug, plan?.find((g) => g.format === id)) : versionThumb(slug, creative, entry, id)),
-  }), [formats, presets, labels, ui, t, group, slug, creative, plan, entry]);
+    thumbOf: (id) => (group ? groupThumb(slug, plan?.find((g) => g.format === id)) : versionThumb(slug, creative, entry, id, subtitleHashes)),
+  }), [formats, presets, labels, ui, t, group, slug, creative, plan, entry, subtitleHashes]);
   const all = useMemo(() => stores.flatMap((s) => s.devices.flatMap((d) => d.rows.map((r) => r.id))), [stores]);
   const [off, setOff] = useState<ReadonlySet<string>>(() => new Set());
   const chosen = all.filter((id) => !off.has(id));

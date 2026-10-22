@@ -95,7 +95,7 @@ import { SvgSessions } from './svgSessions.tsx';
 import { isMac } from '../../platform.ts';
 import { useEditorKeys, useNudgeKeys } from './useEditorKeys.ts';
 import { usePlayerControls } from './usePlayerControls.ts';
-import { DEFAULT_EXPORT_NAME_PATTERN, DEFAULT_FORMATS, editProblemText } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_NAME_PATTERN, DEFAULT_FORMATS, editProblemText, subtitleHashesOf } from '@motion-studio/shared';
 import './editor.css';
 
 export interface EditorScreenProps {
@@ -158,6 +158,8 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     return () => { alive = false; };
   }, []);
   const versions = useMemo(() => detail?.versions ?? [], [detail]);
+  // Subtitles Task 22: a render that drew a subtitle set since changed is not current (`renderState`).
+  const subtitleHashes = useMemo(() => subtitleHashesOf(detail?.subtitles), [detail]);
   const latest = versions.at(-1) ?? null;
   const states = useMemo(() => (detail ? formatStates(detail, presets) : {}), [detail, presets]);
   const primary = states[format]?.follows ?? format;
@@ -853,7 +855,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
             <span className="ms-fv-badge">
               <FormatBadge bar buttonRef={versionButton} slug={slug} creative={creative} label={ownLabel} versions={versions} shown={n} resumeFrom={cr.resumeFrom?.version ?? null}
                 state={group ? { ...state, star: { ...state.star, version: pickedBy?.slug === creative ? pickedBy.version : null, manual: pickedBy?.slug === creative, newer: null } } : state}
-                labelOf={labelOf} actions={versionActions} busy={working} onView={onView} onCompare={openCompare} />
+                labelOf={labelOf} actions={versionActions} busy={working} onView={onView} onCompare={openCompare} subtitleHashes={subtitleHashes} />
             </span>
           ) : null}
           <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} readOnly={discarded ? t.web.variantGroup.discardedReadOnly : null} />
