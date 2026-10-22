@@ -184,11 +184,17 @@ export type OutputIssue = z.infer<typeof outputIssueSchema>;
 
 /**
  * The subtitle set a render drew (subtitles Task 18): its language and the set file's hash. A render whose composition draws
- * subtitles but that found no set records a marker, `hash: null`, with the language it looked for (null: none, there was
- * no default), so it turns stale once a set appears (`subtitlesCurrent`).
+ * subtitles but that found no set records a marker, `hash: null`, with the language it looked for, so it turns stale once a
+ * set appears in it; with no language (no set could be paired: `lang: null`) it lists the languages present (`seen`), and
+ * turns stale once another one appears (`subtitlesCurrent`).
  */
-export const renderedSubtitlesSchema = z.object({ lang: localeTag.nullable(), hash: z.string().regex(HEX64).nullable() }).strict()
-  .refine((r) => r.hash === null || r.lang !== null, 'a drawn set has a language');
+export const renderedSubtitlesSchema = z.object({
+  lang: localeTag.nullable(), hash: z.string().regex(HEX64).nullable(),
+  /** A marker with no language (none could be paired): the languages of the sets present then (review round 2). */
+  seen: z.array(localeTag).max(64).optional(),
+}).strict()
+  .refine((r) => r.hash === null || r.lang !== null, 'a drawn set has a language')
+  .refine((r) => r.seen === undefined || r.lang === null, 'only a marker with no language lists the sets it saw');
 export type RenderedSubtitles = z.infer<typeof renderedSubtitlesSchema>;
 
 export const outputFileInfoSchema = z.object({

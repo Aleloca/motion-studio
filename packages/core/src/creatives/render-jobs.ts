@@ -1170,7 +1170,9 @@ export class RenderJobService {
     // A localized render looks for its own language only (the marker names it when there is no set yet).
     const lang = o.localized ?? await defaultSubtitleLang(creativeDir, (await store.get(ref.creativeSlug)).brief);
     const staged = await stageSubtitles({ creativeDir, composition, lang, durationMs: Math.round(composition.duration * 1000) });
-    if (!staged) return { data: null, record: { lang, hash: null } };
+    // No set: a marker. With no language at all, the languages present are kept, so a render made again with the same sets is
+    // current and one that could now pair them is not (review round 2).
+    if (!staged) return { data: null, record: lang !== null ? { lang, hash: null } : { lang, hash: null, seen: Object.keys(await subtitleHashes(creativeDir)).sort() as LocaleTag[] } };
     if (o.snapshot) await writeSubtitleSnapshot(creativeDir, n, staged.set, staged.hash);
     return { data: staged.data, record: { lang: staged.set.lang, hash: staged.hash } };
   }

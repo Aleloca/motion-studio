@@ -194,8 +194,8 @@ describe('a render with the track but no set (review I1)', { timeout: 120_000 },
     await done(await render(slug, { formats: ['test-wide'] }));
     expect('subtitles' in env.fake.renders.at(-1)!).toBe(false);
     const out = async () => (await store.readVersions(slug))[0]!.outputs.find((x) => x.format === 'test-wide')!;
-    expect((await out()).subtitles).toEqual({ lang: null, hash: null });
-    expect(manifestOf(dir).renders.find((x) => x.format === 'test-wide')!.subtitles).toEqual({ lang: null, hash: null });
+    expect((await out()).subtitles).toEqual({ lang: null, hash: null, seen: [] });
+    expect(manifestOf(dir).renders.find((x) => x.format === 'test-wide')!.subtitles).toEqual({ lang: null, hash: null, seen: [] });
     const star = async () => ((await env.app.inject({ url: `/api/projects/acme/creatives/${slug}`, headers: H })).json() as CreativeDetail).formats!.find((f) => f.id === 'test-wide')!.starRender;
     expect(await star()).toBe('rendered');
     await writeSubtitleSet(dir, set('it'));
@@ -207,10 +207,37 @@ describe('a render with the track but no set (review I1)', { timeout: 120_000 },
     await removeSubtitleSet(dir, 'it');
     expect(await star()).toBe('stale');
     await done(await render(slug, { formats: ['test-wide'] }));
-    expect((await out()).subtitles).toEqual({ lang: null, hash: null });
+    expect((await out()).subtitles).toEqual({ lang: null, hash: null, seen: [] });
     expect(await star()).toBe('rendered');
     await writeSubtitleSet(dir, set('it'));
     expect(await star()).toBe('stale');
+  });
+});
+
+describe('a render with the track and only sets it cannot pair (review round 2)', { timeout: 120_000 }, () => {
+  it('records the languages it saw: rendering again with the same sets is current; a speech set appearing makes it stale', async () => {
+    const { slug, dir, store } = await creative({ track: true });
+    await writeSubtitleSet(dir, set('en', { origin: 'translation', sourceLang: 'it' }));
+    await done(await render(slug, { formats: ['test-wide'] }));
+    const out = async () => (await store.readVersions(slug))[0]!.outputs.find((x) => x.format === 'test-wide')!;
+    expect((await out()).subtitles).toEqual({ lang: null, hash: null, seen: ['en'] });
+    const star = async () => ((await env.app.inject({ url: `/api/projects/acme/creatives/${slug}`, headers: H })).json() as CreativeDetail).formats!.find((f) => f.id === 'test-wide')!.starRender;
+    expect(await star()).toBe('rendered');
+    await done(await render(slug, { formats: ['test-wide'] }));
+    expect(await star()).toBe('rendered');
+    await writeSubtitleSet(dir, set('it'));
+    expect(await star()).toBe('stale');
+  });
+
+  it('a follower asked for alone after its primary\'s set changed renders the primary again (the set file is on disk before any commit)', async () => {
+    const { slug, dir } = await creative({ track: true, locales: { primary: 'it', extra: [] } });
+    await writeSubtitleSet(dir, set('it'));
+    await done(await render(slug));
+    const before = env.fake.renders.length;
+    await writeSubtitleSet(dir, set('it', { cues: [{ id: 'c1', start: 0, end: 1000, text: 'Corretto', edited: true }] }));
+    await done(await render(slug, { formats: ['test-wide-b'] }));
+    expect(env.fake.renders.length).toBe(before + 1);
+    expect(env.fake.renders.at(-1)!.subtitles?.cues).toEqual([{ start: 0, end: 1000, text: 'Corretto' }]);
   });
 });
 

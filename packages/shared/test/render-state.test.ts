@@ -50,6 +50,14 @@ describe('renderState with the subtitle sets (subtitles Task 18)', () => {
     expect(renderState(none, 'reel', { en: S1 })).toBe('stale');
   });
 
+  it('a marker with no language looked for is current while the languages present are the ones it saw (review round 2)', () => {
+    expect(subtitlesCurrent({ lang: null, hash: null, seen: ['en'] }, { en: S1 })).toBe(true);
+    expect(subtitlesCurrent({ lang: null, hash: null, seen: ['en'] }, { en: S2 })).toBe(true);
+    expect(subtitlesCurrent({ lang: null, hash: null, seen: ['en'] }, {})).toBe(true);
+    expect(subtitlesCurrent({ lang: null, hash: null, seen: ['en'] }, { en: S1, it: S1 })).toBe(false);
+    expect(outputFileInfoSchema.safeParse({ ...version().outputs[0], subtitles: { lang: 'it', hash: null, seen: ['en'] } }).success).toBe(false);
+  });
+
   it('subtitlesCurrent is the one rule (renderState and the localized export check)', () => {
     expect(subtitlesCurrent(undefined, { it: S1 })).toBe(true);
     expect(subtitlesCurrent({ lang: 'it', hash: S1 }, undefined)).toBe(true);

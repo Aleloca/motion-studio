@@ -248,13 +248,17 @@ export function renderState(v: VersionEntry, formatId: string, subtitleHashes?: 
  * Whether a render's subtitles (`OutputFileInfo.subtitles`, a localized row's `render.subtitles`) are still the creative's
  * (subtitles Task 18, review I1). A drawn set: its language's set still has that hash. A marker (`hash: null`, the composition
  * draws subtitles but no set was found): no set has appeared in the language looked for, or, when none was (`lang: null`),
- * no set at all. True without a record (nothing drawn) or without the map (`subtitleHashes`, the rule before Task 18).
+ * no set in a language other than those it saw (`seen`). True without a record (nothing drawn) or without the map (`subtitleHashes`, the rule before Task 18).
  */
-export function subtitlesCurrent(rec: { lang: string | null; hash: string | null } | undefined, subtitleHashes: Readonly<Record<string, string>> | undefined): boolean {
+export function subtitlesCurrent(rec: { lang: string | null; hash: string | null; seen?: readonly string[] } | undefined, subtitleHashes: Readonly<Record<string, string>> | undefined): boolean {
   if (!rec || !subtitleHashes) return true;
   const now = (lang: string) => (Object.hasOwn(subtitleHashes, lang) ? subtitleHashes[lang] : undefined);
   if (rec.hash !== null) return rec.lang !== null && now(rec.lang) === rec.hash;
-  return rec.lang !== null ? now(rec.lang) === undefined : Object.keys(subtitleHashes).length === 0;
+  if (rec.lang !== null) return now(rec.lang) === undefined;
+  // No language could be paired with the sets it saw (review round 2): current while no other language has appeared, so a
+  // render made again with the same sets is current; a set that may pair (a speech set, the brief's language) makes it stale.
+  const seen = new Set(rec.seen ?? []);
+  return Object.keys(subtitleHashes).every((lang) => seen.has(lang));
 }
 
 /** The hash of each subtitle set of a creative by language (`renderState`'s map), from its detail's summaries. */
