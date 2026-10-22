@@ -14,7 +14,7 @@ import { AgentBridge, type BridgeContext } from '../src/bridge/bridge.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import type { CreativeRef } from '../src/creatives/creative-turns.ts';
 import { JobQueue } from '../src/jobs/job-queue.ts';
-import { readSubtitleSet, writeSubtitleSet } from '../src/subtitles/store.ts';
+import { readSubtitleSet, removeSubtitleSet, writeSubtitleSet } from '../src/subtitles/store.ts';
 import { SubtitleTranslateService, subtitleTranslateTools } from '../src/subtitles/translate-job.ts';
 import { languageName } from '../src/subtitles/subtitles-job.ts';
 import { t } from '../src/i18n.ts';
@@ -126,6 +126,16 @@ describe('SubtitleTranslateService', () => {
     expect(run.req.prompt).toContain('c2 | 00:02.000–00:03.500 | Prenota in tre tocchi');
     expect(run.req.prompt).not.toContain('Hallo');
     expect((await readSubtitleSet(dir(), 'en'))?.set).toMatchObject({ sourceLang: 'it', timing: TIMING });
+  });
+
+  it('a language\'s own voice is never a source: with no original speech set the translation is refused (Task 24)', async () => {
+    await writeSubtitleSet(dir(), {
+      ...speech([{ id: 'c1', start: 100, end: 1400, text: 'Hallo zusammen' }]), lang: 'de', detected: 'de',
+      timing: { ...TIMING, fingerprint: '1'.repeat(64), locale: 'de' },
+    });
+    await removeSubtitleSet(dir(), 'it');
+    await expect(service.start(ref, { target: 'en' })).rejects.toMatchObject({ status: 409, apiCode: 'subtitles-no-source' });
+    expect(queue.list()).toEqual([]);
   });
 
   it('the run\'s usage is recorded with the creative\'s translations (Claude usage)', async () => {

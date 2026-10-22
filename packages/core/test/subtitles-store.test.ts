@@ -23,8 +23,9 @@ describe('subtitle store', () => {
   it('the speech source is the set made from the original video, not one of a language\'s own voice (Task 24)', async () => {
     const german = set('de', { timing: { version: 1, format: 'main', fingerprint: 'b'.repeat(64), locale: 'de' } });
     await writeSubtitleSet(dir, german);
-    // Only a localized voice's set: it is the source there is.
-    expect(speechSourceSet(await listSubtitleSets(dir))?.lang).toBe('de');
+    // Only a localized voice's set: no source, and the original video draws nothing by default.
+    expect(speechSourceSet(await listSubtitleSets(dir))).toBeUndefined();
+    expect(await defaultSubtitleLang(dir, { locales: { primary: 'fr', extra: [] } })).toBeNull();
     await writeSubtitleSet(dir, set('it'));
     expect(speechSourceSet(await listSubtitleSets(dir))?.lang).toBe('it');
     // The original video draws the original speech by default, never a language's own voice.

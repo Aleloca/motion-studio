@@ -566,6 +566,33 @@ describe('a language with its own voice (Task 24, spec §6.5)', { timeout: 60_00
     expect((await readSubtitleSet(creativeDir(), 'de'))!.set.timing.locale).toBe('de');
   });
 
+  it('the waveform with a language is the audio that language\'s set is timed on', async () => {
+    await localized();
+    fake.result = { kind: 'whisper-small', words: GERMAN, language: 'de' };
+    await run({ mode: 'new', lang: 'de' });
+    const loudLate = (peaks: number[]) => Math.max(...peaks.slice(700));
+    // The original voice (a quiet sine) plays the whole 3 s; the German one stops at 1.5 s.
+    const original = loudLate((await service.waveform(ref, 1)).peaks);
+    expect(original).toBeGreaterThan(0.05);
+    expect(loudLate((await service.waveform(ref, 1, 'de')).peaks)).toBeLessThan(0.01);
+    // A language without a set: the original video.
+    expect(loudLate((await service.waveform(ref, 1, 'fr')).peaks)).toBe(original);
+  });
+
+  it('the check before the choice listens to the language\'s own voice', async () => {
+    // A silent German voice under an Italian tone: the original would ask, the German video has no speech.
+    await creative([audioClip({ script: 'Ciao a tutti' })], { files: ['tone.wav', 'silence.wav'] });
+    const overlay: Localization = { ...emptyOverlay('de', 'test-wide'), voices: { vo: { src: 'assets/silence.wav', sourceScript: 'Ciao a tutti', script: 'Hallo zusammen' } } };
+    const hash = await writeOverlay(creativeDir(), 1, overlay);
+    await setLocalizationRow(store, ref.creativeSlug, 1, { locale: 'de', instanceId: 'test-wide', hash, origin: 'agent', stale: [], voice: 'translated' });
+    fake.plan = { ask: PENDING };
+    const job = await service.start(ref, { mode: 'new', lang: 'de' });
+    expect((await queue.whenSettled(job.id))?.state).toBe('succeeded');
+    expect(service.pending(ref)).toBeNull();
+    expect(transcribed).toEqual([]);
+    expect(subtitleEntries().map((e) => e.type === 'system' && e.subtitles)).toEqual([{ state: 'no-speech' }]);
+  });
+
   it('a version that moves the original audio names the original speech set in its notice', async () => {
     await localized();
     await run();

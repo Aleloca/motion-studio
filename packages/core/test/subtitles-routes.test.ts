@@ -248,6 +248,15 @@ describe('the waveform of the subtitle timeline (Task 13)', () => {
     expect(mixer).toHaveBeenCalledTimes(1);
   });
 
+  it('?lang= picks the audio of that language\'s set (Task 24); a language without a set is the original, an unsupported one 400', { timeout: 60_000 }, async () => {
+    const slug = await madeWithVoice();
+    const plain = await app.inject(`${P}/${slug}/subtitles/waveform?version=1`);
+    const de = await app.inject(`${P}/${slug}/subtitles/waveform?version=1&lang=de`);
+    expect(de.statusCode, de.body).toBe(200);
+    expect(de.json()).toEqual(plain.json());
+    expect((await app.inject(`${P}/${slug}/subtitles/waveform?version=1&lang=xx`)).statusCode).toBe(400);
+  });
+
   it('two requests at once make one mix', { timeout: 60_000 }, async () => {
     const slug = await madeWithVoice();
     const mixer = vi.spyOn(subtitlesService, 'mixCreativeAudio');

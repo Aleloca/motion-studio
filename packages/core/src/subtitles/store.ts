@@ -89,13 +89,12 @@ export async function subtitleHashes(creativeDir: string): Promise<Record<string
 export { drawsSubtitles };
 
 /**
- * The set made from the speech of the original video (Task 24): the first by language whose timing is not a language's own
- * localized video (`timing.locale`), else the first made from any speech. The source of the translations and of the original
- * video's default subtitles. Undefined when no set was made from speech.
+ * The set made from the speech of the original video (Task 24): the first by language made from speech whose timing is not a
+ * language's own localized video (`timing.locale`). The only source of the translations and of the original video's default
+ * subtitles: a set of a localized voice is timed on another audio. Undefined when there is none.
  */
 export function speechSourceSet(sets: readonly SubtitleSet[]): SubtitleSet | undefined {
-  const speech = sets.filter((s) => s.origin === 'speech');
-  return speech.find((s) => s.timing.locale === undefined) ?? speech[0];
+  return sets.find((s) => s.origin === 'speech' && s.timing.locale === undefined);
 }
 
 /**

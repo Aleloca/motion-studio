@@ -142,7 +142,8 @@ async function localizedAudioOf(creativeDir: string, version: VersionEntry, ic: 
     // As the localized render (and the checks): a path the composition folder has wins over the project's.
     const have = new Set(ic.folder.files.map((f) => f.path));
     return { composition, projectFiles: [...new Set(applied.filter((p) => !have.has(p)))], voiced: applied.length > 0 };
-  } catch {
+  } catch (err) {
+    console.warn(`Motion Studio: the ${locale} localized audio of v${version.n} could not be read: ${errText(err)}`);
     return null;
   }
 }
