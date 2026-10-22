@@ -940,7 +940,8 @@ export class CreativeTurnService {
     const caps = await this.deps.launcher.liveCapabilities?.('creative').catch(() => NO_LIVE) ?? NO_LIVE;
     const live = new LiveTurn(jobId, caps, ref);
     this.live.set(jobId, live);
-    this.paused.delete(key);
+    // Subtitles Task 19: a turn the app asked for never resumes a queue the user paused (Ruling U): only theirs does.
+    if (!app) this.paused.delete(key);
     let job: JobSummary;
     // Phase 15: a variant run's hook is read HERE, with no await before the enqueue below (fix round 2): a decision that
     // lands while this start awaited is seen, and the hook learns the id before the turn can start (a cover must be in
@@ -1018,6 +1019,15 @@ export class CreativeTurnService {
    */
   async assertNotDiscarded(ref: CreativeRef): Promise<void> {
     if ((await this.memberOf(ref))?.self.status === 'discarded') throw new CodedError(409, t().errors.variantDiscardedTurn, 'variant-discarded');
+  }
+
+  /**
+   * Subtitles Task 19: whether the creative's queue waits for the user ("Run next"): `paused` after a Stop or a failure
+   * (Ruling U); `queued`, it holds requests (they may be about to start by themselves, or wait for "Run next"); null: empty.
+   */
+  async queueWaiting(ref: CreativeRef): Promise<'paused' | 'queued' | null> {
+    if (this.paused.has(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug))) return 'paused';
+    return ((await this.side.read(ref.projectDir, ref.creativeSlug)).queued?.length ?? 0) > 0 ? 'queued' : null;
   }
 
   /** Whether a turn of the creative is queued or running. */
@@ -1359,7 +1369,9 @@ export class CreativeTurnService {
             slug, creative, presets, version: n, kind: resumed ? 'redirect' : kind, formats: targets,
             userText: kind === 'fix' || resumed ? undefined : request,
             // A repair turn carries the user's own words (F4): only what they wrote, never a request the core made up.
-            userWords: resumed ? resumed.text : kind === 'fix' ? message?.text || undefined : undefined,
+            userWords: resumed ? resumed.text : kind === 'fix' && !this.appTurns.has(jobId) ? message?.text || undefined : undefined,
+            // Subtitles Task 19: a repair of a turn the app asked for carries the app's instruction, never as the user's words.
+            ...(kind === 'fix' && !resumed && this.appTurns.has(jobId) && message?.text ? { appRequest: message.text } : {}),
             liveMessages: resumed ? (earlierWords?.length ? earlierWords : undefined) : liveWords,
             stoppedNote: Boolean(stopped) && !resumed && kind !== 'fix',
             ...(briefChat && kind === 'first' && !resumed ? { briefChat } : {}),
@@ -1582,7 +1594,8 @@ export class CreativeTurnService {
       });
       live.savedVersion = true;
       live.savedN = n;
-      if (noAgent && request) await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: `${request} · ${j.noAgentNeeded}` });
+      const shown = this.appTurns.get(jobId)?.request ?? request;
+      if (noAgent && shown) await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: `${shown} · ${j.noAgentNeeded}` });
       await store.appendConversation(slug, { type: 'version', at: now(), n, status });
       // User note 6: an incomplete version says in plain words what is wrong and what to do.
       if (status === 'incomplete') {

@@ -442,6 +442,12 @@ describe('app actions in the prompt (decision 917, user note 6)', () => {
     expect(CONTEXT_MD).toContain('`window.msActiveCue(ms)`');
     expect(CONTEXT_MD).not.toContain('later version of the app');
   });
+  it('a repair of a turn Motion Studio asked for carries its instruction as the app\'s, never as the user\'s words (Task 19)', () => {
+    const p = buildCreativePrompt({ ...v2, kind: 'fix', problems: ['x'], appRequest: 'Motion Studio: add the subtitles track.' });
+    expect(p).toContain('Motion Studio asked for this version itself (not the user): Motion Studio: add the subtitles track.');
+    expect(p).not.toContain("The user's request for this version");
+    expect(p).not.toContain('<user_request>');
+  });
   it('says when the brief text states another duration than its field', () => {
     const p = buildCreativePrompt({ ...v2, creative: sixty, kind: 'first', appActions: true });
     expect(p).toContain("The brief's text says about 60s but its duration field says 6s");

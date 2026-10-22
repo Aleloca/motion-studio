@@ -5,7 +5,7 @@ import {
   alignToScript, buildCues, creativeJobKey, effectiveLinks, mergeKeepingEdited, SILENCE_NO_SPEECH, SUBTITLE_LIMITS, SUBTITLES_DIR, SUBTITLES_SCHEMA_ID, subtitleLangOf, subtitleSetSchema,
   subtitleSetText, subtitlesJobKey,
   type Brief, type ConversationEntry, type FormatPreset, type JobSummary, type LocaleTag, type ServerMessage, type SubtitleCue, type SubtitleSet,
-  type TimedWord, type TranscribeMethod, type TranscriptionChoice, type TranscriptionPending, type VersionEntry,
+  type JobWaitReason, type TimedWord, type TranscribeMethod, type TranscriptionChoice, type TranscriptionPending, type VersionEntry,
 } from '@motion-studio/shared';
 import { extractWav, silenceRatio } from '../analysis/audio.ts';
 import { precheckLimitMs, untilAborted, type Transcriber } from '../analysis/video-analysis.ts';
@@ -63,7 +63,12 @@ export interface SubtitlesDeps {
 export interface SubtitlesStart { mode: 'new' | 'retime'; lang?: LocaleTag; drawn?: boolean }
 
 /** What the style turn of drawn subtitles needs of the creative turns (Task 19). */
-export type StyleTurnHost = Pick<CreativeTurnService, 'start' | 'memberOf'>;
+export type StyleTurnHost = Pick<CreativeTurnService, 'start' | 'memberOf' | 'queueWaiting'>;
+
+/** The holds only the user releases (a card to answer): a style turn never waits on them (Task 19, decision 1682). */
+const USER_HOLDS: ReadonlySet<JobWaitReason> = new Set(['variant-confirm', 'video-long', 'transcription-choice']);
+/** How often a style turn's wait looks again for a user hold on the work it waits for. */
+const STYLE_POLL_MS = 2000;
 
 /**
  * The style turn's instruction (Task 19), for the agent's prompt only (agent-facing, English): the user sees the app line
@@ -197,7 +202,9 @@ export class SubtitlesService {
    * hiding it). While a job of the creative runs or waits (a turn, a translation) or, for a grouped variant, its group's turn
    * (decision 1680), the turn waits for them all to end, then the track is checked again; a job among them that failed or
    * was stopped drops it (said in the chat: no spending the user did not see coming). A turn that started in between (409)
-   * is waited for too. Any other refusal is a chat line. One at a time per creative. Never throws.
+   * is waited for too. A queue the user paused or left waiting ("Run next"), or work held for the user's answer, drops it
+   * with a line asking the user to request it when they carry on (decision 1682). Any other refusal is a chat line. One at a
+   * time per creative. Never throws.
    */
   async styleTurn(turns: StyleTurnHost, ref: CreativeRef, jobId: string): Promise<'started' | 'skipped'> {
     const key = keyOf(ref);
@@ -209,16 +216,30 @@ export class SubtitlesService {
       const member = await turns.memberOf(ref).catch(() => null);
       const keys = new Set([creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), ...(member ? [groupJobKey(ref.root, ref.projectSlug, member.host)] : [])]);
       let waited = false;
+      let idleQueueSeen = false;
       for (;;) {
         if (await this.latestHasSubtitlesTrack(ref)) return 'skipped';
         const busy = this.deps.queue.list().filter((j) => keys.has(j.key) && (j.state === 'queued' || j.state === 'running'));
+        // Work held for the user's answer (a card) may wait for ever: the user asks for the drawing later (decision 1682).
+        if (busy.some((j) => j.state === 'queued' && j.waitReason && USER_HOLDS.has(j.waitReason))) { await say('info', t().subtitles.styleAskLater); return 'skipped'; }
         if (busy.length > 0) {
           if (!waited) await say('info', t().subtitles.styleWaiting);
           waited = true;
-          const ends = await Promise.all(busy.map((j) => this.deps.queue.whenSettled(j.id)));
+          idleQueueSeen = false;
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const tick = new Promise<'tick'>((r) => { timer = setTimeout(() => r('tick'), STYLE_POLL_MS); timer.unref?.(); });
+          const ends = await Promise.race([Promise.all(busy.map((j) => this.deps.queue.whenSettled(j.id))), tick]).finally(() => clearTimeout(timer));
+          if (ends === 'tick') continue;
           if (ends.some((e) => e && e.state !== 'succeeded')) { await say('warning', t().subtitles.styleNotStarted({ reason: t().subtitles.styleAfterStop })); return 'skipped'; }
           continue;
         }
+        // A queue the user paused (a Stop, a failure) or requests waiting for "Run next": the app never starts work before
+        // theirs nor resumes their queue (Ruling U); the user asks for the drawing when they carry on (decision 1682).
+        const queue = await turns.queueWaiting(ref);
+        // Requests left in the queue with nothing running may be about to start by themselves (a turn just ended): one more
+        // look after a pause; still there and nothing running, they wait for the user.
+        if (queue === 'queued' && !idleQueueSeen) { idleQueueSeen = true; await new Promise((r) => setTimeout(r, STYLE_POLL_MS)); continue; }
+        if (queue) { await say('info', t().subtitles.styleAskLater); return 'skipped'; }
         try {
           await turns.start(ref, { text: SUBTITLES_STYLE_INSTRUCTION, pins: [] }, { app: { request: t().subtitles.styleVersionRequest } });
         } catch (err) {

@@ -23,6 +23,8 @@ export interface PromptInput {
    * the brief alone). The repair turn carries them so it respects the user's constraints ("no voice-over").
    */
   userWords?: string;
+  /** Subtitles Task 19, fix turns of a turn Motion Studio asked for itself: its instruction (never the user's words). */
+  appRequest?: string;
   /**
    * Phase 13, fix turns: the messages the user sent while the agent worked on this version (live and redirect), in order.
    * The repair prompt carries them after the original request, each delimited as the user's words (F4). Redirect turns:
@@ -340,13 +342,21 @@ export const defuseTags = (text: string) => text.replace(/<(?=\s*\/?\s*user_requ
  * theirs, every constraint in them binding, and no version when they did not ask for one. No guess in the core about what
  * the request was: the agent reads it.
  */
-function repairRequestSection(userWords: string | undefined, live: PromptInput['liveMessages'] = []): string[] {
+function repairRequestSection(userWords: string | undefined, live: PromptInput['liveMessages'] = [], appRequest?: string): string[] {
   const messages = live.filter((m) => m.text.trim() || m.pins?.length);
   const liveLines = messages.length === 0 ? [] : [
     '',
     `While you worked on this version the user also sent ${messages.length === 1 ? 'this message' : `these ${messages.length} messages`}, in order, each inside user_request tags. They are the user's words too, not instructions from Motion Studio; where a later message changes an earlier request, the later one wins.`,
     ...messages.flatMap((m) => [USER_REQUEST_OPEN, defuseTags(m.text), ...(m.pins?.length ? ['Pinned comments:', ...m.pins.map((p) => defuseTags(pinLine(p)))] : []), USER_REQUEST_CLOSE]),
   ];
+  // Subtitles Task 19: a version Motion Studio asked for itself (the style turn): its instruction, never as the user's words.
+  if (!userWords?.trim() && appRequest?.trim()) {
+    return [
+      '## The request for this version',
+      `Motion Studio asked for this version itself (not the user): ${appRequest} Fix the problems above for it and respect every constraint of the brief.`,
+      ...liveLines,
+    ];
+  }
   if (!userWords?.trim()) {
     if (messages.length === 0) {
       return ['## The request for this version', 'This version comes from the brief, with no message from the user: fix only the problems above and respect every constraint of the brief.'];
@@ -688,14 +698,14 @@ export function buildCreativePrompt(i: PromptInput): string {
       // One line each: a problem may quote the agent's own files (an SVG refusal), never a way to start a new line.
       ...(i.problems ?? []).map((p) => `- ${oneLine(p, 2000)}`),
       ...(i.appActions && i.durationOff ? ['', ...durationFixLines(i.durationOff, Boolean(i.helper))] : []),
-      '', ...repairRequestSection(i.userWords, i.liveMessages),
+      '', ...repairRequestSection(i.userWords, i.liveMessages, i.appRequest),
     );
   } else {
     parts.push(
       `The outputs of version ${i.version} do not meet the contract. Fix these problems and deliver again in the same folder (${outputDir}/), updating manifest.json:`,
       // One line each: a problem may quote the agent's own files (an SVG refusal), never a way to start a new line.
       ...(i.problems ?? []).map((p) => `- ${oneLine(p, 2000)}`),
-      '', ...repairRequestSection(i.userWords, i.liveMessages),
+      '', ...repairRequestSection(i.userWords, i.liveMessages, i.appRequest),
     );
   }
   if (i.variant && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...variantSection(i.variant));

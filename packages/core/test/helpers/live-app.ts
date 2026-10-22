@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import { expect, vi } from 'vitest';
 import { AppConfigStore } from '../../src/app-config.ts';
 import { Git } from '../../src/git.ts';
-import { buildServer } from '../../src/server/app.ts';
+import { buildServer, type ServerDeps } from '../../src/server/app.ts';
 import { CreativeSideStateStore } from '../../src/creatives/creative-side-state.ts';
 import { ControlledRunner } from './controlled-runner.ts';
 
@@ -33,7 +33,7 @@ export const brief = { goal: 'Lancio app', message: '', formats: ['instagram-pos
  * `live`: the workspace opts in to live input and interrupt (with a known Claude Code version), as Settings would.
  * `base`/`runner`: reuse a workspace and runner (a second start of the app on the same data).
  */
-export async function liveApp(o: { live?: boolean; base?: string; runner?: ControlledRunner; slug?: string } = {}): Promise<LiveApp> {
+export async function liveApp(o: { live?: boolean; base?: string; runner?: ControlledRunner; slug?: string; onSubtitles?: ServerDeps['onSubtitles'] } = {}): Promise<LiveApp> {
   const base = o.base ?? await mkdtemp(join(tmpdir(), 'ms-live-'));
   const runner = o.runner ?? new ControlledRunner();
   const side = new CreativeSideStateStore(join(base, 'config'));
@@ -43,6 +43,7 @@ export async function liveApp(o: { live?: boolean; base?: string; runner?: Contr
     appConfig: new AppConfigStore(join(base, 'config')), configDir: join(base, 'config'),
     // Decision 804: live on a verified version (2.1.301); the fallback on an older one (the settings default to on).
     git: new Git(), runner, doctor: async () => [], claudeVersion: async () => (o.live ? '2.1.301' : '2.1.0'),
+    ...(o.onSubtitles ? { onSubtitles: o.onSubtitles } : {}),
   });
   let slug = o.slug ?? '';
   if (!o.base) {

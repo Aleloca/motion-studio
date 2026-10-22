@@ -435,6 +435,7 @@ export const en = {
     styleWaiting: 'Subtitles ready: the agent will draw them into the video as soon as the current work ends.',
     styleVersionRequest: 'Subtitles drawn into the video',
     styleAfterStop: 'the work before did not finish. Ask the agent to draw them.',
+    styleAskLater: 'Subtitles ready: ask the agent to draw them into the video when you carry on.',
     styleNotStarted: (p: { reason: string }) => `The subtitles were not drawn into the video: ${p.reason}`,
     readyTitle: 'Subtitles ready',
     download: (p: { ext: string }) => `Download ${p.ext}`,

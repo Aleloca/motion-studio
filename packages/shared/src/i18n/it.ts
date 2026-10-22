@@ -433,6 +433,7 @@ export const it: Messages = {
     styleWaiting: "Sottotitoli pronti: l'agente li disegnerà nel video appena finisce il lavoro in corso.",
     styleVersionRequest: 'Sottotitoli disegnati nel video',
     styleAfterStop: "il lavoro precedente non si è concluso. Chiedi all'agente di disegnarli.",
+    styleAskLater: "Sottotitoli pronti: chiedi all'agente di disegnarli nel video quando riprendi.",
     styleNotStarted: (p: { reason: string }) => `I sottotitoli non sono stati disegnati nel video: ${p.reason}`,
     readyTitle: 'Sottotitoli pronti',
     download: (p) => `Scarica ${p.ext}`,

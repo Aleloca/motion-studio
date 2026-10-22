@@ -82,6 +82,7 @@ let startCalls: number;
 /** Runs before a start is recorded (the n-th call); may throw like `CreativeTurnService.start`. */
 let beforeStart: ((n: number) => Promise<void> | void) | null;
 let member: { host: string } | null;
+let queueState: 'paused' | 'queued' | null;
 let drawnSet: boolean[];
 let tools: ReturnType<typeof subtitlesTools>;
 
@@ -98,7 +99,7 @@ beforeEach(async () => {
   const projectDir = join(base, 'acme');
   await mkdir(projectDir, { recursive: true });
   store = new CreativeStore(projectDir);
-  entries = []; sent = []; started = []; startCalls = 0; beforeStart = null; member = null; drawnSet = [];
+  entries = []; sent = []; started = []; startCalls = 0; beforeStart = null; member = null; queueState = null; drawnSet = [];
   touch = vi.fn();
   queue = new JobQueue({ concurrency: 2, lanes: { [SUBTITLES_LANE]: 1 } });
   service = new SubtitlesService({
@@ -115,6 +116,7 @@ beforeEach(async () => {
       return { id: 'style-turn' } as JobSummary;
     },
     memberOf: async () => member,
+    queueWaiting: async () => queueState,
     setSubtitlesDrawn: async (_ref: CreativeRef, drawn: boolean) => { drawnSet.push(drawn); },
   };
   tools = subtitlesTools({ subtitles: service, turns: turns as never, commits: { touch }, broadcast: (m) => { sent.push(m); } });
@@ -350,6 +352,40 @@ describe('drawn subtitles: start_subtitles({ drawn }) and the style turn (spec Â
     await ask({ drawn: true });
     await vi.waitFor(() => expect(lines()).toContain(t().subtitles.styleNotStarted({ reason: t().errors.variantDiscardedTurn })), { timeout: 20_000 });
     expect(started).toEqual([]);
+  });
+
+  it('a paused queue (a Stop, a failure): no style turn, the chat asks the user to request it (decision 1682)', async () => {
+    await creative();
+    queueState = 'paused';
+    await ask({ drawn: true });
+    await vi.waitFor(() => expect(lines()).toContain(t().subtitles.styleAskLater), { timeout: 20_000 });
+    expect(started).toEqual([]);
+  });
+
+  it('requests left in the queue: one more look, then the style turn starts if they ran, or asks the user if they still wait', async () => {
+    await creative();
+    queueState = 'queued';
+    await ask({ drawn: true });
+    await vi.waitFor(() => expect(lines()).toContain(t().subtitles.styleAskLater), { timeout: 20_000 });
+    expect(started).toEqual([]);
+  }, 30_000);
+
+  it('requests that leave the queue during the look: the style turn starts', async () => {
+    await creative();
+    queueState = 'queued';
+    setTimeout(() => { queueState = null; }, 500);
+    await ask({ drawn: true });
+    await vi.waitFor(() => expect(started).toHaveLength(1), { timeout: 20_000 });
+    expect(lines()).not.toContain(t().subtitles.styleAskLater);
+  }, 30_000);
+
+  it('work held for the user\'s answer: never waited on, the chat asks the user to request it (decision 1682)', async () => {
+    await creative();
+    const held = queue.enqueue({ key: turnKey(), kind: 'creative', label: 'turn', hold: 'transcription-choice', run: async () => {} });
+    await ask({ drawn: true });
+    await vi.waitFor(() => expect(lines()).toContain(t().subtitles.styleAskLater), { timeout: 20_000 });
+    expect(started).toEqual([]);
+    queue.cancel(held.id);
   });
 
   it('a grouped variant waits for its group\'s turn too (decision 1680)', async () => {

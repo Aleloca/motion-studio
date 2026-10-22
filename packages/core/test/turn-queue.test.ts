@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { creativeFileSchema, messages } from '@motion-studio/shared';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
+import type { CreativeTurnService } from '../src/creatives/creative-turns.ts';
+import type { SubtitlesService } from '../src/subtitles/subtitles-job.ts';
 import { buildClaudeArgs } from '../src/agent/claude-code-runner.ts';
 import { buildAgentPolicy, sandboxPath } from '../src/agent/policy.ts';
 import { escapeGlob } from '../src/codebases.ts';
@@ -82,6 +84,43 @@ describe('queue', () => {
     await s.waitIdle();
     const empty = await s.app.inject({ method: 'POST', url: `${s.url}/queue/run-next` });
     expect(empty.json()).toEqual({ code: 'queue-empty', error: it_.queueEmpty });
+  });
+});
+
+describe('the style turn of drawn subtitles and a paused queue (subtitles Task 19, decision 1682)', () => {
+  let subs: SubtitlesService;
+  let turns: CreativeTurnService;
+  const paused = async () => {
+    s = await liveApp({ onSubtitles: (x, t) => { subs = x; turns = t; } });
+    const job = (await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Primo' } })).json();
+    await s.runner.next(0);
+    await queue(cid(), 'Dopo lo stop');
+    await s.app.inject({ method: 'POST', url: `/api/jobs/${job.id}/stop` });
+    await s.waitIdle();
+    const root = (await s.app.inject('/api/workspace')).json().path as string;
+    return { root, projectSlug: 'acme', projectDir: s.projectDir, creativeSlug: s.slug };
+  };
+
+  it('a paused creative: no style turn, the queue stays paused and untouched, the chat asks the user to request it', async () => {
+    const ref = await paused();
+    expect(await subs.styleTurn(turns, ref, 'subtitles-job')).toBe('skipped');
+    expect(s.runner.runs).toHaveLength(1);
+    expect(await queuedTexts()).toEqual(['Dopo lo stop']);
+    expect((await s.conversation()).some((e) => e.type === 'system' && [messages('it'), messages('en')].some((m) => m.subtitles.styleAskLater === e.text))).toBe(true);
+    // Still paused: only Run next starts the user's request.
+    expect((await s.app.inject({ method: 'POST', url: `${s.url}/queue/run-next` })).statusCode).toBe(202);
+    (await s.runner.next(1)).finish();
+    await s.waitIdle();
+  });
+
+  it('a turn the app asks for never resumes a paused queue', async () => {
+    const ref = await paused();
+    await turns.start(ref, { text: 'Motion Studio: add the subtitles track.', pins: [] }, { app: { request: 'Sottotitoli disegnati nel video' } });
+    (await s.runner.next(1)).finish();
+    await s.waitIdle();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(s.runner.runs).toHaveLength(2);
+    expect(await queuedTexts()).toEqual(['Dopo lo stop']);
   });
 });
 

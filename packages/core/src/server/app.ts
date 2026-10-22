@@ -178,8 +178,8 @@ export interface ServerDeps {
   analysisPrecheckMaxMs?: number;
   /** Test seam: told the video analysis service once it exists. */
   onVideoAnalyses?: (s: VideoAnalysisService) => void;
-  /** Test seam: told the subtitles service once it exists. */
-  onSubtitles?: (s: SubtitlesService) => void;
+  /** Test seam: told the subtitles service once it exists (and the creative turns, for its style turn). */
+  onSubtitles?: (s: SubtitlesService, turns: CreativeTurnService) => void;
   /** Spec §7: the folder of the bundled `whisper-cli` (and its VAD model); absent: none bundled. */
   whisperDir?: string;
   /** Network of the transcription providers and the Whisper model downloads (tests inject a fake fetch; default: the real one). */
@@ -454,7 +454,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     broadcast: (msg) => hub.broadcast(msg),
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
   });
-  deps.onSubtitles?.(subtitles);
+  deps.onSubtitles?.(subtitles, turns);
   // Task 14 (spec §6.7): a version that moves the audio under a subtitle set says so in the chat.
   turns.onVersionSaved((ref, n, jobId) => subtitles.versionSaved(ref, n, jobId));
 
