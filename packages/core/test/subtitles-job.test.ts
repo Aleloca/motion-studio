@@ -4,7 +4,7 @@
  * voice scripts as the truth, the cues cut and merged with the user's edits, the set written, the chat told. Real ffmpeg on
  * tones made here; no Whisper, no provider.
  */
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -21,7 +21,7 @@ import { t } from '../src/i18n.ts';
 import { JobQueue } from '../src/jobs/job-queue.ts';
 import { NoMediaTools } from '../src/media/media-tools.ts';
 import { findFfmpeg } from '../src/render/encode.ts';
-import { audioFingerprint, readSubtitleSet, writeSubtitleSet } from '../src/subtitles/store.ts';
+import { audioFingerprint, readSubtitleSet, subtitleSetLocks, writeSubtitleSet } from '../src/subtitles/store.ts';
 import { splitCjkWords, SUBTITLES_LANE, SubtitlesService } from '../src/subtitles/subtitles-job.ts';
 
 const PRESETS: FormatPreset[] = [
@@ -299,6 +299,43 @@ describe('SubtitlesService', { timeout: 60_000 }, () => {
     expect(cues).toEqual([expect.objectContaining({ id: 'c1', text: 'Ciao a tutti voi!', edited: true, start: 200 })]);
   });
 
+  it('a set file that cannot be read fails the job saying so, and is never overwritten', async () => {
+    await creative([audioClip()]);
+    await mkdir(join(creativeDir(), 'subtitles'), { recursive: true });
+    await writeFile(join(creativeDir(), 'subtitles', 'it.json'), '{"not": "a set"');
+    await runFailed();
+    expect(await readFile(join(creativeDir(), 'subtitles', 'it.json'), 'utf8')).toBe('{"not": "a set"');
+    const reason = t().subtitles.setUnreadable({ file: 'subtitles/it.json' });
+    expect(subtitleEntries().map((e) => e.type === 'system' ? e.text : '')).toContain(t().subtitles.failed({ reason }));
+  });
+
+  it('the final re-read, merge and write wait for the creative\'s set lock (decision 1654)', async () => {
+    await creative([audioClip()]);
+    let release!: () => void;
+    fake.gate = new Promise((r) => { release = r; });
+    const job = await service.start(ref, { mode: 'new' });
+    await vi.waitFor(() => expect(transcribed).toHaveLength(1));
+    // A save of the editor holds the lock while the transcription ends: the job writes only after it, and keeps its edit.
+    let unlock!: () => void;
+    const held = subtitleSetLocks.run(creativeDir(), async () => {
+      await new Promise<void>((r) => { unlock = r; });
+      await writeSubtitleSet(creativeDir(), {
+        $schema: SUBTITLES_SCHEMA_ID, lang: 'it', origin: 'speech', transcript: 'whisper-small', detected: 'it',
+        timing: { version: 1, format: 'test-wide', fingerprint: 'a'.repeat(64) },
+        cues: [{ id: 'c1', start: 100, end: 1700, text: 'Ciao a tutti voi!', edited: true }],
+      });
+    });
+    release();
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(queue.list().find((j) => j.id === job.id)?.state).toBe('running');
+    expect(await readSubtitleSet(creativeDir(), 'it')).toBeNull();
+    unlock();
+    await held;
+    expect((await queue.whenSettled(job.id))?.state).toBe('succeeded');
+    const cues = (await readSubtitleSet(creativeDir(), 'it'))!.set.cues;
+    expect(cues).toEqual([expect.objectContaining({ id: 'c1', text: 'Ciao a tutti voi!', edited: true })]);
+  });
+
   it('a held choice: the job waits for the user\'s transcription choice, then runs', async () => {
     await creative([audioClip()]);
     fake.plan = { ask: PENDING };
@@ -353,6 +390,79 @@ describe('SubtitlesService', { timeout: 60_000 }, () => {
     queue.cancel(first.id);
     await creative([audioClip()], { formats: ['test-still'] });
     await expect(service.start(ref, { mode: 'new' })).rejects.toMatchObject({ status: 409, apiCode: 'subtitles-no-video' });
+  });
+});
+
+describe('the video changed under the subtitles (Task 14, spec §6.7)', { timeout: 60_000 }, () => {
+  /** Version `n` of the creative: the same tone, with `clips` (a voice moved, a text changed…). */
+  async function version(n: number, clips: object[]) {
+    const dir = join(store.outputsDir(ref.creativeSlug, n), 'compositions', 'test-wide');
+    await mkdir(join(dir, 'assets'), { recursive: true });
+    await copyFile(join(fixtures, 'tone.wav'), join(dir, 'assets', 'tone.wav'));
+    const c = composition(clips);
+    await writeFile(join(dir, 'composition.json'), JSON.stringify(c));
+    await store.appendVersion(ref.creativeSlug, {
+      n, commit: null, sessionId: null, status: 'complete', createdAt: new Date().toISOString(), request: '', outputs: [], problems: [], tools: [],
+      renderCommand: null, basedOn: n - 1, compositions: [{ format: 'test-wide', dir: 'compositions/test-wide', hash: (await readCompositionFolder(dir)).hash }],
+    });
+    return c;
+  }
+  const timingEntries = () => entries.filter((e) => e.type === 'system' && e.subtitles?.state === 'timing-changed');
+  const setText = () => readFile(join(creativeDir(), 'subtitles', 'it.json'), 'utf8');
+
+  it('fingerprint mismatch shows the notice and changes nothing; "Rifai i tempi" moves the cues and keeps the edited text', async () => {
+    const c1 = await creative([audioClip()]);
+    await writeSubtitleSet(creativeDir(), {
+      $schema: SUBTITLES_SCHEMA_ID, lang: 'it', origin: 'speech', transcript: 'whisper-small', detected: 'it',
+      timing: { version: 1, format: 'test-wide', fingerprint: audioFingerprint(c1) },
+      cues: [
+        // The user corrected the first word ("Ciao").
+        { id: 'c1', start: 200, end: 1800, text: 'Benvenuti a tutti.', edited: true },
+        { id: 'c2', start: 2000, end: 2600, text: 'Prenota ora.' },
+      ],
+    });
+    const before = await setText();
+    // v2: the voice starts 1 s later.
+    const c2 = await version(2, [{ ...audioClip(), start: 1, duration: 2 }]);
+    await service.versionSaved(ref, 2, null);
+    expect(timingEntries()).toEqual([expect.objectContaining({
+      type: 'system', level: 'warning', text: t().subtitles.timingChanged, subtitles: { state: 'timing-changed', lang: 'it' },
+    })]);
+    expect(await setText()).toBe(before);
+    expect(transcribed).toEqual([]);
+    // v3 changes no audio: nothing new to tell (once per version that moved the audio, never on every turn).
+    await version(3, [{ ...audioClip(), start: 1, duration: 2 }]);
+    await service.versionSaved(ref, 3, null);
+    expect(timingEntries()).toHaveLength(1);
+
+    // "Rifai i tempi": the speech heard 1 s later; the set's own language is the transcription's.
+    fake.result = { kind: 'whisper-small', language: 'it', words: words([[1.2, 1.6, 'Ciao'], [1.7, 2.2, 'a'], [2.25, 2.8, 'tutti.'], [3.0, 3.3, 'Prenota'], [3.35, 3.6, 'ora.']]) };
+    await run({ mode: 'retime' });
+    expect(transcribed[0]!.language).toBe('it');
+    const set = (await readSubtitleSet(creativeDir(), 'it'))!.set;
+    expect(set.timing).toEqual({ version: 3, format: 'test-wide', fingerprint: audioFingerprint(c2) });
+    expect(set.cues.map((x) => [x.text, x.start, x.end, x.edited ?? false])).toEqual([['Benvenuti a tutti.', 1200, 2800, true], ['Prenota ora.', 3000, 4000, false]]);
+    expect(subtitleEntries().at(-1)).toMatchObject({ level: 'info', text: t().subtitles.retimed({ lang: 'italiano' }), subtitles: { state: 'ready', lang: 'it' } });
+  });
+
+  it('no notice for a creative without sets, nor when the new version keeps the set\'s audio', async () => {
+    await creative([audioClip()]);
+    await version(2, [{ ...audioClip(), start: 1, duration: 2 }]);
+    await service.versionSaved(ref, 2, null);
+    const c3 = await version(3, [audioClip()]);
+    await writeSubtitleSet(creativeDir(), {
+      $schema: SUBTITLES_SCHEMA_ID, lang: 'it', origin: 'speech', transcript: 'whisper-small', detected: 'it',
+      timing: { version: 1, format: 'test-wide', fingerprint: audioFingerprint(c3) }, cues: [{ id: 'c1', start: 200, end: 1800, text: 'Ciao a tutti.' }],
+    });
+    await service.versionSaved(ref, 3, null);
+    expect(timingEntries()).toEqual([]);
+  });
+
+  it('"Rifai i tempi" needs a set: refused without one, or for a language that has none', async () => {
+    await creative([audioClip()]);
+    await expect(service.start(ref, { mode: 'retime' })).rejects.toMatchObject({ status: 409, apiCode: 'subtitles-no-set' });
+    await expect(service.start(ref, { mode: 'retime', lang: 'de' })).rejects.toMatchObject({ status: 409, apiCode: 'subtitles-no-set' });
+    expect(queue.list()).toEqual([]);
   });
 });
 

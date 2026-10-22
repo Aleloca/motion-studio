@@ -19,7 +19,10 @@ export const subtitleWordSchema = z.object({
 }).strict().refine((w) => w.end >= w.start, { message: 'word end before its start' });
 export type SubtitleWord = z.infer<typeof subtitleWordSchema>;
 
-const cueText = z.string().min(1).max(SUBTITLE_LIMITS.text).refine((t) => t.split('\n').length <= 2, { message: 'at most two lines' });
+// Every line has text: a blank line ends an SRT cue (what follows it would be read as the next cue's number).
+const cueText = z.string().min(1).max(SUBTITLE_LIMITS.text)
+  .refine((t) => t.split('\n').length <= 2, { message: 'at most two lines' })
+  .refine((t) => t.split('\n').every((line) => line.trim() !== ''), { message: 'a line of the text is empty' });
 
 export const subtitleCueSchema = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/),

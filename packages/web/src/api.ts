@@ -1,4 +1,4 @@
-import type { CustomFormatInput, LocaleTag, Localization, LocalizationIssue, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StagedSvgEdit, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, ExportFps, ExportQuality, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, AgentCapabilities, ApprovalDecision, ApprovalRequest, QuestionAnswers, LiveMessageOutcome, RedirectOutcome, ProposalActivity, LanguageSetting, Locale, AssetEntry, CreativeReferenceEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, CreativeRemovalInfo, RecentCreative, DoctorCheck, UpdatesState, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIcon, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings, StorePack, VariantId, VariantPick, BriefContext, BriefField, BriefForm, BriefFormSave, BriefFormSaved, BriefMessageInput, BriefSendResult, BriefSessionRef, BriefSessionView, SubtitleSet, SubtitlesSummary, TranscriptionChoice, TranscriptionModelId, TranscriptionPending, TranscriptionSettingsPatch, TranscriptionStatus, VideoAnalysisView, WhisperEngine, WhisperFound } from '@motion-studio/shared';
+import type { CustomFormatInput, LocaleTag, Localization, LocalizationIssue, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StagedSvgEdit, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, ExportFps, ExportQuality, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, AgentCapabilities, ApprovalDecision, ApprovalRequest, QuestionAnswers, LiveMessageOutcome, RedirectOutcome, ProposalActivity, LanguageSetting, Locale, AssetEntry, CreativeReferenceEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, CreativeRemovalInfo, RecentCreative, DoctorCheck, UpdatesState, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIcon, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings, StorePack, VariantId, VariantPick, BriefContext, BriefField, BriefForm, BriefFormSave, BriefFormSaved, BriefMessageInput, BriefSendResult, BriefSessionRef, BriefSessionView, SubtitleCue, SubtitleSet, SubtitlesSummary, TranscriptionChoice, TranscriptionModelId, TranscriptionPending, TranscriptionSettingsPatch, TranscriptionStatus, VideoAnalysisView, WhisperEngine, WhisperFound } from '@motion-studio/shared';
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
 
@@ -464,7 +464,21 @@ export const api = {
   subtitlesChoice: (slug: string, creative: string, choice: Omit<TranscriptionChoice, 'file'>) => request<SubtitlesJobState>('POST', `${subs(slug, creative)}/transcription-choice`, choice),
   /** "Ricontrolla" in the subtitles job's transcription question: the Whispers looked for again, the question as it is now. */
   subtitlesRecheck: (slug: string, creative: string) => request<SubtitlesJobState>('POST', `${subs(slug, creative)}/transcription-recheck`),
+  /** The subtitle timeline's waveform (Task 13): the main format's audio mix of version `n` as peaks over its duration. */
+  subtitleWaveform: (slug: string, creative: string, n: number) => request<{ peaks: number[]; durationMs: number }>('GET', `${subs(slug, creative)}/waveform?version=${n}`),
   subtitleSet: (slug: string, creative: string, lang: LocaleTag) => request<{ set: SubtitleSet; hash: string }>('GET', `${subs(slug, creative)}/${encodeURIComponent(lang)}`),
+  /**
+   * The editor's save (decision 1654): the whole cue list over the set whose hash is `baseHash`; 409 `subtitles-conflict`
+   * when the set changed since. `keepalive` when the page is closing.
+   */
+  saveSubtitleSet: (slug: string, creative: string, lang: LocaleTag, body: { baseHash: string; cues: SubtitleCue[] }, opts?: RequestOptions) =>
+    request<{ hash: string }>('PUT', `${subs(slug, creative)}/${encodeURIComponent(lang)}`, body, opts),
+  /**
+   * "Tempi controllati" (final review, M3): the set's timing marked as checked on the latest version's audio, the cues
+   * untouched; 409 `subtitles-conflict` when the set changed since `baseHash`.
+   */
+  subtitleTimingChecked: (slug: string, creative: string, lang: LocaleTag, body: { baseHash: string }) =>
+    request<{ hash: string; timing: SubtitleSet['timing'] }>('POST', `${subs(slug, creative)}/${encodeURIComponent(lang)}/timing-checked`, body),
   /** A subtitle set's `.srt` / `.vtt`, fetched with the UI token (the caller saves it). */
   subtitleFile: (slug: string, creative: string, lang: LocaleTag, ext: 'srt' | 'vtt') => fetchBlob(subtitleFileUrl(slug, creative, lang, ext)),
   fileUrl: (slug: string, creative: string, rel: string) => `${c(slug, creative)}/files/${rel.split('/').map(encodeURIComponent).join('/')}`,

@@ -18,6 +18,7 @@ import { ProjectCreatives } from './screens/ProjectCreatives.tsx';
 import { Projects } from './screens/Projects.tsx';
 import { ProjectSettings } from './screens/ProjectSettings.tsx';
 import { References } from './screens/References.tsx';
+import { SubtitlesScreen } from './screens/subtitles/SubtitlesScreen.tsx';
 import { Welcome, type WelcomeProps } from './screens/Welcome.tsx';
 import { useCatalog } from './shell/catalog.ts';
 import { CommandPalette } from './shell/CommandPalette.tsx';
@@ -266,6 +267,7 @@ function AppShell({ route, live, settings, checks, activity, setActivity, langua
       case 'creative': return <CreativeCanvas key={`${r.slug}/${r.creative}`} slug={r.slug} creative={r.creative} live={live} exportNamePattern={settings?.exportNamePattern} onSettings={onSettings} />;
       // A format's page is its editor (one screen, decision 916); without a composition it shows the viewer inside.
       case 'format': return <EditorScreen key={`${r.slug}/${r.creative}/${r.format}`} slug={r.slug} creative={r.creative} format={r.format} live={live} exportNamePattern={settings?.exportNamePattern} onSettings={onSettings} />;
+      case 'subtitles': return <SubtitlesScreen key={`${r.slug}/${r.creative}`} slug={r.slug} creative={r.creative} {...(r.lang ? { lang: r.lang } : {})} />;
       case 'settings': return settings ? (
         <AppSettings section={r.section} settings={settings} checks={checks} checking={Boolean(setup.checking)} checksRun={setup.checksRun ?? 0}
           loadError={setup.loadError ?? null} onRecheck={setup.onRecheck} language={language} systemLocale={systemLocale} onLanguage={onLanguage} onSettings={onSettings} />

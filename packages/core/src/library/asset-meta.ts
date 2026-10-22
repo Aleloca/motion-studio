@@ -52,6 +52,21 @@ export function peaksOf(pcm: Buffer, buckets = WAVEFORM_PEAKS): number[] {
   return peaks;
 }
 
+/**
+ * The peaks of the audio of `abs` (its first `maxSec` seconds): decoded at 4 kHz to a fresh temp name in `dir` (a real
+ * folder), removed at once. Null when it cannot be decoded.
+ */
+export async function filePeaks(decodePcm: NonNullable<MediaTools['decodePcm']>, abs: string, dir: string, o: { buckets: number; maxSec: number }): Promise<number[] | null> {
+  const pcm = join(dir, `.pcm-${randomBytes(6).toString('hex')}.pcm`);
+  noteCoreTemp(pcm);
+  try {
+    if (!(await decodePcm(abs, pcm, { sampleRate: SAMPLE_RATE, maxSec: o.maxSec }))) return null;
+    const st = await lstat(pcm);
+    if (!st.isFile() || st.nlink !== 1 || st.size > SAMPLE_RATE * 2 * (Math.round(o.maxSec) + 1)) return null;
+    return peaksOf(await readFile(pcm), o.buckets);
+  } finally { await rm(pcm, { force: true }).catch(() => {}); }
+}
+
 const inFlight = new Map<string, Promise<number[]>>();
 
 /**
@@ -71,16 +86,10 @@ export async function assetWaveform(deps: { media: MediaTools; projectDir: strin
     const hit = !(await lstat(cache).catch(() => null))?.isFile() ? null : await readFile(cache, 'utf8').then((s) => JSON.parse(s) as { peaks?: unknown }).catch(() => null);
     if (hit && Array.isArray(hit.peaks) && hit.peaks.length <= WAVEFORM_PEAKS && hit.peaks.every((p) => typeof p === 'number')) return hit.peaks as number[];
     if (!deps.media.decodePcm) throw new WorkspaceError(422, t().errors.waveformUnavailable);
-    const pcm = join(dir, `.${key}.${randomBytes(6).toString('hex')}.pcm`);
-    noteCoreTemp(pcm);
-    try {
-      if (!(await deps.media.decodePcm(abs, pcm, { sampleRate: SAMPLE_RATE, maxSec: MAX_SEC }))) throw new WorkspaceError(422, t().errors.waveformUnavailable);
-      const st = await lstat(pcm);
-      if (!st.isFile() || st.nlink !== 1 || st.size > SAMPLE_RATE * 2 * (MAX_SEC + 1)) throw new WorkspaceError(422, t().errors.waveformUnavailable);
-      const peaks = peaksOf(await readFile(pcm));
-      await writeThroughTemp(dir, `${key}.json`, async (temp) => { await writeFile(temp, JSON.stringify({ peaks }), { flag: 'wx' }); return true; });
-      return peaks;
-    } finally { await rm(pcm, { force: true }).catch(() => {}); }
+    const peaks = await filePeaks(deps.media.decodePcm, abs, dir, { buckets: WAVEFORM_PEAKS, maxSec: MAX_SEC });
+    if (!peaks) throw new WorkspaceError(422, t().errors.waveformUnavailable);
+    await writeThroughTemp(dir, `${key}.json`, async (temp) => { await writeFile(temp, JSON.stringify({ peaks }), { flag: 'wx' }); return true; });
+    return peaks;
   })();
   inFlight.set(cache, job);
   try { return await job; } finally { inFlight.delete(cache); }

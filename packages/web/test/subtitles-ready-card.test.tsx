@@ -12,6 +12,8 @@ import { I18nProvider } from '../src/i18n.tsx';
 
 const at = '2026-10-22T10:00:00.000Z';
 const api = {
+  subtitles: vi.fn(async (..._a: unknown[]) => ({ sets: [{ lang: 'it', timingChanged: true }], job: null, pending: null })),
+  startSubtitles: vi.fn(async (..._a: unknown[]) => ({ job: { id: 'j1' } })),
   subtitleFile: vi.fn(async (_s: string, _c: string, _lang: string, _ext: 'srt' | 'vtt') => new Blob(['1\n00:00:00,000 --> 00:00:01,000\nCiao\n'])),
   transcriptionChoice: vi.fn(),
   recheckTranscription: vi.fn(),
@@ -51,6 +53,12 @@ describe('the subtitles card in the chat (Task 8)', () => {
     await waitFor(() => expect(saveBlob).toHaveBeenLastCalledWith(expect.any(Blob), 'lancio.it.vtt'));
   });
 
+  it('"Apri l\'editor" links to the subtitle editor in the set\'s language (Task 9)', () => {
+    card(entry({ state: 'ready', lang: 'it' }));
+    const link = within(screen.getByRole('group', { name: 'Sottotitoli pronti' })).getByRole('link', { name: "Apri l'editor" });
+    expect(link.getAttribute('href')).toBe('#/p/acme/c/lancio/subtitles/it');
+  });
+
   it('the files\' URLs are the set\'s .srt and .vtt routes', async () => {
     const { subtitleFileUrl } = await import('../src/api.ts');
     expect(subtitleFileUrl('acme', 'lancio', 'it', 'srt')).toMatch(/\/api\/projects\/acme\/creatives\/lancio\/subtitles\/it\/file\.srt$/);
@@ -82,6 +90,45 @@ describe('the subtitles card in the chat (Task 8)', () => {
     card(entry({ state: 'failed' }, 'I sottotitoli non sono riusciti: ffmpeg non ha letto l\'audio', 'error'));
     expect(screen.getByRole('alert').textContent).toContain('I sottotitoli non sono riusciti: ffmpeg non ha letto l\'audio');
     expect(screen.queryByRole('button', { name: /Scarica/ })).toBeNull();
+  });
+
+  it('the video changed (Task 14): the notice, "Rifai i tempi" retimes the set, "Apri l\'editor" opens it', async () => {
+    card(entry({ state: 'timing-changed', lang: 'it' }, 'Il video è cambiato: ricontrolla i tempi', 'warning'));
+    const c = screen.getByRole('group', { name: 'Il video è cambiato: ricontrolla i tempi' });
+    expect(within(c).getByRole('link', { name: "Apri l'editor" }).getAttribute('href')).toBe('#/p/acme/c/lancio/subtitles/it');
+    await userEvent.click(await within(c).findByRole('button', { name: 'Rifai i tempi' }));
+    expect(api.subtitles).toHaveBeenCalledWith('acme', 'lancio');
+    expect(api.startSubtitles).toHaveBeenCalledWith('acme', 'lancio', { mode: 'retime', lang: 'it' });
+    expect((await within(c).findByRole('status')).textContent).toBe('Rifaccio i tempi: le righe che hai corretto tengono il loro testo.');
+    expect(within(c).queryByRole('button', { name: /Scarica/ })).toBeNull();
+  });
+
+  it('an old notice whose set is aligned again offers no "Rifai i tempi" (review round 1)', async () => {
+    api.subtitles.mockResolvedValueOnce({ sets: [{ lang: 'it', timingChanged: false }], job: null, pending: null });
+    card(entry({ state: 'timing-changed', lang: 'it' }, 'Il video è cambiato: ricontrolla i tempi', 'warning'));
+    const c = screen.getByRole('group', { name: 'Il video è cambiato: ricontrolla i tempi' });
+    expect(await within(c).findByText('I tempi sono di nuovo allineati al video.')).toBeTruthy();
+    expect(within(c).queryByRole('button', { name: 'Rifai i tempi' })).toBeNull();
+    expect(within(c).getByRole('link', { name: "Apri l'editor" })).toBeTruthy();
+  });
+
+  it('several old notices of one creative share one read of its subtitles per change of the creative (final review)', async () => {
+    const tree = (tick: number) => {
+      const shell = { live: { ...initialEventsState, creativeTicks: { 'acme/lancio': tick } } } as never;
+      const notice = entry({ state: 'timing-changed', lang: 'it' }, 'Il video è cambiato: ricontrolla i tempi', 'warning');
+      return (
+        <I18nProvider locale="it"><ShellContext.Provider value={shell}>
+          {[1, 2, 3].map((k) => <SubtitlesReadyCard key={k} slug="acme" creative="lancio" entry={notice} />)}
+        </ShellContext.Provider></I18nProvider>
+      );
+    };
+    const r = render(tree(0));
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Rifai i tempi' })).toHaveLength(3));
+    expect(api.subtitles).toHaveBeenCalledTimes(1);
+    api.subtitles.mockResolvedValueOnce({ sets: [{ lang: 'it', timingChanged: false }], job: null, pending: null });
+    r.rerender(tree(1));
+    await waitFor(() => expect(screen.getAllByText('I tempi sono di nuovo allineati al video.')).toHaveLength(3));
+    expect(api.subtitles).toHaveBeenCalledTimes(2);
   });
 
   it('the chat shows a subtitles entry as the card', () => {

@@ -492,10 +492,11 @@ type ConversationEntryBody =
    * `origin: 'brief'` (decision 1423): the line that marks where a creative starts after its brief session's conversation.
    * `analysisWait` (decision 1478): the first turn waits for the analyses of these videos (names); the chat offers "Skip".
    * `subtitles` (decision 1640): a subtitles job ended: `ready` (set `lang`; `detected` the transcriber's language, `briefLang`
-   * the brief's when it differs: the chat offers to translate), `failed`, `no-speech`, `unsupported-language` (`detected`).
+   * the brief's when it differs: the chat offers to translate), `failed`, `no-speech`, `unsupported-language` (`detected`);
+   * `timing-changed` (Task 14, spec §6.7): a new version moved the audio set `lang` was timed on ("Rifai i tempi").
    */
   | { type: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string; origin?: 'agent' | 'brief'; keptVersion?: number; analysisWait?: { files: string[] };
-    subtitles?: { state: 'ready' | 'failed' | 'no-speech' | 'unsupported-language'; lang?: LocaleTag; detected?: string; briefLang?: LocaleTag } }
+    subtitles?: { state: 'ready' | 'failed' | 'no-speech' | 'unsupported-language' | 'timing-changed'; lang?: LocaleTag; detected?: string; briefLang?: LocaleTag } }
   /**
    * Phase 3 of the single agent (spec §4.1): a group turn settled. `outcome`: per variant it worked on; `usage`: the turn's
    * whole cost (the coordinator's runs and every helper's), when known. Written once, with `group: true`.

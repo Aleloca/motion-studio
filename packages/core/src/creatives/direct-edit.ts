@@ -275,6 +275,7 @@ export class DirectEditService {
       });
       recorded = true;
       await store.appendConversation(slug, { type: 'version', at: now(), n: newN, status });
+      await this.deps.turns.versionSaved(ref, newN, null);
       const resumeFrom = creative.resumeFrom ? { version: newN, sessionId: creative.resumeFrom.sessionId } : null;
       await store.update(slug, { status: status === 'complete' ? 'ready' : 'incomplete', error: null, resumeFrom });
       await this.deps.turns.commitState(ref, m.jobs.versionStateCommit({ title: creative.title, n: newN }));
@@ -434,6 +435,7 @@ export class DirectEditService {
         });
         recorded = true;
         await store.appendConversation(slug, { type: 'version', at: now(), n, status });
+        await this.deps.turns.versionSaved(ref, n, null);
         // As a version made without the agent after a restart: the next agent turn still forks the restored session.
         const resumeFrom = creative.resumeFrom ? { version: n, sessionId: creative.resumeFrom.sessionId } : null;
         await store.update(slug, { status: status === 'complete' ? 'ready' : 'incomplete', error: null, resumeFrom });

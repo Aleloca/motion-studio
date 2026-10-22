@@ -5,26 +5,30 @@
  * bridge active (the test calls the bridge routes with a run's token, as the MCP server would), real ffmpeg, no Whisper
  * (none detected) and the transcription set to "ask".
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  SUBTITLES_SCHEMA_ID, subtitleSetHash, toSrt, toVtt, type Composition, type ConversationEntry, type CreativeDetail, type JobSummary, type SubtitleSet, type SubtitlesSummary,
+  SUBTITLES_SCHEMA_ID, subtitleSetHash, toSrt, toVtt, type Composition, type ConversationEntry, type CreativeDetail, type JobSummary, type ServerMessage,
+  type SubtitleCue, type SubtitleSet, type SubtitlesSummary,
 } from '@motion-studio/shared';
+import type { Transcriber } from '../src/analysis/video-analysis.ts';
 import { AppConfigStore } from '../src/app-config.ts';
 import { ApprovalBroker } from '../src/approvals/broker.ts';
 import { AgentBridge, type AppScope } from '../src/bridge/bridge.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
-import type { SubtitlesStart } from '../src/subtitles/subtitles-job.ts';
+import type { SubtitlesDeps, SubtitlesService, SubtitlesStart } from '../src/subtitles/subtitles-job.ts';
 import { parseStudioBlock } from '../src/creatives/prompt.ts';
+import { execCommand } from '../src/exec.ts';
 import { Git } from '../src/git.ts';
 import { t } from '../src/i18n.ts';
 import { MemoryVault } from '../src/secrets/vault.ts';
 import { buildServer } from '../src/server/app.ts';
-import { audioFingerprint, writeSubtitleSet } from '../src/subtitles/store.ts';
+import { audioFingerprint, readSubtitleSet, SubtitleCommits, subtitleSetLocks, writeSubtitleSet } from '../src/subtitles/store.ts';
+import { SUBTITLE_WAVEFORM_PEAKS } from '../src/server/subtitles-routes.ts';
 import { ControlledRunner, type ControlledRun } from './helpers/controlled-runner.ts';
 
 const P = '/api/projects/acme/creatives';
@@ -36,6 +40,8 @@ let runner: ControlledRunner;
 let bridge: AgentBridge;
 /** Each start of a subtitles job: the versions saved at that moment and the options. */
 let starts: Array<{ versions: number[]; o: SubtitlesStart }>;
+let subtitlesService: SubtitlesService;
+let broadcasts: ServerMessage[];
 
 beforeEach(async () => {
   base = await mkdtemp(join(tmpdir(), 'ms-subtitles-routes-'));
@@ -43,6 +49,7 @@ beforeEach(async () => {
   bridge = new AgentBridge();
   bridge.setOrigin('http://127.0.0.1:9');
   starts = [];
+  broadcasts = [];
   const config = new AppConfigStore(join(base, 'config'));
   await config.setTranscription({ method: 'ask' });
   app = await buildServer({
@@ -50,7 +57,9 @@ beforeEach(async () => {
     appConfig: config, configDir: join(base, 'config'), git: new Git(), runner,
     doctor: async () => [], claudeVersion: async () => '2.1.0', bridge, approvals: new ApprovalBroker({ broadcast: () => {} }),
     mcpCommand: [process.execPath, join(base, 'never-started-mcp.mjs')], vault: new MemoryVault({}), whisperDetect: async () => [],
+    onBroadcast: (m) => { broadcasts.push(m); },
     onSubtitles: (svc) => {
+      subtitlesService = svc;
       const start = svc.start.bind(svc);
       svc.start = async (ref, o) => {
         starts.push({ versions: (await new CreativeStore(ref.projectDir).readVersions(ref.creativeSlug)).map((v) => v.n), o });
@@ -62,6 +71,7 @@ beforeEach(async () => {
   await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Acme' } });
 });
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const r of runner.runs) r.end();
   await app.close();
   await rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
@@ -98,6 +108,25 @@ const made = async (): Promise<string> => {
   const slug = ((await app.inject({ method: 'POST', url: P, payload: { title: 'Lancio', brief, generate: true } })).json() as { slug: string }).slug;
   const run = await runOf(slug);
   writeCompositions(run);
+  run.finish({ write: false });
+  await waitIdle();
+  expect((await detail(slug)).versions.map((v) => v.status)).toEqual(['complete']);
+  return slug;
+};
+/** A creative whose version 1 has a 3 s tone as its voice (the subtitles job has something to mix), near full scale. */
+const madeWithVoice = async (): Promise<string> => {
+  const tone = join(base, 'tone.wav');
+  const ff = await execCommand('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=f=440:d=3:r=48000', '-af', 'volume=7', '-c:a', 'pcm_s16le', tone], { timeoutMs: 60_000 });
+  expect(ff.code, ff.stderr).toBe(0);
+  const slug = ((await app.inject({ method: 'POST', url: P, payload: { title: 'Lancio', brief, generate: true } })).json() as { slug: string }).slug;
+  const run = await runOf(slug);
+  for (const f of parseStudioBlock(run.req.prompt)!.formats) {
+    const dir = join(run.req.cwd, f.compositionDir!);
+    mkdirSync(join(dir, 'assets'), { recursive: true });
+    copyFileSync(tone, join(dir, 'assets', 'tone.wav'));
+    const audio = { id: 'a', kind: 'audio', clips: [{ id: 'vo', type: 'audio', src: 'assets/tone.wav', start: 0, duration: 3 }] };
+    writeFileSync(join(dir, 'composition.json'), JSON.stringify({ ...composition(f.width, f.height, 6), tracks: [audio] }));
+  }
   run.finish({ write: false });
   await waitIdle();
   expect((await detail(slug)).versions.map((v) => v.status)).toEqual(['complete']);
@@ -192,6 +221,194 @@ describe('subtitles routes', () => {
 
   it('an unknown creative answers 404', async () => {
     expect((await app.inject(`${P}/nope/subtitles`)).statusCode).toBe(404);
+  });
+});
+
+describe('the waveform of the subtitle timeline (Task 13)', () => {
+  it('the main format\'s mix as 1200 peaks over the video\'s duration, cached per audio fingerprint', { timeout: 60_000 }, async () => {
+    const slug = await madeWithVoice();
+    const mixer = vi.spyOn(subtitlesService, 'mixCreativeAudio');
+    const res = await app.inject(`${P}/${slug}/subtitles/waveform?version=1`);
+    expect(res.statusCode, res.body).toBe(200);
+    const body = res.json() as { peaks: number[]; durationMs: number };
+    expect(body.durationMs).toBe(6000);
+    expect(SUBTITLE_WAVEFORM_PEAKS).toBe(1200);
+    expect(body.peaks).toHaveLength(SUBTITLE_WAVEFORM_PEAKS);
+    // The tone plays for the first 3 s of 6: loud in the first half, silent in the second.
+    expect(Math.max(...body.peaks)).toBeGreaterThan(0.5);
+    expect(Math.max(...body.peaks.slice(700))).toBeLessThan(0.01);
+    expect(mixer).toHaveBeenCalledTimes(1);
+    const voiced = { ...composition(1920, 1080, 6), tracks: [{ id: 'a', kind: 'audio', clips: [{ id: 'vo', type: 'audio', src: 'assets/tone.wav', start: 0, duration: 3 }] }] } as unknown as Composition;
+    const cached = join(projectDir(), '.studio', 'cache', 'subtitles', slug, `wave-${audioFingerprint(voiced)}.json`);
+    expect(JSON.parse(await readFile(cached, 'utf8'))).toEqual(body);
+
+    // The second call reads the cache: no mix.
+    const again = await app.inject(`${P}/${slug}/subtitles/waveform?version=1`);
+    expect(again.json()).toEqual(body);
+    expect(mixer).toHaveBeenCalledTimes(1);
+  });
+
+  it('two requests at once make one mix', { timeout: 60_000 }, async () => {
+    const slug = await madeWithVoice();
+    const mixer = vi.spyOn(subtitlesService, 'mixCreativeAudio');
+    const [a, b] = await Promise.all([app.inject(`${P}/${slug}/subtitles/waveform?version=1`), app.inject(`${P}/${slug}/subtitles/waveform?version=1`)]);
+    expect(a.statusCode, a.body).toBe(200);
+    expect(b.json()).toEqual(a.json());
+    expect(mixer).toHaveBeenCalledTimes(1);
+  });
+
+  it('a version without audio has no peaks; an unknown version 404, a bad one 400', async () => {
+    const slug = await made();
+    const res = await app.inject(`${P}/${slug}/subtitles/waveform?version=1`);
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json()).toEqual({ peaks: [], durationMs: 6000 });
+    expect((await app.inject(`${P}/${slug}/subtitles/waveform?version=9`)).statusCode).toBe(404);
+    for (const q of ['', '?version=0', '?version=x']) expect((await app.inject(`${P}/${slug}/subtitles/waveform${q}`)).statusCode, q).toBe(400);
+  });
+});
+
+describe('saving a subtitle set (PUT, decision 1654)', () => {
+  const save = (slug: string, body: unknown, lang = 'en') => app.inject({ method: 'PUT', url: `${P}/${slug}/subtitles/${lang}`, payload: body as object });
+  const editedFirst = (cues: SubtitleCue[], text = 'Hello all of you'): SubtitleCue[] => cues.map((c, i) => (i === 0 ? { ...c, text, edited: true } : c));
+  const stored = async (slug: string, s: SubtitleSet = set('0'.repeat(64))) => {
+    const creativeDir = join(projectDir(), 'creatives', slug);
+    return { creativeDir, set: s, hash: await writeSubtitleSet(creativeDir, s) };
+  };
+
+  it('with the stored hash: saves the cues, keeps every other field, answers the new hash, touches the commit once and broadcasts', async () => {
+    const slug = await made();
+    const before = await stored(slug);
+    const touch = vi.spyOn(SubtitleCommits.prototype, 'touch');
+    broadcasts.length = 0;
+    const cues = editedFirst(before.set.cues);
+    const res = await save(slug, { baseHash: before.hash, cues });
+    expect(res.statusCode, res.body).toBe(200);
+    const saved: SubtitleSet = { ...before.set, cues };
+    expect(res.json()).toEqual({ hash: subtitleSetHash(saved) });
+    expect(await readSubtitleSet(before.creativeDir, 'en')).toEqual({ set: saved, hash: subtitleSetHash(saved) });
+    expect(touch).toHaveBeenCalledTimes(1);
+    expect(touch).toHaveBeenCalledWith(expect.objectContaining({ projectSlug: 'acme', creativeSlug: slug }), t().subtitles.commit({ title: 'Lancio', lang: 'en' }));
+    expect(broadcasts.filter((m) => m.type === 'subtitles')).toEqual([{ type: 'subtitles', project: 'acme', creative: slug, lang: 'en' }]);
+    // The next save starts from the hash it was given.
+    const again = await save(slug, { baseHash: subtitleSetHash(saved), cues: editedFirst(cues, 'Hi') });
+    expect(again.statusCode, again.body).toBe(200);
+  });
+
+  it('a stale baseHash gets 409 subtitles-conflict', async () => {
+    const slug = await made();
+    const before = await stored(slug);
+    const touch = vi.spyOn(SubtitleCommits.prototype, 'touch');
+    const res = await save(slug, { baseHash: 'f'.repeat(64), cues: editedFirst(before.set.cues) });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'subtitles-conflict', hash: before.hash });
+    expect((await readSubtitleSet(before.creativeDir, 'en'))!.hash).toBe(before.hash);
+    expect(touch).not.toHaveBeenCalled();
+  });
+
+  it('refuses a cue with end before start, a blank line or a bad body (400); no set 404, a language outside 400', async () => {
+    const slug = await made();
+    const before = await stored(slug);
+    const [first, ...rest] = before.set.cues;
+    const bad: unknown[] = [
+      { baseHash: before.hash, cues: [{ ...first!, end: first!.start - 1 }, ...rest] },
+      { baseHash: before.hash, cues: [{ ...first!, text: 'Hello\n ' }, ...rest] },
+      { baseHash: before.hash, cues: [{ ...first!, id: 'c2' }, ...rest] },
+      { baseHash: before.hash, cues: before.set.cues, lang: 'it' },
+      { baseHash: 'nope', cues: before.set.cues },
+      { cues: before.set.cues },
+    ];
+    for (const body of bad) {
+      const res = await save(slug, body);
+      expect(res.statusCode, JSON.stringify(body)).toBe(400);
+      expect(res.json()).toMatchObject({ code: 'invalid-request' });
+    }
+    expect((await save(slug, { baseHash: before.hash, cues: [] }, 'fr')).statusCode).toBe(404);
+    expect((await save(slug, { baseHash: before.hash, cues: [] }, 'xx')).statusCode).toBe(400);
+    expect((await readSubtitleSet(before.creativeDir, 'en'))!.hash).toBe(before.hash);
+  });
+
+  it('waits for the creative\'s set lock (the one the job\'s final merge holds)', async () => {
+    const slug = await made();
+    const before = await stored(slug);
+    let release!: () => void;
+    const held = subtitleSetLocks.run(before.creativeDir, () => new Promise<void>((r) => { release = r; }));
+    let answered = false;
+    const pending = save(slug, { baseHash: before.hash, cues: editedFirst(before.set.cues) }).then((r) => { answered = true; return r; });
+    await new Promise((r) => setTimeout(r, 150));
+    expect(answered).toBe(false);
+    release();
+    await held;
+    expect((await pending).statusCode).toBe(200);
+  });
+
+  it('a save during a running job is kept, edited, by the job\'s later write', { timeout: 60_000 }, async () => {
+    const slug = await madeWithVoice();
+    const before = await stored(slug, { ...set('0'.repeat(64)), cues: [{ id: 'c1', start: 200, end: 1800, text: 'Hello everyone' }] });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let transcribing = 0;
+    const words: Array<[number, number, string]> = [[0.2, 0.6, 'Hello'], [0.7, 1.8, 'everyone.'], [2.6, 2.9, 'Goodbye.']];
+    const transcriber: Transcriber = {
+      plan: async () => ({ run: 'whisper' }),
+      settings: async () => ({ method: 'whisper' }),
+      prepareChoice: async () => ({}),
+      recheck: async () => { throw new Error('nothing asks'); },
+      transcribe: async () => {
+        transcribing += 1;
+        await gate;
+        return { kind: 'whisper-small', segments: [], words: words.map(([from, to, text]) => ({ from, to, text })), language: 'en' };
+      },
+    } as Transcriber;
+    (subtitlesService as unknown as { deps: SubtitlesDeps }).deps.transcriber = transcriber;
+
+    const started = await app.inject({ method: 'POST', url: `${P}/${slug}/subtitles`, payload: {} });
+    expect(started.statusCode, started.body).toBe(200);
+    await vi.waitFor(() => expect(transcribing).toBe(1), { timeout: 20_000, interval: 20 });
+    expect((await jobs()).some((j) => j.kind === 'subtitles' && j.state === 'running')).toBe(true);
+    const cues = editedFirst(before.set.cues);
+    const res = await save(slug, { baseHash: before.hash, cues });
+    expect(res.statusCode, res.body).toBe(200);
+    release();
+    await waitIdle();
+
+    const after = (await readSubtitleSet(before.creativeDir, 'en'))!.set;
+    expect(after.timing.fingerprint).not.toBe('0'.repeat(64));
+    expect(after.cues[0]).toEqual(cues[0]);
+    expect(after.cues.slice(1).map((c) => c.text)).toEqual(['Goodbye.']);
+  });
+});
+
+describe('"Tempi controllati": the timing marked as checked (final review, M3)', () => {
+  const checked = (slug: string, body: unknown, lang = 'en') => app.inject({ method: 'POST', url: `${P}/${slug}/subtitles/${lang}/timing-checked`, payload: body as object });
+
+  it('with the stored hash: the timing becomes the latest version\'s audio, the cues stay, the commit is touched and it broadcasts', async () => {
+    const slug = await made();
+    const creativeDir = join(projectDir(), 'creatives', slug);
+    const before = set('0'.repeat(64));
+    const hash = await writeSubtitleSet(creativeDir, before);
+    const touch = vi.spyOn(SubtitleCommits.prototype, 'touch');
+    broadcasts.length = 0;
+    const res = await checked(slug, { baseHash: hash });
+    expect(res.statusCode, res.body).toBe(200);
+    const after: SubtitleSet = { ...before, timing: { version: 1, format: 'youtube-16x9', fingerprint: audioFingerprint(composition(1920, 1080, 6)) } };
+    expect(res.json()).toEqual({ hash: subtitleSetHash(after), timing: after.timing });
+    expect(await readSubtitleSet(creativeDir, 'en')).toEqual({ set: after, hash: subtitleSetHash(after) });
+    expect(((await app.inject(`${P}/${slug}/subtitles`)).json() as { sets: SubtitlesSummary[] }).sets[0]).toMatchObject({ timingChanged: false });
+    expect(touch).toHaveBeenCalledTimes(1);
+    expect(broadcasts.filter((m) => m.type === 'subtitles')).toEqual([{ type: 'subtitles', project: 'acme', creative: slug, lang: 'en' }]);
+  });
+
+  it('a stale baseHash gets 409 subtitles-conflict and changes nothing; a bad body 400, no set 404', async () => {
+    const slug = await made();
+    const creativeDir = join(projectDir(), 'creatives', slug);
+    const hash = await writeSubtitleSet(creativeDir, set('0'.repeat(64)));
+    const stale = await checked(slug, { baseHash: 'f'.repeat(64) });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json()).toMatchObject({ code: 'subtitles-conflict', hash });
+    expect((await readSubtitleSet(creativeDir, 'en'))!.hash).toBe(hash);
+    expect((await checked(slug, { baseHash: 'nope' })).statusCode).toBe(400);
+    expect((await checked(slug, {})).statusCode).toBe(400);
+    expect((await checked(slug, { baseHash: hash }, 'fr')).statusCode).toBe(404);
   });
 });
 

@@ -93,6 +93,8 @@ export interface BriefPatch {
 /** Decision 917: how a creative turn ended, for the hooks that run when it settles (`onTurnSettled`). */
 export interface TurnSettled { state: string | undefined; savedVersion: number | null; stopped: boolean }
 export type TurnSettledHook = (ref: CreativeRef, jobId: string, outcome: TurnSettled) => Promise<void>;
+/** Task 14: a new version `n` was saved (by the turn `jobId`, or by a direct edit: null), for the hooks that note it in the chat. */
+export type VersionSavedHook = (ref: CreativeRef, n: number, jobId: string | null) => Promise<void>;
 /** Phase 15: what a variant group shares and propagates (spec §2): the brief (minus each variant's links), title and codebases. */
 export interface SharedBrief { brief: Brief; title?: string; linkedCodebases?: LinkedCodebase[] }
 
@@ -336,6 +338,7 @@ export class CreativeTurnService {
   private readonly turnDurations = new Map<string, number | null>();
   /** Decision 917: called when a creative turn settles (`onTurnSettled`). */
   private readonly settleHooks: TurnSettledHook[] = [];
+  private readonly versionHooks: VersionSavedHook[] = [];
   /** Phase 3 of the single agent: the helpers of group turns, by job id, until they settle. */
   private readonly helpers = new Map<string, HelperOf>();
   /** Phase 3: see `GroupRouter` (set by the group turn service). */
@@ -543,6 +546,16 @@ export class CreativeTurnService {
 
   /** Decision 917: `fn` runs when each creative turn settles, after its pending brief is applied and before its queue may go on. */
   onTurnSettled(fn: TurnSettledHook): void { this.settleHooks.push(fn); }
+
+  /** Task 14: `fn` runs once for each new version saved (an agent turn, a direct edit or a duplicated format), after its chat entry. */
+  onVersionSaved(fn: VersionSavedHook): void { this.versionHooks.push(fn); }
+
+  /** Runs the version hooks for version `n` (see `onVersionSaved`). Never throws: a hook never fails the save. */
+  async versionSaved(ref: CreativeRef, n: number, jobId: string | null): Promise<void> {
+    for (const hook of this.versionHooks) {
+      await hook(ref, n, jobId).catch((err: Error) => console.warn(`Motion Studio: the actions after v${n} of ${ref.creativeSlug} failed: ${err.message}`));
+    }
+  }
 
   /**
    * Decision 917: a chat line about the creative, from the running turn `jobId` when there is one: written after the agent's
@@ -1555,6 +1568,8 @@ export class CreativeTurnService {
           ? a.incompleteDuration({ n, duration: String(off.duration), target: String(off.target) })
           : a.incompleteOther({ n, count: problems.length }) });
       }
+      // Task 14: e.g. "Il video è cambiato: ricontrolla i tempi" when the version moved the audio under the subtitles.
+      await this.versionSaved(ref, n, jobId);
       // A version made without the agent after a restart keeps the restart's intent: the next agent turn still forks the
       // restored session (from this new version, which it now builds on).
       const resumeFrom = noAgent && creative.resumeFrom ? { version: n, sessionId: creative.resumeFrom.sessionId } : null;
