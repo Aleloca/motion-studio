@@ -53,7 +53,7 @@ export function readRuntimeSubtitles(v: unknown): { ok: true; subtitles: Runtime
     }
     cues.push({ start: c.start, end: c.end, text: c.text, ...(words ? { words } : {}) });
   }
-  return { ok: true, subtitles: { lang: v.lang, cues } };
+  return { ok: true, subtitles: { lang: v.lang, cues: Object.freeze(cues) as RuntimeCue[] } };
 }
 
 /**
@@ -84,7 +84,11 @@ export function activeCue(cues: ReadonlyArray<{ start: number; end: number }>, m
   return find(1, 0, t.size - 1);
 }
 
-/** A max tree over the cues' ends (leaves from `size`; past the last cue, -Infinity), cached per cue array. */
+/**
+ * A max tree over the cues' ends (leaves from `size`; past the last cue, -Infinity), cached per cue array. The cache
+ * assumes a cue array is never changed in place once drawn: `readRuntimeSubtitles` returns fresh, frozen arrays and
+ * `setSubtitles` replaces the whole set (a new array, a new tree).
+ */
 const endTrees = new WeakMap<object, { n: number; size: number; max: Float64Array }>();
 function endTree(cues: ReadonlyArray<{ end: number }>): { size: number; max: Float64Array } {
   const had = endTrees.get(cues);
@@ -172,7 +176,8 @@ export function drawSubtitles(el: HTMLElement, clip: SubtitlesClip, cue: Runtime
   const key = `${clip.id}|${p.highlight?.color ?? ''}`;
   const prev = drawn.get(el);
   let box = el.firstElementChild as HTMLElement | null;
-  if (!prev || prev.cue !== cue || prev.on !== on || prev.key !== key || !box) {
+  const rebuilt = !prev || prev.cue !== cue || prev.on !== on || prev.key !== key || !box;
+  if (rebuilt || !box) {
     box = el.ownerDocument.createElement('div');
     box.className = 'ms-subs-box';
     if (ranges) {
@@ -195,13 +200,14 @@ export function drawSubtitles(el: HTMLElement, clip: SubtitlesClip, cue: Runtime
   }
 
   const fs = p.fontSize;
+  const pad = p.background ? (p.boxPadding ?? Math.round(fs * 0.25)) : 0;
   const outline = p.outlineColor && (p.outlineWidth ?? 0) > 0 ? { color: p.outlineColor, width: p.outlineWidth! } : null;
   Object.assign(box.style, {
     boxSizing: 'border-box', maxWidth: `${Math.min(laneW, p.maxWidth * frame.width)}px`,
     fontFamily: o.fontFamily ?? 'sans-serif', fontSize: `${fs}px`, fontWeight: String(p.fontWeight ?? 'normal'),
     lineHeight: String(p.lineHeight ?? 1.2), color: p.color, textAlign: align,
     whiteSpace: 'pre-line', overflowWrap: 'break-word',
-    padding: p.background ? `${p.boxPadding ?? Math.round(fs * 0.25)}px` : '0px',
+    padding: `${pad}px`,
     borderRadius: p.background ? `${p.boxRadius ?? 0}px` : '0px',
     backgroundColor: p.background ?? 'transparent',
     // The stroke is centred on the glyph's edge: twice the width, painted under the fill, leaves `outlineWidth` outside.
@@ -209,6 +215,8 @@ export function drawSubtitles(el: HTMLElement, clip: SubtitlesClip, cue: Runtime
     paintOrder: outline ? 'stroke fill' : '',
     textShadow: p.shadow ? `0 ${round(fs * 0.04)}px ${round(fs * 0.15)}px rgba(0, 0, 0, 0.75)` : '',
   });
+  box.style.setProperty('text-wrap', 'balance');
+  if (rebuilt) fitWidth(box, pad);
 
   // The entrance: a pure function of the time since the cue start.
   const entrance = p.entrance ?? 'none';
@@ -218,6 +226,32 @@ export function drawSubtitles(el: HTMLElement, clip: SubtitlesClip, cue: Runtime
   box.style.opacity = entrance === 'none' || k >= 1 ? '1' : String(round(e, 4));
   box.style.transform = entrance === 'pop' && k < 1 ? `scale(${round(0.8 + 0.2 * e, 4)})`
     : entrance === 'slideUp' && k < 1 ? `translateY(${round((1 - e) * fs * 0.6, 2)}px)` : '';
+}
+
+/**
+ * A box shrinks to its text only while the text fits on one line: once it wraps, CSS gives it all the width it may take.
+ * So, once per new line (not every frame), the box is laid out at its natural width, its widest line is measured (the
+ * line boxes of a Range over its contents, grouped by their vertical middle) and the box gets that width plus its padding.
+ * Read in the box's own pixels (the ratio of its drawn to its layout width undoes the preview's scale and a `pop`
+ * entrance). Without layout (no line rects: jsdom, a hidden page) the natural width stays.
+ */
+function fitWidth(box: HTMLElement, pad: number): void {
+  box.style.width = '';
+  const range = box.ownerDocument.createRange();
+  range.selectNodeContents(box);
+  const rects = typeof range.getClientRects === 'function' ? [...range.getClientRects()].filter((r) => r.width > 0 && r.height > 0) : [];
+  const layoutW = box.offsetWidth;
+  const drawnW = box.getBoundingClientRect().width;
+  if (rects.length === 0 || !(layoutW > 0) || !(drawnW > 0)) return;
+  const lines: Array<{ mid: number; half: number; left: number; right: number }> = [];
+  for (const r of rects) {
+    const mid = r.top + r.height / 2;
+    const line = lines.find((l) => Math.abs(l.mid - mid) < l.half);
+    if (line) { line.left = Math.min(line.left, r.left); line.right = Math.max(line.right, r.right); } else lines.push({ mid, half: r.height / 2, left: r.left, right: r.right });
+  }
+  const widest = Math.max(...lines.map((l) => l.right - l.left)) * (layoutW / drawnW);
+  const width = Math.ceil(widest) + 2 * pad;
+  if (width < layoutW) box.style.width = `${width}px`;
 }
 
 const round = (v: number, digits = 1) => { const m = 10 ** digits; return Math.round(v * m) / m; };

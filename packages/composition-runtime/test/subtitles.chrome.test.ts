@@ -73,9 +73,12 @@ describe.skipIf(!chrome)('drawn subtitles in Chrome', () => {
       expect(info.errors).toEqual([]);
       expect(await page.eval('document.querySelector(".ms-subs").style.display')).toBe('none'); // t = 0: no cue
       await page.eval('window.__ms.seek(2)');
-      const r = await page.eval<{ top: number; bottom: number; left: number; right: number; text: string; on: string[]; font: boolean }>(`(() => {
+      const r = await page.eval<{ top: number; bottom: number; left: number; right: number; width: number; widest: number; text: string; on: string[]; font: boolean }>(`(() => {
         const b = document.querySelector('.ms-subs-box').getBoundingClientRect();
-        return { top: b.top, bottom: b.bottom, left: b.left, right: b.right, text: document.querySelector('.ms-subs').textContent,
+        const range = document.createRange(); range.selectNodeContents(document.querySelector('.ms-subs-box'));
+        const lines = new Map(); for (const q of range.getClientRects()) { if (!q.width) continue; const k = Math.round(q.top + q.height / 2); const l = [...lines.keys()].find((m) => Math.abs(m - k) < q.height / 2) ?? k; const v = lines.get(l) ?? [Infinity, -Infinity]; lines.set(l, [Math.min(v[0], q.left), Math.max(v[1], q.right)]); }
+        const widest = Math.max(...[...lines.values()].map(([a, z]) => z - a));
+        return { top: b.top, bottom: b.bottom, left: b.left, right: b.right, width: b.width, widest, text: document.querySelector('.ms-subs').textContent,
           on: [...document.querySelectorAll('[data-ms-word][data-on="true"]')].map((s) => s.textContent), font: document.fonts.check('bold 64px Mono') };
       })()`);
       expect(r.text).toBe('Motion Studio disegna\ni sottotitoli');
@@ -86,6 +89,9 @@ describe.skipIf(!chrome)('drawn subtitles in Chrome', () => {
       expect(r.top).toBeGreaterThanOrEqual(SAFE.top);
       expect(r.left).toBeGreaterThanOrEqual(SAFE.left);
       expect(r.right).toBeLessThanOrEqual(W - SAFE.right);
+      // The box hugs its widest line (plus its padding), also when the text wraps.
+      expect(r.width).toBeLessThanOrEqual(r.widest + 2 * 20 + 1);
+      expect(r.widest).toBeLessThan(840 - 2 * 20 - 50); // it did wrap short of the lane
       // Centred on the frame, though the safe zone is not (Reels-like insets 60 / 120).
       expect(Math.abs((r.left + r.right) / 2 - W / 2)).toBeLessThanOrEqual(1);
       const png = await page.screenshot();
