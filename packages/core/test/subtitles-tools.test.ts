@@ -512,7 +512,31 @@ describe('the prompt rules of drawn subtitles (spec §6.4)', () => {
       'highlight only when the user asks', 'reads window.msSubtitles and window.msActiveCue(ms) and writes the line with textContent only',
       'To turn drawing off, remove the track',
     ]) expect(look).toContain(x);
+    // No choice recorded yet: nothing about a previous one.
+    expect(p).not.toContain('The user chose');
     // Without the app actions (a repair attempt), none of it.
     expect(buildCreativePrompt({ slug: '2026-10-22-promo', creative: creative as never, presets: DEFAULT_FORMATS, version: 2, locale: 'it', kind: 'fix', problems: ['x'], appActions: true })).not.toContain('Drawn subtitles are the subtitles track');
+  });
+});
+
+describe('the prompt remembers the user\'s drawn-or-files choice (final review M1)', () => {
+  const creative = (subtitlesDrawn?: boolean) => ({
+    schemaVersion: 1, title: 'Promo', status: 'draft', error: null, resumeFrom: null, linkedCodebases: [], createdAt: '2026-10-22T10:00:00.000Z', updatedAt: '2026-10-22T10:00:00.000Z',
+    brief: { goal: 'Promo', message: '', formats: ['instagram-reel-9x16'], durationSec: 15, assets: [], notes: '' }, ...(subtitlesDrawn !== undefined ? { subtitlesDrawn } : {}),
+  }) as never;
+  const prompt = (drawn?: boolean) => buildCreativePrompt({ slug: '2026-10-22-promo', creative: creative(drawn), presets: DEFAULT_FORMATS, version: 3, locale: 'it', kind: 'iteration', userText: 'Rifai i sottotitoli', pins: [], appActions: true });
+  const line = (p: string) => p.split('\n').find((l) => l.startsWith('- The user chose')) ?? '';
+
+  it('"rifai i sottotitoli" after a drawn choice: start_subtitles with drawn true without asking again, unless the user says otherwise', () => {
+    const l = line(prompt(true));
+    expect(l).toContain('drawn into the video');
+    expect(l).toContain('call start_subtitles with drawn true without asking again');
+    expect(l).toContain('ask only when they say something new about how');
+  });
+
+  it('after a files-only choice: drawn false', () => {
+    const l = line(prompt(false));
+    expect(l).toContain('only as a track/file');
+    expect(l).toContain('call start_subtitles with drawn false without asking again');
   });
 });

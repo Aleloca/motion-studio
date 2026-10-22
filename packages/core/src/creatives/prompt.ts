@@ -524,7 +524,7 @@ export function identityPromptSection(kinds: ReadonlySet<'logo' | 'favicon' | 'a
  * Decision 917: the app actions the agent may take itself, with no confirmation card (the chat shows each one), and when.
  * With a brief whose text states another duration than its field (user note 6), the line that asks to settle it first.
  */
-export function appActionsSection(brief: CreativeFile['brief'], helper = false): string[] {
+export function appActionsSection(brief: CreativeFile['brief'], helper = false, subtitlesDrawn?: boolean): string[] {
   const stated = statedDurationSec([brief.goal, brief.message, brief.notes].join('\n'));
   return [
     '## Acting on the app (Motion Studio tools)',
@@ -542,6 +542,8 @@ export function appActionsSection(brief: CreativeFile['brief'], helper = false):
     // Decision 1640 (U9) and Task 19 (phase 3 restored drawing, decision 1710): drawn or files is the user's call; the text
     // comes only from the job, corrected with edit_subtitles; the look is the subtitles track's (spec §6.4).
     '- start_subtitles: makes the subtitles of this creative from the audio of the version you are making in this turn, on their own once your turn ends (it may take minutes; the chat tells the user when they are ready, with the subtitle editor and the .srt/.vtt files). Call it once, after the audio is final. When the user asks for subtitles without saying how, first ask with AskUserQuestion whether they want them drawn into the video or only as a track/file (.srt/.vtt, or a track in the MP4), then call start_subtitles with drawn set to the answer. When drawn subtitles are ready, Motion Studio asks you in a new turn to add the subtitles track. Never write subtitle text in text clips: subtitles come only from start_subtitles.',
+    // Final review M1: the user's last answer (`subtitlesDrawn`), so "redo the subtitles" does not ask it again.
+    ...(subtitlesDrawn === undefined ? [] : [`- The user chose subtitles ${subtitlesDrawn ? 'drawn into the video' : 'only as a track/file'} last time: when they ask to make or redo the subtitles without saying how, call start_subtitles with drawn ${subtitlesDrawn} without asking again; ask only when they say something new about how.`]),
     '- edit_subtitles: corrects the subtitles\' text when the user asks (e.g. "write Motion Studio with capitals everywhere"): replace for a word or a name in every line, cues for whole lines by id, each with was, the text you read (the ids and texts are in the creative\'s subtitles/<lang>.json: read it just before, never write that folder; a line the user corrected since refuses the edit, read it again). The lines you change count as the user\'s corrections.',
     '- Drawn subtitles are the subtitles track: one track of kind "subtitles" with one clip of type "subtitles" from 0 to the end, in every video format (never in a still). It draws the creative\'s subtitle set (the text is never in the composition; the user corrects it in the subtitle editor) with the style in its props. Unless the user asks for another look: a legible style in the brand fonts and colours, fontSize at least 4.5 % of the frame height, a contrast box (background) or an outline; in 9:16 formats position "bottom" with the line at least 18 % of the frame height above the bottom edge (above the platform\'s UI: margin counts from the format\'s safe zone, so add only what the safe zone lacks); a subtle entrance (fade or none); highlight only when the user asks for the spoken word coloured. For a look the props cannot give, template names an html layer (layers/*.html) that reads window.msSubtitles and window.msActiveCue(ms) and writes the line with textContent only. preview_frames shows them as they will be drawn. To turn drawing off, remove the track.',
     `Use them only when the user asks for it, or when the brief clearly needs it${helper ? '' : ' (name_formats: always, see Format names)'}. You cannot archive or delete anything, nor change settings, keys or permissions.`,
@@ -711,7 +713,7 @@ export function buildCreativePrompt(i: PromptInput): string {
   if (i.variant && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...variantSection(i.variant));
   if (i.helper && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...helperSection(i.variant?.letter, i.helper));
   if (i.context && i.kind !== 'fix' && i.kind !== 'redirect') parts.push(...contextSections(i.context, contract, brief.services));
-  if (i.appActions && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...appActionsSection(brief, Boolean(i.helper)));
+  if (i.appActions && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...appActionsSection(brief, Boolean(i.helper), i.creative.subtitlesDrawn));
   if (i.appActions && !i.helper && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...formatNamesSection(brief, locale, Boolean(i.variant)));
   if (contract === 'compositions') {
     // Agent-facing: the format's own facts only (Motion Studio renders, so no extensions, bitrates or encoding flags).
