@@ -401,6 +401,9 @@ export const it: Messages = {
     recheckFailed: (p) => `Il controllo non è riuscito: ${p.detail}`,
     pickInstalled: 'Già installato altrove? Indicalo in Impostazioni',
   },
+  subtitles: {
+    commit: (p) => `Sottotitoli: ${p.title} (${p.lang})`,
+  },
   briefSession: {
     filled: (p) => `Compilato il brief: ${p.parts}`,
     parts: {
@@ -835,6 +838,7 @@ export const it: Messages = {
     turnLabel: (p) => `Turno · ${p.name}`,
     briefLabel: (p) => `${p.name} · brief con l'agente`,
     videoAnalysisLabel: (p) => `Analisi video · ${p.file}`,
+    subtitlesLabel: (p) => `Sottotitoli · ${p.title}`,
     creativeLabel: (p) => `Creatività · ${p.title}`,
     localizeLabel: (p) => `Traduzione · ${p.title}`,
     localizeStarted: (p) => `Traduzione della v${p.n} in ${p.locales}`,

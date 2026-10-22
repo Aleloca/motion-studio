@@ -265,7 +265,8 @@ describe('carry-over safety (review fixes)', { timeout: 90_000 }, () => {
     const start = vi.spyOn(launcher, 'start');
     await run(service.start(ref, { text: 'due', pins: [] }, { formats: [REEL] }));
     const dirs = start.mock.calls[0]![0].protectedDirs!;
-    expect(dirs).toEqual([1, 2].map((k) => store.outputsDir(ref.creativeSlug, k)));
+    // The subtitles change only through the agent's subtitle tool (Task 4).
+    expect(dirs).toEqual([...[1, 2].map((k) => store.outputsDir(ref.creativeSlug, k)), join(store.dir(ref.creativeSlug), 'subtitles')]);
     expect(dirs).not.toContain(store.outputsDir(ref.creativeSlug, 3));
   });
 

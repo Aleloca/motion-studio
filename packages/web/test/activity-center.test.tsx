@@ -28,6 +28,14 @@ describe('Activity center · the brief session (decision 1421)', () => {
   });
 });
 
+describe('Activity center · subtitles (decision 1640)', () => {
+  it('a subtitles job belongs to its creative and its row opens the creative', () => {
+    const sub = job({ id: 's1', key: 'subtitles:C:\\Users\\me\\ws:acme:lancio', kind: 'subtitles', label: 'Sottotitoli · Lancio' });
+    expect(jobPlace(sub)).toEqual({ project: 'acme', creative: 'lancio' });
+    expect(jobHref(sub)).toBe('#/p/acme/c/lancio');
+  });
+});
+
 describe('Activity center · exports in the background (decision 974, user report 20)', () => {
   const exp = (over: Partial<JobSummary> = {}) => job({ id: 'e1', key: 'export:C:\\Users\\me\\ws:acme:lancio:0a1b2c3d', kind: 'export', label: 'Export · Lancio estivo', state: 'running', ...over });
 

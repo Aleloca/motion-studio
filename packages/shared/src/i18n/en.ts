@@ -403,6 +403,9 @@ export const en = {
     recheckFailed: (p: { detail: string }) => `The check failed: ${p.detail}`,
     pickInstalled: 'Installed somewhere else? Point to it in Settings',
   },
+  subtitles: {
+    commit: (p: { title: string; lang: string }) => `Subtitles: ${p.title} (${p.lang})`,
+  },
   briefSession: {
     filled: (p: { parts: string }) => `Filled in the brief: ${p.parts}`,
     parts: {
@@ -846,6 +849,7 @@ export const en = {
     turnLabel: (p: { name: string }) => `Turn · ${p.name}`,
     briefLabel: (p: { name: string }) => `${p.name} · brief with the agent`,
     videoAnalysisLabel: (p: { file: string }) => `Video analysis · ${p.file}`,
+    subtitlesLabel: (p: { title: string }) => `Subtitles · ${p.title}`,
     creativeLabel: (p: { title: string }) => `Creative · ${p.title}`,
     localizeLabel: (p: { title: string }) => `Translation · ${p.title}`,
     localizeStarted: (p: { n: number; locales: string }) => `Translating v${p.n} into ${p.locales}`,

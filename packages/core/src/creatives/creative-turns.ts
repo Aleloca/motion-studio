@@ -43,6 +43,7 @@ import { sumUsage } from '../usage/usage-tracker.ts';
 import { carryLocalizations } from '../localization/carry.ts';
 import { instanceComposition, type InstanceComposition } from '../localization/store.ts';
 import { currentLocale, t } from '../i18n.ts';
+import { subtitlesDir } from '../subtitles/store.ts';
 
 export interface CreativeTurnDeps {
   queue: JobQueue; launcher: AgentLauncher; git: Git; media: MediaTools; vault: SecretsVault;
@@ -1352,7 +1353,8 @@ export class CreativeTurnService {
           const sessionBefore = live.sessionId;
           const run = await this.deps.launcher.start({
             kind: 'creative', jobId, projectSlug: ref.projectSlug, projectDir: ref.projectDir, creativeSlug: slug, codebases: existing,
-            protectedDirs: earlier.map((d) => join(creativeDir, 'outputs', d)),
+            // The subtitle sets change only through the agent's subtitle tool (decision 1636), never by a file write.
+            protectedDirs: [...earlier.map((d) => join(creativeDir, 'outputs', d)), subtitlesDir(creativeDir)],
             request: { prompt, resumeSessionId, forkSession, model },
             usage: { version: n, attempt }, sandboxed,
             // The brief as read at this turn's start (Task 7): a change from the chat applies from the next turn.
