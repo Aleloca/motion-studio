@@ -5,7 +5,7 @@
 // banner when the video changed under the set ("Rifai i tempi", and "Tempi controllati" to keep the timing), and "Rifai la
 // trascrizione…" in the header. Task 26: the subtitle languages in the header (LangSwitcher), a translation's stale lines
 // marked with "Ritraduci" per line and "Ritraduci tutto", the source text under each translated line.
-import { SUPPORTED_LOCALES, drawsSubtitles, sourceCueOf, staleCues, type CreativeDetail, type JobSummary, type LocaleTag, type SubtitleCue } from '@motion-studio/shared';
+import { SUPPORTED_LOCALES, drawsSubtitles, missingSourceLines, sourceCueOf, staleCues, translationSources, type CreativeDetail, type JobSummary, type LocaleTag, type SubtitleCue } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
 import { api, ApiError } from '../../api.ts';
 import { CompositionPlayer, type CompositionMedia } from '../../components/CompositionPlayer.tsx';
@@ -353,7 +353,7 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
   };
   const edited = useMemo(() => state.cues.filter((c) => c.edited).length, [state.cues]);
   const sources = useSourceLines(slug, creative, translation ? summary?.sourceLang ?? null : null, tick);
-  const marks = useMemo(() => staleOf(state.cues, sources), [state.cues, sources]);
+  const marks = useMemo(() => staleOf(state.cues, sources, !timingChanged), [state.cues, sources, timingChanged]);
   const retranslate = useRetranslate(slug, creative, lang, save.flush);
   return (
     <main ref={root} className="ms-subs" data-lang={lang}>
@@ -371,7 +371,7 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
             <Icon name="download" size={13} />.{ext}
           </Button>
         ))}
-        {translation && marks.size > 0 ? <RetranslateAll count={marks.actionable} busy={retranslate.busy} run={() => void retranslate.run()} /> : null}
+        {translation && (marks.size > 0 || marks.actionable > 0) ? <RetranslateAll count={marks.actionable} busy={retranslate.busy} run={() => void retranslate.run()} /> : null}
         {downloadError ? <span className="ms-subs-head-error" role="alert">{downloadError}</span> : null}
         {switchError ? <span className="ms-subs-head-error" role="alert">{s.notSavedSwitch}</span> : null}
         {retranslate.note ? <span className={retranslate.note.ok ? 'ms-subs-head-note' : 'ms-subs-head-error'} role={retranslate.note.ok ? 'status' : 'alert'}>{retranslate.note.text}</span> : null}
@@ -419,6 +419,7 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
           <Button size="sm" variant="outline" disabled={!loaded} onClick={addLine}>{s.addLine}</Button>
         </div>
         {noRoom ? <p className="ms-subs-note" role="status">{s.noRoom}</p> : null}
+        {translation && marks.missing.length > 0 ? <MissingLines lines={marks.missing} sourceLang={summary?.sourceLang} /> : null}
         {finding ? <FindReplace cues={state.cues} dispatch={dispatch} /> : null}
         <div ref={listBox} className="ms-subs-scroll">
           {loadError ? (
@@ -461,23 +462,50 @@ function useSourceLines(slug: string, creative: string, sourceLang: LocaleTag | 
 /**
  * Task 26: each translated line against its source now (the shared `staleCues`, on the editor's lines, unsaved edits
  * included): `changed` (its source line says something else now, shown with that text) or `gone` (no source line under it
- * any more); a current line shows the text it was translated from. `actionable`: what "Ritraduci tutto" translates again,
- * the changed lines the user did not correct (the corrected ones and the gone ones it leaves to the user).
+ * any more); a current line shows the text it was translated from. `missing`: the source lines no line stands for
+ * ("Manca la traduzione", `missingSourceLines`, final review I2). `actionable`: the lines "Ritraduci tutto" translates: for a
+ * translation timed as its source (`following`), the changed lines the user did not correct (the corrected ones and the
+ * gone ones it leaves to the user) and the missing ones; for one its source's retime left behind, every source line no
+ * corrected line stands for (it is translated again whole, I2).
  */
-export function staleOf(cues: readonly SubtitleCue[], source: readonly SubtitleCue[] | null): { rows: Map<string, CueSource>; size: number; actionable: number } {
+export function staleOf(cues: readonly SubtitleCue[], source: readonly SubtitleCue[] | null, following = true):
+  { rows: Map<string, CueSource>; size: number; actionable: number; missing: SubtitleCue[] } {
   const rows = new Map<string, CueSource>();
-  if (!source) return { rows, size: 0, actionable: 0 };
+  if (!source) return { rows, size: 0, actionable: 0, missing: [] };
   const stale = new Set(staleCues({ cues: [...cues] }, { cues: [...source] }));
-  let actionable = 0;
+  const missing = missingSourceLines(cues, source, following);
+  let changed = 0;
   for (const c of cues) {
     if (!c.source) continue;
     if (!stale.has(c.id)) { rows.set(c.id, { state: 'current', text: c.source.text }); continue; }
     const now = sourceCueOf(c, source);
     if (!now) { rows.set(c.id, { state: 'gone', text: c.source.text }); continue; }
     rows.set(c.id, { state: 'changed', text: now.text });
-    if (!c.edited) actionable++;
+    if (!c.edited) changed++;
   }
-  return { rows, size: stale.size, actionable };
+  let actionable = changed + missing.length;
+  if (!following) {
+    const partner = translationSources(cues, source, false);
+    const corrected = new Set(cues.filter((c) => c.edited).map((c) => partner.get(c.id)?.id));
+    actionable = source.filter((s) => !corrected.has(s.id)).length;
+  }
+  return { rows, size: stale.size, actionable, missing };
+}
+
+/** Final review I2: the source lines with no line in this language ("Manca la traduzione"), covered by "Ritraduci tutto". */
+function MissingLines({ lines, sourceLang }: { lines: readonly SubtitleCue[]; sourceLang: LocaleTag | undefined }) {
+  const s = useT().subtitles;
+  return (
+    <section className="ms-subs-missing" aria-label={s.missingTranslation}>
+      <p className="ms-subs-missing-head"><Icon name="warn" size={12} />{s.missingTranslation}<span className="ms-subs-count">{lines.length}</span></p>
+      <p className="ms-subs-missing-hint">{s.missingTranslationHint}</p>
+      <ul className="ms-subs-missing-list">
+        {lines.map((c) => (
+          <li key={c.id}><span className="ms-subs-missing-at">{msText(c.start)}</span><span className="ms-subs-missing-text" lang={sourceLang}>{c.text}</span></li>
+        ))}
+      </ul>
+    </section>
+  );
 }
 
 /**

@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import {
-  isSupportedLocale, issuesText, SUBTITLE_LIMITS, staleCues, subtitleCuesHash, subtitleSetHash, subtitleSetSchema, subtitleSetText, subtitlesJobKey, toSrt, toVtt, transcriptionChoiceSchema,
+  isSupportedLocale, issuesText, missingSourceLines, SUBTITLE_LIMITS, staleCues, subtitleCuesHash, subtitleSetHash, subtitleSetSchema, subtitleSetText, subtitlesJobKey, toSrt, toVtt, transcriptionChoiceSchema,
   type FormatPreset, type JobSummary, type LocaleTag, type ServerMessage, type SubtitleSet, type SubtitlesSummary, type TranscriptionPending,
 } from '@motion-studio/shared';
 import { CreativeStore } from '../creatives/creative-store.ts';
@@ -49,7 +49,8 @@ export async function subtitleTimingNow(projectDir: string, creativeSlug: string
  * version's main format (false when that version has no video), each set against the video it was timed on (the original,
  * or its language's own: Task 24); for a translation, against its source's timing (Task 25: it follows its source, whose
  * writers carry their times over, `followSource`; a difference is a safety signal, never a retime of the translation). `staleCues`: a translation's lines whose source line changed since (`staleCues`
- * against the original speech set; 0 without one, and for a set made from speech).
+ * against the original speech set; 0 without one, and for a set made from speech). `missing`: a translation's source lines no
+ * line of it stands for (`missingSourceLines`, final review I2), counted the same way.
  */
 export async function subtitleSummaries(projectDir: string, creativeSlug: string, presets: () => Promise<FormatPreset[]>): Promise<SubtitlesSummary[]> {
   const sets = await listSubtitleSets(new CreativeStore(projectDir).dir(creativeSlug));
@@ -69,6 +70,7 @@ export async function subtitleSummaries(projectDir: string, creativeSlug: string
       cues: s.cues.length, edited: s.cues.filter((c) => c.edited).length, hash: subtitleSetHash(s), cuesHash: subtitleCuesHash(s),
       timing: s.timing, timingChanged: now !== null && now.fingerprint !== s.timing.fingerprint,
       staleCues: translation && source ? staleCues(s, source).length : 0,
+      missing: translation && source ? missingSourceLines(s.cues, source.cues, s.timing.fingerprint === source.timing.fingerprint).length : 0,
     };
   }));
 }

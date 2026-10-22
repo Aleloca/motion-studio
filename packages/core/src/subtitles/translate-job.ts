@@ -1,6 +1,6 @@
 import { lstat } from 'node:fs/promises';
 import {
-  SUBTITLE_LIMITS, SUBTITLE_RULES, SUBTITLES_DIR, SUBTITLES_SCHEMA_ID, staleCues, subtitleSetSchema, subtitleSetText, translationSources, wrapLines,
+  SUBTITLE_LIMITS, SUBTITLE_RULES, SUBTITLES_DIR, SUBTITLES_SCHEMA_ID, staleCues, subtitleSetSchema, subtitleSetText, normalizeToken, translationSources, wrapLines,
   type JobSummary, type LocaleTag, type ServerMessage, type SubtitleCue, type SubtitleSet,
 } from '@motion-studio/shared';
 import { z } from 'zod';
@@ -153,6 +153,12 @@ export function subtitleTranslateTools(): Record<'submit_subtitle_translation', 
   };
 }
 
+/** Two texts the same for pairing a line with its source (words lower-cased, punctuation and spacing aside). */
+const sameText = (a: string, b: string) => {
+  const key = (t: string) => t.split(/\s+/).map(normalizeToken).filter(Boolean).join(' ');
+  return key(a) === key(b);
+};
+
 /**
  * The cues of the target set after a translation (anti-goal 1). Which target line stands for which source line is
  * `translationSources` (`following`: the target is timed as its source), never the ids (a source timed again recycles them,
@@ -162,12 +168,15 @@ export function subtitleTranslateTools(): Record<'submit_subtitle_translation', 
  * corrected lines plus a translated line for each source line no corrected line stands for: every other line is replaced or,
  * its source gone, dropped. With it (the source ids asked for), the target's lines with the translated ones put in, each in
  * place of the listed lines and of the uncorrected translated lines that stood for the same source line.
+ * `following` false (a full translation of a set its source's retime left behind): a corrected line moves to the times of the
+ * source line its text pairs with (I2).
  */
 export function mergeTranslation(o: {
   source: readonly SubtitleCue[]; target: readonly SubtitleCue[]; texts: ReadonlyMap<string, string>; explicit: ReadonlySet<string> | null;
   listed?: ReadonlySet<string>; following?: boolean;
 }): SubtitleCue[] {
-  const partner = translationSources(o.target, o.source, o.following ?? true);
+  const following = o.following ?? true;
+  const partner = translationSources(o.target, o.source, following);
   const standsFor = (c: SubtitleCue) => partner.get(c.id)?.id ?? null;
   const translating = new Set(o.source.filter((s) => o.texts.has(s.id) && (!o.explicit || o.explicit.has(s.id))).map((s) => s.id));
   const kept = o.target.filter((c) => {
@@ -176,6 +185,13 @@ export function mergeTranslation(o: {
     if (!o.explicit) return false;
     const s = standsFor(c);
     return c.source === undefined || s === null || !translating.has(s);
+  }).map((c) => {
+    // A full translation of a set its source's retime left behind (I2): a corrected line whose source text is the source line's
+    // it pairs with goes to that line's times (its text untouched), as the set takes the source's timing.
+    const to = !o.explicit && !following && c.edited && c.source ? partner.get(c.id) : null;
+    if (!to || !sameText(to.text, c.source!.text) || (to.start === c.start && to.end === c.end)) return c;
+    const delta = to.start - c.start;
+    return { ...c, start: to.start, end: to.end, ...(c.words ? { words: c.words.map((w) => ({ ...w, start: Math.max(0, w.start + delta), end: Math.max(0, w.end + delta) })) } : {}) };
   });
   // A full translation leaves the source lines a corrected line stands for (corrected during the run too) to that line.
   const corrected = new Set(o.explicit ? [] : kept.filter((c) => c.edited).map(standsFor));

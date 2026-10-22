@@ -182,6 +182,28 @@ describe('a translation in the editor (Task 26)', () => {
     expect(screen.getByText(/2 righe senza più il testo originale/)).toBeTruthy();
   });
 
+  it('a source line with no translation shows "Manca la traduzione" and counts in "Ritraduci tutto" (final review I2)', async () => {
+    SOURCE.push({ id: 'c5', start: 6000, end: 7000, text: 'Nuova riga' });
+    try {
+      await open('en');
+      const missing = await screen.findByRole('region', { name: 'Manca la traduzione' });
+      expect(within(missing).getByText('Nuova riga')).toBeTruthy();
+      // The changed c2 and the missing c5.
+      expect((await screen.findByRole('button', { name: /Ritraduci tutto/ })).textContent).toContain('2');
+    } finally { SOURCE.pop(); }
+  });
+
+  it('a translation not timed as its source: "Ritraduci tutto" counts every source line it translates again (final review I2)', async () => {
+    SETS = [sum('it'), sum('en', { origin: 'translation', sourceLang: 'it', timingChanged: true })];
+    TRANSLATED = TRANSLATED.map((c) => (c.id === 'c1' ? { ...c, edited: true as const } : c));
+    await open('en');
+    // c2 and c3: c1 is the user's.
+    const all = await screen.findByRole('button', { name: /Ritraduci tutto/ });
+    expect(all.textContent).toContain('2');
+    await userEvent.click(all);
+    expect(api.retranslateSubtitles).toHaveBeenCalledWith('acme', 'lancio', 'en', {});
+  });
+
   it('a translation can be deleted, after a confirmation when it has corrected lines; the original speech cannot', async () => {
     SETS = [sum('it'), sum('en', { origin: 'translation', sourceLang: 'it', edited: 2 })];
     TRANSLATED = TRANSLATED.map((c) => (c.id === 'c2' ? c : { ...c, edited: true }));

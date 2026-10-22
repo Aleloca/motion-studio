@@ -172,7 +172,7 @@ describe('subtitles routes', () => {
 
     const overview = (await app.inject(`${P}/${slug}/subtitles`)).json() as { sets: SubtitlesSummary[] };
     const summary: SubtitlesSummary = {
-      lang: 'en', origin: 'speech', cues: 4, edited: 1, hash: subtitleSetHash(written), cuesHash: subtitleCuesHash(written), timing: written.timing, timingChanged: true, staleCues: 0,
+      lang: 'en', origin: 'speech', cues: 4, edited: 1, hash: subtitleSetHash(written), cuesHash: subtitleCuesHash(written), timing: written.timing, timingChanged: true, staleCues: 0, missing: 0,
     };
     expect(overview.sets).toEqual([summary]);
     expect((await detail(slug)).subtitles).toEqual([summary]);
@@ -658,6 +658,19 @@ describe('subtitle languages (Task 25, spec §6.5, U8)', () => {
     expect(translateStarts.at(-1)).toEqual({ target: 'en', ids: ['c2'] });
   });
 
+  it('retranslate without ids also asks for the source lines no line stands for ("Manca la traduzione", final review I2)', async () => {
+    const slug = await made();
+    await writeSubtitleSet(dirOf(slug), speech());
+    await writeSubtitleSet(dirOf(slug), translated(['Hi everyone', 'Book in three taps', 'Get the app']));
+    await writeSubtitleSet(dirOf(slug), speech([...ORIGINAL, { id: 'c4', start: 6000, end: 7000, text: 'Nuova riga' }]));
+    expect((await sets(slug)).find((s) => s.lang === 'en')).toMatchObject({ staleCues: 0, missing: 1 });
+    const res = await retranslate(slug, 'en');
+    expect(res.statusCode, res.body).toBe(200);
+    expect(translateStarts).toEqual([{ target: 'en', ids: [], sourceIds: ['c4'] }]);
+    await app.inject({ method: 'POST', url: `/api/jobs/${(res.json() as { job: JobSummary }).job.id}/stop` });
+    await waitIdle();
+  });
+
   it('retranslate without ids drops the uncorrected lines whose source line is gone (decision 1690), corrected ones stay', async () => {
     const slug = await made();
     await writeSubtitleSet(dirOf(slug), speech());
@@ -694,7 +707,8 @@ describe('subtitle languages (Task 25, spec §6.5, U8)', () => {
     expect(kept.statusCode, kept.body).toBe(200);
     expect(kept.json()).not.toHaveProperty('dropped');
     expect((await readSubtitleSet(dirOf(slug), 'en'))!.set.cues.map((c) => c.id)).toEqual(['c1', 'c2', 'c3']);
-    expect(translateStarts).toEqual([{ target: 'en', ids: ['c3'] }]);
+    // Translated again whole from the source now (final review I2): the job, not this request, replaces its lines.
+    expect(translateStarts).toEqual([{ target: 'en' }]);
 
     // Timed as its source, with a line gone and the translation of 'en' already running: dropped, then refused, said both.
     await writeSubtitleSet(dirOf(slug), { ...translated(['Hi everyone', 'Book in three taps', 'Get the app']), cues: [...en.cues.slice(0, 2), { id: 'c9', start: 8000, end: 9000, text: 'Gone', source: { text: 'Sparita' } }] });
@@ -705,6 +719,43 @@ describe('subtitle languages (Task 25, spec §6.5, U8)', () => {
     expect((await readSubtitleSet(dirOf(slug), 'en'))!.set.cues.map((c) => c.id)).toEqual(['c1', 'c2']);
     await app.inject({ method: 'POST', url: `/api/jobs/${(kept.json() as { job: JobSummary }).job.id}/stop` });
     await waitIdle();
+  });
+
+  it('"Ritraduci tutto" on a translation a shifted retime left behind translates every source line now, corrections kept (final review I2)', async () => {
+    const slug = await made();
+    // The source after a retime with a 3 s intro: its fresh lines renamed (f1…), the line the user corrected kept (c1).
+    const shifted: SubtitleCue[] = [
+      { id: 'f1', start: 0, end: 2500, text: 'Benvenuti' },
+      { id: 'c1', start: 3200, end: 4800, text: 'Ciao a voi', edited: true },
+      { id: 'f2', start: 5000, end: 6500, text: 'Prenota in tre tocchi' },
+      { id: 'f3', start: 7000, end: 8500, text: 'Scarica l\'app' },
+    ];
+    await writeSubtitleSet(dirOf(slug), speech(shifted, '2'.repeat(64)));
+    // The English could not follow: its old times and timing; its c2 corrected by the user.
+    const en = translated(['Hi everyone', 'Book in three taps', 'Get the app']);
+    await writeSubtitleSet(dirOf(slug), { ...en, cues: en.cues.map((c) => (c.id === 'c2' ? { ...c, text: 'Book now', edited: true as const } : c)) });
+    // "Ciao a voi" has no line standing for it.
+    expect((await sets(slug)).find((s) => s.lang === 'en')).toMatchObject({ timingChanged: true, missing: 1 });
+    const res = await retranslate(slug, 'en');
+    expect(res.statusCode, res.body).toBe(200);
+    expect(translateStarts).toEqual([{ target: 'en' }]);
+    await vi.waitFor(() => expect(runner.runs.some((r) => r.req.prompt.startsWith('Motion Studio: translate'))).toBe(true), { timeout: 10_000 });
+    const run = runner.runs.find((r) => r.req.prompt.startsWith('Motion Studio: translate'))!;
+    // From the source as it is now; the corrected line's source line is left to it.
+    expect(run.req.prompt).toContain('f1 | 00:00.000–00:02.500 | Benvenuti');
+    expect(run.req.prompt).toContain('c1 | 00:03.200–00:04.800 | Ciao a voi');
+    expect(run.req.prompt).toContain('f3 | 00:07.000–00:08.500 | Scarica l\'app');
+    expect(run.req.prompt).not.toContain('f2 | ');
+    const submitted = await tool(run, 'submit_subtitle_translation', { cues: [{ id: 'f1', text: 'Welcome' }, { id: 'c1', text: 'Hi you all' }, { id: 'f3', text: 'Get the app' }] });
+    expect(submitted.statusCode, submitted.body).toBe(200);
+    run.finish({ write: false });
+    await waitIdle();
+    const after = (await readSubtitleSet(dirOf(slug), 'en'))!.set;
+    expect(after.cues.map((c) => [c.id, c.start, c.end, c.text, c.edited ?? false])).toEqual([
+      ['f1', 0, 2500, 'Welcome', false], ['c1', 3200, 4800, 'Hi you all', false], ['c2', 5000, 6500, 'Book now', true], ['f3', 7000, 8500, 'Get the app', false],
+    ]);
+    expect(after.timing).toEqual((await readSubtitleSet(dirOf(slug), 'it'))!.set.timing);
+    expect((await sets(slug)).find((s) => s.lang === 'en')).toMatchObject({ timingChanged: false, staleCues: 0, missing: 0 });
   });
 
   it('"Tempi controllati" refuses a translation: it follows its source (review round 2)', async () => {

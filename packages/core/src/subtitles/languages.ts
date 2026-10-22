@@ -1,4 +1,4 @@
-import { sourceCueOf, staleCues, type JobSummary, type LocaleTag, type ServerMessage, type SubtitleCue, type SubtitleSet } from '@motion-studio/shared';
+import { missingSourceLines, sourceCueOf, staleCues, type JobSummary, type LocaleTag, type ServerMessage, type SubtitleCue, type SubtitleSet } from '@motion-studio/shared';
 import { CreativeStore } from '../creatives/creative-store.ts';
 import type { CreativeRef } from '../creatives/creative-turns.ts';
 import { t } from '../i18n.ts';
@@ -39,48 +39,55 @@ export async function assertNoSubtitleSet(ref: CreativeRef, lang: LocaleTag): Pr
 
 /**
  * Task 25 ("Ritraduci"): translates lines of `lang`'s translation again. With `ids`, those (lines the user corrected included:
- * they asked for them, decision 1686). Without, every stale line (`staleCues`) the user did not correct; first, under the set
- * lock, the uncorrected lines no source line overlaps any more go (as in a full translation, decision 1690), committed and
- * told to the clients (`dropped`, also on a refusal of the translation after); not for a translation that is not timed as its
- * source now (its lines may only have moved). Nothing left to ask: `job: null` when lines went, else 409 `subtitles-nothing-stale`
- * (saying so when the stale lines are all corrected ones). 404 without the set, 409 `subtitles-lang-spoken` for a set made
- * from speech; the translation's own refusals otherwise.
+ * they asked for them, decision 1686; a line whose source is gone is skipped, final review I2). Without, for a translation
+ * timed as its source: every stale line (`staleCues`) the user did not correct and every source line no line stands for
+ * ("Manca la traduzione", `missingSourceLines`); first, under the set lock, the uncorrected lines no source line overlaps any
+ * more go (as in a full translation, decision 1690), committed and told to the clients (`dropped`, also on a refusal of the
+ * translation after). For a translation not timed as its source (a retime it could not follow, final review I2): a full
+ * translation from the source now (every line the user did not correct replaced, or dropped when its source is gone).
+ * Nothing left to ask: `job: null` when lines went, else 409 `subtitles-nothing-stale` (saying so when the stale lines are
+ * all corrected ones). 404 without the set, 409 `subtitles-lang-spoken` for a set made from speech; the translation's own
+ * refusals otherwise.
  */
 export async function retranslateSubtitles(deps: RetranslateDeps, ref: CreativeRef, lang: LocaleTag, ids?: string[]): Promise<{ job: JobSummary | null; dropped?: number }> {
   const store = new CreativeStore(ref.projectDir);
   const dir = store.dir(ref.creativeSlug);
   const name = languageName(lang);
-  const plan = await subtitleSetLocks.run(dir, async () => {
+  const plan = await subtitleSetLocks.run(dir, async (): Promise<{ ids: string[]; sourceIds: string[]; dropped: number; corrected: number; full?: true }> => {
     const sets = await listSubtitleSets(dir);
     const target = sets.find((s) => s.lang === lang);
     if (!target) throw new CodedError(404, t().errors.subtitlesNoLang({ lang: name }), 'subtitles-not-found');
     if (target.origin === 'speech') throw new CodedError(409, t().errors.subtitlesLangSpoken({ lang: name }), 'subtitles-lang-spoken');
-    if (ids) return { ids, dropped: 0, corrected: 0 };
+    if (ids) return { ids, sourceIds: [], dropped: 0, corrected: 0 };
     const source = speechSourceSet(sets);
     if (!source) throw new CodedError(409, t().errors.subtitlesNoSource, 'subtitles-no-source');
     // Only a translation timed as its source is now can tell a line whose source is gone (review round 2): one that could not
-    // follow the source's new times would lose lines that merely moved.
-    const follows = target.timing.fingerprint === source.timing.fingerprint;
-    const gone = (c: SubtitleCue) => follows && !c.edited && c.source !== undefined && sourceCueOf(c, source.cues) === null;
+    // follow the source's new times is translated again whole from the source now (final review I2).
+    if (target.timing.fingerprint !== source.timing.fingerprint) return { ids: [], sourceIds: [], dropped: 0, corrected: 0, full: true };
+    const gone = (c: SubtitleCue) => !c.edited && c.source !== undefined && sourceCueOf(c, source.cues) === null;
     const kept: SubtitleSet = { ...target, cues: target.cues.filter((c) => !gone(c)) };
     const dropped = target.cues.length - kept.cues.length;
     if (dropped > 0) await writeSubtitleSet(dir, kept);
     const edited = new Set(kept.cues.filter((c) => c.edited).map((c) => c.id));
     const stale = staleCues(kept, source);
-    return { ids: stale.filter((id) => !edited.has(id)), dropped, corrected: stale.filter((id) => edited.has(id)).length };
+    return {
+      ids: stale.filter((id) => !edited.has(id)), sourceIds: missingSourceLines(kept.cues, source.cues, true).map((c) => c.id),
+      dropped, corrected: stale.filter((id) => edited.has(id)).length,
+    };
   });
+  if (plan.full) return { job: await deps.translate.start(ref, { target: lang }) };
   if (plan.dropped > 0) {
     deps.commits.touch(ref, t().subtitles.commit({ title: (await store.get(ref.creativeSlug)).title, lang }));
     try { deps.broadcast({ type: 'subtitles', project: ref.projectSlug, creative: ref.creativeSlug, lang }); } catch { /* a faulty listener */ }
   }
   const dropped = plan.dropped > 0 ? { dropped: plan.dropped } : {};
-  if (plan.ids.length === 0 && !ids) {
+  if (plan.ids.length === 0 && plan.sourceIds.length === 0 && !ids) {
     if (plan.dropped > 0) return { job: null, ...dropped };
     const text = plan.corrected > 0 ? t().errors.subtitlesNothingStaleCorrected({ lang: name }) : t().errors.subtitlesNothingStale({ lang: name });
     throw new CodedError(409, text, 'subtitles-nothing-stale');
   }
   try {
-    return { job: await deps.translate.start(ref, { target: lang, ids: plan.ids }), ...dropped };
+    return { job: await deps.translate.start(ref, { target: lang, ids: plan.ids, ...(plan.sourceIds.length > 0 ? { sourceIds: plan.sourceIds } : {}) }), ...dropped };
   } catch (err) {
     // The lines dropped stay dropped: the refusal says so too.
     if (err instanceof CodedError && plan.dropped > 0) err.dropped = plan.dropped;

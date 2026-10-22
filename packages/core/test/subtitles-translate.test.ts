@@ -294,6 +294,24 @@ describe('SubtitleTranslateService', () => {
     ]);
   });
 
+  it('a listed line whose source is gone is skipped, not refused; a source line no line stands for (sourceIds) is added (final review I2)', async () => {
+    await translate({ target: 'en' }, EN);
+    const en = (await readSubtitleSet(dir(), 'en'))!.set;
+    await writeSubtitleSet(dir(), { ...en, cues: [...en.cues, { id: 'c9', start: 8000, end: 9000, text: 'Gone', source: { text: 'Sparita' } }] });
+    await writeSubtitleSet(dir(), speech([...SOURCE, { id: 'c4', start: 6000, end: 7000, text: 'Nuova riga' }]));
+    const { run, job } = await translate({ target: 'en', ids: ['c9', 'c1'], sourceIds: ['c4'] }, { c1: 'Hello all', c4: 'A new line' });
+    expect(job?.state).toBe('succeeded');
+    expect(run.req.prompt).toContain('c1 | ');
+    expect(run.req.prompt).toContain('c4 | 00:06.000–00:07.000 | Nuova riga');
+    expect(run.req.prompt).not.toContain('c9 | ');
+    expect((await readSubtitleSet(dir(), 'en'))!.set.cues.map((c) => [c.id, c.text])).toEqual([
+      ['c1', 'Hello all'], ['c2', EN.c2], ['c3', EN.c3], ['c4', 'A new line'], ['c9', 'Gone'],
+    ]);
+    // Only lines whose source is gone: nothing to translate.
+    await expect(service.start(ref, { target: 'en', ids: ['c9'] })).rejects.toMatchObject({ status: 409, apiCode: 'subtitles-nothing-to-translate' });
+    await expect(service.start(ref, { target: 'en', ids: [], sourceIds: ['nope'] })).rejects.toMatchObject({ status: 400, apiCode: 'subtitles-no-cues' });
+  });
+
   it('a tool call with an unknown id or a text over two lines is a 400 naming the id; nothing of that call is kept', async () => {
     const job = await service.start(ref, { target: 'en' });
     const run = await runner.next();
