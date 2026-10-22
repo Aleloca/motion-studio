@@ -383,3 +383,25 @@ export function sourceCueOf(cue: Pick<SubtitleCue, 'start' | 'end'>, source: rea
   }
   return best;
 }
+
+/**
+ * The source line each line of a translation stands for (final review C1, I2), by the line's id. Timed as its source
+ * (`following`: the same timing), the source line it overlaps most (`sourceCueOf`, as `staleCues`). Not timed as its source
+ * (its times are not the source's: a retime it could not follow), the source line its source text pairs with in order
+ * (`certainPairs`), else the one it overlaps most. A line without `source` (one the user wrote) stands for the source line it
+ * overlaps most. Never by id: the ids of a source timed again are recycled. Null: none.
+ */
+export function translationSources(cues: readonly SubtitleCue[], source: readonly SubtitleCue[], following: boolean): Map<string, SubtitleCue | null> {
+  const paired = new Map<string, SubtitleCue>();
+  if (!following) {
+    const from = [...cues].filter((c) => c.source).sort((a, b) => a.start - b.start || a.end - b.end);
+    for (const [i, j] of certainPairs(from.map((c) => pairingText(c.source!.text)), source.map((c) => pairingText(c.text)))) paired.set(from[i]!.id, source[j]!);
+  }
+  return new Map(cues.map((c) => [c.id, paired.get(c.id) ?? sourceCueOf(c, source)]));
+}
+
+/** The source lines no line of the translation stands for (`translationSources`): "Manca la traduzione" (final review I2). */
+export function missingSourceLines(cues: readonly SubtitleCue[], source: readonly SubtitleCue[], following: boolean): SubtitleCue[] {
+  const covered = new Set([...translationSources(cues, source, following).values()].map((s) => s?.id));
+  return source.filter((s) => !covered.has(s.id));
+}

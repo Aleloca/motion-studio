@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { followSourceTimes, subtitleCueSchema, alignToScript, buildCues, cueWarnings, mergeKeepingEdited, relocateCues, wrapLines, type SubtitleCue } from '../src/index.ts';
+import { followSourceTimes, missingSourceLines, translationSources, subtitleCueSchema, alignToScript, buildCues, cueWarnings, mergeKeepingEdited, relocateCues, wrapLines, type SubtitleCue } from '../src/index.ts';
 
 const w = (text: string, start: number, end: number) => ({ text, start, end });
 
@@ -250,5 +250,28 @@ describe('followSourceTimes (Task 25, review round 3)', () => {
     const r = followSourceTimes([tr('c1', 0, 1000, 'Uno'), tr('c2', 1200, 2000, 'Due')], same, same.map((c) => ({ ...c })));
     expect(r.complete).toBe(true);
     expect(at(r)).toEqual([['c1', 0, 1000], ['c2', 1200, 2000]]);
+  });
+});
+
+describe('translationSources / missingSourceLines (final review C1, I2)', () => {
+  const src = (list: Array<[string, number, number, string]>): SubtitleCue[] => list.map(([id, start, end, text]) => ({ id, start, end, text }));
+  const tr = (id: string, start: number, end: number, from: string | null, edited = false): SubtitleCue =>
+    ({ id, start, end, text: `EN ${from ?? id}`, ...(from ? { source: { text: from } } : {}), ...(edited ? { edited: true as const } : {}) });
+  const ids = (m: Map<string, SubtitleCue | null>) => [...m].map(([id, s]) => [id, s?.id ?? null]);
+
+  it('timed as its source: by time (as staleCues), recycled ids never matter', () => {
+    const source = src([['f1', 0, 2000, 'a'], ['f2', 2000, 4000, 'b'], ['f3', 4000, 6000, 'c'], ['f4', 6000, 8000, 'd']]);
+    const cues = [tr('f1', 0, 2000, 'a'), tr('f2', 2000, 4000, 'b'), tr('c9', 4000, 6000, 'old c'), tr('f3', 6000, 8000, 'd', true)];
+    expect(ids(translationSources(cues, source, true))).toEqual([['f1', 'f1'], ['f2', 'f2'], ['c9', 'f3'], ['f3', 'f4']]);
+    expect(missingSourceLines(cues, source, true)).toEqual([]);
+  });
+
+  it('not timed as its source (+3 s intro): by the text it came from, in order; else by time; a line the user wrote by time', () => {
+    const source = src([['f1', 0, 3000, 'intro'], ['f2', 3000, 5000, 'a'], ['f3', 5000, 7000, 'b'], ['f4', 7000, 9000, 'new']]);
+    const cues = [tr('c1', 0, 2000, 'a'), tr('c2', 2000, 4000, 'b', true), tr('c3', 4500, 6500, 'gone'), tr('u1', 8500, 9000, null, true)];
+    expect(ids(translationSources(cues, source, false))).toEqual([['c1', 'f2'], ['c2', 'f3'], ['c3', 'f3'], ['u1', 'f4']]);
+    // By time they would stand for the intro (twice), b and the new line: a would be the one missing.
+    expect(missingSourceLines(cues, source, false).map((c) => c.id)).toEqual(['f1']);
+    expect(missingSourceLines(cues, source, true).map((c) => c.id)).toEqual(['f2']);
   });
 });

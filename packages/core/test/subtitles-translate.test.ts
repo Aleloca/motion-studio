@@ -264,6 +264,36 @@ describe('SubtitleTranslateService', () => {
     await expect(service.start(ref, { target: 'en', ids: ['nope'] })).rejects.toMatchObject({ status: 400, apiCode: 'subtitles-no-cues' });
   });
 
+  it('recycled ids (final review C1): "Ritraduci" on a stale line never touches another line the user corrected that has its source\'s id', async () => {
+    // The source after a second retime: its fresh lines renamed f1…f4; the English f3 is the user's correction of "d" (6–8 s).
+    const source = [
+      { id: 'f1', start: 0, end: 2000, text: 'a' }, { id: 'f2', start: 2000, end: 4000, text: 'b' },
+      { id: 'f3', start: 4000, end: 6000, text: 'c' }, { id: 'f4', start: 6000, end: 8000, text: 'd' },
+    ];
+    await writeSubtitleSet(dir(), speech(source));
+    await writeSubtitleSet(dir(), english([
+      { id: 'f1', start: 0, end: 2000, text: 'A', source: { text: 'a' } }, { id: 'f2', start: 2000, end: 4000, text: 'B', source: { text: 'b' } },
+      { id: 'c9', start: 4000, end: 6000, text: 'Old C', source: { text: 'old c' } },
+      { id: 'f3', start: 6000, end: 8000, text: 'MY CORRECTION', edited: true, source: { text: 'd' } },
+    ]));
+    const { run, job } = await translate({ target: 'en', ids: ['c9'] }, { f3: 'C' });
+    expect(job?.state).toBe('succeeded');
+    expect(run.req.prompt).toContain('f3 | 00:04.000–00:06.000 | c');
+    const after = (await readSubtitleSet(dir(), 'en'))!.set;
+    expect(after.cues.map((c) => [c.id, c.start, c.text, c.edited ?? false])).toEqual([
+      ['f1', 0, 'A', false], ['f2', 2000, 'B', false], ['c9', 4000, 'C', false], ['f3', 6000, 'MY CORRECTION', true],
+    ]);
+    expect(after.cues[2]!.source).toEqual({ text: 'c' });
+    // "Ritraduci" on the corrected line itself: the source line it stands for ("d", f4), never the source line named f3.
+    const again = await translate({ target: 'en', ids: ['f3'] }, { f4: 'D' });
+    expect(again.job?.state).toBe('succeeded');
+    expect(again.run.req.prompt).toContain('f4 | 00:06.000–00:08.000 | d');
+    expect(again.run.req.prompt).not.toContain('f3 | ');
+    expect((await readSubtitleSet(dir(), 'en'))!.set.cues.map((c) => [c.id, c.start, c.text])).toEqual([
+      ['f1', 0, 'A'], ['f2', 2000, 'B'], ['c9', 4000, 'C'], ['f4', 6000, 'D'],
+    ]);
+  });
+
   it('a tool call with an unknown id or a text over two lines is a 400 naming the id; nothing of that call is kept', async () => {
     const job = await service.start(ref, { target: 'en' });
     const run = await runner.next();
