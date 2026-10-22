@@ -84,6 +84,17 @@ describe('CreativeTurnService', { timeout: 90_000 }, () => {
     for (const { args } of all) expect(args.slice(args.indexOf('--allowedTools') + 1)).toEqual([...AGENT_ALLOWED_TOOLS]);
   });
 
+  it('a turn Motion Studio asks for itself (app): its instruction reaches the prompt only, never the chat as the user\'s (subtitles Task 19)', async () => {
+    await finalState((await service.start(ref)).id);
+    const job = await service.start(ref, { text: 'Motion Studio: add the subtitles track.', pins: [] }, { app: { request: 'Sottotitoli disegnati nel video' } });
+    expect(await finalState(job.id)).toBe('succeeded');
+    expect((await prompts()).at(-1)!.prompt).toContain('Motion Studio: add the subtitles track.');
+    const conv = await store.readConversation(ref.creativeSlug);
+    expect(conv.filter((e) => e.type === 'user')).toEqual([]);
+    // (The fake agent echoes its prompt as its own text: only the user's entries are checked.)
+    expect((await store.readVersions(ref.creativeSlug)).at(-1)).toMatchObject({ n: 2, request: 'Sottotitoli disegnati nel video' });
+  });
+
   it('rewrites .studio/context.md before each turn', async () => {
     await writeFile(join(ref.projectDir, '.studio', 'context.md'), 'manomesso');
     await finalState((await service.start(ref)).id);

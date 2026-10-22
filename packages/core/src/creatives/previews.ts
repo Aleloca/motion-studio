@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { lstat, mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
-import { compositionProblemText, INSTANCE_FOLDER_SOURCE, messages, type Composition, type FormatPreset, type Locale, type LocaleTag, type PreviewSessionInfo, type StagedAsset, type StagedSvgEdit, type VersionEntry } from '@motion-studio/shared';
+import { compositionProblemText, INSTANCE_FOLDER_SOURCE, messages, sha256Hex, type Composition, type FormatPreset, type Locale, type LocaleTag, type PreviewSessionInfo, type StagedAsset, type StagedSvgEdit, type VersionEntry } from '@motion-studio/shared';
 import { loadComposition } from '../compositions/composition-files.ts';
 import { EDITOR_STAGING, startCompositionServer, type CompositionServer, type CompositionSession, type SessionMediaFile } from '../compositions/composition-server.ts';
 import { noteCoreChange } from '../core-changes.ts';
@@ -18,7 +18,7 @@ import { sessionMediaOf, type MediaNormalizer, type PreparedMedia } from '../ren
 import { PreviewLane, PreviewLaneBusyError } from '../render/preview-lane.ts';
 import type { RenderEngine } from '../render/renderer.ts';
 import type { RuntimeSubtitles } from '@motion-studio/composition-runtime/page';
-import { drawsSubtitles, stageDefaultSubtitles } from '../subtitles/store.ts';
+import { defaultSubtitleLang, drawsSubtitles, readSubtitleSet, stageDefaultSubtitles } from '../subtitles/store.ts';
 import { CodedError } from '../workspace-store.ts';
 import { isRealDirChain, realDirChain } from './core-files.ts';
 import { CreativeStore } from './creative-store.ts';
@@ -70,8 +70,20 @@ export const storyboardSchema = z.object({
     width: z.number().int().positive(),
     height: z.number().int().positive(),
   })).max(MAX_STORYBOARD_SCENES + 1),
+  /**
+   * Subtitles Task 19: the hash of the subtitle set its frames drew (`stageDefaultSubtitles`), null when its composition draws
+   * subtitles but none was found; absent when it draws none. A storyboard whose set changed since is made again.
+   */
+  subtitles: z.string().regex(HEX64).nullable().optional(),
 });
 export type Storyboard = z.infer<typeof storyboardSchema>;
+
+/**
+ * The storyboard's content key in its image URLs: the composition hash, mixed with the drawn set's when it draws subtitles
+ * (a storyboard remade for corrected subtitles never reuses a URL).
+ */
+export const storyboardKey = (sb: Pick<Storyboard, 'hash' | 'subtitles'>): string =>
+  (sb.subtitles === undefined ? sb.hash : sha256Hex(new TextEncoder().encode(`${sb.hash}:${sb.subtitles ?? 'none'}`))).slice(0, 16);
 
 /** `<project>/.studio/cache/storyboards/<creative>/v<N>/<format>`; `format` is the composition folder's name. */
 export const storyboardDir = (projectDir: string, creativeSlug: string, n: number, format: string) =>
@@ -329,10 +341,25 @@ export class PreviewService {
     }
   }
 
-  /** The storyboard index of (version, format) when it exists and matches `hash`; null otherwise. */
+  /**
+   * The storyboard index of (version, format) when it exists and matches `hash`, and the subtitle set it drew is still the
+   * one its render would draw (Task 19); null otherwise.
+   */
   async readStoryboard(ref: VersionFormatRef, folder: string, hash: string): Promise<Storyboard | null> {
     const sb = await readJsonFile(join(storyboardDir(ref.projectDir, ref.creativeSlug, ref.n, folder), 'storyboard.json'), storyboardSchema).catch(() => null);
-    return sb && sb.hash === hash ? sb : null;
+    if (!sb || sb.hash !== hash) return null;
+    return sb.subtitles === undefined || sb.subtitles === await this.subtitlesHash(ref) ? sb : null;
+  }
+
+  /** The hash of the set a render of the version draws by default (the brief's pairing), null without one. */
+  private async subtitlesHash(ref: VersionFormatRef): Promise<string | null> {
+    try {
+      const brief = (await new CreativeStore(ref.projectDir).get(ref.creativeSlug)).brief;
+      const lang = await defaultSubtitleLang(ref.creativeDir, brief);
+      return lang ? (await readSubtitleSet(ref.creativeDir, lang))?.hash ?? null : null;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -351,6 +378,8 @@ export class PreviewService {
       if (!loaded.ok || loaded.hash !== hash) return null;
       const plan = storyboardPlan(loaded.composition);
       const unique = [...new Set(plan.map((p) => p.t))];
+      // Read before the frames: a set corrected while they are drawn leaves an older key, so the next read makes them again.
+      const subtitles = drawsSubtitles(loaded.composition) ? { subtitles: await this.subtitlesHash(ref) } : {};
       const compDir = join(ref.creativeDir, 'outputs', `v${ref.n}`, 'compositions', folder);
       const r = await this.frames({ ref, folder, preset, composition: loaded.composition, times: unique, width: Math.min(STORYBOARD_WIDTH, loaded.composition.width), imageFormat: 'jpeg', ...(signal ? { signal } : {}) });
       if (this.closing.signal.aborted) throw new Error('closed');
@@ -373,7 +402,7 @@ export class PreviewService {
         }
         const sb: Storyboard = {
           schemaVersion: 2, hash, width: Math.min(STORYBOARD_WIDTH, loaded.composition.width),
-          frames: plan.map((p) => ({ ...p, ...files.get(p.t)! })),
+          frames: plan.map((p) => ({ ...p, ...files.get(p.t)! })), ...subtitles,
         };
         await writeFile(join(temp, 'storyboard.json'), `${JSON.stringify(sb, null, 2)}\n`, { flag: 'wx' });
         await rm(dir, { recursive: true, force: true });

@@ -118,14 +118,14 @@ const TOOLS = [
     drawn: { type: 'boolean', description: 'true: drawn into the video; false: only as files (.srt/.vtt) or a track in the MP4' },
     lang: str('Only when the user names the spoken language: its tag (e.g. "it", "en", "zh-Hans"). Leave it out to detect it'),
   }, required: ['drawn'], additionalProperties: false } },
-  { name: 'edit_subtitles', description: 'Corrects the text of this creative\'s subtitles in one language now; their times stay. replace: a literal text found in every line (case-insensitive unless caseSensitive), e.g. "motion studio" → "Motion Studio"; cues: the whole text of lines by id (the ids are in creatives/<slug>/subtitles/<lang>.json: read it, never write it). The lines you change count as the user\'s corrections (a new transcription keeps them). An unknown id changes nothing. Returns how many lines changed.', inputSchema: { type: 'object', properties: {
+  { name: 'edit_subtitles', description: 'Corrects the text of this creative\'s subtitles in one language now; their times stay. replace: a literal text found in every line (case-insensitive unless caseSensitive), e.g. "motion studio" → "Motion Studio"; cues: the whole text of lines by id, each with was, its text as you read it (the ids and texts are in creatives/<slug>/subtitles/<lang>.json: read it just before, never write it); if a line changed since (the user corrected it), nothing is changed: read it again. The lines you change count as the user\'s corrections (a new transcription keeps them). An unknown id changes nothing. Returns how many lines changed.', inputSchema: { type: 'object', properties: {
     lang: str('Language tag of the subtitles, e.g. "it"'),
     replace: { type: 'array', maxItems: 20, items: { type: 'object', properties: {
       find: str('Text to find (literal)', { minLength: 1, maxLength: 200 }), with: str('Replacement', { maxLength: 200 }), caseSensitive: { type: 'boolean', description: 'Match the case exactly (default: no)' },
     }, required: ['find', 'with'], additionalProperties: false } },
     cues: { type: 'array', maxItems: 200, items: { type: 'object', properties: {
-      id: str('Line id', { minLength: 1, maxLength: 32 }), text: str('The line\'s new text, at most two lines (\\n between them)', { minLength: 1, maxLength: 200 }),
-    }, required: ['id', 'text'], additionalProperties: false } },
+      id: str('Line id', { minLength: 1, maxLength: 32 }), was: str('The line\'s text as you read it', { maxLength: 200 }), text: str('The line\'s new text, at most two lines (\\n between them)', { minLength: 1, maxLength: 200 }),
+    }, required: ['id', 'was', 'text'], additionalProperties: false } },
   }, required: ['lang'], additionalProperties: false } },
 ];
 

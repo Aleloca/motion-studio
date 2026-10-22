@@ -2,7 +2,7 @@ import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import {
-  alignToScript, buildCues, effectiveLinks, mergeKeepingEdited, SILENCE_NO_SPEECH, SUBTITLE_LIMITS, SUBTITLES_DIR, SUBTITLES_SCHEMA_ID, subtitleLangOf, subtitleSetSchema,
+  alignToScript, buildCues, creativeJobKey, effectiveLinks, mergeKeepingEdited, SILENCE_NO_SPEECH, SUBTITLE_LIMITS, SUBTITLES_DIR, SUBTITLES_SCHEMA_ID, subtitleLangOf, subtitleSetSchema,
   subtitleSetText, subtitlesJobKey,
   type Brief, type ConversationEntry, type FormatPreset, type JobSummary, type LocaleTag, type ServerMessage, type SubtitleCue, type SubtitleSet,
   type TimedWord, type TranscribeMethod, type TranscriptionChoice, type TranscriptionPending, type VersionEntry,
@@ -12,6 +12,7 @@ import { precheckLimitMs, untilAborted, type Transcriber } from '../analysis/vid
 import { realDirChain, writeThroughTemp } from '../creatives/core-files.ts';
 import { CreativeStore } from '../creatives/creative-store.ts';
 import type { CreativeRef, CreativeTurnService } from '../creatives/creative-turns.ts';
+import { groupJobKey } from '../creatives/group-turn.ts';
 import { execCommand, type CommandExec } from '../exec.ts';
 import { findPreset } from '../formats/format-catalog.ts';
 import { currentLocale, t } from '../i18n.ts';
@@ -62,7 +63,13 @@ export interface SubtitlesDeps {
 export interface SubtitlesStart { mode: 'new' | 'retime'; lang?: LocaleTag; drawn?: boolean }
 
 /** What the style turn of drawn subtitles needs of the creative turns (Task 19). */
-export type StyleTurnHost = Pick<CreativeTurnService, 'start' | 'turnActive' | 'postMessage' | 'side'>;
+export type StyleTurnHost = Pick<CreativeTurnService, 'start' | 'memberOf'>;
+
+/**
+ * The style turn's instruction (Task 19), for the agent's prompt only (agent-facing, English): the user sees the app line
+ * `subtitles.styleStarted` and the version's request `subtitles.styleVersionRequest` instead.
+ */
+export const SUBTITLES_STYLE_INSTRUCTION = 'Motion Studio: the subtitles the user asked to see drawn into the video are ready. Add the subtitles track to every video format, with its style (see "Drawn subtitles are the subtitles track"), as a new version. Change nothing else.';
 
 /** A subtitles job queued or running: one per creative. */
 interface Active {
@@ -171,6 +178,8 @@ function alignVoices(words: TimedWord[], ic: InstanceComposition, scripts: Reado
  */
 export class SubtitlesService {
   private readonly active = new Map<string, Active>();
+  /** The creatives whose style turn is being started or waits (Task 19). */
+  private readonly styling = new Set<string>();
   private readonly readyHooks: Array<(ref: CreativeRef, r: { lang: LocaleTag; drawn: boolean }, jobId: string) => void> = [];
   private readonly ff: CommandExec;
 
@@ -182,30 +191,49 @@ export class SubtitlesService {
   onReady(fn: (ref: CreativeRef, r: { lang: LocaleTag; drawn: boolean }, jobId: string) => void): void { this.readyHooks.push(fn); }
 
   /**
-   * Task 19 (spec §6.2): a drawn job (`jobId`) is ready: the agent is asked for the `subtitles` track with its style
-   * (`subtitles.styleRequest`, a new version). Nothing when the latest version already has the track (drawn, or switched
-   * off by hiding it). A turn of the creative running, or requests waiting in its queue: the request is queued behind them
-   * (the creative's queue, which starts it by itself after a turn that saved a version); otherwise the turn starts now. A
-   * refusal is a chat line. Never throws.
+   * Task 19 (spec §6.2): a drawn job (`jobId`) is ready: Motion Studio asks the agent for the `subtitles` track with its style
+   * in a turn of its own (`start`'s `app` option: the instruction goes to the agent's prompt only, never as a user message;
+   * the chat says it with an app line). Nothing when the latest version already has the track (drawn, or switched off by
+   * hiding it). While a job of the creative runs or waits (a turn, a translation) or, for a grouped variant, its group's turn
+   * (decision 1680), the turn waits for them all to end, then the track is checked again; a job among them that failed or
+   * was stopped drops it (said in the chat: no spending the user did not see coming). A turn that started in between (409)
+   * is waited for too. Any other refusal is a chat line. One at a time per creative. Never throws.
    */
-  async styleTurn(turns: StyleTurnHost, ref: CreativeRef, jobId: string): Promise<'started' | 'queued' | 'skipped'> {
-    const text = t().subtitles.styleRequest;
+  async styleTurn(turns: StyleTurnHost, ref: CreativeRef, jobId: string): Promise<'started' | 'skipped'> {
+    const key = keyOf(ref);
+    if (this.styling.has(key)) return 'skipped';
+    this.styling.add(key);
+    const say = (level: 'info' | 'warning', text: string) =>
+      this.deps.turns.noteFromTurn(jobId, ref, { type: 'system', at: new Date().toISOString(), level, text, origin: 'agent' }).catch(() => {});
     try {
-      if (await this.latestHasSubtitlesTrack(ref)) return 'skipped';
-      const queue = () => turns.postMessage(ref, { clientId: `subtitles-style-${jobId}`, text, pins: [], mode: 'queued' }).then(() => 'queued' as const);
-      const waiting = (await turns.side.read(ref.projectDir, ref.creativeSlug)).queued?.length ?? 0;
-      if (turns.turnActive(ref) || waiting > 0) return await queue();
-      try {
-        await turns.start(ref, { text, pins: [] });
+      const member = await turns.memberOf(ref).catch(() => null);
+      const keys = new Set([creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), ...(member ? [groupJobKey(ref.root, ref.projectSlug, member.host)] : [])]);
+      let waited = false;
+      for (;;) {
+        if (await this.latestHasSubtitlesTrack(ref)) return 'skipped';
+        const busy = this.deps.queue.list().filter((j) => keys.has(j.key) && (j.state === 'queued' || j.state === 'running'));
+        if (busy.length > 0) {
+          if (!waited) await say('info', t().subtitles.styleWaiting);
+          waited = true;
+          const ends = await Promise.all(busy.map((j) => this.deps.queue.whenSettled(j.id)));
+          if (ends.some((e) => e && e.state !== 'succeeded')) { await say('warning', t().subtitles.styleNotStarted({ reason: t().subtitles.styleAfterStop })); return 'skipped'; }
+          continue;
+        }
+        try {
+          await turns.start(ref, { text: SUBTITLES_STYLE_INSTRUCTION, pins: [] }, { app: { request: t().subtitles.styleVersionRequest } });
+        } catch (err) {
+          // Something of the creative started in between: wait for it.
+          if (this.deps.queue.list().some((j) => keys.has(j.key) && (j.state === 'queued' || j.state === 'running'))) continue;
+          throw err;
+        }
+        if (!waited) await say('info', t().subtitles.styleStarted);
         return 'started';
-      } catch (err) {
-        // A turn started in between (409): behind it.
-        if (turns.turnActive(ref)) return await queue();
-        throw err;
       }
     } catch (err) {
-      await this.deps.turns.noteFromTurn(jobId, ref, { type: 'system', at: new Date().toISOString(), level: 'warning', text: t().subtitles.styleNotStarted({ reason: errText(err) }) }).catch(() => {});
+      await say('warning', t().subtitles.styleNotStarted({ reason: errText(err) }));
       return 'skipped';
+    } finally {
+      this.styling.delete(key);
     }
   }
 

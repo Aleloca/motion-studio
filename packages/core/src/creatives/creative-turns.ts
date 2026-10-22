@@ -151,6 +151,9 @@ export interface GroupRouter {
   queueForGroup(ref: CreativeRef, m: UserMessageInput, variant: VariantId): Promise<void>;
 }
 
+/** Subtitles Task 19: a turn Motion Studio asks for itself (`start`'s `opts.app`); `request`: the version's request, shown. */
+export interface AppTurn { request: string }
+
 /** Phase 15: see `CreativeTurnService.setQueuedHook`. `hold`: the reason the request's turn waits with (null: none now). */
 export interface QueuedHook {
   hold: JobWaitReason | null;
@@ -341,6 +344,8 @@ export class CreativeTurnService {
   private readonly versionHooks: VersionSavedHook[] = [];
   /** Phase 3 of the single agent: the helpers of group turns, by job id, until they settle. */
   private readonly helpers = new Map<string, HelperOf>();
+  /** Subtitles Task 19: the turns Motion Studio asked for itself (`start`'s `opts.app`), by job id, until they settle. */
+  private readonly appTurns = new Map<string, AppTurn>();
   /** Phase 3: see `GroupRouter` (set by the group turn service). */
   private router: GroupRouter | null = null;
   constructor(private readonly deps: CreativeTurnDeps) {
@@ -356,10 +361,12 @@ export class CreativeTurnService {
    * `opts.fanout`: the request was sent to several variants at once (decision 1153; see `QueuedRequest.fanout`). Phase 3 of
    * the single agent: `opts.helper`, the turn is a helper of that group turn: `message` is the coordinator's instruction (no
    * user entry is written: the user's message is the group's), every entry it writes carries `groupJobId`, and its group-level
-   * actions are refused.
+   * actions are refused. Subtitles Task 19: `opts.app`, a turn Motion Studio asks for itself (the style turn of drawn
+   * subtitles): `message` is an instruction for the agent's prompt only, never written as the user's, and the version's
+   * request is `opts.app.request` (in the app language).
    */
-  async start(ref: CreativeRef, message?: { text: string; pins: Pin[] }, opts: { formats?: string[]; hold?: JobWaitReason; fanout?: FanoutTag; helper?: HelperOf } = {}): Promise<JobSummary> {
-    return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), () => this.startLocked(ref, message, opts.formats, undefined, opts.hold, opts.fanout, opts.helper));
+  async start(ref: CreativeRef, message?: { text: string; pins: Pin[] }, opts: { formats?: string[]; hold?: JobWaitReason; fanout?: FanoutTag; helper?: HelperOf; app?: AppTurn } = {}): Promise<JobSummary> {
+    return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), () => this.startLocked(ref, message, opts.formats, undefined, opts.hold, opts.fanout, opts.helper, opts.app));
   }
 
   /** Phase 3 of the single agent: see `GroupRouter`. */
@@ -879,7 +886,7 @@ export class CreativeTurnService {
     });
   }
 
-  private async startLocked(ref: CreativeRef, message: { text: string; pins: Pin[]; pinsVersion?: number } | undefined, formats: string[] | undefined, queued?: { clientId: string }, hold?: JobWaitReason, fanout?: FanoutTag, helper?: HelperOf): Promise<JobSummary> {
+  private async startLocked(ref: CreativeRef, message: { text: string; pins: Pin[]; pinsVersion?: number } | undefined, formats: string[] | undefined, queued?: { clientId: string }, hold?: JobWaitReason, fanout?: FanoutTag, helper?: HelperOf, app?: AppTurn): Promise<JobSummary> {
     const store = new CreativeStore(ref.projectDir);
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     // Same check the queue does, but before touching the creative's files.
@@ -904,7 +911,8 @@ export class CreativeTurnService {
     // Phase 3: a helper's entries carry its group turn from the first one on (the store stamps them); its message is the
     // coordinator's instruction, never written as the user's.
     if (helper) { this.helpers.set(jobId, helper); setHelperTag(ref.projectDir, ref.creativeSlug, helper.jobId); }
-    if (message && !helper) {
+    if (app) this.appTurns.set(jobId, app);
+    if (message && !helper && !app) {
       // A queued request starts as a user entry with `mode: 'queued'`. One that was first written as a live message (it
       // arrived when the agent had finished) is not written twice, unless it was edited in the queue meanwhile.
       const written = queued && (await store.readConversation(ref.creativeSlug, { own: true })).some((e) => e.type === 'user' && e.clientId === queued.clientId
@@ -975,10 +983,11 @@ export class CreativeTurnService {
     } catch (err) {
       this.live.delete(jobId);
       this.noAdd.delete(jobId);
+      this.appTurns.delete(jobId);
       if (helper) { this.helpers.delete(jobId); setHelperTag(ref.projectDir, ref.creativeSlug, null); }
       throw err;
     }
-    void this.deps.queue.whenSettled(job.id).then((settled) => { this.noAdd.delete(job.id); return this.turnSettled(ref, job.id, settled?.state); });
+    void this.deps.queue.whenSettled(job.id).then((settled) => { this.noAdd.delete(job.id); this.appTurns.delete(job.id); return this.turnSettled(ref, job.id, settled?.state); });
     return job;
   }
 
@@ -1524,7 +1533,7 @@ export class CreativeTurnService {
       await live.serial(async () => { live.phase = 'finalizing'; await this.drainLive(ref, store, live); });
       // Report 33: nothing to assemble; `keepable` already required a latest version.
       if (untouched && latest) {
-        await this.keptLatest(ref, store, { creative, latest, n, versions, live, sessionId: resumeSessionId, noAgent, request, aborted: signal.aborted });
+        await this.keptLatest(ref, store, { creative, latest, n, versions, live, sessionId: resumeSessionId, noAgent, request: this.appTurns.get(jobId)?.request ?? request, aborted: signal.aborted });
         return;
       }
       let saved: { outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: string | null; compositions?: VersionComposition[]; localizations?: VersionEntry['localizations']; durationOff?: { duration: number; target: number }; durationProblems?: string[] };
@@ -1554,7 +1563,7 @@ export class CreativeTurnService {
       // that could not follow, has no entry, so it would not count as a difference) and found no problem that is new
       // besides a duration off the brief (which the re-check settles against the brief the turn ends with).
       if (latest && this.keepsLatest(latest, saved, plan.creative.brief.formats)) {
-        await this.keptLatest(ref, store, { creative, latest, n, versions, live, sessionId: noAgent ? undefined : resumeSessionId, noAgent, request, aborted: signal.aborted });
+        await this.keptLatest(ref, store, { creative, latest, n, versions, live, sessionId: noAgent ? undefined : resumeSessionId, noAgent, request: this.appTurns.get(jobId)?.request ?? request, aborted: signal.aborted });
         return;
       }
       const { problems } = saved;
@@ -1563,7 +1572,8 @@ export class CreativeTurnService {
       const usage = sumUsage(attemptUsage);
       await store.appendVersion(slug, {
         n, commit, sessionId: resumeSessionId ?? null, status, createdAt: now(),
-        request: request ?? t().jobs.requestFromBrief,
+        // Subtitles Task 19: a turn the app asked for shows its own request (its instruction is the agent's only).
+        request: this.appTurns.get(jobId)?.request ?? request ?? t().jobs.requestFromBrief,
         outputs: saved.outputs, problems, tools: saved.tools, renderCommand: saved.renderCommand,
         basedOn: creative.resumeFrom?.version ?? latest?.n ?? null,
         ...(usage ? { usage } : {}),

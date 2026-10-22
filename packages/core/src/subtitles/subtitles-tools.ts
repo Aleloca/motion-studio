@@ -20,7 +20,8 @@ const editInput = z.strictObject({
   replace: z.array(z.strictObject({
     find: z.string().min(1).max(SUBTITLE_LIMITS.text), with: z.string().max(SUBTITLE_LIMITS.text), caseSensitive: z.boolean().optional(),
   })).max(20).optional(),
-  cues: z.array(z.strictObject({ id: z.string().min(1).max(32), text: z.string().max(SUBTITLE_LIMITS.text) })).max(200).optional(),
+  // `was`: the line's text as the agent read it; a line changed since (the user corrected it) refuses the whole edit (409).
+  cues: z.array(z.strictObject({ id: z.string().min(1).max(32), was: z.string().max(SUBTITLE_LIMITS.text), text: z.string().max(SUBTITLE_LIMITS.text) })).max(200).optional(),
 }).refine((x) => (x.replace?.length ?? 0) + (x.cues?.length ?? 0) > 0, { message: 'give replace or cues' });
 type EditInput = z.infer<typeof editInput>;
 
@@ -82,7 +83,8 @@ export function editCues(cues: readonly SubtitleCue[], edit: Pick<EditInput, 're
  * - `edit_subtitles` (spec §6.4): corrects the text of a set now: re-read, changed and written under the creative's set lock
  *   (the editor's save holds it too, so neither loses the other's change; the editor then meets the new hash and rebases),
  *   every changed cue marked edited, committed in the subtitle commits' batch and told to the clients. All or nothing: an
- *   unknown cue id or a text the set refuses changes nothing (400).
+ *   unknown cue id or a text the set refuses changes nothing (400), nor does a line whose text is no longer the `was` the
+ *   agent read (409 `subtitles-cue-changed`: the user corrected it since, anti-goal 1).
  */
 export function subtitlesTools(deps: {
   subtitles: Pick<SubtitlesService, 'start' | 'assertTranscriptionOn' | 'onReady' | 'styleTurn'>;
@@ -130,6 +132,10 @@ export function subtitlesTools(deps: {
         const ids = new Set(stored.set.cues.map((x) => x.id));
         const unknown = [...new Set((e.cues ?? []).map((x) => x.id).filter((id) => !ids.has(id)))];
         if (unknown.length > 0) throw new CodedError(400, t().errors.subtitlesUnknownCue({ ids: unknown.slice(0, 10).join(', ') }), 'subtitles-unknown-cue');
+        // Anti-goal 1: a whole-line text never overwrites a correction the agent did not see.
+        const texts = new Map(stored.set.cues.map((x) => [x.id, x.text]));
+        const moved = [...new Set((e.cues ?? []).filter((x) => texts.get(x.id) !== x.was).map((x) => x.id))];
+        if (moved.length > 0) throw new CodedError(409, t().errors.subtitlesCueChanged({ ids: moved.slice(0, 10).join(', ') }), 'subtitles-cue-changed');
         const next = editCues(stored.set.cues, e);
         if (next.changed === 0) return 0;
         const set = parse(subtitleSetSchema, { ...stored.set, cues: next.cues });

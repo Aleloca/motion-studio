@@ -166,7 +166,8 @@ describe('mcp-studio server', () => {
     expect(e.inputSchema).toMatchObject({ additionalProperties: false, required: ['lang'] });
     expect(Object.keys(e.inputSchema.properties)).toEqual(['lang', 'replace', 'cues']);
     expect(e.inputSchema.properties.replace).toMatchObject({ maxItems: 20 });
-    expect(e.inputSchema.properties.cues).toMatchObject({ maxItems: 200 });
+    expect(e.inputSchema.properties.cues).toMatchObject({ maxItems: 200, items: { required: ['id', 'was', 'text'] } });
+    expect(e.description).toContain('each with was, its text as you read it');
     await rpc(4, 'tools/call', { name: 'start_subtitles', arguments: { drawn: true, lang: 'it' } });
     expect(calls.at(-1)).toMatchObject({ url: '/api/bridge/start_subtitles', body: { drawn: true, lang: 'it' } });
     await rpc(5, 'tools/call', { name: 'edit_subtitles', arguments: { lang: 'it', replace: [{ find: 'motion studio', with: 'Motion Studio' }] } });

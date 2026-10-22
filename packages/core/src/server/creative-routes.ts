@@ -15,7 +15,7 @@ import { makeOwnedTempDir } from '../render/owner.ts';
 import type { ExportJobService, ExportOutcome, ExportRun } from '../creatives/export-jobs.ts';
 import type { ExportRendered, RenderWait } from '../creatives/render-jobs.ts';
 import { assertLocalesInBrief, checkedLocale } from '../localization/validate.ts';
-import { storyboardDir, storyboardSchema, sweepStoryboardTemps, workVersion, type PreviewService } from '../creatives/previews.ts';
+import { storyboardDir, storyboardKey, storyboardSchema, sweepStoryboardTemps, workVersion, type PreviewService } from '../creatives/previews.ts';
 import { readJsonFile } from '../json-file.ts';
 import { isRealDirChain } from '../creatives/core-files.ts';
 import type { UrlSigner } from './signed-urls.ts';
@@ -1342,16 +1342,16 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     if (!version) throw new WorkspaceError(404, t().errors.versionNotFound);
     const r = await ctx.previews.storyboardOf({ projectDir: ref.projectDir, creativeDir: ref.store.dir(ref.creativeSlug), creativeSlug: ref.creativeSlug, n }, version, req.params.format);
     if (!r) throw new CodedError(404, t().errors.previewUnavailable, 'storyboard-unavailable');
-    // Signed, short-lived image URLs (fix I4), content-addressed by the composition hash (a regenerated storyboard of other
-    // content never reuses a URL). The UI asks again before `expiresAt` for fresh ones.
-    const base = `/api/projects/${encodeURIComponent(req.params.slug)}/creatives/${encodeURIComponent(ref.creativeSlug)}/storyboard-files/${n}/${r.folder}/${r.storyboard.hash.slice(0, 16)}`;
+    // Signed, short-lived image URLs (fix I4), content-addressed by the composition hash (and the drawn subtitles', Task 19:
+    // a regenerated storyboard of other content never reuses a URL). The UI asks again before `expiresAt` for fresh ones.
+    const base = `/api/projects/${encodeURIComponent(req.params.slug)}/creatives/${encodeURIComponent(ref.creativeSlug)}/storyboard-files/${n}/${r.folder}/${storyboardKey(r.storyboard)}`;
     let expiresAt = 0;
     const frames = r.storyboard.frames.map(({ file, ...f }) => { const s = ctx.signer.sign(`${base}/${file}`); expiresAt = s.expiresAt; return { ...f, url: s.url }; });
     return { format: r.folder, hash: r.storyboard.hash, width: r.storyboard.width, expiresAt: new Date(expiresAt).toISOString(), frames };
   });
 
   // Storyboard images, shown by <img>: no UI token, but a signed URL from the route above (fix I4); only `f-<i>.jpg` of the
-  // storyboard whose composition hash starts with `:hash`.
+  // storyboard whose content key (`storyboardKey`) is `:hash`.
   app.get<{ Params: { slug: string; c: string; n: string; folder: string; hash: string; file: string }; Querystring: { s?: string } }>('/api/projects/:slug/creatives/:c/storyboard-files/:n/:folder/:hash/:file', async (req, reply) => {
     const path = req.url.split('?')[0]!;
     if (!ctx.signer.verify(path, req.query.s)) return reply.status(403).send({ error: t().errors.fileNotFoundShort });
@@ -1360,7 +1360,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const notFound = () => reply.status(404).send({ error: t().errors.fileNotFoundShort });
     if (!Number.isInteger(n) || n < 1 || !FOLDER_RE.test(req.params.folder) || !/^[0-9a-f]{16}$/.test(req.params.hash) || !FRAME_FILE_RE.test(req.params.file)) return notFound();
     const sb = await readJsonFile(join(storyboardDir(ref.projectDir, ref.creativeSlug, n, req.params.folder), 'storyboard.json'), storyboardSchema).catch(() => null);
-    if (!sb || !sb.hash.startsWith(req.params.hash)) return notFound();
+    if (!sb || storyboardKey(sb) !== req.params.hash) return notFound();
     return sendConfinedFile(reply, storyboardDir(ref.projectDir, ref.creativeSlug, n, req.params.folder), req.params.file, ['f-']);
   });
 
