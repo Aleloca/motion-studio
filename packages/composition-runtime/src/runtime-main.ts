@@ -185,6 +185,8 @@ function createLivePreview(o: {
   let pending: { composition: Composition; keepTime: boolean; seq: number } | null = null;
   /** The subtitles drawn: the page's, then each `setSubtitles`; a draft mounts with the latest. */
   let subtitles = o.subtitles;
+  /** `setSubtitles` commands seen: a draft gets them at the swap only when one came while it mounted. */
+  let subtitlesGen = 0;
 
   const wire = (p: Player) => {
     p.onTime = (t, playing) => o.post({ type: 'time', t, playing });
@@ -195,6 +197,7 @@ function createLivePreview(o: {
   const apply = async (d: { composition: Composition; keepTime: boolean; seq: number }) => {
     applying = true;
     const genAtStart = seekGen;
+    const subtitlesAtStart = subtitlesGen;
     const errors: RuntimeError[] = [];
     let collecting = true;
     const report = (e: RuntimeError) => { if (!collecting) o.report(e); else if (errors.length < MAX_ERRORS) errors.push(e); };
@@ -224,7 +227,8 @@ function createLivePreview(o: {
       const keep = selected !== null && ids.has(selected) ? selected : null;
       const resume = current.playing && playOpts ? { ...playOpts, from: current.time } : null;
       next.setScale(scale);
-      next.setSubtitles(subtitles); // a `setSubtitles` sent during the re-mount
+      // A `setSubtitles` sent during the re-mount; otherwise the draft already has them (a template would load again).
+      if (subtitlesGen !== subtitlesAtStart) next.setSubtitles(subtitles);
       // Swap: the old mount goes, the new one is the one shown.
       current.destroy();
       holder?.remove();
@@ -263,7 +267,7 @@ function createLivePreview(o: {
       if (applying) { pending = draft; return; }
       void apply(draft);
     },
-    setSubtitles: (s) => { subtitles = s; current.setSubtitles(s); },
+    setSubtitles: (s) => { subtitles = s; subtitlesGen++; current.setSubtitles(s); },
     addSessionMedia: (m) => {
       if (!videos.has(m.src) && videos.size >= MAX_VIDEOS) return;
       // As the core's `withSessionMedia` writes a session video into the inlined composition.

@@ -1,9 +1,24 @@
 import { JSDOM } from 'jsdom';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type { RuntimeSubtitles } from '../src/subtitles.ts';
 import { renderRuntimePage } from '../src/page.ts';
 import { parseDraft } from '../src/draft.ts';
 import { DRAFT_PARSER_KEY } from '../src/preview-bridge.ts';
 import { startRuntime } from '../src/runtime-main.ts';
+
+/** Every player mounted, with the `setSubtitles` calls it got (final review M2); the mount itself is the real one. */
+const mounted = vi.hoisted(() => [] as Array<{ subtitles: Array<unknown> }>);
+vi.mock('../src/mount.ts', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../src/mount.ts')>();
+  return { ...real, mount: (...args: Parameters<typeof real.mount>) => {
+    const player = real.mount(...args);
+    const rec = { subtitles: [] as unknown[] };
+    mounted.push(rec);
+    const set = player.setSubtitles.bind(player);
+    player.setSubtitles = (s) => { rec.subtitles.push(s); set(s); };
+    return player;
+  } };
+});
 
 const INDEX = '<!doctype html><html><head><!--ms-composition--></head><body><div id="ms-root"></div></body></html>';
 
@@ -166,6 +181,26 @@ describe('setComposition (preview, same document)', () => {
     p.post({ type: 'setComposition', seq: 3, composition: comp() });
     await p.until(() => p.sent.some((m) => m.type === 'compositionApplied' && m.seq === 3));
     expect(p.boxes()).toEqual(['card', 'late']);
+  });
+
+  it('a draft mounts with the latest subtitles and gets setSubtitles only when one came during its re-mount (final review M2)', async () => {
+    const p = preview(comp());
+    await p.until(() => p.sent.some((m) => m.type === 'ready'));
+    const subs: RuntimeSubtitles = { lang: 'it', cues: [{ start: 0, end: 900, text: 'Ciao' }] };
+    p.post({ type: 'setSubtitles', subtitles: subs });
+    mounted.length = 0;
+    // No setSubtitles while it mounts: the draft is mounted with them, never sent them again (a template would load twice).
+    p.post({ type: 'setComposition', composition: comp(), keepTime: true, seq: 1 });
+    await p.until(() => p.sent.some((m) => m.type === 'compositionApplied' && m.seq === 1));
+    expect(mounted).toHaveLength(1);
+    expect(mounted[0]!.subtitles).toEqual([]);
+    // One during the re-mount: the new mount gets the latest at the swap.
+    const later: RuntimeSubtitles = { lang: 'it', cues: [{ start: 0, end: 900, text: 'Corretto' }] };
+    p.post({ type: 'setComposition', composition: comp(), keepTime: true, seq: 2 });
+    p.post({ type: 'setSubtitles', subtitles: later });
+    await p.until(() => p.sent.some((m) => m.type === 'compositionApplied' && m.seq === 2));
+    expect(mounted).toHaveLength(2);
+    expect(mounted[1]!.subtitles).toEqual([later]);
   });
 
   it('coalesces drafts that arrive during a re-mount: the latest wins', async () => {
