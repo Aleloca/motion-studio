@@ -264,6 +264,8 @@ export const it: Messages = {
     subtitlesNoVideo: 'L\'ultima versione non ha un formato video: non c\'è niente da sottotitolare.',
     noFfmpegSubtitles: 'Per i sottotitoli serve ffmpeg, che non è stato trovato su questo Mac.',
     subtitlesTranscriptionOff: 'La trascrizione dei video è disattivata: attivala in Impostazioni → Trascrizione video per fare i sottotitoli.',
+    subtitlesConflict: 'I sottotitoli sono stati modificati altrove: ricaricali.',
+    subtitlesTooLarge: (p) => `I sottotitoli superano ${p.maxMB} MB.`,
     subtitlesOncePerTurn: 'I sottotitoli sono già stati chiesti in questo turno: partono quando finisce.',
     transcriptionNoBundled: 'Questa app non ha un Whisper suo: installane uno o indicalo in Impostazioni → Trascrizione video.',
   },
@@ -428,6 +430,7 @@ export const it: Messages = {
     openEditor: "Apri l'editor",
     editorTitle: 'Sottotitoli',
     backToCreative: 'Torna alla creatività',
+    savedElsewhere: 'Modificati altrove: ricaricati',
   },
   briefSession: {
     filled: (p) => `Compilato il brief: ${p.parts}`,

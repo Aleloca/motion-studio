@@ -6,6 +6,7 @@ import {
 import { noteCoreChange } from '../core-changes.ts';
 import type { Git } from '../git.ts';
 import { writeJsonFileAtomic } from '../json-file.ts';
+import { KeyedMutex } from '../keyed-mutex.ts';
 import { mixClips } from '../render/audio-mix.ts';
 import { readRegularFile } from '../safe-read.ts';
 import type { CreativeRef } from '../creatives/creative-turns.ts';
@@ -16,6 +17,13 @@ import type { CreativeRef } from '../creatives/creative-turns.ts';
  */
 export const subtitlesDir = (creativeDir: string): string => join(creativeDir, SUBTITLES_DIR);
 export const subtitlePath = (creativeDir: string, lang: LocaleTag): string => join(subtitlesDir(creativeDir), `${lang}.json`);
+
+/**
+ * Decision 1654: every read-modify-write of a creative's sets (the editor's save, the job's final re-read + merge + write)
+ * runs under this lock, keyed by the creative's folder, so neither loses the other's change. One per process: the server
+ * and the job share it by importing it from here. A plain read needs no lock (writes are atomic).
+ */
+export const subtitleSetLocks = new KeyedMutex();
 
 /** The set of `lang` and the hash of its file, or null when there is none or it is not a valid set (too large, bad schema). */
 export async function readSubtitleSet(creativeDir: string, lang: LocaleTag): Promise<{ set: SubtitleSet; hash: string } | null> {

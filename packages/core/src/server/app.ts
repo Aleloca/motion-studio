@@ -919,7 +919,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
   registerBriefRoutes(app, { requireWorkspace, briefs, configDir });
   registerAnalysisRoutes(app, { requireWorkspace, analyses, media, git: deps.git });
-  registerSubtitlesRoutes(app, { requireWorkspace, subtitles, jobs: () => queue.list(), presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets });
+  registerSubtitlesRoutes(app, {
+    requireWorkspace, subtitles, jobs: () => queue.list(), presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
+    commits: subtitleCommits, broadcast: (msg) => hub.broadcast(msg),
+  });
   registerTranscriptionRoutes(app, { transcription });
   registerSettingsRoutes(app, { vault, approvals, requireWorkspace, keyChecks, keyCheckHttp: deps.keyCheckHttp ?? { fetch: globalThis.fetch } });
   registerRenderEngineRoutes(app, {

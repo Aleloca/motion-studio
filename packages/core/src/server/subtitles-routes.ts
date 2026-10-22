@@ -1,19 +1,21 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import {
-  isSupportedLocale, issuesText, subtitleSetHash, subtitlesJobKey, toSrt, toVtt, transcriptionChoiceSchema,
-  type FormatPreset, type JobSummary, type LocaleTag, type SubtitleSet, type SubtitlesSummary, type TranscriptionPending,
+  isSupportedLocale, issuesText, SUBTITLE_LIMITS, subtitleSetHash, subtitleSetSchema, subtitleSetText, subtitlesJobKey, toSrt, toVtt, transcriptionChoiceSchema,
+  type FormatPreset, type JobSummary, type LocaleTag, type ServerMessage, type SubtitleSet, type SubtitlesSummary, type TranscriptionPending,
 } from '@motion-studio/shared';
 import { CreativeStore } from '../creatives/creative-store.ts';
 import type { CreativeRef } from '../creatives/creative-turns.ts';
 import { currentLocale, t } from '../i18n.ts';
 import { instanceComposition } from '../localization/store.ts';
-import { audioFingerprint, listSubtitleSets, readSubtitleSet } from '../subtitles/store.ts';
+import { audioFingerprint, listSubtitleSets, readSubtitleSet, type SubtitleCommits, subtitleSetLocks, writeSubtitleSet } from '../subtitles/store.ts';
 import { subtitleSourceFormat, type SubtitlesService } from '../subtitles/subtitles-job.ts';
 import { CodedError, type WorkspaceStore } from '../workspace-store.ts';
 
 const startSchema = z.strictObject({ mode: z.enum(['new', 'retime']).optional(), lang: z.string().refine(isSupportedLocale, { message: 'not a supported language' }).optional() });
 const choiceSchema = transcriptionChoiceSchema.omit({ file: true });
+/** The editor's save: the whole cue list, checked against the stored set's fields with `subtitleSetSchema`. */
+const saveSchema = z.strictObject({ baseHash: z.string().regex(/^[0-9a-f]{64}$/), cues: z.array(z.unknown()).max(SUBTITLE_LIMITS.cues) });
 
 function parse<T>(schema: z.ZodType<T>, body: unknown): T {
   const r = schema.safeParse(body ?? {});
@@ -52,11 +54,12 @@ export async function subtitleSummaries(projectDir: string, creativeSlug: string
 /**
  * Decisions 1636-1640 (spec §6.1-§6.2): the subtitles of a creative (`/api/projects/:slug/creatives/:c/subtitles`): the
  * overview (sets, the job, its transcription question), Fai i sottotitoli, the answer to the transcription dialog and
- * "Ricontrolla", one set, and its `.srt` / `.vtt` download. A language outside the supported ones answers 400, one without
- * a set 404.
+ * "Ricontrolla", one set, its save from the editor (decision 1654) and its `.srt` / `.vtt` download. A language outside the
+ * supported ones answers 400, one without a set 404.
  */
 export function registerSubtitlesRoutes(app: FastifyInstance, ctx: {
   requireWorkspace: () => WorkspaceStore; subtitles: SubtitlesService; jobs: () => JobSummary[]; presets: () => Promise<FormatPreset[]>;
+  commits: Pick<SubtitleCommits, 'touch'>; broadcast: (m: ServerMessage) => void;
 }) {
   const refOf = async (slug: string, creativeSlug: string): Promise<CreativeRef> => {
     const ws = ctx.requireWorkspace();
@@ -110,6 +113,29 @@ export function registerSubtitlesRoutes(app: FastifyInstance, ctx: {
   app.get<PL>('/api/projects/:slug/creatives/:c/subtitles/:lang', async (req) => {
     const lang = langOf(req.params.lang);
     return setOf(await refOf(req.params.slug, req.params.c), lang);
+  });
+  // Decision 1654: the editor's save. The cues replace the stored ones (every other field kept); `baseHash` is the hash of the
+  // set the editor loaded, 409 `subtitles-conflict` with the stored hash when the set changed since. Allowed while a job runs:
+  // the read, the check and the write hold the creative's set lock, as the job's final merge does.
+  app.put<PL>('/api/projects/:slug/creatives/:c/subtitles/:lang', async (req, reply) => {
+    const lang = langOf(req.params.lang);
+    const ref = await refOf(req.params.slug, req.params.c);
+    const body = parse(saveSchema, req.body);
+    const store = new CreativeStore(ref.projectDir);
+    const creativeDir = store.dir(ref.creativeSlug);
+    const saved = await subtitleSetLocks.run(creativeDir, async () => {
+      const stored = await setOf(ref, lang);
+      if (stored.hash !== body.baseHash) return { conflict: stored.hash };
+      const set = parse(subtitleSetSchema, { ...stored.set, cues: body.cues });
+      if (Buffer.byteLength(subtitleSetText(set)) > SUBTITLE_LIMITS.fileBytes) {
+        throw new CodedError(413, t().errors.subtitlesTooLarge({ maxMB: SUBTITLE_LIMITS.fileBytes / 1_048_576 }), 'subtitles-too-large');
+      }
+      return { hash: await writeSubtitleSet(creativeDir, set) };
+    });
+    if ('conflict' in saved) return reply.status(409).send({ error: t().errors.subtitlesConflict, code: 'subtitles-conflict', hash: saved.conflict });
+    ctx.commits.touch(ref, t().subtitles.commit({ title: (await store.get(ref.creativeSlug)).title, lang }));
+    try { ctx.broadcast({ type: 'subtitles', project: ref.projectSlug, creative: ref.creativeSlug, lang }); } catch { /* a faulty listener */ }
+    return { hash: saved.hash };
   });
   // The cues clamped to the latest version's main format (a cue past its end is left out); no video: as they are.
   const download = async (req: { params: PL['Params'] }, reply: FastifyReply, ext: 'srt' | 'vtt') => {

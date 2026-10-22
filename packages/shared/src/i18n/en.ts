@@ -266,6 +266,8 @@ export const en = {
     subtitlesNoVideo: 'The latest version has no video format: there is nothing to subtitle.',
     noFfmpegSubtitles: 'Subtitles need ffmpeg, which was not found on this Mac.',
     subtitlesTranscriptionOff: 'Video transcription is switched off: turn it on in Settings → Video transcription to make subtitles.',
+    subtitlesConflict: 'The subtitles were changed elsewhere: reload them.',
+    subtitlesTooLarge: (p: { maxMB: number }) => `The subtitles are over ${p.maxMB} MB.`,
     subtitlesOncePerTurn: 'The subtitles were already asked for in this turn: they start when it ends.',
     transcriptionNoBundled: 'This app has no Whisper of its own: install one or point to it in Settings → Video transcription.',
   },
@@ -430,6 +432,7 @@ export const en = {
     openEditor: 'Open the editor',
     editorTitle: 'Subtitles',
     backToCreative: 'Back to the creative',
+    savedElsewhere: 'Changed elsewhere: reloaded',
   },
   briefSession: {
     filled: (p: { parts: string }) => `Filled in the brief: ${p.parts}`,

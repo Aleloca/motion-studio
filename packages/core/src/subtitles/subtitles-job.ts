@@ -21,7 +21,7 @@ import type { MediaTools } from '../media/media-tools.ts';
 import { mixAudio, mixClips } from '../render/audio-mix.ts';
 import type { FfmpegInfo } from '../render/encode.ts';
 import { CodedError } from '../workspace-store.ts';
-import { audioFingerprint, readSubtitleSet, type SubtitleCommits, writeSubtitleSet } from './store.ts';
+import { audioFingerprint, readSubtitleSet, type SubtitleCommits, subtitleSetLocks, writeSubtitleSet } from './store.ts';
 
 /** The queue lane of the subtitles jobs (decision 1640): one at a time, never in an agent turn's slot. */
 export const SUBTITLES_LANE = 'subtitles';
@@ -398,18 +398,21 @@ export class SubtitlesService {
       }
       if (signal.aborted) return 'cancelled';
 
-      // Re-read just before writing: a save of the editor during the transcription keeps its edited cues (anti-goal 1).
-      const existing = await readSubtitleSet(creativeDir, lang);
-      const cues = capCues(existing ? mergeKeepingEdited(existing.set.cues, fresh) : fresh);
-      let set: SubtitleSet = {
-        $schema: SUBTITLES_SCHEMA_ID, lang, origin: 'speech', transcript: tr.kind, detected: tr.language,
-        timing: { version: version.n, format, fingerprint: audioFingerprint(ic.composition) }, cues,
-      };
-      // A set over the file limit loses its word timings (word highlighting then falls back to whole cues).
-      if (Buffer.byteLength(subtitleSetText(set)) > SUBTITLE_LIMITS.fileBytes) set = { ...set, cues: set.cues.map(({ words: _w, ...c }) => c) };
-      const valid = subtitleSetSchema.safeParse(set);
-      if (!valid.success || Buffer.byteLength(subtitleSetText(set)) > SUBTITLE_LIMITS.fileBytes) throw new Error(valid.success ? 'the subtitles are too large' : valid.error.message);
-      await writeSubtitleSet(creativeDir, set);
+      // Re-read just before writing, under the sets' lock (decision 1654): a save of the editor during the transcription keeps
+      // its edited cues (anti-goal 1), and one arriving now waits for this write and then meets its new hash (409).
+      await subtitleSetLocks.run(creativeDir, async () => {
+        const existing = await readSubtitleSet(creativeDir, lang);
+        const cues = capCues(existing ? mergeKeepingEdited(existing.set.cues, fresh) : fresh);
+        let set: SubtitleSet = {
+          $schema: SUBTITLES_SCHEMA_ID, lang, origin: 'speech', transcript: tr.kind, detected: tr.language,
+          timing: { version: version.n, format, fingerprint: audioFingerprint(ic.composition) }, cues,
+        };
+        // A set over the file limit loses its word timings (word highlighting then falls back to whole cues).
+        if (Buffer.byteLength(subtitleSetText(set)) > SUBTITLE_LIMITS.fileBytes) set = { ...set, cues: set.cues.map(({ words: _w, ...c }) => c) };
+        const valid = subtitleSetSchema.safeParse(set);
+        if (!valid.success || Buffer.byteLength(subtitleSetText(set)) > SUBTITLE_LIMITS.fileBytes) throw new Error(valid.success ? 'the subtitles are too large' : valid.error.message);
+        await writeSubtitleSet(creativeDir, set);
+      });
       this.deps.commits.touch(ref, t().subtitles.commit({ title: creative.title, lang }));
       try { this.deps.broadcast({ type: 'subtitles', project: ref.projectSlug, creative: ref.creativeSlug, lang }); } catch { /* a faulty listener */ }
       const briefLang = creative.brief.locales?.primary;

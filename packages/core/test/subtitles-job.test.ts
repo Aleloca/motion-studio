@@ -21,7 +21,7 @@ import { t } from '../src/i18n.ts';
 import { JobQueue } from '../src/jobs/job-queue.ts';
 import { NoMediaTools } from '../src/media/media-tools.ts';
 import { findFfmpeg } from '../src/render/encode.ts';
-import { audioFingerprint, readSubtitleSet, writeSubtitleSet } from '../src/subtitles/store.ts';
+import { audioFingerprint, readSubtitleSet, subtitleSetLocks, writeSubtitleSet } from '../src/subtitles/store.ts';
 import { splitCjkWords, SUBTITLES_LANE, SubtitlesService } from '../src/subtitles/subtitles-job.ts';
 
 const PRESETS: FormatPreset[] = [
@@ -297,6 +297,33 @@ describe('SubtitlesService', { timeout: 60_000 }, () => {
     expect((await queue.whenSettled(job.id))?.state).toBe('succeeded');
     const cues = (await readSubtitleSet(creativeDir(), 'it'))!.set.cues;
     expect(cues).toEqual([expect.objectContaining({ id: 'c1', text: 'Ciao a tutti voi!', edited: true, start: 200 })]);
+  });
+
+  it('the final re-read, merge and write wait for the creative\'s set lock (decision 1654)', async () => {
+    await creative([audioClip()]);
+    let release!: () => void;
+    fake.gate = new Promise((r) => { release = r; });
+    const job = await service.start(ref, { mode: 'new' });
+    await vi.waitFor(() => expect(transcribed).toHaveLength(1));
+    // A save of the editor holds the lock while the transcription ends: the job writes only after it, and keeps its edit.
+    let unlock!: () => void;
+    const held = subtitleSetLocks.run(creativeDir(), async () => {
+      await new Promise<void>((r) => { unlock = r; });
+      await writeSubtitleSet(creativeDir(), {
+        $schema: SUBTITLES_SCHEMA_ID, lang: 'it', origin: 'speech', transcript: 'whisper-small', detected: 'it',
+        timing: { version: 1, format: 'test-wide', fingerprint: 'a'.repeat(64) },
+        cues: [{ id: 'c1', start: 100, end: 1700, text: 'Ciao a tutti voi!', edited: true }],
+      });
+    });
+    release();
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(queue.list().find((j) => j.id === job.id)?.state).toBe('running');
+    expect(await readSubtitleSet(creativeDir(), 'it')).toBeNull();
+    unlock();
+    await held;
+    expect((await queue.whenSettled(job.id))?.state).toBe('succeeded');
+    const cues = (await readSubtitleSet(creativeDir(), 'it'))!.set.cues;
+    expect(cues).toEqual([expect.objectContaining({ id: 'c1', text: 'Ciao a tutti voi!', edited: true })]);
   });
 
   it('a held choice: the job waits for the user\'s transcription choice, then runs', async () => {
