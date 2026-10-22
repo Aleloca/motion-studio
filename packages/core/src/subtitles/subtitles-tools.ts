@@ -6,7 +6,8 @@ import { currentLocale, t } from '../i18n.ts';
 import { CodedError } from '../workspace-store.ts';
 import type { SubtitlesService } from './subtitles-job.ts';
 
-const startInput = z.strictObject({ drawn: z.boolean(), lang: z.string().refine(isSupportedLocale, { message: 'not a supported language' }).optional() });
+/** `drawn`: phase 3's drawn subtitles; the agent is not offered it in phase 1 (decision 1710), so absent means files only. */
+const startInput = z.strictObject({ drawn: z.boolean().optional(), lang: z.string().refine(isSupportedLocale, { message: 'not a supported language' }).optional() });
 
 /**
  * Decision 1703 (U9, spec §6.2): the agent's `start_subtitles`, creative turns only (the turn's creative from its
@@ -39,7 +40,7 @@ export function subtitlesTools(deps: { subtitles: SubtitlesService; turns: Pick<
       if (!r.success) throw new CodedError(400, t().errors.invalidRequestDetail({ detail: issuesText(r.error, currentLocale()) }), 'invalid-request');
       if (asked.has(c.jobId)) throw new CodedError(409, t().errors.subtitlesOncePerTurn, 'subtitles-once');
       await deps.subtitles.assertTranscriptionOn();
-      asked.set(c.jobId, { drawn: r.data.drawn, ...(r.data.lang ? { lang: r.data.lang as LocaleTag } : {}) });
+      asked.set(c.jobId, { drawn: r.data.drawn === true, ...(r.data.lang ? { lang: r.data.lang as LocaleTag } : {}) });
       return { started: true, when: 'after-turn' };
     },
   };

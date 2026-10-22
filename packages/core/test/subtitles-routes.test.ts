@@ -208,7 +208,8 @@ describe('the start_subtitles tool (decision 1703)', () => {
   it('asked in the first turn, starts once the turn saved v1; in the next turn again, on the v2 that turn saved', async () => {
     const slug = await create();
     const first = await runOf(slug);
-    const res = await tool(first, 'start_subtitles', { drawn: false });
+    // Phase 1 does not offer `drawn` to the agent (decision 1710): absent, the job makes files only.
+    const res = await tool(first, 'start_subtitles', {});
     expect(res.statusCode, res.body).toBe(200);
     expect(res.json()).toEqual({ started: true, when: 'after-turn' });
     const again = await tool(first, 'start_subtitles', { drawn: true });
@@ -218,9 +219,10 @@ describe('the start_subtitles tool (decision 1703)', () => {
     expect(await subtitleJobs()).toEqual([]);
     writeCompositions(first);
     first.finish({ write: false });
+    // The settle hook starts the job asynchronously: the queue can be idle before it is queued.
+    await vi.waitFor(() => expect(starts).toEqual([{ versions: [1], o: { mode: 'new', drawn: false } }]), { timeout: 20_000, interval: 20 });
+    await vi.waitFor(async () => expect(await subtitleJobs()).toHaveLength(1), { timeout: 20_000, interval: 20 });
     await waitIdle();
-    expect(starts).toEqual([{ versions: [1], o: { mode: 'new', drawn: false } }]);
-    expect(await subtitleJobs()).toHaveLength(1);
 
     // The next turn may ask again (the guard is per turn); the job is timed on the version this turn saves.
     await say(slug, 1, 'Cambia la musica e rifai i sottotitoli');
@@ -228,10 +230,11 @@ describe('the start_subtitles tool (decision 1703)', () => {
     expect((await tool(second, 'start_subtitles', { drawn: true, lang: 'it' })).json()).toEqual({ started: true, when: 'after-turn' });
     writeCompositions(second, '#202020');
     second.finish({ write: false });
+    await vi.waitFor(() => expect(starts).toHaveLength(2), { timeout: 20_000, interval: 20 });
+    expect(starts.at(-1)).toEqual({ versions: [1, 2], o: { mode: 'new', drawn: true, lang: 'it' } });
+    await vi.waitFor(async () => expect(await subtitleJobs()).toHaveLength(2), { timeout: 20_000, interval: 20 });
     await waitIdle();
     expect((await detail(slug)).versions.map((v) => v.n)).toEqual([1, 2]);
-    expect(starts.at(-1)).toEqual({ versions: [1, 2], o: { mode: 'new', drawn: true, lang: 'it' } });
-    expect(await subtitleJobs()).toHaveLength(2);
   });
 
   it('a stopped turn starts nothing and says so', async () => {
@@ -241,9 +244,10 @@ describe('the start_subtitles tool (decision 1703)', () => {
     const turn = (await jobs()).find((j) => j.kind !== 'subtitles' && j.state === 'running')!;
     await app.inject({ method: 'POST', url: `/api/jobs/${turn.id}/stop` });
     await waitIdle();
+    // The settle hook has run once its line is written: only then is "nothing started" a fact.
+    await vi.waitFor(async () => expect(await agentLines(slug)).toContain(t().subtitles.notStartedTurn));
     expect(starts).toEqual([]);
     expect(await subtitleJobs()).toEqual([]);
-    await vi.waitFor(async () => expect(await agentLines(slug)).toContain(t().subtitles.notStartedTurn));
   });
 
   it('a refusal when the turn ends is a chat line', async () => {

@@ -66,7 +66,7 @@ For effects the clips cannot express (particles, charts, custom typography). A l
 - **Logo**: an \`svg\` (or \`image\`) clip with \`"fit": "contain"\` and \`popIn\`, usually on the top track for the whole duration or the last scene.
 - **Transitions between scenes**: overlap the outgoing and incoming clips by a few tenths of a second inside the scenes and use fadeOut/fadeIn, slides or \`wipe\`.
 - **Voice-over**: an \`audio\` clip with \`"role": "voice"\` (from \`tts\`); music on another audio track with \`"role": "music"\` is ducked under the voice.
-- **Subtitles**: call \`start_subtitles\`; never one text clip per sentence.
+- **Subtitles**: \`start_subtitles\` makes subtitle files (.srt/.vtt) and draws nothing into the video. When the user wants subtitles in the video now: one \`text\` clip per sentence, timed on the voice (subtitles drawn from the transcription come in a later version of the app).
 
 Example (a 1080×1080 still):
 \`\`\`json
