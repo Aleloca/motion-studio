@@ -1,11 +1,13 @@
 // Task 13: the subtitle timeline under the editor's player and list: the waveform, a block per line, its edges and body
 // dragged with the pointer (one `times` op per move, the model snapping and clamping), the edges as sliders (← → 100 ms,
 // ⇧ 1 s), a click on empty space seeking, ⌘-wheel zooming.
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import { useReducer } from 'react';
 import type { SubtitleCue } from '@motion-studio/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../src/i18n.tsx';
-import { CueTimeline } from '../src/screens/subtitles/CueTimeline.tsx';
+import { CueTimeline, NUDGE_PAUSE_MS } from '../src/screens/subtitles/CueTimeline.tsx';
+import { editorReducer, initialEditorState, type EditorOp } from '../src/screens/subtitles/subtitlesModel.ts';
 
 // jsdom has no PointerEvent: a MouseEvent carries the coordinates, button and modifiers the timeline reads.
 if (typeof window.PointerEvent === 'undefined') {
@@ -77,10 +79,10 @@ describe('CueTimeline', () => {
     const end = screen.getByRole('slider', { name: 'Fine della riga 1' });
     expect(end.getAttribute('aria-valuenow')).toBe('3000');
     fireEvent.keyDown(end, { key: 'ArrowRight' });
-    expect(dispatch).toHaveBeenLastCalledWith({ type: 'times', id: 'a', end: 3100 });
+    expect(dispatch).toHaveBeenLastCalledWith({ type: 'times', id: 'a', end: 3100, drag: true });
     const start = screen.getByRole('slider', { name: 'Inizio della riga 1' });
     fireEvent.keyDown(start, { key: 'ArrowLeft', shiftKey: true });
-    expect(dispatch).toHaveBeenLastCalledWith({ type: 'times', id: 'a', start: 0 });
+    expect(dispatch).toHaveBeenLastCalledWith({ type: 'times', id: 'a', start: 0, drag: true });
   });
 
   it('a click on empty space seeks there and edits nothing', () => {
@@ -164,5 +166,54 @@ describe('CueTimeline', () => {
     fireEvent.pointerMove(edge, { clientX: 360, buttons: 1, pointerId: 1 });
     fireEvent.pointerUp(edge, { clientX: 360, pointerId: 1 });
     expect(dispatch.mock.calls.filter(([op]) => op.type === 'times').map(([op]) => op.end)).toEqual([3300, 3400]);
+  });
+});
+
+describe('CueTimeline nudges as undo steps (final review, M2)', () => {
+  /** The timeline over the editor's real model; `undo` steps it back. */
+  const live = () => {
+    const ref: { dispatch?: (op: EditorOp) => void; end?: number; start?: number } = {};
+    function Live() {
+      const [state, dispatch] = useReducer(editorReducer, undefined, () => editorReducer(initialEditorState(), { type: 'load', cues: CUES, durationMs: 10_000, lang: 'it' }));
+      ref.dispatch = dispatch;
+      ref.start = state.cues[0]!.start;
+      ref.end = state.cues[0]!.end;
+      return <CueTimeline cues={state.cues} durationMs={state.durationMs} peaks={[]} time={0} selected="a" dragging={state.dragging} dispatch={dispatch} onSeek={() => {}} />;
+    }
+    render(<I18nProvider locale="it"><Live /></I18nProvider>);
+    const undo = () => act(() => { ref.dispatch!({ type: 'undo' }); });
+    return { ref, undo, end: () => screen.getByRole('slider', { name: 'Fine della riga 1' }), start: () => screen.getByRole('slider', { name: 'Inizio della riga 1' }) };
+  };
+  const press = (el: HTMLElement, key: string) => { fireEvent.keyDown(el, { key }); fireEvent.keyUp(el, { key }); };
+
+  it('consecutive nudges of one edge are one undo step', () => {
+    const { ref, undo, end } = live();
+    press(end(), 'ArrowRight');
+    press(end(), 'ArrowRight');
+    press(end(), 'ArrowRight');
+    expect(ref.end).toBe(3300);
+    undo();
+    expect(ref.end).toBe(3000);
+  });
+
+  it('another edge, a blur or a pause after the key goes up starts a new step', () => {
+    vi.useFakeTimers();
+    try {
+      const { ref, undo, end, start } = live();
+      press(end(), 'ArrowRight');
+      press(start(), 'ArrowLeft');
+      undo();
+      expect([ref.start, ref.end]).toEqual([1000, 3100]);
+      press(end(), 'ArrowRight');
+      fireEvent.blur(end());
+      press(end(), 'ArrowRight');
+      undo();
+      expect(ref.end).toBe(3200);
+      press(end(), 'ArrowRight');
+      act(() => { vi.advanceTimersByTime(NUDGE_PAUSE_MS); });
+      press(end(), 'ArrowRight');
+      undo();
+      expect(ref.end).toBe(3300);
+    } finally { vi.useRealTimers(); }
   });
 });

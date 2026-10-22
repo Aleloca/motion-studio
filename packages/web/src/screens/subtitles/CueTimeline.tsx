@@ -1,7 +1,7 @@
 // The subtitle editor's timeline (Task 13, spec §6.3): the audio mix's waveform on a canvas, a block per line over it. A
 // block's edges (6 px handles) and its body drag with the pointer: each move is a `times` op marked `drag`, so the model
 // snaps and clamps it and the whole drag is one undo step (`endDrag` closes it). The edges are sliders for the keyboard
-// (← → 100 ms, ⇧ 1 s). A click on empty space seeks; ⌘-wheel (Ctrl elsewhere) zooms 1×–20× around the pointer.
+// (← → 100 ms, ⇧ 1 s; a run of nudges of one edge is one undo step, as a drag). A click on empty space seeks; ⌘-wheel (Ctrl elsewhere) zooms 1×–20× around the pointer.
 import type { SubtitleCue } from '@motion-studio/shared';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type KeyboardEvent, type PointerEvent } from 'react';
 import { useT } from '../../i18n.tsx';
@@ -15,6 +15,8 @@ export const MAX_ZOOM = 20;
 /** The arrow keys move an edge by this much; with ⇧ by BIG_STEP_MS. */
 export const STEP_MS = 100;
 export const BIG_STEP_MS = 1000;
+/** Nudges of one edge are one undo step until the key has been up this long (or another edge, a blur, another op). */
+export const NUDGE_PAUSE_MS = 1000;
 /** A body press that moves less than this is a click (select and seek), not a drag. */
 const CLICK_SLOP_PX = 3;
 
@@ -74,6 +76,18 @@ export function CueTimeline({ cues, durationMs, peaks, peaksMs, time, selected, 
   const track = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const grab = useRef<Grab | null>(null);
+  /** The edge being nudged with the arrows (`id:start|end`), and the pause that ends its undo step. */
+  const nudge = useRef<string | null>(null);
+  const nudgePause = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const endNudge = () => {
+    if (nudgePause.current) { clearTimeout(nudgePause.current); nudgePause.current = null; }
+    if (nudge.current === null) return;
+    nudge.current = null;
+    dispatch({ type: 'endDrag' });
+  };
+  const endNudgeRef = useRef(endNudge);
+  endNudgeRef.current = endNudge;
+  useEffect(() => () => { if (nudgePause.current) clearTimeout(nudgePause.current); }, []);
   const draggingNow = useRef(dragging);
   draggingNow.current = dragging;
   const [zoom, setZoom] = useState(1);
@@ -152,6 +166,7 @@ export function CueTimeline({ cues, durationMs, peaks, peaksMs, time, selected, 
 
   const down = (e: PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
+    endNudge();
     const target = e.target as Element;
     const block = target.closest<HTMLElement>('.ms-subtl-cue');
     const cue = block ? cues.find((c) => c.id === block.dataset.cue) : undefined;
@@ -203,19 +218,29 @@ export function CueTimeline({ cues, durationMs, peaks, peaksMs, time, selected, 
   // The blocks change with the lines, not with the playhead: kept between the frames of playback.
   const tabbable = selected !== null && cues.some((c) => c.id === selected) ? selected : cues[0]?.id ?? null;
   const blocks = useMemo(() => cues.map((c, i) => {
+    // Final review, M2: the nudges are `times` ops marked `drag`, so the model makes a run of them one undo step.
     const key = (edge: 'start' | 'end') => (e: KeyboardEvent<HTMLSpanElement>) => {
       if (e.metaKey || e.ctrlKey || e.altKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
       e.preventDefault();
       e.stopPropagation();
+      const which = `${c.id}:${edge}`;
+      if (nudge.current !== which) endNudgeRef.current();
+      else if (nudgePause.current) { clearTimeout(nudgePause.current); nudgePause.current = null; }
+      nudge.current = which;
       const d = (e.key === 'ArrowRight' ? 1 : -1) * (e.shiftKey ? BIG_STEP_MS : STEP_MS);
-      dispatch(edge === 'start' ? { type: 'times', id: c.id, start: Math.max(0, c.start + d) } : { type: 'times', id: c.id, end: c.end + d });
+      dispatch(edge === 'start' ? { type: 'times', id: c.id, start: Math.max(0, c.start + d), drag: true } : { type: 'times', id: c.id, end: c.end + d, drag: true });
+    };
+    const keyUp = (e: KeyboardEvent<HTMLSpanElement>) => {
+      if ((e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || nudge.current === null) return;
+      if (nudgePause.current) clearTimeout(nudgePause.current);
+      nudgePause.current = setTimeout(() => { nudgePause.current = null; endNudgeRef.current(); }, NUDGE_PAUSE_MS);
     };
     const edge = (which: 'start' | 'end') => {
       const v = which === 'start' ? c.start : c.end;
       return (
         <span className={cx('ms-subtl-edge', which === 'start' ? 'ms-start' : 'ms-end')} role="slider" tabIndex={c.id === tabbable ? 0 : -1}
           aria-label={which === 'start' ? s.start({ n: i + 1 }) : s.end({ n: i + 1 })} aria-valuemin={0} aria-valuemax={span} aria-valuenow={v}
-          aria-valuetext={msText(v)} onKeyDown={key(which)} />
+          aria-valuetext={msText(v)} onKeyDown={key(which)} onKeyUp={keyUp} onBlur={() => endNudgeRef.current()} />
       );
     };
     return (
