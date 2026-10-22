@@ -479,7 +479,7 @@ describe('the video changed under the subtitles (Task 14, spec §6.7)', { timeou
       cues: [
         { id: 'c1', start: 200, end: 1800, text: 'Hi everyone.', source: { text: 'Ciao a tutti.' } },
         // The user corrected this line (and its times).
-        { id: 'c2', start: 2050, end: 2650, text: 'Book it now.', source: { text: 'Prenota ora.' }, edited: true },
+        { id: 'c2', start: 3050, end: 3650, text: 'Book it now.', source: { text: 'Prenota ora.' }, edited: true },
       ],
     });
     const before = (await readSubtitleSet(creativeDir(), 'en'))!;
@@ -492,7 +492,7 @@ describe('the video changed under the subtitles (Task 14, spec §6.7)', { timeou
     expect(it.cues.map((x) => [x.start, x.end])).toEqual([[1200, 2800], [3000, 4000]]);
     const after = (await readSubtitleSet(creativeDir(), 'en'))!;
     expect(after.set.cues.map((x) => [x.id, x.start, x.end, x.text, x.edited ?? false])).toEqual([
-      ['c1', 1200, 2800, 'Hi everyone.', false], ['c2', 2050, 2650, 'Book it now.', true],
+      ['c1', 1200, 2800, 'Hi everyone.', false], ['c2', 3050, 3650, 'Book it now.', true],
     ]);
     expect(after.set.timing).toEqual({ version: 2, format: 'test-wide', fingerprint: audioFingerprint(c2) });
     // What a render draws changed: a render of the old lines turns stale.

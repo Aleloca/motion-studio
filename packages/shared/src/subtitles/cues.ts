@@ -303,56 +303,73 @@ export function staleCues(target: Pick<SubtitleSet, 'cues'>, source: Pick<Subtit
   return out;
 }
 
+/** A line's text for pairing: words lower-cased, punctuation and spacing aside. */
+const pairingText = (text: string) => text.split(/\s+/).map(normalizeToken).filter(Boolean).join(' ');
+
 /**
- * The lines of a set before it was made again (`before`) paired with the lines after (`after`), by id (Task 25, review round
- * 2): a line kept by id (a corrected one, or the same set), then, in order, the next line whose text is the same once
- * normalised (case, punctuation and spaces aside), then, when as many lines are left on each side, the rest in order. Lines
- * left out have no pair. Old id → new line.
+ * The pairs of `a` and `b` (indexes) that every longest common subsequence of their keys agrees on (Task 25, review round 3):
+ * order kept (nothing crosses); a pair two alignments would choose differently (a line repeated) is left out.
  */
-export function pairSourceCues(before: readonly SubtitleCue[], after: readonly SubtitleCue[]): Map<string, SubtitleCue> {
-  const out = new Map<string, SubtitleCue>();
-  const byId = new Map(after.map((c) => [c.id, c]));
-  const used = new Set<string>();
-  for (const c of before) {
-    const same = byId.get(c.id);
-    if (same) { out.set(c.id, same); used.add(same.id); }
+function certainPairs(a: readonly string[], b: readonly string[]): Array<[number, number]> {
+  const n = a.length, m = b.length, w = m + 1;
+  // f: LCS of a[0..i) and b[0..j); g: LCS of a[i..) and b[j..).
+  const f = new Uint32Array((n + 1) * w), g = new Uint32Array((n + 1) * w);
+  for (let i = 1; i <= n; i++) for (let j = 1; j <= m; j++) {
+    f[i * w + j] = a[i - 1] === b[j - 1] ? f[(i - 1) * w + j - 1]! + 1 : Math.max(f[(i - 1) * w + j]!, f[i * w + j - 1]!);
   }
-  const norm = (text: string) => text.split(/\s+/).map(normalizeToken).filter(Boolean).join(' ');
-  const olds = before.filter((c) => !out.has(c.id));
-  let news = after.filter((c) => !used.has(c.id));
-  let from = 0;
-  for (const c of olds) {
-    const text = norm(c.text);
-    const at = news.findIndex((n, i) => i >= from && norm(n.text) === text);
-    if (at < 0) continue;
-    out.set(c.id, news[at]!);
-    used.add(news[at]!.id);
-    from = at + 1;
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) {
+    g[i * w + j] = a[i] === b[j] ? g[(i + 1) * w + j + 1]! + 1 : Math.max(g[(i + 1) * w + j]!, g[i * w + j + 1]!);
   }
-  const leftOld = olds.filter((c) => !out.has(c.id));
-  news = news.filter((c) => !used.has(c.id));
-  if (leftOld.length === news.length) leftOld.forEach((c, i) => out.set(c.id, news[i]!));
-  return out;
+  const total = f[n * w + m]!;
+  const pairs: Array<[number, number]> = [];
+  for (let i = 0; i < n; i++) for (let j = 0; j < m; j++) {
+    if (a[i] === b[j] && f[i * w + j]! + 1 + g[(i + 1) * w + j + 1]! === total) pairs.push([i, j]);
+  }
+  const countA = new Map<number, number>(), countB = new Map<number, number>();
+  for (const [i, j] of pairs) { countA.set(i, (countA.get(i) ?? 0) + 1); countB.set(j, (countB.get(j) ?? 0) + 1); }
+  const sure = pairs.filter(([i, j]) => countA.get(i) === 1 && countB.get(j) === 1);
+  // Kept only when in order with every other sure pair.
+  return sure.filter(([i, j]) => sure.every(([k, l]) => (k === i && l === j) || (k < i && l < j) || (k > i && l > j)));
 }
 
 /**
- * A translation's cues after its source was made again (Task 25): each translated line the user did not correct takes the
- * times of its source line as it is now: the line it stood for in `before` (by id, else the one it overlaps most), paired
- * with its line in `after` (`pairSourceCues`). A corrected line keeps its own times (anti-goal 1). Texts untouched; sorted by
- * time. `complete`: false when an uncorrected line found no line in `after` (it keeps its times; the translation then does
- * not claim to follow the source's timing).
+ * A translation's cues after its source was made again (Task 25, review round 3): each translated line the user did not
+ * correct goes to the line of the source now (`after`) with its own source text (`source.text`, normalised), by an
+ * order-keeping alignment of the whole sequences (`certainPairs`: a repeated line pairs only when unambiguous), and takes its
+ * times. Never by id (the ids of uncorrected source lines are recycled) nor by position: a wrong move is worse than none. A
+ * line with no partner keeps its times, and so does a line whose move would overlap a line left in place. A corrected line
+ * keeps its times (anti-goal 1). Texts untouched; sorted by time. `complete`: every uncorrected line moved to its partner
+ * (or `before` is `after`'s lines as they were, "Tempi controllati": nothing moves, and it follows); when false, the
+ * translation does not claim its source's timing.
  */
 export function followSourceTimes(cues: readonly SubtitleCue[], before: readonly SubtitleCue[], after: readonly SubtitleCue[]): { cues: SubtitleCue[]; complete: boolean } {
-  const pairs = pairSourceCues(before, after);
-  const oldById = new Map(before.map((c) => [c.id, c]));
-  let complete = true;
-  const out = cues.map((c) => {
-    if (c.edited || !c.source) return c;
-    const old = oldById.get(c.id) ?? sourceCueOf(c, before);
-    const now = old ? pairs.get(old.id) : undefined;
-    if (!now) { complete = false; return c; }
-    return now.start !== c.start || now.end !== c.end ? { ...c, start: now.start, end: now.end } : c;
+  const unchanged = before.length === after.length
+    && before.every((c, i) => { const d = after[i]!; return c.id === d.id && c.start === d.start && c.end === d.end && c.text === d.text; });
+  const sorted = [...cues].sort((a, b) => a.start - b.start || a.end - b.end);
+  if (unchanged) return { cues: sorted, complete: true };
+  const free = sorted.filter((c) => !c.edited && c.source);
+  const pairs = certainPairs(free.map((c) => pairingText(c.source!.text)), after.map((c) => pairingText(c.text)));
+  const target = new Map(pairs.map(([i, j]) => [free[i]!.id, after[j]!]));
+  const moved = new Set<string>();
+  let out = sorted.map((c) => {
+    const to = target.get(c.id);
+    if (!to) return c;
+    moved.add(c.id);
+    return { ...c, start: to.start, end: to.end };
   });
+  // A moved line never overlaps one left in place: it stays (until nothing changes, as one put back may meet another).
+  for (let again = true; again;) {
+    again = false;
+    out = out.map((c, i) => {
+      if (!moved.has(c.id)) return c;
+      const hits = out.some((d, k) => k !== i && !moved.has(d.id) && c.start < d.end && d.start < c.end);
+      if (!hits) return c;
+      moved.delete(c.id);
+      again = true;
+      return sorted.find((x) => x.id === c.id)!;
+    });
+  }
+  const complete = free.every((c) => moved.has(c.id));
   return { cues: out.sort((a, b) => a.start - b.start || a.end - b.end), complete };
 }
 

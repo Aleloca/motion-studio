@@ -188,39 +188,67 @@ describe('Korean keeps its spaces', () => {
   });
 });
 
-describe('followSourceTimes (Task 25, review round 2)', () => {
-  const OLD: SubtitleCue[] = [
-    { id: 'c1', start: 200, end: 1800, text: 'Ciao a tutti.' },
-    { id: 'c2', start: 2000, end: 3600, text: 'Prenota ora.', edited: true },
-    { id: 'c3', start: 3800, end: 5400, text: 'Scarica l\'app.' },
-  ];
-  // Retimed 2 s later (an intro): longer than every line, so no old line overlaps its new self. The uncorrected lines have new
-  // ids and a heard text that may differ in case and punctuation; the corrected one keeps its id.
-  const NEW: SubtitleCue[] = [
-    { id: 'f1', start: 2200, end: 3800, text: 'ciao a tutti' },
-    { id: 'c2', start: 4000, end: 5600, text: 'Prenota ora.', edited: true },
-    { id: 'f2', start: 5800, end: 7400, text: 'Scarica l\'app!' },
-  ];
-  const tr = (id: string, start: number, end: number, text: string, from: string, edited = false): SubtitleCue =>
-    ({ id, start, end, text, source: { text: from }, ...(edited ? { edited: true as const } : {}) });
+describe('followSourceTimes (Task 25, review round 3)', () => {
+  const src = (list: Array<[string, number, number, string]>): SubtitleCue[] => list.map(([id, start, end, text]) => ({ id, start, end, text }));
+  const tr = (id: string, start: number, end: number, from: string, edited = false): SubtitleCue =>
+    ({ id, start, end, text: `EN ${from}`, source: { text: from }, ...(edited ? { edited: true as const } : {}) });
+  const at = (r: { cues: SubtitleCue[] }) => r.cues.map((c) => [c.id, c.start, c.end]);
+  const overlapping = (cues: SubtitleCue[]) => cues.some((a, i) => cues.some((b, j) => i < j && a.start < b.end && b.start < a.end));
 
   it('a +2 s retime with 1.6 s lines: every uncorrected line moves to its source line; a corrected one keeps its times', () => {
-    const cues = [tr('c1', 200, 1800, 'Hi all.', 'Ciao a tutti.'), tr('c2', 2000, 3600, 'Book now.', 'Prenota ora.'), tr('c3', 3800, 5400, 'Get it.', 'Scarica l\'app.', true)];
-    const r = followSourceTimes(cues, OLD, NEW);
+    const before = src([['c1', 200, 1800, 'Ciao a tutti.'], ['c2', 2000, 3600, 'Prenota ora.'], ['c3', 3800, 5400, 'Scarica l\'app.']]);
+    const after = src([['f1', 2200, 3800, 'ciao a tutti'], ['f2', 4000, 5600, 'Prenota ora!'], ['f3', 5800, 7400, 'Scarica l\'app.']]);
+    const r = followSourceTimes([tr('c1', 200, 1800, 'Ciao a tutti.', true), tr('c2', 2000, 3600, 'Prenota ora.'), tr('c3', 3800, 5400, 'Scarica l\'app.')], before, after);
     expect(r.complete).toBe(true);
-    expect(r.cues.map((c) => [c.id, c.start, c.end])).toEqual([['c2', 4000, 5600], ['c3', 3800, 5400], ['c1', 2200, 3800]].sort((a, b) => (a[1] as number) - (b[1] as number)));
+    expect(at(r)).toEqual([['c1', 200, 1800], ['c2', 4000, 5600], ['c3', 5800, 7400]]);
+    expect(overlapping(r.cues)).toBe(false);
   });
 
-  it('texts that do not pair fall back to the order when as many lines are left on each side', () => {
-    const fresh = NEW.map((c) => (c.id === 'f2' ? { ...c, text: 'Scarica la app.' } : c));
-    const r = followSourceTimes([tr('c3', 3800, 5400, 'Get it.', 'Scarica l\'app.')], OLD, fresh);
-    expect(r).toEqual({ cues: [tr('c3', 5800, 7400, 'Get it.', 'Scarica l\'app.')], complete: true });
+  it('a second retime with recycled f-ids and an intro line added: each line follows its own text, not the id', () => {
+    const before = src([['f1', 2200, 3800, 'Ciao a tutti.'], ['f2', 4000, 5600, 'Prenota ora.']]);
+    const after = src([['f1', 2200, 3000, 'Benvenuti.'], ['f2', 4200, 5800, 'Ciao a tutti.'], ['f3', 6000, 7600, 'Prenota ora.']]);
+    const r = followSourceTimes([tr('f1', 2200, 3800, 'Ciao a tutti.'), tr('f2', 4000, 5600, 'Prenota ora.')], before, after);
+    expect(r.complete).toBe(true);
+    expect(at(r)).toEqual([['f1', 4200, 5800], ['f2', 6000, 7600]]);
   });
 
-  it('a line that cannot be paired keeps its times and the result says it is not complete', () => {
-    const fewer = NEW.filter((c) => c.id !== 'f2').concat([{ id: 'f3', start: 5800, end: 6400, text: 'Altro.' }, { id: 'f4', start: 6500, end: 7000, text: 'Ancora.' }]);
-    const r = followSourceTimes([tr('c1', 200, 1800, 'Hi all.', 'Ciao a tutti.'), tr('c3', 3800, 5400, 'Get it.', 'Scarica l\'app.')], OLD, fewer);
+  it('Alfa, Beta, Gamma → Alfa, "Gamma bis", Delta: only Alfa moves; nothing is placed by position', () => {
+    const before = src([['a', 0, 1000, 'Alfa'], ['b', 1200, 2200, 'Beta'], ['g', 2400, 3400, 'Gamma']]);
+    const after = src([['f1', 100, 900, 'Alfa'], ['f2', 1300, 2300, 'Gamma bis'], ['f3', 2500, 3500, 'Delta']]);
+    const r = followSourceTimes([tr('a', 0, 1000, 'Alfa'), tr('b', 1200, 2200, 'Beta'), tr('g', 2400, 3400, 'Gamma')], before, after);
     expect(r.complete).toBe(false);
-    expect(r.cues.map((c) => [c.id, c.start])).toEqual([['c1', 2200], ['c3', 3800]]);
+    expect(at(r)).toEqual([['a', 100, 900], ['b', 1200, 2200], ['g', 2400, 3400]]);
+  });
+
+  it('Grazie, Ciao, Grazie → Ciao, Grazie: the pairs keep their order; the first Grazie stays; no overlaps', () => {
+    const before = src([['c1', 0, 1000, 'Grazie'], ['c2', 1200, 2200, 'Ciao'], ['c3', 2400, 3400, 'Grazie']]);
+    const after = src([['f1', 3600, 4600, 'Ciao'], ['f2', 4800, 5800, 'Grazie']]);
+    const r = followSourceTimes([tr('c1', 0, 1000, 'Grazie'), tr('c2', 1200, 2200, 'Ciao'), tr('c3', 2400, 3400, 'Grazie')], before, after);
+    expect(r.complete).toBe(false);
+    expect(at(r)).toEqual([['c1', 0, 1000], ['c2', 3600, 4600], ['c3', 4800, 5800]]);
+    expect(overlapping(r.cues)).toBe(false);
+  });
+
+  it('an ambiguous pair moves nothing: two Grazie for one', () => {
+    const before = src([['c1', 0, 1000, 'Grazie'], ['c2', 1200, 2200, 'Grazie']]);
+    const after = src([['f1', 3000, 4000, 'Grazie']]);
+    const r = followSourceTimes([tr('c1', 0, 1000, 'Grazie'), tr('c2', 1200, 2200, 'Grazie')], before, after);
+    expect(r).toMatchObject({ complete: false });
+    expect(at(r)).toEqual([['c1', 0, 1000], ['c2', 1200, 2200]]);
+  });
+
+  it('a line whose move would overlap a line kept in place does not move', () => {
+    const before = src([['c1', 0, 1000, 'Uno'], ['c2', 1200, 2000, 'Due']]);
+    const after = src([['f1', 0, 400, 'Uno'], ['f2', 500, 1500, 'Due']]);
+    const r = followSourceTimes([tr('c1', 0, 1000, 'Uno', true), tr('c2', 1200, 2000, 'Due')], before, after);
+    expect(r.complete).toBe(false);
+    expect(at(r)).toEqual([['c1', 0, 1000], ['c2', 1200, 2000]]);
+  });
+
+  it('the source unchanged ("Tempi controllati"): nothing moves and it follows, even a line whose source text changed', () => {
+    const same = src([['c1', 0, 1000, 'Uno'], ['c2', 1200, 2000, 'Due bis']]);
+    const r = followSourceTimes([tr('c1', 0, 1000, 'Uno'), tr('c2', 1200, 2000, 'Due')], same, same.map((c) => ({ ...c })));
+    expect(r.complete).toBe(true);
+    expect(at(r)).toEqual([['c1', 0, 1000], ['c2', 1200, 2000]]);
   });
 });
