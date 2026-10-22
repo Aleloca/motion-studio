@@ -275,7 +275,31 @@ export function warningsOf(cues: SubtitleCue[], lang: LocaleTag): Map<string, Cu
   return out;
 }
 
-/** The cue on screen at `ms` (its start included, its end not), or null. */
+/**
+ * The cue on screen at `ms` (its start included, its end not), or null. Overlapping cues follow the runtime's rule (Task 22,
+ * `activeCue`): the one that started later shows, and when it ends a longer one under it shows again.
+ */
 export function cueAt(cues: SubtitleCue[], ms: number): SubtitleCue | null {
-  return cues.find((c) => ms >= c.start && ms < c.end) ?? null;
+  let shown: SubtitleCue | null = null;
+  for (const c of cues) if (ms >= c.start && ms < c.end && (shown === null || byStart(c, shown) >= 0)) shown = c;
+  return shown;
+}
+
+/** The cues as the runtime draws them (`setSubtitles`, Task 22). */
+export interface EditorRuntimeSubtitles { lang: string; cues: Array<{ start: number; end: number; text: string; words?: SubtitleWord[] }> }
+
+/**
+ * The set as the preview's runtime takes it (Task 22): sorted by start, as the core stages it (`stageSubtitles`): a cue
+ * starting at or after the video's end (`durationMs`, 0 when not known yet) is dropped, one running past it is cut there
+ * (its words too). Within the runtime's bounds, so a line being typed never gets the whole block refused.
+ */
+export function runtimeSubtitlesOf(lang: string, cues: readonly SubtitleCue[], durationMs: number): EditorRuntimeSubtitles {
+  const out: EditorRuntimeSubtitles['cues'] = [];
+  for (const c of [...cues].sort(byStart).slice(0, SUBTITLE_LIMITS.cues)) {
+    const end = durationMs > 0 ? Math.min(c.end, durationMs) : c.end;
+    if (!(end > c.start)) continue;
+    const words = c.words?.filter((w) => w.start < end).slice(0, SUBTITLE_LIMITS.words).map((w) => ({ start: w.start, end: Math.min(w.end, end), text: w.text }));
+    out.push({ start: c.start, end, text: c.text.slice(0, SUBTITLE_LIMITS.text), ...(words ? { words } : {}) });
+  }
+  return { lang, cues: out };
 }

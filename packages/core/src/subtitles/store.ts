@@ -1,7 +1,7 @@
 import { lstat, mkdir, readdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  SUBTITLES_DIR, SUBTITLE_LIMITS, parseSubtitleSet, sha256Hex, subtitleSetHash, subtitleSetSchema, subtitleSetText, type Brief, type Composition, type LocaleTag, type SubtitleSet,
+  SUBTITLES_DIR, SUBTITLE_LIMITS, drawsSubtitles, parseSubtitleSet, sha256Hex, subtitleSetHash, subtitleSetSchema, subtitleSetText, type Brief, type Composition, type LocaleTag, type SubtitleSet,
 } from '@motion-studio/shared';
 import type { RuntimeCue, RuntimeSubtitles } from '@motion-studio/composition-runtime/page';
 import { noteCoreChange } from '../core-changes.ts';
@@ -82,10 +82,8 @@ export async function subtitleHashes(creativeDir: string): Promise<Record<string
   return out;
 }
 
-/** Whether the composition draws subtitles: a `subtitles` clip on the subtitles track, neither of them hidden. */
-export function drawsSubtitles(c: Composition): boolean {
-  return c.tracks.some((t) => t.kind === 'subtitles' && !t.hidden && t.clips.some((k) => k.type === 'subtitles' && !k.hidden));
-}
+/** Whether the composition draws subtitles (shared with the subtitle editor, Task 22). */
+export { drawsSubtitles };
 
 /**
  * The default subtitle language of a render (U8, spec §6.6): a localized render (`localized`) draws its own language's set,

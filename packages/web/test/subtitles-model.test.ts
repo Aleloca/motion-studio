@@ -1,6 +1,6 @@
 import type { SubtitleCue } from '@motion-studio/shared';
 import { describe, expect, it } from 'vitest';
-import { cueAt, editorReducer, initialEditorState, warningsOf, type EditorOp, type EditorState } from '../src/screens/subtitles/subtitlesModel.ts';
+import { cueAt, editorReducer, runtimeSubtitlesOf, initialEditorState, warningsOf, type EditorOp, type EditorState } from '../src/screens/subtitles/subtitlesModel.ts';
 
 const cue = (id: string, start: number, end: number, text: string, extra: Partial<SubtitleCue> = {}): SubtitleCue => ({ id, start, end, text, ...extra });
 const load = (cues: SubtitleCue[], durationMs = 20000): EditorState => editorReducer(initialEditorState(), { type: 'load', cues, durationMs, lang: 'it' });
@@ -112,6 +112,30 @@ describe('subtitle editor model (decisions 1652-1655)', () => {
     expect(cueAt(cues, 0)?.id).toBe('a');
     expect(cueAt(cues, 1000)?.id).toBe('b');
     expect(cueAt(cues, 3000)).toBeNull();
+  });
+  it('Task 22: cueAt follows the runtime\'s overlap rule: of the cues on screen, the one that started later shows', () => {
+    const cues = [cue('long', 0, 5000, 'lunga'), cue('short', 1000, 2000, 'breve'), cue('next', 4000, 6000, 'dopo')];
+    expect(cueAt(cues, 500)?.id).toBe('long');
+    expect(cueAt(cues, 1500)?.id).toBe('short');
+    // When the later one ends, the longer one under it shows again.
+    expect(cueAt(cues, 2500)?.id).toBe('long');
+    expect(cueAt(cues, 4500)?.id).toBe('next');
+  });
+  it('Task 22: runtimeSubtitlesOf: the cues as the runtime takes them, sorted, cut at the video\'s end, text bounded', () => {
+    const cues = [
+      { ...cue('b', 2000, 3000, 'due'), edited: true as const, words: [{ start: 2000, end: 2500, text: 'due' }] },
+      cue('a', 0, 1000, 'uno'),
+      cue('c', 5500, 7000, 'oltre la fine'),
+      cue('d', 4000, 9000, 'x'.repeat(250)),
+    ];
+    expect(runtimeSubtitlesOf('it', cues, 6000)).toEqual({ lang: 'it', cues: [
+      { start: 0, end: 1000, text: 'uno' },
+      { start: 2000, end: 3000, text: 'due', words: [{ start: 2000, end: 2500, text: 'due' }] },
+      { start: 4000, end: 6000, text: 'x'.repeat(200) },
+      { start: 5500, end: 6000, text: 'oltre la fine' },
+    ] });
+    // No known duration: nothing is cut.
+    expect(runtimeSubtitlesOf('it', [cue('a', 0, 9000, 'uno')], 0).cues).toEqual([{ start: 0, end: 9000, text: 'uno' }]);
   });
   it('the video\'s duration, known after the load, changes no cue, no history and nothing to save (Task 12)', () => {
     const s0 = load([cue('a', 0, 2000, 'Ciao')], 2000);

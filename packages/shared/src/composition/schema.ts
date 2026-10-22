@@ -238,6 +238,10 @@ export function stripSubtitles(c: Composition): Composition {
 }
 /** A subtitles track is always locked: its clip is drawn from the subtitle set, never edited directly. */
 export const trackLocked = (t: Track): boolean => Boolean(t.locked) || t.kind === 'subtitles';
+/** Whether the composition draws subtitles: a `subtitles` clip on the subtitles track, neither of them hidden. */
+export function drawsSubtitles(c: Composition): boolean {
+  return c.tracks.some((t) => t.kind === 'subtitles' && !t.hidden && t.clips.some((k) => k.type === 'subtitles' && !k.hidden));
+}
 /** The one subtitles clip of a composition, or null. */
 export function subtitlesClipOf(c: Composition): SubtitlesClip | null {
   for (const t of c.tracks) for (const k of t.clips) if (k.type === 'subtitles') return k;

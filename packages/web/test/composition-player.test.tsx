@@ -245,6 +245,29 @@ describe('CompositionPlayer', () => {
   });
 });
 
+describe('the subtitles prop (subtitles Task 22)', () => {
+  const subs = (text: string) => ({ lang: 'it', cues: [{ start: 0, end: 1000, text }] });
+  const sent = (posted: ReturnType<typeof vi.spyOn>) => posted.mock.calls.map((c) => c[0] as { type: string }).filter((c) => c.type === 'setSubtitles');
+  it('is sent as setSubtitles once the frame is ready, again on each change and to a new frame; absent: never sent', () => {
+    const p = mount({ subtitles: subs('Ciao') });
+    expect(sent(p.posted)).toEqual([]);
+    fromRuntime(READY);
+    expect(sent(p.posted)).toEqual([{ type: 'setSubtitles', subtitles: subs('Ciao') }]);
+    p.rerender(<I18nProvider locale="en"><CompositionPlayer session={session()} title="Reel v2" subtitles={subs('Ciao!')} /></I18nProvider>);
+    expect(sent(p.posted).at(-1)).toEqual({ type: 'setSubtitles', subtitles: subs('Ciao!') });
+    expect(sent(p.posted)).toHaveLength(2);
+    p.unmount();
+    const q = mount();
+    fromRuntime(READY);
+    expect(sent(q.posted)).toEqual([]);
+  });
+  it('a block the protocol refuses is never posted', () => {
+    const p = mount({ subtitles: { lang: 'it', cues: [{ start: 1000, end: 500, text: 'x' }] } });
+    fromRuntime(READY);
+    expect(sent(p.posted)).toEqual([]);
+  });
+});
+
 describe('CompositionMedia.setComposition (the editor draft, Phase 10b)', () => {
   const draft = (text: string, duration = 8) => ({
     $schema: 'motion-studio/composition@1' as const, width: 1080, height: 1920, fps: 30 as const, duration, background: '#000000', fonts: [],
