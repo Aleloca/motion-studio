@@ -137,6 +137,22 @@ describe('CreativeCanvas · arrives from the brief panel (decision 1419)', () =>
   });
 });
 
+describe('CreativeCanvas · the subtitles entry (Task 26)', () => {
+  it('"Sottotitoli" opens the original speech set, not the first set listed', async () => {
+    const timing = { version: 1, format: 'tiktok-9x16', fingerprint: 'f'.repeat(64) };
+    const set = { cues: 3, edited: 0, hash: 'a'.repeat(64), timing, timingChanged: false, staleCues: 0 };
+    detail = { ...makeDetail([version(1, 'Dal brief')]), subtitles: [
+      { ...set, lang: 'en', origin: 'translation', sourceLang: 'it' },
+      { ...set, lang: 'de', origin: 'speech', timing: { ...timing, locale: 'de' } },
+      { ...set, lang: 'it', origin: 'speech' },
+    ] };
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    fireEvent.click(await screen.findByRole('button', { name: 'Sottotitoli' }));
+    expect(location.hash).toBe('#/p/acme/c/lancio/subtitles/it');
+  });
+});
+
 describe('CreativeCanvas · fit to view', () => {
   it('opens fitted so every board is visible (CV1); ⌘+ / ⌘− step the zoom and ⌘0 fits again (decision 973)', async () => {
     const size = (dim: 'clientWidth' | 'clientHeight', v: number) => vi.spyOn(HTMLElement.prototype, dim, 'get')

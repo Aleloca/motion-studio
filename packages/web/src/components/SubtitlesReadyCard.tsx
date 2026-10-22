@@ -1,12 +1,12 @@
 import type { ConversationEntry, LocaleTag, SubtitlesSummary } from '@motion-studio/shared';
 import { useContext, useEffect, useState } from 'react';
-import { api } from '../api.ts';
+import { api, ApiError } from '../api.ts';
 import { saveBlob } from '../download.ts';
 import { message } from '../errors.ts';
 import { useLocale, useT } from '../i18n.tsx';
 import { href } from '../routes.ts';
 import { localeName } from '../screens/creative/languagesModel.ts';
-import { ShellContext } from '../shell/ShellContext.tsx';
+import { go, ShellContext } from '../shell/ShellContext.tsx';
 import { Button, Icon, Pill } from '../ui/index.ts';
 
 type SystemEntry = Extract<ConversationEntry, { type: 'system' }>;
@@ -91,6 +91,35 @@ function TimingChangedCard({ slug, creative, lang }: { slug: string; creative: s
 }
 
 /**
+ * Task 26 (U8): "Traduci in {language}" on a ready card in another language than the brief's: the brief's language is added
+ * as a subtitle language (translated, or from its own voice) and its editor opens, where the subtitles show once made. A
+ * language that has them already opens as it is.
+ */
+function TranslateInto({ slug, creative, lang }: { slug: string; creative: string; lang: LocaleTag }) {
+  const s = useT().subtitles;
+  const locale = useLocale();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.addSubtitleLanguage(slug, creative, lang);
+    } catch (e) {
+      if (!(e instanceof ApiError && e.code === 'subtitles-lang-exists')) { setError(s.translateIntoFailed({ detail: message(e) })); setBusy(false); return; }
+    }
+    setBusy(false);
+    go(href.subtitles(slug, creative, lang));
+  };
+  return (
+    <>
+      <Button size="sm" variant="outline" disabled={busy} aria-busy={busy || undefined} onClick={() => void run()}>{s.translateInto({ language: localeName(lang, locale) })}</Button>
+      {error ? <span className="ms-convo-version-summary ms-convo-error" role="alert">{error}</span> : null}
+    </>
+  );
+}
+
+/**
  * Decision 1640 (spec §6.2): a subtitles job's outcome in the chat. Ready: "Sottotitoli pronti", the set's language and its
  * `.srt` / `.vtt` downloads (fetched with the UI token, then saved: a plain link to the route would be refused); spoken in
  * another language than the brief's, the note that says so. No speech, an unsupported language or a failure: the core's own
@@ -130,7 +159,10 @@ export function SubtitlesReadyCard({ slug, creative, entry }: { slug: string; cr
         </Button>
       ))}
       {s.briefLang && s.briefLang !== lang ? (
-        <span className="ms-convo-version-summary">{t.subtitles.readyOtherLang({ lang: inlineName(lang, locale), brief: inlineName(s.briefLang, locale) })}</span>
+        <>
+          <span className="ms-convo-version-summary">{t.subtitles.readyOtherLang({ lang: inlineName(lang, locale), brief: inlineName(s.briefLang, locale) })}</span>
+          <TranslateInto slug={slug} creative={creative} lang={s.briefLang} />
+        </>
       ) : null}
       {error ? <span className="ms-convo-version-summary ms-convo-error" role="alert">{error}</span> : null}
     </div>
