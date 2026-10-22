@@ -537,6 +537,12 @@ arrives and worked on later together.
     Done (decisions 1626–1629): a video's picture and controls are sticky at the top of the panel's body, the picture capped
     at min(260px, 36vh).
 
+68. **Subtitles (user request of 2026-10-22).** Design docs/superpowers/specs/2026-10-22-subtitles-design.md, plan
+    docs/superpowers/plans/2026-10-22-subtitles.md. Done in four phases (decisions 1636-1751): sets per creative and language
+    from the creative's own audio (Whisper first), the subtitle editor (layout B with a waveform timeline), drawn subtitles
+    styled by the agent (built-in look or HTML template), .srt/.vtt files and soft MP4 tracks, translations and own-voice
+    languages, multi-language exports with video/subtitle pairs. To be tested by the user in the real app.
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
