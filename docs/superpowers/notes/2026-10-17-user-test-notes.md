@@ -551,6 +551,9 @@ arrives and worked on later together.
   (run 39638356088, part 3/3: diff ratio 0.0073 against < 0.002 between two shots of the same frame) and passed on rerun.
   Find what differs between the two shots (a video or animated pixel not settled on the frozen clock) or compare only the
   logo's region.
+- **Flaky under load:** `web/test/CreativeCanvas.test.tsx` "the chat panel moves from the brief panel… the boards rise one after
+  the other" failed once in a full local run (5.6 s, "expected flip to be called") and passes alone 3/3. Raise its waitFor
+  timeout or make the animation wait deterministic.
 - **CI on macOS waits for runners:** with 3 parts plus the Electron job, 3 macOS jobs started 10 minutes after the run
   (run 39638356088). If it keeps happening, go to 2 macOS parts.
 - **"Replace with a text layer"** for outlined SVG lettering (report 13): not built (decision 1024).
