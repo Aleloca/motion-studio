@@ -474,6 +474,7 @@ export const en = {
     waveformLoading: 'Loading the waveform…',
     // The video changed (Task 14, spec §6.7).
     timingChanged: 'The video changed: check the timing',
+    timingAligned: 'The timing matches the video again.',
     retime: 'Redo the timing',
     retimed: (p: { lang: string }) => `Subtitle timing redone (${p.lang}).`,
     retimeStarted: 'Redoing the timing: the lines you corrected keep their text.',

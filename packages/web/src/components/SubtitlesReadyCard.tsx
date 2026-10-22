@@ -1,11 +1,12 @@
 import type { ConversationEntry, LocaleTag } from '@motion-studio/shared';
-import { useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import { api } from '../api.ts';
 import { saveBlob } from '../download.ts';
 import { message } from '../errors.ts';
 import { useLocale, useT } from '../i18n.tsx';
 import { href } from '../routes.ts';
 import { localeName } from '../screens/creative/languagesModel.ts';
+import { ShellContext } from '../shell/ShellContext.tsx';
 import { Button, Icon, Pill } from '../ui/index.ts';
 
 type SystemEntry = Extract<ConversationEntry, { type: 'system' }>;
@@ -42,6 +43,36 @@ export function RetimeAction({ slug, creative, lang, className }: { slug: string
 }
 
 /**
+ * Task 14: a new version moved the audio under set `lang`: "Rifai i tempi", or the editor to check the lines by hand. The set's
+ * state is read again (on each change of the creative): once it is aligned again (retimed, or the audio put back), an old
+ * notice offers no retime, which would only transcribe again (decision 1717). A read that fails leaves the button.
+ */
+function TimingChangedCard({ slug, creative, lang }: { slug: string; creative: string; lang: LocaleTag }) {
+  const t = useT();
+  const locale = useLocale();
+  const tick = useContext(ShellContext)?.live.creativeTicks[`${slug}/${creative}`] ?? 0;
+  const [changed, setChanged] = useState<boolean | null>(null);
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve().then(() => api.subtitles(slug, creative)).then(
+      (r) => { if (alive) setChanged(r.sets.find((x) => x.lang === lang)?.timingChanged ?? false); },
+      () => { if (alive) setChanged(true); });
+    return () => { alive = false; };
+  }, [slug, creative, lang, tick]);
+  return (
+    <div className="ms-convo-version ms-convo-subtitles" role="group" aria-label={t.subtitles.timingChanged}>
+      <Icon name="warn" size={14} className="ms-convo-subtitles-warn" />
+      <b>{t.subtitles.timingChanged}</b>
+      <Pill>{localeName(lang, locale)}</Pill>
+      <span className="ms-grow" />
+      <a className="ms-btn ms-sm ms-outline" href={href.subtitles(slug, creative, lang)}>{t.subtitles.openEditor}</a>
+      {changed === true ? <RetimeAction slug={slug} creative={creative} lang={lang} className="ms-convo-version-summary" /> : null}
+      {changed === false ? <span className="ms-convo-version-summary">{t.subtitles.timingAligned}</span> : null}
+    </div>
+  );
+}
+
+/**
  * Decision 1640 (spec §6.2): a subtitles job's outcome in the chat. Ready: "Sottotitoli pronti", the set's language and its
  * `.srt` / `.vtt` downloads (fetched with the UI token, then saved: a plain link to the route would be refused); spoken in
  * another language than the brief's, the note that says so. No speech, an unsupported language or a failure: the core's own
@@ -54,19 +85,7 @@ export function SubtitlesReadyCard({ slug, creative, entry }: { slug: string; cr
   const [error, setError] = useState<string | null>(null);
   const s = entry.subtitles;
   const lang = s?.lang;
-  if (s?.state === 'timing-changed' && lang) {
-    // Task 14: a new version moved the audio under the set: "Rifai i tempi", or the editor to check the lines by hand.
-    return (
-      <div className="ms-convo-version ms-convo-subtitles" role="group" aria-label={t.subtitles.timingChanged}>
-        <Icon name="warn" size={14} className="ms-convo-subtitles-warn" />
-        <b>{t.subtitles.timingChanged}</b>
-        <Pill>{localeName(lang, locale)}</Pill>
-        <span className="ms-grow" />
-        <a className="ms-btn ms-sm ms-outline" href={href.subtitles(slug, creative, lang)}>{t.subtitles.openEditor}</a>
-        <RetimeAction slug={slug} creative={creative} lang={lang} className="ms-convo-version-summary" />
-      </div>
-    );
-  }
+  if (s?.state === 'timing-changed' && lang) return <TimingChangedCard slug={slug} creative={creative} lang={lang} />;
   if (s?.state !== 'ready' || !lang) {
     if (entry.level === 'error') return <p role="alert" className="ms-convo-system ms-error">{entry.text}</p>;
     if (entry.level === 'warning') return <p className="ms-convo-system ms-warning"><Icon name="warn" size={13} /><span>{entry.text}</span></p>;

@@ -472,6 +472,7 @@ export const it: Messages = {
     waveformLoading: 'Carico la forma d\'onda…',
     // Il video è cambiato (Task 14, spec §6.7).
     timingChanged: 'Il video è cambiato: ricontrolla i tempi',
+    timingAligned: 'I tempi sono di nuovo allineati al video.',
     retime: 'Rifai i tempi',
     retimed: (p) => `Tempi dei sottotitoli rifatti (${p.lang}).`,
     retimeStarted: 'Rifaccio i tempi: le righe che hai corretto tengono il loro testo.',
