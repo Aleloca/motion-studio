@@ -465,6 +465,10 @@ export const it: Messages = {
     split: 'Dividi al cursore',
     merge: 'Unisci con la successiva',
     remove: 'Elimina la riga',
+    // La timeline (Task 13).
+    timeline: 'Timeline',
+    timelineHint: (p) => `Trascina una riga o i suoi bordi per cambiarne i tempi; ${p.mod} + rotellina per lo zoom`,
+    waveformLoading: 'Carico la forma d\'onda…',
     warnings: {
       tooLong: 'Troppo lunga',
       tooFast: 'Troppo veloce',

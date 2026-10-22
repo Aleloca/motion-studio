@@ -467,6 +467,10 @@ export const en = {
     split: 'Split at the cursor',
     merge: 'Merge with the next',
     remove: 'Delete the line',
+    // The timeline (Task 13).
+    timeline: 'Timeline',
+    timelineHint: (p: { mod: string }) => `Drag a line or its edges to change its times; ${p.mod} + scroll to zoom`,
+    waveformLoading: 'Loading the waveform…',
     warnings: {
       tooLong: 'Too long',
       tooFast: 'Too fast',

@@ -2,7 +2,9 @@
  * Task 12: the subtitle editor (layout B) measured in real Chrome at 1280 × 800 and 900 × 700, light and dark: the player and
  * the list of lines sit side by side under the header with nothing scrolling sideways, the list scrolls by itself (the page
  * does not), a two-line text shows whole in its box, the rows' fields, buttons and warnings stay inside their row, the
- * frame keeps the format's proportions inside its column. MS_LAYOUT_SHOTS=<folder> keeps a screenshot of each case.
+ * frame keeps the format's proportions inside its column. Task 13: the timeline runs under both columns, full width and inside
+ * the window, its blocks inside its track, the waveform drawn (by the component's own `drawWave`, run in the page: the
+ * markup is static). MS_LAYOUT_SHOTS=<folder> keeps a screenshot of each case.
  */
 import type { CreativeDetail, SubtitleCue, VersionEntry } from '@motion-studio/shared';
 import { render, screen, waitFor, within } from '@testing-library/react';
@@ -30,7 +32,14 @@ const CUES: SubtitleCue[] = Array.from({ length: 30 }, (_, i) => ({
   id: `c${i + 1}`, start: i * 3000, end: i * 3000 + (i === 2 ? 1800 : 2800),
   text: i === 1 ? TWO_LINES : i === 2 ? 'Una frase davvero molto lunga che si legge troppo in fretta' : i === 3 ? '\u2026' : SAID[i % SAID.length]!,
 }));
+// A voice: speech under each line, quiet in between (90 s, 1200 peaks).
+const PEAKS = Array.from({ length: 1200 }, (_, i) => {
+  const ms = (i / 1200) * 90_000;
+  const on = CUES.some((c) => ms >= c.start && ms < c.end);
+  return Math.round((on ? 0.25 + 0.7 * Math.abs(Math.sin(i / 3.1) * Math.cos(i / 11.7)) : 0.03) * 1000) / 1000;
+});
 const api = {
+  subtitleWaveform: vi.fn(async () => ({ peaks: PEAKS, durationMs: 90_000 })),
   getCreative: vi.fn(async () => detail),
   subtitleSet: vi.fn(async () => ({ set: { $schema: 'motion-studio/subtitles@1', lang: 'it', origin: 'speech', transcript: 'whisper-small', detected: 'it', timing: { version: 2, format: REEL, fingerprint: 'f'.repeat(64) }, cues: CUES }, hash: 'a'.repeat(64) })),
   saveSubtitleSet: vi.fn(async () => ({ hash: 'b'.repeat(64) })),
@@ -65,6 +74,7 @@ vi.mock('../src/components/CompositionPlayer.tsx', async () => {
   };
 });
 const { SubtitlesScreen } = await import('../src/screens/subtitles/SubtitlesScreen.tsx');
+const { drawWave } = await import('../src/screens/subtitles/CueTimeline.tsx');
 const { I18nProvider } = await import('../src/i18n.tsx');
 const { ShellContext } = await import('../src/shell/ShellContext.tsx');
 
@@ -74,6 +84,8 @@ async function markup(): Promise<string> {
     <I18nProvider locale="it"><ShellContext.Provider value={shell}><div id="page"><SubtitlesScreen slug="acme" creative="lancio" lang="it" /></div></ShellContext.Provider></I18nProvider>);
   await screen.findByRole('list', { name: 'Righe dei sottotitoli' });
   await waitFor(() => expect(container.querySelector('.ms-subs-caption')).not.toBeNull());
+  // The waveform has loaded (no "loading" note in the markup).
+  await waitFor(() => expect(container.querySelector('.ms-subtl-loading')).toBeNull());
   // A selected row, as after a click (the playhead moves to it).
   await userEvent.click(within(screen.getAllByRole('listitem')[1]!).getByText('2'));
   const html = container.querySelector('#page')!.innerHTML;
@@ -82,6 +94,15 @@ async function markup(): Promise<string> {
 }
 
 const MEASURE = `(() => {
+  const tl = document.querySelector('.ms-subs-timeline').getBoundingClientRect();
+  const view = document.querySelector('.ms-subtl-view');
+  const track = document.querySelector('.ms-subtl-track').getBoundingClientRect();
+  const canvas = document.querySelector('.ms-subtl-wave');
+  (${drawWave.toString()})(canvas, { peaks: ${JSON.stringify(PEAKS)}, cover: 90000, span: 90000, trackW: view.clientWidth, scrollX: 0, viewW: view.clientWidth });
+  const px = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+  let inked = 0;
+  for (let i = 3; i < px.length; i += 4) if (px[i] > 0) inked++;
+  const blocks = [...document.querySelectorAll('.ms-subtl-cue')];
   const page = document.querySelector('.ms-page');
   const subs = document.querySelector('.ms-subs').getBoundingClientRect();
   const head = document.querySelector('.ms-subs-head');
@@ -110,11 +131,19 @@ const MEASURE = `(() => {
     frameWidth: frame.width,
     caption: (() => { const c = document.querySelector('.ms-subs-caption'); if (!c) return false; const b = c.getBoundingClientRect(); return b.left >= frame.left - 0.5 && b.right <= frame.right + 0.5 && b.bottom <= frame.bottom + 0.5; })(),
     listWidth: side.width,
+    timelineUnder: tl.top >= Math.max(player.bottom, side.bottom) - 0.5,
+    timelineFull: tl.left <= player.left + 0.5 && tl.right >= side.right - 0.5,
+    timelineInside: tl.bottom <= innerHeight + 0.5 && tl.height >= 90,
+    blocks: blocks.length,
+    blocksInTrack: blocks.every((b) => { const r = b.getBoundingClientRect(); return r.top >= track.top - 0.5 && r.bottom <= track.bottom + 0.5 && r.left >= track.left - 0.5 && r.right <= track.right + 0.5; }),
+    waveInked: inked / (canvas.width * canvas.height),
+    edges: [...document.querySelectorAll('.ms-subtl-cue.ms-on .ms-subtl-edge')].map((e) => Math.round(e.getBoundingClientRect().width)),
   };
 })()`;
 type M = {
   sideBySide: boolean; underHead: boolean; insideApp: boolean; pageSideways: boolean; pageScrolls: boolean; listScrolls: boolean; listSideways: boolean;
   twoLinesWhole: boolean; rowOut: string[]; cut: string[]; headOut: string[]; frameInside: boolean; ratio: number; frameWidth: number; caption: boolean; listWidth: number;
+  timelineUnder: boolean; timelineFull: boolean; timelineInside: boolean; blocks: number; blocksInTrack: boolean; waveInked: number; edges: number[];
 };
 // The app as the shell lays it out: the 52 px bar, then the page.
 const shell = (page: string) => `<div class="ms-app"><div style="height:52px;border-bottom:1px solid var(--line);background:var(--panel)"></div><main class="ms-main"><div class="ms-stage"><div class="ms-page" data-page-active>${page}</div></div></main></div>`;
@@ -130,7 +159,7 @@ run('the subtitle editor: real Chrome layout (Task 12)', () => {
 
   for (const theme of ['light', 'dark'] as const) {
     for (const [width, height] of [[1280, 800], [900, 700]] as const) {
-      it(`${theme} ${width}×${height}: player and lines side by side, the list scrolls by itself, a two-line text shows whole`, async () => {
+      it(`${theme} ${width}×${height}: player and lines side by side, the list scrolls by itself, a two-line text shows whole, the timeline under both`, async () => {
         const r = await rig.measure<M>(shell(html), MEASURE, { name: 'subs-editor', width, height, theme }, 'subs-editor');
         expect(r.sideBySide, 'the player left of the list').toBe(true);
         expect(r.underHead).toBe(true);
@@ -148,6 +177,13 @@ run('the subtitle editor: real Chrome layout (Task 12)', () => {
         expect(r.frameWidth).toBeGreaterThan(150);
         expect(r.caption, 'the caption inside the picture').toBe(true);
         expect(r.listWidth).toBeGreaterThanOrEqual(340);
+        expect(r.timelineUnder, 'the timeline under the player and the list').toBe(true);
+        expect(r.timelineFull, 'the timeline as wide as both columns').toBe(true);
+        expect(r.timelineInside, 'the timeline inside the window').toBe(true);
+        expect(r.blocks).toBe(CUES.length);
+        expect(r.blocksInTrack).toBe(true);
+        expect(r.waveInked, 'the waveform is drawn').toBeGreaterThan(0.02);
+        expect(r.edges, 'the selected line\'s two 6 px handles').toEqual([6, 6]);
       }, 120_000);
     }
   }

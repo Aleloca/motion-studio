@@ -137,3 +137,20 @@ describe('subtitle editor model (decisions 1652-1655)', () => {
     expect(run(typed, { type: 'undo' }, { type: 'redo' }, { type: 'text', id: 'a', text: 'Ciao a tutti!' }).past).toHaveLength(2);
   });
 });
+
+describe('a timeline drag is one undo step (Task 13)', () => {
+  it('times ops marked `drag` join the first one until `endDrag`; the next drag is a new step', () => {
+    const s0 = load([cue('a', 0, 2000, 'Ciao'), cue('b', 5000, 7000, 'Mondo')]);
+    const s1 = run(s0, { type: 'times', id: 'a', end: 2100, drag: true }, { type: 'times', id: 'a', end: 2600, drag: true }, { type: 'times', id: 'a', end: 3000, drag: true });
+    expect(s1.cues[0]).toMatchObject({ end: 3000, edited: true });
+    expect(s1.past).toHaveLength(1);
+    expect(s1.dirty).toBe(true);
+    const s2 = run(s1, { type: 'endDrag' }, { type: 'times', id: 'a', end: 3500, drag: true }, { type: 'times', id: 'a', end: 4000, drag: true }, { type: 'endDrag' });
+    expect(s2.past).toHaveLength(2);
+    expect(run(s2, { type: 'undo' }).cues[0]!.end).toBe(3000);
+    expect(run(s2, { type: 'undo' }, { type: 'undo' }).cues[0]).toEqual(s0.cues[0]);
+    // A drag of another cue is a step of its own; a times op without `drag` always is.
+    expect(run(s1, { type: 'times', id: 'b', start: 5500, drag: true }).past).toHaveLength(2);
+    expect(run(s1, { type: 'times', id: 'a', end: 3200 }).past).toHaveLength(2);
+  });
+});

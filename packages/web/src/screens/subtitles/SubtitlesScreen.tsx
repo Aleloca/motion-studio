@@ -1,6 +1,6 @@
 // The subtitle editor (spec §6.3, layout B, Task 12): the creative's latest version in the live player on the left, with an
 // editor-only caption of the line under the playhead (the runtime draws the agent's style instead once the composition has a
-// subtitles track, Task 22); the list of lines on the right; the waveform timeline goes under both (Task 13). Edits save by
+// subtitles track, Task 22); the list of lines on the right; the waveform timeline under both (Task 13). Edits save by
 // themselves (useSubtitleSave); a `subtitles` broadcast reloads the set only when nothing is waiting to be saved.
 import type { CreativeDetail, LocaleTag, SubtitleCue } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
@@ -20,6 +20,7 @@ import { localeName } from '../creative/languagesModel.ts';
 import { usePlayerControls } from '../editor/usePlayerControls.ts';
 import { activatesControl, bare, inOverlay, isTyping } from '../keys.ts';
 import { CueList, FindReplace, msText, rowSelector } from './CueList.tsx';
+import { CueTimeline, type CueTimelineProps } from './CueTimeline.tsx';
 import { byStart, cueAt, editorReducer, initialEditorState, warningsOf, type EditorOp } from './subtitlesModel.ts';
 import { useSubtitleSave, type SubtitleSaveStatus } from './useSubtitleSave.ts';
 import './subtitles.css';
@@ -137,6 +138,23 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
   const now = useSyncExternalStore(controls.clock.subscribe, () => cueAt(cuesRef.current, Math.round(controls.clock.get().time * 1000))?.id ?? null);
   const nowCue = now ? state.cues.find((c) => c.id === now) ?? null : null;
   const warnings = useMemo(() => warningsOf(state.cues, state.lang), [state.cues, state.lang]);
+
+  // The timeline's waveform: the played version's audio mix, read once per version (it may take a few seconds on a long
+  // creative: the timeline says so and stays usable). Unavailable: no waveform, nothing else changes.
+  const [wave, setWave] = useState<{ peaks: number[]; durationMs: number } | null>(null);
+  const [waveDone, setWaveDone] = useState(false);
+  const waveOf = latest?.n ?? null;
+  useEffect(() => {
+    if (waveOf === null) return;
+    let alive = true;
+    setWave(null);
+    setWaveDone(false);
+    Promise.resolve().then(() => api.subtitleWaveform(slug, creative, waveOf)).then(
+      (w) => { if (alive) { setWave(w); setWaveDone(true); } },
+      () => { if (alive) setWaveDone(true); });
+    return () => { alive = false; };
+  }, [slug, creative, waveOf]);
+  const seekMs = useCallback((ms: number) => controls.seek(ms / 1000), [controls]);
 
   const rowOf = (id: string) => listBox.current?.querySelector(rowSelector(id));
   // The row under the playhead follows playback (scrolled to; the focus stays where it is).
@@ -302,7 +320,8 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
           )}
         </div>
       </section>
-      {/* The waveform timeline goes here, under both columns (Task 13: the grid's `timeline` row). */}
+      <Timeline clock={controls.clock} cues={state.cues} durationMs={state.durationMs} peaks={waveDone ? wave?.peaks ?? [] : null}
+        peaksMs={wave?.durationMs} selected={state.selected} dispatch={dispatch} onSeek={seekMs} />
     </main>
   );
 }
@@ -318,6 +337,12 @@ function SaveState({ status, retry }: { status: SubtitleSaveStatus; retry(): voi
       {status === 'error' ? <Button size="sm" variant="ghost" onClick={retry}>{s.retry}</Button> : null}
     </span>
   );
+}
+
+/** The timeline with the playhead from the player's clock (only the timeline re-renders on each frame). */
+function Timeline({ clock, ...p }: Omit<CueTimelineProps, 'time'> & { clock: Clock }) {
+  const { time } = useClock(clock);
+  return <CueTimeline {...p} time={time * 1000} />;
 }
 
 function TimeReadout({ clock, duration }: { clock: Clock; duration: number }) {

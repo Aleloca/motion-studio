@@ -464,6 +464,8 @@ export const api = {
   subtitlesChoice: (slug: string, creative: string, choice: Omit<TranscriptionChoice, 'file'>) => request<SubtitlesJobState>('POST', `${subs(slug, creative)}/transcription-choice`, choice),
   /** "Ricontrolla" in the subtitles job's transcription question: the Whispers looked for again, the question as it is now. */
   subtitlesRecheck: (slug: string, creative: string) => request<SubtitlesJobState>('POST', `${subs(slug, creative)}/transcription-recheck`),
+  /** The subtitle timeline's waveform (Task 13): the main format's audio mix of version `n` as peaks over its duration. */
+  subtitleWaveform: (slug: string, creative: string, n: number) => request<{ peaks: number[]; durationMs: number }>('GET', `${subs(slug, creative)}/waveform?version=${n}`),
   subtitleSet: (slug: string, creative: string, lang: LocaleTag) => request<{ set: SubtitleSet; hash: string }>('GET', `${subs(slug, creative)}/${encodeURIComponent(lang)}`),
   /**
    * The editor's save (decision 1654): the whole cue list over the set whose hash is `baseHash`; 409 `subtitles-conflict`

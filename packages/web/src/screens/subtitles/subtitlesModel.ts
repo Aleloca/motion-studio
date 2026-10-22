@@ -12,11 +12,14 @@ export interface EditorState {
   lang: LocaleTag;
   /** The cue being typed in: its next `text` op joins the last undo step (until another op, a select or `endTyping`). */
   typing: string | null;
+  /** The cue being dragged on the timeline: its next `times` op marked `drag` joins the last undo step (until `endDrag` or another op). */
+  dragging: string | null;
 }
 
 export type EditorOp =
   | { type: 'text'; id: string; text: string }
-  | { type: 'times'; id: string; start?: number; end?: number }
+  /** `drag`: a move of a timeline drag (the whole drag is one undo step). */
+  | { type: 'times'; id: string; start?: number; end?: number; drag?: boolean }
   | { type: 'split'; id: string; at: number }
   | { type: 'merge'; id: string }
   | { type: 'add'; at: number }
@@ -29,6 +32,8 @@ export type EditorOp =
   | { type: 'duration'; ms: number }
   /** The user left the text box: the next typing is a new undo step. */
   | { type: 'endTyping' }
+  /** The timeline drag ended: the next one is a new undo step. */
+  | { type: 'endDrag' }
   | { type: 'load'; cues: SubtitleCue[]; durationMs: number; lang: LocaleTag };
 
 export const UNDO_DEPTH = 200;
@@ -81,7 +86,7 @@ function withText(c: SubtitleCue, text: string): SubtitleCue {
 }
 
 function commit(s: EditorState, cues: SubtitleCue[], selected: string | null = s.selected): EditorState {
-  return { ...s, cues: [...cues].sort(byStart), past: [...s.past, s.cues].slice(-UNDO_DEPTH), future: [], selected, dirty: true, typing: null };
+  return { ...s, cues: [...cues].sort(byStart), past: [...s.past, s.cues].slice(-UNDO_DEPTH), future: [], selected, dirty: true, typing: null, dragging: null };
 }
 
 function setTimes(s: EditorState, op: Extract<EditorOp, { type: 'times' }>): EditorState {
@@ -112,7 +117,9 @@ function setTimes(s: EditorState, op: Extract<EditorOp, { type: 'times' }>): Edi
   if (start === cue.start && end === cue.end) return s;
   const cues = s.cues.slice();
   cues[i] = { ...cue, start, end, edited: true };
-  return commit(s, cues);
+  // Dragging on in the same cue: the drag is one undo step (as typing).
+  if (op.drag && s.dragging === op.id && s.past.length > 0) return { ...s, cues: cues.sort(byStart), future: [], dirty: true };
+  return { ...commit(s, cues), dragging: op.drag ? op.id : null };
 }
 
 function split(s: EditorState, op: Extract<EditorOp, { type: 'split'; }>): EditorState {
@@ -210,22 +217,24 @@ function replaceAll(s: EditorState, op: Extract<EditorOp, { type: 'replace' }>):
 export function editorReducer(s: EditorState, op: EditorOp): EditorState {
   switch (op.type) {
     case 'load':
-      return { cues: [...op.cues].sort(byStart), past: [], future: [], selected: null, durationMs: op.durationMs, dirty: false, lang: op.lang, typing: null };
+      return { cues: [...op.cues].sort(byStart), past: [], future: [], selected: null, durationMs: op.durationMs, dirty: false, lang: op.lang, typing: null, dragging: null };
     case 'select':
-      return op.id === s.selected && s.typing === null ? s : { ...s, selected: op.id, typing: null };
+      return op.id === s.selected && s.typing === null && s.dragging === null ? s : { ...s, selected: op.id, typing: null, dragging: null };
     case 'endTyping':
       return s.typing === null ? s : { ...s, typing: null };
+    case 'endDrag':
+      return s.dragging === null ? s : { ...s, dragging: null };
     case 'duration':
       return op.ms === s.durationMs || !(op.ms > 0) ? s : { ...s, durationMs: Math.round(op.ms) };
     case 'undo': {
       const prev = s.past[s.past.length - 1];
       if (!prev) return s;
-      return { ...s, cues: prev, past: s.past.slice(0, -1), future: [s.cues, ...s.future], selected: prev.some((c) => c.id === s.selected) ? s.selected : null, dirty: true, typing: null };
+      return { ...s, cues: prev, past: s.past.slice(0, -1), future: [s.cues, ...s.future], selected: prev.some((c) => c.id === s.selected) ? s.selected : null, dirty: true, typing: null, dragging: null };
     }
     case 'redo': {
       const nxt = s.future[0];
       if (!nxt) return s;
-      return { ...s, cues: nxt, past: [...s.past, s.cues].slice(-UNDO_DEPTH), future: s.future.slice(1), selected: nxt.some((c) => c.id === s.selected) ? s.selected : null, dirty: true, typing: null };
+      return { ...s, cues: nxt, past: [...s.past, s.cues].slice(-UNDO_DEPTH), future: s.future.slice(1), selected: nxt.some((c) => c.id === s.selected) ? s.selected : null, dirty: true, typing: null, dragging: null };
     }
     case 'text': {
       const i = s.cues.findIndex((c) => c.id === op.id);
@@ -236,7 +245,7 @@ export function editorReducer(s: EditorState, op: EditorOp): EditorState {
       const cues = s.cues.slice();
       cues[i] = withText(s.cues[i]!, text);
       // Typing on in the same cue: the burst is one undo step (the step before it stays the one to go back to).
-      if (s.typing === op.id && s.past.length > 0) return { ...s, cues, future: [], dirty: true };
+      if (s.typing === op.id && s.past.length > 0) return { ...s, cues, future: [], dirty: true, dragging: null };
       return { ...commit(s, cues), typing: op.id };
     }
     case 'times': return setTimes(s, op);
@@ -252,7 +261,7 @@ export function editorReducer(s: EditorState, op: EditorOp): EditorState {
 }
 
 export function initialEditorState(): EditorState {
-  return { cues: [], past: [], future: [], selected: null, durationMs: 0, dirty: false, lang: 'en', typing: null };
+  return { cues: [], past: [], future: [], selected: null, durationMs: 0, dirty: false, lang: 'en', typing: null, dragging: null };
 }
 
 /** The warnings of each cue that has any, keyed by cue id. */

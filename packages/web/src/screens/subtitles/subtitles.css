@@ -78,6 +78,29 @@
 .ms-subs-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .ms-chip.ms-subs-warn { height: 22px; padding: 0 8px; font-size: 11.5px; color: var(--warn); background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); cursor: help; }
 
+/* Under both columns: the timeline (Task 13). The waveform is a canvas over the visible part only (it follows the scroll); the
+   lines are translucent blocks over it, their 6 px edges the drag handles; the playhead a line. */
+.ms-subs-timeline { grid-area: timeline; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px 16px 12px; background: var(--panel); border-top: 1px solid var(--line); }
+.ms-subtl-head { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 11.5px; color: var(--muted); }
+.ms-subtl-hint { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-subtl-loading, .ms-subtl-zoom { flex: none; font-variant-numeric: tabular-nums; }
+.ms-subtl-view { position: relative; height: 84px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; border-radius: 8px; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line2); }
+.ms-subtl-track { position: relative; height: 100%; min-width: 100%; touch-action: pan-x; cursor: text; }
+.ms-subtl-wave { position: absolute; top: 0; height: 100%; color: var(--faint); pointer-events: none; }
+.ms-subtl-cue {
+  position: absolute; top: 10px; bottom: 10px; min-width: 2px; display: flex; align-items: flex-start; overflow: hidden; cursor: grab;
+  border-radius: 5px; background: color-mix(in srgb, var(--accent) 18%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.ms-subtl-cue.ms-on { background: color-mix(in srgb, var(--accent) 30%, transparent); box-shadow: inset 0 0 0 2px var(--accent); z-index: 1; }
+.ms-subtl-cue:active { cursor: grabbing; }
+.ms-subtl-text { flex: 1; min-width: 0; padding: 3px 8px; font-size: 11px; line-height: 1.3; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.ms-subtl-edge { position: absolute; top: 0; bottom: 0; width: 6px; z-index: 1; cursor: ew-resize; outline: none; }
+.ms-subtl-edge.ms-start { left: 0; }
+.ms-subtl-edge.ms-end { right: 0; }
+.ms-subtl-edge:hover, .ms-subtl-cue.ms-on .ms-subtl-edge { background: color-mix(in srgb, var(--accent) 60%, transparent); }
+.ms-subtl-edge:focus-visible { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+.ms-subtl-playhead { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; z-index: 2; background: var(--text); pointer-events: none; }
+
 /* A narrow window: the header's labels stay whole on their own lines; the player's padding shrinks. */
 @media (max-width: 1000px) {
   .ms-subs-player { padding: 12px 12px 10px; }

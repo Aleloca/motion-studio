@@ -7,6 +7,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
 import type { Shell } from '../src/shell/ShellContext.tsx';
 
+// jsdom has no PointerEvent: a MouseEvent carries the coordinates, button and modifiers the timeline reads.
+if (typeof window.PointerEvent === 'undefined') {
+  class PointerEventPolyfill extends MouseEvent {
+    pointerId: number;
+    constructor(type: string, init: MouseEventInit & { pointerId?: number } = {}) { super(type, init); this.pointerId = init.pointerId ?? 1; }
+  }
+  Object.defineProperty(window, 'PointerEvent', { value: PointerEventPolyfill, configurable: true });
+}
+
 const at = '2026-10-22T10:00:00.000Z';
 const REEL = 'instagram-reel-9x16';
 const H1 = 'a'.repeat(64);
@@ -35,6 +44,7 @@ const api = {
   getCreative: vi.fn(async () => detail),
   subtitleSet: vi.fn(async (..._a: unknown[]) => ({ set: setOf(CUES), hash: H1 })),
   saveSubtitleSet: vi.fn(async (..._a: unknown[]) => ({ hash: H2 })),
+  subtitleWaveform: vi.fn(async (..._a: unknown[]) => ({ peaks: [0.2, 0.9, 0.4], durationMs: 6000 })),
   subtitleFile: vi.fn(async (..._a: unknown[]) => new Blob(['1\n00:00:00,000 --> 00:00:01,500\nCiao\n'])),
   revokePreview: vi.fn(async (..._a: unknown[]) => ({ revoked: true })),
   previewSession: vi.fn(async (_s: string, _c: string, n: number, format: string) => ({
@@ -338,5 +348,45 @@ describe('the subtitle editor screen (Task 12)', () => {
         expect(scroll).not.toHaveBeenCalled();
       } finally { delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView; }
     });
+  });
+});
+
+describe('the timeline under the player and the list (Task 13)', () => {
+  it('reads the waveform of the played version and shows a block per line', async () => {
+    await open();
+    expect(api.subtitleWaveform).toHaveBeenCalledWith('acme', 'lancio', 2);
+    const tl = screen.getByRole('region', { name: 'Timeline' });
+    expect(tl.querySelectorAll('.ms-subtl-cue')).toHaveLength(3);
+  });
+
+  it('while the waveform loads the lines can be edited; a pointer drag of an edge is one undo step', async () => {
+    let done: (w: { peaks: number[]; durationMs: number }) => void = () => {};
+    api.subtitleWaveform.mockImplementationOnce(() => new Promise((r) => { done = r; }));
+    await open();
+    const tl = screen.getByRole('region', { name: 'Timeline' });
+    expect(within(tl).getByRole('status').textContent).toContain("Carico la forma d'onda");
+    const track = tl.querySelector<HTMLElement>('.ms-subtl-track')!;
+    // 1000 px for the video's 6 s.
+    const box = { left: 0, top: 0, right: 1000, bottom: 80, width: 1000, height: 80, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+    vi.spyOn(track, 'getBoundingClientRect').mockReturnValue(box);
+    const edge = tl.querySelector<HTMLElement>('.ms-subtl-cue[data-cue="c1"] .ms-subtl-edge.ms-end')!;
+    fireEvent.pointerDown(edge, { clientX: 250, button: 0, pointerId: 1 });
+    for (const x of [260, 270, 280, 290, 300]) fireEvent.pointerMove(edge, { clientX: x, pointerId: 1 });
+    fireEvent.pointerUp(edge, { clientX: 300, pointerId: 1 });
+    // 50 px of 1000 for 6 s: 300 ms later.
+    const end = () => (screen.getByRole('textbox', { name: 'Fine della riga 1' }) as HTMLInputElement).value;
+    expect(end()).toBe('00:01.800');
+    await userEvent.click(screen.getByRole('button', { name: 'Annulla' }));
+    expect(end()).toBe('00:01.500');
+    expect((screen.getByRole('button', { name: 'Annulla' }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => { done({ peaks: [0.5], durationMs: 6000 }); });
+    expect(within(tl).queryByRole('status')).toBeNull();
+  });
+
+  it('an edge as a slider: → moves the line\'s end by 100 ms', async () => {
+    await open();
+    const tl = screen.getByRole('region', { name: 'Timeline' });
+    fireEvent.keyDown(within(tl).getByRole('slider', { name: 'Fine della riga 2' }), { key: 'ArrowRight' });
+    expect((screen.getByRole('textbox', { name: 'Fine della riga 2' }) as HTMLInputElement).value).toBe('00:03.600');
   });
 });
