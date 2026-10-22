@@ -8,7 +8,7 @@ import { CreativeStore } from '../creatives/creative-store.ts';
 import type { CreativeRef, CreativeTurnService } from '../creatives/creative-turns.ts';
 import { currentLocale, t } from '../i18n.ts';
 import { CodedError } from '../workspace-store.ts';
-import { addSubtitleLanguage } from './languages.ts';
+import { addSubtitleLanguage, assertNoSubtitleSet } from './languages.ts';
 import { readSubtitleSet, type SubtitleCommits, subtitleSetLocks, writeSubtitleSet } from './store.ts';
 import type { StyleTurnHost, SubtitlesService } from './subtitles-job.ts';
 import type { SubtitleTranslateService } from './translate-job.ts';
@@ -88,8 +88,10 @@ export function editCues(cues: readonly SubtitleCue[], edit: Pick<EditInput, 're
  *   every changed cue marked edited, committed in the subtitle commits' batch and told to the clients. All or nothing: an
  *   unknown cue id or a text the set refuses changes nothing (400), nor does a line whose text is no longer the `was` the
  *   agent read (409 `subtitles-cue-changed`: the user corrected it since, anti-goal 1).
- * - `add_subtitle_language` (Task 25, spec §6.5, U8): a new subtitle language now, as the route (`addSubtitleLanguage`: from
- *   the language's own voices, or translated from the speech set); a refusal is the tool's error. The brief is not touched.
+ * - `add_subtitle_language` (Task 25, spec §6.5, U8): a new subtitle language, as the route (`addSubtitleLanguage`). A
+ *   language with its own voices is transcribed when the turn settles (as `start_subtitles`: on the version it saved, routed
+ *   again then, a refusal then a chat line); a translation starts now. A language with a set, or the transcription switched
+ *   off for a voiced one, is refused at once. The brief is not touched.
  */
 export function subtitlesTools(deps: {
   subtitles: Pick<SubtitlesService, 'start' | 'assertTranscriptionOn' | 'onReady' | 'styleTurn' | 'localizedVoiceLang'>;
@@ -100,20 +102,28 @@ export function subtitlesTools(deps: {
 }): Record<'start_subtitles' | 'edit_subtitles' | 'add_subtitle_language', BridgeHandler> {
   /** What each turn asked for, by job id, until it settles. */
   const asked = new Map<string, { drawn?: boolean; lang?: LocaleTag }>();
+  /** The languages with their own voices each turn added (`add_subtitle_language`), by job id, until it settles. */
+  const voiced = new Map<string, Set<LocaleTag>>();
   deps.turns.onTurnSettled(async (ref, jobId, o) => {
     const a = asked.get(jobId);
     asked.delete(jobId);
-    if (!a) return;
+    const langs = [...(voiced.get(jobId) ?? [])];
+    voiced.delete(jobId);
+    if (!a && langs.length === 0) return;
     const say = (text: string) => deps.turns.noteFromTurn(jobId, ref, { type: 'system', at: new Date().toISOString(), level: 'warning', text, origin: 'agent' });
+    const failed = (err: unknown) => say(t().subtitles.notStarted({ reason: err instanceof Error ? err.message : String(err) }));
     if (o.state !== 'succeeded' || o.stopped) { await say(t().subtitles.notStartedTurn); return; }
-    try {
-      await deps.subtitles.start(plain(ref), { mode: 'new', drawn: a.drawn === true, ...(a.lang ? { lang: a.lang } : {}) });
-    } catch (err) {
-      await say(t().subtitles.notStarted({ reason: err instanceof Error ? err.message : String(err) }));
-      return;
+    if (a) {
+      try {
+        await deps.subtitles.start(plain(ref), { mode: 'new', drawn: a.drawn === true, ...(a.lang ? { lang: a.lang } : {}) });
+        if (a.drawn !== undefined) {
+          await deps.turns.setSubtitlesDrawn(plain(ref), a.drawn).catch((err: Error) => console.warn(`Motion Studio: the subtitles choice of ${ref.creativeSlug} was not recorded: ${err.message}`));
+        }
+      } catch (err) { await failed(err); }
     }
-    if (a.drawn !== undefined) {
-      await deps.turns.setSubtitlesDrawn(plain(ref), a.drawn).catch((err: Error) => console.warn(`Motion Studio: the subtitles choice of ${ref.creativeSlug} was not recorded: ${err.message}`));
+    // Task 25: routed again on the version the turn saved (its language may no longer have its own voices: then translated).
+    for (const lang of langs) {
+      try { await addSubtitleLanguage({ subtitles: deps.subtitles, translate: deps.translate }, plain(ref), lang); } catch (err) { await failed(err); }
     }
   });
   deps.subtitles.onReady((ref, r, jobId) => { if (r.drawn) void deps.subtitles.styleTurn(deps.turns, plain(ref), jobId); });
@@ -160,9 +170,16 @@ export function subtitlesTools(deps: {
     },
     add_subtitle_language: async (c, args) => {
       const ref = creativeOf(c);
-      const r = parse(addLanguageInput, args);
-      const { how } = await addSubtitleLanguage({ subtitles: deps.subtitles, translate: deps.translate }, ref, r.lang as LocaleTag);
-      return { started: true, how };
+      const tag = parse(addLanguageInput, args).lang as LocaleTag;
+      await assertNoSubtitleSet(ref, tag);
+      // From the language's own voices: transcribed when the turn ends, on the version it saved (like start_subtitles).
+      if (await deps.subtitles.localizedVoiceLang(ref, tag)) {
+        await deps.subtitles.assertTranscriptionOn();
+        voiced.set(c.jobId, (voiced.get(c.jobId) ?? new Set()).add(tag));
+        return { started: true, how: 'speech', when: 'after-turn' };
+      }
+      // Translated from the speech set already saved: now.
+      return { started: true, how: (await addSubtitleLanguage({ subtitles: deps.subtitles, translate: deps.translate }, ref, tag)).how, when: 'now' };
     },
   };
 }

@@ -439,6 +439,7 @@ describe('app actions in the prompt (decision 917, user note 6)', () => {
     const more = on.split('\n').find((l) => l.startsWith('- add_subtitle_language:'))!;
     expect(more).toContain('never add_language');
     expect(more).toContain('the brief');
+    expect(more).toContain('never together with start_subtitles for the same language');
     const look = on.split('\n').find((l) => l.startsWith('- Drawn subtitles are the subtitles track:'))!;
     for (const x of ['brand fonts and colours', '4.5 % of the frame height', '18 % of the frame height', 'highlight only when', 'window.msActiveCue(ms)', 'textContent only', 'remove the track']) expect(look).toContain(x);
     expect(CONTEXT_MD).toContain('**Subtitles**: call `start_subtitles` (drawn into the video, or files/track only: ask the user when they did not say); never one text clip per sentence.');

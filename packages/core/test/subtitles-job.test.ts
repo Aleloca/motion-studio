@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  SUBTITLES_SCHEMA_ID, type Brief, type Composition, type ConversationEntry, type FormatPreset, type Localization, type ServerMessage, type TranscriptionPending,
+  SUBTITLES_SCHEMA_ID, subtitleCuesHash, type Brief, type Composition, type ConversationEntry, type FormatPreset, type Localization, type ServerMessage, type TranscriptionPending,
   type TranscriptKind, type TranscriptWord,
 } from '@motion-studio/shared';
 import type { Transcriber } from '../src/analysis/video-analysis.ts';
@@ -465,6 +465,40 @@ describe('the video changed under the subtitles (Task 14, spec §6.7)', { timeou
     });
     await service.versionSaved(ref, 3, null);
     expect(timingEntries()).toEqual([]);
+  });
+
+  it('"Rifai i tempi" of the source moves its translations\' uncorrected lines with it; a corrected line keeps its times (Task 25)', async () => {
+    const c1 = await creative([audioClip()]);
+    const timing = { version: 1, format: 'test-wide', fingerprint: audioFingerprint(c1) };
+    await writeSubtitleSet(creativeDir(), {
+      $schema: SUBTITLES_SCHEMA_ID, lang: 'it', origin: 'speech', transcript: 'whisper-small', detected: 'it', timing,
+      cues: [{ id: 'c1', start: 200, end: 1800, text: 'Ciao a tutti.' }, { id: 'c2', start: 2000, end: 2600, text: 'Prenota ora.' }],
+    });
+    await writeSubtitleSet(creativeDir(), {
+      $schema: SUBTITLES_SCHEMA_ID, lang: 'en', origin: 'translation', sourceLang: 'it', transcript: 'whisper-small', detected: null, timing,
+      cues: [
+        { id: 'c1', start: 200, end: 1800, text: 'Hi everyone.', source: { text: 'Ciao a tutti.' } },
+        // The user corrected this line (and its times).
+        { id: 'c2', start: 2050, end: 2650, text: 'Book it now.', source: { text: 'Prenota ora.' }, edited: true },
+      ],
+    });
+    const before = (await readSubtitleSet(creativeDir(), 'en'))!;
+    // v2: the voice starts 1 s later.
+    const c2 = await version(2, [{ ...audioClip(), start: 1, duration: 2 }]);
+    fake.result = { kind: 'whisper-small', language: 'it', words: words([[1.2, 1.6, 'Ciao'], [1.7, 2.2, 'a'], [2.25, 2.8, 'tutti.'], [3.0, 3.3, 'Prenota'], [3.35, 3.6, 'ora.']]) };
+    sent.length = 0;
+    await run({ mode: 'retime', lang: 'it' });
+    const it = (await readSubtitleSet(creativeDir(), 'it'))!.set;
+    expect(it.cues.map((x) => [x.start, x.end])).toEqual([[1200, 2800], [3000, 4000]]);
+    const after = (await readSubtitleSet(creativeDir(), 'en'))!;
+    expect(after.set.cues.map((x) => [x.id, x.start, x.end, x.text, x.edited ?? false])).toEqual([
+      ['c1', 1200, 2800, 'Hi everyone.', false], ['c2', 2050, 2650, 'Book it now.', true],
+    ]);
+    expect(after.set.timing).toEqual({ version: 2, format: 'test-wide', fingerprint: audioFingerprint(c2) });
+    // What a render draws changed: a render of the old lines turns stale.
+    expect(after.cuesHash).not.toBe(before.cuesHash);
+    expect(after.cuesHash).toBe(subtitleCuesHash(after.set));
+    expect(sent.filter((m) => m.type === 'subtitles').map((m) => m.type === 'subtitles' && m.lang).sort()).toEqual(['en', 'it']);
   });
 
   it('a translation never gets the notice: it follows its source, which "Rifai i tempi" redoes (Task 25)', async () => {

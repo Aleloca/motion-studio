@@ -68,11 +68,13 @@ function TimingChangedCard({ slug, creative, lang }: { slug: string; creative: s
   const t = useT();
   const locale = useLocale();
   const tick = useContext(ShellContext)?.live.creativeTicks[`${slug}/${creative}`] ?? 0;
-  const [changed, setChanged] = useState<boolean | null>(null);
+  // 'follows': the set is a translation (an older notice may name one, Task 25): it follows its source, never retimed itself.
+  const [changed, setChanged] = useState<boolean | 'follows' | null>(null);
   useEffect(() => {
     let alive = true;
     const read = readSetsShared(slug, creative, tick);
-    void read.sets.then((sets) => { if (alive) setChanged(sets === null ? true : sets.find((x) => x.lang === lang)?.timingChanged ?? false); });
+    const state = (x: SubtitlesSummary | undefined) => (x?.origin === 'translation' ? 'follows' : x?.timingChanged ?? false);
+    void read.sets.then((sets) => { if (alive) setChanged(sets === null ? true : state(sets.find((x) => x.lang === lang))); });
     return () => { alive = false; read.release(); };
   }, [slug, creative, lang, tick]);
   return (

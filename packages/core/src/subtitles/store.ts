@@ -1,7 +1,7 @@
 import { lstat, mkdir, readdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  SUBTITLES_DIR, SUBTITLE_LIMITS, drawsSubtitles, parseSubtitleSet, sha256Hex, subtitleCuesHash, subtitleSetHash, subtitleSetSchema, subtitleSetText, type Brief, type Composition, type LocaleTag, type SubtitleSet,
+  SUBTITLES_DIR, SUBTITLE_LIMITS, drawsSubtitles, followSourceTimes, parseSubtitleSet, sha256Hex, subtitleCuesHash, subtitleSetHash, subtitleSetSchema, subtitleSetText, type Brief, type Composition, type LocaleTag, type SubtitleSet,
 } from '@motion-studio/shared';
 import type { RuntimeCue, RuntimeSubtitles } from '@motion-studio/composition-runtime/page';
 import { noteCoreChange } from '../core-changes.ts';
@@ -95,6 +95,25 @@ export { drawsSubtitles };
  */
 export function speechSourceSet(sets: readonly SubtitleSet[]): SubtitleSet | undefined {
   return sets.find((s) => s.origin === 'speech' && s.timing.locale === undefined);
+}
+
+/**
+ * Task 25: the translations of `source` (the original speech set just written, `speechSourceSet`) follow its times: each
+ * translation of its language gets `followSourceTimes` and the source's timing, written when that changed. To be called under
+ * the creative's set lock, by the writer of the source. The languages written (to commit and tell the clients).
+ */
+export async function followSource(creativeDir: string, source: SubtitleSet): Promise<LocaleTag[]> {
+  const sets = await listSubtitleSets(creativeDir);
+  if (speechSourceSet(sets)?.lang !== source.lang) return [];
+  const out: LocaleTag[] = [];
+  for (const s of sets) {
+    if (s.origin !== 'translation' || s.sourceLang !== source.lang) continue;
+    const next: SubtitleSet = { ...s, timing: source.timing, cues: followSourceTimes(s.cues, source.cues) };
+    if (subtitleSetHash(next) === subtitleSetHash(s)) continue;
+    await writeSubtitleSet(creativeDir, next);
+    out.push(s.lang);
+  }
+  return out;
 }
 
 /**

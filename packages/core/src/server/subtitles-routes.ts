@@ -8,7 +8,7 @@ import { CreativeStore } from '../creatives/creative-store.ts';
 import type { CreativeRef } from '../creatives/creative-turns.ts';
 import { currentLocale, t } from '../i18n.ts';
 import { addSubtitleLanguage, retranslateSubtitles } from '../subtitles/languages.ts';
-import { listSubtitleSets, readSubtitleSet, removeSubtitleSet, speechSourceSet, type SubtitleCommits, subtitleSetLocks, writeSubtitleSet } from '../subtitles/store.ts';
+import { followSource, listSubtitleSets, readSubtitleSet, removeSubtitleSet, speechSourceSet, type SubtitleCommits, subtitleSetLocks, writeSubtitleSet } from '../subtitles/store.ts';
 import { languageName, subtitleTimingOf, type SubtitlesService } from '../subtitles/subtitles-job.ts';
 import { type SubtitleTranslateService, subtitleTranslateJobKey } from '../subtitles/translate-job.ts';
 
@@ -47,8 +47,8 @@ export async function subtitleTimingNow(projectDir: string, creativeSlug: string
 /**
  * The creative's subtitle sets as the UI lists them. `timingChanged`: the audio the set was timed on differs from the latest
  * version's main format (false when that version has no video), each set against the video it was timed on (the original,
- * or its language's own: Task 24); never for a translation, which follows its source (Task 25: its lines are translated again
- * from it, "Rifai i tempi" is the source's). `staleCues`: a translation's lines whose source line changed since (`staleCues`
+ * or its language's own: Task 24); for a translation, against its source's timing (Task 25: it follows its source, whose
+ * writers carry their times over, `followSource`; a difference is a safety signal, never a retime of the translation). `staleCues`: a translation's lines whose source line changed since (`staleCues`
  * against the original speech set; 0 without one, and for a set made from speech).
  */
 export async function subtitleSummaries(projectDir: string, creativeSlug: string, presets: () => Promise<FormatPreset[]>): Promise<SubtitlesSummary[]> {
@@ -63,7 +63,7 @@ export async function subtitleSummaries(projectDir: string, creativeSlug: string
   const source = speechSourceSet(sets);
   return Promise.all(sets.map(async (s) => {
     const translation = s.origin === 'translation';
-    const now = translation ? null : await nowOf(s.timing.locale);
+    const now = translation ? source?.timing ?? null : await nowOf(s.timing.locale);
     return {
       lang: s.lang, origin: s.origin, ...(s.sourceLang ? { sourceLang: s.sourceLang } : {}),
       cues: s.cues.length, edited: s.cues.filter((c) => c.edited).length, hash: subtitleSetHash(s), cuesHash: subtitleCuesHash(s),
@@ -191,19 +191,24 @@ export function registerSubtitlesRoutes(app: FastifyInstance, ctx: {
       const now = latest ? await subtitleTimingOf(creativeDir, latest, (await store.get(ref.creativeSlug)).brief, await ctx.presets(), locale) : null;
       if (!latest || !now) throw new CodedError(409, t().errors.subtitlesNoVideo, 'subtitles-no-video');
       const set: SubtitleSet = { ...stored.set, timing: { version: latest.n, format: now.format, fingerprint: now.fingerprint, ...(locale ? { locale } : {}) } };
-      return { hash: await writeSubtitleSet(creativeDir, set), timing: set.timing };
+      const hash = await writeSubtitleSet(creativeDir, set);
+      // The original speech set's translations follow it (Task 25): its timing, and its lines' times.
+      return { hash, timing: set.timing, followed: await followSource(creativeDir, set) };
     });
     if ('conflict' in done) return reply.status(409).send({ error: t().errors.subtitlesConflict, code: 'subtitles-conflict', hash: done.conflict });
     ctx.commits.touch(ref, t().subtitles.commit({ title: (await store.get(ref.creativeSlug)).title, lang }));
-    try { ctx.broadcast({ type: 'subtitles', project: ref.projectSlug, creative: ref.creativeSlug, lang }); } catch { /* a faulty listener */ }
-    return done;
+    for (const l of [lang, ...done.followed]) {
+      try { ctx.broadcast({ type: 'subtitles', project: ref.projectSlug, creative: ref.creativeSlug, lang: l }); } catch { /* a faulty listener */ }
+    }
+    return { hash: done.hash, timing: done.timing };
   });
-  // Task 25, "Ritraduci": the lines asked for, or every stale one the user did not correct (`retranslateSubtitles`).
+  // Task 25, "Ritraduci": the lines asked for, or every stale one the user did not correct, the lines whose source is gone
+  // dropped (`retranslateSubtitles`): `{ job, dropped? }`, `job: null` when only dropping was left to do.
   app.post<PL>('/api/projects/:slug/creatives/:c/subtitles/:lang/retranslate', async (req) => {
     const lang = langOf(req.params.lang);
     const ref = await refOf(req.params.slug, req.params.c);
     const body = parse(retranslateSchema, req.body);
-    return { job: await retranslateSubtitles({ translate: ctx.translate }, ref, lang, body.ids) };
+    return retranslateSubtitles({ translate: ctx.translate, commits: ctx.commits, broadcast: ctx.broadcast }, ref, lang, body.ids);
   });
   // Task 25: a language's set deleted, under the set lock, committed and told to the clients; a render that drew it turns stale
   // (its hash is no longer the creative's). Never the original video's speech set, the source of the translations (409

@@ -303,6 +303,19 @@ export function staleCues(target: Pick<SubtitleSet, 'cues'>, source: Pick<Subtit
   return out;
 }
 
+/**
+ * A translation's cues after its source was timed again (Task 25): each translated line the user did not correct takes the
+ * times of the source line it stands for (`sourceCueOf`); a corrected line keeps its own times (anti-goal 1), a line no
+ * source line overlaps keeps them too (it shows as stale). Texts untouched; sorted by time.
+ */
+export function followSourceTimes(cues: readonly SubtitleCue[], source: readonly SubtitleCue[]): SubtitleCue[] {
+  return cues.map((c) => {
+    if (c.edited || !c.source) return c;
+    const s = sourceCueOf(c, source);
+    return s && (s.start !== c.start || s.end !== c.end) ? { ...c, start: s.start, end: s.end } : c;
+  }).sort((a, b) => a.start - b.start || a.end - b.end);
+}
+
 /** The source cue a translated cue stands for (Task 25): the one it overlaps most in time (the first of equals), or null. */
 export function sourceCueOf(cue: Pick<SubtitleCue, 'start' | 'end'>, source: readonly SubtitleCue[]): SubtitleCue | null {
   let best: SubtitleCue | null = null;

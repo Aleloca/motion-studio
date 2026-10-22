@@ -42,10 +42,12 @@ class ApiError extends Error {
 }
 /** Task 14: the set's timing no longer matches the latest version's audio. */
 let TIMING_CHANGED = false;
+/** Task 25: the set shown is a translation. */
+let TRANSLATION = false;
 /** Task 22: the latest version's composition has a subtitles track. */
 let TRACK = false;
 const api = {
-  getCreative: vi.fn(async () => (TIMING_CHANGED ? { ...detail, subtitles: detail.subtitles!.map((x) => ({ ...x, timingChanged: true })) } : detail)),
+  getCreative: vi.fn(async () => (TIMING_CHANGED ? { ...detail, subtitles: detail.subtitles!.map((x) => ({ ...x, timingChanged: true, ...(TRANSLATION ? { origin: 'translation' as const, sourceLang: 'en' as const } : {}) })) } : detail)),
   startSubtitles: vi.fn(async (..._a: unknown[]) => ({ job: { id: 'j1' } })),
   subtitleSet: vi.fn(async (..._a: unknown[]) => ({ set: setOf(CUES), hash: H1 })),
   saveSubtitleSet: vi.fn(async (..._a: unknown[]) => ({ hash: H2 })),
@@ -130,6 +132,7 @@ beforeEach(() => {
   media.currentTime = 0;
   media.paused = true;
   TIMING_CHANGED = false;
+  TRANSLATION = false;
   TRACK = false;
   playerSubtitles.length = 0;
 });
@@ -443,6 +446,15 @@ describe('the video changed, and redoing the transcription (Task 14)', () => {
     await userEvent.click(within(banner).getByRole('button', { name: 'Rifai i tempi' }));
     expect(api.startSubtitles).toHaveBeenCalledWith('acme', 'lancio', { mode: 'retime', lang: 'it' });
     expect(await within(banner).findByRole('status')).toHaveProperty('textContent', 'Rifaccio i tempi: le righe che hai corretto tengono il loro testo.');
+  });
+
+  it('a translation not timed as its source says so, with no "Rifai i tempi" nor "Tempi controllati" (Task 25)', async () => {
+    TIMING_CHANGED = true;
+    TRANSLATION = true;
+    await open();
+    const banner = await screen.findByRole('region', { name: 'Il video è cambiato: ricontrolla i tempi' });
+    expect(banner.textContent).toContain('I tempi di questa traduzione non sono più quelli dei sottotitoli da cui viene');
+    expect(within(banner).queryAllByRole('button')).toEqual([]);
   });
 
   it('a retime refused says why', async () => {

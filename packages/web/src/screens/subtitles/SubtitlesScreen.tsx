@@ -302,7 +302,10 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
   const frameLabel = t.web.render.playerFrame({ label: detail && latest ? `${detail.creative.title} v${latest.n}` : creative });
   const waiting = preview.state.kind === 'loading' || preview.state.kind === 'busy' || (preview.state.kind === 'idle' && format !== null);
   const noPreview = preview.state.kind === 'legacy' || (loaded && detail !== null && format === null);
-  const timingChanged = detail?.subtitles?.find((x) => x.lang === lang)?.timingChanged === true;
+  const summary = detail?.subtitles?.find((x) => x.lang === lang);
+  const timingChanged = summary?.timingChanged === true;
+  // Task 25: a translation follows its source's times; it is never retimed nor marked checked on its own.
+  const translation = summary?.origin === 'translation';
   return (
     <main ref={root} className="ms-subs" data-lang={lang}>
       <Head slug={slug} creative={creative} lang={lang}>
@@ -323,9 +326,9 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
       {timingChanged ? (
         <section className="ms-subs-banner" aria-label={s.timingChanged}>
           <Icon name="warn" size={14} />
-          <span className="ms-subs-banner-text">{s.timingChanged}</span>
-          <RetimeAction slug={slug} creative={creative} lang={lang} className="ms-subs-banner-note" />
-          <TimingChecked mark={save.timingChecked} />
+          <span className="ms-subs-banner-text">{translation ? s.translationTimingChanged : s.timingChanged}</span>
+          {translation ? null : <RetimeAction slug={slug} creative={creative} lang={lang} className="ms-subs-banner-note" />}
+          {translation ? null : <TimingChecked mark={save.timingChecked} />}
         </section>
       ) : null}
 

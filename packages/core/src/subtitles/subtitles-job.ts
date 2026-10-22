@@ -24,7 +24,7 @@ import { decodePcmWith, type MediaTools } from '../media/media-tools.ts';
 import { mixAudio, mixClips, type MixClip } from '../render/audio-mix.ts';
 import type { FfmpegInfo } from '../render/encode.ts';
 import { CodedError } from '../workspace-store.ts';
-import { audioFingerprint, listSubtitleSets, readSubtitleSet, speechSourceSet, type SubtitleCommits, subtitlePath, subtitleSetLocks, writeSubtitleSet } from './store.ts';
+import { audioFingerprint, followSource, listSubtitleSets, readSubtitleSet, speechSourceSet, type SubtitleCommits, subtitlePath, subtitleSetLocks, writeSubtitleSet } from './store.ts';
 
 /** The queue lane of the subtitles jobs (decision 1640): one at a time, never in an agent turn's slot. */
 export const SUBTITLES_LANE = 'subtitles';
@@ -728,7 +728,9 @@ export class SubtitlesService {
       if (signal.aborted) return 'cancelled';
 
       // Re-read just before writing, under the sets' lock (decision 1654): a save of the editor during the transcription keeps
-      // its edited cues (anti-goal 1), and one arriving now waits for this write and then meets its new hash (409).
+      // its edited cues (anti-goal 1), and one arriving now waits for this write and then meets its new hash (409). The
+      // translations of the original speech set follow its new times (Task 25, `followSource`), under the same lock.
+      let followed: LocaleTag[] = [];
       await subtitleSetLocks.run(creativeDir, async () => {
         const existing = await readSubtitleSet(creativeDir, lang);
         // A file there that is not a valid set may hold the user's corrections: never overwritten (anti-goal 1).
@@ -745,9 +747,12 @@ export class SubtitlesService {
         const valid = subtitleSetSchema.safeParse(set);
         if (!valid.success || Buffer.byteLength(subtitleSetText(set)) > SUBTITLE_LIMITS.fileBytes) throw new Error(valid.success ? 'the subtitles are too large' : valid.error.message);
         await writeSubtitleSet(creativeDir, set);
+        if (!audio) followed = await followSource(creativeDir, set);
       });
       this.deps.commits.touch(ref, t().subtitles.commit({ title: creative.title, lang }));
-      try { this.deps.broadcast({ type: 'subtitles', project: ref.projectSlug, creative: ref.creativeSlug, lang }); } catch { /* a faulty listener */ }
+      for (const l of [lang, ...followed]) {
+        try { this.deps.broadcast({ type: 'subtitles', project: ref.projectSlug, creative: ref.creativeSlug, lang: l }); } catch { /* a faulty listener */ }
+      }
       const briefLang = creative.brief.locales?.primary;
       // A language's own voice was known, not heard: never "a language other than the brief's".
       const other = !audio && briefLang !== undefined && briefLang !== lang;

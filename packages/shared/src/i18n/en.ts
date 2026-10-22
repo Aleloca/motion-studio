@@ -281,7 +281,8 @@ export const en = {
     subtitlesNoIds: 'Name at least one subtitle line to translate again.',
     subtitlesNothingToTranslate: (p: { lang: string }) => `Every line in ${p.lang} is one you corrected: there is nothing to translate.`,
     subtitlesLangExists: (p: { lang: string }) => `This creative already has subtitles in ${p.lang}.`,
-    subtitlesNothingStale: (p: { lang: string }) => `No line in ${p.lang} needs translating again (the lines you corrected are translated again only when you pick them).`,
+    subtitlesNothingStale: (p: { lang: string }) => `No line in ${p.lang} needs translating again.`,
+    subtitlesNothingStaleCorrected: (p: { lang: string }) => `The lines to translate again in ${p.lang} are ones you corrected: pick them to translate them again.`,
     subtitlesSourceSet: 'These subtitles come from the video\'s speech and the other languages are translated from them: they cannot be deleted.',
     subtitlesTranslateBad: (p: { detail: string }) => `submit_subtitle_translation: ${p.detail}`,
     subtitlesTranslateLimit: 'submit_subtitle_translation can be called at most 5 times in a run.',
@@ -503,6 +504,7 @@ export const en = {
     waveformLoading: 'Loading the waveform…',
     // The video changed (Task 14, spec §6.7).
     timingChanged: 'The video changed: check the timing',
+    translationTimingChanged: 'This translation is no longer timed as the subtitles it comes from: retime those, or translate again.',
     timingAligned: 'The timing matches the video again.',
     retime: 'Redo the timing',
     retimed: (p: { lang: string }) => `Subtitle timing redone (${p.lang}).`,

@@ -279,7 +279,8 @@ export const it: Messages = {
     subtitlesNoIds: 'Indica almeno una riga dei sottotitoli da ritradurre.',
     subtitlesNothingToTranslate: (p) => `Tutte le righe in ${p.lang} sono righe che hai corretto: non c'è niente da tradurre.`,
     subtitlesLangExists: (p) => `Questa creatività ha già i sottotitoli in ${p.lang}.`,
-    subtitlesNothingStale: (p) => `Nessuna riga in ${p.lang} è da ritradurre (le righe che hai corretto si ritraducono solo se le scegli).`,
+    subtitlesNothingStale: (p) => `Nessuna riga in ${p.lang} è da ritradurre.`,
+    subtitlesNothingStaleCorrected: (p) => `Le righe da ritradurre in ${p.lang} sono righe che hai corretto: sceglile per ritradurle.`,
     subtitlesSourceSet: 'Questi sottotitoli vengono dal parlato del video e le altre lingue si traducono da loro: non si possono eliminare.',
     subtitlesTranslateBad: (p) => `submit_subtitle_translation: ${p.detail}`,
     subtitlesTranslateLimit: 'submit_subtitle_translation si può chiamare al massimo 5 volte per esecuzione.',
@@ -501,6 +502,7 @@ export const it: Messages = {
     waveformLoading: 'Carico la forma d\'onda…',
     // Il video è cambiato (Task 14, spec §6.7).
     timingChanged: 'Il video è cambiato: ricontrolla i tempi',
+    translationTimingChanged: 'I tempi di questa traduzione non sono più quelli dei sottotitoli da cui viene: rifai i tempi di quelli, o ritraduci.',
     timingAligned: 'I tempi sono di nuovo allineati al video.',
     retime: 'Rifai i tempi',
     retimed: (p) => `Tempi dei sottotitoli rifatti (${p.lang}).`,

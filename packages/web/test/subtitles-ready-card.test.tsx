@@ -12,7 +12,7 @@ import { I18nProvider } from '../src/i18n.tsx';
 
 const at = '2026-10-22T10:00:00.000Z';
 const api = {
-  subtitles: vi.fn(async (..._a: unknown[]) => ({ sets: [{ lang: 'it', timingChanged: true }], job: null, pending: null })),
+  subtitles: vi.fn(async (..._a: unknown[]) => ({ sets: [{ lang: 'it', timingChanged: true }] as Array<{ lang: string; timingChanged: boolean; origin?: string }>, job: null, pending: null })),
   startSubtitles: vi.fn(async (..._a: unknown[]) => ({ job: { id: 'j1' } })),
   subtitleFile: vi.fn(async (_s: string, _c: string, _lang: string, _ext: 'srt' | 'vtt') => new Blob(['1\n00:00:00,000 --> 00:00:01,000\nCiao\n'])),
   transcriptionChoice: vi.fn(),
@@ -109,6 +109,17 @@ describe('the subtitles card in the chat (Task 8)', () => {
     const c = screen.getByRole('group', { name: 'Il video è cambiato: ricontrolla i tempi' });
     expect(await within(c).findByText('I tempi sono di nuovo allineati al video.')).toBeTruthy();
     expect(within(c).queryByRole('button', { name: 'Rifai i tempi' })).toBeNull();
+    expect(within(c).getByRole('link', { name: "Apri l'editor" })).toBeTruthy();
+  });
+
+  it('an old notice that names a translation offers no "Rifai i tempi": it follows its source (Task 25)', async () => {
+    api.subtitles.mockResolvedValueOnce({ sets: [{ lang: 'it', origin: 'translation', timingChanged: true }], job: null, pending: null });
+    card(entry({ state: 'timing-changed', lang: 'it' }, 'Il video è cambiato: ricontrolla i tempi', 'warning'));
+    const c = screen.getByRole('group', { name: 'Il video è cambiato: ricontrolla i tempi' });
+    await waitFor(() => expect(api.subtitles).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(within(c).queryByRole('button', { name: 'Rifai i tempi' })).toBeNull();
+    expect(within(c).queryByText('I tempi sono di nuovo allineati al video.')).toBeNull();
     expect(within(c).getByRole('link', { name: "Apri l'editor" })).toBeTruthy();
   });
 
