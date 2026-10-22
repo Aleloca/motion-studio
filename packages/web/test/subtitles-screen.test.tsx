@@ -371,7 +371,7 @@ describe('the timeline under the player and the list (Task 13)', () => {
     vi.spyOn(track, 'getBoundingClientRect').mockReturnValue(box);
     const edge = tl.querySelector<HTMLElement>('.ms-subtl-cue[data-cue="c1"] .ms-subtl-edge.ms-end')!;
     fireEvent.pointerDown(edge, { clientX: 250, button: 0, pointerId: 1 });
-    for (const x of [260, 270, 280, 290, 300]) fireEvent.pointerMove(edge, { clientX: x, pointerId: 1 });
+    for (const x of [260, 270, 280, 290, 300]) fireEvent.pointerMove(edge, { clientX: x, buttons: 1, pointerId: 1 });
     fireEvent.pointerUp(edge, { clientX: 300, pointerId: 1 });
     // 50 px of 1000 for 6 s: 300 ms later.
     const end = () => (screen.getByRole('textbox', { name: 'Fine della riga 1' }) as HTMLInputElement).value;
@@ -381,6 +381,24 @@ describe('the timeline under the player and the list (Task 13)', () => {
     expect((screen.getByRole('button', { name: 'Annulla' }) as HTMLButtonElement).disabled).toBe(true);
     await act(async () => { done({ peaks: [0.5], durationMs: 6000 }); });
     expect(within(tl).queryByRole('status')).toBeNull();
+  });
+
+  it('⌘Z in the middle of a drag undoes it, and the rest of the gesture moves nothing', async () => {
+    await open();
+    const tl = screen.getByRole('region', { name: 'Timeline' });
+    const box = { left: 0, top: 0, right: 1000, bottom: 80, width: 1000, height: 80, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+    vi.spyOn(tl.querySelector<HTMLElement>('.ms-subtl-track')!, 'getBoundingClientRect').mockReturnValue(box);
+    const edge = tl.querySelector<HTMLElement>('.ms-subtl-cue[data-cue="c1"] .ms-subtl-edge.ms-end')!;
+    const end = () => (screen.getByRole('textbox', { name: 'Fine della riga 1' }) as HTMLInputElement).value;
+    fireEvent.pointerDown(edge, { clientX: 250, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(edge, { clientX: 280, buttons: 1, pointerId: 1 });
+    fireEvent.pointerMove(edge, { clientX: 300, buttons: 1, pointerId: 1 });
+    expect(end()).toBe('00:01.800');
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
+    expect(end()).toBe('00:01.500');
+    fireEvent.pointerMove(edge, { clientX: 320, buttons: 1, pointerId: 1 });
+    fireEvent.pointerUp(edge, { clientX: 320, pointerId: 1 });
+    expect(end()).toBe('00:01.500');
   });
 
   it('an edge as a slider: → moves the line\'s end by 100 ms', async () => {

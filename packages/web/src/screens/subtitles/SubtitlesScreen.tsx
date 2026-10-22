@@ -149,7 +149,7 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
     let alive = true;
     setWave(null);
     setWaveDone(false);
-    Promise.resolve().then(() => api.subtitleWaveform(slug, creative, waveOf)).then(
+    api.subtitleWaveform(slug, creative, waveOf).then(
       (w) => { if (alive) { setWave(w); setWaveDone(true); } },
       () => { if (alive) setWaveDone(true); });
     return () => { alive = false; };
@@ -321,7 +321,7 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
         </div>
       </section>
       <Timeline clock={controls.clock} cues={state.cues} durationMs={state.durationMs} peaks={waveDone ? wave?.peaks ?? [] : null}
-        peaksMs={wave?.durationMs} selected={state.selected} dispatch={dispatch} onSeek={seekMs} />
+        peaksMs={wave?.durationMs} selected={state.selected} dragging={state.dragging} dispatch={dispatch} onSeek={seekMs} />
     </main>
   );
 }

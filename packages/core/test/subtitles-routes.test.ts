@@ -248,6 +248,15 @@ describe('the waveform of the subtitle timeline (Task 13)', () => {
     expect(mixer).toHaveBeenCalledTimes(1);
   });
 
+  it('two requests at once make one mix', { timeout: 60_000 }, async () => {
+    const slug = await madeWithVoice();
+    const mixer = vi.spyOn(subtitlesService, 'mixCreativeAudio');
+    const [a, b] = await Promise.all([app.inject(`${P}/${slug}/subtitles/waveform?version=1`), app.inject(`${P}/${slug}/subtitles/waveform?version=1`)]);
+    expect(a.statusCode, a.body).toBe(200);
+    expect(b.json()).toEqual(a.json());
+    expect(mixer).toHaveBeenCalledTimes(1);
+  });
+
   it('a version without audio has no peaks; an unknown version 404, a bad one 400', async () => {
     const slug = await made();
     const res = await app.inject(`${P}/${slug}/subtitles/waveform?version=1`);

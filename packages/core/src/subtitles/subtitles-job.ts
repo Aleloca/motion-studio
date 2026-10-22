@@ -419,7 +419,7 @@ export class SubtitlesService {
       // The mix and its 16 kHz copy in the project's cache, removed after (a leftover of an earlier job is cleared first). Their
       // own `job` folder: the creative's cache folder also keeps the timeline's waveforms.
       const cache = await realDirChain(ref.projectDir, ['.studio', 'cache', 'subtitles', ref.creativeSlug]);
-      if (!cache) throw new Error('.studio/cache/subtitles is not a folder');
+      if (!cache) throw new Error(`.studio/cache/subtitles/${ref.creativeSlug} is not a folder`);
       work = join(cache, 'job');
       await rm(work, { recursive: true, force: true });
       await mkdir(work);

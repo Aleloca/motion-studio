@@ -47,8 +47,8 @@ describe('CueTimeline', () => {
     const { dispatch } = mount();
     const edge = block('a').querySelector<HTMLElement>('.ms-subtl-edge.ms-end')!;
     fireEvent.pointerDown(edge, { clientX: 300, button: 0, pointerId: 1 });
-    fireEvent.pointerMove(edge, { clientX: 325, pointerId: 1 });
-    fireEvent.pointerMove(edge, { clientX: 350, pointerId: 1 });
+    fireEvent.pointerMove(edge, { clientX: 325, buttons: 1, pointerId: 1 });
+    fireEvent.pointerMove(edge, { clientX: 350, buttons: 1, pointerId: 1 });
     fireEvent.pointerUp(edge, { clientX: 350, pointerId: 1 });
     const times = dispatch.mock.calls.map(([op]) => op).filter((op) => op.type === 'times');
     expect(times.at(-1)).toEqual({ type: 'times', id: 'a', end: 3500, drag: true });
@@ -60,13 +60,13 @@ describe('CueTimeline', () => {
     const { dispatch } = mount();
     const start = block('a').querySelector<HTMLElement>('.ms-subtl-edge.ms-start')!;
     fireEvent.pointerDown(start, { clientX: 100, button: 0, pointerId: 1 });
-    fireEvent.pointerMove(start, { clientX: 80, pointerId: 1 });
+    fireEvent.pointerMove(start, { clientX: 80, buttons: 1, pointerId: 1 });
     fireEvent.pointerUp(start, { clientX: 80, pointerId: 1 });
     expect(dispatch).toHaveBeenCalledWith({ type: 'times', id: 'a', start: 800, drag: true });
     dispatch.mockClear();
     const body = block('b');
     fireEvent.pointerDown(body, { clientX: 600, button: 0, pointerId: 2 });
-    fireEvent.pointerMove(body, { clientX: 630, pointerId: 2 });
+    fireEvent.pointerMove(body, { clientX: 630, buttons: 1, pointerId: 2 });
     fireEvent.pointerUp(body, { clientX: 630, pointerId: 2 });
     expect(dispatch).toHaveBeenCalledWith({ type: 'select', id: 'b' });
     expect(dispatch).toHaveBeenCalledWith({ type: 'times', id: 'b', start: 5300, end: 7300, drag: true });
@@ -97,7 +97,7 @@ describe('CueTimeline', () => {
     expect(screen.getByRole('status').textContent).toContain("Carico la forma d'onda");
     const edge = block('b').querySelector<HTMLElement>('.ms-subtl-edge.ms-end')!;
     fireEvent.pointerDown(edge, { clientX: 700, button: 0, pointerId: 1 });
-    fireEvent.pointerMove(edge, { clientX: 720, pointerId: 1 });
+    fireEvent.pointerMove(edge, { clientX: 720, buttons: 1, pointerId: 1 });
     expect(dispatch).toHaveBeenCalledWith({ type: 'times', id: 'b', end: 7200, drag: true });
   });
 
@@ -113,5 +113,56 @@ describe('CueTimeline', () => {
     expect(track.style.width).toBe('2000%');
     for (let i = 0; i < 10; i++) fireEvent.wheel(view, { deltaY: 1000, metaKey: true });
     expect(track.style.width).toBe('100%');
+  });
+
+  it('a lost pointer capture ends the drag: later moves send nothing, one endDrag', () => {
+    const { dispatch } = mount();
+    const edge = block('a').querySelector<HTMLElement>('.ms-subtl-edge.ms-end')!;
+    const track = document.querySelector<HTMLElement>('.ms-subtl-track')!;
+    fireEvent.pointerDown(edge, { clientX: 300, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(edge, { clientX: 330, buttons: 1, pointerId: 1 });
+    const times = () => dispatch.mock.calls.filter(([op]) => op.type === 'times').length;
+    expect(times()).toBe(1);
+    fireEvent.lostPointerCapture(track, { pointerId: 1 });
+    fireEvent.pointerMove(track, { clientX: 360, buttons: 1, pointerId: 1 });
+    fireEvent.pointerMove(track, { clientX: 390, pointerId: 1 });
+    expect(times()).toBe(1);
+    expect(dispatch.mock.calls.filter(([op]) => op.type === 'endDrag')).toHaveLength(1);
+  });
+
+  it('a pointercancel after a moved drag sends one endDrag; a move with no button held ends the drag too', () => {
+    const { dispatch } = mount();
+    const edge = block('a').querySelector<HTMLElement>('.ms-subtl-edge.ms-end')!;
+    const ends = () => dispatch.mock.calls.filter(([op]) => op.type === 'endDrag').length;
+    fireEvent.pointerDown(edge, { clientX: 300, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(edge, { clientX: 330, buttons: 1, pointerId: 1 });
+    fireEvent.pointerCancel(edge, { pointerId: 1 });
+    fireEvent.pointerUp(edge, { clientX: 330, pointerId: 1 });
+    expect(ends()).toBe(1);
+    dispatch.mockClear();
+    fireEvent.pointerDown(edge, { clientX: 300, button: 0, pointerId: 2 });
+    fireEvent.pointerMove(edge, { clientX: 330, buttons: 1, pointerId: 2 });
+    fireEvent.pointerMove(edge, { clientX: 360, buttons: 0, pointerId: 2 });
+    fireEvent.pointerMove(edge, { clientX: 390, buttons: 0, pointerId: 2 });
+    expect(dispatch.mock.calls.filter(([op]) => op.type === 'times')).toHaveLength(1);
+    expect(ends()).toBe(1);
+  });
+
+  it('once the model let go of the drag (undo mid-drag), the rest of the gesture moves nothing', () => {
+    const dispatch = vi.fn();
+    const ui = (dragging: string | null) => (
+      <I18nProvider locale="it">
+        <CueTimeline cues={CUES} durationMs={10_000} peaks={[]} time={0} selected="a" dragging={dragging} dispatch={dispatch} onSeek={() => {}} />
+      </I18nProvider>);
+    const { rerender } = render(ui(null));
+    const edge = block('a').querySelector<HTMLElement>('.ms-subtl-edge.ms-end')!;
+    fireEvent.pointerDown(edge, { clientX: 300, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(edge, { clientX: 330, buttons: 1, pointerId: 1 });
+    rerender(ui('a'));
+    fireEvent.pointerMove(edge, { clientX: 340, buttons: 1, pointerId: 1 });
+    rerender(ui(null));
+    fireEvent.pointerMove(edge, { clientX: 360, buttons: 1, pointerId: 1 });
+    fireEvent.pointerUp(edge, { clientX: 360, pointerId: 1 });
+    expect(dispatch.mock.calls.filter(([op]) => op.type === 'times').map(([op]) => op.end)).toEqual([3300, 3400]);
   });
 });

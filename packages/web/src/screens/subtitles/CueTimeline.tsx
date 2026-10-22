@@ -29,11 +29,13 @@ export interface CueTimelineProps {
   /** The playhead, in ms. */
   time: number;
   selected: string | null;
+  /** The model's `dragging`: once it held the dragged line, a drag it no longer holds (⌘Z mid-drag) moves nothing more. */
+  dragging?: string | null;
   dispatch: Dispatch<EditorOp>;
   onSeek(ms: number): void;
 }
 
-type Grab = { kind: 'start' | 'end' | 'move'; id: string; x0: number; start0: number; end0: number; moved: boolean; width: number } | { kind: 'seek' };
+type Grab = { kind: 'start' | 'end' | 'move'; id: string; x0: number; start0: number; end0: number; moved: boolean; width: number; held: boolean } | { kind: 'seek' };
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
@@ -65,13 +67,15 @@ export function drawWave(c: HTMLCanvasElement, o: { peaks: readonly number[]; co
   }
 }
 
-export function CueTimeline({ cues, durationMs, peaks, peaksMs, time, selected, dispatch, onSeek }: CueTimelineProps) {
+export function CueTimeline({ cues, durationMs, peaks, peaksMs, time, selected, dragging = null, dispatch, onSeek }: CueTimelineProps) {
   const t = useT();
   const s = t.subtitles;
   const view = useRef<HTMLDivElement>(null);
   const track = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const grab = useRef<Grab | null>(null);
+  const draggingNow = useRef(dragging);
+  draggingNow.current = dragging;
   const [zoom, setZoom] = useState(1);
   const [viewW, setViewW] = useState(0);
   const [scrollX, setScrollX] = useState(0);
@@ -160,13 +164,18 @@ export function CueTimeline({ cues, durationMs, peaks, peaksMs, time, selected, 
     }
     const edge = target.closest<HTMLElement>('.ms-subtl-edge');
     const width = track.current?.getBoundingClientRect().width ?? 0;
-    grab.current = { kind: edge ? (edge.classList.contains('ms-start') ? 'start' : 'end') : 'move', id: cue.id, x0: e.clientX, start0: cue.start, end0: cue.end, moved: false, width };
+    grab.current = { kind: edge ? (edge.classList.contains('ms-start') ? 'start' : 'end') : 'move', id: cue.id, x0: e.clientX, start0: cue.start, end0: cue.end, moved: false, width, held: false };
     if (cue.id !== selected) dispatch({ type: 'select', id: cue.id });
   };
   const move = (e: PointerEvent<HTMLDivElement>) => {
     const g = grab.current;
     if (!g) return;
+    // No button held any more (a release the timeline never saw): the gesture is over, hovering moves nothing.
+    if ((e.buttons & 1) === 0) { cancel(); return; }
     if (g.kind === 'seek') { const at = msAt(e.clientX); if (at !== null) onSeek(at); return; }
+    // The model let go of this drag (undo mid-drag): the rest of the gesture moves nothing.
+    if (draggingNow.current === g.id) g.held = true;
+    else if (g.held) { grab.current = null; return; }
     const dx = e.clientX - g.x0;
     if (!g.moved && Math.abs(dx) < CLICK_SLOP_PX) return;
     if (!g.width) return;
@@ -228,7 +237,7 @@ export function CueTimeline({ cues, durationMs, peaks, peaksMs, time, selected, 
       </div>
       <div ref={view} className="ms-subtl-view">
         <div ref={track} className="ms-subtl-track" style={{ width: `${zoom * 100}%` }}
-          onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={cancel}>
+          onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={cancel} onLostPointerCapture={cancel}>
           <canvas ref={canvas} className="ms-subtl-wave" aria-hidden="true" style={{ left: scrollX, width: viewW || '100%' }} />
           {blocks}
           <span className="ms-subtl-playhead" aria-hidden="true" style={{ left: `${clamp(time / span, 0, 1) * 100}%` }} />
