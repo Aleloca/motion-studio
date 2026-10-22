@@ -433,7 +433,7 @@ export class RenderJobService {
               for (const f of [format, ...followers]) {
                 const checked = await this.exportChecks(r.path, findPreset(presets, f) ?? { ...findPreset(presets, format)!, id: f }, r.composition, r.render, locale);
                 if (checked.warning) detail(`${label(f)}: ${outputWarningText(checked.warning, locale)}`);
-                collect(f, { path: r.path, render: r.render, problems: checked.problems, issues: checked.issues, durationSec: r.composition.duration > 0 ? r.composition.duration : null,
+                collect(f, { path: r.path, render: r.render, problems: [...new Set([...checked.problems, ...r.overflows])], issues: checked.issues, durationSec: r.composition.duration > 0 ? r.composition.duration : null,
                   ...(r.softIgnored ? { softIgnored: true } : {}) });
               }
             } catch (e) {
@@ -470,7 +470,7 @@ export class RenderJobService {
    * hash still the recorded one), its media normalised, rendered into `outDir`. Nothing is recorded in the version.
    */
   private async renderForExport(o: { ref: CreativeRef; n: number; format: string; comps: VersionComposition[]; presets: FormatPreset[]; profile: RenderProfile;
-    subtitles?: ExportRenderOptions['subtitles']; force?: boolean; outDir: string; signal: AbortSignal; progress: (p: JobProgress) => void; label: (id: string) => string; locale: Locale }): Promise<{ path: string; render: RenderInfo; composition: Composition; softIgnored: boolean }> {
+    subtitles?: ExportRenderOptions['subtitles']; force?: boolean; outDir: string; signal: AbortSignal; progress: (p: JobProgress) => void; label: (id: string) => string; locale: Locale }): Promise<{ path: string; render: RenderInfo; composition: Composition; softIgnored: boolean; overflows: string[] }> {
     const { ref, n, format, signal } = o;
     const m = messages(o.locale);
     const store = new CreativeStore(ref.projectDir);
@@ -496,7 +496,11 @@ export class RenderJobService {
         if (loaded.hash !== entry.hash) throw new Error(m.render.compositionChanged({ format: o.label(format) }));
         base = loaded.composition;
       }
-      return await this.renderExportComposition({ ...o, creativeDir, compDir, preset, base, dir: loc ? loc.root : creativeDir });
+      const r = await this.renderExportComposition({ ...o, creativeDir, compDir, preset, base, dir: loc ? loc.root : creativeDir });
+      // Task 27, review round 1: a translated text that overflows in this render is a problem of the file, as for the row render
+      // (Ruling J): the export leaves it out and lists it, never ships it silently.
+      const overflows = loc ? (await this.localizedOverflows(ref, n, loc, r.textOverflows, o.locale, signal)).filter((i) => i.code === 'textOverflowMeasured').map((i) => i.message) : [];
+      return { ...r, overflows };
     } finally {
       await loc?.release();
     }
@@ -504,7 +508,8 @@ export class RenderJobService {
 
   /** The render of `renderForExport`, once its composition (`base`), folder and preset are known. */
   private async renderExportComposition(o: { ref: CreativeRef; n: number; format: string; profile: RenderProfile; subtitles?: ExportRenderOptions['subtitles']; outDir: string; signal: AbortSignal;
-    progress: (p: JobProgress) => void; locale: Locale; creativeDir: string; compDir: string; preset: FormatPreset; base: Composition; dir: string }): Promise<{ path: string; render: RenderInfo; composition: Composition; softIgnored: boolean }> {
+    progress: (p: JobProgress) => void; locale: Locale; creativeDir: string; compDir: string; preset: FormatPreset; base: Composition; dir: string }):
+    Promise<{ path: string; render: RenderInfo; composition: Composition; softIgnored: boolean; textOverflows: RenderResult['textOverflows'] }> {
     const { ref, n, format, signal, creativeDir, compDir, preset } = o;
     // Report 39 (decision 1234): at the export's frame rate for the media too, so an embedded video is normalised at that
     // rate (its own cache file) and never shows each frame twice at 60 fps.
@@ -536,6 +541,7 @@ export class RenderJobService {
       }
       const result = await this.deps.engine!.render({
         ...this.deps.renderOptions,
+        // The instance id names the output (a localized video's preset may be its base preset, as in `renderLocalized`).
         dir: o.dir, versionDir: `outputs/v${n}`, composition, format: { ...preset, id: format }, out: join(o.outDir, file), signal, ...(media ? { media } : {}),
         // The App Store preview keeps its store audio, as its version render (final review M4): it then takes no soft tracks.
         ...storeRenderOptions(format, composition),
@@ -543,7 +549,7 @@ export class RenderJobService {
         quality: o.profile.quality, ...(o.profile.short !== undefined ? { short: o.profile.short } : {}),
         onProgress: (p) => o.progress({ format, phase: 'frames', done: p.frames, total: p.total }),
       });
-      return { path: result.file, render: renderInfoOf(result, o.profile.quality, composition.fps), composition,
+      return { path: result.file, render: renderInfoOf(result, o.profile.quality, composition.fps), composition, textOverflows: result.textOverflows,
         softIgnored: soft.length > 0 && result.warnings.some((w) => w.code === 'softSubtitlesIgnored') };
     } finally {
       prepared.release();
@@ -1117,22 +1123,7 @@ export class RenderJobService {
       const info = await this.describe({ creativeDir, versionDir, n, preset, file, composition, sha256: result.sha256, hash: ic.entry.hash, locale, poster: false })
         // A check that could not run is a problem of the render, never a clean record (Ruling J).
         .catch(() => ({ width: result.width, height: result.height, durationSec: result.durationSec, problems: [m.variants.renderCheckFailed({ file })] }));
-      // The browser's own measure (Ruling I): a translated text that overflows its box at the applied fit is a problem of this
-      // language. A clip that shows the source text (not translated, or outdated: the stale rule) overflows with the original's
-      // words: a note on the row (`sourceTextOverflow`, live F4), never a problem of the translation nor a reason to force.
-      const translated = (id: string) => Object.hasOwn(read.overlay.texts, id) && !row.stale.includes(id);
-      // A translated clip whose SOURCE already overflows keeps a note: the source-relative estimate judged the translation itself.
-      // The source verdict comes from the browser (cached per composition and preset, fix round 2 N1); the row's notes (written
-      // when the translation was judged, or carried) only when the browser cannot measure now. Any other translated clip that
-      // overflows is a problem: nothing is exported silently.
-      const measureText = this.deps.measureText;
-      const sourceOver = measureText ? await sourceOverflowOf({ ...ic, preset }, (c, s) => measureText({ ref: { projectDir: ref.projectDir, creativeDir, creativeSlug: ref.creativeSlug, n },
-        folder: basename(ic.compDir), preset, composition: c, signal: s }), signal).catch(() => null) : null;
-      const sourceNoted = new Set((sourceOver ?? (row.issues ?? []).filter((i) => i.code === 'sourceTextOverflow' && i.clipId !== undefined).map((i) => i.clipId!)).filter((id) => translated(id)));
-      const measured = (result.textOverflows ?? []).filter((e) => e.clipId !== undefined).map((e) => e.clipId!);
-      const overflowIssues: LocalizationIssue[] = [...new Set([...measured, ...sourceNoted])].map((id): LocalizationIssue => (translated(id) && !sourceNoted.has(id)
-        ? { code: 'textOverflowMeasured', clipId: id, message: m.variants.textOverflowMeasured({ clip: clipLabel(ic.composition, id), fit: Math.round((read.overlay.fit[id] ?? 1) * 100) }) }
-        : { code: 'sourceTextOverflow', clipId: id, message: (translated(id) ? m.variants.sourceLayoutOverflow : m.variants.sourceTextOverflow)({ clip: clipLabel(ic.composition, id) }) }));
+      const overflowIssues = await this.localizedOverflows(ref, n, loc, result.textOverflows, locale, signal);
       const overflows = overflowIssues.filter((i) => i.code === 'textOverflowMeasured').map((i) => i.message);
       const problems = [...new Set([...(info.problems ?? []), ...overflows])];
       const at = new Date().toISOString();
@@ -1166,6 +1157,32 @@ export class RenderJobService {
     } finally {
       await loc.release();
     }
+  }
+
+  /**
+   * The browser's own measure of a localized render (Ruling I), shared by the row render and an export render of the localized
+   * video (subtitles Task 27, review round 1): a translated text that overflows its box at the applied fit is a problem of this
+   * language (`textOverflowMeasured`). A clip that shows the source text (not translated, or outdated: the stale rule)
+   * overflows with the original's words: a note (`sourceTextOverflow`, live F4), never a problem of the translation nor a reason
+   * to force. A translated clip whose SOURCE already overflows keeps a note: the source-relative estimate judged the translation
+   * itself. The source verdict comes from the browser (cached per composition and preset, fix round 2 N1); the row's notes
+   * (written when the translation was judged, or carried) only when the browser cannot measure now. Any other translated clip
+   * that overflows is a problem: nothing is exported silently.
+   */
+  private async localizedOverflows(ref: CreativeRef, n: number, loc: Pick<Awaited<ReturnType<RenderJobService['localizedFolder']>>, 'ic' | 'preset' | 'read' | 'row'>,
+    textOverflows: RenderResult['textOverflows'], locale: Locale, signal: AbortSignal): Promise<LocalizationIssue[]> {
+    const m = messages(locale);
+    const { ic, preset, read, row } = loc;
+    const creativeDir = new CreativeStore(ref.projectDir).dir(ref.creativeSlug);
+    const translated = (id: string) => Object.hasOwn(read.overlay.texts, id) && !row.stale.includes(id);
+    const measureText = this.deps.measureText;
+    const sourceOver = measureText ? await sourceOverflowOf({ ...ic, preset }, (c, s) => measureText({ ref: { projectDir: ref.projectDir, creativeDir, creativeSlug: ref.creativeSlug, n },
+      folder: basename(ic.compDir), preset, composition: c, signal: s }), signal).catch(() => null) : null;
+    const sourceNoted = new Set((sourceOver ?? (row.issues ?? []).filter((i) => i.code === 'sourceTextOverflow' && i.clipId !== undefined).map((i) => i.clipId!)).filter((id) => translated(id)));
+    const measured = (textOverflows ?? []).filter((e) => e.clipId !== undefined).map((e) => e.clipId!);
+    return [...new Set([...measured, ...sourceNoted])].map((id): LocalizationIssue => (translated(id) && !sourceNoted.has(id)
+      ? { code: 'textOverflowMeasured', clipId: id, message: m.variants.textOverflowMeasured({ clip: clipLabel(ic.composition, id), fit: Math.round((read.overlay.fit[id] ?? 1) * 100) }) }
+      : { code: 'sourceTextOverflow', clipId: id, message: (translated(id) ? m.variants.sourceLayoutOverflow : m.variants.sourceTextOverflow)({ clip: clipLabel(ic.composition, id) }) }));
   }
 
   /**

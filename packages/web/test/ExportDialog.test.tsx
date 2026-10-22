@@ -647,6 +647,9 @@ describe('ExportDialog · subtitle languages (Task 27)', () => {
     expect(videoOf(/^Video dei sottotitoli in inglese/i).textContent).toMatch(/Originale/);
     expect(preview()).toContain('summer-launch-instagram-reel-9x16-v5-de-sub-de.mp4');
     expect(preview()).toContain('summer-launch-instagram-reel-9x16-v5-sub-en.mp4');
+    // Every drawn video names its video, the original's too (review round 1).
+    expect(preview()).toMatch(/Video in italiano, sottotitoli in inglese/i);
+    expect(preview()).toMatch(/Video in tedesco, sottotitoli in tedesco/i);
     // The Italian video's two drawn videos and its still; the German subtitles' two videos.
     expect(screen.getByRole('button', { name: 'Esporta 5 file' })).toBeTruthy();
     // English on the German video instead.

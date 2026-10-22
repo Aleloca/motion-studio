@@ -307,6 +307,15 @@ describe('export subtitle choices (Task 21)', { timeout: 120_000 }, () => {
     expect(r.json().skipped).toEqual([expect.stringMatching(/Still/)]);
   });
 
+  // Task 27, review round 1: the same files the dialog counts (a video without the track: its clean file and files, no drawn one; the still as it is).
+  it('a still and a video without the track, with drawn and files: four files, as the dialog counts them', async () => {
+    const { slug } = await creative({ still: true });
+    const r = await exportOf(slug, { picks: { 'test-wide': 1, 'test-still': 1 }, subtitles: { drawn: ['en'], files: ['it'] } });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(await outFiles()).toEqual(['launch-test-still-v1.png', `${STEM}.it.srt`, `${STEM}.it.vtt`, `${STEM}.mp4`]);
+    expect(r.json().skipped).toEqual(expect.arrayContaining([expect.stringMatching(/en/)]));
+  });
+
   it('the creative\'s format summaries say which ★ compositions draw the subtitles (final review I2)', async () => {
     const formats = async (slug: string) => Object.fromEntries(((await env.app.inject({ url: `/api/projects/acme/creatives/${slug}`, headers: H })).json().formats as Array<{ id: string; subtitlesTrack?: boolean }>)
       .map((f) => [f.id, f.subtitlesTrack]));
@@ -576,6 +585,23 @@ describe('multi-language subtitle exports (Task 27)', { timeout: 120_000 }, () =
     expect(r.statusCode, r.body).toBe(200);
     const calls = env.fake.renders.slice(before);
     expect(calls.map((c) => [titleOf(c.composition as never), c.softSubtitles?.map((s) => s.lang)]).sort()).toEqual([['Ciao', ['it']], ['Hallo', ['it', 'de']]]);
+  });
+
+  // Review round 1.
+  it('a translated text that overflows in the German export render leaves that video out, listed in excluded (Ruling J)', async () => {
+    const { slug } = await creative();
+    env.fake.overflows = ['title'];
+    const r = await exportOf(slug, { locales: ['it', 'de'], subtitles: { soft: ['it'] } });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().excluded).toEqual([expect.objectContaining({ format: 'test-wide', version: 1, locale: 'de', problems: [expect.stringMatching(/title|Titolo|Hallo/i)] })]);
+    expect(await outFiles()).toEqual([`${STEM}.mp4`]);
+  });
+
+  it('a pair on the original video when only German is exported: the drawn original and the German file as today', async () => {
+    const { slug } = await creative();
+    const r = await exportOf(slug, { locales: ['de'], subtitles: { drawn: [{ video: 'it', lang: 'en' }] } });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(await outFiles()).toEqual([`${STEM}-de.mp4`, `${STEM}-sub-en.mp4`]);
   });
 
   it('a pair names a video language of the brief (400 locale-not-in-brief otherwise)', async () => {

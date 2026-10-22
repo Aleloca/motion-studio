@@ -163,6 +163,8 @@ run('the export dialog\'s Sottotitoli section: real Chrome layout (Task 22)', ()
         expect(r.formatRowShown, 'the formats list keeps a row in view').toBe(true);
         expect(r.sideways, 'nothing scrolls sideways').toBe(false);
         expect(r.dialogInside).toBe(true);
+        // Horizontal only (review round 1): with two video languages the section is taller than the dialog's visible body at
+        // 1024 × 700 and scrolls with it, by design; what must hold is that nothing leaves the dialog's sides.
         expect(r.sectionInsideX).toBe(true);
         expect(r.checks).toEqual([3, 3, 3]);
         expect(r.out, 'rows, checks, video pills, hints, note and preview lines inside their box').toEqual([]);

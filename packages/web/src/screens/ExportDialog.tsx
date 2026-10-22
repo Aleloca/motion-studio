@@ -581,8 +581,9 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
             <div className="ms-exp-preview ms-exp-subs-out">
               {drawnNames.map((l) => (
                 <span key={`sub-${l.video ?? ''}-${l.lang}`} className="ms-exp-preview-line">
-                  <span className="ms-exp-preview-label">{l.video === undefined ? x.subtitles.previewDrawn({ language: localeName(l.lang, locale) })
-                    : x.subtitles.previewDrawnOn({ language: localeName(l.lang, locale), video: localeName(l.video, locale) })}</span>
+                  {/* With other languages every drawn video names its video, the original's too (review round 1). */}
+                  <span className="ms-exp-preview-label">{locales && withLanguages ? x.subtitles.previewDrawnOn({ language: localeName(l.lang, locale), video: localeName(l.video ?? locales.primary, locale) })
+                    : x.subtitles.previewDrawn({ language: localeName(l.lang, locale) })}</span>
                   <span className="ms-exp-file">{l.names.join(', ')}</span>
                 </span>
               ))}
