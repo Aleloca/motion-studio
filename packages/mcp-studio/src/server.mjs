@@ -112,11 +112,21 @@ const TOOLS = [
   { name: 'set_pick', description: 'Sets the ★ of a format: the version exported. version: a saved version number, or "current" (the version you are making, set when your turn ends). In a variant group, variant names whose version it is (default: yours; the agent of the group always names it, with a saved version).', inputSchema: { type: 'object', properties: { format: str('Format id'), version: { anyOf: [{ type: 'integer', minimum: 1 }, { const: 'current' }] }, variant: VARIANT_ID }, required: ['format', 'version'], additionalProperties: false } },
   { name: 'render_version', description: 'Renders a version\'s video and image files on the user\'s computer: a saved version number now, or "current" (the version you are making) when your turn ends. Optional formats (default: all). The agent of a variant group names the variant and a saved version.', inputSchema: { type: 'object', properties: { version: { anyOf: [{ type: 'integer', minimum: 1 }, { const: 'current' }] }, formats: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 100 }, variant: VARIANT_ID }, required: ['version'], additionalProperties: false } },
   { name: 'prepare_export', description: 'When your turn ends, renders what the ★ export needs. The user then exports (chooses where the files go): you never write outside the project.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
-  // Decisions 1640 (U9) and 1710: the subtitles job of this creative, which runs on its own; files only until the app draws
-  // subtitles (phase 3 adds `drawn` back here). The core checks the input again.
-  { name: 'start_subtitles', description: 'Makes the subtitle files (.srt and .vtt) of this creative from the version you are making in this turn: when your turn ends, its audio is transcribed and cut into subtitle lines, on its own (it may take minutes; the chat tells the user when they are ready, with the editor and the downloads). Once per turn. It draws nothing into the video.', inputSchema: { type: 'object', properties: {
+  // Decision 1640 (U9) and Task 19: the subtitles job of this creative, which runs on its own, drawn into the video or files
+  // only (phase 3 restored `drawn`, decision 1710); and the agent's corrections of their text. The core checks the input again.
+  { name: 'start_subtitles', description: 'Makes the subtitles of this creative from the version you are making in this turn: when your turn ends, its audio is transcribed and cut into subtitle lines, on its own (it may take minutes; the chat tells the user when they are ready, with the editor and the .srt/.vtt downloads). Once per turn. drawn: true when the user wants them drawn into the video (when they are ready, Motion Studio asks you in a new turn to add the subtitles track with their style), false for files or a track in the MP4 only. If the user did not say which, ask with AskUserQuestion first. Never write subtitles as text clips.', inputSchema: { type: 'object', properties: {
+    drawn: { type: 'boolean', description: 'true: drawn into the video; false: only as files (.srt/.vtt) or a track in the MP4' },
     lang: str('Only when the user names the spoken language: its tag (e.g. "it", "en", "zh-Hans"). Leave it out to detect it'),
-  }, additionalProperties: false } },
+  }, required: ['drawn'], additionalProperties: false } },
+  { name: 'edit_subtitles', description: 'Corrects the text of this creative\'s subtitles in one language now; their times stay. replace: a literal text found in every line (case-insensitive unless caseSensitive), e.g. "motion studio" → "Motion Studio"; cues: the whole text of lines by id, each with was, its text as you read it (the ids and texts are in creatives/<slug>/subtitles/<lang>.json: read it just before, never write it); if a line changed since (the user corrected it), nothing is changed: read it again. The lines you change count as the user\'s corrections (a new transcription keeps them). An unknown id changes nothing. Returns how many lines changed.', inputSchema: { type: 'object', properties: {
+    lang: str('Language tag of the subtitles, e.g. "it"'),
+    replace: { type: 'array', maxItems: 20, items: { type: 'object', properties: {
+      find: str('Text to find (literal)', { minLength: 1, maxLength: 200 }), with: str('Replacement', { maxLength: 200 }), caseSensitive: { type: 'boolean', description: 'Match the case exactly (default: no)' },
+    }, required: ['find', 'with'], additionalProperties: false } },
+    cues: { type: 'array', maxItems: 200, items: { type: 'object', properties: {
+      id: str('Line id', { minLength: 1, maxLength: 32 }), was: str('The line\'s text as you read it', { maxLength: 200 }), text: str('The line\'s new text, at most two lines (\\n between them)', { minLength: 1, maxLength: 200 }),
+    }, required: ['id', 'was', 'text'], additionalProperties: false } },
+  }, required: ['lang'], additionalProperties: false } },
 ];
 
 const send = (m) => process.stdout.write(`${JSON.stringify(m)}\n`);

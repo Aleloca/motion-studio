@@ -1,9 +1,10 @@
 import type { Composition } from '@motion-studio/shared';
 import { installVirtualClock, nativesOf } from './clock.ts';
 import { mount, type Player, type ReadyInfo } from './mount.ts';
-import { COMPOSITION_DATA_ID, readCompositionData } from './page.ts';
+import { COMPOSITION_DATA_ID, readCompositionData, type SafeZone } from './page.ts';
 import { createPreviewBridge, DRAFT_PARSER_KEY, type BridgePlayer, type PreviewBridge } from './preview-bridge.ts';
 import { parseParentOrigin, PREVIEW_PROTOCOL_VERSION, RUNTIME_QUERY, type DraftParser, type PreviewOutgoing, type RuntimeError, type RuntimeMode } from './protocol.ts';
+import type { RuntimeSubtitles } from './subtitles.ts';
 
 /** The render-mode API on `window.__ms` (driven over CDP by the core renderer). */
 export interface RuntimeApi {
@@ -53,7 +54,8 @@ export function startRuntime(w: Window & typeof globalThis): RuntimeApi {
   };
 
   const block = w.document.getElementById(COMPOSITION_DATA_ID);
-  const data = block ? readCompositionData(block.textContent ?? '') : null;
+  // A malformed subtitles block is left out with a warning (`subtitlesInvalid`): the page still renders, without them.
+  const data = block ? readCompositionData(block.textContent ?? '', report) : null;
   if (!data) return fail('compositionMissing', 'the page has no composition data block');
   let base: URL;
   try { base = new URL(data.base, w.location.href); } catch { return fail('baseNotAllowed', 'bad composition base'); }
@@ -71,7 +73,9 @@ export function startRuntime(w: Window & typeof globalThis): RuntimeApi {
   const root = w.document.getElementById('ms-root') ?? w.document.body;
   let player: Player;
   try {
-    player = mount(root, comp as Composition, { mode, base: base.href, natives, clock, report, ...(data.safeZone ? { safeZone: data.safeZone } : {}) });
+    player = mount(root, comp as Composition, {
+      mode, base: base.href, natives, clock, report, ...(data.safeZone ? { safeZone: data.safeZone } : {}), ...(data.subtitles ? { subtitles: data.subtitles } : {}),
+    });
   } catch (e) {
     return fail('compositionInvalid', `the composition could not be mounted: ${String(e instanceof Error ? e.message : e).slice(0, 300)}`);
   }
@@ -81,6 +85,7 @@ export function startRuntime(w: Window & typeof globalThis): RuntimeApi {
   if (parentOrigin) {
     const live = createLivePreview({
       w, root, first: player, composition: comp as Composition, base: base.href, natives, report,
+      safeZone: data.safeZone, subtitles: data.subtitles ?? null,
       post: (m) => { if (bridge) bridge.post(m); },
     });
     const parserOf = () => (w as unknown as Record<string, { parseDraft?: DraftParser } | undefined>)[DRAFT_PARSER_KEY]?.parseDraft;
@@ -161,6 +166,7 @@ function withSessionVideos(c: Composition, videos: ReadonlyMap<string, SessionVi
 function createLivePreview(o: {
   w: Window & typeof globalThis; root: HTMLElement; first: Player; composition: Composition; base: string;
   natives: ReturnType<typeof nativesOf>; report(e: RuntimeError): void; post(m: PreviewOutgoing): void;
+  safeZone: SafeZone | undefined; subtitles: RuntimeSubtitles | null;
 }): BridgePlayer {
   const doc = o.root.ownerDocument;
   const videos = sessionVideos(o.composition);
@@ -177,6 +183,10 @@ function createLivePreview(o: {
   let seekGen = 0;
   let lastSeek = 0;
   let pending: { composition: Composition; keepTime: boolean; seq: number } | null = null;
+  /** The subtitles drawn: the page's, then each `setSubtitles`; a draft mounts with the latest. */
+  let subtitles = o.subtitles;
+  /** `setSubtitles` commands seen: a draft gets them at the swap only when one came while it mounted. */
+  let subtitlesGen = 0;
 
   const wire = (p: Player) => {
     p.onTime = (t, playing) => o.post({ type: 'time', t, playing });
@@ -187,6 +197,7 @@ function createLivePreview(o: {
   const apply = async (d: { composition: Composition; keepTime: boolean; seq: number }) => {
     applying = true;
     const genAtStart = seekGen;
+    const subtitlesAtStart = subtitlesGen;
     const errors: RuntimeError[] = [];
     let collecting = true;
     const report = (e: RuntimeError) => { if (!collecting) o.report(e); else if (errors.length < MAX_ERRORS) errors.push(e); };
@@ -197,7 +208,9 @@ function createLivePreview(o: {
     let next: Player | null = null;
     try {
       const c = withSessionVideos(d.composition, videos);
-      next = mount(box, c, { mode: 'preview', base: o.base, natives: o.natives, clock: null, report, timeouts: REMOUNT_TIMEOUTS });
+      next = mount(box, c, {
+        mode: 'preview', base: o.base, natives: o.natives, clock: null, report, timeouts: REMOUNT_TIMEOUTS, subtitles, ...(o.safeZone ? { safeZone: o.safeZone } : {}),
+      });
       next.setScale(scale);
       await next.load();
       const ids = idsOf(c);
@@ -214,6 +227,8 @@ function createLivePreview(o: {
       const keep = selected !== null && ids.has(selected) ? selected : null;
       const resume = current.playing && playOpts ? { ...playOpts, from: current.time } : null;
       next.setScale(scale);
+      // A `setSubtitles` sent during the re-mount; otherwise the draft already has them (a template would load again).
+      if (subtitlesGen !== subtitlesAtStart) next.setSubtitles(subtitles);
       // Swap: the old mount goes, the new one is the one shown.
       current.destroy();
       holder?.remove();
@@ -252,6 +267,7 @@ function createLivePreview(o: {
       if (applying) { pending = draft; return; }
       void apply(draft);
     },
+    setSubtitles: (s) => { subtitles = s; subtitlesGen++; current.setSubtitles(s); },
     addSessionMedia: (m) => {
       if (!videos.has(m.src) && videos.size >= MAX_VIDEOS) return;
       // As the core's `withSessionMedia` writes a session video into the inlined composition.

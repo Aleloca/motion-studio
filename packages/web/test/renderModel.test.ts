@@ -22,6 +22,14 @@ describe('renderModel', () => {
     // The same shared rule as the core's keys (fix round 1): derived from the creative's key, it is the render job's key.
     for (const root of ['/Users/me/Motion Studio', 'C:\\ws']) expect(renderKeyOf(creativeJobKey(root, 'acme', 'lancio'), 7)).toBe(renderJobKey(root, 'acme', 'lancio', 7));
   });
+  it('Task 22: with the creative\'s subtitle hashes, a render that drew another set is not rendered (stale), nor skipped by Render ★', () => {
+    const drew = (hash: string): VersionEntry => { const x = v(2, ['reel']); x.outputs[0] = { ...x.outputs[0]!, subtitles: { lang: 'it', hash } }; return x; };
+    expect(boardRender(drew('a'.repeat(64)), 'reel', [], KEY, { it: 'a'.repeat(64) })).toEqual({ kind: 'rendered' });
+    expect(boardRender(drew('a'.repeat(64)), 'reel', [], KEY, { it: 'b'.repeat(64) })).toEqual({ kind: 'none' });
+    const st = { reel: { id: 'reel', history: [2], star: { version: 2, manual: false, newer: null, follows: null }, defaultVersion: 2, exportVersion: 2, starFileMissing: false, linkable: [], follows: null } } as unknown as Record<string, FormatState>;
+    expect([...starRenderPlan(st, [drew('a'.repeat(64))], [], KEY, { it: 'b'.repeat(64) })]).toEqual([[2, ['reel']]]);
+    expect([...starRenderPlan(st, [drew('a'.repeat(64))], [], KEY, { it: 'a'.repeat(64) })]).toEqual([]);
+  });
   it('legacy versions have no render state; v2 ones: none, rendered, queued, rendering, failed', () => {
     const legacy = { ...v(2), compositions: undefined };
     expect(boardRender(legacy, 'reel', [], KEY)).toBeNull();

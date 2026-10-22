@@ -2,6 +2,7 @@ import { DEFAULT_EXPORT_QUALITY, effectiveLinks, isDefaultProfile, letterOfSlug,
 import { findPreset } from '../formats/format-catalog.ts';
 import { probeConfinedFile } from '../brand/agent-guard.ts';
 import { CodedError } from '../workspace-store.ts';
+import { subtitleHashes } from '../subtitles/store.ts';
 import type { CreativeRef } from './creative-turns.ts';
 import type { CreativeStore } from './creative-store.ts';
 import { checkDestination, exportResolved, plainName, resolveLocalizedItems, setOf, type ExportCommon, type ExportItem, type ExportResult } from './export.ts';
@@ -47,11 +48,12 @@ export interface GroupPlanItem {
  */
 export async function planGroupExport(svc: VariantGroupService, store: CreativeStore, ref: CreativeRef): Promise<GroupPlanItem[]> {
   const selection = await svc.groupSelection(ref);
-  const cache = new Map<string, { versions: VersionEntry[]; links: Record<string, string> } | null>();
+  const cache = new Map<string, { versions: VersionEntry[]; links: Record<string, string>; subtitles: Record<string, string> } | null>();
   const dataOf = async (slug: string) => {
     if (!cache.has(slug)) {
-      cache.set(slug, await Promise.all([store.get(slug), store.readVersions(slug)])
-        .then(([c, versions]) => ({ versions, links: effectiveLinks(c.brief.links, c.brief.formats) }), () => null));
+      // The member's subtitle sets' hashes (Task 18), read once per member: a render drawn with another set is not current.
+      cache.set(slug, await Promise.all([store.get(slug), store.readVersions(slug), subtitleHashes(store.dir(slug))])
+        .then(([c, versions, subtitles]) => ({ versions, links: effectiveLinks(c.brief.links, c.brief.formats), subtitles }), () => null));
     }
     return cache.get(slug)!;
   };
@@ -72,7 +74,7 @@ export async function planGroupExport(svc: VariantGroupService, store: CreativeS
       const usable = plainName(o.file) && (await probeConfinedFile(creativeDir, `outputs/v${s.version}/${o.file}`)) === true;
       // A composition's file is current only when its render is (the single export's `pendingRenders` rule): else it is
       // rendered first, exactly as a single creative's export does.
-      const state: GroupPlanState = composed ? (usable && renderState(v!, format) === 'rendered' ? 'ready' : 'needs-render') : usable ? 'ready' : 'missing';
+      const state: GroupPlanState = composed ? (usable && renderState(v!, format, d?.subtitles) === 'rendered' ? 'ready' : 'needs-render') : usable ? 'ready' : 'missing';
       out.push({ ...base, ...named, file: o.file, width: o.width, height: o.height, ...setOf(o), state, ...(comp ? { composed: true, hash: comp.hash } : {}) });
     } else if (comp) {
       out.push({ ...base, ...named, file: '', width: 0, height: 0, state: 'needs-render', composed: true, hash: comp.hash });

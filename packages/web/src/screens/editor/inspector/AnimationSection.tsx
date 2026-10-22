@@ -13,7 +13,7 @@ const EPS = 1e-4;
 const DEFAULT_DURATION = 0.4;
 
 /** The animation in a slot: `in` starts with the clip, `out` ends with it (the same rule as `applyEdit`). */
-export function slotOf(clip: Exclude<Clip, { type: 'audio' }>, slot: 'in' | 'out'): { preset: Extract<Anim, { preset: string }> | null; custom: boolean } {
+export function slotOf(clip: Exclude<Clip, { type: 'audio' | 'subtitles' }>, slot: 'in' | 'out'): { preset: Extract<Anim, { preset: string }> | null; custom: boolean } {
   const list = clip.animations ?? [];
   const inSlot = (a: Anim) => (slot === 'in' ? (a.start ?? 0) <= EPS : (a.start ?? 0) > EPS && Math.abs((a.start ?? 0) + a.duration - clip.duration) <= EPS);
   const occupying = list.filter(inSlot);
@@ -24,7 +24,7 @@ export function slotOf(clip: Exclude<Clip, { type: 'audio' }>, slot: 'in' | 'out
 export function AnimationSection({ ctl }: { ctl: Ctl }) {
   const e = useT().web.editor;
   const { draft, askAnimation } = useEditor();
-  const clip = ctl.clip as Exclude<Clip, { type: 'audio' }>;
+  const clip = ctl.clip as Exclude<Clip, { type: 'audio' | 'subtitles' }>;
   const names: Record<AnimationPreset, string> = {
     fadeIn: e.presetFadeIn, fadeOut: e.presetFadeOut, slideUp: e.presetSlideUp, slideDown: e.presetSlideDown, slideLeft: e.presetSlideLeft,
     slideRight: e.presetSlideRight, popIn: e.presetPopIn, scaleIn: e.presetScaleIn, wipe: e.presetWipe,

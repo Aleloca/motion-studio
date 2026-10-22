@@ -19,6 +19,7 @@
  *   file the session cannot serve fails to load and is reported, never fetched from anywhere else.
  */
 import type { Composition } from '@motion-studio/shared';
+import { readRuntimeSubtitles, type RuntimeSubtitles } from './subtitles.ts';
 
 export const PREVIEW_PROTOCOL_VERSION = 1;
 
@@ -54,6 +55,12 @@ export const RUNTIME_ERROR_CODES = [
    * instead of on the layer timeout. Fails the render like `layerTimeout` and `layerError`.
    */
   'layerStalled',
+  /**
+   * A warning (subtitles Task 16): the subtitles inlined in the page, or sent by `setSubtitles`, were malformed (too many
+   * cues, unsorted or non-finite times, a text too long) and were left out: the subtitles track draws nothing. Never fails
+   * a render.
+   */
+  'subtitlesInvalid',
 ] as const;
 export type RuntimeErrorCode = (typeof RUNTIME_ERROR_CODES)[number];
 /** A problem the runtime met. `message` is a developer detail in English; the UI shows its own text for `code`. */
@@ -106,7 +113,13 @@ export type PreviewIncoming =
    * then plays that file with these source fields, as the session's own videos do; its sound (when `audioStart` is given)
    * plays from `src` itself. Applies to the drafts that follow.
    */
-  | { type: 'sessionMedia'; src: string; index: number; sourceFps: number; sourceStart: number; sourceVideoEnd: number; audioStart?: number };
+  | { type: 'sessionMedia'; src: string; index: number; sourceFps: number; sourceStart: number; sourceVideoEnd: number; audioStart?: number }
+  /**
+   * Preview only (subtitles Task 16): the subtitles the `subtitles` clip draws, replacing the inlined ones (null: none),
+   * redrawn at once at the current time, without a re-mount; drafts that follow keep them. The editor sends it after each
+   * local change. Checked like the page's (`readRuntimeSubtitles`): a malformed block is refused.
+   */
+  | { type: 'setSubtitles'; subtitles: RuntimeSubtitles | null };
 
 export const RATE_MIN = 0.1;
 export const RATE_MAX = 4;
@@ -184,6 +197,12 @@ export function parseIncoming(data: unknown, parseDraft?: DraftParser): PreviewI
         type: 'sessionMedia', src: data.src, index: data.index, sourceFps: data.sourceFps, sourceStart: data.sourceStart, sourceVideoEnd: data.sourceVideoEnd,
         ...(data.audioStart !== undefined ? { audioStart: data.audioStart } : {}),
       };
+    }
+    case 'setSubtitles': {
+      if (!keysWithin(data, ['type', 'subtitles']) || !('subtitles' in data)) return null;
+      if (data.subtitles === null) return { type: 'setSubtitles', subtitles: null };
+      const r = readRuntimeSubtitles(data.subtitles);
+      return r.ok ? { type: 'setSubtitles', subtitles: r.subtitles } : null;
     }
     default:
       return null;

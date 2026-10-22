@@ -245,6 +245,39 @@ describe('CompositionPlayer', () => {
   });
 });
 
+describe('the subtitles prop (subtitles Task 22)', () => {
+  const subs = (text: string) => ({ lang: 'it', cues: [{ start: 0, end: 1000, text }] });
+  const sent = (posted: ReturnType<typeof vi.spyOn>) => posted.mock.calls.map((c) => c[0] as { type: string }).filter((c) => c.type === 'setSubtitles');
+  it('is sent as setSubtitles once the frame is ready, again on each change and to a new frame; absent: never sent', () => {
+    const p = mount({ subtitles: subs('Ciao') });
+    expect(sent(p.posted)).toEqual([]);
+    fromRuntime(READY);
+    expect(sent(p.posted)).toEqual([{ type: 'setSubtitles', subtitles: subs('Ciao') }]);
+    p.rerender(<I18nProvider locale="en"><CompositionPlayer session={session()} title="Reel v2" subtitles={subs('Ciao!')} /></I18nProvider>);
+    expect(sent(p.posted).at(-1)).toEqual({ type: 'setSubtitles', subtitles: subs('Ciao!') });
+    expect(sent(p.posted)).toHaveLength(2);
+    p.unmount();
+    const q = mount();
+    fromRuntime(READY);
+    expect(sent(q.posted)).toEqual([]);
+  });
+  it('review: once the prop goes away the media forgets the lines, and a new frame gets none (its page draws its own)', () => {
+    const p = mount({ subtitles: subs('Ciao') });
+    fromRuntime(READY);
+    expect(sent(p.posted)).toHaveLength(1);
+    p.rerender(<I18nProvider locale="en"><CompositionPlayer session={session('tok2')} title="Reel v2" /></I18nProvider>);
+    const second = [...document.querySelectorAll('iframe')][1]!;
+    const posted2 = vi.spyOn(second.contentWindow!, 'postMessage');
+    fromRuntime(READY, { source: second.contentWindow });
+    expect(sent(posted2)).toEqual([]);
+  });
+  it('a block the protocol refuses is never posted', () => {
+    const p = mount({ subtitles: { lang: 'it', cues: [{ start: 1000, end: 500, text: 'x' }] } });
+    fromRuntime(READY);
+    expect(sent(p.posted)).toEqual([]);
+  });
+});
+
 describe('CompositionMedia.setComposition (the editor draft, Phase 10b)', () => {
   const draft = (text: string, duration = 8) => ({
     $schema: 'motion-studio/composition@1' as const, width: 1080, height: 1920, fps: 30 as const, duration, background: '#000000', fonts: [],

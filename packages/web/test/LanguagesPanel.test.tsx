@@ -318,7 +318,8 @@ describe('Export in several languages', () => {
   it('with a translation ticked, sends the languages (the core renders them in the export job)', async () => {
     open();
     await userEvent.click(screen.getByRole('checkbox', { name: 'German' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Export 1 file' }));
+    // The original and its German translation (subtitles Task 22, review round 1: the count is the files').
+    await userEvent.click(screen.getByRole('button', { name: 'Export 2 files' }));
     await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledOnce());
     // Ruling R: the workspace pattern as it is (the core names the translation `…-de`, the original as today), the same
     // rule as the core's default when no pattern is sent.
@@ -357,7 +358,8 @@ describe('Export in several languages', () => {
     api.exportPicksJob.mockRejectedValueOnce(new ApiError(409, 'raw', 'localization-needs-force', undefined, ['German · Reel: 1 outdated']));
     open();
     await userEvent.click(screen.getByRole('checkbox', { name: 'German' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Export 1 file' }));
+    // The original and its German translation (subtitles Task 22, review round 1: the count is the files').
+    await userEvent.click(screen.getByRole('button', { name: 'Export 2 files' }));
     const alert = await screen.findByText('German · Reel: 1 outdated');
     expect(alert.closest('[role=alert]')!.textContent).toContain('These translations have open problems or outdated texts:');
     await userEvent.click(screen.getByRole('button', { name: 'Render anyway' }));

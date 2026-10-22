@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import {
-  isSupportedLocale, issuesText, SUBTITLE_LIMITS, subtitleSetHash, subtitleSetSchema, subtitleSetText, subtitlesJobKey, toSrt, toVtt, transcriptionChoiceSchema,
+  isSupportedLocale, issuesText, SUBTITLE_LIMITS, subtitleCuesHash, subtitleSetHash, subtitleSetSchema, subtitleSetText, subtitlesJobKey, toSrt, toVtt, transcriptionChoiceSchema,
   type FormatPreset, type JobSummary, type LocaleTag, type ServerMessage, type SubtitleSet, type SubtitlesSummary, type TranscriptionPending,
 } from '@motion-studio/shared';
 import { CreativeStore } from '../creatives/creative-store.ts';
@@ -48,7 +48,7 @@ export async function subtitleSummaries(projectDir: string, creativeSlug: string
   const now = await subtitleTimingNow(projectDir, creativeSlug, await presets());
   return sets.map((s) => ({
     lang: s.lang, origin: s.origin, ...(s.sourceLang ? { sourceLang: s.sourceLang } : {}),
-    cues: s.cues.length, edited: s.cues.filter((c) => c.edited).length, hash: subtitleSetHash(s),
+    cues: s.cues.length, edited: s.cues.filter((c) => c.edited).length, hash: subtitleSetHash(s), cuesHash: subtitleCuesHash(s),
     timing: s.timing, timingChanged: now !== null && now.fingerprint !== s.timing.fingerprint, staleCues: 0,
   }));
 }
@@ -79,7 +79,8 @@ export function registerSubtitlesRoutes(app: FastifyInstance, ctx: {
   const setOf = async (ref: CreativeRef, lang: LocaleTag): Promise<{ set: SubtitleSet; hash: string }> => {
     const r = await readSubtitleSet(new CreativeStore(ref.projectDir).dir(ref.creativeSlug), lang);
     if (!r) throw new CodedError(404, t().errors.notFound, 'subtitles-not-found');
-    return r;
+    // The set file's hash only: the editor's saves compare it (the lines' hash is the summaries', final review M3).
+    return { set: r.set, hash: r.hash };
   };
   const activeJob = (ref: CreativeRef): JobSummary | null => {
     const key = subtitlesJobKey(ref.root, ref.projectSlug, ref.creativeSlug);

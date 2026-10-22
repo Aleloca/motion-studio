@@ -35,15 +35,16 @@ export function renderPct(job: JobSummary, format: string): number {
 /**
  * The render state of `format` (a board's source format: a follower's is its primary's) in `version`; null for a legacy
  * version (its media is the result). A queued or running job of that version covering the format wins; then the records;
- * then the last finished job's failure.
+ * then the last finished job's failure. `subtitleHashes` (subtitles Task 22): the creative's sets now (`subtitleHashesOf`):
+ * a render that drew a set since changed is not current (`renderState`).
  */
-export function boardRender(version: VersionEntry | null | undefined, format: string, jobs: JobSummary[], creativeJobKey: string): BoardRender | null {
+export function boardRender(version: VersionEntry | null | undefined, format: string, jobs: JobSummary[], creativeJobKey: string, subtitleHashes?: Readonly<Record<string, string>>): BoardRender | null {
   if (!version || !compositionOf(version, format)) return null;
   const key = renderKeyOf(creativeJobKey, version.n);
   const mine = jobs.filter((j) => j.kind === 'render' && isVersionJob(j, key) && covers(j, format));
   const live = mine.find(isActiveJob);
   const recorded = (): BoardRender | null => {
-    if (renderState(version, format) !== 'rendered') return null;
+    if (renderState(version, format, subtitleHashes) !== 'rendered') return null;
     const problems = renderProblems(version, format);
     return problems.length ? { kind: 'problem', problems } : { kind: 'rendered' };
   };
@@ -66,12 +67,12 @@ export function boardRender(version: VersionEntry | null | undefined, format: st
  * "Render ★": every primary format whose ★ is a v2 version without a current render (and no render of it on the way),
  * grouped by version (one request each). A current render with problems is not rendered again here (the board offers it).
  */
-export function starRenderPlan(states: Record<string, FormatState>, versions: VersionEntry[], jobs: JobSummary[], creativeJobKey: string): Map<number, string[]> {
+export function starRenderPlan(states: Record<string, FormatState>, versions: VersionEntry[], jobs: JobSummary[], creativeJobKey: string, subtitleHashes?: Readonly<Record<string, string>>): Map<number, string[]> {
   const plan = new Map<number, string[]>();
   for (const s of Object.values(states)) {
     if (s.follows || s.star.version === null) continue;
     const v = versions.find((x) => x.n === s.star.version);
-    const r = boardRender(v, s.id, jobs, creativeJobKey);
+    const r = boardRender(v, s.id, jobs, creativeJobKey, subtitleHashes);
     if (!v || !r || r.kind === 'rendered' || r.kind === 'problem' || r.kind === 'queued' || r.kind === 'rendering') continue;
     plan.set(v.n, [...(plan.get(v.n) ?? []), s.id]);
   }

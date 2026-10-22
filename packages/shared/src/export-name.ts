@@ -107,6 +107,14 @@ export function withLocaleSuffix(stem: string, locale: string): string {
 }
 
 /**
+ * The stem of a video exported with the subtitles of `lang` drawn into it (subtitles decision 1643): `stem-sub-<lang>` (the
+ * tag as a slug), never `withLocaleSuffix`'s `stem-<locale>`; the stem cut so the whole stays within EXPORT_NAME_MAX.
+ */
+export function subtitledStem(stem: string, lang: string): string {
+  return withSuffix(stem, `sub-${slugToken(lang)}`);
+}
+
+/**
  * The stem of an exported file in a language (Phase 12, final review I2): a translated file (`localized`) whose pattern has
  * no `{locale}` gets its language appended, whatever else is exported, so it is never named like the original; the primary
  * language's file keeps its stem. Shared by the core's export and the export dialog's preview.

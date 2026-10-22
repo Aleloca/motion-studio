@@ -230,12 +230,43 @@ export function sameDelivery(latest: VersionEntry, next: Pick<VersionEntry, 'out
  * Old renders are never deleted: an edit always makes a new version, so a render stays valid in its own version.
  */
 export type RenderState = 'none' | 'rendered' | 'stale';
-export function renderState(v: VersionEntry, formatId: string): RenderState {
+/**
+ * `subtitleHashes` (subtitles Task 18): the hash of each subtitle set of the creative now, by language
+ * (`CreativeDetail.subtitles`). With it, a v2 render whose subtitles are no longer the creative's (`subtitlesCurrent`) is also
+ * `stale`. Absent: the composition hash alone, as before.
+ */
+export function renderState(v: VersionEntry, formatId: string, subtitleHashes?: Readonly<Record<string, string>>): RenderState {
   const comp = v.compositions?.find((c) => c.format === formatId);
   const out = v.outputs.find((o) => o.format === formatId);
   if (!comp) return out ? 'rendered' : 'none';
   if (!out || out.sha256 === undefined) return 'none';
-  return out.fromComposition === comp.hash ? 'rendered' : 'stale';
+  if (out.fromComposition !== comp.hash) return 'stale';
+  return subtitlesCurrent(out.subtitles, subtitleHashes) ? 'rendered' : 'stale';
+}
+
+/**
+ * Whether a render's subtitles (`OutputFileInfo.subtitles`, a localized row's `render.subtitles`) are still the creative's
+ * (subtitles Task 18, review I1). A drawn set: its language's set still has that hash. A marker (`hash: null`, the composition
+ * draws subtitles but no set was found): no set has appeared in the language looked for, or, when none was (`lang: null`),
+ * no set in a language other than those it saw (`seen`). True without a record (nothing drawn) or without the map (`subtitleHashes`, the rule before Task 18).
+ */
+export function subtitlesCurrent(rec: { lang: string | null; hash: string | null; seen?: readonly string[] } | undefined, subtitleHashes: Readonly<Record<string, string>> | undefined): boolean {
+  if (!rec || !subtitleHashes) return true;
+  const now = (lang: string) => (Object.hasOwn(subtitleHashes, lang) ? subtitleHashes[lang] : undefined);
+  if (rec.hash !== null) return rec.lang !== null && now(rec.lang) === rec.hash;
+  if (rec.lang !== null) return now(rec.lang) === undefined;
+  // No language could be paired with the sets it saw (review round 2): current while no other language has appeared, so a
+  // render made again with the same sets is current; a set that may pair (a speech set, the brief's language) makes it stale.
+  const seen = new Set(rec.seen ?? []);
+  return Object.keys(subtitleHashes).every((lang) => seen.has(lang));
+}
+
+/**
+ * The hash of what each subtitle set of a creative draws, by language (`renderState`'s map), from its detail's summaries: the
+ * lines' hash (`cuesHash`, final review M3), the set's own from a core that does not send it.
+ */
+export function subtitleHashesOf(sets: ReadonlyArray<{ lang: string; hash: string; cuesHash?: string }> | undefined): Record<string, string> {
+  return Object.fromEntries((sets ?? []).map((s) => [s.lang, s.cuesHash ?? s.hash]));
 }
 
 /**
@@ -400,6 +431,12 @@ export interface FormatSummary {
    * Optional: older cores do not send it.
    */
   starRender?: 'rendered' | 'notRendered' | 'stale' | 'missing' | null;
+  /**
+   * Subtitles (final review I2): the composition export uses (`exportVersion`) is a video with the `subtitles` track, so it
+   * can be exported with subtitles drawn into it (an unreadable composition counts as one with it, as in the export). False
+   * for a still, a legacy file or no composition. Sent only when the creative has subtitle sets; absent: not known.
+   */
+  subtitlesTrack?: boolean;
   /** Each other format of the brief as a possible primary for this one (`checkLink`). */
   linkable: Array<{ primary: string; ok: boolean; reason?: LinkReason }>;
 }

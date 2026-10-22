@@ -426,7 +426,7 @@ export class LocalizeService {
         try {
           const composition = await this.localized(creativeDir, n, pair);
           return await previews.localizedAgentFrames({ ref: { projectDir: ref.projectDir, creativeDir, creativeSlug: slug, n }, format: a.format as string, folder: basename(pair.group.ic.compDir),
-            preset: pair.group.ic.preset, composition, times: a.times, locale: ui, signal });
+            preset: pair.group.ic.preset, composition, times: a.times, locale: ui, signal, localized: pair.locale });
         } catch (e) {
           if (e instanceof CodedError && e.apiCode === 'preview-busy') previewCalls--;
           throw e;

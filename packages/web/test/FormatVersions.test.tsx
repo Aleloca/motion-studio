@@ -77,6 +77,13 @@ describe('a format\'s version menu', () => {
     expect(api.getStoryboard).not.toHaveBeenCalledWith('acme', 'lancio', 2, YT);
   });
 
+  it('Task 22: a render that drew a subtitle set since corrected shows a still (stale), with the creative\'s subtitle hashes', async () => {
+    const file: OutputFileInfo = { format: YT, file: `${YT}.mp4`, width: 1920, height: 1080, durationSec: 6, verified: true, preview: null, sha256: h('f'), fromComposition: h('b'), subtitles: { lang: 'it', hash: h('1') } };
+    mount([ver(1, 'b', { outputs: [file] })], state([1]), { subtitleHashes: { it: h('2') } });
+    const pop = await open();
+    await waitFor(() => expect(rows(pop)[0]!.querySelector('.ms-vmenu-thumb img')?.getAttribute('src')).toBe(`/sb/v1/${YT}.jpg`));
+  });
+
   it('an entry still broken in its latest version says so', async () => {
     mount([ver(1, 'a', { problems: ['durata'] })], state([1]));
     expect(rows(await open())[0]!.textContent).toContain('Incompleta');

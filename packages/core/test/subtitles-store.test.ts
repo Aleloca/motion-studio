@@ -2,7 +2,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SUBTITLES_SCHEMA_ID, subtitleSetHash, type Composition, type SubtitleSet } from '@motion-studio/shared';
+import { SUBTITLES_SCHEMA_ID, subtitleCuesHash, subtitleSetHash, type Composition, type SubtitleSet } from '@motion-studio/shared';
 import type { Git } from '../src/git.ts';
 import {
   SubtitleCommits, audioFingerprint, listSubtitleSets, readSubtitleSet, removeSubtitleSet, subtitlePath, subtitlesDir, writeSubtitleSet,
@@ -29,7 +29,7 @@ describe('subtitle store', () => {
     const s = set('it');
     const hash = await writeSubtitleSet(dir, s);
     expect(hash).toBe(subtitleSetHash(s));
-    expect(await readSubtitleSet(dir, 'it')).toEqual({ set: s, hash });
+    expect(await readSubtitleSet(dir, 'it')).toEqual({ set: s, hash, cuesHash: subtitleCuesHash(s) });
     expect(await writeSubtitleSet(dir, s)).toBe(hash);
     expect(await readSubtitleSet(dir, 'en')).toBeNull();
   });

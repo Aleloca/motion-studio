@@ -8,6 +8,11 @@
  *   so the layer gets the virtual clock, `msParams` and the seek bridge before its own code runs.
  */
 
+import type { RuntimeError } from './protocol.ts';
+import { readRuntimeSubtitles, type RuntimeSubtitles } from './subtitles.ts';
+
+export type { RuntimeCue, RuntimeSubtitles, RuntimeWord } from './subtitles.ts';
+
 /** The comment in `dist/index.html` that `renderRuntimePage` replaces. */
 export const COMPOSITION_PLACEHOLDER = '<!--ms-composition-->';
 /** Id of the data block. */
@@ -30,6 +35,11 @@ export interface CompositionData {
    * without an explicit box is measured against the frame inside it, else against the whole frame.
    */
   safeZone?: SafeZone;
+  /**
+   * The subtitle set the composition's `subtitles` clip draws (subtitles Task 16), staged by the core: times in
+   * composition milliseconds. Checked by `readCompositionData`: a bad block is dropped (`subtitlesInvalid`), never fatal.
+   */
+  subtitles?: RuntimeSubtitles;
 }
 
 export interface SafeZone { top: number; bottom: number; left: number; right: number }
@@ -63,19 +73,30 @@ export function renderRuntimePage(indexHtml: string, data: CompositionData): str
   const at = indexHtml.indexOf(COMPOSITION_PLACEHOLDER);
   if (at < 0) throw new Error('renderRuntimePage: placeholder not found');
   const safeZone = safeZoneOf(data.safeZone);
-  const block = `<script type="application/json" id="${COMPOSITION_DATA_ID}">${scriptSafeJson({ base: data.base, composition: data.composition, ...(safeZone ? { safeZone } : {}) })}</script>`;
+  const block = `<script type="application/json" id="${COMPOSITION_DATA_ID}">${scriptSafeJson({
+    base: data.base, composition: data.composition, ...(safeZone ? { safeZone } : {}), ...(data.subtitles ? { subtitles: data.subtitles } : {}),
+  })}</script>`;
   return indexHtml.slice(0, at) + block + indexHtml.slice(at + COMPOSITION_PLACEHOLDER.length);
 }
 
-/** Parses the text of the data block; null when it is not `{ base: string, composition: object }`. */
-export function readCompositionData(text: string): CompositionData | null {
+/**
+ * Parses the text of the data block; null when it is not `{ base: string, composition: object }`. A `subtitles` block
+ * that `readRuntimeSubtitles` refuses is left out and reported to `report` as `subtitlesInvalid` (a warning).
+ */
+export function readCompositionData(text: string, report?: (e: RuntimeError) => void): CompositionData | null {
   let v: unknown;
   try { v = JSON.parse(text); } catch { return null; }
   if (typeof v !== 'object' || v === null) return null;
   const o = v as Record<string, unknown>;
   if (typeof o.base !== 'string' || typeof o.composition !== 'object' || o.composition === null) return null;
   const safeZone = safeZoneOf(o.safeZone);
-  return { base: o.base, composition: o.composition, ...(safeZone ? { safeZone } : {}) };
+  let subtitles: RuntimeSubtitles | undefined;
+  if (o.subtitles !== undefined) {
+    const r = readRuntimeSubtitles(o.subtitles);
+    if (r.ok) subtitles = r.subtitles;
+    else report?.({ code: 'subtitlesInvalid', message: `the subtitles were left out: ${r.reason}` });
+  }
+  return { base: o.base, composition: o.composition, ...(safeZone ? { safeZone } : {}), ...(subtitles ? { subtitles } : {}) };
 }
 
 /**

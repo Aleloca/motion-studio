@@ -11,10 +11,11 @@ import { useState } from 'react';
 import { useLocale, useT } from '../../i18n.tsx';
 import { Button, Icon, cx, type IconName } from '../../ui/index.ts';
 import { useEditor } from './editorContext.ts';
+import { trackLocked } from './TrackHeader.tsx';
 import { svgElementName } from './inspector/SvgContentSection.tsx';
 import { useSvgSession, useSvgTree } from './svgSessions.tsx';
 
-const CLIP_ICON: Record<Clip['type'], IconName> = { text: 'text', shape: 'grid', image: 'image', svg: 'image', video: 'video', html: 'code', audio: 'music' };
+const CLIP_ICON: Record<Clip['type'], IconName> = { text: 'text', shape: 'grid', image: 'image', svg: 'image', video: 'video', html: 'code', audio: 'music', subtitles: 'text' };
 
 type Flag = 'hidden' | 'locked';
 
@@ -35,6 +36,8 @@ interface RowProps {
   icon: IconName;
   hidden: boolean;
   locked: boolean;
+  /** A subtitles track is always locked: its lock button is shown pressed and disabled. */
+  lockFixed?: boolean | undefined;
   selected?: boolean;
   nested?: boolean;
   /** Null: a track header, which does not select. */
@@ -44,7 +47,7 @@ interface RowProps {
   twisty?: { open: boolean; onToggle(): void } | undefined;
 }
 
-function LayerRow({ name, kind, icon, hidden, locked, selected, nested, onSelect, onFlag, twisty }: RowProps) {
+function LayerRow({ name, kind, icon, hidden, locked, lockFixed, selected, nested, onSelect, onFlag, twisty }: RowProps) {
   const e = useT().web.editor;
   const eye = hidden ? e.showTrack({ name }) : e.hideTrack({ name });
   const lock = locked ? e.unlockTrack({ name }) : e.lockTrack({ name });
@@ -71,7 +74,7 @@ function LayerRow({ name, kind, icon, hidden, locked, selected, nested, onSelect
       ) : (
         <span className="ms-layer-main ms-static">{label}</span>
       )}
-      <Button size="sm" variant="ghost" icon aria-label={lock} title={lock} onClick={() => onFlag('locked', !locked)}>
+      <Button size="sm" variant="ghost" icon aria-label={lock} title={lock} disabled={lockFixed} onClick={() => onFlag('locked', !locked)}>
         <Icon name={locked ? 'lock' : 'unlock'} size={14} />
       </Button>
     </div>
@@ -122,9 +125,9 @@ export function LayersPanel() {
   const layers = [...tracks].reverse().filter((track) => track.clips.length > 0);
 
   const kinds: Record<Clip['type'], string> = {
-    text: e.clipText, shape: e.clipShape, image: e.clipImage, svg: e.clipSvg, video: e.clipVideo, html: e.clipHtml, audio: e.clipAudio,
+    text: e.clipText, shape: e.clipShape, image: e.clipImage, svg: e.clipSvg, video: e.clipVideo, html: e.clipHtml, audio: e.clipAudio, subtitles: e.clipSubtitles,
   };
-  const trackKinds: Record<Track['kind'], string> = { visual: e.kindVisual, video: e.kindVideo, text: e.kindText, audio: e.kindAudio };
+  const trackKinds: Record<Track['kind'], string> = { visual: e.kindVisual, video: e.kindVideo, text: e.kindText, audio: e.kindAudio, subtitles: e.kindSubtitles };
 
   const run = (op: EditOp) => {
     const res = actions.apply(op);
@@ -156,8 +159,8 @@ export function LayersPanel() {
               const clip = track.clips[0]!;
               return (
                 <li key={track.id}>
-                  <LayerRow name={clipLabel(clip, draft.composition, e)} kind={kinds[clip.type]} icon={CLIP_ICON[clip.type]} selected={layerSelected(clip)}
-                    hidden={Boolean(track.hidden || clip.hidden)} locked={Boolean(track.locked || clip.locked)} twisty={svgTree(clip)}
+                  <LayerRow lockFixed={track.kind === 'subtitles'} name={clipLabel(clip, draft.composition, e)} kind={kinds[clip.type]} icon={CLIP_ICON[clip.type]} selected={layerSelected(clip)}
+                    hidden={Boolean(track.hidden || clip.hidden)} locked={Boolean(trackLocked(track) || clip.locked)} twisty={svgTree(clip)}
                     onSelect={() => select(clip.id)} onFlag={(flag, value) => layerFlag(track, clip, flag, value)} />
                   {elementsOf(clip, false)}
                 </li>
@@ -165,12 +168,12 @@ export function LayersPanel() {
             }
             return (
               <li key={track.id}>
-                <LayerRow name={trackName} kind={trackKinds[track.kind]} icon={CLIP_ICON[track.clips[0]!.type]} hidden={Boolean(track.hidden)} locked={Boolean(track.locked)}
+                <LayerRow lockFixed={track.kind === 'subtitles'} name={trackName} kind={trackKinds[track.kind]} icon={CLIP_ICON[track.clips[0]!.type]} hidden={Boolean(track.hidden)} locked={trackLocked(track)}
                   onSelect={null} onFlag={(flag, value) => trackFlag(track, flag, value)} />
                 <ol className="ms-layers-sub">
                   {[...track.clips].reverse().map((clip) => (
                     <li key={clip.id}>
-                      <LayerRow nested name={clipLabel(clip, draft.composition, e)} kind={kinds[clip.type]} icon={CLIP_ICON[clip.type]} selected={layerSelected(clip)}
+                      <LayerRow nested lockFixed={track.kind === 'subtitles'} name={clipLabel(clip, draft.composition, e)} kind={kinds[clip.type]} icon={CLIP_ICON[clip.type]} selected={layerSelected(clip)}
                         hidden={Boolean(clip.hidden)} locked={Boolean(clip.locked)} twisty={svgTree(clip)}
                         onSelect={() => select(clip.id)} onFlag={(flag, value) => clipFlag(clip, flag, value)} />
                       {elementsOf(clip, true)}

@@ -42,6 +42,8 @@ class ApiError extends Error {
 }
 /** Task 14: the set's timing no longer matches the latest version's audio. */
 let TIMING_CHANGED = false;
+/** Task 22: the latest version's composition has a subtitles track. */
+let TRACK = false;
 const api = {
   getCreative: vi.fn(async () => (TIMING_CHANGED ? { ...detail, subtitles: detail.subtitles!.map((x) => ({ ...x, timingChanged: true })) } : detail)),
   startSubtitles: vi.fn(async (..._a: unknown[]) => ({ job: { id: 'j1' } })),
@@ -51,6 +53,13 @@ const api = {
   subtitleWaveform: vi.fn(async (..._a: unknown[]) => ({ peaks: [0.2, 0.9, 0.4], durationMs: 6000 })),
   subtitleFile: vi.fn(async (..._a: unknown[]) => new Blob(['1\n00:00:00,000 --> 00:00:01,500\nCiao\n'])),
   revokePreview: vi.fn(async (..._a: unknown[]) => ({ revoked: true })),
+  /** Task 22: the played composition; with a subtitles track the runtime draws the lines (TRACK). */
+  getEditorComposition: vi.fn(async (_s: string, _c: string, n: number, format: string) => ({
+    n, format, primaryFormat: format, hash: H1, files: [], fonts: [],
+    composition: { $schema: 'motion-studio/composition@1', width: 1080, height: 1920, fps: 30, duration: 6, background: '#000000', fonts: [], scenes: [],
+      tracks: TRACK ? [{ id: 'subtitles', kind: 'subtitles', clips: [{ id: 'subs', type: 'subtitles', start: 0, duration: 6,
+        props: { fontSize: 64, color: '#ffffff', position: 'bottom', margin: 40, maxWidth: 0.8 } }] }] : [] },
+  })),
   previewSession: vi.fn(async (_s: string, _c: string, n: number, format: string) => ({
     url: `http://127.0.0.1:61234/tok-v${n}/runtime/index.html?mode=preview`, token: `tok-v${n}`, origin: 'http://127.0.0.1:61234',
     expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(), format, hash: H1, width: 1080, height: 1920, duration: 6, fps: 30,
@@ -73,13 +82,16 @@ const media = vi.hoisted(() => {
   };
   return m;
 });
+/** Task 22: the `subtitles` prop of each render of the fake player. */
+const playerSubtitles = vi.hoisted(() => [] as unknown[]);
 vi.mock('../src/components/CompositionPlayer.tsx', async () => {
   const React = await import('react');
   return {
     CompositionMedia: class {},
-    CompositionPlayer: (p: { session: { token: string }; onMedia?(m: unknown): void }) => {
+    CompositionPlayer: (p: { session: { token: string }; onMedia?(m: unknown): void; subtitles?: unknown }) => {
       const props = React.useRef(p);
       props.current = p;
+      playerSubtitles.push(p.subtitles);
       React.useEffect(() => { props.current.onMedia?.(media); return () => props.current.onMedia?.(null); }, []);
       return React.createElement('div', { 'data-testid': 'player', 'data-token': p.session.token });
     },
@@ -118,6 +130,8 @@ beforeEach(() => {
   media.currentTime = 0;
   media.paused = true;
   TIMING_CHANGED = false;
+  TRACK = false;
+  playerSubtitles.length = 0;
 });
 afterEach(() => { vi.clearAllMocks(); __resetPreviewSessions(); });
 
@@ -557,5 +571,28 @@ describe('final review fixes', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Rifai la trascrizione…' }));
     const dialog = await screen.findByRole('dialog', { name: 'Rifai la trascrizione' });
     expect(within(dialog).getByText('Con un\'altra lingua nasce un insieme di sottotitoli a parte.')).toBeTruthy();
+  });
+});
+
+describe('the runtime draws the agent\'s style (Task 22)', () => {
+  const last = () => playerSubtitles.at(-1) as { lang: string; cues: Array<{ start: number; end: number; text: string }> } | undefined;
+  it('without a subtitles track: the editor\'s caption, and no subtitles for the player', async () => {
+    await open();
+    await waitFor(() => expect(api.getEditorComposition).toHaveBeenCalledWith('acme', 'lancio', 2, REEL));
+    expect(screen.getByTestId('subs-caption').textContent).toContain('Ciao a tutti');
+    expect(playerSubtitles.every((x) => x === undefined)).toBe(true);
+  });
+
+  it('with a track: no caption overlay; the player gets the lines, and a text edit after 150 ms', async () => {
+    TRACK = true;
+    await open();
+    await waitFor(() => expect(last()?.cues).toHaveLength(3));
+    expect(screen.queryByTestId('subs-caption')).toBeNull();
+    expect(last()).toEqual({ lang: 'it', cues: CUES.map((c) => ({ start: c.start, end: c.end, text: c.text })) });
+    const box = screen.getByRole('textbox', { name: 'Testo della riga 1' });
+    await userEvent.type(box, '!');
+    // Not at once: a run of keystrokes is one message.
+    expect(last()?.cues[0]!.text).toBe('Ciao a tutti');
+    await waitFor(() => expect(last()?.cues[0]!.text).toBe('Ciao a tutti!'), { timeout: 1000 });
   });
 });

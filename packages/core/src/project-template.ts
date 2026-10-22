@@ -37,7 +37,7 @@ outputs/vN/compositions/<preset-id>/
 The full JSON Schema is \`.studio/composition.schema.json\`. In short:
 - Root: \`{ "$schema": "motion-studio/composition@1", width, height, fps, duration, background, fonts[], scenes[], tracks[] }\`. \`fps\` is 24, 25, 30, 50 or 60. \`duration\` is in seconds; an image format is a **still**: \`duration: 0\`, no scenes, every clip starting at 0 (one frame at t = 0).
 - **Scenes** \`{ id, name?, start, duration }\`: contiguous from 0 and covering the whole duration. They are the storyboard: one thumbnail per scene start.
-- **Tracks** are listed bottom to top: \`{ id, kind: visual|video|text|audio, name?, muted?, hidden?, locked?, clips[] }\`. Audio clips go on audio tracks only.
+- **Tracks** are listed bottom to top: \`{ id, kind: visual|video|text|audio|subtitles, name?, muted?, hidden?, locked?, clips[] }\`. Audio clips go on audio tracks only; at most one subtitles track, holding only the subtitles clip.
 - **Clips** \`{ id, type, start, duration, scene?, props, animations? }\`, with absolute times in seconds (inside their scene when \`scene\` is set). Ids: lowercase letters, digits and hyphens, unique.
   - \`text\`: props \`text, fontFamily, fontSize, fontWeight, color, align\`;
   - \`shape\`: props \`fill, radius\`;
@@ -45,6 +45,7 @@ The full JSON Schema is \`.studio/composition.schema.json\`. In short:
   - \`video\`: \`src, trimStart, volume\`;
   - \`html\`: \`src: "layers/<name>.html"\` and \`params\` \`{ key: { type: text|color|number|image, value, label? } }\` (the only values the editor exposes; the layer reads \`window.msParams\`);
   - \`audio\`: \`src, trimStart, volume, fadeIn, fadeOut, role (voice|music|sfx)\`, no props.
+  - \`subtitles\` (on the subtitles track, from 0 to the end, videos only): draws the line of the creative's subtitle set active at each frame, never its text; props \`fontFamily?, fontSize, fontWeight?, color, lineHeight?, align?, position (bottom|middle|top), margin, maxWidth, background?, boxPadding?, boxRadius?, outlineColor?, outlineWidth?, shadow?, entrance? (none|fade|pop|slideUp), entranceSec?, highlight? { color }\`, and an optional \`template: "layers/<name>.html"\` that draws the line instead.
   - Every visual clip has a box in \`props\`: \`x, y, width, height, rotation, scale, opacity\` (composition pixels; rotation and scale around the centre).
 - **Animations** (times relative to the clip start): a preset \`{ preset, duration, start?, ease? }\` (fadeIn, fadeOut, slideUp, slideDown, slideLeft, slideRight, popIn, scaleIn, wipe), a tween \`{ prop, from, to, duration, start?, ease? }\` or keyframes \`{ prop, keyframes: [{ t: 0..1, v, ease? }], duration, start? }\`. Props: opacity, x, y, scale, rotation, color (hex), blur. Several animations combine (e.g. slideUp + fadeIn).
 - **Paths** are relative to the composition folder, under \`assets/\` or \`layers/\`: no \`..\`, no absolute paths, no URLs.
@@ -57,6 +58,7 @@ For effects the clips cannot express (particles, charts, custom typography). A l
 - signal loading with \`window.msReady = (async () => { … })()\` (images and fonts loaded);
 - \`msReady\` and \`msSeek\` must never wait on time: no \`setTimeout\`, \`setInterval\`, \`Date\` or \`performance.now\` waits (time does not pass while Motion Studio renders a frame, so such a layer fails the render);
 - read its parameters from \`window.msParams\`;
+- a subtitles template (the \`template\` of the subtitles clip) reads the set from \`window.msSubtitles\` and the line at a time from \`window.msActiveCue(ms)\` (\`{ index, text, words, progress }\` or null; ms is \`msSeek\`'s t × 1000) and writes the text with \`textContent\` only, never \`innerHTML\` (the text is data, not markup);
 - never put \`will-change\` (nor \`translateZ\`/\`translate3d\` hacks) on elements that scale or rotate, such as a camera rig: Motion Studio rasterises every frame at the output size, and the hint only freezes the raster scale and blurs the text;
 - **forbidden**: network (fetch, XMLHttpRequest, WebSocket, external URLs), Worker, AudioContext, \`<video>\`/\`<audio>\` playing on their own. Put files in \`assets/\` and reference them relatively (\`../assets/x.png\`).
 
@@ -66,7 +68,7 @@ For effects the clips cannot express (particles, charts, custom typography). A l
 - **Logo**: an \`svg\` (or \`image\`) clip with \`"fit": "contain"\` and \`popIn\`, usually on the top track for the whole duration or the last scene.
 - **Transitions between scenes**: overlap the outgoing and incoming clips by a few tenths of a second inside the scenes and use fadeOut/fadeIn, slides or \`wipe\`.
 - **Voice-over**: an \`audio\` clip with \`"role": "voice"\` (from \`tts\`); music on another audio track with \`"role": "music"\` is ducked under the voice.
-- **Subtitles**: \`start_subtitles\` makes subtitle files (.srt/.vtt) and draws nothing into the video. When the user wants subtitles in the video now: one \`text\` clip per sentence, timed on the voice (subtitles drawn from the transcription come in a later version of the app).
+- **Subtitles**: call \`start_subtitles\` (drawn into the video, or files/track only: ask the user when they did not say); never one text clip per sentence. Drawn subtitles are the subtitles track with its style (legible, brand fonts and colours, above the platform's UI in 9:16); \`edit_subtitles\` corrects their text; remove the track to stop drawing them.
 
 Example (a 1080×1080 still):
 \`\`\`json

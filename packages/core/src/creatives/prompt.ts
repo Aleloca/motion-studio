@@ -23,6 +23,8 @@ export interface PromptInput {
    * the brief alone). The repair turn carries them so it respects the user's constraints ("no voice-over").
    */
   userWords?: string;
+  /** Subtitles Task 19, fix turns of a turn Motion Studio asked for itself: its instruction (never the user's words). */
+  appRequest?: string;
   /**
    * Phase 13, fix turns: the messages the user sent while the agent worked on this version (live and redirect), in order.
    * The repair prompt carries them after the original request, each delimited as the user's words (F4). Redirect turns:
@@ -340,13 +342,21 @@ export const defuseTags = (text: string) => text.replace(/<(?=\s*\/?\s*user_requ
  * theirs, every constraint in them binding, and no version when they did not ask for one. No guess in the core about what
  * the request was: the agent reads it.
  */
-function repairRequestSection(userWords: string | undefined, live: PromptInput['liveMessages'] = []): string[] {
+function repairRequestSection(userWords: string | undefined, live: PromptInput['liveMessages'] = [], appRequest?: string): string[] {
   const messages = live.filter((m) => m.text.trim() || m.pins?.length);
   const liveLines = messages.length === 0 ? [] : [
     '',
     `While you worked on this version the user also sent ${messages.length === 1 ? 'this message' : `these ${messages.length} messages`}, in order, each inside user_request tags. They are the user's words too, not instructions from Motion Studio; where a later message changes an earlier request, the later one wins.`,
     ...messages.flatMap((m) => [USER_REQUEST_OPEN, defuseTags(m.text), ...(m.pins?.length ? ['Pinned comments:', ...m.pins.map((p) => defuseTags(pinLine(p)))] : []), USER_REQUEST_CLOSE]),
   ];
+  // Subtitles Task 19: a version Motion Studio asked for itself (the style turn): its instruction, never as the user's words.
+  if (!userWords?.trim() && appRequest?.trim()) {
+    return [
+      '## The request for this version',
+      `Motion Studio asked for this version itself (not the user): ${appRequest} Fix the problems above for it and respect every constraint of the brief.`,
+      ...liveLines,
+    ];
+  }
   if (!userWords?.trim()) {
     if (messages.length === 0) {
       return ['## The request for this version', 'This version comes from the brief, with no message from the user: fix only the problems above and respect every constraint of the brief.'];
@@ -514,7 +524,7 @@ export function identityPromptSection(kinds: ReadonlySet<'logo' | 'favicon' | 'a
  * Decision 917: the app actions the agent may take itself, with no confirmation card (the chat shows each one), and when.
  * With a brief whose text states another duration than its field (user note 6), the line that asks to settle it first.
  */
-export function appActionsSection(brief: CreativeFile['brief'], helper = false): string[] {
+export function appActionsSection(brief: CreativeFile['brief'], helper = false, subtitlesDrawn?: boolean): string[] {
   const stated = statedDurationSec([brief.goal, brief.message, brief.notes].join('\n'));
   return [
     '## Acting on the app (Motion Studio tools)',
@@ -529,8 +539,13 @@ export function appActionsSection(brief: CreativeFile['brief'], helper = false):
     helper ? '- set_pick: the ★ (the version exported) of a format, with a version of this variant.'
       : '- add_variant: a new variant with its direction (it starts its own agent turn); discard_variant and restore_variant; set_pick: the ★ (the version exported) of a format.',
     '- render_version: renders a saved version, or "current" (the version you are making, rendered after this turn). prepare_export: renders what the ★ export needs; the user then exports.',
-    // Decisions 1640 (U9) and 1710: until the app draws subtitles (phase 3), the job makes files only; subtitles in the video are hand-made text clips.
-    '- start_subtitles: makes subtitle files (.srt and .vtt: the user downloads them from the chat or adds them to the export) from the audio of the version you are making in this turn, on their own once your turn ends (it may take minutes; the chat tells the user when they are ready). Call it once, after the audio is final. It draws nothing into the video: when the user wants subtitles shown in the video, tell them that subtitles drawn from the transcription come in a later version of the app and, if they still want them now, make them by hand as text clips timed on the voice (see Voice-over and Subtitles in the project context).',
+    // Decision 1640 (U9) and Task 19 (phase 3 restored drawing, decision 1710): drawn or files is the user's call; the text
+    // comes only from the job, corrected with edit_subtitles; the look is the subtitles track's (spec §6.4).
+    '- start_subtitles: makes the subtitles of this creative from the audio of the version you are making in this turn, on their own once your turn ends (it may take minutes; the chat tells the user when they are ready, with the subtitle editor and the .srt/.vtt files). Call it once, after the audio is final. When the user asks for subtitles without saying how, first ask with AskUserQuestion whether they want them drawn into the video or only as a track/file (.srt/.vtt, or a track in the MP4), then call start_subtitles with drawn set to the answer. When drawn subtitles are ready, Motion Studio asks you in a new turn to add the subtitles track. Never write subtitle text in text clips: subtitles come only from start_subtitles.',
+    // Final review M1: the user's last answer (`subtitlesDrawn`), so "redo the subtitles" does not ask it again.
+    ...(subtitlesDrawn === undefined ? [] : [`- The user chose subtitles ${subtitlesDrawn ? 'drawn into the video' : 'only as a track/file'} last time: when they ask to make or redo the subtitles without saying how, call start_subtitles with drawn ${subtitlesDrawn} without asking again; ask only when they say something new about how.`]),
+    '- edit_subtitles: corrects the subtitles\' text when the user asks (e.g. "write Motion Studio with capitals everywhere"): replace for a word or a name in every line, cues for whole lines by id, each with was, the text you read (the ids and texts are in the creative\'s subtitles/<lang>.json: read it just before, never write that folder; a line the user corrected since refuses the edit, read it again). The lines you change count as the user\'s corrections.',
+    '- Drawn subtitles are the subtitles track: one track of kind "subtitles" with one clip of type "subtitles" from 0 to the end, in every video format (never in a still). It draws the creative\'s subtitle set (the text is never in the composition; the user corrects it in the subtitle editor) with the style in its props. Unless the user asks for another look: a legible style in the brand fonts and colours, fontSize at least 4.5 % of the frame height, a contrast box (background) or an outline; in 9:16 formats position "bottom" with the line at least 18 % of the frame height above the bottom edge (above the platform\'s UI: margin counts from the format\'s safe zone, so add only what the safe zone lacks); a subtle entrance (fade or none); highlight only when the user asks for the spoken word coloured. For a look the props cannot give, template names an html layer (layers/*.html) that reads window.msSubtitles and window.msActiveCue(ms) and writes the line with textContent only. preview_frames shows them as they will be drawn. To turn drawing off, remove the track.',
     `Use them only when the user asks for it, or when the brief clearly needs it${helper ? '' : ' (name_formats: always, see Format names)'}. You cannot archive or delete anything, nor change settings, keys or permissions.`,
     // Decision 1060.
     '- A turn whose compositions all stay exactly as they were makes no new version: what you did with these tools still applies, and "the version you are making" is then the latest one.',
@@ -685,20 +700,20 @@ export function buildCreativePrompt(i: PromptInput): string {
       // One line each: a problem may quote the agent's own files (an SVG refusal), never a way to start a new line.
       ...(i.problems ?? []).map((p) => `- ${oneLine(p, 2000)}`),
       ...(i.appActions && i.durationOff ? ['', ...durationFixLines(i.durationOff, Boolean(i.helper))] : []),
-      '', ...repairRequestSection(i.userWords, i.liveMessages),
+      '', ...repairRequestSection(i.userWords, i.liveMessages, i.appRequest),
     );
   } else {
     parts.push(
       `The outputs of version ${i.version} do not meet the contract. Fix these problems and deliver again in the same folder (${outputDir}/), updating manifest.json:`,
       // One line each: a problem may quote the agent's own files (an SVG refusal), never a way to start a new line.
       ...(i.problems ?? []).map((p) => `- ${oneLine(p, 2000)}`),
-      '', ...repairRequestSection(i.userWords, i.liveMessages),
+      '', ...repairRequestSection(i.userWords, i.liveMessages, i.appRequest),
     );
   }
   if (i.variant && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...variantSection(i.variant));
   if (i.helper && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...helperSection(i.variant?.letter, i.helper));
   if (i.context && i.kind !== 'fix' && i.kind !== 'redirect') parts.push(...contextSections(i.context, contract, brief.services));
-  if (i.appActions && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...appActionsSection(brief, Boolean(i.helper)));
+  if (i.appActions && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...appActionsSection(brief, Boolean(i.helper), i.creative.subtitlesDrawn));
   if (i.appActions && !i.helper && (i.kind === 'first' || i.kind === 'iteration')) parts.push('', ...formatNamesSection(brief, locale, Boolean(i.variant)));
   if (contract === 'compositions') {
     // Agent-facing: the format's own facts only (Motion Studio renders, so no extensions, bitrates or encoding flags).

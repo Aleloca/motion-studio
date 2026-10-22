@@ -82,6 +82,8 @@ export function parseCompositionText(bytes: Uint8Array): { ok: true; value: unkn
  *   other prop numbers;
  * - every text clip's font (its `fontFamily`, or `fonts[0]`) is declared in `fonts[]`; generic CSS families are not fonts;
  *   every font is a font file under `assets/`;
+ * - at most one `subtitles` track, with exactly one `subtitles` clip from 0 to `duration`, no scene; no subtitles track in a still;
+ *   a `subtitles` clip only on that track and nothing else on it; its `template`, if any, is an `.html` file under `layers/`;
  * - html clips point to an `.html` file under `layers/`, media clips (and image params) to a file under `assets/`;
  *   every referenced file exists in `ctx.files` (paths compared in NFC);
  * - the folder is within `ctx.maxBytes`;
@@ -259,15 +261,27 @@ function semantic(c: Composition, ctx: CompositionContext): { problems: Composit
     referenced.push(f.src);
   }
 
+  // The subtitles track: at most one, one clip over the whole composition (the clip's own checks run below).
+  const subtitleTracks = c.tracks.filter((t) => t.kind === 'subtitles');
+  if (subtitleTracks.length > 1) out.push(p('subtitlesTwice'));
+  if (subtitleTracks.length > 0 && still) out.push(p('subtitlesOnStill'));
+  for (const t of subtitleTracks) {
+    const k = t.clips[0];
+    if (still) continue;
+    if (t.clips.length !== 1 || (k && (k.start > EPS || Math.abs(k.duration - c.duration) > EPS || k.scene !== undefined))) {
+      out.push(p('subtitlesSpan', { track: t.id, duration: c.duration }));
+    }
+  }
+
   // Tracks and clips.
   for (const t of c.tracks) {
     let audioReported = false;
     for (const k of t.clips) {
-      if ((t.kind === 'audio') !== (k.type === 'audio')) out.push(p('trackKind', { track: t.id, clip: k.id, kind: t.kind, type: k.type }));
+      if ((t.kind === 'audio') !== (k.type === 'audio') || (t.kind === 'subtitles') !== (k.type === 'subtitles')) out.push(p('trackKind', { track: t.id, clip: k.id, kind: t.kind, type: k.type }));
       const end = k.start + k.duration;
       if (still) {
         if (k.type === 'audio' && !audioReported) { audioReported = true; warnings.push(p('stillAudio', { track: t.id })); }
-        if (k.type !== 'audio' && k.animations && k.animations.length > 0) warnings.push(p('stillAnimations', { clip: k.id }));
+        if (k.type !== 'audio' && k.type !== 'subtitles' && k.animations && k.animations.length > 0) warnings.push(p('stillAnimations', { clip: k.id }));
         if (k.start > EPS) out.push(p('clipStill', { clip: k.id }));
       } else if (k.duration <= 0) {
         out.push(p('clipZero', { clip: k.id }));
@@ -279,7 +293,7 @@ function semantic(c: Composition, ctx: CompositionContext): { problems: Composit
         if (!s) out.push(p('unknownScene', { clip: k.id, scene: k.scene }));
         else if (!still && (k.start < s.start - EPS || end > s.end + EPS)) out.push(p('clipOutsideScene', { clip: k.id, scene: k.scene, start: secs(s.start), end: secs(s.end) }));
       }
-      if (!still && k.type !== 'audio' && k.animations) checkAnimations(k.id, k.duration, k.animations, frame, out);
+      if (!still && k.type !== 'audio' && k.type !== 'subtitles' && k.animations) checkAnimations(k.id, k.duration, k.animations, frame, out);
       if (k.type === 'text') {
         const family = k.props.fontFamily ?? c.fonts[0]?.family;
         if (family === undefined) out.push(p('fontMissing', { clip: k.id }));
@@ -292,7 +306,15 @@ function semantic(c: Composition, ctx: CompositionContext): { problems: Composit
           if (declared && !declared.includes(weight)) warnings.push(p('fontWeightUndeclared', { clip: k.id, family, weight, declared: declared.join(', ') }));
         }
       }
-      if (k.type === 'html') {
+      if (k.type === 'subtitles') {
+        const family = k.props.fontFamily ?? c.fonts[0]?.family;
+        if (family === undefined) out.push(p('fontMissing', { clip: k.id }));
+        else if (!families.has(family.toLowerCase())) out.push(p('unknownFont', { clip: k.id, family }));
+        if (k.template !== undefined) {
+          if (!k.template.startsWith('layers/') || !k.template.toLowerCase().endsWith('.html')) out.push(p('layerNotHtml', { clip: k.id, src: k.template }));
+          referenced.push(k.template);
+        }
+      } else if (k.type === 'html') {
         if (!k.src.startsWith('layers/') || !k.src.toLowerCase().endsWith('.html')) out.push(p('layerNotHtml', { clip: k.id, src: k.src }));
         referenced.push(k.src);
         for (const param of Object.values(k.params ?? {})) {

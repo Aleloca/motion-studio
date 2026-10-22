@@ -88,11 +88,14 @@ export function stepItem(keys: readonly string[], key: string, dir: 1 | -1): str
   return keys[Math.min(keys.length - 1, Math.max(0, i + dir))];
 }
 
-/** A single version's thumbnail of `id`: its render when current, else a still of its composition (report 47). */
-export function versionThumb(slug: string, creative: string, v: VersionEntry | undefined, id: string): PackThumb | null {
+/**
+ * A single version's thumbnail of `id`: its render when current, else a still of its composition (report 47). `subtitleHashes`:
+ * the creative's subtitle sets now; a render that drew a set since changed is not current (subtitles Task 22).
+ */
+export function versionThumb(slug: string, creative: string, v: VersionEntry | undefined, id: string, subtitleHashes?: Readonly<Record<string, string>>): PackThumb | null {
   if (!v) return null;
   const comp = v.compositions?.find((c) => c.format === id);
-  if (comp && renderState(v, id) !== 'rendered') return { still: { slug, creative, n: v.n, format: id, hash: comp.hash } };
+  if (comp && renderState(v, id, subtitleHashes) !== 'rendered') return { still: { slug, creative, n: v.n, format: id, hash: comp.hash } };
   const out = v.outputs.find((x) => x.format === id);
   return out ? { media: outputMedia(slug, creative, v.n, out) } : null;
 }

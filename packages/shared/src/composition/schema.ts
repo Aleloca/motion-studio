@@ -174,13 +174,42 @@ const audioClip = z.strictObject({
   script: z.string().max(5000).optional().describe('The spoken text of a voice clip (role "voice" only); used to translate the voice.'),
 }).refine((c) => c.script === undefined || c.role === 'voice', { message: 'composition.scriptNeedsVoice', path: ['script'] });
 
-export const CLIP_TYPES = ['text', 'shape', 'image', 'svg', 'video', 'html', 'audio'] as const;
-export const clipSchema = z.discriminatedUnion('type', [textClip, shapeClip, imageClip, svgClip, videoClip, htmlClip, audioClip]);
+/** Where the subtitle line sits in the frame (inside the safe zone). */
+export const SUBTITLE_POSITIONS = ['bottom', 'middle', 'top'] as const;
+export const SUBTITLE_ENTRANCES = ['none', 'fade', 'pop', 'slideUp'] as const;
+const subtitlesClip = z.strictObject({
+  ...clipBase, type: z.literal('subtitles'),
+  template: path.optional().describe('An .html file under layers/ that draws the line instead of the built-in look; it reads the subtitle set from window.msSubtitles and the line at a time from window.msActiveCue(ms).'),
+  props: z.strictObject({
+    fontFamily: family.optional(),
+    fontSize: z.number().gt(0).max(COMPOSITION_BOUNDS.fontSize),
+    fontWeight: weight.optional(),
+    color,
+    lineHeight: z.number().min(0.8).max(3).optional().describe('A multiple of the font size.'),
+    align: z.enum(TEXT_ALIGNS).optional(),
+    position: z.enum(SUBTITLE_POSITIONS),
+    margin: z.number().min(0).max(COORD).describe('Pixels from the edge of the safe zone.'),
+    maxWidth: z.number().min(0.2).max(1).describe('A fraction of the frame width.'),
+    background: color.optional().describe('A box behind the line.'),
+    boxPadding: z.number().min(0).max(200).optional(),
+    boxRadius: z.number().min(0).max(200).optional(),
+    outlineColor: color.optional(),
+    outlineWidth: z.number().min(0).max(20).optional(),
+    shadow: z.boolean().optional(),
+    entrance: z.enum(SUBTITLE_ENTRANCES).optional(),
+    entranceSec: z.number().min(0).max(1).optional(),
+    highlight: z.strictObject({ color }).optional().describe('Colours the word being spoken.'),
+  }),
+}).describe('Draws the active subtitle line of the creative\'s subtitle set; one per composition, on the one subtitles track, from 0 to the end; the text is not here.');
+export type SubtitlesClip = z.infer<typeof subtitlesClip>;
+
+export const CLIP_TYPES = ['text', 'shape', 'image', 'svg', 'video', 'html', 'audio', 'subtitles'] as const;
+export const clipSchema = z.discriminatedUnion('type', [textClip, shapeClip, imageClip, svgClip, videoClip, htmlClip, audioClip, subtitlesClip]);
 export type Clip = z.infer<typeof clipSchema>;
 
 export const trackSchema = z.strictObject({
   id,
-  kind: z.enum(['visual', 'video', 'text', 'audio']),
+  kind: z.enum(['visual', 'video', 'text', 'audio', 'subtitles']),
   name: name.optional(),
   muted: z.boolean().optional(),
   hidden: z.boolean().optional(),
@@ -199,9 +228,25 @@ export const compositionSchema = z.strictObject({
   fonts: z.array(fontRefSchema).max(COMPOSITION_LIMITS.fonts),
   fontFallbacks: z.array(family).max(3).optional().describe('Declared families tried after a text clip\'s own family, before the generic fallback (per character). Set by localization for scripts the font lacks; leave it as it is.'),
   scenes: z.array(sceneSchema).max(COMPOSITION_LIMITS.scenes),
-  tracks: z.array(trackSchema).max(COMPOSITION_LIMITS.tracks).describe('Stacking order: the first track is at the bottom. Audio tracks do not render.'),
+  tracks: z.array(trackSchema).max(COMPOSITION_LIMITS.tracks).describe('Stacking order: the first track is at the bottom. Audio tracks do not render. At most one subtitles track, holding one subtitles clip.'),
 });
 export type Composition = z.infer<typeof compositionSchema>;
+
+/** The composition without its `subtitles` track (the same object when it has none). */
+export function stripSubtitles(c: Composition): Composition {
+  return c.tracks.some((t) => t.kind === 'subtitles') ? { ...c, tracks: c.tracks.filter((t) => t.kind !== 'subtitles') } : c;
+}
+/** A subtitles track is always locked: its clip is drawn from the subtitle set, never edited directly. */
+export const trackLocked = (t: Track): boolean => Boolean(t.locked) || t.kind === 'subtitles';
+/** Whether the composition draws subtitles: a `subtitles` clip on the subtitles track, neither of them hidden. */
+export function drawsSubtitles(c: Composition): boolean {
+  return c.tracks.some((t) => t.kind === 'subtitles' && !t.hidden && t.clips.some((k) => k.type === 'subtitles' && !k.hidden));
+}
+/** The one subtitles clip of a composition, or null. */
+export function subtitlesClipOf(c: Composition): SubtitlesClip | null {
+  for (const t of c.tracks) for (const k of t.clips) if (k.type === 'subtitles') return k;
+  return null;
+}
 
 /**
  * The JSON Schema (2020-12) of `compositionSchema`, as given to the agent (`.studio/composition.schema.json`). The checked-in
@@ -217,7 +262,7 @@ export function compositionJsonSchema(): Record<string, unknown> {
     [animationSchema, 'animation'], [box, 'box'], [pictureProps, 'pictureProps'], [kenBurnsEnd, 'kenBurnsEnd'], [weight, 'fontWeight'],
     [htmlParam, 'htmlParam'], [fontRefSchema, 'font'], [sceneSchema, 'scene'], [trackSchema, 'track'], [clipSchema, 'clip'],
     [textClip, 'textClip'], [shapeClip, 'shapeClip'], [imageClip, 'imageClip'], [svgClip, 'svgClip'], [videoClip, 'videoClip'],
-    [htmlClip, 'htmlClip'], [audioClip, 'audioClip'],
+    [htmlClip, 'htmlClip'], [audioClip, 'audioClip'], [subtitlesClip, 'subtitlesClip'],
   ];
   for (const [schema, name] of named) defs.add(schema, { id: name });
   // The generator only reads metadata with `get`: merge the local ids over the global registry so `.describe()` texts stay.

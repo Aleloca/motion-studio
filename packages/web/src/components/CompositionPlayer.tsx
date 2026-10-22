@@ -14,6 +14,8 @@
 //   origin matches no named target, so a named one would never be delivered. Commands carry no secrets (times, a rate).
 // - The editor's draft (`setComposition`, Phase 10b) goes the same way: validated by `parseIncoming` (structure and size),
 //   posted to this frame only, at most once per animation frame. The runtime accepts it only from its parent, in preview.
+// - The subtitle editor's lines (`setSubtitles`, subtitles Task 22) go the same way: validated by `parseIncoming`, posted to
+//   this frame only; the runtime draws them with the composition's own subtitles style.
 // - The frame's `src` is never changed: a new session (a renewal, the composition server restarted on another port) mounts
 //   a new frame (React `key`), whose origin the desktop filter checks afresh.
 // - Web residual (documented, carry 5): in a plain browser the preview's network is not locked down like a render's
@@ -27,6 +29,9 @@ import { useT } from '../i18n.tsx';
 import { cx } from '../ui/index.ts';
 import type { SyncMedia } from '../ui/useSyncedMedia.ts';
 import './player.css';
+
+/** The subtitles the runtime draws in preview (`setSubtitles`): null draws none. */
+export type PreviewSubtitles = Extract<PreviewIncoming, { type: 'setSubtitles' }>['subtitles'];
 
 /** No `ready` from the runtime in this time: the frame is reported stalled (the caller mints a new session). */
 export const READY_TIMEOUT_MS = 20_000;
@@ -74,6 +79,8 @@ export class CompositionMedia implements SyncMedia {
   /** Staged videos' session media, by source (sent to each new frame before the draft). */
   private readonly sessionMedia = new Map<string, { token: string; cmd: PreviewIncoming }>();
   private seq = 0;
+  /** The subtitles last given (`setSubtitles`), sent again to a new frame; undefined: never given (the page's own are drawn). */
+  private subtitles: PreviewSubtitles | undefined = undefined;
   /** The `seq` last sent to the active frame (none: -1). */
   private sentSeq = -1;
   private flushQueued = false;
@@ -138,6 +145,16 @@ export class CompositionMedia implements SyncMedia {
     }
     return this.seq;
   }
+  /**
+   * Subtitles Task 22: the lines the runtime draws in place of those inlined in the page (null: none), at once at the current
+   * time, and again on each new frame (before the draft). A block the protocol refuses is not sent.
+   */
+  setSubtitles(subtitles: PreviewSubtitles): void {
+    this.subtitles = subtitles;
+    this.post({ type: 'setSubtitles', subtitles });
+  }
+  /** Forgets the lines given (the caller stopped sending them): a new frame then draws its page's own. Sends nothing. */
+  clearSubtitles(): void { this.subtitles = undefined; }
   /** Selects a clip in the runtime (its drawn box comes back as `clipBounds`, event `clipbounds`); null clears. */
   select(clipId: string | null): void {
     this.selectedId = clipId;
@@ -192,6 +209,7 @@ export class CompositionMedia implements SyncMedia {
       const token = sessionTokenOf(id);
       for (const [src, m] of this.sessionMedia) if (m.token !== token) this.sessionMedia.delete(src); else this.post(m.cmd);
       if (this.selectedId !== null) this.post({ type: 'select', clipId: this.selectedId });
+      if (this.subtitles !== undefined) this.post({ type: 'setSubtitles', subtitles: this.subtitles });
       this.flushDraft(); // after the restoring seek: the draft keeps that time
       if (!this.isPaused) this.post(this.playCommand());
       this.emit('loadedmetadata');
@@ -285,6 +303,11 @@ export interface CompositionPlayerProps {
   autoPlay?: boolean;
   /** No sound (Compare's second player, as its <video> was). */
   muted?: boolean;
+  /**
+   * Subtitles Task 22: the lines the composition's subtitles track draws (the subtitle editor's, sent as `setSubtitles` on each
+   * change; the caller debounces them). Absent: the page's own, as staged by the core.
+   */
+  subtitles?: PreviewSubtitles;
   className?: string;
 }
 
@@ -298,7 +321,7 @@ function frameUrl(s: PreviewSessionInfo): string | null {
   }
 }
 
-export function CompositionPlayer({ session, title, onMedia, onStall, onShowing, autoPlay, muted = false, className }: CompositionPlayerProps) {
+export function CompositionPlayer({ session, title, onMedia, onStall, onShowing, autoPlay, muted = false, subtitles, className }: CompositionPlayerProps) {
   const t = useT();
   const r = t.web.render;
   const [media] = useState(() => new CompositionMedia());
@@ -314,6 +337,7 @@ export function CompositionPlayer({ session, title, onMedia, onStall, onShowing,
     return () => { media.pause(); media.detach(); callbacks.current.onMedia?.(null); callbacks.current.onShowing?.(null); };
   }, [media]);
   useEffect(() => { media.muted = muted; }, [muted, media]);
+  useEffect(() => { if (subtitles !== undefined) media.setSubtitles(subtitles); else media.clearSubtitles(); }, [subtitles, media]);
   useEffect(() => {
     if (autoPlay) { media.loop = true; void media.play().catch(() => {}); }
   }, [autoPlay, media]);

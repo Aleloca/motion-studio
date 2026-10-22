@@ -84,6 +84,27 @@ describe('CreativeTurnService', { timeout: 90_000 }, () => {
     for (const { args } of all) expect(args.slice(args.indexOf('--allowedTools') + 1)).toEqual([...AGENT_ALLOWED_TOOLS]);
   });
 
+  it('a turn Motion Studio asks for itself (app): its instruction reaches the prompt only, never the chat as the user\'s (subtitles Task 19)', async () => {
+    await finalState((await service.start(ref)).id);
+    const job = await service.start(ref, { text: 'Motion Studio: add the subtitles track.', pins: [] }, { app: { request: 'Sottotitoli disegnati nel video' } });
+    expect(await finalState(job.id)).toBe('succeeded');
+    expect((await prompts()).at(-1)!.prompt).toContain('Motion Studio: add the subtitles track.');
+    const conv = await store.readConversation(ref.creativeSlug);
+    expect(conv.filter((e) => e.type === 'user')).toEqual([]);
+    // (The fake agent echoes its prompt as its own text: only the user's entries are checked.)
+    expect((await store.readVersions(ref.creativeSlug)).at(-1)).toMatchObject({ n: 2, request: 'Sottotitoli disegnati nel video' });
+  });
+
+  it('the repair attempt of an app turn carries its instruction as the app\'s request, not as the user\'s words (Task 19)', async () => {
+    await finalState((await service.start(ref)).id);
+    process.env.FAKE_CLAUDE_SCENARIO = 'render_missing_once';
+    const job = await service.start(ref, { text: 'Motion Studio: add the subtitles track.', pins: [] }, { app: { request: 'Sottotitoli disegnati nel video' } });
+    expect(await finalState(job.id)).toBe('succeeded');
+    const fix = (await prompts()).at(-1)!.prompt;
+    expect(fix).toContain('Motion Studio asked for this version itself (not the user): Motion Studio: add the subtitles track.');
+    expect(fix).not.toContain('<user_request>');
+  });
+
   it('rewrites .studio/context.md before each turn', async () => {
     await writeFile(join(ref.projectDir, '.studio', 'context.md'), 'manomesso');
     await finalState((await service.start(ref)).id);

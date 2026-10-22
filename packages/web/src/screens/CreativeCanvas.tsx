@@ -7,7 +7,7 @@
 // is a grid of cards, one per variant, to compare and choose ("Selezione finale" is the page's main action).
 import { ProblemList } from '../components/ProblemList.tsx';
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
-import { entriesOfVariant, turnEndOf } from '@motion-studio/shared';
+import { entriesOfVariant, subtitleHashesOf, turnEndOf } from '@motion-studio/shared';
 import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, outputWarningText, shownTotal, packFileFormats, packInstancesOf, type ConversationEntry, type JobSummary, type CreativeDetail, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VariantId, type VariantMember, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
@@ -149,6 +149,8 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   // it (`viewing`, format → vN, never the ★ itself). Sending a change shows the ★s again. What is viewed in the format view
   // comes back with T4.
   const versions = useMemo(() => detail?.versions ?? [], [detail]);
+  // Subtitles Task 22: a render that drew a subtitle set since changed is not current (`renderState`).
+  const subtitleHashes = useMemo(() => subtitleHashesOf(detail?.subtitles), [detail]);
   const latest = versions.at(-1) ?? null;
   const states = useMemo<Record<string, FormatState>>(() => (detail ? formatStates(detail, presets) : {}), [detail, presets]);
   const [viewing, setViewing] = useState<Record<string, number>>(() => takeShownVersions(`${slug}/${creative}`));
@@ -630,7 +632,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
       };
     }
     const shownVersion = b.n !== null ? versions.find((v) => v.n === b.n) : undefined;
-    const r = boardRender(shownVersion, b.id, jobList, detail.jobKey);
+    const r = boardRender(shownVersion, b.id, jobList, detail.jobKey, subtitleHashes);
     const canRender = b.n !== null && r !== null && r.kind !== 'queued' && r.kind !== 'rendering';
     // Phase 15: in a group the card shows the GROUP's ★ ("Scegli" / "Scelta") and the same plain version badge on every
     // variant (decision 973); the version history of a format is in its format view.
@@ -651,7 +653,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
       badge: (
         <FormatBadge slug={slug} creative={creative} label={formatLabel(b.id)} state={s}
           versions={versions} shown={b.n} resumeFrom={cr.resumeFrom?.version ?? null}
-          labelOf={formatLabel} actions={actions} busy={busyLinks} onView={(v) => view(b.id, v)} onCompare={() => openCompare(b.id)}
+          labelOf={formatLabel} actions={actions} busy={busyLinks} onView={(v) => view(b.id, v)} onCompare={() => openCompare(b.id)} subtitleHashes={subtitleHashes}
           render={canRender ? { n: b.n!, run: () => renderNow([[b.n!, [b.id]]]) } : null} />
       ),
       note: null,
@@ -687,7 +689,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     const src = boardSource(states, b.id, viewing).format;
     const v = versions.find((x) => x.n === b.n);
     const comp = compositionOf(v, src);
-    const render = boardRender(v, src, jobList, detail.jobKey);
+    const render = boardRender(v, src, jobList, detail.jobKey, subtitleHashes);
     return comp && render ? { n: b.n, format: src, hash: comp.hash, render, onRender: () => renderNow([[b.n!, [src]]]) } : null;
   };
   /** A board of the open creative; in a group, a thumbnail of its card at the card's zoom (`z`). */
@@ -826,7 +828,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
     const src = boardSource(st, b.id, {}).format;
     const v = d.versions.find((x) => x.n === b.n);
     const comp = b.n === null ? null : compositionOf(v, src);
-    const render = comp ? boardRender(v, src, jobList, d.jobKey) : null;
+    const render = comp ? boardRender(v, src, jobList, d.jobKey, subtitleHashesOf(d.subtitles)) : null;
     const pick = group!.group.picks[b.id];
     const isPick = pick?.slug === m.slug && pick.version === b.n;
     const mjob = Object.values(live.jobs).find((j) => j.key === d.jobKey && (j.state === 'queued' || j.state === 'running'));
@@ -1183,7 +1185,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
         return (
         <StorePackExport open={packExport} onClose={() => setPackExport(false)} slug={slug} creative={group ? hostSlug : creative} title={title} version={version?.n ?? 0}
           {...(group ? { group: true } : {})} untranslated={packGaps.untranslated} needsReview={packGaps.review}
-          presets={presets} {...(group ? {} : { formats: packFileFormats(cr.brief, presets), ...(cr.brief.formatLabels ? { labels: cr.brief.formatLabels } : {}), ...(version ? { entry: version } : {}) })}
+          presets={presets} {...(group ? {} : { formats: packFileFormats(cr.brief, presets), ...(cr.brief.formatLabels ? { labels: cr.brief.formatLabels } : {}), ...(version ? { entry: version, subtitleHashes } : {}) })}
           {...(creativeLocales(cr.brief) ? { locales: creativeLocales(cr.brief)! } : {})} />
         );
       })() : null}

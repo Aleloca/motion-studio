@@ -131,6 +131,11 @@ export const creativeFileSchema = z.object({
    * search, "Jump back in") and listed under "Archiviate", where it can be restored. Absent: not archived.
    */
   archivedAt: z.iso.datetime().optional(),
+  /**
+   * Subtitles Task 19 (spec §6.2, U9): what the user chose the last time the agent made the subtitles (`start_subtitles`):
+   * true drawn into the video, false files/track only. Absent: never asked.
+   */
+  subtitlesDrawn: z.boolean().optional(),
 });
 export type CreativeFile = z.infer<typeof creativeFileSchema>;
 
@@ -182,6 +187,21 @@ export const outputIssueSchema = z.object({
 });
 export type OutputIssue = z.infer<typeof outputIssueSchema>;
 
+/**
+ * The subtitle set a render drew (subtitles Task 18): its language and the set file's hash. A render whose composition draws
+ * subtitles but that found no set records a marker, `hash: null`, with the language it looked for, so it turns stale once a
+ * set appears in it; with no language (no set could be paired: `lang: null`) it lists the languages present (`seen`), and
+ * turns stale once another one appears (`subtitlesCurrent`).
+ */
+export const renderedSubtitlesSchema = z.object({
+  lang: localeTag.nullable(), hash: z.string().regex(HEX64).nullable(),
+  /** A marker with no language (none could be paired): the languages of the sets present then (review round 2). */
+  seen: z.array(localeTag).max(64).optional(),
+}).strict()
+  .refine((r) => r.hash === null || r.lang !== null, 'a drawn set has a language')
+  .refine((r) => r.seen === undefined || r.lang === null, 'only a marker with no language lists the sets it saw');
+export type RenderedSubtitles = z.infer<typeof renderedSubtitlesSchema>;
+
 export const outputFileInfoSchema = z.object({
   format: z.string(), file: z.string(), width: z.number(), height: z.number(),
   durationSec: z.number().nullable(), verified: z.boolean(), preview: z.string().nullable(),
@@ -213,6 +233,13 @@ export const outputFileInfoSchema = z.object({
   identitySet: identitySetInfoSchema.optional(),
   /** A core render (decision 974): its quality, size and encoder; absent on older renders (`standard`) and on agent files. */
   render: renderInfoSchema.optional(),
+  /**
+   * Subtitles Task 18 (spec §6.1): the subtitle set this render drew (its language and the hash of the set file), whose
+   * snapshot is `outputs/vN/subtitles/<lang>.<hash first 12>.json`; a marker (`hash: null`) when its composition draws
+   * subtitles but no set was found. The render is stale once the creative's sets no longer match it (`renderState`).
+   * Absent: its composition draws no subtitles.
+   */
+  subtitles: renderedSubtitlesSchema.optional(),
 });
 export type OutputFileInfo = z.infer<typeof outputFileInfoSchema>;
 
@@ -313,6 +340,8 @@ export const versionEntrySchema = z.object({
       width: z.number().int().positive(), height: z.number().int().positive(), durationSec: z.number().positive().nullable(),
       sha256: z.string().regex(HEX64), fromComposition: z.string().regex(HEX64), overlayHash: z.string().regex(HEX64),
       forced: z.boolean(), stale: z.array(z.string()), problems: z.array(z.string()).optional(), renderedAt: z.iso.datetime(),
+      /** Subtitles Task 18: the set this render drew (its own language's, when there is one), as `OutputFileInfo.subtitles`. */
+      subtitles: renderedSubtitlesSchema.optional(),
     }).optional(),
   })).optional(),
 });
@@ -365,6 +394,8 @@ export const manifestV2Schema = z.object({
     locale: localeTag.optional(),
     forced: z.boolean().optional(),
     stale: z.array(z.string()).optional(),
+    /** Subtitles Task 18: the subtitle set the render drew (its snapshot is in `outputs/vN/subtitles/`). Absent: none. */
+    subtitles: renderedSubtitlesSchema.optional(),
   })),
 });
 export type ManifestV2 = z.infer<typeof manifestV2Schema>;
@@ -580,7 +611,11 @@ export type CreativeListItem = ({ ok: true } & CreativeSummary) | { ok: false; s
  * check the timing"); `staleCues`: the cues of a translation whose source text changed since.
  */
 export interface SubtitlesSummary {
-  lang: LocaleTag; origin: 'speech' | 'translation'; sourceLang?: LocaleTag; cues: number; edited: number; hash: string;
+  lang: LocaleTag; origin: 'speech' | 'translation'; sourceLang?: LocaleTag; cues: number; edited: number;
+  /** The set file's hash (`subtitleSetHash`): what the editor's saves compare. */
+  hash: string;
+  /** The hash of what a render draws (`subtitleCuesHash`, final review M3): what render staleness compares. */
+  cuesHash?: string;
   timing: SubtitleSet['timing']; timingChanged: boolean; staleCues: number;
 }
 export interface CreativeDetail { slug: string; creative: CreativeFile; versions: VersionEntry[]; jobKey: string; formats?: FormatSummary[]; /** Phase 15: absent outside a group. */ variants?: VariantDetail;

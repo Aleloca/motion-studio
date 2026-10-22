@@ -1,9 +1,12 @@
-import { lstat, mkdir, readdir, unlink } from 'node:fs/promises';
+import { lstat, mkdir, readdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  SUBTITLES_DIR, SUBTITLE_LIMITS, parseSubtitleSet, sha256Hex, subtitleSetHash, type Composition, type LocaleTag, type SubtitleSet,
+  SUBTITLES_DIR, SUBTITLE_LIMITS, drawsSubtitles, parseSubtitleSet, sha256Hex, subtitleCuesHash, subtitleSetHash, subtitleSetSchema, subtitleSetText, type Brief, type Composition, type LocaleTag, type SubtitleSet,
 } from '@motion-studio/shared';
+import type { RuntimeCue, RuntimeSubtitles } from '@motion-studio/composition-runtime/page';
 import { noteCoreChange } from '../core-changes.ts';
+import { noteCoreOutputWrite } from '../creatives/carry-over.ts';
+import { realDirChain, writeThroughTemp } from '../creatives/core-files.ts';
 import type { Git } from '../git.ts';
 import { writeJsonFileAtomic } from '../json-file.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
@@ -25,14 +28,17 @@ export const subtitlePath = (creativeDir: string, lang: LocaleTag): string => jo
  */
 export const subtitleSetLocks = new KeyedMutex();
 
-/** The set of `lang` and the hash of its file, or null when there is none or it is not a valid set (too large, bad schema). */
-export async function readSubtitleSet(creativeDir: string, lang: LocaleTag): Promise<{ set: SubtitleSet; hash: string } | null> {
+/**
+ * The set of `lang`, the hash of its file (save conflicts) and of its lines (`subtitleCuesHash`: renders, final review M3), or
+ * null when there is none or it is not a valid set (too large, bad schema).
+ */
+export async function readSubtitleSet(creativeDir: string, lang: LocaleTag): Promise<{ set: SubtitleSet; hash: string; cuesHash: string } | null> {
   const f = await readRegularFile(subtitlePath(creativeDir, lang), SUBTITLE_LIMITS.fileBytes);
   if (f.kind !== 'file') return null;
   const set = parseSubtitleSet(f.data.toString('utf8'));
   // A file named for another language is not that language's set.
   if (!set || set.lang !== lang) return null;
-  return { set, hash: subtitleSetHash(set) };
+  return { set, hash: subtitleSetHash(set), cuesHash: subtitleCuesHash(set) };
 }
 
 /** Every valid set of the creative; a file that cannot be read as a set is skipped with a warning. */
@@ -57,13 +63,100 @@ export async function writeSubtitleSet(creativeDir: string, set: SubtitleSet): P
     await mkdir(dir, { recursive: true });
     await noteCoreChange(creativeDir);
   }
+  // Through the schema first (review M1): its keys in the schema's order, so the hash written is the one every read gives.
+  const clean = subtitleSetSchema.parse(set);
   // `writeJsonFileAtomic` writes exactly `subtitleSetText` (2-space JSON, final newline), so the hash is the file's.
-  await writeJsonFileAtomic(subtitlePath(creativeDir, set.lang), set);
-  return subtitleSetHash(set);
+  await writeJsonFileAtomic(subtitlePath(creativeDir, clean.lang), clean);
+  return subtitleSetHash(clean);
 }
 
 export async function removeSubtitleSet(creativeDir: string, lang: LocaleTag): Promise<void> {
   await unlink(subtitlePath(creativeDir, lang)).catch((e: NodeJS.ErrnoException) => { if (e.code !== 'ENOENT') throw e; });
+}
+
+/** Every valid set's lines hash by language (`renderState`'s map, `subtitleCuesHash`): `{}` when the creative has none. */
+export async function subtitleHashes(creativeDir: string): Promise<Record<string, string>> {
+  const names = await readdir(subtitlesDir(creativeDir)).catch(() => [] as string[]);
+  const out: Record<string, string> = {};
+  for (const name of names.filter((n) => n.endsWith('.json'))) {
+    const r = await readSubtitleSet(creativeDir, name.slice(0, -'.json'.length) as LocaleTag);
+    if (r) out[r.set.lang] = r.cuesHash;
+  }
+  return out;
+}
+
+/** Whether the composition draws subtitles (shared with the subtitle editor, Task 22). */
+export { drawsSubtitles };
+
+/**
+ * The default subtitle language of a render (U8, spec §6.6): a localized render (`localized`) draws its own language's set,
+ * else none; a version render draws the brief's primary language when it has a set, else the set made from the speech (the
+ * first by language when several were). Null: none.
+ */
+export async function defaultSubtitleLang(creativeDir: string, brief: Pick<Brief, 'locales'>, localized?: LocaleTag): Promise<LocaleTag | null> {
+  if (localized !== undefined) return (await readSubtitleSet(creativeDir, localized)) ? localized : null;
+  const primary = brief.locales?.primary;
+  if (primary && await readSubtitleSet(creativeDir, primary)) return primary;
+  return (await listSubtitleSets(creativeDir)).find((s) => s.origin === 'speech')?.lang ?? null;
+}
+
+/**
+ * The set of `lang` as the runtime draws it (spec §6.1 "Versions"): inlined in the page's data (`CompositionData.subtitles`),
+ * never a file the renderer reads. Its cues are clamped to the composition (`durationMs`): a cue starting at or after the end
+ * is dropped, one running past it is cut there (its words too). Null when the composition draws no subtitles
+ * (`drawsSubtitles`), when there is no language, or no valid set in it; `hash` is its lines' (`subtitleCuesHash`, final
+ * review M3), the one a render records.
+ */
+export async function stageSubtitles(o: { creativeDir: string; composition: Composition; lang: LocaleTag | null; durationMs: number }):
+  Promise<{ data: RuntimeSubtitles; hash: string; set: SubtitleSet } | null> {
+  if (o.lang === null || !(o.durationMs > 0) || !drawsSubtitles(o.composition)) return null;
+  const r = await readSubtitleSet(o.creativeDir, o.lang);
+  if (!r) return null;
+  const end = o.durationMs;
+  const cues: RuntimeCue[] = [];
+  for (const c of r.set.cues) {
+    if (c.start >= end) continue;
+    const words = c.words?.filter((w) => w.start < end).map((w) => ({ start: w.start, end: Math.min(w.end, end), text: w.text }));
+    cues.push({ start: c.start, end: Math.min(c.end, end), text: c.text, ...(words ? { words } : {}) });
+  }
+  return { data: { lang: r.set.lang, cues }, hash: r.cuesHash, set: r.set };
+}
+
+/**
+ * The set a render or preview of `composition` draws by default (`defaultSubtitleLang`, then `stageSubtitles` up to its
+ * duration). Nothing is read for a composition that draws no subtitles (anti-goal 4).
+ */
+export async function stageDefaultSubtitles(creativeDir: string, brief: Pick<Brief, 'locales'>, composition: Composition, localized?: LocaleTag):
+  Promise<{ data: RuntimeSubtitles; hash: string; set: SubtitleSet } | null> {
+  if (!drawsSubtitles(composition)) return null;
+  const lang = await defaultSubtitleLang(creativeDir, brief, localized);
+  return stageSubtitles({ creativeDir, composition, lang, durationMs: Math.round(composition.duration * 1000) });
+}
+
+/**
+ * Keeps the set a render of version `n` draws next to its output (spec §6.1 "Versions"):
+ * `outputs/v<n>/subtitles/<lang>.<hash first 12>.json`, the set file's exact text, so a past render can be told apart and
+ * re-exported as it was. Written before the render through a temp file noted as the core's own write (a turn's check of
+ * earlier versions never reads it as the agent's); a snapshot already there with that content is kept. Returns its path
+ * relative to the creative folder.
+ */
+export async function writeSubtitleSnapshot(creativeDir: string, n: number, set: SubtitleSet, hash: string): Promise<string> {
+  const name = `${set.lang}.${hash.slice(0, 12)}.json`;
+  const dirRel = `outputs/v${n}/${SUBTITLES_DIR}`;
+  const rel = `${dirRel}/${name}`;
+  const text = subtitleSetText(set);
+  const have = await readRegularFile(join(creativeDir, ...rel.split('/')), SUBTITLE_LIMITS.fileBytes);
+  if (have.kind === 'file' && have.data.toString('utf8') === text) return rel;
+  const dir = await realDirChain(creativeDir, ['outputs', `v${n}`, SUBTITLES_DIR]);
+  if (!dir) throw new Error(`${dirRel} is not a folder of the creative`);
+  const written = await writeThroughTemp(dir, name, async (temp) => {
+    await writeFile(temp, text, { flag: 'wx', mode: 0o644 });
+    await noteCoreOutputWrite(creativeDir, rel, temp);
+    return true;
+  });
+  if (!written) throw new Error(`${rel} could not be written`);
+  await noteCoreOutputWrite(creativeDir, dirRel);
+  return rel;
 }
 
 /**

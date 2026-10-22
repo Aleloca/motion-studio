@@ -14,7 +14,7 @@
 // (Transport.tsx, shared with Compare), the comment layer and the hint read, so the page (bar, chat) does not
 // re-render while the video plays.
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
-import { channelName, isDurationOffBrief, pinClipName, DEFAULT_EXPORT_NAME_PATTERN, DEFAULT_FORMATS, type Composition, type FormatPreset, type Pin, type StoryboardView, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
+import { channelName, isDurationOffBrief, subtitleHashesOf, pinClipName, DEFAULT_EXPORT_NAME_PATTERN, DEFAULT_FORMATS, type Composition, type FormatPreset, type Pin, type StoryboardView, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import {
   useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type CSSProperties, type Dispatch, type MouseEvent, type SetStateAction,
@@ -131,6 +131,8 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   // Versions (spec §3.1): the format's ★ (a follower: its primary's file and ★), or the version viewed on its board, which
   // comes along with T3 and goes back with T4.
   const versions = useMemo(() => detail?.versions ?? [], [detail]);
+  // Subtitles Task 22: a render that drew a subtitle set since changed is not current (`renderState`).
+  const subtitleHashes = useMemo(() => subtitleHashesOf(detail?.subtitles), [detail]);
   const latest = versions.at(-1) ?? null;
   const states = useMemo<Record<string, FormatState>>(() => (detail ? formatStates(detail, presets) : {}), [detail, presets]);
   const [ownViewing, setOwnViewing] = useState<Record<string, number>>(() => (ownerViewing ? {} : takeShownVersions(`${slug}/${creative}`)));
@@ -593,7 +595,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
           ) : state && cr ? (
             <span className="ms-fv-badge">
               <FormatBadge bar buttonRef={versionButton} slug={slug} creative={creative} label={label} state={group ? { ...state, star: { ...state.star, version: group.group.picks[source.format]?.slug === creative ? group.group.picks[source.format]!.version : null, manual: group.group.picks[source.format]?.slug === creative, newer: null } } : state} versions={versions} shown={source.n} resumeFrom={cr.resumeFrom?.version ?? null}
-                labelOf={formatLabel} actions={actions} busy={working} onView={(v) => view(format, v)} onCompare={openCompare} />
+                labelOf={formatLabel} actions={actions} busy={working} onView={(v) => view(format, v)} onCompare={openCompare} subtitleHashes={subtitleHashes} />
             </span>
           ) : null}
           <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} readOnly={readOnly} />

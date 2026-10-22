@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { lstat, mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
-import { compositionProblemText, INSTANCE_FOLDER_SOURCE, messages, type Composition, type FormatPreset, type Locale, type PreviewSessionInfo, type StagedAsset, type StagedSvgEdit, type VersionEntry } from '@motion-studio/shared';
+import { compositionProblemText, INSTANCE_FOLDER_SOURCE, messages, sha256Hex, type Composition, type FormatPreset, type Locale, type LocaleTag, type PreviewSessionInfo, type StagedAsset, type StagedSvgEdit, type VersionEntry } from '@motion-studio/shared';
 import { loadComposition } from '../compositions/composition-files.ts';
 import { EDITOR_STAGING, startCompositionServer, type CompositionServer, type CompositionSession, type SessionMediaFile } from '../compositions/composition-server.ts';
 import { noteCoreChange } from '../core-changes.ts';
@@ -17,8 +17,11 @@ import { frameTime } from '../render/frames.ts';
 import { sessionMediaOf, type MediaNormalizer, type PreparedMedia } from '../render/media-normalize.ts';
 import { PreviewLane, PreviewLaneBusyError } from '../render/preview-lane.ts';
 import type { RenderEngine } from '../render/renderer.ts';
+import type { RuntimeSubtitles } from '@motion-studio/composition-runtime/page';
+import { defaultSubtitleLang, drawsSubtitles, readSubtitleSet, stageDefaultSubtitles } from '../subtitles/store.ts';
 import { CodedError } from '../workspace-store.ts';
 import { isRealDirChain, realDirChain } from './core-files.ts';
+import { CreativeStore } from './creative-store.ts';
 import { readSvgForEdit, removeStaging, stageFile, stageSvgEdit, stagingDirOf, type StageSource, type SvgEditSource } from './editor-staging.ts';
 
 /**
@@ -67,8 +70,20 @@ export const storyboardSchema = z.object({
     width: z.number().int().positive(),
     height: z.number().int().positive(),
   })).max(MAX_STORYBOARD_SCENES + 1),
+  /**
+   * Subtitles Task 19: the hash of the subtitle set its frames drew (`stageDefaultSubtitles`), null when its composition draws
+   * subtitles but none was found; absent when it draws none. A storyboard whose set changed since is made again.
+   */
+  subtitles: z.string().regex(HEX64).nullable().optional(),
 });
 export type Storyboard = z.infer<typeof storyboardSchema>;
+
+/**
+ * The storyboard's content key in its image URLs: the composition hash, mixed with the drawn set's when it draws subtitles
+ * (a storyboard remade for corrected subtitles never reuses a URL).
+ */
+export const storyboardKey = (sb: Pick<Storyboard, 'hash' | 'subtitles'>): string =>
+  (sb.subtitles === undefined ? sb.hash : sha256Hex(new TextEncoder().encode(`${sb.hash}:${sb.subtitles ?? 'none'}`))).slice(0, 16);
 
 /** `<project>/.studio/cache/storyboards/<creative>/v<N>/<format>`; `format` is the composition folder's name. */
 export const storyboardDir = (projectDir: string, creativeSlug: string, n: number, format: string) =>
@@ -222,8 +237,23 @@ export class PreviewService {
     return this.server;
   }
 
-  /** Frames through the lane, with the normalised media (released after). */
-  private async frames(o: { ref: VersionFormatRef; folder: string; preset: FormatPreset; composition: Composition; times: number[]; width: number; imageFormat: 'png' | 'jpeg'; signal?: AbortSignal; noWait?: boolean }) {
+  /**
+   * Subtitles Task 19: the set a composition with the `subtitles` track draws, as its render would (`stageDefaultSubtitles`:
+   * the brief's pairing, or the `localized` render's own language), so storyboards, pin frames and the agent's frames show
+   * the drawn subtitles. Nothing is read for a composition without the track (anti-goal 4); a set that cannot be read: none.
+   */
+  private async subtitlesOf(ref: VersionFormatRef, c: Composition, localized?: LocaleTag): Promise<RuntimeSubtitles | null> {
+    if (!drawsSubtitles(c)) return null;
+    try {
+      const brief = (await new CreativeStore(ref.projectDir).get(ref.creativeSlug)).brief;
+      return (await stageDefaultSubtitles(ref.creativeDir, brief, c, localized))?.data ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Frames through the lane, with the normalised media (released after) and the drawn subtitles (`subtitlesOf`). */
+  private async frames(o: { ref: VersionFormatRef; folder: string; preset: FormatPreset; composition: Composition; times: number[]; width: number; imageFormat: 'png' | 'jpeg'; signal?: AbortSignal; noWait?: boolean; localized?: LocaleTag }) {
     const engine = this.deps.engine;
     if (!engine || !(await this.available())) throw new CodedError(503, messages(currentLocale()).errors.previewUnavailable, 'no-renderer');
     const signal = AbortSignal.any([this.closing.signal, ...(o.signal ? [o.signal] : [])]);
@@ -233,12 +263,13 @@ export class PreviewService {
       // first encode does not count against it, and a lane timeout aborts only this caller's wait (the encode is shared
       // and stops only when no caller waits for it any more).
       const prepared = await this.deps.normalizer.prepare({ projectDir: o.ref.projectDir, compDir, composition: o.composition, signal });
+      const subtitles = await this.subtitlesOf(o.ref, o.composition, o.localized);
       try {
         return await this.lane.run(async (laneSignal) => engine.frames({
           server: await this.compositionServer(), // one long-lived server for every preview (fix minor 5)
           dir: o.ref.creativeDir, versionDir: `outputs/v${o.ref.n}`, composition: o.composition, format: { ...o.preset, id: o.folder },
           times: o.times, width: o.width, imageFormat: o.imageFormat, quality: 80, signal: laneSignal, ...withMedia(prepared),
-          ...(this.deps.distDir ? { distDir: this.deps.distDir } : {}),
+          ...(this.deps.distDir ? { distDir: this.deps.distDir } : {}), ...(subtitles ? { subtitles } : {}),
         }), signal, { noWait: o.noWait === true });
       } finally {
         prepared.release();
@@ -276,12 +307,13 @@ export class PreviewService {
 
   /**
    * `preview_frames` of a localize turn (Phase 12): frames of a localized composition held in memory (the version's composition
-   * folder `folder`, with the overlay applied), same limits as `agentFrames`.
+   * folder `folder`, with the overlay applied), same limits as `agentFrames`; drawn subtitles in the `localized` language.
    */
-  async localizedAgentFrames(o: { ref: VersionFormatRef; format: string; folder: string; preset: FormatPreset; composition: Composition; times: unknown; locale: Locale; signal: AbortSignal }): Promise<Record<string, unknown>> {
+  async localizedAgentFrames(o: { ref: VersionFormatRef; format: string; folder: string; preset: FormatPreset; composition: Composition; times: unknown; locale: Locale; signal: AbortSignal; localized?: LocaleTag }): Promise<Record<string, unknown>> {
     const times = checkedPreviewTimes(o.times, o.locale);
     const c = o.composition;
-    const r = await this.frames({ ref: o.ref, folder: o.folder, preset: o.preset, composition: c, times, width: Math.min(AGENT_FRAME_MAX_WIDTH, c.width), imageFormat: 'png', signal: o.signal });
+    const r = await this.frames({ ref: o.ref, folder: o.folder, preset: o.preset, composition: c, times, width: Math.min(AGENT_FRAME_MAX_WIDTH, c.width), imageFormat: 'png', signal: o.signal,
+      ...(o.localized ? { localized: o.localized } : {}) });
     return {
       format: o.format, ok: true,
       frames: r.frames.map((f) => ({ t: f.t, width: f.width, height: f.height })),
@@ -309,10 +341,25 @@ export class PreviewService {
     }
   }
 
-  /** The storyboard index of (version, format) when it exists and matches `hash`; null otherwise. */
+  /**
+   * The storyboard index of (version, format) when it exists and matches `hash`, and the subtitle set it drew is still the
+   * one its render would draw (Task 19); null otherwise.
+   */
   async readStoryboard(ref: VersionFormatRef, folder: string, hash: string): Promise<Storyboard | null> {
     const sb = await readJsonFile(join(storyboardDir(ref.projectDir, ref.creativeSlug, ref.n, folder), 'storyboard.json'), storyboardSchema).catch(() => null);
-    return sb && sb.hash === hash ? sb : null;
+    if (!sb || sb.hash !== hash) return null;
+    return sb.subtitles === undefined || sb.subtitles === await this.subtitlesHash(ref) ? sb : null;
+  }
+
+  /** The lines hash of the set a render of the version draws by default (the brief's pairing), null without one. */
+  private async subtitlesHash(ref: VersionFormatRef): Promise<string | null> {
+    try {
+      const brief = (await new CreativeStore(ref.projectDir).get(ref.creativeSlug)).brief;
+      const lang = await defaultSubtitleLang(ref.creativeDir, brief);
+      return lang ? (await readSubtitleSet(ref.creativeDir, lang))?.cuesHash ?? null : null;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -331,6 +378,8 @@ export class PreviewService {
       if (!loaded.ok || loaded.hash !== hash) return null;
       const plan = storyboardPlan(loaded.composition);
       const unique = [...new Set(plan.map((p) => p.t))];
+      // Read before the frames: a set corrected while they are drawn leaves an older key, so the next read makes them again.
+      const subtitles = drawsSubtitles(loaded.composition) ? { subtitles: await this.subtitlesHash(ref) } : {};
       const compDir = join(ref.creativeDir, 'outputs', `v${ref.n}`, 'compositions', folder);
       const r = await this.frames({ ref, folder, preset, composition: loaded.composition, times: unique, width: Math.min(STORYBOARD_WIDTH, loaded.composition.width), imageFormat: 'jpeg', ...(signal ? { signal } : {}) });
       if (this.closing.signal.aborted) throw new Error('closed');
@@ -353,7 +402,7 @@ export class PreviewService {
         }
         const sb: Storyboard = {
           schemaVersion: 2, hash, width: Math.min(STORYBOARD_WIDTH, loaded.composition.width),
-          frames: plan.map((p) => ({ ...p, ...files.get(p.t)! })),
+          frames: plan.map((p) => ({ ...p, ...files.get(p.t)! })), ...subtitles,
         };
         await writeFile(join(temp, 'storyboard.json'), `${JSON.stringify(sb, null, 2)}\n`, { flag: 'wx' });
         await rm(dir, { recursive: true, force: true });
@@ -422,7 +471,8 @@ export class PreviewService {
    * re-hashed and validated (it must still be the recorded one), its media normalised, and a preview-mode session minted
    * for `parentOrigin` (one of the UI origins, else 403). The media lease ends when the session expires.
    */
-  async mintPreview(ref: VersionFormatRef, version: Pick<VersionEntry, 'n' | 'compositions'>, format: string, parentOrigin: string, locale: Locale, o: { renewFrom?: string } = {}): Promise<PreviewSessionInfo> {
+  async mintPreview(ref: VersionFormatRef, version: Pick<VersionEntry, 'n' | 'compositions'>, format: string, parentOrigin: string, locale: Locale,
+    o: { renewFrom?: string; subtitles?: (c: Composition) => Promise<RuntimeSubtitles | null> } = {}): Promise<PreviewSessionInfo> {
     const e = messages(locale).errors;
     const entry = entryOf(version, format);
     if (!entry) throw new CodedError(404, e.compositionNotFound({ format, n: version.n }), 'composition-not-found');
@@ -432,12 +482,14 @@ export class PreviewService {
     const compDir = join(ref.creativeDir, 'outputs', `v${ref.n}`, 'compositions', entry.folder);
     const loaded = await loadComposition(compDir, preset);
     if (!loaded.ok || loaded.hash !== entry.hash) throw new CodedError(409, e.compositionUnusable({ format, n: version.n }), 'composition-unusable');
+    // The subtitles the version's render would draw (subtitles Task 18); the editor sends its changes with `setSubtitles`.
+    const subtitles = o.subtitles ? await o.subtitles(loaded.composition) : null;
     const prepared = await this.deps.normalizer.prepare({ projectDir: ref.projectDir, compDir, composition: loaded.composition, signal: this.closing.signal });
     try {
       const server = await this.compositionServer();
       const session = await server.mintSession({
         creativeDir: ref.creativeDir, versionDir: `outputs/v${ref.n}`, format: entry.folder, composition: loaded.composition,
-        mode: 'preview', parentOrigin, ...withMedia(prepared),
+        mode: 'preview', parentOrigin, ...withMedia(prepared), ...(subtitles ? { subtitles } : {}),
       });
       const ttl = Math.max(0, session.expiresAt - Date.now());
       const timer = setTimeout(() => { this.endSession(session.token); }, ttl + 1000);

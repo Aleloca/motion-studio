@@ -427,18 +427,26 @@ describe('app actions in the prompt (decision 917, user note 6)', () => {
     // A repair attempt keeps its prompt short: no list.
     expect(buildCreativePrompt({ ...v2, kind: 'fix', problems: ['x'], appActions: true })).not.toContain('## Acting on the app');
   });
-  it('start_subtitles makes files only until drawn subtitles exist; text clips by hand for subtitles in the video now (U9, phase 1)', () => {
+  it('start_subtitles asks drawn or files when the user did not say, never hand-made text clips; edit_subtitles corrects the text (U9, Task 19)', () => {
     const on = buildCreativePrompt({ ...v2, kind: 'iteration', userText: 'Aggiungi i sottotitoli', pins: [], appActions: true });
     const line = on.split('\n').find((l) => l.startsWith('- start_subtitles:'))!;
-    expect(line).toContain('.srt');
-    expect(line).toContain('draws nothing into the video');
-    expect(line).toContain('later version of the app');
-    expect(line).toContain('text clips');
-    expect(line).not.toContain('AskUserQuestion');
-    expect(line).not.toContain('drawn set to');
-    expect(CONTEXT_MD).toContain('**Subtitles**: `start_subtitles` makes subtitle files (.srt/.vtt) and draws nothing into the video.');
-    expect(CONTEXT_MD).toContain('one `text` clip per sentence, timed on the voice');
-    expect(CONTEXT_MD).not.toContain('never one text clip per sentence');
+    expect(line).toContain('AskUserQuestion');
+    expect(line).toContain('drawn set to the answer');
+    expect(line).toContain('Never write subtitle text in text clips');
+    expect(line).not.toContain('later version of the app');
+    expect(on.split('\n').find((l) => l.startsWith('- edit_subtitles:'))).toContain('count as the user\'s corrections');
+    const look = on.split('\n').find((l) => l.startsWith('- Drawn subtitles are the subtitles track:'))!;
+    for (const x of ['brand fonts and colours', '4.5 % of the frame height', '18 % of the frame height', 'highlight only when', 'window.msActiveCue(ms)', 'textContent only', 'remove the track']) expect(look).toContain(x);
+    expect(CONTEXT_MD).toContain('**Subtitles**: call `start_subtitles` (drawn into the video, or files/track only: ask the user when they did not say); never one text clip per sentence.');
+    expect(CONTEXT_MD).toContain('kind: visual|video|text|audio|subtitles');
+    expect(CONTEXT_MD).toContain('`window.msActiveCue(ms)`');
+    expect(CONTEXT_MD).not.toContain('later version of the app');
+  });
+  it('a repair of a turn Motion Studio asked for carries its instruction as the app\'s, never as the user\'s words (Task 19)', () => {
+    const p = buildCreativePrompt({ ...v2, kind: 'fix', problems: ['x'], appRequest: 'Motion Studio: add the subtitles track.' });
+    expect(p).toContain('Motion Studio asked for this version itself (not the user): Motion Studio: add the subtitles track.');
+    expect(p).not.toContain("The user's request for this version");
+    expect(p).not.toContain('<user_request>');
   });
   it('says when the brief text states another duration than its field', () => {
     const p = buildCreativePrompt({ ...v2, creative: sixty, kind: 'first', appActions: true });

@@ -1,10 +1,10 @@
 // The subtitle editor (spec §6.3, layout B, Task 12): the creative's latest version in the live player on the left, with an
-// editor-only caption of the line under the playhead (the runtime draws the agent's style instead once the composition has a
-// subtitles track, Task 22); the list of lines on the right; the waveform timeline under both (Task 13). Edits save by
+// editor-only caption of the line under the playhead, or, when the composition has a subtitles track, the runtime drawing
+// the lines in the agent's style as they are edited (`setSubtitles`, debounced, Task 22); the list of lines on the right; the waveform timeline under both (Task 13). Edits save by
 // themselves (useSubtitleSave); a `subtitles` broadcast reloads the set only when nothing is waiting to be saved. Task 14: a
 // banner when the video changed under the set ("Rifai i tempi", and "Tempi controllati" to keep the timing), and "Rifai la
 // trascrizione…" in the header.
-import { SUPPORTED_LOCALES, type CreativeDetail, type LocaleTag, type SubtitleCue } from '@motion-studio/shared';
+import { SUPPORTED_LOCALES, drawsSubtitles, type CreativeDetail, type LocaleTag, type SubtitleCue } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
 import { api } from '../../api.ts';
 import { CompositionPlayer, type CompositionMedia } from '../../components/CompositionPlayer.tsx';
@@ -24,11 +24,16 @@ import { usePlayerControls } from '../editor/usePlayerControls.ts';
 import { activatesControl, bare, inOverlay, isTyping } from '../keys.ts';
 import { CueList, FindReplace, msText, rowSelector } from './CueList.tsx';
 import { CueTimeline, type CueTimelineProps } from './CueTimeline.tsx';
-import { byStart, cueAt, editorReducer, initialEditorState, warningsOf, type EditorOp } from './subtitlesModel.ts';
+import { byStart, cueAt, editorReducer, initialEditorState, runtimeSubtitlesOf, warningsOf, type EditorOp } from './subtitlesModel.ts';
 import { useSubtitleSave, type SubtitleSaveStatus } from './useSubtitleSave.ts';
 import './subtitles.css';
 
 const EXTS = ['srt', 'vtt'] as const;
+/**
+ * The lines go to the runtime this long after the last change (Task 22): a run of keystrokes is one `setSubtitles` (a
+ * template layer reloads the whole set, up to about 0.5 MB, on each).
+ */
+export const SUBTITLES_PREVIEW_MS = 150;
 /** ⌘ on macOS, Ctrl elsewhere (as the composition editor). */
 const mod = (e: KeyboardEvent): boolean => (isMac() ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey);
 const textOf = (cues: readonly SubtitleCue[]): string => JSON.stringify(cues);
@@ -140,6 +145,25 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
   const session = preview.state.kind === 'ready' ? preview.state.session : null;
   const [player, setPlayer] = useState<CompositionMedia | null>(null);
   const controls = usePlayerControls(player, `${latest?.n ?? 0}/${format ?? ''}`, session?.fps ?? 30);
+  // Task 22: with a subtitles track in the played composition the runtime draws the lines in the agent's style, sent as they
+  // are edited; without one the editor's own caption shows the line, and until it is known neither does (the page may already
+  // draw its staged subtitles). A composition that cannot be read counts as one without the track: the caption shows, and if
+  // the composition does have the track the page's own (saved) lines show under it too, a double caption accepted over none.
+  const [track, setTrack] = useState<boolean | null>(null);
+  const trackOf = latest !== null && format !== null ? { n: latest.n, format } : null;
+  useEffect(() => {
+    setTrack(null);
+    if (!trackOf) return;
+    let alive = true;
+    Promise.resolve().then(() => api.getEditorComposition(slug, creative, trackOf.n, trackOf.format)).then(
+      (v) => { if (alive) setTrack(drawsSubtitles(v.composition)); },
+      () => { if (alive) setTrack(false); });
+    return () => { alive = false; };
+  }, [slug, creative, trackOf?.n, trackOf?.format]); // eslint-disable-line react-hooks/exhaustive-deps
+  const sessionMs = session ? Math.round(session.duration * 1000) : 0;
+  const drawn = useMemo(() => (track ? runtimeSubtitlesOf(lang, state.cues, sessionMs) : undefined), [track, lang, state.cues, sessionMs]);
+  const liveSubtitles = useDebounced(drawn, SUBTITLES_PREVIEW_MS);
+
   // The video's length bounds new lines and moved times.
   useEffect(() => {
     if (!session) return;
@@ -308,7 +332,8 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
       <section className="ms-subs-player" aria-label={frameLabel}>
         <div className="ms-subs-stage">
           <div className="ms-subs-frame" style={{ '--ar': ratio } as CSSProperties}>
-            {session ? <CompositionPlayer session={session} title={frameLabel} onMedia={setPlayer} onStall={preview.stalled} onShowing={preview.showing} /> : null}
+            {session ? <CompositionPlayer session={session} title={frameLabel} onMedia={setPlayer} onStall={preview.stalled} onShowing={preview.showing}
+              {...(liveSubtitles ? { subtitles: liveSubtitles } : {})} /> : null}
             {waiting ? <span className="ms-cplayer-state" role="status">{preview.state.kind === 'busy' ? t.web.render.busy : t.web.render.loading}</span> : null}
             {preview.state.kind === 'failed' ? (
               <span className="ms-subs-frame-note" role="alert">
@@ -317,7 +342,7 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
               </span>
             ) : null}
             {noPreview ? <span className="ms-subs-frame-note">{s.noPreview}</span> : null}
-            {nowCue ? <p className="ms-subs-caption" data-testid="subs-caption"><span className={cx(nowCue.id === state.selected && 'ms-on')}>{nowCue.text}</span></p> : null}
+            {nowCue && track === false ? <p className="ms-subs-caption" data-testid="subs-caption"><span className={cx(nowCue.id === state.selected && 'ms-on')}>{nowCue.text}</span></p> : null}
           </div>
         </div>
         <div className="ms-subs-transport">
@@ -438,6 +463,16 @@ function SaveState({ status, notice, retry }: { status: SubtitleSaveStatus; noti
       {status === 'error' ? <Button size="sm" variant="ghost" onClick={retry}>{s.retry}</Button> : null}
     </span>
   );
+}
+
+/** `value`, once it has stayed the same for `ms` (Task 22). */
+function useDebounced<T>(value: T, ms: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const id = window.setTimeout(() => setSettled(value), ms);
+    return () => window.clearTimeout(id);
+  }, [value, ms]);
+  return settled;
 }
 
 /** The timeline with the playhead from the player's clock (only the timeline re-renders on each frame). */

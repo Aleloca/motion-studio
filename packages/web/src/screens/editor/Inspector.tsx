@@ -80,7 +80,7 @@ function InspectorBody({ clip, locked }: { clip: Clip; locked: boolean }) {
     );
   }
   const kinds: Record<Clip['type'], string> = {
-    text: e.clipText, shape: e.clipShape, image: e.clipImage, svg: e.clipSvg, video: e.clipVideo, html: e.clipHtml, audio: e.clipAudio,
+    text: e.clipText, shape: e.clipShape, image: e.clipImage, svg: e.clipSvg, video: e.clipVideo, html: e.clipHtml, audio: e.clipAudio, subtitles: e.clipSubtitles,
   };
   return (
     <div className="ms-insp" data-clip-type={clip.type}>
@@ -89,6 +89,7 @@ function InspectorBody({ clip, locked }: { clip: Clip; locked: boolean }) {
         <span className="ms-insp-kind">{kinds[clip.type]}</span>
       </header>
       {locked ? <p className="ms-insp-locked" role="status"><Icon name="lock" size={13} />{e.inspLocked}</p> : null}
+      {clip.type === 'subtitles' ? null : (<>
       {video ? <TimingSection ctl={ctl} /> : null}
       {clip.type !== 'audio' ? <BoxSection ctl={ctl} /> : null}
       {clip.type === 'text' ? <TextSection ctl={ctl} brand={brand} /> : null}
@@ -98,6 +99,7 @@ function InspectorBody({ clip, locked }: { clip: Clip; locked: boolean }) {
       {clip.type === 'audio' ? <AudioSection ctl={ctl} /> : null}
       {clip.type === 'html' ? <ParamsSection ctl={ctl} /> : null}
       {video && clip.type !== 'audio' ? <AnimationSection ctl={ctl} /> : null}
+      </>)}
     </div>
   );
 }

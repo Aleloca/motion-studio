@@ -66,7 +66,7 @@
       "items": {
         "$ref": "#/$defs/track"
       },
-      "description": "Stacking order: the first track is at the bottom. Audio tracks do not render."
+      "description": "Stacking order: the first track is at the bottom. Audio tracks do not render. At most one subtitles track, holding one subtitles clip."
     }
   },
   "required": [
@@ -190,7 +190,8 @@
             "visual",
             "video",
             "text",
-            "audio"
+            "audio",
+            "subtitles"
           ]
         },
         "name": {
@@ -243,6 +244,9 @@
         },
         {
           "$ref": "#/$defs/audioClip"
+        },
+        {
+          "$ref": "#/$defs/subtitlesClip"
         }
       ]
     },
@@ -1210,6 +1214,171 @@
         "src"
       ],
       "additionalProperties": false
+    },
+    "subtitlesClip": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "scene": {
+          "description": "The scene this clip belongs to: moving the scene moves the clip. The clip must lie inside it.",
+          "$ref": "#/$defs/id"
+        },
+        "start": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 600,
+          "description": "Seconds, absolute on the composition timeline."
+        },
+        "duration": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 600
+        },
+        "hidden": {
+          "description": "The editor hides the clip: it is not rendered. Set by the user; leave it as it is.",
+          "type": "boolean"
+        },
+        "locked": {
+          "description": "The user locked the clip against direct edits in the editor. Set by the user; leave it as it is.",
+          "type": "boolean"
+        },
+        "type": {
+          "type": "string",
+          "const": "subtitles"
+        },
+        "template": {
+          "description": "An .html file under layers/ that draws the line instead of the built-in look; it reads the subtitle set from window.msSubtitles and the line at a time from window.msActiveCue(ms).",
+          "$ref": "#/$defs/path"
+        },
+        "props": {
+          "type": "object",
+          "properties": {
+            "fontFamily": {
+              "$ref": "#/$defs/fontFamily"
+            },
+            "fontSize": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 2000
+            },
+            "fontWeight": {
+              "$ref": "#/$defs/fontWeight"
+            },
+            "color": {
+              "$ref": "#/$defs/color"
+            },
+            "lineHeight": {
+              "description": "A multiple of the font size.",
+              "type": "number",
+              "minimum": 0.8,
+              "maximum": 3
+            },
+            "align": {
+              "type": "string",
+              "enum": [
+                "left",
+                "center",
+                "right"
+              ]
+            },
+            "position": {
+              "type": "string",
+              "enum": [
+                "bottom",
+                "middle",
+                "top"
+              ]
+            },
+            "margin": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100000,
+              "description": "Pixels from the edge of the safe zone."
+            },
+            "maxWidth": {
+              "type": "number",
+              "minimum": 0.2,
+              "maximum": 1,
+              "description": "A fraction of the frame width."
+            },
+            "background": {
+              "description": "A box behind the line.",
+              "$ref": "#/$defs/color"
+            },
+            "boxPadding": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 200
+            },
+            "boxRadius": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 200
+            },
+            "outlineColor": {
+              "$ref": "#/$defs/color"
+            },
+            "outlineWidth": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 20
+            },
+            "shadow": {
+              "type": "boolean"
+            },
+            "entrance": {
+              "type": "string",
+              "enum": [
+                "none",
+                "fade",
+                "pop",
+                "slideUp"
+              ]
+            },
+            "entranceSec": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "highlight": {
+              "description": "Colours the word being spoken.",
+              "type": "object",
+              "properties": {
+                "color": {
+                  "$ref": "#/$defs/color"
+                }
+              },
+              "required": [
+                "color"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "fontSize",
+            "color",
+            "position",
+            "margin",
+            "maxWidth"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "id",
+        "start",
+        "duration",
+        "type",
+        "props"
+      ],
+      "additionalProperties": false,
+      "description": "Draws the active subtitle line of the creative's subtitle set; one per composition, on the one subtitles track, from 0 to the end; the text is not here."
     }
   }
 }
