@@ -45,12 +45,14 @@ async function markup(): Promise<string> {
   } finally { unmount(); }
 }
 
+/** The German videos exist (final review Minor 3: a drawn language goes on its video only when the format is translated). */
+const german: VersionEntry = { ...version, localizations: [REEL, YT].map((instanceId) => ({ locale: 'de' as const, instanceId, hash: '1'.repeat(64), origin: 'agent' as const, stale: [], voice: 'translated' as const })) };
 /** Task 27: Italian and German videos, English and German drawn (each on its video), English files, Italian tracks. */
 async function languagesMarkup(): Promise<string> {
   localStorage.setItem('ms.exportFolder', '/Users/me/Consegne/Lancio estivo');
   const { unmount } = render(
     <I18nProvider locale="it">
-      <ExportDialog open onClose={() => {}} slug="acme" creative="promo" title="Promo autunno" snapshot={{ versions: [version], states: { [REEL]: state(REEL), [YT]: state(YT) } }}
+      <ExportDialog open onClose={() => {}} slug="acme" creative="promo" title="Promo autunno" snapshot={{ versions: [german], states: { [REEL]: state(REEL), [YT]: state(YT) } }}
         presets={DEFAULT_FORMATS} pattern="{title}-{format}-v{v}" subtitles={[sub('it'), sub('en'), sub('de')]} locales={{ primary: 'it', extra: ['de'] }} />
     </I18nProvider>,
   );
