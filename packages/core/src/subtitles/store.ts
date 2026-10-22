@@ -70,6 +70,8 @@ export class SubtitleCommits {
   private readonly git: Git;
   private readonly quietMs: number;
   private readonly pending = new Map<string, { ref: CreativeRef; message: string; timer: ReturnType<typeof setTimeout> }>();
+  /** The commit running now per creative (`pending` is cleared before git is awaited). */
+  private readonly inFlight = new Map<string, Promise<void>>();
 
   constructor(o: { git: Git; quietMs?: number }) {
     this.git = o.git;
@@ -85,20 +87,27 @@ export class SubtitleCommits {
     this.pending.set(key, { ref, message, timer });
   }
 
-  /** Commits now the pending edits of `ref`, or of every creative. */
+  /** Commits now the pending edits of `ref`, or of every creative; a commit the timer already started is waited for. */
   async flush(ref?: CreativeRef): Promise<void> {
-    const keys = ref ? [keyOf(ref)] : [...this.pending.keys()];
+    const keys = ref ? [keyOf(ref)] : [...new Set([...this.pending.keys(), ...this.inFlight.keys()])];
     await Promise.all(keys.map((k) => this.commit(k)));
   }
 
-  private async commit(key: string): Promise<void> {
+  private commit(key: string): Promise<void> {
     const p = this.pending.get(key);
-    if (!p) return;
+    const before = this.inFlight.get(key);
+    if (!p) return before ?? Promise.resolve();
     clearTimeout(p.timer);
     this.pending.delete(key);
-    try {
-      await this.git.commitPaths(p.ref.projectDir, [`creatives/${p.ref.creativeSlug}/${SUBTITLES_DIR}`], p.message);
-    } catch { /* picked up by the next commit */ }
+    // After the commit already running for this creative (if any): a flush then waits for both.
+    const run: Promise<void> = (async () => {
+      await before;
+      try {
+        await this.git.commitPaths(p.ref.projectDir, [`creatives/${p.ref.creativeSlug}/${SUBTITLES_DIR}`], p.message);
+      } catch { /* picked up by the next commit */ }
+    })().finally(() => { if (this.inFlight.get(key) === run) this.inFlight.delete(key); });
+    this.inFlight.set(key, run);
+    return run;
   }
 }
 

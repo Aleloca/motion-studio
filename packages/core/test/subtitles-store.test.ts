@@ -112,6 +112,23 @@ describe('SubtitleCommits', () => {
     expect(commitPaths).toHaveBeenLastCalledWith('/w/acme', ['creatives/other/subtitles'], 'edit 2');
   });
 
+  it('flush waits for a commit the quiet timer already started', async () => {
+    let release!: () => void;
+    const commitPaths = vi.fn(() => new Promise<string>((r) => { release = () => r('sha'); }));
+    const c = new SubtitleCommits({ git: { commitPaths } as unknown as Git, quietMs: 10 });
+    c.touch(ref, 'edit');
+    await vi.waitFor(() => expect(commitPaths).toHaveBeenCalledTimes(1));
+    let flushed = 0;
+    const all = c.flush().then(() => { flushed++; });
+    const one = c.flush(ref).then(() => { flushed++; });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(flushed).toBe(0);
+    release();
+    await Promise.all([all, one]);
+    expect(flushed).toBe(2);
+    expect(commitPaths).toHaveBeenCalledTimes(1);
+  });
+
   it('a failed commit does not throw', async () => {
     const commitPaths = vi.fn(async () => { throw new Error('git'); });
     const c = new SubtitleCommits({ git: { commitPaths } as unknown as Git, quietMs: 10_000 });
