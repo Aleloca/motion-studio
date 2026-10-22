@@ -2,7 +2,7 @@ import { access, constants, lstat, mkdir, mkdtemp, open, realpath, rm, stat, wri
 import { tmpdir } from 'node:os';
 import { pipeline } from 'node:stream/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { DEFAULT_EXPORT_NAME_PATTERN, exportExtension, exportNameCollisions, exportNameVars, followerMatches, followerVersion, hasFormat, isDefaultProfile, localizedStem, profileApplies, profileFor, DEFAULT_EXPORT_QUALITY, recordedQuality, renderName, renderState, separateInstanceNames, subtitlesCurrent, starOf, toSrt, toVtt, type FormatPreset, type RenderProfile, type SubtitleSet, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_NAME_PATTERN, exportExtension, exportNameCollisions, exportNameVars, followerMatches, followerVersion, hasFormat, isDefaultProfile, localizedStem, profileApplies, profileFor, DEFAULT_EXPORT_QUALITY, recordedQuality, renderName, renderState, separateInstanceNames, subtitledStem, subtitlesCurrent, starOf, toSrt, toVtt, type FormatPreset, type LocaleTag, type RenderProfile, type SubtitleSet, type VersionEntry } from '@motion-studio/shared';
 import { copyConfinedFile, probeConfinedFile } from '../brand/agent-guard.ts';
 import { findPreset } from '../formats/format-catalog.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
@@ -144,6 +144,13 @@ export interface ExportItem { format: string; n: number; v?: number; file: strin
    * as a folder named like the file (without its extension), next to it.
    */
   set?: { dir: string; files: string[] };
+  /** Subtitles Task 21: the language drawn into this video (a render made for the export, or the version render that draws it): named `<stem>-sub-<lang>`. */
+  subtitled?: LocaleTag;
+  /**
+   * Subtitles Task 21: the `.srt`/`.vtt` written next to this (clean) video, in place of `ExportCommon.subtitles`; `durationMs` the
+   * cut when the video's own duration is not recorded.
+   */
+  subtitleFiles?: { sets: SubtitleSet[]; durationMs?: number };
   /**
    * Decision 974: the file is a render made for this export at another quality or size, in the core's own temp folder (an
    * absolute path, never from a request), copied in place of `outputs/vN/<file>`; `file` then names its extension.
@@ -178,7 +185,7 @@ export interface ExportCommon {
   signal?: AbortSignal;
 }
 
-const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.webm', '.m4v']);
+export const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.webm', '.m4v']);
 
 /**
  * Writes `<stem>.<lang>.srt` and `.vtt` for each set into `destination` (the names of `copyUnique`: `-2`… when taken, the
@@ -265,6 +272,8 @@ async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refu
   // Languages (Phase 12, final review I2): a pattern without `{locale}` names each translated file with its language, also
   // when it is exported alone, so a translation is never named like the original; the primary language's file keeps its name.
   for (const x of named) x.stem = localizedStem(pattern, x.stem, x.locale, x.localized === true);
+  // Subtitles (decision 1643): a video with subtitles drawn into it is `<stem>-sub-<lang>`; the plain `<stem>` stays clean.
+  for (const x of named) if (x.subtitled) x.stem = subtitledStem(x.stem, x.subtitled);
   // Format instances (Phase 12, Ruling C): two files that would share a name (a pattern without `{format}`, or a preset id
   // equal to an instance's slug, `foo-2` and `foo@2`) keep them apart with the instance's slugged id on each k > 1 instance;
   // a bare instance's name never changes. What still collides is refused below, as before.
@@ -284,12 +293,13 @@ async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refu
     try {
       const to = await copyUnique(copy, from, dest, it.stem, it.ext);
       if (to) files.push({ from, to }); else skipped.push(it.file);
-      if (to && opts.subtitles && VIDEO_EXTENSIONS.has(it.ext)) {
+      const subs = it.subtitleFiles ?? opts.subtitles;
+      if (to && subs && subs.sets.length > 0 && VIDEO_EXTENSIONS.has(it.ext)) {
         const stem = basename(to).slice(0, basename(to).length - it.ext.length);
         // The cues are cut at THIS video's duration (an older or longer version differs from the latest); never unbounded.
         const durationMs = it.durationSec && it.durationSec > 0 ? Math.round(it.durationSec * 1000)
-          : opts.subtitles.durationMs ?? Math.max(0, ...opts.subtitles.sets.flatMap((s) => s.cues.map((c) => c.end)));
-        for (const sub of await writeSubtitleFiles({ destination: dest, stem, sets: opts.subtitles.sets, durationMs, ...(opts.copy ? { copy: opts.copy } : {}) })) files.push({ from, to: sub });
+          : subs.durationMs ?? Math.max(0, ...subs.sets.flatMap((s) => s.cues.map((c) => c.end)));
+        for (const sub of await writeSubtitleFiles({ destination: dest, stem, sets: subs.sets, durationMs, ...(opts.copy ? { copy: opts.copy } : {}) })) files.push({ from, to: sub });
       }
       if (to && it.set) files.push(...await copySet(copy, dir, it.n, it.set, dest, basename(to).slice(0, basename(to).length - it.ext.length)));
     } catch (e) {

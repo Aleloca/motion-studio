@@ -1,11 +1,11 @@
 import { exportRenderJobKey, renderJobKey } from '@motion-studio/shared';
 import { randomBytes } from 'node:crypto';
 import { constants } from 'node:fs';
-import { copyFile, lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import {
-  compositionProblemText, outputWarningText, scaledSize, DEFAULT_EXPORT_QUALITY, profileApplies, recordedQuality, effectiveLinks, formatDisplayName, messages, renderProblems, renderState, type RenderInfo, type RenderProfile,
+  compositionProblemText, outputWarningText, scaledSize, stripSubtitles, toSrt, DEFAULT_EXPORT_QUALITY, profileApplies, recordedQuality, effectiveLinks, formatDisplayName, messages, renderProblems, renderState, type RenderInfo, type RenderProfile,
   type Brief, type Composition, type FormatPreset, type JobProgress, type JobSummary, type Locale, type LocaleTag, type Localization, type LocalizationIssue, type LocalizationRow, type ManifestV2, type OutputFileInfo,
   type IdentitySetInfo, type RenderedSubtitles, type OutputIssue, type ServerMessage, type VersionComposition, type VersionEntry,
 } from '@motion-studio/shared';
@@ -32,7 +32,7 @@ import { sessionMediaOf, type MediaNormalizer } from '../render/media-normalize.
 import { activeLocaleRenders } from '../render/render-sweep.ts';
 import { storeComposition, storeRenderOptions } from '../store-pack/flatten.ts';
 import type { RenderCompositionOptions, RenderEngine, RenderResult } from '../render/renderer.ts';
-import { defaultSubtitleLang, drawsSubtitles, stageSubtitles, subtitleHashes, writeSubtitleSnapshot, type SubtitleCommits } from '../subtitles/store.ts';
+import { defaultSubtitleLang, drawsSubtitles, readSubtitleSet, stageSubtitles, subtitleHashes, writeSubtitleSnapshot, type SubtitleCommits } from '../subtitles/store.ts';
 import { CodedError } from '../workspace-store.ts';
 import { noteCoreOutputWrite } from './carry-over.ts';
 import { CreativeStore } from './creative-store.ts';
@@ -90,6 +90,12 @@ export interface RenderJobDeps {
 
 /** How a caller waits for render jobs (decision 974): its cancel, and the jobs it waits for (an export job's progress). */
 export interface RenderWait { signal?: AbortSignal; onJobs?(ids: string[]): void }
+/**
+ * How a render made for an export is made (decision 974; subtitles Task 21): at `profile`, and, when `subtitles` is given, with
+ * explicit subtitles instead of the version render's default pairing: `drawn` the language drawn into the picture (null: none),
+ * `strip` the subtitles track taken out (the clean video of anti-goal 2), `soft` the languages muxed as `mov_text` tracks.
+ */
+export interface ExportRenderOptions { profile: RenderProfile; subtitles?: { drawn: LocaleTag | null; strip: boolean; soft: LocaleTag[] } }
 /** A render made for one export (decision 974): the file (in the export's own temp folder) and its record. */
 export interface ExportRendered {
   path: string; render: RenderInfo;
@@ -340,7 +346,7 @@ export class RenderJobService {
    * `render-export:…` (`exportRenderJobKey`): it records nothing in the version, and no other request reuses it. A follower is
    * the file of its primary's render. Returns the files made (key `<n>\0<format>`) and the failed jobs' errors.
    */
-  async exportRenderAndWait(ref: CreativeRef, pending: ReadonlyMap<number, string[]>, profile: RenderProfile, outDir: string, w: RenderWait = {}):
+  async exportRenderAndWait(ref: CreativeRef, pending: ReadonlyMap<number, string[]>, o: ExportRenderOptions, outDir: string, w: RenderWait = {}):
     Promise<{ files: Map<string, ExportRendered>; failed: Map<string, string>; errors: string[] }> {
     if (w.signal?.aborted) throw new RenderError('cancelled', 'cancelled');
     const files = new Map<string, ExportRendered>();
@@ -348,7 +354,7 @@ export class RenderJobService {
     const ids: string[] = [];
     try {
       for (const [n, formats] of pending) {
-        ids.push((await this.startExportRender(ref, n, formats, profile, join(outDir, `v${n}`),
+        ids.push((await this.startExportRender(ref, n, formats, o, join(outDir, `v${n}`),
           (format, r) => files.set(`${n}\0${format}`, r), (format, reason) => failed.set(`${n}\0${format}`, reason))).id);
       }
     } catch (e) {
@@ -375,8 +381,9 @@ export class RenderJobService {
     clearTimeout(timer);
   }
 
-  private async startExportRender(ref: CreativeRef, n: number, requested: string[], profile: RenderProfile, outDir: string,
+  private async startExportRender(ref: CreativeRef, n: number, requested: string[], o: ExportRenderOptions, outDir: string,
     collect: (format: string, r: ExportRendered) => void, fail: (format: string, reason: string) => void): Promise<JobSummary> {
+    const { profile, subtitles } = o;
     const locale = currentLocale();
     const m = messages(locale);
     const store = new CreativeStore(ref.projectDir);
@@ -389,7 +396,8 @@ export class RenderJobService {
     if (plan.unknown.length > 0) throw new CodedError(400, m.render.formatsNotInVersion({ list: plan.unknown.join(', ') }), 'formats-not-in-version');
     if (!this.deps.engine) throw new CodedError(503, m.render.noRenderer, 'no-renderer');
     if ((await this.deps.engine.info()).kind === null) throw new CodedError(409, m.render.noBrowser, 'no-browser');
-    const detail = [profile.short !== undefined ? `${profile.short}p` : null, profile.fps !== undefined ? m.render.fpsName({ fps: profile.fps }) : null, m.render.qualityNames[profile.quality]].filter(Boolean).join(' · ');
+    const detail = [profile.short !== undefined ? `${profile.short}p` : null, profile.fps !== undefined ? m.render.fpsName({ fps: profile.fps }) : null, m.render.qualityNames[profile.quality],
+      subtitles?.drawn ? m.render.exportSubtitlesDrawn({ lang: subtitles.drawn }) : subtitles?.strip ? m.render.exportNoSubtitles : null].filter(Boolean).join(' · ');
     return this.deps.queue.enqueue({
       key: exportRenderJobKey(ref.root, ref.projectSlug, ref.creativeSlug, n, randomBytes(4).toString('hex')),
       kind: 'render', lane: 'render',
@@ -408,7 +416,7 @@ export class RenderJobService {
             if (signal.aborted) throw new RenderError('cancelled', 'cancelled');
             const followers = Object.keys(plan.followers).filter((f) => plan.followers[f] === format);
             try {
-              const r = await this.renderForExport({ ref, n, format, comps, presets, profile, outDir, signal, progress, label, locale });
+              const r = await this.renderForExport({ ref, n, format, comps, presets, profile, ...(subtitles ? { subtitles } : {}), outDir, signal, progress, label, locale });
               // Each file checked against its own format (a follower's limits are its own, M4), as a version render's.
               for (const f of [format, ...followers]) {
                 const checked = await this.exportChecks(r.path, findPreset(presets, f) ?? { ...findPreset(presets, format)!, id: f }, r.composition, r.render, locale);
@@ -448,8 +456,8 @@ export class RenderJobService {
    * One format rendered for an export at `profile` (decision 974): the composition checked as for the version's render (its
    * hash still the recorded one), its media normalised, rendered into `outDir`. Nothing is recorded in the version.
    */
-  private async renderForExport(o: { ref: CreativeRef; n: number; format: string; comps: VersionComposition[]; presets: FormatPreset[]; profile: RenderProfile; outDir: string;
-    signal: AbortSignal; progress: (p: JobProgress) => void; label: (id: string) => string; locale: Locale }): Promise<{ path: string; render: RenderInfo; composition: Composition }> {
+  private async renderForExport(o: { ref: CreativeRef; n: number; format: string; comps: VersionComposition[]; presets: FormatPreset[]; profile: RenderProfile;
+    subtitles?: ExportRenderOptions['subtitles']; outDir: string; signal: AbortSignal; progress: (p: JobProgress) => void; label: (id: string) => string; locale: Locale }): Promise<{ path: string; render: RenderInfo; composition: Composition }> {
     const { ref, n, format, signal } = o;
     const m = messages(o.locale);
     const store = new CreativeStore(ref.projectDir);
@@ -467,27 +475,53 @@ export class RenderJobService {
     if (loaded.hash !== entry.hash) throw new Error(m.render.compositionChanged({ format: o.label(format) }));
     // Report 39 (decision 1234): at the export's frame rate for the media too, so an embedded video is normalised at that
     // rate (its own cache file) and never shows each frame twice at 60 fps.
-    const own = storeComposition(format, loaded.composition);
+    // Subtitles Task 21: the clean video never has the subtitles track (anti-goal 2).
+    const own = storeComposition(format, o.subtitles?.strip ? stripSubtitles(loaded.composition) : loaded.composition);
     const composition = o.profile.fps !== undefined && o.profile.fps !== own.fps ? { ...own, fps: o.profile.fps } : own;
     // The video sources at the render's scale (review #8): never upscaled soft at 1440p or 2160p.
     const scale = scaledSize(composition, o.profile.short).width / composition.width;
     const prepared = await this.deps.normalizer.prepare({ projectDir: ref.projectDir, compDir, composition, signal, ...(scale !== 1 ? { scale } : {}),
       onProgress: (p) => o.progress({ format, phase: 'media', done: p.done, total: p.total }) });
     const file = `${format}.${renderExtension(preset, !(composition.duration > 0))}`;
+    // Soft tracks (Task 21): SRT files of the core's own, in the export's work folder, cut at the composition's end.
+    const softDir = o.subtitles?.soft.length ? await mkdtemp(join(o.outDir, `.soft-${format}-`)) : null;
     try {
-      // The version render's subtitles (default pairing), not recorded: an export renders the version as it would be.
-      const subtitles = await this.subtitlesFor(ref, n, composition, { snapshot: false });
+      // Without explicit subtitles: the version render's (default pairing), not recorded: an export renders the version as it
+      // would be. With them (Task 21): only the language asked for, never recorded either.
+      if (o.subtitles && (o.subtitles.drawn !== null || softDir)) await this.deps.subtitleCommits?.flush(ref);
+      const subtitles = o.subtitles ? await this.exportSubtitles(ref, composition, o.subtitles.drawn) : (await this.subtitlesFor(ref, n, composition, { snapshot: false }))?.data;
+      const soft: Array<{ lang: LocaleTag; srt: string }> = [];
+      for (const lang of softDir ? o.subtitles!.soft : []) {
+        const found = await readSubtitleSet(creativeDir, lang);
+        if (!found) throw new Error(messages(o.locale).export.subtitlesMissing({ lang }));
+        const srt = join(softDir!, `${lang}.srt`);
+        await writeFile(srt, toSrt(found.set.cues, { durationMs: Math.round(composition.duration * 1000) }));
+        soft.push({ lang, srt });
+      }
       const result = await this.deps.engine!.render({
         ...this.deps.renderOptions,
         dir: creativeDir, versionDir: `outputs/v${n}`, composition, format: preset, out: join(o.outDir, file), signal, ...(sessionMediaOf(prepared) ? { media: sessionMediaOf(prepared)! } : {}),
-        ...(subtitles?.data ? { subtitles: subtitles.data } : {}),
+        ...(subtitles ? { subtitles } : {}), ...(soft.length ? { softSubtitles: soft } : {}),
         quality: o.profile.quality, ...(o.profile.short !== undefined ? { short: o.profile.short } : {}),
         onProgress: (p) => o.progress({ format, phase: 'frames', done: p.frames, total: p.total }),
       });
       return { path: result.file, render: renderInfoOf(result, o.profile.quality, composition.fps), composition };
     } finally {
       prepared.release();
+      if (softDir) await rm(softDir, { recursive: true, force: true }).catch(() => {});
     }
+  }
+
+  /**
+   * The set drawn into a render made for an export with explicit subtitles (Task 21): `lang`'s, cut at the composition's end;
+   * none for `null` (the clean video). A language asked for that cannot be drawn now (its set gone, or no subtitles track) fails
+   * the render rather than giving a video named for subtitles it does not have.
+   */
+  private async exportSubtitles(ref: CreativeRef, composition: Composition, lang: LocaleTag | null): Promise<NonNullable<RenderCompositionOptions['subtitles']> | undefined> {
+    if (lang === null) return undefined;
+    const staged = await stageSubtitles({ creativeDir: new CreativeStore(ref.projectDir).dir(ref.creativeSlug), composition, lang, durationMs: Math.round(composition.duration * 1000) });
+    if (!staged) throw new Error(messages(currentLocale()).export.subtitlesMissing({ lang }));
+    return staged.data;
   }
 
   /**

@@ -3,12 +3,14 @@
  * Task 7 of the subtitles plan: `.srt`/`.vtt` files in the export. The core writes `<stem>.<lang>.srt|vtt` next to each
  * exported video (never a still); the route refuses a language with no set; an export without the field is as it was.
  */
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { SUBTITLES_SCHEMA_ID, toSrt, toVtt, type SubtitleSet, type VersionEntry } from '@motion-studio/shared';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import {
+  EXPORT_NAME_MAX, SUBTITLES_SCHEMA_ID, exportNameCollisions, subtitledStem, toSrt, toVtt, withLocaleSuffix, type FormatPreset, type JobSummary, type ManifestV2, type SubtitleSet, type VersionEntry,
+} from '@motion-studio/shared';
 import { AppConfigStore } from '../src/app-config.ts';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { exportPicks, exportVersion } from '../src/creatives/export.ts';
@@ -16,7 +18,12 @@ import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { Git } from '../src/git.ts';
 import { buildServer } from '../src/server/app.ts';
 import { writeSubtitleSet } from '../src/subtitles/store.ts';
+import { readCompositionFolder } from '../src/compositions/composition-files.ts';
+import { execCommand } from '../src/exec.ts';
 import { fileURLToPath } from 'node:url';
+import { hasFfmpeg, probe } from './helpers/analysis-fixtures.ts';
+import { FONT } from './helpers/render-env.ts';
+import { H, PRESETS, startInstanceEnv, type InstanceEnv } from './helpers/instance-server.ts';
 
 const set = (lang: 'it' | 'en'): SubtitleSet => ({
   $schema: SUBTITLES_SCHEMA_ID, lang, origin: 'speech', transcript: 'whisper-small', detected: lang,
@@ -138,5 +145,219 @@ describe('export route with subtitles', () => {
     expect(await readFile(join(vdest, 'lancio-instagram-reel-9x16-v8.it.vtt'), 'utf8')).toBe(toVtt(set('it').cues, { durationMs: 9000 }));
     const plain = await app.inject({ method: 'POST', url, payload: { destination: join(base, 'plain'), picks: { 'instagram-post-1x1': 1 } } });
     expect((await readdir(join(base, 'plain'))).length).toBe(plain.json().files.length);
+  });
+});
+
+/**
+ * Task 21 (spec §6.6, decision 1643, anti-goals 2 and 4): the subtitle choices of an export, with the fake render engine of
+ * the instance suites recording each render's options. `drawn`: one video per language, `<stem>-sub-<lang>`; `files` and
+ * `soft`: the CLEAN video `<stem>` (never drawn subtitles), the tracks muxed into it, the files next to it.
+ */
+describe('export subtitle choices (Task 21)', { timeout: 120_000 }, () => {
+  const DURATION = 5;
+  const STILL: FormatPreset = { id: 'test-still', channel: 'Test', name: 'Still', width: 320, height: 180, kind: 'image', extensions: ['png'] };
+  const subtitlesTrack = { id: 'subs', kind: 'subtitles',
+    clips: [{ id: 'sub', type: 'subtitles', start: 0, duration: DURATION, props: { fontFamily: 'Mono', fontSize: 20, color: '#ffffff', position: 'bottom', margin: 10, maxWidth: 0.8 } }] };
+  const composition = (o: { track?: boolean; still?: boolean }) => ({
+    $schema: 'motion-studio/composition@1', width: 320, height: 180, fps: 30, duration: o.still ? 0 : DURATION, background: '#101010',
+    fonts: o.track ? [{ family: 'Mono', src: 'assets/Mono.woff2', weight: 400 }] : [],
+    scenes: o.still ? [] : [{ id: 's', start: 0, duration: DURATION }],
+    tracks: [
+      { id: 't', kind: 'visual', clips: [{ id: 'box', type: 'shape', start: 0, duration: o.still ? 0 : DURATION, props: { x: 10, y: 10, width: 100, height: 50, fill: '#ff0000' } }] },
+      ...(o.track ? [subtitlesTrack] : []),
+    ],
+  });
+  const tset = (lang: 'it' | 'en'): SubtitleSet => ({ ...set(lang), timing: { version: 1, format: 'test-wide', fingerprint: 'a'.repeat(64) },
+    ...(lang === 'en' ? { origin: 'translation', sourceLang: 'it' } as const : {}) });
+  let env: InstanceEnv;
+  let mp4: Buffer | null = null;
+  beforeAll(async () => {
+    if (!hasFfmpeg) return;
+    // A real (tiny) MP4 for the version renders whose soft tracks are muxed without a render.
+    const d = await mkdtemp(join(tmpdir(), 'ms-exp-subs-mp4-'));
+    const r = await execCommand('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=red:s=160x90:d=1:r=25', '-f', 'lavfi', '-i', 'sine=f=440:d=1:r=48000',
+      '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', join(d, 'v.mp4')], { timeoutMs: 60_000 });
+    if (r.code !== 0) throw new Error(r.stderr);
+    mp4 = await readFile(join(d, 'v.mp4'));
+    await rm(d, { recursive: true, force: true });
+  }, 60_000);
+  beforeEach(async () => {
+    env = await startInstanceEnv('ms-test-export-subs-');
+    expect((await env.app.inject({ method: 'PUT', url: '/api/formats', headers: H, payload: { presets: [...PRESETS, STILL] } })).statusCode).toBe(200);
+  });
+  afterEach(async () => { await env?.close(); });
+
+  /** A v2 version 1: `test-wide` (with or without the subtitles track), its follower `test-wide-b`, and `extra` formats. */
+  async function creative(o: { track?: boolean; still?: boolean }): Promise<{ slug: string; dir: string }> {
+    const formats = ['test-wide', 'test-wide-b', ...(o.still ? ['test-still'] : [])];
+    const r = await env.app.inject({ method: 'POST', url: '/api/projects/acme/creatives', headers: H, payload: {
+      title: 'Launch', generate: false, brief: { goal: 'g', message: '', formats, durationSec: DURATION, assets: [], notes: '', links: { 'test-wide-b': 'test-wide' }, locales: { primary: 'it', extra: [] } },
+    } });
+    expect(r.statusCode, r.body).toBe(201);
+    const slug = r.json().slug as string;
+    const store = env.store();
+    const vdir = store.outputsDir(slug, 1);
+    const compositions: Array<{ format: string; dir: string; hash: string; followsFormat?: string; problems: string[] }> = [];
+    for (const [f, c] of [['test-wide', composition({ track: o.track })], ...(o.still ? [['test-still', composition({ still: true })] as const] : [])] as const) {
+      const cdir = join(vdir, 'compositions', f);
+      await mkdir(join(cdir, 'assets'), { recursive: true });
+      if (f === 'test-wide') await copyFile(FONT, join(cdir, 'assets', 'Mono.woff2'));
+      await writeFile(join(cdir, 'composition.json'), JSON.stringify(c));
+      compositions.push({ format: f, dir: `compositions/${f}`, hash: (await readCompositionFolder(cdir)).hash, problems: [] });
+    }
+    compositions.push({ format: 'test-wide-b', dir: 'compositions/test-wide', hash: compositions[0]!.hash, followsFormat: 'test-wide', problems: [] });
+    await writeFile(join(vdir, 'manifest.json'), JSON.stringify({ schemaVersion: 2, compositions, renders: [] } satisfies ManifestV2));
+    await store.appendVersion(slug, { n: 1, commit: null, sessionId: null, status: 'complete', createdAt: new Date().toISOString(), request: 'r', outputs: [], problems: [], tools: [],
+      renderCommand: null, basedOn: null, compositions });
+    const dir = store.dir(slug);
+    await writeSubtitleSet(dir, tset('it'));
+    await writeSubtitleSet(dir, tset('en'));
+    // The version render (draws `it`, the brief's primary, when the composition has the track).
+    await env.render(slug, 1);
+    return { slug, dir };
+  }
+  const exportOf = (slug: string, payload: object) => env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export`, headers: H,
+    payload: { destination: join(env.base, 'out'), picks: { 'test-wide': 1 }, ...payload } });
+  const outFiles = async () => (await readdir(join(env.base, 'out'))).sort();
+  const exportJobs = async () => ((await env.app.inject({ url: '/api/jobs', headers: H })).json() as JobSummary[]).filter((j) => j.key.startsWith('render-export:'));
+  const STEM = 'launch-test-wide-v1';
+
+  it('drawn: one export render per language with that set drawn, named <stem>-sub-<lang>, the version render untouched', async () => {
+    const { slug } = await creative({ track: true });
+    expect(env.fake.renders.at(-1)!.subtitles?.lang).toBe('it');
+    const before = env.fake.renders.length;
+    const r = await exportOf(slug, { subtitles: { drawn: ['en'] } });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(env.fake.renders.length).toBe(before + 1);
+    const call = env.fake.renders.at(-1)!;
+    expect(call.subtitles?.lang).toBe('en');
+    expect(call.composition.tracks.some((t) => t.kind === 'subtitles')).toBe(true);
+    expect('softSubtitles' in call).toBe(false);
+    expect(await outFiles()).toEqual([`${STEM}-sub-en.mp4`]);
+    const jobs = await exportJobs();
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]!.label).toMatch(/(subtitles|sottotitoli) en\)$/);
+  });
+
+  it('drawn in the language the version render already draws reuses it (no render)', async () => {
+    const { slug, dir } = await creative({ track: true });
+    const before = env.fake.renders.length;
+    const r = await exportOf(slug, { subtitles: { drawn: ['it'] } });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(env.fake.renders.length).toBe(before);
+    expect(await outFiles()).toEqual([`${STEM}-sub-it.mp4`]);
+    expect(await readFile(join(env.base, 'out', `${STEM}-sub-it.mp4`), 'utf8')).toBe(await readFile(join(dir, 'outputs', 'v1', 'test-wide.mp4'), 'utf8'));
+  });
+
+  it('files and soft on a composition with the track: one clean export render (stripped, soft tracks), files next to it, never drawn (anti-goal 2)', async () => {
+    const { slug } = await creative({ track: true });
+    const before = env.fake.renders.length;
+    const seen: string[] = [];
+    env.fake.after = async (o) => { for (const s of o.softSubtitles ?? []) seen.push(await readFile(s.srt, 'utf8')); };
+    const r = await exportOf(slug, { subtitles: { files: ['it'], soft: ['it', 'en'] } });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(env.fake.renders.length).toBe(before + 1);
+    const call = env.fake.renders.at(-1)!;
+    expect('subtitles' in call).toBe(false);
+    expect(call.composition.tracks.some((t) => t.kind === 'subtitles')).toBe(false);
+    expect(call.softSubtitles?.map((s) => s.lang)).toEqual(['it', 'en']);
+    for (const s of call.softSubtitles!) expect(s.srt.startsWith(dirname(call.out))).toBe(true);
+    expect(seen).toEqual([toSrt(tset('it').cues, { durationMs: DURATION * 1000 }), toSrt(tset('en').cues, { durationMs: DURATION * 1000 })]);
+    expect(await outFiles()).toEqual([`${STEM}.it.srt`, `${STEM}.it.vtt`, `${STEM}.mp4`]);
+    expect((await exportJobs())[0]!.label).toMatch(/(without subtitles|senza sottotitoli)\)$/);
+  });
+
+  it.skipIf(!hasFfmpeg)('files and soft on a composition without the track: no render job, the tracks muxed into a copy of the version file', async () => {
+    env.fake.content = (o) => (o.format.id === 'test-wide' ? mp4 : null);
+    const { slug, dir } = await creative({});
+    const before = env.fake.renders.length;
+    const versionBytes = await readFile(join(dir, 'outputs', 'v1', 'test-wide.mp4'));
+    const r = await exportOf(slug, { subtitles: { files: ['it'], soft: ['it', 'en'] } });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(env.fake.renders.length).toBe(before);
+    expect(await exportJobs()).toHaveLength(0);
+    expect(await outFiles()).toEqual([`${STEM}.it.srt`, `${STEM}.it.vtt`, `${STEM}.mp4`]);
+    const streams = (await probe(join(env.base, 'out', `${STEM}.mp4`))).streams;
+    expect(streams.filter((s) => s.codec_type === 'subtitle').map((s) => [s.codec_name, (s.tags as Record<string, string>).language])).toEqual([['mov_text', 'ita'], ['mov_text', 'eng']]);
+    expect(streams.filter((s) => s.codec_type === 'video')).toHaveLength(1);
+    expect(streams.filter((s) => s.codec_type === 'audio')).toHaveLength(1);
+    // The version's own file is never changed.
+    expect((await readFile(join(dir, 'outputs', 'v1', 'test-wide.mp4'))).equals(versionBytes)).toBe(true);
+  });
+
+  it('files only on a composition without the track: the version file as it is, the files next to it', async () => {
+    const { slug, dir } = await creative({});
+    const before = env.fake.renders.length;
+    const r = await exportOf(slug, { subtitles: { files: ['en'] } });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(env.fake.renders.length).toBe(before);
+    expect(await outFiles()).toEqual([`${STEM}.en.srt`, `${STEM}.en.vtt`, `${STEM}.mp4`]);
+    expect(await readFile(join(env.base, 'out', `${STEM}.mp4`), 'utf8')).toBe(await readFile(join(dir, 'outputs', 'v1', 'test-wide.mp4'), 'utf8'));
+  });
+
+  it('stills are skipped with a note (the still itself is exported as it is)', async () => {
+    const { slug } = await creative({ track: true, still: true });
+    const before = env.fake.renders.length;
+    const r = await exportOf(slug, { picks: { 'test-still': 1 }, subtitles: { drawn: ['en'], files: ['it'] } });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(env.fake.renders.length).toBe(before);
+    expect(await outFiles()).toEqual(['launch-test-still-v1.png']);
+    expect(r.json().skipped).toEqual([expect.stringMatching(/Still/)]);
+  });
+
+  it('a follower reuses its primary\'s subtitled file, renamed', async () => {
+    const { slug } = await creative({ track: true });
+    const before = env.fake.renders.length;
+    const r = await exportOf(slug, { follow: ['test-wide-b'], subtitles: { drawn: ['en'] } });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(env.fake.renders.length).toBe(before + 1);
+    expect(await outFiles()).toEqual(['launch-test-wide-b-v1-sub-en.mp4', `${STEM}-sub-en.mp4`]);
+    const a = await readFile(join(env.base, 'out', `${STEM}-sub-en.mp4`), 'utf8');
+    expect(await readFile(join(env.base, 'out', 'launch-test-wide-b-v1-sub-en.mp4'), 'utf8')).toBe(a);
+  });
+
+  it('drawn, files and soft together: the drawn video and the clean one, the files with the clean one', async () => {
+    const { slug } = await creative({ track: true });
+    const before = env.fake.renders.length;
+    const r = await exportOf(slug, { subtitles: { drawn: ['en'], files: ['it'], soft: ['en'] } });
+    expect(r.statusCode, r.body).toBe(200);
+    const calls = env.fake.renders.slice(before);
+    expect(calls).toHaveLength(2);
+    expect(calls.map((c) => c.subtitles?.lang ?? null).sort()).toEqual(['en', null]);
+    const clean = calls.find((c) => !c.subtitles)!;
+    expect(clean.softSubtitles?.map((s) => s.lang)).toEqual(['en']);
+    expect(clean.composition.tracks.some((t) => t.kind === 'subtitles')).toBe(false);
+    expect(calls.find((c) => c.subtitles)!.softSubtitles).toBeUndefined();
+    expect(await outFiles()).toEqual([`${STEM}-sub-en.mp4`, `${STEM}.it.srt`, `${STEM}.it.vtt`, `${STEM}.mp4`]);
+  });
+
+  it('refuses a drawn or soft language without a set (400 export-subtitles-missing), nothing rendered', async () => {
+    const { slug } = await creative({ track: true });
+    const before = env.fake.renders.length;
+    for (const subtitles of [{ drawn: ['fr'] }, { soft: ['fr'] }]) {
+      const r = await exportOf(slug, { subtitles });
+      expect([r.statusCode, r.json().code]).toEqual([400, 'export-subtitles-missing']);
+    }
+    expect(env.fake.renders.length).toBe(before);
+  });
+
+  it('without subtitles the export runs as before: no render, no job, the version file (anti-goal 4)', async () => {
+    const { slug, dir } = await creative({ track: true });
+    const before = env.fake.renders.length;
+    const r = await exportOf(slug, {});
+    expect(r.statusCode, r.body).toBe(200);
+    expect(env.fake.renders.length).toBe(before);
+    expect(await exportJobs()).toHaveLength(0);
+    expect(await outFiles()).toEqual([`${STEM}.mp4`]);
+    expect(await readFile(join(env.base, 'out', `${STEM}.mp4`), 'utf8')).toBe(await readFile(join(dir, 'outputs', 'v1', 'test-wide.mp4'), 'utf8'));
+  });
+});
+
+describe('subtitledStem (decision 1643)', () => {
+  it('names a drawn video <stem>-sub-<lang>, never like a localized one', () => {
+    expect(subtitledStem('launch-reel-v1', 'pt-BR')).toBe('launch-reel-v1-sub-pt-br');
+    const names = [subtitledStem('a', 'en'), withLocaleSuffix('a', 'en'), 'a', subtitledStem('a', 'it'), withLocaleSuffix('a', 'it')].map((s) => `${s}.mp4`);
+    expect(exportNameCollisions(names)).toEqual([]);
+    expect(subtitledStem('x'.repeat(200), 'en').length).toBeLessThanOrEqual(EXPORT_NAME_MAX);
   });
 });

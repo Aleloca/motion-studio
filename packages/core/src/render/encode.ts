@@ -294,3 +294,15 @@ export function finalMuxArgs(o: { list: string; wav?: string | undefined; hasAud
     ...(soft.length ? ['-c:s', 'mov_text', ...soft.flatMap((t, i) => [`-metadata:s:s:${i}`, `language=${ISO639_2[t.lang]}`])] : []),
     '-c:v', 'copy', '-movflags', '+faststart', '-f', o.format, o.out];
 }
+
+/**
+ * The soft tracks muxed into an existing clean video, without a render (subtitles Task 21): the file (its video and audio
+ * copied, `-c copy`) and one SRT input per track, mapped and tagged as `finalMuxArgs` does. `input` is the core's own copy
+ * of the file, never the version's file itself.
+ */
+export function softRemuxArgs(o: { input: string; soft: readonly SoftSubtitle[]; format: string; out: string }): string[] {
+  return [...ownInput(o.input, { formats: MP4_DEMUXERS }), ...o.soft.flatMap((t) => subtitleInput(t.srt)),
+    '-map', '0:v:0', '-map', '0:a?', ...o.soft.flatMap((_, i) => ['-map', `${1 + i}:s:0`]),
+    '-c', 'copy', '-c:s', 'mov_text', ...o.soft.flatMap((t, i) => [`-metadata:s:s:${i}`, `language=${ISO639_2[t.lang]}`]),
+    '-movflags', '+faststart', '-f', o.format, o.out];
+}

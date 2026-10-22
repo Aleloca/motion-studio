@@ -3,7 +3,7 @@ import { recoverRenameJournal } from '../library/rename-recovery.ts';
 import { lstat, readdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, join, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { DEFAULT_EXPORT_QUALITY, EXPORT_FPS, EXPORT_QUALITIES, isDefaultProfile, EXPORT_RESOLUTIONS, type ExportFps, type ExportQuality, type RenderProfile, type VersionEntry, messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type Composition, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow, activeMembers, hostOf, isVariantId, letterOfSlug, MAX_NEW_VARIANTS, variantIdSchema, type VariantDetail, type VariantId, type SubtitleSet, briefSessionRefSchema, singleAgentOn, subtitleHashesOf, videoAnalysisJobKey } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_QUALITY, EXPORT_FPS, EXPORT_QUALITIES, isDefaultProfile, EXPORT_RESOLUTIONS, type ExportFps, type ExportQuality, type RenderProfile, type VersionEntry, messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type Composition, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow, activeMembers, hostOf, isVariantId, letterOfSlug, MAX_NEW_VARIANTS, variantIdSchema, type VariantDetail, type VariantId, type SubtitleSet, type LocaleTag, briefSessionRefSchema, singleAgentOn, subtitleHashesOf, videoAnalysisJobKey } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import type { BriefClaim, BriefSessionService } from '../brief/brief-session.ts';
@@ -13,7 +13,10 @@ import type { CreativeSideStateStore, StoppedSession } from '../creatives/creati
 import { checkDestination, exportResolved, exportVersion, pendingRenders, profiledRenders, resolveExportPicks, resolveLocalizedItems, type ExportItem, type ExportResult } from '../creatives/export.ts';
 import { makeOwnedTempDir } from '../render/owner.ts';
 import type { ExportJobService, ExportOutcome, ExportRun } from '../creatives/export-jobs.ts';
-import type { ExportRendered, RenderWait } from '../creatives/render-jobs.ts';
+import type { ExportRendered, ExportRenderOptions, RenderWait } from '../creatives/render-jobs.ts';
+import { planSubtitleExport, remuxSoft, type SubtitleChoice, type SubtitleEntry } from '../creatives/subtitle-export.ts';
+import { findFfmpeg } from '../render/encode.ts';
+import { RenderError } from '../render/errors.ts';
 import { assertLocalesInBrief, checkedLocale } from '../localization/validate.ts';
 import { storyboardDir, storyboardKey, storyboardSchema, sweepStoryboardTemps, workVersion, type PreviewService } from '../creatives/previews.ts';
 import { readJsonFile } from '../json-file.ts';
@@ -46,7 +49,7 @@ import { CodedError, expandHome, WorkspaceError, type WorkspaceStore } from '../
 import { sendConfinedFile } from './serve-file.ts';
 import { localizedCompositionView } from './localization-routes.ts';
 import { subtitleSummaries, subtitleTimingNow } from './subtitles-routes.ts';
-import { readSubtitleSet, stageDefaultSubtitles } from '../subtitles/store.ts';
+import { readSubtitleSet, stageDefaultSubtitles, subtitleHashes } from '../subtitles/store.ts';
 import { currentLocale, t } from '../i18n.ts';
 import { BrandStore } from '../brand/brand-store.ts';
 import { readConfinedFile } from '../brand/agent-guard.ts';
@@ -176,8 +179,15 @@ const exportBody = z.object({
   locales: z.array(z.string().min(1).max(40)).min(1).max(11).optional(),
   /** "Render anyway" for translations rendered first that have open problems or outdated entries. */
   force: z.boolean().optional(),
-  /** The subtitles to export (spec §6.6); `files`: the languages written as `.srt`/`.vtt` next to each video. Absent: as before. */
-  subtitles: z.object({ files: z.array(z.string().min(1).max(40)).min(1).max(11).optional() }).optional(),
+  /**
+   * The subtitles to export (spec §6.6, Task 21): `drawn` one video per language with it drawn (`<stem>-sub-<lang>`); `files`
+   * the `.srt`/`.vtt` and `soft` the `mov_text` tracks, both with the CLEAN video `<stem>` (anti-goal 2). Absent: as before.
+   */
+  subtitles: z.object({
+    drawn: z.array(z.string().min(1).max(40)).min(1).max(11).optional(),
+    files: z.array(z.string().min(1).max(40)).min(1).max(11).optional(),
+    soft: z.array(z.string().min(1).max(40)).min(1).max(11).optional(),
+  }).optional(),
   ...exportProfileFields,
 });
 /** Phase 15 (spec §6): `POST …/export-group`; no picks, the group selection decides. */
@@ -857,26 +867,32 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const briefPrimary = creative.brief.locales?.primary;
     const includeSource = tags === null || (briefPrimary !== undefined && tags.includes(briefPrimary));
     const otherTags = tags === null ? [] : tags.filter((x) => x !== briefPrimary);
-    // The `.srt`/`.vtt` files: every language needs its set (a refusal before anything is rendered or copied).
-    const subtitleTags = [...new Set((body.subtitles?.files ?? []).map((x) => checkedLocale(x, currentLocale())))];
-    const subtitleSets: SubtitleSet[] = [];
-    for (const lang of subtitleTags) {
+    // The subtitles (Task 21): every language needs its set (a refusal before anything is rendered or copied).
+    const tagsOf = (list: string[] | undefined) => [...new Set((list ?? []).map((x) => checkedLocale(x, currentLocale())))];
+    const drawnTags = tagsOf(body.subtitles?.drawn);
+    const fileTags = tagsOf(body.subtitles?.files);
+    const softTags = tagsOf(body.subtitles?.soft);
+    const subtitleSetOf = new Map<LocaleTag, SubtitleSet>();
+    for (const lang of [...new Set([...drawnTags, ...fileTags, ...softTags])]) {
       const found = await readSubtitleSet(creativeDir, lang);
       if (!found) throw new CodedError(400, t().export.subtitlesMissing({ lang }), 'export-subtitles-missing');
-      subtitleSets.push(found.set);
+      subtitleSetOf.set(lang, found.set);
     }
     // Each video is cut at its own duration (its output's); the latest main format's is only the fallback for an unknown one.
-    const fallbackMs = subtitleSets.length > 0 ? (await subtitleTimingNow(ref.projectDir, ref.creativeSlug, presets))?.durationMs : undefined;
-    const subtitles = subtitleSets.length > 0 ? { sets: subtitleSets, ...(fallbackMs !== undefined ? { durationMs: fallbackMs } : {}) } : null;
+    const fallbackMs = subtitleSetOf.size > 0 ? (await subtitleTimingNow(ref.projectDir, ref.creativeSlug, presets))?.durationMs : undefined;
+    const subtitleChoice: SubtitleChoice | null = subtitleSetOf.size > 0
+      ? { drawn: drawnTags, files: fileTags.map((x) => subtitleSetOf.get(x)!), soft: softTags, ...(fallbackMs !== undefined ? { durationMs: fallbackMs } : {}) } : null;
     const common = { creativeDir, destination, slug: ref.creativeSlug, title: creative.title, forbiddenRoot: ref.root, presets, pattern,
       ...(typeof body.date === 'string' ? { now: body.date } : {}),
-      ...(subtitles ? { subtitles } : {}),
       label: (id: string) => formatDisplayName(presets, id, currentLocale(), creative.brief.formatLabels) };
     if (body.picks === undefined && body.follow === undefined && body.version !== undefined) {
-      // The older single-version payload: every output of that version.
+      // The older single-version payload: every output of that version, the `.srt`/`.vtt` next to each video (Task 7); it has
+      // no clean-video rule, so it takes no drawn or soft subtitles.
+      if (drawnTags.length > 0 || softTags.length > 0) throw new CodedError(400, t().export.invalidPicks, 'export-invalid-picks');
       const version = (await ref.store.readVersions(ref.creativeSlug)).find((v) => v.n === body.version);
       if (!version) throw new WorkspaceError(404, t().errors.versionNotFound);
-      return exportVersion({ ...common, version });
+      const files = fileTags.map((x) => subtitleSetOf.get(x)!);
+      return exportVersion({ ...common, version, ...(files.length > 0 ? { subtitles: { sets: files, ...(fallbackMs !== undefined ? { durationMs: fallbackMs } : {}) } } : {}) });
     }
     const profile = profileOfBody(body);
     refuseProfileWithLanguages(profile, otherTags);
@@ -947,8 +963,12 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
         });
         if (!items.length) throw new CodedError(409, t().export.renderProblemsOnly({ list: problems.join(', ') }), 'export-render-problems');
       }
-      // Decision 974: the videos at another quality or size are rendered for this export alone, then copied from there.
-      const result = await withExportRenders(ref, items, versions, profile ? { profile, presets } : null, wait, async (list, gaps) => {
+      // Decision 974: the videos at another quality or size are rendered for this export alone, then copied from there. With
+      // subtitles (Task 21) the renders made for the export also give the drawn and the clean videos.
+      const renderFor = subtitleChoice
+        ? (copy: (list: ExportItem[], gaps: ExportGap[]) => Promise<ExportResult>) => withSubtitleExports(ref, items, versions, subtitleChoice, subtitleSetOf, profile, presets, common.label, wait, copy)
+        : (copy: (list: ExportItem[], gaps: ExportGap[]) => Promise<ExportResult>) => withExportRenders(ref, items, versions, profile ? { profile, presets } : null, wait, copy);
+      const result = await renderFor(async (list, gaps) => {
         // A render made for the export that failed refuses the export, as a version render does; one with problems is left
         // out and listed (I2, review #4).
         const failedNow = gaps.filter((g) => g.kind === 'failed');
@@ -1155,7 +1175,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       for (const [slug, pending] of plans) {
         const at = { ...ref, creativeSlug: slug };
         await notDiscarded(at);
-        const r = await ctx.renders.exportRenderAndWait(at, pending, o.profile, join(temp, slug), wait);
+        const r = await ctx.renders.exportRenderAndWait(at, pending, { profile: o.profile }, join(temp, slug), wait);
         for (const [n, fs] of pending) {
           for (const f of fs) {
             const k = `${n}\0${f}`;
@@ -1176,6 +1196,70 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
         kept.push(f ? { ...it, source: f.path, file: basename(f.path), width: f.render.width, height: f.render.height } : it);
       }
       return await copy(kept, gaps);
+    } finally {
+      await rm(temp, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
+    }
+  }
+
+  /**
+   * Subtitles Task 21 (spec §6.6, decision 1643): the export's subtitle choices (`planSubtitleExport`) made real, in a temp folder
+   * of the core's own like `withExportRenders`: one render job per version and way of rendering (the clean video, each drawn
+   * language), the soft tracks muxed into a copy of a clean version file that needs no render, then `copy` with the items and
+   * the gaps (as `withExportRenders`). The notes (a still, a video with no subtitles track) are added to `skipped`.
+   */
+  async function withSubtitleExports(ref: CreativeRef & { store: CreativeStore }, items: ExportItem[], versions: VersionEntryList, choice: SubtitleChoice,
+    sets: ReadonlyMap<LocaleTag, SubtitleSet>, profile: RenderProfile | undefined, presets: FormatPreset[], label: (id: string) => string, wait: RenderWait,
+    copy: (items: ExportItem[], gaps: ExportGap[]) => Promise<ExportResult>): Promise<ExportResult> {
+    const creativeDir = ref.store.dir(ref.creativeSlug);
+    const profiled = profile ? await profiledRenders(creativeDir, versions, items.filter((it) => !it.localized), { profile, presets }) : new Map<number, string[]>();
+    const { entries, notes } = await planSubtitleExport({ creativeDir, versions, items, choice, profiled, hashes: await subtitleHashes(creativeDir), label });
+    const withNotes = (r: ExportResult): ExportResult => (notes.length ? { ...r, skipped: [...r.skipped, ...notes] } : r);
+    // Nothing a subtitled export can give (e.g. only drawn languages on videos without the track): said, never an empty folder.
+    if (entries.length === 0) throw new CodedError(409, t().export.renderProblemsOnly({ list: notes.join(' ') }), 'export-subtitles-nothing');
+    const ff = entries.some((e) => e.kind === 'remux') ? await findFfmpeg() : null;
+    if (entries.some((e) => e.kind === 'remux') && !ff) throw new CodedError(409, t().errors.noFfmpegSubtitles, 'export-no-ffmpeg');
+    if (!entries.some((e) => e.kind !== 'copy')) return withNotes(await copy(entries.map((e) => e.item), []));
+    const temp = await makeOwnedTempDir(join(tmpdir(), 'ms-render-export-'));
+    try {
+      const made = new Map<SubtitleEntry, ExportItem>();
+      const gaps: ExportGap[] = [];
+      for (const e of entries) {
+        if (e.kind !== 'remux') continue;
+        if (wait.signal?.aborted) throw new RenderError('cancelled', 'cancelled');
+        const it = e.item;
+        const durationMs = it.durationSec && it.durationSec > 0 ? Math.round(it.durationSec * 1000) : choice.durationMs ?? Math.max(0, ...choice.soft.flatMap((x) => sets.get(x)!.cues.map((c) => c.end)));
+        try {
+          const path = await remuxSoft({ ff: ff!, creativeDir, item: it, sets: choice.soft.map((x) => sets.get(x)!), durationMs, work: temp, ...(wait.signal ? { signal: wait.signal } : {}) });
+          made.set(e, { ...it, source: path, file: basename(path) });
+        } catch (err) {
+          if (wait.signal?.aborted) throw new RenderError('cancelled', 'cancelled');
+          gaps.push({ item: it, slug: ref.creativeSlug, kind: 'failed', reason: err instanceof Error ? err.message : String(err), problems: [], issues: [] });
+        }
+      }
+      // One render job per version for each way of rendering, in the order the entries name them.
+      const groups = new Map<string, { subtitles: NonNullable<ExportRenderOptions['subtitles']>; pending: Map<number, string[]>; list: SubtitleEntry[] }>();
+      for (const e of entries) {
+        if (e.kind !== 'render') continue;
+        const g = groups.get(e.key) ?? { subtitles: e.subtitles, pending: new Map<number, string[]>(), list: [] };
+        const fs = g.pending.get(e.item.n) ?? [];
+        if (!fs.includes(e.item.format)) g.pending.set(e.item.n, [...fs, e.item.format]);
+        g.list.push(e);
+        groups.set(e.key, g);
+      }
+      if (groups.size > 0) await notDiscarded(ref);
+      let k = 0;
+      for (const g of groups.values()) {
+        const r = await ctx.renders.exportRenderAndWait(ref, g.pending, { profile: profile ?? { quality: DEFAULT_EXPORT_QUALITY }, subtitles: g.subtitles }, join(temp, `r${k++}`), wait);
+        for (const e of g.list) {
+          const key = `${e.item.n} ${e.item.format}`;
+          const f = r.files.get(key);
+          if (!f) { gaps.push({ item: e.item, slug: ref.creativeSlug, kind: 'failed', reason: r.failed.get(key) ?? r.errors[0] ?? '', problems: [], issues: [] }); continue; }
+          if (f.problems.length > 0) { gaps.push({ item: e.item, slug: ref.creativeSlug, kind: 'problems', problems: f.problems, issues: f.issues }); continue; }
+          made.set(e, { ...e.item, source: f.path, file: basename(f.path), width: f.render.width, height: f.render.height });
+        }
+      }
+      const kept = entries.flatMap((e) => (e.kind === 'copy' ? [e.item] : made.has(e) ? [made.get(e)!] : []));
+      return withNotes(await copy(kept, gaps));
     } finally {
       await rm(temp, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
     }
