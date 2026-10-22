@@ -280,6 +280,9 @@ export const en = {
     subtitlesNoCues: (p: { ids: string }) => `The subtitles have no line with these ids: ${p.ids}.`,
     subtitlesNoIds: 'Name at least one subtitle line to translate again.',
     subtitlesNothingToTranslate: (p: { lang: string }) => `Every line in ${p.lang} is one you corrected: there is nothing to translate.`,
+    subtitlesLangExists: (p: { lang: string }) => `This creative already has subtitles in ${p.lang}.`,
+    subtitlesNothingStale: (p: { lang: string }) => `No line in ${p.lang} needs translating again (the lines you corrected are translated again only when you pick them).`,
+    subtitlesSourceSet: 'These subtitles come from the video\'s speech and the other languages are translated from them: they cannot be deleted.',
     subtitlesTranslateBad: (p: { detail: string }) => `submit_subtitle_translation: ${p.detail}`,
     subtitlesTranslateLimit: 'submit_subtitle_translation can be called at most 5 times in a run.',
     transcriptionNoBundled: 'This app has no Whisper of its own: install one or point to it in Settings → Video transcription.',
@@ -427,6 +430,7 @@ export const en = {
   },
   subtitles: {
     commit: (p: { title: string; lang: string }) => `Subtitles: ${p.title} (${p.lang})`,
+    commitDeleted: (p: { title: string; lang: string }) => `Subtitles deleted: ${p.title} (${p.lang})`,
     ready: (p: { lang: string }) => `Subtitles ready (${p.lang}).`,
     readyOtherLang: (p: { lang: string; brief: string }) => `Subtitles ready in ${p.lang}: it is the language spoken in the video, not the brief's (${p.brief}).`,
     noSpeech: 'No speech in the video: no subtitles.',

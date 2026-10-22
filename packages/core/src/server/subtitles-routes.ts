@@ -1,14 +1,16 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import {
-  isSupportedLocale, issuesText, SUBTITLE_LIMITS, subtitleCuesHash, subtitleSetHash, subtitleSetSchema, subtitleSetText, subtitlesJobKey, toSrt, toVtt, transcriptionChoiceSchema,
+  isSupportedLocale, issuesText, SUBTITLE_LIMITS, staleCues, subtitleCuesHash, subtitleSetHash, subtitleSetSchema, subtitleSetText, subtitlesJobKey, toSrt, toVtt, transcriptionChoiceSchema,
   type FormatPreset, type JobSummary, type LocaleTag, type ServerMessage, type SubtitleSet, type SubtitlesSummary, type TranscriptionPending,
 } from '@motion-studio/shared';
 import { CreativeStore } from '../creatives/creative-store.ts';
 import type { CreativeRef } from '../creatives/creative-turns.ts';
 import { currentLocale, t } from '../i18n.ts';
-import { listSubtitleSets, readSubtitleSet, type SubtitleCommits, subtitleSetLocks, writeSubtitleSet } from '../subtitles/store.ts';
-import { subtitleTimingOf, type SubtitlesService } from '../subtitles/subtitles-job.ts';
+import { addSubtitleLanguage, retranslateSubtitles } from '../subtitles/languages.ts';
+import { listSubtitleSets, readSubtitleSet, removeSubtitleSet, speechSourceSet, type SubtitleCommits, subtitleSetLocks, writeSubtitleSet } from '../subtitles/store.ts';
+import { languageName, subtitleTimingOf, type SubtitlesService } from '../subtitles/subtitles-job.ts';
+import { type SubtitleTranslateService, subtitleTranslateJobKey } from '../subtitles/translate-job.ts';
 
 export { SUBTITLE_WAVEFORM_PEAKS } from '../subtitles/subtitles-job.ts';
 import { CodedError, type WorkspaceStore } from '../workspace-store.ts';
@@ -19,6 +21,9 @@ const choiceSchema = transcriptionChoiceSchema.omit({ file: true });
 /** The editor's save: the whole cue list, checked against the stored set's fields with `subtitleSetSchema`. */
 const saveSchema = z.strictObject({ baseHash: z.string().regex(/^[0-9a-f]{64}$/), cues: z.array(z.unknown()).max(SUBTITLE_LIMITS.cues) });
 const checkedSchema = z.strictObject({ baseHash: z.string().regex(/^[0-9a-f]{64}$/) });
+const addSchema = z.strictObject({ lang: z.string().refine(isSupportedLocale, { message: 'not a supported language' }) });
+/** "Ritraduci": the lines asked for by id (absent: every stale line). */
+const retranslateSchema = z.strictObject({ ids: z.array(z.string().min(1).max(64)).max(SUBTITLE_LIMITS.cues).optional() });
 
 function parse<T>(schema: z.ZodType<T>, body: unknown): T {
   const r = schema.safeParse(body ?? {});
@@ -42,7 +47,9 @@ export async function subtitleTimingNow(projectDir: string, creativeSlug: string
 /**
  * The creative's subtitle sets as the UI lists them. `timingChanged`: the audio the set was timed on differs from the latest
  * version's main format (false when that version has no video), each set against the video it was timed on (the original,
- * or its language's own: Task 24); `staleCues` comes with the translations (Phase 4).
+ * or its language's own: Task 24); never for a translation, which follows its source (Task 25: its lines are translated again
+ * from it, "Rifai i tempi" is the source's). `staleCues`: a translation's lines whose source line changed since (`staleCues`
+ * against the original speech set; 0 without one, and for a set made from speech).
  */
 export async function subtitleSummaries(projectDir: string, creativeSlug: string, presets: () => Promise<FormatPreset[]>): Promise<SubtitlesSummary[]> {
   const sets = await listSubtitleSets(new CreativeStore(projectDir).dir(creativeSlug));
@@ -53,12 +60,15 @@ export async function subtitleSummaries(projectDir: string, creativeSlug: string
     if (!nows.has(locale ?? '')) nows.set(locale ?? '', subtitleTimingNow(projectDir, creativeSlug, list, locale));
     return nows.get(locale ?? '')!;
   };
+  const source = speechSourceSet(sets);
   return Promise.all(sets.map(async (s) => {
-    const now = await nowOf(s.timing.locale);
+    const translation = s.origin === 'translation';
+    const now = translation ? null : await nowOf(s.timing.locale);
     return {
       lang: s.lang, origin: s.origin, ...(s.sourceLang ? { sourceLang: s.sourceLang } : {}),
       cues: s.cues.length, edited: s.cues.filter((c) => c.edited).length, hash: subtitleSetHash(s), cuesHash: subtitleCuesHash(s),
-      timing: s.timing, timingChanged: now !== null && now.fingerprint !== s.timing.fingerprint, staleCues: 0,
+      timing: s.timing, timingChanged: now !== null && now.fingerprint !== s.timing.fingerprint,
+      staleCues: translation && source ? staleCues(s, source).length : 0,
     };
   }));
 }
@@ -70,7 +80,7 @@ export async function subtitleSummaries(projectDir: string, creativeSlug: string
  * supported ones answers 400, one without a set 404.
  */
 export function registerSubtitlesRoutes(app: FastifyInstance, ctx: {
-  requireWorkspace: () => WorkspaceStore; subtitles: SubtitlesService; jobs: () => JobSummary[]; presets: () => Promise<FormatPreset[]>;
+  requireWorkspace: () => WorkspaceStore; subtitles: SubtitlesService; translate: Pick<SubtitleTranslateService, 'start'>; jobs: () => JobSummary[]; presets: () => Promise<FormatPreset[]>;
   commits: Pick<SubtitleCommits, 'touch'>; broadcast: (m: ServerMessage) => void;
 }) {
   const refOf = async (slug: string, creativeSlug: string): Promise<CreativeRef> => {
@@ -92,10 +102,8 @@ export function registerSubtitlesRoutes(app: FastifyInstance, ctx: {
     // The set file's hash only: the editor's saves compare it (the lines' hash is the summaries', final review M3).
     return { set: r.set, hash: r.hash };
   };
-  const activeJob = (ref: CreativeRef): JobSummary | null => {
-    const key = subtitlesJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
-    return ctx.jobs().find((j) => j.key === key && (j.state === 'queued' || j.state === 'running')) ?? null;
-  };
+  const jobOf = (key: string): JobSummary | null => ctx.jobs().find((j) => j.key === key && (j.state === 'queued' || j.state === 'running')) ?? null;
+  const activeJob = (ref: CreativeRef): JobSummary | null => jobOf(subtitlesJobKey(ref.root, ref.projectSlug, ref.creativeSlug));
   type PC = { Params: { slug: string; c: string } };
   type PL = { Params: { slug: string; c: string; lang: string } };
 
@@ -122,6 +130,14 @@ export function registerSubtitlesRoutes(app: FastifyInstance, ctx: {
     const pending = await ctx.subtitles.recheck(ref);
     if (!pending) throw new CodedError(409, t().errors.transcriptionNothingAsks, 'transcription-not-asked');
     return { job: activeJob(ref), pending };
+  });
+  // Task 25 (spec §6.5, U8): a new subtitle language, from its own voices or translated (`addSubtitleLanguage`); the brief's
+  // languages stay as they are. Before `/:lang`.
+  app.post<PC>('/api/projects/:slug/creatives/:c/subtitles/languages', async (req) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const body = parse(addSchema, req.body);
+    const { job } = await addSubtitleLanguage({ subtitles: ctx.subtitles, translate: ctx.translate }, ref, body.lang as LocaleTag);
+    return { job };
   });
   // Task 13: the timeline's waveform of a version's main format (before `/:lang`, which would take `waveform` as a language);
   // with `lang`, the audio that language's set is timed on (its own localized video, Task 24).
@@ -181,6 +197,36 @@ export function registerSubtitlesRoutes(app: FastifyInstance, ctx: {
     ctx.commits.touch(ref, t().subtitles.commit({ title: (await store.get(ref.creativeSlug)).title, lang }));
     try { ctx.broadcast({ type: 'subtitles', project: ref.projectSlug, creative: ref.creativeSlug, lang }); } catch { /* a faulty listener */ }
     return done;
+  });
+  // Task 25, "Ritraduci": the lines asked for, or every stale one the user did not correct (`retranslateSubtitles`).
+  app.post<PL>('/api/projects/:slug/creatives/:c/subtitles/:lang/retranslate', async (req) => {
+    const lang = langOf(req.params.lang);
+    const ref = await refOf(req.params.slug, req.params.c);
+    const body = parse(retranslateSchema, req.body);
+    return { job: await retranslateSubtitles({ translate: ctx.translate }, ref, lang, body.ids) };
+  });
+  // Task 25: a language's set deleted, under the set lock, committed and told to the clients; a render that drew it turns stale
+  // (its hash is no longer the creative's). Never the original video's speech set, the source of the translations (409
+  // `subtitles-source-set`); nor a set a job is about to write: its translation (409 `subtitles-translating`) or, for a set
+  // made from speech, the creative's subtitles job (409 `subtitles-running`). A file that is not a valid set is left: 404.
+  app.delete<PL>('/api/projects/:slug/creatives/:c/subtitles/:lang', async (req) => {
+    const lang = langOf(req.params.lang);
+    const ref = await refOf(req.params.slug, req.params.c);
+    const store = new CreativeStore(ref.projectDir);
+    const creativeDir = store.dir(ref.creativeSlug);
+    const name = languageName(lang);
+    await subtitleSetLocks.run(creativeDir, async () => {
+      const sets = await listSubtitleSets(creativeDir);
+      const set = sets.find((s) => s.lang === lang);
+      if (!set) throw new CodedError(404, t().errors.subtitlesNoLang({ lang: name }), 'subtitles-not-found');
+      if (speechSourceSet(sets) === set) throw new CodedError(409, t().errors.subtitlesSourceSet, 'subtitles-source-set');
+      if (jobOf(subtitleTranslateJobKey(ref, lang))) throw new CodedError(409, t().errors.subtitlesTranslating({ lang: name }), 'subtitles-translating');
+      if (set.origin === 'speech' && activeJob(ref)) throw new CodedError(409, t().errors.subtitlesRunning, 'subtitles-running');
+      await removeSubtitleSet(creativeDir, lang);
+    });
+    ctx.commits.touch(ref, t().subtitles.commitDeleted({ title: (await store.get(ref.creativeSlug)).title, lang }));
+    try { ctx.broadcast({ type: 'subtitles', project: ref.projectSlug, creative: ref.creativeSlug, lang }); } catch { /* a faulty listener */ }
+    return { deleted: lang };
   });
   // The cues clamped to the latest version's main format (a cue past its end is left out); no video: as they are.
   const download = async (req: { params: PL['Params'] }, reply: FastifyReply, ext: 'srt' | 'vtt') => {

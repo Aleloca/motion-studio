@@ -133,6 +133,10 @@ const TOOLS = [
       id: str('Line id', { minLength: 1, maxLength: 32 }), was: str('The line\'s text as you read it', { maxLength: 200 }), text: str('The line\'s new text, at most two lines (\\n between them)', { minLength: 1, maxLength: 200 }),
     }, required: ['id', 'was', 'text'], additionalProperties: false } },
   }, required: ['lang'], additionalProperties: false } },
+  // Task 25 (spec §6.5, U8): one more subtitle language, made from its own voices or translated. The core checks it again.
+  { name: 'add_subtitle_language', description: 'Adds subtitles in another language to this creative now: from that language\'s own voices when its localized video has them, else translated from the subtitles made from the video\'s speech (start_subtitles first when there are none). It runs on its own; the chat tells the user when they are ready. Subtitles only: the video is not translated and the brief\'s languages do not change: for subtitles use this tool, not add_language (which translates the video itself). Refused when the language already has subtitles.', inputSchema: { type: 'object', properties: {
+    lang: str('Language tag of the new subtitles, e.g. "en"'),
+  }, required: ['lang'], additionalProperties: false } },
 ];
 
 const send = (m) => process.stdout.write(`${JSON.stringify(m)}\n`);

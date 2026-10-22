@@ -1,6 +1,6 @@
 import { lstat } from 'node:fs/promises';
 import {
-  SUBTITLE_LIMITS, SUBTITLE_RULES, SUBTITLES_DIR, SUBTITLES_SCHEMA_ID, staleCues, subtitleSetSchema, subtitleSetText, wrapLines,
+  SUBTITLE_LIMITS, SUBTITLE_RULES, SUBTITLES_DIR, SUBTITLES_SCHEMA_ID, sourceCueOf, staleCues, subtitleSetSchema, subtitleSetText, wrapLines,
   type JobSummary, type LocaleTag, type ServerMessage, type SubtitleCue, type SubtitleSet,
 } from '@motion-studio/shared';
 import { z } from 'zod';
@@ -34,8 +34,9 @@ export interface SubtitleTranslateDeps {
 }
 
 /**
- * `target`: the language to translate into. `ids` ("Ritraduci"): only these source lines, and a line the user corrected in the
- * target is translated again only when listed here (the user asked for it); absent: every source line but the corrected ones.
+ * `target`: the language to translate into. `ids` ("Ritraduci"): only these lines, and a line the user corrected in the target
+ * is translated again only when listed here (the user asked for it); absent: every source line but the corrected ones. An id
+ * is a source line's, or a target line's whose source was timed again since (new ids): the source line it overlaps most.
  */
 export interface SubtitleTranslateStart { target: LocaleTag; ids?: string[] }
 
@@ -154,10 +155,12 @@ export function subtitleTranslateTools(): Record<'submit_subtitle_translation', 
  * The cues of the target set after a translation (anti-goal 1): a corrected target line (`edited`) stays unless `explicit`
  * lists it; every translated line takes its source line's id, times and text (`source.text`). Without `explicit` (a full
  * translation) the result is the source's lines plus the corrected lines no source line has; with it, the target's lines with
- * the translated ones put in.
+ * the translated ones put in, each in place of the target line of its id, of the target lines `listed` (the ids asked for),
+ * and of the uncorrected translated lines that stood for the same source line (a source timed again since, Task 25).
  */
 export function mergeTranslation(o: {
   source: readonly SubtitleCue[]; target: readonly SubtitleCue[]; texts: ReadonlyMap<string, string>; explicit: ReadonlySet<string> | null;
+  listed?: ReadonlySet<string>;
 }): SubtitleCue[] {
   const current = new Map(o.target.map((c) => [c.id, c]));
   const translated = (s: SubtitleCue): SubtitleCue | null => {
@@ -169,7 +172,9 @@ export function mergeTranslation(o: {
   let cues: SubtitleCue[];
   if (o.explicit) {
     const replaced = new Map(o.source.filter((s) => o.explicit!.has(s.id)).map((s) => [s.id, translated(s)]));
-    cues = [...o.target.filter((c) => !replaced.has(c.id)), ...[...replaced.values()].filter((c): c is SubtitleCue => c !== null)];
+    const gone = (c: SubtitleCue) => replaced.has(c.id) || o.listed?.has(c.id) === true
+      || (!c.edited && c.source !== undefined && replaced.has(sourceCueOf(c, o.source)?.id ?? ''));
+    cues = [...o.target.filter((c) => !gone(c)), ...[...replaced.values()].filter((c): c is SubtitleCue => c !== null)];
   } else {
     const ids = new Set(o.source.map((s) => s.id));
     cues = [
@@ -183,6 +188,8 @@ export function mergeTranslation(o: {
 interface Plan {
   ref: CreativeRef; target: LocaleTag; title: string;
   source: SubtitleSet; asked: SubtitleCue[]; explicit: ReadonlySet<string> | null;
+  /** The ids asked for as given (source or target lines). */
+  listed: ReadonlySet<string> | null;
 }
 
 /**
@@ -232,15 +239,24 @@ export class SubtitleTranslateService {
     if (existing?.origin === 'speech') throw new CodedError(409, t().errors.subtitlesLangSpoken({ lang }), 'subtitles-lang-spoken');
     if (!o.ids) {
       const corrected = new Set(existing?.cues.filter((c) => c.edited).map((c) => c.id));
-      return { ref, target: o.target, title: creative.title, source, asked: source.cues.filter((c) => !corrected.has(c.id)), explicit: null };
+      return { ref, target: o.target, title: creative.title, source, asked: source.cues.filter((c) => !corrected.has(c.id)), explicit: null, listed: null };
     }
     // "Ritraduci" (review M2, M3): lines of an existing translation, at least one, each a line of the source.
     if (o.ids.length === 0) throw new CodedError(400, t().errors.subtitlesNoIds, 'subtitles-no-ids');
     if (!existing) throw new CodedError(409, t().errors.subtitlesNoLang({ lang }), 'subtitles-no-lang');
-    const explicit = new Set(o.ids);
-    const missing = [...explicit].filter((id) => !source.cues.some((c) => c.id === id));
+    const listed = new Set(o.ids);
+    const explicit = new Set<string>();
+    const missing: string[] = [];
+    for (const id of listed) {
+      if (source.cues.some((c) => c.id === id)) { explicit.add(id); continue; }
+      // A translated line whose source was timed again (new ids, Task 25): the source line it stands for now.
+      const mine = existing.cues.find((c) => c.id === id);
+      const now = mine?.source ? sourceCueOf(mine, source.cues) : null;
+      if (now) explicit.add(now.id);
+      else missing.push(id);
+    }
     if (missing.length) throw new CodedError(400, t().errors.subtitlesNoCues({ ids: list(missing) }), 'subtitles-no-cues');
-    return { ref, target: o.target, title: creative.title, source, asked: source.cues.filter((c) => explicit.has(c.id)), explicit };
+    return { ref, target: o.target, title: creative.title, source, asked: source.cues.filter((c) => explicit.has(c.id)), explicit, listed };
   }
 
   private async note(jobId: string, ref: CreativeRef, level: 'info' | 'error', text: string, state: 'ready' | 'failed', lang: LocaleTag): Promise<void> {
@@ -273,7 +289,7 @@ export class SubtitleTranslateService {
         }
         if (now?.set.origin === 'speech') throw new Error(t().errors.subtitlesLangSpoken({ lang }));
         // Each line records the source text it was translated from (`source.text`, the run's source).
-        const cues = mergeTranslation({ source: source.cues, target: now?.set.cues ?? [], texts, explicit: plan.explicit });
+        const cues = mergeTranslation({ source: source.cues, target: now?.set.cues ?? [], texts, explicit: plan.explicit, ...(plan.listed ? { listed: plan.listed } : {}) });
         const set: SubtitleSet = {
           $schema: SUBTITLES_SCHEMA_ID, lang: target, origin: 'translation', sourceLang: source.lang,
           transcript: source.transcript, detected: null, timing: source.timing, cues,

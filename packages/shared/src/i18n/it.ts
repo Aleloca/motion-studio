@@ -278,6 +278,9 @@ export const it: Messages = {
     subtitlesNoCues: (p) => `I sottotitoli non hanno righe con questi id: ${p.ids}.`,
     subtitlesNoIds: 'Indica almeno una riga dei sottotitoli da ritradurre.',
     subtitlesNothingToTranslate: (p) => `Tutte le righe in ${p.lang} sono righe che hai corretto: non c'è niente da tradurre.`,
+    subtitlesLangExists: (p) => `Questa creatività ha già i sottotitoli in ${p.lang}.`,
+    subtitlesNothingStale: (p) => `Nessuna riga in ${p.lang} è da ritradurre (le righe che hai corretto si ritraducono solo se le scegli).`,
+    subtitlesSourceSet: 'Questi sottotitoli vengono dal parlato del video e le altre lingue si traducono da loro: non si possono eliminare.',
     subtitlesTranslateBad: (p) => `submit_subtitle_translation: ${p.detail}`,
     subtitlesTranslateLimit: 'submit_subtitle_translation si può chiamare al massimo 5 volte per esecuzione.',
     transcriptionNoBundled: 'Questa app non ha un Whisper suo: installane uno o indicalo in Impostazioni → Trascrizione video.',
@@ -425,6 +428,7 @@ export const it: Messages = {
   },
   subtitles: {
     commit: (p) => `Sottotitoli: ${p.title} (${p.lang})`,
+    commitDeleted: (p) => `Sottotitoli eliminati: ${p.title} (${p.lang})`,
     ready: (p) => `Sottotitoli pronti (${p.lang}).`,
     readyOtherLang: (p) => `Sottotitoli pronti in ${p.lang}: è la lingua parlata nel video, non quella del brief (${p.brief}).`,
     noSpeech: 'Nessun parlato nel video: nessun sottotitolo.',

@@ -617,13 +617,15 @@ export class SubtitlesService {
    * Task 14 (spec §6.7): version `n` of `ref` was just saved (an agent turn, `jobId`, or a direct edit, null). When its main
    * format's audio differs from what a subtitle set was timed on, the chat says "Il video è cambiato: ricontrolla i tempi"
    * (with "Rifai i tempi"): once, on the version that moved the audio (decision 1715): a version whose audio is the previous
-   * version's tells nothing new. Nothing is changed: the sets keep their cues until the user retimes them. Never throws.
+   * version's tells nothing new. Nothing is changed: the sets keep their cues until the user retimes them. Only the sets made
+   * from speech (Task 25): a translation follows its source (its lines are translated again from it, with its times) and
+   * "Rifai i tempi" would refuse it. Never throws.
    */
   async versionSaved(ref: CreativeRef, n: number, jobId: string | null): Promise<void> {
     try {
       const store = new CreativeStore(ref.projectDir);
       const dir = store.dir(ref.creativeSlug);
-      const sets = await listSubtitleSets(dir);
+      const sets = (await listSubtitleSets(dir)).filter((s) => s.origin === 'speech');
       if (sets.length === 0) return;
       const versions = await store.readVersions(ref.creativeSlug);
       const i = versions.findIndex((v) => v.n === n);

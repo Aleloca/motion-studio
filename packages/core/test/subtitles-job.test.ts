@@ -467,6 +467,22 @@ describe('the video changed under the subtitles (Task 14, spec §6.7)', { timeou
     expect(timingEntries()).toEqual([]);
   });
 
+  it('a translation never gets the notice: it follows its source, which "Rifai i tempi" redoes (Task 25)', async () => {
+    await creative([audioClip()]);
+    const c2 = await version(2, [{ ...audioClip(), start: 1, duration: 2 }]);
+    // The speech set is already timed on v2's audio; the translation still has v1's times.
+    await writeSubtitleSet(creativeDir(), {
+      $schema: SUBTITLES_SCHEMA_ID, lang: 'it', origin: 'speech', transcript: 'whisper-small', detected: 'it',
+      timing: { version: 2, format: 'test-wide', fingerprint: audioFingerprint(c2) }, cues: [{ id: 'c1', start: 1200, end: 2800, text: 'Ciao a tutti.' }],
+    });
+    await writeSubtitleSet(creativeDir(), {
+      $schema: SUBTITLES_SCHEMA_ID, lang: 'en', origin: 'translation', sourceLang: 'it', transcript: 'whisper-small', detected: null,
+      timing: { version: 1, format: 'test-wide', fingerprint: '0'.repeat(64) }, cues: [{ id: 'c1', start: 200, end: 1800, text: 'Hi all.', source: { text: 'Ciao a tutti.' } }],
+    });
+    await service.versionSaved(ref, 2, null);
+    expect(timingEntries()).toEqual([]);
+  });
+
   it('"Rifai i tempi" needs a set: refused without one, or for a language that has none', async () => {
     await creative([audioClip()]);
     await expect(service.start(ref, { mode: 'retime' })).rejects.toMatchObject({ status: 409, apiCode: 'subtitles-no-set' });

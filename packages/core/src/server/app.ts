@@ -927,13 +927,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       ...briefs.tools(),
       ...videoAnalysisTools(),
       ...subtitleTranslateTools(),
-      ...subtitlesTools({ subtitles, turns, commits: subtitleCommits, broadcast: (m) => hub.broadcast(m) }),
+      ...subtitlesTools({ subtitles, translate: subtitleTranslate, turns, commits: subtitleCommits, broadcast: (m) => hub.broadcast(m) }),
     },
   });
   registerBriefRoutes(app, { requireWorkspace, briefs, configDir });
   registerAnalysisRoutes(app, { requireWorkspace, analyses, media, git: deps.git });
   registerSubtitlesRoutes(app, {
-    requireWorkspace, subtitles, jobs: () => queue.list(), presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
+    requireWorkspace, subtitles, translate: subtitleTranslate, jobs: () => queue.list(), presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
     commits: subtitleCommits, broadcast: (msg) => hub.broadcast(msg),
   });
   registerTranscriptionRoutes(app, { transcription });

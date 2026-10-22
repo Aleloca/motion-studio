@@ -8,8 +8,10 @@ import { CreativeStore } from '../creatives/creative-store.ts';
 import type { CreativeRef, CreativeTurnService } from '../creatives/creative-turns.ts';
 import { currentLocale, t } from '../i18n.ts';
 import { CodedError } from '../workspace-store.ts';
+import { addSubtitleLanguage } from './languages.ts';
 import { readSubtitleSet, type SubtitleCommits, subtitleSetLocks, writeSubtitleSet } from './store.ts';
 import type { StyleTurnHost, SubtitlesService } from './subtitles-job.ts';
+import type { SubtitleTranslateService } from './translate-job.ts';
 
 const lang = z.string().refine(isSupportedLocale, { message: 'not a supported language' });
 /** `drawn` (U9): drawn into the video, or files/track only; absent (an older agent) means files only. */
@@ -24,6 +26,7 @@ const editInput = z.strictObject({
   cues: z.array(z.strictObject({ id: z.string().min(1).max(32), was: z.string().max(SUBTITLE_LIMITS.text), text: z.string().max(SUBTITLE_LIMITS.text) })).max(200).optional(),
 }).refine((x) => (x.replace?.length ?? 0) + (x.cues?.length ?? 0) > 0, { message: 'give replace or cues' });
 type EditInput = z.infer<typeof editInput>;
+const addLanguageInput = z.strictObject({ lang });
 
 function parse<T>(schema: z.ZodType<T>, args: unknown): T {
   const r = schema.safeParse(args ?? {});
@@ -85,13 +88,16 @@ export function editCues(cues: readonly SubtitleCue[], edit: Pick<EditInput, 're
  *   every changed cue marked edited, committed in the subtitle commits' batch and told to the clients. All or nothing: an
  *   unknown cue id or a text the set refuses changes nothing (400), nor does a line whose text is no longer the `was` the
  *   agent read (409 `subtitles-cue-changed`: the user corrected it since, anti-goal 1).
+ * - `add_subtitle_language` (Task 25, spec §6.5, U8): a new subtitle language now, as the route (`addSubtitleLanguage`: from
+ *   the language's own voices, or translated from the speech set); a refusal is the tool's error. The brief is not touched.
  */
 export function subtitlesTools(deps: {
-  subtitles: Pick<SubtitlesService, 'start' | 'assertTranscriptionOn' | 'onReady' | 'styleTurn'>;
+  subtitles: Pick<SubtitlesService, 'start' | 'assertTranscriptionOn' | 'onReady' | 'styleTurn' | 'localizedVoiceLang'>;
+  translate: Pick<SubtitleTranslateService, 'start'>;
   turns: Pick<CreativeTurnService, 'onTurnSettled' | 'noteFromTurn' | 'setSubtitlesDrawn'> & StyleTurnHost;
   commits: Pick<SubtitleCommits, 'touch'>;
   broadcast: (m: ServerMessage) => void;
-}): Record<'start_subtitles' | 'edit_subtitles', BridgeHandler> {
+}): Record<'start_subtitles' | 'edit_subtitles' | 'add_subtitle_language', BridgeHandler> {
   /** What each turn asked for, by job id, until it settles. */
   const asked = new Map<string, { drawn?: boolean; lang?: LocaleTag }>();
   deps.turns.onTurnSettled(async (ref, jobId, o) => {
@@ -151,6 +157,12 @@ export function subtitlesTools(deps: {
         try { deps.broadcast({ type: 'subtitles', project: ref.projectSlug, creative: ref.creativeSlug, lang: tag }); } catch { /* a faulty listener */ }
       }
       return { changed };
+    },
+    add_subtitle_language: async (c, args) => {
+      const ref = creativeOf(c);
+      const r = parse(addLanguageInput, args);
+      const { how } = await addSubtitleLanguage({ subtitles: deps.subtitles, translate: deps.translate }, ref, r.lang as LocaleTag);
+      return { started: true, how };
     },
   };
 }

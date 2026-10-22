@@ -435,9 +435,14 @@ describe('app actions in the prompt (decision 917, user note 6)', () => {
     expect(line).toContain('Never write subtitle text in text clips');
     expect(line).not.toContain('later version of the app');
     expect(on.split('\n').find((l) => l.startsWith('- edit_subtitles:'))).toContain('count as the user\'s corrections');
+    // Task 25 (U8): subtitles in another language are not a language variant of the creative.
+    const more = on.split('\n').find((l) => l.startsWith('- add_subtitle_language:'))!;
+    expect(more).toContain('never add_language');
+    expect(more).toContain('the brief');
     const look = on.split('\n').find((l) => l.startsWith('- Drawn subtitles are the subtitles track:'))!;
     for (const x of ['brand fonts and colours', '4.5 % of the frame height', '18 % of the frame height', 'highlight only when', 'window.msActiveCue(ms)', 'textContent only', 'remove the track']) expect(look).toContain(x);
     expect(CONTEXT_MD).toContain('**Subtitles**: call `start_subtitles` (drawn into the video, or files/track only: ask the user when they did not say); never one text clip per sentence.');
+    expect(CONTEXT_MD).toContain('`add_subtitle_language` adds subtitles in another language (never `add_language`');
     expect(CONTEXT_MD).toContain('kind: visual|video|text|audio|subtitles');
     expect(CONTEXT_MD).toContain('`window.msActiveCue(ms)`');
     expect(CONTEXT_MD).not.toContain('later version of the app');

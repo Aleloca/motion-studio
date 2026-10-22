@@ -31,10 +31,10 @@ export const MCP_SERVER = 'studio';
 export const GROUP_TOOLS = ['list_variants', 'work_on_variants', 'add_variants'] as const;
 export const APP_ACTION_TOOLS = ['update_brief', 'add_format', 'duplicate_format', 'name_formats', 'add_language', 'add_variant', 'discard_variant', 'restore_variant', 'set_pick', 'render_version', 'prepare_export'] as const;
 /**
- * Decision 1640 (U9): the creative turn starts the subtitles job of its creative; Task 19: and corrects their text
- * (`subtitles-tools.ts`).
+ * Decision 1640 (U9): the creative turn starts the subtitles job of its creative; Task 19: and corrects their text; Task 25:
+ * adds a subtitle language (`subtitles-tools.ts`).
  */
-export const SUBTITLE_TOOLS = ['start_subtitles', 'edit_subtitles'] as const;
+export const SUBTITLE_TOOLS = ['start_subtitles', 'edit_subtitles', 'add_subtitle_language'] as const;
 /** Decision 1421: a brief session's own tools (`brief-session.ts`); no other job has them. */
 export const BRIEF_TOOLS = ['list_formats', 'fill_brief'] as const;
 export const MCP_TOOLS: Record<AgentJobKind, string[]> = {

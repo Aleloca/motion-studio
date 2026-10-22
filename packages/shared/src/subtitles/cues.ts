@@ -297,13 +297,19 @@ export function staleCues(target: Pick<SubtitleSet, 'cues'>, source: Pick<Subtit
   const out: string[] = [];
   for (const c of target.cues) {
     if (!c.source) continue;
-    let best: SubtitleCue | null = null;
-    let most = 0;
-    for (const s of source.cues) {
-      const overlap = Math.min(c.end, s.end) - Math.max(c.start, s.start);
-      if (overlap > most) { most = overlap; best = s; }
-    }
+    const best = sourceCueOf(c, source.cues);
     if (!best || best.text !== c.source.text) out.push(c.id);
   }
   return out;
+}
+
+/** The source cue a translated cue stands for (Task 25): the one it overlaps most in time (the first of equals), or null. */
+export function sourceCueOf(cue: Pick<SubtitleCue, 'start' | 'end'>, source: readonly SubtitleCue[]): SubtitleCue | null {
+  let best: SubtitleCue | null = null;
+  let most = 0;
+  for (const s of source) {
+    const overlap = Math.min(cue.end, s.end) - Math.max(cue.start, s.start);
+    if (overlap > most) { most = overlap; best = s; }
+  }
+  return best;
 }

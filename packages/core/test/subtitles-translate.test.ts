@@ -245,6 +245,25 @@ describe('SubtitleTranslateService', () => {
     expect(after.cues[2]).toEqual({ ...before.cues[2]!, text: 'Download the app today' });
   });
 
+  it('a target id follows a retimed source (Task 25): asked by the source line it overlaps most, it replaces that cue, no duplicate', async () => {
+    await translate({ target: 'en' }, EN);
+    const en = (await readSubtitleSet(dir(), 'en'))!.set;
+    // The user corrected c2 in English; then the source was timed again (new ids, 100 ms later) and its c2 changed.
+    await writeSubtitleSet(dir(), { ...en, cues: en.cues.map((c) => (c.id === 'c2' ? { ...c, text: 'Book it', edited: true as const } : c)) });
+    const renamed = SOURCE.map((c, i) => ({ ...c, id: `f${i + 1}`, start: c.start + 100, end: c.end + 100, ...(i === 1 ? { text: 'Prenota ora' } : {}) }));
+    await writeSubtitleSet(dir(), speech(renamed));
+    const { run, job } = await translate({ target: 'en', ids: ['c2'] }, { f2: 'Book now' });
+    expect(job?.state).toBe('succeeded');
+    expect(run.req.prompt).toContain('f2 | ');
+    expect(run.req.prompt).not.toContain('f1 | ');
+    const after = (await readSubtitleSet(dir(), 'en'))!.set;
+    expect(after.cues.map((c) => [c.id, c.start, c.text, c.edited ?? false])).toEqual([
+      ['c1', 0, 'Hi everyone', false], ['f2', 2100, 'Book now', false], ['c3', 4000, 'Get the app today', false],
+    ]);
+    expect(staleCues(after, speech(renamed))).toEqual([]);
+    await expect(service.start(ref, { target: 'en', ids: ['nope'] })).rejects.toMatchObject({ status: 400, apiCode: 'subtitles-no-cues' });
+  });
+
   it('a tool call with an unknown id or a text over two lines is a 400 naming the id; nothing of that call is kept', async () => {
     const job = await service.start(ref, { target: 'en' });
     const run = await runner.next();
