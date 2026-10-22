@@ -1,7 +1,7 @@
 # Subtitles (user request of 2026-10-22)
 
-Status: design, not built. Decisions of this design: 1636–1660 in `docs/decisions-log.md` (to be written when the design
-is approved). The editor layout was chosen by the user from three mockups in the brainstorming companion (option B).
+Status: design, not built. Decisions of this design: 1636–1643 in `docs/decisions-log.md` (written by Task 1 of the plan,
+docs/superpowers/plans/2026-10-22-subtitles.md). The editor layout was chosen by the user from three mockups in the brainstorming companion (option B).
 
 ## 1. Why
 
