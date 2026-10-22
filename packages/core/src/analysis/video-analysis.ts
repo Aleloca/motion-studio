@@ -33,7 +33,7 @@ const PRECHECK_MAX_MS = 60_000;
 export const precheckLimitMs = (baseMs: number, durationSec: number): number =>
   Math.min(2 ** 31 - 1, Math.ceil(baseMs + (Number.isFinite(durationSec) && durationSec > 0 ? durationSec * 200 : 0)));
 /** `p`, or an AbortError as soon as `signal` aborts (the step itself may never settle). */
-function untilAborted<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+export function untilAborted<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) return Promise.reject(abortedError());
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => reject(abortedError());
@@ -52,6 +52,8 @@ export interface Transcriber {
   plan(audioSec: number): Promise<{ run: TranscribeMethod } | { ask: TranscriptionPending } | { skip: true }>;
   prepareChoice(c: TranscriptionChoice): Promise<{ wait?: Promise<void> }>;
   recheck(audioSec: number): Promise<TranscriptionPending>;
+  /** The saved settings (the subtitles tell "switched off" from "unavailable"); absent: unknown. */
+  settings?(): Promise<{ method: string }>;
   /** `words`: the word timings too (the subtitles); `language`: told to the engine, auto when absent or null. */
   transcribe(i: { ref: ProjectRef; file: string; jobId: string; wav: string; durationSec: number; signal: AbortSignal; method?: TranscribeMethod; words?: boolean; language?: string | null }): Promise<{ kind: TranscriptKind; segments: TranscriptSegment[]; words?: TranscriptWord[]; language: string | null }>;
 }

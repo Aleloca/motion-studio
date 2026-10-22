@@ -131,3 +131,13 @@ describe('alignToScript', () => {
     expect(out[0]).toMatchObject({ text: 'Motion', start: 1000 });
   });
 });
+
+describe('Korean keeps its spaces', () => {
+  it('cuts Korean at its words and joins them with spaces', () => {
+    const k = (text: string, start: number, end: number) => ({ text, start, end });
+    const cues = buildCues({ words: [k('안녕하세요', 0, 600), k('여러분', 700, 1200), k('반갑습니다.', 1300, 2000)] }, 'ko');
+    expect(cues.map((c) => c.text)).toEqual(['안녕하세요 여러분 반갑습니다.']);
+    expect(wrapLines('안녕하세요 여러분', 'ko')).toEqual(['안녕하세요 여러분']);
+    expect(buildCues({ segments: [k('안녕하세요 여러분', 0, 2000)] }, 'ko').map((c) => c.text)).toEqual(['안녕하세요 여러분']);
+  });
+});

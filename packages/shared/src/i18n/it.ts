@@ -263,6 +263,7 @@ export const it: Messages = {
     subtitlesRunning: 'I sottotitoli di questa creatività sono già in preparazione.',
     subtitlesNoVideo: 'L\'ultima versione non ha un formato video: non c\'è niente da sottotitolare.',
     noFfmpegSubtitles: 'Per i sottotitoli serve ffmpeg, che non è stato trovato su questo Mac.',
+    subtitlesTranscriptionOff: 'La trascrizione dei video è disattivata: attivala in Impostazioni → Trascrizione video per fare i sottotitoli.',
     transcriptionNoBundled: 'Questa app non ha un Whisper suo: installane uno o indicalo in Impostazioni → Trascrizione video.',
   },
   videoAnalysis: {
@@ -409,6 +410,10 @@ export const it: Messages = {
     ready: (p) => `Sottotitoli pronti (${p.lang}).`,
     readyOtherLang: (p) => `Sottotitoli pronti in ${p.lang}: è la lingua parlata nel video, non quella del brief (${p.brief}).`,
     noSpeech: 'Nessun parlato nel video: nessun sottotitolo.',
+    transcriptionOff: 'la trascrizione dei video è disattivata (Impostazioni → Trascrizione video).',
+    transcriptionUnavailable: 'la trascrizione non è stata fatta: il metodo scelto non è disponibile o non ha funzionato. Controlla Impostazioni → Trascrizione video.',
+    transcriptionTimeout: 'il controllo della trascrizione non ha risposto in tempo: riprova.',
+    unsupportedUnknown: 'Nessun sottotitolo: non è stato possibile riconoscere la lingua parlata nel video.',
     unsupported: (p) => `Nessun sottotitolo: la lingua parlata nel video (${p.detected}) non è supportata.`,
     failed: (p) => `I sottotitoli non sono riusciti: ${p.reason}`,
   },

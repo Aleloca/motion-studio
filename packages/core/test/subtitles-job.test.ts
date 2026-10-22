@@ -17,6 +17,7 @@ import { readCompositionFolder } from '../src/compositions/composition-files.ts'
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import type { CreativeRef } from '../src/creatives/creative-turns.ts';
 import { execCommand } from '../src/exec.ts';
+import { t } from '../src/i18n.ts';
 import { JobQueue } from '../src/jobs/job-queue.ts';
 import { NoMediaTools } from '../src/media/media-tools.ts';
 import { findFfmpeg } from '../src/render/encode.ts';
@@ -54,7 +55,12 @@ const composition = (clips: object[]): Composition => ({
 const words = (list: Array<[number, number, string]>): TranscriptWord[] => list.map(([from, to, text]) => ({ from, to, text }));
 const HELLO = words([[0.2, 0.6, 'Ciao'], [0.7, 1.2, 'a'], [1.25, 1.8, 'tutti.']]);
 
-interface Fake { result: { kind: TranscriptKind; words?: TranscriptWord[]; language: string | null }; gate: Promise<void> | null; plan: Awaited<ReturnType<Transcriber['plan']>> }
+interface Fake {
+  result: { kind: TranscriptKind; words?: TranscriptWord[]; language: string | null }; gate: Promise<void> | null;
+  /** null: the plan never answers. */
+  plan: Awaited<ReturnType<Transcriber['plan']>> | null;
+  method: 'ask' | 'never' | 'whisper';
+}
 const PENDING: TranscriptionPending = {
   kind: 'transcription', audioSec: 3, whisper: { available: true, modelPresent: true, model: 'small', sizeBytes: 1, engine: 'whisper.cpp' },
   openai: { keySaved: false, costUsd: 0 }, elevenlabs: { keySaved: false, costUsd: 0 },
@@ -73,7 +79,8 @@ let ready: Array<{ lang: string; drawn: boolean }>;
 let service: SubtitlesService;
 
 const transcriber: Transcriber = {
-  plan: async () => fake.plan,
+  plan: () => (fake.plan ? Promise.resolve(fake.plan) : new Promise(() => {})),
+  settings: async () => ({ method: fake.method }),
   prepareChoice: async () => ({}),
   recheck: async () => PENDING,
   transcribe: async (i) => {
@@ -91,7 +98,7 @@ beforeEach(async () => {
   const projectDir = join(base, 'acme');
   await mkdir(projectDir, { recursive: true });
   store = new CreativeStore(projectDir);
-  fake = { result: { kind: 'whisper-small', words: HELLO, language: 'it' }, gate: null, plan: { run: 'whisper' } };
+  fake = { result: { kind: 'whisper-small', words: HELLO, language: 'it' }, gate: null, plan: { run: 'whisper' }, method: 'whisper' };
   transcribed = []; entries = []; sent = []; ready = [];
   touch = vi.fn();
   queue = new JobQueue({ concurrency: 2, lanes: { [SUBTITLES_LANE]: 1 } });
@@ -101,6 +108,7 @@ beforeEach(async () => {
     commits: { touch },
     broadcast: (m) => { sent.push(m); },
     presets: async () => PRESETS,
+    planMaxMs: 300,
   });
   service.onReady((_r, r) => { ready.push(r); });
   return async () => { await queue.whenIdle(); await rm(base, { recursive: true, force: true }); };
@@ -127,6 +135,10 @@ const run = async (o: Parameters<SubtitlesService['start']>[1] = { mode: 'new' }
   const done = await queue.whenSettled(job.id);
   expect(done?.state, done?.error).toBe('succeeded');
   return done;
+};
+const runFailed = async () => {
+  const job = await service.start(ref, { mode: 'new' });
+  expect((await queue.whenSettled(job.id))?.state).toBe('failed');
 };
 const subtitleEntries = () => entries.filter((e) => e.type === 'system' && e.subtitles);
 const creativeDir = () => store.dir(ref.creativeSlug);
@@ -172,25 +184,99 @@ describe('SubtitlesService', { timeout: 60_000 }, () => {
     expect(cues[0]!.words!.map((w) => [w.start, w.text])).toEqual([[200, 'Motion'], [700, 'Studio'], [1200, 'is'], [1500, 'great']]);
   });
 
-  it('no audio track, silence, or no transcription: no-speech and no file', async () => {
+  it('no audio track, silence, or an engine that heard nothing: no-speech and no file', async () => {
     await creative([]);
     await run();
     await creative([audioClip({ src: 'silence.wav' })], { files: ['silence.wav'] });
     await run();
     await creative([audioClip()]);
-    fake.result = { kind: 'none-skipped', language: null };
+    fake.result = { kind: 'whisper-small', words: [], language: 'it' };
     await run();
-    expect(subtitleEntries().map((e) => e.type === 'system' && e.subtitles)).toEqual([{ state: 'no-speech' }, { state: 'no-speech' }, { state: 'no-speech' }]);
-    expect(transcribed).toHaveLength(1);
+    await creative([audioClip()]);
+    fake.result = { kind: 'none-no-speech', language: null };
+    await run();
+    expect(subtitleEntries().map((e) => e.type === 'system' && e.subtitles)).toEqual([{ state: 'no-speech' }, { state: 'no-speech' }, { state: 'no-speech' }, { state: 'no-speech' }]);
+    expect(subtitleEntries().every((e) => e.type === 'system' && e.text === t().subtitles.noSpeech)).toBe(true);
+    expect(transcribed).toHaveLength(2);
     expect(sent.filter((m) => m.type === 'subtitles')).toEqual([]);
     expect(touch).not.toHaveBeenCalled();
   });
 
-  it('an unsupported language: an entry naming it, no file', async () => {
+  it('a transcription that was not made is a failure that says why, never "no speech"', async () => {
+    // Skipped by the transcriber (method unavailable, no key, engine error).
+    await creative([audioClip()]);
+    fake.result = { kind: 'none-skipped', language: null };
+    await runFailed();
+    // The setting turned to "never" after the job started.
+    await creative([audioClip()]);
+    fake.plan = { skip: true };
+    await runFailed();
+    // The plan never answered.
+    await creative([audioClip()]);
+    fake.plan = null;
+    await runFailed();
+    const texts = subtitleEntries().map((e) => (e.type === 'system' ? [e.level, e.subtitles, e.text] : null));
+    expect(texts).toEqual([
+      ['error', { state: 'failed' }, t().subtitles.failed({ reason: t().subtitles.transcriptionUnavailable })],
+      ['error', { state: 'failed' }, t().subtitles.failed({ reason: t().subtitles.transcriptionOff })],
+      ['error', { state: 'failed' }, t().subtitles.failed({ reason: t().subtitles.transcriptionTimeout })],
+    ]);
+    expect(transcribed).toHaveLength(1);
+    expect(touch).not.toHaveBeenCalled();
+  });
+
+  it('without a transcriber the job fails saying so', async () => {
+    service = new SubtitlesService({
+      queue, ffmpeg: () => findFfmpeg(), media: NoMediaTools, turns: { noteFromTurn: async (_job, _ref, e) => { entries.push(e); } },
+      commits: { touch }, broadcast: () => {}, presets: async () => PRESETS,
+    });
+    await creative([audioClip()]);
+    await runFailed();
+    expect(subtitleEntries()).toEqual([expect.objectContaining({ subtitles: { state: 'failed' }, text: t().subtitles.failed({ reason: t().subtitles.transcriptionUnavailable }) })]);
+  });
+
+  it('transcription set to "never": refused at start, so the agent can say so at once', async () => {
+    await creative([audioClip()]);
+    fake.method = 'never';
+    await expect(service.start(ref, { mode: 'new' })).rejects.toMatchObject({ status: 409, apiCode: 'subtitles-transcription-off' });
+    expect(queue.list()).toEqual([]);
+  });
+
+  it('a creative with no audio clips or a silent mix never asks about the transcription', async () => {
+    fake.plan = { ask: PENDING };
+    for (const [clips, files] of [[[], ['tone.wav']], [[audioClip({ src: 'silence.wav' })], ['silence.wav']]] as const) {
+      await creative([...clips], { files: [...files] });
+      const job = await service.start(ref, { mode: 'new' });
+      expect((await queue.whenSettled(job.id))?.state).toBe('succeeded');
+      expect(service.pending(ref)).toBeNull();
+    }
+    expect(subtitleEntries().map((e) => e.type === 'system' && e.subtitles)).toEqual([{ state: 'no-speech' }, { state: 'no-speech' }]);
+    expect(transcribed).toEqual([]);
+  });
+
+  it('the cue limit never drops a cue the user edited', async () => {
+    await creative([audioClip()]);
+    fake.result = { kind: 'whisper-small', words: Array.from({ length: 2100 }, (_, i) => ({ from: i, to: i + 0.4, text: `w${i}.` })), language: 'it' };
+    await writeSubtitleSet(creativeDir(), {
+      $schema: SUBTITLES_SCHEMA_ID, lang: 'it', origin: 'speech', transcript: 'whisper-small', detected: 'it',
+      timing: { version: 1, format: 'test-wide', fingerprint: 'a'.repeat(64) },
+      cues: [{ id: 'mine', start: 2_099_500, end: 2_099_900, text: 'La mia riga', edited: true }],
+    });
+    await run();
+    const cues = (await readSubtitleSet(creativeDir(), 'it'))!.set.cues;
+    expect(cues).toHaveLength(2000);
+    expect(cues.at(-1)).toMatchObject({ id: 'mine', text: 'La mia riga', edited: true });
+  });
+
+  it('an unsupported language: an entry naming it, no file; with no language at all, no name', async () => {
     await creative([audioClip()]);
     fake.result = { kind: 'whisper-small', words: HELLO, language: 'ar' };
     await run();
     expect(subtitleEntries()).toEqual([expect.objectContaining({ subtitles: { state: 'unsupported-language', detected: 'ar' } })]);
+    await creative([audioClip()]);
+    fake.result = { kind: 'whisper-small', words: HELLO, language: null };
+    await run();
+    expect(subtitleEntries()[1]).toMatchObject({ subtitles: { state: 'unsupported-language' }, text: t().subtitles.unsupportedUnknown });
     expect(await readSubtitleSet(creativeDir(), 'it')).toBeNull();
     expect(touch).not.toHaveBeenCalled();
   });
@@ -257,6 +343,8 @@ describe('splitCjkWords', () => {
       { start: 500, end: 900, text: 'ok' },
     ]);
     expect(splitCjkWords([{ start: 0, end: 300, text: 'สวัส' }]).map((w) => w.text)).toEqual(['ส', 'วั', 'ส']);
+    // Korean has spaces between its words: a Hangul word stays whole.
+    expect(splitCjkWords([{ start: 0, end: 500, text: '안녕하세요' }])).toEqual([{ start: 0, end: 500, text: '안녕하세요' }]);
     // A Latin run inside stays one word.
     expect(splitCjkWords([{ start: 0, end: 600, text: 'AI模型' }]).map((w) => [w.start, w.end, w.text])).toEqual([[0, 200, 'AI'], [200, 400, '模'], [400, 600, '型']]);
   });

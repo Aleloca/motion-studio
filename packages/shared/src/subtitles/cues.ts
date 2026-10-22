@@ -7,8 +7,12 @@ export type SubtitleRules = typeof SUBTITLE_RULES;
 
 export interface TimedWord { start: number; end: number; text: string }
 
+/** The languages of full-width text: their lines are `cjkLineChars` wide. */
 const CJK_LANGS: readonly string[] = ['zh-Hans', 'zh-Hant', 'ja', 'ko', 'th'];
+/** Of those, the ones written without spaces between words: cut and joined by characters. Korean has spaces (decision 1701). */
+const NO_SPACE_LANGS: readonly string[] = ['zh-Hans', 'zh-Hant', 'ja', 'th'];
 const isCjk = (lang: LocaleTag): boolean => CJK_LANGS.includes(lang);
+const noSpaces = (lang: LocaleTag): boolean => NO_SPACE_LANGS.includes(lang);
 const lineCharsOf = (lang: LocaleTag, rules: SubtitleRules): number => (isCjk(lang) ? rules.cjkLineChars : rules.maxLineChars);
 const SENTENCE_END = /[.!?…。！？]["'”’)\]]*$/;
 const MAX_CUE_WORDS = 60;
@@ -19,7 +23,7 @@ interface Token { t: string; glued: boolean }
 function tokenize(text: string, lang: LocaleTag, lineChars: number): Token[] {
   const flat = text.replace(/\s+/g, ' ').trim();
   if (flat === '') return [];
-  if (isCjk(lang)) return Array.from(flat).map((t) => ({ t, glued: true }));
+  if (noSpaces(lang)) return Array.from(flat).map((t) => ({ t, glued: true }));
   const out: Token[] = [];
   for (const word of flat.split(' ')) {
     const chars = Array.from(word);
@@ -28,7 +32,7 @@ function tokenize(text: string, lang: LocaleTag, lineChars: number): Token[] {
   return out;
 }
 
-const sepOf = (lang: LocaleTag): string => (isCjk(lang) ? '' : ' ');
+const sepOf = (lang: LocaleTag): string => (noSpaces(lang) ? '' : ' ');
 const len = (s: string): number => Array.from(s).length;
 
 function joinTokens(tokens: Token[], sep: string): string {
@@ -41,7 +45,7 @@ export function wrapLines(text: string, lang: LocaleTag, rules: SubtitleRules = 
   const tokens = tokenize(text, lang, lineChars);
   if (tokens.length === 0) return [];
   const sep = sepOf(lang);
-  if (isCjk(lang)) {
+  if (noSpaces(lang)) {
     const n = Math.ceil(tokens.length / lineChars);
     const size = Math.ceil(tokens.length / n);
     const lines: string[] = [];

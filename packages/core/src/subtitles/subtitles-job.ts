@@ -1,13 +1,14 @@
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   alignToScript, buildCues, effectiveLinks, mergeKeepingEdited, SILENCE_NO_SPEECH, SUBTITLE_LIMITS, SUBTITLES_SCHEMA_ID, subtitleLangOf, subtitleSetSchema,
   subtitleSetText, subtitlesJobKey,
   type Brief, type ConversationEntry, type FormatPreset, type JobSummary, type LocaleTag, type ServerMessage, type SubtitleCue, type SubtitleSet,
-  type TimedWord, type TranscribeMethod, type TranscriptionChoice, type TranscriptionPending, type TranscriptKind, type VersionEntry,
+  type TimedWord, type TranscribeMethod, type TranscriptionChoice, type TranscriptionPending, type VersionEntry,
 } from '@motion-studio/shared';
 import { extractWav, silenceRatio } from '../analysis/audio.ts';
-import type { Transcriber } from '../analysis/video-analysis.ts';
+import { precheckLimitMs, untilAborted, type Transcriber } from '../analysis/video-analysis.ts';
 import { realDirChain } from '../creatives/core-files.ts';
 import { CreativeStore } from '../creatives/creative-store.ts';
 import type { CreativeRef, CreativeTurnService } from '../creatives/creative-turns.ts';
@@ -24,12 +25,15 @@ import { audioFingerprint, readSubtitleSet, type SubtitleCommits, writeSubtitleS
 
 /** The queue lane of the subtitles jobs (decision 1640): one at a time, never in an agent turn's slot. */
 export const SUBTITLES_LANE = 'subtitles';
-/** The plan before a transcription choice gives up after this long: the job then goes ahead with what the settings give. */
+/**
+ * The check before a transcription choice (the plan, then the mix's speech when it would ask) gives up after this long, plus
+ * 0.2 s per second of audio: the job then fails saying so.
+ */
 const PLAN_MAX_MS = 60_000;
 
 export interface SubtitlesDeps {
   queue: JobQueue;
-  /** The transcription (the analyses' one); absent: every job ends with no speech. */
+  /** The transcription (the analyses' one); absent: a job with speech fails saying the transcription is unavailable. */
   transcriber?: Transcriber;
   /** The ffmpeg of the mix (default: none, every job fails). */
   ffmpeg?: () => Promise<FfmpegInfo | null>;
@@ -40,6 +44,8 @@ export interface SubtitlesDeps {
   presets(): Promise<FormatPreset[]>;
   /** The runner of the WAV extraction and the silence check (default: the system's). Test seam. */
   ffExec?: CommandExec;
+  /** The base time limit of the check before the choice (default PLAN_MAX_MS). Test seam. */
+  planMaxMs?: number;
 }
 
 export interface SubtitlesStart { mode: 'new' | 'retime'; lang?: LocaleTag; drawn?: boolean }
@@ -47,6 +53,10 @@ export interface SubtitlesStart { mode: 'new' | 'retime'; lang?: LocaleTag; draw
 /** A subtitles job queued or running: one per creative. */
 interface Active {
   ref: CreativeRef; jobId: string; o: SubtitlesStart; audioSec: number;
+  /** The composition the check before the choice listens to. */
+  ic: InstanceComposition;
+  /** Why the job will not transcribe, found before it runs: the setting is "never", or the check ran out of time. */
+  blocked: 'off' | 'timeout' | null;
   /** The user's transcription choice, or what the plan resolved to; null: what the settings resolve to when it runs. */
   method: TranscribeMethod | null;
   /** What the held job asks the user; null: nothing. */
@@ -57,7 +67,6 @@ interface Active {
 
 const keyOf = (ref: CreativeRef) => subtitlesJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const abortedError = () => Object.assign(new Error('aborted'), { name: 'AbortError' });
 const ms = (sec: number) => Math.max(0, Math.round(sec * 1000));
 
 /** The language's name in the app language ("italiano"), its tag when unknown. */
@@ -74,10 +83,11 @@ export function subtitleSourceFormat(version: VersionEntry, brief: Brief, preset
   return brief.formats.find((id) => !followers.has(id) && findPreset(presets, id)?.kind === 'video' && version.compositions?.some((c) => c.format === id)) ?? null;
 }
 
-const CJK_CHAR = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Thai}]/u;
+/** The scripts written without spaces between words (Korean has spaces: its words stay whole, decision 1701). */
+const CJK_CHAR = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}]/u;
 
 /**
- * whisper.cpp's CJK tokens have no leading space, so a whole segment may arrive as one long "word": every word holding a
+ * whisper.cpp's Chinese, Japanese and Thai tokens have no leading space, so a whole segment may arrive as one long "word": every word holding a
  * CJK or Thai character is cut into its characters (a run of other characters stays one piece), the word's time shared
  * evenly. Graphemes, so a Thai vowel mark stays on its consonant.
  */
@@ -100,6 +110,13 @@ export function splitCjkWords(words: readonly TimedWord[]): TimedWord[] {
     });
   }
   return out;
+}
+
+/** At most SUBTITLE_LIMITS.cues cues: the fresh ones are dropped from the end, an edited cue never (anti-goal 1). */
+function capCues(cues: SubtitleCue[]): SubtitleCue[] {
+  if (cues.length <= SUBTITLE_LIMITS.cues) return cues;
+  let room = SUBTITLE_LIMITS.cues - cues.filter((c) => c.edited).length;
+  return cues.filter((c) => c.edited || room-- > 0);
 }
 
 /** The heard words of each voice clip with a known script replaced by the script's (decision 1639), the heard times kept. */
@@ -159,9 +176,11 @@ export class SubtitlesService {
     const ic = latest && format ? await instanceComposition(store.dir(ref.creativeSlug), latest, format, presets) : null;
     if (!ic) throw new CodedError(409, t().errors.subtitlesNoVideo, 'subtitles-no-video');
     if (!(await this.deps.ffmpeg?.().catch(() => null))) throw new CodedError(409, t().errors.noFfmpegSubtitles, 'subtitles-no-ffmpeg');
-    if (this.active.has(key) || this.jobActive(key)) throw running();
     const tr = this.deps.transcriber;
-    const entry: Active = { ref, jobId: '', o, audioSec: ic.composition.duration, method: null, pending: null, planning: tr ? new AbortController() : null };
+    // The transcription switched off in the settings: said at once (the agent tells the user), no job that could only fail.
+    if ((await tr?.settings?.().catch(() => null))?.method === 'never') throw new CodedError(409, t().errors.subtitlesTranscriptionOff, 'subtitles-transcription-off');
+    if (this.active.has(key) || this.jobActive(key)) throw running();
+    const entry: Active = { ref, jobId: '', o, audioSec: ic.composition.duration, ic, blocked: null, method: null, pending: null, planning: tr ? new AbortController() : null };
     const job = this.deps.queue.enqueue({
       key, kind: 'subtitles', label: t().jobs.subtitlesLabel({ title: creative.title }), lane: SUBTITLES_LANE,
       // Held while the transcription is planned (decision 1547's flow): with no method to run, the hold becomes the user's choice.
@@ -182,29 +201,54 @@ export class SubtitlesService {
     if (this.active.get(key) === entry) this.active.delete(key);
   }
 
-  /** The transcription plan, in the background: run → released with that method; ask → held for the user; else released. */
+  /**
+   * The check before the job runs, in the background (the analysis's precheck, decision 1547): `run` releases the job with
+   * that method; `ask` holds it for the user's choice, unless the mix has no speech (no audio clip, or silent: the job then
+   * ends with "no speech", nothing asked); `skip` (the setting is "never") or a check out of time releases it to fail saying
+   * so. Bounded, and stopped with the job.
+   */
   private async plan(entry: Active): Promise<void> {
     const own = entry.planning;
     const tr = this.deps.transcriber;
     if (!own || !tr) return;
-    type Plan = Awaited<ReturnType<Transcriber['plan']>>;
-    let plan: Plan | null = null;
+    let plan: Awaited<ReturnType<Transcriber['plan']>> | null = null;
+    let speech = true;
+    let timedOut = false;
     try {
-      const signal = AbortSignal.any([own.signal, AbortSignal.timeout(PLAN_MAX_MS)]);
-      plan = await new Promise<Plan>((resolve, reject) => {
-        signal.addEventListener('abort', () => reject(abortedError()), { once: true });
-        tr.plan(entry.audioSec).then(resolve, reject);
-      });
-    } catch { /* the settings decide when the job runs */ }
+      const signal = AbortSignal.any([own.signal, AbortSignal.timeout(precheckLimitMs(this.deps.planMaxMs ?? PLAN_MAX_MS, entry.audioSec))]);
+      plan = await untilAborted(tr.plan(entry.audioSec), signal);
+      if ('ask' in plan) speech = await untilAborted(this.hasSpeech(entry.ic, signal), signal);
+    } catch { timedOut = true; }
     if (own.signal.aborted || entry.planning !== own || this.active.get(keyOf(entry.ref)) !== entry) return;
     entry.planning = null;
-    if (plan && 'ask' in plan) {
+    if (timedOut) entry.blocked = 'timeout';
+    else if (plan && 'skip' in plan) entry.blocked = 'off';
+    else if (plan && 'ask' in plan && speech) {
       entry.pending = plan.ask;
       this.deps.queue.setHold(entry.jobId, 'transcription-choice');
       return;
-    }
-    if (plan && 'run' in plan) entry.method = plan.run;
+    } else if (plan && 'run' in plan) entry.method = plan.run;
     this.deps.queue.setHold(entry.jobId, null);
+  }
+
+  /** Whether the composition's mix has speech (less than 95 % silence); false when it has no audio or cannot be read. */
+  private async hasSpeech(ic: InstanceComposition, signal: AbortSignal): Promise<boolean> {
+    const clips = mixClips(ic.composition);
+    if (clips.length === 0) return false;
+    const ff = await this.deps.ffmpeg?.().catch(() => null);
+    if (!ff) return false;
+    const tmp = await mkdtemp(join(tmpdir(), 'ms-subtitles-pre-'));
+    try {
+      const duration = ic.composition.duration;
+      const mix = join(tmp, 'mix.wav'), wav = join(tmp, 'audio.wav');
+      if (!await mixAudio({ ff, compDir: ic.compDir, clips, durationSec: duration, outWav: mix, workDir: tmp, signal })) return false;
+      if (!await extractWav(this.ff, mix, wav, signal, duration)) return false;
+      return (await silenceRatio(this.ff, wav, duration, signal)) < SILENCE_NO_SPEECH;
+    } catch {
+      return false;
+    } finally {
+      await rm(tmp, { recursive: true, force: true }).catch(() => {});
+    }
   }
 
   private asking(ref: CreativeRef): Active | null {
@@ -307,22 +351,27 @@ export class SubtitlesService {
       let speech = mixed && await extractWav(this.ff, mix, wav, signal, duration);
       if (speech && (await silenceRatio(this.ff, wav, duration, signal)) >= SILENCE_NO_SPEECH) speech = false;
       if (signal.aborted) return 'cancelled';
-      let tr: { kind: TranscriptKind; segments: Array<{ from: number; to: number; text: string }>; words?: Array<{ from: number; to: number; text: string }>; language: string | null } | null = null;
-      if (speech && this.deps.transcriber) {
-        tr = await this.deps.transcriber.transcribe({
-          ref, file: `creatives/${ref.creativeSlug}`, jobId, wav, durationSec: duration, signal,
-          ...(entry.method ? { method: entry.method } : {}), words: true, language: o.lang ?? null,
-        });
-      }
+      // "No speech" only when it is true: no audio, a silent mix, or an engine that heard nothing. A transcription that was not
+      // made (switched off, unavailable, failed, a check out of time) is a failure that says why.
+      const noSpeech = () => this.note(jobId, ref, 'info', t().subtitles.noSpeech, { state: 'no-speech' });
+      if (!speech) { await noSpeech(); return; }
+      const transcriber = this.deps.transcriber;
+      if (!transcriber) throw new Error(t().subtitles.transcriptionUnavailable);
+      if (entry.blocked) throw new Error(entry.blocked === 'off' ? t().subtitles.transcriptionOff : t().subtitles.transcriptionTimeout);
+      const tr = await transcriber.transcribe({
+        ref, file: `creatives/${ref.creativeSlug}`, jobId, wav, durationSec: duration, signal,
+        ...(entry.method ? { method: entry.method } : {}), words: true, language: o.lang ?? null,
+      });
       if (signal.aborted) return 'cancelled';
-      if (!tr || tr.kind === 'none-skipped' || tr.kind === 'none-no-speech' || (tr.segments.length === 0 && !tr.words?.length)) {
-        await this.note(jobId, ref, 'info', t().subtitles.noSpeech, { state: 'no-speech' });
-        return;
+      if (tr.kind === 'none-skipped') {
+        const off = (await transcriber.settings?.().catch(() => null))?.method === 'never';
+        throw new Error(off ? t().subtitles.transcriptionOff : t().subtitles.transcriptionUnavailable);
       }
+      if (tr.kind === 'none-no-speech' || (tr.segments.length === 0 && !tr.words?.length)) { await noSpeech(); return; }
       const lang = subtitleLangOf(o.lang ?? tr.language);
       if (!lang) {
-        const detected = tr.language ?? '?';
-        await this.note(jobId, ref, 'warning', t().subtitles.unsupported({ detected: languageName(detected) }), { state: 'unsupported-language', ...(tr.language ? { detected: tr.language } : {}) });
+        const text = tr.language ? t().subtitles.unsupported({ detected: languageName(tr.language) }) : t().subtitles.unsupportedUnknown;
+        await this.note(jobId, ref, 'warning', text, { state: 'unsupported-language', ...(tr.language ? { detected: tr.language } : {}) });
         return;
       }
 
@@ -339,7 +388,7 @@ export class SubtitlesService {
 
       // Re-read just before writing: a save of the editor during the transcription keeps its edited cues (anti-goal 1).
       const existing = await readSubtitleSet(creativeDir, lang);
-      const cues = (existing ? mergeKeepingEdited(existing.set.cues, fresh) : fresh).slice(0, SUBTITLE_LIMITS.cues);
+      const cues = capCues(existing ? mergeKeepingEdited(existing.set.cues, fresh) : fresh);
       let set: SubtitleSet = {
         $schema: SUBTITLES_SCHEMA_ID, lang, origin: 'speech', transcript: tr.kind, detected: tr.language,
         timing: { version: version.n, format, fingerprint: audioFingerprint(ic.composition) }, cues,
