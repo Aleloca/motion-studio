@@ -36,6 +36,8 @@ interface RowProps {
   icon: IconName;
   hidden: boolean;
   locked: boolean;
+  /** A subtitles track is always locked: its lock button is shown pressed and disabled. */
+  lockFixed?: boolean | undefined;
   selected?: boolean;
   nested?: boolean;
   /** Null: a track header, which does not select. */
@@ -45,7 +47,7 @@ interface RowProps {
   twisty?: { open: boolean; onToggle(): void } | undefined;
 }
 
-function LayerRow({ name, kind, icon, hidden, locked, selected, nested, onSelect, onFlag, twisty }: RowProps) {
+function LayerRow({ name, kind, icon, hidden, locked, lockFixed, selected, nested, onSelect, onFlag, twisty }: RowProps) {
   const e = useT().web.editor;
   const eye = hidden ? e.showTrack({ name }) : e.hideTrack({ name });
   const lock = locked ? e.unlockTrack({ name }) : e.lockTrack({ name });
@@ -72,7 +74,7 @@ function LayerRow({ name, kind, icon, hidden, locked, selected, nested, onSelect
       ) : (
         <span className="ms-layer-main ms-static">{label}</span>
       )}
-      <Button size="sm" variant="ghost" icon aria-label={lock} title={lock} onClick={() => onFlag('locked', !locked)}>
+      <Button size="sm" variant="ghost" icon aria-label={lock} title={lock} disabled={lockFixed} onClick={() => onFlag('locked', !locked)}>
         <Icon name={locked ? 'lock' : 'unlock'} size={14} />
       </Button>
     </div>
@@ -157,7 +159,7 @@ export function LayersPanel() {
               const clip = track.clips[0]!;
               return (
                 <li key={track.id}>
-                  <LayerRow name={clipLabel(clip, draft.composition, e)} kind={kinds[clip.type]} icon={CLIP_ICON[clip.type]} selected={layerSelected(clip)}
+                  <LayerRow lockFixed={track.kind === 'subtitles'} name={clipLabel(clip, draft.composition, e)} kind={kinds[clip.type]} icon={CLIP_ICON[clip.type]} selected={layerSelected(clip)}
                     hidden={Boolean(track.hidden || clip.hidden)} locked={Boolean(trackLocked(track) || clip.locked)} twisty={svgTree(clip)}
                     onSelect={() => select(clip.id)} onFlag={(flag, value) => layerFlag(track, clip, flag, value)} />
                   {elementsOf(clip, false)}
@@ -166,12 +168,12 @@ export function LayersPanel() {
             }
             return (
               <li key={track.id}>
-                <LayerRow name={trackName} kind={trackKinds[track.kind]} icon={CLIP_ICON[track.clips[0]!.type]} hidden={Boolean(track.hidden)} locked={trackLocked(track)}
+                <LayerRow lockFixed={track.kind === 'subtitles'} name={trackName} kind={trackKinds[track.kind]} icon={CLIP_ICON[track.clips[0]!.type]} hidden={Boolean(track.hidden)} locked={trackLocked(track)}
                   onSelect={null} onFlag={(flag, value) => trackFlag(track, flag, value)} />
                 <ol className="ms-layers-sub">
                   {[...track.clips].reverse().map((clip) => (
                     <li key={clip.id}>
-                      <LayerRow nested name={clipLabel(clip, draft.composition, e)} kind={kinds[clip.type]} icon={CLIP_ICON[clip.type]} selected={layerSelected(clip)}
+                      <LayerRow nested lockFixed={track.kind === 'subtitles'} name={clipLabel(clip, draft.composition, e)} kind={kinds[clip.type]} icon={CLIP_ICON[clip.type]} selected={layerSelected(clip)}
                         hidden={Boolean(clip.hidden)} locked={Boolean(clip.locked)} twisty={svgTree(clip)}
                         onSelect={() => select(clip.id)} onFlag={(flag, value) => clipFlag(clip, flag, value)} />
                       {elementsOf(clip, true)}

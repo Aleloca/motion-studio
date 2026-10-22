@@ -1,12 +1,11 @@
 // The header of a timeline lane (Phase 10b, Task 7): the track's name and kind, and its hide, lock and (audio) mute buttons.
-import type { Track } from '@motion-studio/shared';
+import { trackLocked, type Track } from '@motion-studio/shared';
 import { useT } from '../../i18n.tsx';
 import { Button, Icon, cx, type IconName } from '../../ui/index.ts';
 
 export const KIND_ICON: Record<Track['kind'], IconName> = { visual: 'image', video: 'video', text: 'text', audio: 'music', subtitles: 'text' };
 
-/** A subtitles track is always shown locked: its clip is drawn from the subtitle set, not edited here. */
-export const trackLocked = (track: Track): boolean => Boolean(track.locked) || track.kind === 'subtitles';
+export { trackLocked };
 
 export function TrackHeader({ track, name, onFlag }: { track: Track; name: string; onFlag(flag: 'hidden' | 'locked' | 'muted', value: boolean): void }) {
   const e = useT().web.editor;

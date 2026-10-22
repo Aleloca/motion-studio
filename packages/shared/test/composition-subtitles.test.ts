@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
-  DEFAULT_FORMATS, applyLocalization, compositionJsonSchema, compositionSchema, localizableEntries, stripSubtitles, subtitlesClipOf,
+  DEFAULT_FORMATS, applyEdit, sceneOrderAllowed, type EditOp, applyLocalization, compositionJsonSchema, compositionSchema, localizableEntries, stripSubtitles, subtitlesClipOf,
   validateComposition, type Composition, type Localization,
 } from '../src/index.ts';
+import { copy, fileMap, reorderable } from './composition-edit-helpers.ts';
 
 const REEL = DEFAULT_FORMATS.find((f) => f.id === 'instagram-reel-9x16')!;
 const ctx = { format: REEL, files: new Map<string, { size: number }>([['composition.json', { size: 10 }], ['assets/inter.ttf', { size: 10 }], ['layers/subs.html', { size: 10 }]]) };
@@ -109,5 +110,39 @@ describe('localization ignores the subtitles clip', () => {
     expect(localizableEntries(c).texts.map((t) => t.clipId)).toEqual(['title']);
     const out = applyLocalization(c, overlay);
     expect(out.tracks[1]).toEqual(c.tracks[1]);
+  });
+});
+
+describe('editing a composition with the subtitles track', () => {
+  const withTrack = (c: Composition): Composition => { const x = copy(c);
+    x.tracks.push({ id: 'subtitles', kind: 'subtitles', clips: [{ id: 'subs', type: 'subtitles', start: 0, duration: x.duration,
+      props: { fontSize: 64, color: '#ffffff', position: 'bottom', margin: 120, maxWidth: 0.8 } }] } as never);
+    return x;
+  };
+  it('scenes can be reordered', () => {
+    const c = withTrack(reorderable());
+    expect(sceneOrderAllowed(c)).toEqual({ ok: true });
+    const r = applyEdit(c, { kind: 'sceneOrder', order: ['photo', 'intro', 'outro'] });
+    expect(r.ok).toBe(true);
+  });
+  it('resizing a scene keeps the subtitles clip over the whole new duration', () => {
+    for (const [scene, d] of [['outro', 3], ['intro', 3], ['outro', 1]] as const) {
+      const r = applyEdit(withTrack(reorderable()), { kind: 'sceneDuration', sceneId: scene, duration: d });
+      if (!r.ok) throw new Error(r.problem.key);
+      expect(subtitlesClipOf(r.composition)).toMatchObject({ start: 0, duration: r.composition.duration });
+      expect(validateComposition(r.composition, { format: REEL, files: fileMap() }).problems).toEqual([]);
+    }
+  });
+  it('edit ops on its clip are refused as locked', () => {
+    const c = withTrack(reorderable());
+    const ops: EditOp[] = [
+      { kind: 'clipTiming', clipId: 'subs', start: 0, duration: 5, ripple: false },
+      { kind: 'clipProps', clipId: 'subs', props: { fontSize: 50 } as never },
+    ];
+    for (const op of ops) {
+      const r = applyEdit(c, op);
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.problem.key).toBe('editor.locked');
+    }
   });
 });

@@ -236,6 +236,8 @@ export type Composition = z.infer<typeof compositionSchema>;
 export function stripSubtitles(c: Composition): Composition {
   return c.tracks.some((t) => t.kind === 'subtitles') ? { ...c, tracks: c.tracks.filter((t) => t.kind !== 'subtitles') } : c;
 }
+/** A subtitles track is always locked: its clip is drawn from the subtitle set, never edited directly. */
+export const trackLocked = (t: Track): boolean => Boolean(t.locked) || t.kind === 'subtitles';
 /** The one subtitles clip of a composition, or null. */
 export function subtitlesClipOf(c: Composition): SubtitlesClip | null {
   for (const t of c.tracks) for (const k of t.clips) if (k.type === 'subtitles') return k;

@@ -2,7 +2,7 @@ import { compositionProblem, type CompositionProblem } from '../problems.ts';
 import { normalizeComposition } from '../normalize.ts';
 import { declaredWeights, weightNumber } from '../fonts.ts';
 import { isCompositionPath } from '../paths.ts';
-import { COMPOSITION_LIMITS, compositionSchema, type Clip, type Composition, type Scene, type Track } from '../schema.ts';
+import { COMPOSITION_LIMITS, compositionSchema, trackLocked, type Clip, type Composition, type Scene, type Track } from '../schema.ts';
 import { ADD_FONT_MAX_WEIGHTS, type EditContext, type EditOp, type EditResult } from './ops.ts';
 
 /** Tolerance on times (seconds), well below one frame at 60 fps (same as the validator). */
@@ -63,7 +63,7 @@ function locate(w: Composition, clipId: string): { track: Track; clip: Clip } {
 }
 function locateUnlocked(w: Composition, clipId: string): { track: Track; clip: Clip } {
   const found = locate(w, clipId);
-  if (found.clip.locked || found.track.locked) refuse('editor.locked', { clip: clipId });
+  if (found.clip.locked || trackLocked(found.track)) refuse('editor.locked', { clip: clipId });
   return found;
 }
 const byTime = (w: Composition): Scene[] => [...w.scenes].sort((a, b) => a.start - b.start);
@@ -78,7 +78,7 @@ function owner(k: Clip, scenes: Scene[]): Scene | undefined {
 }
 
 /**
- * Whether scenes can be reordered: every clip that is not audio lies inside exactly one scene (its `scene`, or the only one
+ * Whether scenes can be reordered: every clip that is not audio (or subtitles) lies inside exactly one scene (its `scene`, or the only one
  * that contains it). Audio clips spanning several scenes are fine: they stay where they are.
  */
 export function sceneOrderAllowed(c: Composition): { ok: true } | { ok: false; clipId: string } {
@@ -86,7 +86,7 @@ export function sceneOrderAllowed(c: Composition): { ok: true } | { ok: false; c
   if (w.duration === 0) return { ok: true };
   const scenes = byTime(w);
   for (const { clip } of allClips(w)) {
-    if (clip.type === 'audio') continue;
+    if (clip.type === 'audio' || clip.type === 'subtitles') continue;
     if (!owner(clip, scenes)) return { ok: false, clipId: clip.id };
   }
   return { ok: true };
@@ -148,13 +148,13 @@ function resizeScene(w: Composition, sceneId: string, newDuration: number, skip?
   const setEnd = (track: Track, k: Clip, end: number): void => {
     const d = r(end - k.start);
     if (d < minD - EPS) refuse('composition.clipOutsideScene', { clip: k.id, scene: scene.id, start: r(scene.start), end: r(newEnd) });
-    if (k.locked || track.locked) refuse('editor.locked', { clip: k.id });
+    if (k.locked || trackLocked(track)) refuse('editor.locked', { clip: k.id });
     fitAnimations(k, d, w.fps);
     k.duration = d;
   };
 
   for (const { track, clip, owner: o } of owners) {
-    if (clip.id === skip) continue;
+    if (clip.id === skip || clip.type === 'subtitles') continue; // it follows the duration below
     const end = clip.start + clip.duration;
     const oi = o ? scenes.indexOf(o) : -1;
     if (o && oi > index) { shift(clip, delta); continue; }
@@ -164,16 +164,17 @@ function resizeScene(w: Composition, sceneId: string, newDuration: number, skip?
     if (clip.start >= oldEnd - EPS) shift(clip, delta);
     else if (clip.type === 'audio') {
       // Audio keeps its place and length, except when it ran to the end of the composition (it follows) or would pass the new end.
-      if (end >= oldTotal - EPS) { if (delta < 0 || !(clip.locked || track.locked)) setEnd(track, clip, end + delta); }
+      if (end >= oldTotal - EPS) { if (delta < 0 || !(clip.locked || trackLocked(track))) setEnd(track, clip, end + delta); }
       else if (end > oldTotal + delta + EPS) setEnd(track, clip, oldTotal + delta);
     } else if (end > oldEnd + EPS || (last && end >= oldEnd - EPS)) {
-      if (delta > 0 && (clip.locked || track.locked)) continue;
+      if (delta > 0 && (clip.locked || trackLocked(track))) continue;
       setEnd(track, clip, end + delta);
     } else if (end > newEnd + EPS) setEnd(track, clip, newEnd);
   }
   scene.duration = r(newDuration);
   for (let i = index + 1; i < scenes.length; i++) scenes[i]!.start = r(scenes[i]!.start + delta);
   w.duration = r(scenes.reduce((m, s) => Math.max(m, s.start + s.duration), 0));
+  for (const { clip } of allClips(w)) if (clip.type === 'subtitles') clip.duration = w.duration;
 }
 
 // ---------- ops ----------
