@@ -22,13 +22,14 @@ const H2 = 'b'.repeat(64);
 const H3 = 'c'.repeat(64);
 
 /** The hook over an editor state; the hook's own dispatch goes to the same reducer, as in the screen. */
-function setup(start: EditorState = loaded(), firstHash: string | null = H1) {
+function setup(start: EditorState = loaded(), firstHash: string | null = H1, o: { deferDispatch?: boolean } = {}) {
   let state = start;
   let hash = firstHash;
   // eslint-disable-next-line prefer-const
   let hook: ReturnType<typeof render>;
   const edit = (op: EditorOp) => { state = editorReducer(state, op); hook.rerender({ state, hash }); };
-  const dispatch = vi.fn<(op: EditorOp) => void>((op) => { edit(op); });
+  // `deferDispatch`: the hook's op is applied but shown only with the next render (one React batch with what follows).
+  const dispatch = vi.fn<(op: EditorOp) => void>((op) => { if (o.deferDispatch) state = editorReducer(state, op); else edit(op); });
   const render = () => renderHook(({ state: st, hash: h }) => useSubtitleSave('acme', 'promo', 'it', st, { hash: h, dispatch }), { initialProps: { state, hash } });
   hook = render();
   /** The screen passing another hash, with or without a load in the same render. */
@@ -125,6 +126,56 @@ describe('useSubtitleSave', () => {
     expect(api.saveSubtitleSet).toHaveBeenCalledTimes(3);
     expect(again.result.current.status).toBe('conflict');
     again.unmount();
+  });
+
+  it('a reloaded set with equal starts in another order than the editor\'s keeps autosave working', async () => {
+    api.saveSubtitleSet.mockRejectedValueOnce(new ApiError(409, 'changed', 'subtitles-conflict')).mockResolvedValue({ hash: H2 });
+    // Sorted by start only (the schema's rule); the editor sorts equal starts by end.
+    const theirs: SubtitleCue[] = [{ id: 'c1', start: 0, end: 1500, text: 'Ciao' }, { id: 'c2', start: 0, end: 1000, text: 'Sopra' }];
+    api.subtitleSet.mockResolvedValueOnce({ set: { lang: 'it', cues: theirs }, hash: H3 });
+    const { result, edit, now } = setup();
+    act(() => { edit({ type: 'delete', id: 'c2' }); });
+    await act(async () => { vi.advanceTimersByTime(SAVE_DEBOUNCE_MS); });
+    await settle();
+    expect(now().cues.map((c) => c.id)).toEqual(['c2', 'c1']);
+    expect(api.saveSubtitleSet).toHaveBeenCalledTimes(1);
+    act(() => { edit({ type: 'text', id: 'c1', text: 'Ciao ciao' }); });
+    await act(async () => { vi.advanceTimersByTime(SAVE_DEBOUNCE_MS); });
+    expect(api.saveSubtitleSet).toHaveBeenCalledTimes(2);
+    expect(api.saveSubtitleSet.mock.calls[1]![3]).toEqual({ baseHash: H3, cues: now().cues });
+    expect(result.current.status).toBe('saved');
+  });
+
+  it('a screen load in the same render as the reload\'s load wins, and autosave goes on over its hash', async () => {
+    api.saveSubtitleSet.mockRejectedValueOnce(new ApiError(409, 'changed', 'subtitles-conflict')).mockResolvedValue({ hash: H2 });
+    api.subtitleSet.mockResolvedValueOnce({ set: { lang: 'it', cues: CUES }, hash: H3 });
+    const { edit, screen, now } = setup(loaded(), H1, { deferDispatch: true });
+    act(() => { edit({ type: 'text', id: 'c1', text: 'Ciao mio' }); });
+    await act(async () => { vi.advanceTimersByTime(SAVE_DEBOUNCE_MS); });
+    await settle();
+    const other: SubtitleCue[] = [{ id: 'c9', start: 100, end: 1600, text: 'Dalla schermata' }];
+    act(() => { screen(H1.replace(/a/g, 'd'), other); });
+    await settle();
+    expect(now().cues).toEqual(other);
+    act(() => { edit({ type: 'text', id: 'c9', text: 'Dalla schermata, corretto' }); });
+    await act(async () => { vi.advanceTimersByTime(SAVE_DEBOUNCE_MS); });
+    expect(api.saveSubtitleSet.mock.calls.at(-1)![3]).toEqual({ baseHash: 'd'.repeat(64), cues: now().cues });
+  });
+
+  it('leaving the screen while a conflict reload is pending still saves the merged corrections', async () => {
+    api.saveSubtitleSet.mockRejectedValueOnce(new ApiError(409, 'changed', 'subtitles-conflict')).mockResolvedValue({ hash: H2 });
+    let answer!: (v: unknown) => void;
+    api.subtitleSet.mockImplementationOnce(() => new Promise((r) => { answer = r; }));
+    const theirs: SubtitleCue[] = [CUES[0]!, { id: 'c2', start: 2000, end: 3500, text: 'Prenota ora', edited: true }];
+    const { edit, now, unmount } = setup();
+    act(() => { edit({ type: 'text', id: 'c1', text: 'Ciao mio' }); });
+    const mine = now().cues[0]!;
+    await act(async () => { vi.advanceTimersByTime(SAVE_DEBOUNCE_MS); });
+    unmount();
+    await act(async () => { answer({ set: { lang: 'it', cues: theirs }, hash: H3 }); });
+    await settle();
+    expect(api.saveSubtitleSet).toHaveBeenCalledTimes(2);
+    expect(api.saveSubtitleSet.mock.calls[1]).toEqual(['acme', 'promo', 'it', { baseHash: H3, cues: mergeKeepingEdited([mine], theirs) }, { keepalive: true }]);
   });
 
   it('a hash given without a load is ignored; one given with a load is the next base', async () => {

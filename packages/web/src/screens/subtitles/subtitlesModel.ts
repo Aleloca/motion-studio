@@ -55,7 +55,8 @@ export function normalizeCueText(text: string, lang: LocaleTag): string {
 
 const flatten = (text: string, lang: LocaleTag): string => text.replace(/\s*\n\s*/g, joiner(lang));
 const compact = (s: string): string => s.replace(/\s+/g, '');
-const byStart = (a: SubtitleCue, b: SubtitleCue): number => a.start - b.start || a.end - b.end;
+/** The editor's cue order (by start, then end): every `load` and edit sorts with it. */
+export const byStart = (a: SubtitleCue, b: SubtitleCue): number => a.start - b.start || a.end - b.end;
 
 function nextId(cues: SubtitleCue[]): string {
   let n = 0;

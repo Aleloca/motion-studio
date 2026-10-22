@@ -1,11 +1,11 @@
-// Autosave of the subtitle editor (decisions 1654-1657): the cues go out SAVE_DEBOUNCE_MS after the last edit, over the hash
+// Autosave of the subtitle editor (decisions 1654-1659): the cues go out SAVE_DEBOUNCE_MS after the last edit, over the hash
 // of the set the editor holds. One save at a time. A 409 means the set changed elsewhere (a job, another window): it is
 // reloaded, the user's unsaved corrections are put back on it (anti-goal 1: nothing silently drops text the user corrected)
 // and saved over the new hash. A waiting edit is sent when the screen goes away or the page closes.
 import { mergeKeepingEdited, type LocaleTag, type SubtitleCue } from '@motion-studio/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../../api.ts';
-import type { EditorOp, EditorState } from './subtitlesModel.ts';
+import { byStart, type EditorOp, type EditorState } from './subtitlesModel.ts';
 
 export const SAVE_DEBOUNCE_MS = 800;
 /** A body over this many bytes is sent without keepalive when the page closes (browsers refuse larger keepalive bodies). */
@@ -30,6 +30,8 @@ const textOf = (cues: readonly SubtitleCue[]): string => JSON.stringify(cues);
  * the cues of `state` when it is not dirty; afterwards with each `load` the screen dispatches (pass the new hash in the same
  * render as that load, e.g. both from one state). A hash that changes without a load is ignored. `o.dispatch` is the
  * editor's: the hook dispatches its own `load` after a conflict. Mount one per set (key it by creative and language).
+ * The screen must not dispatch its own `load` while the editor is dirty or while a conflict is being resolved (status
+ * `conflict` with a save in flight): a screen load then wins over the hook's and the merged corrections are not saved.
  */
 export function useSubtitleSave(
   slug: string, creative: string, lang: LocaleTag, state: EditorState,
@@ -54,6 +56,13 @@ export function useSubtitleSave(
   /** No edit since the last conflict: a save then keeps saying `conflict`. */
   const afterConflict = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * False once the screen is gone; `closing`: the page began closing (a cancelled close leaves it set: harmless, the reload
+   * then saves its merge itself and the editor's load that follows has nothing more to save). A reload ending then saves
+   * its result itself.
+   */
+  const mounted = useRef(true);
+  const closing = useRef(false);
   const chain = useRef<Promise<void>>(Promise.resolve());
 
   const changed = () => textOf(latest.current.cues) !== base.current.text;
@@ -66,10 +75,23 @@ export function useSubtitleSave(
     try { fresh = await api.subtitleSet(s, c, l); } catch { setStatus('error'); return; }
     const saved = new Set(base.current.cues.map((cue) => JSON.stringify(cue)));
     const unsaved = latest.current.cues.filter((cue) => cue.edited && !saved.has(JSON.stringify(cue)));
-    const cues = unsaved.length > 0 ? mergeKeepingEdited(unsaved, fresh.set.cues) : fresh.set.cues;
+    // In the editor's order, so the `load` on screen is recognised by its text.
+    const cues = [...(unsaved.length > 0 ? mergeKeepingEdited(unsaved, fresh.set.cues) : fresh.set.cues)].sort(byStart);
     if (timer.current) { clearTimeout(timer.current); timer.current = null; }
     hash.current = fresh.hash;
-    base.current = { cues: fresh.set.cues, text: textOf(fresh.set.cues) };
+    // The server's cues in the editor's order: the same set, so a reload with nothing to put back saves nothing.
+    const server = [...fresh.set.cues].sort(byStart);
+    base.current = { cues: server, text: textOf(server) };
+    // The screen left (or the page is closing) while it loaded: no effect will save the merge, so it goes out now.
+    if ((!mounted.current || closing.current) && unsaved.length > 0) {
+      const body = { baseHash: fresh.hash, cues };
+      const small = new TextEncoder().encode(JSON.stringify(body)).length <= KEEPALIVE_MAX_BYTES;
+      try {
+        const r = await (small ? api.saveSubtitleSet(s, c, l, body, { keepalive: true }) : api.saveSubtitleSet(s, c, l, body));
+        hash.current = r.hash;
+        base.current = { cues, text: textOf(cues) };
+      } catch { /* the editor, if still there, saves it after its load */ }
+    }
     ownLoad.current = textOf(cues);
     afterConflict.current = true;
     setStatus('conflict');
@@ -114,10 +136,20 @@ export function useSubtitleSave(
     if (ownLoad.current !== null) {
       // Our load is on screen (alone, or under edits made right after it: then it is the first undo step).
       const shown = state.dirty ? state.past.length > 0 && textOf(state.past[0]!) === ownLoad.current : text === ownLoad.current;
-      if (!shown) return;
-      ownLoad.current = null;
-      if (!state.dirty) {
-        if (text !== base.current.text) void save(false);
+      if (shown) {
+        ownLoad.current = null;
+        if (!state.dirty) {
+          if (text !== base.current.text) void save(false);
+          return;
+        }
+      } else if (state.dirty) {
+        // A render from before our load: the load's own render follows.
+        return;
+      } else {
+        // A screen load in the same batch as ours (outside the contract): it wins, with its hash.
+        ownLoad.current = null;
+        base.current = { cues: state.cues, text };
+        hash.current = propHash.current;
         return;
       }
     } else if (!state.dirty) {
@@ -135,12 +167,14 @@ export function useSubtitleSave(
 
   // Leaving the screen sends a waiting edit (the page lives on); closing the page too, with keepalive when it fits.
   useEffect(() => {
-    const closing = () => { void save(true); };
-    window.addEventListener('beforeunload', closing);
-    window.addEventListener('pagehide', closing);
+    const onClose = () => { closing.current = true; void save(true); };
+    window.addEventListener('beforeunload', onClose);
+    window.addEventListener('pagehide', onClose);
+    mounted.current = true;
     return () => {
-      window.removeEventListener('beforeunload', closing);
-      window.removeEventListener('pagehide', closing);
+      window.removeEventListener('beforeunload', onClose);
+      window.removeEventListener('pagehide', onClose);
+      mounted.current = false;
       void save(false);
     };
   }, [save]);
