@@ -428,6 +428,12 @@ export interface FormatSummary {
    * Optional: older cores do not send it.
    */
   starRender?: 'rendered' | 'notRendered' | 'stale' | 'missing' | null;
+  /**
+   * Subtitles (final review I2): the composition export uses (`exportVersion`) is a video with the `subtitles` track, so it
+   * can be exported with subtitles drawn into it (an unreadable composition counts as one with it, as in the export). False
+   * for a still, a legacy file or no composition. Sent only when the creative has subtitle sets; absent: not known.
+   */
+  subtitlesTrack?: boolean;
   /** Each other format of the brief as a possible primary for this one (`checkLink`). */
   linkable: Array<{ primary: string; ok: boolean; reason?: LinkReason }>;
 }

@@ -307,6 +307,15 @@ describe('export subtitle choices (Task 21)', { timeout: 120_000 }, () => {
     expect(r.json().skipped).toEqual([expect.stringMatching(/Still/)]);
   });
 
+  it('the creative\'s format summaries say which ★ compositions draw the subtitles (final review I2)', async () => {
+    const formats = async (slug: string) => Object.fromEntries(((await env.app.inject({ url: `/api/projects/acme/creatives/${slug}`, headers: H })).json().formats as Array<{ id: string; subtitlesTrack?: boolean }>)
+      .map((f) => [f.id, f.subtitlesTrack]));
+    const withTrack = await creative({ track: true, still: true, render: false });
+    expect(await formats(withTrack.slug)).toEqual({ 'test-wide': true, 'test-wide-b': true, 'test-still': false });
+    const without = await creative({ render: false });
+    expect(await formats(without.slug)).toEqual({ 'test-wide': false, 'test-wide-b': false });
+  });
+
   it('a follower reuses its primary\'s subtitled file, renamed', async () => {
     const { slug } = await creative({ track: true });
     const before = env.fake.renders.length;

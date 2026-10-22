@@ -35,7 +35,7 @@ const SOFT_CONTAINERS: Record<string, string> = { '.mp4': 'mp4', '.mov': 'mov', 
  * subtitles. Null for a legacy item (no compositions). A composition that cannot be read counts as one with the track, so the
  * clean video is rendered with the track off (anti-goal 2) rather than copied with subtitles it might have.
  */
-async function compositionFacts(creativeDir: string, v: VersionEntry | undefined, format: string): Promise<{ still: boolean; track: boolean } | null> {
+export async function compositionFacts(creativeDir: string, v: VersionEntry | undefined, format: string): Promise<{ still: boolean; track: boolean } | null> {
   const entry = v?.compositions?.find((c) => c.format === format);
   if (!v || !entry) return null;
   const parsed = await readCompositionJson(join(creativeDir, 'outputs', `v${v.n}`, ...entry.dir.split('/'))).catch(() => null);

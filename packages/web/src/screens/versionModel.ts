@@ -19,6 +19,8 @@ export interface FormatState {
   linkable: FormatSummary['linkable'];
   /** The primary this format follows (it then has no ★ and no history of its own to pick from). */
   follows: string | null;
+  /** `FormatSummary.subtitlesTrack` (final review I2): absent when the core does not say. */
+  subtitlesTrack?: boolean;
 }
 
 /**
@@ -50,6 +52,7 @@ export function formatStates(detail: CreativeDetail, presets: FormatPreset[]): R
         return c.ok ? { primary, ok: true } : { primary, ok: false, reason: c.reason };
       }),
       follows: star.follows,
+      ...(s?.subtitlesTrack !== undefined ? { subtitlesTrack: s.subtitlesTrack } : {}),
     };
   }
   for (const v of detail.versions) {

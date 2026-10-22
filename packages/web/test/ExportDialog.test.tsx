@@ -572,6 +572,36 @@ describe('ExportDialog · the Sottotitoli section (Task 22)', () => {
     expect(screen.getByRole('button', { name: 'Esporta 3 file' })).toBeTruthy();
   });
 
+  it('"Nel video" names and counts the -sub- videos of the rows whose composition has the track only (final review I2)', async () => {
+    openWith([sub('it'), sub('en')], 'it', { versions, states: states({ [REEL]: { subtitlesTrack: false }, [TIKTOK]: { subtitlesTrack: true }, [POST]: { subtitlesTrack: false } }) });
+    await userEvent.click(screen.getByRole('checkbox', { name: /^Nel video.*inglese/i }));
+    expect(preview()).toContain('summer-launch-tiktok-9x16-v5-sub-en.mp4');
+    expect(preview()).not.toContain('reel-9x16-v5-sub-en');
+    // The Reel draws no subtitles: with drawn languages only it gives no file, and its row says so.
+    const reel = document.querySelector('.ms-exp-row:not(.ms-exp-cols) .ms-exp-file')!;
+    expect(reel.textContent).toBe('Non disegna i sottotitoli: non esportato');
+    // The TikTok's drawn video and the still.
+    expect(screen.getByRole('button', { name: 'Esporta 2 file' })).toBeTruthy();
+    // Files with it: the Reel's clean video and its files count again.
+    await userEvent.click(screen.getByRole('checkbox', { name: /^File \.srt e \.vtt.*italiano/i }));
+    expect(screen.getByRole('button', { name: 'Esporta 8 file' })).toBeTruthy();
+  });
+
+  it('no ticked row has the track: no "Nel video" row (final review I2)', async () => {
+    openWith([sub('it')], 'it', { versions, states: states({ [REEL]: { subtitlesTrack: true }, [TIKTOK]: { subtitlesTrack: false }, [POST]: { subtitlesTrack: false } }) });
+    const group = screen.getByRole('group', { name: 'Sottotitoli' });
+    expect(within(group).getByRole('group', { name: 'Nel video' })).toBeTruthy();
+    await userEvent.click(screen.getByRole('checkbox', { name: /^Nel video.*italiano/i }));
+    // Unticking the only format with the track: the row goes, and its ticked language is not sent.
+    await userEvent.click(screen.getByRole('checkbox', { name: /^Esporta Instagram · Story\/Reel/ }));
+    expect(within(group).queryByRole('group', { name: 'Nel video' })).toBeNull();
+    for (const row of ['File .srt e .vtt', 'Traccia nel file MP4']) expect(within(group).getByRole('group', { name: row })).toBeTruthy();
+    await userEvent.click(screen.getByRole('checkbox', { name: /^Traccia nel file MP4.*italiano/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^Esporta \d+ file$/ }));
+    await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledOnce());
+    expect((api.exportPicksJob.mock.calls[0]![2] as unknown as { subtitles: object }).subtitles).toEqual({ soft: ['it'] });
+  });
+
   it('a ★ render that drew a set since corrected is rendered first (renderState with the creative\'s subtitle hashes)', () => {
     const comp = { format: REEL, dir: `compositions/${REEL}`, hash: 'e'.repeat(64) };
     const v7 = { ...ver(7, [{ ...out(REEL, 'mp4', 1920), sha256: 'f'.repeat(64), fromComposition: 'e'.repeat(64), subtitles: { lang: 'it', hash: 'a'.repeat(64) } }]), compositions: [comp] };

@@ -1,6 +1,7 @@
 import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { checkLink, effectiveLinks, followerVersion, formatHistory, renderState, starOf, type CreativeFile, type FormatPreset, type FormatSummary, type VersionEntry } from '@motion-studio/shared';
+import { compositionFacts } from './subtitle-export.ts';
 
 /**
  * The output file of `formatId` in version `n` is usable: a regular, single-linked file on disk (a symlink or a hard link is
@@ -38,6 +39,8 @@ export async function formatSummaries(creativeDir: string, creative: CreativeFil
     const rs = version && v2 ? renderState(version, id, subtitleHashes) : null;
     const starRender: FormatSummary['starRender'] = !version ? null : !v2 ? (fileOk ? 'rendered' : 'missing')
       : rs === 'rendered' ? (fileOk ? 'rendered' : 'notRendered') : rs === 'stale' ? 'stale' : 'notRendered';
+    // Final review I2: whether the exported composition can have subtitles drawn into it (only asked with subtitle sets).
+    const facts = subtitleHashes && Object.keys(subtitleHashes).length > 0 ? await compositionFacts(creativeDir, version, id) : undefined;
     return {
       id,
       history: formatHistory(versions, id),
@@ -45,6 +48,7 @@ export async function formatSummaries(creativeDir: string, creative: CreativeFil
       exportVersion: exported,
       starFileMissing: missing,
       starRender,
+      ...(facts !== undefined ? { subtitlesTrack: facts !== null && !facts.still && facts.track } : {}),
       linkable: brief.formats.filter((p) => p !== id).map((primary) => {
         const c = checkLink(brief, versions, presets, id, primary);
         return c.ok ? { primary, ok: true } : { primary, ok: false, reason: c.reason };
