@@ -294,12 +294,17 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
   const voiceOf = (lang: string) => (subtitles ?? []).find((s) => s.lang === lang)?.timing.locale;
   const fits = (lang: string, video: string | undefined) => { const v = voiceOf(lang); return v === undefined || v === video; };
   const asVideo = (tag: string | undefined) => (tag === undefined || tag === locales?.primary ? undefined : tag);
+  // Final review Minor 3: a language has a video for the drawn subtitles when every chosen video row has its translation.
+  const translated = (lang: string) => {
+    const drawn = chosen.filter((c) => drawable(c.row));
+    return drawn.length > 0 && drawn.every((c) => versions.find((v) => v.n === c.row.n)?.localizations?.some((l) => l.locale === lang && l.instanceId === c.row.id) === true);
+  };
   /** The video a drawn language goes on: the one chosen, else the default pairing (U8, `defaultSubtitleVideo`). */
   const videoOf = (lang: string): string | undefined => {
     const set = (subtitles ?? []).find((s) => s.lang === lang);
     if (!locales || !withLanguages || !set) return undefined;
     const chosenTag = subVideo[lang];
-    return asVideo(chosenTag !== undefined && fits(lang, asVideo(chosenTag)) ? chosenTag : defaultSubtitleVideo(set, locales));
+    return asVideo(chosenTag !== undefined && fits(lang, asVideo(chosenTag)) ? chosenTag : defaultSubtitleVideo(set, locales, translated));
   };
   // Files and tracks of a set timed on a localized voice are offered while that video is exported.
   const offered = (lang: string) => { const v = voiceOf(lang); return v === undefined || (withLanguages && Boolean(langs[v])); };

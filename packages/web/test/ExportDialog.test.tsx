@@ -39,6 +39,8 @@ const POST = 'instagram-post-1x1';
 const out = (format: string, ext: string, size = 1080) => ({ format, file: `${format}.${ext}`, width: 1080, height: size, durationSec: null, verified: true, preview: null });
 const ver = (n: number, outputs: VersionEntry['outputs']): VersionEntry =>
   ({ n, commit: 'c', sessionId: 's', status: 'complete', createdAt: '2026-10-08T10:00:00.000Z', request: '', outputs, problems: [], tools: [], renderCommand: null, basedOn: null });
+/** A translation row of a version (Phase 12): the language's video of that format exists. */
+const loc = (locale: string, instanceId: string) => ({ locale, instanceId, hash: '1'.repeat(64), origin: 'agent', stale: [], voice: 'translated' }) as NonNullable<VersionEntry['localizations']>[number];
 const versions = [ver(5, [out(REEL, 'mp4', 1920), out(TIKTOK, 'mp4', 1920), out(POST, 'png')]), ver(7, [out(REEL, 'mp4', 1920), out(TIKTOK, 'mp4', 1920), out(POST, 'png')])];
 const state = (id: string, s: Partial<FormatState>): FormatState => ({
   id, history: [5, 7], star: { version: 7, manual: false, newer: null, follows: null }, defaultVersion: 7, exportVersion: 7, starFileMissing: false, linkable: [], follows: null, ...s,
@@ -472,7 +474,7 @@ describe('ExportDialog · resolution and quality (decision 974, user report 22)'
       timing: { version: 7, format: REEL, fingerprint: 'b'.repeat(64) }, timingChanged: false, staleCues: 0 }) as never;
     render(
       <I18nProvider locale="en">
-        <Live open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions: [v7], states: st() }} presets={DEFAULT_FORMATS}
+        <Live open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions: [{ ...v7, localizations: [loc('it', REEL)] }], states: st() }} presets={DEFAULT_FORMATS}
           pattern="{title}-{format}-v{v}" locales={{ primary: 'en', extra: ['it'] }} subtitles={[sub('en'), sub('it')]} />
       </I18nProvider>,
     );
@@ -651,9 +653,11 @@ describe('ExportDialog · the Sottotitoli section (Task 22)', () => {
 describe('ExportDialog · subtitle languages (Task 27)', () => {
   const sub = (lang: string, voice?: string) => ({ lang, origin: lang === 'it' || voice ? 'speech' : 'translation', cues: 3, edited: 0, hash: 'a'.repeat(64),
     timing: { version: 1, format: REEL, fingerprint: 'b'.repeat(64), ...(voice ? { locale: voice } : {}) }, timingChanged: false, staleCues: 0 }) as never;
-  const openWith = (subtitles: never[]) => render(
+  /** The German videos exist: each video format of v5 and v7 has its German translation. */
+  const german = versions.map((v) => ({ ...v, localizations: [loc('de', REEL), loc('de', TIKTOK)] }));
+  const openWith = (subtitles: never[], o: { versions?: VersionEntry[] } = {}) => render(
     <I18nProvider locale="it">
-      <Live open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions, states: states() }} presets={DEFAULT_FORMATS}
+      <Live open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions: o.versions ?? german, states: states() }} presets={DEFAULT_FORMATS}
         pattern="{title}-{format}-v{v}" onSettings={onSettings} subtitles={subtitles} locales={{ primary: 'it', extra: ['de'] }} />
     </I18nProvider>,
   );
@@ -682,6 +686,13 @@ describe('ExportDialog · subtitle languages (Task 27)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Esporta 7 file' }));
     await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledOnce());
     expect(sent().subtitles).toEqual({ drawn: [{ video: 'de', lang: 'en' }, { video: 'de', lang: 'de' }] });
+  });
+
+  it('German subtitles go on the original by default when the format has no German translation (final review Minor 3)', async () => {
+    openWith([sub('it'), sub('de')], { versions });
+    await userEvent.click(screen.getByRole('checkbox', { name: /^Nel video.*tedesco/i }));
+    expect(videoOf(/^Video dei sottotitoli in tedesco/i).textContent).toMatch(/Originale/);
+    expect(preview()).toContain('summer-launch-instagram-reel-9x16-v5-sub-de.mp4');
   });
 
   it('files and tracks go with every exported video language: names and count per language', async () => {

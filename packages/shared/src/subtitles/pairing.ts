@@ -13,9 +13,11 @@ export function subtitlesFitVideo(timing: { locale?: LocaleTag | undefined }, vi
 
 /**
  * The video a subtitle language goes on by default (U8): the video it was timed on when it follows a localized voice, else the
- * video in that language when the creative is localized into it, else the original (`locales.primary`).
+ * video in that language when the creative is localized into it (and, given `translated`, that language has a translation of
+ * the format: final review Minor 3), else the original (`locales.primary`).
  */
-export function defaultSubtitleVideo(set: { lang: LocaleTag; timing: { locale?: LocaleTag | undefined } }, locales: { primary: LocaleTag; extra: readonly LocaleTag[] }): LocaleTag {
+export function defaultSubtitleVideo(set: { lang: LocaleTag; timing: { locale?: LocaleTag | undefined } }, locales: { primary: LocaleTag; extra: readonly LocaleTag[] },
+  translated?: (lang: LocaleTag) => boolean): LocaleTag {
   if (set.timing.locale !== undefined) return set.timing.locale;
-  return locales.extra.includes(set.lang) ? set.lang : locales.primary;
+  return locales.extra.includes(set.lang) && (translated?.(set.lang) ?? true) ? set.lang : locales.primary;
 }
