@@ -1253,7 +1253,7 @@
           "const": "subtitles"
         },
         "template": {
-          "description": "An .html file under layers/ that draws the line instead of the built-in look; it reads the line from window.msSubtitle.",
+          "description": "An .html file under layers/ that draws the line instead of the built-in look; it reads the subtitle set from window.msSubtitles and the line at a time from window.msActiveCue(ms).",
           "$ref": "#/$defs/path"
         },
         "props": {

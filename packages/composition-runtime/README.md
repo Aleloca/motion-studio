@@ -277,7 +277,7 @@ than 200 scenes or errors.
 | in | `{ type: 'setComposition', composition, keepTime?, seq }` (Phase 10b, preview only; render mode never listens). `parseIncoming` needs the draft parser (`./draft`, loaded from `preview.js`; without it the draft is refused): it serialises the draft once, refuses it above `COMPOSITION_LIMITS.jsonBytes` (UTF-8) and checks it with `compositionSchema` (structure only). The runtime mounts it below the mount shown, in the same document, loads it, seeks it to the kept time (clamped; 0 without `keepTime`), then swaps it in and destroys the old mount (animations cancelled, media and layer frames released, fonts deleted). Scale, mute, play state and the selection (when its clip still exists) carry over. Drafts that arrive during a re-mount wait; only the latest is mounted next. A video clip whose `src` is a source the session normalised (`originalSrc` in the inlined copy) plays the same `media/<i>.mp4`. |
 | in | `{ type: 'sessionMedia', src, index, sourceFps, sourceStart, sourceVideoEnd, audioStart? }` (Phase 10b, preview only): a video the core staged for the draft (`assets/lib/…`) was normalised and added to the session's media. A draft video clip whose `src` is `src` then plays `media/<index>.mp4` with these source fields (trusted), and its sound, when `audioStart` is given, from `src` itself. The core serves only the indices it added to that session. Applies to the drafts that follow. |
 | out | `{ type: 'compositionApplied', seq, errors }` after a draft is shown (its `time` and `clipBounds` go first), or after it failed to mount (the old one stays). `errors` are the draft's load problems; they are not also sent one by one. |
-| in | `{ type: 'setSubtitles', subtitles }` (subtitles Task 16, preview only): the subtitles the `subtitles` clip draws (`RuntimeSubtitles`, or `null` for none), checked like the page's (`readRuntimeSubtitles`; a bad block is refused). Redrawn at once at the time shown, without a re-mount; the drafts that follow keep them. |
+| in | `{ type: 'setSubtitles', subtitles }` (subtitles Task 16, preview only): the subtitles the `subtitles` clip draws (`RuntimeSubtitles`, or `null` for none), checked like the page's (`readRuntimeSubtitles`; a bad block is refused). Redrawn at once at the time shown, without a re-mount (a `template` layer is opened again with them, see below); the drafts that follow keep them. |
 
 ## Drawn subtitles
 
@@ -290,7 +290,18 @@ draws the line at each time (`subtitles.ts`): `activeCue` finds it (of overlappi
 larger side inset on both sides), at most `maxWidth` of the frame wide, never past the opposite safe edge,
 with its box, outline, shadow, entrance (over `entranceSec` from the cue start) and the spoken-word highlight (only when the
 cue's words still match its text). Everything is a function of the time alone, so render frames are exact. Its font is a
-composition font, loaded with the others before the first frame. With a `template`, the built-in look is off (Task 17).
+composition font, loaded with the others before the first frame.
+
+**Template (Task 17).** A `subtitles` clip with a `template` (an `.html` file under `layers/`) draws nothing itself: the
+template is mounted as an html layer, the same sandboxed frame, `layer.js` bootstrap, server CSP and static checks as an
+`html` clip, driven by `msSeek`/`msTimeline` like any layer. Its configuration carries the subtitle set
+(`LayerConfig.subtitles`, checked again by `decodeLayerConfig`; none gives `{ lang: 'und', cues: [] }`), and `layer.js`
+defines `window.msSubtitles` (frozen all the way down) and `window.msActiveCue(tMs)`: `{ index, text, words, progress }` of
+the line shown at `tMs` (the layer's time in ms, which is the composition's: the clip spans it) as the built-in look picks
+it, `progress` from 0 to 1 through its span, or `null`; `tMs` is taken to whole microseconds. The cue text is data: a
+template sets it with `textContent`, never as markup. A layer reads its configuration once, so a preview `setSubtitles`
+opens the template again with the new set, transparent over the one shown, and swaps it in once it is ready (and sought
+to the time shown while paused); a newer `setSubtitles` drops one still loading.
 
 ## Animations
 

@@ -1,4 +1,5 @@
 import type { RuntimeMode } from './protocol.ts';
+import { readRuntimeSubtitles, type RuntimeSubtitles } from './subtitles.ts';
 
 /**
  * Runtime ↔ html layer. A layer is an `<iframe sandbox="allow-scripts">`, so it has its own opaque origin in both modes
@@ -27,6 +28,11 @@ export interface LayerConfig {
   fonts: LayerFont[];
   /** Render mode: how long the layer waits for each native animation frame after a seek before failing it. */
   frameTimeoutMs?: number;
+  /**
+   * A subtitles template (subtitles Task 17): the subtitle set, as `window.msSubtitles` (frozen), with `window.msActiveCue`.
+   * Times in composition milliseconds, which are also the layer's (a `subtitles` clip runs from 0 to the end).
+   */
+  subtitles?: RuntimeSubtitles;
 }
 
 export type LayerRequest = { id: number; op: 'ready' } | { id: number; op: 'seek'; t: number } | { op: 'tick'; t: number };
@@ -77,7 +83,12 @@ export function decodeLayerConfig(name: string): LayerConfig | null {
     const params = typeof v.params === 'object' && v.params !== null ? v.params : {};
     const fonts = Array.isArray(v.fonts) ? v.fonts.filter((f) => f && typeof f.family === 'string' && typeof f.url === 'string') : [];
     const frameTimeoutMs = typeof v.frameTimeoutMs === 'number' && v.frameTimeoutMs > 0 ? v.frameTimeoutMs : undefined;
-    return { v: LAYER_PROTOCOL_VERSION, mode: v.mode, clipId: v.clipId, params, fonts, ...(frameTimeoutMs ? { frameTimeoutMs } : {}) };
+    // Checked again like the page's (a bad block is left out: the template then sees no subtitles).
+    const subs = v.subtitles !== undefined ? readRuntimeSubtitles(v.subtitles) : null;
+    return {
+      v: LAYER_PROTOCOL_VERSION, mode: v.mode, clipId: v.clipId, params, fonts, ...(frameTimeoutMs ? { frameTimeoutMs } : {}),
+      ...(subs?.ok ? { subtitles: subs.subtitles } : {}),
+    };
   } catch {
     return null;
   }

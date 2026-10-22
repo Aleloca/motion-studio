@@ -1,12 +1,14 @@
 import { installVirtualClock, type VirtualClock } from './clock.ts';
 import { FrameTimeoutError, nextFrame, PREVIEW_FRAME_WAIT, twoFrames, type FrameWait } from './frames.ts';
 import { decodeLayerConfig, LAYER_PROTOCOL_VERSION, type LayerConfig, type LayerRequest } from './layer-protocol.ts';
+import { activeCue, type RuntimeCue, type RuntimeSubtitles, type RuntimeWord } from './subtitles.ts';
 
 /**
  * The html layer side (`layer.js`), injected by the core as the layer's first script. It runs before any layer code:
  * - installs the virtual clock (both modes: in preview the runtime advances it on every frame, so free JS animations
  *   follow the timeline, pause with it and scrub with it);
- * - defines `window.msParams` (frozen) from the configuration in `window.name`;
+ * - defines `window.msParams` (frozen) from the configuration in `window.name`, and for a subtitles template
+ *   `window.msSubtitles` and `window.msActiveCue` (`defineSubtitles`);
  * - turns off the `will-change` hints that freeze the raster scale (`createUnfreezer`, report 38, decision 1230), in
  *   both modes, after every seek and tick;
  * - answers the runtime: `ready` (every font face of the layer and of the composition `FontFace.load()`ed, then
@@ -332,6 +334,36 @@ export async function settleAnimations(started: readonly Animation[], t: number,
 /** The elements the unfreezer checks in one preview tick at most (decision 1245); a render checks them all. */
 export const PREVIEW_UNFREEZE_BUDGET = 2000;
 
+/** The line `msActiveCue` gives a subtitles template at a time. */
+export interface ActiveCueInfo { index: number; text: string; words: readonly RuntimeWord[]; progress: number }
+
+/**
+ * A subtitles template (subtitles Task 17): `window.msSubtitles`, the subtitle set frozen all the way down, and
+ * `window.msActiveCue(tMs)`, the line shown at `tMs` (the layer's time in milliseconds, `msSeek`'s `t` times 1000) as the
+ * built-in look picks it (`activeCue`), with its words (none: `[]`) and how far through its span `tMs` is (0–1), or null.
+ * `tMs` is taken to whole microseconds, as the built-in look does, so `t * 1000` lands on the same line every time. Both
+ * are pure: the template only paints, the same frame however it is reached. The cue text is data for the template.
+ */
+function defineSubtitles(lw: LayerWindow, s: RuntimeSubtitles): void {
+  const cues = Object.freeze(s.cues.map((c) => Object.freeze({
+    start: c.start, end: c.end, text: c.text,
+    ...(c.words ? { words: Object.freeze(c.words.map((wd) => Object.freeze({ ...wd }))) } : {}),
+  }))) as readonly RuntimeCue[];
+  const subtitles = Object.freeze({ lang: s.lang, cues });
+  const none: readonly RuntimeWord[] = Object.freeze([]);
+  const activeAt = (tMs: number): ActiveCueInfo | null => {
+    if (typeof tMs !== 'number' || !Number.isFinite(tMs)) return null;
+    const ms = Math.round(tMs * 1e3) / 1e3;
+    const i = activeCue(cues, ms);
+    if (i < 0) return null;
+    const c = cues[i]!;
+    return Object.freeze({ index: i, text: c.text, words: c.words ?? none, progress: Math.min(1, Math.max(0, (ms - c.start) / (c.end - c.start))) });
+  };
+  const fixed = { writable: false, configurable: false, enumerable: true } as const;
+  Object.defineProperty(lw, 'msSubtitles', { value: subtitles, ...fixed });
+  Object.defineProperty(lw, 'msActiveCue', { value: activeAt, ...fixed });
+}
+
 /** `stallMs`: the render-mode stall bound (`CLOCK_STALL_MS`; shorter only in tests). */
 export function startLayerAgent(w: Window & typeof globalThis, o: { stallMs?: number } = {}): void {
   const config: LayerConfig | null = decodeLayerConfig(w.name);
@@ -342,6 +374,7 @@ export function startLayerAgent(w: Window & typeof globalThis, o: { stallMs?: nu
   const lw = w as unknown as LayerWindow;
   const unfreezer = createUnfreezer(w.document);
   Object.defineProperty(lw, 'msParams', { value: Object.freeze({ ...config.params }), writable: false, configurable: false, enumerable: true });
+  if (config.subtitles) defineSubtitles(lw, config.subtitles);
 
   const declared: FontFace[] = [];
   for (const f of config.fonts) {

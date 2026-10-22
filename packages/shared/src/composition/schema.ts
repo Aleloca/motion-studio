@@ -179,7 +179,7 @@ export const SUBTITLE_POSITIONS = ['bottom', 'middle', 'top'] as const;
 export const SUBTITLE_ENTRANCES = ['none', 'fade', 'pop', 'slideUp'] as const;
 const subtitlesClip = z.strictObject({
   ...clipBase, type: z.literal('subtitles'),
-  template: path.optional().describe('An .html file under layers/ that draws the line instead of the built-in look; it reads the line from window.msSubtitle.'),
+  template: path.optional().describe('An .html file under layers/ that draws the line instead of the built-in look; it reads the subtitle set from window.msSubtitles and the line at a time from window.msActiveCue(ms).'),
   props: z.strictObject({
     fontFamily: family.optional(),
     fontSize: z.number().gt(0).max(COMPOSITION_BOUNDS.fontSize),

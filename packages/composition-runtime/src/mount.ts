@@ -4,7 +4,7 @@ import { compileAnimations, compileKenBurns, REGISTERED_PROPERTIES, type Compile
 import type { Natives, VirtualClock } from './clock.ts';
 import { FrameTimeoutError, twoFrames, withTimeout } from './frames.ts';
 import { connectLayer, LayerRequestError, type LayerHost } from './layer-host.ts';
-import { encodeLayerConfig, type LayerFont } from './layer-protocol.ts';
+import { encodeLayerConfig, type LayerConfig, type LayerFont } from './layer-protocol.ts';
 import type { Rect, RuntimeError, RuntimeErrorCode, RuntimeMode } from './protocol.ts';
 import { activeCue, drawSubtitles, type RuntimeSubtitles } from './subtitles.ts';
 import { audioGain, frameCount, isClipVisible, needsAudioResync, needsResync, pickVideoFrame, PRE_SEEK_SETTLE_MS, sourceTrustedOf, sourceVideoEndOf, videoSourceTime } from './timing.ts';
@@ -48,7 +48,7 @@ export interface Player {
   setScale(scale: number | 'fit'): void;
   /** Preview: silences every sound (videos and audio clips) or restores each one's own setting. */
   setMuted(muted: boolean): void;
-  /** Replaces the subtitles the `subtitles` clip draws (null: none) and redraws them at the time shown. */
+  /** Replaces the subtitles the `subtitles` clip draws (null: none): the built-in look redraws them at the time shown, a template's layer is opened again with them. */
   setSubtitles(subtitles: RuntimeSubtitles | null): void;
   /** The selected clip (preview), or null. */
   readonly selected: string | null;
@@ -78,6 +78,8 @@ interface Mounted {
   /** Render mode: where the video's frame is drawn (see `drawVideoFrame`). */
   canvas?: HTMLCanvasElement;
   layer?: LayerHost;
+  /** The layer's frame (html clips and subtitle templates). */
+  frame?: HTMLIFrameElement;
   prepare: Promise<void>;
   muted: boolean;
   /** Shown at the current time. */
@@ -87,6 +89,8 @@ interface Mounted {
 }
 /** `derived`: the sound of a normalised video clip (its `audioSrc`), not an audio clip of the composition. */
 interface MountedAudio { clip: AudioClip; el: HTMLAudioElement; muted: boolean; derived?: boolean }
+/** What a subtitle template gets when there are no subtitles: an empty set, its language undetermined (BCP 47 `und`). */
+const NO_SUBTITLES: RuntimeSubtitles = { lang: 'und', cues: [] };
 /** How long `ready()` waits for a video clip's derived sound before going on without it (`clipAudioFailed`). */
 const DERIVED_AUDIO_WAIT_MS = 3000;
 
@@ -222,6 +226,36 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
   }), Math.min(DERIVED_AUDIO_WAIT_MS, timeouts.load), n, `loading ${a.clip.src} timed out`)
     .catch((e: unknown) => report('clipAudioFailed', String(e instanceof Error ? e.message : e), a.clip.id));
 
+  /**
+   * An html layer in `content`: a sandboxed frame (its own opaque origin, see layer-protocol.ts) on `url`, configured through
+   * its `name`, connected; `prepare` resolves once it is ready (a failure is reported, never thrown). Html clips and
+   * subtitle templates (`extra.subtitles`) alike. `hidden`: laid over the frame already there, transparent (a remount).
+   */
+  const openLayer = (content: HTMLElement, clipId: string, url: string, file: string, extra: Pick<LayerConfig, 'params'> & Partial<Pick<LayerConfig, 'subtitles'>>, hidden = false) => {
+    const frame = doc.createElement('iframe');
+    frame.setAttribute('sandbox', 'allow-scripts');
+    frame.setAttribute('scrolling', 'no');
+    frame.tabIndex = -1;
+    frame.name = encodeLayerConfig({ v: 1, mode: opts.mode, clipId, params: extra.params, fonts: layerFonts, frameTimeoutMs: Math.max(1, Math.floor(timeouts.layer / 2)), ...(extra.subtitles ? { subtitles: extra.subtitles } : {}) });
+    Object.assign(frame.style, { display: 'block', width: '100%', height: '100%', border: '0', background: 'transparent', colorScheme: 'normal' });
+    if (hidden) Object.assign(frame.style, { position: 'absolute', left: '0', top: '0', opacity: '0' });
+    const layer = connectLayer(frame, n, timeouts.layer, { failFast: opts.mode === 'render' });
+    frame.src = url;
+    content.appendChild(frame);
+    const prepare = layer.ready().then(
+      (warnings) => { for (const m of warnings) report('fontLoadFailed', `layer: ${m}`, clipId); },
+      // `layerStalled` (decision 709): msReady waited on the frozen render clock; anything else is the layer not answering.
+      (e: unknown) => report(e instanceof LayerRequestError && e.code === 'layerStalled' ? 'layerStalled' : 'layerTimeout', `html layer ${file}: ${String(e instanceof Error ? e.message : e)}`, clipId),
+    );
+    return { frame, layer, prepare };
+  };
+  /** Lets go of a layer and its frame. */
+  const closeLayer = (l: { frame: HTMLIFrameElement; layer: LayerHost }) => {
+    l.layer.dispose();
+    l.frame.removeAttribute('src');
+    l.frame.remove();
+  };
+
   const mountVisual = (clip: VisualClip, track: Track) => {
     const p = clip.props as Record<string, unknown> & { x?: number; y?: number; width?: number; height?: number; rotation?: number; scale?: number; opacity?: number };
     const box = doc.createElement('div');
@@ -251,6 +285,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     let video: HTMLVideoElement | undefined;
     let canvas: HTMLCanvasElement | undefined;
     let layer: LayerHost | undefined;
+    let frame: HTMLIFrameElement | undefined;
     let media: Element | undefined;
     let subs: HTMLDivElement | undefined;
     const muted = opts.mode === 'render' || !!track.muted;
@@ -344,28 +379,17 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
         for (const [key, param] of Object.entries(clip.params ?? {})) {
           if (param.type === 'image') { const u = assetUrl(param.value, clip.id); if (u) params[key] = u; } else params[key] = param.value;
         }
-        const frame = doc.createElement('iframe');
-        frame.setAttribute('sandbox', 'allow-scripts');
-        frame.setAttribute('scrolling', 'no');
-        frame.tabIndex = -1;
-        frame.name = encodeLayerConfig({ v: 1, mode: opts.mode, clipId: clip.id, params, fonts: layerFonts, frameTimeoutMs: Math.max(1, Math.floor(timeouts.layer / 2)) });
-        Object.assign(frame.style, { display: 'block', width: '100%', height: '100%', border: '0', background: 'transparent', colorScheme: 'normal' });
-        layer = connectLayer(frame, n, timeouts.layer, { failFast: opts.mode === 'render' });
-        frame.src = url;
-        content.appendChild(frame);
-        const lh = layer;
-        prepare = lh.ready().then(
-          (warnings) => { for (const m of warnings) report('fontLoadFailed', `layer: ${m}`, clip.id); },
-          // `layerStalled` (decision 709): msReady waited on the frozen render clock; anything else is the layer not answering.
-          (e: unknown) => report(e instanceof LayerRequestError && e.code === 'layerStalled' ? 'layerStalled' : 'layerTimeout', `html layer ${clip.src}: ${String(e instanceof Error ? e.message : e)}`, clip.id),
-        );
+        ({ frame, layer, prepare } = openLayer(content, clip.id, url, clip.src, { params }));
         break;
       }
       case 'subtitles': {
         // The line comes from the subtitle set (`subtitles`), drawn at each time by `drawSubtitles` (applyStatic). Its
         // fonts are the composition's, loaded with the others before any seek shows a frame.
         if (clip.template) {
-          // Task 17: the template layer draws the line instead; the built-in look stays off for this clip.
+          // Task 17: an html layer draws the line instead (same frame, sandbox, bootstrap and checks as an html clip), fed
+          // with the subtitle set (`window.msSubtitles`, `window.msActiveCue`); the built-in look stays off for this clip.
+          const url = assetUrl(clip.template, clip.id);
+          if (url) ({ frame, layer, prepare } = openLayer(content, clip.id, url, clip.template, { params: {}, subtitles: subtitles ?? NO_SUBTITLES }));
           break;
         }
         checkFamily(clip.props.fontFamily ?? defaultFamily, 'subtitles', clip.id);
@@ -390,7 +414,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
       }
     }
     stage.appendChild(box);
-    mounted.push({ clip, box, content, anims, ...(video ? { video } : {}), ...(canvas ? { canvas } : {}), ...(layer ? { layer } : {}), ...(subs ? { subs } : {}), prepare, muted, visible: false });
+    mounted.push({ clip, box, content, anims, ...(video ? { video } : {}), ...(canvas ? { canvas } : {}), ...(layer ? { layer } : {}), ...(frame ? { frame } : {}), ...(subs ? { subs } : {}), prepare, muted, visible: false });
   };
 
   for (const track of c.tracks) {
@@ -798,6 +822,40 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
   const onResize = () => { applyScale(); player.onBounds?.(); };
   if (opts.mode === 'preview') w.addEventListener('resize', onResize);
 
+  /**
+   * Preview `setSubtitles` with a subtitle template (Task 17): its layer is opened again with the new set (a layer reads its
+   * configuration once, at load), laid transparent over the one shown; once ready, and sought to the time shown while
+   * paused, it replaces it, so an edit never blanks the line. A newer `setSubtitles` drops a layer still loading.
+   */
+  const remounts = new Map<Mounted, { frame: HTMLIFrameElement; layer: LayerHost }>();
+  const remountTemplate = (m: Mounted) => {
+    if (m.clip.type !== 'subtitles' || !m.clip.template || !m.frame || !m.layer) return;
+    const url = assetUrl(m.clip.template, m.clip.id);
+    if (!url) return;
+    const was = remounts.get(m);
+    if (was) closeLayer(was);
+    const next = openLayer(m.content, m.clip.id, url, m.clip.template, { params: {}, subtitles: subtitles ?? NO_SUBTITLES }, true);
+    remounts.set(m, next);
+    const current = () => !destroyed && remounts.get(m) === next;
+    void next.prepare.then(async () => {
+      if (!current()) return;
+      // Sought again when a seek of the player moved the time shown meanwhile (that seek went to the old layer).
+      for (let at = Number.NaN; !playing && m.visible && time !== at;) {
+        at = time;
+        await next.layer.seek(at - m.clip.start).catch((e: unknown) => {
+          if (current()) report(e instanceof LayerRequestError && e.code === 'layerStalled' ? 'layerStalled' : 'layerError', `layer seek: ${String(e instanceof Error ? e.message : e)}`, m.clip.id);
+        });
+        if (!current()) return;
+      }
+      remounts.delete(m);
+      closeLayer({ frame: m.frame!, layer: m.layer! });
+      Object.assign(next.frame.style, { opacity: '' });
+      m.frame = next.frame;
+      m.layer = next.layer;
+      m.prepare = next.prepare;
+    });
+  };
+
   /** Stops a media element and lets go of its resource (`src` removed, then `load()` resets it to empty). */
   const releaseMedia = (el: HTMLMediaElement) => {
     try { el.pause(); } catch { /* not playing */ }
@@ -813,6 +871,8 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     player.onTime = undefined;
     player.onBounds = undefined;
     if (opts.mode === 'preview') w.removeEventListener('resize', onResize);
+    for (const l of remounts.values()) l.layer.dispose(); // their frames go with the others below
+    remounts.clear();
     for (const m of mounted) {
       for (const { anim } of m.anims) { try { anim.cancel(); } catch { /* already gone */ } }
       if (m.video) releaseMedia(m.video);
@@ -932,8 +992,12 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     setSubtitles(next) {
       if (destroyed) return;
       subtitles = next;
-      // Redrawn at once at the time shown (a pure function of it): no seek, no re-mount.
-      for (const m of mounted) if (m.subs && m.visible) drawLine(m, time);
+      // The built-in look is redrawn at once at the time shown (a pure function of it): no seek, no re-mount. A template's
+      // layer is opened again with the new set.
+      for (const m of mounted) {
+        if (m.subs && m.visible) drawLine(m, time);
+        else if (m.clip.type === 'subtitles' && m.layer) remountTemplate(m);
+      }
     },
     selectedBounds() {
       if (!selected) return null;
