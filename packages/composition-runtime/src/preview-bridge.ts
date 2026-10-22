@@ -1,5 +1,6 @@
 import type { Composition } from '@motion-studio/shared';
 import { parseIncoming, parseOutgoing, type DraftParser, type PreviewIncoming, type PreviewOutgoing } from './protocol.ts';
+import type { RuntimeSubtitles } from './subtitles.ts';
 
 /** Where `preview.js` puts the draft parser on the runtime's window (entry/preview.ts). */
 export const DRAFT_PARSER_KEY = '__msDraft';
@@ -16,6 +17,8 @@ export interface BridgePlayer {
   setComposition(composition: Composition, o: { keepTime: boolean; seq: number }): void;
   /** A staged video's normalised session file (`sessionMedia`), for the drafts that follow. */
   addSessionMedia(m: Extract<PreviewIncoming, { type: 'sessionMedia' }>): void;
+  /** Validated subtitles (`setSubtitles`), or null: redraw at the current time (runtime-main). */
+  setSubtitles(subtitles: RuntimeSubtitles | null): void;
 }
 
 export interface PreviewBridge {
@@ -50,6 +53,7 @@ export function createPreviewBridge(o: {
       case 'mute': o.player.setMuted(cmd.muted); break;
       case 'setComposition': o.player.setComposition(cmd.composition, { keepTime: cmd.keepTime ?? false, seq: cmd.seq }); break;
       case 'sessionMedia': o.player.addSessionMedia(cmd); break;
+      case 'setSubtitles': o.player.setSubtitles(cmd.subtitles); break;
     }
   };
   return {

@@ -277,6 +277,19 @@ than 200 scenes or errors.
 | in | `{ type: 'setComposition', composition, keepTime?, seq }` (Phase 10b, preview only; render mode never listens). `parseIncoming` needs the draft parser (`./draft`, loaded from `preview.js`; without it the draft is refused): it serialises the draft once, refuses it above `COMPOSITION_LIMITS.jsonBytes` (UTF-8) and checks it with `compositionSchema` (structure only). The runtime mounts it below the mount shown, in the same document, loads it, seeks it to the kept time (clamped; 0 without `keepTime`), then swaps it in and destroys the old mount (animations cancelled, media and layer frames released, fonts deleted). Scale, mute, play state and the selection (when its clip still exists) carry over. Drafts that arrive during a re-mount wait; only the latest is mounted next. A video clip whose `src` is a source the session normalised (`originalSrc` in the inlined copy) plays the same `media/<i>.mp4`. |
 | in | `{ type: 'sessionMedia', src, index, sourceFps, sourceStart, sourceVideoEnd, audioStart? }` (Phase 10b, preview only): a video the core staged for the draft (`assets/lib/…`) was normalised and added to the session's media. A draft video clip whose `src` is `src` then plays `media/<index>.mp4` with these source fields (trusted), and its sound, when `audioStart` is given, from `src` itself. The core serves only the indices it added to that session. Applies to the drafts that follow. |
 | out | `{ type: 'compositionApplied', seq, errors }` after a draft is shown (its `time` and `clipBounds` go first), or after it failed to mount (the old one stays). `errors` are the draft's load problems; they are not also sent one by one. |
+| in | `{ type: 'setSubtitles', subtitles }` (subtitles Task 16, preview only): the subtitles the `subtitles` clip draws (`RuntimeSubtitles`, or `null` for none), checked like the page's (`readRuntimeSubtitles`; a bad block is refused). Redrawn at once at the time shown, without a re-mount; the drafts that follow keep them. |
+
+## Drawn subtitles
+
+The core inlines the creative's subtitle set next to the composition (`CompositionData.subtitles`: `{ lang, cues: [{ start,
+end, text, words? }] }`, composition milliseconds). `readCompositionData` checks it (at most 2000 cues, finite times with
+`start < end`, cues sorted by start, a text of at most 200 characters, at most 60 words per cue); a bad block is left out
+with a `subtitlesInvalid` warning, which never fails a render. The `subtitles` clip (one, on the subtitles track) then
+draws the line at each time (`subtitles.ts`): `activeCue` finds it (of overlapping cues, the one that started last) and
+`drawSubtitles` lays it out inside the format's safe zone (`position`, `margin`), at most `maxWidth` of the frame wide,
+with its box, outline, shadow, entrance (over `entranceSec` from the cue start) and the spoken-word highlight (only when the
+cue's words still match its text). Everything is a function of the time alone, so render frames are exact. Its font is a
+composition font, loaded with the others before the first frame. With a `template`, the built-in look is off (Task 17).
 
 ## Animations
 

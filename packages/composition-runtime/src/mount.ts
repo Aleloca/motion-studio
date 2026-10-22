@@ -6,6 +6,7 @@ import { FrameTimeoutError, twoFrames, withTimeout } from './frames.ts';
 import { connectLayer, LayerRequestError, type LayerHost } from './layer-host.ts';
 import { encodeLayerConfig, type LayerFont } from './layer-protocol.ts';
 import type { Rect, RuntimeError, RuntimeErrorCode, RuntimeMode } from './protocol.ts';
+import { activeCue, drawSubtitles, type RuntimeSubtitles } from './subtitles.ts';
 import { audioGain, frameCount, isClipVisible, needsAudioResync, needsResync, pickVideoFrame, PRE_SEEK_SETTLE_MS, sourceTrustedOf, sourceVideoEndOf, videoSourceTime } from './timing.ts';
 
 export interface MountOptions {
@@ -20,6 +21,8 @@ export interface MountOptions {
   timeouts?: { load?: number; seek?: number; layer?: number };
   /** The format's safe zone (insets): the room of a text clip without an explicit box (render-mode measure). */
   safeZone?: { top: number; bottom: number; left: number; right: number };
+  /** The subtitle set the `subtitles` clip draws (page data, already checked), or none; `Player.setSubtitles` replaces it. */
+  subtitles?: RuntimeSubtitles | null;
 }
 
 export interface ReadyInfo { duration: number; fps: number; width: number; height: number; frames: number }
@@ -45,6 +48,8 @@ export interface Player {
   setScale(scale: number | 'fit'): void;
   /** Preview: silences every sound (videos and audio clips) or restores each one's own setting. */
   setMuted(muted: boolean): void;
+  /** Replaces the subtitles the `subtitles` clip draws (null: none) and redraws them at the time shown. */
+  setSubtitles(subtitles: RuntimeSubtitles | null): void;
   /** The selected clip (preview), or null. */
   readonly selected: string | null;
   /** Bounds of the selected clip in viewport CSS pixels, or null. */
@@ -77,6 +82,8 @@ interface Mounted {
   muted: boolean;
   /** Shown at the current time. */
   visible: boolean;
+  /** A `subtitles` clip with the built-in look: the lane `drawSubtitles` draws the line in. */
+  subs?: HTMLDivElement;
 }
 /** `derived`: the sound of a normalised video clip (its `audioSrc`), not an audio clip of the composition. */
 interface MountedAudio { clip: AudioClip; el: HTMLAudioElement; muted: boolean; derived?: boolean }
@@ -159,6 +166,14 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
   }
   const fontsLoaded = Promise.all(fontLoads).then(() => {});
   const defaultFamily = c.fonts?.[0]?.family;
+  /** The CSS font chain of a clip that names `family` (or none): the family, the composition's fallbacks, the generic font. */
+  const fontChain = (family: string | undefined) => [...(family ? [cssString(family)] : []), ...(c.fontFallbacks ?? []).map(cssString), FALLBACK_FONT].join(', ');
+  /** Reports a text family the composition does not declare (or no family at all), as a text clip does. */
+  const checkFamily = (family: string | undefined, kind: string, clipId: string) => {
+    if (!family) report('fontMissing', `${kind} clip has no font and the composition declares none; using ${FALLBACK_FONT}`, clipId);
+    else if (!declaredFamilies.has(family.toLowerCase())) report('fontMissing', `font ${family} is not declared in fonts[]; using a fallback`, clipId);
+  };
+  let subtitles = opts.subtitles ?? null;
 
   // Stage: composition pixels; preview scales it to the viewport.
   const stage = doc.createElement('div');
@@ -237,17 +252,17 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     let canvas: HTMLCanvasElement | undefined;
     let layer: LayerHost | undefined;
     let media: Element | undefined;
+    let subs: HTMLDivElement | undefined;
     const muted = opts.mode === 'render' || !!track.muted;
 
     switch (clip.type) {
       case 'text': {
         const tp = clip.props;
         const family = tp.fontFamily ?? defaultFamily;
-        if (!family) report('fontMissing', `text clip has no font and the composition declares none; using ${FALLBACK_FONT}`, clip.id);
-        else if (!declaredFamilies.has(family.toLowerCase())) report('fontMissing', `font ${family} is not declared in fonts[]; using a fallback`, clip.id);
+        checkFamily(family, 'text', clip.id);
         content.textContent = tp.text;
         Object.assign(content.style, {
-          fontFamily: [...(family ? [cssString(family)] : []), ...(c.fontFallbacks ?? []).map(cssString), FALLBACK_FONT].join(', '),
+          fontFamily: fontChain(family),
           fontSize: `${tp.fontSize ?? 48}px`, fontWeight: String(tp.fontWeight ?? 'normal'), color: tp.color ?? '#ffffff',
           textAlign: tp.align ?? 'left', lineHeight: '1.2', whiteSpace: 'pre-wrap', overflowWrap: 'break-word',
         });
@@ -346,6 +361,20 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
         );
         break;
       }
+      case 'subtitles': {
+        // The line comes from the subtitle set (`subtitles`), drawn at each time by `drawSubtitles` (applyStatic). Its
+        // fonts are the composition's, loaded with the others before any seek shows a frame.
+        if (clip.template) {
+          // Task 17: the template layer draws the line instead; the built-in look stays off for this clip.
+          break;
+        }
+        checkFamily(clip.props.fontFamily ?? defaultFamily, 'subtitles', clip.id);
+        subs = doc.createElement('div');
+        subs.className = 'ms-subs';
+        subs.style.display = 'none';
+        content.appendChild(subs);
+        break;
+      }
       default:
         report('unknownClipType', `unknown clip type ${(clip as { type?: unknown }).type as string}`, (clip as { id?: string }).id);
         return;
@@ -353,7 +382,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
 
     let anims: Array<{ anim: Animation; start: number }> = [];
     if (!still) {
-      const compiled = compileAnimations(clip.animations, { width: c.width, height: c.height, clipDuration: clip.duration }, (m) => report('badAnimation', m, clip.id));
+      const compiled = compileAnimations(clip.type === 'subtitles' ? undefined : clip.animations, { width: c.width, height: c.height, clipDuration: clip.duration }, (m) => report('badAnimation', m, clip.id));
       if (compiled.some((a) => a.property === '--ms-blur')) content.style.filter = 'blur(var(--ms-blur))';
       anims = makeAnimations(content, compiled, clip.id);
       if ((clip.type === 'image' || clip.type === 'svg') && clip.props.kenBurns && media) {
@@ -361,7 +390,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
       }
     }
     stage.appendChild(box);
-    mounted.push({ clip, box, content, anims, ...(video ? { video } : {}), ...(canvas ? { canvas } : {}), ...(layer ? { layer } : {}), prepare, muted, visible: false });
+    mounted.push({ clip, box, content, anims, ...(video ? { video } : {}), ...(canvas ? { canvas } : {}), ...(layer ? { layer } : {}), ...(subs ? { subs } : {}), prepare, muted, visible: false });
   };
 
   for (const track of c.tracks) {
@@ -395,7 +424,16 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
 
   const clampT = (t: number) => (still ? 0 : Math.min(Math.max(0, t), c.duration));
 
-  /** Visibility and JSON animations at t (synchronous, cheap). */
+  const subtitleFrame = { width: c.width, height: c.height, ...(opts.safeZone ? { safeZone: opts.safeZone } : {}) };
+  /** The subtitle line at t (whole microseconds, so frame times like 1/30 s land on the same millisecond every time). */
+  const drawLine = (m: Mounted, t: number) => {
+    if (!m.subs || m.clip.type !== 'subtitles') return;
+    const ms = Math.round(t * 1e6) / 1e3;
+    const i = subtitles ? activeCue(subtitles.cues, ms) : -1;
+    drawSubtitles(m.subs, m.clip, i >= 0 ? subtitles!.cues[i]! : null, ms, subtitleFrame, { fontFamily: fontChain(m.clip.props.fontFamily ?? defaultFamily) });
+  };
+
+  /** Visibility, JSON animations and the subtitle line at t (synchronous, cheap). */
   const applyStatic = (t: number) => {
     for (const m of mounted) {
       const on = isClipVisible(m.clip, t, c.duration);
@@ -404,6 +442,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
       if (!on) continue;
       const local = t - m.clip.start;
       for (const { anim, start } of m.anims) anim.currentTime = (local - start) * 1000;
+      drawLine(m, t);
     }
   };
 
@@ -889,6 +928,12 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
         if (m) { ownMuted.set(v, v.muted); v.muted = true; } else { v.muted = ownMuted.get(v) ?? v.muted; ownMuted.delete(v); }
       }
       for (const a of audios) a.el.muted = a.muted || m;
+    },
+    setSubtitles(next) {
+      if (destroyed) return;
+      subtitles = next;
+      // Redrawn at once at the time shown (a pure function of it): no seek, no re-mount.
+      for (const m of mounted) if (m.subs && m.visible) drawLine(m, time);
     },
     selectedBounds() {
       if (!selected) return null;

@@ -125,8 +125,11 @@ export const RENDER_TEMP_RE = /^\..+\.render-[0-9a-f]{12}\.tmp$/;
 export { RENDER_OWNER_FILE } from './owner.ts';
 
 export const DEFAULT_PARALLEL = 4;
-/** Runtime reports that never fail a render: `audioBlocked` (preview only) and `videoFrameMismatch` (a warning). */
-const IGNORED_RUNTIME_ERRORS = new Set(['audioBlocked', 'videoFrameMismatch', 'textOverflow']);
+/**
+ * Runtime reports that never fail a render: `audioBlocked` (preview only), `videoFrameMismatch` and `subtitlesInvalid`
+ * (warnings), `textOverflow` (advisory).
+ */
+const IGNORED_RUNTIME_ERRORS = new Set(['audioBlocked', 'videoFrameMismatch', 'textOverflow', 'subtitlesInvalid']);
 const VIDEO_EXT: Record<string, string> = { '.mp4': 'mp4', '.m4v': 'mp4', '.mov': 'mov' };
 const STILL_EXT: Record<string, CaptureFormat> = { '.png': 'png', '.jpg': 'jpeg', '.jpeg': 'jpeg', '.webp': 'webp' };
 

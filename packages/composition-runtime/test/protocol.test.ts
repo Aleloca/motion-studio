@@ -162,7 +162,7 @@ describe('preview bridge', () => {
   const ORIGIN = 'http://127.0.0.1:4317';
   function setup() {
     const parent = { postMessage: vi.fn() };
-    const player = { seek: vi.fn(async () => {}), play: vi.fn(), pause: vi.fn(), select: vi.fn(), setScale: vi.fn(), setMuted: vi.fn(), setComposition: vi.fn(), addSessionMedia: vi.fn() };
+    const player = { seek: vi.fn(async () => {}), play: vi.fn(), pause: vi.fn(), select: vi.fn(), setScale: vi.fn(), setMuted: vi.fn(), setComposition: vi.fn(), addSessionMedia: vi.fn(), setSubtitles: vi.fn() };
     const bridge = createPreviewBridge({ parent, parentOrigin: ORIGIN, player, parseDraft: () => parseDraft });
     return { parent, player, bridge };
   }
@@ -174,6 +174,10 @@ describe('preview bridge', () => {
     bridge.handle({ data: { type: 'select', clipId: 'title' }, origin: ORIGIN, source: parent });
     bridge.handle({ data: { type: 'setScale', scale: 'fit' }, origin: ORIGIN, source: parent });
     bridge.handle({ data: { type: 'mute', muted: true }, origin: ORIGIN, source: parent });
+    bridge.handle({ data: { type: 'setSubtitles', subtitles: { lang: 'it', cues: [{ start: 0, end: 900, text: 'Ciao' }] } }, origin: ORIGIN, source: parent });
+    bridge.handle({ data: { type: 'setSubtitles', subtitles: null }, origin: ORIGIN, source: {} }); // not the parent
+    expect(player.setSubtitles).toHaveBeenCalledTimes(1);
+    expect(player.setSubtitles).toHaveBeenCalledWith({ lang: 'it', cues: [{ start: 0, end: 900, text: 'Ciao' }] });
     expect(player.setMuted).toHaveBeenCalledWith(true);
     expect(player.seek).toHaveBeenCalledWith(2);
     expect(player.play).toHaveBeenCalledWith({ loop: true, rate: 0.5 });
@@ -196,7 +200,7 @@ describe('preview bridge', () => {
   });
   it('a draft that comes before the parser has loaded waits for it (the latest only), then applies', () => {
     const parent = { postMessage: vi.fn() };
-    const player = { seek: vi.fn(async () => {}), play: vi.fn(), pause: vi.fn(), select: vi.fn(), setScale: vi.fn(), setMuted: vi.fn(), setComposition: vi.fn(), addSessionMedia: vi.fn() };
+    const player = { seek: vi.fn(async () => {}), play: vi.fn(), pause: vi.fn(), select: vi.fn(), setScale: vi.fn(), setMuted: vi.fn(), setComposition: vi.fn(), addSessionMedia: vi.fn(), setSubtitles: vi.fn() };
     let parser: typeof parseDraft | undefined;
     const bridge = createPreviewBridge({ parent, parentOrigin: ORIGIN, player, parseDraft: () => parser });
     bridge.handle({ data: { type: 'setComposition', composition: smallComp(), seq: 1 }, origin: ORIGIN, source: parent });

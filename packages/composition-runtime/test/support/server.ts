@@ -9,7 +9,7 @@
 import { createServer, type Server } from 'node:http';
 import { readFileSync, statSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
-import { injectLayerBootstrap, renderRuntimePage } from '../../src/page.ts';
+import { injectLayerBootstrap, renderRuntimePage, type CompositionData } from '../../src/page.ts';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.json': 'application/json', '.css': 'text/css', '.svg': 'image/svg+xml',
@@ -29,7 +29,8 @@ export function compositionCsp(frameAncestors: string | null): string {
 
 export interface TestServer { origin: string; token: string; pageUrl(query: string): string; requests: string[]; close(): Promise<void> }
 
-export function startCompositionServer(o: { distDir: string; root: string; compPath: string; frameAncestors?: string }): Promise<TestServer> {
+/** `data`: what the core inlines next to the composition (safe zone, subtitles), when the test needs it. */
+export function startCompositionServer(o: { distDir: string; root: string; compPath: string; frameAncestors?: string; data?: Pick<CompositionData, 'safeZone' | 'subtitles'> }): Promise<TestServer> {
   const token = `t${Math.random().toString(36).slice(2, 10)}`;
   const requests: string[] = [];
   const compDir = resolve(o.root, o.compPath);
@@ -57,7 +58,7 @@ export function startCompositionServer(o: { distDir: string; root: string; compP
     const type = MIME[extname(file).toLowerCase()] ?? 'application/octet-stream';
     if (rest === 'runtime/index.html') {
       const composition = JSON.parse(readFileSync(join(compDir, 'composition.json'), 'utf8')) as unknown;
-      const body = renderRuntimePage(readFileSync(file, 'utf8'), { base: `../${o.compPath}/`, composition });
+      const body = renderRuntimePage(readFileSync(file, 'utf8'), { ...o.data, base: `../${o.compPath}/`, composition });
       res.writeHead(200, { ...headers, 'content-type': type }); return res.end(body);
     }
     if (file.startsWith(join(compDir, 'layers') + sep) && extname(file) === '.html') {
