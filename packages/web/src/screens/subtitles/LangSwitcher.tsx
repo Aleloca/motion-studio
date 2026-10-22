@@ -21,13 +21,35 @@ export function entrySubtitleLang(sets: readonly SubtitlesSummary[] | undefined,
   return (sets.find(isOriginalSpeech) ?? sets.find((s) => s.lang === briefPrimary) ?? sets[0]!).lang;
 }
 
+/** Final review T26: when each creative's language was last seen with its set (`slug/creative/lang`), on this client. */
+const seenWithSet = new Map<string, number>();
+/** Final review T26: the creative's subtitles job "+ Lingua" started for a language (its own voice), by `slug/creative/lang`. */
+const startedFor = new Map<string, string>();
+const langKey = (slug: string, creative: string, lang: string) => `${slug}/${creative}/${lang}`;
+
+/** The creative's sets as just read: each language is seen with its set now (a job asked before is not making it again). */
+export function noteSubtitleLangs(slug: string, creative: string, sets: ReadonlyArray<Pick<SubtitlesSummary, 'lang'>>): void {
+  const now = Date.now();
+  for (const x of sets) seenWithSet.set(langKey(slug, creative, x.lang), now);
+}
+
+/** "+ Lingua" started job `jobId` for `lang`: the creative's subtitles job is then that language's. */
+export function noteLanguageJob(slug: string, creative: string, lang: LocaleTag, jobId: string): void {
+  startedFor.set(langKey(slug, creative, lang), jobId);
+}
+
 /**
  * The job making `lang`'s subtitles, the latest one: its translation (`subtitles-translate:<root>:<project>:<creative>:<lang>`)
- * or, for a language from its own voice, the creative's subtitles job (`subtitles:<root>:<project>:<creative>`).
+ * or the creative's subtitles job (`subtitles:<root>:<project>:<creative>`) when "+ Lingua" started it for this language (its
+ * own voice). Final review T26: only a job asked since the language was last seen with its set (an older one made or failed
+ * to make a set that is gone since).
  */
 export function languageJob(jobs: Record<string, JobSummary>, slug: string, creative: string, lang: LocaleTag): JobSummary | null {
-  const mine = (j: JobSummary) => (j.key.startsWith('subtitles-translate:') && j.key.endsWith(`:${slug}:${creative}:${lang}`))
-    || (j.key.startsWith('subtitles:') && j.key.endsWith(`:${slug}:${creative}`) && (j.state === 'queued' || j.state === 'running'));
+  const key = langKey(slug, creative, lang);
+  const since = seenWithSet.get(key) ?? Number.NEGATIVE_INFINITY;
+  const own = startedFor.get(key);
+  const mine = (j: JobSummary) => ((j.key.startsWith('subtitles-translate:') && j.key.endsWith(`:${slug}:${creative}:${lang}`))
+    || (j.id === own && j.key.startsWith('subtitles:') && j.key.endsWith(`:${slug}:${creative}`))) && Date.parse(j.createdAt) > since;
   return Object.values(jobs).filter(mine).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).at(-1) ?? null;
 }
 
@@ -89,7 +111,8 @@ function AddLanguage({ slug, creative, sets, brief, onAdded }: { slug: string; c
     setBusy(tag);
     setError(null);
     try {
-      await api.addSubtitleLanguage(slug, creative, tag);
+      const r = await api.addSubtitleLanguage(slug, creative, tag);
+      if (r.job?.id) noteLanguageJob(slug, creative, tag, r.job.id);
     } catch (e) {
       // Already there (made meanwhile): it opens all the same.
       if (!(e instanceof ApiError && e.code === 'subtitles-lang-exists')) { setError(s.addFailed({ detail: message(e) })); setBusy(null); return; }

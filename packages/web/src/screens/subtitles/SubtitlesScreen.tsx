@@ -24,7 +24,7 @@ import { creativeLocales, localeName } from '../creative/languagesModel.ts';
 import { usePlayerControls } from '../editor/usePlayerControls.ts';
 import { activatesControl, bare, inOverlay, isTyping } from '../keys.ts';
 import { CueList, FindReplace, msText, rowSelector, type CueSource } from './CueList.tsx';
-import { entrySubtitleLang, inlineLangName, LangSwitcher, languageJob } from './LangSwitcher.tsx';
+import { entrySubtitleLang, inlineLangName, LangSwitcher, languageJob, noteSubtitleLangs } from './LangSwitcher.tsx';
 import { CueTimeline, type CueTimelineProps } from './CueTimeline.tsx';
 import { byStart, cueAt, editorReducer, initialEditorState, runtimeSubtitlesOf, warningsOf, type EditorOp } from './subtitlesModel.ts';
 import { useSubtitleSave, type SubtitleSaveStatus } from './useSubtitleSave.ts';
@@ -52,7 +52,7 @@ export function SubtitlesScreen({ slug, creative, lang }: { slug: string; creati
   useEffect(() => {
     let alive = true;
     Promise.resolve().then(() => api.getCreative(slug, creative)).then(
-      (d) => { if (alive) { setDetail(d); setError(null); } },
+      (d) => { if (alive) { noteSubtitleLangs(slug, creative, d.subtitles ?? []); setDetail(d); setError(null); } },
       (e: unknown) => { if (alive) setError(message(e)); });
     return () => { alive = false; };
   }, [slug, creative, tick]);

@@ -78,7 +78,7 @@ const { SubtitlesScreen } = await import('../src/screens/subtitles/SubtitlesScre
 const { I18nProvider } = await import('../src/i18n.tsx');
 const { ShellContext } = await import('../src/shell/ShellContext.tsx');
 const { __resetPreviewSessions } = await import('../src/components/compositionPreview.ts');
-const { entrySubtitleLang } = await import('../src/screens/subtitles/LangSwitcher.tsx');
+const { entrySubtitleLang, languageJob, noteLanguageJob, noteSubtitleLangs } = await import('../src/screens/subtitles/LangSwitcher.tsx');
 
 let JOBS: Record<string, JobSummary> = {};
 const live = (): EventsState => ({ approvals: {}, jobs: JOBS, events: {}, creativeTicks: { 'acme/lancio': 0 }, projectTicks: {} });
@@ -154,6 +154,32 @@ describe('the language switcher (Task 26)', () => {
     render(<Harness lang="fr" />);
     expect(await screen.findByText('Preparo i sottotitoli in francese…')).toBeTruthy();
     expect(api.subtitleSet).not.toHaveBeenCalledWith('acme', 'lancio', 'fr');
+  });
+});
+
+describe('the job a language without its set claims (final review T26)', () => {
+  const job = (id: string, key: string, state: JobSummary['state'], createdAt: string) => ({ id, key, kind: 'subtitles', label: 'x', state, createdAt }) as unknown as JobSummary;
+
+  it('only a job for this language, asked since the language last had a set', () => {
+    const old = job('j1', 'subtitles-translate:/w:acme:t26:fr', 'failed', '2026-10-22T10:00:00.000Z');
+    expect(languageJob({ j1: old }, 'acme', 't26', 'fr')).toBe(old);
+    // The French set was there after that failure (made again, then deleted): the old failure is not this absence's.
+    noteSubtitleLangs('acme', 't26', [{ lang: 'fr' }]);
+    expect(languageJob({ j1: old }, 'acme', 't26', 'fr')).toBeNull();
+    const later = job('j2', 'subtitles-translate:/w:acme:t26:fr', 'running', new Date(Date.now() + 60_000).toISOString());
+    expect(languageJob({ j1: old, j2: later }, 'acme', 't26', 'fr')).toBe(later);
+    // The creative's subtitles job is this language's only when it was started for it ("+ Lingua" of its own voice).
+    const redo = job('j3', 'subtitles:/w:acme:t26', 'running', new Date(Date.now() + 60_000).toISOString());
+    expect(languageJob({ j3: redo }, 'acme', 't26', 'de')).toBeNull();
+    noteLanguageJob('acme', 't26', 'de', 'j3');
+    expect(languageJob({ j3: redo }, 'acme', 't26', 'de')).toBe(redo);
+  });
+
+  it('a transcription running for the creative is not shown as the language on its way', async () => {
+    JOBS = { j9: { id: 'j9', key: 'subtitles:/w:acme:lancio', kind: 'subtitles', label: 'x', state: 'running', createdAt: at } as unknown as JobSummary };
+    render(<Harness lang="fr" />);
+    expect(await screen.findByText('Questa creatività non ha sottotitoli in francese: aggiungili con «+ Lingua».')).toBeTruthy();
+    expect(screen.queryByText('Preparo i sottotitoli in francese…')).toBeNull();
   });
 });
 
