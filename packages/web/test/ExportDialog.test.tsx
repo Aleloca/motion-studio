@@ -467,6 +467,28 @@ describe('ExportDialog · resolution and quality (decision 974, user report 22)'
     expect(api.exportPicksJob.mock.calls[0]![2]).not.toHaveProperty('fps');
   });
 
+  it('a drawn language on the Italian video locks the size and quality, as the core asks, with only the original exported (final review Minor 1)', async () => {
+    const sub = (lang: string) => ({ lang, origin: lang === 'en' ? 'speech' : 'translation', cues: 3, edited: 0, hash: 'a'.repeat(64),
+      timing: { version: 7, format: REEL, fingerprint: 'b'.repeat(64) }, timingChanged: false, staleCues: 0 }) as never;
+    render(
+      <I18nProvider locale="en">
+        <Live open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions: [v7], states: st() }} presets={DEFAULT_FORMATS}
+          pattern="{title}-{format}-v{v}" locales={{ primary: 'en', extra: ['it'] }} subtitles={[sub('en'), sub('it')]} />
+      </I18nProvider>,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /^Resolution/ }));
+    await userEvent.click(await screen.findByRole('option', { name: '720p' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: /^In the video.*Italian/i }));
+    expect((screen.getByRole('button', { name: /^Resolution/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/With other languages the videos are exported at the format size and High quality/)).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: /^Export \d+ files?$/ }));
+    await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledOnce());
+    const body = api.exportPicksJob.mock.calls[0]![2] as unknown as Record<string, unknown>;
+    expect(body).toMatchObject({ quality: 'high', subtitles: { drawn: [{ video: 'it', lang: 'it' }] } });
+    expect(body).not.toHaveProperty('resolution');
+    expect(body).not.toHaveProperty('locales');
+  });
+
   it('with other languages the videos keep the format size and High: the choice is locked and said', async () => {
     openV2({ primary: 'en', extra: ['it'] });
     await userEvent.click(screen.getByRole('checkbox', { name: 'Italian' }));

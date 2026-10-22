@@ -397,7 +397,8 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
   const subtitlesBody = subtitled ? { subtitles: {
     ...(drawnBody.length > 0 ? { drawn: drawnBody } : {}), ...(fileLangs.length > 0 ? { files: fileLangs } : {}), ...(softLangs.length > 0 ? { soft: softLangs } : {}),
   } } : {};
-  const lockProfile = otherLanguages;
+  // A localized video is exported at the format size and High, drawn or not (decision 1007, Task 27): as the core refuses any other.
+  const lockProfile = otherLanguages || drawnPairs.some((p) => p.video !== undefined);
   // The resolution and quality are the videos' (decision 974): stills, identity and store pack formats keep their own.
   const videoRow = (r: Row) => r.composed && r.preset !== null && profileApplies(r.preset, r.id);
   const anyVideo = rows.some(videoRow);
