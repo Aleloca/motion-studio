@@ -25,6 +25,7 @@ import { ApprovalCard } from './ApprovalCard.tsx';
 import { Clipped } from './QuestionCard.tsx';
 import { groupTurnText } from './groupTurnText.ts';
 import { ServicesChip } from './ServicesSelector.tsx';
+import { SubtitlesReadyCard } from './SubtitlesReadyCard.tsx';
 import { explanationView, RiskChips } from './RiskChips.tsx';
 import { useApprovalPresence, type ShownApproval } from './approvalPresence.ts';
 import { commandLog, webExplainContext, WorkspacePathContext, type CommandLog, type CommandMark, type CommandRow } from './commandLog.ts';
@@ -201,6 +202,8 @@ type Item =
   | { key: string; kind: 'intro'; node: ReactNode }
   /** The caller's card (a video analysis question in the brief's chat). */
   | { key: string; kind: 'card'; node: ReactNode }
+  /** Decision 1640: a subtitles job's outcome (the ready card with its downloads, or the line saying why there are none). */
+  | { key: string; kind: 'subtitles'; slug: string; creative: string; entry: Extract<ConversationEntry, { type: 'system' }> }
   /** `agent`: a line about something the agent did in the app with its tools (decision 917). */
   | { key: string; kind: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string; agent?: boolean; variant?: VariantId; wait?: { slug: string; creative: string } }
   | { key: string; kind: 'approval'; shown: ShownApproval }
@@ -518,6 +521,8 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
         out.push({ key, kind: 'version', at: e.at, n: e.n, complete: e.status === 'complete', ...(e.variant ? { variant: e.variant } : {}) });
       } else if (e.type === 'system' && e.origin === 'brief') {
         out.push({ key, kind: 'briefStart', at: e.at, text: e.text });
+      } else if (e.type === 'system' && e.subtitles && creative) {
+        out.push({ key, kind: 'subtitles', slug, creative, entry: e });
       } else if (e.type === 'system') {
         if (lastUser && e.level === 'error') lastUser.failed = true;
         out.push({ key, kind: 'system', at: e.at, level: e.level, text: e.text, ...(e.origin === 'agent' ? { agent: true } : {}), ...(e.variant ? { variant: e.variant } : {}),
@@ -867,6 +872,8 @@ function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetai
       );
     case 'card':
       return <div className="ms-convo-card">{item.node}</div>;
+    case 'subtitles':
+      return <SubtitlesReadyCard slug={item.slug} creative={item.creative} entry={item.entry} />;
     case 'intro':
       return (
         <article className="ms-msg" aria-label={c.agent}>

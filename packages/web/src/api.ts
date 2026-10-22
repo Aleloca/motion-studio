@@ -1,4 +1,4 @@
-import type { CustomFormatInput, LocaleTag, Localization, LocalizationIssue, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StagedSvgEdit, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, ExportFps, ExportQuality, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, AgentCapabilities, ApprovalDecision, ApprovalRequest, QuestionAnswers, LiveMessageOutcome, RedirectOutcome, ProposalActivity, LanguageSetting, Locale, AssetEntry, CreativeReferenceEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, CreativeRemovalInfo, RecentCreative, DoctorCheck, UpdatesState, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIcon, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings, StorePack, VariantId, VariantPick, BriefContext, BriefField, BriefForm, BriefFormSave, BriefFormSaved, BriefMessageInput, BriefSendResult, BriefSessionRef, BriefSessionView, TranscriptionChoice, TranscriptionModelId, TranscriptionSettingsPatch, TranscriptionStatus, VideoAnalysisView, WhisperEngine, WhisperFound } from '@motion-studio/shared';
+import type { CustomFormatInput, LocaleTag, Localization, LocalizationIssue, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StagedSvgEdit, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, ExportFps, ExportQuality, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, AgentCapabilities, ApprovalDecision, ApprovalRequest, QuestionAnswers, LiveMessageOutcome, RedirectOutcome, ProposalActivity, LanguageSetting, Locale, AssetEntry, CreativeReferenceEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, CreativeRemovalInfo, RecentCreative, DoctorCheck, UpdatesState, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIcon, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings, StorePack, VariantId, VariantPick, BriefContext, BriefField, BriefForm, BriefFormSave, BriefFormSaved, BriefMessageInput, BriefSendResult, BriefSessionRef, BriefSessionView, SubtitleSet, SubtitlesSummary, TranscriptionChoice, TranscriptionModelId, TranscriptionPending, TranscriptionSettingsPatch, TranscriptionStatus, VideoAnalysisView, WhisperEngine, WhisperFound } from '@motion-studio/shared';
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
 
@@ -73,6 +73,13 @@ async function request<T>(method: string, url: string, body?: unknown, opts: Req
   return parse<T>(res);
 }
 
+/** A file of an API route as a Blob: the route needs the UI token, so a plain link to it would be refused (401). */
+async function fetchBlob(url: string): Promise<Blob> {
+  const res = await withToken(() => fetch(url, { headers: headers() }));
+  if (!res.ok) await parse(res);
+  return res.blob();
+}
+
 /** What the editor stages for an SVG it edited (SVG inner editor): the clip, the `src` it started from, the whole new text. */
 export type SvgEditFrom = Extract<StageRequest['from'], { kind: 'svgEdit' }>;
 
@@ -143,6 +150,11 @@ export type GenerateRequest =
 export interface CatalogState { presets: FormatPreset[]; error: string | null; path: string }
 const p = (slug: string) => `/api/projects/${encodeURIComponent(slug)}`;
 const c = (slug: string, creative: string) => `${p(slug)}/creatives/${encodeURIComponent(creative)}`;
+const subs = (slug: string, creative: string) => `${c(slug, creative)}/subtitles`;
+/** A subtitle set's file (decision 1702): its cues as `.srt` or `.vtt`, cut at the latest version's video duration. */
+export const subtitleFileUrl = (slug: string, creative: string, lang: LocaleTag, ext: 'srt' | 'vtt') => `${subs(slug, creative)}/${encodeURIComponent(lang)}/file.${ext}`;
+/** The subtitles job and its transcription question, as the subtitle routes answer them. */
+export interface SubtitlesJobState { job: JobSummary | null; pending: TranscriptionPending | null }
 
 /** Decision 974: the quality and resolution (short side) of an export's videos; report 39: their frame rate (absent: the format's own). */
 export interface ExportProfileBody { quality: ExportQuality; resolution?: number; fps?: ExportFps }
@@ -444,6 +456,17 @@ export const api = {
   downloadWhisperModel: (id: TranscriptionModelId, sizeBytes: number) =>
     request<TranscriptionStatus['download']>('POST', `/api/transcription/models/${id}/download`, { consent: true, sizeBytes }),
   removeWhisperModel: (id: TranscriptionModelId) => request<void>('DELETE', `/api/transcription/models/${id}`),
+  /** A creative's subtitles (decisions 1636-1640): its sets, the running job and the question it holds on. */
+  subtitles: (slug: string, creative: string) => request<{ sets: SubtitlesSummary[] } & SubtitlesJobState>('GET', subs(slug, creative)),
+  /** Fai i sottotitoli: `retime` keeps the edited cues' text on new timings; `lang` the set (absent: the spoken language). */
+  startSubtitles: (slug: string, creative: string, body: { mode?: 'new' | 'retime'; lang?: LocaleTag } = {}) => request<{ job: JobSummary }>('POST', subs(slug, creative), body),
+  /** The answer to the subtitles job's transcription question (409 `transcription-not-asked` when it asks nothing). */
+  subtitlesChoice: (slug: string, creative: string, choice: Omit<TranscriptionChoice, 'file'>) => request<SubtitlesJobState>('POST', `${subs(slug, creative)}/transcription-choice`, choice),
+  /** "Ricontrolla" in the subtitles job's transcription question: the Whispers looked for again, the question as it is now. */
+  subtitlesRecheck: (slug: string, creative: string) => request<SubtitlesJobState>('POST', `${subs(slug, creative)}/transcription-recheck`),
+  subtitleSet: (slug: string, creative: string, lang: LocaleTag) => request<{ set: SubtitleSet; hash: string }>('GET', `${subs(slug, creative)}/${encodeURIComponent(lang)}`),
+  /** A subtitle set's `.srt` / `.vtt`, fetched with the UI token (the caller saves it). */
+  subtitleFile: (slug: string, creative: string, lang: LocaleTag, ext: 'srt' | 'vtt') => fetchBlob(subtitleFileUrl(slug, creative, lang, ext)),
   fileUrl: (slug: string, creative: string, rel: string) => `${c(slug, creative)}/files/${rel.split('/').map(encodeURIComponent).join('/')}`,
   /** The size of a creative's file (a HEAD of its files URL: the record of a render has no size); null when unknown. */
   fileBytes: async (url: string): Promise<number | null> => {

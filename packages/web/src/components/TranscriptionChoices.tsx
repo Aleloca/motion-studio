@@ -1,4 +1,4 @@
-import type { TranscriptionChoice, TranscriptionPending, TranscriptionStatus, VideoAnalysisView } from '@motion-studio/shared';
+import type { TranscriptionChoice, TranscriptionPending, TranscriptionStatus, VideoAnalysisPending, VideoAnalysisView } from '@motion-studio/shared';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api.ts';
 import { message } from '../errors.ts';
@@ -30,6 +30,16 @@ export interface TranscriptionChoicesProps {
   footer?: ReactNode;
   /** The Settings link was followed (a dialog closes, decision 1601). */
   onSettings?(): void;
+  /**
+   * Where the choice goes (a subtitles job's question, decision 1640): it answers with the question as it stands (absent:
+   * nothing asks any more). Default: the video analysis's route for `view.file`.
+   */
+  submit?(c: Omit<TranscriptionChoice, 'file'>): Promise<{ pending: TranscriptionPending | VideoAnalysisPending | null }>;
+  /** "Ricontrolla" for that question: the new offer, null when nothing asks any more. Default: the analysis's route. */
+  recheck?(): Promise<TranscriptionPending | null>;
+  /** The heading and the line under it, when the question is not about a video's analysis (the subtitles'). */
+  title?: string;
+  why?: string;
 }
 
 /** The commands that get a Whisper the app can run (report 64): whisper.cpp from Homebrew, or the Python one. */
@@ -88,7 +98,7 @@ function CommandChip({ command, onCopied }: { command: string; onCopied(state: '
  * "Ricorda la scelta" and "Continua senza trascrizione" (beside the dialog's Chiudi, `footer`). Installing shows the
  * download's progress (read from the transcription status) until the analysis goes on or the download fails.
  */
-export function TranscriptionChoices({ slug, view, question, onDone, headingId, footer, onSettings }: TranscriptionChoicesProps) {
+export function TranscriptionChoices({ slug, view, question, onDone, headingId, footer, onSettings, submit, recheck: recheckOffer, title, why }: TranscriptionChoicesProps) {
   const t = useT();
   const tr = t.transcription;
   const locale = useLocale();
@@ -123,7 +133,8 @@ export function TranscriptionChoices({ slug, view, question, onDone, headingId, 
     // A Python engine that downloads its own model needs no download from us (decision 1551 of the review).
     const install = choice === 'whisper' && !p.whisper.installed && !p.whisper.downloadsOwnModel;
     try {
-      const r = await api.transcriptionChoice(slug, { file: view.file, choice, remember, ...(install ? { sizeBytes: p.whisper.sizeBytes } : {}) });
+      const body = { choice, remember, ...(install ? { sizeBytes: p.whisper.sizeBytes } : {}) };
+      const r = submit ? await submit(body) : await api.transcriptionChoice(slug, { file: view.file, ...body });
       // Installing: the job stays held until the model is in place; the live view then drops its question.
       if (install && r.pending?.kind === 'transcription' && !r.pending.error) setInstalling(true);
       else onDone?.();
@@ -135,10 +146,10 @@ export function TranscriptionChoices({ slug, view, question, onDone, headingId, 
     setRechecking(true);
     setRecheckNote(null);
     try {
-      const r = await api.recheckTranscription(slug, view.file);
-      if (r.pending?.kind !== 'transcription') { onDone?.(); return; }
-      setFresh({ for: question, offer: r.pending });
-      const w = r.pending.whisper;
+      const offer = recheckOffer ? await recheckOffer() : await api.recheckTranscription(slug, view.file).then((r) => (r.pending?.kind === 'transcription' ? r.pending : null));
+      if (!offer) { onDone?.(); return; }
+      setFresh({ for: question, offer });
+      const w = offer.whisper;
       if (!(w.installed || w.downloadsOwnModel || w.canInstall)) setRecheckNote(tr.stillNone);
     } catch (e) { setRecheckNote(tr.recheckFailed({ detail: message(e) })); }
     finally { setRechecking(false); }
@@ -169,8 +180,8 @@ export function TranscriptionChoices({ slug, view, question, onDone, headingId, 
 
   return (
     <div className="ms-tchoices">
-      <h2 id={headingId} className="ms-tchoices-title">{transcriptionTitle(t, view.file)}</h2>
-      <p className="ms-tchoices-why">{tr.why}</p>
+      <h2 id={headingId} className="ms-tchoices-title">{title ?? transcriptionTitle(t, view.file)}</h2>
+      <p className="ms-tchoices-why">{why ?? tr.why}</p>
       {shownError ? <p className="ms-tchoices-error" role="alert">{shownError}</p> : null}
       {installing ? (
         <div className="ms-tchoices-progress" role="status">

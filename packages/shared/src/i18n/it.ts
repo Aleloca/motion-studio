@@ -325,6 +325,8 @@ export const it: Messages = {
     leavesMac: 'L\'audio lascia il Mac.',
     pythonCache: 'Questo Whisper scarica i modelli nella sua cartella al primo uso.',
     dialogTitle: (p) => `Trascrivere il parlato di ${p.file}?`,
+    subtitlesTitle: (p) => `Sottotitoli di ${p.title}: trascrivere il parlato?`,
+    subtitlesWhy: 'I sottotitoli si fanno dal parlato del video: per farli bisogna trascriverlo.',
     methods: { ask: 'Chiedi ogni volta', whisper: 'Whisper sul Mac', openai: 'OpenAI', elevenlabs: 'ElevenLabs', never: 'Mai' },
     method: 'Metodo',
     model: 'Modello di Whisper',
@@ -419,6 +421,9 @@ export const it: Messages = {
     failed: (p) => `I sottotitoli non sono riusciti: ${p.reason}`,
     notStarted: (p) => `I sottotitoli non sono partiti: ${p.reason}`,
     notStartedTurn: 'I sottotitoli non sono partiti: il turno non si è concluso. Chiedili di nuovo.',
+    readyTitle: 'Sottotitoli pronti',
+    download: (p) => `Scarica ${p.ext}`,
+    downloadFailed: (p) => `Download non riuscito: ${p.detail}`,
   },
   briefSession: {
     filled: (p) => `Compilato il brief: ${p.parts}`,

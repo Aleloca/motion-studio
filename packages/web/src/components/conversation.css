@@ -273,6 +273,8 @@ aside.ms-chat-col { padding: 12px; background: var(--bg); border: 0; overflow: v
 /* Decision 1423: where a creative starts after its brief session (no version yet, so no badge). */
 .ms-convo-briefstart > b { font-size: 13px; }
 .ms-convo-briefstart-mark { color: var(--accent); flex: none; }
+/* Decision 1640: the subtitles ready card (the version row's look, its two downloads on the right). */
+.ms-convo-subtitles-mark { color: var(--accent); flex: none; }
 .ms-msg-pins .ms-msg-folder .ms-pin-ref { font-family: var(--mono); font-size: 11px; }
 
 /* Comment chips: reference (number · format · time), then the comment's words, ellipsized; the chip never overflows. */

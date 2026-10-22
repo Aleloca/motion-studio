@@ -327,6 +327,8 @@ export const en = {
     leavesMac: 'The audio leaves the Mac.',
     pythonCache: 'This Whisper downloads its models into its own folder on first use.',
     dialogTitle: (p: { file: string }) => `Transcribe the speech of ${p.file}?`,
+    subtitlesTitle: (p: { title: string }) => `Subtitles of ${p.title}: transcribe the speech?`,
+    subtitlesWhy: 'Subtitles are made from the video\'s speech: it has to be transcribed first.',
     methods: { ask: 'Ask every time', whisper: 'Whisper on the Mac', openai: 'OpenAI', elevenlabs: 'ElevenLabs', never: 'Never' },
     method: 'Method',
     model: 'Whisper model',
@@ -421,6 +423,9 @@ export const en = {
     failed: (p: { reason: string }) => `The subtitles could not be made: ${p.reason}`,
     notStarted: (p: { reason: string }) => `The subtitles did not start: ${p.reason}`,
     notStartedTurn: 'The subtitles did not start: the turn did not finish. Ask for them again.',
+    readyTitle: 'Subtitles ready',
+    download: (p: { ext: string }) => `Download ${p.ext}`,
+    downloadFailed: (p: { detail: string }) => `Download failed: ${p.detail}`,
   },
   briefSession: {
     filled: (p: { parts: string }) => `Filled in the brief: ${p.parts}`,
