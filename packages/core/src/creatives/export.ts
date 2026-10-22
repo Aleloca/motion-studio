@@ -132,6 +132,8 @@ export interface ExportItem { format: string; n: number; v?: number; file: strin
   creativeDir?: string;
   /** The language of the file (Phase 12): the `{locale}` of its name; absent for a creative without extra languages. */
   locale?: string;
+  /** The video's own duration in seconds when the version recorded it: what its subtitle files are cut to. */
+  durationSec?: number | null;
   /** A translated render (not the primary language's file). */
   localized?: boolean;
   /** A translated render's own problems (its checks and the browser's overflow measure, Phase 12 Rulings I and J). */
@@ -169,8 +171,8 @@ export interface ExportCommon {
   /** A format's display name in messages; its id when omitted. */
   label?: (format: string) => string;
   copy?: CopyFn;
-  /** Subtitles as `.srt`/`.vtt` files next to each exported video (never a still): the sets and the duration their cues are cut to. */
-  subtitles?: { sets: SubtitleSet[]; durationMs: number };
+  /** Subtitles as `.srt`/`.vtt` files next to each exported video (never a still): the sets, and `durationMs` the cut for a video whose own duration is not recorded (else the sets' last cue end). */
+  subtitles?: { sets: SubtitleSet[]; durationMs?: number };
   /** Review #6: a cancel stops the copy between files (and a render made for the export mid-file); it ends as `cancelled`. */
   signal?: AbortSignal;
 }
@@ -283,7 +285,10 @@ async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refu
       if (to) files.push({ from, to }); else skipped.push(it.file);
       if (to && opts.subtitles && VIDEO_EXTENSIONS.has(it.ext)) {
         const stem = basename(to).slice(0, basename(to).length - it.ext.length);
-        for (const sub of await writeSubtitleFiles({ destination: dest, stem, ...opts.subtitles, ...(opts.copy ? { copy: opts.copy } : {}) })) files.push({ from, to: sub });
+        // The cues are cut at THIS video's duration (an older or longer version differs from the latest); never unbounded.
+        const durationMs = it.durationSec && it.durationSec > 0 ? Math.round(it.durationSec * 1000)
+          : opts.subtitles.durationMs ?? Math.max(0, ...opts.subtitles.sets.flatMap((s) => s.cues.map((c) => c.end)));
+        for (const sub of await writeSubtitleFiles({ destination: dest, stem, sets: opts.subtitles.sets, durationMs, ...(opts.copy ? { copy: opts.copy } : {}) })) files.push({ from, to: sub });
       }
       if (to && it.set) files.push(...await copySet(copy, dir, it.n, it.set, dest, basename(to).slice(0, basename(to).length - it.ext.length)));
     } catch (e) {
@@ -441,7 +446,7 @@ export function resolveExportPicks(opts: PicksOptions): ExportItem[] {
   const itemOf = (format: string, n: number) => {
     const v = opts.versions.find((x) => x.n === n);
     const o = v?.outputs.find((x) => x.format === format);
-    if (o) return { format, n, file: o.file, width: o.width, height: o.height, ...setOf(o) };
+    if (o) return { format, n, file: o.file, width: o.width, height: o.height, durationSec: o.durationSec, ...setOf(o) };
     // A v2 composition with no render yet: exported once rendered.
     return v && v.compositions?.some((c) => c.format === format) && hasFormat(v, format) ? { format, n, file: '', width: 0, height: 0 } : null;
   };
@@ -499,6 +504,6 @@ export async function exportVersion(opts: ExportCommon & { version: VersionEntry
   }
   const n = opts.version.n;
   const items = opts.version.outputs.filter((o) => !wanted || wanted.has(o.format))
-    .map((o) => ({ format: o.format, n, file: o.file, width: o.width, height: o.height, ...setOf(o) }));
+    .map((o) => ({ format: o.format, n, file: o.file, width: o.width, height: o.height, durationSec: o.durationSec, ...setOf(o) }));
   return runExport(items, opts, 'skip', n);
 }

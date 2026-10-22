@@ -864,8 +864,9 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       if (!found) throw new CodedError(400, t().export.subtitlesMissing({ lang }), 'export-subtitles-missing');
       subtitleSets.push(found.set);
     }
-    const subtitles = subtitleSets.length > 0
-      ? { sets: subtitleSets, durationMs: (await subtitleTimingNow(ref.projectDir, ref.creativeSlug, presets))?.durationMs ?? Number.POSITIVE_INFINITY } : null;
+    // Each video is cut at its own duration (its output's); the latest main format's is only the fallback for an unknown one.
+    const fallbackMs = subtitleSets.length > 0 ? (await subtitleTimingNow(ref.projectDir, ref.creativeSlug, presets))?.durationMs : undefined;
+    const subtitles = subtitleSets.length > 0 ? { sets: subtitleSets, ...(fallbackMs !== undefined ? { durationMs: fallbackMs } : {}) } : null;
     const common = { creativeDir, destination, slug: ref.creativeSlug, title: creative.title, forbiddenRoot: ref.root, presets, pattern,
       ...(typeof body.date === 'string' ? { now: body.date } : {}),
       ...(subtitles ? { subtitles } : {}),
