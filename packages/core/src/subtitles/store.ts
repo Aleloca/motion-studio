@@ -101,7 +101,8 @@ export function speechSourceSet(sets: readonly SubtitleSet[]): SubtitleSet | und
  * Task 25: the translations of the original speech set follow it when it is written again (`after`; `before`: the set as it
  * was, read under the same lock, null when there was none): each translation of its language gets `followSourceTimes` and,
  * when every uncorrected line found its source line, the source's timing (else its own stays: `timingChanged` keeps saying
- * so, review round 2). Written when that changed. To be called under the creative's set lock, by the writer of the source.
+ * so, review round 2); a translation not in step with `before` (another timing) gets it only when its lines truly follow now
+ * (final review I1). Written when that changed. To be called under the creative's set lock, by the writer of the source.
  * The languages written (to commit and tell the clients).
  */
 export async function followSource(creativeDir: string, before: SubtitleSet | null, after: SubtitleSet): Promise<LocaleTag[]> {
@@ -110,7 +111,10 @@ export async function followSource(creativeDir: string, before: SubtitleSet | nu
   const out: LocaleTag[] = [];
   for (const s of sets) {
     if (s.origin !== 'translation' || s.sourceLang !== after.lang) continue;
-    const r = followSourceTimes(s.cues, (before ?? after).cues, after.cues);
+    // Only a translation in step with the source as it was may take the shortcut of an unchanged source (final review I1):
+    // one lagging behind (another timing) is aligned with the source now, and takes its timing only when that completes.
+    const inStep = before === null || s.timing.fingerprint === before.timing.fingerprint;
+    const r = followSourceTimes(s.cues, inStep ? (before ?? after).cues : [], after.cues);
     const next: SubtitleSet = { ...s, timing: r.complete ? after.timing : s.timing, cues: r.cues };
     if (subtitleSetHash(next) === subtitleSetHash(s)) continue;
     await writeSubtitleSet(creativeDir, next);
