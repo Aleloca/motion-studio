@@ -24,7 +24,7 @@ import { decodePcmWith, type MediaTools } from '../media/media-tools.ts';
 import { mixAudio, mixClips, type MixClip } from '../render/audio-mix.ts';
 import type { FfmpegInfo } from '../render/encode.ts';
 import { CodedError } from '../workspace-store.ts';
-import { audioFingerprint, followSource, listSubtitleSets, readSubtitleSet, speechSourceSet, type SubtitleCommits, subtitlePath, subtitleSetLocks, writeSubtitleSet } from './store.ts';
+import { audioFingerprint, followSource, listSubtitleSets, readSubtitleSet, removeSubtitleSet, speechSourceSet, type SubtitleCommits, subtitlePath, subtitleSetLocks, writeSubtitleSet } from './store.ts';
 
 /** The queue lane of the subtitles jobs (decision 1640): one at a time, never in an agent turn's slot. */
 export const SUBTITLES_LANE = 'subtitles';
@@ -179,15 +179,23 @@ export async function localizedVoiceOf(creativeDir: string, version: VersionEntr
  * video, or the original: undefined), or null. 409 `subtitles-lang-translated`: the language's set is a translation (the user
  * deletes it first); `subtitles-voice-gone`: its set was made from that language's own voice, which its video no longer has
  * (only a translation fits it now); `subtitles-other-speech`: the original video's speech already has a set in another
- * language (one set from it: the source of the translations).
+ * language that translations come from (one set from it: those go first). With none, that set is replaced (`replacedSpeechSet`).
  */
+/**
+ * Follow-up ruling of the final review: the original video's speech set in another language than `lang`, which a set made from
+ * the original audio (`audio` undefined) in `lang` replaces (its corrected lines kept, its file gone); undefined when none.
+ */
+export function replacedSpeechSet(sets: readonly SubtitleSet[], lang: LocaleTag, audio: LocaleTag | undefined): SubtitleSet | undefined {
+  return audio === undefined ? sets.find((s) => s.origin === 'speech' && s.timing.locale === undefined && s.lang !== lang) : undefined;
+}
+
 export function speechSetRefusal(sets: readonly SubtitleSet[], lang: LocaleTag, audio: LocaleTag | undefined): CodedError | null {
   const name = languageName(lang);
   const existing = sets.find((s) => s.lang === lang);
   if (existing?.origin === 'translation') return new CodedError(409, t().errors.subtitlesLangTranslated({ lang: name }), 'subtitles-lang-translated');
   if (audio === undefined && existing?.timing.locale !== undefined) return new CodedError(409, t().errors.subtitlesVoiceGone({ lang: name }), 'subtitles-voice-gone');
-  const other = audio === undefined ? sets.find((s) => s.origin === 'speech' && s.timing.locale === undefined && s.lang !== lang) : undefined;
-  if (other) return new CodedError(409, t().errors.subtitlesOtherSpeech({ lang: name, other: languageName(other.lang) }), 'subtitles-other-speech');
+  const other = replacedSpeechSet(sets, lang, audio);
+  if (other && sets.some((s) => s.origin === 'translation' && s.sourceLang === other.lang)) return new CodedError(409, t().errors.subtitlesOtherSpeech({ lang: name, other: languageName(other.lang) }), 'subtitles-other-speech');
   return null;
 }
 
@@ -760,11 +768,15 @@ export class SubtitlesService {
       // its edited cues (anti-goal 1), and one arriving now waits for this write and then meets its new hash (409). The
       // translations of the original speech set follow its new times (Task 25, `followSource`), under the same lock.
       let followed: LocaleTag[] = [];
+      let replaced: LocaleTag | null = null;
       await subtitleSetLocks.run(creativeDir, async () => {
         // One set from the original video's speech, never over a translation (final review I3): the language is known now.
-        const refusal = speechSetRefusal(await listSubtitleSets(creativeDir), lang, audio);
+        const sets = await listSubtitleSets(creativeDir);
+        const refusal = speechSetRefusal(sets, lang, audio);
         if (refusal) throw new Error(refusal.message);
-        const existing = await readSubtitleSet(creativeDir, lang);
+        // The original speech set in another language, no translation from it: this one takes its place (follow-up ruling).
+        replaced = replacedSpeechSet(sets, lang, audio)?.lang ?? null;
+        const existing = (await readSubtitleSet(creativeDir, lang)) ?? (replaced ? await readSubtitleSet(creativeDir, replaced) : null);
         // A file there that is not a valid set may hold the user's corrections: never overwritten (anti-goal 1).
         if (!existing && await lstat(subtitlePath(creativeDir, lang)).then(() => true, () => false)) {
           throw new Error(t().subtitles.setUnreadable({ file: `${SUBTITLES_DIR}/${lang}.json` }));
@@ -779,10 +791,11 @@ export class SubtitlesService {
         const valid = subtitleSetSchema.safeParse(set);
         if (!valid.success || Buffer.byteLength(subtitleSetText(set)) > SUBTITLE_LIMITS.fileBytes) throw new Error(valid.success ? 'the subtitles are too large' : valid.error.message);
         await writeSubtitleSet(creativeDir, set);
+        if (replaced) await removeSubtitleSet(creativeDir, replaced);
         if (!audio) followed = await followSource(creativeDir, existing?.set ?? null, set);
       });
       this.deps.commits.touch(ref, t().subtitles.commit({ title: creative.title, lang }));
-      for (const l of [lang, ...followed]) {
+      for (const l of [lang, ...(replaced ? [replaced] : []), ...followed]) {
         try { this.deps.broadcast({ type: 'subtitles', project: ref.projectSlug, creative: ref.creativeSlug, lang: l }); } catch { /* a faulty listener */ }
       }
       const briefLang = creative.brief.locales?.primary;

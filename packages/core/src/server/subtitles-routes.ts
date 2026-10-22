@@ -215,8 +215,8 @@ export function registerSubtitlesRoutes(app: FastifyInstance, ctx: {
     return retranslateSubtitles({ translate: ctx.translate, commits: ctx.commits, broadcast: ctx.broadcast }, ref, lang, body.ids);
   });
   // Task 25: a language's set deleted, under the set lock, committed and told to the clients; a render that drew it turns stale
-  // (its hash is no longer the creative's). Never the original video's speech set, the source of the translations (409
-  // `subtitles-source-set`); nor a set a job is about to write: its translation (409 `subtitles-translating`) or, for a set
+  // (its hash is no longer the creative's). Never the original video's speech set while a translation comes from it (409
+  // `subtitles-source-set`: those first); nor a set a job is about to write: its translation (409 `subtitles-translating`) or, for a set
   // made from speech, the creative's subtitles job (409 `subtitles-running`). A file that is not a valid set is left: 404.
   app.delete<PL>('/api/projects/:slug/creatives/:c/subtitles/:lang', async (req) => {
     const lang = langOf(req.params.lang);
@@ -228,7 +228,10 @@ export function registerSubtitlesRoutes(app: FastifyInstance, ctx: {
       const sets = await listSubtitleSets(creativeDir);
       const set = sets.find((s) => s.lang === lang);
       if (!set) throw new CodedError(404, t().errors.subtitlesNoLang({ lang: name }), 'subtitles-not-found');
-      if (speechSourceSet(sets) === set) throw new CodedError(409, t().errors.subtitlesSourceSet, 'subtitles-source-set');
+      // The original speech set only once no translation comes from it (follow-up ruling of the final review).
+      if (speechSourceSet(sets) === set && sets.some((s) => s.origin === 'translation' && s.sourceLang === set.lang)) {
+        throw new CodedError(409, t().errors.subtitlesSourceSet, 'subtitles-source-set');
+      }
       if (jobOf(subtitleTranslateJobKey(ref, lang))) throw new CodedError(409, t().errors.subtitlesTranslating({ lang: name }), 'subtitles-translating');
       if (set.origin === 'speech' && activeJob(ref)) throw new CodedError(409, t().errors.subtitlesRunning, 'subtitles-running');
       await removeSubtitleSet(creativeDir, lang);

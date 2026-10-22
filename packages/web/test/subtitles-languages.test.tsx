@@ -248,9 +248,16 @@ describe('a translation in the editor (Task 26)', () => {
     await waitFor(() => expect(location.hash).toBe('#/p/acme/c/lancio/subtitles/it'));
   });
 
-  it('the original speech set has no delete', async () => {
+  it('the original speech set has no delete while a translation comes from it', async () => {
     await open('it');
     expect(screen.queryByRole('button', { name: /Elimina i sottotitoli/ })).toBeNull();
+  });
+
+  it('with no translation from it, the original speech set can be deleted (follow-up ruling)', async () => {
+    SETS = [sum('it')];
+    await open('it');
+    await userEvent.click(screen.getByRole('button', { name: 'Elimina i sottotitoli in italiano' }));
+    expect(api.deleteSubtitleLanguage).toHaveBeenCalledWith('acme', 'lancio', 'it');
   });
 });
 

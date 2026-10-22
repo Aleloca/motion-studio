@@ -1,6 +1,6 @@
 // The subtitle languages in the editor's header (Task 26, spec §6.3, §6.5, U8): the creative's subtitle languages (its own
-// list, apart from the brief's), "+ Lingua" to add one (the brief's languages first) and the deletion of a language that is
-// not the original speech. Switching goes through the screen (`onSwitch`), which saves a waiting edit first.
+// list, apart from the brief's), "+ Lingua" to add one (the brief's languages first) and the deletion of a language (the
+// original speech only once no translation comes from it). Switching goes through the screen (`onSwitch`), which saves a waiting edit first.
 import { SUPPORTED_LOCALES, type Brief, type JobSummary, type LocaleTag, type SubtitlesSummary } from '@motion-studio/shared';
 import { useMemo, useRef, useState } from 'react';
 import { api, ApiError } from '../../api.ts';
@@ -11,6 +11,13 @@ import { creativeLocales, localeName } from '../creative/languagesModel.ts';
 
 /** The original video's speech set: made from speech, on the original audio (not a localized voice's, Task 24). */
 export const isOriginalSpeech = (s: Pick<SubtitlesSummary, 'origin' | 'timing'>): boolean => s.origin === 'speech' && !s.timing.locale;
+
+/**
+ * Whether a set can be deleted: any but the original speech set, and that one too once no translation comes from it
+ * (follow-up ruling of the final review).
+ */
+export const deletable = (s: Pick<SubtitlesSummary, 'lang' | 'origin' | 'timing'>, sets: ReadonlyArray<Pick<SubtitlesSummary, 'origin' | 'sourceLang'>>): boolean =>
+  !isOriginalSpeech(s) || !sets.some((x) => x.origin === 'translation' && x.sourceLang === s.lang);
 
 /**
  * The language the editor (and the creative page's "Sottotitoli") opens with no language named: the original speech set, else
@@ -86,7 +93,7 @@ export function LangSwitcher({ slug, creative, lang, sets, brief, edited, onSwit
     <span className="ms-subs-langs">
       <Segmented<LocaleTag> label={s.languages} options={options} value={lang} onChange={(v) => void onSwitch(v)} className="ms-subs-lang-seg" />
       <AddLanguage slug={slug} creative={creative} sets={sets} brief={brief} onAdded={onSwitch} />
-      {current && !isOriginalSpeech(current) ? <DeleteLanguage slug={slug} creative={creative} lang={lang} edited={edited}
+      {current && deletable(current, sets) ? <DeleteLanguage slug={slug} creative={creative} lang={lang} edited={edited}
         onDeleted={() => onLeave(entrySubtitleLang(sets.filter((x) => x.lang !== lang), creativeLocales(brief ?? {})?.primary))} /> : null}
     </span>
   );

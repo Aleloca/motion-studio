@@ -801,7 +801,7 @@ describe('subtitle languages (Task 25, spec §6.5, U8)', () => {
 
     const source = await remove(slug, 'it');
     expect(source.statusCode).toBe(409);
-    expect(source.json()).toMatchObject({ code: 'subtitles-source-set' });
+    expect(source.json()).toMatchObject({ code: 'subtitles-source-set', error: t().errors.subtitlesSourceSet });
     expect(await readSubtitleSet(dirOf(slug), 'it')).not.toBeNull();
 
     for (const lang of ['en', 'de'] as const) {
@@ -817,6 +817,10 @@ describe('subtitle languages (Task 25, spec §6.5, U8)', () => {
     expect(subtitlesCurrent(drawn, subtitleHashesOf((await detail(slug)).subtitles))).toBe(false);
     expect((await remove(slug, 'en')).statusCode).toBe(404);
     expect((await remove(slug, 'xx')).statusCode).toBe(400);
+    // No translation comes from it any more (follow-up ruling): the original speech set can go too.
+    const gone = await remove(slug, 'it');
+    expect(gone.statusCode, gone.body).toBe(200);
+    expect(await sets(slug)).toEqual([]);
   });
 
   it('the add_subtitle_language tool adds a language from a creative turn; the brief stays as it is (U8); other jobs 403', async () => {

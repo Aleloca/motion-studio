@@ -582,7 +582,7 @@ describe('final review fixes', () => {
     await open();
     await userEvent.click(screen.getByRole('button', { name: 'Rifai la trascrizione…' }));
     const dialog = await screen.findByRole('dialog', { name: 'Rifai la trascrizione' });
-    expect(within(dialog).getByText('Il parlato del video ha un solo insieme di sottotitoli: per un\'altra lingua usa «+ Lingua», che lo traduce.')).toBeTruthy();
+    expect(within(dialog).getByText('Il parlato del video ha un solo insieme di sottotitoli: con un\'altra lingua si rifà in quella (se nessuna lingua è tradotta da lui). Per aggiungere una lingua usa «+ Lingua».')).toBeTruthy();
   });
 });
 

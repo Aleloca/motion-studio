@@ -420,6 +420,26 @@ describe('SubtitlesService', { timeout: 60_000 }, () => {
     await run({ mode: 'new', lang: 'it' });
   });
 
+  it('another language for the original speech set with no translation from it replaces that set, corrected lines kept (follow-up ruling)', async () => {
+    await creative([audioClip()]);
+    await run();
+    const it = (await readSubtitleSet(creativeDir(), 'it'))!.set;
+    await writeSubtitleSet(creativeDir(), { ...it, cues: it.cues.map((c) => ({ ...c, text: 'Hola a todos.', edited: true as const })) });
+    sent.length = 0;
+    fake.result = { kind: 'whisper-small', words: words([[0.2, 0.6, 'Hola'], [0.7, 1.2, 'a'], [1.25, 1.8, 'todos.']]), language: 'es' };
+    await run({ mode: 'new', lang: 'es' });
+    expect(await readSubtitleSet(creativeDir(), 'it')).toBeNull();
+    const es = (await readSubtitleSet(creativeDir(), 'es'))!.set;
+    expect(es).toMatchObject({ lang: 'es', origin: 'speech' });
+    expect(es.cues.map((c) => [c.text, c.edited ?? false])).toEqual([['Hola a todos.', true]]);
+    expect(sent.filter((m) => m.type === 'subtitles').map((m) => (m as { lang: string }).lang).sort()).toEqual(['es', 'it']);
+    // Recognised automatically too.
+    fake.result = { kind: 'whisper-small', words: HELLO, language: 'it' };
+    await run();
+    expect(await readSubtitleSet(creativeDir(), 'es')).toBeNull();
+    expect((await readSubtitleSet(creativeDir(), 'it'))!.set.cues.map((c) => c.text)).toEqual(['Hola a todos.']);
+  });
+
   it('refuses a second job for the creative, and a creative whose latest version has no video format', async () => {
     await creative([audioClip()]);
     fake.gate = new Promise(() => {});
