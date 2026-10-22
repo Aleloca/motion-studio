@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { alignToScript, buildCues, cueWarnings, mergeKeepingEdited, wrapLines, type SubtitleCue } from '../src/index.ts';
+import { subtitleCueSchema, alignToScript, buildCues, cueWarnings, mergeKeepingEdited, wrapLines, type SubtitleCue } from '../src/index.ts';
 
 const w = (text: string, start: number, end: number) => ({ text, start, end });
 
@@ -59,10 +59,16 @@ describe('wrapLines', () => {
     }
     expect(wrapLines('  ', 'it')).toEqual([]);
   });
-  it('keeps a cue text free of blank lines even for a pathological word', () => {
-    const cues = buildCues({ words: [w('y'.repeat(100), 0, 3000)] }, 'it');
-    expect(cues[0]!.text.split('\n').length).toBeLessThanOrEqual(2);
-    expect(cues[0]!.text.split('\n').every((l) => l.trim() !== '')).toBe(true);
+  it('cuts a token too long for any cue over several cues, losing nothing', () => {
+    const token = Array.from({ length: 300 }, (_, i) => String.fromCharCode(97 + (i % 26))).join('');
+    const cues = buildCues({ words: [w('prima', 0, 500), w(token, 600, 9000), w('dopo', 9100, 9500)] }, 'it');
+    for (const c of cues) {
+      expect(subtitleCueSchema.safeParse(c).success).toBe(true);
+      expect(c.text.split('\n').every((l) => l.trim() !== '')).toBe(true);
+    }
+    expect(cues.map((c) => c.text.replace(/\n/g, '')).slice(1, -1).join('')).toBe(token);
+    expect(cues[0]!.text).toBe('prima');
+    expect(cues[cues.length - 1]!.text).toBe('dopo');
   });
 });
 

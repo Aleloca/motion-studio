@@ -78,7 +78,7 @@ function cueText(text: string, lang: LocaleTag, rules: SubtitleRules): string {
   const lines = wrapLines(text, lang, rules);
   if (lines.length <= rules.maxLines) return lines.join('\n');
   const head = lines.slice(0, rules.maxLines - 1);
-  return [...head, lines.slice(rules.maxLines - 1).join(sepOf(lang))].join('\n');
+  return [...head, lines.slice(rules.maxLines - 1).join('')].join('\n');
 }
 
 const fits = (text: string, lang: LocaleTag, rules: SubtitleRules): boolean => wrapLines(text, lang, rules).length <= rules.maxLines;
@@ -115,6 +115,19 @@ export function buildCues(input: { words: TimedWord[] } | { segments: TimedWord[
     for (const raw of input.words) {
       const w = { ...raw, text: raw.text.trim() };
       if (w.text === '') continue;
+      const cap = rules.maxLines * lineCharsOf(lang, rules);
+      if (len(w.text) > cap) {
+        // A token that cannot fit one cue (a URL, garbage): cut it over cues of one full capacity each, times by characters.
+        flush();
+        const chars = Array.from(w.text);
+        for (let i = 0; i < chars.length; i += cap) {
+          const start = w.start + Math.round(((w.end - w.start) * i) / chars.length);
+          const end = w.start + Math.round(((w.end - w.start) * Math.min(i + cap, chars.length)) / chars.length);
+          const piece = chars.slice(i, i + cap).join('');
+          push(start, end, piece, [{ start, end, text: piece }]);
+        }
+        continue;
+      }
       if (group.length > 0) {
         const last = group[group.length - 1]!;
         const text = group.map((x) => x.text).concat(w.text).join(sep);
