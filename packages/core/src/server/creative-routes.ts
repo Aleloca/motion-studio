@@ -1298,6 +1298,8 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
           // Soft tracks the renderer left out (an App Store preview, final review M4): said like a file that takes none.
           const softNote = f.softIgnored ? t().export.subtitlesSoftStore({ format: label(e.item.format) }) : null;
           if (softNote && !notes.includes(softNote)) notes.push(softNote);
+          // A forced localized video whose translated text overflows (Task 27, re-review): exported, its problems said.
+          if (f.forcedProblems?.length) notes.push(t().export.renderProblems({ item: `${label(e.item.format)} v${e.item.n}${e.item.locale ? ` (${e.item.locale})` : ''}`, list: f.forcedProblems.join('; ') }));
           made.set(e, { ...e.item, source: f.path, file: basename(f.path), width: f.render.width, height: f.render.height, durationSec: f.durationSec ?? e.item.durationSec ?? null });
         }
       }

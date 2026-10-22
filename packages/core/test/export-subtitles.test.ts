@@ -595,6 +595,13 @@ describe('multi-language subtitle exports (Task 27)', { timeout: 120_000 }, () =
     expect(r.statusCode, r.body).toBe(200);
     expect(r.json().excluded).toEqual([expect.objectContaining({ format: 'test-wide', version: 1, locale: 'de', problems: [expect.stringMatching(/title|Titolo|Hallo/i)] })]);
     expect(await outFiles()).toEqual([`${STEM}.mp4`]);
+    // "Esporta comunque" (force): the German video is exported, its overflow said as a note (as a forced row render).
+    const forced = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export`, headers: H,
+      payload: { destination: join(env.base, 'forced'), picks: { 'test-wide': 1 }, locales: ['it', 'de'], subtitles: { soft: ['it'] }, force: true } });
+    expect(forced.statusCode, forced.body).toBe(200);
+    expect(forced.json().excluded).toBeUndefined();
+    expect((await readdir(join(env.base, 'forced'))).sort()).toEqual([`${STEM}-de.mp4`, `${STEM}.mp4`]);
+    expect(forced.json().skipped).toEqual([expect.stringMatching(/\(de\).*(problemi|problems)/)]);
   });
 
   it('a pair on the original video when only German is exported: the drawn original and the German file as today', async () => {

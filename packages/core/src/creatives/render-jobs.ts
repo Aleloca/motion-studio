@@ -109,6 +109,11 @@ export interface ExportRendered {
   durationSec?: number | null;
   /** Soft subtitle tracks were asked and left out (an App Store preview, final review M4): the export says so. */
   softIgnored?: boolean;
+  /**
+   * Task 27, re-review: a localized video rendered with `force` whose translated text overflows: exported anyway (as a forced
+   * row render), these problems said as a note. Without `force` they are `problems` and the file is left out.
+   */
+  forcedProblems?: string[];
 }
 
 export interface RenderPlan {
@@ -433,7 +438,10 @@ export class RenderJobService {
               for (const f of [format, ...followers]) {
                 const checked = await this.exportChecks(r.path, findPreset(presets, f) ?? { ...findPreset(presets, format)!, id: f }, r.composition, r.render, locale);
                 if (checked.warning) detail(`${label(f)}: ${outputWarningText(checked.warning, locale)}`);
-                collect(f, { path: r.path, render: r.render, problems: [...new Set([...checked.problems, ...r.overflows])], issues: checked.issues, durationSec: r.composition.duration > 0 ? r.composition.duration : null,
+                // A translated text that overflows (Ruling J): a problem, unless the export was forced ("Esporta comunque").
+                const forced = o.force === true ? r.overflows : [];
+                collect(f, { path: r.path, render: r.render, problems: [...new Set([...checked.problems, ...(o.force === true ? [] : r.overflows)])], issues: checked.issues,
+                  ...(forced.length ? { forcedProblems: forced } : {}), durationSec: r.composition.duration > 0 ? r.composition.duration : null,
                   ...(r.softIgnored ? { softIgnored: true } : {}) });
               }
             } catch (e) {
