@@ -940,6 +940,7 @@ export const it: Messages = {
     invalidDate: 'Data di esportazione non valida (AAAA-MM-GG)',
     invalidPattern: 'Lo schema dei nomi non è valido (al massimo 200 caratteri)',
     subtitlesMissing: (p) => `Non ci sono sottotitoli in ${p.lang} da esportare`,
+    subtitlesPair: (p) => `I sottotitoli in ${p.lang} seguono la voce del video in ${p.video}: vanno solo con quel video (esportalo, o scegli un'altra lingua)`,
     subtitlesStill: (p) => `${p.format}: un'immagine fissa non ha sottotitoli, è stata esportata senza`,
     subtitlesNoTrack: (p) => `${p.format}: il video non ha la traccia dei sottotitoli, quindi i sottotitoli in ${p.lang} non sono stati disegnati (chiedi all'agente di aggiungerli)`,
     subtitlesNoSoft: (p) => `${p.format}: questo file non può contenere tracce di sottotitoli, quindi sono state tralasciate`,

@@ -94,8 +94,10 @@ export interface RenderWait { signal?: AbortSignal; onJobs?(ids: string[]): void
  * How a render made for an export is made (decision 974; subtitles Task 21): at `profile`, and, when `subtitles` is given, with
  * explicit subtitles instead of the version render's default pairing: `drawn` the language drawn into the picture (null: none),
  * `strip` the subtitles track taken out (the clean video of anti-goal 2), `soft` the languages muxed as `mov_text` tracks.
+ * `video` (Task 27): the localized video of that language (`localizedComposition`, each instance with its own overlay, at the
+ * default profile); absent: the original. `force`: a translation with open problems or outdated entries is rendered anyway.
  */
-export interface ExportRenderOptions { profile: RenderProfile; subtitles?: { drawn: LocaleTag | null; strip: boolean; soft: LocaleTag[];
+export interface ExportRenderOptions { profile: RenderProfile; force?: boolean; subtitles?: { video?: LocaleTag; drawn: LocaleTag | null; strip: boolean; soft: LocaleTag[];
   /** The sets the export read with its request: the soft tracks use them, so they match the `.srt`/`.vtt` beside the video. */
   sets?: Partial<Record<LocaleTag, SubtitleSet>> } }
 /** A render made for one export (decision 974): the file (in the export's own temp folder) and its record. */
@@ -398,11 +400,15 @@ export class RenderJobService {
     if (!version) throw new CodedError(404, m.errors.versionNNotFound({ n }), 'version-not-found');
     const comps = version.compositions ?? [];
     if (comps.length === 0) throw new CodedError(400, m.render.notV2({ n }), 'version-not-v2');
-    const plan = renderPlan(comps, creative.brief, requested);
-    if (plan.unknown.length > 0) throw new CodedError(400, m.render.formatsNotInVersion({ list: plan.unknown.join(', ') }), 'formats-not-in-version');
+    const full = renderPlan(comps, creative.brief, requested);
+    if (full.unknown.length > 0) throw new CodedError(400, m.render.formatsNotInVersion({ list: full.unknown.join(', ') }), 'formats-not-in-version');
+    // Task 27: a localized video renders every instance with its own overlay (a follower too), as a render per language does.
+    const video = subtitles?.video;
+    const plan = video === undefined ? full : { ...full, primaries: [...full.primaries, ...Object.keys(full.followers)], followers: {} };
+    if (video !== undefined) await this.checkLocalized(ref, version, plan.primaries, video, o.force === true, locale);
     if (!this.deps.engine) throw new CodedError(503, m.render.noRenderer, 'no-renderer');
     if ((await this.deps.engine.info()).kind === null) throw new CodedError(409, m.render.noBrowser, 'no-browser');
-    const detail = [profile.short !== undefined ? `${profile.short}p` : null, profile.fps !== undefined ? m.render.fpsName({ fps: profile.fps }) : null, m.render.qualityNames[profile.quality],
+    const detail = [video ?? null, profile.short !== undefined ? `${profile.short}p` : null, profile.fps !== undefined ? m.render.fpsName({ fps: profile.fps }) : null, m.render.qualityNames[profile.quality],
       subtitles?.drawn ? m.render.exportSubtitlesDrawn({ lang: subtitles.drawn }) : subtitles?.strip ? m.render.exportNoSubtitles : null].filter(Boolean).join(' · ');
     return this.deps.queue.enqueue({
       key: exportRenderJobKey(ref.root, ref.projectSlug, ref.creativeSlug, n, randomBytes(4).toString('hex')),
@@ -422,7 +428,7 @@ export class RenderJobService {
             if (signal.aborted) throw new RenderError('cancelled', 'cancelled');
             const followers = Object.keys(plan.followers).filter((f) => plan.followers[f] === format);
             try {
-              const r = await this.renderForExport({ ref, n, format, comps, presets, profile, ...(subtitles ? { subtitles } : {}), outDir, signal, progress, label, locale });
+              const r = await this.renderForExport({ ref, n, format, comps, presets, profile, ...(subtitles ? { subtitles } : {}), force: o.force === true, outDir, signal, progress, label, locale });
               // Each file checked against its own format (a follower's limits are its own, M4), as a version render's.
               for (const f of [format, ...followers]) {
                 const checked = await this.exportChecks(r.path, findPreset(presets, f) ?? { ...findPreset(presets, format)!, id: f }, r.composition, r.render, locale);
@@ -464,26 +470,46 @@ export class RenderJobService {
    * hash still the recorded one), its media normalised, rendered into `outDir`. Nothing is recorded in the version.
    */
   private async renderForExport(o: { ref: CreativeRef; n: number; format: string; comps: VersionComposition[]; presets: FormatPreset[]; profile: RenderProfile;
-    subtitles?: ExportRenderOptions['subtitles']; outDir: string; signal: AbortSignal; progress: (p: JobProgress) => void; label: (id: string) => string; locale: Locale }): Promise<{ path: string; render: RenderInfo; composition: Composition; softIgnored: boolean }> {
+    subtitles?: ExportRenderOptions['subtitles']; force?: boolean; outDir: string; signal: AbortSignal; progress: (p: JobProgress) => void; label: (id: string) => string; locale: Locale }): Promise<{ path: string; render: RenderInfo; composition: Composition; softIgnored: boolean }> {
     const { ref, n, format, signal } = o;
     const m = messages(o.locale);
     const store = new CreativeStore(ref.projectDir);
     const creativeDir = store.dir(ref.creativeSlug);
-    const entry = o.comps.find((c) => c.format === format)!;
-    const preset = findPreset(o.presets, format);
-    if (!preset) throw new Error(m.validation.unknownPreset({ id: format }));
     o.progress({ format, phase: 'media', done: 0, total: 0 });
-    const compDir = join(store.outputsDir(ref.creativeSlug, n), ...entry.dir.split('/'));
-    const loaded = await loadComposition(compDir, preset);
-    if (!loaded.ok) {
-      const list = loaded.problems.slice(0, 5).map((p) => compositionProblemText(p, o.locale)).join('; ');
-      throw new Error(m.render.compositionProblems({ format: o.label(format), list }));
+    // Task 27: a localized video from its private copy (`localizedFolder`), else the version's composition as it is.
+    const video = o.subtitles?.video;
+    const loc = video !== undefined ? await this.localizedFolder(ref, n, format, video, o.force === true, o.presets, o.locale) : null;
+    try {
+      let base: Composition, compDir: string, preset: FormatPreset;
+      if (loc) ({ composition: base, compDir, preset } = loc);
+      else {
+        const entry = o.comps.find((c) => c.format === format)!;
+        const found = findPreset(o.presets, format);
+        if (!found) throw new Error(m.validation.unknownPreset({ id: format }));
+        preset = found;
+        compDir = join(store.outputsDir(ref.creativeSlug, n), ...entry.dir.split('/'));
+        const loaded = await loadComposition(compDir, preset);
+        if (!loaded.ok) {
+          const list = loaded.problems.slice(0, 5).map((p) => compositionProblemText(p, o.locale)).join('; ');
+          throw new Error(m.render.compositionProblems({ format: o.label(format), list }));
+        }
+        if (loaded.hash !== entry.hash) throw new Error(m.render.compositionChanged({ format: o.label(format) }));
+        base = loaded.composition;
+      }
+      return await this.renderExportComposition({ ...o, creativeDir, compDir, preset, base, dir: loc ? loc.root : creativeDir });
+    } finally {
+      await loc?.release();
     }
-    if (loaded.hash !== entry.hash) throw new Error(m.render.compositionChanged({ format: o.label(format) }));
+  }
+
+  /** The render of `renderForExport`, once its composition (`base`), folder and preset are known. */
+  private async renderExportComposition(o: { ref: CreativeRef; n: number; format: string; profile: RenderProfile; subtitles?: ExportRenderOptions['subtitles']; outDir: string; signal: AbortSignal;
+    progress: (p: JobProgress) => void; locale: Locale; creativeDir: string; compDir: string; preset: FormatPreset; base: Composition; dir: string }): Promise<{ path: string; render: RenderInfo; composition: Composition; softIgnored: boolean }> {
+    const { ref, n, format, signal, creativeDir, compDir, preset } = o;
     // Report 39 (decision 1234): at the export's frame rate for the media too, so an embedded video is normalised at that
     // rate (its own cache file) and never shows each frame twice at 60 fps.
     // Subtitles Task 21: the clean video never has the subtitles track (anti-goal 2).
-    const own = storeComposition(format, o.subtitles?.strip ? stripSubtitles(loaded.composition) : loaded.composition);
+    const own = storeComposition(format, o.subtitles?.strip ? stripSubtitles(o.base) : o.base);
     const composition = o.profile.fps !== undefined && o.profile.fps !== own.fps ? { ...own, fps: o.profile.fps } : own;
     // The video sources at the render's scale (review #8): never upscaled soft at 1440p or 2160p.
     const scale = scaledSize(composition, o.profile.short).width / composition.width;
@@ -498,6 +524,7 @@ export class RenderJobService {
       // would be. With them (Task 21): only the language asked for, never recorded either.
       if (o.subtitles && (o.subtitles.drawn !== null || softDir)) await this.deps.subtitleCommits?.flush(ref);
       const subtitles = o.subtitles ? await this.exportSubtitles(ref, composition, o.subtitles.drawn) : (await this.subtitlesFor(ref, n, composition, { snapshot: false }))?.data;
+      const media = sessionMediaOf(prepared);
       const soft: Array<{ lang: LocaleTag; srt: string }> = [];
       for (const lang of softDir ? o.subtitles!.soft : []) {
         // The set the export read with its request (the side files' content), else the one on disk now.
@@ -509,7 +536,7 @@ export class RenderJobService {
       }
       const result = await this.deps.engine!.render({
         ...this.deps.renderOptions,
-        dir: creativeDir, versionDir: `outputs/v${n}`, composition, format: preset, out: join(o.outDir, file), signal, ...(sessionMediaOf(prepared) ? { media: sessionMediaOf(prepared)! } : {}),
+        dir: o.dir, versionDir: `outputs/v${n}`, composition, format: { ...preset, id: format }, out: join(o.outDir, file), signal, ...(media ? { media } : {}),
         // The App Store preview keeps its store audio, as its version render (final review M4): it then takes no soft tracks.
         ...storeRenderOptions(format, composition),
         ...(subtitles ? { subtitles } : {}), ...(soft.length ? { softSubtitles: soft } : {}),
@@ -1063,66 +1090,9 @@ export class RenderJobService {
     const store = new CreativeStore(ref.projectDir);
     const creativeDir = store.dir(ref.creativeSlug);
     const versionDir = store.outputsDir(ref.creativeSlug, n);
-    const version = (await store.readVersions(ref.creativeSlug)).find((x) => x.n === n);
-    const row = version?.localizations?.find((r) => r.locale === tag && r.instanceId === instanceId);
-    const read = row ? await readOverlay(creativeDir, n, tag, instanceId) : null;
-    if (!version || !row || !read || read.hash !== row.hash) throw new Error(m.variants.localizationNotFound({ locale: tag, format: instanceId, n }));
-    const ic = await instanceComposition(creativeDir, version, instanceId, presets);
-    if (!ic) throw new Error(m.render.compositionChanged({ format: instanceId }));
-    const used = overlayAssetPaths(read.overlay, row);
-    row.problems = (await this.reverifyAssets(ref, n, row, read.overlay, ic.compDir)).problems;
-    const forced = (row.problems?.length ?? 0) > 0 || row.stale.length > 0;
-    if (forced && !force) throw new Error(m.variants.renderNeedsForce({ list: `${instanceId} (${tag})` }));
-    const composition = localizedComposition(ic.composition, read.overlay, row);
-    if (!composition) throw new Error(m.variants.localizationUnusable({ locale: tag, format: instanceId }));
-    const preset = findPreset(presets, instanceId) ?? { ...ic.preset, id: instanceId };
-    const cache = await realDirChain(ref.projectDir, ['.studio', 'cache', 'locale-render']);
-    if (!cache) throw new Error(m.render.compositionChanged({ format: instanceId }));
-    const root = join(cache, `r-${randomBytes(8).toString('hex')}`);
-    const compDir = join(root, 'outputs', `v${n}`, 'compositions', instanceId);
-    activeLocaleRenders.add(root);
+    const loc = await this.localizedFolder(ref, n, instanceId, tag, force, presets, locale);
+    const { root, composition, preset, ic, row, read, forced, version, compDir } = loc;
     try {
-      await mkdir(compDir, { recursive: true });
-      for (const f of ic.folder.files) {
-        await mkdir(dirname(join(compDir, ...f.path.split('/'))), { recursive: true });
-        await copyConfinedFile(ic.compDir, f.path, join(compDir, ...f.path.split('/')));
-      }
-      if ((await readCompositionFolder(compDir)).hash !== ic.entry.hash) throw new Error(m.render.compositionChanged({ format: instanceId }));
-      const have = new Set(ic.folder.files.map((f) => f.path));
-      for (const font of read.overlay.fonts) {
-        for (const p of font.files) {
-          if (have.has(p)) continue;
-          await mkdir(dirname(join(compDir, ...p.split('/'))), { recursive: true });
-          await copyConfinedFile(ref.projectDir, p, join(compDir, ...p.split('/')));
-          have.add(p);
-        }
-      }
-      // The translated voices the core generated are project assets (Task 4, `voiceRootsOf`): copied in too, unless the
-      // composition folder has that path (it wins, as in the checks). Stale or unused voices are not needed.
-      if (row.voice === 'translated') {
-        for (const [id, v] of Object.entries(read.overlay.voices)) {
-          if (have.has(v.src) || row.stale.includes(id)) continue;
-          if (!(await voiceFileOk([ref.projectDir], v.src))) throw new Error(m.variants.voiceFileInvalid({ clip: clipLabel(ic.composition, id) }));
-          await mkdir(dirname(join(compDir, ...v.src.split('/'))), { recursive: true });
-          await copyConfinedFile(ref.projectDir, v.src, join(compDir, ...v.src.split('/')));
-          have.add(v.src);
-        }
-      }
-      // Ruling L: every voice and font file the core wrote or attached must still be the one it recorded, checked on the very
-      // file this render uses (the private copy). A changed file is a problem of the language, never rendered silently.
-      const changed = await changedAssets([compDir], row, used);
-      if (changed.length > 0) {
-        const texts = changed.map((file) => m.variants.assetChanged({ file }));
-        const found: LocalizationIssue[] = changed.map((file, i) => {
-          const clipId = Object.entries(read.overlay.voices).find(([, v]) => v.src === file)?.[0];
-          return { code: 'assetChanged', message: texts[i]!, ...(clipId !== undefined ? { clipId } : {}) };
-        });
-        await store.updateVersion(ref.creativeSlug, n, (x) => ({
-          ...x, localizations: (x.localizations ?? []).map((r) => (r.locale !== tag || r.instanceId !== instanceId ? r : withIssues(r, found))),
-        }));
-        this.deps.broadcast({ type: 'creative', project: ref.projectSlug, creative: ref.creativeSlug });
-        throw new Error(texts.join('; '));
-      }
       const atFps = storeComposition(instanceId, composition);
       // Its own language's subtitles when there is a set in it, else none (U8).
       const subtitles = await this.subtitlesFor(ref, n, atFps, { snapshot: true, localized: tag });
@@ -1194,9 +1164,120 @@ export class RenderJobService {
       await noteRenderStamps(ref.projectDir, creativeDir, ref.creativeSlug, n, [{ file, sha256: result.sha256 }]).catch(() => {});
       this.deps.broadcast({ type: 'creative', project: ref.projectSlug, creative: ref.creativeSlug });
     } finally {
+      await loc.release();
+    }
+  }
+
+  /**
+   * The refusals of a render of `instances` in `tag` before anything is queued (as `startLocalized`): an instance with no
+   * translation (409 `localization-missing`) and, without `force`, a translation with open problems or outdated entries
+   * (409 `localization-needs-force`, `problems` listing them).
+   */
+  private async checkLocalized(ref: CreativeRef, version: VersionEntry, instances: readonly string[], tag: LocaleTag, force: boolean, locale: Locale): Promise<void> {
+    const v = messages(locale).variants;
+    const presets = await this.deps.presets();
+    const label = (id: string) => `${formatDisplayName(presets, id, locale)} (${tag})`;
+    const creativeDir = new CreativeStore(ref.projectDir).dir(ref.creativeSlug);
+    const comps = version.compositions ?? [];
+    const missing: string[] = [];
+    const needsForce: string[] = [];
+    for (const id of instances) {
+      const found = version.localizations?.find((r) => r.locale === tag && r.instanceId === id);
+      const read = found ? await readOverlay(creativeDir, version.n, tag, id) : null;
+      if (!found || !read || read.hash !== found.hash) { missing.push(label(id)); continue; }
+      const dir = comps.find((c) => c.format === id)?.dir;
+      const row = dir ? await this.reverifyAssets(ref, version.n, found, read.overlay, join(creativeDir, 'outputs', `v${version.n}`, ...dir.split('/'))) : found;
+      if ((row.problems?.length ?? 0) > 0 || row.stale.length > 0) needsForce.push(label(id));
+    }
+    const refuse = (list: string[], text: (p: { list: string }) => string, code: string) => {
+      const err = new CodedError(409, text({ list: list.slice(0, 10).join(', ') }), code);
+      err.problems = list.slice(0, 50);
+      throw err;
+    };
+    if (missing.length > 0) refuse(missing, v.localizationMissing, 'localization-missing');
+    if (needsForce.length > 0 && !force) refuse(needsForce, v.renderNeedsForce, 'localization-needs-force');
+  }
+
+  /**
+   * The private copy a localized render is made from (Phase 12; shared by the export renders of a localized video, subtitles
+   * Task 27): the instance's composition (re-hashed, still the recorded one) with its overlay applied (`localizedComposition`,
+   * stale ids keep the source), its folder's files (verified against the recorded hash), the overlay's fallback font files and
+   * its translated voices, in `<project>/.studio/cache/locale-render/`. A voice or font file changed since the core recorded it
+   * is a problem of the language (recorded on the row) and refuses the render. `release` removes the copy.
+   */
+  private async localizedFolder(ref: CreativeRef, n: number, instanceId: string, tag: LocaleTag, force: boolean, presets: FormatPreset[], locale: Locale) {
+    const m = messages(locale);
+    const store = new CreativeStore(ref.projectDir);
+    const creativeDir = store.dir(ref.creativeSlug);
+    const version = (await store.readVersions(ref.creativeSlug)).find((x) => x.n === n);
+    const row = version?.localizations?.find((r) => r.locale === tag && r.instanceId === instanceId);
+    const read = row ? await readOverlay(creativeDir, n, tag, instanceId) : null;
+    if (!version || !row || !read || read.hash !== row.hash) throw new Error(m.variants.localizationNotFound({ locale: tag, format: instanceId, n }));
+    const ic = await instanceComposition(creativeDir, version, instanceId, presets);
+    if (!ic) throw new Error(m.render.compositionChanged({ format: instanceId }));
+    const used = overlayAssetPaths(read.overlay, row);
+    row.problems = (await this.reverifyAssets(ref, n, row, read.overlay, ic.compDir)).problems;
+    const forced = (row.problems?.length ?? 0) > 0 || row.stale.length > 0;
+    if (forced && !force) throw new Error(m.variants.renderNeedsForce({ list: `${instanceId} (${tag})` }));
+    const composition = localizedComposition(ic.composition, read.overlay, row);
+    if (!composition) throw new Error(m.variants.localizationUnusable({ locale: tag, format: instanceId }));
+    const preset = findPreset(presets, instanceId) ?? { ...ic.preset, id: instanceId };
+    const cache = await realDirChain(ref.projectDir, ['.studio', 'cache', 'locale-render']);
+    if (!cache) throw new Error(m.render.compositionChanged({ format: instanceId }));
+    const root = join(cache, `r-${randomBytes(8).toString('hex')}`);
+    const compDir = join(root, 'outputs', `v${n}`, 'compositions', instanceId);
+    activeLocaleRenders.add(root);
+    const release = async () => {
       await rm(root, { recursive: true, force: true }).catch(() => {});
       activeLocaleRenders.delete(root);
+    };
+    try {
+      await mkdir(compDir, { recursive: true });
+      for (const f of ic.folder.files) {
+        await mkdir(dirname(join(compDir, ...f.path.split('/'))), { recursive: true });
+        await copyConfinedFile(ic.compDir, f.path, join(compDir, ...f.path.split('/')));
+      }
+      if ((await readCompositionFolder(compDir)).hash !== ic.entry.hash) throw new Error(m.render.compositionChanged({ format: instanceId }));
+      const have = new Set(ic.folder.files.map((f) => f.path));
+      for (const font of read.overlay.fonts) {
+        for (const p of font.files) {
+          if (have.has(p)) continue;
+          await mkdir(dirname(join(compDir, ...p.split('/'))), { recursive: true });
+          await copyConfinedFile(ref.projectDir, p, join(compDir, ...p.split('/')));
+          have.add(p);
+        }
+      }
+      // The translated voices the core generated are project assets (Task 4, `voiceRootsOf`): copied in too, unless the
+      // composition folder has that path (it wins, as in the checks). Stale or unused voices are not needed.
+      if (row.voice === 'translated') {
+        for (const [id, v] of Object.entries(read.overlay.voices)) {
+          if (have.has(v.src) || row.stale.includes(id)) continue;
+          if (!(await voiceFileOk([ref.projectDir], v.src))) throw new Error(m.variants.voiceFileInvalid({ clip: clipLabel(ic.composition, id) }));
+          await mkdir(dirname(join(compDir, ...v.src.split('/'))), { recursive: true });
+          await copyConfinedFile(ref.projectDir, v.src, join(compDir, ...v.src.split('/')));
+          have.add(v.src);
+        }
+      }
+      // Ruling L: every voice and font file the core wrote or attached must still be the one it recorded, checked on the very
+      // file this render uses (the private copy). A changed file is a problem of the language, never rendered silently.
+      const changed = await changedAssets([compDir], row, used);
+      if (changed.length > 0) {
+        const texts = changed.map((file) => m.variants.assetChanged({ file }));
+        const found: LocalizationIssue[] = changed.map((file, i) => {
+          const clipId = Object.entries(read.overlay.voices).find(([, v]) => v.src === file)?.[0];
+          return { code: 'assetChanged', message: texts[i]!, ...(clipId !== undefined ? { clipId } : {}) };
+        });
+        await store.updateVersion(ref.creativeSlug, n, (x) => ({
+          ...x, localizations: (x.localizations ?? []).map((r) => (r.locale !== tag || r.instanceId !== instanceId ? r : withIssues(r, found))),
+        }));
+        this.deps.broadcast({ type: 'creative', project: ref.projectSlug, creative: ref.creativeSlug });
+        throw new Error(texts.join('; '));
+      }
+    } catch (e) {
+      await release();
+      throw e;
     }
+    return { root, compDir, composition, preset, ic, row, read, forced, version, release };
   }
 
   /**

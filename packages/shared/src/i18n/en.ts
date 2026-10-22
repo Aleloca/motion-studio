@@ -952,6 +952,7 @@ export const en = {
     invalidDate: 'Invalid export date (YYYY-MM-DD)',
     invalidPattern: 'The name pattern is not valid (at most 200 characters)',
     subtitlesMissing: (p: { lang: string }) => `There are no subtitles in ${p.lang} to export`,
+    subtitlesPair: (p: { lang: string; video: string }) => `The ${p.lang} subtitles follow the voice of the ${p.video} video: they go with that video only (export it, or choose another language)`,
     subtitlesStill: (p: { format: string }) => `${p.format}: a still has no subtitles, it was exported without them`,
     subtitlesNoTrack: (p: { format: string; lang: string }) => `${p.format}: the video has no subtitles track, so the subtitles in ${p.lang} were not drawn into it (ask the agent to add them)`,
     subtitlesNoSoft: (p: { format: string }) => `${p.format}: this file cannot hold subtitle tracks, so they were left out`,
