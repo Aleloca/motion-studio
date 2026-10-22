@@ -4,6 +4,7 @@ import { api } from '../api.ts';
 import { saveBlob } from '../download.ts';
 import { message } from '../errors.ts';
 import { useLocale, useT } from '../i18n.tsx';
+import { href } from '../routes.ts';
 import { localeName } from '../screens/creative/languagesModel.ts';
 import { Button, Icon, Pill } from '../ui/index.ts';
 
@@ -46,6 +47,7 @@ export function SubtitlesReadyCard({ slug, creative, entry }: { slug: string; cr
       <b>{t.subtitles.readyTitle}</b>
       <Pill>{localeName(lang, locale)}</Pill>
       <span className="ms-grow" />
+      <a className="ms-btn ms-sm ms-outline" href={href.subtitles(slug, creative, lang)}>{t.subtitles.openEditor}</a>
       {EXTS.map((ext) => (
         <Button key={ext} size="sm" variant="outline" disabled={busy !== null} aria-busy={busy === ext || undefined}
           aria-label={t.subtitles.download({ ext: `.${ext}` })} onClick={() => void download(ext, lang)}>

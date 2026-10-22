@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { depthOf, href, parseRoute, redirectOf, routeKey, type Route } from '../src/routes.ts';
+import { depthOf, href, parseRoute, projectOf, redirectOf, routeKey, type Route } from '../src/routes.ts';
 
 describe('parseRoute', () => {
   it.each([
@@ -103,5 +103,24 @@ describe('Phase 7 routes', () => {
     expect(k('#/p/acme/c/x')).not.toBe(k('#/p/acme/c/x/f/y'));
     const all: Route[] = [parseRoute('#/'), parseRoute('#/welcome'), parseRoute('#/p/a/new'), parseRoute('#/p/a/c/b')];
     expect(new Set(all.map(routeKey)).size).toBe(all.length);
+  });
+});
+
+describe('the subtitle editor route (Task 9)', () => {
+  it('parses the editor with and without a language, sisters included', () => {
+    expect(parseRoute('#/p/acme/c/promo/subtitles')).toEqual({ name: 'subtitles', slug: 'acme', creative: 'promo' });
+    expect(parseRoute('#/p/acme/c/promo/subtitles/en')).toEqual({ name: 'subtitles', slug: 'acme', creative: 'promo', lang: 'en' });
+    expect(parseRoute('#/p/acme/c/promo~b/subtitles/it')).toEqual({ name: 'subtitles', slug: 'acme', creative: 'promo~b', lang: 'it' });
+  });
+  it('an unsupported language segment opens the creative', () => {
+    expect(parseRoute('#/p/acme/c/promo/subtitles/xx')).toEqual({ name: 'creative', slug: 'acme', creative: 'promo' });
+  });
+  it('round-trips href and has depth 4, its own page key and a project', () => {
+    expect(parseRoute(href.subtitles('acme', 'promo'))).toEqual({ name: 'subtitles', slug: 'acme', creative: 'promo' });
+    expect(href.subtitles('acme', 'promo', 'en')).toBe('#/p/acme/c/promo/subtitles/en');
+    const r = parseRoute(href.subtitles('acme', 'promo', 'en'));
+    expect(depthOf(r)).toBe(4);
+    expect(routeKey(r)).toBe('subtitles:acme/promo');
+    expect(projectOf(r)).toBe('acme');
   });
 });

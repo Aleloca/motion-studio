@@ -427,6 +427,9 @@ export const en = {
     readyTitle: 'Subtitles ready',
     download: (p: { ext: string }) => `Download ${p.ext}`,
     downloadFailed: (p: { detail: string }) => `Download failed: ${p.detail}`,
+    openEditor: 'Open the editor',
+    editorTitle: 'Subtitles',
+    backToCreative: 'Back to the creative',
   },
   briefSession: {
     filled: (p: { parts: string }) => `Filled in the brief: ${p.parts}`,
@@ -3053,6 +3056,7 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
       },
       state: { needs: 'Needs you', working: 'Working' },
       panel: 'Creative panel',
+      subtitles: 'Subtitles',
       tabs: { chat: 'Chat', comments: 'Comments', brief: 'Brief' },
       comments: {
         emptyTitle: 'No comments yet',

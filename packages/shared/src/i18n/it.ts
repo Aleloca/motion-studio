@@ -425,6 +425,9 @@ export const it: Messages = {
     readyTitle: 'Sottotitoli pronti',
     download: (p) => `Scarica ${p.ext}`,
     downloadFailed: (p) => `Download non riuscito: ${p.detail}`,
+    openEditor: "Apri l'editor",
+    editorTitle: 'Sottotitoli',
+    backToCreative: 'Torna alla creatività',
   },
   briefSession: {
     filled: (p) => `Compilato il brief: ${p.parts}`,
@@ -3017,6 +3020,7 @@ Variabili: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (array JSON)`,
       },
       state: { needs: 'Serve a te', working: 'In lavorazione' },
       panel: 'Pannello della creatività',
+      subtitles: 'Sottotitoli',
       tabs: { chat: 'Chat', comments: 'Commenti', brief: 'Brief' },
       comments: {
         emptyTitle: 'Ancora nessun commento',

@@ -1,3 +1,5 @@
+import { isSupportedLocale, type LocaleTag } from '@motion-studio/shared';
+
 export type ProjectTab = 'creatives' | 'brand' | 'assets' | 'references' | 'settings';
 const TABS: ProjectTab[] = ['brand', 'assets', 'references', 'settings'];
 export type SettingsSection = 'general' | 'system' | 'paid' | 'transcription' | 'usage' | 'notifications' | 'updates';
@@ -11,7 +13,9 @@ export type Route =
   | { name: 'project'; slug: string; tab: ProjectTab }
   | { name: 'new-creative'; slug: string }
   | { name: 'creative'; slug: string; creative: string }
-  | { name: 'format'; slug: string; creative: string; format: string };
+  | { name: 'format'; slug: string; creative: string; format: string }
+  /** The subtitle editor (phase 2): a creative's subtitle sets; `lang` picks the set. */
+  | { name: 'subtitles'; slug: string; creative: string; lang?: LocaleTag };
 
 const SLUG = '[a-z0-9][a-z0-9-]*';
 /** A creative segment: a slug, or a variant sister's `<slug>~b`…`~z`, `~aa`… (Phase 15, decision 978; `~` is reserved for sisters). */
@@ -48,6 +52,12 @@ export function parseRoute(hash: string): Route {
   // The old editor address (redirected by `redirectOf`) is the format page too.
   m = hash.match(new RegExp(`^#/p/(${SLUG})/c/(${CSLUG})/f/(${FORMAT_SEG})(?:/edit)?$`));
   if (m) return { name: 'format', slug: m[1]!, creative: m[2]!, format: formatOfSeg(m[3]!) };
+  m = hash.match(new RegExp(`^#/p/(${SLUG})/c/(${CSLUG})/subtitles(?:/([A-Za-z-]+))?$`));
+  if (m) {
+    // A language the app does not support opens the creative, like an unknown settings section opens the projects.
+    if (m[3] === undefined) return { name: 'subtitles', slug: m[1]!, creative: m[2]! };
+    return isSupportedLocale(m[3]) ? { name: 'subtitles', slug: m[1]!, creative: m[2]!, lang: m[3] } : { name: 'creative', slug: m[1]!, creative: m[2]! };
+  }
   m = hash.match(new RegExp(`^#/p/(${SLUG})/c/(${CSLUG})$`));
   if (m) return { name: 'creative', slug: m[1]!, creative: m[2]! };
   m = hash.match(new RegExp(`^#/p/(${SLUG})/new$`));
@@ -75,6 +85,7 @@ export const href = {
   creative: (slug: string, c: string) => `#/p/${slug}/c/${c}`,
   /** A format's page: the direct editor (one screen with the chat, versions, render and export; decision 916). */
   format: (slug: string, c: string, format: string) => `#/p/${slug}/c/${c}/f/${format}`,
+  subtitles: (slug: string, c: string, lang?: LocaleTag) => `#/p/${slug}/c/${c}/subtitles${lang ? `/${lang}` : ''}`,
 };
 
 /** Route depth: drives the direction of the page transition (T1): deeper slides in from the right. */
@@ -84,7 +95,7 @@ export function depthOf(r: Route): number {
     case 'projects': return 1;
     case 'settings': case 'project': return 2;
     case 'new-creative': case 'creative': return 3;
-    case 'format': return 4;
+    case 'format': case 'subtitles': return 4;
   }
 }
 
@@ -96,10 +107,11 @@ export function routeKey(r: Route): string {
     case 'new-creative': return `new:${r.slug}`;
     case 'creative': return `creative:${r.slug}/${r.creative}`;
     case 'format': return `format:${r.slug}/${r.creative}/${r.format}`;
+    case 'subtitles': return `subtitles:${r.slug}/${r.creative}`;
   }
 }
 
 /** The project a route belongs to, if any. */
 export function projectOf(r: Route): string | null {
-  return r.name === 'project' || r.name === 'new-creative' || r.name === 'creative' || r.name === 'format' ? r.slug : null;
+  return r.name === 'project' || r.name === 'new-creative' || r.name === 'creative' || r.name === 'format' || r.name === 'subtitles' ? r.slug : null;
 }

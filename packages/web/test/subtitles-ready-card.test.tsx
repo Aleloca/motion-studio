@@ -51,6 +51,12 @@ describe('the subtitles card in the chat (Task 8)', () => {
     await waitFor(() => expect(saveBlob).toHaveBeenLastCalledWith(expect.any(Blob), 'lancio.it.vtt'));
   });
 
+  it('"Apri l\'editor" links to the subtitle editor in the set\'s language (Task 9)', () => {
+    card(entry({ state: 'ready', lang: 'it' }));
+    const link = within(screen.getByRole('group', { name: 'Sottotitoli pronti' })).getByRole('link', { name: "Apri l'editor" });
+    expect(link.getAttribute('href')).toBe('#/p/acme/c/lancio/subtitles/it');
+  });
+
   it('the files\' URLs are the set\'s .srt and .vtt routes', async () => {
     const { subtitleFileUrl } = await import('../src/api.ts');
     expect(subtitleFileUrl('acme', 'lancio', 'it', 'srt')).toMatch(/\/api\/projects\/acme\/creatives\/lancio\/subtitles\/it\/file\.srt$/);
