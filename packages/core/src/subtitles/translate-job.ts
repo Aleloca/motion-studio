@@ -14,7 +14,7 @@ import { defuseTags } from '../creatives/prompt.ts';
 import { t } from '../i18n.ts';
 import { JobConflictError, JobFailedError, type JobQueue } from '../jobs/job-queue.ts';
 import { CodedError } from '../workspace-store.ts';
-import { listSubtitleSets, readSubtitleSet, type SubtitleCommits, subtitlePath, subtitleSetLocks, writeSubtitleSet } from './store.ts';
+import { listSubtitleSets, readSubtitleSet, speechSourceSet, type SubtitleCommits, subtitlePath, subtitleSetLocks, writeSubtitleSet } from './store.ts';
 import { languageName } from './subtitles-job.ts';
 
 /** Calls of `submit_subtitle_translation` one run may make (the texts add up; a call with a problem keeps nothing). */
@@ -224,7 +224,8 @@ export class SubtitleTranslateService {
     const creative = await store.get(ref.creativeSlug);
     const sets = await listSubtitleSets(store.dir(ref.creativeSlug));
     const lang = languageName(o.target);
-    const source = sets.find((s) => s.origin === 'speech');
+    // The original video's speech (Task 24): a language's own voice is never the source of the others.
+    const source = speechSourceSet(sets);
     if (!source) throw new CodedError(409, t().errors.subtitlesNoSource, 'subtitles-no-source');
     if (source.lang === o.target) throw new CodedError(400, t().errors.subtitlesSameLang({ lang }), 'subtitles-same-lang');
     const existing = sets.find((s) => s.lang === o.target);
@@ -282,7 +283,7 @@ export class SubtitleTranslateService {
         await writeSubtitleSet(dir, set);
         // Review I1: the lines that no longer match the source as it is now (edited during the run, or corrected lines kept
         // over a changed source line): the note says how many to check.
-        const fresh = (await listSubtitleSets(dir)).find((s) => s.origin === 'speech');
+        const fresh = speechSourceSet(await listSubtitleSets(dir));
         toCheck = fresh ? staleCues(set, fresh).length : 0;
       });
       this.deps.commits.touch(ref, t().subtitles.commit({ title: plan.title, lang: target }));

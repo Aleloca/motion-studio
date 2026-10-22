@@ -14,7 +14,7 @@ export { SUBTITLE_WAVEFORM_PEAKS } from '../subtitles/subtitles-job.ts';
 import { CodedError, type WorkspaceStore } from '../workspace-store.ts';
 
 const startSchema = z.strictObject({ mode: z.enum(['new', 'retime']).optional(), lang: z.string().refine(isSupportedLocale, { message: 'not a supported language' }).optional() });
-const waveformQuery = z.object({ version: z.coerce.number().int().positive() });
+const waveformQuery = z.object({ version: z.coerce.number().int().positive(), lang: z.string().refine(isSupportedLocale, { message: 'not a supported language' }).optional() });
 const choiceSchema = transcriptionChoiceSchema.omit({ file: true });
 /** The editor's save: the whole cue list, checked against the stored set's fields with `subtitleSetSchema`. */
 const saveSchema = z.strictObject({ baseHash: z.string().regex(/^[0-9a-f]{64}$/), cues: z.array(z.unknown()).max(SUBTITLE_LIMITS.cues) });
@@ -28,28 +28,38 @@ function parse<T>(schema: z.ZodType<T>, body: unknown): T {
 
 /**
  * The latest version's main format (the one the subtitles are timed on, `subtitleSourceFormat`): its duration (ms) and the
- * fingerprint of its audio. Null when the latest version has no video format.
+ * fingerprint of its audio; with `locale`, of that language's own localized video (a set's `timing.locale`, Task 24). Null
+ * when the latest version has no video format.
  */
-export async function subtitleTimingNow(projectDir: string, creativeSlug: string, presets: readonly FormatPreset[]): Promise<{ durationMs: number; fingerprint: string } | null> {
+export async function subtitleTimingNow(projectDir: string, creativeSlug: string, presets: readonly FormatPreset[], locale?: LocaleTag): Promise<{ durationMs: number; fingerprint: string } | null> {
   const store = new CreativeStore(projectDir);
   const latest = (await store.readVersions(creativeSlug)).at(-1);
   if (!latest) return null;
-  const timing = await subtitleTimingOf(store.dir(creativeSlug), latest, (await store.get(creativeSlug)).brief, presets);
+  const timing = await subtitleTimingOf(store.dir(creativeSlug), latest, (await store.get(creativeSlug)).brief, presets, locale);
   return timing ? { durationMs: Math.round(timing.ic.composition.duration * 1000), fingerprint: timing.fingerprint } : null;
 }
 
 /**
  * The creative's subtitle sets as the UI lists them. `timingChanged`: the audio the set was timed on differs from the latest
- * version's main format (false when that version has no video); `staleCues` comes with the translations (Phase 4).
+ * version's main format (false when that version has no video), each set against the video it was timed on (the original,
+ * or its language's own: Task 24); `staleCues` comes with the translations (Phase 4).
  */
 export async function subtitleSummaries(projectDir: string, creativeSlug: string, presets: () => Promise<FormatPreset[]>): Promise<SubtitlesSummary[]> {
   const sets = await listSubtitleSets(new CreativeStore(projectDir).dir(creativeSlug));
   if (sets.length === 0) return [];
-  const now = await subtitleTimingNow(projectDir, creativeSlug, await presets());
-  return sets.map((s) => ({
-    lang: s.lang, origin: s.origin, ...(s.sourceLang ? { sourceLang: s.sourceLang } : {}),
-    cues: s.cues.length, edited: s.cues.filter((c) => c.edited).length, hash: subtitleSetHash(s), cuesHash: subtitleCuesHash(s),
-    timing: s.timing, timingChanged: now !== null && now.fingerprint !== s.timing.fingerprint, staleCues: 0,
+  const list = await presets();
+  const nows = new Map<string, Promise<{ fingerprint: string } | null>>();
+  const nowOf = (locale?: LocaleTag) => {
+    if (!nows.has(locale ?? '')) nows.set(locale ?? '', subtitleTimingNow(projectDir, creativeSlug, list, locale));
+    return nows.get(locale ?? '')!;
+  };
+  return Promise.all(sets.map(async (s) => {
+    const now = await nowOf(s.timing.locale);
+    return {
+      lang: s.lang, origin: s.origin, ...(s.sourceLang ? { sourceLang: s.sourceLang } : {}),
+      cues: s.cues.length, edited: s.cues.filter((c) => c.edited).length, hash: subtitleSetHash(s), cuesHash: subtitleCuesHash(s),
+      timing: s.timing, timingChanged: now !== null && now.fingerprint !== s.timing.fingerprint, staleCues: 0,
+    };
   }));
 }
 
@@ -113,10 +123,12 @@ export function registerSubtitlesRoutes(app: FastifyInstance, ctx: {
     if (!pending) throw new CodedError(409, t().errors.transcriptionNothingAsks, 'transcription-not-asked');
     return { job: activeJob(ref), pending };
   });
-  // Task 13: the timeline's waveform of a version's main format (before `/:lang`, which would take `waveform` as a language).
-  app.get<PC & { Querystring: { version?: string } }>('/api/projects/:slug/creatives/:c/subtitles/waveform', async (req) => {
+  // Task 13: the timeline's waveform of a version's main format (before `/:lang`, which would take `waveform` as a language);
+  // with `lang`, the audio that language's set is timed on (its own localized video, Task 24).
+  app.get<PC & { Querystring: { version?: string; lang?: string } }>('/api/projects/:slug/creatives/:c/subtitles/waveform', async (req) => {
     const ref = await refOf(req.params.slug, req.params.c);
-    return ctx.subtitles.waveform(ref, parse(waveformQuery, req.query).version);
+    const q = parse(waveformQuery, req.query);
+    return ctx.subtitles.waveform(ref, q.version, q.lang as LocaleTag | undefined);
   });
   app.get<PL>('/api/projects/:slug/creatives/:c/subtitles/:lang', async (req) => {
     const lang = langOf(req.params.lang);
@@ -146,8 +158,8 @@ export function registerSubtitlesRoutes(app: FastifyInstance, ctx: {
     return { hash: saved.hash };
   });
   // "Tempi controllati" (final review, M3): the user looked at the timing after the video changed and keeps it. The set's
-  // timing becomes the latest version's main format and audio fingerprint (so "Il video è cambiato" goes); the cues are not
-  // touched. Over `baseHash` and under the set lock, as the save: 409 `subtitles-conflict` with the stored hash when the set
+  // timing becomes the latest version's main format and audio fingerprint (so "Il video è cambiato" goes), of the video it is
+  // timed on (the original, or its language's own: Task 24, `timing.locale` kept); the cues are not touched. Over `baseHash` and under the set lock, as the save: 409 `subtitles-conflict` with the stored hash when the set
   // changed since; 409 `subtitles-no-video` when the latest version has no video format.
   app.post<PL>('/api/projects/:slug/creatives/:c/subtitles/:lang/timing-checked', async (req, reply) => {
     const lang = langOf(req.params.lang);
@@ -159,9 +171,10 @@ export function registerSubtitlesRoutes(app: FastifyInstance, ctx: {
       const stored = await setOf(ref, lang);
       if (stored.hash !== body.baseHash) return { conflict: stored.hash };
       const latest = (await store.readVersions(ref.creativeSlug)).at(-1);
-      const now = latest ? await subtitleTimingOf(creativeDir, latest, (await store.get(ref.creativeSlug)).brief, await ctx.presets()) : null;
+      const locale = stored.set.timing.locale;
+      const now = latest ? await subtitleTimingOf(creativeDir, latest, (await store.get(ref.creativeSlug)).brief, await ctx.presets(), locale) : null;
       if (!latest || !now) throw new CodedError(409, t().errors.subtitlesNoVideo, 'subtitles-no-video');
-      const set: SubtitleSet = { ...stored.set, timing: { version: latest.n, format: now.format, fingerprint: now.fingerprint } };
+      const set: SubtitleSet = { ...stored.set, timing: { version: latest.n, format: now.format, fingerprint: now.fingerprint, ...(locale ? { locale } : {}) } };
       return { hash: await writeSubtitleSet(creativeDir, set), timing: set.timing };
     });
     if ('conflict' in done) return reply.status(409).send({ error: t().errors.subtitlesConflict, code: 'subtitles-conflict', hash: done.conflict });

@@ -398,6 +398,18 @@ describe('"Tempi controllati": the timing marked as checked (final review, M3)',
     expect(broadcasts.filter((m) => m.type === 'subtitles')).toEqual([{ type: 'subtitles', project: 'acme', creative: slug, lang: 'en' }]);
   });
 
+  it('a set timed on its language\'s own video keeps saying so (Task 24)', async () => {
+    const slug = await made();
+    const creativeDir = join(projectDir(), 'creatives', slug);
+    // The German video has no row of its own any more: its audio is the original's, and the set stays the German video's.
+    const before: SubtitleSet = { ...set('0'.repeat(64)), lang: 'de', timing: { version: 1, format: 'youtube-16x9', fingerprint: '0'.repeat(64), locale: 'de' } };
+    const hash = await writeSubtitleSet(creativeDir, before);
+    const res = await checked(slug, { baseHash: hash }, 'de');
+    expect(res.statusCode, res.body).toBe(200);
+    expect((await readSubtitleSet(creativeDir, 'de'))!.set.timing).toEqual({ version: 1, format: 'youtube-16x9', fingerprint: audioFingerprint(composition(1920, 1080, 6)), locale: 'de' });
+    expect(((await app.inject(`${P}/${slug}/subtitles`)).json() as { sets: SubtitlesSummary[] }).sets[0]).toMatchObject({ lang: 'de', timingChanged: false });
+  });
+
   it('a stale baseHash gets 409 subtitles-conflict and changes nothing; a bad body 400, no set 404', async () => {
     const slug = await made();
     const creativeDir = join(projectDir(), 'creatives', slug);

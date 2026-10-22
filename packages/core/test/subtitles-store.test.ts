@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SUBTITLES_SCHEMA_ID, subtitleCuesHash, subtitleSetHash, type Composition, type SubtitleSet } from '@motion-studio/shared';
 import type { Git } from '../src/git.ts';
 import {
-  SubtitleCommits, audioFingerprint, listSubtitleSets, readSubtitleSet, removeSubtitleSet, subtitlePath, subtitlesDir, writeSubtitleSet,
+  SubtitleCommits, audioFingerprint, defaultSubtitleLang, listSubtitleSets, speechSourceSet, readSubtitleSet, removeSubtitleSet, subtitlePath, subtitlesDir, writeSubtitleSet,
 } from '../src/subtitles/store.ts';
 
 const set = (lang: SubtitleSet['lang'], over: Partial<SubtitleSet> = {}): SubtitleSet => ({
@@ -20,6 +20,18 @@ beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'ms-subtitles-')); }
 afterEach(async () => { await rm(dir, { recursive: true, force: true }); vi.restoreAllMocks(); });
 
 describe('subtitle store', () => {
+  it('the speech source is the set made from the original video, not one of a language\'s own voice (Task 24)', async () => {
+    const german = set('de', { timing: { version: 1, format: 'main', fingerprint: 'b'.repeat(64), locale: 'de' } });
+    await writeSubtitleSet(dir, german);
+    // Only a localized voice's set: it is the source there is.
+    expect(speechSourceSet(await listSubtitleSets(dir))?.lang).toBe('de');
+    await writeSubtitleSet(dir, set('it'));
+    expect(speechSourceSet(await listSubtitleSets(dir))?.lang).toBe('it');
+    // The original video draws the original speech by default, never a language's own voice.
+    expect(await defaultSubtitleLang(dir, { locales: { primary: 'fr', extra: [] } })).toBe('it');
+    expect(await defaultSubtitleLang(dir, { locales: { primary: 'fr', extra: [] } }, 'de')).toBe('de');
+  });
+
   it('keeps one file per language under subtitles/', () => {
     expect(subtitlesDir('/c')).toBe(join('/c', 'subtitles'));
     expect(subtitlePath('/c', 'it')).toBe(join('/c', 'subtitles', 'it.json'));

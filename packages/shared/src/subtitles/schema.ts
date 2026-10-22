@@ -46,6 +46,11 @@ export const subtitleSetSchema = z.object({
     version: z.number().int().min(1),
     format: z.string(),
     fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+    /**
+     * Task 24 (spec §6.5): the set was timed on that language's localized video (its own translated voices), not on the
+     * original one: "Il video è cambiato" compares it with that video's audio. Absent: the original video.
+     */
+    locale: localeTag.optional(),
   }).strict(),
   cues: z.array(subtitleCueSchema).max(SUBTITLE_LIMITS.cues),
 }).strict().superRefine((s, ctx) => {

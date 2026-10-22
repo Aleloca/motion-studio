@@ -116,6 +116,18 @@ describe('SubtitleTranslateService', () => {
     expect(MCP_TOOLS['subtitles-translate']).toEqual(['report_progress', 'submit_subtitle_translation']);
   });
 
+  it('the source is the set made from the original video, not a language\'s own voice (Task 24)', async () => {
+    await writeSubtitleSet(dir(), {
+      ...speech([{ id: 'c1', start: 100, end: 1400, text: 'Hallo zusammen' }]), lang: 'de', detected: 'de',
+      timing: { ...TIMING, fingerprint: '1'.repeat(64), locale: 'de' },
+    });
+    const { run, job } = await translate({ target: 'en' }, EN);
+    expect(job?.state).toBe('succeeded');
+    expect(run.req.prompt).toContain('c2 | 00:02.000–00:03.500 | Prenota in tre tocchi');
+    expect(run.req.prompt).not.toContain('Hallo');
+    expect((await readSubtitleSet(dir(), 'en'))?.set).toMatchObject({ sourceLang: 'it', timing: TIMING });
+  });
+
   it('the run\'s usage is recorded with the creative\'s translations (Claude usage)', async () => {
     const job = await service.start(ref, { target: 'en' });
     const run = await runner.next();

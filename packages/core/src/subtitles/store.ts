@@ -89,15 +89,25 @@ export async function subtitleHashes(creativeDir: string): Promise<Record<string
 export { drawsSubtitles };
 
 /**
+ * The set made from the speech of the original video (Task 24): the first by language whose timing is not a language's own
+ * localized video (`timing.locale`), else the first made from any speech. The source of the translations and of the original
+ * video's default subtitles. Undefined when no set was made from speech.
+ */
+export function speechSourceSet(sets: readonly SubtitleSet[]): SubtitleSet | undefined {
+  const speech = sets.filter((s) => s.origin === 'speech');
+  return speech.find((s) => s.timing.locale === undefined) ?? speech[0];
+}
+
+/**
  * The default subtitle language of a render (U8, spec §6.6): a localized render (`localized`) draws its own language's set,
- * else none; a version render draws the brief's primary language when it has a set, else the set made from the speech (the
- * first by language when several were). Null: none.
+ * else none; a version render draws the brief's primary language when it has a set, else the set made from the speech of the
+ * original video (`speechSourceSet`). Null: none.
  */
 export async function defaultSubtitleLang(creativeDir: string, brief: Pick<Brief, 'locales'>, localized?: LocaleTag): Promise<LocaleTag | null> {
   if (localized !== undefined) return (await readSubtitleSet(creativeDir, localized)) ? localized : null;
   const primary = brief.locales?.primary;
   if (primary && await readSubtitleSet(creativeDir, primary)) return primary;
-  return (await listSubtitleSets(creativeDir)).find((s) => s.origin === 'speech')?.lang ?? null;
+  return speechSourceSet(await listSubtitleSets(creativeDir))?.lang ?? null;
 }
 
 /**

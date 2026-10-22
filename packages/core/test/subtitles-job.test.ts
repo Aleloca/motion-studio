@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  SUBTITLES_SCHEMA_ID, type Brief, type Composition, type ConversationEntry, type FormatPreset, type ServerMessage, type TranscriptionPending,
+  SUBTITLES_SCHEMA_ID, type Brief, type Composition, type ConversationEntry, type FormatPreset, type Localization, type ServerMessage, type TranscriptionPending,
   type TranscriptKind, type TranscriptWord,
 } from '@motion-studio/shared';
 import type { Transcriber } from '../src/analysis/video-analysis.ts';
@@ -19,10 +19,13 @@ import type { CreativeRef } from '../src/creatives/creative-turns.ts';
 import { execCommand } from '../src/exec.ts';
 import { t } from '../src/i18n.ts';
 import { JobQueue } from '../src/jobs/job-queue.ts';
+import { emptyOverlay, localizedComposition, setLocalizationRow, writeOverlay } from '../src/localization/store.ts';
 import { NoMediaTools } from '../src/media/media-tools.ts';
 import { findFfmpeg } from '../src/render/encode.ts';
+import { silenceRatio } from '../src/analysis/audio.ts';
+import { subtitleSummaries } from '../src/server/subtitles-routes.ts';
 import { audioFingerprint, readSubtitleSet, subtitleSetLocks, writeSubtitleSet } from '../src/subtitles/store.ts';
-import { splitCjkWords, SUBTITLES_LANE, SubtitlesService } from '../src/subtitles/subtitles-job.ts';
+import { languageName, splitCjkWords, SUBTITLES_LANE, SubtitlesService } from '../src/subtitles/subtitles-job.ts';
 
 const PRESETS: FormatPreset[] = [
   { id: 'test-wide', channel: 'Test', name: 'Wide', width: 320, height: 180, kind: 'video', extensions: ['mp4'] },
@@ -38,6 +41,8 @@ beforeAll(async () => {
   };
   await ff(['-f', 'lavfi', '-i', 'sine=f=440:d=3:r=48000', '-c:a', 'pcm_s16le', join(fixtures, 'tone.wav')]);
   await ff(['-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=mono', '-t', '3', '-c:a', 'pcm_s16le', join(fixtures, 'silence.wav')]);
+  // A localized voice (Task 24): 1.5 s of another tone, so a mix of it is half silent.
+  await ff(['-f', 'lavfi', '-i', 'sine=f=880:d=1.5:r=48000', '-c:a', 'pcm_s16le', join(fixtures, 'short.wav')]);
 }, 60_000);
 afterAll(async () => { await rm(fixtures, { recursive: true, force: true }); });
 
@@ -60,6 +65,8 @@ interface Fake {
   /** null: the plan never answers. */
   plan: Awaited<ReturnType<Transcriber['plan']>> | null;
   method: 'ask' | 'never' | 'whisper';
+  /** Task 24: the transcriber measures the silence of the WAV it gets (into `heard`). */
+  listen?: boolean;
 }
 const PENDING: TranscriptionPending = {
   kind: 'transcription', audioSec: 3, whisper: { available: true, modelPresent: true, model: 'small', sizeBytes: 1, engine: 'whisper.cpp' },
@@ -72,6 +79,7 @@ let store: CreativeStore;
 let queue: JobQueue;
 let fake: Fake;
 let transcribed: Array<Parameters<Transcriber['transcribe']>[0]>;
+let heard: number[];
 let entries: ConversationEntry[];
 let sent: ServerMessage[];
 let touch: ReturnType<typeof vi.fn>;
@@ -85,6 +93,7 @@ const transcriber: Transcriber = {
   recheck: async () => PENDING,
   transcribe: async (i) => {
     transcribed.push(i);
+    if (fake.listen) heard.push(await silenceRatio(execCommand, i.wav, i.durationSec));
     if (fake.gate) {
       const stopped = new Promise<never>((_, reject) => { i.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true }); });
       await Promise.race([fake.gate, stopped]);
@@ -99,7 +108,7 @@ beforeEach(async () => {
   await mkdir(projectDir, { recursive: true });
   store = new CreativeStore(projectDir);
   fake = { result: { kind: 'whisper-small', words: HELLO, language: 'it' }, gate: null, plan: { run: 'whisper' }, method: 'whisper' };
-  transcribed = []; entries = []; sent = []; ready = [];
+  transcribed = []; heard = []; entries = []; sent = []; ready = [];
   touch = vi.fn();
   queue = new JobQueue({ concurrency: 2, lanes: { [SUBTITLES_LANE]: 1 } });
   service = new SubtitlesService({
@@ -463,6 +472,116 @@ describe('the video changed under the subtitles (Task 14, spec §6.7)', { timeou
     await expect(service.start(ref, { mode: 'retime' })).rejects.toMatchObject({ status: 409, apiCode: 'subtitles-no-set' });
     await expect(service.start(ref, { mode: 'retime', lang: 'de' })).rejects.toMatchObject({ status: 409, apiCode: 'subtitles-no-set' });
     expect(queue.list()).toEqual([]);
+  });
+});
+
+describe('a language with its own voice (Task 24, spec §6.5)', { timeout: 60_000 }, () => {
+  const GERMAN = words([[0.2, 0.6, 'halo'], [0.7, 1.3, 'zusamen']]);
+  /**
+   * v1 with a voice clip (its Italian script) and a `de` row of the main format whose overlay replaces it with a German voice
+   * (1.5 s of another tone, a project asset as a localize turn writes it). The localized composition is returned with v1's.
+   */
+  async function localized(voice: 'translated' | 'original' | 'muted' = 'translated', o: { voices?: boolean } = {}) {
+    const c = await creative([audioClip({ script: 'Ciao a tutti' })]);
+    await mkdir(join(ref.projectDir, 'assets', 'audio'), { recursive: true });
+    await copyFile(join(fixtures, 'short.wav'), join(ref.projectDir, 'assets', 'audio', 'vo-de.wav'));
+    const overlay: Localization = {
+      ...emptyOverlay('de', 'test-wide'),
+      voices: o.voices === false ? {} : { vo: { src: 'assets/audio/vo-de.wav', sourceScript: 'Ciao a tutti', script: 'Hallo zusammen' } },
+    };
+    const hash = await writeOverlay(creativeDir(), 1, overlay);
+    await setLocalizationRow(store, ref.creativeSlug, 1, { locale: 'de', instanceId: 'test-wide', hash, origin: 'agent', stale: [], voice });
+    return { c, de: localizedComposition(c, overlay, { stale: [], voice })!, overlay, hash };
+  }
+  const timingEntries = () => entries.filter((e) => e.type === 'system' && e.subtitles?.state === 'timing-changed');
+
+  it('the job mixes the language\'s own voice, tells the transcriber the language and aligns the words to its script', async () => {
+    const { c, de } = await localized();
+    fake.listen = true;
+    // The original video first: its Italian voice, heard over the whole 3 s.
+    await run();
+    expect(heard[0]).toBeLessThan(0.1);
+    expect(transcribed[0]!.language).toBeNull();
+    expect((await readSubtitleSet(creativeDir(), 'it'))!.set.timing).toEqual({ version: 1, format: 'test-wide', fingerprint: audioFingerprint(c) });
+
+    fake.result = { kind: 'whisper-small', words: GERMAN, language: 'de' };
+    await run({ mode: 'new', lang: 'de' });
+    // The German voice is 1.5 s of the 3: the mix the transcriber heard is the localized one.
+    expect(heard[1]).toBeGreaterThan(0.3);
+    expect(transcribed[1]!.language).toBe('de');
+    const set = (await readSubtitleSet(creativeDir(), 'de'))!.set;
+    expect(set).toMatchObject({ lang: 'de', origin: 'speech' });
+    expect(set.timing).toEqual({ version: 1, format: 'test-wide', fingerprint: audioFingerprint(de), locale: 'de' });
+    expect(audioFingerprint(de)).not.toBe(audioFingerprint(c));
+    expect(set.cues.map((x) => x.text)).toEqual(['Hallo zusammen']);
+    expect(set.cues[0]!.words!.map((w) => [w.start, w.text])).toEqual([[200, 'Hallo'], [700, 'zusammen']]);
+    // Not "a language other than the brief's": the language was known.
+    expect(subtitleEntries().at(-1)).toMatchObject({ level: 'info', text: t().subtitles.ready({ lang: languageName('de') }), subtitles: { state: 'ready', lang: 'de' } });
+  });
+
+  it('localizedVoiceLang: only a row of the main format whose voices are translated and applied', async () => {
+    await localized();
+    expect(await service.localizedVoiceLang(ref, 'de')).toBe(true);
+    expect(await service.localizedVoiceLang(ref, 'fr')).toBe(false);
+    await localized('original');
+    expect(await service.localizedVoiceLang(ref, 'de')).toBe(false);
+    await localized('muted');
+    expect(await service.localizedVoiceLang(ref, 'de')).toBe(false);
+    await localized('translated', { voices: false });
+    expect(await service.localizedVoiceLang(ref, 'de')).toBe(false);
+    // An overlay whose file no longer has the row's hash is not applied.
+    const { overlay } = await localized();
+    await writeOverlay(creativeDir(), 1, { ...overlay, voices: { vo: { ...overlay.voices.vo!, script: 'Guten Tag' } } });
+    expect(await service.localizedVoiceLang(ref, 'de')).toBe(false);
+    // A language without a row's voices is transcribed from the original video, as before.
+    await localized('original');
+    fake.listen = true;
+    fake.result = { kind: 'whisper-small', words: GERMAN, language: 'de' };
+    await run({ mode: 'new', lang: 'de' });
+    expect(heard[0]).toBeLessThan(0.1);
+    expect((await readSubtitleSet(creativeDir(), 'de'))!.set.timing.locale).toBeUndefined();
+  });
+
+  it('"Il video è cambiato" compares a localized set with its own language\'s video, and "Rifai i tempi" keeps that audio', async () => {
+    const { hash } = await localized();
+    await run();
+    fake.result = { kind: 'whisper-small', words: GERMAN, language: 'de' };
+    await run({ mode: 'new', lang: 'de' });
+    // Each set matches the audio it was timed on: nothing to tell.
+    await service.versionSaved(ref, 1, null);
+    expect(timingEntries()).toEqual([]);
+    const summary = async () => Object.fromEntries((await subtitleSummaries(ref.projectDir, ref.creativeSlug, async () => PRESETS)).map((s) => [s.lang, s.timingChanged]));
+    expect(await summary()).toEqual({ de: false, it: false });
+    // The German video goes back to the original voice: only the German set's audio changed.
+    await setLocalizationRow(store, ref.creativeSlug, 1, { locale: 'de', instanceId: 'test-wide', hash, origin: 'agent', stale: [], voice: 'original' });
+    expect(await summary()).toEqual({ de: true, it: false });
+    await setLocalizationRow(store, ref.creativeSlug, 1, { locale: 'de', instanceId: 'test-wide', hash, origin: 'agent', stale: [], voice: 'translated' });
+    expect(await summary()).toEqual({ de: false, it: false });
+
+    // "Rifai i tempi" of the German set: its own voice again, its language told.
+    fake.listen = true;
+    await run({ mode: 'retime', lang: 'de' });
+    expect(heard.at(-1)).toBeGreaterThan(0.3);
+    expect(transcribed.at(-1)!.language).toBe('de');
+    expect((await readSubtitleSet(creativeDir(), 'de'))!.set.timing.locale).toBe('de');
+  });
+
+  it('a version that moves the original audio names the original speech set in its notice', async () => {
+    await localized();
+    await run();
+    fake.result = { kind: 'whisper-small', words: GERMAN, language: 'de' };
+    await run({ mode: 'new', lang: 'de' });
+    // v2: the original voice moves 1 s later.
+    const dir = join(store.outputsDir(ref.creativeSlug, 2), 'compositions', 'test-wide');
+    await mkdir(join(dir, 'assets'), { recursive: true });
+    await copyFile(join(fixtures, 'tone.wav'), join(dir, 'assets', 'tone.wav'));
+    await writeFile(join(dir, 'composition.json'), JSON.stringify(composition([{ ...audioClip({ script: 'Ciao a tutti' }), start: 1, duration: 2 }])));
+    await store.appendVersion(ref.creativeSlug, {
+      n: 2, commit: null, sessionId: null, status: 'complete', createdAt: new Date().toISOString(), request: '', outputs: [], problems: [], tools: [],
+      renderCommand: null, basedOn: 1, compositions: [{ format: 'test-wide', dir: 'compositions/test-wide', hash: (await readCompositionFolder(dir)).hash }],
+    });
+    await service.versionSaved(ref, 2, null);
+    expect(timingEntries()).toEqual([expect.objectContaining({ subtitles: { state: 'timing-changed', lang: 'it' } })]);
   });
 });
 
