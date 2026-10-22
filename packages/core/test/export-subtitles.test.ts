@@ -3,9 +3,10 @@
  * Task 7 of the subtitles plan: `.srt`/`.vtt` files in the export. The core writes `<stem>.<lang>.srt|vtt` next to each
  * exported video (never a still); the route refuses a language with no set; an export without the field is as it was.
  */
+import { existsSync } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -20,6 +21,7 @@ import { buildServer } from '../src/server/app.ts';
 import { writeSubtitleSet } from '../src/subtitles/store.ts';
 import { readCompositionFolder } from '../src/compositions/composition-files.ts';
 import { execCommand } from '../src/exec.ts';
+import { softRemuxArgs } from '../src/render/encode.ts';
 import { fileURLToPath } from 'node:url';
 import { hasFfmpeg, probe } from './helpers/analysis-fixtures.ts';
 import { FONT } from './helpers/render-env.ts';
@@ -188,7 +190,7 @@ describe('export subtitle choices (Task 21)', { timeout: 120_000 }, () => {
   afterEach(async () => { await env?.close(); });
 
   /** A v2 version 1: `test-wide` (with or without the subtitles track), its follower `test-wide-b`, and `extra` formats. */
-  async function creative(o: { track?: boolean; still?: boolean }): Promise<{ slug: string; dir: string }> {
+  async function creative(o: { track?: boolean; still?: boolean; render?: boolean }): Promise<{ slug: string; dir: string }> {
     const formats = ['test-wide', 'test-wide-b', ...(o.still ? ['test-still'] : [])];
     const r = await env.app.inject({ method: 'POST', url: '/api/projects/acme/creatives', headers: H, payload: {
       title: 'Launch', generate: false, brief: { goal: 'g', message: '', formats, durationSec: DURATION, assets: [], notes: '', links: { 'test-wide-b': 'test-wide' }, locales: { primary: 'it', extra: [] } },
@@ -213,7 +215,7 @@ describe('export subtitle choices (Task 21)', { timeout: 120_000 }, () => {
     await writeSubtitleSet(dir, tset('it'));
     await writeSubtitleSet(dir, tset('en'));
     // The version render (draws `it`, the brief's primary, when the composition has the track).
-    await env.render(slug, 1);
+    if (o.render !== false) await env.render(slug, 1);
     return { slug, dir };
   }
   const exportOf = (slug: string, payload: object) => env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export`, headers: H,
@@ -350,6 +352,78 @@ describe('export subtitle choices (Task 21)', { timeout: 120_000 }, () => {
     expect(await exportJobs()).toHaveLength(0);
     expect(await outFiles()).toEqual([`${STEM}.mp4`]);
     expect(await readFile(join(env.base, 'out', `${STEM}.mp4`), 'utf8')).toBe(await readFile(join(dir, 'outputs', 'v1', 'test-wide.mp4'), 'utf8'));
+  });
+
+  // Review round 1.
+  it('a ★ without a current render is not rendered for the version first when the export renders it all (one render)', async () => {
+    const { slug } = await creative({ track: true, render: false });
+    const r = await exportOf(slug, { subtitles: { files: ['it'], soft: ['it'] } });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(env.fake.renders).toHaveLength(1);
+    expect(env.fake.renders[0]!.composition.tracks.some((t) => t.kind === 'subtitles')).toBe(false);
+    expect(await outFiles()).toEqual([`${STEM}.it.srt`, `${STEM}.it.vtt`, `${STEM}.mp4`]);
+    // Cut at the rendered video's own duration.
+    expect(await readFile(join(env.base, 'out', `${STEM}.it.srt`), 'utf8')).toBe(toSrt(tset('it').cues, { durationMs: DURATION * 1000 }));
+  });
+
+  it('the soft tracks and the side files come from the same read of the sets (a set changed during the export is not mixed in)', async () => {
+    const { slug, dir } = await creative({ track: true, render: false });
+    let open!: () => void;
+    env.fake.gate = new Promise<void>((res) => { open = res; });
+    const seen: string[] = [];
+    env.fake.after = async (o) => { for (const x of o.softSubtitles ?? []) seen.push(await readFile(x.srt, 'utf8')); };
+    // `drawn: ['it']` (the version render's language) makes the version render first: the set changes while it runs.
+    const pending = exportOf(slug, { subtitles: { drawn: ['it'], files: ['en'], soft: ['en'] } });
+    for (let i = 0; i < 500 && env.fake.renders.length === 0; i++) await new Promise((res) => setTimeout(res, 10));
+    expect(env.fake.renders).toHaveLength(1);
+    await writeSubtitleSet(dir, { ...tset('en'), cues: [{ id: 'c1', start: 0, end: 900, text: 'Changed' }] });
+    env.fake.gate = null;
+    open();
+    const r = await pending;
+    expect(r.statusCode, r.body).toBe(200);
+    const old = toSrt(tset('en').cues, { durationMs: DURATION * 1000 });
+    expect(seen).toEqual([old]);
+    expect(await readFile(join(env.base, 'out', `${STEM}.en.srt`), 'utf8')).toBe(old);
+  });
+
+  it('409 export-subtitles-nothing when only drawn languages are asked of videos without the track', async () => {
+    const { slug } = await creative({});
+    const r = await exportOf(slug, { subtitles: { drawn: ['en'] } });
+    expect([r.statusCode, r.json().code]).toEqual([409, 'export-subtitles-nothing']);
+    await expect(readdir(join(env.base, 'out'))).rejects.toThrow();
+  });
+
+  it('the older version payload refuses drawn and soft subtitles (400), takes the files', async () => {
+    const { slug } = await creative({ track: true });
+    const url = `/api/projects/acme/creatives/${slug}/export`;
+    for (const subtitles of [{ drawn: ['en'] }, { soft: ['en'] }]) {
+      const r = await env.app.inject({ method: 'POST', url, headers: H, payload: { destination: join(env.base, 'out'), version: 1, subtitles } });
+      expect([r.statusCode, r.json().code]).toEqual([400, 'export-invalid-picks']);
+    }
+    const ok = await env.app.inject({ method: 'POST', url, headers: H, payload: { destination: join(env.base, 'out'), version: 1, subtitles: { files: ['en'] } } });
+    expect(ok.statusCode, ok.body).toBe(200);
+  });
+
+  it('a failed subtitle render refuses the export and leaves no temp folder', async () => {
+    const { slug } = await creative({ track: true });
+    const outs: string[] = [];
+    env.fake.after = (o) => { outs.push(o.out); throw new Error('boom'); };
+    const r = await exportOf(slug, { subtitles: { soft: ['it', 'en'] } });
+    expect([r.statusCode, r.json().code]).toEqual([409, 'export-render-failed']);
+    expect(outs).toHaveLength(1);
+    const temp = dirname(dirname(dirname(outs[0]!)));
+    expect(basename(temp)).toMatch(/^ms-render-export-/);
+    expect(existsSync(temp)).toBe(false);
+  });
+});
+
+describe('softRemuxArgs', () => {
+  it('copies the video and any audio, maps each SRT as mov_text with its ISO 639-2 tag', () => {
+    const own = (p: string, f: string) => ['-protocol_whitelist', 'file', '-format_whitelist', f, '-i', p];
+    expect(softRemuxArgs({ input: '/w/in.mp4', soft: [{ lang: 'it', srt: '/w/it.srt' }, { lang: 'en', srt: '/w/en.srt' }], format: 'mp4', out: '/w/out.mp4' })).toEqual([
+      ...own('/w/in.mp4', 'mov,mp4'), ...own('/w/it.srt', 'srt'), ...own('/w/en.srt', 'srt'),
+      '-map', '0:v:0', '-map', '0:a?', '-map', '1:s:0', '-map', '2:s:0', '-c', 'copy', '-c:s', 'mov_text',
+      '-metadata:s:s:0', 'language=ita', '-metadata:s:s:1', 'language=eng', '-movflags', '+faststart', '-f', 'mp4', '/w/out.mp4']);
   });
 });
 

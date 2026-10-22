@@ -14,7 +14,7 @@ import { checkDestination, exportResolved, exportVersion, pendingRenders, profil
 import { makeOwnedTempDir } from '../render/owner.ts';
 import type { ExportJobService, ExportOutcome, ExportRun } from '../creatives/export-jobs.ts';
 import type { ExportRendered, ExportRenderOptions, RenderWait } from '../creatives/render-jobs.ts';
-import { planSubtitleExport, remuxSoft, type SubtitleChoice, type SubtitleEntry } from '../creatives/subtitle-export.ts';
+import { planSubtitleExport, remuxSoft, skipsVersionRender, type SubtitleChoice, type SubtitleEntry } from '../creatives/subtitle-export.ts';
 import { findFfmpeg } from '../render/encode.ts';
 import { RenderError } from '../render/errors.ts';
 import { assertLocalesInBrief, checkedLocale } from '../localization/validate.ts';
@@ -49,7 +49,7 @@ import { CodedError, expandHome, WorkspaceError, type WorkspaceStore } from '../
 import { sendConfinedFile } from './serve-file.ts';
 import { localizedCompositionView } from './localization-routes.ts';
 import { subtitleSummaries, subtitleTimingNow } from './subtitles-routes.ts';
-import { readSubtitleSet, stageDefaultSubtitles, subtitleHashes } from '../subtitles/store.ts';
+import { defaultSubtitleLang, readSubtitleSet, stageDefaultSubtitles, subtitleHashes } from '../subtitles/store.ts';
 import { currentLocale, t } from '../i18n.ts';
 import { BrandStore } from '../brand/brand-store.ts';
 import { readConfinedFile } from '../brand/agent-guard.ts';
@@ -881,7 +881,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     // Each video is cut at its own duration (its output's); the latest main format's is only the fallback for an unknown one.
     const fallbackMs = subtitleSetOf.size > 0 ? (await subtitleTimingNow(ref.projectDir, ref.creativeSlug, presets))?.durationMs : undefined;
     const subtitleChoice: SubtitleChoice | null = subtitleSetOf.size > 0
-      ? { drawn: drawnTags, files: fileTags.map((x) => subtitleSetOf.get(x)!), soft: softTags, ...(fallbackMs !== undefined ? { durationMs: fallbackMs } : {}) } : null;
+      ? { drawn: drawnTags, files: fileTags.map((x) => subtitleSetOf.get(x)!), soft: softTags, sets: Object.fromEntries(subtitleSetOf), ...(fallbackMs !== undefined ? { durationMs: fallbackMs } : {}) } : null;
     const common = { creativeDir, destination, slug: ref.creativeSlug, title: creative.title, forbiddenRoot: ref.root, presets, pattern,
       ...(typeof body.date === 'string' ? { now: body.date } : {}),
       label: (id: string) => formatDisplayName(presets, id, currentLocale(), creative.brief.formatLabels) };
@@ -896,6 +896,8 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     }
     const profile = profileOfBody(body);
     refuseProfileWithLanguages(profile, otherTags);
+    // Task 21 (review round 1): a video the subtitled export renders entirely for itself needs no version render first.
+    const defaultLang = subtitleChoice ? await defaultSubtitleLang(creativeDir, creative.brief) : null;
     const profileOpts = profile ? { profile, presets } : {};
     const resolve = async () => {
       // The same hashed versions as the creative GET, so a follower's ★ here is the one the dialog showed.
@@ -906,7 +908,8 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       if (!complete && body.follow !== undefined) throw new CodedError(503, t().errors.hashesPending, 'hashes-pending', PICK_RETRY_AFTER_SEC);
       const items = resolveExportPicks({ ...common, versions, picks: (body.picks ?? {}) as Record<string, number>, follow: body.follow as string[] | Record<string, number> | undefined,
         links: effectiveLinks(creative.brief.links, creative.brief.formats), storedPicks: creative.exportPicks });
-      return { items, versions, pending: await pendingRenders(creativeDir, versions, items, profileOpts) };
+      const skip = subtitleChoice ? { skip: (it: ExportItem) => skipsVersionRender({ creativeDir, versions, item: it, choice: subtitleChoice, defaultLang }) } : {};
+      return { items, versions, pending: await pendingRenders(creativeDir, versions, items, { ...profileOpts, ...skip }) };
     };
     // Decision 974: in the background the request answers at once with the job (its refusals of the picks first, as before).
     if (body.background) {
@@ -1251,11 +1254,11 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       for (const g of groups.values()) {
         const r = await ctx.renders.exportRenderAndWait(ref, g.pending, { profile: profile ?? { quality: DEFAULT_EXPORT_QUALITY }, subtitles: g.subtitles }, join(temp, `r${k++}`), wait);
         for (const e of g.list) {
-          const key = `${e.item.n} ${e.item.format}`;
+          const key = `${e.item.n}\0${e.item.format}`;
           const f = r.files.get(key);
           if (!f) { gaps.push({ item: e.item, slug: ref.creativeSlug, kind: 'failed', reason: r.failed.get(key) ?? r.errors[0] ?? '', problems: [], issues: [] }); continue; }
           if (f.problems.length > 0) { gaps.push({ item: e.item, slug: ref.creativeSlug, kind: 'problems', problems: f.problems, issues: f.issues }); continue; }
-          made.set(e, { ...e.item, source: f.path, file: basename(f.path), width: f.render.width, height: f.render.height });
+          made.set(e, { ...e.item, source: f.path, file: basename(f.path), width: f.render.width, height: f.render.height, durationSec: f.durationSec ?? e.item.durationSec ?? null });
         }
       }
       const kept = entries.flatMap((e) => (e.kind === 'copy' ? [e.item] : made.has(e) ? [made.get(e)!] : []));

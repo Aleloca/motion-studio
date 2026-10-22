@@ -7,7 +7,7 @@ import { basename, dirname, join } from 'node:path';
 import {
   compositionProblemText, outputWarningText, scaledSize, stripSubtitles, toSrt, DEFAULT_EXPORT_QUALITY, profileApplies, recordedQuality, effectiveLinks, formatDisplayName, messages, renderProblems, renderState, type RenderInfo, type RenderProfile,
   type Brief, type Composition, type FormatPreset, type JobProgress, type JobSummary, type Locale, type LocaleTag, type Localization, type LocalizationIssue, type LocalizationRow, type ManifestV2, type OutputFileInfo,
-  type IdentitySetInfo, type RenderedSubtitles, type OutputIssue, type ServerMessage, type VersionComposition, type VersionEntry,
+  type IdentitySetInfo, type RenderedSubtitles, type SubtitleSet, type OutputIssue, type ServerMessage, type VersionComposition, type VersionEntry,
 } from '@motion-studio/shared';
 import { copyConfinedFile, hashConfinedFile, readConfinedFile } from '../brand/agent-guard.ts';
 import { BrandStore } from '../brand/brand-store.ts';
@@ -95,12 +95,16 @@ export interface RenderWait { signal?: AbortSignal; onJobs?(ids: string[]): void
  * explicit subtitles instead of the version render's default pairing: `drawn` the language drawn into the picture (null: none),
  * `strip` the subtitles track taken out (the clean video of anti-goal 2), `soft` the languages muxed as `mov_text` tracks.
  */
-export interface ExportRenderOptions { profile: RenderProfile; subtitles?: { drawn: LocaleTag | null; strip: boolean; soft: LocaleTag[] } }
+export interface ExportRenderOptions { profile: RenderProfile; subtitles?: { drawn: LocaleTag | null; strip: boolean; soft: LocaleTag[];
+  /** The sets the export read with its request: the soft tracks use them, so they match the `.srt`/`.vtt` beside the video. */
+  sets?: Partial<Record<LocaleTag, SubtitleSet>> } }
 /** A render made for one export (decision 974): the file (in the export's own temp folder) and its record. */
 export interface ExportRendered {
   path: string; render: RenderInfo;
   /** The output checks of that format (review #4: as a version render's, against the format's own preset; never the size). */
   problems: string[]; issues: OutputIssue[];
+  /** The video's duration in seconds (its composition's), null for a still: what its subtitle files are cut to. */
+  durationSec?: number | null;
 }
 
 export interface RenderPlan {
@@ -421,7 +425,7 @@ export class RenderJobService {
               for (const f of [format, ...followers]) {
                 const checked = await this.exportChecks(r.path, findPreset(presets, f) ?? { ...findPreset(presets, format)!, id: f }, r.composition, r.render, locale);
                 if (checked.warning) detail(`${label(f)}: ${outputWarningText(checked.warning, locale)}`);
-                collect(f, { path: r.path, render: r.render, problems: checked.problems, issues: checked.issues });
+                collect(f, { path: r.path, render: r.render, problems: checked.problems, issues: checked.issues, durationSec: r.composition.duration > 0 ? r.composition.duration : null });
               }
             } catch (e) {
               if (signal.aborted || (e instanceof RenderError && e.code === 'cancelled')) throw e;
@@ -483,19 +487,21 @@ export class RenderJobService {
     const prepared = await this.deps.normalizer.prepare({ projectDir: ref.projectDir, compDir, composition, signal, ...(scale !== 1 ? { scale } : {}),
       onProgress: (p) => o.progress({ format, phase: 'media', done: p.done, total: p.total }) });
     const file = `${format}.${renderExtension(preset, !(composition.duration > 0))}`;
-    // Soft tracks (Task 21): SRT files of the core's own, in the export's work folder, cut at the composition's end.
-    const softDir = o.subtitles?.soft.length ? await mkdtemp(join(o.outDir, `.soft-${format}-`)) : null;
+    let softDir: string | null = null;
     try {
+      // Soft tracks (Task 21): SRT files of the core's own, in the export's work folder, cut at the composition's end.
+      if (o.subtitles?.soft.length) softDir = await mkdtemp(join(o.outDir, `.soft-${format}-`));
       // Without explicit subtitles: the version render's (default pairing), not recorded: an export renders the version as it
       // would be. With them (Task 21): only the language asked for, never recorded either.
       if (o.subtitles && (o.subtitles.drawn !== null || softDir)) await this.deps.subtitleCommits?.flush(ref);
       const subtitles = o.subtitles ? await this.exportSubtitles(ref, composition, o.subtitles.drawn) : (await this.subtitlesFor(ref, n, composition, { snapshot: false }))?.data;
       const soft: Array<{ lang: LocaleTag; srt: string }> = [];
       for (const lang of softDir ? o.subtitles!.soft : []) {
-        const found = await readSubtitleSet(creativeDir, lang);
-        if (!found) throw new Error(messages(o.locale).export.subtitlesMissing({ lang }));
+        // The set the export read with its request (the side files' content), else the one on disk now.
+        const set = o.subtitles!.sets?.[lang] ?? (await readSubtitleSet(creativeDir, lang))?.set;
+        if (!set) throw new Error(messages(o.locale).export.subtitlesMissing({ lang }));
         const srt = join(softDir!, `${lang}.srt`);
-        await writeFile(srt, toSrt(found.set.cues, { durationMs: Math.round(composition.duration * 1000) }));
+        await writeFile(srt, toSrt(set.cues, { durationMs: Math.round(composition.duration * 1000) }));
         soft.push({ lang, srt });
       }
       const result = await this.deps.engine!.render({

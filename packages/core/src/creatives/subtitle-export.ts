@@ -14,7 +14,9 @@ import { VIDEO_EXTENSIONS, type ExportItem } from './export.ts';
 import type { ExportRenderOptions } from './render-jobs.ts';
 
 /** The subtitles an export asks for: `files` with their sets (read and checked by the route), `drawn` and `soft` by language. */
-export interface SubtitleChoice { drawn: LocaleTag[]; files: SubtitleSet[]; soft: LocaleTag[]; durationMs?: number }
+export interface SubtitleChoice { drawn: LocaleTag[]; files: SubtitleSet[]; soft: LocaleTag[]; durationMs?: number;
+  /** Every set the request named, read once with it: the soft tracks are made from these, like the side files. */
+  sets: Partial<Record<LocaleTag, SubtitleSet>> }
 
 /**
  * One file of a subtitled export: `copy` the item as it is; `remux` the version's clean file with the soft tracks muxed into a
@@ -47,6 +49,20 @@ async function compositionFacts(creativeDir: string, v: VersionEntry | undefined
 }
 
 /**
+ * Whether an item's version render is of no use to a subtitled export (review round 1): the export renders everything it gives
+ * from that item itself, so the version render a ★ without a current one would get first is skipped. True for a video with
+ * the subtitles track unless a drawn language is the one the version render draws (`defaultLang`, reused), and for a video
+ * without the track when only drawn languages are asked (it gives nothing). A still or a legacy item always uses its file.
+ */
+export async function skipsVersionRender(o: { creativeDir: string; versions: VersionEntry[]; item: ExportItem; choice: Pick<SubtitleChoice, 'drawn' | 'files' | 'soft'>; defaultLang: LocaleTag | null }): Promise<boolean> {
+  if (o.item.localized) return false;
+  const facts = await compositionFacts(o.creativeDir, o.versions.find((x) => x.n === o.item.n), o.item.format);
+  if (!facts || facts.still) return false;
+  if (facts.track) return o.defaultLang === null || !o.choice.drawn.includes(o.defaultLang);
+  return o.choice.files.length === 0 && o.choice.soft.length === 0;
+}
+
+/**
  * What each item becomes (the order: per item, the clean video first, then one video per drawn language). `profiled`: the items
  * an export at another quality or size renders for itself (`profiledRenders`); `hashes`: the subtitle sets' current hashes.
  * Translated items (`localized`) are exported as they are: the pairing of subtitles with a translated video is phase 4.
@@ -75,7 +91,7 @@ export async function planSubtitleExport(o: { creativeDir: string; versions: Ver
     const profiled = facts !== null && (o.profiled.get(it.n) ?? []).includes(it.format);
     if (clean) {
       if (facts && (track || profiled)) {
-        entries.push({ kind: 'render', item: { ...it, ...files }, key: 'clean', subtitles: { drawn: null, strip: track, soft: [...choice.soft] } });
+        entries.push({ kind: 'render', item: { ...it, ...files }, key: 'clean', subtitles: { drawn: null, strip: track, soft: [...choice.soft], sets: choice.sets } });
       } else if (choice.soft.length > 0 && SOFT_CONTAINERS[ext] !== undefined) {
         entries.push({ kind: 'remux', item: { ...it, ...files } });
       } else {

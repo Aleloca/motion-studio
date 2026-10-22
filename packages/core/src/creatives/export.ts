@@ -391,7 +391,9 @@ export function exportResolved(items: ExportItem[], opts: ExportCommon): Promise
  * (`renderState` is not `rendered`) or whose rendered file is not usable on disk any more. Legacy items never do (their
  * media is the result).
  */
-export async function pendingRenders(creativeDir: string, versions: VersionEntry[], items: ExportItem[], o: ExportProfileOptions = {}): Promise<Map<number, string[]>> {
+export async function pendingRenders(creativeDir: string, versions: VersionEntry[], items: ExportItem[], o: ExportProfileOptions & {
+  /** Items the export renders entirely for itself (subtitles Task 21, `skipsVersionRender`): their version render is not needed. */
+  skip?: (it: ExportItem) => Promise<boolean> } = {}): Promise<Map<number, string[]>> {
   const out = new Map<number, string[]>();
   // Subtitles Task 18: a render drawn with a subtitle set changed since is rendered again.
   const subtitles = await subtitleHashes(creativeDir);
@@ -401,6 +403,7 @@ export async function pendingRenders(creativeDir: string, versions: VersionEntry
     // Decision 974: an item at another quality or size is rendered for the export alone (`profiledRenders`).
     const preset = o.presets ? findPreset(o.presets, it.format) : undefined;
     if (o.profile && !isDefaultProfile(profileFor(preset, it.format, o.profile))) continue;
+    if (o.skip && await o.skip(it)) continue;
     // At the default profile a video render made before the quality choice (`standard`) is rendered again, at `high`.
     const stale = o.profile !== undefined && profileApplies(preset, it.format) && recordedQuality(v.outputs.find((x) => x.format === it.format)) !== DEFAULT_EXPORT_QUALITY;
     const fresh = !stale && renderState(v, it.format, subtitles) === 'rendered' && it.file !== '' && plainName(it.file)
