@@ -47,6 +47,7 @@ const api = {
   startSubtitles: vi.fn(async (..._a: unknown[]) => ({ job: { id: 'j1' } })),
   subtitleSet: vi.fn(async (..._a: unknown[]) => ({ set: setOf(CUES), hash: H1 })),
   saveSubtitleSet: vi.fn(async (..._a: unknown[]) => ({ hash: H2 })),
+  subtitleTimingChecked: vi.fn(async (..._a: unknown[]) => ({ hash: 'e'.repeat(64), timing: { version: 2, format: REEL, fingerprint: '9'.repeat(64) } })),
   subtitleWaveform: vi.fn(async (..._a: unknown[]) => ({ peaks: [0.2, 0.9, 0.4], durationMs: 6000 })),
   subtitleFile: vi.fn(async (..._a: unknown[]) => new Blob(['1\n00:00:00,000 --> 00:00:01,500\nCiao\n'])),
   revokePreview: vi.fn(async (..._a: unknown[]) => ({ revoked: true })),
@@ -346,7 +347,8 @@ describe('the subtitle editor screen (Task 12)', () => {
         scroll.mockClear();
         act(() => { media.currentTime = 2.5; media.emit('timeupdate'); });
         expect(scroll).toHaveBeenCalled();
-        screen.getByRole('textbox', { name: 'Testo della riga 3' }).focus();
+        // Focusing the text selects its line (final review, I1), which scrolls to it once.
+        act(() => { screen.getByRole('textbox', { name: 'Testo della riga 3' }).focus(); });
         scroll.mockClear();
         act(() => { media.currentTime = 4.5; media.emit('timeupdate'); });
         expect(scroll).not.toHaveBeenCalled();
@@ -458,5 +460,102 @@ describe('the video changed, and redoing the transcription (Task 14)', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Rifai la trascrizione' });
     await userEvent.click(within(dialog).getByRole('button', { name: 'Rifai la trascrizione' }));
     expect(api.startSubtitles).toHaveBeenCalledWith('acme', 'lancio', { mode: 'new' });
+  });
+});
+
+describe('final review fixes', () => {
+  const box = (n: number) => screen.getByRole('textbox', { name: `Testo della riga ${n}` }) as HTMLTextAreaElement;
+  const end = (n: number) => (screen.getByRole('textbox', { name: `Fine della riga ${n}` }) as HTMLInputElement).value;
+
+  it('I1: focusing a line\'s text (Tab) selects that line and seeks to it', async () => {
+    await open();
+    act(() => { box(2).focus(); });
+    expect(rows()[1]!.getAttribute('aria-current')).toBe('true');
+    expect(media.currentTime).toBe(2);
+  });
+
+  it('I1: Enter outside a field moves the focus into the selected line\'s text; not on a button, not while typing', async () => {
+    await open();
+    fireEvent.keyDown(document.body, { key: 'ArrowDown' });
+    fireEvent.keyDown(document.body, { key: 'ArrowDown' });
+    expect(rows()[1]!.getAttribute('aria-current')).toBe('true');
+    fireEvent.keyDown(document.body, { key: 'Enter' });
+    expect(document.activeElement).toBe(box(2));
+    expect(box(2).selectionStart).toBe(box(2).value.length);
+    // In the text Enter is a new line of the text, nothing else.
+    fireEvent.keyDown(box(2), { key: 'Enter' });
+    expect(document.activeElement).toBe(box(2));
+    // On a button Enter presses the button.
+    const merge = within(rows()[0]!).getByRole('button', { name: 'Unisci con la successiva' });
+    merge.focus();
+    fireEvent.keyDown(merge, { key: 'Enter' });
+    expect(document.activeElement).toBe(merge);
+  });
+
+  it('I2: once a conflict\'s merge is saved, a broadcast (a finished retime) updates the lines again', async () => {
+    api.saveSubtitleSet.mockRejectedValueOnce(new ApiError(409, 'changed', 'subtitles-conflict'));
+    const r = await open(0);
+    await userEvent.type(box(1), '!');
+    await waitFor(() => expect(api.saveSubtitleSet).toHaveBeenCalledTimes(2), { timeout: SAVE_DEBOUNCE_MS + 2000 });
+    const state = () => screen.getByRole('status', { name: 'Stato del salvataggio' }).textContent;
+    await waitFor(() => expect(state()).toContain('Modificati altrove'));
+    // The retime's result: the corrected line moved with the new audio.
+    CUES = [{ id: 'c1', start: 100, end: 1600, text: 'Ciao a tutti!', edited: true }, CUES[1]!, CUES[2]!];
+    r.rerender(<Harness tick={1} />);
+    await waitFor(() => expect((screen.getByRole('textbox', { name: 'Inizio della riga 1' }) as HTMLInputElement).value).toBe('00:00.100'));
+  });
+
+  it('M1: a broadcast\'s set arriving with a drag step not rendered as saved yet never loads over it', async () => {
+    let answer!: (v: unknown) => void;
+    const r = await open(0);
+    const tl = screen.getByRole('region', { name: 'Timeline' });
+    vi.spyOn(tl.querySelector<HTMLElement>('.ms-subtl-track')!, 'getBoundingClientRect')
+      .mockReturnValue({ left: 0, top: 0, right: 1000, bottom: 80, width: 1000, height: 80, x: 0, y: 0, toJSON: () => ({}) } as DOMRect);
+    api.subtitleSet.mockImplementationOnce(() => new Promise((res) => { answer = res as (v: unknown) => void; }));
+    CUES = [CUES[0]!, CUES[1]!, { ...CUES[2]!, text: 'Da un\'altra finestra' }];
+    r.rerender(<Harness tick={1} />);
+    await waitFor(() => expect(answer).toBeTypeOf('function'));
+    const edge = tl.querySelector<HTMLElement>('.ms-subtl-cue[data-cue="c1"] .ms-subtl-edge.ms-end')!;
+    fireEvent.pointerDown(edge, { clientX: 250, button: 0, pointerId: 1 });
+    // The drag's move and the set's answer in one batch: the screen decides after the move is rendered.
+    await act(async () => {
+      fireEvent.pointerMove(edge, { clientX: 300, buttons: 1, pointerId: 1 });
+      answer({ set: { $schema: 'motion-studio/subtitles@1', lang: 'it', origin: 'speech', transcript: null, detected: null, timing: { version: 2, format: REEL, fingerprint: 'f'.repeat(64) }, cues: CUES }, hash: H2 });
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    });
+    expect(end(1)).toBe('00:01.800');
+    expect(box(3).value).toBe('Questa riga è decisamente troppo lunga per un secondo');
+    fireEvent.pointerUp(edge, { clientX: 300, pointerId: 1 });
+  });
+
+  it('M3: "Tempi controllati" in the banner marks the timing as checked over the saved hash, without touching the lines', async () => {
+    TIMING_CHANGED = true;
+    await open();
+    await userEvent.type(box(1), '!');
+    const banner = await screen.findByRole('region', { name: 'Il video è cambiato: ricontrolla i tempi' });
+    await userEvent.click(within(banner).getByRole('button', { name: 'Tempi controllati' }));
+    // A waiting edit is saved first; then the mark goes over the hash that save answered.
+    await waitFor(() => expect(api.subtitleTimingChecked).toHaveBeenCalledWith('acme', 'lancio', 'it', { baseHash: H2 }));
+    expect(api.saveSubtitleSet.mock.invocationCallOrder[0]!).toBeLessThan(api.subtitleTimingChecked.mock.invocationCallOrder[0]!);
+    // The next edit saves over the hash the mark answered.
+    await userEvent.type(box(2), '!');
+    await waitFor(() => expect(api.saveSubtitleSet).toHaveBeenCalledTimes(2), { timeout: SAVE_DEBOUNCE_MS + 2000 });
+    expect((api.saveSubtitleSet.mock.calls[1]![3] as { baseHash: string }).baseHash).toBe('e'.repeat(64));
+  });
+
+  it('M3: a mark refused says why', async () => {
+    TIMING_CHANGED = true;
+    api.subtitleTimingChecked.mockRejectedValueOnce(new ApiError(409, 'I sottotitoli sono stati modificati altrove: ricaricali.', 'subtitles-conflict'));
+    await open();
+    const banner = await screen.findByRole('region', { name: 'Il video è cambiato: ricontrolla i tempi' });
+    await userEvent.click(within(banner).getByRole('button', { name: 'Tempi controllati' }));
+    expect((await within(banner).findByRole('alert')).textContent).toBe('I tempi non sono stati segnati come controllati: I sottotitoli sono stati modificati altrove: ricaricali.');
+  });
+
+  it('M4: "Rifai la trascrizione…" says that another language makes a separate set', async () => {
+    await open();
+    await userEvent.click(screen.getByRole('button', { name: 'Rifai la trascrizione…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Rifai la trascrizione' });
+    expect(within(dialog).getByText('Con un\'altra lingua nasce un insieme di sottotitoli a parte.')).toBeTruthy();
   });
 });

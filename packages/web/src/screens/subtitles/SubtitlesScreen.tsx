@@ -2,7 +2,8 @@
 // editor-only caption of the line under the playhead (the runtime draws the agent's style instead once the composition has a
 // subtitles track, Task 22); the list of lines on the right; the waveform timeline under both (Task 13). Edits save by
 // themselves (useSubtitleSave); a `subtitles` broadcast reloads the set only when nothing is waiting to be saved. Task 14: a
-// banner when the video changed under the set ("Rifai i tempi"), and "Rifai la trascrizione…" in the header.
+// banner when the video changed under the set ("Rifai i tempi", and "Tempi controllati" to keep the timing), and "Rifai la
+// trascrizione…" in the header.
 import { SUPPORTED_LOCALES, type CreativeDetail, type LocaleTag, type SubtitleCue } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
 import { api } from '../../api.ts';
@@ -83,41 +84,53 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
   const root = useRef<HTMLElement>(null);
   const listBox = useRef<HTMLDivElement>(null);
   const [state, dispatch] = useReducer(editorReducer, undefined, initialEditorState);
-  /** The set's hash, set in the same render as each `load` (the save hook's contract, decision 1657). */
+  /** The set's hash and audio fingerprint, set in the same render as each `load` (the save hook's contract, decision 1657). */
   const [hash, setHash] = useState<string | null>(null);
+  const [fingerprint, setFingerprint] = useState<string | null>(null);
   /** The format the set was timed on, once read. */
   const [timedOn, setTimedOn] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [again, setAgain] = useState(0);
-  const save = useSubtitleSave(slug, creative, lang, state, { hash, dispatch });
+  const save = useSubtitleSave(slug, creative, lang, state, { hash, fingerprint, dispatch });
 
   // The set: read at mount and again on each broadcast. A reload never goes over unsaved edits or a conflict being resolved
-  // (the save hook's contract): it waits for the save to be done, then reads again. Cues the editor already shows load
-  // nothing, so the undo history stays (the broadcast of our own save is one of those).
-  const live = useRef({ state, status: save.status });
-  live.current = { state, status: save.status };
+  // (the save hook's contract): the set read is applied after the render that holds every op dispatched meanwhile, and only
+  // when those cues are what the server has with nothing in flight (`isSaved`, final review M1: never on a status read in
+  // the answer's callback, which may predate a drag step); otherwise it is dropped and read again once they are. Cues the
+  // editor already shows load nothing, so the undo history stays (the broadcast of our own save is one of those).
+  const [incoming, setIncoming] = useState<{ cues: SubtitleCue[]; hash: string; fingerprint: string } | null>(null);
   const stale = useRef(false);
   const durationMs = useRef(0);
+  const cuesNow = useRef(state.cues);
+  cuesNow.current = state.cues;
   useEffect(() => {
     let alive = true;
     Promise.resolve().then(() => api.subtitleSet(slug, creative, lang)).then(({ set, hash: h }) => {
       if (!alive) return;
       setLoadError(null);
       setTimedOn(set.timing.format);
-      const cues = [...set.cues].sort(byStart);
-      if (loaded) {
-        if (live.current.status !== 'saved') { stale.current = true; return; }
-        stale.current = false;
-        if (textOf(cues) === textOf(live.current.state.cues)) return;
-      }
-      setLoaded(true);
-      setHash(h);
-      dispatch({ type: 'load', cues, durationMs: Math.max(durationMs.current, ...cues.map((c) => c.end)), lang });
+      setIncoming({ cues: [...set.cues].sort(byStart), hash: h, fingerprint: set.timing.fingerprint });
     }, (e: unknown) => { if (alive && !loaded) setLoadError(message(e)); });
     return () => { alive = false; };
   }, [slug, creative, lang, tick, again]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (save.status === 'saved' && stale.current) { stale.current = false; setAgain((n) => n + 1); } }, [save.status]);
+  useEffect(() => {
+    if (!incoming) return;
+    setIncoming(null);
+    if (loaded) {
+      if (!save.isSaved(state.cues)) { stale.current = true; return; }
+      stale.current = false;
+      if (textOf(incoming.cues) === textOf(state.cues)) return;
+    }
+    setLoaded(true);
+    setHash(incoming.hash);
+    setFingerprint(incoming.fingerprint);
+    dispatch({ type: 'load', cues: incoming.cues, durationMs: Math.max(durationMs.current, ...incoming.cues.map((c) => c.end)), lang });
+  }, [incoming]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A set dropped while edits were unsaved is read again once they are saved (after a conflict too, I2).
+  useEffect(() => {
+    if (stale.current && save.isSaved(cuesNow.current)) { stale.current = false; setAgain((n) => n + 1); }
+  });
 
   // The player: the latest version, on the format the set was timed on (else its first own composition).
   const latest = detail?.versions.at(-1) ?? null;
@@ -131,7 +144,7 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
   useEffect(() => {
     if (!session) return;
     durationMs.current = Math.round(session.duration * 1000);
-    dispatch({ type: 'duration', ms: Math.max(durationMs.current, ...live.current.state.cues.map((c) => c.end)) });
+    dispatch({ type: 'duration', ms: Math.max(durationMs.current, ...cuesNow.current.map((c) => c.end)) });
   }, [session]);
 
   // The cue under the playhead: only its change re-renders the page, not every frame.
@@ -238,6 +251,13 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
   const plain = (e: KeyboardEvent) => free(e) && bare(e) && !e.shiftKey && !isTyping(e);
   usePageShortcut(root, (e) => plain(e) && (e.key === ' ' || e.code === 'Space') && !activatesControl(e, '.ms-subs-play'), () => controls.toggle());
   usePageShortcut(root, (e) => plain(e) && (e.key === 'ArrowDown' || e.key === 'ArrowUp'), (e) => step(e.key === 'ArrowDown' ? 1 : -1));
+  // Final review, I1: Enter (outside a field, not on a control) puts the focus in the selected line's text, caret at the end.
+  usePageShortcut(root, (e) => plain(e) && e.key === 'Enter' && !activatesControl(e) && state.selected !== null, () => {
+    const box = state.selected ? rowOf(state.selected)?.querySelector('textarea') : null;
+    if (!box) return;
+    box.focus();
+    box.setSelectionRange(box.value.length, box.value.length);
+  });
 
   // Downloads: an edit still waiting is saved first, so the file has it.
   const [busy, setBusy] = useState<'srt' | 'vtt' | null>(null);
@@ -262,7 +282,7 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
   return (
     <main ref={root} className="ms-subs" data-lang={lang}>
       <Head slug={slug} creative={creative} lang={lang}>
-        <SaveState status={save.status} retry={() => void save.flush()} />
+        <SaveState status={save.status} notice={save.notice} retry={() => void save.flush()} />
         <RedoTranscription slug={slug} creative={creative} />
         <span className="ms-subs-undo">
           <Tooltip label={s.undo}><Button size="sm" variant="ghost" icon aria-label={s.undo} disabled={state.past.length === 0} onClick={() => dispatch({ type: 'undo' })}><Icon name="undo" size={14} /></Button></Tooltip>
@@ -281,6 +301,7 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
           <Icon name="warn" size={14} />
           <span className="ms-subs-banner-text">{s.timingChanged}</span>
           <RetimeAction slug={slug} creative={creative} lang={lang} className="ms-subs-banner-note" />
+          <TimingChecked mark={save.timingChecked} />
         </section>
       ) : null}
 
@@ -371,6 +392,7 @@ function RedoTranscription({ slug, creative }: { slug: string; creative: string 
           <b className="ms-subs-redo-title">{s.redoTitle}</b>
           <Select<LocaleTag | 'auto'> label={s.redoLanguage} value={pick} options={options} onChange={setPick} />
           <p className="ms-subs-redo-hint">{s.redoHint}</p>
+          <p className="ms-subs-redo-hint">{s.redoOtherLanguage}</p>
           {note && !note.ok ? <p className="ms-subs-redo-error" role="alert">{note.text}</p> : null}
           <Button size="sm" variant="ink" loading={busy} onClick={() => void start()}>{s.redoStart}</Button>
         </div>
@@ -380,13 +402,38 @@ function RedoTranscription({ slug, creative }: { slug: string; creative: string 
   );
 }
 
-function SaveState({ status, retry }: { status: SubtitleSaveStatus; retry(): void }) {
+/**
+ * Final review, M3: "Tempi controllati": the user checked the lines against the new video and keeps their timing. Once the
+ * edits are saved, the set's timing is marked as checked on the latest audio (the banner then goes with the broadcast).
+ */
+function TimingChecked({ mark }: { mark(): Promise<void> }) {
   const s = useT().subtitles;
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try { await mark(); } catch (e) { setError(s.timingCheckedFailed({ detail: message(e) })); } finally { setBusy(false); }
+  };
+  return (
+    <>
+      <Tooltip label={s.timingCheckedHint}>
+        <Button size="sm" variant="ghost" disabled={busy} aria-busy={busy || undefined} onClick={() => void run()}><Icon name="check" size={13} />{s.timingChecked}</Button>
+      </Tooltip>
+      {error ? <span role="alert" className="ms-subs-banner-note">{error}</span> : null}
+    </>
+  );
+}
+
+function SaveState({ status, notice, retry }: { status: SubtitleSaveStatus; notice: boolean; retry(): void }) {
+  const s = useT().subtitles;
+  // After a conflict, "saved" keeps saying the lines were changed elsewhere until the next edit.
+  const elsewhere = status === 'conflict' || (status === 'saved' && notice);
   return (
     <span className="ms-subs-save">
-      <span role="status" aria-label={s.saveState} className={cx('ms-subs-save-text', `ms-${status}`)}>
-        {status === 'saving' ? <Spinner decorative size={11} /> : <Icon name={status === 'saved' ? 'check' : 'warn'} size={12} />}
-        {status === 'saving' ? s.saving : status === 'saved' ? s.saved : status === 'error' ? s.saveFailed : s.savedElsewhere}
+      <span role="status" aria-label={s.saveState} className={cx('ms-subs-save-text', `ms-${elsewhere ? 'conflict' : status}`)}>
+        {status === 'saving' ? <Spinner decorative size={11} /> : <Icon name={status === 'saved' && !elsewhere ? 'check' : 'warn'} size={12} />}
+        {status === 'saving' ? s.saving : elsewhere ? s.savedElsewhere : status === 'saved' ? s.saved : s.saveFailed}
       </span>
       {status === 'error' ? <Button size="sm" variant="ghost" onClick={retry}>{s.retry}</Button> : null}
     </span>
