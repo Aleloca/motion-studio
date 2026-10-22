@@ -70,6 +70,13 @@
 .ms-exp-langs { display: flex; flex-direction: column; gap: 6px; padding: 0 22px 8px; }
 .ms-exp-langs-list { display: flex; flex-wrap: wrap; gap: 6px 16px; }
 .ms-exp-lang { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; }
+/* Subtitles Task 22: the export's "Sottotitoli" section, a row per output (name and hint, then a check per language). */
+.ms-exp-subs { gap: 10px; }
+.ms-exp-subs-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
+.ms-exp-subs-name { flex: 1 1 220px; display: flex; flex-direction: column; gap: 1px; min-width: 0; font-size: 13px; }
+.ms-exp-subs-row .ms-exp-langs-list { flex: 1 1 260px; min-width: 0; }
+.ms-exp-subs-name .ms-faint { font-size: 12px; }
+.ms-exp-subs-note { margin: 0; }
 
 /* Brief languages */
 .ms-brief-langs { display: flex; flex-direction: column; gap: 6px; }

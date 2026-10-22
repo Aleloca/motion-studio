@@ -508,3 +508,69 @@ describe('ExportDialog · subtitle files', () => {
     expect(api.exportPicksJob.mock.calls[0]![2]).toMatchObject({ subtitles: { files: ['it'] } });
   });
 });
+
+describe('ExportDialog · the Sottotitoli section (Task 22)', () => {
+  const sub = (lang: string, hash = 'a'.repeat(64)) => ({ lang, origin: 'speech', cues: 3, edited: 0, hash, timing: { version: 1, format: REEL, fingerprint: 'b'.repeat(64) }, timingChanged: false, staleCues: 0 }) as never;
+  const openWith = (subtitles: never[], locale: 'it' | 'en' = 'it', snapshot: { versions: VersionEntry[]; states: Record<string, FormatState> } = { versions, states: states() }) => render(
+    <I18nProvider locale={locale}>
+      <Live open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={snapshot} presets={DEFAULT_FORMATS}
+        pattern="{title}-{format}-v{v}" onSettings={onSettings} subtitles={subtitles} />
+    </I18nProvider>,
+  );
+  const preview = () => document.querySelector('.ms-exp-preview')!.textContent!;
+  const NOTE = 'File e tracce vanno con un video senza sottotitoli disegnati.';
+
+  it('three rows, a check per language each: Nel video, File .srt e .vtt, Traccia nel file MP4; nothing ticked by default', () => {
+    openWith([sub('it'), sub('en')]);
+    const group = screen.getByRole('group', { name: 'Sottotitoli' });
+    for (const row of ['Nel video', 'File .srt e .vtt', 'Traccia nel file MP4']) {
+      const r = within(group).getByRole('group', { name: row });
+      expect(within(r).getAllByRole('checkbox').map((c) => c.getAttribute('aria-checked'))).toEqual(['false', 'false']);
+    }
+    expect(screen.queryByText(NOTE)).toBeNull();
+  });
+
+  it('"Nel video: Inglese" and "Traccia nel file MP4: Italiano" send drawn [en] and soft [it], say the video is clean, and preview the -sub-en video', async () => {
+    openWith([sub('it'), sub('en')]);
+    await userEvent.click(screen.getByRole('checkbox', { name: /^Nel video.*inglese/i }));
+    expect(screen.queryByText(NOTE)).toBeNull();
+    expect(preview()).toContain('summer-launch-instagram-reel-9x16-v5-sub-en.mp4');
+    await userEvent.click(screen.getByRole('checkbox', { name: /^Traccia nel file MP4.*italiano/i }));
+    expect(screen.getByText(NOTE)).toBeTruthy();
+    expect(preview()).toContain('summer-launch-instagram-reel-9x16-v5-sub-en.mp4');
+    expect(preview()).toContain('summer-launch-tiktok-9x16-v5-sub-en.mp4');
+    // The still never gets a drawn copy.
+    expect(preview()).not.toContain('post-1x1-v7-sub-en');
+    await userEvent.click(screen.getByRole('button', { name: 'Esporta 3 file' }));
+    await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledOnce());
+    expect(api.exportPicksJob.mock.calls[0]![2]).toMatchObject({ subtitles: { drawn: ['en'], soft: ['it'] } });
+    expect((api.exportPicksJob.mock.calls[0]![2] as unknown as { subtitles: object }).subtitles).not.toHaveProperty('files');
+  });
+
+  it('the .srt and .vtt go next to the clean videos, named <stem>.<lang>, and the note says so', async () => {
+    openWith([sub('it'), sub('en')]);
+    await userEvent.click(screen.getByRole('checkbox', { name: /^File \.srt e \.vtt.*italiano/i }));
+    expect(screen.getByText(NOTE)).toBeTruthy();
+    for (const name of ['summer-launch-instagram-reel-9x16-v5.it.srt', 'summer-launch-instagram-reel-9x16-v5.it.vtt', 'summer-launch-tiktok-9x16-v5.it.srt']) expect(preview()).toContain(name);
+    expect(preview()).not.toContain('post-1x1-v7.it.srt');
+  });
+
+  it('only drawn languages: the plain video is not previewed (it is not exported), the still is', async () => {
+    openWith([sub('it'), sub('en')]);
+    await userEvent.click(screen.getByRole('checkbox', { name: /^Nel video.*italiano/i }));
+    const lines = [...document.querySelectorAll('.ms-exp-preview .ms-exp-file')].map((e) => e.textContent);
+    expect(lines.join(' ')).not.toMatch(/reel-9x16-v5\.mp4/);
+    expect(lines.join(' ')).toContain('summer-launch-instagram-reel-9x16-v5-sub-it.mp4');
+  });
+
+  it('a ★ render that drew a set since corrected is rendered first (renderState with the creative\'s subtitle hashes)', () => {
+    const comp = { format: REEL, dir: `compositions/${REEL}`, hash: 'e'.repeat(64) };
+    const v7 = { ...ver(7, [{ ...out(REEL, 'mp4', 1920), sha256: 'f'.repeat(64), fromComposition: 'e'.repeat(64), subtitles: { lang: 'it', hash: 'a'.repeat(64) } }]), compositions: [comp] };
+    const snap = { versions: [v7], states: { [REEL]: state(REEL, { history: [7] }) } };
+    const { unmount } = openWith([sub('it', 'a'.repeat(64))], 'en', snap);
+    expect(screen.queryByText('Rendered first')).toBeNull();
+    unmount();
+    openWith([sub('it', 'c'.repeat(64))], 'en', snap);
+    expect(screen.getByText('Rendered first')).toBeTruthy();
+  });
+});

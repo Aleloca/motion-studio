@@ -361,7 +361,11 @@
 }
 
 /* Export (modal). */
-.ms-exp { display: flex; flex-direction: column; min-height: 0; max-height: min(760px, 90vh); }
+.ms-exp { display: flex; flex-direction: column; min-height: 0; max-height: min(760px, 90vh); overflow: auto; }
+/* Subtitles Task 22: the dialog's middle scrolls between its head and its footer when it does not fit, and the list of formats
+   keeps its rows (up to a third of the window, then it scrolls by itself) instead of being squeezed away by the sections below. */
+.ms-exp > .ms-exp-head { position: sticky; top: 0; z-index: 2; background: var(--panel); }
+.ms-exp > .ms-exp-foot { position: sticky; bottom: 0; z-index: 2; }
 .ms-exp-head { display: flex; align-items: flex-start; gap: 12px; padding: 18px 22px; border-bottom: 1px solid var(--line2); }
 .ms-exp-titles { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 .ms-exp-titles h2 { margin: 0; font-size: 18px; letter-spacing: -.01em; overflow-wrap: anywhere; text-wrap: balance; }
@@ -376,7 +380,7 @@
 .ms-exp-choice-icon { display: inline-flex; gap: 2px; flex: none; padding-top: 1px; }
 .ms-exp-choice-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .ms-exp-choice-text span { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
-.ms-exp-rows { padding: 8px 12px; overflow: auto; min-height: 0; }
+.ms-exp-rows { padding: 8px 12px; overflow: auto; flex: none; max-height: max(150px, 36vh); }
 .ms-exp-row {
   display: grid; grid-template-columns: 28px 52px minmax(0, 1fr) 150px; gap: 0 12px; align-items: center; padding: 8px 10px; border-radius: 10px;
   transition: opacity var(--d-s) var(--e-std), background var(--d-m) var(--e-std);
