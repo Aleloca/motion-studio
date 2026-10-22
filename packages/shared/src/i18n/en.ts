@@ -422,6 +422,7 @@ export const en = {
     unsupported: (p: { detected: string }) => `No subtitles: the language spoken in the video (${p.detected}) is not supported.`,
     failed: (p: { reason: string }) => `The subtitles could not be made: ${p.reason}`,
     notStarted: (p: { reason: string }) => `The subtitles did not start: ${p.reason}`,
+    cancelledNoTranscription: 'Subtitles cancelled: you chose to continue without a transcription.',
     notStartedTurn: 'The subtitles did not start: the turn did not finish. Ask for them again.',
     readyTitle: 'Subtitles ready',
     download: (p: { ext: string }) => `Download ${p.ext}`,

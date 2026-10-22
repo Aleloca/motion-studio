@@ -420,6 +420,7 @@ export const it: Messages = {
     unsupported: (p) => `Nessun sottotitolo: la lingua parlata nel video (${p.detected}) non è supportata.`,
     failed: (p) => `I sottotitoli non sono riusciti: ${p.reason}`,
     notStarted: (p) => `I sottotitoli non sono partiti: ${p.reason}`,
+    cancelledNoTranscription: 'Sottotitoli annullati: hai scelto di continuare senza trascrizione.',
     notStartedTurn: 'I sottotitoli non sono partiti: il turno non si è concluso. Chiedili di nuovo.',
     readyTitle: 'Sottotitoli pronti',
     download: (p) => `Scarica ${p.ext}`,

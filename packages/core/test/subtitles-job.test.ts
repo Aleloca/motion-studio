@@ -314,7 +314,7 @@ describe('SubtitlesService', { timeout: 60_000 }, () => {
     expect(await readSubtitleSet(creativeDir(), 'it')).not.toBeNull();
   });
 
-  it('"without transcription" stops the job: no set, no entry', async () => {
+  it('"without transcription" stops the job: no set, and the chat says why', async () => {
     await creative([audioClip()]);
     fake.plan = { ask: PENDING };
     const job = await service.start(ref, { mode: 'new' });
@@ -322,7 +322,27 @@ describe('SubtitlesService', { timeout: 60_000 }, () => {
     await service.choose(ref, { choice: 'none', remember: false });
     expect((await queue.whenSettled(job.id))?.state).toBe('cancelled');
     expect(transcribed).toHaveLength(0);
-    expect(subtitleEntries()).toEqual([]);
+    expect(await readSubtitleSet(creativeDir(), 'it')).toBeNull();
+    expect(subtitleEntries()).toEqual([expect.objectContaining({ level: 'warning', text: t().subtitles.cancelledNoTranscription, subtitles: { state: 'failed' } })]);
+  });
+
+  it('"without transcription, remember": the other jobs still asking stop too, each with its chat line', async () => {
+    await creative([audioClip()]);
+    const first = ref;
+    fake.plan = { ask: PENDING };
+    const a = await service.start(first, { mode: 'new' });
+    await creative([audioClip()]);
+    const second = ref;
+    const b = await service.start(second, { mode: 'new' });
+    await vi.waitFor(() => { expect(service.pending(first)).not.toBeNull(); expect(service.pending(second)).not.toBeNull(); });
+    fake.plan = { skip: true };
+    await service.choose(first, { choice: 'none', remember: true });
+    expect((await queue.whenSettled(a.id))?.state).toBe('cancelled');
+    expect((await queue.whenSettled(b.id))?.state).toBe('cancelled');
+    expect(subtitleEntries()).toEqual([
+      expect.objectContaining({ text: t().subtitles.cancelledNoTranscription, subtitles: { state: 'failed' } }),
+      expect.objectContaining({ text: t().subtitles.cancelledNoTranscription, subtitles: { state: 'failed' } }),
+    ]);
   });
 
   it('refuses a second job for the creative, and a creative whose latest version has no video format', async () => {

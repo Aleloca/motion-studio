@@ -269,7 +269,7 @@ export class SubtitlesService {
   /**
    * The user's answer to the transcription dialog of `ref`'s job (the analysis's semantics): a refusal throws the
    * transcriber's CodedError and the dialog stays; a model download keeps the job held until it ends (failed: the dialog
-   * stays with the error). `none` stops the job: there are no subtitles without a transcription. `remember`: the other
+   * stays with the error). `none` stops the job, with a chat line: there are no subtitles without a transcription. `remember`: the other
    * subtitles jobs still asking are planned again.
    */
   async choose(ref: CreativeRef, c: Omit<TranscriptionChoice, 'file'>): Promise<void> {
@@ -277,6 +277,12 @@ export class SubtitlesService {
     const tr = this.deps.transcriber;
     if (!a?.pending || !tr) return;
     const { wait } = await tr.prepareChoice({ ...c, file: `creatives/${ref.creativeSlug}` });
+    // A job stopped for "continue without a transcription" says so in the chat first (a cancelled job writes nothing else).
+    const stop = async (entry: Active) => {
+      entry.pending = null;
+      await this.note(entry.jobId, entry.ref, 'warning', t().subtitles.cancelledNoTranscription, { state: 'failed' });
+      this.deps.queue.cancel(entry.jobId);
+    };
     const release = (entry: Active, how: TranscribeMethod) => {
       entry.method = how;
       entry.pending = null;
@@ -289,12 +295,11 @@ export class SubtitlesService {
         const plan = await tr.plan(other.audioSec).catch(() => null);
         if (!plan || 'ask' in plan || !other.pending) continue;
         if ('run' in plan) release(other, plan.run);
-        else { other.pending = null; this.deps.queue.cancel(other.jobId); }
+        else await stop(other);
       }
     };
     if (c.choice === 'none') {
-      a.pending = null;
-      this.deps.queue.cancel(a.jobId);
+      await stop(a);
       await replanOthers();
       return;
     }
