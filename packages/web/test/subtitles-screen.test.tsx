@@ -40,8 +40,11 @@ const setOf = (cues: SubtitleCue[]) => ({
 class ApiError extends Error {
   constructor(public readonly status: number, message: string, public readonly code?: string) { super(message); }
 }
+/** Task 14: the set's timing no longer matches the latest version's audio. */
+let TIMING_CHANGED = false;
 const api = {
-  getCreative: vi.fn(async () => detail),
+  getCreative: vi.fn(async () => (TIMING_CHANGED ? { ...detail, subtitles: detail.subtitles!.map((x) => ({ ...x, timingChanged: true })) } : detail)),
+  startSubtitles: vi.fn(async (..._a: unknown[]) => ({ job: { id: 'j1' } })),
   subtitleSet: vi.fn(async (..._a: unknown[]) => ({ set: setOf(CUES), hash: H1 })),
   saveSubtitleSet: vi.fn(async (..._a: unknown[]) => ({ hash: H2 })),
   subtitleWaveform: vi.fn(async (..._a: unknown[]) => ({ peaks: [0.2, 0.9, 0.4], durationMs: 6000 })),
@@ -113,6 +116,7 @@ beforeEach(() => {
   ];
   media.currentTime = 0;
   media.paused = true;
+  TIMING_CHANGED = false;
 });
 afterEach(() => { vi.clearAllMocks(); __resetPreviewSessions(); });
 
@@ -406,5 +410,53 @@ describe('the timeline under the player and the list (Task 13)', () => {
     const tl = screen.getByRole('region', { name: 'Timeline' });
     fireEvent.keyDown(within(tl).getByRole('slider', { name: 'Fine della riga 2' }), { key: 'ArrowRight' });
     expect((screen.getByRole('textbox', { name: 'Fine della riga 2' }) as HTMLInputElement).value).toBe('00:03.600');
+  });
+});
+
+describe('the video changed, and redoing the transcription (Task 14)', () => {
+  it('no banner while the timing matches the video', async () => {
+    await open();
+    expect(screen.queryByText('Il video è cambiato: ricontrolla i tempi')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Rifai i tempi' })).toBeNull();
+  });
+
+  it('the banner says the video changed and "Rifai i tempi" starts a retime of this set', async () => {
+    TIMING_CHANGED = true;
+    await open();
+    const banner = await screen.findByRole('region', { name: 'Il video è cambiato: ricontrolla i tempi' });
+    await userEvent.click(within(banner).getByRole('button', { name: 'Rifai i tempi' }));
+    expect(api.startSubtitles).toHaveBeenCalledWith('acme', 'lancio', { mode: 'retime', lang: 'it' });
+    expect(await within(banner).findByRole('status')).toHaveProperty('textContent', 'Rifaccio i tempi: le righe che hai corretto tengono il loro testo.');
+  });
+
+  it('a retime refused says why', async () => {
+    TIMING_CHANGED = true;
+    api.startSubtitles.mockRejectedValueOnce(new ApiError(409, 'I sottotitoli di questa creatività sono già in preparazione.', 'subtitles-running'));
+    await open();
+    const banner = await screen.findByRole('region', { name: 'Il video è cambiato: ricontrolla i tempi' });
+    await userEvent.click(within(banner).getByRole('button', { name: 'Rifai i tempi' }));
+    expect((await within(banner).findByRole('alert')).textContent).toBe('I tempi non sono ripartiti: I sottotitoli di questa creatività sono già in preparazione.');
+  });
+
+  it('"Rifai la trascrizione…": a language picker (automatic by default), then a new transcription in the language picked', async () => {
+    await open();
+    await userEvent.click(screen.getByRole('button', { name: 'Rifai la trascrizione…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Rifai la trascrizione' });
+    const picker = within(dialog).getByRole('button', { name: /Lingua parlata/ });
+    expect(picker.textContent).toContain('Riconoscila da sola');
+    await userEvent.click(picker);
+    await userEvent.click(await screen.findByRole('option', { name: 'Tedesco' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Rifai la trascrizione' }));
+    expect(api.startSubtitles).toHaveBeenCalledWith('acme', 'lancio', { mode: 'new', lang: 'de' });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rifai la trascrizione' })).toBeNull());
+    expect(screen.getByText('Trascrizione avviata: i sottotitoli si aggiornano quando è pronta.')).toBeTruthy();
+  });
+
+  it('"Rifai la trascrizione…" left on automatic sends no language', async () => {
+    await open();
+    await userEvent.click(screen.getByRole('button', { name: 'Rifai la trascrizione…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Rifai la trascrizione' });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Rifai la trascrizione' }));
+    expect(api.startSubtitles).toHaveBeenCalledWith('acme', 'lancio', { mode: 'new' });
   });
 });

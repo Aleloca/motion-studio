@@ -275,6 +275,8 @@ aside.ms-chat-col { padding: 12px; background: var(--bg); border: 0; overflow: v
 .ms-convo-briefstart-mark { color: var(--accent); flex: none; }
 /* Decision 1640: the subtitles ready card (the version row's look, its two downloads on the right). */
 .ms-convo-subtitles-mark { color: var(--accent); flex: none; }
+/* Task 14: the video changed under the subtitles. */
+.ms-convo-subtitles-warn { color: var(--warn); flex: none; }
 .ms-msg-pins .ms-msg-folder .ms-pin-ref { font-family: var(--mono); font-size: 11px; }
 
 /* Comment chips: reference (number · format · time), then the comment's words, ellipsized; the chip never overflows. */

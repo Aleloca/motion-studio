@@ -3,8 +3,8 @@
 .ms-subs {
   height: 100%; min-height: 0; display: grid; background: var(--bg); color: var(--text);
   grid-template-columns: minmax(0, 1fr) clamp(340px, 40%, 480px);
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  grid-template-areas: "head head" "player side" "timeline timeline";
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-areas: "head head" "banner banner" "player side" "timeline timeline";
 }
 .ms-subs-grow { flex: 1; min-width: 0; }
 .ms-subs-head {
@@ -14,6 +14,21 @@
 .ms-subs-title { margin: 0; font-size: 15px; font-weight: 600; white-space: nowrap; }
 .ms-subs-head .ms-btn { white-space: nowrap; flex: none; }
 .ms-subs-head-error { flex-basis: 100%; font-size: 12px; color: var(--warn); overflow-wrap: anywhere; }
+.ms-subs-head-note { flex-basis: 100%; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+/* Task 14: the video changed under the set; "Rifai la trascrizione…" with its language picker. */
+.ms-subs-banner {
+  grid-area: banner; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; min-width: 0;
+  padding: 8px 16px; font-size: 12.5px; color: var(--warn); background: var(--warnBg); border-bottom: 1px solid var(--line);
+}
+.ms-subs-banner > svg { flex: none; }
+.ms-subs-banner-text { font-weight: 600; overflow-wrap: anywhere; }
+.ms-subs-banner .ms-btn { flex: none; white-space: nowrap; }
+.ms-subs-banner-note { flex-basis: 100%; color: var(--text); overflow-wrap: anywhere; }
+.ms-subs-redo { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.ms-subs-redo-title { font-size: 13px; }
+.ms-subs-redo-hint { margin: 0; font-size: 12px; color: var(--muted); }
+.ms-subs-redo-error { margin: 0; font-size: 12px; color: var(--warn); overflow-wrap: anywhere; }
+.ms-subs-redo > .ms-btn { align-self: flex-end; }
 .ms-subs-undo { display: inline-flex; gap: 2px; }
 .ms-subs-save { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .ms-subs-save-text { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); min-width: 0; overflow-wrap: anywhere; }

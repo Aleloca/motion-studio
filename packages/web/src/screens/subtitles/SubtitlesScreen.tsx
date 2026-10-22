@@ -1,12 +1,14 @@
 // The subtitle editor (spec §6.3, layout B, Task 12): the creative's latest version in the live player on the left, with an
 // editor-only caption of the line under the playhead (the runtime draws the agent's style instead once the composition has a
 // subtitles track, Task 22); the list of lines on the right; the waveform timeline under both (Task 13). Edits save by
-// themselves (useSubtitleSave); a `subtitles` broadcast reloads the set only when nothing is waiting to be saved.
-import type { CreativeDetail, LocaleTag, SubtitleCue } from '@motion-studio/shared';
+// themselves (useSubtitleSave); a `subtitles` broadcast reloads the set only when nothing is waiting to be saved. Task 14: a
+// banner when the video changed under the set ("Rifai i tempi"), and "Rifai la trascrizione…" in the header.
+import { SUPPORTED_LOCALES, type CreativeDetail, type LocaleTag, type SubtitleCue } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
 import { api } from '../../api.ts';
 import { CompositionPlayer, type CompositionMedia } from '../../components/CompositionPlayer.tsx';
 import { usePreviewSession } from '../../components/compositionPreview.ts';
+import { RetimeAction } from '../../components/SubtitlesReadyCard.tsx';
 import { saveBlob } from '../../download.ts';
 import { message } from '../../errors.ts';
 import { useLocale, useT } from '../../i18n.tsx';
@@ -15,7 +17,7 @@ import { isMac } from '../../platform.ts';
 import { href } from '../../routes.ts';
 import { go, ShellContext } from '../../shell/ShellContext.tsx';
 import { useClock, type Clock } from '../../ui/clock.ts';
-import { Button, Icon, Pill, Spinner, Tooltip, cx } from '../../ui/index.ts';
+import { Button, Icon, Pill, Popover, Select, Spinner, Tooltip, cx, type SelectOption } from '../../ui/index.ts';
 import { localeName } from '../creative/languagesModel.ts';
 import { usePlayerControls } from '../editor/usePlayerControls.ts';
 import { activatesControl, bare, inOverlay, isTyping } from '../keys.ts';
@@ -256,10 +258,12 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
   const frameLabel = t.web.render.playerFrame({ label: detail && latest ? `${detail.creative.title} v${latest.n}` : creative });
   const waiting = preview.state.kind === 'loading' || preview.state.kind === 'busy' || (preview.state.kind === 'idle' && format !== null);
   const noPreview = preview.state.kind === 'legacy' || (loaded && detail !== null && format === null);
+  const timingChanged = detail?.subtitles?.find((x) => x.lang === lang)?.timingChanged === true;
   return (
     <main ref={root} className="ms-subs" data-lang={lang}>
       <Head slug={slug} creative={creative} lang={lang}>
         <SaveState status={save.status} retry={() => void save.flush()} />
+        <RedoTranscription slug={slug} creative={creative} />
         <span className="ms-subs-undo">
           <Tooltip label={s.undo}><Button size="sm" variant="ghost" icon aria-label={s.undo} disabled={state.past.length === 0} onClick={() => dispatch({ type: 'undo' })}><Icon name="undo" size={14} /></Button></Tooltip>
           <Tooltip label={s.redo}><Button size="sm" variant="ghost" icon aria-label={s.redo} disabled={state.future.length === 0} onClick={() => dispatch({ type: 'redo' })}><Icon name="redo" size={14} /></Button></Tooltip>
@@ -272,6 +276,13 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
         ))}
         {downloadError ? <span className="ms-subs-head-error" role="alert">{downloadError}</span> : null}
       </Head>
+      {timingChanged ? (
+        <section className="ms-subs-banner" aria-label={s.timingChanged}>
+          <Icon name="warn" size={14} />
+          <span className="ms-subs-banner-text">{s.timingChanged}</span>
+          <RetimeAction slug={slug} creative={creative} lang={lang} className="ms-subs-banner-note" />
+        </section>
+      ) : null}
 
       <section className="ms-subs-player" aria-label={frameLabel}>
         <div className="ms-subs-stage">
@@ -323,6 +334,49 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
       <Timeline clock={controls.clock} cues={state.cues} durationMs={state.durationMs} peaks={waveDone ? wave?.peaks ?? [] : null}
         peaksMs={wave?.durationMs} selected={state.selected} dragging={state.dragging} dispatch={dispatch} onSeek={seekMs} />
     </main>
+  );
+}
+
+/**
+ * Task 14: "Rifai la trascrizione…": the spoken language (recognised automatically unless the user picks one, the only
+ * case the transcriber is told a language), then a new transcription of the latest version. Edited lines stay as they are.
+ */
+function RedoTranscription({ slug, creative }: { slug: string; creative: string }) {
+  const s = useT().subtitles;
+  const locale = useLocale();
+  const anchor = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const [pick, setPick] = useState<LocaleTag | 'auto'>('auto');
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const options = useMemo((): SelectOption<LocaleTag | 'auto'>[] => [
+    { value: 'auto', label: s.redoAuto },
+    ...SUPPORTED_LOCALES.map((l) => ({ value: l.tag, label: localeName(l.tag, locale) })).sort((a, b) => a.label.localeCompare(b.label, locale)),
+  ], [s, locale]);
+  const start = async () => {
+    setBusy(true);
+    setNote(null);
+    try {
+      await api.startSubtitles(slug, creative, { mode: 'new', ...(pick !== 'auto' ? { lang: pick } : {}) });
+      setOpen(false);
+      setNote({ ok: true, text: s.redoStarted });
+    } catch (e) { setNote({ ok: false, text: s.redoFailed({ detail: message(e) }) }); }
+    finally { setBusy(false); }
+  };
+  return (
+    <>
+      <Button ref={anchor} size="sm" variant="ghost" aria-haspopup="dialog" aria-expanded={open} onClick={() => { setNote(null); setOpen((v) => !v); }}>{s.redoMenu}</Button>
+      <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="bottom-end" width={300} label={s.redoTitle}>
+        <div className="ms-subs-redo">
+          <b className="ms-subs-redo-title">{s.redoTitle}</b>
+          <Select<LocaleTag | 'auto'> label={s.redoLanguage} value={pick} options={options} onChange={setPick} />
+          <p className="ms-subs-redo-hint">{s.redoHint}</p>
+          {note && !note.ok ? <p className="ms-subs-redo-error" role="alert">{note.text}</p> : null}
+          <Button size="sm" variant="ink" loading={busy} onClick={() => void start()}>{s.redoStart}</Button>
+        </div>
+      </Popover>
+      {note?.ok ? <span className="ms-subs-head-note" role="status">{note.text}</span> : null}
+    </>
   );
 }
 

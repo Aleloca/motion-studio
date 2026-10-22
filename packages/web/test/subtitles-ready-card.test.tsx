@@ -12,6 +12,7 @@ import { I18nProvider } from '../src/i18n.tsx';
 
 const at = '2026-10-22T10:00:00.000Z';
 const api = {
+  startSubtitles: vi.fn(async (..._a: unknown[]) => ({ job: { id: 'j1' } })),
   subtitleFile: vi.fn(async (_s: string, _c: string, _lang: string, _ext: 'srt' | 'vtt') => new Blob(['1\n00:00:00,000 --> 00:00:01,000\nCiao\n'])),
   transcriptionChoice: vi.fn(),
   recheckTranscription: vi.fn(),
@@ -88,6 +89,16 @@ describe('the subtitles card in the chat (Task 8)', () => {
     card(entry({ state: 'failed' }, 'I sottotitoli non sono riusciti: ffmpeg non ha letto l\'audio', 'error'));
     expect(screen.getByRole('alert').textContent).toContain('I sottotitoli non sono riusciti: ffmpeg non ha letto l\'audio');
     expect(screen.queryByRole('button', { name: /Scarica/ })).toBeNull();
+  });
+
+  it('the video changed (Task 14): the notice, "Rifai i tempi" retimes the set, "Apri l\'editor" opens it', async () => {
+    card(entry({ state: 'timing-changed', lang: 'it' }, 'Il video è cambiato: ricontrolla i tempi', 'warning'));
+    const c = screen.getByRole('group', { name: 'Il video è cambiato: ricontrolla i tempi' });
+    expect(within(c).getByRole('link', { name: "Apri l'editor" }).getAttribute('href')).toBe('#/p/acme/c/lancio/subtitles/it');
+    await userEvent.click(within(c).getByRole('button', { name: 'Rifai i tempi' }));
+    expect(api.startSubtitles).toHaveBeenCalledWith('acme', 'lancio', { mode: 'retime', lang: 'it' });
+    expect((await within(c).findByRole('status')).textContent).toBe('Rifaccio i tempi: le righe che hai corretto tengono il loro testo.');
+    expect(within(c).queryByRole('button', { name: /Scarica/ })).toBeNull();
   });
 
   it('the chat shows a subtitles entry as the card', () => {
