@@ -273,6 +273,13 @@ export const en = {
     subtitlesNoLang: (p: { lang: string }) => `This creative has no subtitles in ${p.lang}.`,
     subtitlesUnknownCue: (p: { ids: string }) => `No subtitle line has these ids: ${p.ids}. Nothing was changed.`,
     subtitlesCueChanged: (p: { ids: string }) => `These subtitle lines changed since you read them: ${p.ids}. Nothing was changed: read them again.`,
+    subtitlesNoSource: 'There are no subtitles made from the speech to translate: make them first.',
+    subtitlesSameLang: (p: { lang: string }) => `The subtitles are already in ${p.lang}.`,
+    subtitlesLangSpoken: (p: { lang: string }) => `The subtitles in ${p.lang} come from the video's own speech: they are not translated.`,
+    subtitlesTranslating: (p: { lang: string }) => `The subtitles in ${p.lang} are already being translated.`,
+    subtitlesNoCues: (p: { ids: string }) => `The subtitles have no line with these ids: ${p.ids}.`,
+    subtitlesTranslateBad: (p: { detail: string }) => `submit_subtitle_translation: ${p.detail}`,
+    subtitlesTranslateLimit: 'submit_subtitle_translation can be called at most 5 times in a run.',
     transcriptionNoBundled: 'This app has no Whisper of its own: install one or point to it in Settings → Video transcription.',
   },
   videoAnalysis: {
@@ -430,6 +437,12 @@ export const en = {
     notStarted: (p: { reason: string }) => `The subtitles did not start: ${p.reason}`,
     cancelledNoTranscription: 'Subtitles cancelled: you chose to continue without a transcription.',
     setUnreadable: (p: { file: string }) => `the file ${p.file} cannot be read as subtitles and may hold your corrections: fix or move it, then make the subtitles again.`,
+    translated: (p: { lang: string }) => `Subtitles translated into ${p.lang}.`,
+    translatedKept: (p: { lang: string; count: number }) => (p.count === 1
+      ? `Subtitles translated into ${p.lang}. 1 line you corrected was kept as it is: check it.`
+      : `Subtitles translated into ${p.lang}. ${p.count} lines you corrected were kept as they are: check them.`),
+    translateFailed: (p: { lang: string; reason: string }) => `The subtitles could not be translated into ${p.lang}: ${p.reason}`,
+    translateMissing: (p: { count: number }) => (p.count === 1 ? 'the translation left out 1 line' : `the translation left out ${p.count} lines`),
     notStartedTurn: 'The subtitles did not start: the turn did not finish. Ask for them again.',
     styleStarted: 'Subtitles ready: the agent is drawing them into the video.',
     styleWaiting: 'Subtitles ready: the agent will draw them into the video as soon as the current work ends.',
@@ -637,6 +650,7 @@ export const en = {
   approvals: {
     briefReadOnly: 'The brief agent only reads the linked folders and the project: nothing else can be approved.',
     videoAnalysisReadOnly: 'The video analysis only looks at the extracted frames: nothing else can be approved.',
+    subtitlesTranslateOnly: 'The subtitle translation only hands over the translated lines: nothing else can be approved.',
     runCommand: 'Run a command',
     editOutside: 'Edit a file outside the project',
     readOutside: 'Read a file outside the project',
@@ -972,6 +986,7 @@ export const en = {
     briefLabel: (p: { name: string }) => `${p.name} · brief with the agent`,
     videoAnalysisLabel: (p: { file: string }) => `Video analysis · ${p.file}`,
     subtitlesLabel: (p: { title: string }) => `Subtitles · ${p.title}`,
+    subtitlesTranslateLabel: (p: { title: string; lang: string }) => `Subtitles · ${p.title} · ${p.lang}`,
     creativeLabel: (p: { title: string }) => `Creative · ${p.title}`,
     localizeLabel: (p: { title: string }) => `Translation · ${p.title}`,
     localizeStarted: (p: { n: number; locales: string }) => `Translating v${p.n} into ${p.locales}`,

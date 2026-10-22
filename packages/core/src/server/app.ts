@@ -80,6 +80,7 @@ import { videoAnalysisTools } from '../analysis/analysis-tool.ts';
 import { ANALYSIS_LANE, VideoAnalysisService } from '../analysis/video-analysis.ts';
 import { SubtitleCommits } from '../subtitles/store.ts';
 import { SUBTITLES_LANE, SubtitlesService } from '../subtitles/subtitles-job.ts';
+import { SubtitleTranslateService, subtitleTranslateTools } from '../subtitles/translate-job.ts';
 import { subtitlesTools } from '../subtitles/subtitles-tools.ts';
 import { registerSubtitlesRoutes } from './subtitles-routes.ts';
 import { registerAnalysisRoutes } from './analysis-routes.ts';
@@ -180,6 +181,8 @@ export interface ServerDeps {
   onVideoAnalyses?: (s: VideoAnalysisService) => void;
   /** Test seam: told the subtitles service once it exists (and the creative turns, for its style turn). */
   onSubtitles?: (s: SubtitlesService, turns: CreativeTurnService) => void;
+  /** Test seam: told the subtitle translation service once it exists (Task 23). */
+  onSubtitleTranslate?: (s: SubtitleTranslateService) => void;
   /** Spec §7: the folder of the bundled `whisper-cli` (and its VAD model); absent: none bundled. */
   whisperDir?: string;
   /** Network of the transcription providers and the Whisper model downloads (tests inject a fake fetch; default: the real one). */
@@ -455,6 +458,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
   });
   deps.onSubtitles?.(subtitles, turns);
+  // Task 23 (spec §6.5): the translation of a creative's subtitles by a read-only agent run.
+  const subtitleTranslate = new SubtitleTranslateService({
+    queue, launcher, turns, commits: subtitleCommits, broadcast: (msg) => hub.broadcast(msg),
+    model: async () => (await requireWorkspace().readSettings()).model,
+  });
+  deps.onSubtitleTranslate?.(subtitleTranslate);
   // Task 14 (spec §6.7): a version that moves the audio under a subtitle set says so in the chat.
   turns.onVersionSaved((ref, n, jobId) => subtitles.versionSaved(ref, n, jobId));
 
@@ -917,6 +926,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       ...agentActions.tools(),
       ...briefs.tools(),
       ...videoAnalysisTools(),
+      ...subtitleTranslateTools(),
       ...subtitlesTools({ subtitles, turns, commits: subtitleCommits, broadcast: (m) => hub.broadcast(m) }),
     },
   });

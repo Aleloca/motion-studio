@@ -40,8 +40,16 @@ export interface SubtitleSave {
   flush(): Promise<boolean>;
 }
 
-const textOf = (cues: readonly SubtitleCue[]): string => JSON.stringify(cues);
-const same = (a: SubtitleCue, b: SubtitleCue | undefined): boolean => b !== undefined && JSON.stringify(a) === JSON.stringify(b);
+/**
+ * A cue as a string that does not depend on its keys' order (Task 23): the server answers its cues in the schema's order
+ * (id, start, end, text, words, edited, source), the editor builds them in its own (a corrected translated line ends with
+ * `edited`), and both must read as the same line.
+ */
+const cueKey = (c: SubtitleCue): string => JSON.stringify([
+  c.id, c.start, c.end, c.text, c.edited ?? null, c.source?.text ?? null, c.words?.map((w) => [w.start, w.end, w.text]) ?? null,
+]);
+const textOf = (cues: readonly SubtitleCue[]): string => JSON.stringify(cues.map(cueKey));
+const same = (a: SubtitleCue, b: SubtitleCue | undefined): boolean => b !== undefined && cueKey(a) === cueKey(b);
 
 /**
  * After a 409 (final review, C1): the server's set `fresh` with the user's changes since `base` (what the server had when the

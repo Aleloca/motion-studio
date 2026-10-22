@@ -440,3 +440,18 @@ describe('a video analysis job (decision 1493)', () => {
     expect((await call('report_progress', { message: 'Guardo i fotogrammi' }, job)).statusCode).toBe(200);
   });
 });
+
+describe('a subtitle translation job (Task 23)', () => {
+  it('a subtitles-translate job gets nothing approved and only its own tools', async () => {
+    const scope = { root: dirname(projectDir), projectSlug: 'acme', projectDir, creativeSlug: 'promo', target: 'en' as const, ids: ['c1'], submit: () => [] };
+    const job = bridge.register({ jobId: 't1', kind: 'subtitles-translate', projectSlug: 'acme', projectDir, creativeSlug: 'promo', sandboxed: true, autoApproveAtStart: true, emit: (e) => events.push(e), signal: new AbortController().signal, subtitleTranslateScope: scope });
+    expect(Object.isFrozen(bridge.resolve(job)?.subtitleTranslateScope?.ids)).toBe(true);
+    for (const [tool_name, input] of [['Read', { file_path: join(projectDir, 'creatives', 'promo', 'subtitles', 'it.json') }], ['Bash', { command: 'ls' }], ['WebFetch', { url: 'https://example.com' }], ['AskUserQuestion', { questions: [] }]] as const) {
+      expect((await call('approve', { tool_name, input, tool_use_id: 't' }, job)).json()).toEqual({ behavior: 'deny', message: 'La traduzione dei sottotitoli consegna solo le righe tradotte: nient\'altro si può approvare.' });
+    }
+    expect(approvals.pending()).toEqual([]);
+    expect((await call('read_brand_kit', {}, job)).statusCode).toBe(403);
+    expect((await call('validate_composition', {}, job)).statusCode).toBe(403);
+    expect((await call('report_progress', { message: 'Traduco' }, job)).statusCode).toBe(200);
+  });
+});

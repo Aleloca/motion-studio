@@ -21,7 +21,12 @@ import { DEFAULT_ALLOWED_DOMAINS, sensitiveHomeEntries, sensitiveHomePaths } fro
  * `video-analysis` (decision 1493): one run of a video's analysis. It reads only the extracted frames (`readDirs`) and writes
  * only through `write_video_analysis`: no editing tool, no Bash, no search, no network, no project "Always" rule.
  */
-export type AgentJobKind = 'creative' | 'brand-analysis' | 'describe' | 'console' | 'localize' | 'variant-directions' | 'creative-group' | 'brief' | 'video-analysis';
+/**
+ * `subtitles-translate` (Task 23): one translation of a creative's subtitle set. The lines are in its prompt; it hands the
+ * translation over through `submit_subtitle_translation` and touches nothing else: no file tool (not even Read), no Bash, no
+ * search, no network, no project "Always" rule.
+ */
+export type AgentJobKind = 'creative' | 'brand-analysis' | 'describe' | 'console' | 'localize' | 'variant-directions' | 'creative-group' | 'brief' | 'video-analysis' | 'subtitles-translate';
 export interface PolicyInput {
   kind: AgentJobKind; sandbox: boolean; projectDir?: string; home: string; configDir: string;
   codebases: string[]; protectedFiles: string[];
@@ -93,12 +98,14 @@ const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 /** Phase 3: the coordinator reads the project (its own folders, the variants' compositions) and nothing else. */
 const COORDINATOR_TOOLS = ['Read', 'Glob', 'Grep'];
 // A video analysis's only read rules are scoped to its `readDirs` (buildAgentPolicy).
-const SANDBOXED_TOOLS: Record<AgentJobKind, readonly string[]> = { creative: [], console: [], 'brand-analysis': BRAND_ANALYSIS_TOOLS, describe: DESCRIBE_TOOLS, localize: LOCALIZE_TOOLS, 'variant-directions': [], 'creative-group': COORDINATOR_TOOLS, brief: [], 'video-analysis': [] };
-const LEGACY_TOOLS: Record<AgentJobKind, readonly string[]> = { creative: AGENT_ALLOWED_TOOLS, console: [], 'brand-analysis': BRAND_ANALYSIS_TOOLS, describe: DESCRIBE_TOOLS, localize: LOCALIZE_TOOLS, 'variant-directions': [], 'creative-group': COORDINATOR_TOOLS, brief: [], 'video-analysis': [] };
+const SANDBOXED_TOOLS: Record<AgentJobKind, readonly string[]> = { creative: [], console: [], 'brand-analysis': BRAND_ANALYSIS_TOOLS, describe: DESCRIBE_TOOLS, localize: LOCALIZE_TOOLS, 'variant-directions': [], 'creative-group': COORDINATOR_TOOLS, brief: [], 'video-analysis': [], 'subtitles-translate': [] };
+const LEGACY_TOOLS: Record<AgentJobKind, readonly string[]> = { creative: AGENT_ALLOWED_TOOLS, console: [], 'brand-analysis': BRAND_ANALYSIS_TOOLS, describe: DESCRIBE_TOOLS, localize: LOCALIZE_TOOLS, 'variant-directions': [], 'creative-group': COORDINATOR_TOOLS, brief: [], 'video-analysis': [], 'subtitles-translate': [] };
 /** Decision 1421: what a brief session never uses, wherever (it only reads and fills the form; Grep could cross a secret file). */
 const BRIEF_DENIED_TOOLS = [...EDIT_TOOLS, 'Bash', 'Grep', 'WebFetch', 'WebSearch'];
 /** Decision 1493: what a video analysis never uses (it looks at the frames it is given and writes through its tool). */
 const VIDEO_ANALYSIS_DENIED_TOOLS = [...EDIT_TOOLS, 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'Task'];
+/** Task 23: what a subtitle translation never uses (its lines are in the prompt; it writes through its tool). */
+const SUBTITLE_TRANSLATE_DENIED_TOOLS = [...VIDEO_ANALYSIS_DENIED_TOOLS, 'Read'];
 const unique = (xs: string[]) => [...new Set(xs)];
 
 export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
@@ -143,17 +150,20 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
     ...(i.kind === 'creative-group' ? [...EDIT_TOOLS, 'Bash', 'WebFetch', 'WebSearch'] : []),
     ...(brief ? BRIEF_DENIED_TOOLS : []),
     ...(i.kind === 'video-analysis' ? VIDEO_ANALYSIS_DENIED_TOOLS : []),
+    ...(i.kind === 'subtitles-translate' ? SUBTITLE_TRANSLATE_DENIED_TOOLS : []),
   ];
   // Neither the directions turn nor the coordinator (nor a brief session) takes the project's "Always" rules: nothing of
   // theirs may run a command.
-  const directions = i.kind === 'variant-directions' || i.kind === 'creative-group' || brief || i.kind === 'video-analysis';
+  const directions = i.kind === 'variant-directions' || i.kind === 'creative-group' || brief || i.kind === 'video-analysis' || i.kind === 'subtitles-translate';
   const extra = [...(scansSecrets ? codebaseReadAllowRules(i.codebases) : []), ...(directions ? [] : i.projectAllowRules), ...i.mcpTools];
   // With codebases the brand tools keep only WebFetch, and only with a website source: Bash(mkdir/ffprobe) are dropped.
   // Phase 3 of the single agent (review minor 1): the coordinator reads the project without asking, nothing else (a read
   // elsewhere reaches the permission prompt, which refuses it for this kind).
   const coordinatorReads = i.kind === 'creative-group' && i.projectDir ? COORDINATOR_TOOLS.map((t) => `${t}(/${escapeGlob(i.projectDir!)}/**)`)
     // Decision 1493: a video analysis reads its frames' folders without asking, nothing else.
-    : i.kind === 'video-analysis' ? (i.readDirs ?? []).map((d) => `Read(/${escapeGlob(d)}/**)`) : null;
+    : i.kind === 'video-analysis' ? (i.readDirs ?? []).map((d) => `Read(/${escapeGlob(d)}/**)`)
+      // Task 23: a subtitle translation reads nothing.
+      : i.kind === 'subtitles-translate' ? [] : null;
   const kindTools = (list: readonly string[]) => (coordinatorReads ?? (brandCodebases ? (i.brandWebsite ? list.filter((t) => t === 'WebFetch') : []) : list));
   if (!i.sandbox) {
     return { settings: null, allowedTools: unique([...kindTools(LEGACY_TOOLS[i.kind]), ...extra]), disallowedTools, addDirs: unique([...i.codebases, ...(i.readDirs ?? [])]), env: {} };

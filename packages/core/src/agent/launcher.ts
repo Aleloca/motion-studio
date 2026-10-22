@@ -54,6 +54,8 @@ export const MCP_TOOLS: Record<AgentJobKind, string[]> = {
   brief: ['report_progress', 'read_brand_kit', ...BRIEF_TOOLS],
   // Decision 1493: a video analysis run writes its description of the frames, nothing else.
   'video-analysis': ['report_progress', 'write_video_analysis'],
+  // Task 23: a subtitle translation hands its lines over, nothing else.
+  'subtitles-translate': ['report_progress', 'submit_subtitle_translation'],
 };
 
 /** Characters that make Claude Code's sandbox read a path as a glob. */
@@ -133,6 +135,8 @@ export interface LaunchInput {
   briefScope?: BridgeContext['briefScope'];
   /** Decision 1468: the analysis run's scope (`video-analysis` jobs only, see BridgeContext). */
   videoAnalysisScope?: BridgeContext['videoAnalysisScope'];
+  /** Task 23: the translation run's scope (`subtitles-translate` jobs only, see BridgeContext). */
+  subtitleTranslateScope?: BridgeContext['subtitleTranslateScope'];
   /** `video-analysis` jobs: the absolute folders the run may read (the frames), see PolicyInput.readDirs. */
   readDirs?: string[];
   /** What the run's ledger line is about (a creative's version and fix-loop attempt); null for other jobs. */
@@ -323,6 +327,7 @@ export class AgentLauncher {
           ...(i.kind === 'creative-group' && i.groupTools ? { groupTools: i.groupTools } : {}),
           ...(i.kind === 'brief' && i.briefScope ? { briefScope: i.briefScope } : {}),
           ...(i.kind === 'video-analysis' && i.videoAnalysisScope ? { videoAnalysisScope: i.videoAnalysisScope } : {}),
+          ...(i.kind === 'subtitles-translate' && i.subtitleTranslateScope ? { subtitleTranslateScope: i.subtitleTranslateScope } : {}),
         });
         // The paths are recorded before writing, so release() also removes a half-written pair.
         const files = await prepareRunFiles(configDir, i.jobId);
@@ -347,7 +352,10 @@ export class AgentLauncher {
         // Phase 15: a variant group's directions turn is metered with the creative's turns (the report has no kind for it).
         // Phase 3: so is the coordinator of a group (its runs are part of the group's turn). Decision 1421: a brief session's
         // runs too, with no creative (they are the start of the creative it becomes). A video analysis has its own kind (1468).
-        projectDir: i.projectDir, jobId: i.jobId, kind: i.kind === 'variant-directions' || i.kind === 'creative-group' || i.kind === 'brief' ? 'creative' : i.kind, creativeSlug: i.kind === 'brief' ? null : i.creativeSlug ?? null,
+        // Task 23: a subtitle translation is metered with the translations of its creative.
+        projectDir: i.projectDir, jobId: i.jobId,
+        kind: i.kind === 'variant-directions' || i.kind === 'creative-group' || i.kind === 'brief' ? 'creative' : i.kind === 'subtitles-translate' ? 'localize' : i.kind,
+        creativeSlug: i.kind === 'brief' ? null : i.creativeSlug ?? null,
         version: i.usage?.version ?? null, attempt: i.usage?.attempt ?? null,
         ...(i.request.resumeSessionId ? { resumeSessionId: i.request.resumeSessionId } : {}),
       }, this.usageLedger);

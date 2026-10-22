@@ -271,6 +271,13 @@ export const it: Messages = {
     subtitlesNoLang: (p: { lang: string }) => `Questa creatività non ha sottotitoli in ${p.lang}.`,
     subtitlesUnknownCue: (p: { ids: string }) => `Nessuna riga dei sottotitoli ha questi id: ${p.ids}. Non è stato cambiato niente.`,
     subtitlesCueChanged: (p: { ids: string }) => `Queste righe dei sottotitoli sono cambiate da quando le hai lette: ${p.ids}. Non è stato cambiato niente: rileggile.`,
+    subtitlesNoSource: 'Non ci sono sottotitoli fatti dal parlato da tradurre: falli prima.',
+    subtitlesSameLang: (p) => `I sottotitoli sono già in ${p.lang}.`,
+    subtitlesLangSpoken: (p) => `I sottotitoli in ${p.lang} vengono dal parlato del video: non si traducono.`,
+    subtitlesTranslating: (p) => `I sottotitoli in ${p.lang} sono già in traduzione.`,
+    subtitlesNoCues: (p) => `I sottotitoli non hanno righe con questi id: ${p.ids}.`,
+    subtitlesTranslateBad: (p) => `submit_subtitle_translation: ${p.detail}`,
+    subtitlesTranslateLimit: 'submit_subtitle_translation si può chiamare al massimo 5 volte per esecuzione.',
     transcriptionNoBundled: 'Questa app non ha un Whisper suo: installane uno o indicalo in Impostazioni → Trascrizione video.',
   },
   videoAnalysis: {
@@ -428,6 +435,12 @@ export const it: Messages = {
     notStarted: (p) => `I sottotitoli non sono partiti: ${p.reason}`,
     cancelledNoTranscription: 'Sottotitoli annullati: hai scelto di continuare senza trascrizione.',
     setUnreadable: (p) => `il file ${p.file} non si legge come sottotitoli e potrebbe contenere le tue correzioni: correggilo o spostalo, poi rifai i sottotitoli.`,
+    translated: (p) => `Sottotitoli tradotti in ${p.lang}.`,
+    translatedKept: (p) => (p.count === 1
+      ? `Sottotitoli tradotti in ${p.lang}. 1 riga che avevi corretto è rimasta com'era: controllala.`
+      : `Sottotitoli tradotti in ${p.lang}. ${p.count} righe che avevi corretto sono rimaste com'erano: controllale.`),
+    translateFailed: (p) => `Non è stato possibile tradurre i sottotitoli in ${p.lang}: ${p.reason}`,
+    translateMissing: (p) => (p.count === 1 ? 'la traduzione ha tralasciato 1 riga' : `la traduzione ha tralasciato ${p.count} righe`),
     notStartedTurn: 'I sottotitoli non sono partiti: il turno non si è concluso. Chiedili di nuovo.',
     styleStarted: "Sottotitoli pronti: l'agente li disegna nel video.",
     styleWaiting: "Sottotitoli pronti: l'agente li disegnerà nel video appena finisce il lavoro in corso.",
@@ -635,6 +648,7 @@ export const it: Messages = {
   approvals: {
     briefReadOnly: 'L\'agente del brief legge solo le cartelle collegate e il progetto: nient\'altro si può approvare.',
     videoAnalysisReadOnly: 'L\'analisi video guarda solo i fotogrammi estratti: nient\'altro si può approvare.',
+    subtitlesTranslateOnly: 'La traduzione dei sottotitoli consegna solo le righe tradotte: nient\'altro si può approvare.',
     runCommand: 'Eseguire un comando',
     editOutside: 'Modificare un file fuori dal progetto',
     readOutside: 'Leggere un file fuori dal progetto',
@@ -960,6 +974,7 @@ export const it: Messages = {
     briefLabel: (p) => `${p.name} · brief con l'agente`,
     videoAnalysisLabel: (p) => `Analisi video · ${p.file}`,
     subtitlesLabel: (p) => `Sottotitoli · ${p.title}`,
+    subtitlesTranslateLabel: (p) => `Sottotitoli · ${p.title} · ${p.lang}`,
     creativeLabel: (p) => `Creatività · ${p.title}`,
     localizeLabel: (p) => `Traduzione · ${p.title}`,
     localizeStarted: (p) => `Traduzione della v${p.n} in ${p.locales}`,

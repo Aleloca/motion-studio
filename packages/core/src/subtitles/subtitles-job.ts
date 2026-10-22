@@ -96,7 +96,7 @@ const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const ms = (sec: number) => Math.max(0, Math.round(sec * 1000));
 
 /** The language's name in the app language ("italiano"), its tag when unknown. */
-function languageName(tag: string): string {
+export function languageName(tag: string): string {
   try { return new Intl.DisplayNames([currentLocale()], { type: 'language' }).of(tag) ?? tag; } catch { return tag; }
 }
 

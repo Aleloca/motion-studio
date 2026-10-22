@@ -34,6 +34,11 @@ describe('Activity center · subtitles (decision 1640)', () => {
     expect(jobPlace(sub)).toEqual({ project: 'acme', creative: 'lancio' });
     expect(jobHref(sub)).toBe('#/p/acme/c/lancio');
   });
+  it('a subtitle translation `subtitles-translate:<root>:<project>:<creative>:<lang>` belongs to its creative (Task 23)', () => {
+    const tr = job({ id: 's2', key: 'subtitles-translate:C:\\Users\\me\\ws:acme:lancio:en', kind: 'subtitles-translate', label: 'Sottotitoli · Lancio · inglese' });
+    expect(jobPlace(tr)).toEqual({ project: 'acme', creative: 'lancio' });
+    expect(jobHref(tr)).toBe('#/p/acme/c/lancio');
+  });
 });
 
 describe('Activity center · exports in the background (decision 974, user report 20)', () => {

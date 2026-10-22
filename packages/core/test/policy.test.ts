@@ -266,3 +266,18 @@ describe('buildAgentPolicy for a video analysis (decision 1493)', () => {
     expect(p.disallowedTools).toEqual(expect.arrayContaining(['Bash', 'Edit']));
   });
 });
+
+describe('buildAgentPolicy for a subtitle translation (Task 23)', () => {
+  const translate: PolicyInput = { ...base, kind: 'subtitles-translate', projectDir: '/p', codebases: [], mcpTools: ['mcp__studio__report_progress', 'mcp__studio__submit_subtitle_translation'] };
+  it('subtitles-translate: only its tools, no file tool, no Bash, no network, no project rule', () => {
+    for (const sandbox of [true, false]) {
+      const p = buildAgentPolicy({ ...translate, sandbox });
+      expect(p.allowedTools).toEqual(['mcp__studio__report_progress', 'mcp__studio__submit_subtitle_translation']);
+      expect(p.disallowedTools).toEqual(expect.arrayContaining(['Bash', 'Read', 'Grep', 'Glob', 'Edit', 'Write', 'WebFetch', 'WebSearch', 'Task']));
+      expect(p.addDirs).toEqual([]);
+    }
+    const s = buildAgentPolicy(translate).settings as Sb;
+    expect(s.sandbox.network).toBeUndefined();
+    expect(s.sandbox.autoAllowBashIfSandboxed).toBe(false);
+  });
+});

@@ -89,7 +89,8 @@ export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelle
 /** `brief` (decision 1421): a turn of a project's brief session: a read-only agent that fills the New creative form. */
 /** `video-analysis` (decision 1468): the analysis of one video of a brief, its runs read only the extracted frames. */
 /** `subtitles` (decision 1640): the transcription of a creative's audio mix into its subtitle sets (no agent). */
-export type JobKind = 'creative' | 'brand-analysis' | 'asset-description' | 'console' | 'render' | 'asset-generation' | 'localize' | 'variant-directions' | 'export' | 'creative-group' | 'brief' | 'video-analysis' | 'subtitles';
+/** `subtitles-translate` (Task 23): a read-only agent run that translates a creative's subtitle set into another language. */
+export type JobKind = 'creative' | 'brand-analysis' | 'asset-description' | 'console' | 'render' | 'asset-generation' | 'localize' | 'variant-directions' | 'export' | 'creative-group' | 'brief' | 'video-analysis' | 'subtitles' | 'subtitles-translate';
 
 /**
  * An export job (decision 974, user report 20): the export runs in the background, so the dialog may close. `stage`

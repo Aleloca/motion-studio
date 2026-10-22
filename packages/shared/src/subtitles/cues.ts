@@ -1,6 +1,6 @@
 // Cutting words into cues, the cue warnings, and the merge that keeps what the user edited (decisions 1636-1644).
 import type { LocaleTag } from '../localization/locales.ts';
-import type { SubtitleCue, SubtitleWord } from './schema.ts';
+import type { SubtitleCue, SubtitleSet, SubtitleWord } from './schema.ts';
 
 export const SUBTITLE_RULES = { maxLines: 2, maxLineChars: 42, cjkLineChars: 16, minMs: 1000, maxMs: 7000, maxCps: 17, pauseMs: 500 } as const;
 export type SubtitleRules = typeof SUBTITLE_RULES;
@@ -285,4 +285,25 @@ export function mergeKeepingEdited(old: SubtitleCue[], fresh: SubtitleCue[]): Su
     return { ...f, id: `f${n}` };
   });
   return [...kept, ...renamed].sort((a, b) => a.start - b.start || a.end - b.end);
+}
+
+/**
+ * The translated cues of `target` whose source line changed since they were translated (Task 23, spec §6.5): each cue with a
+ * `source` is compared with the source cue it overlaps most in time (ids change when the source is timed again), and is stale
+ * when that cue's text differs from its `source.text`, or when no source cue overlaps it any more. A cue without `source` (a
+ * line the user added in that language) is never stale. Ids in the target's order.
+ */
+export function staleCues(target: Pick<SubtitleSet, 'cues'>, source: Pick<SubtitleSet, 'cues'>): string[] {
+  const out: string[] = [];
+  for (const c of target.cues) {
+    if (!c.source) continue;
+    let best: SubtitleCue | null = null;
+    let most = 0;
+    for (const s of source.cues) {
+      const overlap = Math.min(c.end, s.end) - Math.max(c.start, s.start);
+      if (overlap > most) { most = overlap; best = s; }
+    }
+    if (!best || best.text !== c.source.text) out.push(c.id);
+  }
+  return out;
 }
