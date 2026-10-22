@@ -271,7 +271,7 @@ export function errorReply(error: unknown, _req: FastifyRequest, reply: FastifyR
   const err = error as Error;
   if (err instanceof CodedError) {
     if (err.retryAfterSec !== undefined) reply.header('Retry-After', String(err.retryAfterSec));
-    return reply.status(err.status).send({ error: err.message, code: err.apiCode, ...(err.problems ? { problems: err.problems } : {}) });
+    return reply.status(err.status).send({ error: err.message, code: err.apiCode, ...(err.problems ? { problems: err.problems } : {}), ...(err.dropped ? { dropped: err.dropped } : {}) });
   }
   if (err instanceof WorkspaceError) return reply.status(err.status).send({ error: err.message });
   if (err instanceof JobConflictError) return reply.status(409).send({ error: err.message });

@@ -304,16 +304,56 @@ export function staleCues(target: Pick<SubtitleSet, 'cues'>, source: Pick<Subtit
 }
 
 /**
- * A translation's cues after its source was timed again (Task 25): each translated line the user did not correct takes the
- * times of the source line it stands for (`sourceCueOf`); a corrected line keeps its own times (anti-goal 1), a line no
- * source line overlaps keeps them too (it shows as stale). Texts untouched; sorted by time.
+ * The lines of a set before it was made again (`before`) paired with the lines after (`after`), by id (Task 25, review round
+ * 2): a line kept by id (a corrected one, or the same set), then, in order, the next line whose text is the same once
+ * normalised (case, punctuation and spaces aside), then, when as many lines are left on each side, the rest in order. Lines
+ * left out have no pair. Old id → new line.
  */
-export function followSourceTimes(cues: readonly SubtitleCue[], source: readonly SubtitleCue[]): SubtitleCue[] {
-  return cues.map((c) => {
+export function pairSourceCues(before: readonly SubtitleCue[], after: readonly SubtitleCue[]): Map<string, SubtitleCue> {
+  const out = new Map<string, SubtitleCue>();
+  const byId = new Map(after.map((c) => [c.id, c]));
+  const used = new Set<string>();
+  for (const c of before) {
+    const same = byId.get(c.id);
+    if (same) { out.set(c.id, same); used.add(same.id); }
+  }
+  const norm = (text: string) => text.split(/\s+/).map(normalizeToken).filter(Boolean).join(' ');
+  const olds = before.filter((c) => !out.has(c.id));
+  let news = after.filter((c) => !used.has(c.id));
+  let from = 0;
+  for (const c of olds) {
+    const text = norm(c.text);
+    const at = news.findIndex((n, i) => i >= from && norm(n.text) === text);
+    if (at < 0) continue;
+    out.set(c.id, news[at]!);
+    used.add(news[at]!.id);
+    from = at + 1;
+  }
+  const leftOld = olds.filter((c) => !out.has(c.id));
+  news = news.filter((c) => !used.has(c.id));
+  if (leftOld.length === news.length) leftOld.forEach((c, i) => out.set(c.id, news[i]!));
+  return out;
+}
+
+/**
+ * A translation's cues after its source was made again (Task 25): each translated line the user did not correct takes the
+ * times of its source line as it is now: the line it stood for in `before` (by id, else the one it overlaps most), paired
+ * with its line in `after` (`pairSourceCues`). A corrected line keeps its own times (anti-goal 1). Texts untouched; sorted by
+ * time. `complete`: false when an uncorrected line found no line in `after` (it keeps its times; the translation then does
+ * not claim to follow the source's timing).
+ */
+export function followSourceTimes(cues: readonly SubtitleCue[], before: readonly SubtitleCue[], after: readonly SubtitleCue[]): { cues: SubtitleCue[]; complete: boolean } {
+  const pairs = pairSourceCues(before, after);
+  const oldById = new Map(before.map((c) => [c.id, c]));
+  let complete = true;
+  const out = cues.map((c) => {
     if (c.edited || !c.source) return c;
-    const s = sourceCueOf(c, source);
-    return s && (s.start !== c.start || s.end !== c.end) ? { ...c, start: s.start, end: s.end } : c;
-  }).sort((a, b) => a.start - b.start || a.end - b.end);
+    const old = oldById.get(c.id) ?? sourceCueOf(c, before);
+    const now = old ? pairs.get(old.id) : undefined;
+    if (!now) { complete = false; return c; }
+    return now.start !== c.start || now.end !== c.end ? { ...c, start: now.start, end: now.end } : c;
+  });
+  return { cues: out.sort((a, b) => a.start - b.start || a.end - b.end), complete };
 }
 
 /** The source cue a translated cue stands for (Task 25): the one it overlaps most in time (the first of equals), or null. */

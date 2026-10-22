@@ -283,6 +283,7 @@ export const en = {
     subtitlesLangExists: (p: { lang: string }) => `This creative already has subtitles in ${p.lang}.`,
     subtitlesNothingStale: (p: { lang: string }) => `No line in ${p.lang} needs translating again.`,
     subtitlesNothingStaleCorrected: (p: { lang: string }) => `The lines to translate again in ${p.lang} are ones you corrected: pick them to translate them again.`,
+    subtitlesFollowsSource: 'A translation has the timing of the subtitles it comes from: check the timing of those.',
     subtitlesSourceSet: 'These subtitles come from the video\'s speech and the other languages are translated from them: they cannot be deleted.',
     subtitlesTranslateBad: (p: { detail: string }) => `submit_subtitle_translation: ${p.detail}`,
     subtitlesTranslateLimit: 'submit_subtitle_translation can be called at most 5 times in a run.',

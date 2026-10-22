@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  SUBTITLES_SCHEMA_ID, subtitleCuesHash, type Brief, type Composition, type ConversationEntry, type FormatPreset, type Localization, type ServerMessage, type TranscriptionPending,
+  SUBTITLES_SCHEMA_ID, subtitleCuesHash, type Brief, type Composition, type ConversationEntry, type FormatPreset, type Localization, type ServerMessage, type SubtitleSet, type TranscriptionPending,
   type TranscriptKind, type TranscriptWord,
 } from '@motion-studio/shared';
 import type { Transcriber } from '../src/analysis/video-analysis.ts';
@@ -24,7 +24,7 @@ import { NoMediaTools } from '../src/media/media-tools.ts';
 import { findFfmpeg } from '../src/render/encode.ts';
 import { silenceRatio } from '../src/analysis/audio.ts';
 import { subtitleSummaries } from '../src/server/subtitles-routes.ts';
-import { audioFingerprint, readSubtitleSet, subtitleSetLocks, writeSubtitleSet } from '../src/subtitles/store.ts';
+import { audioFingerprint, followSource, readSubtitleSet, subtitleSetLocks, writeSubtitleSet } from '../src/subtitles/store.ts';
 import { languageName, splitCjkWords, SUBTITLES_LANE, SubtitlesService } from '../src/subtitles/subtitles-job.ts';
 
 const PRESETS: FormatPreset[] = [
@@ -499,6 +499,34 @@ describe('the video changed under the subtitles (Task 14, spec §6.7)', { timeou
     expect(after.cuesHash).not.toBe(before.cuesHash);
     expect(after.cuesHash).toBe(subtitleCuesHash(after.set));
     expect(sent.filter((m) => m.type === 'subtitles').map((m) => m.type === 'subtitles' && m.lang).sort()).toEqual(['en', 'it']);
+  });
+
+  it('followSource: a +2 s retime moves every uncorrected line to its source line; a line with no pair keeps the old timing (review round 2)', async () => {
+    await creative([audioClip()]);
+    const timing = (fingerprint: string) => ({ version: 1, format: 'test-wide', fingerprint });
+    const source = (cues: Array<[string, number, number, string]>, fingerprint: string): SubtitleSet => ({
+      $schema: SUBTITLES_SCHEMA_ID, lang: 'it' as const, origin: 'speech' as const, transcript: 'whisper-small' as const, detected: 'it', timing: timing(fingerprint),
+      cues: cues.map(([id, start, end, text]) => ({ id, start, end, text })),
+    });
+    const before = source([['c1', 200, 1800, 'Ciao a tutti.'], ['c2', 2000, 3600, 'Prenota ora.']], 'a'.repeat(64));
+    await writeSubtitleSet(creativeDir(), before);
+    const translation: SubtitleSet = {
+      $schema: SUBTITLES_SCHEMA_ID, lang: 'en' as const, origin: 'translation' as const, sourceLang: 'it' as const, transcript: 'whisper-small' as const, detected: null, timing: before.timing,
+      cues: [{ id: 'c1', start: 200, end: 1800, text: 'Hi all.', source: { text: 'Ciao a tutti.' } }, { id: 'c2', start: 2000, end: 3600, text: 'Book now.', source: { text: 'Prenota ora.' } }],
+    };
+    await writeSubtitleSet(creativeDir(), translation);
+    const after = source([['f1', 2200, 3800, 'ciao a tutti'], ['f2', 4000, 5600, 'Prenota ora!']], 'b'.repeat(64));
+    await writeSubtitleSet(creativeDir(), after);
+    expect(await followSource(creativeDir(), before, after)).toEqual(['en']);
+    const en = (await readSubtitleSet(creativeDir(), 'en'))!.set;
+    expect(en.cues.map((c) => [c.id, c.start, c.end])).toEqual([['c1', 2200, 3800], ['c2', 4000, 5600]]);
+    expect(en.timing).toEqual(after.timing);
+
+    // Again, the second line unheard and two others in its place: it cannot be paired, so the timing is not claimed.
+    const third = source([['g1', 2200, 3800, 'Ciao a tutti.'], ['g2', 4000, 4500, 'Altro.'], ['g3', 4600, 5600, 'Ancora.']], 'c'.repeat(64));
+    await writeSubtitleSet(creativeDir(), third);
+    expect(await followSource(creativeDir(), after, third)).toEqual([]);
+    expect((await readSubtitleSet(creativeDir(), 'en'))!.set.timing).toEqual(after.timing);
   });
 
   it('a translation never gets the notice: it follows its source, which "Rifai i tempi" redoes (Task 25)', async () => {

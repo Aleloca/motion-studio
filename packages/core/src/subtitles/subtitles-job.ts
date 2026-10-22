@@ -747,7 +747,7 @@ export class SubtitlesService {
         const valid = subtitleSetSchema.safeParse(set);
         if (!valid.success || Buffer.byteLength(subtitleSetText(set)) > SUBTITLE_LIMITS.fileBytes) throw new Error(valid.success ? 'the subtitles are too large' : valid.error.message);
         await writeSubtitleSet(creativeDir, set);
-        if (!audio) followed = await followSource(creativeDir, set);
+        if (!audio) followed = await followSource(creativeDir, existing?.set ?? null, set);
       });
       this.deps.commits.touch(ref, t().subtitles.commit({ title: creative.title, lang }));
       for (const l of [lang, ...followed]) {

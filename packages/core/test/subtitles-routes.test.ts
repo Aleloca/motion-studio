@@ -684,6 +684,39 @@ describe('subtitle languages (Task 25, spec §6.5, U8)', () => {
     expect((await readSubtitleSet(dirOf(slug), 'en'))!.set.cues.map((c) => c.id)).toEqual(['c2', 'c4']);
   });
 
+  it('a translation not timed as its source loses nothing to Ritraduci; lines dropped before a refusal are still reported (review round 2)', async () => {
+    const slug = await made();
+    await writeSubtitleSet(dirOf(slug), speech());
+    // Timed on other audio than the source now (its lines could not follow a retime): c3 overlaps no source line, yet is kept.
+    const en = translated(['Hi everyone', 'Book in three taps', 'Get the app']);
+    await writeSubtitleSet(dirOf(slug), { ...en, timing: { ...en.timing, fingerprint: '1'.repeat(64) }, cues: en.cues.map((c) => (c.id === 'c3' ? { ...c, start: 8000, end: 9000 } : c)) });
+    const kept = await retranslate(slug, 'en');
+    expect(kept.statusCode, kept.body).toBe(200);
+    expect(kept.json()).not.toHaveProperty('dropped');
+    expect((await readSubtitleSet(dirOf(slug), 'en'))!.set.cues.map((c) => c.id)).toEqual(['c1', 'c2', 'c3']);
+    expect(translateStarts).toEqual([{ target: 'en', ids: ['c3'] }]);
+
+    // Timed as its source, with a line gone and the translation of 'en' already running: dropped, then refused, said both.
+    await writeSubtitleSet(dirOf(slug), { ...translated(['Hi everyone', 'Book in three taps', 'Get the app']), cues: [...en.cues.slice(0, 2), { id: 'c9', start: 8000, end: 9000, text: 'Gone', source: { text: 'Sparita' } }] });
+    await writeSubtitleSet(dirOf(slug), speech(ORIGINAL.map((c) => (c.id === 'c1' ? { ...c, text: 'Ciao a voi' } : c)).slice(0, 2)));
+    const refused = await retranslate(slug, 'en');
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json()).toMatchObject({ code: 'subtitles-translating', dropped: 1 });
+    expect((await readSubtitleSet(dirOf(slug), 'en'))!.set.cues.map((c) => c.id)).toEqual(['c1', 'c2']);
+    await app.inject({ method: 'POST', url: `/api/jobs/${(kept.json() as { job: JobSummary }).job.id}/stop` });
+    await waitIdle();
+  });
+
+  it('"Tempi controllati" refuses a translation: it follows its source (review round 2)', async () => {
+    const slug = await made();
+    await writeSubtitleSet(dirOf(slug), speech());
+    const hash = await writeSubtitleSet(dirOf(slug), translated(['Hi everyone', 'Book in three taps', 'Get the app']));
+    const res = await app.inject({ method: 'POST', url: `${P}/${slug}/subtitles/en/timing-checked`, payload: { baseHash: hash } });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'subtitles-follows-source' });
+    expect((await readSubtitleSet(dirOf(slug), 'en'))!.hash).toBe(hash);
+  });
+
   it('retranslate with nothing stale 409; of a speech set 409; no set 404; a bad body 400', async () => {
     const slug = await made();
     await writeSubtitleSet(dirOf(slug), speech());

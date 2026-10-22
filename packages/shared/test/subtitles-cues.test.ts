@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { subtitleCueSchema, alignToScript, buildCues, cueWarnings, mergeKeepingEdited, relocateCues, wrapLines, type SubtitleCue } from '../src/index.ts';
+import { followSourceTimes, subtitleCueSchema, alignToScript, buildCues, cueWarnings, mergeKeepingEdited, relocateCues, wrapLines, type SubtitleCue } from '../src/index.ts';
 
 const w = (text: string, start: number, end: number) => ({ text, start, end });
 
@@ -185,5 +185,42 @@ describe('Korean keeps its spaces', () => {
     expect(cues.map((c) => c.text)).toEqual(['안녕하세요 여러분 반갑습니다.']);
     expect(wrapLines('안녕하세요 여러분', 'ko')).toEqual(['안녕하세요 여러분']);
     expect(buildCues({ segments: [k('안녕하세요 여러분', 0, 2000)] }, 'ko').map((c) => c.text)).toEqual(['안녕하세요 여러분']);
+  });
+});
+
+describe('followSourceTimes (Task 25, review round 2)', () => {
+  const OLD: SubtitleCue[] = [
+    { id: 'c1', start: 200, end: 1800, text: 'Ciao a tutti.' },
+    { id: 'c2', start: 2000, end: 3600, text: 'Prenota ora.', edited: true },
+    { id: 'c3', start: 3800, end: 5400, text: 'Scarica l\'app.' },
+  ];
+  // Retimed 2 s later (an intro): longer than every line, so no old line overlaps its new self. The uncorrected lines have new
+  // ids and a heard text that may differ in case and punctuation; the corrected one keeps its id.
+  const NEW: SubtitleCue[] = [
+    { id: 'f1', start: 2200, end: 3800, text: 'ciao a tutti' },
+    { id: 'c2', start: 4000, end: 5600, text: 'Prenota ora.', edited: true },
+    { id: 'f2', start: 5800, end: 7400, text: 'Scarica l\'app!' },
+  ];
+  const tr = (id: string, start: number, end: number, text: string, from: string, edited = false): SubtitleCue =>
+    ({ id, start, end, text, source: { text: from }, ...(edited ? { edited: true as const } : {}) });
+
+  it('a +2 s retime with 1.6 s lines: every uncorrected line moves to its source line; a corrected one keeps its times', () => {
+    const cues = [tr('c1', 200, 1800, 'Hi all.', 'Ciao a tutti.'), tr('c2', 2000, 3600, 'Book now.', 'Prenota ora.'), tr('c3', 3800, 5400, 'Get it.', 'Scarica l\'app.', true)];
+    const r = followSourceTimes(cues, OLD, NEW);
+    expect(r.complete).toBe(true);
+    expect(r.cues.map((c) => [c.id, c.start, c.end])).toEqual([['c2', 4000, 5600], ['c3', 3800, 5400], ['c1', 2200, 3800]].sort((a, b) => (a[1] as number) - (b[1] as number)));
+  });
+
+  it('texts that do not pair fall back to the order when as many lines are left on each side', () => {
+    const fresh = NEW.map((c) => (c.id === 'f2' ? { ...c, text: 'Scarica la app.' } : c));
+    const r = followSourceTimes([tr('c3', 3800, 5400, 'Get it.', 'Scarica l\'app.')], OLD, fresh);
+    expect(r).toEqual({ cues: [tr('c3', 5800, 7400, 'Get it.', 'Scarica l\'app.')], complete: true });
+  });
+
+  it('a line that cannot be paired keeps its times and the result says it is not complete', () => {
+    const fewer = NEW.filter((c) => c.id !== 'f2').concat([{ id: 'f3', start: 5800, end: 6400, text: 'Altro.' }, { id: 'f4', start: 6500, end: 7000, text: 'Ancora.' }]);
+    const r = followSourceTimes([tr('c1', 200, 1800, 'Hi all.', 'Ciao a tutti.'), tr('c3', 3800, 5400, 'Get it.', 'Scarica l\'app.')], OLD, fewer);
+    expect(r.complete).toBe(false);
+    expect(r.cues.map((c) => [c.id, c.start])).toEqual([['c1', 2200], ['c3', 3800]]);
   });
 });

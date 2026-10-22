@@ -281,6 +281,7 @@ export const it: Messages = {
     subtitlesLangExists: (p) => `Questa creatività ha già i sottotitoli in ${p.lang}.`,
     subtitlesNothingStale: (p) => `Nessuna riga in ${p.lang} è da ritradurre.`,
     subtitlesNothingStaleCorrected: (p) => `Le righe da ritradurre in ${p.lang} sono righe che hai corretto: sceglile per ritradurle.`,
+    subtitlesFollowsSource: 'Una traduzione ha i tempi dei sottotitoli da cui viene: controlla i tempi di quelli.',
     subtitlesSourceSet: 'Questi sottotitoli vengono dal parlato del video e le altre lingue si traducono da loro: non si possono eliminare.',
     subtitlesTranslateBad: (p) => `submit_subtitle_translation: ${p.detail}`,
     subtitlesTranslateLimit: 'submit_subtitle_translation si può chiamare al massimo 5 volte per esecuzione.',

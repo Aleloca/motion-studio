@@ -186,6 +186,8 @@ export function registerSubtitlesRoutes(app: FastifyInstance, ctx: {
     const done = await subtitleSetLocks.run(creativeDir, async () => {
       const stored = await setOf(ref, lang);
       if (stored.hash !== body.baseHash) return { conflict: stored.hash };
+      // A translation follows its source's timing (Task 25): checked there.
+      if (stored.set.origin === 'translation') throw new CodedError(409, t().errors.subtitlesFollowsSource, 'subtitles-follows-source');
       const latest = (await store.readVersions(ref.creativeSlug)).at(-1);
       const locale = stored.set.timing.locale;
       const now = latest ? await subtitleTimingOf(creativeDir, latest, (await store.get(ref.creativeSlug)).brief, await ctx.presets(), locale) : null;
@@ -193,7 +195,7 @@ export function registerSubtitlesRoutes(app: FastifyInstance, ctx: {
       const set: SubtitleSet = { ...stored.set, timing: { version: latest.n, format: now.format, fingerprint: now.fingerprint, ...(locale ? { locale } : {}) } };
       const hash = await writeSubtitleSet(creativeDir, set);
       // The original speech set's translations follow it (Task 25): its timing, and its lines' times.
-      return { hash, timing: set.timing, followed: await followSource(creativeDir, set) };
+      return { hash, timing: set.timing, followed: await followSource(creativeDir, stored.set, set) };
     });
     if ('conflict' in done) return reply.status(409).send({ error: t().errors.subtitlesConflict, code: 'subtitles-conflict', hash: done.conflict });
     ctx.commits.touch(ref, t().subtitles.commit({ title: (await store.get(ref.creativeSlug)).title, lang }));

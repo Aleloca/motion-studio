@@ -41,7 +41,8 @@ export async function assertNoSubtitleSet(ref: CreativeRef, lang: LocaleTag): Pr
  * Task 25 ("Ritraduci"): translates lines of `lang`'s translation again. With `ids`, those (lines the user corrected included:
  * they asked for them, decision 1686). Without, every stale line (`staleCues`) the user did not correct; first, under the set
  * lock, the uncorrected lines no source line overlaps any more go (as in a full translation, decision 1690), committed and
- * told to the clients (`dropped`). Nothing left to ask: `job: null` when lines went, else 409 `subtitles-nothing-stale`
+ * told to the clients (`dropped`, also on a refusal of the translation after); not for a translation that is not timed as its
+ * source now (its lines may only have moved). Nothing left to ask: `job: null` when lines went, else 409 `subtitles-nothing-stale`
  * (saying so when the stale lines are all corrected ones). 404 without the set, 409 `subtitles-lang-spoken` for a set made
  * from speech; the translation's own refusals otherwise.
  */
@@ -57,7 +58,10 @@ export async function retranslateSubtitles(deps: RetranslateDeps, ref: CreativeR
     if (ids) return { ids, dropped: 0, corrected: 0 };
     const source = speechSourceSet(sets);
     if (!source) throw new CodedError(409, t().errors.subtitlesNoSource, 'subtitles-no-source');
-    const gone = (c: SubtitleCue) => !c.edited && c.source !== undefined && sourceCueOf(c, source.cues) === null;
+    // Only a translation timed as its source is now can tell a line whose source is gone (review round 2): one that could not
+    // follow the source's new times would lose lines that merely moved.
+    const follows = target.timing.fingerprint === source.timing.fingerprint;
+    const gone = (c: SubtitleCue) => follows && !c.edited && c.source !== undefined && sourceCueOf(c, source.cues) === null;
     const kept: SubtitleSet = { ...target, cues: target.cues.filter((c) => !gone(c)) };
     const dropped = target.cues.length - kept.cues.length;
     if (dropped > 0) await writeSubtitleSet(dir, kept);
@@ -75,5 +79,11 @@ export async function retranslateSubtitles(deps: RetranslateDeps, ref: CreativeR
     const text = plan.corrected > 0 ? t().errors.subtitlesNothingStaleCorrected({ lang: name }) : t().errors.subtitlesNothingStale({ lang: name });
     throw new CodedError(409, text, 'subtitles-nothing-stale');
   }
-  return { job: await deps.translate.start(ref, { target: lang, ids: plan.ids }), ...dropped };
+  try {
+    return { job: await deps.translate.start(ref, { target: lang, ids: plan.ids }), ...dropped };
+  } catch (err) {
+    // The lines dropped stay dropped: the refusal says so too.
+    if (err instanceof CodedError && plan.dropped > 0) err.dropped = plan.dropped;
+    throw err;
+  }
 }

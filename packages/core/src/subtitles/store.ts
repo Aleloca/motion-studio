@@ -98,17 +98,20 @@ export function speechSourceSet(sets: readonly SubtitleSet[]): SubtitleSet | und
 }
 
 /**
- * Task 25: the translations of `source` (the original speech set just written, `speechSourceSet`) follow its times: each
- * translation of its language gets `followSourceTimes` and the source's timing, written when that changed. To be called under
- * the creative's set lock, by the writer of the source. The languages written (to commit and tell the clients).
+ * Task 25: the translations of the original speech set follow it when it is written again (`after`; `before`: the set as it
+ * was, read under the same lock, null when there was none): each translation of its language gets `followSourceTimes` and,
+ * when every uncorrected line found its source line, the source's timing (else its own stays: `timingChanged` keeps saying
+ * so, review round 2). Written when that changed. To be called under the creative's set lock, by the writer of the source.
+ * The languages written (to commit and tell the clients).
  */
-export async function followSource(creativeDir: string, source: SubtitleSet): Promise<LocaleTag[]> {
+export async function followSource(creativeDir: string, before: SubtitleSet | null, after: SubtitleSet): Promise<LocaleTag[]> {
   const sets = await listSubtitleSets(creativeDir);
-  if (speechSourceSet(sets)?.lang !== source.lang) return [];
+  if (speechSourceSet(sets)?.lang !== after.lang) return [];
   const out: LocaleTag[] = [];
   for (const s of sets) {
-    if (s.origin !== 'translation' || s.sourceLang !== source.lang) continue;
-    const next: SubtitleSet = { ...s, timing: source.timing, cues: followSourceTimes(s.cues, source.cues) };
+    if (s.origin !== 'translation' || s.sourceLang !== after.lang) continue;
+    const r = followSourceTimes(s.cues, (before ?? after).cues, after.cues);
+    const next: SubtitleSet = { ...s, timing: r.complete ? after.timing : s.timing, cues: r.cues };
     if (subtitleSetHash(next) === subtitleSetHash(s)) continue;
     await writeSubtitleSet(creativeDir, next);
     out.push(s.lang);
