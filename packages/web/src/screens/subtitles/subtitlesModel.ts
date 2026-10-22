@@ -10,6 +10,8 @@ export interface EditorState {
   dirty: boolean;
   /** The set's language: wrapping and the warnings depend on it. */
   lang: LocaleTag;
+  /** The cue being typed in: its next `text` op joins the last undo step (until another op, a select or `endTyping`). */
+  typing: string | null;
 }
 
 export type EditorOp =
@@ -25,6 +27,8 @@ export type EditorOp =
   | { type: 'select'; id: string | null }
   /** The video's duration, known after the load (the player reports it): no history, nothing to save. */
   | { type: 'duration'; ms: number }
+  /** The user left the text box: the next typing is a new undo step. */
+  | { type: 'endTyping' }
   | { type: 'load'; cues: SubtitleCue[]; durationMs: number; lang: LocaleTag };
 
 export const UNDO_DEPTH = 200;
@@ -77,7 +81,7 @@ function withText(c: SubtitleCue, text: string): SubtitleCue {
 }
 
 function commit(s: EditorState, cues: SubtitleCue[], selected: string | null = s.selected): EditorState {
-  return { ...s, cues: [...cues].sort(byStart), past: [...s.past, s.cues].slice(-UNDO_DEPTH), future: [], selected, dirty: true };
+  return { ...s, cues: [...cues].sort(byStart), past: [...s.past, s.cues].slice(-UNDO_DEPTH), future: [], selected, dirty: true, typing: null };
 }
 
 function setTimes(s: EditorState, op: Extract<EditorOp, { type: 'times' }>): EditorState {
@@ -206,20 +210,22 @@ function replaceAll(s: EditorState, op: Extract<EditorOp, { type: 'replace' }>):
 export function editorReducer(s: EditorState, op: EditorOp): EditorState {
   switch (op.type) {
     case 'load':
-      return { cues: [...op.cues].sort(byStart), past: [], future: [], selected: null, durationMs: op.durationMs, dirty: false, lang: op.lang };
+      return { cues: [...op.cues].sort(byStart), past: [], future: [], selected: null, durationMs: op.durationMs, dirty: false, lang: op.lang, typing: null };
     case 'select':
-      return op.id === s.selected ? s : { ...s, selected: op.id };
+      return op.id === s.selected && s.typing === null ? s : { ...s, selected: op.id, typing: null };
+    case 'endTyping':
+      return s.typing === null ? s : { ...s, typing: null };
     case 'duration':
       return op.ms === s.durationMs || !(op.ms > 0) ? s : { ...s, durationMs: Math.round(op.ms) };
     case 'undo': {
       const prev = s.past[s.past.length - 1];
       if (!prev) return s;
-      return { ...s, cues: prev, past: s.past.slice(0, -1), future: [s.cues, ...s.future], selected: prev.some((c) => c.id === s.selected) ? s.selected : null, dirty: true };
+      return { ...s, cues: prev, past: s.past.slice(0, -1), future: [s.cues, ...s.future], selected: prev.some((c) => c.id === s.selected) ? s.selected : null, dirty: true, typing: null };
     }
     case 'redo': {
       const nxt = s.future[0];
       if (!nxt) return s;
-      return { ...s, cues: nxt, past: [...s.past, s.cues].slice(-UNDO_DEPTH), future: s.future.slice(1), selected: nxt.some((c) => c.id === s.selected) ? s.selected : null, dirty: true };
+      return { ...s, cues: nxt, past: [...s.past, s.cues].slice(-UNDO_DEPTH), future: s.future.slice(1), selected: nxt.some((c) => c.id === s.selected) ? s.selected : null, dirty: true, typing: null };
     }
     case 'text': {
       const i = s.cues.findIndex((c) => c.id === op.id);
@@ -229,7 +235,9 @@ export function editorReducer(s: EditorState, op: EditorOp): EditorState {
       if (text === '' || text === s.cues[i]!.text) return s;
       const cues = s.cues.slice();
       cues[i] = withText(s.cues[i]!, text);
-      return commit(s, cues);
+      // Typing on in the same cue: the burst is one undo step (the step before it stays the one to go back to).
+      if (s.typing === op.id && s.past.length > 0) return { ...s, cues, future: [], dirty: true };
+      return { ...commit(s, cues), typing: op.id };
     }
     case 'times': return setTimes(s, op);
     case 'split': return split(s, op);
@@ -244,7 +252,7 @@ export function editorReducer(s: EditorState, op: EditorOp): EditorState {
 }
 
 export function initialEditorState(): EditorState {
-  return { cues: [], past: [], future: [], selected: null, durationMs: 0, dirty: false, lang: 'en' };
+  return { cues: [], past: [], future: [], selected: null, durationMs: 0, dirty: false, lang: 'en', typing: null };
 }
 
 /** The warnings of each cue that has any, keyed by cue id. */

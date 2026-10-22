@@ -10,7 +10,7 @@ import { usePreviewSession } from '../../components/compositionPreview.ts';
 import { saveBlob } from '../../download.ts';
 import { message } from '../../errors.ts';
 import { useLocale, useT } from '../../i18n.tsx';
-import { usePageShortcut } from '../../motion/index.ts';
+import { isActivePage, usePageShortcut } from '../../motion/index.ts';
 import { isMac } from '../../platform.ts';
 import { href } from '../../routes.ts';
 import { go, ShellContext } from '../../shell/ShellContext.tsx';
@@ -47,7 +47,7 @@ export function SubtitlesScreen({ slug, creative, lang }: { slug: string; creati
   }, [slug, creative, tick]);
   // No language in the route: the creative's first set.
   const shown = lang ?? detail?.subtitles?.[0]?.lang ?? null;
-  if (shown) return <SubtitleEditor key={`${creative}/${shown}`} slug={slug} creative={creative} lang={shown} detail={detail} tick={tick} />;
+  if (shown) return <SubtitleEditor key={`${slug}/${creative}/${shown}`} slug={slug} creative={creative} lang={shown} detail={detail} tick={tick} />;
   return (
     <main className="ms-subs">
       <Head slug={slug} creative={creative} lang={null} />
@@ -140,7 +140,11 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
 
   const rowOf = (id: string) => listBox.current?.querySelector(rowSelector(id));
   // The row under the playhead follows playback (scrolled to; the focus stays where it is).
-  useEffect(() => { if (now && controls.playing) reveal(rowOf(now)); }, [now, controls.playing]);
+  // Not while the focus is inside the list (the user is typing or using a row's controls).
+  useEffect(() => {
+    if (!now || !controls.playing || listBox.current?.contains(document.activeElement)) return;
+    reveal(rowOf(now));
+  }, [now, controls.playing]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (state.selected) reveal(rowOf(state.selected)); }, [state.selected]);
 
   const show = useCallback((cue: SubtitleCue) => {
@@ -195,10 +199,22 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
   // The keyboard (spec §6.3): Space plays and pauses, ↑/↓ move between lines (never while typing), ⌘Z / ⇧⌘Z undo and redo
   // the lines (also from a line's fields; the find and replace fields keep their own).
   const free = (e: KeyboardEvent) => !e.isComposing && !e.altKey && !inOverlay(e);
-  const lineUndo = (e: KeyboardEvent) => free(e) && !(e.target instanceof Element && e.target.closest('.ms-subs-find'));
-  const letter = (e: KeyboardEvent, k: string) => e.key.toLowerCase() === k;
-  usePageShortcut(root, (e) => lineUndo(e) && mod(e) && !e.shiftKey && letter(e, 'z'), () => dispatch({ type: 'undo' }));
-  usePageShortcut(root, (e) => lineUndo(e) && ((mod(e) && e.shiftKey && letter(e, 'z')) || (!isMac() && e.ctrlKey && !e.metaKey && !e.shiftKey && letter(e, 'y'))), () => dispatch({ type: 'redo' }));
+  // Undo and redo are the page's own listener, not a page shortcut: a held chord repeats, and every keydown of it (repeats
+  // included) is default-prevented, so the browser's own undo of a text box (or the desktop menu's) never mixes in.
+  useEffect(() => {
+    const letter = (e: KeyboardEvent, k: string) => e.key.toLowerCase() === k;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || !free(e) || !isActivePage(root.current)) return;
+      if (e.target instanceof Element && e.target.closest('.ms-subs-find')) return;
+      const undo = mod(e) && !e.shiftKey && letter(e, 'z');
+      const redo = (mod(e) && e.shiftKey && letter(e, 'z')) || (!isMac() && e.ctrlKey && !e.metaKey && !e.shiftKey && letter(e, 'y'));
+      if (!undo && !redo) return;
+      e.preventDefault();
+      dispatch({ type: undo ? 'undo' : 'redo' });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const plain = (e: KeyboardEvent) => free(e) && bare(e) && !e.shiftKey && !isTyping(e);
   usePageShortcut(root, (e) => plain(e) && (e.key === ' ' || e.code === 'Space') && !activatesControl(e, '.ms-subs-play'), () => controls.toggle());
   usePageShortcut(root, (e) => plain(e) && (e.key === 'ArrowDown' || e.key === 'ArrowUp'), (e) => step(e.key === 'ArrowDown' ? 1 : -1));
@@ -210,7 +226,8 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
     setBusy(ext);
     setDownloadError(null);
     try {
-      await save.flush();
+      // An edit not saved (a failed save, a conflict not merged yet) would be missing from the file: no stale download.
+      if (!(await save.flush())) { setDownloadError(s.downloadFailed({ detail: s.notSaved })); return; }
       saveBlob(await api.subtitleFile(slug, creative, lang, ext), `${creative}.${lang}.${ext}`);
     } catch (e) { setDownloadError(s.downloadFailed({ detail: message(e) })); }
     finally { setBusy(null); }

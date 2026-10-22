@@ -101,7 +101,7 @@ describe('subtitle editor model (decisions 1652-1655)', () => {
 
   it('keeps at most 200 undo steps', () => {
     let s = load([cue('a', 0, 2000, 'x')]);
-    for (let i = 0; i < 250; i++) s = run(s, { type: 'text', id: 'a', text: `t${i}` });
+    for (let i = 0; i < 250; i++) s = run(s, { type: 'text', id: 'a', text: `t${i}` }, { type: 'endTyping' });
     expect(s.past).toHaveLength(200);
   });
 
@@ -122,5 +122,18 @@ describe('subtitle editor model (decisions 1652-1655)', () => {
     expect(s1.dirty).toBe(false);
     expect(run(s1, { type: 'add', at: 5000 }).cues).toHaveLength(2);
     expect(run(s1, { type: 'duration', ms: 9000 })).toBe(s1);
+  });
+  it('a burst of typing in one cue is one undo step, ended by another op, a select or the end of typing (Task 12 fix 1)', () => {
+    const s0 = load([cue('a', 0, 2000, 'Ciao'), cue('b', 3000, 5000, 'Mondo')]);
+    const typed = run(s0, { type: 'text', id: 'a', text: 'Ciao a' }, { type: 'text', id: 'a', text: 'Ciao a t' }, { type: 'text', id: 'a', text: 'Ciao a tutti' });
+    expect(typed.past).toHaveLength(1);
+    expect(run(typed, { type: 'undo' }).cues[0]!.text).toBe('Ciao');
+    expect(run(typed, { type: 'undo' }, { type: 'redo' }).cues[0]!.text).toBe('Ciao a tutti');
+    // Another cue, or the same one after the end of typing, a select or another op: a new step.
+    expect(run(typed, { type: 'text', id: 'b', text: 'Mondo!' }).past).toHaveLength(2);
+    expect(run(typed, { type: 'endTyping' }, { type: 'text', id: 'a', text: 'Ciao a tutti!' }).past).toHaveLength(2);
+    expect(run(typed, { type: 'select', id: 'a' }, { type: 'text', id: 'a', text: 'Ciao a tutti!' }).past).toHaveLength(2);
+    expect(run(typed, { type: 'times', id: 'b', end: 4500 }, { type: 'text', id: 'a', text: 'Ciao a tutti!' }).past).toHaveLength(3);
+    expect(run(typed, { type: 'undo' }, { type: 'redo' }, { type: 'text', id: 'a', text: 'Ciao a tutti!' }).past).toHaveLength(2);
   });
 });

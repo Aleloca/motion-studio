@@ -114,7 +114,7 @@ function CueRow({ cue, n, last, lang, selected, now, warnings, dispatch, onPick 
       <textarea ref={box} className="ms-input ms-textarea ms-subs-text" rows={2} aria-label={s.text({ n })} spellCheck lang={lang}
         value={draft ?? cue.text}
         onChange={(e) => { setDraft(e.target.value); dispatch({ type: 'text', id: cue.id, text: e.target.value }); }}
-        onBlur={() => setDraft(null)} />
+        onBlur={() => { setDraft(null); dispatch({ type: 'endTyping' }); }} />
       {warnings.length ? (
         <div className="ms-subs-chips">
           {warnings.map((w) => <Chip key={w} icon="warn" className="ms-subs-warn" title={hint(w)}>{s.warnings[w]}</Chip>)}

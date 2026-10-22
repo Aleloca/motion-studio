@@ -437,6 +437,7 @@ export const it: Messages = {
     saving: 'Salvataggio…',
     saved: 'Salvato',
     saveFailed: 'Salvataggio non riuscito',
+    notSaved: 'le ultime modifiche non sono salvate, il file non le avrebbe. Riprova quando il salvataggio è riuscito',
     retry: 'Riprova',
     undo: 'Annulla',
     redo: 'Ripeti',

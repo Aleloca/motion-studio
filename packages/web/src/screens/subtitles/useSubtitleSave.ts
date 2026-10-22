@@ -19,8 +19,12 @@ export type SubtitleSaveStatus = 'saved' | 'saving' | 'error' | 'conflict';
 
 export interface SubtitleSave {
   status: SubtitleSaveStatus;
-  /** Sends a waiting edit now (or retries a failed one) and waits for the saves in flight. */
-  flush(): Promise<void>;
+  /**
+   * Sends a waiting edit now (or retries a failed one) and waits for the saves in flight, a conflict's merged save included.
+   * True when the server then has everything the editor shows (a download may go); false when a save failed or is still
+   * owed.
+   */
+  flush(): Promise<boolean>;
 }
 
 const textOf = (cues: readonly SubtitleCue[]): string => JSON.stringify(cues);
@@ -64,6 +68,9 @@ export function useSubtitleSave(
   const mounted = useRef(true);
   const closing = useRef(false);
   const chain = useRef<Promise<void>>(Promise.resolve());
+  /** `flush` calls waiting for the reload's `load` to be on screen (its merged save follows it). */
+  const loadShown = useRef<Array<() => void>>([]);
+  const wake = () => { const w = loadShown.current; loadShown.current = []; for (const f of w) f(); };
 
   const changed = () => textOf(latest.current.cues) !== base.current.text;
 
@@ -140,6 +147,7 @@ export function useSubtitleSave(
       const shown = state.dirty ? state.past.length > 0 && textOf(state.past[0]!) === ownLoad.current : text === ownLoad.current;
       if (shown) {
         ownLoad.current = null;
+        wake();
         if (!state.dirty) {
           if (text !== base.current.text) void save(false);
           return;
@@ -150,6 +158,7 @@ export function useSubtitleSave(
       } else {
         // A screen load in the same batch as ours (outside the contract): it wins, with its hash.
         ownLoad.current = null;
+        wake();
         base.current = { cues: state.cues, text };
         hash.current = propHash.current;
         return;
@@ -178,9 +187,21 @@ export function useSubtitleSave(
       window.removeEventListener('pagehide', onClose);
       mounted.current = false;
       void save(false);
+      wake();
     };
   }, [save]);
 
-  const flush = useCallback(() => save(false), [save]);
+  const flush = useCallback(async (): Promise<boolean> => {
+    // A 409 reloads and loads the merge; its save goes out once the editor shows it: wait for that, then send it now.
+    for (let round = 0; round < 5; round++) {
+      await save(false);
+      if (ownLoad.current === null || !mounted.current) break;
+      await new Promise<void>((r) => { loadShown.current.push(r); });
+    }
+    // The merge's own save may already be queued (the editor showed the load before we looked): wait for every queued save.
+    for (let last = null as Promise<void> | null; last !== chain.current;) { last = chain.current; await last; }
+    return mounted.current && ownLoad.current === null && !changed();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [save]);
   return { status, flush };
 }

@@ -439,6 +439,7 @@ export const en = {
     saving: 'Saving…',
     saved: 'Saved',
     saveFailed: 'Not saved',
+    notSaved: 'the latest edits are not saved, the file would miss them. Try again once they are saved',
     retry: 'Try again',
     undo: 'Undo',
     redo: 'Redo',

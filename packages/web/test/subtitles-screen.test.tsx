@@ -270,4 +270,73 @@ describe('the subtitle editor screen (Task 12)', () => {
     expect(rows()).toHaveLength(1);
     expect((screen.getByRole('textbox', { name: 'Testo della riga 1' }) as HTMLInputElement).value).toBe('Rifatti dal job!');
   });
+
+  describe('fix round 1', () => {
+    const mac = () => /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+    const chord = (o: { shift?: boolean; repeat?: boolean } = {}) => ({ key: 'z', shiftKey: Boolean(o.shift), repeat: Boolean(o.repeat), metaKey: mac(), ctrlKey: !mac() });
+
+    it('a held ⌘Z / ⇧⌘Z in a text box or a time field is always the lines\' undo: repeats are default-prevented and step the model', async () => {
+      await open();
+      await userEvent.click(within(rows()[0]!).getByRole('button', { name: 'Elimina la riga' }));
+      await userEvent.click(within(rows()[0]!).getByRole('button', { name: 'Elimina la riga' }));
+      expect(rows()).toHaveLength(1);
+      const box = screen.getByRole('textbox', { name: 'Testo della riga 1' });
+      expect(fireEvent.keyDown(box, chord())).toBe(false);
+      expect(rows()).toHaveLength(2);
+      expect(fireEvent.keyDown(box, chord({ repeat: true }))).toBe(false);
+      expect(rows()).toHaveLength(3);
+      const time = screen.getByRole('textbox', { name: 'Inizio della riga 1' });
+      expect(fireEvent.keyDown(time, chord({ shift: true, repeat: true }))).toBe(false);
+      expect(rows()).toHaveLength(2);
+      // The find and replace fields keep their own undo.
+      await userEvent.click(screen.getByRole('button', { name: 'Trova e sostituisci' }));
+      expect(fireEvent.keyDown(screen.getByRole('textbox', { name: 'Trova' }), chord({ repeat: true }))).toBe(true);
+      expect(rows()).toHaveLength(2);
+    });
+
+    it('typing in one line is one undo step', async () => {
+      await open();
+      await userEvent.type(screen.getByRole('textbox', { name: 'Testo della riga 1' }), ' quanti');
+      await userEvent.click(screen.getByRole('button', { name: 'Annulla' }));
+      expect((screen.getByRole('textbox', { name: 'Testo della riga 1' }) as HTMLTextAreaElement).value).toBe('Ciao a tutti');
+      expect((screen.getByRole('button', { name: 'Annulla' }) as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it('a download whose waiting edit could not be saved does not download: it says why', async () => {
+      api.saveSubtitleSet.mockRejectedValueOnce(new ApiError(500, 'disk full'));
+      await open();
+      await userEvent.type(screen.getByRole('textbox', { name: 'Testo della riga 1' }), '!');
+      await userEvent.click(screen.getByRole('button', { name: 'Scarica .vtt' }));
+      expect((await screen.findByRole('alert')).textContent).toMatch(/^Download non riuscito: /);
+      expect(api.subtitleFile).not.toHaveBeenCalled();
+      expect(saveBlob).not.toHaveBeenCalled();
+    });
+
+    it('a download after a conflict waits for the merged save, then downloads', async () => {
+      api.saveSubtitleSet.mockRejectedValueOnce(new ApiError(409, 'changed', 'subtitles-conflict'));
+      await open();
+      await userEvent.type(screen.getByRole('textbox', { name: 'Testo della riga 1' }), '!');
+      await userEvent.click(screen.getByRole('button', { name: 'Scarica .srt' }));
+      await waitFor(() => expect(saveBlob).toHaveBeenCalledWith(expect.any(Blob), 'lancio.it.srt'));
+      expect(api.saveSubtitleSet).toHaveBeenCalledTimes(2);
+      expect((api.saveSubtitleSet.mock.calls[1]![3] as { cues: SubtitleCue[] }).cues[0]!.text).toBe('Ciao a tutti!');
+      expect(api.saveSubtitleSet.mock.invocationCallOrder[1]!).toBeLessThan(api.subtitleFile.mock.invocationCallOrder[0]!);
+    });
+
+    it('the list follows playback, but not while the focus is inside it', async () => {
+      const scroll = vi.fn();
+      Element.prototype.scrollIntoView = scroll;
+      try {
+        await open();
+        fireEvent.keyDown(document.body, { key: ' ', code: 'Space' });
+        scroll.mockClear();
+        act(() => { media.currentTime = 2.5; media.emit('timeupdate'); });
+        expect(scroll).toHaveBeenCalled();
+        screen.getByRole('textbox', { name: 'Testo della riga 3' }).focus();
+        scroll.mockClear();
+        act(() => { media.currentTime = 4.5; media.emit('timeupdate'); });
+        expect(scroll).not.toHaveBeenCalled();
+      } finally { delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView; }
+    });
+  });
 });
