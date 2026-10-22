@@ -19,6 +19,12 @@ describe('subtitleSetSchema', () => {
   it('refuses a third text line', () => {
     expect(subtitleSetSchema.safeParse(set({ cues: [{ id: 'c1', start: 0, end: 5, text: 'a\nb\nc' }] })).success).toBe(false);
   });
+  it('refuses an empty or blank line (a blank line ends an SRT cue)', () => {
+    for (const text of ['a\n', '\nb', 'a\n  ', ' ', '\t', 'a\n ']) {
+      expect(subtitleSetSchema.safeParse(set({ cues: [{ id: 'c1', start: 0, end: 5, text }] })).success, JSON.stringify(text)).toBe(false);
+    }
+    expect(subtitleSetSchema.safeParse(set({ cues: [{ id: 'c1', start: 0, end: 5, text: ' a\nb ' }] })).success).toBe(true);
+  });
   it('refuses duplicate ids', () => {
     expect(subtitleSetSchema.safeParse(set({ cues: [{ id: 'c1', start: 0, end: 5, text: 'a' }, { id: 'c1', start: 6, end: 9, text: 'b' }] })).success).toBe(false);
   });
