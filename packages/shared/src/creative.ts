@@ -131,6 +131,11 @@ export const creativeFileSchema = z.object({
    * search, "Jump back in") and listed under "Archiviate", where it can be restored. Absent: not archived.
    */
   archivedAt: z.iso.datetime().optional(),
+  /**
+   * Subtitles Task 19 (spec §6.2, U9): what the user chose the last time the agent made the subtitles (`start_subtitles`):
+   * true drawn into the video, false files/track only. Absent: never asked.
+   */
+  subtitlesDrawn: z.boolean().optional(),
 });
 export type CreativeFile = z.infer<typeof creativeFileSchema>;
 

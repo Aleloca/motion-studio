@@ -425,7 +425,7 @@ describe('the start_subtitles tool (decision 1703)', () => {
   it('asked in the first turn, starts once the turn saved v1; in the next turn again, on the v2 that turn saved', async () => {
     const slug = await create();
     const first = await runOf(slug);
-    // Phase 1 does not offer `drawn` to the agent (decision 1710): absent, the job makes files only.
+    // `drawn` left out (an older agent): the job makes files only.
     const res = await tool(first, 'start_subtitles', {});
     expect(res.statusCode, res.body).toBe(200);
     expect(res.json()).toEqual({ started: true, when: 'after-turn' });

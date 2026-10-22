@@ -270,6 +270,8 @@ export const en = {
     subtitlesConflict: 'The subtitles were changed elsewhere: reload them.',
     subtitlesTooLarge: (p: { maxMB: number }) => `The subtitles are over ${p.maxMB} MB.`,
     subtitlesOncePerTurn: 'The subtitles were already asked for in this turn: they start when it ends.',
+    subtitlesNoLang: (p: { lang: string }) => `This creative has no subtitles in ${p.lang}.`,
+    subtitlesUnknownCue: (p: { ids: string }) => `No subtitle line has these ids: ${p.ids}. Nothing was changed.`,
     transcriptionNoBundled: 'This app has no Whisper of its own: install one or point to it in Settings → Video transcription.',
   },
   videoAnalysis: {
@@ -428,6 +430,8 @@ export const en = {
     cancelledNoTranscription: 'Subtitles cancelled: you chose to continue without a transcription.',
     setUnreadable: (p: { file: string }) => `the file ${p.file} cannot be read as subtitles and may hold your corrections: fix or move it, then make the subtitles again.`,
     notStartedTurn: 'The subtitles did not start: the turn did not finish. Ask for them again.',
+    styleRequest: 'Draw the subtitles into the video: add the subtitles track to every video format, in a legible style that fits the brand, as a new version.',
+    styleNotStarted: (p: { reason: string }) => `The subtitles were not drawn into the video: ${p.reason}`,
     readyTitle: 'Subtitles ready',
     download: (p: { ext: string }) => `Download ${p.ext}`,
     downloadFailed: (p: { detail: string }) => `Download failed: ${p.detail}`,

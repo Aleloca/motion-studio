@@ -268,6 +268,8 @@ export const it: Messages = {
     subtitlesConflict: 'I sottotitoli sono stati modificati altrove: ricaricali.',
     subtitlesTooLarge: (p) => `I sottotitoli superano ${p.maxMB} MB.`,
     subtitlesOncePerTurn: 'I sottotitoli sono già stati chiesti in questo turno: partono quando finisce.',
+    subtitlesNoLang: (p: { lang: string }) => `Questa creatività non ha sottotitoli in ${p.lang}.`,
+    subtitlesUnknownCue: (p: { ids: string }) => `Nessuna riga dei sottotitoli ha questi id: ${p.ids}. Non è stato cambiato niente.`,
     transcriptionNoBundled: 'Questa app non ha un Whisper suo: installane uno o indicalo in Impostazioni → Trascrizione video.',
   },
   videoAnalysis: {
@@ -426,6 +428,8 @@ export const it: Messages = {
     cancelledNoTranscription: 'Sottotitoli annullati: hai scelto di continuare senza trascrizione.',
     setUnreadable: (p) => `il file ${p.file} non si legge come sottotitoli e potrebbe contenere le tue correzioni: correggilo o spostalo, poi rifai i sottotitoli.`,
     notStartedTurn: 'I sottotitoli non sono partiti: il turno non si è concluso. Chiedili di nuovo.',
+    styleRequest: 'Disegna i sottotitoli nel video: aggiungi la traccia dei sottotitoli (subtitles track) a ogni formato video, con uno stile leggibile adatto al brand, in una nuova versione.',
+    styleNotStarted: (p: { reason: string }) => `I sottotitoli non sono stati disegnati nel video: ${p.reason}`,
     readyTitle: 'Sottotitoli pronti',
     download: (p) => `Scarica ${p.ext}`,
     downloadFailed: (p) => `Download non riuscito: ${p.detail}`,

@@ -828,6 +828,20 @@ export class CreativeTurnService {
   }
 
   /**
+   * Subtitles Task 19 (U9): records what the user chose for the subtitles the agent made (`CreativeFile.subtitlesDrawn`),
+   * under the creative's lock, committing creative.json alone (as a ★). Unchanged: nothing written.
+   */
+  async setSubtitlesDrawn(ref: CreativeRef, drawn: boolean): Promise<void> {
+    const store = new CreativeStore(ref.projectDir);
+    await this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), async () => {
+      if ((await store.get(ref.creativeSlug)).subtitlesDrawn === drawn) return;
+      const updated = await store.update(ref.creativeSlug, { subtitlesDrawn: drawn });
+      await this.commitCreativeFile(ref, store, t().jobs.stateCommit({ title: updated.title }));
+      this.changed(ref);
+    });
+  }
+
+  /**
    * Links `follower` to `primary`, or unlinks it (`null`) (spec §2.3); refused while a generation is queued or running.
    * A link is checked with `checkLink` against the primary's latest known duration (unknown: re-checked at materialization).
    * The stored links are sanitized (`effectiveLinks`): dropped formats, self-links and chains never stay.

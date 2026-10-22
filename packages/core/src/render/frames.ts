@@ -1,4 +1,5 @@
 import type { Composition, FormatPreset } from '@motion-studio/shared';
+import type { RuntimeSubtitles } from '@motion-studio/composition-runtime/page';
 import { RUNTIME_DIST_DIR } from '@motion-studio/composition-runtime/dist';
 import { startCompositionServer, type CompositionServer, type CompositionSession, type SessionMedia } from '../compositions/composition-server.ts';
 import { readRegularFile } from '../safe-read.ts';
@@ -39,6 +40,11 @@ export interface RenderFramesOptions {
   distDir?: string;
   /** Wall-clock limit, ms (default 120 s + 10 s per frame). */
   timeLimitMs?: number;
+  /**
+   * The subtitle set the composition's `subtitles` clip draws (subtitles Task 19: the agent sees its style), as for a render
+   * (`RenderOptions.subtitles`). Absent: the session is minted as before.
+   */
+  subtitles?: RuntimeSubtitles;
 }
 
 export interface RenderedFrame { t: number; data: Buffer; width: number; height: number }
@@ -74,7 +80,7 @@ export async function renderFrames(o: RenderFramesOptions): Promise<RenderFrames
     server = o.server ?? await startCompositionServer({ uiOrigins: [], distDir });
     session = await server.mintSession({
       creativeDir: o.dir, versionDir: o.versionDir, format: o.format.id, composition: c, mode: 'render', ttlMs: (o.timeLimitMs ?? 300_000) + 60_000,
-      ...(o.media ? { media: o.media } : {}), ...(o.format.safeZone ? { safeZone: o.format.safeZone } : {}),
+      ...(o.media ? { media: o.media } : {}), ...(o.format.safeZone ? { safeZone: o.format.safeZone } : {}), ...(o.subtitles ? { subtitles: o.subtitles } : {}),
     });
     const clock = await readRegularFile(join(distDir, 'clock.js'), 1024 * 1024).catch(() => null);
     page = await o.provider.open({

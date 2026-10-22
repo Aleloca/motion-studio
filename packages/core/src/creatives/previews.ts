@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { lstat, mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
-import { compositionProblemText, INSTANCE_FOLDER_SOURCE, messages, type Composition, type FormatPreset, type Locale, type PreviewSessionInfo, type StagedAsset, type StagedSvgEdit, type VersionEntry } from '@motion-studio/shared';
+import { compositionProblemText, INSTANCE_FOLDER_SOURCE, messages, type Composition, type FormatPreset, type Locale, type LocaleTag, type PreviewSessionInfo, type StagedAsset, type StagedSvgEdit, type VersionEntry } from '@motion-studio/shared';
 import { loadComposition } from '../compositions/composition-files.ts';
 import { EDITOR_STAGING, startCompositionServer, type CompositionServer, type CompositionSession, type SessionMediaFile } from '../compositions/composition-server.ts';
 import { noteCoreChange } from '../core-changes.ts';
@@ -18,8 +18,10 @@ import { sessionMediaOf, type MediaNormalizer, type PreparedMedia } from '../ren
 import { PreviewLane, PreviewLaneBusyError } from '../render/preview-lane.ts';
 import type { RenderEngine } from '../render/renderer.ts';
 import type { RuntimeSubtitles } from '@motion-studio/composition-runtime/page';
+import { drawsSubtitles, stageDefaultSubtitles } from '../subtitles/store.ts';
 import { CodedError } from '../workspace-store.ts';
 import { isRealDirChain, realDirChain } from './core-files.ts';
+import { CreativeStore } from './creative-store.ts';
 import { readSvgForEdit, removeStaging, stageFile, stageSvgEdit, stagingDirOf, type StageSource, type SvgEditSource } from './editor-staging.ts';
 
 /**
@@ -223,8 +225,23 @@ export class PreviewService {
     return this.server;
   }
 
-  /** Frames through the lane, with the normalised media (released after). */
-  private async frames(o: { ref: VersionFormatRef; folder: string; preset: FormatPreset; composition: Composition; times: number[]; width: number; imageFormat: 'png' | 'jpeg'; signal?: AbortSignal; noWait?: boolean }) {
+  /**
+   * Subtitles Task 19: the set a composition with the `subtitles` track draws, as its render would (`stageDefaultSubtitles`:
+   * the brief's pairing, or the `localized` render's own language), so storyboards, pin frames and the agent's frames show
+   * the drawn subtitles. Nothing is read for a composition without the track (anti-goal 4); a set that cannot be read: none.
+   */
+  private async subtitlesOf(ref: VersionFormatRef, c: Composition, localized?: LocaleTag): Promise<RuntimeSubtitles | null> {
+    if (!drawsSubtitles(c)) return null;
+    try {
+      const brief = (await new CreativeStore(ref.projectDir).get(ref.creativeSlug)).brief;
+      return (await stageDefaultSubtitles(ref.creativeDir, brief, c, localized))?.data ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Frames through the lane, with the normalised media (released after) and the drawn subtitles (`subtitlesOf`). */
+  private async frames(o: { ref: VersionFormatRef; folder: string; preset: FormatPreset; composition: Composition; times: number[]; width: number; imageFormat: 'png' | 'jpeg'; signal?: AbortSignal; noWait?: boolean; localized?: LocaleTag }) {
     const engine = this.deps.engine;
     if (!engine || !(await this.available())) throw new CodedError(503, messages(currentLocale()).errors.previewUnavailable, 'no-renderer');
     const signal = AbortSignal.any([this.closing.signal, ...(o.signal ? [o.signal] : [])]);
@@ -234,12 +251,13 @@ export class PreviewService {
       // first encode does not count against it, and a lane timeout aborts only this caller's wait (the encode is shared
       // and stops only when no caller waits for it any more).
       const prepared = await this.deps.normalizer.prepare({ projectDir: o.ref.projectDir, compDir, composition: o.composition, signal });
+      const subtitles = await this.subtitlesOf(o.ref, o.composition, o.localized);
       try {
         return await this.lane.run(async (laneSignal) => engine.frames({
           server: await this.compositionServer(), // one long-lived server for every preview (fix minor 5)
           dir: o.ref.creativeDir, versionDir: `outputs/v${o.ref.n}`, composition: o.composition, format: { ...o.preset, id: o.folder },
           times: o.times, width: o.width, imageFormat: o.imageFormat, quality: 80, signal: laneSignal, ...withMedia(prepared),
-          ...(this.deps.distDir ? { distDir: this.deps.distDir } : {}),
+          ...(this.deps.distDir ? { distDir: this.deps.distDir } : {}), ...(subtitles ? { subtitles } : {}),
         }), signal, { noWait: o.noWait === true });
       } finally {
         prepared.release();
@@ -277,12 +295,13 @@ export class PreviewService {
 
   /**
    * `preview_frames` of a localize turn (Phase 12): frames of a localized composition held in memory (the version's composition
-   * folder `folder`, with the overlay applied), same limits as `agentFrames`.
+   * folder `folder`, with the overlay applied), same limits as `agentFrames`; drawn subtitles in the `localized` language.
    */
-  async localizedAgentFrames(o: { ref: VersionFormatRef; format: string; folder: string; preset: FormatPreset; composition: Composition; times: unknown; locale: Locale; signal: AbortSignal }): Promise<Record<string, unknown>> {
+  async localizedAgentFrames(o: { ref: VersionFormatRef; format: string; folder: string; preset: FormatPreset; composition: Composition; times: unknown; locale: Locale; signal: AbortSignal; localized?: LocaleTag }): Promise<Record<string, unknown>> {
     const times = checkedPreviewTimes(o.times, o.locale);
     const c = o.composition;
-    const r = await this.frames({ ref: o.ref, folder: o.folder, preset: o.preset, composition: c, times, width: Math.min(AGENT_FRAME_MAX_WIDTH, c.width), imageFormat: 'png', signal: o.signal });
+    const r = await this.frames({ ref: o.ref, folder: o.folder, preset: o.preset, composition: c, times, width: Math.min(AGENT_FRAME_MAX_WIDTH, c.width), imageFormat: 'png', signal: o.signal,
+      ...(o.localized ? { localized: o.localized } : {}) });
     return {
       format: o.format, ok: true,
       frames: r.frames.map((f) => ({ t: f.t, width: f.width, height: f.height })),

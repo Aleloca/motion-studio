@@ -61,6 +61,9 @@ export interface SubtitlesDeps {
  */
 export interface SubtitlesStart { mode: 'new' | 'retime'; lang?: LocaleTag; drawn?: boolean }
 
+/** What the style turn of drawn subtitles needs of the creative turns (Task 19). */
+export type StyleTurnHost = Pick<CreativeTurnService, 'start' | 'turnActive' | 'postMessage' | 'side'>;
+
 /** A subtitles job queued or running: one per creative. */
 interface Active {
   ref: CreativeRef; jobId: string; o: SubtitlesStart; audioSec: number;
@@ -168,15 +171,56 @@ function alignVoices(words: TimedWord[], ic: InstanceComposition, scripts: Reado
  */
 export class SubtitlesService {
   private readonly active = new Map<string, Active>();
-  private readonly readyHooks: Array<(ref: CreativeRef, r: { lang: LocaleTag; drawn: boolean }) => void> = [];
+  private readonly readyHooks: Array<(ref: CreativeRef, r: { lang: LocaleTag; drawn: boolean }, jobId: string) => void> = [];
   private readonly ff: CommandExec;
 
   constructor(private readonly deps: SubtitlesDeps) {
     this.ff = deps.ffExec ?? execCommand;
   }
 
-  /** `fn` runs when a job wrote a set (Phase 3: the style turn of drawn subtitles). */
-  onReady(fn: (ref: CreativeRef, r: { lang: LocaleTag; drawn: boolean }) => void): void { this.readyHooks.push(fn); }
+  /** `fn` runs when a job wrote a set (Phase 3: the style turn of drawn subtitles, `styleTurn`). */
+  onReady(fn: (ref: CreativeRef, r: { lang: LocaleTag; drawn: boolean }, jobId: string) => void): void { this.readyHooks.push(fn); }
+
+  /**
+   * Task 19 (spec §6.2): a drawn job (`jobId`) is ready: the agent is asked for the `subtitles` track with its style
+   * (`subtitles.styleRequest`, a new version). Nothing when the latest version already has the track (drawn, or switched
+   * off by hiding it). A turn of the creative running, or requests waiting in its queue: the request is queued behind them
+   * (the creative's queue, which starts it by itself after a turn that saved a version); otherwise the turn starts now. A
+   * refusal is a chat line. Never throws.
+   */
+  async styleTurn(turns: StyleTurnHost, ref: CreativeRef, jobId: string): Promise<'started' | 'queued' | 'skipped'> {
+    const text = t().subtitles.styleRequest;
+    try {
+      if (await this.latestHasSubtitlesTrack(ref)) return 'skipped';
+      const queue = () => turns.postMessage(ref, { clientId: `subtitles-style-${jobId}`, text, pins: [], mode: 'queued' }).then(() => 'queued' as const);
+      const waiting = (await turns.side.read(ref.projectDir, ref.creativeSlug)).queued?.length ?? 0;
+      if (turns.turnActive(ref) || waiting > 0) return await queue();
+      try {
+        await turns.start(ref, { text, pins: [] });
+        return 'started';
+      } catch (err) {
+        // A turn started in between (409): behind it.
+        if (turns.turnActive(ref)) return await queue();
+        throw err;
+      }
+    } catch (err) {
+      await this.deps.turns.noteFromTurn(jobId, ref, { type: 'system', at: new Date().toISOString(), level: 'warning', text: t().subtitles.styleNotStarted({ reason: errText(err) }) }).catch(() => {});
+      return 'skipped';
+    }
+  }
+
+  /** Whether a composition of the latest version has a `subtitles` track (hidden or not). */
+  private async latestHasSubtitlesTrack(ref: CreativeRef): Promise<boolean> {
+    const store = new CreativeStore(ref.projectDir);
+    const latest = (await store.readVersions(ref.creativeSlug)).at(-1);
+    if (!latest) return false;
+    const presets = await this.deps.presets();
+    for (const c of latest.compositions ?? []) {
+      const ic = await instanceComposition(store.dir(ref.creativeSlug), latest, c.format, presets).catch(() => null);
+      if (ic?.composition.tracks.some((k) => k.kind === 'subtitles')) return true;
+    }
+    return false;
+  }
 
   private jobActive(key: string): boolean {
     return this.deps.queue.list().some((j) => j.key === key && (j.state === 'queued' || j.state === 'running'));
@@ -546,7 +590,7 @@ export class SubtitlesService {
       await this.note(jobId, ref, 'info', text, {
         state: 'ready', lang, ...(tr.language ? { detected: tr.language } : {}), ...(other ? { briefLang } : {}),
       });
-      for (const fn of this.readyHooks) { try { fn(ref, { lang, drawn: o.drawn === true }); } catch { /* a hook never fails the job */ } }
+      for (const fn of this.readyHooks) { try { fn(ref, { lang, drawn: o.drawn === true }, jobId); } catch { /* a hook never fails the job */ } }
     } catch (err) {
       if (signal.aborted || (err as Error).name === 'AbortError') return 'cancelled';
       const reason = errText(err);

@@ -917,7 +917,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       ...agentActions.tools(),
       ...briefs.tools(),
       ...videoAnalysisTools(),
-      ...subtitlesTools({ subtitles, turns }),
+      ...subtitlesTools({ subtitles, turns, commits: subtitleCommits, broadcast: (m) => hub.broadcast(m) }),
     },
   });
   registerBriefRoutes(app, { requireWorkspace, briefs, configDir });

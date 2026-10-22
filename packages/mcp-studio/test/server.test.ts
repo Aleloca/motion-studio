@@ -150,23 +150,32 @@ describe('mcp-studio server', () => {
     startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,fill_brief' });
     expect(((await rpc(5, 'tools/list')).result.tools as Array<{ name: string }>).map((t) => t.name)).not.toContain('write_video_analysis');
   });
-  it('lists start_subtitles only when the job names it, files only (no drawn until phase 3), and forwards it (subtitles, U9)', async () => {
+  it('lists start_subtitles and edit_subtitles only when the job names them, drawn required (U9, Task 19), and forwards them', async () => {
     child.kill();
-    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,start_subtitles' });
+    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,start_subtitles,edit_subtitles' });
     const tools = (await rpc(3, 'tools/list')).result.tools as Array<{ name: string; description: string; inputSchema: { additionalProperties?: boolean; required?: string[]; properties: Record<string, unknown> } }>;
-    expect(tools.map((t) => t.name)).toEqual(['approve', 'report_progress', 'start_subtitles']);
+    expect(tools.map((t) => t.name)).toEqual(['approve', 'report_progress', 'start_subtitles', 'edit_subtitles']);
     const s = tools.find((t) => t.name === 'start_subtitles')!;
     expect(s.inputSchema.additionalProperties).toBe(false);
-    expect(s.inputSchema.required ?? []).toEqual([]);
-    expect(Object.keys(s.inputSchema.properties)).toEqual(['lang']);
-    expect(s.description).toContain('.srt');
-    expect(s.description).toContain('draws nothing into the video');
-    expect(s.description).not.toContain('AskUserQuestion');
-    await rpc(4, 'tools/call', { name: 'start_subtitles', arguments: { lang: 'it' } });
-    expect(calls.at(-1)).toMatchObject({ url: '/api/bridge/start_subtitles', body: { lang: 'it' } });
+    expect(s.inputSchema.required).toEqual(['drawn']);
+    expect(Object.keys(s.inputSchema.properties)).toEqual(['drawn', 'lang']);
+    expect(s.description).toContain('AskUserQuestion');
+    expect(s.description).toContain('Never write subtitles as text clips');
+    expect(s.description).not.toContain('draws nothing into the video');
+    const e = tools.find((t) => t.name === 'edit_subtitles')!;
+    expect(e.inputSchema).toMatchObject({ additionalProperties: false, required: ['lang'] });
+    expect(Object.keys(e.inputSchema.properties)).toEqual(['lang', 'replace', 'cues']);
+    expect(e.inputSchema.properties.replace).toMatchObject({ maxItems: 20 });
+    expect(e.inputSchema.properties.cues).toMatchObject({ maxItems: 200 });
+    await rpc(4, 'tools/call', { name: 'start_subtitles', arguments: { drawn: true, lang: 'it' } });
+    expect(calls.at(-1)).toMatchObject({ url: '/api/bridge/start_subtitles', body: { drawn: true, lang: 'it' } });
+    await rpc(5, 'tools/call', { name: 'edit_subtitles', arguments: { lang: 'it', replace: [{ find: 'motion studio', with: 'Motion Studio' }] } });
+    expect(calls.at(-1)).toMatchObject({ url: '/api/bridge/edit_subtitles', body: { lang: 'it', replace: [{ find: 'motion studio', with: 'Motion Studio' }] } });
     child.kill();
     startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,update_brief' });
-    expect(((await rpc(5, 'tools/list')).result.tools as Array<{ name: string }>).map((t) => t.name)).not.toContain('start_subtitles');
+    const names = ((await rpc(6, 'tools/list')).result.tools as Array<{ name: string }>).map((t) => t.name);
+    expect(names).not.toContain('start_subtitles');
+    expect(names).not.toContain('edit_subtitles');
   });
   it('describes every tool in English', async () => {
     child.kill();
