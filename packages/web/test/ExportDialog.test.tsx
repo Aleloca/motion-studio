@@ -625,3 +625,64 @@ describe('ExportDialog · the Sottotitoli section (Task 22)', () => {
     expect(screen.getByText('Rendered first')).toBeTruthy();
   });
 });
+
+describe('ExportDialog · subtitle languages (Task 27)', () => {
+  const sub = (lang: string, voice?: string) => ({ lang, origin: lang === 'it' || voice ? 'speech' : 'translation', cues: 3, edited: 0, hash: 'a'.repeat(64),
+    timing: { version: 1, format: REEL, fingerprint: 'b'.repeat(64), ...(voice ? { locale: voice } : {}) }, timingChanged: false, staleCues: 0 }) as never;
+  const openWith = (subtitles: never[]) => render(
+    <I18nProvider locale="it">
+      <Live open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions, states: states() }} presets={DEFAULT_FORMATS}
+        pattern="{title}-{format}-v{v}" onSettings={onSettings} subtitles={subtitles} locales={{ primary: 'it', extra: ['de'] }} />
+    </I18nProvider>,
+  );
+  const preview = () => document.querySelector('.ms-exp-subs-out')?.textContent ?? '';
+  const videoOf = (language: RegExp) => screen.getByRole('button', { name: language });
+  const sent = () => api.exportPicksJob.mock.calls[0]![2] as unknown as { subtitles: Record<string, unknown>; locales?: string[] };
+
+  it('default pairing (U8): German subtitles on the German video, English on the original; any pair can be chosen', async () => {
+    openWith([sub('it'), sub('en'), sub('de')]);
+    await userEvent.click(screen.getByRole('checkbox', { name: /^Nel video.*tedesco/i }));
+    await userEvent.click(screen.getByRole('checkbox', { name: /^Nel video.*inglese/i }));
+    expect(videoOf(/^Video dei sottotitoli in tedesco/i).textContent).toMatch(/tedesco/i);
+    expect(videoOf(/^Video dei sottotitoli in inglese/i).textContent).toMatch(/Originale/);
+    expect(preview()).toContain('summer-launch-instagram-reel-9x16-v5-de-sub-de.mp4');
+    expect(preview()).toContain('summer-launch-instagram-reel-9x16-v5-sub-en.mp4');
+    // The Italian video's two drawn videos and its still; the German subtitles' two videos.
+    expect(screen.getByRole('button', { name: 'Esporta 5 file' })).toBeTruthy();
+    // English on the German video instead.
+    await userEvent.click(videoOf(/^Video dei sottotitoli in inglese/i));
+    await userEvent.click(screen.getByRole('option', { name: /tedesco/i }));
+    expect(preview()).toContain('summer-launch-instagram-reel-9x16-v5-de-sub-en.mp4');
+    // Nothing is asked of the Italian video now: its three files are exported as they are, next to the four German drawn ones.
+    await userEvent.click(screen.getByRole('button', { name: 'Esporta 7 file' }));
+    await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledOnce());
+    expect(sent().subtitles).toEqual({ drawn: [{ video: 'de', lang: 'en' }, { video: 'de', lang: 'de' }] });
+  });
+
+  it('files and tracks go with every exported video language: names and count per language', async () => {
+    openWith([sub('it'), sub('en'), sub('de')]);
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Tedesco' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: /^File \.srt e \.vtt.*inglese/i }));
+    for (const name of ['summer-launch-instagram-reel-9x16-v5.en.srt', 'summer-launch-instagram-reel-9x16-v5-de.en.srt', 'summer-launch-tiktok-9x16-v5-de.en.vtt']) expect(preview()).toContain(name);
+    // Per language: two clean videos with two files each, and the still.
+    expect(screen.getByRole('button', { name: 'Esporta 14 file' })).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Esporta 14 file' }));
+    await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledOnce());
+    expect(sent()).toMatchObject({ locales: ['it', 'de'], subtitles: { files: ['en'] } });
+  });
+
+  it('a set timed on the German voice goes only on the German video: no other choice, files and tracks only with that video', async () => {
+    openWith([sub('it'), sub('de', 'de')]);
+    await userEvent.click(screen.getByRole('checkbox', { name: /^Nel video.*tedesco/i }));
+    const video = videoOf(/^Video dei sottotitoli in tedesco/i) as HTMLButtonElement;
+    expect([video.textContent, video.disabled]).toEqual([expect.stringMatching(/tedesco/i), true]);
+    const soft = screen.getByRole('checkbox', { name: /^Traccia nel file MP4.*tedesco/i }) as HTMLButtonElement;
+    expect(soft.disabled).toBe(true);
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Tedesco' }));
+    expect(soft.disabled).toBe(false);
+    await userEvent.click(soft);
+    await userEvent.click(screen.getByRole('button', { name: /^Esporta \d+ file$/ }));
+    await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledOnce());
+    expect(sent().subtitles).toEqual({ drawn: [{ video: 'de', lang: 'de' }], soft: ['de'] });
+  });
+});

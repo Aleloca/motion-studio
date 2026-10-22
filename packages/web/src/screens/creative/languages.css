@@ -77,6 +77,10 @@
 .ms-exp-subs-row .ms-exp-langs-list { flex: 1 1 260px; min-width: 0; }
 .ms-exp-subs-name .ms-faint { font-size: 12px; }
 .ms-exp-subs-note { margin: 0; }
+/* Subtitles Task 27: a drawn language and the video it goes on (a pill); a language waiting for its video. */
+.ms-exp-sub-lang { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; max-width: 100%; }
+.ms-exp-sub-lang .ms-select-pill { max-width: 100%; }
+.ms-exp-lang.ms-off { opacity: 0.5; cursor: default; }
 
 /* Brief languages */
 .ms-brief-langs { display: flex; flex-direction: column; gap: 6px; }

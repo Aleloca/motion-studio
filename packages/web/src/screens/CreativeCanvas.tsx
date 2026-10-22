@@ -1192,7 +1192,9 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
       })() : null}
       {renderPlan && creativeLocales(cr.brief) ? (
         <RenderLanguagesDialog open onClose={() => setRenderPlan(null)} slug={slug} creative={creative} plan={renderPlan} locales={creativeLocales(cr.brief)!}
-          rowsOf={(n) => versions.find((v) => v.n === n)?.localizations ?? []} labelOf={formatLabel} />
+          rowsOf={(n) => versions.find((v) => v.n === n)?.localizations ?? []} labelOf={formatLabel}
+          {...(detail.subtitles?.length ? { subtitles: detail.subtitles } : {})}
+          drawsSubtitles={renderPlan.some(([, formats]) => formats.some((f) => detail.formats?.find((x) => x.id === f)?.subtitlesTrack === true))} />
       ) : null}
     </div>
   );

@@ -123,7 +123,8 @@ export interface StorePackExportResult { folder: string; written: string[]; fail
 export interface LocaleOptions { locales?: string[]; force?: boolean }
 /** The subtitles of an export (spec §6.6): the languages written as `.srt`/`.vtt` files next to each video. */
 /** The subtitles of an export (spec §6.6, Tasks 7 and 21): drawn into a video per language, `.srt`/`.vtt` files, soft MP4 tracks. */
-export interface ExportSubtitles { subtitles?: { drawn?: string[]; files?: string[]; soft?: string[] } }
+/** Subtitles Task 27: a drawn language on a video language (`{ video, lang }`), or a bare tag on the original video. */
+export interface ExportSubtitles { subtitles?: { drawn?: Array<string | { video: string; lang: string }>; files?: string[]; soft?: string[] } }
 
 /** What `POST …/variants/run` answers (202): by variant letter; see the core's `FanoutResult`. */
 export interface VariantRunResult {

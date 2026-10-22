@@ -1,7 +1,8 @@
 // "Render" of a creative with languages (Phase 12, spec §3.5): a multiselect of the languages to render (the original and the
 // translations that exist). A translation with open problems or outdated texts is refused by the core with the list (409): the
 // dialog shows it and offers "Render anyway", which sends `force`. Without languages in the brief the renders start as before.
-import type { LocaleTag, LocalizationRow } from '@motion-studio/shared';
+// Subtitles Task 27: each language whose render will draw its subtitles says "con sottotitoli" (the default pairing, U8).
+import type { LocaleTag, LocalizationRow, SubtitlesSummary } from '@motion-studio/shared';
 import { useId, useRef, useState } from 'react';
 import { api, ApiError } from '../../api.ts';
 import { message } from '../../errors.ts';
@@ -21,6 +22,21 @@ export interface RenderLanguagesDialogProps {
   /** The translations of version n. */
   rowsOf(n: number): readonly LocalizationRow[];
   labelOf(format: string): string;
+  /** The creative's subtitle sets (Task 27): a language whose render draws one says so. */
+  subtitles?: readonly SubtitlesSummary[];
+  /** Whether a planned format's composition has the subtitles track (the format summaries' `subtitlesTrack`). */
+  drawsSubtitles?: boolean;
+}
+
+/**
+ * The language whose subtitles a render draws by default (the core's `defaultSubtitleLang`, Task 18): a translated render its
+ * own language's set; the original the primary language's, else the original audio's speech set (never one timed on a
+ * localized voice). Null: none.
+ */
+export function renderSubtitleLang(sets: readonly SubtitlesSummary[], primary: LocaleTag, tag: LocaleTag): LocaleTag | null {
+  if (tag !== primary) return sets.some((s) => s.lang === tag) ? tag : null;
+  if (sets.some((s) => s.lang === primary)) return primary;
+  return sets.find((s) => s.origin === 'speech' && s.timing.locale === undefined)?.lang ?? null;
 }
 
 export function RenderLanguagesDialog(p: RenderLanguagesDialogProps) {
@@ -32,7 +48,7 @@ export function RenderLanguagesDialog(p: RenderLanguagesDialogProps) {
   );
 }
 
-function Body({ onClose, slug, creative, plan, locales, rowsOf, labelOf }: RenderLanguagesDialogProps) {
+function Body({ onClose, slug, creative, plan, locales, rowsOf, labelOf, subtitles = [], drawsSubtitles = false }: RenderLanguagesDialogProps) {
   const t = useT();
   const l = t.web.languages;
   const ui = useLocale();
@@ -47,6 +63,7 @@ function Body({ onClose, slug, creative, plan, locales, rowsOf, labelOf }: Rende
   const listId = useId();
   const chosen = locales.extra.filter((tag) => on[tag] && hasAll(tag));
   const withPrimary = Boolean(on[locales.primary]);
+  const withSubs = (tag: LocaleTag) => (drawsSubtitles && renderSubtitleLang(subtitles, locales.primary, tag) !== null ? <span className="ms-lp-muted">{l.renderWithSubtitles}</span> : null);
 
   const run = async (force: boolean) => {
     setBusy(true); setError(null);
@@ -82,6 +99,7 @@ function Body({ onClose, slug, creative, plan, locales, rowsOf, labelOf }: Rende
         <label className="ms-lp-format">
           <Check on={withPrimary} label={l.renderOriginal({ language: localeName(locales.primary, ui) })} disabled={busy} onChange={(v) => setOn((s) => ({ ...s, [locales.primary]: v }))} />
           <span>{l.renderOriginal({ language: localeName(locales.primary, ui) })}</span>
+          {withSubs(locales.primary)}
         </label>
         {locales.extra.map((tag) => {
           const ok = hasAll(tag);
@@ -89,7 +107,7 @@ function Body({ onClose, slug, creative, plan, locales, rowsOf, labelOf }: Rende
             <label key={tag} className="ms-lp-format">
               <Check on={ok && Boolean(on[tag])} label={localeName(tag, ui)} disabled={busy || !ok} onChange={(v) => setOn((s) => ({ ...s, [tag]: v }))} />
               <span>{localeName(tag, ui)}</span>
-              {!ok ? <span className="ms-lp-muted">{l.statusNone}</span> : null}
+              {!ok ? <span className="ms-lp-muted">{l.statusNone}</span> : withSubs(tag)}
             </label>
           );
         })}
