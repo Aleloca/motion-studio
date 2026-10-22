@@ -351,12 +351,12 @@ export class PreviewService {
     return sb.subtitles === undefined || sb.subtitles === await this.subtitlesHash(ref) ? sb : null;
   }
 
-  /** The hash of the set a render of the version draws by default (the brief's pairing), null without one. */
+  /** The lines hash of the set a render of the version draws by default (the brief's pairing), null without one. */
   private async subtitlesHash(ref: VersionFormatRef): Promise<string | null> {
     try {
       const brief = (await new CreativeStore(ref.projectDir).get(ref.creativeSlug)).brief;
       const lang = await defaultSubtitleLang(ref.creativeDir, brief);
-      return lang ? (await readSubtitleSet(ref.creativeDir, lang))?.hash ?? null : null;
+      return lang ? (await readSubtitleSet(ref.creativeDir, lang))?.cuesHash ?? null : null;
     } catch {
       return null;
     }

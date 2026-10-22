@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { outputFileInfoSchema, manifestV2Schema, renderState, subtitlesCurrent, versionEntrySchema, type VersionEntry } from '../src/index.ts';
+import { SUBTITLES_SCHEMA_ID, outputFileInfoSchema, manifestV2Schema, renderState, subtitleCuesHash, subtitleHashesOf, subtitleSetHash, subtitlesCurrent, versionEntrySchema, type SubtitleSet, type VersionEntry } from '../src/index.ts';
 
 const H1 = '1'.repeat(64);
 const S1 = 'a'.repeat(64);
@@ -84,5 +84,23 @@ describe('renderState with the subtitle sets (subtitles Task 18)', () => {
     const m = manifestV2Schema.parse({ schemaVersion: 2, compositions: [], renders: [{ format: 'reel', file: 'reel.mp4', width: 1, height: 1, durationSec: 5, sha256: S1,
       renderedAt: '2026-10-22T10:00:00.000Z', subtitles: { lang: 'it', hash: S2 } }] });
     expect(m.renders[0]!.subtitles).toEqual({ lang: 'it', hash: S2 });
+  });
+});
+
+describe('the lines hash a render records (final review M3)', () => {
+  const set = (over: Partial<SubtitleSet> = {}): SubtitleSet => ({
+    $schema: SUBTITLES_SCHEMA_ID, lang: 'it', origin: 'speech', transcript: 'whisper-small', detected: 'it',
+    timing: { version: 1, format: 'reel', fingerprint: '0'.repeat(64) }, cues: [{ id: 'c1', start: 0, end: 900, text: 'Ciao' }], ...over,
+  });
+  it('ignores the timing, the detected language and the origin; follows the lines and the language', () => {
+    const a = set();
+    const checked = set({ timing: { version: 2, format: 'reel', fingerprint: '1'.repeat(64) }, detected: 'en' });
+    expect(subtitleSetHash(checked)).not.toBe(subtitleSetHash(a));
+    expect(subtitleCuesHash(checked)).toBe(subtitleCuesHash(a));
+    expect(subtitleCuesHash(set({ cues: [{ id: 'c1', start: 0, end: 900, text: 'Ciao!' }] }))).not.toBe(subtitleCuesHash(a));
+    expect(subtitleCuesHash(set({ lang: 'en' }))).not.toBe(subtitleCuesHash(a));
+  });
+  it('subtitleHashesOf takes the summaries\' lines hash, the set hash from an older core', () => {
+    expect(subtitleHashesOf([{ lang: 'it', hash: S1, cuesHash: S2 }, { lang: 'en', hash: S1 }])).toEqual({ it: S2, en: S1 });
   });
 });

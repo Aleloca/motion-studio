@@ -1,7 +1,7 @@
 import { lstat, mkdir, readdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  SUBTITLES_DIR, SUBTITLE_LIMITS, drawsSubtitles, parseSubtitleSet, sha256Hex, subtitleSetHash, subtitleSetSchema, subtitleSetText, type Brief, type Composition, type LocaleTag, type SubtitleSet,
+  SUBTITLES_DIR, SUBTITLE_LIMITS, drawsSubtitles, parseSubtitleSet, sha256Hex, subtitleCuesHash, subtitleSetHash, subtitleSetSchema, subtitleSetText, type Brief, type Composition, type LocaleTag, type SubtitleSet,
 } from '@motion-studio/shared';
 import type { RuntimeCue, RuntimeSubtitles } from '@motion-studio/composition-runtime/page';
 import { noteCoreChange } from '../core-changes.ts';
@@ -28,14 +28,17 @@ export const subtitlePath = (creativeDir: string, lang: LocaleTag): string => jo
  */
 export const subtitleSetLocks = new KeyedMutex();
 
-/** The set of `lang` and the hash of its file, or null when there is none or it is not a valid set (too large, bad schema). */
-export async function readSubtitleSet(creativeDir: string, lang: LocaleTag): Promise<{ set: SubtitleSet; hash: string } | null> {
+/**
+ * The set of `lang`, the hash of its file (save conflicts) and of its lines (`subtitleCuesHash`: renders, final review M3), or
+ * null when there is none or it is not a valid set (too large, bad schema).
+ */
+export async function readSubtitleSet(creativeDir: string, lang: LocaleTag): Promise<{ set: SubtitleSet; hash: string; cuesHash: string } | null> {
   const f = await readRegularFile(subtitlePath(creativeDir, lang), SUBTITLE_LIMITS.fileBytes);
   if (f.kind !== 'file') return null;
   const set = parseSubtitleSet(f.data.toString('utf8'));
   // A file named for another language is not that language's set.
   if (!set || set.lang !== lang) return null;
-  return { set, hash: subtitleSetHash(set) };
+  return { set, hash: subtitleSetHash(set), cuesHash: subtitleCuesHash(set) };
 }
 
 /** Every valid set of the creative; a file that cannot be read as a set is skipped with a warning. */
@@ -71,13 +74,13 @@ export async function removeSubtitleSet(creativeDir: string, lang: LocaleTag): P
   await unlink(subtitlePath(creativeDir, lang)).catch((e: NodeJS.ErrnoException) => { if (e.code !== 'ENOENT') throw e; });
 }
 
-/** Every valid set's hash by language (`renderState`'s map): `{}` when the creative has none. */
+/** Every valid set's lines hash by language (`renderState`'s map, `subtitleCuesHash`): `{}` when the creative has none. */
 export async function subtitleHashes(creativeDir: string): Promise<Record<string, string>> {
   const names = await readdir(subtitlesDir(creativeDir)).catch(() => [] as string[]);
   const out: Record<string, string> = {};
   for (const name of names.filter((n) => n.endsWith('.json'))) {
     const r = await readSubtitleSet(creativeDir, name.slice(0, -'.json'.length) as LocaleTag);
-    if (r) out[r.set.lang] = r.hash;
+    if (r) out[r.set.lang] = r.cuesHash;
   }
   return out;
 }
@@ -101,7 +104,8 @@ export async function defaultSubtitleLang(creativeDir: string, brief: Pick<Brief
  * The set of `lang` as the runtime draws it (spec §6.1 "Versions"): inlined in the page's data (`CompositionData.subtitles`),
  * never a file the renderer reads. Its cues are clamped to the composition (`durationMs`): a cue starting at or after the end
  * is dropped, one running past it is cut there (its words too). Null when the composition draws no subtitles
- * (`drawsSubtitles`), when there is no language, or no valid set in it; `hash` is the set file's.
+ * (`drawsSubtitles`), when there is no language, or no valid set in it; `hash` is its lines' (`subtitleCuesHash`, final
+ * review M3), the one a render records.
  */
 export async function stageSubtitles(o: { creativeDir: string; composition: Composition; lang: LocaleTag | null; durationMs: number }):
   Promise<{ data: RuntimeSubtitles; hash: string; set: SubtitleSet } | null> {
@@ -115,7 +119,7 @@ export async function stageSubtitles(o: { creativeDir: string; composition: Comp
     const words = c.words?.filter((w) => w.start < end).map((w) => ({ start: w.start, end: Math.min(w.end, end), text: w.text }));
     cues.push({ start: c.start, end: Math.min(c.end, end), text: c.text, ...(words ? { words } : {}) });
   }
-  return { data: { lang: r.set.lang, cues }, hash: r.hash, set: r.set };
+  return { data: { lang: r.set.lang, cues }, hash: r.cuesHash, set: r.set };
 }
 
 /**

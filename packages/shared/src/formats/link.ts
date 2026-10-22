@@ -261,9 +261,12 @@ export function subtitlesCurrent(rec: { lang: string | null; hash: string | null
   return Object.keys(subtitleHashes).every((lang) => seen.has(lang));
 }
 
-/** The hash of each subtitle set of a creative by language (`renderState`'s map), from its detail's summaries. */
-export function subtitleHashesOf(sets: ReadonlyArray<{ lang: string; hash: string }> | undefined): Record<string, string> {
-  return Object.fromEntries((sets ?? []).map((s) => [s.lang, s.hash]));
+/**
+ * The hash of what each subtitle set of a creative draws, by language (`renderState`'s map), from its detail's summaries: the
+ * lines' hash (`cuesHash`, final review M3), the set's own from a core that does not send it.
+ */
+export function subtitleHashesOf(sets: ReadonlyArray<{ lang: string; hash: string; cuesHash?: string }> | undefined): Record<string, string> {
+  return Object.fromEntries((sets ?? []).map((s) => [s.lang, s.cuesHash ?? s.hash]));
 }
 
 /**

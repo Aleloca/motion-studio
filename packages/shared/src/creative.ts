@@ -611,7 +611,11 @@ export type CreativeListItem = ({ ok: true } & CreativeSummary) | { ok: false; s
  * check the timing"); `staleCues`: the cues of a translation whose source text changed since.
  */
 export interface SubtitlesSummary {
-  lang: LocaleTag; origin: 'speech' | 'translation'; sourceLang?: LocaleTag; cues: number; edited: number; hash: string;
+  lang: LocaleTag; origin: 'speech' | 'translation'; sourceLang?: LocaleTag; cues: number; edited: number;
+  /** The set file's hash (`subtitleSetHash`): what the editor's saves compare. */
+  hash: string;
+  /** The hash of what a render draws (`subtitleCuesHash`, final review M3): what render staleness compares. */
+  cuesHash?: string;
   timing: SubtitleSet['timing']; timingChanged: boolean; staleCues: number;
 }
 export interface CreativeDetail { slug: string; creative: CreativeFile; versions: VersionEntry[]; jobKey: string; formats?: FormatSummary[]; /** Phase 15: absent outside a group. */ variants?: VariantDetail;

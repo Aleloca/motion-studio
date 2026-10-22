@@ -602,6 +602,18 @@ describe('ExportDialog · the Sottotitoli section (Task 22)', () => {
     expect((api.exportPicksJob.mock.calls[0]![2] as unknown as { subtitles: object }).subtitles).toEqual({ soft: ['it'] });
   });
 
+  it('a set whose lines are unchanged (only its timing checked) keeps the render; one with corrected lines does not (final review M3)', () => {
+    const comp = { format: REEL, dir: `compositions/${REEL}`, hash: 'e'.repeat(64) };
+    const v7 = { ...ver(7, [{ ...out(REEL, 'mp4', 1920), sha256: 'f'.repeat(64), fromComposition: 'e'.repeat(64), subtitles: { lang: 'it', hash: 'a'.repeat(64) } }]), compositions: [comp] };
+    const snap = { versions: [v7], states: { [REEL]: state(REEL, { history: [7] }) } };
+    const withCues = (hash: string, cuesHash: string) => ({ ...(sub('it', hash) as object), cuesHash }) as never;
+    const { unmount } = openWith([withCues('d'.repeat(64), 'a'.repeat(64))], 'en', snap);
+    expect(screen.queryByText('Rendered first')).toBeNull();
+    unmount();
+    openWith([withCues('d'.repeat(64), 'c'.repeat(64))], 'en', snap);
+    expect(screen.getByText('Rendered first')).toBeTruthy();
+  });
+
   it('a ★ render that drew a set since corrected is rendered first (renderState with the creative\'s subtitle hashes)', () => {
     const comp = { format: REEL, dir: `compositions/${REEL}`, hash: 'e'.repeat(64) };
     const v7 = { ...ver(7, [{ ...out(REEL, 'mp4', 1920), sha256: 'f'.repeat(64), fromComposition: 'e'.repeat(64), subtitles: { lang: 'it', hash: 'a'.repeat(64) } }]), compositions: [comp] };

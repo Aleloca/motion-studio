@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  SUBTITLES_SCHEMA_ID, renderState, subtitleSetText, type Composition, type CreativeDetail, type FormatPreset, type JobSummary, type ManifestV2, type SubtitleSet,
+  SUBTITLES_SCHEMA_ID, renderState, subtitleCuesHash, subtitleHashesOf, subtitleSetText, type Composition, type CreativeDetail, type FormatPreset, type JobSummary, type ManifestV2, type SubtitleSet,
 } from '@motion-studio/shared';
 import { readCompositionFolder } from '../src/compositions/composition-files.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
@@ -59,7 +59,9 @@ describe('stageSubtitles', () => {
 
   it('staged cues are clamped to the composition: a cue past the 5 s duration is cut, one starting after it dropped', async () => {
     const s = set('it');
-    const hash = await writeSubtitleSet(dir, s);
+    await writeSubtitleSet(dir, s);
+    // The lines' hash, what a render records (final review M3).
+    const hash = subtitleCuesHash(s);
     const staged = await stageSubtitles({ creativeDir: dir, composition: composition({ track: true }), lang: 'it', durationMs: DURATION * 1000 });
     expect(staged).not.toBeNull();
     expect(staged!.hash).toBe(hash);
@@ -135,7 +137,8 @@ describe('a version render draws the subtitles', { timeout: 120_000 }, () => {
   it('records outputs[].subtitles = { lang, hash } (the follower too), writes the snapshot, and hands the staged set to the renderer', async () => {
     const { slug, dir, store } = await creative({ track: true, locales: { primary: 'it', extra: ['en'] } });
     const it = set('it');
-    const hash = await writeSubtitleSet(dir, it);
+    await writeSubtitleSet(dir, it);
+    const hash = subtitleCuesHash(it);
     await writeSubtitleSet(dir, set('en', { origin: 'translation', sourceLang: 'it' }));
     await done(await render(slug));
     const call = env.fake.renders.at(-1)!;
@@ -157,7 +160,8 @@ describe('a version render draws the subtitles', { timeout: 120_000 }, () => {
     const { slug, dir, store } = await creative({ track: true, locales: { primary: 'it', extra: [] } });
     await writeSubtitleSet(dir, set('it'));
     await done(await render(slug));
-    const changed = await writeSubtitleSet(dir, set('it', { cues: [{ id: 'c1', start: 0, end: 1000, text: 'Corretto', edited: true }] }));
+    await writeSubtitleSet(dir, set('it', { cues: [{ id: 'c1', start: 0, end: 1000, text: 'Corretto', edited: true }] }));
+    const changed = (await readSubtitleSet(dir, 'it'))!.cuesHash;
     const v = (await store.readVersions(slug))[0]!;
     expect(renderState(v, 'test-wide', { it: changed })).toBe('stale');
     expect(renderState(v, 'test-wide')).toBe('rendered');
@@ -167,6 +171,28 @@ describe('a version render draws the subtitles', { timeout: 120_000 }, () => {
     await done(await render(slug));
     expect(env.fake.renders.at(-1)!.subtitles?.cues).toEqual([{ start: 0, end: 1000, text: 'Corretto' }]);
     expect((await store.readVersions(slug))[0]!.outputs.find((x) => x.format === 'test-wide')!.subtitles).toEqual({ lang: 'it', hash: changed });
+  });
+
+  it('"Tempi controllati" and other changes outside the cues keep the render current; a cue edit makes it stale (final review M3)', async () => {
+    const { slug, dir, store } = await creative({ track: true, locales: { primary: 'it', extra: [] } });
+    const before = await writeSubtitleSet(dir, set('it'));
+    await done(await render(slug));
+    const starRender = async () => ((await env.app.inject({ url: `/api/projects/acme/creatives/${slug}`, headers: H })).json() as CreativeDetail).formats!.find((f) => f.id === 'test-wide')!.starRender;
+    // The timing record written again (as "Tempi controllati" does), the detected language and the origin: the file (and its
+    // hash, the one save conflicts use) changes, the lines drawn do not.
+    const checked = await writeSubtitleSet(dir, set('it', { timing: { version: 1, format: 'test-wide', fingerprint: 'b'.repeat(64) }, detected: 'en', transcript: 'whisper-large-v3-turbo' }));
+    expect(checked).not.toBe(before);
+    expect(await starRender()).toBe('rendered');
+    const detail = (await env.app.inject({ url: `/api/projects/acme/creatives/${slug}`, headers: H })).json() as CreativeDetail;
+    const v = (await store.readVersions(slug))[0]!;
+    expect(renderState(v, 'test-wide', subtitleHashesOf(detail.subtitles))).toBe('rendered');
+    // The summary keeps the set's own hash for the editor's saves.
+    expect(detail.subtitles![0]!.hash).toBe(checked);
+    // A line corrected: stale, here and in the web's map.
+    await writeSubtitleSet(dir, set('it', { cues: [{ id: 'c1', start: 0, end: 1200, text: 'Ciao corretto', edited: true }] }));
+    expect(await starRender()).toBe('stale');
+    const after = (await env.app.inject({ url: `/api/projects/acme/creatives/${slug}`, headers: H })).json() as CreativeDetail;
+    expect(renderState(v, 'test-wide', subtitleHashesOf(after.subtitles))).toBe('stale');
   });
 
   it('default pairing (U8): the brief\'s primary language when it has a set, else the set made from the speech', async () => {
@@ -201,7 +227,7 @@ describe('a render with the track but no set (review I1)', { timeout: 120_000 },
     await writeSubtitleSet(dir, set('it'));
     expect(await star()).toBe('stale');
     await done(await render(slug, { formats: ['test-wide'] }));
-    expect((await out()).subtitles).toEqual({ lang: 'it', hash: (await readSubtitleSet(dir, 'it'))!.hash });
+    expect((await out()).subtitles).toEqual({ lang: 'it', hash: (await readSubtitleSet(dir, 'it'))!.cuesHash });
     expect(await star()).toBe('rendered');
     // The set is removed: stale; rendered again without it: a marker, current; transcribed again: stale.
     await removeSubtitleSet(dir, 'it');
@@ -261,7 +287,7 @@ describe('a localized render', { timeout: 120_000 }, () => {
     await writeSubtitleSet(dir, set('de', { origin: 'translation', sourceLang: 'it' }));
     // The `de` set appeared: the render without it is no longer current.
     expect(await items()).toEqual({ current: 0, pending: ['de'] });
-    const { hash } = (await readSubtitleSet(dir, 'de'))!;
+    const { cuesHash: hash } = (await readSubtitleSet(dir, 'de'))!;
     await done(await render(slug, { formats: ['test-wide'], locales: ['de'] }));
     expect(env.fake.renders.at(-1)!.subtitles?.lang).toBe('de');
     expect((await row()).render!.subtitles).toEqual({ lang: 'de', hash });

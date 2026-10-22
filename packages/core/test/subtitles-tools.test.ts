@@ -453,7 +453,9 @@ describe('storyboards are keyed on the drawn set too (decision 1678)', { timeout
     (previews as unknown as { compositionServer: () => Promise<unknown> }).compositionServer = async () => ({ origin: 'http://127.0.0.1:1' });
     await creative({ track: true });
     await mkdir(join(ref.projectDir, '.studio', 'cache'), { recursive: true });
-    const setHash = await writeSubtitleSet(creativeDir(), SET(CUES));
+    await writeSubtitleSet(creativeDir(), SET(CUES));
+    // The lines' hash, as the render records it (final review M3).
+    const setHash = (await readSubtitleSet(creativeDir(), 'en'))!.cuesHash;
     const vref = { projectDir: ref.projectDir, creativeDir: creativeDir(), creativeSlug: ref.creativeSlug, n: 1 };
     const hash = (await store.readVersions(ref.creativeSlug))[0]!.compositions![0]!.hash;
     const sb = (await previews.makeStoryboard(vref, 'test-wide', hash))!;
@@ -463,7 +465,7 @@ describe('storyboards are keyed on the drawn set too (decision 1678)', { timeout
     await edit({ lang: 'en', replace: [{ find: 'motion studio', with: 'Motion Studio' }] });
     expect(await previews.readStoryboard(vref, 'test-wide', hash)).toBeNull();
     const again = (await previews.makeStoryboard(vref, 'test-wide', hash))!;
-    expect(again.subtitles).toBe((await readSubtitleSet(creativeDir(), 'en'))!.hash);
+    expect(again.subtitles).toBe((await readSubtitleSet(creativeDir(), 'en'))!.cuesHash);
     expect(storyboardKey(again)).not.toBe(storyboardKey(sb));
     // No track: no subtitles key, the image key is the composition hash's as before.
     expect(storyboardKey({ hash, subtitles: undefined })).toBe(hash.slice(0, 16));

@@ -74,6 +74,13 @@ export const subtitleSetText = (s: SubtitleSet): string => `${JSON.stringify(s, 
 
 export const subtitleSetHash = (s: SubtitleSet): string => sha256Hex(new TextEncoder().encode(subtitleSetText(s)));
 
+/**
+ * What a render draws of a set (final review M3): its language and its lines. Renders, storyboards and their staleness use
+ * this hash, so a change outside the lines (the timing record "Tempi controllati" writes, the detected language, the origin)
+ * keeps them current; the set's own hash (`subtitleSetHash`) stays the one save conflicts compare.
+ */
+export const subtitleCuesHash = (s: Pick<SubtitleSet, 'lang' | 'cues'>): string => sha256Hex(new TextEncoder().encode(JSON.stringify({ lang: s.lang, cues: s.cues })));
+
 export const subtitlesJobKey = (root: string, projectSlug: string, creativeSlug: string): string => `subtitles:${root}:${projectSlug}:${creativeSlug}`;
 
 /** ISO 639-2/T codes, for the language tag of a soft MP4 track. */

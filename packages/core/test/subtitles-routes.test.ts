@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  SUBTITLES_SCHEMA_ID, subtitleSetHash, toSrt, toVtt, type Composition, type ConversationEntry, type CreativeDetail, type JobSummary, type ServerMessage,
+  SUBTITLES_SCHEMA_ID, subtitleCuesHash, subtitleSetHash, toSrt, toVtt, type Composition, type ConversationEntry, type CreativeDetail, type JobSummary, type ServerMessage,
   type SubtitleCue, type SubtitleSet, type SubtitlesSummary,
 } from '@motion-studio/shared';
 import type { Transcriber } from '../src/analysis/video-analysis.ts';
@@ -160,7 +160,7 @@ describe('subtitles routes', () => {
 
     const overview = (await app.inject(`${P}/${slug}/subtitles`)).json() as { sets: SubtitlesSummary[] };
     const summary: SubtitlesSummary = {
-      lang: 'en', origin: 'speech', cues: 4, edited: 1, hash: subtitleSetHash(written), timing: written.timing, timingChanged: true, staleCues: 0,
+      lang: 'en', origin: 'speech', cues: 4, edited: 1, hash: subtitleSetHash(written), cuesHash: subtitleCuesHash(written), timing: written.timing, timingChanged: true, staleCues: 0,
     };
     expect(overview.sets).toEqual([summary]);
     expect((await detail(slug)).subtitles).toEqual([summary]);
@@ -285,7 +285,7 @@ describe('saving a subtitle set (PUT, decision 1654)', () => {
     expect(res.statusCode, res.body).toBe(200);
     const saved: SubtitleSet = { ...before.set, cues };
     expect(res.json()).toEqual({ hash: subtitleSetHash(saved) });
-    expect(await readSubtitleSet(before.creativeDir, 'en')).toEqual({ set: saved, hash: subtitleSetHash(saved) });
+    expect(await readSubtitleSet(before.creativeDir, 'en')).toEqual({ set: saved, hash: subtitleSetHash(saved), cuesHash: subtitleCuesHash(saved) });
     expect(touch).toHaveBeenCalledTimes(1);
     expect(touch).toHaveBeenCalledWith(expect.objectContaining({ projectSlug: 'acme', creativeSlug: slug }), t().subtitles.commit({ title: 'Lancio', lang: 'en' }));
     expect(broadcasts.filter((m) => m.type === 'subtitles')).toEqual([{ type: 'subtitles', project: 'acme', creative: slug, lang: 'en' }]);
@@ -392,7 +392,7 @@ describe('"Tempi controllati": the timing marked as checked (final review, M3)',
     expect(res.statusCode, res.body).toBe(200);
     const after: SubtitleSet = { ...before, timing: { version: 1, format: 'youtube-16x9', fingerprint: audioFingerprint(composition(1920, 1080, 6)) } };
     expect(res.json()).toEqual({ hash: subtitleSetHash(after), timing: after.timing });
-    expect(await readSubtitleSet(creativeDir, 'en')).toEqual({ set: after, hash: subtitleSetHash(after) });
+    expect(await readSubtitleSet(creativeDir, 'en')).toEqual({ set: after, hash: subtitleSetHash(after), cuesHash: subtitleCuesHash(after) });
     expect(((await app.inject(`${P}/${slug}/subtitles`)).json() as { sets: SubtitlesSummary[] }).sets[0]).toMatchObject({ timingChanged: false });
     expect(touch).toHaveBeenCalledTimes(1);
     expect(broadcasts.filter((m) => m.type === 'subtitles')).toEqual([{ type: 'subtitles', project: 'acme', creative: slug, lang: 'en' }]);
