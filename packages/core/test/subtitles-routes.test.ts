@@ -28,6 +28,7 @@ import { t } from '../src/i18n.ts';
 import { MemoryVault } from '../src/secrets/vault.ts';
 import { buildServer } from '../src/server/app.ts';
 import { audioFingerprint, readSubtitleSet, SubtitleCommits, subtitleSetLocks, writeSubtitleSet } from '../src/subtitles/store.ts';
+import { SUBTITLE_WAVEFORM_PEAKS } from '../src/server/subtitles-routes.ts';
 import { ControlledRunner, type ControlledRun } from './helpers/controlled-runner.ts';
 
 const P = '/api/projects/acme/creatives';
@@ -112,10 +113,10 @@ const made = async (): Promise<string> => {
   expect((await detail(slug)).versions.map((v) => v.status)).toEqual(['complete']);
   return slug;
 };
-/** A creative whose version 1 has a 3 s tone as its voice (the subtitles job has something to mix). */
+/** A creative whose version 1 has a 3 s tone as its voice (the subtitles job has something to mix), near full scale. */
 const madeWithVoice = async (): Promise<string> => {
   const tone = join(base, 'tone.wav');
-  const ff = await execCommand('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=f=440:d=3:r=48000', '-c:a', 'pcm_s16le', tone], { timeoutMs: 60_000 });
+  const ff = await execCommand('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=f=440:d=3:r=48000', '-af', 'volume=7', '-c:a', 'pcm_s16le', tone], { timeoutMs: 60_000 });
   expect(ff.code, ff.stderr).toBe(0);
   const slug = ((await app.inject({ method: 'POST', url: P, payload: { title: 'Lancio', brief, generate: true } })).json() as { slug: string }).slug;
   const run = await runOf(slug);
@@ -220,6 +221,40 @@ describe('subtitles routes', () => {
 
   it('an unknown creative answers 404', async () => {
     expect((await app.inject(`${P}/nope/subtitles`)).statusCode).toBe(404);
+  });
+});
+
+describe('the waveform of the subtitle timeline (Task 13)', () => {
+  it('the main format\'s mix as 1200 peaks over the video\'s duration, cached per audio fingerprint', { timeout: 60_000 }, async () => {
+    const slug = await madeWithVoice();
+    const mixer = vi.spyOn(subtitlesService, 'mixCreativeAudio');
+    const res = await app.inject(`${P}/${slug}/subtitles/waveform?version=1`);
+    expect(res.statusCode, res.body).toBe(200);
+    const body = res.json() as { peaks: number[]; durationMs: number };
+    expect(body.durationMs).toBe(6000);
+    expect(SUBTITLE_WAVEFORM_PEAKS).toBe(1200);
+    expect(body.peaks).toHaveLength(SUBTITLE_WAVEFORM_PEAKS);
+    // The tone plays for the first 3 s of 6: loud in the first half, silent in the second.
+    expect(Math.max(...body.peaks)).toBeGreaterThan(0.5);
+    expect(Math.max(...body.peaks.slice(700))).toBeLessThan(0.01);
+    expect(mixer).toHaveBeenCalledTimes(1);
+    const voiced = { ...composition(1920, 1080, 6), tracks: [{ id: 'a', kind: 'audio', clips: [{ id: 'vo', type: 'audio', src: 'assets/tone.wav', start: 0, duration: 3 }] }] } as unknown as Composition;
+    const cached = join(projectDir(), '.studio', 'cache', 'subtitles', slug, `wave-${audioFingerprint(voiced)}.json`);
+    expect(JSON.parse(await readFile(cached, 'utf8'))).toEqual(body);
+
+    // The second call reads the cache: no mix.
+    const again = await app.inject(`${P}/${slug}/subtitles/waveform?version=1`);
+    expect(again.json()).toEqual(body);
+    expect(mixer).toHaveBeenCalledTimes(1);
+  });
+
+  it('a version without audio has no peaks; an unknown version 404, a bad one 400', async () => {
+    const slug = await made();
+    const res = await app.inject(`${P}/${slug}/subtitles/waveform?version=1`);
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json()).toEqual({ peaks: [], durationMs: 6000 });
+    expect((await app.inject(`${P}/${slug}/subtitles/waveform?version=9`)).statusCode).toBe(404);
+    for (const q of ['', '?version=0', '?version=x']) expect((await app.inject(`${P}/${slug}/subtitles/waveform${q}`)).statusCode, q).toBe(400);
   });
 });
 

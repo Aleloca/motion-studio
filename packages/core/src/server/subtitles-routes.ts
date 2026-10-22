@@ -10,9 +10,12 @@ import { currentLocale, t } from '../i18n.ts';
 import { instanceComposition } from '../localization/store.ts';
 import { audioFingerprint, listSubtitleSets, readSubtitleSet, type SubtitleCommits, subtitleSetLocks, writeSubtitleSet } from '../subtitles/store.ts';
 import { subtitleSourceFormat, type SubtitlesService } from '../subtitles/subtitles-job.ts';
+
+export { SUBTITLE_WAVEFORM_PEAKS } from '../subtitles/subtitles-job.ts';
 import { CodedError, type WorkspaceStore } from '../workspace-store.ts';
 
 const startSchema = z.strictObject({ mode: z.enum(['new', 'retime']).optional(), lang: z.string().refine(isSupportedLocale, { message: 'not a supported language' }).optional() });
+const waveformQuery = z.object({ version: z.coerce.number().int().positive() });
 const choiceSchema = transcriptionChoiceSchema.omit({ file: true });
 /** The editor's save: the whole cue list, checked against the stored set's fields with `subtitleSetSchema`. */
 const saveSchema = z.strictObject({ baseHash: z.string().regex(/^[0-9a-f]{64}$/), cues: z.array(z.unknown()).max(SUBTITLE_LIMITS.cues) });
@@ -109,6 +112,11 @@ export function registerSubtitlesRoutes(app: FastifyInstance, ctx: {
     const pending = await ctx.subtitles.recheck(ref);
     if (!pending) throw new CodedError(409, t().errors.transcriptionNothingAsks, 'transcription-not-asked');
     return { job: activeJob(ref), pending };
+  });
+  // Task 13: the timeline's waveform of a version's main format (before `/:lang`, which would take `waveform` as a language).
+  app.get<PC & { Querystring: { version?: string } }>('/api/projects/:slug/creatives/:c/subtitles/waveform', async (req) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    return ctx.subtitles.waveform(ref, parse(waveformQuery, req.query).version);
   });
   app.get<PL>('/api/projects/:slug/creatives/:c/subtitles/:lang', async (req) => {
     const lang = langOf(req.params.lang);

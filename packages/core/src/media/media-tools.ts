@@ -34,6 +34,15 @@ export const NoMediaTools: MediaTools = {
 
 const STILL_CODECS = new Set(['png', 'mjpeg', 'webp', 'bmp', 'tiff']);
 
+/** The waveforms' decode (`MediaTools.decodePcm`) through `exec`: the first audio stream as mono s16le PCM at `sampleRate`. */
+export function decodePcmWith(exec: CommandExec): NonNullable<MediaTools['decodePcm']> {
+  return async (file, out, o) => {
+    if (isSvgName(file) || !isRegularFileNow(file)) return false;
+    const r = await execFfVia(exec, 'ffmpeg', ['-y', '-loglevel', 'error', ...mediaInput({ file }), '-vn', '-map', '0:a:0', '-t', String(Math.max(1, Math.round(o.maxSec))), waveformPcmFilter(o.sampleRate), '-f', 's16le', out], { timeoutMs: 120_000 });
+    return r.code === 0 && ((await stat(out).catch(() => null))?.size ?? 0) > 0;
+  };
+}
+
 export async function createFfmpegTools(exec: CommandExec = execCommand): Promise<MediaTools> {
   const check = await execFfVia(exec, 'ffprobe', ['-version'], { timeoutMs: 10_000 });
   if (check.code !== 0) return NoMediaTools;
@@ -91,11 +100,7 @@ export async function createFfmpegTools(exec: CommandExec = execCommand): Promis
         return null;
       }
     },
-    async decodePcm(file, out, o) {
-      if (isSvgName(file) || !isRegularFileNow(file)) return false;
-      const r = await execFfVia(exec, 'ffmpeg', ['-y', '-loglevel', 'error', ...mediaInput({ file }), '-vn', '-map', '0:a:0', '-t', String(Math.max(1, Math.round(o.maxSec))), waveformPcmFilter(o.sampleRate), '-f', 's16le', out], { timeoutMs: 120_000 });
-      return r.code === 0 && ((await stat(out).catch(() => null))?.size ?? 0) > 0;
-    },
+    decodePcm: decodePcmWith(exec),
     poster: (video, out, atSec = 0.5) => grab(video, out, atSec),
     frame: (video, out, atSec, opts) => grab(video, out, atSec, opts),
   };

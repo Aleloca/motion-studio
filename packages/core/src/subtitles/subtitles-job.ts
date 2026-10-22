@@ -1,6 +1,6 @@
-import { lstat, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import {
   alignToScript, buildCues, effectiveLinks, mergeKeepingEdited, SILENCE_NO_SPEECH, SUBTITLE_LIMITS, SUBTITLES_DIR, SUBTITLES_SCHEMA_ID, subtitleLangOf, subtitleSetSchema,
   subtitleSetText, subtitlesJobKey,
@@ -9,7 +9,7 @@ import {
 } from '@motion-studio/shared';
 import { extractWav, silenceRatio } from '../analysis/audio.ts';
 import { precheckLimitMs, untilAborted, type Transcriber } from '../analysis/video-analysis.ts';
-import { realDirChain } from '../creatives/core-files.ts';
+import { realDirChain, writeThroughTemp } from '../creatives/core-files.ts';
 import { CreativeStore } from '../creatives/creative-store.ts';
 import type { CreativeRef, CreativeTurnService } from '../creatives/creative-turns.ts';
 import { execCommand, type CommandExec } from '../exec.ts';
@@ -17,7 +17,8 @@ import { findPreset } from '../formats/format-catalog.ts';
 import { currentLocale, t } from '../i18n.ts';
 import { JobFailedError, type JobQueue } from '../jobs/job-queue.ts';
 import { instanceComposition, knownVoiceScripts, type InstanceComposition } from '../localization/store.ts';
-import type { MediaTools } from '../media/media-tools.ts';
+import { filePeaks } from '../library/asset-meta.ts';
+import { decodePcmWith, type MediaTools } from '../media/media-tools.ts';
 import { mixAudio, mixClips } from '../render/audio-mix.ts';
 import type { FfmpegInfo } from '../render/encode.ts';
 import { CodedError } from '../workspace-store.ts';
@@ -30,6 +31,11 @@ export const SUBTITLES_LANE = 'subtitles';
  * 0.2 s per second of audio: the job then fails saying so.
  */
 const PLAN_MAX_MS = 60_000;
+/** The peaks of the subtitle timeline's waveform (Task 13), and how long its mix may take. */
+export const SUBTITLE_WAVEFORM_PEAKS = 1200;
+const WAVE_MAX_MS = 300_000;
+/** The waveforms being made, by cache file: a second request waits for the first. */
+const waveInFlight = new Map<string, Promise<{ peaks: number[]; durationMs: number }>>();
 
 export interface SubtitlesDeps {
   queue: JobQueue;
@@ -258,6 +264,66 @@ export class SubtitlesService {
     }
   }
 
+  /**
+   * The audio mix of `version`'s `format` (the composition's audio clips, as the render mixes them) as `mix.wav` in
+   * `workDir`, its path; null without ffmpeg, without that composition, or when nothing could be mixed (no audio clip).
+   */
+  async mixCreativeAudio(ref: CreativeRef, version: VersionEntry, format: string, workDir: string, signal: AbortSignal): Promise<string | null> {
+    const ff = await this.deps.ffmpeg?.().catch(() => null);
+    if (!ff) return null;
+    const ic = await instanceComposition(new CreativeStore(ref.projectDir).dir(ref.creativeSlug), version, format, await this.deps.presets());
+    if (!ic) return null;
+    const outWav = join(workDir, 'mix.wav');
+    const mixed = await mixAudio({ ff, compDir: ic.compDir, clips: mixClips(ic.composition), durationSec: ic.composition.duration, outWav, workDir, signal });
+    return mixed ? outWav : null;
+  }
+
+  /**
+   * Task 13: the waveform of the subtitle timeline: `version`'s main format mixed, decoded at 4 kHz and cut into
+   * SUBTITLE_WAVEFORM_PEAKS peaks over the composition's duration (no audio: no peaks). Cached as
+   * `.studio/cache/subtitles/<creative>/wave-<audio fingerprint>.json`. 404 for an unknown version, 409
+   * `subtitles-no-video` when it has no video format.
+   */
+  async waveform(ref: CreativeRef, n: number): Promise<{ peaks: number[]; durationMs: number }> {
+    const store = new CreativeStore(ref.projectDir);
+    const version = (await store.readVersions(ref.creativeSlug)).find((v) => v.n === n);
+    if (!version) throw new CodedError(404, t().errors.notFound, 'version-not-found');
+    const presets = await this.deps.presets();
+    const format = subtitleSourceFormat(version, (await store.get(ref.creativeSlug)).brief, presets);
+    const ic = format ? await instanceComposition(store.dir(ref.creativeSlug), version, format, presets) : null;
+    if (!format || !ic) throw new CodedError(409, t().errors.subtitlesNoVideo, 'subtitles-no-video');
+    const durationMs = ms(ic.composition.duration);
+    const dir = await realDirChain(ref.projectDir, ['.studio', 'cache', 'subtitles', ref.creativeSlug]);
+    if (!dir) throw new CodedError(422, t().errors.waveformUnavailable, 'waveform-unavailable');
+    const cache = join(dir, `wave-${audioFingerprint(ic.composition)}.json`);
+    const pending = waveInFlight.get(cache);
+    if (pending) return pending;
+    const job = (async () => {
+      const hit = !(await lstat(cache).catch(() => null))?.isFile() ? null : await readFile(cache, 'utf8').then((s) => JSON.parse(s) as { peaks?: unknown; durationMs?: unknown }).catch(() => null);
+      if (hit && hit.durationMs === durationMs && Array.isArray(hit.peaks) && hit.peaks.length <= SUBTITLE_WAVEFORM_PEAKS && hit.peaks.every((p) => typeof p === 'number')) {
+        return { peaks: hit.peaks as number[], durationMs };
+      }
+      if (!(await this.deps.ffmpeg?.().catch(() => null))) throw new CodedError(409, t().errors.noFfmpegSubtitles, 'subtitles-no-ffmpeg');
+      const work = await mkdtemp(join(tmpdir(), 'ms-subtitles-wave-'));
+      try {
+        const mix = await this.mixCreativeAudio(ref, version, format, work, AbortSignal.timeout(WAVE_MAX_MS));
+        // No audio clip (or a mix that failed): no peaks, and nothing cached.
+        if (!mix) return { peaks: [], durationMs };
+        const got = await filePeaks(decodePcmWith(this.ff), mix, work, { buckets: SUBTITLE_WAVEFORM_PEAKS, maxSec: Math.ceil(ic.composition.duration) + 1 });
+        if (!got) throw new CodedError(422, t().errors.waveformUnavailable, 'waveform-unavailable');
+        // A very short mix has fewer samples than peaks: spread to the full count, so each peak is the same slice of time.
+        const peaks = got.length === SUBTITLE_WAVEFORM_PEAKS ? got : Array.from({ length: SUBTITLE_WAVEFORM_PEAKS }, (_, i) => got[Math.floor((i * got.length) / SUBTITLE_WAVEFORM_PEAKS)] ?? 0);
+        const out = { peaks, durationMs };
+        await writeThroughTemp(dir, basename(cache), async (temp) => { await writeFile(temp, JSON.stringify(out), { flag: 'wx' }); return true; }).catch(() => {});
+        return out;
+      } finally {
+        await rm(work, { recursive: true, force: true }).catch(() => {});
+      }
+    })();
+    waveInFlight.set(cache, job);
+    try { return await job; } finally { waveInFlight.delete(cache); }
+  }
+
   private asking(ref: CreativeRef): Active | null {
     const a = this.active.get(keyOf(ref));
     return a?.pending ? a : null;
@@ -350,17 +416,17 @@ export class SubtitlesService {
       if (!ff) throw new Error(t().errors.noFfmpegSubtitles);
       const duration = ic.composition.duration;
 
-      // The mix and its 16 kHz copy in the project's cache, removed after (a leftover of an earlier job is cleared first).
-      const cache = await realDirChain(ref.projectDir, ['.studio', 'cache', 'subtitles']);
+      // The mix and its 16 kHz copy in the project's cache, removed after (a leftover of an earlier job is cleared first). Their
+      // own `job` folder: the creative's cache folder also keeps the timeline's waveforms.
+      const cache = await realDirChain(ref.projectDir, ['.studio', 'cache', 'subtitles', ref.creativeSlug]);
       if (!cache) throw new Error('.studio/cache/subtitles is not a folder');
-      work = join(cache, ref.creativeSlug);
+      work = join(cache, 'job');
       await rm(work, { recursive: true, force: true });
       await mkdir(work);
-      const mix = join(work, 'mix.wav');
       const wav = join(work, 'audio.wav');
-      const mixed = await mixAudio({ ff, compDir: ic.compDir, clips: mixClips(ic.composition), durationSec: duration, outWav: mix, workDir: work, signal });
+      const mix = await this.mixCreativeAudio(ref, version, format, work, signal);
       if (signal.aborted) return 'cancelled';
-      let speech = mixed && await extractWav(this.ff, mix, wav, signal, duration);
+      let speech = mix !== null && await extractWav(this.ff, mix, wav, signal, duration);
       if (speech && (await silenceRatio(this.ff, wav, duration, signal)) >= SILENCE_NO_SPEECH) speech = false;
       if (signal.aborted) return 'cancelled';
       // "No speech" only when it is true: no audio, a silent mix, or an engine that heard nothing. A transcription that was not
