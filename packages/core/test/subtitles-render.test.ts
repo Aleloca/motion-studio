@@ -18,7 +18,8 @@ import { RenderJobService } from '../src/creatives/render-jobs.ts';
 import { JobQueue } from '../src/jobs/job-queue.ts';
 import { NoMediaTools } from '../src/media/media-tools.ts';
 import type { MediaNormalizer } from '../src/render/media-normalize.ts';
-import { readSubtitleSet, stageSubtitles, writeSubtitleSet } from '../src/subtitles/store.ts';
+import { resolveLocalizedItems } from '../src/creatives/export.ts';
+import { readSubtitleSet, removeSubtitleSet, stageSubtitles, writeSubtitleSet } from '../src/subtitles/store.ts';
 import { FONT } from './helpers/render-env.ts';
 import { H, PRESETS, UI_ORIGIN, startInstanceEnv, type InstanceEnv } from './helpers/instance-server.ts';
 
@@ -67,6 +68,13 @@ describe('stageSubtitles', () => {
       { start: 0, end: 1200, text: 'Ciao it', words: [{ start: 0, end: 500, text: 'Ciao' }, { start: 500, end: 1200, text: 'it' }] },
       { start: 4500, end: 5000, text: 'fine', words: [{ start: 4500, end: 4800, text: 'fi' }, { start: 4800, end: 5000, text: 'ne' }] },
     ] });
+  });
+
+  it('a set written with its keys out of order hashes the same on write and on read (review M1)', async () => {
+    const s = set('de', { origin: 'translation', sourceLang: 'it' });
+    expect(Object.keys(s).at(-1)).toBe('sourceLang');
+    const written = await writeSubtitleSet(dir, s);
+    expect((await readSubtitleSet(dir, 'de'))!.hash).toBe(written);
   });
 
   it('null without a visible subtitles track, without a language, or without that language\'s set', async () => {
@@ -180,6 +188,32 @@ describe('a version render draws the subtitles', { timeout: 120_000 }, () => {
   });
 });
 
+describe('a render with the track but no set (review I1)', { timeout: 120_000 }, () => {
+  it('records a marker and turns stale once a set appears; removing the set and rendering again, then transcribing again, the same', async () => {
+    const { slug, dir, store } = await creative({ track: true, locales: { primary: 'it', extra: [] } });
+    await done(await render(slug, { formats: ['test-wide'] }));
+    expect('subtitles' in env.fake.renders.at(-1)!).toBe(false);
+    const out = async () => (await store.readVersions(slug))[0]!.outputs.find((x) => x.format === 'test-wide')!;
+    expect((await out()).subtitles).toEqual({ lang: null, hash: null });
+    expect(manifestOf(dir).renders.find((x) => x.format === 'test-wide')!.subtitles).toEqual({ lang: null, hash: null });
+    const star = async () => ((await env.app.inject({ url: `/api/projects/acme/creatives/${slug}`, headers: H })).json() as CreativeDetail).formats!.find((f) => f.id === 'test-wide')!.starRender;
+    expect(await star()).toBe('rendered');
+    await writeSubtitleSet(dir, set('it'));
+    expect(await star()).toBe('stale');
+    await done(await render(slug, { formats: ['test-wide'] }));
+    expect((await out()).subtitles).toEqual({ lang: 'it', hash: (await readSubtitleSet(dir, 'it'))!.hash });
+    expect(await star()).toBe('rendered');
+    // The set is removed: stale; rendered again without it: a marker, current; transcribed again: stale.
+    await removeSubtitleSet(dir, 'it');
+    expect(await star()).toBe('stale');
+    await done(await render(slug, { formats: ['test-wide'] }));
+    expect((await out()).subtitles).toEqual({ lang: null, hash: null });
+    expect(await star()).toBe('rendered');
+    await writeSubtitleSet(dir, set('it'));
+    expect(await star()).toBe('stale');
+  });
+});
+
 describe('a localized render', { timeout: 120_000 }, () => {
   it('draws its own language\'s set when there is one, else none', async () => {
     const { slug, dir, store } = await creative({ track: true, locales: { primary: 'it', extra: ['de'] } });
@@ -189,8 +223,17 @@ describe('a localized render', { timeout: 120_000 }, () => {
     await done(await render(slug, { formats: ['test-wide'], locales: ['de'] }));
     expect('subtitles' in env.fake.renders.at(-1)!).toBe(false);
     const row = () => store.readVersions(slug).then((vs) => vs[0]!.localizations!.find((r) => r.locale === 'de')!);
-    expect((await row()).render!.subtitles).toBeUndefined();
+    // A marker: the track draws, but there was no `de` set (review I1).
+    expect((await row()).render!.subtitles).toEqual({ lang: 'de', hash: null });
+    const items = async () => {
+      const vs = await store.readVersions(slug);
+      const r = await resolveLocalizedItems(dir, vs, [{ format: 'test-wide', n: 1, file: 'test-wide.mp4', width: 320, height: 180 }], ['de']);
+      return { current: r.items.length, pending: [...r.pending.values()].flatMap((p) => p.locales) };
+    };
+    expect(await items()).toEqual({ current: 1, pending: [] });
     await writeSubtitleSet(dir, set('de', { origin: 'translation', sourceLang: 'it' }));
+    // The `de` set appeared: the render without it is no longer current.
+    expect(await items()).toEqual({ current: 0, pending: ['de'] });
     const { hash } = (await readSubtitleSet(dir, 'de'))!;
     await done(await render(slug, { formats: ['test-wide'], locales: ['de'] }));
     expect(env.fake.renders.at(-1)!.subtitles?.lang).toBe('de');
@@ -237,5 +280,21 @@ describe('pending subtitle commits', { timeout: 60_000 }, () => {
     await queue.whenIdle();
     expect(queue.list().find((j) => j.id === job.id)?.error).toBeUndefined();
     expect(log).toEqual([`flush ${slug}`, 'render']);
+  });
+
+  it('are not waited for by the render of a composition without the track (review M4)', async () => {
+    const { slug } = await creative({ locales: { primary: 'it', extra: [] } });
+    const log: string[] = [];
+    const queue = new JobQueue({ concurrency: 1, lanes: { render: 1 } });
+    const normalizer = { prepare: async () => ({ media: { dir: join(env.projectDir(), '.studio', 'cache', 'media'), clips: new Map() }, warnings: [], made: 0, cached: 0, release: () => {} }) } as unknown as MediaNormalizer;
+    const ref = { root: env.ws, projectSlug: 'acme', projectDir: env.projectDir(), creativeSlug: slug };
+    const svc = new RenderJobService({
+      queue, engine: env.fake.engine, media: NoMediaTools, normalizer, presets: async () => PRESETS as FormatPreset[], broadcast: () => {},
+      subtitleCommits: { flush: async () => { log.push('flush'); } },
+    });
+    const job = await svc.start(ref, 1, ['test-wide']);
+    await queue.whenIdle();
+    expect(queue.list().find((j) => j.id === job.id)?.state).toBe('succeeded');
+    expect(log).toEqual([]);
   });
 });

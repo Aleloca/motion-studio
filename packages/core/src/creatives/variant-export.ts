@@ -48,11 +48,12 @@ export interface GroupPlanItem {
  */
 export async function planGroupExport(svc: VariantGroupService, store: CreativeStore, ref: CreativeRef): Promise<GroupPlanItem[]> {
   const selection = await svc.groupSelection(ref);
-  const cache = new Map<string, { versions: VersionEntry[]; links: Record<string, string> } | null>();
+  const cache = new Map<string, { versions: VersionEntry[]; links: Record<string, string>; subtitles: Record<string, string> } | null>();
   const dataOf = async (slug: string) => {
     if (!cache.has(slug)) {
-      cache.set(slug, await Promise.all([store.get(slug), store.readVersions(slug)])
-        .then(([c, versions]) => ({ versions, links: effectiveLinks(c.brief.links, c.brief.formats) }), () => null));
+      // The member's subtitle sets' hashes (Task 18), read once per member: a render drawn with another set is not current.
+      cache.set(slug, await Promise.all([store.get(slug), store.readVersions(slug), subtitleHashes(store.dir(slug))])
+        .then(([c, versions, subtitles]) => ({ versions, links: effectiveLinks(c.brief.links, c.brief.formats), subtitles }), () => null));
     }
     return cache.get(slug)!;
   };
@@ -73,7 +74,7 @@ export async function planGroupExport(svc: VariantGroupService, store: CreativeS
       const usable = plainName(o.file) && (await probeConfinedFile(creativeDir, `outputs/v${s.version}/${o.file}`)) === true;
       // A composition's file is current only when its render is (the single export's `pendingRenders` rule): else it is
       // rendered first, exactly as a single creative's export does.
-      const state: GroupPlanState = composed ? (usable && renderState(v!, format, await subtitleHashes(creativeDir)) === 'rendered' ? 'ready' : 'needs-render') : usable ? 'ready' : 'missing';
+      const state: GroupPlanState = composed ? (usable && renderState(v!, format, d?.subtitles) === 'rendered' ? 'ready' : 'needs-render') : usable ? 'ready' : 'missing';
       out.push({ ...base, ...named, file: o.file, width: o.width, height: o.height, ...setOf(o), state, ...(comp ? { composed: true, hash: comp.hash } : {}) });
     } else if (comp) {
       out.push({ ...base, ...named, file: '', width: 0, height: 0, state: 'needs-render', composed: true, hash: comp.hash });

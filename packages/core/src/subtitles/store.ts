@@ -1,7 +1,7 @@
 import { lstat, mkdir, readdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  SUBTITLES_DIR, SUBTITLE_LIMITS, parseSubtitleSet, sha256Hex, subtitleSetHash, subtitleSetText, type Brief, type Composition, type LocaleTag, type SubtitleSet,
+  SUBTITLES_DIR, SUBTITLE_LIMITS, parseSubtitleSet, sha256Hex, subtitleSetHash, subtitleSetSchema, subtitleSetText, type Brief, type Composition, type LocaleTag, type SubtitleSet,
 } from '@motion-studio/shared';
 import type { RuntimeCue, RuntimeSubtitles } from '@motion-studio/composition-runtime/page';
 import { noteCoreChange } from '../core-changes.ts';
@@ -60,9 +60,11 @@ export async function writeSubtitleSet(creativeDir: string, set: SubtitleSet): P
     await mkdir(dir, { recursive: true });
     await noteCoreChange(creativeDir);
   }
+  // Through the schema first (review M1): its keys in the schema's order, so the hash written is the one every read gives.
+  const clean = subtitleSetSchema.parse(set);
   // `writeJsonFileAtomic` writes exactly `subtitleSetText` (2-space JSON, final newline), so the hash is the file's.
-  await writeJsonFileAtomic(subtitlePath(creativeDir, set.lang), set);
-  return subtitleSetHash(set);
+  await writeJsonFileAtomic(subtitlePath(creativeDir, clean.lang), clean);
+  return subtitleSetHash(clean);
 }
 
 export async function removeSubtitleSet(creativeDir: string, lang: LocaleTag): Promise<void> {

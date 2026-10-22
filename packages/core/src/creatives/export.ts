@@ -2,7 +2,7 @@ import { access, constants, lstat, mkdir, mkdtemp, open, realpath, rm, stat, wri
 import { tmpdir } from 'node:os';
 import { pipeline } from 'node:stream/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { DEFAULT_EXPORT_NAME_PATTERN, exportExtension, exportNameCollisions, exportNameVars, followerMatches, followerVersion, hasFormat, isDefaultProfile, localizedStem, profileApplies, profileFor, DEFAULT_EXPORT_QUALITY, recordedQuality, renderName, renderState, separateInstanceNames, starOf, toSrt, toVtt, type FormatPreset, type RenderProfile, type SubtitleSet, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_NAME_PATTERN, exportExtension, exportNameCollisions, exportNameVars, followerMatches, followerVersion, hasFormat, isDefaultProfile, localizedStem, profileApplies, profileFor, DEFAULT_EXPORT_QUALITY, recordedQuality, renderName, renderState, separateInstanceNames, subtitlesCurrent, starOf, toSrt, toVtt, type FormatPreset, type RenderProfile, type SubtitleSet, type VersionEntry } from '@motion-studio/shared';
 import { copyConfinedFile, probeConfinedFile } from '../brand/agent-guard.ts';
 import { findPreset } from '../formats/format-catalog.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
@@ -330,7 +330,7 @@ export async function resolveLocalizedItems(creativeDir: string, versions: Versi
       if (!v || !comp || !row) { missing.push({ format: it.format, n: it.n, locale }); continue; }
       const r = row.render;
       const current = r !== undefined && r.overlayHash === row.hash && r.fromComposition === comp.hash && plainName(r.file)
-        && (r.subtitles === undefined || (Object.hasOwn(subtitles, r.subtitles.lang) && subtitles[r.subtitles.lang] === r.subtitles.hash))
+        && subtitlesCurrent(r.subtitles, subtitles)
         && (await probeConfinedFile(creativeDir, `outputs/v${it.n}/${r.file}`)) === true && (!matches || await matches(it.n, r.file, r.sha256))
         && (!assetsOk || await assetsOk(it.n, row));
       if (!current) {

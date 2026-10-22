@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { outputFileInfoSchema, manifestV2Schema, renderState, versionEntrySchema, type VersionEntry } from '../src/index.ts';
+import { outputFileInfoSchema, manifestV2Schema, renderState, subtitlesCurrent, versionEntrySchema, type VersionEntry } from '../src/index.ts';
 
 const H1 = '1'.repeat(64);
 const S1 = 'a'.repeat(64);
 const S2 = 'b'.repeat(64);
 
-const version = (subtitles?: { lang: 'it' | 'en'; hash: string }): VersionEntry => ({
+const version = (subtitles?: { lang: 'it' | 'en' | null; hash: string | null }): VersionEntry => ({
   n: 1, commit: null, sessionId: null, status: 'complete', createdAt: '2026-10-22T10:00:00.000Z', request: 'r', problems: [], tools: [],
   renderCommand: null, basedOn: null,
   compositions: [{ format: 'reel', dir: 'compositions/reel', hash: H1 }],
@@ -37,6 +37,28 @@ describe('renderState with the subtitle sets (subtitles Task 18)', () => {
     const v = version({ lang: 'it', hash: S1 });
     v.compositions![0]!.hash = '2'.repeat(64);
     expect(renderState(v, 'reel', { it: S1 })).toBe('stale');
+  });
+
+  it('a marker (the track drew no set) is stale once a set appears for the language tried, or any set when none was (review I1)', () => {
+    const tried = version({ lang: 'it', hash: null });
+    expect(renderState(tried, 'reel')).toBe('rendered');
+    expect(renderState(tried, 'reel', {})).toBe('rendered');
+    expect(renderState(tried, 'reel', { en: S1 })).toBe('rendered');
+    expect(renderState(tried, 'reel', { it: S1 })).toBe('stale');
+    const none = version({ lang: null, hash: null });
+    expect(renderState(none, 'reel', {})).toBe('rendered');
+    expect(renderState(none, 'reel', { en: S1 })).toBe('stale');
+  });
+
+  it('subtitlesCurrent is the one rule (renderState and the localized export check)', () => {
+    expect(subtitlesCurrent(undefined, { it: S1 })).toBe(true);
+    expect(subtitlesCurrent({ lang: 'it', hash: S1 }, undefined)).toBe(true);
+    expect(subtitlesCurrent({ lang: 'it', hash: S1 }, { it: S1 })).toBe(true);
+    expect(subtitlesCurrent({ lang: 'it', hash: S1 }, { it: S2 })).toBe(false);
+    expect(subtitlesCurrent({ lang: 'it', hash: null }, { en: S2 })).toBe(true);
+    expect(subtitlesCurrent({ lang: null, hash: null }, { en: S2 })).toBe(false);
+    // A language name that is an Object.prototype key is never read from the prototype.
+    expect(subtitlesCurrent({ lang: 'it', hash: null }, Object.create({ it: S1 }) as Record<string, string>)).toBe(true);
   });
 
   it('the records keep the set a render was drawn with (outputs, the localized row\'s render, the manifest)', () => {

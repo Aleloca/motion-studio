@@ -232,8 +232,8 @@ export function sameDelivery(latest: VersionEntry, next: Pick<VersionEntry, 'out
 export type RenderState = 'none' | 'rendered' | 'stale';
 /**
  * `subtitleHashes` (subtitles Task 18): the hash of each subtitle set of the creative now, by language
- * (`CreativeDetail.subtitles`). With it, a v2 render that drew subtitles is also `stale` when its set's hash is not the one
- * there (changed or removed). Absent: the composition hash alone, as before.
+ * (`CreativeDetail.subtitles`). With it, a v2 render whose subtitles are no longer the creative's (`subtitlesCurrent`) is also
+ * `stale`. Absent: the composition hash alone, as before.
  */
 export function renderState(v: VersionEntry, formatId: string, subtitleHashes?: Readonly<Record<string, string>>): RenderState {
   const comp = v.compositions?.find((c) => c.format === formatId);
@@ -241,9 +241,20 @@ export function renderState(v: VersionEntry, formatId: string, subtitleHashes?: 
   if (!comp) return out ? 'rendered' : 'none';
   if (!out || out.sha256 === undefined) return 'none';
   if (out.fromComposition !== comp.hash) return 'stale';
-  if (!out.subtitles || !subtitleHashes) return 'rendered';
-  const now = Object.hasOwn(subtitleHashes, out.subtitles.lang) ? subtitleHashes[out.subtitles.lang] : undefined;
-  return now === out.subtitles.hash ? 'rendered' : 'stale';
+  return subtitlesCurrent(out.subtitles, subtitleHashes) ? 'rendered' : 'stale';
+}
+
+/**
+ * Whether a render's subtitles (`OutputFileInfo.subtitles`, a localized row's `render.subtitles`) are still the creative's
+ * (subtitles Task 18, review I1). A drawn set: its language's set still has that hash. A marker (`hash: null`, the composition
+ * draws subtitles but no set was found): no set has appeared in the language looked for, or, when none was (`lang: null`),
+ * no set at all. True without a record (nothing drawn) or without the map (`subtitleHashes`, the rule before Task 18).
+ */
+export function subtitlesCurrent(rec: { lang: string | null; hash: string | null } | undefined, subtitleHashes: Readonly<Record<string, string>> | undefined): boolean {
+  if (!rec || !subtitleHashes) return true;
+  const now = (lang: string) => (Object.hasOwn(subtitleHashes, lang) ? subtitleHashes[lang] : undefined);
+  if (rec.hash !== null) return rec.lang !== null && now(rec.lang) === rec.hash;
+  return rec.lang !== null ? now(rec.lang) === undefined : Object.keys(subtitleHashes).length === 0;
 }
 
 /** The hash of each subtitle set of a creative by language (`renderState`'s map), from its detail's summaries. */

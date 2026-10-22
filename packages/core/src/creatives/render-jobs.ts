@@ -32,7 +32,7 @@ import { sessionMediaOf, type MediaNormalizer } from '../render/media-normalize.
 import { activeLocaleRenders } from '../render/render-sweep.ts';
 import { storeComposition, storeRenderOptions } from '../store-pack/flatten.ts';
 import type { RenderCompositionOptions, RenderEngine, RenderResult } from '../render/renderer.ts';
-import { drawsSubtitles, stageDefaultSubtitles, subtitleHashes, writeSubtitleSnapshot, type SubtitleCommits } from '../subtitles/store.ts';
+import { defaultSubtitleLang, drawsSubtitles, stageSubtitles, subtitleHashes, writeSubtitleSnapshot, type SubtitleCommits } from '../subtitles/store.ts';
 import { CodedError } from '../workspace-store.ts';
 import { noteCoreOutputWrite } from './carry-over.ts';
 import { CreativeStore } from './creative-store.ts';
@@ -402,7 +402,6 @@ export class RenderJobService {
         const failures: string[] = [];
         const notes: string[] = [];
         const detail = (text: string) => { notes.push(text); this.deps.queue.patch(jobId, { notes: [...notes] }); };
-        await this.deps.subtitleCommits?.flush(ref);
         await mkdir(outDir, { recursive: true });
         try {
           for (const format of plan.primaries) {
@@ -481,7 +480,7 @@ export class RenderJobService {
       const result = await this.deps.engine!.render({
         ...this.deps.renderOptions,
         dir: creativeDir, versionDir: `outputs/v${n}`, composition, format: preset, out: join(o.outDir, file), signal, ...(sessionMediaOf(prepared) ? { media: sessionMediaOf(prepared)! } : {}),
-        ...(subtitles ? { subtitles: subtitles.data } : {}),
+        ...(subtitles?.data ? { subtitles: subtitles.data } : {}),
         quality: o.profile.quality, ...(o.profile.short !== undefined ? { short: o.profile.short } : {}),
         onProgress: (p) => o.progress({ format, phase: 'frames', done: p.frames, total: p.total }),
       });
@@ -555,8 +554,6 @@ export class RenderJobService {
       this.deps.queue.patch(jobId, { progress: p });
     };
     const failures: string[] = [];
-    // The user's last subtitle edits are committed before the sets are read (spec §6.1).
-    await this.deps.subtitleCommits?.flush(ref);
     try {
       for (const format of plan.primaries) {
         if (signal.aborted) throw new RenderError('cancelled', 'cancelled');
@@ -633,7 +630,7 @@ export class RenderJobService {
         dir: creativeDir, versionDir: `outputs/v${n}`, composition, format: preset, out: join(versionDir, file), signal, ...(sessionMediaOf(prepared) ? { media: sessionMediaOf(prepared)! } : {}),
         // Store screenshots are flattened, the App Store preview gets its audio track (Phase 12, spec §4.2).
         ...storeRenderOptions(format, composition),
-        ...(subtitles ? { subtitles: subtitles.data } : {}),
+        ...(subtitles?.data ? { subtitles: subtitles.data } : {}),
         // The version's own render is always at the default quality and the format's size (decision 974).
         quality: DEFAULT_EXPORT_QUALITY,
         onProgress: (p) => o.progress({ format, phase: 'frames', done: p.frames, total: p.total }),
@@ -990,7 +987,6 @@ export class RenderJobService {
           lastKey = key;
           this.deps.queue.patch(jobId, { progress: p });
         };
-        await this.deps.subtitleCommits?.flush(ref);
         try {
           for (const it of items) {
             if (signal.aborted) throw new RenderError('cancelled', 'cancelled');
@@ -1094,7 +1090,7 @@ export class RenderJobService {
           dir: root, versionDir: `outputs/v${n}`, composition: atFps, format: { ...preset, id: instanceId }, out: join(versionDir, file), signal,
           ...storeRenderOptions(instanceId, composition),
           ...(sessionMediaOf(prepared) ? { media: sessionMediaOf(prepared)! } : {}),
-          ...(subtitles ? { subtitles: subtitles.data } : {}),
+          ...(subtitles?.data ? { subtitles: subtitles.data } : {}),
           ...(progress ? { onProgress: (p: { frames: number; total: number }) => progress({ format: `${instanceId}.${tag}`, phase: 'frames', done: p.frames, total: p.total }) } : {}),
           beforeRename: (temp) => noteCoreOutputWrite(creativeDir, `outputs/v${n}/${file}`, temp),
         });
@@ -1158,18 +1154,23 @@ export class RenderJobService {
   }
 
   /**
-   * The subtitles a render of version `n` draws (subtitles Task 18, spec §6.1 "Versions", U8): nothing is read for a
-   * composition without a visible subtitles track (anti-goal 4). The language is the default pairing (`defaultSubtitleLang`:
-   * a localized render's own, else the brief's primary or the speech's); the set is staged clamped to the composition and,
-   * with `snapshot`, kept next to the output first (`writeSubtitleSnapshot`). Null: no subtitles.
+   * The subtitles a render of version `n` draws (subtitles Task 18, spec §6.1 "Versions", U8). For a composition without a
+   * visible subtitles track nothing is read, committed or recorded (null: anti-goal 4). Otherwise the user's pending subtitle
+   * commits are flushed first (review M4: only renders that draw subtitles wait for them), the language is the default pairing
+   * (`defaultSubtitleLang`: a localized render's own, else the brief's primary or the speech's) and the set is staged clamped to
+   * the composition and, with `snapshot`, kept next to the output first (`writeSubtitleSnapshot`). No set: `data` null and the
+   * record a marker (`hash: null`, the language looked for), so the render turns stale once a set appears (review I1).
    */
   private async subtitlesFor(ref: CreativeRef, n: number, composition: Composition, o: { snapshot: boolean; localized?: LocaleTag }):
-    Promise<{ data: NonNullable<RenderCompositionOptions['subtitles']>; record: RenderedSubtitles } | null> {
+    Promise<{ data: NonNullable<RenderCompositionOptions['subtitles']> | null; record: RenderedSubtitles } | null> {
     if (!drawsSubtitles(composition)) return null;
+    await this.deps.subtitleCommits?.flush(ref);
     const store = new CreativeStore(ref.projectDir);
     const creativeDir = store.dir(ref.creativeSlug);
-    const staged = await stageDefaultSubtitles(creativeDir, (await store.get(ref.creativeSlug)).brief, composition, o.localized);
-    if (!staged) return null;
+    // A localized render looks for its own language only (the marker names it when there is no set yet).
+    const lang = o.localized ?? await defaultSubtitleLang(creativeDir, (await store.get(ref.creativeSlug)).brief);
+    const staged = await stageSubtitles({ creativeDir, composition, lang, durationMs: Math.round(composition.duration * 1000) });
+    if (!staged) return { data: null, record: { lang, hash: null } };
     if (o.snapshot) await writeSubtitleSnapshot(creativeDir, n, staged.set, staged.hash);
     return { data: staged.data, record: { lang: staged.set.lang, hash: staged.hash } };
   }

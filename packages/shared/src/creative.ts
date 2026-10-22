@@ -182,8 +182,13 @@ export const outputIssueSchema = z.object({
 });
 export type OutputIssue = z.infer<typeof outputIssueSchema>;
 
-/** The subtitle set a render drew (subtitles Task 18): its language and the set file's hash. */
-export const renderedSubtitlesSchema = z.object({ lang: localeTag, hash: z.string().regex(HEX64) }).strict();
+/**
+ * The subtitle set a render drew (subtitles Task 18): its language and the set file's hash. A render whose composition draws
+ * subtitles but that found no set records a marker, `hash: null`, with the language it looked for (null: none, there was
+ * no default), so it turns stale once a set appears (`subtitlesCurrent`).
+ */
+export const renderedSubtitlesSchema = z.object({ lang: localeTag.nullable(), hash: z.string().regex(HEX64).nullable() }).strict()
+  .refine((r) => r.hash === null || r.lang !== null, 'a drawn set has a language');
 export type RenderedSubtitles = z.infer<typeof renderedSubtitlesSchema>;
 
 export const outputFileInfoSchema = z.object({
@@ -219,8 +224,9 @@ export const outputFileInfoSchema = z.object({
   render: renderInfoSchema.optional(),
   /**
    * Subtitles Task 18 (spec §6.1): the subtitle set this render drew (its language and the hash of the set file), whose
-   * snapshot is `outputs/vN/subtitles/<lang>.<hash first 12>.json`. The render is stale once the creative's set of that
-   * language has another hash (`renderState`). Absent: it drew no subtitles.
+   * snapshot is `outputs/vN/subtitles/<lang>.<hash first 12>.json`; a marker (`hash: null`) when its composition draws
+   * subtitles but no set was found. The render is stale once the creative's sets no longer match it (`renderState`).
+   * Absent: its composition draws no subtitles.
    */
   subtitles: renderedSubtitlesSchema.optional(),
 });
