@@ -31,3 +31,30 @@ describe('api · coded errors', () => {
     expect(JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string)).toEqual({ text: 'x', formats: ['reel'] });
   });
 });
+
+describe('api · subtitle languages (Task 26)', () => {
+  it('adds, retranslates and deletes a language; the waveform of a localized voice names it; a refusal carries `dropped`', async () => {
+    const { ApiError } = await import('../src/api.ts');
+    const fetchMock = vi.fn(async () => new Response('{"job":null}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await api.addSubtitleLanguage('acme', 'c1', 'it');
+    await api.retranslateSubtitles('acme', 'c1', 'en', { ids: ['c2'] });
+    await api.deleteSubtitleLanguage('acme', 'c1', 'en');
+    await api.subtitleWaveform('acme', 'c1', 3, 'de');
+    await api.subtitleWaveform('acme', 'c1', 3);
+    const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>;
+    expect(calls.map(([u, i]) => [i.method, u])).toEqual([
+      ['POST', '/api/projects/acme/creatives/c1/subtitles/languages'],
+      ['POST', '/api/projects/acme/creatives/c1/subtitles/en/retranslate'],
+      ['DELETE', '/api/projects/acme/creatives/c1/subtitles/en'],
+      ['GET', '/api/projects/acme/creatives/c1/subtitles/waveform?version=3&lang=de'],
+      ['GET', '/api/projects/acme/creatives/c1/subtitles/waveform?version=3'],
+    ]);
+    expect(JSON.parse(calls[0]![1].body as string)).toEqual({ lang: 'it' });
+    expect(JSON.parse(calls[1]![1].body as string)).toEqual({ ids: ['c2'] });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'niente', code: 'subtitles-nothing-stale', dropped: 2 }), { status: 409 })));
+    const err = await api.retranslateSubtitles('acme', 'c1', 'en', {}).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).toMatchObject({ status: 409, code: 'subtitles-nothing-stale', dropped: 2 });
+  });
+});

@@ -52,7 +52,7 @@ async function autoApprovable(ctx: BridgeRoutesContext, c: BridgeContext, toolNa
 async function sameConditions(ctx: BridgeRoutesContext, c: BridgeContext, input: Record<string, unknown>): Promise<boolean> {
   // A translation turn never gets anything approved by itself (Phase 12, fix I1), nor a directions turn (Phase 15).
   // Decision 1421: nor a brief session.
-  if (c.kind === 'localize' || c.kind === 'variant-directions' || c.kind === 'creative-group' || c.kind === 'brief' || c.kind === 'video-analysis') return false;
+  if (c.kind === 'localize' || c.kind === 'variant-directions' || c.kind === 'creative-group' || c.kind === 'brief' || c.kind === 'video-analysis' || c.kind === 'subtitles-translate') return false;
   if (c.sandboxed !== true || c.autoApproveAtStart !== true) return false;
   if (Object.hasOwn(input, 'dangerouslyDisableSandbox') && input.dangerouslyDisableSandbox !== false) return false;
   if (!ctx.settings) return false;
@@ -157,6 +157,8 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
       // Decision 1493: a video analysis reads its frames (allowed by its rules) and writes through its tool; nobody is there to
       // answer a card, so everything else (a read elsewhere, a question, a command) is refused without one.
       if (c.kind === 'video-analysis') return { behavior: 'deny', message: t().approvals.videoAnalysisReadOnly };
+      // Task 23: a subtitle translation only hands its lines over; nobody is there to answer a card.
+      if (c.kind === 'subtitles-translate') return { behavior: 'deny', message: t().approvals.subtitlesTranslateOnly };
       // A brand analysis of codebases (Phase 14, fix round 1) never runs commands nor searches file contents: Bash and Grep
       // are refused without a card, whatever the sandbox (they are also denied by the job's rules).
       if (c.kind === 'brand-analysis' && (c.codebases?.length ?? 0) > 0 && BRAND_CODEBASE_DENIED_TOOLS.includes(toolName)) return { behavior: 'deny', message: t().approvals.brandCodebaseToolDenied };

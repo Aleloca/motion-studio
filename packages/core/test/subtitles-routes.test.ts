@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  SUBTITLES_SCHEMA_ID, subtitleCuesHash, subtitleSetHash, toSrt, toVtt, type Composition, type ConversationEntry, type CreativeDetail, type JobSummary, type ServerMessage,
+  SUBTITLES_SCHEMA_ID, subtitleCuesHash, subtitleHashesOf, subtitlesCurrent, subtitleSetHash, toSrt, toVtt, type Composition, type ConversationEntry, type CreativeDetail, type JobSummary, type ServerMessage,
   type SubtitleCue, type SubtitleSet, type SubtitlesSummary,
 } from '@motion-studio/shared';
 import type { Transcriber } from '../src/analysis/video-analysis.ts';
@@ -29,6 +29,8 @@ import { MemoryVault } from '../src/secrets/vault.ts';
 import { buildServer } from '../src/server/app.ts';
 import { audioFingerprint, readSubtitleSet, SubtitleCommits, subtitleSetLocks, writeSubtitleSet } from '../src/subtitles/store.ts';
 import { SUBTITLE_WAVEFORM_PEAKS } from '../src/server/subtitles-routes.ts';
+import { emptyOverlay, setLocalizationRow, writeOverlay } from '../src/localization/store.ts';
+import type { SubtitleTranslateStart } from '../src/subtitles/translate-job.ts';
 import { ControlledRunner, type ControlledRun } from './helpers/controlled-runner.ts';
 
 const P = '/api/projects/acme/creatives';
@@ -41,6 +43,8 @@ let bridge: AgentBridge;
 /** Each start of a subtitles job: the versions saved at that moment and the options. */
 let starts: Array<{ versions: number[]; o: SubtitlesStart }>;
 let subtitlesService: SubtitlesService;
+/** Each start of a translation job (Task 25): the options. */
+let translateStarts: SubtitleTranslateStart[];
 let broadcasts: ServerMessage[];
 
 beforeEach(async () => {
@@ -49,6 +53,7 @@ beforeEach(async () => {
   bridge = new AgentBridge();
   bridge.setOrigin('http://127.0.0.1:9');
   starts = [];
+  translateStarts = [];
   broadcasts = [];
   const config = new AppConfigStore(join(base, 'config'));
   await config.setTranscription({ method: 'ask' });
@@ -65,6 +70,10 @@ beforeEach(async () => {
         starts.push({ versions: (await new CreativeStore(ref.projectDir).readVersions(ref.creativeSlug)).map((v) => v.n), o });
         return start(ref, o);
       };
+    },
+    onSubtitleTranslate: (svc) => {
+      const start = svc.start.bind(svc);
+      svc.start = async (ref, o) => { translateStarts.push(o); return start(ref, o); };
     },
   });
   await app.inject({ method: 'PUT', url: '/api/workspace', payload: { path: join(base, 'ws') } });
@@ -113,8 +122,11 @@ const made = async (): Promise<string> => {
   expect((await detail(slug)).versions.map((v) => v.status)).toEqual(['complete']);
   return slug;
 };
-/** A creative whose version 1 has a 3 s tone as its voice (the subtitles job has something to mix), near full scale. */
-const madeWithVoice = async (): Promise<string> => {
+/**
+ * A creative whose version 1 has a 3 s tone as its voice (the subtitles job has something to mix), near full scale; `role`: the
+ * clip is marked as a voice (a localization can replace it).
+ */
+const madeWithVoice = async (o: { role?: boolean } = {}): Promise<string> => {
   const tone = join(base, 'tone.wav');
   const ff = await execCommand('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=f=440:d=3:r=48000', '-af', 'volume=7', '-c:a', 'pcm_s16le', tone], { timeoutMs: 60_000 });
   expect(ff.code, ff.stderr).toBe(0);
@@ -124,7 +136,7 @@ const madeWithVoice = async (): Promise<string> => {
     const dir = join(run.req.cwd, f.compositionDir!);
     mkdirSync(join(dir, 'assets'), { recursive: true });
     copyFileSync(tone, join(dir, 'assets', 'tone.wav'));
-    const audio = { id: 'a', kind: 'audio', clips: [{ id: 'vo', type: 'audio', src: 'assets/tone.wav', start: 0, duration: 3 }] };
+    const audio = { id: 'a', kind: 'audio', clips: [{ id: 'vo', type: 'audio', src: 'assets/tone.wav', start: 0, duration: 3, ...(o.role ? { role: 'voice' } : {}) }] };
     writeFileSync(join(dir, 'composition.json'), JSON.stringify({ ...composition(f.width, f.height, 6), tracks: [audio] }));
   }
   run.finish({ write: false });
@@ -160,7 +172,7 @@ describe('subtitles routes', () => {
 
     const overview = (await app.inject(`${P}/${slug}/subtitles`)).json() as { sets: SubtitlesSummary[] };
     const summary: SubtitlesSummary = {
-      lang: 'en', origin: 'speech', cues: 4, edited: 1, hash: subtitleSetHash(written), cuesHash: subtitleCuesHash(written), timing: written.timing, timingChanged: true, staleCues: 0,
+      lang: 'en', origin: 'speech', cues: 4, edited: 1, hash: subtitleSetHash(written), cuesHash: subtitleCuesHash(written), timing: written.timing, timingChanged: true, staleCues: 0, missing: 0,
     };
     expect(overview.sets).toEqual([summary]);
     expect((await detail(slug)).subtitles).toEqual([summary]);
@@ -246,6 +258,15 @@ describe('the waveform of the subtitle timeline (Task 13)', () => {
     const again = await app.inject(`${P}/${slug}/subtitles/waveform?version=1`);
     expect(again.json()).toEqual(body);
     expect(mixer).toHaveBeenCalledTimes(1);
+  });
+
+  it('?lang= picks the audio of that language\'s set (Task 24); a language without a set is the original, an unsupported one 400', { timeout: 60_000 }, async () => {
+    const slug = await madeWithVoice();
+    const plain = await app.inject(`${P}/${slug}/subtitles/waveform?version=1`);
+    const de = await app.inject(`${P}/${slug}/subtitles/waveform?version=1&lang=de`);
+    expect(de.statusCode, de.body).toBe(200);
+    expect(de.json()).toEqual(plain.json());
+    expect((await app.inject(`${P}/${slug}/subtitles/waveform?version=1&lang=xx`)).statusCode).toBe(400);
   });
 
   it('two requests at once make one mix', { timeout: 60_000 }, async () => {
@@ -398,6 +419,18 @@ describe('"Tempi controllati": the timing marked as checked (final review, M3)',
     expect(broadcasts.filter((m) => m.type === 'subtitles')).toEqual([{ type: 'subtitles', project: 'acme', creative: slug, lang: 'en' }]);
   });
 
+  it('a set timed on its language\'s own video keeps saying so (Task 24)', async () => {
+    const slug = await made();
+    const creativeDir = join(projectDir(), 'creatives', slug);
+    // The German video has no row of its own any more: its audio is the original's, and the set stays the German video's.
+    const before: SubtitleSet = { ...set('0'.repeat(64)), lang: 'de', timing: { version: 1, format: 'youtube-16x9', fingerprint: '0'.repeat(64), locale: 'de' } };
+    const hash = await writeSubtitleSet(creativeDir, before);
+    const res = await checked(slug, { baseHash: hash }, 'de');
+    expect(res.statusCode, res.body).toBe(200);
+    expect((await readSubtitleSet(creativeDir, 'de'))!.set.timing).toEqual({ version: 1, format: 'youtube-16x9', fingerprint: audioFingerprint(composition(1920, 1080, 6)), locale: 'de' });
+    expect(((await app.inject(`${P}/${slug}/subtitles`)).json() as { sets: SubtitlesSummary[] }).sets[0]).toMatchObject({ lang: 'de', timingChanged: false });
+  });
+
   it('a stale baseHash gets 409 subtitles-conflict and changes nothing; a bad body 400, no set 404', async () => {
     const slug = await made();
     const creativeDir = join(projectDir(), 'creatives', slug);
@@ -504,5 +537,331 @@ describe('the start_subtitles tool (decision 1703)', () => {
     expect(coordinator.statusCode).toBe(403);
     expect(coordinator.json()).toEqual({ error: t().errors.toolUnavailable });
     expect((await call(register('creative'))).statusCode).toBe(403);
+  });
+});
+
+describe('subtitle languages (Task 25, spec §6.5, U8)', () => {
+  const ORIGINAL: SubtitleCue[] = [
+    { id: 'c1', start: 200, end: 1800, text: 'Ciao a tutti' },
+    { id: 'c2', start: 2000, end: 3500, text: 'Prenota in tre tocchi' },
+    { id: 'c3', start: 4000, end: 5500, text: 'Scarica l\'app' },
+  ];
+  const speech = (cues: SubtitleCue[] = ORIGINAL, fingerprint = '0'.repeat(64)): SubtitleSet => ({
+    $schema: SUBTITLES_SCHEMA_ID, lang: 'it', origin: 'speech', transcript: 'whisper-small', detected: 'it', timing: { version: 1, format: 'youtube-16x9', fingerprint }, cues,
+  });
+  const english = (cues: SubtitleCue[], fingerprint = '0'.repeat(64)): SubtitleSet => ({
+    $schema: SUBTITLES_SCHEMA_ID, lang: 'en', origin: 'translation', sourceLang: 'it', transcript: 'whisper-small', detected: null,
+    timing: { version: 1, format: 'youtube-16x9', fingerprint }, cues,
+  });
+  const translated = (texts: string[]) => english(ORIGINAL.map((c, i) => ({ id: c.id, start: c.start, end: c.end, text: texts[i]!, source: { text: c.text } })));
+  const add = (slug: string, body: unknown) => app.inject({ method: 'POST', url: `${P}/${slug}/subtitles/languages`, payload: body as object });
+  const retranslate = (slug: string, lang: string, body: unknown = {}) => app.inject({ method: 'POST', url: `${P}/${slug}/subtitles/${lang}/retranslate`, payload: body as object });
+  const remove = (slug: string, lang: string) => app.inject({ method: 'DELETE', url: `${P}/${slug}/subtitles/${lang}` });
+  const sets = async (slug: string) => ((await app.inject(`${P}/${slug}/subtitles`)).json() as { sets: SubtitlesSummary[] }).sets;
+  const dirOf = (slug: string) => join(projectDir(), 'creatives', slug);
+  /** A `de` row of v1's main format: its voice `voice`, with a German voice for the clip `vo`. */
+  const germanRow = async (slug: string, voice: 'translated' | 'original') => {
+    const store = new CreativeStore(projectDir());
+    const overlay = { ...emptyOverlay('de', 'youtube-16x9'), voices: { vo: { src: 'assets/audio/vo-de.wav', sourceScript: '', script: 'Hallo zusammen' } } };
+    const hash = await writeOverlay(store.dir(slug), 1, overlay);
+    await setLocalizationRow(store, slug, 1, { locale: 'de', instanceId: 'youtube-16x9', hash, origin: 'agent', stale: [], voice });
+  };
+
+  it('adding a language translates the original speech set; the brief is not touched (U8)', async () => {
+    const slug = await made();
+    await writeSubtitleSet(dirOf(slug), speech());
+    const before = (await detail(slug)).creative.brief;
+    const res = await add(slug, { lang: 'en' });
+    expect(res.statusCode, res.body).toBe(200);
+    expect((res.json() as { job: JobSummary }).job).toMatchObject({ kind: 'subtitles-translate' });
+    expect(translateStarts).toEqual([{ target: 'en' }]);
+    expect(starts).toEqual([]);
+    expect((await detail(slug)).creative.brief).toEqual(before);
+  });
+
+  it('a language that has a set answers 409 subtitles-lang-exists; without a speech set 409 subtitles-no-source; a bad language 400', async () => {
+    const slug = await made();
+    const none = await add(slug, { lang: 'en' });
+    expect(none.statusCode).toBe(409);
+    expect(none.json()).toMatchObject({ code: 'subtitles-no-source' });
+    await writeSubtitleSet(dirOf(slug), speech());
+    await writeSubtitleSet(dirOf(slug), translated(['Hi everyone', 'Book in three taps', 'Get the app']));
+    for (const lang of ['it', 'en']) {
+      const res = await add(slug, { lang });
+      expect(res.statusCode, lang).toBe(409);
+      expect(res.json()).toMatchObject({ code: 'subtitles-lang-exists' });
+    }
+    expect((await add(slug, { lang: 'xx' })).statusCode).toBe(400);
+    expect((await add(slug, {})).statusCode).toBe(400);
+    // The one asked before the sets existed, refused by the translation.
+    expect(translateStarts).toEqual([{ target: 'en' }]);
+  });
+
+  it('a language whose own translated voices are applied is made from its video\'s speech; with the original voice it is translated (Task 24)', { timeout: 60_000 }, async () => {
+    const slug = await madeWithVoice({ role: true });
+    await writeSubtitleSet(dirOf(slug), speech());
+    await germanRow(slug, 'translated');
+    const voiced = await add(slug, { lang: 'de' });
+    expect(voiced.statusCode, voiced.body).toBe(200);
+    expect((voiced.json() as { job: JobSummary }).job).toMatchObject({ kind: 'subtitles' });
+    expect(starts.map((s) => s.o)).toEqual([{ mode: 'new', lang: 'de' }]);
+    expect(translateStarts).toEqual([]);
+    await app.inject({ method: 'POST', url: `/api/jobs/${(voiced.json() as { job: JobSummary }).job.id}/stop` });
+    await waitIdle();
+
+    await germanRow(slug, 'original');
+    const original = await add(slug, { lang: 'de' });
+    expect(original.statusCode, original.body).toBe(200);
+    expect((original.json() as { job: JobSummary }).job).toMatchObject({ kind: 'subtitles-translate' });
+    expect(translateStarts).toEqual([{ target: 'de' }]);
+    expect(starts).toHaveLength(1);
+  });
+
+  it('the summary counts a translation\'s stale lines; a translation\'s timing is its source\'s, not the video\'s', async () => {
+    const slug = await made();
+    await writeSubtitleSet(dirOf(slug), speech());
+    await writeSubtitleSet(dirOf(slug), translated(['Hi everyone', 'Book in three taps', 'Get the app']));
+    // The video moved under both: only the source says so (the translation follows it).
+    expect((await sets(slug)).map((s) => [s.lang, s.staleCues, s.timingChanged])).toEqual([['en', 0, false], ['it', 0, true]]);
+    await writeSubtitleSet(dirOf(slug), speech(ORIGINAL.map((c) => (c.id === 'c1' ? { ...c, text: 'Ciao a voi', edited: true } : c))));
+    expect((await sets(slug)).find((s) => s.lang === 'en')).toMatchObject({ staleCues: 1, timingChanged: false });
+    // A translation not timed as its source is now (a safety signal).
+    await writeSubtitleSet(dirOf(slug), { ...translated(['Hi everyone', 'Book in three taps', 'Get the app']), timing: { version: 1, format: 'youtube-16x9', fingerprint: '1'.repeat(64) } });
+    expect((await sets(slug)).find((s) => s.lang === 'en')).toMatchObject({ timingChanged: true });
+  });
+
+  it('"Tempi controllati" of the source carries its timing to the translations (Task 25)', async () => {
+    const slug = await made();
+    const hash = await writeSubtitleSet(dirOf(slug), speech());
+    await writeSubtitleSet(dirOf(slug), translated(['Hi everyone', 'Book in three taps', 'Get the app']));
+    const res = await app.inject({ method: 'POST', url: `${P}/${slug}/subtitles/it/timing-checked`, payload: { baseHash: hash } });
+    expect(res.statusCode, res.body).toBe(200);
+    expect((await readSubtitleSet(dirOf(slug), 'en'))!.set.timing).toEqual((await readSubtitleSet(dirOf(slug), 'it'))!.set.timing);
+    expect((await sets(slug)).map((s) => [s.lang, s.timingChanged])).toEqual([['en', false], ['it', false]]);
+  });
+
+  it('retranslate without ids asks for the stale lines the user did not correct; with ids, those (corrected ones included)', async () => {
+    const slug = await made();
+    await writeSubtitleSet(dirOf(slug), speech(ORIGINAL.map((c) => (c.id === 'c3' ? c : { ...c, text: `${c.text}!`, edited: true }))));
+    const en = translated(['Hi everyone', 'Book in three taps', 'Get the app']);
+    // c2 was corrected by the user: stale too, but only translated again when asked for.
+    await writeSubtitleSet(dirOf(slug), { ...en, cues: en.cues.map((c) => (c.id === 'c2' ? { ...c, text: 'Book now', edited: true } : c)) });
+    const all = await retranslate(slug, 'en');
+    expect(all.statusCode, all.body).toBe(200);
+    expect((all.json() as { job: JobSummary }).job).toMatchObject({ kind: 'subtitles-translate' });
+    expect(translateStarts).toEqual([{ target: 'en', ids: ['c1'] }]);
+    await app.inject({ method: 'POST', url: `/api/jobs/${(all.json() as { job: JobSummary }).job.id}/stop` });
+    await waitIdle();
+
+    const listed = await retranslate(slug, 'en', { ids: ['c2'] });
+    expect(listed.statusCode, listed.body).toBe(200);
+    expect(translateStarts.at(-1)).toEqual({ target: 'en', ids: ['c2'] });
+  });
+
+  it('retranslate without ids also asks for the source lines no line stands for ("Manca la traduzione", final review I2)', async () => {
+    const slug = await made();
+    await writeSubtitleSet(dirOf(slug), speech());
+    await writeSubtitleSet(dirOf(slug), translated(['Hi everyone', 'Book in three taps', 'Get the app']));
+    await writeSubtitleSet(dirOf(slug), speech([...ORIGINAL, { id: 'c4', start: 6000, end: 7000, text: 'Nuova riga' }]));
+    expect((await sets(slug)).find((s) => s.lang === 'en')).toMatchObject({ staleCues: 0, missing: 1 });
+    const res = await retranslate(slug, 'en');
+    expect(res.statusCode, res.body).toBe(200);
+    expect(translateStarts).toEqual([{ target: 'en', ids: [], sourceIds: ['c4'] }]);
+    await app.inject({ method: 'POST', url: `/api/jobs/${(res.json() as { job: JobSummary }).job.id}/stop` });
+    await waitIdle();
+  });
+
+  it('retranslate without ids drops the uncorrected lines whose source line is gone (decision 1690), corrected ones stay', async () => {
+    const slug = await made();
+    await writeSubtitleSet(dirOf(slug), speech());
+    const en = translated(['Hi everyone', 'Book in three taps', 'Get the app']);
+    await writeSubtitleSet(dirOf(slug), { ...en, cues: [...en.cues, { id: 'c4', start: 6000, end: 6500, text: 'Mine', source: { text: 'Mio' }, edited: true }] });
+    // c3's source line is gone, c2's changed.
+    await writeSubtitleSet(dirOf(slug), speech([ORIGINAL[0]!, { ...ORIGINAL[1]!, text: 'Prenota ora' }]));
+    vi.spyOn(SubtitleCommits.prototype, 'touch');
+    broadcasts.length = 0;
+    const res = await retranslate(slug, 'en');
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json()).toMatchObject({ job: { kind: 'subtitles-translate' }, dropped: 1 });
+    expect(translateStarts).toEqual([{ target: 'en', ids: ['c2'] }]);
+    expect((await readSubtitleSet(dirOf(slug), 'en'))!.set.cues.map((c) => c.id)).toEqual(['c1', 'c2', 'c4']);
+    expect(broadcasts.filter((m) => m.type === 'subtitles')).toEqual([{ type: 'subtitles', project: 'acme', creative: slug, lang: 'en' }]);
+    await app.inject({ method: 'POST', url: `/api/jobs/${(res.json() as { job: JobSummary }).job.id}/stop` });
+    await waitIdle();
+
+    // Only gone lines: dropped, no job.
+    await writeSubtitleSet(dirOf(slug), speech([ORIGINAL[1]!]));
+    const only = await retranslate(slug, 'en');
+    expect(only.statusCode, only.body).toBe(200);
+    expect(only.json()).toEqual({ job: null, dropped: 1 });
+    expect((await readSubtitleSet(dirOf(slug), 'en'))!.set.cues.map((c) => c.id)).toEqual(['c2', 'c4']);
+  });
+
+  it('a translation not timed as its source loses nothing to Ritraduci; lines dropped before a refusal are still reported (review round 2)', async () => {
+    const slug = await made();
+    await writeSubtitleSet(dirOf(slug), speech());
+    // Timed on other audio than the source now (its lines could not follow a retime): c3 overlaps no source line, yet is kept.
+    const en = translated(['Hi everyone', 'Book in three taps', 'Get the app']);
+    await writeSubtitleSet(dirOf(slug), { ...en, timing: { ...en.timing, fingerprint: '1'.repeat(64) }, cues: en.cues.map((c) => (c.id === 'c3' ? { ...c, start: 8000, end: 9000 } : c)) });
+    const kept = await retranslate(slug, 'en');
+    expect(kept.statusCode, kept.body).toBe(200);
+    expect(kept.json()).not.toHaveProperty('dropped');
+    expect((await readSubtitleSet(dirOf(slug), 'en'))!.set.cues.map((c) => c.id)).toEqual(['c1', 'c2', 'c3']);
+    // Translated again whole from the source now (final review I2): the job, not this request, replaces its lines.
+    expect(translateStarts).toEqual([{ target: 'en' }]);
+
+    // Timed as its source, with a line gone and the translation of 'en' already running: dropped, then refused, said both.
+    await writeSubtitleSet(dirOf(slug), { ...translated(['Hi everyone', 'Book in three taps', 'Get the app']), cues: [...en.cues.slice(0, 2), { id: 'c9', start: 8000, end: 9000, text: 'Gone', source: { text: 'Sparita' } }] });
+    await writeSubtitleSet(dirOf(slug), speech(ORIGINAL.map((c) => (c.id === 'c1' ? { ...c, text: 'Ciao a voi' } : c)).slice(0, 2)));
+    const refused = await retranslate(slug, 'en');
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json()).toMatchObject({ code: 'subtitles-translating', dropped: 1 });
+    expect((await readSubtitleSet(dirOf(slug), 'en'))!.set.cues.map((c) => c.id)).toEqual(['c1', 'c2']);
+    await app.inject({ method: 'POST', url: `/api/jobs/${(kept.json() as { job: JobSummary }).job.id}/stop` });
+    await waitIdle();
+  });
+
+  it('"Ritraduci tutto" on a translation a shifted retime left behind translates every source line now, corrections kept (final review I2)', async () => {
+    const slug = await made();
+    // The source after a retime with a 3 s intro: its fresh lines renamed (f1…), the line the user corrected kept (c1).
+    const shifted: SubtitleCue[] = [
+      { id: 'f1', start: 0, end: 2500, text: 'Benvenuti' },
+      { id: 'c1', start: 3200, end: 4800, text: 'Ciao a voi', edited: true },
+      { id: 'f2', start: 5000, end: 6500, text: 'Prenota in tre tocchi' },
+      { id: 'f3', start: 7000, end: 8500, text: 'Scarica l\'app' },
+    ];
+    await writeSubtitleSet(dirOf(slug), speech(shifted, '2'.repeat(64)));
+    // The English could not follow: its old times and timing; its c2 corrected by the user.
+    const en = translated(['Hi everyone', 'Book in three taps', 'Get the app']);
+    await writeSubtitleSet(dirOf(slug), { ...en, cues: en.cues.map((c) => (c.id === 'c2' ? { ...c, text: 'Book now', edited: true as const } : c)) });
+    // "Ciao a voi" has no line standing for it.
+    expect((await sets(slug)).find((s) => s.lang === 'en')).toMatchObject({ timingChanged: true, missing: 1 });
+    const res = await retranslate(slug, 'en');
+    expect(res.statusCode, res.body).toBe(200);
+    expect(translateStarts).toEqual([{ target: 'en' }]);
+    await vi.waitFor(() => expect(runner.runs.some((r) => r.req.prompt.startsWith('Motion Studio: translate'))).toBe(true), { timeout: 10_000 });
+    const run = runner.runs.find((r) => r.req.prompt.startsWith('Motion Studio: translate'))!;
+    // From the source as it is now; the corrected line's source line is left to it.
+    expect(run.req.prompt).toContain('f1 | 00:00.000–00:02.500 | Benvenuti');
+    expect(run.req.prompt).toContain('c1 | 00:03.200–00:04.800 | Ciao a voi');
+    expect(run.req.prompt).toContain('f3 | 00:07.000–00:08.500 | Scarica l\'app');
+    expect(run.req.prompt).not.toContain('f2 | ');
+    const submitted = await tool(run, 'submit_subtitle_translation', { cues: [{ id: 'f1', text: 'Welcome' }, { id: 'c1', text: 'Hi you all' }, { id: 'f3', text: 'Get the app' }] });
+    expect(submitted.statusCode, submitted.body).toBe(200);
+    run.finish({ write: false });
+    await waitIdle();
+    const after = (await readSubtitleSet(dirOf(slug), 'en'))!.set;
+    expect(after.cues.map((c) => [c.id, c.start, c.end, c.text, c.edited ?? false])).toEqual([
+      ['f1', 0, 2500, 'Welcome', false], ['c1', 3200, 4800, 'Hi you all', false], ['c2', 5000, 6500, 'Book now', true], ['f3', 7000, 8500, 'Get the app', false],
+    ]);
+    expect(after.timing).toEqual((await readSubtitleSet(dirOf(slug), 'it'))!.set.timing);
+    expect((await sets(slug)).find((s) => s.lang === 'en')).toMatchObject({ timingChanged: false, staleCues: 0, missing: 0 });
+  });
+
+  it('"Tempi controllati" refuses a translation: it follows its source (review round 2)', async () => {
+    const slug = await made();
+    await writeSubtitleSet(dirOf(slug), speech());
+    const hash = await writeSubtitleSet(dirOf(slug), translated(['Hi everyone', 'Book in three taps', 'Get the app']));
+    const res = await app.inject({ method: 'POST', url: `${P}/${slug}/subtitles/en/timing-checked`, payload: { baseHash: hash } });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'subtitles-follows-source' });
+    expect((await readSubtitleSet(dirOf(slug), 'en'))!.hash).toBe(hash);
+  });
+
+  it('retranslate with nothing stale 409; of a speech set 409; no set 404; a bad body 400', async () => {
+    const slug = await made();
+    await writeSubtitleSet(dirOf(slug), speech());
+    expect((await retranslate(slug, 'en')).statusCode).toBe(404);
+    await writeSubtitleSet(dirOf(slug), translated(['Hi everyone', 'Book in three taps', 'Get the app']));
+    const fresh = await retranslate(slug, 'en');
+    expect(fresh.statusCode).toBe(409);
+    expect(fresh.json()).toEqual({ error: t().errors.subtitlesNothingStale({ lang: 'inglese' }), code: 'subtitles-nothing-stale' });
+    // The only stale line is one the user corrected: the message says so (they pick it to translate it again).
+    const en = (await readSubtitleSet(dirOf(slug), 'en'))!.set;
+    await writeSubtitleSet(dirOf(slug), { ...en, cues: en.cues.map((c) => (c.id === 'c1' ? { ...c, text: 'Hi all', edited: true } : c)) });
+    await writeSubtitleSet(dirOf(slug), speech(ORIGINAL.map((c) => (c.id === 'c1' ? { ...c, text: 'Ciao a voi' } : c))));
+    expect((await retranslate(slug, 'en')).json()).toEqual({ error: t().errors.subtitlesNothingStaleCorrected({ lang: 'inglese' }), code: 'subtitles-nothing-stale' });
+    const spoken = await retranslate(slug, 'it', { ids: ['c1'] });
+    expect(spoken.statusCode).toBe(409);
+    expect(spoken.json()).toMatchObject({ code: 'subtitles-lang-spoken' });
+    expect((await retranslate(slug, 'en', { ids: 'c1' })).statusCode).toBe(400);
+    expect((await retranslate(slug, 'en', { ids: [], other: 1 })).statusCode).toBe(400);
+    expect(translateStarts).toEqual([]);
+  });
+
+  it('deleting a translation or a localized voice\'s set removes it, commits, broadcasts and turns its renders stale; the original speech set 409', async () => {
+    const slug = await made();
+    await writeSubtitleSet(dirOf(slug), speech());
+    await writeSubtitleSet(dirOf(slug), translated(['Hi everyone', 'Book in three taps', 'Get the app']));
+    await writeSubtitleSet(dirOf(slug), { ...speech(), lang: 'de', detected: 'de', timing: { version: 1, format: 'youtube-16x9', fingerprint: '0'.repeat(64), locale: 'de' } });
+    const drawn = { lang: 'en', hash: (await readSubtitleSet(dirOf(slug), 'en'))!.cuesHash };
+    expect(subtitlesCurrent(drawn, subtitleHashesOf((await detail(slug)).subtitles))).toBe(true);
+    const touch = vi.spyOn(SubtitleCommits.prototype, 'touch');
+    broadcasts.length = 0;
+
+    const source = await remove(slug, 'it');
+    expect(source.statusCode).toBe(409);
+    expect(source.json()).toMatchObject({ code: 'subtitles-source-set', error: t().errors.subtitlesSourceSet });
+    expect(await readSubtitleSet(dirOf(slug), 'it')).not.toBeNull();
+
+    for (const lang of ['en', 'de'] as const) {
+      const res = await remove(slug, lang);
+      expect(res.statusCode, res.body).toBe(200);
+      expect(await readSubtitleSet(dirOf(slug), lang)).toBeNull();
+    }
+    expect(touch).toHaveBeenCalledWith(expect.objectContaining({ creativeSlug: slug }), t().subtitles.commitDeleted({ title: 'Lancio', lang: 'en' }));
+    expect(broadcasts.filter((m) => m.type === 'subtitles')).toEqual([
+      { type: 'subtitles', project: 'acme', creative: slug, lang: 'en' }, { type: 'subtitles', project: 'acme', creative: slug, lang: 'de' },
+    ]);
+    expect((await sets(slug)).map((s) => s.lang)).toEqual(['it']);
+    expect(subtitlesCurrent(drawn, subtitleHashesOf((await detail(slug)).subtitles))).toBe(false);
+    expect((await remove(slug, 'en')).statusCode).toBe(404);
+    expect((await remove(slug, 'xx')).statusCode).toBe(400);
+    // No translation comes from it any more (follow-up ruling): the original speech set can go too.
+    const gone = await remove(slug, 'it');
+    expect(gone.statusCode, gone.body).toBe(200);
+    expect(await sets(slug)).toEqual([]);
+  });
+
+  it('the add_subtitle_language tool adds a language from a creative turn; the brief stays as it is (U8); other jobs 403', async () => {
+    const slug = ((await app.inject({ method: 'POST', url: P, payload: { title: 'Lancio', brief, generate: true } })).json() as { slug: string }).slug;
+    const run = await runOf(slug);
+    await writeSubtitleSet(dirOf(slug), speech());
+    const before = (await detail(slug)).creative.brief;
+    const res = await tool(run, 'add_subtitle_language', { lang: 'en' });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json()).toEqual({ started: true, how: 'translation', when: 'now' });
+    expect(translateStarts).toEqual([{ target: 'en' }]);
+    expect((await detail(slug)).creative.brief).toEqual(before);
+    const again = await tool(run, 'add_subtitle_language', { lang: 'it' });
+    expect(again.statusCode).toBe(409);
+    expect((await tool(run, 'add_subtitle_language', { lang: 'xx' })).statusCode).toBe(400);
+    const token = bridge.register({
+      jobId: 'brief-1', kind: 'brief', projectSlug: 'acme', projectDir: projectDir(), creativeSlug: null, sandboxed: false, autoApproveAtStart: false,
+      emit: () => {}, signal: new AbortController().signal,
+    });
+    expect((await app.inject({ method: 'POST', url: '/api/bridge/add_subtitle_language', headers: { 'x-motion-studio-bridge': token }, payload: { lang: 'en' } })).statusCode).toBe(403);
+  });
+
+  it('the tool on a language with its own voices starts when the turn ends, on the version it saved; a refusal then is a chat line', async () => {
+    const slug = ((await app.inject({ method: 'POST', url: P, payload: { title: 'Lancio', brief, generate: true } })).json() as { slug: string }).slug;
+    const run = await runOf(slug);
+    const voiced = vi.spyOn(subtitlesService, 'localizedVoiceLang').mockImplementation(async (_ref, lang) => lang === 'de' || lang === 'fr');
+    const res = await tool(run, 'add_subtitle_language', { lang: 'de' });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json()).toEqual({ started: true, how: 'speech', when: 'after-turn' });
+    expect((await tool(run, 'add_subtitle_language', { lang: 'fr' })).json()).toEqual({ started: true, how: 'speech', when: 'after-turn' });
+    expect(starts).toEqual([]);
+    writeCompositions(run);
+    run.finish({ write: false });
+    // de starts on v1; fr then meets the running subtitles job: a chat line says why.
+    await vi.waitFor(() => expect(starts.map((x) => x.o)).toEqual([{ mode: 'new', lang: 'de' }, { mode: 'new', lang: 'fr' }]), { timeout: 20_000, interval: 20 });
+    expect(starts[0]!.versions).toEqual([1]);
+    const lines = async () => ((await app.inject(`${P}/${slug}/conversation`)).json() as ConversationEntry[])
+      .filter((e): e is Extract<ConversationEntry, { type: 'system' }> => e.type === 'system' && e.origin === 'agent').map((e) => e.text);
+    await vi.waitFor(async () => expect(await lines()).toContain(t().subtitles.notStarted({ reason: t().errors.subtitlesRunning })), { timeout: 20_000, interval: 20 });
+    expect(translateStarts).toEqual([]);
+    voiced.mockRestore();
+    await waitIdle();
   });
 });

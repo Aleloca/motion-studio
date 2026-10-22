@@ -80,6 +80,7 @@ import { videoAnalysisTools } from '../analysis/analysis-tool.ts';
 import { ANALYSIS_LANE, VideoAnalysisService } from '../analysis/video-analysis.ts';
 import { SubtitleCommits } from '../subtitles/store.ts';
 import { SUBTITLES_LANE, SubtitlesService } from '../subtitles/subtitles-job.ts';
+import { SubtitleTranslateService, subtitleTranslateTools } from '../subtitles/translate-job.ts';
 import { subtitlesTools } from '../subtitles/subtitles-tools.ts';
 import { registerSubtitlesRoutes } from './subtitles-routes.ts';
 import { registerAnalysisRoutes } from './analysis-routes.ts';
@@ -180,6 +181,8 @@ export interface ServerDeps {
   onVideoAnalyses?: (s: VideoAnalysisService) => void;
   /** Test seam: told the subtitles service once it exists (and the creative turns, for its style turn). */
   onSubtitles?: (s: SubtitlesService, turns: CreativeTurnService) => void;
+  /** Test seam: told the subtitle translation service once it exists (Task 23). */
+  onSubtitleTranslate?: (s: SubtitleTranslateService) => void;
   /** Spec §7: the folder of the bundled `whisper-cli` (and its VAD model); absent: none bundled. */
   whisperDir?: string;
   /** Network of the transcription providers and the Whisper model downloads (tests inject a fake fetch; default: the real one). */
@@ -268,7 +271,7 @@ export function errorReply(error: unknown, _req: FastifyRequest, reply: FastifyR
   const err = error as Error;
   if (err instanceof CodedError) {
     if (err.retryAfterSec !== undefined) reply.header('Retry-After', String(err.retryAfterSec));
-    return reply.status(err.status).send({ error: err.message, code: err.apiCode, ...(err.problems ? { problems: err.problems } : {}) });
+    return reply.status(err.status).send({ error: err.message, code: err.apiCode, ...(err.problems ? { problems: err.problems } : {}), ...(err.dropped ? { dropped: err.dropped } : {}) });
   }
   if (err instanceof WorkspaceError) return reply.status(err.status).send({ error: err.message });
   if (err instanceof JobConflictError) return reply.status(409).send({ error: err.message });
@@ -455,6 +458,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
   });
   deps.onSubtitles?.(subtitles, turns);
+  // Task 23 (spec §6.5): the translation of a creative's subtitles by a read-only agent run.
+  const subtitleTranslate = new SubtitleTranslateService({
+    queue, launcher, turns, commits: subtitleCommits, broadcast: (msg) => hub.broadcast(msg),
+    model: async () => (await requireWorkspace().readSettings()).model,
+  });
+  deps.onSubtitleTranslate?.(subtitleTranslate);
   // Task 14 (spec §6.7): a version that moves the audio under a subtitle set says so in the chat.
   turns.onVersionSaved((ref, n, jobId) => subtitles.versionSaved(ref, n, jobId));
 
@@ -917,13 +926,14 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       ...agentActions.tools(),
       ...briefs.tools(),
       ...videoAnalysisTools(),
-      ...subtitlesTools({ subtitles, turns, commits: subtitleCommits, broadcast: (m) => hub.broadcast(m) }),
+      ...subtitleTranslateTools(),
+      ...subtitlesTools({ subtitles, translate: subtitleTranslate, turns, commits: subtitleCommits, broadcast: (m) => hub.broadcast(m) }),
     },
   });
   registerBriefRoutes(app, { requireWorkspace, briefs, configDir });
   registerAnalysisRoutes(app, { requireWorkspace, analyses, media, git: deps.git });
   registerSubtitlesRoutes(app, {
-    requireWorkspace, subtitles, jobs: () => queue.list(), presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
+    requireWorkspace, subtitles, translate: subtitleTranslate, jobs: () => queue.list(), presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
     commits: subtitleCommits, broadcast: (msg) => hub.broadcast(msg),
   });
   registerTranscriptionRoutes(app, { transcription });

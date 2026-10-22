@@ -28,6 +28,12 @@ export function parseMs(text: string): number | null {
 /** The warnings of a row: the model's, and the placeholder text of a line made with "+ Riga" (it would end up in the files). */
 export type RowWarning = CueWarning | 'placeholder';
 
+/**
+ * Task 26: a translated line's source: `current` (the text it was translated from), `changed` (its source line says
+ * something else now: that text, "Ritraduci" offered) or `gone` (no source line under it any more: the text it came from).
+ */
+export interface CueSource { state: 'current' | 'changed' | 'gone'; text: string }
+
 /** The row's element, for the screen's scrolling and focus (cue ids are `[a-z0-9-]`: nothing to escape). */
 export const rowSelector = (id: string) => `[data-cue="${id}"]`;
 
@@ -41,23 +47,30 @@ export interface CueListProps {
   dispatch(op: EditorOp): void;
   /** A row was clicked (or its text focused): select it and show it. */
   onPick(cue: SubtitleCue): void;
+  /** Task 26, a translation: each translated line's source (greyed under its text), its language, and "Ritraduci". */
+  sources?: Map<string, CueSource>;
+  sourceLang?: LocaleTag | undefined;
+  retranslating?: boolean;
+  onRetranslate?(id: string): void;
 }
 
-export function CueList({ cues, lang, warnings, selected, now, dispatch, onPick }: CueListProps) {
+export function CueList({ cues, lang, warnings, selected, now, dispatch, onPick, sources, sourceLang, retranslating, onRetranslate }: CueListProps) {
   const t = useT();
   return (
     <ol className="ms-subs-list" aria-label={t.subtitles.listLabel}>
       {cues.map((cue, i) => (
         <CueRow key={cue.id} cue={cue} n={i + 1} last={i === cues.length - 1} lang={lang} selected={cue.id === selected} now={cue.id === now}
-          warnings={[...(warnings.get(cue.id) ?? []), ...(cue.text === NEW_CUE_TEXT ? ['placeholder' as const] : [])]} dispatch={dispatch} onPick={onPick} />
+          warnings={[...(warnings.get(cue.id) ?? []), ...(cue.text === NEW_CUE_TEXT ? ['placeholder' as const] : [])]} dispatch={dispatch} onPick={onPick}
+          source={sources?.get(cue.id)} sourceLang={sourceLang} retranslating={retranslating === true} onRetranslate={onRetranslate} />
       ))}
     </ol>
   );
 }
 
-function CueRow({ cue, n, last, lang, selected, now, warnings, dispatch, onPick }: {
+function CueRow({ cue, n, last, lang, selected, now, warnings, dispatch, onPick, source, sourceLang, retranslating, onRetranslate }: {
   cue: SubtitleCue; n: number; last: boolean; lang: LocaleTag; selected: boolean; now: boolean; warnings: RowWarning[];
   dispatch(op: EditorOp): void; onPick(cue: SubtitleCue): void;
+  source: CueSource | undefined; sourceLang: LocaleTag | undefined; retranslating: boolean; onRetranslate: ((id: string) => void) | undefined;
 }) {
   const t = useT();
   const s = t.subtitles;
@@ -116,6 +129,15 @@ function CueRow({ cue, n, last, lang, selected, now, warnings, dispatch, onPick 
         onChange={(e) => { setDraft(e.target.value); dispatch({ type: 'text', id: cue.id, text: e.target.value }); }}
         onFocus={() => { if (!selected) onPick(cue); }}
         onBlur={() => { setDraft(null); dispatch({ type: 'endTyping' }); }} />
+      {source ? <p className={cx('ms-subs-source', source.state !== 'current' && 'ms-stale')} aria-label={s.sourceText} lang={sourceLang}>{source.text}</p> : null}
+      {source && source.state !== 'current' ? (
+        <div className="ms-subs-chips ms-subs-stale">
+          <Chip icon="warn" className="ms-subs-warn" title={source.state === 'changed' ? s.staleHint : s.goneHint}>{source.state === 'changed' ? s.staleMark : s.goneMark}</Chip>
+          {source.state === 'changed' && onRetranslate ? (
+            <Button size="sm" variant="outline" disabled={retranslating} onClick={() => onRetranslate(cue.id)}><Icon name="refresh" size={12} />{s.retranslate}</Button>
+          ) : null}
+        </div>
+      ) : null}
       {warnings.length ? (
         <div className="ms-subs-chips">
           {warnings.map((w) => <Chip key={w} icon="warn" className="ms-subs-warn" title={hint(w)}>{s.warnings[w]}</Chip>)}

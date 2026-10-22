@@ -1,6 +1,6 @@
 import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import {
   alignToScript, buildCues, creativeJobKey, effectiveLinks, mergeKeepingEdited, SILENCE_NO_SPEECH, SUBTITLE_LIMITS, SUBTITLES_DIR, SUBTITLES_SCHEMA_ID, subtitleLangOf, subtitleSetSchema,
   subtitleSetText, subtitlesJobKey,
@@ -8,6 +8,7 @@ import {
   type JobWaitReason, type TimedWord, type TranscribeMethod, type TranscriptionChoice, type TranscriptionPending, type VersionEntry,
 } from '@motion-studio/shared';
 import { extractWav, silenceRatio } from '../analysis/audio.ts';
+import { copyConfinedFile } from '../brand/agent-guard.ts';
 import { precheckLimitMs, untilAborted, type Transcriber } from '../analysis/video-analysis.ts';
 import { realDirChain, writeThroughTemp } from '../creatives/core-files.ts';
 import { CreativeStore } from '../creatives/creative-store.ts';
@@ -17,13 +18,13 @@ import { execCommand, type CommandExec } from '../exec.ts';
 import { findPreset } from '../formats/format-catalog.ts';
 import { currentLocale, t } from '../i18n.ts';
 import { JobFailedError, type JobQueue } from '../jobs/job-queue.ts';
-import { instanceComposition, knownVoiceScripts, type InstanceComposition } from '../localization/store.ts';
+import { instanceComposition, knownVoiceScripts, localizedComposition, readOverlay, type InstanceComposition } from '../localization/store.ts';
 import { filePeaks } from '../library/asset-meta.ts';
 import { decodePcmWith, type MediaTools } from '../media/media-tools.ts';
-import { mixAudio, mixClips } from '../render/audio-mix.ts';
+import { mixAudio, mixClips, type MixClip } from '../render/audio-mix.ts';
 import type { FfmpegInfo } from '../render/encode.ts';
 import { CodedError } from '../workspace-store.ts';
-import { audioFingerprint, listSubtitleSets, readSubtitleSet, type SubtitleCommits, subtitlePath, subtitleSetLocks, writeSubtitleSet } from './store.ts';
+import { audioFingerprint, followSource, listSubtitleSets, readSubtitleSet, removeSubtitleSet, speechSourceSet, type SubtitleCommits, subtitlePath, subtitleSetLocks, writeSubtitleSet } from './store.ts';
 
 /** The queue lane of the subtitles jobs (decision 1640): one at a time, never in an agent turn's slot. */
 export const SUBTITLES_LANE = 'subtitles';
@@ -56,9 +57,11 @@ export interface SubtitlesDeps {
 }
 
 /**
- * `new`: transcribe and cut (the language `lang` when the user picked one, else the one heard). `retime` (Task 14, spec §6.7,
- * "Rifai i tempi"): the same flow on an existing set (`lang`, else the first one timed on other audio, else the first),
- * transcribed in the set's language; the merge keeps every edited cue's text and moves it onto the words heard now.
+ * `new`: transcribe and cut (the language `lang` when the user picked one, else the one heard); a `lang` whose localized
+ * video has its own voices (`localizedVoiceOf`, Task 24) is made from that video's audio. `retime` (Task 14, spec §6.7,
+ * "Rifai i tempi"): the same flow on an existing set (`lang`, else the first one timed on other audio, else the first), on
+ * the audio it was timed on (the original video, or its language's own), transcribed in the set's language; the merge keeps
+ * every edited cue's text and moves it onto the words heard now.
  */
 export interface SubtitlesStart { mode: 'new' | 'retime'; lang?: LocaleTag; drawn?: boolean }
 
@@ -79,8 +82,10 @@ export const SUBTITLES_STYLE_INSTRUCTION = 'Motion Studio: the subtitles the use
 /** A subtitles job queued or running: one per creative. */
 interface Active {
   ref: CreativeRef; jobId: string; o: SubtitlesStart; audioSec: number;
-  /** The composition the check before the choice listens to. */
-  ic: InstanceComposition;
+  /** The audio the check before the choice listens to. */
+  timing: SubtitleTiming;
+  /** A retime's: the language whose own localized video the set was timed on (`timing.locale`); absent: the original. */
+  audio?: LocaleTag;
   /** Why the job will not transcribe, found before it runs: the setting is "never", or the check ran out of time. */
   blocked: 'off' | 'timeout' | null;
   /** The user's transcription choice, or what the plan resolved to; null: what the settings resolve to when it runs. */
@@ -96,7 +101,7 @@ const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const ms = (sec: number) => Math.max(0, Math.round(sec * 1000));
 
 /** The language's name in the app language ("italiano"), its tag when unknown. */
-function languageName(tag: string): string {
+export function languageName(tag: string): string {
   try { return new Intl.DisplayNames([currentLocale()], { type: 'language' }).of(tag) ?? tag; } catch { return tag; }
 }
 
@@ -109,15 +114,105 @@ export function subtitleSourceFormat(version: VersionEntry, brief: Brief, preset
   return brief.formats.find((id) => !followers.has(id) && findPreset(presets, id)?.kind === 'video' && version.compositions?.some((c) => c.format === id)) ?? null;
 }
 
+/** The audio a subtitle set is timed on (`subtitleTimingOf`). */
+export interface SubtitleTiming {
+  format: string;
+  /** The main format's composition; for a language's own video (`locale`), its localized one (the folder stays the original's). */
+  ic: InstanceComposition;
+  fingerprint: string;
+  /** Task 24: the language whose localized video this is; absent: the original video. */
+  locale?: LocaleTag;
+  /** The localized voices the mix takes from the project (`voiceRootsOf`): the composition folder does not have them. */
+  projectFiles: string[];
+}
+
+/**
+ * Task 24: the localized video of `locale` for `ic` (the main format of `version`): its composition (`localizedComposition`,
+ * the row's voice choice applied) and the voice files it takes from the project. `voiced`: the row translates the voices and
+ * at least one is applied. Null when the language has no row on that format, or its overlay is not the row's or no longer applies.
+ */
+async function localizedAudioOf(creativeDir: string, version: VersionEntry, ic: InstanceComposition, locale: LocaleTag): Promise<{ composition: InstanceComposition['composition']; projectFiles: string[]; voiced: boolean } | null> {
+  try {
+    const row = version.localizations?.find((r) => r.locale === locale && r.instanceId === ic.entry.format);
+    const read = row ? await readOverlay(creativeDir, version.n, locale, row.instanceId) : null;
+    if (!row || !read || read.hash !== row.hash) return null;
+    const composition = localizedComposition(ic.composition, read.overlay, row);
+    if (!composition) return null;
+    const applied = row.voice === 'translated' ? Object.entries(read.overlay.voices).filter(([id]) => !row.stale.includes(id)).map(([, v]) => v.src) : [];
+    // As the localized render (and the checks): a path the composition folder has wins over the project's.
+    const have = new Set(ic.folder.files.map((f) => f.path));
+    return { composition, projectFiles: [...new Set(applied.filter((p) => !have.has(p)))], voiced: applied.length > 0 };
+  } catch (err) {
+    console.warn(`Motion Studio: the ${locale} localized audio of v${version.n} could not be read: ${errText(err)}`);
+    return null;
+  }
+}
+
 /**
  * The audio the subtitles of `version` are timed on: its main format (`subtitleSourceFormat`), that composition and the
- * fingerprint of its audio; null when there is no such format or its composition cannot be read. The one derivation of the
- * job, the chat notice and the routes' `timingChanged`, so they never disagree (Task 14, review round 1).
+ * fingerprint of its audio; null when there is no such format or its composition cannot be read. With `locale` (a set timed
+ * on that language's own video, Task 24): that language's localized composition, as the row has it now; the original when
+ * the language has no row there. The one derivation of the job, the chat notice and the routes' `timingChanged`, so they
+ * never disagree (Task 14, review round 1).
  */
-export async function subtitleTimingOf(creativeDir: string, version: VersionEntry, brief: Brief, presets: readonly FormatPreset[]): Promise<{ format: string; ic: InstanceComposition; fingerprint: string } | null> {
+export async function subtitleTimingOf(creativeDir: string, version: VersionEntry, brief: Brief, presets: readonly FormatPreset[], locale?: LocaleTag): Promise<SubtitleTiming | null> {
   const format = subtitleSourceFormat(version, brief, presets);
   const ic = format ? await instanceComposition(creativeDir, version, format, presets).catch(() => null) : null;
-  return format && ic ? { format, ic, fingerprint: audioFingerprint(ic.composition) } : null;
+  if (!format || !ic) return null;
+  const own = locale ? await localizedAudioOf(creativeDir, version, ic, locale) : null;
+  if (own) return { format, ic: { ...ic, composition: own.composition }, fingerprint: audioFingerprint(own.composition), locale, projectFiles: own.projectFiles };
+  return { format, ic, fingerprint: audioFingerprint(ic.composition), projectFiles: [] };
+}
+
+/**
+ * Task 24 (spec §6.5): whether `lang`'s localized video of `version`'s main format has its own voices (its row translates them
+ * and at least one is applied): its subtitles are then made from that audio, not translated.
+ */
+export async function localizedVoiceOf(creativeDir: string, version: VersionEntry, brief: Brief, presets: readonly FormatPreset[], lang: LocaleTag): Promise<boolean> {
+  const format = subtitleSourceFormat(version, brief, presets);
+  const ic = format ? await instanceComposition(creativeDir, version, format, presets).catch(() => null) : null;
+  return ic ? (await localizedAudioOf(creativeDir, version, ic, lang))?.voiced === true : false;
+}
+
+/**
+ * Final review I3 and Minor 4: why a set in `lang` may not be made from speech heard on `audio` (a language's own localized
+ * video, or the original: undefined), or null. 409 `subtitles-lang-translated`: the language's set is a translation (the user
+ * deletes it first); `subtitles-voice-gone`: its set was made from that language's own voice, which its video no longer has
+ * (only a translation fits it now); `subtitles-other-speech`: the original video's speech already has a set in another
+ * language that translations come from (one set from it: those go first). With none, that set is replaced (`replacedSpeechSet`).
+ */
+/**
+ * Follow-up ruling of the final review: the original video's speech set in another language than `lang`, which a set made from
+ * the original audio (`audio` undefined) in `lang` replaces (its corrected lines kept, its file gone); undefined when none.
+ */
+export function replacedSpeechSet(sets: readonly SubtitleSet[], lang: LocaleTag, audio: LocaleTag | undefined): SubtitleSet | undefined {
+  return audio === undefined ? sets.find((s) => s.origin === 'speech' && s.timing.locale === undefined && s.lang !== lang) : undefined;
+}
+
+export function speechSetRefusal(sets: readonly SubtitleSet[], lang: LocaleTag, audio: LocaleTag | undefined): CodedError | null {
+  const name = languageName(lang);
+  const existing = sets.find((s) => s.lang === lang);
+  if (existing?.origin === 'translation') return new CodedError(409, t().errors.subtitlesLangTranslated({ lang: name }), 'subtitles-lang-translated');
+  if (audio === undefined && existing?.timing.locale !== undefined) return new CodedError(409, t().errors.subtitlesVoiceGone({ lang: name }), 'subtitles-voice-gone');
+  const other = replacedSpeechSet(sets, lang, audio);
+  if (other && sets.some((s) => s.origin === 'translation' && s.sourceLang === other.lang)) return new CodedError(409, t().errors.subtitlesOtherSpeech({ lang: name, other: languageName(other.lang) }), 'subtitles-other-speech');
+  return null;
+}
+
+/**
+ * The folder the mix reads `t`'s audio from: the composition folder, or, when localized voices live in the project, a private
+ * copy in `workDir` of every file the mix plays, each from where the localized render takes it.
+ */
+async function mixFolder(projectDir: string, t: SubtitleTiming, clips: readonly MixClip[], workDir: string): Promise<string> {
+  if (t.projectFiles.length === 0) return t.ic.compDir;
+  const root = join(workDir, 'sources');
+  const fromProject = new Set(t.projectFiles);
+  for (const src of new Set(clips.map((c) => c.src))) {
+    const to = join(root, ...src.split('/'));
+    await mkdir(dirname(to), { recursive: true });
+    await copyConfinedFile(fromProject.has(src) ? projectDir : t.ic.compDir, src, to);
+  }
+  return root;
 }
 
 /** The scripts written without spaces between words (Korean has spaces: its words stay whole, decision 1701). */
@@ -296,25 +391,47 @@ export class SubtitlesService {
     const running = () => new CodedError(409, t().errors.subtitlesRunning, 'subtitles-running');
     if (this.active.has(key) || this.jobActive(key)) throw running();
     const store = new CreativeStore(ref.projectDir);
+    const dir = store.dir(ref.creativeSlug);
     const creative = await store.get(ref.creativeSlug);
     const latest = (await store.readVersions(ref.creativeSlug)).at(-1);
     const presets = await this.deps.presets();
-    const timing = latest ? await subtitleTimingOf(store.dir(ref.creativeSlug), latest, creative.brief, presets) : null;
+    const timingOf = async (locale?: LocaleTag) => (latest ? subtitleTimingOf(dir, latest, creative.brief, presets, locale) : null);
+    let timing = await timingOf();
     if (!timing) throw new CodedError(409, t().errors.subtitlesNoVideo, 'subtitles-no-video');
-    const { ic } = timing;
+    let audio: LocaleTag | undefined;
     if (o.mode === 'retime') {
       // Decision 1714: a retime redoes one set in its own language (the transcriber is told it, so the heard words land in
-      // that set): the one asked for, else the first one timed on other audio than the latest version's, else the first.
-      const sets = (await listSubtitleSets(store.dir(ref.creativeSlug))).filter((s) => s.origin === 'speech');
-      const set = o.lang ? sets.find((s) => s.lang === o.lang) : sets.find((s) => s.timing.fingerprint !== timing.fingerprint) ?? sets[0];
+      // that set): the one asked for, else the first one timed on other audio than the latest version's (each set against
+      // the video it was timed on, Task 24), else the first.
+      const sets = (await listSubtitleSets(dir)).filter((s) => s.origin === 'speech');
+      let set: SubtitleSet | undefined;
+      if (o.lang) set = sets.find((s) => s.lang === o.lang);
+      else {
+        for (const s of sets) if ((await timingOf(s.timing.locale))?.fingerprint !== s.timing.fingerprint) { set = s; break; }
+        set ??= sets[0];
+      }
       if (!set) throw new CodedError(409, t().errors.subtitlesNoSet, 'subtitles-no-set');
       o = { ...o, lang: set.lang };
+      audio = set.timing.locale;
+      // A language's own voice its video no longer has (Minor 4): never its original audio under its name.
+      if (audio && !(latest && await localizedVoiceOf(dir, latest, creative.brief, presets, audio))) {
+        throw new CodedError(409, t().errors.subtitlesVoiceGone({ lang: languageName(audio) }), 'subtitles-voice-gone');
+      }
+    } else {
+      if (o.lang && latest && await localizedVoiceOf(dir, latest, creative.brief, presets, o.lang)) audio = o.lang;
+      // One set from the original video's speech (final review I3); a language picked is checked now, one recognised when the
+      // job knows it (`run`).
+      const refusal = o.lang ? speechSetRefusal(await listSubtitleSets(dir), o.lang, audio) : null;
+      if (refusal) throw refusal;
     }
+    // The audio the check before the choice listens to (the job itself looks again when it runs).
+    if (audio) timing = (await timingOf(audio)) ?? timing;
+    const { ic } = timing;
     if (!(await this.deps.ffmpeg?.().catch(() => null))) throw new CodedError(409, t().errors.noFfmpegSubtitles, 'subtitles-no-ffmpeg');
     const tr = this.deps.transcriber;
     await this.assertTranscriptionOn();
     if (this.active.has(key) || this.jobActive(key)) throw running();
-    const entry: Active = { ref, jobId: '', o, audioSec: ic.composition.duration, ic, blocked: null, method: null, pending: null, planning: tr ? new AbortController() : null };
+    const entry: Active = { ref, jobId: '', o, audioSec: ic.composition.duration, timing, ...(audio ? { audio } : {}), blocked: null, method: null, pending: null, planning: tr ? new AbortController() : null };
     const job = this.deps.queue.enqueue({
       key, kind: 'subtitles', label: t().jobs.subtitlesLabel({ title: creative.title }), lane: SUBTITLES_LANE,
       // Held while the transcription is planned (decision 1547's flow): with no method to run, the hold becomes the user's choice.
@@ -351,7 +468,7 @@ export class SubtitlesService {
     try {
       const signal = AbortSignal.any([own.signal, AbortSignal.timeout(precheckLimitMs(this.deps.planMaxMs ?? PLAN_MAX_MS, entry.audioSec))]);
       plan = await untilAborted(tr.plan(entry.audioSec), signal);
-      if ('ask' in plan) speech = await untilAborted(this.hasSpeech(entry.ic, signal), signal);
+      if ('ask' in plan) speech = await untilAborted(this.hasSpeech(entry.ref, entry.timing, signal), signal);
     } catch { timedOut = true; }
     if (own.signal.aborted || entry.planning !== own || this.active.get(keyOf(entry.ref)) !== entry) return;
     entry.planning = null;
@@ -365,17 +482,16 @@ export class SubtitlesService {
     this.deps.queue.setHold(entry.jobId, null);
   }
 
-  /** Whether the composition's mix has speech (less than 95 % silence); false when it has no audio or cannot be read. */
-  private async hasSpeech(ic: InstanceComposition, signal: AbortSignal): Promise<boolean> {
-    const clips = mixClips(ic.composition);
-    if (clips.length === 0) return false;
-    const ff = await this.deps.ffmpeg?.().catch(() => null);
-    if (!ff) return false;
+  /** Whether the mix of `timing` has speech (less than 95 % silence); false when it has no audio or cannot be read. */
+  private async hasSpeech(ref: CreativeRef, timing: SubtitleTiming, signal: AbortSignal): Promise<boolean> {
+    if (mixClips(timing.ic.composition).length === 0) return false;
+    if (!(await this.deps.ffmpeg?.().catch(() => null))) return false;
     const tmp = await mkdtemp(join(tmpdir(), 'ms-subtitles-pre-'));
     try {
-      const duration = ic.composition.duration;
-      const mix = join(tmp, 'mix.wav'), wav = join(tmp, 'audio.wav');
-      if (!await mixAudio({ ff, compDir: ic.compDir, clips, durationSec: duration, outWav: mix, workDir: tmp, signal })) return false;
+      const duration = timing.ic.composition.duration;
+      const mix = await this.mixCreativeAudio(ref, timing, tmp, signal);
+      const wav = join(tmp, 'audio.wav');
+      if (!mix) return false;
       if (!await extractWav(this.ff, mix, wav, signal, duration)) return false;
       return (await silenceRatio(this.ff, wav, duration, signal)) < SILENCE_NO_SPEECH;
     } catch {
@@ -386,33 +502,48 @@ export class SubtitlesService {
   }
 
   /**
-   * The audio mix of `version`'s `format` (the composition's audio clips, as the render mixes them) as `mix.wav` in
-   * `workDir`, its path; null without ffmpeg, without that composition, or when nothing could be mixed (no audio clip).
+   * The audio mix of `timing` (its composition's audio clips, as the render mixes them; a language's own video with its
+   * localized voices, Task 24) as `mix.wav` in `workDir`, its path; null without ffmpeg or when nothing could be mixed (no
+   * audio clip).
    */
-  async mixCreativeAudio(ref: CreativeRef, version: VersionEntry, format: string, workDir: string, signal: AbortSignal): Promise<string | null> {
+  async mixCreativeAudio(ref: CreativeRef, timing: SubtitleTiming, workDir: string, signal: AbortSignal): Promise<string | null> {
     const ff = await this.deps.ffmpeg?.().catch(() => null);
     if (!ff) return null;
-    const ic = await instanceComposition(new CreativeStore(ref.projectDir).dir(ref.creativeSlug), version, format, await this.deps.presets());
-    if (!ic) return null;
+    const clips = mixClips(timing.ic.composition);
+    if (clips.length === 0) return null;
+    const compDir = await mixFolder(ref.projectDir, timing, clips, workDir);
     const outWav = join(workDir, 'mix.wav');
-    const mixed = await mixAudio({ ff, compDir: ic.compDir, clips: mixClips(ic.composition), durationSec: ic.composition.duration, outWav, workDir, signal });
+    const mixed = await mixAudio({ ff, compDir, clips, durationSec: timing.ic.composition.duration, outWav, workDir, signal });
     return mixed ? outWav : null;
   }
 
   /**
-   * Task 13: the waveform of the subtitle timeline: `version`'s main format mixed, decoded at 4 kHz and cut into
-   * SUBTITLE_WAVEFORM_PEAKS peaks over the composition's duration (no audio: no peaks). Cached as
-   * `.studio/cache/subtitles/<creative>/wave-<audio fingerprint>.json`. 404 for an unknown version, 409
-   * `subtitles-no-video` when it has no video format.
+   * Task 24 (spec §6.5): whether `lang`'s localized video of `ref`'s latest version has its own voices (`localizedVoiceOf`):
+   * a new set in `lang` is then made from that audio (`start` with `lang`), not translated. False without a version.
    */
-  async waveform(ref: CreativeRef, n: number): Promise<{ peaks: number[]; durationMs: number }> {
+  async localizedVoiceLang(ref: CreativeRef, lang: LocaleTag): Promise<boolean> {
+    const store = new CreativeStore(ref.projectDir);
+    const latest = (await store.readVersions(ref.creativeSlug)).at(-1);
+    if (!latest) return false;
+    return localizedVoiceOf(store.dir(ref.creativeSlug), latest, (await store.get(ref.creativeSlug)).brief, await this.deps.presets(), lang);
+  }
+
+  /**
+   * Task 13: the waveform of the subtitle timeline: `version`'s main format mixed, decoded at 4 kHz and cut into
+   * SUBTITLE_WAVEFORM_PEAKS peaks over the composition's duration (no audio: no peaks). With `lang`, the audio that language's
+   * set is timed on (its own localized video, Task 24). Cached as `.studio/cache/subtitles/<creative>/wave-<audio
+   * fingerprint>.json`. 404 for an unknown version, 409 `subtitles-no-video` when it has no video format.
+   */
+  async waveform(ref: CreativeRef, n: number, lang?: LocaleTag): Promise<{ peaks: number[]; durationMs: number }> {
     const store = new CreativeStore(ref.projectDir);
     const version = (await store.readVersions(ref.creativeSlug)).find((v) => v.n === n);
     if (!version) throw new CodedError(404, t().errors.notFound, 'version-not-found');
     const presets = await this.deps.presets();
-    const timing = await subtitleTimingOf(store.dir(ref.creativeSlug), version, (await store.get(ref.creativeSlug)).brief, presets);
+    const creativeDir = store.dir(ref.creativeSlug);
+    const locale = lang ? (await readSubtitleSet(creativeDir, lang))?.set.timing.locale : undefined;
+    const timing = await subtitleTimingOf(creativeDir, version, (await store.get(ref.creativeSlug)).brief, presets, locale);
     if (!timing) throw new CodedError(409, t().errors.subtitlesNoVideo, 'subtitles-no-video');
-    const { format, ic } = timing;
+    const { ic } = timing;
     const durationMs = ms(ic.composition.duration);
     const dir = await realDirChain(ref.projectDir, ['.studio', 'cache', 'subtitles', ref.creativeSlug]);
     if (!dir) throw new CodedError(422, t().errors.waveformUnavailable, 'waveform-unavailable');
@@ -427,7 +558,7 @@ export class SubtitlesService {
       if (!(await this.deps.ffmpeg?.().catch(() => null))) throw new CodedError(409, t().errors.noFfmpegSubtitles, 'subtitles-no-ffmpeg');
       const work = await mkdtemp(join(tmpdir(), 'ms-subtitles-wave-'));
       try {
-        const mix = await this.mixCreativeAudio(ref, version, format, work, AbortSignal.timeout(WAVE_MAX_MS));
+        const mix = await this.mixCreativeAudio(ref, timing, work, AbortSignal.timeout(WAVE_MAX_MS));
         // No audio clip (or a mix that failed): no peaks, and nothing cached.
         if (!mix) return { peaks: [], durationMs };
         const got = await filePeaks(decodePcmWith(this.ff), mix, work, { buckets: SUBTITLE_WAVEFORM_PEAKS, maxSec: Math.ceil(ic.composition.duration) + 1 });
@@ -521,26 +652,38 @@ export class SubtitlesService {
    * Task 14 (spec §6.7): version `n` of `ref` was just saved (an agent turn, `jobId`, or a direct edit, null). When its main
    * format's audio differs from what a subtitle set was timed on, the chat says "Il video è cambiato: ricontrolla i tempi"
    * (with "Rifai i tempi"): once, on the version that moved the audio (decision 1715): a version whose audio is the previous
-   * version's tells nothing new. Nothing is changed: the sets keep their cues until the user retimes them. Never throws.
+   * version's tells nothing new. Nothing is changed: the sets keep their cues until the user retimes them. Only the sets made
+   * from speech (Task 25): a translation follows its source (its lines are translated again from it, with its times) and
+   * "Rifai i tempi" would refuse it. Never throws.
    */
   async versionSaved(ref: CreativeRef, n: number, jobId: string | null): Promise<void> {
     try {
       const store = new CreativeStore(ref.projectDir);
       const dir = store.dir(ref.creativeSlug);
-      const sets = await listSubtitleSets(dir);
+      const sets = (await listSubtitleSets(dir)).filter((s) => s.origin === 'speech');
       if (sets.length === 0) return;
       const versions = await store.readVersions(ref.creativeSlug);
       const i = versions.findIndex((v) => v.n === n);
       if (i < 0) return;
       const brief = (await store.get(ref.creativeSlug)).brief;
       const presets = await this.deps.presets();
-      const fingerprint = async (v: VersionEntry) => (await subtitleTimingOf(dir, v, brief, presets))?.fingerprint ?? null;
-      const now = await fingerprint(versions[i]!);
-      if (!now) return;
-      const off = sets.filter((s) => s.timing.fingerprint !== now);
+      // Each set against the video it was timed on: the original, or its language's own (Task 24).
+      const known = new Map<string, Promise<string | null>>();
+      const fingerprint = (v: VersionEntry, locale?: LocaleTag) => {
+        const key = `${v.n}:${locale ?? ''}`;
+        if (!known.has(key)) known.set(key, subtitleTimingOf(dir, v, brief, presets, locale).then((x) => x?.fingerprint ?? null));
+        return known.get(key)!;
+      };
+      const off: SubtitleSet[] = [];
+      for (const s of sets) {
+        const now = await fingerprint(versions[i]!, s.timing.locale);
+        if (!now || s.timing.fingerprint === now) continue;
+        // Only on the version that moved that audio.
+        if (i > 0 && (await fingerprint(versions[i - 1]!, s.timing.locale)) === now) continue;
+        off.push(s);
+      }
       if (off.length === 0) return;
-      if (i > 0 && (await fingerprint(versions[i - 1]!)) === now) return;
-      const set = off.find((s) => s.origin === 'speech') ?? off[0]!;
+      const set = speechSourceSet(off) ?? off[0]!;
       await this.note(jobId ?? '', ref, 'warning', t().subtitles.timingChanged, { state: 'timing-changed', lang: set.lang });
     } catch (err) {
       console.warn(`Motion Studio: the subtitles' timing check of ${ref.creativeSlug} v${n} failed: ${errText(err)}`);
@@ -560,7 +703,13 @@ export class SubtitlesService {
       const creative = await store.get(ref.creativeSlug);
       const version = (await store.readVersions(ref.creativeSlug)).at(-1);
       const presets = await this.deps.presets();
-      const timing = version ? await subtitleTimingOf(creativeDir, version, creative.brief, presets) : null;
+      // The language whose own localized video is heard (Task 24): a retime's set's, or a new set's language when its video
+      // has its own voices now; else the original video.
+      const audio = o.mode === 'retime' ? entry.audio
+        : o.lang && version && await localizedVoiceOf(creativeDir, version, creative.brief, presets, o.lang) ? o.lang : undefined;
+      // A language's own voice its video no longer has since the job was asked for (Minor 4).
+      if (audio && !(version && await localizedVoiceOf(creativeDir, version, creative.brief, presets, audio))) throw new Error(t().errors.subtitlesVoiceGone({ lang: languageName(audio) }));
+      const timing = version ? await subtitleTimingOf(creativeDir, version, creative.brief, presets, audio) : null;
       if (!version || !timing) throw new Error(t().errors.subtitlesNoVideo);
       const { format, ic } = timing;
       const ff = await this.deps.ffmpeg?.().catch(() => null);
@@ -575,7 +724,7 @@ export class SubtitlesService {
       await rm(work, { recursive: true, force: true });
       await mkdir(work);
       const wav = join(work, 'audio.wav');
-      const mix = await this.mixCreativeAudio(ref, version, format, work, signal);
+      const mix = await this.mixCreativeAudio(ref, timing, work, signal);
       if (signal.aborted) return 'cancelled';
       let speech = mix !== null && await extractWav(this.ff, mix, wav, signal, duration);
       if (speech && (await silenceRatio(this.ff, wav, duration, signal)) >= SILENCE_NO_SPEECH) speech = false;
@@ -616,9 +765,18 @@ export class SubtitlesService {
       if (signal.aborted) return 'cancelled';
 
       // Re-read just before writing, under the sets' lock (decision 1654): a save of the editor during the transcription keeps
-      // its edited cues (anti-goal 1), and one arriving now waits for this write and then meets its new hash (409).
+      // its edited cues (anti-goal 1), and one arriving now waits for this write and then meets its new hash (409). The
+      // translations of the original speech set follow its new times (Task 25, `followSource`), under the same lock.
+      let followed: LocaleTag[] = [];
+      let replaced: LocaleTag | null = null;
       await subtitleSetLocks.run(creativeDir, async () => {
-        const existing = await readSubtitleSet(creativeDir, lang);
+        // One set from the original video's speech, never over a translation (final review I3): the language is known now.
+        const sets = await listSubtitleSets(creativeDir);
+        const refusal = speechSetRefusal(sets, lang, audio);
+        if (refusal) throw new Error(refusal.message);
+        // The original speech set in another language, no translation from it: this one takes its place (follow-up ruling).
+        replaced = replacedSpeechSet(sets, lang, audio)?.lang ?? null;
+        const existing = (await readSubtitleSet(creativeDir, lang)) ?? (replaced ? await readSubtitleSet(creativeDir, replaced) : null);
         // A file there that is not a valid set may hold the user's corrections: never overwritten (anti-goal 1).
         if (!existing && await lstat(subtitlePath(creativeDir, lang)).then(() => true, () => false)) {
           throw new Error(t().subtitles.setUnreadable({ file: `${SUBTITLES_DIR}/${lang}.json` }));
@@ -626,18 +784,23 @@ export class SubtitlesService {
         const cues = capCues(existing ? mergeKeepingEdited(existing.set.cues, fresh) : fresh);
         let set: SubtitleSet = {
           $schema: SUBTITLES_SCHEMA_ID, lang, origin: 'speech', transcript: tr.kind, detected: tr.language,
-          timing: { version: version.n, format, fingerprint: timing.fingerprint }, cues,
+          timing: { version: version.n, format, fingerprint: timing.fingerprint, ...(audio ? { locale: audio } : {}) }, cues,
         };
         // A set over the file limit loses its word timings (word highlighting then falls back to whole cues).
         if (Buffer.byteLength(subtitleSetText(set)) > SUBTITLE_LIMITS.fileBytes) set = { ...set, cues: set.cues.map(({ words: _w, ...c }) => c) };
         const valid = subtitleSetSchema.safeParse(set);
         if (!valid.success || Buffer.byteLength(subtitleSetText(set)) > SUBTITLE_LIMITS.fileBytes) throw new Error(valid.success ? 'the subtitles are too large' : valid.error.message);
         await writeSubtitleSet(creativeDir, set);
+        if (replaced) await removeSubtitleSet(creativeDir, replaced);
+        if (!audio) followed = await followSource(creativeDir, existing?.set ?? null, set);
       });
       this.deps.commits.touch(ref, t().subtitles.commit({ title: creative.title, lang }));
-      try { this.deps.broadcast({ type: 'subtitles', project: ref.projectSlug, creative: ref.creativeSlug, lang }); } catch { /* a faulty listener */ }
+      for (const l of [lang, ...(replaced ? [replaced] : []), ...followed]) {
+        try { this.deps.broadcast({ type: 'subtitles', project: ref.projectSlug, creative: ref.creativeSlug, lang: l }); } catch { /* a faulty listener */ }
+      }
       const briefLang = creative.brief.locales?.primary;
-      const other = briefLang !== undefined && briefLang !== lang;
+      // A language's own voice was known, not heard: never "a language other than the brief's".
+      const other = !audio && briefLang !== undefined && briefLang !== lang;
       const text = o.mode === 'retime' ? t().subtitles.retimed({ lang: languageName(lang) })
         : other ? t().subtitles.readyOtherLang({ lang: languageName(lang), brief: languageName(briefLang) }) : t().subtitles.ready({ lang: languageName(lang) });
       await this.note(jobId, ref, 'info', text, {

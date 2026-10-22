@@ -1,7 +1,7 @@
 import { lstat, mkdir, readdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  SUBTITLES_DIR, SUBTITLE_LIMITS, drawsSubtitles, parseSubtitleSet, sha256Hex, subtitleCuesHash, subtitleSetHash, subtitleSetSchema, subtitleSetText, type Brief, type Composition, type LocaleTag, type SubtitleSet,
+  SUBTITLES_DIR, SUBTITLE_LIMITS, drawsSubtitles, followSourceTimes, parseSubtitleSet, sha256Hex, subtitleCuesHash, subtitleSetHash, subtitleSetSchema, subtitleSetText, type Brief, type Composition, type LocaleTag, type SubtitleSet,
 } from '@motion-studio/shared';
 import type { RuntimeCue, RuntimeSubtitles } from '@motion-studio/composition-runtime/page';
 import { noteCoreChange } from '../core-changes.ts';
@@ -89,15 +89,50 @@ export async function subtitleHashes(creativeDir: string): Promise<Record<string
 export { drawsSubtitles };
 
 /**
+ * The set made from the speech of the original video (Task 24): the first by language made from speech whose timing is not a
+ * language's own localized video (`timing.locale`). The only source of the translations and of the original video's default
+ * subtitles: a set of a localized voice is timed on another audio. Undefined when there is none.
+ */
+export function speechSourceSet(sets: readonly SubtitleSet[]): SubtitleSet | undefined {
+  return sets.find((s) => s.origin === 'speech' && s.timing.locale === undefined);
+}
+
+/**
+ * Task 25: the translations of the original speech set follow it when it is written again (`after`; `before`: the set as it
+ * was, read under the same lock, null when there was none): each translation of its language gets `followSourceTimes` and,
+ * when every uncorrected line found its source line, the source's timing (else its own stays: `timingChanged` keeps saying
+ * so, review round 2); a translation not in step with `before` (another timing) gets it only when its lines truly follow now
+ * (final review I1). Written when that changed. To be called under the creative's set lock, by the writer of the source.
+ * The languages written (to commit and tell the clients).
+ */
+export async function followSource(creativeDir: string, before: SubtitleSet | null, after: SubtitleSet): Promise<LocaleTag[]> {
+  const sets = await listSubtitleSets(creativeDir);
+  if (speechSourceSet(sets)?.lang !== after.lang) return [];
+  const out: LocaleTag[] = [];
+  for (const s of sets) {
+    if (s.origin !== 'translation' || s.sourceLang !== after.lang) continue;
+    // Only a translation in step with the source as it was may take the shortcut of an unchanged source (final review I1):
+    // one lagging behind (another timing) is aligned with the source now, and takes its timing only when that completes.
+    const inStep = before === null || s.timing.fingerprint === before.timing.fingerprint;
+    const r = followSourceTimes(s.cues, inStep ? (before ?? after).cues : [], after.cues);
+    const next: SubtitleSet = { ...s, timing: r.complete ? after.timing : s.timing, cues: r.cues };
+    if (subtitleSetHash(next) === subtitleSetHash(s)) continue;
+    await writeSubtitleSet(creativeDir, next);
+    out.push(s.lang);
+  }
+  return out;
+}
+
+/**
  * The default subtitle language of a render (U8, spec §6.6): a localized render (`localized`) draws its own language's set,
- * else none; a version render draws the brief's primary language when it has a set, else the set made from the speech (the
- * first by language when several were). Null: none.
+ * else none; a version render draws the brief's primary language when it has a set, else the set made from the speech of the
+ * original video (`speechSourceSet`). Null: none.
  */
 export async function defaultSubtitleLang(creativeDir: string, brief: Pick<Brief, 'locales'>, localized?: LocaleTag): Promise<LocaleTag | null> {
   if (localized !== undefined) return (await readSubtitleSet(creativeDir, localized)) ? localized : null;
   const primary = brief.locales?.primary;
   if (primary && await readSubtitleSet(creativeDir, primary)) return primary;
-  return (await listSubtitleSets(creativeDir)).find((s) => s.origin === 'speech')?.lang ?? null;
+  return speechSourceSet(await listSubtitleSets(creativeDir))?.lang ?? null;
 }
 
 /**

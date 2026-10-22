@@ -617,6 +617,11 @@ export interface SubtitlesSummary {
   /** The hash of what a render draws (`subtitleCuesHash`, final review M3): what render staleness compares. */
   cuesHash?: string;
   timing: SubtitleSet['timing']; timingChanged: boolean; staleCues: number;
+  /**
+   * A translation's source lines no line of it stands for (`missingSourceLines`, final review I2): "Manca la traduzione",
+   * covered by "Ritraduci tutto". Always sent by the core; optional in the type only so older fixtures stay valid.
+   */
+  missing?: number;
 }
 export interface CreativeDetail { slug: string; creative: CreativeFile; versions: VersionEntry[]; jobKey: string; formats?: FormatSummary[]; /** Phase 15: absent outside a group. */ variants?: VariantDetail;
   /** The creative's subtitle sets; absent: none. */

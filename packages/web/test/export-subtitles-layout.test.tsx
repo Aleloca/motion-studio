@@ -4,7 +4,8 @@
  * language), the clean-video note and the file-name preview (the `-sub-<lang>` videos and the `.srt`/`.vtt` names) stay
  * inside the dialog with nothing scrolling sideways, and the list of formats above keeps at least one row in view (the
  * section never squeezes it away). The markup is rendered in jsdom with the rows ticked; MS_LAYOUT_SHOTS=<folder> keeps a
- * screenshot of each case.
+ * screenshot of each case. Task 27: a creative translated into German, its two video languages exported, each drawn language
+ * with the video it goes on (a pill) and the files of each language's clean videos, in the same sizes.
  */
 import { DEFAULT_FORMATS, type VersionEntry } from '@motion-studio/shared';
 import { render, screen } from '@testing-library/react';
@@ -40,6 +41,26 @@ async function markup(): Promise<string> {
       await userEvent.click(screen.getByRole('checkbox', { name }));
     }
     expect(screen.getByText('File e tracce vanno con un video senza sottotitoli disegnati.')).toBeTruthy();
+    return (document.querySelector('.ms-modal') as HTMLElement).outerHTML;
+  } finally { unmount(); }
+}
+
+/** The German videos exist (final review Minor 3: a drawn language goes on its video only when the format is translated). */
+const german: VersionEntry = { ...version, localizations: [REEL, YT].map((instanceId) => ({ locale: 'de' as const, instanceId, hash: '1'.repeat(64), origin: 'agent' as const, stale: [], voice: 'translated' as const })) };
+/** Task 27: Italian and German videos, English and German drawn (each on its video), English files, Italian tracks. */
+async function languagesMarkup(): Promise<string> {
+  localStorage.setItem('ms.exportFolder', '/Users/me/Consegne/Lancio estivo');
+  const { unmount } = render(
+    <I18nProvider locale="it">
+      <ExportDialog open onClose={() => {}} slug="acme" creative="promo" title="Promo autunno" snapshot={{ versions: [german], states: { [REEL]: state(REEL), [YT]: state(YT) } }}
+        presets={DEFAULT_FORMATS} pattern="{title}-{format}-v{v}" subtitles={[sub('it'), sub('en'), sub('de')]} locales={{ primary: 'it', extra: ['de'] }} />
+    </I18nProvider>,
+  );
+  try {
+    for (const name of [/^Tedesco$/, /^Nel video.*inglese/i, /^Nel video.*tedesco/i, /^File \.srt e \.vtt.*inglese/i, /^Traccia nel file MP4.*italiano/i]) {
+      await userEvent.click(screen.getByRole('checkbox', { name }));
+    }
+    expect(screen.getAllByRole('button', { name: /^Video dei sottotitoli in/ })).toHaveLength(2);
     return (document.querySelector('.ms-modal') as HTMLElement).outerHTML;
   } finally { unmount(); }
 }
@@ -89,14 +110,16 @@ const MEASURE = `(() => {
       || [...document.querySelectorAll('.ms-exp-preview')].some((p) => p.scrollWidth > p.clientWidth + 1),
     dialogInside: d.left >= -0.5 && d.right <= innerWidth + 0.5,
     sectionInside: within(s, d),
+    // Task 27: a taller section scrolls with the dialog's body; it must still stay within the dialog's sides.
+    sectionInsideX: s.left >= d.left - 0.5 && s.right <= d.right + 0.5,
     rows: rows.length,
-    out: [...outside(section, '.ms-exp-subs-row, .ms-exp-lang, .ms-exp-subs-name b, .ms-exp-subs-name .ms-faint, .ms-exp-subs-note, .ms-exp-subs-out', s), ...outside(preview, '.ms-exp-preview-line', preview.getBoundingClientRect())],
+    out: [...outside(section, '.ms-exp-subs-row, .ms-exp-lang, .ms-exp-sub-lang .ms-select, .ms-exp-subs-name b, .ms-exp-subs-name .ms-faint, .ms-exp-subs-note, .ms-exp-subs-out', s), ...outside(preview, '.ms-exp-preview-line', preview.getBoundingClientRect())],
     checks: rows.map((r) => r.querySelectorAll('[role="checkbox"]').length),
     note: !!note && note.getBoundingClientRect().height > 0,
     previewLines: [...preview.querySelectorAll('.ms-exp-preview-line')].map((l) => l.textContent),
   };
 })()`;
-type M = { dialogWidth: number; formatRowShown: boolean; sideways: boolean; dialogInside: boolean; sectionInside: boolean; rows: number; out: string[]; checks: number[]; note: boolean; previewLines: string[] };
+type M = { dialogWidth: number; formatRowShown: boolean; sideways: boolean; dialogInside: boolean; sectionInside: boolean; sectionInsideX: boolean; rows: number; out: string[]; checks: number[]; note: boolean; previewLines: string[] };
 
 const run = chromePath ? describe : describe.skip;
 if (!chromePath && chromeRequired) it('Chrome is required (MS_REQUIRE_CHROME=1)', () => { throw new Error('missing Chrome (set CHROME_PATH)'); });
@@ -105,7 +128,8 @@ run('the export dialog\'s Sottotitoli section: real Chrome layout (Task 22)', ()
   const rig = new LayoutRig();
   let html = '';
   let plain = '';
-  beforeAll(async () => { await rig.start(); html = await markup(); plain = await plainMarkup(); }, 120_000);
+  let langs = '';
+  beforeAll(async () => { await rig.start(); html = await markup(); plain = await plainMarkup(); langs = await languagesMarkup(); }, 120_000);
   afterAll(() => rig.stop(), 60_000);
 
   for (const theme of ['light', 'dark'] as const) {
@@ -132,6 +156,23 @@ run('the export dialog\'s Sottotitoli section: real Chrome layout (Task 22)', ()
       expect(r.previewLines.some((l) => l.includes('-sub-en.mp4'))).toBe(true);
       expect(r.previewLines.some((l) => l.includes('.it.srt'))).toBe(true);
     }, 120_000);
+    }
+    for (const dialog of [760, 520]) {
+      it(`${theme}, a ${dialog} px dialog in 1024 × 700 with two video languages (Task 27): the drawn languages with their video, the files of each, nothing sideways`, async () => {
+        const page = langs.replace('style="width: 760px;"', `style="width: ${dialog}px;"`);
+        const r = await rig.measure<M>(page, MEASURE, { name: `export-langs-${dialog}`, width: 1024, height: 700, theme }, `export-langs-dialog${dialog}`);
+        expect(r.dialogWidth).toBe(dialog);
+        expect(r.formatRowShown, 'the formats list keeps a row in view').toBe(true);
+        expect(r.sideways, 'nothing scrolls sideways').toBe(false);
+        expect(r.dialogInside).toBe(true);
+        // Horizontal only (review round 1): with two video languages the section is taller than the dialog's visible body at
+        // 1024 × 700 and scrolls with it, by design; what must hold is that nothing leaves the dialog's sides.
+        expect(r.sectionInsideX).toBe(true);
+        expect(r.checks).toEqual([3, 3, 3]);
+        expect(r.out, 'rows, checks, video pills, hints, note and preview lines inside their box').toEqual([]);
+        expect(r.previewLines.some((l) => l.includes('-de-sub-de.mp4'))).toBe(true);
+        expect(r.previewLines.some((l) => l.includes('-de.en.srt'))).toBe(true);
+      }, 120_000);
     }
   }
 });

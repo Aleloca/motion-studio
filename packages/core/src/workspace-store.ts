@@ -37,6 +37,8 @@ export class WorkspaceError extends Error {
 export class CodedError extends WorkspaceError {
   /** `problems`: every translated problem behind a refusal (a draft that does not validate), sent as `problems`. */
   problems?: string[];
+  /** Task 25: subtitle lines removed before the refusal (`retranslateSubtitles`), sent as `dropped`. */
+  dropped?: number;
   constructor(status: 400 | 403 | 404 | 409 | 413 | 422 | 429 | 503, message: string, public readonly apiCode: string, public readonly retryAfterSec?: number) {
     super(status, message);
     this.name = 'CodedError';

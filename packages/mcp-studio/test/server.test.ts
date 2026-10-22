@@ -150,6 +150,17 @@ describe('mcp-studio server', () => {
     startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,fill_brief' });
     expect(((await rpc(5, 'tools/list')).result.tools as Array<{ name: string }>).map((t) => t.name)).not.toContain('write_video_analysis');
   });
+  it('lists submit_subtitle_translation alone for a subtitle translation and forwards it (Task 23)', async () => {
+    child.kill();
+    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,submit_subtitle_translation' });
+    const tools = (await rpc(3, 'tools/list')).result.tools as Array<{ name: string; description: string; inputSchema: { additionalProperties?: boolean; required?: string[]; properties: Record<string, unknown> } }>;
+    expect(tools.map((t) => t.name)).toEqual(['approve', 'report_progress', 'submit_subtitle_translation']);
+    const s = tools.find((t) => t.name === 'submit_subtitle_translation')!;
+    expect(s.description).toMatch(/^Subtitle translation jobs only/);
+    expect(s.inputSchema).toMatchObject({ additionalProperties: false, required: ['cues'] });
+    await rpc(4, 'tools/call', { name: 'submit_subtitle_translation', arguments: { cues: [{ id: 'c1', text: 'Hi' }] } });
+    expect(calls.at(-1)).toMatchObject({ url: '/api/bridge/submit_subtitle_translation', body: { cues: [{ id: 'c1', text: 'Hi' }] } });
+  });
   it('lists start_subtitles and edit_subtitles only when the job names them, drawn required (U9, Task 19), and forwards them', async () => {
     child.kill();
     startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,start_subtitles,edit_subtitles' });
@@ -177,6 +188,17 @@ describe('mcp-studio server', () => {
     const names = ((await rpc(6, 'tools/list')).result.tools as Array<{ name: string }>).map((t) => t.name);
     expect(names).not.toContain('start_subtitles');
     expect(names).not.toContain('edit_subtitles');
+  });
+  it('lists add_subtitle_language when the job names it, lang required, and forwards it (Task 25, U8)', async () => {
+    child.kill();
+    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,add_subtitle_language' });
+    const tools = (await rpc(3, 'tools/list')).result.tools as Array<{ name: string; description: string; inputSchema: { additionalProperties?: boolean; required?: string[]; properties: Record<string, unknown> } }>;
+    const a = tools.find((t) => t.name === 'add_subtitle_language')!;
+    expect(a.inputSchema).toMatchObject({ additionalProperties: false, required: ['lang'] });
+    expect(Object.keys(a.inputSchema.properties)).toEqual(['lang']);
+    expect(a.description).toContain('not add_language');
+    await rpc(4, 'tools/call', { name: 'add_subtitle_language', arguments: { lang: 'en' } });
+    expect(calls.at(-1)).toMatchObject({ url: '/api/bridge/add_subtitle_language', body: { lang: 'en' } });
   });
   it('describes every tool in English', async () => {
     child.kill();

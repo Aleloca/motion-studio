@@ -146,6 +146,8 @@ export interface ExportItem { format: string; n: number; v?: number; file: strin
   set?: { dir: string; files: string[] };
   /** Subtitles Task 21: the language drawn into this video (a render made for the export, or the version render that draws it): named `<stem>-sub-<lang>`. */
   subtitled?: LocaleTag;
+  /** Subtitles Task 27: the language a current translated render draws (its record), so a drawn export of it can reuse the file. */
+  draws?: LocaleTag;
   /**
    * Subtitles Task 21: the `.srt`/`.vtt` written next to this (clean) video, in place of `ExportCommon.subtitles`; `durationMs` the
    * cut when the video's own duration is not recorded.
@@ -325,7 +327,12 @@ export async function resolveLocalizedItems(creativeDir: string, versions: Versi
    * Ruling L: whether the voice and font files the row recorded are still the ones it recorded; when not, the render is not
    * current (rendering it again records the problem and fails, so the export says so). Absent: not checked.
    */
-  assetsOk?: (n: number, row: NonNullable<VersionEntry['localizations']>[number]) => Promise<boolean>):
+  assetsOk?: (n: number, row: NonNullable<VersionEntry['localizations']>[number]) => Promise<boolean>,
+  /**
+   * Subtitles Task 27: the items a subtitled export renders entirely for itself from the localized composition: one whose render
+   * is not current is listed with an empty `file`, not rendered first (`pending`).
+   */
+  skip?: (it: ExportItem, locale: string) => Promise<boolean>):
   Promise<{ items: ExportItem[]; missing: Array<{ format: string; n: number; locale: string }>; pending: Map<number, { formats: string[]; locales: string[] }> }> {
   const out: ExportItem[] = [];
   const missing: Array<{ format: string; n: number; locale: string }> = [];
@@ -343,6 +350,10 @@ export async function resolveLocalizedItems(creativeDir: string, versions: Versi
         && subtitlesCurrent(r.subtitles, subtitles)
         && (await probeConfinedFile(creativeDir, `outputs/v${it.n}/${r.file}`)) === true && (!matches || await matches(it.n, r.file, r.sha256))
         && (!assetsOk || await assetsOk(it.n, row));
+      if (!current && skip && await skip(it, locale)) {
+        out.push({ format: it.format, n: it.n, ...(it.v !== undefined ? { v: it.v } : {}), file: '', width: r?.width ?? it.width, height: r?.height ?? it.height, locale, localized: true });
+        continue;
+      }
       if (!current) {
         const p = pending.get(it.n) ?? { formats: [], locales: [] };
         if (!p.formats.includes(it.format)) p.formats.push(it.format);
@@ -351,7 +362,7 @@ export async function resolveLocalizedItems(creativeDir: string, versions: Versi
         continue;
       }
       out.push({ format: it.format, n: it.n, ...(it.v !== undefined ? { v: it.v } : {}), file: r.file, width: r.width, height: r.height, locale, localized: true,
-        ...(r.problems?.length ? { problems: r.problems } : {}) });
+        ...(r.problems?.length ? { problems: r.problems } : {}), ...(r.subtitles?.hash && r.subtitles.lang ? { draws: r.subtitles.lang } : {}) });
     }
   }
   return { items: out, missing, pending };

@@ -11,7 +11,7 @@
 // the two last with the clean video, which the dialog says; the preview names them as the core does.
 import {
   DEFAULT_EXPORT_QUALITY, EXPORT_FPS, EXPORT_QUALITIES, EXPORT_RESOLUTIONS, profileApplies, scaledSize, type ExportFps, type ExportQuality,
-  EXPORT_NAME_TOKENS, type CompositionStill, exportDate, exportExtension, exportNameCollisions, exportNameVars, localizedStem, renderName, renderProblems, renderState, separateInstanceNames, subtitledStem, subtitleHashesOf,
+  EXPORT_NAME_TOKENS, type CompositionStill, defaultSubtitleVideo, exportDate, exportExtension, exportNameCollisions, exportNameVars, localizedStem, renderName, renderProblems, renderState, separateInstanceNames, subtitledStem, subtitleHashesOf,
   type FormatPreset, type JobSummary, type LocaleTag, type SubtitlesSummary, type VersionEntry, type WorkspaceSettings,
 } from '@motion-studio/shared';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -215,6 +215,8 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
   const [subDrawn, setSubDrawn] = useState<Record<string, boolean>>({});
   const [subFiles, setSubFiles] = useState<Record<string, boolean>>({});
   const [subSoft, setSubSoft] = useState<Record<string, boolean>>({});
+  // Task 27 (U8): the video language chosen for a drawn language; absent: the default pairing.
+  const [subVideo, setSubVideo] = useState<Record<string, string>>({});
   const [langs, setLangs] = useState<Record<string, boolean>>(() => (locales ? { [locales.primary]: true } : {}));
   const [refused, setRefused] = useState<string[] | null>(null);
   const field = useRef<HTMLInputElement>(null);
@@ -278,52 +280,82 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
   // ticked translation's, which gains its language when the pattern has no `{locale}`; instances kept apart over all of them.
   const otherTags = locales && withLanguages ? locales.extra.filter((tag) => langs[tag]) : [];
   const withOriginal = !locales || !withLanguages || Boolean(langs[locales.primary]);
-  // Subtitles (Task 21's export, decision 1643): the files and soft tracks go with the CLEAN video `<stem>`; each "Nel video"
-  // language is a video of its own, `<stem>-sub-<lang>`; with drawn languages only, the clean video is not exported. Only the
-  // original's videos take subtitles (decision 1685), never a still.
+  // Subtitles (Task 21's export, decision 1643; Task 27, U8): the files and soft tracks go with the CLEAN video `<stem>` of each
+  // exported video language; each "Nel video" language is a video of its own on the video language chosen for it,
+  // `<stem>[-<video>]-sub-<lang>`. A video language asked for nothing (no file or track fits it, nothing drawn on it) is
+  // exported as it is; with drawn languages only, its clean video is not exported. Never a still.
   const ticked = (m: Record<string, boolean>) => subtitleLangs.filter((l) => m[l]);
   const isVideo = (r: Row) => r.file !== null && VIDEO_EXTS.has(exportExtension(r.file));
   // Final review I2: subtitles are drawn only into a composition with the track (the core's `subtitlesNoTrack` otherwise);
   // "Nel video" is offered while a chosen video has it, and its languages count only then.
   const drawable = (r: Row) => isVideo(r) && r.noTrack !== true;
   const drawnOffered = chosen.some((c) => drawable(c.row));
-  const drawnLangs = drawnOffered ? ticked(subDrawn) : [];
-  const fileLangs = ticked(subFiles);
-  const softLangs = ticked(subSoft);
-  const subtitled = drawnLangs.length + fileLangs.length + softLangs.length > 0;
+  // A video language: undefined is the original video. A set timed on a localized voice goes only on that video (Task 27).
+  const voiceOf = (lang: string) => (subtitles ?? []).find((s) => s.lang === lang)?.timing.locale;
+  const fits = (lang: string, video: string | undefined) => { const v = voiceOf(lang); return v === undefined || v === video; };
+  const asVideo = (tag: string | undefined) => (tag === undefined || tag === locales?.primary ? undefined : tag);
+  // Final review Minor 3: a language has a video for the drawn subtitles when every chosen video row has its translation.
+  const translated = (lang: string) => {
+    const drawn = chosen.filter((c) => drawable(c.row));
+    return drawn.length > 0 && drawn.every((c) => versions.find((v) => v.n === c.row.n)?.localizations?.some((l) => l.locale === lang && l.instanceId === c.row.id) === true);
+  };
+  /** The video a drawn language goes on: the one chosen, else the default pairing (U8, `defaultSubtitleVideo`). */
+  const videoOf = (lang: string): string | undefined => {
+    const set = (subtitles ?? []).find((s) => s.lang === lang);
+    if (!locales || !withLanguages || !set) return undefined;
+    const chosenTag = subVideo[lang];
+    return asVideo(chosenTag !== undefined && fits(lang, asVideo(chosenTag)) ? chosenTag : defaultSubtitleVideo(set, locales, translated));
+  };
+  // Files and tracks of a set timed on a localized voice are offered while that video is exported.
+  const offered = (lang: string) => { const v = voiceOf(lang); return v === undefined || (withLanguages && Boolean(langs[v])); };
+  // Drawn, such a set needs its video named: never on the original without the other languages (final review Minor 2).
+  const drawnFits = (lang: string) => voiceOf(lang) === undefined || withLanguages;
+  const drawnPairs = (drawnOffered ? ticked(subDrawn).filter(drawnFits) : []).map((lang) => ({ video: videoOf(lang), lang }));
+  const fileLangs = ticked(subFiles).filter(offered);
+  const softLangs = ticked(subSoft).filter(offered);
+  const subtitled = drawnPairs.length + fileLangs.length + softLangs.length > 0;
   const cleanVideo = fileLangs.length > 0 || softLangs.length > 0;
-  const exportEntries = [
-    ...(withOriginal ? chosen.map((c) => ({ row: c.row, tag: undefined as string | undefined })) : []),
-    ...otherTags.flatMap((tag) => chosen.map((c) => ({ row: c.row, tag: tag as string | undefined }))),
-  ].flatMap((e) => {
-    const r = e.row.file ? renderName(pattern, vars(e.row, e.tag ?? primaryTag)) : null;
+  /** What a row gives on the video of `video` (as the core's `planSubtitleExport`): its plain or clean file, its files, its drawn videos. */
+  const planOf = (r: Row, video: string | undefined, exported: boolean) => {
+    const files = exported && isVideo(r) ? fileLangs.filter((l) => fits(l, video)) : [];
+    const clean = files.length > 0 || (exported && isVideo(r) && softLangs.some((l) => fits(l, video)));
+    const drawn = drawnPairs.filter((p) => p.video === video).map((p) => p.lang);
+    return { plain: exported && (!isVideo(r) || clean || drawn.length === 0), files, drawn: drawable(r) ? drawn : [] };
+  };
+  // The exported video languages, then the ones only a drawn pair names (they give their drawn videos only).
+  const exportedVideos: Array<string | undefined> = [...(withOriginal ? [undefined] : []), ...otherTags];
+  const videos: Array<[string | undefined, boolean]> = [...exportedVideos.map((v) => [v, true] as [string | undefined, boolean]),
+    ...[...new Set(drawnPairs.map((p) => p.video))].filter((v) => !exportedVideos.includes(v)).map((v) => [v, false] as [string | undefined, boolean])];
+  const exportEntries = videos.flatMap(([video, exported]) => chosen.flatMap((c) => {
+    const r = c.row.file ? renderName(pattern, vars(c.row, video ?? primaryTag)) : null;
     if (!r?.ok) return [];
-    const entry = { ...e, format: e.row.id, stem: localizedStem(pattern, r.name, e.tag, e.tag !== undefined), ext: exportExtension(e.row.file!), sub: undefined as string | undefined };
-    if (!subtitled || e.tag !== undefined || !isVideo(e.row)) return [entry];
-    return [...(cleanVideo ? [entry] : []), ...(drawable(e.row) ? drawnLangs : []).map((lang) => ({ ...entry, stem: subtitledStem(entry.stem, lang), sub: lang as string | undefined }))];
-  });
+    const p = planOf(c.row, video, exported);
+    const entry = { row: c.row, tag: video, format: c.row.id, stem: localizedStem(pattern, r.name, video, video !== undefined), ext: exportExtension(c.row.file!), sub: undefined as string | undefined, files: p.files };
+    return [...(p.plain ? [entry] : []), ...p.drawn.map((lang) => ({ ...entry, stem: subtitledStem(entry.stem, lang), sub: lang as string | undefined, files: [] as string[] }))];
+  }));
   const exportStems = separateInstanceNames(exportEntries);
-  const exportNames = exportEntries.map((e, i) => ({ tag: e.tag, sub: e.sub, format: e.format, video: isVideo(e.row), stem: exportStems[i]!, name: `${exportStems[i]!}${e.ext}` }));
+  const exportNames = exportEntries.map((e, i) => ({ tag: e.tag, sub: e.sub, format: e.format, files: e.files, stem: exportStems[i]!, name: `${exportStems[i]!}${e.ext}` }));
   const original = exportNames.filter((e) => e.tag === undefined);
-  const drawnNames = drawnLangs.map((lang) => ({ lang, names: original.filter((e) => e.sub === lang).map((e) => e.name) })).filter((l) => l.names.length > 0);
+  const drawnNames = drawnPairs.map((p) => ({ ...p, names: exportNames.filter((e) => e.sub === p.lang && e.tag === p.video).map((e) => e.name) })).filter((l) => l.names.length > 0);
   // The `.srt`/`.vtt` next to each clean video, `<stem>.<lang>.srt` (the core's `writeSubtitleFiles`).
-  const subtitleFileNames = original.filter((e) => e.sub === undefined && e.video).flatMap((e) => fileLangs.flatMap((lang) => [`${e.stem}.${lang}.srt`, `${e.stem}.${lang}.vtt`]));
+  const subtitleFileNames = exportNames.filter((e) => e.sub === undefined).flatMap((e) => e.files.flatMap((lang) => [`${e.stem}.${lang}.srt`, `${e.stem}.${lang}.vtt`]));
   /** With drawn languages only, a video row names its drawn videos: its plain file is not exported (review round 1). */
   const rowName = (r: Row, name: string | null) => {
-    if (!subtitled || cleanVideo) return name;
+    if (!subtitled || !withOriginal) return name;
+    const p = planOf(r, undefined, true);
+    if (p.plain) return name;
     // A video without the track gives nothing when only drawn languages are asked (final review I2).
     if (isVideo(r) && !drawable(r)) return x.subtitles.noTrackRow;
     const drawnOfRow = original.filter((e) => e.format === r.id && e.sub !== undefined).map((e) => e.name);
     return drawnOfRow.length > 0 ? drawnOfRow.join(', ') : name;
   };
-  // Every file the export writes (review round 1): per chosen row the original's (a video with subtitles: its clean video when
-  // files or tracks are ticked, one per drawn language, and two subtitle files per language), then each translation's. Counted
-  // from the rows, so a name the pattern cannot make yet does not change it.
-  const fileCount = chosen.reduce((n, c) => {
-    const subs = subtitled && isVideo(c.row);
-    const own = !withOriginal ? 0 : subs ? (cleanVideo ? 1 + 2 * fileLangs.length : 0) + (drawable(c.row) ? drawnLangs.length : 0) : 1;
-    return n + own + otherTags.length;
-  }, 0);
+  // Every file the export writes (review round 1): per video language and chosen row its plain or clean file (two subtitle
+  // files per language with it) and one per language drawn on it. Counted from the rows, so a name the pattern cannot make
+  // yet does not change it.
+  const fileCount = videos.reduce((n, [video, exported]) => n + chosen.reduce((m, c) => {
+    const p = planOf(c.row, video, exported);
+    return m + (p.plain ? 1 + 2 * p.files.length : 0) + p.drawn.length;
+  }, 0), 0);
   const translatedNames = otherTags.map((tag) => ({ tag, names: exportNames.filter((e) => e.tag === tag).map((e) => e.name) })).filter((x) => x.names.length > 0);
   // Unknown variables are the same on every row: they are left out of the names and flagged here.
   const firstRow = chosen[0]?.row ?? rows[0];
@@ -367,10 +399,13 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
   const wanted = locales && withLanguages ? [locales.primary, ...locales.extra].filter((tag) => langs[tag]) : [];
   const otherLanguages = locales ? wanted.some((tag) => tag !== locales.primary) : false;
   const languageBody = otherLanguages ? { locales: wanted } : {};
+  // Task 27: with other languages each drawn language names its video; without, a bare tag (the original video).
+  const drawnBody = drawnPairs.map((p) => (locales && withLanguages ? { video: p.video ?? locales.primary, lang: p.lang } : p.lang));
   const subtitlesBody = subtitled ? { subtitles: {
-    ...(drawnLangs.length > 0 ? { drawn: drawnLangs } : {}), ...(fileLangs.length > 0 ? { files: fileLangs } : {}), ...(softLangs.length > 0 ? { soft: softLangs } : {}),
+    ...(drawnBody.length > 0 ? { drawn: drawnBody } : {}), ...(fileLangs.length > 0 ? { files: fileLangs } : {}), ...(softLangs.length > 0 ? { soft: softLangs } : {}),
   } } : {};
-  const lockProfile = otherLanguages;
+  // A localized video is exported at the format size and High, drawn or not (decision 1007, Task 27): as the core refuses any other.
+  const lockProfile = otherLanguages || drawnPairs.some((p) => p.video !== undefined);
   // The resolution and quality are the videos' (decision 974): stills, identity and store pack formats keep their own.
   const videoRow = (r: Row) => r.composed && r.preset !== null && profileApplies(r.preset, r.id);
   const anyVideo = rows.some(videoRow);
@@ -516,20 +551,35 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
         <div className="ms-exp-langs ms-exp-subs" role="group" aria-label={x.subtitles.title}>
           <span className="ms-exp-dest-label">{x.subtitles.title}</span>
           {([
-            ...(drawnOffered ? [[x.subtitles.drawn, x.subtitles.drawnHint, subDrawn, setSubDrawn]] as const : []),
-            [x.subtitles.files, x.subtitles.filesHint, subFiles, setSubFiles],
-            [x.subtitles.soft, x.subtitles.softHint, subSoft, setSubSoft],
-          ] as const).map(([name, hint, picked, setPicked]) => (
+            ...(drawnOffered ? [[x.subtitles.drawn, x.subtitles.drawnHint, subDrawn, setSubDrawn, true]] as const : []),
+            [x.subtitles.files, x.subtitles.filesHint, subFiles, setSubFiles, false],
+            [x.subtitles.soft, x.subtitles.softHint, subSoft, setSubSoft, false],
+          ] as const).map(([name, hint, picked, setPicked, drawnRow]) => (
             <div key={name} className="ms-exp-subs-row" role="group" aria-label={name}>
               <span className="ms-exp-subs-name"><b>{name}</b><span className="ms-faint">{hint}</span></span>
               <div className="ms-exp-langs-list">
-                {subtitleLangs.map((tag) => (
-                  <label key={tag} className="ms-exp-lang">
-                    <Check on={Boolean(picked[tag])} label={`${name}: ${localeName(tag, locale)}`} disabled={running}
-                      onChange={(v) => setPicked((s) => ({ ...s, [tag]: v }))} />
-                    <span>{localeName(tag, locale)}</span>
-                  </label>
-                ))}
+                {subtitleLangs.map((tag) => {
+                  // Files and tracks of a set timed on a localized voice wait for that video (Task 27).
+                  const voice = voiceOf(tag);
+                  const off = drawnRow ? !drawnFits(tag) : !offered(tag);
+                  // "Nel video" (Task 27, U8): the video language it goes on, the valid ones only.
+                  const options = drawnRow && picked[tag] && locales && withLanguages
+                    ? [locales.primary, ...locales.extra].filter((v) => fits(tag, asVideo(v))).map((v) => ({ value: v, label: v === locales.primary ? t.web.languages.renderOriginal({ language: localeName(v, locale) }) : localeName(v, locale) }))
+                    : null;
+                  return (
+                    <span key={tag} className="ms-exp-sub-lang">
+                      <label className={cx('ms-exp-lang', off && 'ms-off')} title={off && voice ? x.subtitles.voicedOnly({ language: localeName(voice, locale) }) : undefined}>
+                        <Check on={Boolean(picked[tag]) && !off} label={`${name}: ${localeName(tag, locale)}`} disabled={running || off}
+                          onChange={(v) => setPicked((s) => ({ ...s, [tag]: v }))} />
+                        <span>{localeName(tag, locale)}</span>
+                      </label>
+                      {options && locales ? (
+                        <Select variant="pill" label={x.subtitles.drawnVideo({ language: localeName(tag, locale) })} value={videoOf(tag) ?? locales.primary} options={options}
+                          disabled={running || options.length < 2} onChange={(v) => setSubVideo((s) => ({ ...s, [tag]: v }))} />
+                      ) : null}
+                    </span>
+                  );
+                })}
               </div>
             </div>
           ))}
@@ -538,8 +588,10 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
           {drawnNames.length > 0 || subtitleFileNames.length > 0 ? (
             <div className="ms-exp-preview ms-exp-subs-out">
               {drawnNames.map((l) => (
-                <span key={`sub-${l.lang}`} className="ms-exp-preview-line">
-                  <span className="ms-exp-preview-label">{x.subtitles.previewDrawn({ language: localeName(l.lang, locale) })}</span>
+                <span key={`sub-${l.video ?? ''}-${l.lang}`} className="ms-exp-preview-line">
+                  {/* With other languages every drawn video names its video, the original's too (review round 1). */}
+                  <span className="ms-exp-preview-label">{locales && withLanguages ? x.subtitles.previewDrawnOn({ language: localeName(l.lang, locale), video: localeName(l.video ?? locales.primary, locale) })
+                    : x.subtitles.previewDrawn({ language: localeName(l.lang, locale) })}</span>
                   <span className="ms-exp-file">{l.names.join(', ')}</span>
                 </span>
               ))}

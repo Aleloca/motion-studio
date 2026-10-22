@@ -4,9 +4,11 @@
  * does not), a two-line text shows whole in its box, the rows' fields, buttons and warnings stay inside their row, the
  * frame keeps the format's proportions inside its column. Task 13: the timeline runs under both columns, full width and inside
  * the window, its blocks inside its track, the waveform drawn (by the component's own `drawWave`, run in the page: the
- * markup is static). MS_LAYOUT_SHOTS=<folder> keeps a screenshot of each case.
+ * markup is static). Task 26: a creative with six subtitle languages, opened on a translation: the language switcher, "+ Lingua"
+ * and "Ritraduci tutto" fit the header (every language on one line, nothing cut or outside), the stale marks, "Ritraduci" and
+ * the source text stay inside their row. MS_LAYOUT_SHOTS=<folder> keeps a screenshot of each case.
  */
-import type { CreativeDetail, SubtitleCue, VersionEntry } from '@motion-studio/shared';
+import type { CreativeDetail, SubtitleCue, SubtitlesSummary, VersionEntry } from '@motion-studio/shared';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -19,8 +21,15 @@ const version: VersionEntry = {
   n: 2, commit: 'c', sessionId: 's', status: 'complete', createdAt: at, request: '', outputs: [], problems: [], tools: [], renderCommand: null, basedOn: null,
   compositions: [{ format: REEL, dir: `compositions/${REEL}`, hash: '2'.repeat(64) }],
 };
+const TIMING = { version: 2, format: REEL, fingerprint: 'f'.repeat(64) };
+const summary = (lang: SubtitlesSummary['lang'], translated: boolean): SubtitlesSummary => ({
+  lang, origin: translated ? 'translation' : 'speech', ...(translated ? { sourceLang: 'it' as const } : {}), cues: 30, edited: 0, hash: 'a'.repeat(64),
+  timing: TIMING, timingChanged: false, staleCues: translated ? 2 : 0,
+});
 const detail: CreativeDetail = {
   slug: 'lancio', jobKey: 'creative:/w:acme:lancio', versions: [version],
+  // Task 26: six subtitle languages, the original speech and five translations.
+  subtitles: [summary('it', false), ...(['en', 'de', 'fr', 'es', 'pt'] as const).map((l) => summary(l, true))],
   creative: {
     schemaVersion: 1, title: 'Lancio estivo', status: 'ready', error: null, createdAt: at, updatedAt: at, resumeFrom: null, linkedCodebases: [],
     brief: { goal: 'g', message: 'm', formats: [REEL], durationSec: 60, assets: [], notes: '' },
@@ -38,10 +47,19 @@ const PEAKS = Array.from({ length: 1200 }, (_, i) => {
   const on = CUES.some((c) => ms >= c.start && ms < c.end);
   return Math.round((on ? 0.25 + 0.7 * Math.abs(Math.sin(i / 3.1) * Math.cos(i / 11.7)) : 0.03) * 1000) / 1000;
 });
+/** Task 26: the English translation, two of its lines translated from a source text that changed since. */
+const SAID_EN = ['Welcome to the new Acme Travel app', 'Find the place you have always dreamed of', 'Compare prices in a moment', 'Pick the dates and the seats', 'Pay safely'];
+// Final review I2: two lines of the source (c7, c8) have no English line yet: "Manca la traduzione".
+const MISSING = new Set(['c7', 'c8']);
+const EN: SubtitleCue[] = CUES.filter((c) => !MISSING.has(c.id)).map((c, i) => ({
+  ...c, text: i === 1 ? 'Book your next holiday by the sea\nin three taps with the Acme Travel app' : i === 2 ? 'A really long sentence that reads far too fast' : i === 3 ? c.text : SAID_EN[i % SAID_EN.length]!,
+  source: { text: i === 0 || i === 2 ? 'Un testo di prima, cambiato da allora' : c.text },
+}));
 const api = {
   subtitleWaveform: vi.fn(async () => ({ peaks: PEAKS, durationMs: 90_000 })),
   getCreative: vi.fn(async () => detail),
-  subtitleSet: vi.fn(async () => ({ set: { $schema: 'motion-studio/subtitles@1', lang: 'it', origin: 'speech', transcript: 'whisper-small', detected: 'it', timing: { version: 2, format: REEL, fingerprint: 'f'.repeat(64) }, cues: CUES }, hash: 'a'.repeat(64) })),
+  subtitleSet: vi.fn(async (_s: string, _c: string, lang: string) => ({ set: { $schema: 'motion-studio/subtitles@1', lang, origin: lang === 'it' ? 'speech' : 'translation', ...(lang === 'it' ? {} : { sourceLang: 'it' }),
+    transcript: 'whisper-small', detected: 'it', timing: TIMING, cues: lang === 'it' ? CUES : EN }, hash: 'a'.repeat(64) })),
   saveSubtitleSet: vi.fn(async () => ({ hash: 'b'.repeat(64) })),
   subtitleFile: vi.fn(async () => new Blob([''])),
   revokePreview: vi.fn(async () => ({ revoked: true })),
@@ -78,16 +96,18 @@ const { drawWave } = await import('../src/screens/subtitles/CueTimeline.tsx');
 const { I18nProvider } = await import('../src/i18n.tsx');
 const { ShellContext } = await import('../src/shell/ShellContext.tsx');
 
-async function markup(): Promise<string> {
-  const shell = { route: { name: 'subtitles', slug: 'acme', creative: 'lancio', lang: 'it' }, live: { approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} } } as unknown as Shell;
+async function markup(lang: 'it' | 'en' = 'it'): Promise<string> {
+  const shell = { route: { name: 'subtitles', slug: 'acme', creative: 'lancio', lang }, live: { approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} } } as unknown as Shell;
   const { container, unmount } = render(
-    <I18nProvider locale="it"><ShellContext.Provider value={shell}><div id="page"><SubtitlesScreen slug="acme" creative="lancio" lang="it" /></div></ShellContext.Provider></I18nProvider>);
+    <I18nProvider locale="it"><ShellContext.Provider value={shell}><div id="page"><SubtitlesScreen slug="acme" creative="lancio" lang={lang} /></div></ShellContext.Provider></I18nProvider>);
   await screen.findByRole('list', { name: 'Righe dei sottotitoli' });
+  // A translation: its source read, the stale marks shown.
+  if (lang !== 'it') await screen.findAllByText('Testo originale cambiato');
   await waitFor(() => expect(container.querySelector('.ms-subs-caption')).not.toBeNull());
   // The waveform has loaded (no "loading" note in the markup).
   await waitFor(() => expect(container.querySelector('.ms-subtl-loading')).toBeNull());
   // A selected row, as after a click (the playhead moves to it).
-  await userEvent.click(within(screen.getAllByRole('listitem')[1]!).getByText('2'));
+  await userEvent.click(within(within(screen.getByRole('list', { name: 'Righe dei sottotitoli' })).getAllByRole('listitem')[1]!).getByText('2'));
   const html = container.querySelector('#page')!.innerHTML;
   unmount();
   return html;
@@ -124,6 +144,34 @@ const MEASURE = `(() => {
     listSideways: scroll.scrollWidth > scroll.clientWidth + 1,
     twoLinesWhole: !!two && two.scrollHeight <= two.clientHeight + 1 && two.clientHeight >= 2 * parseFloat(getComputedStyle(two).lineHeight),
     rowOut,
+    langs: (() => {
+      const box = document.querySelector('.ms-subs-langs');
+      if (!box) return null;
+      const seg = [...box.querySelectorAll('.ms-seg button')];
+      const tops = seg.map((b) => Math.round(b.getBoundingClientRect().top));
+      return {
+        count: seg.length,
+        oneLine: tops.every((t) => t === tops[0]),
+        out: outside(head, '.ms-subs-langs, .ms-subs-langs .ms-btn, .ms-seg button', head.getBoundingClientRect()),
+        cut: cutIn(box, 'button'),
+        headHeight: Math.round(head.getBoundingClientRect().height),
+        marks: document.querySelectorAll('.ms-subs-stale .ms-chip').length,
+        sources: document.querySelectorAll('.ms-subs-source').length,
+        sourceOut: rows.flatMap((r) => outside(r, '.ms-subs-source, .ms-subs-stale .ms-btn, .ms-subs-stale .ms-chip', r.getBoundingClientRect())),
+        missing: (() => {
+          const m = document.querySelector('.ms-subs-missing');
+          if (!m) return null;
+          const b = m.getBoundingClientRect();
+          return {
+            items: m.querySelectorAll('.ms-subs-missing-list li').length,
+            inSide: b.left >= side.left - 0.5 && b.right <= side.right + 0.5 && b.top >= side.top - 0.5 && b.bottom <= side.bottom + 0.5,
+            out: outside(m, '.ms-subs-missing-head, .ms-subs-missing-hint, .ms-subs-missing-list li, .ms-subs-missing-at, .ms-subs-missing-text', b),
+            sideways: m.scrollWidth > m.clientWidth + 1,
+            height: Math.round(b.height),
+          };
+        })(),
+      };
+    })(),
     cut: [...cutIn(document.querySelector('.ms-subs-head'), 'button, .ms-pill'), ...cutIn(document.querySelector('.ms-subs-side'), 'button, .ms-chip')],
     headOut: outside(head, 'button, .ms-pill, h1, [role="status"]', head.getBoundingClientRect()),
     frameInside: frame.left >= stage.left - 0.5 && frame.right <= stage.right + 0.5 && frame.top >= stage.top - 0.5 && frame.bottom <= stage.bottom + 0.5,
@@ -142,7 +190,9 @@ const MEASURE = `(() => {
 })()`;
 type M = {
   sideBySide: boolean; underHead: boolean; insideApp: boolean; pageSideways: boolean; pageScrolls: boolean; listScrolls: boolean; listSideways: boolean;
-  twoLinesWhole: boolean; rowOut: string[]; cut: string[]; headOut: string[]; frameInside: boolean; ratio: number; frameWidth: number; caption: boolean; listWidth: number;
+  twoLinesWhole: boolean; rowOut: string[]; cut: string[];
+  langs: { count: number; oneLine: boolean; out: string[]; cut: string[]; headHeight: number; marks: number; sources: number; sourceOut: string[];
+    missing: { items: number; inSide: boolean; out: string[]; sideways: boolean; height: number } | null } | null; headOut: string[]; frameInside: boolean; ratio: number; frameWidth: number; caption: boolean; listWidth: number;
   timelineUnder: boolean; timelineFull: boolean; timelineInside: boolean; blocks: number; blocksInTrack: boolean; waveInked: number; edges: number[];
 };
 // The app as the shell lays it out: the 52 px bar, then the page.
@@ -184,6 +234,48 @@ run('the subtitle editor: real Chrome layout (Task 12)', () => {
         expect(r.blocksInTrack).toBe(true);
         expect(r.waveInked, 'the waveform is drawn').toBeGreaterThan(0.02);
         expect(r.edges, 'the selected line\'s two 6 px handles').toEqual([6, 6]);
+      }, 120_000);
+    }
+  }
+});
+
+run('the subtitle languages: real Chrome layout (Task 26)', () => {
+  const rig = new LayoutRig();
+  let html = '';
+  beforeAll(async () => { await rig.start(); html = await markup('en'); }, 120_000);
+  afterAll(() => rig.stop(), 60_000);
+
+  for (const theme of ['light', 'dark'] as const) {
+    for (const [width, height] of [[1280, 800], [900, 700]] as const) {
+      it(`${theme} ${width}×${height}: six languages, "+ Lingua" and "Ritraduci tutto" fit the header; the stale marks, the source text and "Manca la traduzione" stay in place`, async () => {
+        const r = await rig.measure<M>(shell(html), MEASURE, { name: 'subs-langs', width, height, theme }, 'subs-langs');
+        expect(r.langs, 'the switcher is in the header').not.toBeNull();
+        expect(r.langs!.count).toBe(6);
+        expect(r.langs!.oneLine, 'every language on one line').toBe(true);
+        expect(r.langs!.out, 'the switcher inside the header').toEqual([]);
+        expect(r.langs!.cut, 'no language cut').toEqual([]);
+        expect(r.headOut).toEqual([]);
+        expect(r.cut).toEqual([]);
+        // At most two rows of controls: the editor keeps its room.
+        expect(r.langs!.headHeight).toBeLessThanOrEqual(100);
+        expect(r.langs!.marks, 'the two stale lines are marked').toBe(2);
+        expect(r.langs!.sources, 'every translated line shows its source text').toBe(CUES.length - MISSING.size);
+        // Final review I2: the source lines with no English line, listed above the lines, inside the side column.
+        expect(r.langs!.missing, '"Manca la traduzione" is shown').not.toBeNull();
+        expect(r.langs!.missing!.items).toBe(MISSING.size);
+        expect(r.langs!.missing!.inSide).toBe(true);
+        expect(r.langs!.missing!.out).toEqual([]);
+        expect(r.langs!.missing!.sideways).toBe(false);
+        expect(r.langs!.missing!.height).toBeLessThanOrEqual(132);
+        expect(r.langs!.sourceOut).toEqual([]);
+        expect(r.rowOut).toEqual([]);
+        expect(r.sideBySide).toBe(true);
+        expect(r.insideApp).toBe(true);
+        expect(r.pageSideways).toBe(false);
+        expect(r.pageScrolls).toBe(false);
+        expect(r.listScrolls).toBe(true);
+        expect(r.listSideways).toBe(false);
+        expect(r.timelineInside).toBe(true);
       }, 120_000);
     }
   }

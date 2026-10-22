@@ -39,6 +39,7 @@ import { StorePackExport } from './creative/StorePackExport.tsx';
 import { LanguagesButton } from './creative/LanguagesButton.tsx';
 import { RenderLanguagesDialog } from './creative/RenderLanguagesDialog.tsx';
 import { creativeLocales, packLanguageGaps } from './creative/languagesModel.ts';
+import { entrySubtitleLang } from './subtitles/LangSwitcher.tsx';
 import { activatesControl, bare, inOverlay, isTyping } from './keys.ts';
 import { useChatPins } from './pendingPins.ts';
 import { FollowerChip, FormatBadge, useNewVersionNotice, useVersionActions, VersionTimeline } from './FormatVersions.tsx';
@@ -1117,7 +1118,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
         <div className="ms-chat-card">
           {!group && detail.subtitles?.length ? (
             <div className="ms-cv-subs-entry">
-              <Button size="sm" variant="outline" onClick={() => go(href.subtitles(slug, creative, detail.subtitles![0]!.lang))}><Icon name="text" size={13} />{c.subtitles}</Button>
+              <Button size="sm" variant="outline" onClick={() => go(href.subtitles(slug, creative, entrySubtitleLang(detail.subtitles, creativeLocales(detail.creative.brief)?.primary) ?? undefined))}><Icon name="text" size={13} />{c.subtitles}</Button>
             </div>
           ) : null}
           <Tabs label={c.panel} value={tab} onChange={setTab}
@@ -1191,7 +1192,9 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
       })() : null}
       {renderPlan && creativeLocales(cr.brief) ? (
         <RenderLanguagesDialog open onClose={() => setRenderPlan(null)} slug={slug} creative={creative} plan={renderPlan} locales={creativeLocales(cr.brief)!}
-          rowsOf={(n) => versions.find((v) => v.n === n)?.localizations ?? []} labelOf={formatLabel} />
+          rowsOf={(n) => versions.find((v) => v.n === n)?.localizations ?? []} labelOf={formatLabel}
+          {...(detail.subtitles?.length ? { subtitles: detail.subtitles } : {})}
+          drawsSubtitles={renderPlan.some(([, formats]) => formats.some((f) => detail.formats?.find((x) => x.id === f)?.subtitlesTrack === true))} />
       ) : null}
     </div>
   );

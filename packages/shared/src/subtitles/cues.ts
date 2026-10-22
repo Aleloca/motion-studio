@@ -1,6 +1,6 @@
 // Cutting words into cues, the cue warnings, and the merge that keeps what the user edited (decisions 1636-1644).
 import type { LocaleTag } from '../localization/locales.ts';
-import type { SubtitleCue, SubtitleWord } from './schema.ts';
+import type { SubtitleCue, SubtitleSet, SubtitleWord } from './schema.ts';
 
 export const SUBTITLE_RULES = { maxLines: 2, maxLineChars: 42, cjkLineChars: 16, minMs: 1000, maxMs: 7000, maxCps: 17, pauseMs: 500 } as const;
 export type SubtitleRules = typeof SUBTITLE_RULES;
@@ -285,4 +285,130 @@ export function mergeKeepingEdited(old: SubtitleCue[], fresh: SubtitleCue[]): Su
     return { ...f, id: `f${n}` };
   });
   return [...kept, ...renamed].sort((a, b) => a.start - b.start || a.end - b.end);
+}
+
+/**
+ * The translated cues of `target` whose source line changed since they were translated (Task 23, spec §6.5): each cue with a
+ * `source` is compared with the source cue it overlaps most in time (ids change when the source is timed again), and is stale
+ * when that cue's text differs from its `source.text`, or when no source cue overlaps it any more. A cue without `source` (a
+ * line the user added in that language) is never stale. Ids in the target's order.
+ */
+export function staleCues(target: Pick<SubtitleSet, 'cues'>, source: Pick<SubtitleSet, 'cues'>): string[] {
+  const out: string[] = [];
+  for (const c of target.cues) {
+    if (!c.source) continue;
+    const best = sourceCueOf(c, source.cues);
+    if (!best || best.text !== c.source.text) out.push(c.id);
+  }
+  return out;
+}
+
+/** A line's text for pairing: words lower-cased, punctuation and spacing aside. */
+const pairingText = (text: string) => text.split(/\s+/).map(normalizeToken).filter(Boolean).join(' ');
+
+/**
+ * The pairs of `a` and `b` (indexes) that every longest common subsequence of their keys agrees on (Task 25, review round 3):
+ * order kept (nothing crosses); a pair two alignments would choose differently (a line repeated) is left out.
+ */
+function certainPairs(a: readonly string[], b: readonly string[]): Array<[number, number]> {
+  const n = a.length, m = b.length, w = m + 1;
+  // f: LCS of a[0..i) and b[0..j); g: LCS of a[i..) and b[j..).
+  const f = new Uint32Array((n + 1) * w), g = new Uint32Array((n + 1) * w);
+  for (let i = 1; i <= n; i++) for (let j = 1; j <= m; j++) {
+    f[i * w + j] = a[i - 1] === b[j - 1] ? f[(i - 1) * w + j - 1]! + 1 : Math.max(f[(i - 1) * w + j]!, f[i * w + j - 1]!);
+  }
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) {
+    g[i * w + j] = a[i] === b[j] ? g[(i + 1) * w + j + 1]! + 1 : Math.max(g[(i + 1) * w + j]!, g[i * w + j + 1]!);
+  }
+  const total = f[n * w + m]!;
+  const pairs: Array<[number, number]> = [];
+  for (let i = 0; i < n; i++) for (let j = 0; j < m; j++) {
+    if (a[i] === b[j] && f[i * w + j]! + 1 + g[(i + 1) * w + j + 1]! === total) pairs.push([i, j]);
+  }
+  const countA = new Map<number, number>(), countB = new Map<number, number>();
+  for (const [i, j] of pairs) { countA.set(i, (countA.get(i) ?? 0) + 1); countB.set(j, (countB.get(j) ?? 0) + 1); }
+  const sure = pairs.filter(([i, j]) => countA.get(i) === 1 && countB.get(j) === 1);
+  // Kept only when in order with every other sure pair.
+  return sure.filter(([i, j]) => sure.every(([k, l]) => (k === i && l === j) || (k < i && l < j) || (k > i && l > j)));
+}
+
+/**
+ * A translation's cues after its source was made again (Task 25, review round 3): each translated line the user did not
+ * correct goes to the line of the source now (`after`) with its own source text (`source.text`, normalised), by an
+ * order-keeping alignment of the whole sequences (`certainPairs`: a repeated line pairs only when unambiguous), and takes its
+ * times. Never by id (the ids of uncorrected source lines are recycled) nor by position: a wrong move is worse than none. A
+ * line with no partner keeps its times, and so does a line whose move would overlap a line left in place. A corrected line
+ * keeps its times (anti-goal 1). Texts untouched; sorted by time. `complete`: every uncorrected line moved to its partner
+ * (or `before` is `after`'s lines as they were, "Tempi controllati": nothing moves, and it follows); when false, the
+ * translation does not claim its source's timing.
+ */
+export function followSourceTimes(cues: readonly SubtitleCue[], before: readonly SubtitleCue[], after: readonly SubtitleCue[]): { cues: SubtitleCue[]; complete: boolean } {
+  const unchanged = before.length === after.length
+    && before.every((c, i) => { const d = after[i]!; return c.id === d.id && c.start === d.start && c.end === d.end && c.text === d.text; });
+  const sorted = [...cues].sort((a, b) => a.start - b.start || a.end - b.end);
+  if (unchanged) return { cues: sorted, complete: true };
+  const free = sorted.filter((c) => !c.edited && c.source);
+  const pairs = certainPairs(free.map((c) => pairingText(c.source!.text)), after.map((c) => pairingText(c.text)));
+  const target = new Map(pairs.map(([i, j]) => [free[i]!.id, after[j]!]));
+  const moved = new Set<string>();
+  let out = sorted.map((c) => {
+    const to = target.get(c.id);
+    if (!to) return c;
+    moved.add(c.id);
+    return { ...c, start: to.start, end: to.end };
+  });
+  // A moved line never overlaps one left in place: it stays (until nothing changes, as one put back may meet another).
+  for (let again = true; again;) {
+    again = false;
+    out = out.map((c, i) => {
+      if (!moved.has(c.id)) return c;
+      const hits = out.some((d, k) => k !== i && !moved.has(d.id) && c.start < d.end && d.start < c.end);
+      if (!hits) return c;
+      moved.delete(c.id);
+      again = true;
+      return sorted.find((x) => x.id === c.id)!;
+    });
+  }
+  const complete = free.every((c) => moved.has(c.id));
+  return { cues: out.sort((a, b) => a.start - b.start || a.end - b.end), complete };
+}
+
+/** The source cue a translated cue stands for (Task 25): the one it overlaps most in time (the first of equals), or null. */
+export function sourceCueOf(cue: Pick<SubtitleCue, 'start' | 'end'>, source: readonly SubtitleCue[]): SubtitleCue | null {
+  let best: SubtitleCue | null = null;
+  let most = 0;
+  for (const s of source) {
+    const overlap = Math.min(cue.end, s.end) - Math.max(cue.start, s.start);
+    if (overlap > most) { most = overlap; best = s; }
+  }
+  return best;
+}
+
+/**
+ * The source line each line of a translation stands for (final review C1, I2), by the line's id. Timed as its source
+ * (`following`: the same timing), the source line it overlaps most (`sourceCueOf`, as `staleCues`). Not timed as its source
+ * (a retime it could not follow): the source line on its own times with its source text (a line translated since), else the
+ * one its source text pairs with in order (`certainPairs`), else the one it overlaps most. A line without `source` (one the
+ * user wrote) stands for the source line it overlaps most. Never by id: the ids of a source timed again are recycled. Null: none.
+ */
+export function translationSources(cues: readonly SubtitleCue[], source: readonly SubtitleCue[], following: boolean): Map<string, SubtitleCue | null> {
+  const paired = new Map<string, SubtitleCue>();
+  if (!following) {
+    // A line on its source line's own times and text (one translated since the retime) pairs with it first.
+    const taken = new Set<string>();
+    for (const c of cues) {
+      const s = c.source ? source.find((x) => !taken.has(x.id) && x.start === c.start && x.end === c.end && pairingText(x.text) === pairingText(c.source!.text)) : undefined;
+      if (s) { paired.set(c.id, s); taken.add(s.id); }
+    }
+    const from = [...cues].filter((c) => c.source && !paired.has(c.id)).sort((a, b) => a.start - b.start || a.end - b.end);
+    const rest = source.filter((x) => !taken.has(x.id));
+    for (const [i, j] of certainPairs(from.map((c) => pairingText(c.source!.text)), rest.map((c) => pairingText(c.text)))) paired.set(from[i]!.id, rest[j]!);
+  }
+  return new Map(cues.map((c) => [c.id, paired.get(c.id) ?? sourceCueOf(c, source)]));
+}
+
+/** The source lines no line of the translation stands for (`translationSources`): "Manca la traduzione" (final review I2). */
+export function missingSourceLines(cues: readonly SubtitleCue[], source: readonly SubtitleCue[], following: boolean): SubtitleCue[] {
+  const covered = new Set([...translationSources(cues, source, following).values()].map((s) => s?.id));
+  return source.filter((s) => !covered.has(s.id));
 }

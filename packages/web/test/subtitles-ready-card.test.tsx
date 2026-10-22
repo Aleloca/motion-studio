@@ -12,8 +12,9 @@ import { I18nProvider } from '../src/i18n.tsx';
 
 const at = '2026-10-22T10:00:00.000Z';
 const api = {
-  subtitles: vi.fn(async (..._a: unknown[]) => ({ sets: [{ lang: 'it', timingChanged: true }], job: null, pending: null })),
+  subtitles: vi.fn(async (..._a: unknown[]) => ({ sets: [{ lang: 'it', timingChanged: true }] as Array<{ lang: string; timingChanged: boolean; origin?: string }>, job: null, pending: null })),
   startSubtitles: vi.fn(async (..._a: unknown[]) => ({ job: { id: 'j1' } })),
+  addSubtitleLanguage: vi.fn(async (..._a: unknown[]) => ({ job: { id: 'j2' } })),
   subtitleFile: vi.fn(async (_s: string, _c: string, _lang: string, _ext: 'srt' | 'vtt') => new Blob(['1\n00:00:00,000 --> 00:00:01,000\nCiao\n'])),
   transcriptionChoice: vi.fn(),
   recheckTranscription: vi.fn(),
@@ -79,6 +80,28 @@ describe('the subtitles card in the chat (Task 8)', () => {
     expect(screen.getByText('Sottotitoli pronti in inglese: è la lingua parlata nel video, non quella del brief (italiano).')).toBeTruthy();
   });
 
+  it('ready in another language than the brief\'s: "Traduci in Italiano" adds the brief\'s language and opens its editor (Task 26)', async () => {
+    location.hash = '';
+    card(entry({ state: 'ready', lang: 'en', briefLang: 'it' }, 'Sottotitoli pronti in inglese: …'));
+    await userEvent.click(screen.getByRole('button', { name: 'Traduci in Italiano' }));
+    expect(api.addSubtitleLanguage).toHaveBeenCalledWith('acme', 'lancio', 'it');
+    await waitFor(() => expect(location.hash).toBe('#/p/acme/c/lancio/subtitles/it'));
+  });
+
+  it('"Traduci in" with the language already there opens it; another refusal says why (Task 26)', async () => {
+    location.hash = '';
+    const { ApiError } = await import('../src/api.ts') as unknown as { ApiError: new (m: string) => Error };
+    api.addSubtitleLanguage.mockRejectedValueOnce(Object.assign(new ApiError('già'), { status: 409, code: 'subtitles-lang-exists' }));
+    card(entry({ state: 'ready', lang: 'en', briefLang: 'it' }, 'Sottotitoli pronti in inglese: …'));
+    await userEvent.click(screen.getByRole('button', { name: 'Traduci in Italiano' }));
+    await waitFor(() => expect(location.hash).toBe('#/p/acme/c/lancio/subtitles/it'));
+    location.hash = '';
+    api.addSubtitleLanguage.mockRejectedValueOnce(Object.assign(new ApiError('Nessuna origine'), { status: 409, code: 'subtitles-no-source' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Traduci in Italiano' }));
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'La traduzione non è partita: Nessuna origine');
+    expect(location.hash).toBe('');
+  });
+
   it('no speech, an unsupported language, a failure: their one line, the failure with its reason', () => {
     const { unmount } = card(entry({ state: 'no-speech' }, 'Nessun parlato nel video: nessun sottotitolo.'));
     expect(screen.getByText('Nessun parlato nel video: nessun sottotitolo.')).toBeTruthy();
@@ -109,6 +132,17 @@ describe('the subtitles card in the chat (Task 8)', () => {
     const c = screen.getByRole('group', { name: 'Il video è cambiato: ricontrolla i tempi' });
     expect(await within(c).findByText('I tempi sono di nuovo allineati al video.')).toBeTruthy();
     expect(within(c).queryByRole('button', { name: 'Rifai i tempi' })).toBeNull();
+    expect(within(c).getByRole('link', { name: "Apri l'editor" })).toBeTruthy();
+  });
+
+  it('an old notice that names a translation offers no "Rifai i tempi": it follows its source (Task 25)', async () => {
+    api.subtitles.mockResolvedValueOnce({ sets: [{ lang: 'it', origin: 'translation', timingChanged: true }], job: null, pending: null });
+    card(entry({ state: 'timing-changed', lang: 'it' }, 'Il video è cambiato: ricontrolla i tempi', 'warning'));
+    const c = screen.getByRole('group', { name: 'Il video è cambiato: ricontrolla i tempi' });
+    await waitFor(() => expect(api.subtitles).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(within(c).queryByRole('button', { name: 'Rifai i tempi' })).toBeNull();
+    expect(within(c).queryByText('I tempi sono di nuovo allineati al video.')).toBeNull();
     expect(within(c).getByRole('link', { name: "Apri l'editor" })).toBeTruthy();
   });
 

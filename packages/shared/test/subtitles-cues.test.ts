@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { subtitleCueSchema, alignToScript, buildCues, cueWarnings, mergeKeepingEdited, relocateCues, wrapLines, type SubtitleCue } from '../src/index.ts';
+import { followSourceTimes, missingSourceLines, translationSources, subtitleCueSchema, alignToScript, buildCues, cueWarnings, mergeKeepingEdited, relocateCues, wrapLines, type SubtitleCue } from '../src/index.ts';
 
 const w = (text: string, start: number, end: number) => ({ text, start, end });
 
@@ -185,5 +185,93 @@ describe('Korean keeps its spaces', () => {
     expect(cues.map((c) => c.text)).toEqual(['안녕하세요 여러분 반갑습니다.']);
     expect(wrapLines('안녕하세요 여러분', 'ko')).toEqual(['안녕하세요 여러분']);
     expect(buildCues({ segments: [k('안녕하세요 여러분', 0, 2000)] }, 'ko').map((c) => c.text)).toEqual(['안녕하세요 여러분']);
+  });
+});
+
+describe('followSourceTimes (Task 25, review round 3)', () => {
+  const src = (list: Array<[string, number, number, string]>): SubtitleCue[] => list.map(([id, start, end, text]) => ({ id, start, end, text }));
+  const tr = (id: string, start: number, end: number, from: string, edited = false): SubtitleCue =>
+    ({ id, start, end, text: `EN ${from}`, source: { text: from }, ...(edited ? { edited: true as const } : {}) });
+  const at = (r: { cues: SubtitleCue[] }) => r.cues.map((c) => [c.id, c.start, c.end]);
+  const overlapping = (cues: SubtitleCue[]) => cues.some((a, i) => cues.some((b, j) => i < j && a.start < b.end && b.start < a.end));
+
+  it('a +2 s retime with 1.6 s lines: every uncorrected line moves to its source line; a corrected one keeps its times', () => {
+    const before = src([['c1', 200, 1800, 'Ciao a tutti.'], ['c2', 2000, 3600, 'Prenota ora.'], ['c3', 3800, 5400, 'Scarica l\'app.']]);
+    const after = src([['f1', 2200, 3800, 'ciao a tutti'], ['f2', 4000, 5600, 'Prenota ora!'], ['f3', 5800, 7400, 'Scarica l\'app.']]);
+    const r = followSourceTimes([tr('c1', 200, 1800, 'Ciao a tutti.', true), tr('c2', 2000, 3600, 'Prenota ora.'), tr('c3', 3800, 5400, 'Scarica l\'app.')], before, after);
+    expect(r.complete).toBe(true);
+    expect(at(r)).toEqual([['c1', 200, 1800], ['c2', 4000, 5600], ['c3', 5800, 7400]]);
+    expect(overlapping(r.cues)).toBe(false);
+  });
+
+  it('a second retime with recycled f-ids and an intro line added: each line follows its own text, not the id', () => {
+    const before = src([['f1', 2200, 3800, 'Ciao a tutti.'], ['f2', 4000, 5600, 'Prenota ora.']]);
+    const after = src([['f1', 2200, 3000, 'Benvenuti.'], ['f2', 4200, 5800, 'Ciao a tutti.'], ['f3', 6000, 7600, 'Prenota ora.']]);
+    const r = followSourceTimes([tr('f1', 2200, 3800, 'Ciao a tutti.'), tr('f2', 4000, 5600, 'Prenota ora.')], before, after);
+    expect(r.complete).toBe(true);
+    expect(at(r)).toEqual([['f1', 4200, 5800], ['f2', 6000, 7600]]);
+  });
+
+  it('Alfa, Beta, Gamma → Alfa, "Gamma bis", Delta: only Alfa moves; nothing is placed by position', () => {
+    const before = src([['a', 0, 1000, 'Alfa'], ['b', 1200, 2200, 'Beta'], ['g', 2400, 3400, 'Gamma']]);
+    const after = src([['f1', 100, 900, 'Alfa'], ['f2', 1300, 2300, 'Gamma bis'], ['f3', 2500, 3500, 'Delta']]);
+    const r = followSourceTimes([tr('a', 0, 1000, 'Alfa'), tr('b', 1200, 2200, 'Beta'), tr('g', 2400, 3400, 'Gamma')], before, after);
+    expect(r.complete).toBe(false);
+    expect(at(r)).toEqual([['a', 100, 900], ['b', 1200, 2200], ['g', 2400, 3400]]);
+  });
+
+  it('Grazie, Ciao, Grazie → Ciao, Grazie: the pairs keep their order; the first Grazie stays; no overlaps', () => {
+    const before = src([['c1', 0, 1000, 'Grazie'], ['c2', 1200, 2200, 'Ciao'], ['c3', 2400, 3400, 'Grazie']]);
+    const after = src([['f1', 3600, 4600, 'Ciao'], ['f2', 4800, 5800, 'Grazie']]);
+    const r = followSourceTimes([tr('c1', 0, 1000, 'Grazie'), tr('c2', 1200, 2200, 'Ciao'), tr('c3', 2400, 3400, 'Grazie')], before, after);
+    expect(r.complete).toBe(false);
+    expect(at(r)).toEqual([['c1', 0, 1000], ['c2', 3600, 4600], ['c3', 4800, 5800]]);
+    expect(overlapping(r.cues)).toBe(false);
+  });
+
+  it('an ambiguous pair moves nothing: two Grazie for one', () => {
+    const before = src([['c1', 0, 1000, 'Grazie'], ['c2', 1200, 2200, 'Grazie']]);
+    const after = src([['f1', 3000, 4000, 'Grazie']]);
+    const r = followSourceTimes([tr('c1', 0, 1000, 'Grazie'), tr('c2', 1200, 2200, 'Grazie')], before, after);
+    expect(r).toMatchObject({ complete: false });
+    expect(at(r)).toEqual([['c1', 0, 1000], ['c2', 1200, 2200]]);
+  });
+
+  it('a line whose move would overlap a line kept in place does not move', () => {
+    const before = src([['c1', 0, 1000, 'Uno'], ['c2', 1200, 2000, 'Due']]);
+    const after = src([['f1', 0, 400, 'Uno'], ['f2', 500, 1500, 'Due']]);
+    const r = followSourceTimes([tr('c1', 0, 1000, 'Uno', true), tr('c2', 1200, 2000, 'Due')], before, after);
+    expect(r.complete).toBe(false);
+    expect(at(r)).toEqual([['c1', 0, 1000], ['c2', 1200, 2000]]);
+  });
+
+  it('the source unchanged ("Tempi controllati"): nothing moves and it follows, even a line whose source text changed', () => {
+    const same = src([['c1', 0, 1000, 'Uno'], ['c2', 1200, 2000, 'Due bis']]);
+    const r = followSourceTimes([tr('c1', 0, 1000, 'Uno'), tr('c2', 1200, 2000, 'Due')], same, same.map((c) => ({ ...c })));
+    expect(r.complete).toBe(true);
+    expect(at(r)).toEqual([['c1', 0, 1000], ['c2', 1200, 2000]]);
+  });
+});
+
+describe('translationSources / missingSourceLines (final review C1, I2)', () => {
+  const src = (list: Array<[string, number, number, string]>): SubtitleCue[] => list.map(([id, start, end, text]) => ({ id, start, end, text }));
+  const tr = (id: string, start: number, end: number, from: string | null, edited = false): SubtitleCue =>
+    ({ id, start, end, text: `EN ${from ?? id}`, ...(from ? { source: { text: from } } : {}), ...(edited ? { edited: true as const } : {}) });
+  const ids = (m: Map<string, SubtitleCue | null>) => [...m].map(([id, s]) => [id, s?.id ?? null]);
+
+  it('timed as its source: by time (as staleCues), recycled ids never matter', () => {
+    const source = src([['f1', 0, 2000, 'a'], ['f2', 2000, 4000, 'b'], ['f3', 4000, 6000, 'c'], ['f4', 6000, 8000, 'd']]);
+    const cues = [tr('f1', 0, 2000, 'a'), tr('f2', 2000, 4000, 'b'), tr('c9', 4000, 6000, 'old c'), tr('f3', 6000, 8000, 'd', true)];
+    expect(ids(translationSources(cues, source, true))).toEqual([['f1', 'f1'], ['f2', 'f2'], ['c9', 'f3'], ['f3', 'f4']]);
+    expect(missingSourceLines(cues, source, true)).toEqual([]);
+  });
+
+  it('not timed as its source (+3 s intro): by the text it came from, in order; else by time; a line the user wrote by time', () => {
+    const source = src([['f1', 0, 3000, 'intro'], ['f2', 3000, 5000, 'a'], ['f3', 5000, 7000, 'b'], ['f4', 7000, 9000, 'new']]);
+    const cues = [tr('c1', 0, 2000, 'a'), tr('c2', 2000, 4000, 'b', true), tr('c3', 4500, 6500, 'gone'), tr('u1', 8500, 9000, null, true)];
+    expect(ids(translationSources(cues, source, false))).toEqual([['c1', 'f2'], ['c2', 'f3'], ['c3', 'f3'], ['u1', 'f4']]);
+    // By time they would stand for the intro (twice), b and the new line: a would be the one missing.
+    expect(missingSourceLines(cues, source, false).map((c) => c.id)).toEqual(['f1']);
+    expect(missingSourceLines(cues, source, true).map((c) => c.id)).toEqual(['f2']);
   });
 });

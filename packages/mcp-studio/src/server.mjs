@@ -84,6 +84,12 @@ const TOOLS = [
     }, required: ['colours', 'typography', 'framing', 'audio'], additionalProperties: false },
     tags: { type: 'array', maxItems: 30, items: { type: 'string', minLength: 1, maxLength: 40 } },
   }, additionalProperties: false, minProperties: 1 } },
+  // Task 23: a subtitle translation run hands over its lines; the core checks the ids, the length and the lines on screen.
+  { name: 'submit_subtitle_translation', description: 'Subtitle translation jobs only: submits translated lines by id (only the ids you were given). Each text is one plain line of 1 to 200 characters that fits two lines on screen (Motion Studio wraps it). Several calls add up (at most 5). Returns { ok: true, remaining } (the ids still missing); an error names the lines to fix, and nothing of that call is kept.', inputSchema: { type: 'object', properties: {
+    cues: { type: 'array', minItems: 1, maxItems: 2000, items: { type: 'object', properties: {
+      id: str('Line id, as listed', { minLength: 1, maxLength: 64 }), text: str('The translated line', { minLength: 1, maxLength: 200 }),
+    }, required: ['id', 'text'], additionalProperties: false } },
+  }, required: ['cues'], additionalProperties: false } },
   { name: 'generate_image', description: 'Generates or edits an image with gpt-image-2 (paid; may ask the user for confirmation). Returns the path of the file saved in the assets.', inputSchema: { type: 'object', properties: { prompt: str('Description'), width: { type: 'integer' }, height: { type: 'integer' }, quality: { enum: ['low', 'medium', 'high', 'auto'] }, background: { enum: ['transparent', 'opaque', 'auto'] }, references: { type: 'array', items: { type: 'string' }, maxItems: 16, description: 'Project images to use as references' }, name: str('File name (optional)') }, required: ['prompt', 'width', 'height'] } },
   { name: 'tts', description: 'Generates a voice-over (paid; may ask for confirmation). Returns the path of the audio file.', inputSchema: { type: 'object', properties: { text: str('Text to read'), provider: { enum: ['openai', 'elevenlabs'] }, voice: str('Voice: an OpenAI voice name, or an ElevenLabs voice id from list_voices (then provider \'elevenlabs\')'), instructions: str('Tone and style (OpenAI only)'), format: { enum: ['mp3', 'wav'] }, name: str('File name (optional)') }, required: ['text'] } },
   { name: 'sound_effect', description: 'Generates a sound effect with ElevenLabs (paid; may ask for confirmation). Returns the path of the audio file saved in the assets. Leave the duration out to let the service choose.', inputSchema: { type: 'object', properties: { prompt: str('Description of the sound (up to 1000 characters)'), durationSec: { type: 'number', minimum: 0.5, maximum: 30 }, loop: { type: 'boolean', description: 'Seamless loop' }, promptInfluence: { type: 'number', minimum: 0, maximum: 1 }, name: str('File name (optional)') }, required: ['prompt'] } },
@@ -126,6 +132,10 @@ const TOOLS = [
     cues: { type: 'array', maxItems: 200, items: { type: 'object', properties: {
       id: str('Line id', { minLength: 1, maxLength: 32 }), was: str('The line\'s text as you read it', { maxLength: 200 }), text: str('The line\'s new text, at most two lines (\\n between them)', { minLength: 1, maxLength: 200 }),
     }, required: ['id', 'was', 'text'], additionalProperties: false } },
+  }, required: ['lang'], additionalProperties: false } },
+  // Task 25 (spec §6.5, U8): one more subtitle language, made from its own voices or translated. The core checks it again.
+  { name: 'add_subtitle_language', description: 'Adds subtitles in another language to this creative: from that language\'s own voices when its localized video has them (transcribed when your turn ends), else translated now from the subtitles made from the video\'s speech (start_subtitles first when there are none). Never together with start_subtitles for the same language. It runs on its own; the chat tells the user when they are ready. Subtitles only: the video is not translated and the brief\'s languages do not change: for subtitles use this tool, not add_language (which translates the video itself). Refused when the language already has subtitles.', inputSchema: { type: 'object', properties: {
+    lang: str('Language tag of the new subtitles, e.g. "en"'),
   }, required: ['lang'], additionalProperties: false } },
 ];
 

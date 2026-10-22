@@ -119,7 +119,7 @@ beforeEach(async () => {
     queueWaiting: async () => queueState,
     setSubtitlesDrawn: async (_ref: CreativeRef, drawn: boolean) => { drawnSet.push(drawn); },
   };
-  tools = subtitlesTools({ subtitles: service, turns: turns as never, commits: { touch }, broadcast: (m) => { sent.push(m); } });
+  tools = subtitlesTools({ subtitles: service, translate: { start: async () => { throw new Error('no translation here'); } }, turns: turns as never, commits: { touch }, broadcast: (m) => { sent.push(m); } });
   return async () => { await queue.whenIdle(); await rm(base, { recursive: true, force: true }); };
 });
 

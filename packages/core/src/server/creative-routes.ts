@@ -14,7 +14,7 @@ import { checkDestination, exportResolved, exportVersion, pendingRenders, profil
 import { makeOwnedTempDir } from '../render/owner.ts';
 import type { ExportJobService, ExportOutcome, ExportRun } from '../creatives/export-jobs.ts';
 import type { ExportRendered, ExportRenderOptions, RenderWait } from '../creatives/render-jobs.ts';
-import { planSubtitleExport, remuxSoft, skipsVersionRender, type SubtitleChoice, type SubtitleEntry } from '../creatives/subtitle-export.ts';
+import { planSubtitleExport, remuxSoft, skipsLocalizedRender, skipsVersionRender, type SubtitleChoice, type SubtitleEntry, type SubtitlePair } from '../creatives/subtitle-export.ts';
 import { findFfmpeg } from '../render/encode.ts';
 import { RenderError } from '../render/errors.ts';
 import { assertLocalesInBrief, checkedLocale } from '../localization/validate.ts';
@@ -164,6 +164,8 @@ function outcomeOf(r: ExportResult & { excluded?: NonNullable<ExportOutcome['exc
 const profileOfBody = (b: { quality?: ExportQuality; resolution?: number; fps?: ExportFps }): RenderProfile | undefined =>
   b.quality === undefined && b.resolution === undefined && b.fps === undefined ? undefined
     : { quality: b.quality ?? DEFAULT_EXPORT_QUALITY, ...(b.resolution !== undefined ? { short: b.resolution } : {}), ...(b.fps !== undefined ? { fps: b.fps } : {}) };
+/** Task 27: the drawn pairs an export may ask for (every subtitle language on every video language). */
+const MAX_SUBTITLE_PAIRS = 132;
 const exportBody = z.object({
   destination: z.unknown().optional(),
   picks: z.record(z.string().min(1).max(200), z.unknown()).refine((r) => Object.keys(r).length <= MAX_EXPORT_FORMATS).optional(),
@@ -182,9 +184,11 @@ const exportBody = z.object({
   /**
    * The subtitles to export (spec §6.6, Task 21): `drawn` one video per language with it drawn (`<stem>-sub-<lang>`); `files`
    * the `.srt`/`.vtt` and `soft` the `mov_text` tracks, both with the CLEAN video `<stem>` (anti-goal 2). Absent: as before.
+   * Task 27 (U8): a drawn entry is a pair, the subtitles of `lang` on the video of `video` (`<stem>-<video>-sub-<lang>` for a
+   * localized one); a bare tag (Phase 3 clients) is the original video.
    */
   subtitles: z.object({
-    drawn: z.array(z.string().min(1).max(40)).min(1).max(11).optional(),
+    drawn: z.array(z.union([z.string().min(1).max(40), z.object({ video: z.string().min(1).max(40), lang: z.string().min(1).max(40) })])).min(1).max(MAX_SUBTITLE_PAIRS).optional(),
     files: z.array(z.string().min(1).max(40)).min(1).max(11).optional(),
     soft: z.array(z.string().min(1).max(40)).min(1).max(11).optional(),
   }).optional(),
@@ -869,7 +873,19 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const otherTags = tags === null ? [] : tags.filter((x) => x !== briefPrimary);
     // The subtitles (Task 21): every language needs its set (a refusal before anything is rendered or copied).
     const tagsOf = (list: string[] | undefined) => [...new Set((list ?? []).map((x) => checkedLocale(x, currentLocale())))];
-    const drawnTags = tagsOf(body.subtitles?.drawn);
+    // Task 27 (U8): each drawn language on a video language of the brief; null is the original video (a bare tag too).
+    const pairs: SubtitlePair[] = [];
+    for (const d of body.subtitles?.drawn ?? []) {
+      const lang = checkedLocale(typeof d === 'string' ? d : d.lang, currentLocale());
+      let video: LocaleTag | null = null;
+      if (typeof d !== 'string') {
+        const tag = checkedLocale(d.video, currentLocale());
+        assertLocalesInBrief(creative.brief, [tag], currentLocale());
+        video = tag === briefPrimary ? null : tag;
+      }
+      if (!pairs.some((p) => p.video === video && p.lang === lang)) pairs.push({ video, lang });
+    }
+    const drawnTags = [...new Set(pairs.map((p) => p.lang))];
     const fileTags = tagsOf(body.subtitles?.files);
     const softTags = tagsOf(body.subtitles?.soft);
     const subtitleSetOf = new Map<LocaleTag, SubtitleSet>();
@@ -878,10 +894,19 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       if (!found) throw new CodedError(400, t().export.subtitlesMissing({ lang }), 'export-subtitles-missing');
       subtitleSetOf.set(lang, found.set);
     }
+    // A set timed on a localized voice follows that video's audio (Task 27): drawn only on it, and files or soft tracks only
+    // when that video is exported (they then go with it alone, `planSubtitleExport`).
+    const voiceOf = (lang: LocaleTag) => subtitleSetOf.get(lang)!.timing.locale;
+    const refusePair = (lang: LocaleTag, video: LocaleTag) => { throw new CodedError(400, t().export.subtitlesPair({ lang, video }), 'export-subtitles-pair'); };
+    for (const p of pairs) { const voice = voiceOf(p.lang); if (voice !== undefined && voice !== p.video) refusePair(p.lang, voice); }
+    const exportedVideos: Array<LocaleTag | null> = [...(includeSource ? [null] : []), ...otherTags as LocaleTag[]];
+    for (const lang of [...fileTags, ...softTags]) { const voice = voiceOf(lang); if (voice !== undefined && !exportedVideos.includes(voice)) refusePair(lang, voice); }
     // Each video is cut at its own duration (its output's); the latest main format's is only the fallback for an unknown one.
     const fallbackMs = subtitleSetOf.size > 0 ? (await subtitleTimingNow(ref.projectDir, ref.creativeSlug, presets))?.durationMs : undefined;
     const subtitleChoice: SubtitleChoice | null = subtitleSetOf.size > 0
-      ? { drawn: drawnTags, files: fileTags.map((x) => subtitleSetOf.get(x)!), soft: softTags, sets: Object.fromEntries(subtitleSetOf), ...(fallbackMs !== undefined ? { durationMs: fallbackMs } : {}) } : null;
+      ? { drawn: pairs, files: fileTags.map((x) => subtitleSetOf.get(x)!), soft: softTags, sets: Object.fromEntries(subtitleSetOf), ...(fallbackMs !== undefined ? { durationMs: fallbackMs } : {}) } : null;
+    // The localized videos named only by a drawn pair (Task 27): rendered for the export, never exported plain.
+    const pairVideos = [...new Set(pairs.flatMap((p) => (p.video !== null && !otherTags.includes(p.video) ? [p.video] : [])))];
     const common = { creativeDir, destination, slug: ref.creativeSlug, title: creative.title, forbiddenRoot: ref.root, presets, pattern,
       ...(typeof body.date === 'string' ? { now: body.date } : {}),
       label: (id: string) => formatDisplayName(presets, id, currentLocale(), creative.brief.formatLabels) };
@@ -895,7 +920,8 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       return exportVersion({ ...common, version, ...(files.length > 0 ? { subtitles: { sets: files, ...(fallbackMs !== undefined ? { durationMs: fallbackMs } : {}) } } : {}) });
     }
     const profile = profileOfBody(body);
-    refuseProfileWithLanguages(profile, otherTags);
+    // Task 27: a localized video is rendered at the format size and High quality, drawn or not.
+    refuseProfileWithLanguages(profile, [...otherTags, ...pairs.flatMap((p) => (p.video !== null ? [p.video] : []))]);
     // Task 21 (review round 1): a video the subtitled export renders entirely for itself needs no version render first.
     const defaultLang = subtitleChoice ? await defaultSubtitleLang(creativeDir, creative.brief) : null;
     const profileOpts = profile ? { profile, presets } : {};
@@ -954,8 +980,15 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
         if (!items.length) throw new CodedError(409, t().export.renderProblemsOnly({ list: problems.join(', ') }), 'export-render-problems');
       }
       const localeRendered: Array<{ version: number; formats: string[]; locale: string }> = [];
+      // Task 27: the videos only a drawn pair names (the original when its language is not exported, a localized one not in
+      // `locales`): planned apart, they give their drawn videos only.
+      const pairOnly: ExportItem[] = subtitleChoice && !includeSource && pairs.some((p) => p.video === null)
+        ? items.map((it) => (primaryLocale !== undefined ? { ...it, locale: primaryLocale } : it)) : [];
       if (tags !== null || primaryLocale !== undefined) {
-        const loc = await withLocales(ref, creativeDir, items, { includeSource, primaryLocale, otherTags, force: body.force === true, label: common.label, wait });
+        // A translated video the subtitled export renders entirely for itself is not rendered for its row first (Task 27).
+        const skip = subtitleChoice ? (it: ExportItem, locale: string) => skipsLocalizedRender({ creativeDir, versions, item: it, locale: locale as LocaleTag, choice: subtitleChoice }) : undefined;
+        const loc = await withLocales(ref, creativeDir, items, { includeSource, primaryLocale, otherTags, pairVideos, force: body.force === true, label: common.label, wait, ...(skip ? { skip } : {}) });
+        pairOnly.push(...loc.pairOnly);
         localeRendered.push(...loc.rendered);
         // Ruling J: a translation rendered now with problems is not copied either: reported in `excluded`, as the primary's (I2).
         items = loc.items.filter((it) => {
@@ -969,18 +1002,20 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       // Decision 974: the videos at another quality or size are rendered for this export alone, then copied from there. With
       // subtitles (Task 21) the renders made for the export also give the drawn and the clean videos.
       const renderFor = subtitleChoice
-        ? (copy: (list: ExportItem[], gaps: ExportGap[]) => Promise<ExportResult>) => withSubtitleExports(ref, items, versions, subtitleChoice, subtitleSetOf, profile, presets, common.label, wait, copy)
+        ? (copy: (list: ExportItem[], gaps: ExportGap[]) => Promise<ExportResult>) => withSubtitleExports(ref, items, pairOnly, versions, subtitleChoice, subtitleSetOf, profile, presets, common.label, wait, body.force === true, copy)
         : (copy: (list: ExportItem[], gaps: ExportGap[]) => Promise<ExportResult>) => withExportRenders(ref, items, versions, profile ? { profile, presets } : null, wait, copy);
       const result = await renderFor(async (list, gaps) => {
         // A render made for the export that failed refuses the export, as a version render does; one with problems is left
         // out and listed (I2, review #4).
         const failedNow = gaps.filter((g) => g.kind === 'failed');
+        // A translated video rendered for the export (Task 27) is named with its language.
+        const itemName = (it: ExportItem) => `${common.label(it.format)} v${it.n}${it.localized && it.locale ? ` (${it.locale})` : ''}`;
         if (failedNow.length > 0) {
-          throw new CodedError(409, t().export.renderFailed({ list: failedNow.map((g) => `${common.label(g.item.format)} v${g.item.n}${g.reason ? ` (${g.reason})` : ''}`).join(', ') }), 'export-render-failed');
+          throw new CodedError(409, t().export.renderFailed({ list: failedNow.map((g) => `${itemName(g.item)}${g.reason ? ` (${g.reason})` : ''}`).join(', ') }), 'export-render-failed');
         }
         for (const g of gaps) {
-          problems.push(t().export.renderProblems({ item: `${common.label(g.item.format)} v${g.item.n}`, list: g.problems.join('; ') }));
-          excluded.push({ format: g.item.format, version: g.item.n, problems: g.problems, issues: g.issues });
+          problems.push(t().export.renderProblems({ item: itemName(g.item), list: g.problems.join('; ') }));
+          excluded.push({ format: g.item.format, version: g.item.n, problems: g.problems, issues: g.issues, ...(g.item.localized && g.item.locale ? { locale: g.item.locale } : {}) });
         }
         if (!list.length) throw new CodedError(409, t().export.renderProblemsOnly({ list: problems.join(', ') }), 'export-render-problems');
         run?.copying();
@@ -1210,12 +1245,12 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
    * language), the soft tracks muxed into a copy of a clean version file that needs no render, then `copy` with the items and
    * the gaps (as `withExportRenders`). The notes (a still, a video with no subtitles track) are added to `skipped`.
    */
-  async function withSubtitleExports(ref: CreativeRef & { store: CreativeStore }, items: ExportItem[], versions: VersionEntryList, choice: SubtitleChoice,
-    sets: ReadonlyMap<LocaleTag, SubtitleSet>, profile: RenderProfile | undefined, presets: FormatPreset[], label: (id: string) => string, wait: RenderWait,
+  async function withSubtitleExports(ref: CreativeRef & { store: CreativeStore }, items: ExportItem[], pairOnly: ExportItem[], versions: VersionEntryList, choice: SubtitleChoice,
+    sets: ReadonlyMap<LocaleTag, SubtitleSet>, profile: RenderProfile | undefined, presets: FormatPreset[], label: (id: string) => string, wait: RenderWait, force: boolean,
     copy: (items: ExportItem[], gaps: ExportGap[]) => Promise<ExportResult>): Promise<ExportResult> {
     const creativeDir = ref.store.dir(ref.creativeSlug);
-    const profiled = profile ? await profiledRenders(creativeDir, versions, items.filter((it) => !it.localized), { profile, presets }) : new Map<number, string[]>();
-    const { entries, notes } = await planSubtitleExport({ creativeDir, versions, items, choice, profiled, hashes: await subtitleHashes(creativeDir), label });
+    const profiled = profile ? await profiledRenders(creativeDir, versions, [...items, ...pairOnly].filter((it) => !it.localized), { profile, presets }) : new Map<number, string[]>();
+    const { entries, notes } = await planSubtitleExport({ creativeDir, versions, items, pairOnly, choice, profiled, hashes: await subtitleHashes(creativeDir), label });
     const withNotes = (r: ExportResult): ExportResult => (notes.length ? { ...r, skipped: [...r.skipped, ...notes] } : r);
     // Nothing a subtitled export can give (e.g. only drawn languages on videos without the track): said, never an empty folder.
     if (entries.length === 0) throw new CodedError(409, t().export.renderProblemsOnly({ list: notes.join(' ') }), 'export-subtitles-nothing');
@@ -1230,9 +1265,9 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
         if (e.kind !== 'remux') continue;
         if (wait.signal?.aborted) throw new RenderError('cancelled', 'cancelled');
         const it = e.item;
-        const durationMs = it.durationSec && it.durationSec > 0 ? Math.round(it.durationSec * 1000) : choice.durationMs ?? Math.max(0, ...choice.soft.flatMap((x) => sets.get(x)!.cues.map((c) => c.end)));
+        const durationMs = it.durationSec && it.durationSec > 0 ? Math.round(it.durationSec * 1000) : choice.durationMs ?? Math.max(0, ...e.soft.flatMap((x) => sets.get(x)!.cues.map((c) => c.end)));
         try {
-          const path = await remuxSoft({ ff: ff!, creativeDir, item: it, sets: choice.soft.map((x) => sets.get(x)!), durationMs, work: temp, ...(wait.signal ? { signal: wait.signal } : {}) });
+          const path = await remuxSoft({ ff: ff!, creativeDir, item: it, sets: e.soft.map((x) => sets.get(x)!), durationMs, work: temp, ...(wait.signal ? { signal: wait.signal } : {}) });
           made.set(e, { ...it, source: path, file: basename(path) });
         } catch (err) {
           if (wait.signal?.aborted) throw new RenderError('cancelled', 'cancelled');
@@ -1252,7 +1287,9 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       if (groups.size > 0) await notDiscarded(ref);
       let k = 0;
       for (const g of groups.values()) {
-        const r = await ctx.renders.exportRenderAndWait(ref, g.pending, { profile: profile ?? { quality: DEFAULT_EXPORT_QUALITY }, subtitles: g.subtitles }, join(temp, `r${k++}`), wait);
+        // A localized video (Task 27) is rendered at the default profile, as its row render (the route refused any other).
+        const at = g.subtitles.video === undefined ? profile ?? { quality: DEFAULT_EXPORT_QUALITY } : { quality: DEFAULT_EXPORT_QUALITY };
+        const r = await ctx.renders.exportRenderAndWait(ref, g.pending, { profile: at, subtitles: g.subtitles, ...(force ? { force } : {}) }, join(temp, `r${k++}`), wait);
         for (const e of g.list) {
           const key = `${e.item.n}\0${e.item.format}`;
           const f = r.files.get(key);
@@ -1261,6 +1298,8 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
           // Soft tracks the renderer left out (an App Store preview, final review M4): said like a file that takes none.
           const softNote = f.softIgnored ? t().export.subtitlesSoftStore({ format: label(e.item.format) }) : null;
           if (softNote && !notes.includes(softNote)) notes.push(softNote);
+          // A forced localized video whose translated text overflows (Task 27, re-review): exported, its problems said.
+          if (f.forcedProblems?.length) notes.push(t().export.renderProblems({ item: `${label(e.item.format)} v${e.item.n}${e.item.locale ? ` (${e.item.locale})` : ''}`, list: f.forcedProblems.join('; ') }));
           made.set(e, { ...e.item, source: f.path, file: basename(f.path), width: f.render.width, height: f.render.height, durationSec: f.durationSec ?? e.item.durationSec ?? null });
         }
       }
@@ -1275,23 +1314,34 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     return ctx.turns.runLocked(ref, () => ctx.turns.assertNotDiscarded(ref));
   }
 
+  /**
+   * The exported files of the other languages (Phase 12): each item in each of `otherTags`, its row render rendered first when
+   * not current (unless `skip`: a subtitled export renders it for itself, Task 27). `pairVideos` (Task 27): languages only a drawn
+   * pair names, resolved without any render first (`pairOnly`). A missing translation refuses (409 `localization-missing`).
+   */
   async function withLocales(ref: CreativeRef & { store: CreativeStore }, creativeDir: string, items: ExportItem[],
-    o: { includeSource: boolean; primaryLocale: string | undefined; otherTags: string[]; force: boolean; label: (id: string) => string; wait?: RenderWait }):
-    Promise<{ items: ExportItem[]; rendered: Array<{ version: number; formats: string[]; locale: string }> }> {
+    o: { includeSource: boolean; primaryLocale: string | undefined; otherTags: string[]; pairVideos?: string[]; force: boolean; label: (id: string) => string; wait?: RenderWait;
+      skip?: (it: ExportItem, locale: string) => Promise<boolean> }):
+    Promise<{ items: ExportItem[]; pairOnly: ExportItem[]; rendered: Array<{ version: number; formats: string[]; locale: string }> }> {
     const source = o.includeSource ? items.map((it) => (o.primaryLocale !== undefined ? { ...it, locale: o.primaryLocale } : it)) : [];
     const rendered: Array<{ version: number; formats: string[]; locale: string }> = [];
-    if (o.otherTags.length === 0) return { items: source, rendered };
+    if (o.otherTags.length === 0 && !o.pairVideos?.length) return { items: source, pairOnly: [], rendered };
     const v = messages(currentLocale()).variants;
     const matches = (n: number, file: string, sha: string) => renderFileMatches(ref.projectDir, creativeDir, ref.creativeSlug, n, file, sha);
     const assets = localeAssetsCheck(ref.projectDir, creativeDir);
-    let r = await resolveLocalizedItems(creativeDir, await ref.store.readVersions(ref.creativeSlug), items, o.otherTags, matches, assets);
-    const refuseMissing = () => {
-      if (r.missing.length === 0) return;
-      const list = r.missing.map((x) => `${o.label(x.format)} v${x.n} (${x.locale})`);
-      const err = new CodedError(409, v.localizationMissing({ list: list.slice(0, 10).join(', ') }), 'localization-missing');
-      err.problems = list.slice(0, 50);
+    const missingOf = (list: Array<{ format: string; n: number; locale: string }>) => {
+      if (list.length === 0) return;
+      const names = list.map((x) => `${o.label(x.format)} v${x.n} (${x.locale})`);
+      const err = new CodedError(409, v.localizationMissing({ list: names.slice(0, 10).join(', ') }), 'localization-missing');
+      err.problems = names.slice(0, 50);
       throw err;
     };
+    const paired = o.pairVideos?.length ? await resolveLocalizedItems(creativeDir, await ref.store.readVersions(ref.creativeSlug), items, o.pairVideos, matches, assets, async () => true) : null;
+    missingOf(paired?.missing ?? []);
+    const pairOnly = paired?.items ?? [];
+    if (o.otherTags.length === 0) return { items: source, pairOnly, rendered };
+    let r = await resolveLocalizedItems(creativeDir, await ref.store.readVersions(ref.creativeSlug), items, o.otherTags, matches, assets, o.skip);
+    const refuseMissing = () => missingOf(r.missing);
     refuseMissing();
     if (r.pending.size > 0) {
       await notDiscarded(ref);
@@ -1299,14 +1349,14 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
         await ctx.renders.renderLocalesAndWait(ref, n, p.formats, p.locales, o.force, o.wait);
         for (const locale of p.locales) rendered.push({ version: n, formats: [...p.formats], locale });
       }
-      r = await resolveLocalizedItems(creativeDir, await ref.store.readVersions(ref.creativeSlug), items, o.otherTags, matches, assets);
+      r = await resolveLocalizedItems(creativeDir, await ref.store.readVersions(ref.creativeSlug), items, o.otherTags, matches, assets, o.skip);
       refuseMissing();
       if (r.pending.size > 0) {
         const list = [...r.pending].flatMap(([n, p]) => p.formats.map((f) => `${o.label(f)} v${n}`)).join(', ');
         throw new CodedError(409, t().export.renderFailed({ list }), 'export-render-failed');
       }
     }
-    return { items: [...source, ...r.items], rendered };
+    return { items: [...source, ...r.items], pairOnly, rendered };
   }
 
   /**

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SUBTITLES_SCHEMA_ID, subtitleCuesHash, subtitleSetHash, type Composition, type SubtitleSet } from '@motion-studio/shared';
 import type { Git } from '../src/git.ts';
 import {
-  SubtitleCommits, audioFingerprint, listSubtitleSets, readSubtitleSet, removeSubtitleSet, subtitlePath, subtitlesDir, writeSubtitleSet,
+  SubtitleCommits, audioFingerprint, defaultSubtitleLang, followSource, listSubtitleSets, speechSourceSet, readSubtitleSet, removeSubtitleSet, subtitlePath, subtitlesDir, writeSubtitleSet,
 } from '../src/subtitles/store.ts';
 
 const set = (lang: SubtitleSet['lang'], over: Partial<SubtitleSet> = {}): SubtitleSet => ({
@@ -20,6 +20,38 @@ beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'ms-subtitles-')); }
 afterEach(async () => { await rm(dir, { recursive: true, force: true }); vi.restoreAllMocks(); });
 
 describe('subtitle store', () => {
+  it('the speech source is the set made from the original video, not one of a language\'s own voice (Task 24)', async () => {
+    const german = set('de', { timing: { version: 1, format: 'main', fingerprint: 'b'.repeat(64), locale: 'de' } });
+    await writeSubtitleSet(dir, german);
+    // Only a localized voice's set: no source, and the original video draws nothing by default.
+    expect(speechSourceSet(await listSubtitleSets(dir))).toBeUndefined();
+    expect(await defaultSubtitleLang(dir, { locales: { primary: 'fr', extra: [] } })).toBeNull();
+    await writeSubtitleSet(dir, set('it'));
+    expect(speechSourceSet(await listSubtitleSets(dir))?.lang).toBe('it');
+    // The original video draws the original speech by default, never a language's own voice.
+    expect(await defaultSubtitleLang(dir, { locales: { primary: 'fr', extra: [] } })).toBe('it');
+    expect(await defaultSubtitleLang(dir, { locales: { primary: 'fr', extra: [] } }, 'de')).toBe('de');
+  });
+
+  it('"Tempi controllati" on the source gives its timing only to a translation that was in step, or that truly follows now (final review I1)', async () => {
+    const before = set('it');
+    const after = set('it', { timing: { version: 2, format: 'main', fingerprint: 'c'.repeat(64) } });
+    const translation = (lang: SubtitleSet['lang'], fingerprint: string, cues: SubtitleSet['cues']): SubtitleSet =>
+      set(lang, { origin: 'translation', sourceLang: 'it', detected: null, timing: { version: 1, format: 'main', fingerprint }, cues });
+    // In step with the source as it was: it takes the new timing.
+    await writeSubtitleSet(dir, translation('en', 'a'.repeat(64), [{ id: 'c1', start: 0, end: 1200, text: 'Hi', source: { text: 'Ciao' } }]));
+    // Lagging (an earlier retime it could not follow), its line on old times and from a text the source no longer has.
+    await writeSubtitleSet(dir, translation('fr', 'b'.repeat(64), [{ id: 'c1', start: 3000, end: 4200, text: 'Salut', source: { text: 'Salve' } }]));
+    // Lagging, but its line pairs with the source's by text: it moves there and truly follows.
+    await writeSubtitleSet(dir, translation('de', 'b'.repeat(64), [{ id: 'c1', start: 3000, end: 4200, text: 'Hallo', source: { text: 'Ciao' } }]));
+    await writeSubtitleSet(dir, after);
+    expect((await followSource(dir, before, after)).sort()).toEqual(['de', 'en']);
+    expect((await readSubtitleSet(dir, 'en'))!.set.timing.fingerprint).toBe('c'.repeat(64));
+    expect((await readSubtitleSet(dir, 'fr'))!.set.timing.fingerprint).toBe('b'.repeat(64));
+    const de = (await readSubtitleSet(dir, 'de'))!.set;
+    expect([de.timing.fingerprint, de.cues[0]!.start, de.cues[0]!.end]).toEqual(['c'.repeat(64), 0, 1200]);
+  });
+
   it('keeps one file per language under subtitles/', () => {
     expect(subtitlesDir('/c')).toBe(join('/c', 'subtitles'));
     expect(subtitlePath('/c', 'it')).toBe(join('/c', 'subtitles', 'it.json'));

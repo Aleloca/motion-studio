@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import type { AgentEvent, BriefServices, Locale, VideoAnalysisWrite } from '@motion-studio/shared';
+import type { AgentEvent, BriefServices, Locale, LocaleTag, VideoAnalysisWrite } from '@motion-studio/shared';
 import type { AgentJobKind } from '../agent/policy.ts';
 
 /** What a bridge token gives access to: the job that owns it. */
@@ -68,6 +68,22 @@ export interface BridgeContext {
    * `write_video_analysis` goes. Set by the analysis service when it launches the agent, frozen with the context.
    */
   readonly videoAnalysisScope?: Readonly<VideoAnalysisScope>;
+  /**
+   * Task 23, `subtitles-translate` jobs only: the lines the run translates and where its `submit_subtitle_translation` goes.
+   * Set by the translation service when it launches the agent, frozen with the context.
+   */
+  readonly subtitleTranslateScope?: Readonly<SubtitleTranslateScope>;
+}
+
+/**
+ * Task 23: see `BridgeContext.subtitleTranslateScope`. `target`: the language the lines are translated into; `ids`: the cue ids
+ * asked (the only ones the tool takes); `submit`: keeps the validated texts (wrapped to the target's lines) by id, and answers
+ * the ids still missing.
+ */
+export interface SubtitleTranslateScope {
+  root: string; projectSlug: string; projectDir: string; creativeSlug: string;
+  target: LocaleTag; ids: readonly string[];
+  submit: (texts: ReadonlyMap<string, string>) => string[];
 }
 
 /**
@@ -113,6 +129,7 @@ export class AgentBridge {
       ...(ctx.groupTools ? { groupTools: Object.freeze({ ...ctx.groupTools }) } : {}),
       ...(ctx.briefScope ? { briefScope: Object.freeze({ ...ctx.briefScope }) } : {}),
       ...(ctx.videoAnalysisScope ? { videoAnalysisScope: Object.freeze({ ...ctx.videoAnalysisScope, frames: Object.freeze([...ctx.videoAnalysisScope.frames]) }) } : {}),
+      ...(ctx.subtitleTranslateScope ? { subtitleTranslateScope: Object.freeze({ ...ctx.subtitleTranslateScope, ids: Object.freeze([...ctx.subtitleTranslateScope.ids]) }) } : {}),
     }));
     return t;
   }

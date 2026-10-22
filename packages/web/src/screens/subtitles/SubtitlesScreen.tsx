@@ -3,10 +3,11 @@
 // the lines in the agent's style as they are edited (`setSubtitles`, debounced, Task 22); the list of lines on the right; the waveform timeline under both (Task 13). Edits save by
 // themselves (useSubtitleSave); a `subtitles` broadcast reloads the set only when nothing is waiting to be saved. Task 14: a
 // banner when the video changed under the set ("Rifai i tempi", and "Tempi controllati" to keep the timing), and "Rifai la
-// trascrizione…" in the header.
-import { SUPPORTED_LOCALES, drawsSubtitles, type CreativeDetail, type LocaleTag, type SubtitleCue } from '@motion-studio/shared';
+// trascrizione…" in the header. Task 26: the subtitle languages in the header (LangSwitcher), a translation's stale lines
+// marked with "Ritraduci" per line and "Ritraduci tutto", the source text under each translated line.
+import { SUPPORTED_LOCALES, drawsSubtitles, missingSourceLines, sourceCueOf, staleCues, translationSources, type CreativeDetail, type JobSummary, type LocaleTag, type SubtitleCue } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
-import { api } from '../../api.ts';
+import { api, ApiError } from '../../api.ts';
 import { CompositionPlayer, type CompositionMedia } from '../../components/CompositionPlayer.tsx';
 import { usePreviewSession } from '../../components/compositionPreview.ts';
 import { RetimeAction } from '../../components/SubtitlesReadyCard.tsx';
@@ -18,11 +19,12 @@ import { isMac } from '../../platform.ts';
 import { href } from '../../routes.ts';
 import { go, ShellContext } from '../../shell/ShellContext.tsx';
 import { useClock, type Clock } from '../../ui/clock.ts';
-import { Button, Icon, Pill, Popover, Select, Spinner, Tooltip, cx, type SelectOption } from '../../ui/index.ts';
-import { localeName } from '../creative/languagesModel.ts';
+import { Button, Icon, Popover, Select, Spinner, Tooltip, cx, type SelectOption } from '../../ui/index.ts';
+import { creativeLocales, localeName } from '../creative/languagesModel.ts';
 import { usePlayerControls } from '../editor/usePlayerControls.ts';
 import { activatesControl, bare, inOverlay, isTyping } from '../keys.ts';
-import { CueList, FindReplace, msText, rowSelector } from './CueList.tsx';
+import { CueList, FindReplace, msText, rowSelector, type CueSource } from './CueList.tsx';
+import { entrySubtitleLang, inlineLangName, LangSwitcher, languageJob, noteSubtitleLangs } from './LangSwitcher.tsx';
 import { CueTimeline, type CueTimelineProps } from './CueTimeline.tsx';
 import { byStart, cueAt, editorReducer, initialEditorState, runtimeSubtitlesOf, warningsOf, type EditorOp } from './subtitlesModel.ts';
 import { useSubtitleSave, type SubtitleSaveStatus } from './useSubtitleSave.ts';
@@ -50,16 +52,24 @@ export function SubtitlesScreen({ slug, creative, lang }: { slug: string; creati
   useEffect(() => {
     let alive = true;
     Promise.resolve().then(() => api.getCreative(slug, creative)).then(
-      (d) => { if (alive) { setDetail(d); setError(null); } },
+      (d) => { if (alive) { noteSubtitleLangs(slug, creative, d.subtitles ?? []); setDetail(d); setError(null); } },
       (e: unknown) => { if (alive) setError(message(e)); });
     return () => { alive = false; };
   }, [slug, creative, tick]);
-  // No language in the route: the creative's first set.
-  const shown = lang ?? detail?.subtitles?.[0]?.lang ?? null;
+  // No language in the route: the original speech set, else the brief's language's, else the first (Task 26).
+  const sets = detail?.subtitles ?? [];
+  const brief = detail?.creative.brief ?? null;
+  const shown = lang ?? entrySubtitleLang(sets, creativeLocales(brief ?? {})?.primary);
+  // A language without its set yet (being translated, or gone): said so, with the switcher to leave it.
+  if (shown && detail && !sets.some((x) => x.lang === shown)) {
+    return <LangPending slug={slug} creative={creative} lang={shown} detail={detail} jobs={shell?.live.jobs ?? {}} />;
+  }
+  // The creative is read first, so a language without its set is never asked for (its read would only fail).
+  if (shown && !detail && !error) return <main className="ms-subs"><Head slug={slug} creative={creative} /><div className="ms-subs-empty ms-subs-alone"><Spinner size={16} label={t.subtitles.loading} /></div></main>;
   if (shown) return <SubtitleEditor key={`${slug}/${creative}/${shown}`} slug={slug} creative={creative} lang={shown} detail={detail} tick={tick} />;
   return (
     <main className="ms-subs">
-      <Head slug={slug} creative={creative} lang={null} />
+      <Head slug={slug} creative={creative} />
       <div className="ms-subs-empty ms-subs-alone">
         {error ? <p role="alert">{t.subtitles.loadFailed({ detail: error })}</p>
           : detail ? <p>{t.subtitles.noSets}</p> : <Spinner size={16} label={t.subtitles.loading} />}
@@ -68,17 +78,40 @@ export function SubtitlesScreen({ slug, creative, lang }: { slug: string; creati
   );
 }
 
-function Head({ slug, creative, lang, children }: { slug: string; creative: string; lang: LocaleTag | null; children?: ReactNode }) {
+/** The header; `langs`: the language switcher, after the title. */
+function Head({ slug, creative, langs, children }: { slug: string; creative: string; langs?: ReactNode; children?: ReactNode }) {
   const t = useT();
-  const locale = useLocale();
   return (
     <header className="ms-subs-head">
       <Button variant="ghost" size="sm" onClick={() => go(href.creative(slug, creative))}><Icon name="back" size={13} />{t.subtitles.backToCreative}</Button>
       <h1 className="ms-subs-title">{t.subtitles.editorTitle}</h1>
-      {lang ? <Pill>{localeName(lang, locale)}</Pill> : null}
+      {langs}
       <span className="ms-subs-grow" />
       {children}
     </header>
+  );
+}
+
+/**
+ * Task 26: a language in the route with no set: its subtitles on their way (the job making them, from the live jobs), the
+ * job's failure, or none at all. The set's broadcast reloads the creative and opens the editor.
+ */
+function LangPending({ slug, creative, lang, detail, jobs }: { slug: string; creative: string; lang: LocaleTag; detail: CreativeDetail; jobs: Record<string, JobSummary> }) {
+  const s = useT().subtitles;
+  const locale = useLocale();
+  const job = languageJob(jobs, slug, creative, lang);
+  const name = inlineLangName(lang, locale);
+  const goTo = (l: LocaleTag | null) => go(href.subtitles(slug, creative, l ?? undefined));
+  return (
+    <main className="ms-subs" data-lang={lang}>
+      <Head slug={slug} creative={creative} langs={<LangSwitcher slug={slug} creative={creative} lang={lang} sets={detail.subtitles ?? []} brief={detail.creative.brief}
+        edited={0} onSwitch={goTo} onLeave={goTo} />} />
+      <div className="ms-subs-empty ms-subs-alone">
+        {job && (job.state === 'queued' || job.state === 'running') ? <p role="status"><Spinner decorative size={14} /> {s.pendingLanguage({ lang: name })}</p>
+          : job?.state === 'failed' ? <p role="alert">{s.pendingFailed({ lang: name, detail: job.error ?? '' })}</p>
+            : <p>{s.noLanguage({ lang: name })}</p>}
+      </div>
+    </main>
   );
 }
 
@@ -183,16 +216,19 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
   const [wave, setWave] = useState<{ peaks: number[]; durationMs: number } | null>(null);
   const [waveDone, setWaveDone] = useState(false);
   const waveOf = latest?.n ?? null;
+  // A localized voice's set is timed on its own video: its waveform is that audio (Task 24).
+  const summary = detail?.subtitles?.find((x) => x.lang === lang);
+  const waveLang = summary?.timing.locale;
   useEffect(() => {
     if (waveOf === null) return;
     let alive = true;
     setWave(null);
     setWaveDone(false);
-    api.subtitleWaveform(slug, creative, waveOf).then(
+    (waveLang ? api.subtitleWaveform(slug, creative, waveOf, waveLang) : api.subtitleWaveform(slug, creative, waveOf)).then(
       (w) => { if (alive) { setWave(w); setWaveDone(true); } },
       () => { if (alive) setWaveDone(true); });
     return () => { alive = false; };
-  }, [slug, creative, waveOf]);
+  }, [slug, creative, waveOf, waveLang]);
   const seekMs = useCallback((ms: number) => controls.seek(ms / 1000), [controls]);
 
   const rowOf = (id: string) => listBox.current?.querySelector(rowSelector(id));
@@ -302,12 +338,30 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
   const frameLabel = t.web.render.playerFrame({ label: detail && latest ? `${detail.creative.title} v${latest.n}` : creative });
   const waiting = preview.state.kind === 'loading' || preview.state.kind === 'busy' || (preview.state.kind === 'idle' && format !== null);
   const noPreview = preview.state.kind === 'legacy' || (loaded && detail !== null && format === null);
-  const timingChanged = detail?.subtitles?.find((x) => x.lang === lang)?.timingChanged === true;
+  const timingChanged = summary?.timingChanged === true;
+  // Task 25: a translation follows its source's times; it is never retimed nor marked checked on its own.
+  const translation = summary?.origin === 'translation';
+
+  // Task 26: another language opens once a waiting edit is saved (the save hook is per language); one that cannot be saved
+  // keeps the language and says so (anti-goal 1).
+  const [switchError, setSwitchError] = useState(false);
+  const switchTo = async (to: LocaleTag) => {
+    if (to === lang) return;
+    setSwitchError(false);
+    if (!(await save.flush())) { setSwitchError(true); return; }
+    go(href.subtitles(slug, creative, to));
+  };
+  const edited = useMemo(() => state.cues.filter((c) => c.edited).length, [state.cues]);
+  const sources = useSourceLines(slug, creative, translation ? summary?.sourceLang ?? null : null, tick);
+  const marks = useMemo(() => staleOf(state.cues, sources, !timingChanged), [state.cues, sources, timingChanged]);
+  const retranslate = useRetranslate(slug, creative, lang, save.flush);
   return (
     <main ref={root} className="ms-subs" data-lang={lang}>
-      <Head slug={slug} creative={creative} lang={lang}>
+      <Head slug={slug} creative={creative} langs={<LangSwitcher slug={slug} creative={creative} lang={lang} sets={detail?.subtitles ?? []} brief={detail?.creative.brief ?? null}
+        edited={edited} onSwitch={switchTo} onLeave={(to) => go(href.subtitles(slug, creative, to ?? undefined))} />}>
         <SaveState status={save.status} notice={save.notice} retry={() => void save.flush()} />
-        <RedoTranscription slug={slug} creative={creative} />
+        {/* A translation's lines come from its source, never from speech (final review I3). */}
+        {translation ? null : <RedoTranscription slug={slug} creative={creative} />}
         <span className="ms-subs-undo">
           <Tooltip label={s.undo}><Button size="sm" variant="ghost" icon aria-label={s.undo} disabled={state.past.length === 0} onClick={() => dispatch({ type: 'undo' })}><Icon name="undo" size={14} /></Button></Tooltip>
           <Tooltip label={s.redo}><Button size="sm" variant="ghost" icon aria-label={s.redo} disabled={state.future.length === 0} onClick={() => dispatch({ type: 'redo' })}><Icon name="redo" size={14} /></Button></Tooltip>
@@ -318,14 +372,17 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
             <Icon name="download" size={13} />.{ext}
           </Button>
         ))}
+        {translation && (marks.size > 0 || marks.actionable > 0) ? <RetranslateAll count={marks.actionable} busy={retranslate.busy} run={() => void retranslate.run()} /> : null}
         {downloadError ? <span className="ms-subs-head-error" role="alert">{downloadError}</span> : null}
+        {switchError ? <span className="ms-subs-head-error" role="alert">{s.notSavedSwitch}</span> : null}
+        {retranslate.note ? <span className={retranslate.note.ok ? 'ms-subs-head-note' : 'ms-subs-head-error'} role={retranslate.note.ok ? 'status' : 'alert'}>{retranslate.note.text}</span> : null}
       </Head>
       {timingChanged ? (
         <section className="ms-subs-banner" aria-label={s.timingChanged}>
           <Icon name="warn" size={14} />
-          <span className="ms-subs-banner-text">{s.timingChanged}</span>
-          <RetimeAction slug={slug} creative={creative} lang={lang} className="ms-subs-banner-note" />
-          <TimingChecked mark={save.timingChecked} />
+          <span className="ms-subs-banner-text">{translation ? s.translationTimingChanged : s.timingChanged}</span>
+          {translation ? null : <RetimeAction slug={slug} creative={creative} lang={lang} className="ms-subs-banner-note" />}
+          {translation ? null : <TimingChecked mark={save.timingChecked} />}
         </section>
       ) : null}
 
@@ -363,6 +420,7 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
           <Button size="sm" variant="outline" disabled={!loaded} onClick={addLine}>{s.addLine}</Button>
         </div>
         {noRoom ? <p className="ms-subs-note" role="status">{s.noRoom}</p> : null}
+        {translation && marks.missing.length > 0 ? <MissingLines lines={marks.missing} sourceLang={summary?.sourceLang} /> : null}
         {finding ? <FindReplace cues={state.cues} dispatch={dispatch} /> : null}
         <div ref={listBox} className="ms-subs-scroll">
           {loadError ? (
@@ -373,13 +431,119 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
           ) : !loaded ? (
             <div className="ms-subs-empty"><Spinner size={16} label={s.loading} /></div>
           ) : (
-            <CueList cues={state.cues} lang={state.lang} warnings={warnings} selected={state.selected} now={now} dispatch={dispatch} onPick={show} />
+            <CueList cues={state.cues} lang={state.lang} warnings={warnings} selected={state.selected} now={now} dispatch={dispatch} onPick={show}
+              {...(translation ? { sources: marks.rows, sourceLang: summary?.sourceLang, retranslating: retranslate.busy, onRetranslate: (id: string) => void retranslate.run([id]) } : {})} />
           )}
         </div>
       </section>
       <Timeline clock={controls.clock} cues={state.cues} durationMs={state.durationMs} peaks={waveDone ? wave?.peaks ?? [] : null}
         peaksMs={wave?.durationMs} selected={state.selected} dragging={state.dragging} dispatch={dispatch} onSeek={seekMs} />
     </main>
+  );
+}
+
+/**
+ * Task 26: the lines of a translation's source set (`sourceLang`), read again on each change of the creative; null when it
+ * is not a translation or the read failed (no marks then).
+ */
+function useSourceLines(slug: string, creative: string, sourceLang: LocaleTag | null, tick: number): SubtitleCue[] | null {
+  const [cues, setCues] = useState<SubtitleCue[] | null>(null);
+  // Another source drops the old lines; a re-read keeps them until it answers (the marks do not blink on each save).
+  useEffect(() => { setCues(null); }, [sourceLang]);
+  useEffect(() => {
+    if (!sourceLang) return;
+    let alive = true;
+    Promise.resolve().then(() => api.subtitleSet(slug, creative, sourceLang)).then(
+      ({ set }) => { if (alive) setCues(set.cues); }, () => { /* no marks */ });
+    return () => { alive = false; };
+  }, [slug, creative, sourceLang, tick]);
+  return cues;
+}
+
+/**
+ * Task 26: each translated line against its source now (the shared `staleCues`, on the editor's lines, unsaved edits
+ * included): `changed` (its source line says something else now, shown with that text) or `gone` (no source line under it
+ * any more); a current line shows the text it was translated from. `missing`: the source lines no line stands for
+ * ("Manca la traduzione", `missingSourceLines`, final review I2). `actionable`: the lines "Ritraduci tutto" translates: for a
+ * translation timed as its source (`following`), the changed lines the user did not correct (the corrected ones and the
+ * gone ones it leaves to the user) and the missing ones; for one its source's retime left behind, every source line no
+ * corrected line stands for (it is translated again whole, I2).
+ */
+export function staleOf(cues: readonly SubtitleCue[], source: readonly SubtitleCue[] | null, following = true):
+  { rows: Map<string, CueSource>; size: number; actionable: number; missing: SubtitleCue[] } {
+  const rows = new Map<string, CueSource>();
+  if (!source) return { rows, size: 0, actionable: 0, missing: [] };
+  const stale = new Set(staleCues({ cues: [...cues] }, { cues: [...source] }));
+  const missing = missingSourceLines(cues, source, following);
+  let changed = 0;
+  for (const c of cues) {
+    if (!c.source) continue;
+    if (!stale.has(c.id)) { rows.set(c.id, { state: 'current', text: c.source.text }); continue; }
+    const now = sourceCueOf(c, source);
+    if (!now) { rows.set(c.id, { state: 'gone', text: c.source.text }); continue; }
+    rows.set(c.id, { state: 'changed', text: now.text });
+    if (!c.edited) changed++;
+  }
+  let actionable = changed + missing.length;
+  if (!following) {
+    const partner = translationSources(cues, source, false);
+    const corrected = new Set(cues.filter((c) => c.edited).map((c) => partner.get(c.id)?.id));
+    actionable = source.filter((s) => !corrected.has(s.id)).length;
+  }
+  return { rows, size: stale.size, actionable, missing };
+}
+
+/** Final review I2: the source lines with no line in this language ("Manca la traduzione"), covered by "Ritraduci tutto". */
+function MissingLines({ lines, sourceLang }: { lines: readonly SubtitleCue[]; sourceLang: LocaleTag | undefined }) {
+  const s = useT().subtitles;
+  return (
+    <section className="ms-subs-missing" aria-label={s.missingTranslation}>
+      <p className="ms-subs-missing-head"><Icon name="warn" size={12} />{s.missingTranslation}<span className="ms-subs-count">{lines.length}</span></p>
+      <p className="ms-subs-missing-hint">{s.missingTranslationHint}</p>
+      <ul className="ms-subs-missing-list">
+        {lines.map((c) => (
+          <li key={c.id}><span className="ms-subs-missing-at">{msText(c.start)}</span><span className="ms-subs-missing-text" lang={sourceLang}>{c.text}</span></li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * Task 26: "Ritraduci" (lines by id) and "Ritraduci tutto" (no ids): the edits are saved first, then the translation of those
+ * lines starts (the lines come back with the set's broadcast). Its outcome in plain words: started, lines removed because
+ * their source is gone (`dropped`, also on a refusal), or the refusal (409 `subtitles-nothing-stale` says why).
+ */
+function useRetranslate(slug: string, creative: string, lang: LocaleTag, flush: () => Promise<boolean>) {
+  const s = useT().subtitles;
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const run = async (ids?: string[]) => {
+    setBusy(true);
+    setNote(null);
+    try {
+      if (!(await flush())) { setNote({ ok: false, text: s.retranslateFailed({ detail: s.notSaved }) }); return; }
+      const r = await api.retranslateSubtitles(slug, creative, lang, ids ? { ids } : {});
+      const dropped = r.dropped ? ` ${s.retranslateDropped({ count: r.dropped })}` : '';
+      setNote({ ok: true, text: r.job ? `${s.retranslateStarted}${dropped}` : dropped.trim() });
+    } catch (e) {
+      const dropped = e instanceof ApiError && e.dropped ? ` ${s.retranslateDropped({ count: e.dropped })}` : '';
+      const nothing = e instanceof ApiError && e.code === 'subtitles-nothing-stale';
+      setNote({ ok: false, text: `${nothing ? message(e) : s.retranslateFailed({ detail: message(e) })}${dropped}` });
+    } finally { setBusy(false); }
+  };
+  return { busy, note, run };
+}
+
+/** "Ritraduci tutto" with the number of lines it translates again. */
+function RetranslateAll({ count, busy, run }: { count: number; busy: boolean; run(): void }) {
+  const s = useT().subtitles;
+  return (
+    <Tooltip label={s.retranslateAllHint}>
+      <Button size="sm" variant="outline" disabled={busy} aria-busy={busy || undefined} onClick={run}>
+        <Icon name="refresh" size={13} />{s.retranslateAll}{count > 0 ? <span className="ms-subs-count">{count}</span> : null}
+      </Button>
+    </Tooltip>
   );
 }
 

@@ -244,6 +244,27 @@ describe('Render in several languages', () => {
     </I18nProvider>,
   );
 
+  it('says "with subtitles" on each language whose render will draw its set (Task 27, default pairing)', () => {
+    const sub = (lang: string, origin = 'translation') => ({ lang, origin, cues: 1, edited: 0, hash: 'a'.repeat(64), timing: { version: 1, format: 'instagram-reel-9x16', fingerprint: 'b'.repeat(64) }, timingChanged: false, staleCues: 0 }) as never;
+    const { unmount } = render(
+      <I18nProvider locale="en">
+        <RenderLanguagesDialog open onClose={() => {}} slug="acme" creative="c1" plan={[[3, ['instagram-reel-9x16']]]} locales={{ primary: 'en', extra: ['de', 'ja', 'fr'] }}
+          rowsOf={rows} labelOf={(f) => f} subtitles={[sub('en', 'speech'), sub('de')]} drawsSubtitles />
+      </I18nProvider>,
+    );
+    const marked = () => [...document.querySelectorAll('.ms-rl-list label')].filter((l) => l.textContent?.includes('with subtitles')).map((l) => l.textContent!.replace('with subtitles', '').trim());
+    expect(marked()).toEqual(['Original (English)', 'German']);
+    unmount();
+    // A composition without the subtitles track draws none.
+    render(
+      <I18nProvider locale="en">
+        <RenderLanguagesDialog open onClose={() => {}} slug="acme" creative="c1" plan={[[3, ['instagram-reel-9x16']]]} locales={{ primary: 'en', extra: ['de', 'ja', 'fr'] }}
+          rowsOf={rows} labelOf={(f) => f} subtitles={[sub('en', 'speech'), sub('de')]} drawsSubtitles={false} />
+      </I18nProvider>,
+    );
+    expect(marked()).toEqual([]);
+  });
+
   it('offers the original and the translations that exist; a language without a translation is disabled', () => {
     dialog();
     expect(screen.getByRole('checkbox', { name: 'Original (English)' }).getAttribute('aria-checked')).toBe('true');

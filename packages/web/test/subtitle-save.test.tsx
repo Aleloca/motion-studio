@@ -340,6 +340,28 @@ describe('useSubtitleSave after a conflict (final review)', () => {
     expect(now().cues.at(-1)).toMatchObject({ start: added.start, end: added.end, edited: true });
   });
 
+  it('Task 23: a translated line comes back with its keys in the schema\'s order: still the saved line (a delete stays, isSaved holds)', async () => {
+    const translated: SubtitleCue[] = [
+      { id: 'c1', start: 0, end: 1500, text: 'Hi everyone', source: { text: 'Ciao a tutti' } },
+      { id: 'c2', start: 2000, end: 3500, text: 'Book in three taps', source: { text: 'Prenota in tre tocchi' } },
+    ];
+    api.saveSubtitleSet.mockResolvedValueOnce({ hash: H2 });
+    const { edit, now, result } = setup(loaded(translated));
+    act(() => { edit({ type: 'text', id: 'c1', text: 'Hello everyone' }); });
+    await act(async () => { vi.advanceTimersByTime(SAVE_DEBOUNCE_MS); });
+    const mine = now().cues[0]!;
+    // The server's file has the cue in the schema's key order (id, start, end, text, words, edited, source).
+    const schemaOrder: SubtitleCue = { id: mine.id, start: mine.start, end: mine.end, text: mine.text, edited: true, source: { text: 'Ciao a tutti' } };
+    expect(JSON.stringify(schemaOrder)).not.toBe(JSON.stringify(mine));
+    expect(result.current.isSaved([schemaOrder, translated[1]!])).toBe(true);
+    const c3: SubtitleCue = { id: 'c3', start: 4000, end: 5000, text: 'From another window' };
+    conflictThen([schemaOrder, translated[1]!, c3]);
+    act(() => { edit({ type: 'delete', id: 'c1' }); });
+    await run();
+    expect(now().cues).toEqual([translated[1]!, c3]);
+    expect(lastSaved()).toEqual(now().cues);
+  });
+
   it('M1: isSaved says whether the cues are what the server has, nothing in flight', async () => {
     let answer!: (v: unknown) => void;
     api.saveSubtitleSet.mockImplementationOnce(() => new Promise((r) => { answer = r; }));

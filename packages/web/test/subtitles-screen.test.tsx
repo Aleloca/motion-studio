@@ -42,10 +42,12 @@ class ApiError extends Error {
 }
 /** Task 14: the set's timing no longer matches the latest version's audio. */
 let TIMING_CHANGED = false;
+/** Task 25: the set shown is a translation. */
+let TRANSLATION = false;
 /** Task 22: the latest version's composition has a subtitles track. */
 let TRACK = false;
 const api = {
-  getCreative: vi.fn(async () => (TIMING_CHANGED ? { ...detail, subtitles: detail.subtitles!.map((x) => ({ ...x, timingChanged: true })) } : detail)),
+  getCreative: vi.fn(async () => (TIMING_CHANGED ? { ...detail, subtitles: detail.subtitles!.map((x) => ({ ...x, timingChanged: true, ...(TRANSLATION ? { origin: 'translation' as const, sourceLang: 'en' as const } : {}) })) } : detail)),
   startSubtitles: vi.fn(async (..._a: unknown[]) => ({ job: { id: 'j1' } })),
   subtitleSet: vi.fn(async (..._a: unknown[]) => ({ set: setOf(CUES), hash: H1 })),
   saveSubtitleSet: vi.fn(async (..._a: unknown[]) => ({ hash: H2 })),
@@ -130,6 +132,7 @@ beforeEach(() => {
   media.currentTime = 0;
   media.paused = true;
   TIMING_CHANGED = false;
+  TRANSLATION = false;
   TRACK = false;
   playerSubtitles.length = 0;
 });
@@ -445,6 +448,15 @@ describe('the video changed, and redoing the transcription (Task 14)', () => {
     expect(await within(banner).findByRole('status')).toHaveProperty('textContent', 'Rifaccio i tempi: le righe che hai corretto tengono il loro testo.');
   });
 
+  it('a translation not timed as its source says so, with no "Rifai i tempi" nor "Tempi controllati" (Task 25)', async () => {
+    TIMING_CHANGED = true;
+    TRANSLATION = true;
+    await open();
+    const banner = await screen.findByRole('region', { name: 'Il video è cambiato: ricontrolla i tempi' });
+    expect(banner.textContent).toContain('I tempi di questa traduzione non sono più quelli dei sottotitoli da cui viene');
+    expect(within(banner).queryAllByRole('button')).toEqual([]);
+  });
+
   it('a retime refused says why', async () => {
     TIMING_CHANGED = true;
     api.startSubtitles.mockRejectedValueOnce(new ApiError(409, 'I sottotitoli di questa creatività sono già in preparazione.', 'subtitles-running'));
@@ -566,11 +578,11 @@ describe('final review fixes', () => {
     expect((await within(banner).findByRole('alert')).textContent).toBe('I tempi non sono stati segnati come controllati: I sottotitoli sono stati modificati altrove: ricaricali.');
   });
 
-  it('M4: "Rifai la trascrizione…" says that another language makes a separate set', async () => {
+  it('M4, final review I3: "Rifai la trascrizione…" says that the video\'s speech has one set and another language is added with "+ Lingua"', async () => {
     await open();
     await userEvent.click(screen.getByRole('button', { name: 'Rifai la trascrizione…' }));
     const dialog = await screen.findByRole('dialog', { name: 'Rifai la trascrizione' });
-    expect(within(dialog).getByText('Con un\'altra lingua nasce un insieme di sottotitoli a parte.')).toBeTruthy();
+    expect(within(dialog).getByText('Il parlato del video ha un solo insieme di sottotitoli: con un\'altra lingua si rifà in quella (se nessuna lingua è tradotta da lui). Per aggiungere una lingua usa «+ Lingua».')).toBeTruthy();
   });
 });
 

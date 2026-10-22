@@ -68,7 +68,7 @@ For effects the clips cannot express (particles, charts, custom typography). A l
 - **Logo**: an \`svg\` (or \`image\`) clip with \`"fit": "contain"\` and \`popIn\`, usually on the top track for the whole duration or the last scene.
 - **Transitions between scenes**: overlap the outgoing and incoming clips by a few tenths of a second inside the scenes and use fadeOut/fadeIn, slides or \`wipe\`.
 - **Voice-over**: an \`audio\` clip with \`"role": "voice"\` (from \`tts\`); music on another audio track with \`"role": "music"\` is ducked under the voice.
-- **Subtitles**: call \`start_subtitles\` (drawn into the video, or files/track only: ask the user when they did not say); never one text clip per sentence. Drawn subtitles are the subtitles track with its style (legible, brand fonts and colours, above the platform's UI in 9:16); \`edit_subtitles\` corrects their text; remove the track to stop drawing them.
+- **Subtitles**: call \`start_subtitles\` (drawn into the video, or files/track only: ask the user when they did not say); never one text clip per sentence. Drawn subtitles are the subtitles track with its style (legible, brand fonts and colours, above the platform's UI in 9:16); \`edit_subtitles\` corrects their text; remove the track to stop drawing them. \`add_subtitle_language\` adds subtitles in another language (never \`add_language\`, which translates the video).
 
 Example (a 1080×1080 still):
 \`\`\`json

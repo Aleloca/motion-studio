@@ -39,6 +39,8 @@ const POST = 'instagram-post-1x1';
 const out = (format: string, ext: string, size = 1080) => ({ format, file: `${format}.${ext}`, width: 1080, height: size, durationSec: null, verified: true, preview: null });
 const ver = (n: number, outputs: VersionEntry['outputs']): VersionEntry =>
   ({ n, commit: 'c', sessionId: 's', status: 'complete', createdAt: '2026-10-08T10:00:00.000Z', request: '', outputs, problems: [], tools: [], renderCommand: null, basedOn: null });
+/** A translation row of a version (Phase 12): the language's video of that format exists. */
+const loc = (locale: string, instanceId: string) => ({ locale, instanceId, hash: '1'.repeat(64), origin: 'agent', stale: [], voice: 'translated' }) as NonNullable<VersionEntry['localizations']>[number];
 const versions = [ver(5, [out(REEL, 'mp4', 1920), out(TIKTOK, 'mp4', 1920), out(POST, 'png')]), ver(7, [out(REEL, 'mp4', 1920), out(TIKTOK, 'mp4', 1920), out(POST, 'png')])];
 const state = (id: string, s: Partial<FormatState>): FormatState => ({
   id, history: [5, 7], star: { version: 7, manual: false, newer: null, follows: null }, defaultVersion: 7, exportVersion: 7, starFileMissing: false, linkable: [], follows: null, ...s,
@@ -467,6 +469,28 @@ describe('ExportDialog · resolution and quality (decision 974, user report 22)'
     expect(api.exportPicksJob.mock.calls[0]![2]).not.toHaveProperty('fps');
   });
 
+  it('a drawn language on the Italian video locks the size and quality, as the core asks, with only the original exported (final review Minor 1)', async () => {
+    const sub = (lang: string) => ({ lang, origin: lang === 'en' ? 'speech' : 'translation', cues: 3, edited: 0, hash: 'a'.repeat(64),
+      timing: { version: 7, format: REEL, fingerprint: 'b'.repeat(64) }, timingChanged: false, staleCues: 0 }) as never;
+    render(
+      <I18nProvider locale="en">
+        <Live open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions: [{ ...v7, localizations: [loc('it', REEL)] }], states: st() }} presets={DEFAULT_FORMATS}
+          pattern="{title}-{format}-v{v}" locales={{ primary: 'en', extra: ['it'] }} subtitles={[sub('en'), sub('it')]} />
+      </I18nProvider>,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /^Resolution/ }));
+    await userEvent.click(await screen.findByRole('option', { name: '720p' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: /^In the video.*Italian/i }));
+    expect((screen.getByRole('button', { name: /^Resolution/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/With other languages the videos are exported at the format size and High quality/)).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: /^Export \d+ files?$/ }));
+    await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledOnce());
+    const body = api.exportPicksJob.mock.calls[0]![2] as unknown as Record<string, unknown>;
+    expect(body).toMatchObject({ quality: 'high', subtitles: { drawn: [{ video: 'it', lang: 'it' }] } });
+    expect(body).not.toHaveProperty('resolution');
+    expect(body).not.toHaveProperty('locales');
+  });
+
   it('with other languages the videos keep the format size and High: the choice is locked and said', async () => {
     openV2({ primary: 'en', extra: ['it'] });
     await userEvent.click(screen.getByRole('checkbox', { name: 'Italian' }));
@@ -623,5 +647,91 @@ describe('ExportDialog · the Sottotitoli section (Task 22)', () => {
     unmount();
     openWith([sub('it', 'c'.repeat(64))], 'en', snap);
     expect(screen.getByText('Rendered first')).toBeTruthy();
+  });
+});
+
+describe('ExportDialog · subtitle languages (Task 27)', () => {
+  const sub = (lang: string, voice?: string) => ({ lang, origin: lang === 'it' || voice ? 'speech' : 'translation', cues: 3, edited: 0, hash: 'a'.repeat(64),
+    timing: { version: 1, format: REEL, fingerprint: 'b'.repeat(64), ...(voice ? { locale: voice } : {}) }, timingChanged: false, staleCues: 0 }) as never;
+  /** The German videos exist: each video format of v5 and v7 has its German translation. */
+  const german = versions.map((v) => ({ ...v, localizations: [loc('de', REEL), loc('de', TIKTOK)] }));
+  const openWith = (subtitles: never[], o: { versions?: VersionEntry[] } = {}) => render(
+    <I18nProvider locale="it">
+      <Live open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions: o.versions ?? german, states: states() }} presets={DEFAULT_FORMATS}
+        pattern="{title}-{format}-v{v}" onSettings={onSettings} subtitles={subtitles} locales={{ primary: 'it', extra: ['de'] }} />
+    </I18nProvider>,
+  );
+  const preview = () => document.querySelector('.ms-exp-subs-out')?.textContent ?? '';
+  const videoOf = (language: RegExp) => screen.getByRole('button', { name: language });
+  const sent = () => api.exportPicksJob.mock.calls[0]![2] as unknown as { subtitles: Record<string, unknown>; locales?: string[] };
+
+  it('default pairing (U8): German subtitles on the German video, English on the original; any pair can be chosen', async () => {
+    openWith([sub('it'), sub('en'), sub('de')]);
+    await userEvent.click(screen.getByRole('checkbox', { name: /^Nel video.*tedesco/i }));
+    await userEvent.click(screen.getByRole('checkbox', { name: /^Nel video.*inglese/i }));
+    expect(videoOf(/^Video dei sottotitoli in tedesco/i).textContent).toMatch(/tedesco/i);
+    expect(videoOf(/^Video dei sottotitoli in inglese/i).textContent).toMatch(/Originale/);
+    expect(preview()).toContain('summer-launch-instagram-reel-9x16-v5-de-sub-de.mp4');
+    expect(preview()).toContain('summer-launch-instagram-reel-9x16-v5-sub-en.mp4');
+    // Every drawn video names its video, the original's too (review round 1).
+    expect(preview()).toMatch(/Video in italiano, sottotitoli in inglese/i);
+    expect(preview()).toMatch(/Video in tedesco, sottotitoli in tedesco/i);
+    // The Italian video's two drawn videos and its still; the German subtitles' two videos.
+    expect(screen.getByRole('button', { name: 'Esporta 5 file' })).toBeTruthy();
+    // English on the German video instead.
+    await userEvent.click(videoOf(/^Video dei sottotitoli in inglese/i));
+    await userEvent.click(screen.getByRole('option', { name: /tedesco/i }));
+    expect(preview()).toContain('summer-launch-instagram-reel-9x16-v5-de-sub-en.mp4');
+    // Nothing is asked of the Italian video now: its three files are exported as they are, next to the four German drawn ones.
+    await userEvent.click(screen.getByRole('button', { name: 'Esporta 7 file' }));
+    await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledOnce());
+    expect(sent().subtitles).toEqual({ drawn: [{ video: 'de', lang: 'en' }, { video: 'de', lang: 'de' }] });
+  });
+
+  it('German subtitles go on the original by default when the format has no German translation (final review Minor 3)', async () => {
+    openWith([sub('it'), sub('de')], { versions });
+    await userEvent.click(screen.getByRole('checkbox', { name: /^Nel video.*tedesco/i }));
+    expect(videoOf(/^Video dei sottotitoli in tedesco/i).textContent).toMatch(/Originale/);
+    expect(preview()).toContain('summer-launch-instagram-reel-9x16-v5-sub-de.mp4');
+  });
+
+  it('files and tracks go with every exported video language: names and count per language', async () => {
+    openWith([sub('it'), sub('en'), sub('de')]);
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Tedesco' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: /^File \.srt e \.vtt.*inglese/i }));
+    for (const name of ['summer-launch-instagram-reel-9x16-v5.en.srt', 'summer-launch-instagram-reel-9x16-v5-de.en.srt', 'summer-launch-tiktok-9x16-v5-de.en.vtt']) expect(preview()).toContain(name);
+    // Per language: two clean videos with two files each, and the still.
+    expect(screen.getByRole('button', { name: 'Esporta 14 file' })).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Esporta 14 file' }));
+    await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledOnce());
+    expect(sent()).toMatchObject({ locales: ['it', 'de'], subtitles: { files: ['en'] } });
+  });
+
+  it('without the other languages, a set timed on the German voice is not offered in the video either (final review Minor 2)', async () => {
+    render(
+      <I18nProvider locale="it">
+        <Live open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions, states: states() }} presets={DEFAULT_FORMATS}
+          pattern="{title}-{format}-v{v}" onSettings={onSettings} subtitles={[sub('it'), sub('de', 'de')]} locales={{ primary: 'it', extra: [] }} />
+      </I18nProvider>,
+    );
+    for (const row of ['Nel video', 'File \\.srt e \\.vtt', 'Traccia nel file MP4']) {
+      expect((screen.getByRole('checkbox', { name: new RegExp(`^${row}.*tedesco`, 'i') }) as HTMLButtonElement).disabled, row).toBe(true);
+    }
+    expect((screen.getByRole('checkbox', { name: /^Nel video.*italiano/i }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('a set timed on the German voice goes only on the German video: no other choice, files and tracks only with that video', async () => {
+    openWith([sub('it'), sub('de', 'de')]);
+    await userEvent.click(screen.getByRole('checkbox', { name: /^Nel video.*tedesco/i }));
+    const video = videoOf(/^Video dei sottotitoli in tedesco/i) as HTMLButtonElement;
+    expect([video.textContent, video.disabled]).toEqual([expect.stringMatching(/tedesco/i), true]);
+    const soft = screen.getByRole('checkbox', { name: /^Traccia nel file MP4.*tedesco/i }) as HTMLButtonElement;
+    expect(soft.disabled).toBe(true);
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Tedesco' }));
+    expect(soft.disabled).toBe(false);
+    await userEvent.click(soft);
+    await userEvent.click(screen.getByRole('button', { name: /^Esporta \d+ file$/ }));
+    await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledOnce());
+    expect(sent().subtitles).toEqual({ drawn: [{ video: 'de', lang: 'de' }], soft: ['de'] });
   });
 });

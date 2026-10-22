@@ -7,8 +7,12 @@ import { markPairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
  * response's `Retry-After` in seconds, when it has one (e.g. `hashes-pending`).
  */
 export class ApiError extends Error {
-  /** `problems`: every translated problem behind a 422 (a draft that does not validate). */
-  constructor(public readonly status: number, message: string, public readonly code?: string, public readonly retryAfterSec?: number, public readonly problems?: string[]) { super(message); this.name = 'ApiError'; }
+  /**
+   * `problems`: every translated problem behind a 422 (a draft that does not validate). `dropped`: the subtitle lines a
+   * "Ritraduci" removed before it was refused (Task 25).
+   */
+  constructor(public readonly status: number, message: string, public readonly code?: string, public readonly retryAfterSec?: number, public readonly problems?: string[],
+    public readonly dropped?: number) { super(message); this.name = 'ApiError'; }
 }
 
 /** `Retry-After` as seconds (the delay form only; a date or a bad value is ignored). */
@@ -54,8 +58,9 @@ async function parse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const code = (data as { code?: unknown }).code;
     const problems = (data as { problems?: unknown }).problems;
+    const dropped = (data as { dropped?: unknown }).dropped;
     throw new ApiError(res.status, (data as { error?: string }).error ?? currentMessages().web.api.httpError({ status: res.status }), typeof code === 'string' ? code : undefined, retryAfter(res),
-      Array.isArray(problems) ? problems.filter((x): x is string => typeof x === 'string') : undefined);
+      Array.isArray(problems) ? problems.filter((x): x is string => typeof x === 'string') : undefined, typeof dropped === 'number' ? dropped : undefined);
   }
   return data as T;
 }
@@ -118,7 +123,8 @@ export interface StorePackExportResult { folder: string; written: string[]; fail
 export interface LocaleOptions { locales?: string[]; force?: boolean }
 /** The subtitles of an export (spec §6.6): the languages written as `.srt`/`.vtt` files next to each video. */
 /** The subtitles of an export (spec §6.6, Tasks 7 and 21): drawn into a video per language, `.srt`/`.vtt` files, soft MP4 tracks. */
-export interface ExportSubtitles { subtitles?: { drawn?: string[]; files?: string[]; soft?: string[] } }
+/** Subtitles Task 27: a drawn language on a video language (`{ video, lang }`), or a bare tag on the original video. */
+export interface ExportSubtitles { subtitles?: { drawn?: Array<string | { video: string; lang: string }>; files?: string[]; soft?: string[] } }
 
 /** What `POST …/variants/run` answers (202): by variant letter; see the core's `FanoutResult`. */
 export interface VariantRunResult {
@@ -465,8 +471,25 @@ export const api = {
   subtitlesChoice: (slug: string, creative: string, choice: Omit<TranscriptionChoice, 'file'>) => request<SubtitlesJobState>('POST', `${subs(slug, creative)}/transcription-choice`, choice),
   /** "Ricontrolla" in the subtitles job's transcription question: the Whispers looked for again, the question as it is now. */
   subtitlesRecheck: (slug: string, creative: string) => request<SubtitlesJobState>('POST', `${subs(slug, creative)}/transcription-recheck`),
-  /** The subtitle timeline's waveform (Task 13): the main format's audio mix of version `n` as peaks over its duration. */
-  subtitleWaveform: (slug: string, creative: string, n: number) => request<{ peaks: number[]; durationMs: number }>('GET', `${subs(slug, creative)}/waveform?version=${n}`),
+  /**
+   * The subtitle timeline's waveform (Task 13): the main format's audio mix of version `n` as peaks over its duration; with
+   * `lang`, the audio of that language's own localized video (a localized voice's set, Task 24).
+   */
+  subtitleWaveform: (slug: string, creative: string, n: number, lang?: LocaleTag) =>
+    request<{ peaks: number[]; durationMs: number }>('GET', `${subs(slug, creative)}/waveform?version=${n}${lang ? `&lang=${encodeURIComponent(lang)}` : ''}`),
+  /**
+   * Task 25: a new subtitle language, from its own voices or translated from the original speech (409
+   * `subtitles-lang-exists`, `subtitles-no-source`). The brief's languages stay as they are (U8).
+   */
+  addSubtitleLanguage: (slug: string, creative: string, lang: LocaleTag) => request<{ job: JobSummary }>('POST', `${subs(slug, creative)}/languages`, { lang }),
+  /**
+   * "Ritraduci": the lines `ids`, or every stale line the user did not correct; lines whose source line is gone may be removed
+   * (`dropped`). `job: null` when removing them was all there was to do; 409 `subtitles-nothing-stale` (with `dropped`).
+   */
+  retranslateSubtitles: (slug: string, creative: string, lang: LocaleTag, body: { ids?: string[] }) =>
+    request<{ job: JobSummary | null; dropped?: number }>('POST', `${subs(slug, creative)}/${encodeURIComponent(lang)}/retranslate`, body),
+  /** A language's subtitles deleted (never the original speech set's: 409 `subtitles-source-set`). */
+  deleteSubtitleLanguage: (slug: string, creative: string, lang: LocaleTag) => request<{ deleted: LocaleTag }>('DELETE', `${subs(slug, creative)}/${encodeURIComponent(lang)}`),
   subtitleSet: (slug: string, creative: string, lang: LocaleTag) => request<{ set: SubtitleSet; hash: string }>('GET', `${subs(slug, creative)}/${encodeURIComponent(lang)}`),
   /**
    * The editor's save (decision 1654): the whole cue list over the set whose hash is `baseHash`; 409 `subtitles-conflict`
