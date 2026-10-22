@@ -53,7 +53,9 @@ const englishName = (tag: string) => {
  * Untrusted text in the prompt (the lines and the glossary are the user's content): one line, no control characters, and the
  * prompt's own tags defused (one character) like the user's words elsewhere.
  */
-const defuse = (s: string) => defuseTags(s.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' '))
+/** Control, bidi and zero-width characters (agent output and prompt text alike) become a space. */
+const flatten = (s: string) => s.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]+/g, ' ');
+const defuse = (s: string) => defuseTags(flatten(s))
   .replace(/<(?=\s*\/?\s*(cues|glossary)\b)/gi, '‹');
 
 /** The guidelines' glossary section (a heading naming it, up to the next heading of the same level or above), or null. */
@@ -120,7 +122,7 @@ export function validateTranslation(scope: Pick<SubtitleTranslateScope, 'ids' | 
   const out = new Map<string, string>();
   const empty: string[] = [], long: string[] = [];
   for (const c of parsed.data.cues) {
-    const flat = c.text.replace(/\s+/g, ' ').trim();
+    const flat = flatten(c.text).replace(/\s+/g, ' ').trim();
     const lines = wrapLines(flat, scope.target);
     const text = lines.join('\n');
     if (flat === '' || text.length > SUBTITLE_LIMITS.text) empty.push(c.id);
@@ -156,12 +158,11 @@ export function subtitleTranslateTools(): Record<'submit_subtitle_translation', 
  */
 export function mergeTranslation(o: {
   source: readonly SubtitleCue[]; target: readonly SubtitleCue[]; texts: ReadonlyMap<string, string>; explicit: ReadonlySet<string> | null;
-}): { cues: SubtitleCue[]; kept: string[] } {
+}): SubtitleCue[] {
   const current = new Map(o.target.map((c) => [c.id, c]));
-  const kept: string[] = [];
   const translated = (s: SubtitleCue): SubtitleCue | null => {
     const now = current.get(s.id);
-    if (now?.edited && !o.explicit?.has(s.id)) { kept.push(s.id); return now; }
+    if (now?.edited && !o.explicit?.has(s.id)) return now;
     const text = o.texts.get(s.id);
     return text === undefined ? (now ?? null) : { id: s.id, start: s.start, end: s.end, text, source: { text: s.text } };
   };
@@ -173,10 +174,10 @@ export function mergeTranslation(o: {
     const ids = new Set(o.source.map((s) => s.id));
     cues = [
       ...o.source.map(translated).filter((c): c is SubtitleCue => c !== null),
-      ...o.target.filter((c) => c.edited && !ids.has(c.id)).map((c) => { kept.push(c.id); return c; }),
+      ...o.target.filter((c) => c.edited && !ids.has(c.id)),
     ];
   }
-  return { cues: cues.sort((a, b) => a.start - b.start || a.end - b.end), kept };
+  return cues.sort((a, b) => a.start - b.start || a.end - b.end);
 }
 
 interface Plan {
@@ -199,32 +200,14 @@ export class SubtitleTranslateService {
    * language; 400 for the source's own language or ids no source line has.
    */
   async start(ref: CreativeRef, o: SubtitleTranslateStart): Promise<JobSummary> {
-    const store = new CreativeStore(ref.projectDir);
-    const creative = await store.get(ref.creativeSlug);
-    const dir = store.dir(ref.creativeSlug);
-    const sets = await listSubtitleSets(dir);
-    const source = sets.find((s) => s.origin === 'speech');
-    if (!source) throw new CodedError(409, t().errors.subtitlesNoSource, 'subtitles-no-source');
-    if (source.lang === o.target) throw new CodedError(400, t().errors.subtitlesSameLang({ lang: languageName(o.target) }), 'subtitles-same-lang');
-    const existing = sets.find((s) => s.lang === o.target);
-    if (existing?.origin === 'speech') throw new CodedError(409, t().errors.subtitlesLangSpoken({ lang: languageName(o.target) }), 'subtitles-lang-spoken');
-    let explicit: Set<string> | null = null;
-    let asked: SubtitleCue[];
-    if (o.ids) {
-      explicit = new Set(o.ids);
-      const missing = [...explicit].filter((id) => !source.cues.some((c) => c.id === id));
-      if (explicit.size === 0 || missing.length) throw new CodedError(400, t().errors.subtitlesNoCues({ ids: list(missing) }), 'subtitles-no-cues');
-      asked = source.cues.filter((c) => explicit!.has(c.id));
-    } else {
-      const corrected = new Set(existing?.cues.filter((c) => c.edited).map((c) => c.id));
-      asked = source.cues.filter((c) => !corrected.has(c.id));
-    }
-    const key = subtitleTranslateJobKey(ref, o.target);
-    const plan: Plan = { ref, target: o.target, title: creative.title, source, asked, explicit };
+    const p = await this.planOf(ref, o);
+    // Every line of the target is one the user corrected (review M4): nothing to ask, nothing rewritten.
+    if (p.asked.length === 0) throw new CodedError(409, t().errors.subtitlesNothingToTranslate({ lang: languageName(o.target) }), 'subtitles-nothing-to-translate');
     try {
       return this.deps.queue.enqueue({
-        key, kind: 'subtitles-translate', label: t().jobs.subtitlesTranslateLabel({ title: creative.title, lang: languageName(o.target) }),
-        run: (signal, jobId) => this.run(plan, signal, jobId),
+        key: subtitleTranslateJobKey(ref, o.target), kind: 'subtitles-translate',
+        label: t().jobs.subtitlesTranslateLabel({ title: p.title, lang: languageName(o.target) }),
+        run: (signal, jobId) => this.run(ref, o, signal, jobId),
       });
     } catch (e) {
       if (e instanceof JobConflictError) throw new CodedError(409, t().errors.subtitlesTranslating({ lang: languageName(o.target) }), 'subtitles-translating');
@@ -232,21 +215,54 @@ export class SubtitleTranslateService {
     }
   }
 
+  /**
+   * What a translation of `o` translates now (read when it is asked for, and again when the job runs: the source may have
+   * changed in between, review I1): the speech set, the lines asked, the explicit ids. Throws the refusals of `start`.
+   */
+  private async planOf(ref: CreativeRef, o: SubtitleTranslateStart): Promise<Plan> {
+    const store = new CreativeStore(ref.projectDir);
+    const creative = await store.get(ref.creativeSlug);
+    const sets = await listSubtitleSets(store.dir(ref.creativeSlug));
+    const lang = languageName(o.target);
+    const source = sets.find((s) => s.origin === 'speech');
+    if (!source) throw new CodedError(409, t().errors.subtitlesNoSource, 'subtitles-no-source');
+    if (source.lang === o.target) throw new CodedError(400, t().errors.subtitlesSameLang({ lang }), 'subtitles-same-lang');
+    const existing = sets.find((s) => s.lang === o.target);
+    if (existing?.origin === 'speech') throw new CodedError(409, t().errors.subtitlesLangSpoken({ lang }), 'subtitles-lang-spoken');
+    if (!o.ids) {
+      const corrected = new Set(existing?.cues.filter((c) => c.edited).map((c) => c.id));
+      return { ref, target: o.target, title: creative.title, source, asked: source.cues.filter((c) => !corrected.has(c.id)), explicit: null };
+    }
+    // "Ritraduci" (review M2, M3): lines of an existing translation, at least one, each a line of the source.
+    if (o.ids.length === 0) throw new CodedError(400, t().errors.subtitlesNoIds, 'subtitles-no-ids');
+    if (!existing) throw new CodedError(409, t().errors.subtitlesNoLang({ lang }), 'subtitles-no-lang');
+    const explicit = new Set(o.ids);
+    const missing = [...explicit].filter((id) => !source.cues.some((c) => c.id === id));
+    if (missing.length) throw new CodedError(400, t().errors.subtitlesNoCues({ ids: list(missing) }), 'subtitles-no-cues');
+    return { ref, target: o.target, title: creative.title, source, asked: source.cues.filter((c) => explicit.has(c.id)), explicit };
+  }
+
   private async note(jobId: string, ref: CreativeRef, level: 'info' | 'error', text: string, state: 'ready' | 'failed', lang: LocaleTag): Promise<void> {
     await this.deps.turns.noteFromTurn(jobId, ref, { type: 'system', at: new Date().toISOString(), level, text, subtitles: { state, lang } }).catch(() => {});
   }
 
-  private async run(plan: Plan, signal: AbortSignal, jobId: string): Promise<void | 'cancelled'> {
-    const { ref, target, source } = plan;
+  private async run(ref: CreativeRef, o: SubtitleTranslateStart, signal: AbortSignal, jobId: string): Promise<void | 'cancelled'> {
+    const { target } = o;
     const lang = languageName(target);
     const dir = new CreativeStore(ref.projectDir).dir(ref.creativeSlug);
     try {
-      const texts = plan.asked.length > 0 ? await this.agentRun(plan, signal, jobId) : new Map<string, string>();
+      // The source as it is now, not when the job was queued (review I1).
+      const plan = await this.planOf(ref, o);
+      const { source } = plan;
+      if (plan.asked.length === 0) {
+        await this.note(jobId, ref, 'info', t().subtitles.translateNothing({ lang }), 'ready', target);
+        return;
+      }
+      const texts = await this.agentRun(plan, signal, jobId);
       if (texts === null) return 'cancelled';
       const missing = plan.asked.filter((c) => !texts.has(c.id)).length;
       if (missing > 0) throw new Error(t().subtitles.translateMissing({ count: missing }));
-      let kept: string[] = [];
-      let written: SubtitleSet | null = null;
+      let toCheck = 0;
       // Re-read the target under the sets' lock (decision 1654): a line the user corrected during the run stays (anti-goal 1).
       await subtitleSetLocks.run(dir, async () => {
         const now = await readSubtitleSet(dir, target);
@@ -255,23 +271,23 @@ export class SubtitleTranslateService {
           throw new Error(t().subtitles.setUnreadable({ file: `${SUBTITLES_DIR}/${target}.json` }));
         }
         if (now?.set.origin === 'speech') throw new Error(t().errors.subtitlesLangSpoken({ lang }));
-        const merged = mergeTranslation({ source: source.cues, target: now?.set.cues ?? [], texts, explicit: plan.explicit });
-        kept = merged.kept;
+        // Each line records the source text it was translated from (`source.text`, the run's source).
+        const cues = mergeTranslation({ source: source.cues, target: now?.set.cues ?? [], texts, explicit: plan.explicit });
         const set: SubtitleSet = {
           $schema: SUBTITLES_SCHEMA_ID, lang: target, origin: 'translation', sourceLang: source.lang,
-          transcript: source.transcript, detected: null, timing: source.timing, cues: merged.cues,
+          transcript: source.transcript, detected: null, timing: source.timing, cues,
         };
         const valid = subtitleSetSchema.safeParse(set);
         if (!valid.success || Buffer.byteLength(subtitleSetText(set)) > SUBTITLE_LIMITS.fileBytes) throw new Error(valid.success ? 'the subtitles are too large' : valid.error.message);
         await writeSubtitleSet(dir, set);
-        written = set;
+        // Review I1: the lines that no longer match the source as it is now (edited during the run, or corrected lines kept
+        // over a changed source line): the note says how many to check.
+        const fresh = (await listSubtitleSets(dir)).find((s) => s.origin === 'speech');
+        toCheck = fresh ? staleCues(set, fresh).length : 0;
       });
       this.deps.commits.touch(ref, t().subtitles.commit({ title: plan.title, lang: target }));
       try { this.deps.broadcast({ type: 'subtitles', project: ref.projectSlug, creative: ref.creativeSlug, lang: target }); } catch { /* a faulty listener */ }
-      // The corrected lines kept whose source line changed: the user is told to check them.
-      const stale = new Set(staleCues(written!, source));
-      const toCheck = kept.filter((id) => stale.has(id)).length;
-      await this.note(jobId, ref, 'info', toCheck > 0 ? t().subtitles.translatedKept({ lang, count: toCheck }) : t().subtitles.translated({ lang }), 'ready', target);
+      await this.note(jobId, ref, 'info', toCheck > 0 ? t().subtitles.translatedStale({ lang, count: toCheck }) : t().subtitles.translated({ lang }), 'ready', target);
     } catch (err) {
       if (signal.aborted || (err as Error).name === 'AbortError') return 'cancelled';
       const text = t().subtitles.translateFailed({ lang, reason: errText(err) });

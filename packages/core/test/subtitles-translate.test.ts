@@ -16,6 +16,8 @@ import type { CreativeRef } from '../src/creatives/creative-turns.ts';
 import { JobQueue } from '../src/jobs/job-queue.ts';
 import { readSubtitleSet, writeSubtitleSet } from '../src/subtitles/store.ts';
 import { SubtitleTranslateService, subtitleTranslateTools } from '../src/subtitles/translate-job.ts';
+import { languageName } from '../src/subtitles/subtitles-job.ts';
+import { t } from '../src/i18n.ts';
 import { ControlledRunner, type ControlledRun } from './helpers/controlled-runner.ts';
 import { testLauncher } from './helpers/launcher.ts';
 
@@ -163,6 +165,52 @@ describe('SubtitleTranslateService', () => {
     expect(staleCues(out, changed)).toEqual(['c2']);
   });
 
+  it('when every target line is one the user corrected, nothing runs and nothing is rewritten', async () => {
+    const all = english(SOURCE.map((c) => ({ id: c.id, start: c.start, end: c.end, text: `Mine ${c.id}`, edited: true as const, source: { text: c.text } })));
+    await writeSubtitleSet(dir(), all);
+    await expect(service.start(ref, { target: 'en' })).rejects.toMatchObject({ status: 409, apiCode: 'subtitles-nothing-to-translate' });
+    expect(runner.runs).toHaveLength(0);
+    expect((await readSubtitleSet(dir(), 'en'))!.set).toEqual(all);
+  });
+
+  it('the source is read when the job runs; a source line changed during the run is reported, its cue keeps what was translated', async () => {
+    const job = await service.start(ref, { target: 'en' });
+    const run = await runner.next();
+    await writeSubtitleSet(dir(), speech(SOURCE.map((c) => (c.id === 'c2' ? { ...c, text: 'Prenota in due tocchi', edited: true as const } : c))));
+    await submit(run, Object.entries(EN).map(([id, text]) => ({ id, text })));
+    run.finish({ write: false });
+    expect((await queue.whenSettled(job.id))?.state).toBe('succeeded');
+    expect((await readSubtitleSet(dir(), 'en'))!.set.cues[1]).toMatchObject({ id: 'c2', text: EN.c2, source: { text: 'Prenota in tre tocchi' } });
+    expect(notes.at(-1)).toMatchObject({ level: 'info', subtitles: { state: 'ready', lang: 'en' } });
+    expect(notes.at(-1)).toMatchObject({ text: t().subtitles.translatedStale({ lang: languageName('en'), count: 1 }) });
+  });
+
+  it('a source changed between the request and the run is the one translated', async () => {
+    // A busy queue: the job waits, the source changes, then it runs.
+    const busy = new JobQueue({ concurrency: 1 });
+    let release!: () => void;
+    busy.enqueue({ key: 'other', kind: 'render', label: 'x', run: () => new Promise<void>((r) => { release = r; }) });
+    const queued = new SubtitleTranslateService({ queue: busy, launcher: testLauncher(runner, { bridge, mcpCommand: [process.execPath, join(base, 'never-started-mcp.mjs')] }), commits: { touch }, broadcast: () => {}, turns: { noteFromTurn: async () => {} } });
+    const job = await queued.start(ref, { target: 'en' });
+    await writeSubtitleSet(dir(), speech(SOURCE.map((c) => (c.id === 'c1' ? { ...c, text: 'Ciao a voi' } : c))));
+    release();
+    const run = await runner.next();
+    expect(run.req.prompt).toContain('c1 | 00:00.000–00:01.500 | Ciao a voi');
+    await submit(run, Object.entries(EN).map(([id, text]) => ({ id, text })));
+    run.finish({ write: false });
+    await busy.whenSettled(job.id);
+    expect((await readSubtitleSet(dir(), 'en'))!.set.cues[0]!.source).toEqual({ text: 'Ciao a voi' });
+  });
+
+  it('control, bidi and zero-width characters in the agent\'s text are dropped', async () => {
+    const job = await service.start(ref, { target: 'en' });
+    const run = await runner.next();
+    await submit(run, [{ id: 'c1', text: 'Hi\u0007 every\u200bone\u202e' }, { id: 'c2', text: EN.c2 }, { id: 'c3', text: EN.c3 }]);
+    run.finish({ write: false });
+    await queue.whenSettled(job.id);
+    expect((await readSubtitleSet(dir(), 'en'))!.set.cues[0]!.text).toBe('Hi every one');
+  });
+
   it('ids: [\'c3\'] only rewrites c3', async () => {
     await translate({ target: 'en' }, EN);
     const before = (await readSubtitleSet(dir(), 'en'))!.set;
@@ -208,9 +256,14 @@ describe('SubtitleTranslateService', () => {
     expect((await readSubtitleSet(dir(), 'en'))!.set.cues[0]!.text).toBe('Hi everyone, and welcome\nto the new booking app');
   });
 
-  it('refuses without a speech set, into the source\'s own language, or ids not in the source', async () => {
+  it('refuses without a speech set, into the source\'s own language, ids without a translation, no ids, or ids not in the source', async () => {
     await expect(service.start(ref, { target: 'it' })).rejects.toMatchObject({ status: 400 });
-    await expect(service.start(ref, { target: 'en', ids: ['nope'] })).rejects.toMatchObject({ status: 400 });
+    await expect(service.start(ref, { target: 'en', ids: ['c3'] })).rejects.toMatchObject({ status: 409, apiCode: 'subtitles-no-lang' });
+    await writeSubtitleSet(dir(), english([{ id: 'c1', start: 0, end: 1500, text: 'Hi everyone', source: { text: 'Ciao a tutti' } }]));
+    const none = service.start(ref, { target: 'en', ids: [] });
+    await expect(none).rejects.toMatchObject({ status: 400, apiCode: 'subtitles-no-ids' });
+    await expect(none).rejects.toThrow(/^[^:]*\.$/);
+    await expect(service.start(ref, { target: 'en', ids: ['nope'] })).rejects.toMatchObject({ status: 400, apiCode: 'subtitles-no-cues' });
     await rm(join(dir(), 'subtitles', 'it.json'));
     await expect(service.start(ref, { target: 'en' })).rejects.toMatchObject({ status: 409, apiCode: 'subtitles-no-source' });
   });

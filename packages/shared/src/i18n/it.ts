@@ -276,6 +276,8 @@ export const it: Messages = {
     subtitlesLangSpoken: (p) => `I sottotitoli in ${p.lang} vengono dal parlato del video: non si traducono.`,
     subtitlesTranslating: (p) => `I sottotitoli in ${p.lang} sono già in traduzione.`,
     subtitlesNoCues: (p) => `I sottotitoli non hanno righe con questi id: ${p.ids}.`,
+    subtitlesNoIds: 'Indica almeno una riga dei sottotitoli da ritradurre.',
+    subtitlesNothingToTranslate: (p) => `Tutte le righe in ${p.lang} sono righe che hai corretto: non c'è niente da tradurre.`,
     subtitlesTranslateBad: (p) => `submit_subtitle_translation: ${p.detail}`,
     subtitlesTranslateLimit: 'submit_subtitle_translation si può chiamare al massimo 5 volte per esecuzione.',
     transcriptionNoBundled: 'Questa app non ha un Whisper suo: installane uno o indicalo in Impostazioni → Trascrizione video.',
@@ -436,11 +438,12 @@ export const it: Messages = {
     cancelledNoTranscription: 'Sottotitoli annullati: hai scelto di continuare senza trascrizione.',
     setUnreadable: (p) => `il file ${p.file} non si legge come sottotitoli e potrebbe contenere le tue correzioni: correggilo o spostalo, poi rifai i sottotitoli.`,
     translated: (p) => `Sottotitoli tradotti in ${p.lang}.`,
-    translatedKept: (p) => (p.count === 1
-      ? `Sottotitoli tradotti in ${p.lang}. 1 riga che avevi corretto è rimasta com'era: controllala.`
-      : `Sottotitoli tradotti in ${p.lang}. ${p.count} righe che avevi corretto sono rimaste com'erano: controllale.`),
     translateFailed: (p) => `Non è stato possibile tradurre i sottotitoli in ${p.lang}: ${p.reason}`,
     translateMissing: (p) => (p.count === 1 ? 'la traduzione ha tralasciato 1 riga' : `la traduzione ha tralasciato ${p.count} righe`),
+    translatedStale: (p) => (p.count === 1
+      ? `Sottotitoli tradotti in ${p.lang}. 1 riga non corrisponde più alla sua riga d'origine (è cambiata nel frattempo, o l'avevi corretta): controllala.`
+      : `Sottotitoli tradotti in ${p.lang}. ${p.count} righe non corrispondono più alla loro riga d'origine (sono cambiate nel frattempo, o le avevi corrette): controllale.`),
+    translateNothing: (p) => `Niente da tradurre in ${p.lang}: tutte le righe sono righe che hai corretto.`,
     notStartedTurn: 'I sottotitoli non sono partiti: il turno non si è concluso. Chiedili di nuovo.',
     styleStarted: "Sottotitoli pronti: l'agente li disegna nel video.",
     styleWaiting: "Sottotitoli pronti: l'agente li disegnerà nel video appena finisce il lavoro in corso.",

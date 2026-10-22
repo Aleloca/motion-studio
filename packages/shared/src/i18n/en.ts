@@ -278,6 +278,8 @@ export const en = {
     subtitlesLangSpoken: (p: { lang: string }) => `The subtitles in ${p.lang} come from the video's own speech: they are not translated.`,
     subtitlesTranslating: (p: { lang: string }) => `The subtitles in ${p.lang} are already being translated.`,
     subtitlesNoCues: (p: { ids: string }) => `The subtitles have no line with these ids: ${p.ids}.`,
+    subtitlesNoIds: 'Name at least one subtitle line to translate again.',
+    subtitlesNothingToTranslate: (p: { lang: string }) => `Every line in ${p.lang} is one you corrected: there is nothing to translate.`,
     subtitlesTranslateBad: (p: { detail: string }) => `submit_subtitle_translation: ${p.detail}`,
     subtitlesTranslateLimit: 'submit_subtitle_translation can be called at most 5 times in a run.',
     transcriptionNoBundled: 'This app has no Whisper of its own: install one or point to it in Settings → Video transcription.',
@@ -438,11 +440,12 @@ export const en = {
     cancelledNoTranscription: 'Subtitles cancelled: you chose to continue without a transcription.',
     setUnreadable: (p: { file: string }) => `the file ${p.file} cannot be read as subtitles and may hold your corrections: fix or move it, then make the subtitles again.`,
     translated: (p: { lang: string }) => `Subtitles translated into ${p.lang}.`,
-    translatedKept: (p: { lang: string; count: number }) => (p.count === 1
-      ? `Subtitles translated into ${p.lang}. 1 line you corrected was kept as it is: check it.`
-      : `Subtitles translated into ${p.lang}. ${p.count} lines you corrected were kept as they are: check them.`),
     translateFailed: (p: { lang: string; reason: string }) => `The subtitles could not be translated into ${p.lang}: ${p.reason}`,
     translateMissing: (p: { count: number }) => (p.count === 1 ? 'the translation left out 1 line' : `the translation left out ${p.count} lines`),
+    translatedStale: (p: { lang: string; count: number }) => (p.count === 1
+      ? `Subtitles translated into ${p.lang}. 1 line no longer matches its source line (it changed meanwhile, or you corrected it): check it.`
+      : `Subtitles translated into ${p.lang}. ${p.count} lines no longer match their source line (they changed meanwhile, or you corrected them): check them.`),
+    translateNothing: (p: { lang: string }) => `Nothing to translate into ${p.lang}: every line is one you corrected.`,
     notStartedTurn: 'The subtitles did not start: the turn did not finish. Ask for them again.',
     styleStarted: 'Subtitles ready: the agent is drawing them into the video.',
     styleWaiting: 'Subtitles ready: the agent will draw them into the video as soon as the current work ends.',
