@@ -29,3 +29,4 @@ export * from './brief-session.ts';
 export * from './project-icon.ts';
 export * from './video-analysis.ts';
 export * from './video-analysis-body.ts';
+export * from './subtitles/index.ts';
