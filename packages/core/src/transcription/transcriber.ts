@@ -57,7 +57,7 @@ const abortError = () => Object.assign(new Error('aborted'), { name: 'AbortError
  * a saved method that works runs, `ask` or a saved method that no longer works asks), builds the dialog's offer, applies
  * the user's choice (a model download only with the size the user saw), runs Whisper or a provider, and records a paid
  * transcription's cost in `usage.jsonl`. Language: auto-detected, the app language when the engine reports none
- * (decision 1503).
+ * (decision 1503; for the subtitles null, decision 1709).
  */
 export class TranscriptionService {
   /** Decision 1553: what the last detection found; read by every call, refreshed only in the background or on request. */
@@ -305,8 +305,9 @@ export class TranscriptionService {
   /**
    * Transcribes an analysis's audio with `method` (the user's choice), or with the method the settings resolve to now
    * (absent). A method that does not work at that moment, or a failed transcription, gives `none-skipped`: the rest of the
-   * analysis goes on (decision 1515). Aborts propagate. `words`: also the word timings (the subtitles); `language`: told to
-   * the engine (the editor's "redo choosing the language"), auto when absent.
+   * analysis goes on (decision 1515). Aborts propagate. `words`: also the word timings (the subtitles), and then a
+   * language the engine does not report stays null; `language`: told to the engine in its code (the editor's "redo choosing
+   * the language", the subtitles' language), auto when absent.
    */
   async transcribe(i: { ref: { projectDir: string }; jobId: string; wav: string; durationSec: number; signal: AbortSignal; method?: TranscribeMethod; words?: boolean; language?: string | null }): Promise<{ kind: TranscriptKind; segments: TranscriptSegment[]; words?: TranscriptWord[]; language: string | null }> {
     const skipped = { kind: 'none-skipped' as const, segments: [], language: null };
@@ -316,9 +317,10 @@ export class TranscriptionService {
       if (!('run' in p)) return skipped;
       method = p.run;
     }
-    const hint = currentLocale();
-    const language = i.language ?? null;
     const words = i.words === true;
+    // Decision 1709: the subtitles never label a set with the interface language; the analysis keeps it as its hint.
+    const hint = words ? null : currentLocale();
+    const language = engineLanguage(i.language ?? null);
     try {
       if (method === 'whisper') {
         const s = await this.settings();
@@ -345,6 +347,17 @@ export class TranscriptionService {
       return skipped;
     }
   }
+}
+
+/**
+ * The code an engine is told for a language tag (decision 1709): whisper.cpp, the Python Whispers and OpenAI take ISO 639-1
+ * (`zh`, `no`), and ElevenLabs Scribe takes 639-1 too (or 639-3), so one mapping serves all: the Chinese scripts become `zh`,
+ * Norwegian Bokmål `no`, a region or script subtag is dropped.
+ */
+export function engineLanguage(tag: string | null): string | null {
+  if (!tag) return null;
+  const base = tag.split('-')[0]!.toLowerCase();
+  return base === 'nb' || base === 'nn' ? 'no' : base;
 }
 
 const isProblem = (r: WhisperFound | { problem: string }): r is { problem: string; needsModel?: true } => !('engine' in r);
