@@ -113,4 +113,14 @@ describe('subtitle editor model (decisions 1652-1655)', () => {
     expect(cueAt(cues, 1000)?.id).toBe('b');
     expect(cueAt(cues, 3000)).toBeNull();
   });
+  it('the video\'s duration, known after the load, changes no cue, no history and nothing to save (Task 12)', () => {
+    const s0 = load([cue('a', 0, 2000, 'Ciao')], 2000);
+    const s1 = run(s0, { type: 'duration', ms: 9000 });
+    expect(s1.durationMs).toBe(9000);
+    expect(s1.cues).toBe(s0.cues);
+    expect(s1.past).toEqual([]);
+    expect(s1.dirty).toBe(false);
+    expect(run(s1, { type: 'add', at: 5000 }).cues).toHaveLength(2);
+    expect(run(s1, { type: 'duration', ms: 9000 })).toBe(s1);
+  });
 });

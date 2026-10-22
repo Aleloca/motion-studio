@@ -23,6 +23,8 @@ export type EditorOp =
   | { type: 'undo' }
   | { type: 'redo' }
   | { type: 'select'; id: string | null }
+  /** The video's duration, known after the load (the player reports it): no history, nothing to save. */
+  | { type: 'duration'; ms: number }
   | { type: 'load'; cues: SubtitleCue[]; durationMs: number; lang: LocaleTag };
 
 export const UNDO_DEPTH = 200;
@@ -207,6 +209,8 @@ export function editorReducer(s: EditorState, op: EditorOp): EditorState {
       return { cues: [...op.cues].sort(byStart), past: [], future: [], selected: null, durationMs: op.durationMs, dirty: false, lang: op.lang };
     case 'select':
       return op.id === s.selected ? s : { ...s, selected: op.id };
+    case 'duration':
+      return op.ms === s.durationMs || !(op.ms > 0) ? s : { ...s, durationMs: Math.round(op.ms) };
     case 'undo': {
       const prev = s.past[s.past.length - 1];
       if (!prev) return s;

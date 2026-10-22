@@ -1,0 +1,85 @@
+/* The subtitle editor (Task 12, spec §6.3, layout B): the header, the player on the left, the list of lines on the right; the
+   third row is the waveform timeline under both columns (Task 13). Light and dark through the theme tokens. */
+.ms-subs {
+  height: 100%; min-height: 0; display: grid; background: var(--bg); color: var(--text);
+  grid-template-columns: minmax(0, 1fr) clamp(340px, 40%, 480px);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas: "head head" "player side" "timeline timeline";
+}
+.ms-subs-grow { flex: 1; min-width: 0; }
+.ms-subs-head {
+  grid-area: head; display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; min-width: 0;
+  padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+}
+.ms-subs-title { margin: 0; font-size: 15px; font-weight: 600; white-space: nowrap; }
+.ms-subs-head .ms-btn { white-space: nowrap; flex: none; }
+.ms-subs-head-error { flex-basis: 100%; font-size: 12px; color: var(--warn); overflow-wrap: anywhere; }
+.ms-subs-undo { display: inline-flex; gap: 2px; }
+.ms-subs-save { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.ms-subs-save-text { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
+.ms-subs-save-text.ms-saved { color: var(--ok); }
+.ms-subs-save-text.ms-error, .ms-subs-save-text.ms-conflict { color: var(--warn); }
+.ms-subs-save-text > svg { flex: none; }
+
+/* Left: the frame keeps the format's proportions inside the space it has (container units), the transport under it. */
+.ms-subs-player { grid-area: player; min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: 16px 20px 12px; gap: 10px; }
+.ms-subs-stage { flex: 1; min-height: 0; container-type: size; display: grid; place-items: center; }
+.ms-subs-frame {
+  position: relative; container-type: size; aspect-ratio: var(--ar); width: min(100cqw, calc(100cqh * var(--ar))); max-height: 100cqh;
+  border-radius: 10px; overflow: hidden; background: var(--panel); box-shadow: 0 0 0 1px var(--line), 0 6px 20px var(--shadow);
+}
+.ms-subs-frame-note {
+  position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  margin: 0; padding: 16px; text-align: center; font-size: 12px; color: var(--muted); overflow-wrap: anywhere;
+}
+/* The editor's caption (not the agent's style, which the runtime draws in phase 3): plain, legible on any picture. */
+.ms-subs-caption {
+  position: absolute; left: 6%; right: 6%; bottom: 7%; z-index: 3; margin: 0; text-align: center; pointer-events: none;
+  font-size: clamp(10px, min(3.9cqw, 4.6cqh), 26px); line-height: 1.3; font-weight: 600;
+}
+.ms-subs-caption > span {
+  display: inline; padding: .12em .45em; border-radius: 5px; background: var(--mediaScrim); color: var(--onMediaScrim);
+  white-space: pre-line; overflow-wrap: anywhere; box-decoration-break: clone; -webkit-box-decoration-break: clone;
+}
+.ms-subs-caption > span.ms-on { box-shadow: inset 0 -2px 0 var(--accent); }
+.ms-subs-transport { flex: none; display: flex; align-items: center; justify-content: center; gap: 10px; }
+.ms-subs-tc { font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+.ms-subs-tc-total { color: var(--muted); }
+
+/* Right: the list of lines, which scrolls by itself. */
+.ms-subs-side { grid-area: side; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid var(--line); }
+.ms-subs-side-head { flex: none; display: flex; align-items: center; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--line2); }
+.ms-subs-side-title { margin: 0; font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+.ms-subs-count { font-weight: 500; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ms-subs-note { flex: none; margin: 0; padding: 8px 12px; font-size: 12px; line-height: 1.45; color: var(--warn); background: var(--warnBg); overflow-wrap: anywhere; }
+.ms-subs-find { flex: none; display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--line2); }
+.ms-subs-find .ms-input { height: 30px; font-size: 12.5px; }
+.ms-subs-find-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ms-subs-find-count { flex: 1; min-width: 0; font-size: 12px; color: var(--muted); }
+.ms-subs-scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.ms-subs-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 32px 16px; text-align: center; color: var(--muted); }
+.ms-subs-empty p { margin: 0; max-width: 46ch; overflow-wrap: anywhere; }
+.ms-subs-alone { grid-column: 1 / -1; grid-row: 2; }
+.ms-subs-list { list-style: none; margin: 0; padding: 0; }
+.ms-subs-row {
+  display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 10px 14px; border-bottom: 1px solid var(--line2);
+  box-shadow: inset 3px 0 0 transparent; transition: background var(--d-s) var(--e-std), box-shadow var(--d-s) var(--e-std);
+  scroll-margin: 8px;
+}
+.ms-subs-row.ms-on { background: var(--sel); }
+.ms-subs-row.ms-now { box-shadow: inset 3px 0 0 var(--accent); }
+.ms-subs-row-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ms-subs-num { flex: none; min-width: 20px; font-family: var(--mono); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; cursor: default; }
+.ms-subs-arrow { flex: none; color: var(--faint); font-size: 12px; }
+.ms-input.ms-subs-time { flex: none; width: 92px; height: 28px; padding: 0 7px; font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+.ms-subs-row-actions { flex: none; margin-left: auto; display: inline-flex; gap: 2px; }
+/* Two lines of a line's text always show whole: the box grows with its text (Chrome), two rows at least elsewhere. */
+.ms-input.ms-subs-text { width: 100%; min-height: 0; padding: 7px 10px; font-size: 13px; line-height: 1.45; field-sizing: content; overflow-wrap: anywhere; }
+.ms-subs-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.ms-chip.ms-subs-warn { height: 22px; padding: 0 8px; font-size: 11.5px; color: var(--warn); background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); cursor: help; }
+
+/* A narrow window: the header's labels stay whole on their own lines; the player's padding shrinks. */
+@media (max-width: 1000px) {
+  .ms-subs-player { padding: 12px 12px 10px; }
+}
+@media (prefers-reduced-motion: reduce) { .ms-subs-row { transition: none; } }
