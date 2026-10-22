@@ -696,6 +696,19 @@ describe('ExportDialog · subtitle languages (Task 27)', () => {
     expect(sent()).toMatchObject({ locales: ['it', 'de'], subtitles: { files: ['en'] } });
   });
 
+  it('without the other languages, a set timed on the German voice is not offered in the video either (final review Minor 2)', async () => {
+    render(
+      <I18nProvider locale="it">
+        <Live open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions, states: states() }} presets={DEFAULT_FORMATS}
+          pattern="{title}-{format}-v{v}" onSettings={onSettings} subtitles={[sub('it'), sub('de', 'de')]} locales={{ primary: 'it', extra: [] }} />
+      </I18nProvider>,
+    );
+    for (const row of ['Nel video', 'File \\.srt e \\.vtt', 'Traccia nel file MP4']) {
+      expect((screen.getByRole('checkbox', { name: new RegExp(`^${row}.*tedesco`, 'i') }) as HTMLButtonElement).disabled, row).toBe(true);
+    }
+    expect((screen.getByRole('checkbox', { name: /^Nel video.*italiano/i }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('a set timed on the German voice goes only on the German video: no other choice, files and tracks only with that video', async () => {
     openWith([sub('it'), sub('de', 'de')]);
     await userEvent.click(screen.getByRole('checkbox', { name: /^Nel video.*tedesco/i }));

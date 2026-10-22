@@ -303,7 +303,9 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
   };
   // Files and tracks of a set timed on a localized voice are offered while that video is exported.
   const offered = (lang: string) => { const v = voiceOf(lang); return v === undefined || (withLanguages && Boolean(langs[v])); };
-  const drawnPairs = (drawnOffered ? ticked(subDrawn) : []).map((lang) => ({ video: videoOf(lang), lang }));
+  // Drawn, such a set needs its video named: never on the original without the other languages (final review Minor 2).
+  const drawnFits = (lang: string) => voiceOf(lang) === undefined || withLanguages;
+  const drawnPairs = (drawnOffered ? ticked(subDrawn).filter(drawnFits) : []).map((lang) => ({ video: videoOf(lang), lang }));
   const fileLangs = ticked(subFiles).filter(offered);
   const softLangs = ticked(subSoft).filter(offered);
   const subtitled = drawnPairs.length + fileLangs.length + softLangs.length > 0;
@@ -554,7 +556,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
                 {subtitleLangs.map((tag) => {
                   // Files and tracks of a set timed on a localized voice wait for that video (Task 27).
                   const voice = voiceOf(tag);
-                  const off = !drawnRow && !offered(tag);
+                  const off = drawnRow ? !drawnFits(tag) : !offered(tag);
                   // "Nel video" (Task 27, U8): the video language it goes on, the valid ones only.
                   const options = drawnRow && picked[tag] && locales && withLanguages
                     ? [locales.primary, ...locales.extra].filter((v) => fits(tag, asVideo(v))).map((v) => ({ value: v, label: v === locales.primary ? t.web.languages.renderOriginal({ language: localeName(v, locale) }) : localeName(v, locale) }))
