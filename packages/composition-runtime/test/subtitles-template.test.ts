@@ -102,6 +102,110 @@ describe('the mount: a template is an html layer fed with the cues', () => {
   });
 });
 
+/**
+ * Fake layers for the frames the mount opens (jsdom loads none): each new iframe gets a window that answers the handshake
+ * and `ready`, and its seeks as `onSeek` decides (a promise: the reply waits for it). Records each frame's seeks and the
+ * frame's opacity when each seek arrived.
+ */
+function fakeLayers(root: HTMLElement, onSeek: (frame: number, t: number) => Promise<void> = () => Promise.resolve()) {
+  const frames: Array<{ el: HTMLIFrameElement; seeks: number[]; opacityAtSeek: string[]; ticks: number }> = [];
+  const ports: MessagePort[] = [];
+  const observer = new MutationObserver((records) => {
+    for (const r of records) for (const node of r.addedNodes) {
+      const els = node instanceof HTMLIFrameElement ? [node] : node instanceof HTMLElement ? [...node.querySelectorAll('iframe')] : [];
+      for (const el of els) {
+        if (frames.some((f) => f.el === el)) continue;
+        const rec = { el, seeks: [] as number[], opacityAtSeek: [] as string[], ticks: 0 };
+        const index = frames.push(rec) - 1;
+        Object.defineProperty(el, 'contentWindow', { configurable: true, value: {
+          postMessage: (_m: unknown, _o: string, transfer: MessagePort[]) => {
+            const port = transfer[0]!;
+            ports.push(port);
+            port.onmessage = (m: MessageEvent) => {
+              const d = m.data as { id?: number; op: string; t?: number };
+              if (d.op === 'tick') { rec.ticks++; return; }
+              if (d.op === 'ready') { port.postMessage({ id: d.id, ok: true, warnings: [] }); return; }
+              rec.seeks.push(d.t!);
+              rec.opacityAtSeek.push(el.style.opacity);
+              void onSeek(index, d.t!).then(() => port.postMessage({ id: d.id, ok: true }));
+            };
+            port.postMessage({ type: 'hello', v: 1 });
+          },
+        } });
+        setTimeout(() => el.dispatchEvent(new Event('load')), 1);
+      }
+    }
+  });
+  observer.observe(root, { childList: true, subtree: true });
+  return { frames, close: () => { observer.disconnect(); for (const p of ports) p.close(); } };
+}
+
+describe('the remount swap with layers that answer', () => {
+  const start = (layerMs: number, onSeek?: (frame: number, t: number) => Promise<void>) => {
+    const errors: RuntimeError[] = [];
+    const root = document.getElementById('ms-root')!;
+    const fake = fakeLayers(root, onSeek);
+    const player = mount(root, comp(), { mode: 'preview', base: BASE, natives, report: (e) => errors.push(e), timeouts: { load: 5000, seek: 5000, layer: layerMs }, subtitles: SUBS });
+    return { player, errors, root, fake, live: () => [...root.querySelectorAll('iframe')] };
+  };
+  const NEW: RuntimeSubtitles = { lang: 'it', cues: [{ start: 0, end: 4000, text: 'Corretto' }] };
+  const open: Array<() => void> = [];
+  afterEach(() => { while (open.length) open.pop()!(); });
+
+  it("a seek of the old layer in flight at the swap is dropped at once: the next seek is not held, nothing is reported", async () => {
+    let holdOld = false;
+    const never = new Promise<void>(() => {});
+    const { player, errors, fake, live } = start(10_000, (frame) => (frame === 0 && holdOld ? never : Promise.resolve()));
+    open.push(fake.close);
+    await player.ready();
+    holdOld = true;
+    const inFlight = player.seek(2); // held by the old layer
+    await until(() => fake.frames[0]!.seeks.includes(2));
+    player.setSubtitles(NEW);
+    await until(() => live().length === 1 && live()[0] === fake.frames[1]?.el);
+    const t0 = Date.now();
+    await inFlight;
+    await player.seek(3);
+    expect(Date.now() - t0).toBeLessThan(2000); // not the 10 s layer timeout
+    expect(fake.frames[1]!.seeks).toEqual([2, 3]);
+    expect(errors.map((e) => e.code)).toEqual([]);
+  });
+
+  it('the new layer is shown only once sought, and sought again when the time shown moved meanwhile', async () => {
+    let release!: () => void;
+    const firstNewSeek = new Promise<void>((r) => { release = r; });
+    const { player, errors, fake, live } = start(10_000, (frame) => (frame === 1 && fake.frames[1]!.seeks.length === 1 ? firstNewSeek : Promise.resolve()));
+    open.push(fake.close);
+    await player.ready();
+    await player.seek(2);
+    player.setSubtitles(NEW);
+    await until(() => fake.frames[1]?.seeks.length === 1);
+    await player.seek(4); // goes to the old layer, still shown
+    expect(live()).toHaveLength(2);
+    release();
+    await until(() => live().length === 1);
+    expect(fake.frames[1]!.seeks).toEqual([2, 4]);
+    expect(fake.frames[1]!.opacityAtSeek).toEqual(['0', '0']); // transparent until then
+    expect(fake.frames[1]!.el.style.opacity).toBe('');
+    expect(fake.frames[0]!.el.isConnected).toBe(false);
+    expect(errors.map((e) => e.code)).toEqual([]);
+  });
+
+  it('while playing, the new layer is sought once at the time shown before it is shown, then ticked', async () => {
+    const { player, errors, fake, live } = start(10_000);
+    open.push(fake.close);
+    await player.ready();
+    player.play({ loop: true });
+    player.setSubtitles(NEW);
+    await until(() => live().length === 1 && live()[0] === fake.frames[1]?.el);
+    expect(fake.frames[1]!.seeks).toHaveLength(1);
+    expect(fake.frames[1]!.opacityAtSeek).toEqual(['0']);
+    await until(() => fake.frames[1]!.ticks > 0);
+    player.pause();
+    expect(errors.map((e) => e.code)).toEqual([]);
+  });
+});
+
 describe('layer.js: window.msSubtitles and window.msActiveCue', () => {
   const layerWindow = (config: Partial<LayerConfig> = {}) => {
     const w = new JSDOM('<!doctype html><p>x</p>', { pretendToBeVisual: true }).window as unknown as Window & typeof globalThis;

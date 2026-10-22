@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Natives } from '../src/clock.ts';
-import { connectLayer, LayerRequestError } from '../src/layer-host.ts';
+import { connectLayer, LayerDisposedError, LayerRequestError } from '../src/layer-host.ts';
 import { LAYER_PROTOCOL_VERSION } from '../src/layer-protocol.ts';
 
 /** A fake layer frame: it answers the connect handshake, and seeks only when `answers` is true (with `reply`, if given). */
@@ -10,6 +10,7 @@ function fakeFrame(answers: () => boolean, reply: Record<string, unknown> = { ok
   let seeks = 0;
   const frame = {
     addEventListener: (type: string, cb: () => void) => { if (type === 'load') onLoad = cb; },
+    removeEventListener: () => {},
     contentWindow: {
       postMessage: (_m: unknown, _o: string, transfer: MessagePort[]) => {
         const port = transfer[0]!;
@@ -66,5 +67,33 @@ describe('layer host: failure codes', () => {
     f.close();
     expect(err).toBeInstanceOf(LayerRequestError);
     expect(err).toMatchObject({ code: 'layerStalled', message: 'msSeek waited 5 s for a timer' });
+  });
+});
+
+describe('layer host: dispose (subtitles Task 17)', () => {
+  it('a pending request rejects at once with LayerDisposedError, and so does every later one', async () => {
+    const f = fakeFrame(() => false);
+    const host = connectLayer(f.frame, natives, 10_000);
+    f.load();
+    await host.connected;
+    const pending = host.seek(1).catch((e: unknown) => e);
+    await new Promise((r) => setTimeout(r, 5));
+    const t0 = Date.now();
+    host.dispose();
+    const err = await pending;
+    f.close();
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(err).toBeInstanceOf(LayerDisposedError);
+    expect(err).toBeInstanceOf(LayerRequestError);
+    await expect(host.seek(2)).rejects.toBeInstanceOf(LayerDisposedError);
+  });
+
+  it('a request waiting for the handshake rejects at once too', async () => {
+    const f = fakeFrame(() => true);
+    const host = connectLayer(f.frame, natives, 10_000);
+    const waiting = host.ready().catch((e: unknown) => e); // never loaded: no hello yet
+    host.dispose();
+    expect(await waiting).toBeInstanceOf(LayerDisposedError);
+    f.close();
   });
 });

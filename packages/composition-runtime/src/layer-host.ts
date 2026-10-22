@@ -10,6 +10,14 @@ export class LayerRequestError extends Error {
   constructor(message: string, readonly code?: LayerFailureCode) { super(message); this.name = 'LayerRequestError'; }
 }
 
+/**
+ * A request refused or dropped because the layer was disposed (the mount torn down, or a subtitle template replaced): never
+ * a failure of the layer, so callers do not report it.
+ */
+export class LayerDisposedError extends LayerRequestError {
+  constructor(op: string) { super(`layer ${op} dropped: the layer was removed`); this.name = 'LayerDisposedError'; }
+}
+
 /** The runtime side of one html layer (see layer-protocol.ts). */
 export interface LayerHost {
   /** Resolves once the layer answered the connect handshake (layer.js present). */
@@ -20,7 +28,10 @@ export interface LayerHost {
   seek(t: number): Promise<void>;
   /** Preview playback: applies `t` without waiting. */
   tick(t: number): void;
-  /** Closes the channel and refuses every later request (the mount is torn down); pending requests time out quietly. */
+  /**
+   * Closes the channel; every pending request and every later one rejects at once with a `LayerDisposedError` (a caller
+   * awaiting a seek of a layer just replaced is never held for the layer timeout).
+   */
   dispose(): void;
 }
 
@@ -31,8 +42,12 @@ export interface LayerHost {
 export function connectLayer(frame: HTMLIFrameElement, natives: Natives, timeoutMs: number, o: { failFast?: boolean } = {}): LayerHost {
   let port: MessagePort | null = null;
   let dead: string | null = null;
+  let disposedNow = false;
   let nextId = 1;
-  const pending = new Map<number, { resolve: (r: LayerResult) => void }>();
+  const pending = new Map<number, { resolve: (r: LayerResult) => void; reject: (e: Error) => void; op: string }>();
+  let onDispose: (() => void) | null = null;
+  const disposed = new Promise<never>((_, reject) => { onDispose = () => reject(new LayerDisposedError('request')); });
+  disposed.catch(() => {});
   let onHello: (() => void) | null = null;
   const helloSeen = new Promise<void>((r) => { onHello = r; });
 
@@ -56,13 +71,15 @@ export function connectLayer(frame: HTMLIFrameElement, natives: Natives, timeout
   connected.catch(() => {});
 
   const request = async (op: 'ready' | 'seek', t?: number) => {
+    if (disposedNow) throw new LayerDisposedError(op);
     if (dead !== null) throw new LayerRequestError(`layer ${op} skipped: ${dead}`);
-    await connected;
+    await Promise.race([connected, disposed]).catch((e: unknown) => { throw e instanceof LayerDisposedError ? new LayerDisposedError(op) : e; });
+    if (disposedNow) throw new LayerDisposedError(op);
     const id = nextId++;
-    const reply = new Promise<LayerResult>((resolve) => { pending.set(id, { resolve }); });
+    const reply = new Promise<LayerResult>((resolve, reject) => { pending.set(id, { resolve, reject, op }); });
     port!.postMessage(op === 'seek' ? { id, op, t } : { id, op });
     const r = await withTimeout(reply, timeoutMs, natives, `layer ${op} timed out`)
-      .catch((e: unknown) => { if (o.failFast) dead = `the layer did not answer a ${op} within ${timeoutMs} ms`; throw e; })
+      .catch((e: unknown) => { if (e instanceof LayerDisposedError) throw e; if (o.failFast) dead = `the layer did not answer a ${op} within ${timeoutMs} ms`; throw e; })
       .finally(() => pending.delete(id));
     if (!r.ok) throw new LayerRequestError(r.error ?? `layer ${op} failed`, r.code);
     return r;
@@ -74,7 +91,12 @@ export function connectLayer(frame: HTMLIFrameElement, natives: Natives, timeout
     async seek(t: number) { await request('seek', t); },
     tick(t: number) { port?.postMessage({ op: 'tick', t }); },
     dispose() {
+      if (disposedNow) return;
+      disposedNow = true;
       dead = 'the layer was removed';
+      onDispose?.();
+      for (const p of pending.values()) p.reject(new LayerDisposedError(p.op));
+      pending.clear();
       frame.removeEventListener('load', connect);
       if (port) { port.onmessage = null; port.close(); port = null; }
     },

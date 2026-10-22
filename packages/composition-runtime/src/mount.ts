@@ -3,7 +3,7 @@ import { clipPathHasNoArea } from './clip-path.ts';
 import { compileAnimations, compileKenBurns, REGISTERED_PROPERTIES, type CompiledAnimation } from './animations.ts';
 import type { Natives, VirtualClock } from './clock.ts';
 import { FrameTimeoutError, twoFrames, withTimeout } from './frames.ts';
-import { connectLayer, LayerRequestError, type LayerHost } from './layer-host.ts';
+import { connectLayer, LayerDisposedError, LayerRequestError, type LayerHost } from './layer-host.ts';
 import { encodeLayerConfig, type LayerConfig, type LayerFont } from './layer-protocol.ts';
 import type { Rect, RuntimeError, RuntimeErrorCode, RuntimeMode } from './protocol.ts';
 import { activeCue, drawSubtitles, type RuntimeSubtitles } from './subtitles.ts';
@@ -245,7 +245,8 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     const prepare = layer.ready().then(
       (warnings) => { for (const m of warnings) report('fontLoadFailed', `layer: ${m}`, clipId); },
       // `layerStalled` (decision 709): msReady waited on the frozen render clock; anything else is the layer not answering.
-      (e: unknown) => report(e instanceof LayerRequestError && e.code === 'layerStalled' ? 'layerStalled' : 'layerTimeout', `html layer ${file}: ${String(e instanceof Error ? e.message : e)}`, clipId),
+      // A layer disposed meanwhile (torn down, or a template replaced) is no failure.
+      (e: unknown) => { if (!(e instanceof LayerDisposedError)) report(e instanceof LayerRequestError && e.code === 'layerStalled' ? 'layerStalled' : 'layerTimeout', `html layer ${file}: ${String(e instanceof Error ? e.message : e)}`, clipId); },
     );
     return { frame, layer, prepare };
   };
@@ -690,6 +691,8 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
       if (m.video) work.push(seekVideo(m, time));
       if (m.layer && !(opts.mode === 'render' && (outOfFrame(m.content) || clippedAway(m.content)))) {
         work.push(m.layer.seek(time - m.clip.start).catch((e: unknown) => {
+          // A subtitle template replaced while this seek ran (`remountTemplate`): its successor is sought at the time shown.
+          if (e instanceof LayerDisposedError) return;
           if (e instanceof LayerRequestError && e.code === 'frameTimeout') {
             report('frameTimeout', `html layer painted no frame after seeking to ${time}: ${e.message}`, m.clip.id);
             throw e; // render: fail the seek rather than capture a stale layer
@@ -824,8 +827,9 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
 
   /**
    * Preview `setSubtitles` with a subtitle template (Task 17): its layer is opened again with the new set (a layer reads its
-   * configuration once, at load), laid transparent over the one shown; once ready, and sought to the time shown while
-   * paused, it replaces it, so an edit never blanks the line. A newer `setSubtitles` drops a layer still loading.
+   * configuration once, at load), laid transparent over the one shown; once ready and sought to the time shown, it replaces
+   * it, so an edit never blanks the line. A seek of the old layer still running then rejects at once (`LayerDisposedError`,
+   * not reported), so the player's next seek is never held. A newer `setSubtitles` drops a layer still loading.
    */
   const remounts = new Map<Mounted, { frame: HTMLIFrameElement; layer: LayerHost }>();
   const remountTemplate = (m: Mounted) => {
@@ -839,13 +843,15 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     const current = () => !destroyed && remounts.get(m) === next;
     void next.prepare.then(async () => {
       if (!current()) return;
-      // Sought again when a seek of the player moved the time shown meanwhile (that seek went to the old layer).
-      for (let at = Number.NaN; !playing && m.visible && time !== at;) {
+      // Shown only once sought to the time shown: again while a seek of the player moved it meanwhile (that seek went to the
+      // old layer); while playing once, then its ticks carry it.
+      for (let at = Number.NaN; m.visible && time !== at;) {
         at = time;
         await next.layer.seek(at - m.clip.start).catch((e: unknown) => {
-          if (current()) report(e instanceof LayerRequestError && e.code === 'layerStalled' ? 'layerStalled' : 'layerError', `layer seek: ${String(e instanceof Error ? e.message : e)}`, m.clip.id);
+          if (current() && !(e instanceof LayerDisposedError)) report(e instanceof LayerRequestError && e.code === 'layerStalled' ? 'layerStalled' : 'layerError', `layer seek: ${String(e instanceof Error ? e.message : e)}`, m.clip.id);
         });
         if (!current()) return;
+        if (playing) break;
       }
       remounts.delete(m);
       closeLayer({ frame: m.frame!, layer: m.layer! });
