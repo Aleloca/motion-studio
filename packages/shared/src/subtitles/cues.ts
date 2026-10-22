@@ -183,68 +183,89 @@ export function cueWarnings(cue: SubtitleCue, next: SubtitleCue | undefined, lan
 
 export const normalizeToken = (s: string): string => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 
-/** The fresh words of a set of cues: the cues' own words, or their text spread over their time by characters. */
-function freshWords(fresh: SubtitleCue[]): SubtitleWord[] {
-  const out: SubtitleWord[] = [];
-  for (const c of fresh) {
-    if (c.words && c.words.length > 0) { out.push(...c.words); continue; }
-    const parts = c.text.split(/\s+/).filter((p) => p !== '');
-    const total = parts.reduce((n, p) => n + len(p), 0);
-    let done = 0;
-    for (const p of parts) {
-      const start = c.start + Math.round(((c.end - c.start) * done) / total);
-      done += len(p);
-      out.push({ start, end: c.start + Math.round(((c.end - c.start) * done) / total), text: p });
+/** The fresh words of a set of cues (the cues' own words, or their text spread over their time by characters), each with its cue's index. */
+function freshWords(fresh: SubtitleCue[]): { words: SubtitleWord[]; cueOf: number[] } {
+  const words: SubtitleWord[] = [];
+  const cueOf: number[] = [];
+  fresh.forEach((c, k) => {
+    const before = words.length;
+    if (c.words && c.words.length > 0) words.push(...c.words);
+    else {
+      const parts = c.text.split(/\s+/).filter((p) => p !== '');
+      const total = parts.reduce((n, p) => n + len(p), 0);
+      let done = 0;
+      for (const p of parts) {
+        const start = c.start + Math.round(((c.end - c.start) * done) / total);
+        done += len(p);
+        words.push({ start, end: c.start + Math.round(((c.end - c.start) * done) / total), text: p });
+      }
     }
-  }
-  return out;
+    for (let i = before; i < words.length; i++) cueOf.push(k);
+  });
+  return { words, cueOf };
 }
 
+/** How far from its old start an edited cue may move (review round 1 of Task 14): max(10 s, twice its length). */
+const moveLimitMs = (cue: SubtitleCue): number => Math.max(10_000, 2 * (cue.end - cue.start));
+/** Words this short ("a", "di", "e") are too common to place a cue by themselves. */
+const isShort = (token: string): boolean => len(token) <= 2;
+
 /**
- * Where the words of an edited cue are in the fresh words: at least 60 % found in order, or null. Any of its words may be
- * the anchor (the user often corrects the first one): from each place the anchor is heard, the words after it are looked
- * for forward and the words before it backward. Words of the cue not found at its edges (the ones the user corrected) take
- * the fresh words heard right there, as long as no pause comes between (decision 1713).
+ * Where the words of an edited cue are in the fresh words, or null (it keeps its times). Any of its words may be the anchor
+ * (the user often corrects the first one): from each place the anchor is heard, the words after it are looked for forward and
+ * the words before it backward. A place counts when at least 60 % of the words are found in order, at least one of them
+ * longer than two characters, and it starts within `moveLimitMs` of the cue's old start; the most words found wins, then the
+ * nearest to the old start. Words of the cue not found at its edges (the ones the user corrected) take the fresh words heard
+ * right there in the same fresh cue, as long as no pause comes between (decisions 1713, 1717).
  */
-function locate(tokens: string[], fresh: SubtitleWord[], norm: string[], rules: SubtitleRules = SUBTITLE_RULES): { start: number; end: number } | null {
+function locate(cue: SubtitleCue, tokens: string[], fresh: { words: SubtitleWord[]; cueOf: number[] }, norm: string[], rules: SubtitleRules = SUBTITLE_RULES): { start: number; end: number } | null {
+  const fw = fresh.words;
   const wanted = tokens.map(normalizeToken).filter((t) => t !== '');
   if (wanted.length === 0) return null;
   const reach = wanted.length * 2 + 4;
-  let best: { count: number; first: number; last: number; lead: number; trail: number } | null = null;
+  const limit = moveLimitMs(cue);
+  let best: { count: number; distance: number; first: number; last: number; lead: number; trail: number } | null = null;
   for (let a = 0; a < wanted.length; a++) {
-    for (let s = 0; s < fresh.length; s++) {
+    for (let s = 0; s < fw.length; s++) {
       if (norm[s] !== wanted[a]) continue;
       let count = 1;
+      let long = isShort(wanted[a]!) ? 0 : 1;
       let first = s, last = s, firstAt = a, lastAt = a;
-      const hi = Math.min(fresh.length, s + reach);
+      const hi = Math.min(fw.length, s + reach);
       for (let i = a + 1, p = s + 1; i < wanted.length; i++) {
         let q = p;
         while (q < hi && norm[q] !== wanted[i]) q++;
-        if (q < hi) { count++; last = q; lastAt = i; p = q + 1; }
+        if (q < hi) { count++; if (!isShort(wanted[i]!)) long++; last = q; lastAt = i; p = q + 1; }
       }
       const lo = Math.max(0, s - reach);
       for (let i = a - 1, p = s - 1; i >= 0; i--) {
         let q = p;
         while (q >= lo && norm[q] !== wanted[i]) q--;
-        if (q >= lo) { count++; first = q; firstAt = i; p = q - 1; }
+        if (q >= lo) { count++; if (!isShort(wanted[i]!)) long++; first = q; firstAt = i; p = q - 1; }
       }
-      if (!best || count > best.count) best = { count, first, last, lead: firstAt, trail: wanted.length - 1 - lastAt };
+      if (count / wanted.length < 0.6 || long === 0) continue;
+      const distance = Math.abs(fw[first]!.start - cue.start);
+      if (distance > limit) continue;
+      if (!best || count > best.count || (count === best.count && distance < best.distance)) {
+        best = { count, distance, first, last, lead: firstAt, trail: wanted.length - 1 - lastAt };
+      }
     }
   }
-  if (!best || best.count / wanted.length < 0.6) return null;
+  if (!best) return null;
   let { first, last } = best;
-  for (let n = best.lead; n > 0 && first > 0 && fresh[first]!.start - fresh[first - 1]!.end < rules.pauseMs; n--) first--;
-  for (let n = best.trail; n > 0 && last + 1 < fresh.length && fresh[last + 1]!.start - fresh[last]!.end < rules.pauseMs; n--) last++;
-  return { start: fresh[first]!.start, end: Math.max(fresh[last]!.end, fresh[first]!.start + 1) };
+  const same = (i: number, j: number) => fresh.cueOf[i] === fresh.cueOf[j];
+  for (let n = best.lead; n > 0 && first > 0 && same(first - 1, first) && fw[first]!.start - fw[first - 1]!.end < rules.pauseMs; n--) first--;
+  for (let n = best.trail; n > 0 && last + 1 < fw.length && same(last, last + 1) && fw[last + 1]!.start - fw[last]!.end < rules.pauseMs; n--) last++;
+  return { start: fw[first]!.start, end: Math.max(fw[last]!.end, fw[first]!.start + 1) };
 }
 
 /** The old cues the user edited stay (text kept, times following the fresh words they match); fresh cues over them are dropped. */
 export function mergeKeepingEdited(old: SubtitleCue[], fresh: SubtitleCue[]): SubtitleCue[] {
   const fw = freshWords(fresh);
-  const norm = fw.map((w) => normalizeToken(w.text));
+  const norm = fw.words.map((w) => normalizeToken(w.text));
   const kept: SubtitleCue[] = old.filter((c) => c.edited).map((c) => {
     const tokens = c.words && c.words.length > 0 ? c.words.map((w) => w.text) : c.text.split(/\s+/);
-    const at = locate(tokens, fw, norm);
+    const at = locate(c, tokens, fw, norm);
     if (!at) return c;
     const delta = at.start - c.start;
     const moved: SubtitleCue = { ...c, start: at.start, end: at.end };

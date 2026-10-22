@@ -118,6 +118,30 @@ describe('mergeKeepingEdited', () => {
     const out = mergeKeepingEdited(mine, [freshCue('c1', 'Fine.', 0, 400), freshCue('c2', 'prenota in tre tocchi', 2000, 3000)]);
     expect(out.map((c) => [c.id, c.text, c.start, c.end])).toEqual([['f1', 'Fine.', 0, 400], ['c1', 'Oggi prenota in tre tocchi', 2000, 3000]]);
   });
+  it('a repeated phrase elsewhere in the video never takes an edited cue: the nearest match wins (review round 1)', () => {
+    const fresh = [freshCue('c1', 'Ciao a tutti', 0, 1400), freshCue('c2', 'Prenota ora in tre tocchi', 2000, 5000), freshCue('c3', 'grazie a tutti', 8000, 9400)];
+    const mine: SubtitleCue[] = [{ id: 'e1', edited: true, text: 'Salve a tutti', start: 8000, end: 9400 }];
+    const out = mergeKeepingEdited(mine, fresh);
+    expect(out.map((c) => [c.id, c.text, c.start, c.end])).toEqual([
+      ['f1', 'Ciao a tutti', 0, 1400], ['f2', 'Prenota ora in tre tocchi', 2000, 5000], ['e1', 'Salve a tutti', 8000, 9400],
+    ]);
+  });
+  it('a match far from the cue\'s old time is not taken: the cue keeps its times', () => {
+    const mine: SubtitleCue[] = [{ id: 'e1', edited: true, text: 'Benvenuti a tutti quanti', start: 0, end: 1400 }];
+    const out = mergeKeepingEdited(mine, [freshCue('c1', 'Ciao a tutti quanti', 30_000, 31_400)]);
+    expect(out.map((c) => [c.id, c.start, c.end])).toEqual([['e1', 0, 1400], ['f1', 30_000, 31_400]]);
+  });
+  it('words of two letters or fewer alone never place a cue', () => {
+    const mine: SubtitleCue[] = [{ id: 'e1', edited: true, text: 'Io e te', start: 0, end: 1000 }];
+    const out = mergeKeepingEdited(mine, [freshCue('c1', 'io e lui', 500, 1500)]);
+    // Not placed: it stays where it was, and the fresh cue over it is dropped as always.
+    expect(out.map((c) => [c.id, c.start, c.end])).toEqual([['e1', 0, 1000]]);
+  });
+  it('a corrected last word never takes the first word of the next fresh cue', () => {
+    const mine: SubtitleCue[] = [{ id: 'e1', edited: true, text: 'Prenota ora in tre posti', start: 0, end: 1000 }];
+    const out = mergeKeepingEdited(mine, [freshCue('c1', 'prenota ora in tre', 2000, 3000), freshCue('c2', 'tocchi adesso', 3000, 4000)]);
+    expect(out.map((c) => [c.id, c.text, c.start, c.end])).toEqual([['e1', 'Prenota ora in tre posti', 2000, 3000], ['f1', 'tocchi adesso', 3000, 4000]]);
+  });
   it('still needs 60 % of the words in order: an edit that changed more stays where it was', () => {
     const mine: SubtitleCue[] = [{ id: 'c1', edited: true, text: 'Salve a voi gente', start: 0, end: 1400 }];
     const out = mergeKeepingEdited(mine, [freshCue('c1', 'Ciao a tutti quanti', 1000, 2400)]);
