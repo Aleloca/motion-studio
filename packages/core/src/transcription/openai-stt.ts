@@ -17,10 +17,11 @@ const MIN_TAIL_SEC = 1;
 /** One piece can take a while to transcribe: a deadline well above the default. */
 const PIECE_TIMEOUT_MS = 10 * 60_000;
 
-/** OpenAI names the language in English ("italian"): the codes of the common ones, else the name. */
+/** OpenAI names the language in English ("italian"): the codes of the common ones (every subtitle language among them), else the name. */
 const LANGS: Record<string, string> = {
   english: 'en', italian: 'it', spanish: 'es', french: 'fr', german: 'de', portuguese: 'pt', dutch: 'nl', japanese: 'ja', chinese: 'zh',
-  korean: 'ko', russian: 'ru', polish: 'pl', turkish: 'tr', swedish: 'sv', danish: 'da', norwegian: 'no', finnish: 'fi', greek: 'el', arabic: 'ar', hindi: 'hi',
+  korean: 'ko', russian: 'ru', polish: 'pl', turkish: 'tr', swedish: 'sv', danish: 'da', norwegian: 'no', nynorsk: 'nn', finnish: 'fi', greek: 'el',
+  arabic: 'ar', hindi: 'hi', czech: 'cs', hungarian: 'hu', romanian: 'ro', catalan: 'ca', ukrainian: 'uk', indonesian: 'id', vietnamese: 'vi', thai: 'th',
 };
 const langOf = (v: unknown) => (typeof v === 'string' && v.length <= 32 ? (LANGS[v.toLowerCase()] ?? v.toLowerCase()) : null);
 

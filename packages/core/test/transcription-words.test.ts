@@ -3,6 +3,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { subtitleLangOf } from '@motion-studio/shared';
 import { AppConfigStore } from '../src/app-config.ts';
 import { MemoryVault } from '../src/secrets/vault.ts';
 import { elevenlabsTranscribe } from '../src/transcription/elevenlabs-stt.ts';
@@ -141,5 +142,34 @@ describe('TranscriptionService.transcribe with words', () => {
     expect(run).toContain('-oj');
     expect(run).not.toContain('-ojf');
     expect(run.slice(run.indexOf('-l'), run.indexOf('-l') + 2)).toEqual(['-l', 'auto']);
+  });
+});
+
+describe('the language each engine reports becomes a subtitle language', () => {
+  it('whisper.cpp: ISO 639-1 (`zh`, `no`)', () => {
+    expect(subtitleLangOf(parseWhisperCpp({ ...cppFull, result: { language: 'zh' } }).language)).toBe('zh-Hans');
+    expect(subtitleLangOf(parseWhisperCpp({ ...cppFull, result: { language: 'it' } }).language)).toBe('it');
+    expect(subtitleLangOf(parseWhisperCpp({ ...cppFull, result: { language: 'no' } }).language)).toBe('nb');
+  });
+  it('OpenAI: the English name of every supported language', async () => {
+    const names: Record<string, string> = {
+      english: 'en', italian: 'it', french: 'fr', german: 'de', spanish: 'es', portuguese: 'pt', dutch: 'nl', swedish: 'sv', danish: 'da',
+      norwegian: 'nb', nynorsk: 'nb', finnish: 'fi', polish: 'pl', czech: 'cs', hungarian: 'hu', romanian: 'ro', catalan: 'ca', greek: 'el',
+      russian: 'ru', ukrainian: 'uk', turkish: 'tr', indonesian: 'id', vietnamese: 'vi', chinese: 'zh-Hans', japanese: 'ja', korean: 'ko',
+      hindi: 'hi', thai: 'th',
+    };
+    const file = await wavFile(1);
+    for (const [name, tag] of Object.entries(names)) {
+      const { fetchImpl } = recorder(() => ok({ language: name, segments: [{ start: 0, end: 1, text: 'x' }] }));
+      const r = await openaiTranscribe({ fetch: fetchImpl, apiKey: 'k' }, file, { language: null, signal: signal() });
+      expect([name, subtitleLangOf(r.language)]).toEqual([name, tag]);
+    }
+  });
+  it('ElevenLabs Scribe: ISO 639-3 (`ita`, `cmn`)', async () => {
+    for (const [code, tag] of [['ita', 'it'], ['cmn', 'zh-Hans'], ['nor', 'nb']] as const) {
+      const { fetchImpl } = recorder(() => ok({ language_code: code, words: [{ text: 'Ciao', start: 0, end: 0.4, type: 'word' }] }));
+      const r = await elevenlabsTranscribe({ fetch: fetchImpl, apiKey: 'k' }, await wavFile(1), { language: null, signal: signal() });
+      expect(subtitleLangOf(r.language)).toBe(tag);
+    }
   });
 });

@@ -1,7 +1,7 @@
 // The subtitle set of a creative in one language (decisions 1636-1643): data kept apart from the picture, edited by the user.
 import { z } from 'zod';
 import { sha256Hex } from '../composition/hash.ts';
-import type { LocaleTag } from '../localization/locales.ts';
+import { SUPPORTED_LOCALES, type LocaleTag } from '../localization/locales.ts';
 import { localeTag } from '../localization/schema.ts';
 import { transcriptKindSchema } from '../video-analysis.ts';
 
@@ -80,10 +80,18 @@ export const ISO639_2: Record<LocaleTag, string> = {
   'zh-Hans': 'zho', 'zh-Hant': 'zho', ja: 'jpn', ko: 'kor', hi: 'hin', th: 'tha',
 };
 
-/** The supported tag for a language the transcriber detected, or null (the set then keeps `detected` as it is). */
+/**
+ * The codes the transcribers answer with, besides the tags themselves (lowercase): whisper.cpp's and OpenAI's ISO 639-1 (`zh`,
+ * `no`), ElevenLabs Scribe's ISO 639-3 (`ita`, `cmn`) and the 639-2/B forms (`fre`, `ger`).
+ */
+const LANG_CODES: Record<string, LocaleTag> = {
+  ...Object.fromEntries(SUPPORTED_LOCALES.map((l) => [l.tag.toLowerCase(), l.tag])),
+  ...Object.fromEntries(Object.entries(ISO639_2).filter(([tag]) => tag !== 'zh-Hant').map(([tag, code]) => [code, tag as LocaleTag])),
+  zh: 'zh-Hans', no: 'nb', nn: 'nb', nor: 'nb', nno: 'nb', fre: 'fr', ger: 'de', dut: 'nl', cze: 'cs', rum: 'ro', gre: 'el', chi: 'zh-Hans', cmn: 'zh-Hans',
+};
+
+/** The supported tag for a language the transcriber detected (any case), or null (the set then keeps `detected` as it is). */
 export function subtitleLangOf(detected: string | null): LocaleTag | null {
   if (detected === null) return null;
-  if (detected === 'zh') return 'zh-Hans';
-  if (detected === 'no' || detected === 'nn') return 'nb';
-  return localeTag.safeParse(detected).success ? (detected as LocaleTag) : null;
+  return Object.hasOwn(LANG_CODES, detected.toLowerCase()) ? LANG_CODES[detected.toLowerCase()]! : null;
 }

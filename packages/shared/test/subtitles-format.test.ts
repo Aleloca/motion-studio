@@ -64,6 +64,18 @@ describe('constants and languages', () => {
     expect(subtitleLangOf('ar')).toBeNull();
     expect(subtitleLangOf(null)).toBeNull();
   });
+  it('subtitleLangOf reads the 3-letter codes (ElevenLabs Scribe: ISO 639-3, also 639-2/B), any case', () => {
+    const cases: Array<[string, string]> = [
+      ['eng', 'en'], ['ITA', 'it'], ['fra', 'fr'], ['fre', 'fr'], ['deu', 'de'], ['ger', 'de'], ['spa', 'es'], ['por', 'pt'], ['nld', 'nl'],
+      ['dut', 'nl'], ['swe', 'sv'], ['dan', 'da'], ['nob', 'nb'], ['nor', 'nb'], ['nno', 'nb'], ['fin', 'fi'], ['pol', 'pl'], ['ces', 'cs'],
+      ['cze', 'cs'], ['hun', 'hu'], ['ron', 'ro'], ['rum', 'ro'], ['cat', 'ca'], ['ell', 'el'], ['gre', 'el'], ['rus', 'ru'], ['ukr', 'uk'],
+      ['tur', 'tr'], ['ind', 'id'], ['vie', 'vi'], ['zho', 'zh-Hans'], ['chi', 'zh-Hans'], ['cmn', 'zh-Hans'], ['jpn', 'ja'], ['kor', 'ko'],
+      ['hin', 'hi'], ['tha', 'th'], ['IT', 'it'], ['zh-hans', 'zh-Hans'], ['ZH-HANT', 'zh-Hant'],
+    ];
+    for (const [code, tag] of cases) expect([code, subtitleLangOf(code)]).toEqual([code, tag]);
+    expect(subtitleLangOf('ara')).toBeNull();
+    expect(subtitleLangOf('italian')).toBeNull();
+  });
 });
 
 describe('SRT and VTT', () => {
