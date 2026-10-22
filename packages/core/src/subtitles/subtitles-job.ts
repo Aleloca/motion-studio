@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  alignToScript, buildCues, effectiveLinks, mergeKeepingEdited, SILENCE_NO_SPEECH, SUBTITLE_LIMITS, SUBTITLES_SCHEMA_ID, subtitleLangOf, subtitleSetSchema,
+  alignToScript, buildCues, effectiveLinks, mergeKeepingEdited, SILENCE_NO_SPEECH, SUBTITLE_LIMITS, SUBTITLES_DIR, SUBTITLES_SCHEMA_ID, subtitleLangOf, subtitleSetSchema,
   subtitleSetText, subtitlesJobKey,
   type Brief, type ConversationEntry, type FormatPreset, type JobSummary, type LocaleTag, type ServerMessage, type SubtitleCue, type SubtitleSet,
   type TimedWord, type TranscribeMethod, type TranscriptionChoice, type TranscriptionPending, type VersionEntry,
@@ -21,7 +21,7 @@ import type { MediaTools } from '../media/media-tools.ts';
 import { mixAudio, mixClips } from '../render/audio-mix.ts';
 import type { FfmpegInfo } from '../render/encode.ts';
 import { CodedError } from '../workspace-store.ts';
-import { audioFingerprint, readSubtitleSet, type SubtitleCommits, subtitleSetLocks, writeSubtitleSet } from './store.ts';
+import { audioFingerprint, readSubtitleSet, type SubtitleCommits, subtitlePath, subtitleSetLocks, writeSubtitleSet } from './store.ts';
 
 /** The queue lane of the subtitles jobs (decision 1640): one at a time, never in an agent turn's slot. */
 export const SUBTITLES_LANE = 'subtitles';
@@ -402,6 +402,10 @@ export class SubtitlesService {
       // its edited cues (anti-goal 1), and one arriving now waits for this write and then meets its new hash (409).
       await subtitleSetLocks.run(creativeDir, async () => {
         const existing = await readSubtitleSet(creativeDir, lang);
+        // A file there that is not a valid set may hold the user's corrections: never overwritten (anti-goal 1).
+        if (!existing && await lstat(subtitlePath(creativeDir, lang)).then(() => true, () => false)) {
+          throw new Error(t().subtitles.setUnreadable({ file: `${SUBTITLES_DIR}/${lang}.json` }));
+        }
         const cues = capCues(existing ? mergeKeepingEdited(existing.set.cues, fresh) : fresh);
         let set: SubtitleSet = {
           $schema: SUBTITLES_SCHEMA_ID, lang, origin: 'speech', transcript: tr.kind, detected: tr.language,

@@ -423,6 +423,7 @@ export const it: Messages = {
     failed: (p) => `I sottotitoli non sono riusciti: ${p.reason}`,
     notStarted: (p) => `I sottotitoli non sono partiti: ${p.reason}`,
     cancelledNoTranscription: 'Sottotitoli annullati: hai scelto di continuare senza trascrizione.',
+    setUnreadable: (p) => `il file ${p.file} non si legge come sottotitoli e potrebbe contenere le tue correzioni: correggilo o spostalo, poi rifai i sottotitoli.`,
     notStartedTurn: 'I sottotitoli non sono partiti: il turno non si è concluso. Chiedili di nuovo.',
     readyTitle: 'Sottotitoli pronti',
     download: (p) => `Scarica ${p.ext}`,
@@ -430,7 +431,7 @@ export const it: Messages = {
     openEditor: "Apri l'editor",
     editorTitle: 'Sottotitoli',
     backToCreative: 'Torna alla creatività',
-    savedElsewhere: 'Modificati altrove: ricaricati',
+    savedElsewhere: 'Modificati altrove: ricaricati, le tue correzioni restano',
   },
   briefSession: {
     filled: (p) => `Compilato il brief: ${p.parts}`,

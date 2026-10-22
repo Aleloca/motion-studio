@@ -4,7 +4,7 @@
  * voice scripts as the truth, the cues cut and merged with the user's edits, the set written, the chat told. Real ffmpeg on
  * tones made here; no Whisper, no provider.
  */
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -297,6 +297,16 @@ describe('SubtitlesService', { timeout: 60_000 }, () => {
     expect((await queue.whenSettled(job.id))?.state).toBe('succeeded');
     const cues = (await readSubtitleSet(creativeDir(), 'it'))!.set.cues;
     expect(cues).toEqual([expect.objectContaining({ id: 'c1', text: 'Ciao a tutti voi!', edited: true, start: 200 })]);
+  });
+
+  it('a set file that cannot be read fails the job saying so, and is never overwritten', async () => {
+    await creative([audioClip()]);
+    await mkdir(join(creativeDir(), 'subtitles'), { recursive: true });
+    await writeFile(join(creativeDir(), 'subtitles', 'it.json'), '{"not": "a set"');
+    await runFailed();
+    expect(await readFile(join(creativeDir(), 'subtitles', 'it.json'), 'utf8')).toBe('{"not": "a set"');
+    const reason = t().subtitles.setUnreadable({ file: 'subtitles/it.json' });
+    expect(subtitleEntries().map((e) => e.type === 'system' ? e.text : '')).toContain(t().subtitles.failed({ reason }));
   });
 
   it('the final re-read, merge and write wait for the creative\'s set lock (decision 1654)', async () => {

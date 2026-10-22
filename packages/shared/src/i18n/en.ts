@@ -425,6 +425,7 @@ export const en = {
     failed: (p: { reason: string }) => `The subtitles could not be made: ${p.reason}`,
     notStarted: (p: { reason: string }) => `The subtitles did not start: ${p.reason}`,
     cancelledNoTranscription: 'Subtitles cancelled: you chose to continue without a transcription.',
+    setUnreadable: (p: { file: string }) => `the file ${p.file} cannot be read as subtitles and may hold your corrections: fix or move it, then make the subtitles again.`,
     notStartedTurn: 'The subtitles did not start: the turn did not finish. Ask for them again.',
     readyTitle: 'Subtitles ready',
     download: (p: { ext: string }) => `Download ${p.ext}`,
@@ -432,7 +433,7 @@ export const en = {
     openEditor: 'Open the editor',
     editorTitle: 'Subtitles',
     backToCreative: 'Back to the creative',
-    savedElsewhere: 'Changed elsewhere: reloaded',
+    savedElsewhere: 'Changed elsewhere: reloaded, your corrections are kept',
   },
   briefSession: {
     filled: (p: { parts: string }) => `Filled in the brief: ${p.parts}`,
