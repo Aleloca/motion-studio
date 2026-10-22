@@ -889,6 +889,7 @@ export const it: Messages = {
     subtitlesStill: (p) => `${p.format}: un'immagine fissa non ha sottotitoli, è stata esportata senza`,
     subtitlesNoTrack: (p) => `${p.format}: il video non ha la traccia dei sottotitoli, quindi i sottotitoli in ${p.lang} non sono stati disegnati (chiedi all'agente di aggiungerli)`,
     subtitlesNoSoft: (p) => `${p.format}: questo file non può contenere tracce di sottotitoli, quindi sono state tralasciate`,
+    subtitlesSoftStore: (p) => `${p.format}: un'anteprima per l'App Store non porta tracce di sottotitoli, quindi sono state tralasciate`,
     renderFailed: (p) => `Questi formati non si sono potuti renderizzare, non è stato esportato nulla: ${p.list}`,
     renderProblems: (p) => `${p.item} (renderizzato con problemi: ${p.list})`,
     renderProblemsOnly: (p) => `Non è stato esportato nulla: ${p.list}`,

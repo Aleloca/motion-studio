@@ -1258,6 +1258,9 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
           const f = r.files.get(key);
           if (!f) { gaps.push({ item: e.item, slug: ref.creativeSlug, kind: 'failed', reason: r.failed.get(key) ?? r.errors[0] ?? '', problems: [], issues: [] }); continue; }
           if (f.problems.length > 0) { gaps.push({ item: e.item, slug: ref.creativeSlug, kind: 'problems', problems: f.problems, issues: f.issues }); continue; }
+          // Soft tracks the renderer left out (an App Store preview, final review M4): said like a file that takes none.
+          const softNote = f.softIgnored ? t().export.subtitlesSoftStore({ format: label(e.item.format) }) : null;
+          if (softNote && !notes.includes(softNote)) notes.push(softNote);
           made.set(e, { ...e.item, source: f.path, file: basename(f.path), width: f.render.width, height: f.render.height, durationSec: f.durationSec ?? e.item.durationSec ?? null });
         }
       }

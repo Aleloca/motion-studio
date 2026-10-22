@@ -105,6 +105,8 @@ export interface ExportRendered {
   problems: string[]; issues: OutputIssue[];
   /** The video's duration in seconds (its composition's), null for a still: what its subtitle files are cut to. */
   durationSec?: number | null;
+  /** Soft subtitle tracks were asked and left out (an App Store preview, final review M4): the export says so. */
+  softIgnored?: boolean;
 }
 
 export interface RenderPlan {
@@ -425,7 +427,8 @@ export class RenderJobService {
               for (const f of [format, ...followers]) {
                 const checked = await this.exportChecks(r.path, findPreset(presets, f) ?? { ...findPreset(presets, format)!, id: f }, r.composition, r.render, locale);
                 if (checked.warning) detail(`${label(f)}: ${outputWarningText(checked.warning, locale)}`);
-                collect(f, { path: r.path, render: r.render, problems: checked.problems, issues: checked.issues, durationSec: r.composition.duration > 0 ? r.composition.duration : null });
+                collect(f, { path: r.path, render: r.render, problems: checked.problems, issues: checked.issues, durationSec: r.composition.duration > 0 ? r.composition.duration : null,
+                  ...(r.softIgnored ? { softIgnored: true } : {}) });
               }
             } catch (e) {
               if (signal.aborted || (e instanceof RenderError && e.code === 'cancelled')) throw e;
@@ -461,7 +464,7 @@ export class RenderJobService {
    * hash still the recorded one), its media normalised, rendered into `outDir`. Nothing is recorded in the version.
    */
   private async renderForExport(o: { ref: CreativeRef; n: number; format: string; comps: VersionComposition[]; presets: FormatPreset[]; profile: RenderProfile;
-    subtitles?: ExportRenderOptions['subtitles']; outDir: string; signal: AbortSignal; progress: (p: JobProgress) => void; label: (id: string) => string; locale: Locale }): Promise<{ path: string; render: RenderInfo; composition: Composition }> {
+    subtitles?: ExportRenderOptions['subtitles']; outDir: string; signal: AbortSignal; progress: (p: JobProgress) => void; label: (id: string) => string; locale: Locale }): Promise<{ path: string; render: RenderInfo; composition: Composition; softIgnored: boolean }> {
     const { ref, n, format, signal } = o;
     const m = messages(o.locale);
     const store = new CreativeStore(ref.projectDir);
@@ -507,11 +510,14 @@ export class RenderJobService {
       const result = await this.deps.engine!.render({
         ...this.deps.renderOptions,
         dir: creativeDir, versionDir: `outputs/v${n}`, composition, format: preset, out: join(o.outDir, file), signal, ...(sessionMediaOf(prepared) ? { media: sessionMediaOf(prepared)! } : {}),
+        // The App Store preview keeps its store audio, as its version render (final review M4): it then takes no soft tracks.
+        ...storeRenderOptions(format, composition),
         ...(subtitles ? { subtitles } : {}), ...(soft.length ? { softSubtitles: soft } : {}),
         quality: o.profile.quality, ...(o.profile.short !== undefined ? { short: o.profile.short } : {}),
         onProgress: (p) => o.progress({ format, phase: 'frames', done: p.frames, total: p.total }),
       });
-      return { path: result.file, render: renderInfoOf(result, o.profile.quality, composition.fps), composition };
+      return { path: result.file, render: renderInfoOf(result, o.profile.quality, composition.fps), composition,
+        softIgnored: soft.length > 0 && result.warnings.some((w) => w.code === 'softSubtitlesIgnored') };
     } finally {
       prepared.release();
       if (softDir) await rm(softDir, { recursive: true, force: true }).catch(() => {});

@@ -102,7 +102,9 @@ function fakeEngine(): FakeEngine {
       await rename(temp, o.out);
       await f.after?.(o as RenderCompositionOptions);
       return { file: o.out, sha256: createHash('sha256').update(body).digest('hex'), width: o.composition.width, height: o.composition.height,
-        durationSec: o.composition.duration, frames: 1, encoder: 'libx264', audio: false, warnings: [],
+        durationSec: o.composition.duration, frames: 1, encoder: 'libx264', audio: false,
+        // As the renderer: no soft subtitle tracks in an App Store preview (its audio is muxed apart).
+        warnings: o.storeAudio && o.softSubtitles?.length ? [{ code: 'softSubtitlesIgnored', message: 'soft subtitle tracks are not added to a store preview' }] : [],
         ...(f.overflows.length ? { textOverflows: f.overflows.map((clipId) => ({ code: 'textOverflow', message: 'text overflows its box', clipId })) } : {}) };
     },
   } as unknown as RenderEngine;

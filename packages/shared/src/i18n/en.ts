@@ -901,6 +901,7 @@ export const en = {
     subtitlesStill: (p: { format: string }) => `${p.format}: a still has no subtitles, it was exported without them`,
     subtitlesNoTrack: (p: { format: string; lang: string }) => `${p.format}: the video has no subtitles track, so the subtitles in ${p.lang} were not drawn into it (ask the agent to add them)`,
     subtitlesNoSoft: (p: { format: string }) => `${p.format}: this file cannot hold subtitle tracks, so they were left out`,
+    subtitlesSoftStore: (p: { format: string }) => `${p.format}: an App Store preview takes no subtitle tracks, so they were left out`,
     renderFailed: (p: { list: string }) => `These formats could not be rendered, nothing was exported: ${p.list}`,
     renderProblems: (p: { item: string; list: string }) => `${p.item} (rendered with problems: ${p.list})`,
     renderProblemsOnly: (p: { list: string }) => `Nothing was exported: ${p.list}`,

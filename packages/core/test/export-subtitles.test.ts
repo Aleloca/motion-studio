@@ -10,7 +10,7 @@ import { basename, dirname, join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
-  EXPORT_NAME_MAX, SUBTITLES_SCHEMA_ID, exportNameCollisions, subtitledStem, toSrt, toVtt, withLocaleSuffix, type FormatPreset, type JobSummary, type ManifestV2, type SubtitleSet, type VersionEntry,
+  DEFAULT_FORMATS, EXPORT_NAME_MAX, SUBTITLES_SCHEMA_ID, exportNameCollisions, subtitledStem, toSrt, toVtt, withLocaleSuffix, type FormatPreset, type JobSummary, type ManifestV2, type SubtitleSet, type VersionEntry,
 } from '@motion-studio/shared';
 import { AppConfigStore } from '../src/app-config.ts';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
@@ -314,6 +314,32 @@ describe('export subtitle choices (Task 21)', { timeout: 120_000 }, () => {
     expect(await formats(withTrack.slug)).toEqual({ 'test-wide': true, 'test-wide-b': true, 'test-still': false });
     const without = await creative({ render: false });
     expect(await formats(without.slug)).toEqual({ 'test-wide': false, 'test-wide-b': false });
+  });
+
+  it('soft tracks asked of an App Store preview: rendered with its store audio, the tracks left out with a note (final review M4)', async () => {
+    const preview = DEFAULT_FORMATS.find((p) => p.id === 'appstore-preview')!;
+    expect((await env.app.inject({ method: 'PUT', url: '/api/formats', headers: H, payload: { presets: [...PRESETS, STILL, preview] } })).statusCode).toBe(200);
+    const r0 = await env.app.inject({ method: 'POST', url: '/api/projects/acme/creatives', headers: H, payload: {
+      title: 'Launch', generate: false, brief: { goal: 'g', message: '', formats: ['appstore-preview'], durationSec: DURATION, assets: [], notes: '', locales: { primary: 'it', extra: [] } },
+    } });
+    expect(r0.statusCode, r0.body).toBe(201);
+    const slug = r0.json().slug as string;
+    const store = env.store();
+    const cdir = join(store.outputsDir(slug, 1), 'compositions', 'appstore-preview');
+    await mkdir(join(cdir, 'assets'), { recursive: true });
+    await copyFile(FONT, join(cdir, 'assets', 'Mono.woff2'));
+    await writeFile(join(cdir, 'composition.json'), JSON.stringify({ ...composition({ track: true }), width: preview.width, height: preview.height }));
+    const compositions = [{ format: 'appstore-preview', dir: 'compositions/appstore-preview', hash: (await readCompositionFolder(cdir)).hash, problems: [] }];
+    await writeFile(join(store.outputsDir(slug, 1), 'manifest.json'), JSON.stringify({ schemaVersion: 2, compositions, renders: [] } satisfies ManifestV2));
+    await store.appendVersion(slug, { n: 1, commit: null, sessionId: null, status: 'complete', createdAt: new Date().toISOString(), request: 'r', outputs: [], problems: [], tools: [],
+      renderCommand: null, basedOn: null, compositions });
+    await writeSubtitleSet(store.dir(slug), tset('it'));
+    const r = await exportOf(slug, { picks: { 'appstore-preview': 1 }, subtitles: { files: ['it'], soft: ['it'] } });
+    expect(r.statusCode, r.body).toBe(200);
+    const call = env.fake.renders.at(-1)!;
+    expect(call).toMatchObject({ storeAudio: true, fps: 30 });
+    expect(r.json().skipped).toEqual([expect.stringMatching(/App Preview.*(App Store)/)]);
+    expect(await outFiles()).toEqual(['launch-appstore-preview-v1.it.srt', 'launch-appstore-preview-v1.it.vtt', 'launch-appstore-preview-v1.mp4']);
   });
 
   it('a follower reuses its primary\'s subtitled file, renamed', async () => {
