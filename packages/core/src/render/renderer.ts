@@ -4,7 +4,7 @@ import { mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
-import { DEFAULT_EXPORT_QUALITY, scaledSize, type Composition, type ExportQuality, type FormatPreset } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_QUALITY, scaledSize, type Composition, type ExportQuality, type FormatPreset, type LocaleTag } from '@motion-studio/shared';
 import { RUNTIME_DIST_DIR } from '@motion-studio/composition-runtime/dist';
 import type { RuntimeSubtitles } from '@motion-studio/composition-runtime/page';
 import { startCompositionServer, type CompositionServer, type CompositionSession, type SessionMedia } from '../compositions/composition-server.ts';
@@ -19,9 +19,8 @@ import {
   type RenderPage, type RuntimeErrorInfo,
 } from './chromium-provider.ts';
 import { cftPlatform, findInstalledCft } from './cft-download.ts';
-import { chooseEncoder, concatLine, countVideoFrames, findFfmpeg, h264Args, hostArch, qualitySettings, spawnFfmpeg, targetKbps, type FfmpegInfo, type VideoEncoder } from './encode.ts';
+import { chooseEncoder, concatLine, countVideoFrames, finalMuxArgs, findFfmpeg, h264Args, hostArch, qualitySettings, spawnFfmpeg, targetKbps, type FfmpegInfo, type SoftSubtitle, type VideoEncoder } from './encode.ts';
 import { findSystemChrome } from './system-chrome.ts';
-import { MP4_DEMUXERS, ownInput } from '../media/ffmpeg-exec.ts';
 import { renderFrames, type RenderFramesOptions, type RenderFramesResult } from './frames.ts';
 import { flattenPng, STORE_AUDIO_KBPS, withSilentAudio } from '../store-pack/flatten.ts';
 import type { WatchdogLimits } from './watchdog.ts';
@@ -57,6 +56,8 @@ export interface RenderResult {
    * Never a failure; only a localized render turns them into problems. Absent from engines that do not measure.
    */
   textOverflows?: RuntimeErrorInfo[];
+  /** The languages of the soft `mov_text` tracks in the file (subtitles Task 20); absent when there are none. */
+  softSubtitles?: LocaleTag[];
 }
 
 export interface RenderProgress { frames: number; total: number }
@@ -124,6 +125,11 @@ export interface RenderCompositionOptions {
    * data by the composition server. Absent (a composition without the track): the session is minted as before.
    */
   subtitles?: RuntimeSubtitles;
+  /**
+   * Soft subtitle tracks added at the final mux without re-encoding (subtitles Task 20): `srt` is an absolute path in the render's
+   * work dir. Every video container the renderer writes (.mp4, .mov, .m4v) takes mov_text; a store preview ignores them with a warning. Absent: the argv is as before.
+   */
+  softSubtitles?: SoftSubtitle[];
 }
 
 /** The hidden temp file a render writes next to its output (`.<name>.render-<hex>.tmp`): the startup sweep removes old ones. */
@@ -302,9 +308,12 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
       const hasAudio = await audio;
       const list = join(work, 'segments.txt');
       await writeFile(list, segFiles.map(concatLine).join('\n') + '\n');
-      await spawnFfmpeg(ff!, [...ownInput(list, { formats: ['concat', ...MP4_DEMUXERS], force: true, options: ['-safe', '0'] }), ...(hasAudio ? ownInput(wav, { formats: ['wav'] }) : []),
-        '-map', '0:v:0', ...(hasAudio ? ['-map', '1:a:0', '-c:a', 'aac', '-b:a', o.storeAudio ? `${STORE_AUDIO_KBPS}k` : '128k', '-ar', '48000', ...(o.storeAudio ? ['-ac', '2'] : [])] : []),
-        '-c:v', 'copy', '-movflags', '+faststart', '-f', VIDEO_EXT[ext]!, hasAudio || !o.storeAudio ? tempOut : join(work, `muted${ext}`)], { signal: ctl.signal }).done;
+      // Soft subtitles (subtitles Task 20): mov_text in .mp4/.mov/.m4v only; a store preview keeps its own audio re-mux, so none there.
+      const wanted = o.softSubtitles ?? [];
+      const softOk = wanted.length > 0 && !o.storeAudio;
+      if (wanted.length && !softOk) warnings = [...warnings, { code: 'softSubtitlesIgnored', message: 'soft subtitle tracks are not added to a store preview' }];
+      await spawnFfmpeg(ff!, finalMuxArgs({ list, wav, hasAudio, storeAudio: o.storeAudio === true, storeKbps: STORE_AUDIO_KBPS, format: VIDEO_EXT[ext]!,
+        out: hasAudio || !o.storeAudio ? tempOut : join(work, `muted${ext}`), ...(softOk ? { soft: wanted } : {}) }), { signal: ctl.signal }).done;
       // An App Store preview without audio gets a silent track of the video's length (Phase 12, spec §4.2).
       if (!hasAudio && o.storeAudio) await withSilentAudio(ff!, join(work, `muted${ext}`), tempOut, { durationSec: frames / c.fps, container: VIDEO_EXT[ext] as 'mp4' | 'mov' }, ctl.signal);
       const audioOut = hasAudio || o.storeAudio === true;
@@ -315,7 +324,7 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
       const sha256 = await sha256File(tempOut);
       await o.beforeRename?.(tempOut);
       await rename(tempOut, o.out);
-      return { file: o.out, sha256, width: size.width, height: size.height, durationSec: c.duration, frames, encoder, quality, fps: c.fps, audio: audioOut, warnings, ...(overflows.length ? { textOverflows: overflows } : {}) };
+      return { file: o.out, sha256, width: size.width, height: size.height, durationSec: c.duration, frames, encoder, quality, fps: c.fps, audio: audioOut, warnings, ...(softOk ? { softSubtitles: wanted.map((t) => t.lang) } : {}), ...(overflows.length ? { textOverflows: overflows } : {}) };
     }
     const sha256 = await sha256File(tempOut);
     await o.beforeRename?.(tempOut);
