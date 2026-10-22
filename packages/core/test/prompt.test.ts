@@ -427,6 +427,14 @@ describe('app actions in the prompt (decision 917, user note 6)', () => {
     // A repair attempt keeps its prompt short: no list.
     expect(buildCreativePrompt({ ...v2, kind: 'fix', problems: ['x'], appActions: true })).not.toContain('## Acting on the app');
   });
+  it('asks drawn or file before start_subtitles, and the template drops the hand-timed subtitles (U9)', () => {
+    const on = buildCreativePrompt({ ...v2, kind: 'iteration', userText: 'Aggiungi i sottotitoli', pins: [], appActions: true });
+    expect(on).toContain('start_subtitles');
+    expect(on).toContain('drawn into the video');
+    expect(on).toContain('AskUserQuestion');
+    expect(CONTEXT_MD).toContain('**Subtitles**: call `start_subtitles`; never one text clip per sentence.');
+    expect(CONTEXT_MD).not.toContain('Voice-over subtitles');
+  });
   it('says when the brief text states another duration than its field', () => {
     const p = buildCreativePrompt({ ...v2, creative: sixty, kind: 'first', appActions: true });
     expect(p).toContain("The brief's text says about 60s but its duration field says 6s");

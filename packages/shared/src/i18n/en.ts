@@ -266,6 +266,7 @@ export const en = {
     subtitlesNoVideo: 'The latest version has no video format: there is nothing to subtitle.',
     noFfmpegSubtitles: 'Subtitles need ffmpeg, which was not found on this Mac.',
     subtitlesTranscriptionOff: 'Video transcription is switched off: turn it on in Settings → Video transcription to make subtitles.',
+    subtitlesOncePerTurn: 'The subtitles were already started in this turn: tell the user they are being made.',
     transcriptionNoBundled: 'This app has no Whisper of its own: install one or point to it in Settings → Video transcription.',
   },
   videoAnalysis: {

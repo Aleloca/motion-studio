@@ -45,6 +45,7 @@ import { completeGitignore, sweepProject } from '../project-maintenance.ts';
 import { CodedError, expandHome, WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
 import { sendConfinedFile } from './serve-file.ts';
 import { localizedCompositionView } from './localization-routes.ts';
+import { subtitleSummaries } from './subtitles-routes.ts';
 import { currentLocale, t } from '../i18n.ts';
 import { BrandStore } from '../brand/brand-store.ts';
 import { readConfinedFile } from '../brand/agent-guard.ts';
@@ -569,6 +570,8 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       jobKey: creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug),
       formats: await formatSummaries(creativeDir, creative, versions, (await catalog().load()).presets),
       ...await variantDetail(ref).then((variants) => (variants ? { variants } : {})),
+      // Decision 1636: the creative's subtitle sets (absent: none).
+      ...await subtitleSummaries(ref.projectDir, ref.creativeSlug, async () => (await catalog().load()).presets).then((subtitles) => (subtitles.length ? { subtitles } : {})),
     };
   };
 

@@ -80,6 +80,8 @@ import { videoAnalysisTools } from '../analysis/analysis-tool.ts';
 import { ANALYSIS_LANE, VideoAnalysisService } from '../analysis/video-analysis.ts';
 import { SubtitleCommits } from '../subtitles/store.ts';
 import { SUBTITLES_LANE, SubtitlesService } from '../subtitles/subtitles-job.ts';
+import { subtitlesTools } from '../subtitles/subtitles-tools.ts';
+import { registerSubtitlesRoutes } from './subtitles-routes.ts';
 import { registerAnalysisRoutes } from './analysis-routes.ts';
 import { TranscriptionService } from '../transcription/transcriber.ts';
 import type { WhisperModelManifest } from '../transcription/models.ts';
@@ -912,10 +914,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       ...agentActions.tools(),
       ...briefs.tools(),
       ...videoAnalysisTools(),
+      ...subtitlesTools({ subtitles, turns }),
     },
   });
   registerBriefRoutes(app, { requireWorkspace, briefs, configDir });
   registerAnalysisRoutes(app, { requireWorkspace, analyses, media, git: deps.git });
+  registerSubtitlesRoutes(app, { requireWorkspace, subtitles, jobs: () => queue.list(), presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets });
   registerTranscriptionRoutes(app, { transcription });
   registerSettingsRoutes(app, { vault, approvals, requireWorkspace, keyChecks, keyCheckHttp: deps.keyCheckHttp ?? { fetch: globalThis.fetch } });
   registerRenderEngineRoutes(app, {

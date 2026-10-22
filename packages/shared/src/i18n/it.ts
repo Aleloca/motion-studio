@@ -264,6 +264,7 @@ export const it: Messages = {
     subtitlesNoVideo: 'L\'ultima versione non ha un formato video: non c\'è niente da sottotitolare.',
     noFfmpegSubtitles: 'Per i sottotitoli serve ffmpeg, che non è stato trovato su questo Mac.',
     subtitlesTranscriptionOff: 'La trascrizione dei video è disattivata: attivala in Impostazioni → Trascrizione video per fare i sottotitoli.',
+    subtitlesOncePerTurn: 'I sottotitoli sono già stati avviati in questo turno: di\' all\'utente che sono in preparazione.',
     transcriptionNoBundled: 'Questa app non ha un Whisper suo: installane uno o indicalo in Impostazioni → Trascrizione video.',
   },
   videoAnalysis: {

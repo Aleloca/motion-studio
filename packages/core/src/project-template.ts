@@ -65,7 +65,8 @@ For effects the clips cannot express (particles, charts, custom typography). A l
 - **Photo with Ken Burns**: an \`image\` clip with \`"fit": "cover"\` and \`"kenBurns": { "from": { "scale": 1 }, "to": { "scale": 1.2, "x": -40 } }\`.
 - **Logo**: an \`svg\` (or \`image\`) clip with \`"fit": "contain"\` and \`popIn\`, usually on the top track for the whole duration or the last scene.
 - **Transitions between scenes**: overlap the outgoing and incoming clips by a few tenths of a second inside the scenes and use fadeOut/fadeIn, slides or \`wipe\`.
-- **Voice-over subtitles**: an \`audio\` clip with \`"role": "voice"\` (from \`tts\`) and one \`text\` clip per sentence, timed on the voice; music on another audio track with \`"role": "music"\` is ducked under the voice.
+- **Voice-over**: an \`audio\` clip with \`"role": "voice"\` (from \`tts\`); music on another audio track with \`"role": "music"\` is ducked under the voice.
+- **Subtitles**: call \`start_subtitles\`; never one text clip per sentence.
 
 Example (a 1080×1080 still):
 \`\`\`json
