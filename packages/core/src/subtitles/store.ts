@@ -1,8 +1,9 @@
-import { readdir, unlink } from 'node:fs/promises';
+import { lstat, mkdir, readdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   SUBTITLES_DIR, SUBTITLE_LIMITS, parseSubtitleSet, sha256Hex, subtitleSetHash, type Composition, type LocaleTag, type SubtitleSet,
 } from '@motion-studio/shared';
+import { noteCoreChange } from '../core-changes.ts';
 import type { Git } from '../git.ts';
 import { writeJsonFileAtomic } from '../json-file.ts';
 import { mixClips } from '../render/audio-mix.ts';
@@ -41,6 +42,13 @@ export async function listSubtitleSets(creativeDir: string): Promise<SubtitleSet
 
 /** Writes the set atomically (its exact text) and returns its hash. */
 export async function writeSubtitleSet(creativeDir: string, set: SubtitleSet): Promise<string> {
+  // The first set creates `subtitles/`, an entry of the creative folder: noted so the post-run tripwire does not read it as a
+  // move (as `appendConversation`'s FP3).
+  const dir = subtitlesDir(creativeDir);
+  if (!(await lstat(dir).then(() => true, () => false))) {
+    await mkdir(dir, { recursive: true });
+    await noteCoreChange(creativeDir);
+  }
   // `writeJsonFileAtomic` writes exactly `subtitleSetText` (2-space JSON, final newline), so the hash is the file's.
   await writeJsonFileAtomic(subtitlePath(creativeDir, set.lang), set);
   return subtitleSetHash(set);

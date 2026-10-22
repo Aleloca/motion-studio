@@ -7,6 +7,8 @@ import { BrandStore } from '../src/brand/brand-store.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { writeJsonFileAtomic } from '../src/json-file.ts';
 import { PermissionsStore } from '../src/approvals/permissions-store.ts';
+import { writeSubtitleSet } from '../src/subtitles/store.ts';
+import { SUBTITLES_SCHEMA_ID } from '@motion-studio/shared';
 
 const cleanup: string[] = [];
 afterEach(async () => { for (const d of cleanup.splice(0)) await rm(d, { recursive: true, force: true }); });
@@ -51,6 +53,16 @@ describe('armTripwire (decisions log 141)', () => {
     await store.create({ title: 'due', brief });
     await new BrandStore(p).newProposalId();
     await store.appendConversation(slug, { type: 'system', at: new Date().toISOString(), level: 'info', text: 'core' });
+    expect(await trip.check()).toMatchObject({ tampered: [], moved: [], rewritten: [] });
+  });
+  it('leaves out the first subtitle set, which creates the creative\'s subtitles/ folder', async () => {
+    const { p, c } = await project();
+    const trip = await armTripwire(p, { logs: false });
+    await tick();
+    await writeSubtitleSet(c, {
+      $schema: SUBTITLES_SCHEMA_ID, lang: 'it', origin: 'speech', transcript: 'whisper-small', detected: 'it',
+      timing: { version: 1, format: 'instagram-post-1x1', fingerprint: '0'.repeat(64) }, cues: [{ id: 'c1', start: 0, end: 1000, text: 'Ciao' }],
+    });
     expect(await trip.check()).toMatchObject({ tampered: [], moved: [], rewritten: [] });
   });
   it('sees a file the core did not make at the top of a creative, and a folder replaced', async () => {
