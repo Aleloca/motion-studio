@@ -217,20 +217,24 @@ export class SubtitlesService {
       const keys = new Set([creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), ...(member ? [groupJobKey(ref.root, ref.projectSlug, member.host)] : [])]);
       let waited = false;
       let idleQueueSeen = false;
+      // Every job waited on, across the polls: one waiter each, and the end of each one is checked, also of a job that ended
+      // while another still ran (a group's turn that failed under a running turn of the variant).
+      const seen = new Map<string, Promise<JobSummary | null>>();
       for (;;) {
         if (await this.latestHasSubtitlesTrack(ref)) return 'skipped';
         const busy = this.deps.queue.list().filter((j) => keys.has(j.key) && (j.state === 'queued' || j.state === 'running'));
+        const ended = await Promise.all([...seen].filter(([id]) => !busy.some((j) => j.id === id)).map(([, end]) => end));
+        if (ended.some((e) => e && e.state !== 'succeeded')) { await say('warning', t().subtitles.styleNotStarted({ reason: t().subtitles.styleAfterStop })); return 'skipped'; }
         // Work held for the user's answer (a card) may wait for ever: the user asks for the drawing later (decision 1682).
         if (busy.some((j) => j.state === 'queued' && j.waitReason && USER_HOLDS.has(j.waitReason))) { await say('info', t().subtitles.styleAskLater); return 'skipped'; }
         if (busy.length > 0) {
           if (!waited) await say('info', t().subtitles.styleWaiting);
           waited = true;
           idleQueueSeen = false;
+          for (const j of busy) if (!seen.has(j.id)) seen.set(j.id, this.deps.queue.whenSettled(j.id));
           let timer: ReturnType<typeof setTimeout> | undefined;
           const tick = new Promise<'tick'>((r) => { timer = setTimeout(() => r('tick'), STYLE_POLL_MS); timer.unref?.(); });
-          const ends = await Promise.race([Promise.all(busy.map((j) => this.deps.queue.whenSettled(j.id))), tick]).finally(() => clearTimeout(timer));
-          if (ends === 'tick') continue;
-          if (ends.some((e) => e && e.state !== 'succeeded')) { await say('warning', t().subtitles.styleNotStarted({ reason: t().subtitles.styleAfterStop })); return 'skipped'; }
+          await Promise.race([Promise.all(busy.map((j) => seen.get(j.id))), tick]).finally(() => clearTimeout(timer));
           continue;
         }
         // A queue the user paused (a Stop, a failure) or requests waiting for "Run next": the app never starts work before
@@ -238,7 +242,7 @@ export class SubtitlesService {
         const queue = await turns.queueWaiting(ref);
         // Requests left in the queue with nothing running may be about to start by themselves (a turn just ended): one more
         // look after a pause; still there and nothing running, they wait for the user.
-        if (queue === 'queued' && !idleQueueSeen) { idleQueueSeen = true; await new Promise((r) => setTimeout(r, STYLE_POLL_MS)); continue; }
+        if (queue === 'queued' && !idleQueueSeen) { idleQueueSeen = true; await new Promise((r) => setTimeout(r, STYLE_POLL_MS).unref?.()); continue; }
         if (queue) { await say('info', t().subtitles.styleAskLater); return 'skipped'; }
         try {
           await turns.start(ref, { text: SUBTITLES_STYLE_INSTRUCTION, pins: [] }, { app: { request: t().subtitles.styleVersionRequest } });

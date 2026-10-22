@@ -398,6 +398,27 @@ describe('drawn subtitles: start_subtitles({ drawn }) and the style turn (spec ย
     group.release();
     await vi.waitFor(() => expect(started).toHaveLength(1));
   });
+
+  it('a group turn that fails while a turn of the variant still runs: dropped across the waits, one waiter per job (final review I1)', async () => {
+    await creative();
+    member = { host: 'host-creative' };
+    const waits = vi.spyOn(queue, 'whenSettled');
+    const group = busy(groupJobKey(ref.root, ref.projectSlug, 'host-creative'), true);
+    const turn = busy(turnKey());
+    await ask({ drawn: true });
+    await vi.waitFor(() => expect(lines()).toContain(t().subtitles.styleWaiting), { timeout: 20_000 });
+    group.release();
+    expect((await queue.whenSettled(group.job.id))?.state).toBe('failed');
+    // Two polls go by while the variant's turn still runs: the failure is remembered, no new waiter for the same jobs.
+    await new Promise((r) => setTimeout(r, 4500));
+    turn.release();
+    await vi.waitFor(() => expect(lines()).toContain(t().subtitles.styleNotStarted({ reason: t().subtitles.styleAfterStop })));
+    expect(started).toEqual([]);
+    // The test's own whenSettled above is one call; the style turn's are one per job.
+    const calls = (id: string) => waits.mock.calls.filter(([x]) => x === id).length;
+    expect(calls(group.job.id)).toBe(2);
+    expect(calls(turn.job.id)).toBe(1);
+  }, 40_000);
 });
 
 describe('the agent sees the drawn subtitles in its frames (spec ยง6.4)', { timeout: 60_000 }, () => {
