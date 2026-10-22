@@ -93,6 +93,8 @@ export function useSubtitleSave(
       } catch { /* the editor, if still there, saves it after its load */ }
     }
     ownLoad.current = textOf(cues);
+    // Gone: the editor is gone too, never dispatched into (`ownLoad` stays set, so the queued unmount flush sends nothing more).
+    if (!mounted.current) return;
     afterConflict.current = true;
     setStatus('conflict');
     dispatch.current({ type: 'load', cues, durationMs: latest.current.durationMs, lang: latest.current.lang });

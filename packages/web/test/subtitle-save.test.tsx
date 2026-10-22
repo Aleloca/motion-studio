@@ -167,7 +167,7 @@ describe('useSubtitleSave', () => {
     let answer!: (v: unknown) => void;
     api.subtitleSet.mockImplementationOnce(() => new Promise((r) => { answer = r; }));
     const theirs: SubtitleCue[] = [CUES[0]!, { id: 'c2', start: 2000, end: 3500, text: 'Prenota ora', edited: true }];
-    const { edit, now, unmount } = setup();
+    const { edit, now, unmount, dispatch } = setup();
     act(() => { edit({ type: 'text', id: 'c1', text: 'Ciao mio' }); });
     const mine = now().cues[0]!;
     await act(async () => { vi.advanceTimersByTime(SAVE_DEBOUNCE_MS); });
@@ -176,6 +176,8 @@ describe('useSubtitleSave', () => {
     await settle();
     expect(api.saveSubtitleSet).toHaveBeenCalledTimes(2);
     expect(api.saveSubtitleSet.mock.calls[1]).toEqual(['acme', 'promo', 'it', { baseHash: H3, cues: mergeKeepingEdited([mine], theirs) }, { keepalive: true }]);
+    // The editor is gone: nothing is dispatched into it.
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it('a hash given without a load is ignored; one given with a load is the next base', async () => {
