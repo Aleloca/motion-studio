@@ -14,7 +14,7 @@ const BOX_KEYS = ['x', 'y', 'width', 'height', 'rotation', 'scale', 'opacity'];
 const TEXT_KEYS = ['text', 'fontFamily', 'fontSize', 'fontWeight', 'color', 'align'];
 const SHAPE_KEYS = ['fill', 'radius'];
 const KEYS_BY_TYPE: Record<Clip['type'], string[]> = {
-  text: [...BOX_KEYS, ...TEXT_KEYS], shape: [...BOX_KEYS, ...SHAPE_KEYS], image: BOX_KEYS, svg: BOX_KEYS, video: BOX_KEYS, html: BOX_KEYS, audio: [],
+  text: [...BOX_KEYS, ...TEXT_KEYS], shape: [...BOX_KEYS, ...SHAPE_KEYS], image: BOX_KEYS, svg: BOX_KEYS, video: BOX_KEYS, html: BOX_KEYS, audio: [], subtitles: [],
 };
 
 class Refusal extends Error {
@@ -96,7 +96,7 @@ export function sceneOrderAllowed(c: Composition): { ok: true } | { ok: false; c
 
 type Anim = NonNullable<Extract<Clip, { animations?: unknown }>['animations']>[number];
 const isPreset = (a: Anim): a is Extract<Anim, { preset: string }> => 'preset' in a;
-const animationsOf = (k: Clip): Anim[] | undefined => (k.type === 'audio' ? undefined : k.animations);
+const animationsOf = (k: Clip): Anim[] | undefined => (k.type === 'audio' || k.type === 'subtitles' ? undefined : k.animations);
 
 /** Refits a clip's animations to a new duration. Presets are moved or shortened; a custom animation that would end past the clip refuses. */
 function fitAnimations(k: Clip, newDuration: number, fps: number): void {
@@ -317,7 +317,7 @@ function sceneOrder(w: Composition, op: Extract<EditOp, { kind: 'sceneOrder' }>)
 
 function animationPreset(w: Composition, op: Extract<EditOp, { kind: 'animationPreset' }>): void {
   const { clip } = locateUnlocked(w, op.clipId);
-  if (clip.type === 'audio') refuse('editor.wrongType', { clip: clip.id, type: clip.type });
+  if (clip.type === 'audio' || clip.type === 'subtitles') refuse('editor.wrongType', { clip: clip.id, type: clip.type });
   if (w.duration === 0) refuse('editor.stillTiming', { clip: clip.id });
   if (op.slot !== 'in' && op.slot !== 'out') refuse('editor.badValue', { clip: clip.id, key: 'slot' });
   const list = clip.animations ?? [];

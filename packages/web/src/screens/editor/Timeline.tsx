@@ -31,7 +31,7 @@ import {
   DRAG_SLOP, clampZoom, clipBounds, frameRound, frameTiming, moveTiming, pxPerSec, pxToTime, rulerTicks, sliderToZoom, snapEdges, timeToPx, trimTiming, zoomAt, zoomToSlider,
   type Timing,
 } from './timelineMath.ts';
-import { TrackHeader } from './TrackHeader.tsx';
+import { TrackHeader, trackLocked } from './TrackHeader.tsx';
 
 /** Width of the lane headers. */
 export const HEADER_W = 168;
@@ -43,7 +43,7 @@ const ZOOM_WHEEL = 0.0015;
 /** A refusal stays on screen this long. */
 const NOTICE_MS = 6000;
 
-const CLIP_KIND_KEY = { text: 'clipText', shape: 'clipShape', image: 'clipImage', svg: 'clipSvg', video: 'clipVideo', html: 'clipHtml', audio: 'clipAudio' } as const;
+const CLIP_KIND_KEY = { text: 'clipText', shape: 'clipShape', image: 'clipImage', svg: 'clipSvg', video: 'clipVideo', html: 'clipHtml', audio: 'clipAudio', subtitles: 'clipSubtitles' } as const;
 
 export interface TimelineProps {
   loop: boolean; onLoop(on: boolean): void; speed: Speed; onSpeed(s: Speed): void;
@@ -183,7 +183,7 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay, on
   const { storyboard } = useStoryboard({ slug, creative, n: draft.base.n, format: primary, hash: draft.base.hash, enabled: true });
   const thumbOf = (id: string, name?: string) => storyboard?.frames.find((fr) => fr.kind === 'scene' && (fr.scene === id || fr.scene === name)) ?? null;
 
-  const kindName = (kind: Track['kind']) => ({ visual: e.kindVisual, video: e.kindVideo, text: e.kindText, audio: e.kindAudio })[kind];
+  const kindName = (kind: Track['kind']) => ({ visual: e.kindVisual, video: e.kindVideo, text: e.kindText, audio: e.kindAudio, subtitles: e.kindSubtitles })[kind];
   const trackName = (track: Track) => track.name ?? e.trackName({ kind: kindName(track.kind), n: comp.tracks.filter((x) => x.kind === track.kind).indexOf(track) + 1 });
   const sceneName = (s: { name?: string }, i: number) => s.name ?? r.scene({ n: i + 1 });
 
@@ -219,7 +219,7 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay, on
     select(clip.id);
     const pressedAt = timeAt(ev.clientX);
     if (readOnly) { reveal(clip, pressedAt); return; }
-    if (clip.locked || track.locked) { refuse(lockedProblem(clip)); reveal(clip, pressedAt); return; }
+    if (clip.locked || trackLocked(track)) { refuse(lockedProblem(clip)); reveal(clip, pressedAt); return; }
     if (live.current.comp.duration === 0) return;
     cleanup.current();
     // A new gesture never joins the run of an earlier one (its edits hold the run open until the end).
@@ -295,7 +295,7 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay, on
     // Handled here, so the editor's frame step (←/→ with no clip focused) does not also run.
     ev.preventDefault();
     select(clip.id);
-    if (clip.locked || track.locked) { refuse(lockedProblem(clip)); return; }
+    if (clip.locked || trackLocked(track)) { refuse(lockedProblem(clip)); return; }
     const c = live.current.comp;
     const bounds = clipBounds(c, clip, live.current.ripple);
     const from: Timing = { start: clip.start, duration: clip.duration };
@@ -477,10 +477,10 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay, on
             {lanes.map((track) => (
               <div key={track.id} className="ms-tl-row ms-tl-track" data-track={track.id}>
                 <TrackHeader track={track} name={trackName(track)} onFlag={flag(track)} />
-                <div className={cx('ms-tl-lane', track.hidden && 'ms-dim', track.locked && 'ms-locked')} style={{ width: contentW }}>
+                <div className={cx('ms-tl-lane', track.hidden && 'ms-dim', trackLocked(track) && 'ms-locked')} style={{ width: contentW }}>
                   {track.clips.map((clip) => {
                     const kind = e[CLIP_KIND_KEY[clip.type]];
-                    const lockedClip = Boolean(clip.locked || track.locked);
+                    const lockedClip = Boolean(clip.locked || trackLocked(track));
                     const label = e.clipBar({ name: clip.name ?? clip.id, kind, start: timecode(clip.start), end: timecode(clip.start + clip.duration) })
                       + (lockedClip ? `, ${e.locked.toLowerCase()}` : '') + (clip.hidden || track.hidden ? `, ${e.clipBarHidden}` : '');
                     return (

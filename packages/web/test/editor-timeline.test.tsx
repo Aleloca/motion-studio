@@ -345,6 +345,19 @@ describe('moving and snapping', () => {
     drag(edge('card', 'end'), 200, [150]);
     expect(ops()).toHaveLength(0);
   });
+
+  it('shows the subtitles track locked, its clip not draggable, and its lock button disabled', async () => {
+    const c = structuredClone(spike);
+    c.tracks.push({ id: 'subs-track', kind: 'subtitles', clips: [{ id: 'subs', type: 'subtitles', start: 0, duration: c.duration,
+      props: { fontSize: 64, color: '#ffffff', position: 'bottom', margin: 120, maxWidth: 0.8 } }] });
+    await mount({ comp: c });
+    expect(bar('subs').getAttribute('aria-label')).toContain('locked');
+    expect(document.querySelector('[data-track="subs-track"] .ms-tl-lane')!.classList.contains('ms-locked')).toBe(true);
+    expect(document.querySelector<HTMLButtonElement>('[data-track-head="subs-track"] button[aria-label^="Unlock"]')!.disabled).toBe(true);
+    drag(bar('subs'), 100, [150]);
+    expect(clipData('subs').start).toBe(0);
+    expect(ops()).toHaveLength(0);
+  });
 });
 
 describe('drags at the Fit zoom (Task 11 D3)', () => {

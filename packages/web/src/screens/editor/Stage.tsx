@@ -18,7 +18,7 @@ const CLICK_SLOP = 4;
 /** The clip with this id and whether it (or its track) is locked. */
 export function findClip(tracks: Track[], id: string | null): { clip: Clip; locked: boolean } | null {
   if (id === null) return null;
-  for (const t of tracks) for (const c of t.clips) if (c.id === id) return { clip: c, locked: Boolean(c.locked || t.locked) };
+  for (const t of tracks) for (const c of t.clips) if (c.id === id) return { clip: c, locked: Boolean(c.locked || t.locked || t.kind === 'subtitles') };
   return null;
 }
 
