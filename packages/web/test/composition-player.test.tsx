@@ -261,6 +261,16 @@ describe('the subtitles prop (subtitles Task 22)', () => {
     fromRuntime(READY);
     expect(sent(q.posted)).toEqual([]);
   });
+  it('review: once the prop goes away the media forgets the lines, and a new frame gets none (its page draws its own)', () => {
+    const p = mount({ subtitles: subs('Ciao') });
+    fromRuntime(READY);
+    expect(sent(p.posted)).toHaveLength(1);
+    p.rerender(<I18nProvider locale="en"><CompositionPlayer session={session('tok2')} title="Reel v2" /></I18nProvider>);
+    const second = [...document.querySelectorAll('iframe')][1]!;
+    const posted2 = vi.spyOn(second.contentWindow!, 'postMessage');
+    fromRuntime(READY, { source: second.contentWindow });
+    expect(sent(posted2)).toEqual([]);
+  });
   it('a block the protocol refuses is never posted', () => {
     const p = mount({ subtitles: { lang: 'it', cues: [{ start: 1000, end: 500, text: 'x' }] } });
     fromRuntime(READY);

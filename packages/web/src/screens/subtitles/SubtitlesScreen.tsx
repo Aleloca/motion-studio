@@ -146,8 +146,9 @@ function SubtitleEditor({ slug, creative, lang, detail, tick }: { slug: string; 
   const [player, setPlayer] = useState<CompositionMedia | null>(null);
   const controls = usePlayerControls(player, `${latest?.n ?? 0}/${format ?? ''}`, session?.fps ?? 30);
   // Task 22: with a subtitles track in the played composition the runtime draws the lines in the agent's style, sent as they
-  // are edited; without one (or until it is known) the editor's own caption shows the line. A composition that cannot be
-  // read counts as one without the track.
+  // are edited; without one the editor's own caption shows the line, and until it is known neither does (the page may already
+  // draw its staged subtitles). A composition that cannot be read counts as one without the track: the caption shows, and if
+  // the composition does have the track the page's own (saved) lines show under it too, a double caption accepted over none.
   const [track, setTrack] = useState<boolean | null>(null);
   const trackOf = latest !== null && format !== null ? { n: latest.n, format } : null;
   useEffect(() => {

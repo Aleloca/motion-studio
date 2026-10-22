@@ -472,7 +472,8 @@ describe('ExportDialog · resolution and quality (decision 974, user report 22)'
     await userEvent.click(screen.getByRole('checkbox', { name: 'Italian' }));
     expect(screen.getByText(/With other languages the videos are exported at the format size and High quality/)).toBeTruthy();
     expect((screen.getByRole('button', { name: /^Resolution/ }) as HTMLButtonElement).disabled).toBe(true);
-    await userEvent.click(screen.getByRole('button', { name: /^Export 2 files/ }));
+    // Review round 1 (Task 22): two formats in two languages are four files.
+    await userEvent.click(screen.getByRole('button', { name: /^Export 4 files/ }));
     await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledWith('acme', 'c1', expect.objectContaining({ quality: 'high', locales: ['en', 'it'] })));
     expect(api.exportPicksJob.mock.calls[0]![2]).not.toHaveProperty('resolution');
     expect(api.exportPicksJob.mock.calls[0]![2]).not.toHaveProperty('fps');
@@ -503,7 +504,7 @@ describe('ExportDialog · subtitle files', () => {
   it('ticking Italian sends subtitles: { files: [it] }', async () => {
     openWith([sub('it'), sub('en')] as never[]);
     await userEvent.click(screen.getByRole('checkbox', { name: /File \.srt e \.vtt.*italiano/i }));
-    await userEvent.click(screen.getByRole('button', { name: 'Esporta 3 file' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Esporta 7 file' }));
     await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledOnce());
     expect(api.exportPicksJob.mock.calls[0]![2]).toMatchObject({ subtitles: { files: ['it'] } });
   });
@@ -517,7 +518,8 @@ describe('ExportDialog · the Sottotitoli section (Task 22)', () => {
         pattern="{title}-{format}-v{v}" onSettings={onSettings} subtitles={subtitles} />
     </I18nProvider>,
   );
-  const preview = () => document.querySelector('.ms-exp-preview')!.textContent!;
+  /** The subtitle outputs, listed under the section (review round 1). */
+  const preview = () => document.querySelector('.ms-exp-subs-out')?.textContent ?? '';
   const NOTE = 'File e tracce vanno con un video senza sottotitoli disegnati.';
 
   it('three rows, a check per language each: Nel video, File .srt e .vtt, Traccia nel file MP4; nothing ticked by default', () => {
@@ -541,7 +543,9 @@ describe('ExportDialog · the Sottotitoli section (Task 22)', () => {
     expect(preview()).toContain('summer-launch-tiktok-9x16-v5-sub-en.mp4');
     // The still never gets a drawn copy.
     expect(preview()).not.toContain('post-1x1-v7-sub-en');
-    await userEvent.click(screen.getByRole('button', { name: 'Esporta 3 file' }));
+    // Every file counts: two clean videos, two drawn ones and the still (review round 1).
+    expect(screen.getByText('5 file')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Esporta 5 file' }));
     await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledOnce());
     expect(api.exportPicksJob.mock.calls[0]![2]).toMatchObject({ subtitles: { drawn: ['en'], soft: ['it'] } });
     expect((api.exportPicksJob.mock.calls[0]![2] as unknown as { subtitles: object }).subtitles).not.toHaveProperty('files');
@@ -553,14 +557,19 @@ describe('ExportDialog · the Sottotitoli section (Task 22)', () => {
     expect(screen.getByText(NOTE)).toBeTruthy();
     for (const name of ['summer-launch-instagram-reel-9x16-v5.it.srt', 'summer-launch-instagram-reel-9x16-v5.it.vtt', 'summer-launch-tiktok-9x16-v5.it.srt']) expect(preview()).toContain(name);
     expect(preview()).not.toContain('post-1x1-v7.it.srt');
+    // Three files and four subtitle files.
+    expect(screen.getByRole('button', { name: 'Esporta 7 file' })).toBeTruthy();
   });
 
-  it('only drawn languages: the plain video is not previewed (it is not exported), the still is', async () => {
+  it('only drawn languages: the plain video is named nowhere (it is not exported); its row names its drawn videos', async () => {
     openWith([sub('it'), sub('en')]);
     await userEvent.click(screen.getByRole('checkbox', { name: /^Nel video.*italiano/i }));
-    const lines = [...document.querySelectorAll('.ms-exp-preview .ms-exp-file')].map((e) => e.textContent);
-    expect(lines.join(' ')).not.toMatch(/reel-9x16-v5\.mp4/);
-    expect(lines.join(' ')).toContain('summer-launch-instagram-reel-9x16-v5-sub-it.mp4');
+    const names = [...document.querySelectorAll('.ms-exp-file')].map((e) => e.textContent).join(' ');
+    expect(names).not.toMatch(/reel-9x16-v5\.mp4/);
+    const reel = document.querySelector('.ms-exp-row:not(.ms-exp-cols) .ms-exp-file')!;
+    expect(reel.textContent).toBe('summer-launch-instagram-reel-9x16-v5-sub-it.mp4');
+    expect(preview()).toContain('summer-launch-instagram-reel-9x16-v5-sub-it.mp4');
+    expect(screen.getByRole('button', { name: 'Esporta 3 file' })).toBeTruthy();
   });
 
   it('a ★ render that drew a set since corrected is rendered first (renderState with the creative\'s subtitle hashes)', () => {

@@ -44,6 +44,34 @@ async function markup(): Promise<string> {
   } finally { unmount(); }
 }
 
+/** Review round 1: a plain export (no subtitle sets) of eight rendered video formats, as after decision 1726. */
+async function plainMarkup(): Promise<string> {
+  const presets = DEFAULT_FORMATS.filter((p) => p.kind !== 'image').slice(0, 8);
+  const hash = (i: number) => String(i).repeat(64);
+  const v: VersionEntry = { ...version, n: 5,
+    compositions: presets.map((p, i) => ({ format: p.id, dir: `compositions/${p.id}`, hash: hash(i) })),
+    outputs: presets.map((p, i) => ({ ...out(p.id, p.width, p.height), sha256: 'f'.repeat(64), fromComposition: hash(i) })) };
+  const st = (id: string): FormatState => ({ ...state(id), history: [5], star: { version: 5, manual: false, newer: null, follows: null }, defaultVersion: 5, exportVersion: 5 });
+  const { unmount } = render(
+    <I18nProvider locale="it">
+      <ExportDialog open onClose={() => {}} slug="acme" creative="promo" title="Promo autunno" snapshot={{ versions: [v], states: Object.fromEntries(presets.map((p) => [p.id, st(p.id)])) }}
+        presets={DEFAULT_FORMATS} pattern="{title}-{format}-v{v}" />
+    </I18nProvider>,
+  );
+  try {
+    expect(screen.queryByText('Sottotitoli')).toBeNull();
+    expect(document.querySelectorAll('.ms-exp-row:not(.ms-exp-cols)')).toHaveLength(8);
+    return (document.querySelector('.ms-modal') as HTMLElement).outerHTML;
+  } finally { unmount(); }
+}
+const PLAIN = `(() => {
+  const list = document.querySelector('.ms-exp-rows').getBoundingClientRect();
+  const foot = document.querySelector('.ms-exp-foot').getBoundingClientRect();
+  const run = [...document.querySelectorAll('.ms-exp-foot .ms-btn')].map((b) => b.getBoundingClientRect());
+  const rows = [...document.querySelectorAll('.ms-exp-row:not(.ms-exp-cols)')].filter((r) => { const b = r.getBoundingClientRect(); return b.top >= list.top - 0.5 && b.bottom <= list.bottom + 0.5; });
+  return { rowsShown: rows.length, footInView: foot.top >= 0 && foot.bottom <= innerHeight + 0.5 && run.every((b) => b.bottom <= innerHeight + 0.5 && b.right <= innerWidth), sideways: document.documentElement.scrollWidth > innerWidth };
+})()`;
+
 const MEASURE = `(() => {
   const dialog = document.querySelector('.ms-dialog');
   const d = dialog.getBoundingClientRect();
@@ -51,17 +79,18 @@ const MEASURE = `(() => {
   const s = section.getBoundingClientRect();
   const rows = [...section.querySelectorAll('.ms-exp-subs-row')];
   const note = section.querySelector('.ms-exp-subs-note');
-  const preview = document.querySelector('.ms-exp-preview');
+  const preview = document.querySelector('.ms-exp-subs-out');
   const list = document.querySelector('.ms-exp-rows');
   const first = list.querySelector('.ms-exp-row:not(.ms-exp-cols)');
   return {
     dialogWidth: Math.round(d.width),
     formatRowShown: list.getBoundingClientRect().height >= first.getBoundingClientRect().height + first.offsetTop - list.offsetTop - 1,
-    sideways: document.documentElement.scrollWidth > innerWidth || dialog.scrollWidth > dialog.clientWidth + 1 || section.scrollWidth > section.clientWidth + 1 || preview.scrollWidth > preview.clientWidth + 1,
+    sideways: document.documentElement.scrollWidth > innerWidth || dialog.scrollWidth > dialog.clientWidth + 1 || section.scrollWidth > section.clientWidth + 1
+      || [...document.querySelectorAll('.ms-exp-preview')].some((p) => p.scrollWidth > p.clientWidth + 1),
     dialogInside: d.left >= -0.5 && d.right <= innerWidth + 0.5,
     sectionInside: within(s, d),
     rows: rows.length,
-    out: [...outside(section, '.ms-exp-subs-row, .ms-exp-lang, .ms-exp-subs-name b, .ms-exp-subs-name .ms-faint, .ms-exp-subs-note', s), ...outside(preview, '.ms-exp-preview-line', preview.getBoundingClientRect())],
+    out: [...outside(section, '.ms-exp-subs-row, .ms-exp-lang, .ms-exp-subs-name b, .ms-exp-subs-name .ms-faint, .ms-exp-subs-note, .ms-exp-subs-out', s), ...outside(preview, '.ms-exp-preview-line', preview.getBoundingClientRect())],
     checks: rows.map((r) => r.querySelectorAll('[role="checkbox"]').length),
     note: !!note && note.getBoundingClientRect().height > 0,
     previewLines: [...preview.querySelectorAll('.ms-exp-preview-line')].map((l) => l.textContent),
@@ -75,10 +104,17 @@ if (!chromePath && chromeRequired) it('Chrome is required (MS_REQUIRE_CHROME=1)'
 run('the export dialog\'s Sottotitoli section: real Chrome layout (Task 22)', () => {
   const rig = new LayoutRig();
   let html = '';
-  beforeAll(async () => { await rig.start(); html = await markup(); }, 120_000);
+  let plain = '';
+  beforeAll(async () => { await rig.start(); html = await markup(); plain = await plainMarkup(); }, 120_000);
   afterAll(() => rig.stop(), 60_000);
 
   for (const theme of ['light', 'dark'] as const) {
+    it(`${theme}: a plain export of eight formats (no subtitles) shows at least three rows and the footer in 1024 × 700`, async () => {
+      const r = await rig.measure<{ rowsShown: number; footInView: boolean; sideways: boolean }>(plain, PLAIN, { name: 'export-plain', width: 1024, height: 700, theme }, 'export-subs-plain8');
+      expect(r.rowsShown).toBeGreaterThanOrEqual(3);
+      expect(r.footInView).toBe(true);
+      expect(r.sideways).toBe(false);
+    }, 120_000);
     for (const dialog of [760, 520]) {
     it(`${theme}, a ${dialog} px dialog in 1024 × 700: three rows with a check per language, the note and the preview inside the dialog, nothing sideways`, async () => {
       const page = html.replace('style="width: 760px;"', `style="width: ${dialog}px;"`);

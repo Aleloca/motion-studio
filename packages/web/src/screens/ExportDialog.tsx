@@ -296,11 +296,25 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
     return [...(cleanVideo ? [entry] : []), ...drawnLangs.map((lang) => ({ ...entry, stem: subtitledStem(entry.stem, lang), sub: lang as string | undefined }))];
   });
   const exportStems = separateInstanceNames(exportEntries);
-  const exportNames = exportEntries.map((e, i) => ({ tag: e.tag, sub: e.sub, video: isVideo(e.row), stem: exportStems[i]!, name: `${exportStems[i]!}${e.ext}` }));
+  const exportNames = exportEntries.map((e, i) => ({ tag: e.tag, sub: e.sub, format: e.format, video: isVideo(e.row), stem: exportStems[i]!, name: `${exportStems[i]!}${e.ext}` }));
   const original = exportNames.filter((e) => e.tag === undefined);
   const drawnNames = drawnLangs.map((lang) => ({ lang, names: original.filter((e) => e.sub === lang).map((e) => e.name) })).filter((l) => l.names.length > 0);
   // The `.srt`/`.vtt` next to each clean video, `<stem>.<lang>.srt` (the core's `writeSubtitleFiles`).
   const subtitleFileNames = original.filter((e) => e.sub === undefined && e.video).flatMap((e) => fileLangs.flatMap((lang) => [`${e.stem}.${lang}.srt`, `${e.stem}.${lang}.vtt`]));
+  /** With drawn languages only, a video row names its drawn videos: its plain file is not exported (review round 1). */
+  const rowName = (id: string, name: string | null) => {
+    if (!subtitled || cleanVideo) return name;
+    const drawnOfRow = original.filter((e) => e.format === id && e.sub !== undefined).map((e) => e.name);
+    return drawnOfRow.length > 0 ? drawnOfRow.join(', ') : name;
+  };
+  // Every file the export writes (review round 1): per chosen row the original's (a video with subtitles: its clean video when
+  // files or tracks are ticked, one per drawn language, and two subtitle files per language), then each translation's. Counted
+  // from the rows, so a name the pattern cannot make yet does not change it.
+  const fileCount = chosen.reduce((n, c) => {
+    const subs = subtitled && isVideo(c.row);
+    const own = !withOriginal ? 0 : subs ? (cleanVideo ? 1 + 2 * fileLangs.length : 0) + drawnLangs.length : 1;
+    return n + own + otherTags.length;
+  }, 0);
   const translatedNames = otherTags.map((tag) => ({ tag, names: exportNames.filter((e) => e.tag === tag).map((e) => e.name) })).filter((x) => x.names.length > 0);
   // Unknown variables are the same on every row: they are left out of the names and flagged here.
   const firstRow = chosen[0]?.row ?? rows[0];
@@ -459,7 +473,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
                 </span>
                 <span className="ms-exp-name">
                   <span className="ms-exp-label">{r.preset ? <ChannelMark channel={channelOf(r.preset.channel)} /> : null}<b>{label}</b></span>
-                  {blocked ? <span className="ms-exp-blocked">{r.blocked}</span> : <span className="ms-exp-file">{name ?? '—'}{sizeOf(r) ? <span className="ms-exp-size"> {x.outputSize({ size: sizeOf(r)! })}</span> : null}</span>}
+                  {blocked ? <span className="ms-exp-blocked">{r.blocked}</span> : <span className="ms-exp-file">{rowName(r.id, name) ?? '—'}{sizeOf(r) ? <span className="ms-exp-size"> {x.outputSize({ size: sizeOf(r)! })}</span> : null}</span>}
                   {r.needsRender && !blocked ? <span className="ms-exp-render">{t.web.render.rendersFirst}</span> : null}
                   {r.problems.length && !blocked ? <span className="ms-exp-problem">{x.renderProblems({ list: r.problems.join('; ') })}</span> : null}
                 </span>
@@ -511,6 +525,23 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
             </div>
           ))}
           {cleanVideo ? <p className="ms-exp-note ms-exp-subs-note">{x.subtitles.cleanNote}</p> : null}
+          {/* Review round 1: what the ticked rows add, where they are ticked (the name preview below keeps the plain files). */}
+          {drawnNames.length > 0 || subtitleFileNames.length > 0 ? (
+            <div className="ms-exp-preview ms-exp-subs-out">
+              {drawnNames.map((l) => (
+                <span key={`sub-${l.lang}`} className="ms-exp-preview-line">
+                  <span className="ms-exp-preview-label">{x.subtitles.previewDrawn({ language: localeName(l.lang, locale) })}</span>
+                  <span className="ms-exp-file">{l.names.join(', ')}</span>
+                </span>
+              ))}
+              {subtitleFileNames.length > 0 ? (
+                <span className="ms-exp-preview-line">
+                  <span className="ms-exp-preview-label">{x.subtitles.files}</span>
+                  <span className="ms-exp-file">{subtitleFileNames.join(', ')}</span>
+                </span>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
       {refused ? (
@@ -573,18 +604,6 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
           </div>
           <div id={previewId} className="ms-exp-preview">
             {preview ? <span className="ms-exp-preview-line"><span className="ms-exp-preview-label">{x.preview}</span><span className="ms-exp-file">{preview}</span></span> : null}
-            {drawnNames.map((l) => (
-              <span key={`sub-${l.lang}`} className="ms-exp-preview-line">
-                <span className="ms-exp-preview-label">{x.subtitles.previewDrawn({ language: localeName(l.lang, locale) })}</span>
-                <span className="ms-exp-file">{l.names.join(', ')}</span>
-              </span>
-            ))}
-            {subtitleFileNames.length > 0 ? (
-              <span className="ms-exp-preview-line">
-                <span className="ms-exp-preview-label">{x.subtitles.files}</span>
-                <span className="ms-exp-file">{subtitleFileNames.join(', ')}</span>
-              </span>
-            ) : null}
             {translatedNames.map((l) => (
               <span key={l.tag} className="ms-exp-preview-line">
                 <span className="ms-exp-preview-label">{x.previewLanguage({ language: localeName(l.tag, locale) })}</span>
@@ -612,7 +631,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
           </div>
         ) : (
           <div className="ms-exp-summary">
-            <b>{x.files({ count: chosen.length })}</b>
+            <b>{x.files({ count: fileCount })}</b>
             {error ? <span role="alert" className="ms-exp-error">{error}</span> : <span className="ms-exp-note">{x.noOverwrite}</span>}
           </div>
         )}
@@ -626,7 +645,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
           <>
             <Button size="lg" variant="ghost" onClick={onClose}>{t.common.cancel}</Button>
             <Button size="lg" variant="ink" loading={running} disabled={!canRun || (withLanguages && wanted.length === 0)} onClick={() => void run()}>
-              {x.run({ count: chosen.length })}
+              {x.run({ count: fileCount })}
             </Button>
           </>
         )}

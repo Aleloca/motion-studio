@@ -153,6 +153,8 @@ export class CompositionMedia implements SyncMedia {
     this.subtitles = subtitles;
     this.post({ type: 'setSubtitles', subtitles });
   }
+  /** Forgets the lines given (the caller stopped sending them): a new frame then draws its page's own. Sends nothing. */
+  clearSubtitles(): void { this.subtitles = undefined; }
   /** Selects a clip in the runtime (its drawn box comes back as `clipBounds`, event `clipbounds`); null clears. */
   select(clipId: string | null): void {
     this.selectedId = clipId;
@@ -335,7 +337,7 @@ export function CompositionPlayer({ session, title, onMedia, onStall, onShowing,
     return () => { media.pause(); media.detach(); callbacks.current.onMedia?.(null); callbacks.current.onShowing?.(null); };
   }, [media]);
   useEffect(() => { media.muted = muted; }, [muted, media]);
-  useEffect(() => { if (subtitles !== undefined) media.setSubtitles(subtitles); }, [subtitles, media]);
+  useEffect(() => { if (subtitles !== undefined) media.setSubtitles(subtitles); else media.clearSubtitles(); }, [subtitles, media]);
   useEffect(() => {
     if (autoPlay) { media.loop = true; void media.play().catch(() => {}); }
   }, [autoPlay, media]);
