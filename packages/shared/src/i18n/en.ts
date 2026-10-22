@@ -285,6 +285,7 @@ export const en = {
     subtitlesNothingStaleCorrected: (p: { lang: string }) => `The lines to translate again in ${p.lang} are ones you corrected: pick them to translate them again.`,
     subtitlesFollowsSource: 'A translation has the timing of the subtitles it comes from: check the timing of those.',
     subtitlesSourceSet: 'These subtitles come from the video\'s speech and other languages are translated from them: delete those translations first.',
+    subtitlesSourceChanged: 'The subtitles it was translating from are gone (deleted, or made again in another language): nothing was written.',
     subtitlesLangTranslated: (p: { lang: string }) => `The subtitles in ${p.lang} are a translation: to make them from the video's speech, delete them first.`,
     subtitlesOtherSpeech: (p: { lang: string; other: string }) => `The subtitles from the video's speech are in ${p.other} and other languages are translated from them: to make them again in ${p.lang}, delete those translations first. To add a language, use “+ Language”, which translates them.`,
     subtitlesVoiceGone: (p: { lang: string }) => `The ${p.lang} video no longer has its own translated voice: its subtitles are not made again from speech. Delete them and add ${p.lang} again with “+ Language”, which translates them.`,

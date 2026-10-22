@@ -8,7 +8,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { staleCues, SUBTITLES_SCHEMA_ID, type Brief, type ConversationEntry, type ServerMessage, type SubtitleCue, type SubtitleSet } from '@motion-studio/shared';
+import { missingSourceLines, staleCues, SUBTITLES_SCHEMA_ID, type Brief, type ConversationEntry, type ServerMessage, type SubtitleCue, type SubtitleSet } from '@motion-studio/shared';
 import { MCP_TOOLS } from '../src/agent/launcher.ts';
 import { AgentBridge, type BridgeContext } from '../src/bridge/bridge.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
@@ -310,6 +310,49 @@ describe('SubtitleTranslateService', () => {
     // Only lines whose source is gone: nothing to translate.
     await expect(service.start(ref, { target: 'en', ids: ['c9'] })).rejects.toMatchObject({ status: 409, apiCode: 'subtitles-nothing-to-translate' });
     await expect(service.start(ref, { target: 'en', ids: [], sourceIds: ['nope'] })).rejects.toMatchObject({ status: 400, apiCode: 'subtitles-no-cues' });
+  });
+
+  it('"Ritraduci" on one line of a translation its source\'s retime left behind keeps its own timing; "Ritraduci tutto" then repairs it (final review, last round)', async () => {
+    // The source after a retime with a 3 s intro (another timing); the English on the old times, its c2 corrected.
+    const shifted = { ...TIMING, fingerprint: '2'.repeat(64) };
+    const source = [
+      { id: 'f1', start: 0, end: 3000, text: 'intro' }, { id: 'f2', start: 3000, end: 5000, text: 'a' },
+      { id: 'f3', start: 5000, end: 7000, text: 'b' }, { id: 'f4', start: 7000, end: 9000, text: 'c' },
+    ];
+    await writeSubtitleSet(dir(), { ...speech(source), timing: shifted });
+    await writeSubtitleSet(dir(), english([
+      { id: 'c1', start: 0, end: 2000, text: 'A', source: { text: 'a' } },
+      { id: 'c2', start: 2000, end: 4000, text: 'MY B', edited: true, source: { text: 'b' } },
+      { id: 'c3', start: 4000, end: 6000, text: 'C', source: { text: 'c' } },
+    ]));
+    const one = await translate({ target: 'en', ids: ['c1'] }, { f2: 'A again' });
+    expect(one.job?.state).toBe('succeeded');
+    expect(one.run.req.prompt).toContain('f2 | 00:03.000–00:05.000 | a');
+    const partial = (await readSubtitleSet(dir(), 'en'))!.set;
+    // Still not following: its own timing, the intro marked as missing.
+    expect(partial.timing).toEqual(TIMING);
+    expect(missingSourceLines(partial.cues, source, false).map((c) => c.id)).toEqual(['f1']);
+    // "Ritraduci tutto": the full repair from the source now.
+    const all = await translate({ target: 'en' }, { f1: 'Intro', f2: 'A', f4: 'C' });
+    expect(all.job?.state).toBe('succeeded');
+    const after = (await readSubtitleSet(dir(), 'en'))!.set;
+    expect(after.timing).toEqual(shifted);
+    expect(after.cues.map((c) => [c.id, c.start, c.text, c.edited ?? false])).toEqual([
+      ['f1', 0, 'Intro', false], ['f2', 3000, 'A', false], ['c2', 5000, 'MY B', true], ['f4', 7000, 'C', false],
+    ]);
+  });
+
+  it('a source deleted or replaced during the run: nothing is written, the job fails saying so (final review, last round)', async () => {
+    const job = await service.start(ref, { target: 'en' });
+    const run = await runner.next();
+    await removeSubtitleSet(dir(), 'it');
+    await writeSubtitleSet(dir(), { ...speech(SOURCE), lang: 'es', detected: 'es' });
+    await submit(run, Object.entries(EN).map(([id, text]) => ({ id, text })));
+    run.finish({ write: false });
+    expect((await queue.whenSettled(job.id))?.state).toBe('failed');
+    expect(await readSubtitleSet(dir(), 'en')).toBeNull();
+    expect(notes.at(-1)).toMatchObject({ level: 'error', subtitles: { state: 'failed', lang: 'en' } });
+    expect(notes.at(-1)).toMatchObject({ text: t().subtitles.translateFailed({ lang: languageName('en'), reason: t().errors.subtitlesSourceChanged }) });
   });
 
   it('a tool call with an unknown id or a text over two lines is a 400 naming the id; nothing of that call is kept', async () => {

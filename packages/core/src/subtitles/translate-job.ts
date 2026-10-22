@@ -329,12 +329,15 @@ export class SubtitleTranslateService {
           throw new Error(t().subtitles.setUnreadable({ file: `${SUBTITLES_DIR}/${target}.json` }));
         }
         if (now?.set.origin === 'speech') throw new Error(t().errors.subtitlesLangSpoken({ lang }));
+        // The source deleted, or made again in another language, during the run: nothing to write from it.
+        if (speechSourceSet(await listSubtitleSets(dir))?.lang !== source.lang) throw new Error(t().errors.subtitlesSourceChanged);
         // Each line records the source text it was translated from (`source.text`, the run's source).
         const following = !now || now.set.timing.fingerprint === source.timing.fingerprint;
         const cues = mergeTranslation({ source: source.cues, target: now?.set.cues ?? [], texts, explicit: plan.explicit, following, ...(plan.listed ? { listed: plan.listed } : {}) });
         const set: SubtitleSet = {
           $schema: SUBTITLES_SCHEMA_ID, lang: target, origin: 'translation', sourceLang: source.lang,
-          transcript: source.transcript, detected: null, timing: source.timing, cues,
+          // A few lines asked of a set its source's retime left behind keep its own timing: only the full repair follows (I2).
+          transcript: source.transcript, detected: null, timing: plan.explicit && now && !following ? now.set.timing : source.timing, cues,
         };
         const valid = subtitleSetSchema.safeParse(set);
         if (!valid.success || Buffer.byteLength(subtitleSetText(set)) > SUBTITLE_LIMITS.fileBytes) throw new Error(valid.success ? 'the subtitles are too large' : valid.error.message);

@@ -283,6 +283,7 @@ export const it: Messages = {
     subtitlesNothingStaleCorrected: (p) => `Le righe da ritradurre in ${p.lang} sono righe che hai corretto: sceglile per ritradurle.`,
     subtitlesFollowsSource: 'Una traduzione ha i tempi dei sottotitoli da cui viene: controlla i tempi di quelli.',
     subtitlesSourceSet: 'Questi sottotitoli vengono dal parlato del video e ci sono lingue tradotte da loro: elimina prima quelle traduzioni.',
+    subtitlesSourceChanged: 'I sottotitoli da cui traduceva non ci sono più (eliminati, o rifatti in un\'altra lingua): non è stato scritto niente.',
     subtitlesLangTranslated: (p) => `I sottotitoli in ${p.lang} sono una traduzione: per farli dal parlato del video, eliminali prima.`,
     subtitlesOtherSpeech: (p) => `I sottotitoli dal parlato del video sono in ${p.other} e ci sono lingue tradotte da loro: per rifarli in ${p.lang} elimina prima quelle traduzioni. Per aggiungere una lingua usa «+ Lingua», che li traduce.`,
     subtitlesVoiceGone: (p) => `Il video in ${p.lang} non ha più la sua voce tradotta: i suoi sottotitoli non si rifanno dal parlato. Eliminali e aggiungi di nuovo ${p.lang} con «+ Lingua», che li traduce.`,

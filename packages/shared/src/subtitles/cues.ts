@@ -387,15 +387,22 @@ export function sourceCueOf(cue: Pick<SubtitleCue, 'start' | 'end'>, source: rea
 /**
  * The source line each line of a translation stands for (final review C1, I2), by the line's id. Timed as its source
  * (`following`: the same timing), the source line it overlaps most (`sourceCueOf`, as `staleCues`). Not timed as its source
- * (its times are not the source's: a retime it could not follow), the source line its source text pairs with in order
- * (`certainPairs`), else the one it overlaps most. A line without `source` (one the user wrote) stands for the source line it
- * overlaps most. Never by id: the ids of a source timed again are recycled. Null: none.
+ * (a retime it could not follow): the source line on its own times with its source text (a line translated since), else the
+ * one its source text pairs with in order (`certainPairs`), else the one it overlaps most. A line without `source` (one the
+ * user wrote) stands for the source line it overlaps most. Never by id: the ids of a source timed again are recycled. Null: none.
  */
 export function translationSources(cues: readonly SubtitleCue[], source: readonly SubtitleCue[], following: boolean): Map<string, SubtitleCue | null> {
   const paired = new Map<string, SubtitleCue>();
   if (!following) {
-    const from = [...cues].filter((c) => c.source).sort((a, b) => a.start - b.start || a.end - b.end);
-    for (const [i, j] of certainPairs(from.map((c) => pairingText(c.source!.text)), source.map((c) => pairingText(c.text)))) paired.set(from[i]!.id, source[j]!);
+    // A line on its source line's own times and text (one translated since the retime) pairs with it first.
+    const taken = new Set<string>();
+    for (const c of cues) {
+      const s = c.source ? source.find((x) => !taken.has(x.id) && x.start === c.start && x.end === c.end && pairingText(x.text) === pairingText(c.source!.text)) : undefined;
+      if (s) { paired.set(c.id, s); taken.add(s.id); }
+    }
+    const from = [...cues].filter((c) => c.source && !paired.has(c.id)).sort((a, b) => a.start - b.start || a.end - b.end);
+    const rest = source.filter((x) => !taken.has(x.id));
+    for (const [i, j] of certainPairs(from.map((c) => pairingText(c.source!.text)), rest.map((c) => pairingText(c.text)))) paired.set(from[i]!.id, rest[j]!);
   }
   return new Map(cues.map((c) => [c.id, paired.get(c.id) ?? sourceCueOf(c, source)]));
 }
