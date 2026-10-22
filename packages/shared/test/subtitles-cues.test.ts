@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { subtitleCueSchema, alignToScript, buildCues, cueWarnings, mergeKeepingEdited, wrapLines, type SubtitleCue } from '../src/index.ts';
+import { subtitleCueSchema, alignToScript, buildCues, cueWarnings, mergeKeepingEdited, relocateCues, wrapLines, type SubtitleCue } from '../src/index.ts';
 
 const w = (text: string, start: number, end: number) => ({ text, start, end });
 
@@ -90,6 +90,11 @@ describe('mergeKeepingEdited', () => {
   const edited: SubtitleCue[] = [{ id: 'c1', edited: true, text: 'Motion Studio', start: 0, end: 1000 }];
   const freshCue = (id: string, text: string, start: number, end: number): SubtitleCue => ({
     id, start, end, text, words: text.split(' ').map((t, i, a) => w(t, start + (i * (end - start)) / a.length, start + ((i + 1) * (end - start)) / a.length)),
+  });
+  it('relocateCues moves every cue it is given (edited or not) to its words, and keeps the ones not found (final review)', () => {
+    const mine: SubtitleCue[] = [{ id: 'c1', text: 'Motion Studio', start: 0, end: 1000 }, { id: 'c2', edited: true, text: 'nowhere here', start: 3000, end: 4000 }];
+    const out = relocateCues(mine, [freshCue('f1', 'motion studio', 500, 1500)]);
+    expect(out.map((c) => [c.id, c.start, c.end, c.edited])).toEqual([['c1', 500, 1500, undefined], ['c2', 3000, 4000, true]]);
   });
   it('keeps an edited cue whose words no longer match', () => {
     const out = mergeKeepingEdited(edited, [freshCue('c1', 'totally other words', 0, 900), freshCue('c2', 'later text', 2000, 3000)]);

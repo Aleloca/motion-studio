@@ -259,11 +259,11 @@ function locate(cue: SubtitleCue, tokens: string[], fresh: { words: SubtitleWord
   return { start: fw[first]!.start, end: Math.max(fw[last]!.end, fw[first]!.start + 1) };
 }
 
-/** The old cues the user edited stay (text kept, times following the fresh words they match); fresh cues over them are dropped. */
-export function mergeKeepingEdited(old: SubtitleCue[], fresh: SubtitleCue[]): SubtitleCue[] {
+/** Each cue (text kept) moved to the fresh words it matches (`locate`); a cue not found keeps its times. */
+export function relocateCues(cues: SubtitleCue[], fresh: SubtitleCue[]): SubtitleCue[] {
   const fw = freshWords(fresh);
   const norm = fw.words.map((w) => normalizeToken(w.text));
-  const kept: SubtitleCue[] = old.filter((c) => c.edited).map((c) => {
+  return cues.map((c) => {
     const tokens = c.words && c.words.length > 0 ? c.words.map((w) => w.text) : c.text.split(/\s+/);
     const at = locate(c, tokens, fw, norm);
     if (!at) return c;
@@ -272,6 +272,11 @@ export function mergeKeepingEdited(old: SubtitleCue[], fresh: SubtitleCue[]): Su
     if (c.words) moved.words = c.words.map((w) => ({ ...w, start: Math.max(0, w.start + delta), end: Math.max(0, w.end + delta) }));
     return moved;
   });
+}
+
+/** The old cues the user edited stay (text kept, times following the fresh words they match); fresh cues over them are dropped. */
+export function mergeKeepingEdited(old: SubtitleCue[], fresh: SubtitleCue[]): SubtitleCue[] {
+  const kept = relocateCues(old.filter((c) => c.edited), fresh);
   const free = fresh.filter((f) => !kept.some((k) => f.start < k.end && f.end > k.start));
   const used = new Set(kept.map((k) => k.id));
   let n = 0;
