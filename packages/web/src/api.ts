@@ -109,6 +109,8 @@ export interface GroupExportResult {
 export interface StorePackExportResult { folder: string; written: string[]; failed: Array<{ file: string; reason: string }>; notInPack?: string[]; rendered?: Array<{ version: number; formats: string[]; locale?: string }> }
 /** "Render anyway" and the languages of a render or an export (Phase 12 §3.5). */
 export interface LocaleOptions { locales?: string[]; force?: boolean }
+/** The subtitles of an export (spec §6.6): the languages written as `.srt`/`.vtt` files next to each video. */
+export interface ExportSubtitles { subtitles?: { files?: string[] } }
 
 /** What `POST …/variants/run` answers (202): by variant letter; see the core's `FanoutResult`. */
 export interface VariantRunResult {
@@ -332,7 +334,7 @@ export const api = {
    * own size). Answers at once with the export job (its refusals come at once, as `exportPicks`'s); the files come with the
    * job's `export` once it is done.
    */
-  exportPicksJob: (slug: string, creative: string, body: { destination: string; picks: Record<string, number>; follow?: Record<string, number>; pattern?: string; date?: string } & LocaleOptions & ExportProfileBody) =>
+  exportPicksJob: (slug: string, creative: string, body: { destination: string; picks: Record<string, number>; follow?: Record<string, number>; pattern?: string; date?: string } & LocaleOptions & ExportProfileBody & ExportSubtitles) =>
     request<{ job: JobSummary }>('POST', `${c(slug, creative)}/export`, { ...body, background: true }),
   /** Decision 974: the group export in the background (see `exportPicksJob`). */
   exportGroupJob: (slug: string, creative: string, body: { destination: string; formats?: string[]; pattern?: string; date?: string } & LocaleOptions & ExportProfileBody) =>

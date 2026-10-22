@@ -10,7 +10,7 @@
 import {
   DEFAULT_EXPORT_QUALITY, EXPORT_FPS, EXPORT_QUALITIES, EXPORT_RESOLUTIONS, profileApplies, scaledSize, type ExportFps, type ExportQuality,
   EXPORT_NAME_TOKENS, type CompositionStill, exportDate, exportExtension, exportNameCollisions, exportNameVars, localizedStem, renderName, renderProblems, renderState, separateInstanceNames,
-  type FormatPreset, type JobSummary, type LocaleTag, type VersionEntry, type WorkspaceSettings,
+  type FormatPreset, type JobSummary, type LocaleTag, type SubtitlesSummary, type VersionEntry, type WorkspaceSettings,
 } from '@motion-studio/shared';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { api, ApiError, type GroupExportPlanItem } from '../api.ts';
@@ -71,6 +71,8 @@ export interface ExportDialogProps {
   jobs?: Record<string, JobSummary>;
   /** The creative's languages (Phase 12): with extra languages the dialog offers a multiselect; absent: as before. */
   locales?: { primary: LocaleTag; extra: LocaleTag[] };
+  /** The creative's subtitle sets: with any, the dialog offers the `.srt`/`.vtt` files (not in a group export). */
+  subtitles?: SubtitlesSummary[];
   /**
    * Phase 15 (spec §6): the export of a variant group. The rows come from the group selection (each format from its ★, in any
    * variant, or from the default rule on variant A) and the export is `exportGroup`; `snapshot` is not used.
@@ -150,7 +152,7 @@ interface Row {
   problems: string[];
 }
 
-function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels, pattern: initialPattern, onSettings, jobs = {}, locales, groupPlan }: ExportDialogProps & { snapshot: ExportSnapshot; groupPlan?: GroupExportPlanItem[] }) {
+function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels, pattern: initialPattern, onSettings, jobs = {}, locales, subtitles, groupPlan }: ExportDialogProps & { snapshot: ExportSnapshot; groupPlan?: GroupExportPlanItem[] }) {
   const t = useT();
   const x = t.web.exportUi;
   const locale = useLocale();
@@ -196,6 +198,9 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
   // Languages (Phase 12): the original is on, the translations are chosen. A translation with open problems or outdated texts
   // is refused by the core with the list; "Render anyway" sends `force`.
   const withLanguages = Boolean(locales && locales.extra.length > 0);
+  // Subtitle files (spec §6.6): none ticked by default; a group export has none.
+  const subtitleLangs = !groupPlan ? (subtitles ?? []).map((s) => s.lang) : [];
+  const [subFiles, setSubFiles] = useState<Record<string, boolean>>({});
   const [langs, setLangs] = useState<Record<string, boolean>>(() => (locales ? { [locales.primary]: true } : {}));
   const [refused, setRefused] = useState<string[] | null>(null);
   const field = useRef<HTMLInputElement>(null);
@@ -309,6 +314,8 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
   const wanted = locales && withLanguages ? [locales.primary, ...locales.extra].filter((tag) => langs[tag]) : [];
   const otherLanguages = locales ? wanted.some((tag) => tag !== locales.primary) : false;
   const languageBody = otherLanguages ? { locales: wanted } : {};
+  const subtitleFiles = subtitleLangs.filter((l) => subFiles[l]);
+  const subtitlesBody = subtitleFiles.length > 0 ? { subtitles: { files: subtitleFiles } } : {};
   const lockProfile = otherLanguages;
   // The resolution and quality are the videos' (decision 974): stills, identity and store pack formats keep their own.
   const videoRow = (r: Row) => r.composed && r.preset !== null && profileApplies(r.preset, r.id);
@@ -343,7 +350,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
       // are still hashed the core answers hashes-pending, retried after its Retry-After (bounded, like a ★ pick).
       const send = (forced: boolean, wait: Parameters<typeof withHashRetry>[1]) => (groupPlan
         ? api.exportGroupJob(slug, creative, { destination: dest, formats: chosen.map((c) => c.row.id), pattern, date, ...languageBody, ...profileBody, ...(forced ? { force: true } : {}) })
-        : withHashRetry(() => api.exportPicksJob(slug, creative, { destination: dest, picks, ...followed, pattern, date, ...languageBody, ...profileBody, ...(forced ? { force: true } : {}) }), wait));
+        : withHashRetry(() => api.exportPicksJob(slug, creative, { destination: dest, picks, ...followed, pattern, date, ...languageBody, ...subtitlesBody, ...profileBody, ...(forced ? { force: true } : {}) }), wait));
       const started = await send(force, abortableWait(signal));
       // Review #9: the same export with "Render anyway", for the app's notice when this dialog is closed by then.
       if (!force) exportRegistry.setRetry(started.job.id, () => send(true, abortableWait(new AbortController().signal)));
@@ -446,6 +453,22 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
                 <Check on={Boolean(langs[tag])} label={tag === locales.primary ? t.web.languages.renderOriginal({ language: localeName(tag, locale) }) : localeName(tag, locale)}
                   disabled={running} onChange={(v) => { setRefused(null); setLangs((s) => ({ ...s, [tag]: v })); }} />
                 <span>{tag === locales.primary ? t.web.languages.renderOriginal({ language: localeName(tag, locale) }) : localeName(tag, locale)}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {subtitleLangs.length > 0 ? (
+        <div className="ms-exp-langs" role="group" aria-label={x.subtitles.title}>
+          <span className="ms-exp-dest-label">{x.subtitles.title}</span>
+          <span className="ms-exp-lang"><b>{x.subtitles.files}</b></span>
+          <span className="ms-faint">{x.subtitles.filesHint}</span>
+          <div className="ms-exp-langs-list">
+            {subtitleLangs.map((tag) => (
+              <label key={tag} className="ms-exp-lang">
+                <Check on={Boolean(subFiles[tag])} label={`${x.subtitles.files}: ${localeName(tag, locale)}`} disabled={running}
+                  onChange={(v) => setSubFiles((s) => ({ ...s, [tag]: v }))} />
+                <span>{localeName(tag, locale)}</span>
               </label>
             ))}
           </div>

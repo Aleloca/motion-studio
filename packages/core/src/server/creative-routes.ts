@@ -3,7 +3,7 @@ import { recoverRenameJournal } from '../library/rename-recovery.ts';
 import { lstat, readdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, join, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { DEFAULT_EXPORT_QUALITY, EXPORT_FPS, EXPORT_QUALITIES, isDefaultProfile, EXPORT_RESOLUTIONS, type ExportFps, type ExportQuality, type RenderProfile, type VersionEntry, messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow, activeMembers, hostOf, isVariantId, letterOfSlug, MAX_NEW_VARIANTS, variantIdSchema, type VariantDetail, type VariantId, briefSessionRefSchema, singleAgentOn, videoAnalysisJobKey } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_QUALITY, EXPORT_FPS, EXPORT_QUALITIES, isDefaultProfile, EXPORT_RESOLUTIONS, type ExportFps, type ExportQuality, type RenderProfile, type VersionEntry, messages, type JobSummary, INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, presetOf, storePackFormats, storePackSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow, activeMembers, hostOf, isVariantId, letterOfSlug, MAX_NEW_VARIANTS, variantIdSchema, type VariantDetail, type VariantId, type SubtitleSet, briefSessionRefSchema, singleAgentOn, videoAnalysisJobKey } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import type { BriefClaim, BriefSessionService } from '../brief/brief-session.ts';
@@ -45,7 +45,8 @@ import { completeGitignore, sweepProject } from '../project-maintenance.ts';
 import { CodedError, expandHome, WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
 import { sendConfinedFile } from './serve-file.ts';
 import { localizedCompositionView } from './localization-routes.ts';
-import { subtitleSummaries } from './subtitles-routes.ts';
+import { subtitleSummaries, subtitleTimingNow } from './subtitles-routes.ts';
+import { readSubtitleSet } from '../subtitles/store.ts';
 import { currentLocale, t } from '../i18n.ts';
 import { BrandStore } from '../brand/brand-store.ts';
 import { readConfinedFile } from '../brand/agent-guard.ts';
@@ -175,6 +176,8 @@ const exportBody = z.object({
   locales: z.array(z.string().min(1).max(40)).min(1).max(11).optional(),
   /** "Render anyway" for translations rendered first that have open problems or outdated entries. */
   force: z.boolean().optional(),
+  /** The subtitles to export (spec §6.6); `files`: the languages written as `.srt`/`.vtt` next to each video. Absent: as before. */
+  subtitles: z.object({ files: z.array(z.string().min(1).max(40)).min(1).max(11).optional() }).optional(),
   ...exportProfileFields,
 });
 /** Phase 15 (spec §6): `POST …/export-group`; no picks, the group selection decides. */
@@ -853,8 +856,19 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const briefPrimary = creative.brief.locales?.primary;
     const includeSource = tags === null || (briefPrimary !== undefined && tags.includes(briefPrimary));
     const otherTags = tags === null ? [] : tags.filter((x) => x !== briefPrimary);
+    // The `.srt`/`.vtt` files: every language needs its set (a refusal before anything is rendered or copied).
+    const subtitleTags = [...new Set((body.subtitles?.files ?? []).map((x) => checkedLocale(x, currentLocale())))];
+    const subtitleSets: SubtitleSet[] = [];
+    for (const lang of subtitleTags) {
+      const found = await readSubtitleSet(creativeDir, lang);
+      if (!found) throw new CodedError(400, t().export.subtitlesMissing({ lang }), 'export-subtitles-missing');
+      subtitleSets.push(found.set);
+    }
+    const subtitles = subtitleSets.length > 0
+      ? { sets: subtitleSets, durationMs: (await subtitleTimingNow(ref.projectDir, ref.creativeSlug, presets))?.durationMs ?? Number.POSITIVE_INFINITY } : null;
     const common = { creativeDir, destination, slug: ref.creativeSlug, title: creative.title, forbiddenRoot: ref.root, presets, pattern,
       ...(typeof body.date === 'string' ? { now: body.date } : {}),
+      ...(subtitles ? { subtitles } : {}),
       label: (id: string) => formatDisplayName(presets, id, currentLocale(), creative.brief.formatLabels) };
     if (body.picks === undefined && body.follow === undefined && body.version !== undefined) {
       // The older single-version payload: every output of that version.

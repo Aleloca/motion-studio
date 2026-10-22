@@ -1,7 +1,8 @@
-import { access, constants, lstat, mkdir, open, realpath, rm, stat } from 'node:fs/promises';
+import { access, constants, lstat, mkdir, mkdtemp, open, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { pipeline } from 'node:stream/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { DEFAULT_EXPORT_NAME_PATTERN, exportExtension, exportNameCollisions, exportNameVars, followerMatches, followerVersion, hasFormat, isDefaultProfile, localizedStem, profileApplies, profileFor, DEFAULT_EXPORT_QUALITY, recordedQuality, renderName, renderState, separateInstanceNames, starOf, type FormatPreset, type RenderProfile, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_NAME_PATTERN, exportExtension, exportNameCollisions, exportNameVars, followerMatches, followerVersion, hasFormat, isDefaultProfile, localizedStem, profileApplies, profileFor, DEFAULT_EXPORT_QUALITY, recordedQuality, renderName, renderState, separateInstanceNames, starOf, toSrt, toVtt, type FormatPreset, type RenderProfile, type SubtitleSet, type VersionEntry } from '@motion-studio/shared';
 import { copyConfinedFile, probeConfinedFile } from '../brand/agent-guard.ts';
 import { findPreset } from '../formats/format-catalog.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
@@ -168,8 +169,33 @@ export interface ExportCommon {
   /** A format's display name in messages; its id when omitted. */
   label?: (format: string) => string;
   copy?: CopyFn;
+  /** Subtitles as `.srt`/`.vtt` files next to each exported video (never a still): the sets and the duration their cues are cut to. */
+  subtitles?: { sets: SubtitleSet[]; durationMs: number };
   /** Review #6: a cancel stops the copy between files (and a render made for the export mid-file); it ends as `cancelled`. */
   signal?: AbortSignal;
+}
+
+const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.webm', '.m4v']);
+
+/**
+ * Writes `<stem>.<lang>.srt` and `.vtt` for each set into `destination` (the names of `copyUnique`: `-2`… when taken, the
+ * files are never overwritten). Returns the paths written; a failure carries the `target` it created, for the caller to remove.
+ */
+export async function writeSubtitleFiles(o: { destination: string; stem: string; sets: SubtitleSet[]; durationMs: number; copy?: CopyFn }): Promise<string[]> {
+  const copy = o.copy ?? copyOwn;
+  const work = await mkdtemp(join(tmpdir(), 'ms-subtitles-export-'));
+  const out: string[] = [];
+  try {
+    for (const set of o.sets) {
+      for (const [ext, body] of [['.srt', toSrt(set.cues, { durationMs: o.durationMs })], ['.vtt', toVtt(set.cues, { durationMs: o.durationMs })]] as const) {
+        const from = join(work, `${set.lang}${ext}`);
+        await writeFile(from, body);
+        const to = await copyUnique(copy, from, o.destination, `${o.stem}.${set.lang}`, ext);
+        if (to) out.push(to);
+      }
+    }
+    return out;
+  } finally { await rm(work, { recursive: true, force: true }).catch(() => undefined); }
 }
 
 /** A plain file name (no folder part, not `.`/`..`). */
@@ -255,6 +281,10 @@ async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refu
     try {
       const to = await copyUnique(copy, from, dest, it.stem, it.ext);
       if (to) files.push({ from, to }); else skipped.push(it.file);
+      if (to && opts.subtitles && VIDEO_EXTENSIONS.has(it.ext)) {
+        const stem = basename(to).slice(0, basename(to).length - it.ext.length);
+        for (const sub of await writeSubtitleFiles({ destination: dest, stem, ...opts.subtitles, ...(opts.copy ? { copy: opts.copy } : {}) })) files.push({ from, to: sub });
+      }
       if (to && it.set) files.push(...await copySet(copy, dir, it.n, it.set, dest, basename(to).slice(0, basename(to).length - it.ext.length)));
     } catch (e) {
       const target = (e as { target?: string }).target;
