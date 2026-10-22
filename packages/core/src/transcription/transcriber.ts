@@ -3,7 +3,7 @@ import { access, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type {
   TranscribeMethod, TranscriptionChoice, TranscriptionModelId, TranscriptionPending, TranscriptionSettings, TranscriptionSettingsPatch,
-  TranscriptionStatus, TranscriptKind, TranscriptSegment, WhisperEngine, WhisperFound,
+  TranscriptionStatus, TranscriptKind, TranscriptSegment, TranscriptWord, WhisperEngine, WhisperFound,
 } from '@motion-studio/shared';
 import type { AppConfigStore } from '../app-config.ts';
 import { currentLocale, t } from '../i18n.ts';
@@ -57,7 +57,7 @@ const abortError = () => Object.assign(new Error('aborted'), { name: 'AbortError
  * a saved method that works runs, `ask` or a saved method that no longer works asks), builds the dialog's offer, applies
  * the user's choice (a model download only with the size the user saw), runs Whisper or a provider, and records a paid
  * transcription's cost in `usage.jsonl`. Language: auto-detected, the app language when the engine reports none
- * (decision 1503).
+ * (decision 1503; for the subtitles null, decision 1709).
  */
 export class TranscriptionService {
   /** Decision 1553: what the last detection found; read by every call, refreshed only in the background or on request. */
@@ -305,9 +305,11 @@ export class TranscriptionService {
   /**
    * Transcribes an analysis's audio with `method` (the user's choice), or with the method the settings resolve to now
    * (absent). A method that does not work at that moment, or a failed transcription, gives `none-skipped`: the rest of the
-   * analysis goes on (decision 1515). Aborts propagate.
+   * analysis goes on (decision 1515). Aborts propagate. `words`: also the word timings (the subtitles), and then a
+   * language the engine does not report stays null; `language`: told to the engine in its code (the editor's "redo choosing
+   * the language", the subtitles' language), auto when absent.
    */
-  async transcribe(i: { ref: { projectDir: string }; jobId: string; wav: string; durationSec: number; signal: AbortSignal; method?: TranscribeMethod }): Promise<{ kind: TranscriptKind; segments: TranscriptSegment[]; language: string | null }> {
+  async transcribe(i: { ref: { projectDir: string }; jobId: string; wav: string; durationSec: number; signal: AbortSignal; method?: TranscribeMethod; words?: boolean; language?: string | null }): Promise<{ kind: TranscriptKind; segments: TranscriptSegment[]; words?: TranscriptWord[]; language: string | null }> {
     const skipped = { kind: 'none-skipped' as const, segments: [], language: null };
     let method = i.method;
     if (!method) {
@@ -315,14 +317,17 @@ export class TranscriptionService {
       if (!('run' in p)) return skipped;
       method = p.run;
     }
-    const hint = currentLocale();
+    const words = i.words === true;
+    // Decision 1709: the subtitles never label a set with the interface language; the analysis keeps it as its hint.
+    const hint = words ? null : currentLocale();
+    const language = engineLanguage(i.language ?? null);
     try {
       if (method === 'whisper') {
         const s = await this.settings();
         const w = await this.whisper(s);
         if (!w) return skipped;
-        const r = await runWhisper(w, i.wav, { language: null, signal: i.signal, timeoutMs: Math.max(10 * 60_000, Math.ceil(i.durationSec * 3000)) });
-        return { kind: s.model === 'large-v3-turbo' ? 'whisper-large-v3-turbo' : 'whisper-small', segments: r.segments, language: r.language ?? hint };
+        const r = await runWhisper(w, i.wav, { language, signal: i.signal, timeoutMs: Math.max(10 * 60_000, Math.ceil(i.durationSec * 3000)), ...(words ? { words } : {}) });
+        return { kind: s.model === 'large-v3-turbo' ? 'whisper-large-v3-turbo' : 'whisper-small', segments: r.segments, ...(words && r.words ? { words: r.words } : {}), language: r.language ?? hint };
       }
       const apiKey = await this.deps.vault.get(method);
       if (!apiKey) return skipped;
@@ -332,16 +337,27 @@ export class TranscriptionService {
         jobId: i.jobId, provider: method as SttProvider, model: STT_PRICES_USD_PER_MIN[method as SttProvider].model, audioSec: seconds, costUsd: estimateSttCost(method as SttProvider, seconds),
       }).catch((err: Error) => console.warn(`Motion Studio: the transcription usage was not recorded: ${err.message}`));
       const r = method === 'openai'
-        ? await openaiTranscribe(http, i.wav, { language: null, signal: i.signal, onPiece: (p) => bill(p.seconds) })
-        : await elevenlabsTranscribe(http, i.wav, { language: null, signal: i.signal });
+        ? await openaiTranscribe(http, i.wav, { language, signal: i.signal, ...(words ? { words } : {}), onPiece: (p) => bill(p.seconds) })
+        : await elevenlabsTranscribe(http, i.wav, { language, signal: i.signal });
       if (method === 'elevenlabs') await bill(i.durationSec);
-      return { kind: method, segments: r.segments, language: r.language ?? hint };
+      return { kind: method, segments: r.segments, ...(words && r.words ? { words: r.words } : {}), language: r.language ?? hint };
     } catch (err) {
       if (i.signal.aborted || (err as Error).name === 'AbortError') throw abortError();
       console.warn(`Motion Studio: ${t().errors.transcriptionFailed({ reason: (err as Error).message })}`);
       return skipped;
     }
   }
+}
+
+/**
+ * The code an engine is told for a language tag (decision 1709): whisper.cpp, the Python Whispers and OpenAI take ISO 639-1
+ * (`zh`, `no`), and ElevenLabs Scribe takes 639-1 too (or 639-3), so one mapping serves all: the Chinese scripts become `zh`,
+ * Norwegian Bokmål `no`, a region or script subtag is dropped.
+ */
+export function engineLanguage(tag: string | null): string | null {
+  if (!tag) return null;
+  const base = tag.split('-')[0]!.toLowerCase();
+  return base === 'nb' || base === 'nn' ? 'no' : base;
 }
 
 const isProblem = (r: WhisperFound | { problem: string }): r is { problem: string; needsModel?: true } => !('engine' in r);

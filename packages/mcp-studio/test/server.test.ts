@@ -150,6 +150,24 @@ describe('mcp-studio server', () => {
     startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,fill_brief' });
     expect(((await rpc(5, 'tools/list')).result.tools as Array<{ name: string }>).map((t) => t.name)).not.toContain('write_video_analysis');
   });
+  it('lists start_subtitles only when the job names it, files only (no drawn until phase 3), and forwards it (subtitles, U9)', async () => {
+    child.kill();
+    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,start_subtitles' });
+    const tools = (await rpc(3, 'tools/list')).result.tools as Array<{ name: string; description: string; inputSchema: { additionalProperties?: boolean; required?: string[]; properties: Record<string, unknown> } }>;
+    expect(tools.map((t) => t.name)).toEqual(['approve', 'report_progress', 'start_subtitles']);
+    const s = tools.find((t) => t.name === 'start_subtitles')!;
+    expect(s.inputSchema.additionalProperties).toBe(false);
+    expect(s.inputSchema.required ?? []).toEqual([]);
+    expect(Object.keys(s.inputSchema.properties)).toEqual(['lang']);
+    expect(s.description).toContain('.srt');
+    expect(s.description).toContain('draws nothing into the video');
+    expect(s.description).not.toContain('AskUserQuestion');
+    await rpc(4, 'tools/call', { name: 'start_subtitles', arguments: { lang: 'it' } });
+    expect(calls.at(-1)).toMatchObject({ url: '/api/bridge/start_subtitles', body: { lang: 'it' } });
+    child.kill();
+    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,update_brief' });
+    expect(((await rpc(5, 'tools/list')).result.tools as Array<{ name: string }>).map((t) => t.name)).not.toContain('start_subtitles');
+  });
   it('describes every tool in English', async () => {
     child.kill();
     startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,validate_composition,preview_frames,read_brand_kit,generate_image,tts,stock_search,stock_download,fonts_fetch,download_file,inspect_site_fonts,list_formats,fill_brief' });

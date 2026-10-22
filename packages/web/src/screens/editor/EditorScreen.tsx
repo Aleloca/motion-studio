@@ -1103,7 +1103,8 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
       ) : null}
       <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((x) => (x ? { ...x, open: false } : x))} slug={slug} creative={creative}
         title={detail?.creative.title ?? ''} snapshot={exporting?.snapshot ?? null} presets={presets} labels={detail?.creative.brief.formatLabels} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings}
-        jobs={live.jobs} {...(detail && creativeLocales(detail.creative.brief) ? { locales: creativeLocales(detail.creative.brief)! } : {})} />
+        jobs={live.jobs} {...(detail && creativeLocales(detail.creative.brief) ? { locales: creativeLocales(detail.creative.brief)! } : {})}
+        {...(detail?.subtitles?.length ? { subtitles: detail.subtitles } : {})} />
     </div>
   );
   // Tasks 6 to 10 read the draft, the player and the selection from here (`useEditor()`).

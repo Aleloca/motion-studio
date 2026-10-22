@@ -46,9 +46,12 @@ describe('version and flags come only from what the program really says', () => 
     const program = await fakeWhisper(d, 'whisper-cli', { version: `error: unknown argument: --version\n${CPP_HELP}`, help: CPP_HELP });
     expect((await identifyWhisper(program, 'whisper.cpp'))!.version).toBeNull();
   });
-  it('flags from --help: --vad, -sns and -np only when listed', () => {
-    expect(engineFlags(CPP_HELP)).toEqual({ vad: true, sns: true, np: true });
-    expect(engineFlags('usage: main [options]\n  -l LANG, --language LANG')).toEqual({ vad: false, sns: false, np: false });
+  it('flags from --help: --vad, -sns, -np and -ojf only when listed', () => {
+    expect(engineFlags(CPP_HELP)).toEqual({ vad: true, sns: true, np: true, ojf: false });
+    expect(engineFlags('usage: main [options]\n  -l LANG, --language LANG')).toEqual({ vad: false, sns: false, np: false, ojf: false });
+    expect(engineFlags('usage: main [options]\n  -ojf,      --output-json-full  [false  ] include more information in the JSON file').ojf).toBe(true);
+    expect(engineFlags('usage: main [options]\n  --output-json-full').ojf).toBe(true);
+    expect(engineFlags('usage: main [options]\n  -oj,       --output-json       [false  ] output result in a JSON file').ojf).toBe(false);
   });
   it('an older whisper.cpp: no --vad, -sns or -np in its argv even with a VAD model', async () => {
     const d = await temp();

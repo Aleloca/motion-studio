@@ -78,6 +78,10 @@ import { registerBriefRoutes } from './brief-routes.ts';
 import { SettingsHoldStore } from '../settings-hold.ts';
 import { videoAnalysisTools } from '../analysis/analysis-tool.ts';
 import { ANALYSIS_LANE, VideoAnalysisService } from '../analysis/video-analysis.ts';
+import { SubtitleCommits } from '../subtitles/store.ts';
+import { SUBTITLES_LANE, SubtitlesService } from '../subtitles/subtitles-job.ts';
+import { subtitlesTools } from '../subtitles/subtitles-tools.ts';
+import { registerSubtitlesRoutes } from './subtitles-routes.ts';
 import { registerAnalysisRoutes } from './analysis-routes.ts';
 import { TranscriptionService } from '../transcription/transcriber.ts';
 import type { WhisperModelManifest } from '../transcription/models.ts';
@@ -174,6 +178,8 @@ export interface ServerDeps {
   analysisPrecheckMaxMs?: number;
   /** Test seam: told the video analysis service once it exists. */
   onVideoAnalyses?: (s: VideoAnalysisService) => void;
+  /** Test seam: told the subtitles service once it exists. */
+  onSubtitles?: (s: SubtitlesService) => void;
   /** Spec §7: the folder of the bundled `whisper-cli` (and its VAD model); absent: none bundled. */
   whisperDir?: string;
   /** Network of the transcription providers and the Whisper model downloads (tests inject a fake fetch; default: the real one). */
@@ -287,8 +293,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // `coordinator` (phase 3 of the single agent): a group turn waits for its helpers without taking the main slots they need;
     // two at a time (review minor 4): with the main lane's default two, at most four Claude processes.
     // `video-analysis` (decision 1481): the videos' analyses, one at a time per project (a slot group), never in a turn's slot:
-    // a creative's first turn waits for them.
-    concurrency: 2, lanes: { render: 1, generate: 2, export: 2, [COORDINATOR_LANE]: 2, [ANALYSIS_LANE]: 2 },
+    // a creative's first turn waits for them. `subtitles` (decision 1640): one subtitles job at a time, app-wide.
+    concurrency: 2, lanes: { render: 1, generate: 2, export: 2, [COORDINATOR_LANE]: 2, [ANALYSIS_LANE]: 2, [SUBTITLES_LANE]: 1 },
     onUpdate: (job) => {
       hub.broadcast({ type: 'job', job });
       if (job.kind === 'localize' && job.state !== 'queued' && job.state !== 'running') afterOtherJob?.(job.key, job.state);
@@ -440,6 +446,15 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   turns.videoAnalyses = analyses;
   briefs.videoAnalyses = analyses;
   deps.onVideoAnalyses?.(analyses);
+  // Decisions 1636-1640: the subtitle sets, their batched commits (through the app's one Git: its per-repo lock orders them
+  // with every other commit) and the job that makes them from a creative's audio mix.
+  const subtitleCommits = new SubtitleCommits({ git: deps.git });
+  const subtitles = new SubtitlesService({
+    queue, transcriber: transcription, ffmpeg: () => findFfmpeg(), media, turns, commits: subtitleCommits,
+    broadcast: (msg) => hub.broadcast(msg),
+    presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
+  });
+  deps.onSubtitles?.(subtitles);
 
   afterOtherJob = (key, state) => { void turns.otherJobEndedByKey(key, state); };
   turnsRef = turns;
@@ -546,6 +561,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     await previews.close();
     await normalizer.close();
     await queue.whenIdle();
+    // The subtitle edits still waiting for their quiet time are committed now.
+    await subtitleCommits.flush();
   });
 
   await app.register(fastifyWebsocket);
@@ -897,10 +914,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       ...agentActions.tools(),
       ...briefs.tools(),
       ...videoAnalysisTools(),
+      ...subtitlesTools({ subtitles, turns }),
     },
   });
   registerBriefRoutes(app, { requireWorkspace, briefs, configDir });
   registerAnalysisRoutes(app, { requireWorkspace, analyses, media, git: deps.git });
+  registerSubtitlesRoutes(app, { requireWorkspace, subtitles, jobs: () => queue.list(), presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets });
   registerTranscriptionRoutes(app, { transcription });
   registerSettingsRoutes(app, { vault, approvals, requireWorkspace, keyChecks, keyCheckHttp: deps.keyCheckHttp ?? { fetch: globalThis.fetch } });
   registerRenderEngineRoutes(app, {

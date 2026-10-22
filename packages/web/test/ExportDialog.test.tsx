@@ -478,3 +478,33 @@ describe('ExportDialog · resolution and quality (decision 974, user report 22)'
     expect(api.exportPicksJob.mock.calls[0]![2]).not.toHaveProperty('fps');
   });
 });
+
+describe('ExportDialog · subtitle files', () => {
+  const sub = (lang: string) => ({ lang, origin: 'speech', cues: 3, edited: 0, hash: 'a'.repeat(64), timing: { version: 1, format: REEL, fingerprint: 'b'.repeat(64) }, timingChanged: false, staleCues: 0 }) as never;
+  const openWith = (subtitles?: never[]) => render(
+    <I18nProvider locale="it">
+      <Live open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions, states: states() }} presets={DEFAULT_FORMATS}
+        pattern="{title}-{format}-v{v}" onSettings={onSettings} {...(subtitles ? { subtitles } : {})} />
+    </I18nProvider>,
+  );
+  it('shows the section only when the creative has subtitles', () => {
+    openWith();
+    expect(screen.queryByText('Sottotitoli')).toBeNull();
+  });
+  it('sends the ticked languages as subtitles.files (none ticked by default)', async () => {
+    openWith([sub('it'), sub('en')] as never[]);
+    const group = screen.getByRole('group', { name: 'Sottotitoli' });
+    expect(within(group).getByText('File .srt e .vtt')).toBeTruthy();
+    expect(within(group).getByText('Accanto a ogni video, per YouTube, Vimeo, LinkedIn e i siti.')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Esporta 3 file' }));
+    await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledOnce());
+    expect(api.exportPicksJob.mock.calls[0]![2]).not.toHaveProperty('subtitles');
+  });
+  it('ticking Italian sends subtitles: { files: [it] }', async () => {
+    openWith([sub('it'), sub('en')] as never[]);
+    await userEvent.click(screen.getByRole('checkbox', { name: /File \.srt e \.vtt.*italiano/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'Esporta 3 file' }));
+    await waitFor(() => expect(api.exportPicksJob).toHaveBeenCalledOnce());
+    expect(api.exportPicksJob.mock.calls[0]![2]).toMatchObject({ subtitles: { files: ['it'] } });
+  });
+});

@@ -42,8 +42,9 @@ export function activityLists(live: EventsState) {
 
 /**
  * Where a job belongs, from its key. The core's keys are `creative:<root>:<project>:<creative>`,
- * `render:<root>:<project>:<creative>:v<n>` (a follow-up: `…:v<n>:<k>`), `brand:<root>:<project>` (analysis and asset descriptions) and
- * `project:<root>:<project>`, `generate:<id>:<project>` (Assets Generate) and `brief:<root>:<project>` (decision 1421); the root may contain ':' (Windows), slugs never do.
+ * `render:<root>:<project>:<creative>:v<n>` (a follow-up: `…:v<n>:<k>`), `brand:<root>:<project>` (analysis and asset descriptions),
+ * `project:<root>:<project>`, `generate:<id>:<project>` (Assets Generate), `brief:<root>:<project>` (decision 1421) and
+ * `subtitles:<root>:<project>:<creative>` (decision 1640); the root may contain ':' (Windows), slugs never do.
  * Phase 15: a group's directions turn is `variant-directions:creative:<root>:<project>:<host>`, the host's creative key behind
  * a prefix: it belongs to the host (its link and its variant tag).
  */
@@ -53,7 +54,8 @@ export function jobPlace(job: JobSummary): { project: string; creative: string |
   if (job.key.startsWith('group:')) return jobPlace({ ...job, key: job.key.slice('group:'.length) });
   const parts = job.key.split(':');
   const kind = parts[0];
-  if (kind === 'creative' && parts.length >= 4) return { project: parts.at(-2)!, creative: parts.at(-1)! };
+  // Decision 1640: a creative's subtitles job `subtitles:<root>:<project>:<creative>` (`subtitlesJobKey`) belongs to it.
+  if ((kind === 'creative' || kind === 'subtitles') && parts.length >= 4) return { project: parts.at(-2)!, creative: parts.at(-1)! };
   // Decision 1468: a video's analysis `video-analysis:<root>:<project>:<sha256>` belongs to its project (the assets).
   if (kind === 'video-analysis' && parts.length >= 4) return { project: parts.at(-2)!, creative: null };
   // Decision 974: an export `export:<root>:<project>:<creative>:<id>`, a render for one export `render-export:…:v<n>:<id>`.

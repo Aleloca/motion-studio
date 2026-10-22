@@ -28,6 +28,7 @@ import {
 } from './store.ts';
 import { issueFields } from './issues.ts';
 import { checkedInstance, checkedLocale, clipLabel, measuredByBrowser } from './validate.ts';
+import { subtitlesDir } from '../subtitles/store.ts';
 
 /**
  * The `localize` turn (Phase 12, Task 4, spec §3.2): an agent turn on an EXISTING version that translates the missing or
@@ -468,8 +469,9 @@ export class LocalizeService {
           const watch = await this.watchProject(ref, jobId, own);
           const run = await this.deps.launcher.start({
             kind: 'localize', jobId, projectSlug: ref.projectSlug, projectDir: ref.projectDir, creativeSlug: slug,
-            // The version translated is not "earlier" for this turn: it and every other version folder are read-only for the agent.
-            protectedDirs: [versionDir, join(creativeDir, 'outputs')],
+            // The version translated is not "earlier" for this turn: it and every other version folder are read-only for the agent,
+            // and so are the subtitle sets (decision 1636: only the core writes them).
+            protectedDirs: [versionDir, join(creativeDir, 'outputs'), subtitlesDir(creativeDir)],
             request: { prompt, ...(resumeSessionId ? { resumeSessionId } : {}), forkSession: false, ...(model ? { model } : {}) },
             usage: { version: n, attempt }, sandboxed,
             services: effectiveServices(creative.brief),

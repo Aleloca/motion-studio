@@ -1,7 +1,8 @@
-import { access, constants, lstat, mkdir, open, realpath, rm, stat } from 'node:fs/promises';
+import { access, constants, lstat, mkdir, mkdtemp, open, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { pipeline } from 'node:stream/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { DEFAULT_EXPORT_NAME_PATTERN, exportExtension, exportNameCollisions, exportNameVars, followerMatches, followerVersion, hasFormat, isDefaultProfile, localizedStem, profileApplies, profileFor, DEFAULT_EXPORT_QUALITY, recordedQuality, renderName, renderState, separateInstanceNames, starOf, type FormatPreset, type RenderProfile, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_NAME_PATTERN, exportExtension, exportNameCollisions, exportNameVars, followerMatches, followerVersion, hasFormat, isDefaultProfile, localizedStem, profileApplies, profileFor, DEFAULT_EXPORT_QUALITY, recordedQuality, renderName, renderState, separateInstanceNames, starOf, toSrt, toVtt, type FormatPreset, type RenderProfile, type SubtitleSet, type VersionEntry } from '@motion-studio/shared';
 import { copyConfinedFile, probeConfinedFile } from '../brand/agent-guard.ts';
 import { findPreset } from '../formats/format-catalog.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
@@ -131,6 +132,8 @@ export interface ExportItem { format: string; n: number; v?: number; file: strin
   creativeDir?: string;
   /** The language of the file (Phase 12): the `{locale}` of its name; absent for a creative without extra languages. */
   locale?: string;
+  /** The video's own duration in seconds when the version recorded it: what its subtitle files are cut to. */
+  durationSec?: number | null;
   /** A translated render (not the primary language's file). */
   localized?: boolean;
   /** A translated render's own problems (its checks and the browser's overflow measure, Phase 12 Rulings I and J). */
@@ -168,8 +171,33 @@ export interface ExportCommon {
   /** A format's display name in messages; its id when omitted. */
   label?: (format: string) => string;
   copy?: CopyFn;
+  /** Subtitles as `.srt`/`.vtt` files next to each exported video (never a still): the sets, and `durationMs` the cut for a video whose own duration is not recorded (else the sets' last cue end). */
+  subtitles?: { sets: SubtitleSet[]; durationMs?: number };
   /** Review #6: a cancel stops the copy between files (and a render made for the export mid-file); it ends as `cancelled`. */
   signal?: AbortSignal;
+}
+
+const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.webm', '.m4v']);
+
+/**
+ * Writes `<stem>.<lang>.srt` and `.vtt` for each set into `destination` (the names of `copyUnique`: `-2`… when taken, the
+ * files are never overwritten). Returns the paths written; a failure carries the `target` it created, for the caller to remove.
+ */
+export async function writeSubtitleFiles(o: { destination: string; stem: string; sets: SubtitleSet[]; durationMs: number; copy?: CopyFn }): Promise<string[]> {
+  const copy = o.copy ?? copyOwn;
+  const work = await mkdtemp(join(tmpdir(), 'ms-subtitles-export-'));
+  const out: string[] = [];
+  try {
+    for (const set of o.sets) {
+      for (const [ext, body] of [['.srt', toSrt(set.cues, { durationMs: o.durationMs })], ['.vtt', toVtt(set.cues, { durationMs: o.durationMs })]] as const) {
+        const from = join(work, `${set.lang}${ext}`);
+        await writeFile(from, body);
+        const to = await copyUnique(copy, from, o.destination, `${o.stem}.${set.lang}`, ext);
+        if (to) out.push(to);
+      }
+    }
+    return out;
+  } finally { await rm(work, { recursive: true, force: true }).catch(() => undefined); }
 }
 
 /** A plain file name (no folder part, not `.`/`..`). */
@@ -255,6 +283,13 @@ async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refu
     try {
       const to = await copyUnique(copy, from, dest, it.stem, it.ext);
       if (to) files.push({ from, to }); else skipped.push(it.file);
+      if (to && opts.subtitles && VIDEO_EXTENSIONS.has(it.ext)) {
+        const stem = basename(to).slice(0, basename(to).length - it.ext.length);
+        // The cues are cut at THIS video's duration (an older or longer version differs from the latest); never unbounded.
+        const durationMs = it.durationSec && it.durationSec > 0 ? Math.round(it.durationSec * 1000)
+          : opts.subtitles.durationMs ?? Math.max(0, ...opts.subtitles.sets.flatMap((s) => s.cues.map((c) => c.end)));
+        for (const sub of await writeSubtitleFiles({ destination: dest, stem, sets: opts.subtitles.sets, durationMs, ...(opts.copy ? { copy: opts.copy } : {}) })) files.push({ from, to: sub });
+      }
       if (to && it.set) files.push(...await copySet(copy, dir, it.n, it.set, dest, basename(to).slice(0, basename(to).length - it.ext.length)));
     } catch (e) {
       const target = (e as { target?: string }).target;
@@ -411,7 +446,7 @@ export function resolveExportPicks(opts: PicksOptions): ExportItem[] {
   const itemOf = (format: string, n: number) => {
     const v = opts.versions.find((x) => x.n === n);
     const o = v?.outputs.find((x) => x.format === format);
-    if (o) return { format, n, file: o.file, width: o.width, height: o.height, ...setOf(o) };
+    if (o) return { format, n, file: o.file, width: o.width, height: o.height, durationSec: o.durationSec, ...setOf(o) };
     // A v2 composition with no render yet: exported once rendered.
     return v && v.compositions?.some((c) => c.format === format) && hasFormat(v, format) ? { format, n, file: '', width: 0, height: 0 } : null;
   };
@@ -469,6 +504,6 @@ export async function exportVersion(opts: ExportCommon & { version: VersionEntry
   }
   const n = opts.version.n;
   const items = opts.version.outputs.filter((o) => !wanted || wanted.has(o.format))
-    .map((o) => ({ format: o.format, n, file: o.file, width: o.width, height: o.height, ...setOf(o) }));
+    .map((o) => ({ format: o.format, n, file: o.file, width: o.width, height: o.height, durationSec: o.durationSec, ...setOf(o) }));
   return runExport(items, opts, 'skip', n);
 }

@@ -8,6 +8,8 @@ import { INSTANCE_FOLDER_SOURCE, INSTANCE_ID_RE } from './format-instance.ts';
 import { storePackSchema } from './store-pack.ts';
 import { renderInfoSchema } from './export-quality.ts';
 import { localeTag } from './localization/schema.ts';
+import type { LocaleTag } from './localization/locales.ts';
+import type { SubtitleSet } from './subtitles/schema.ts';
 import { channelName, DEFAULT_FORMATS, formatDisplayName } from './formats.ts';
 import { messages, type Locale } from './i18n/index.ts';
 import type { FormatSummary } from './formats/link.ts';
@@ -489,8 +491,11 @@ type ConversationEntryBody =
    * latest) still holds its content. The turn's boundary, like a `version` entry, for the readers that look for one.
    * `origin: 'brief'` (decision 1423): the line that marks where a creative starts after its brief session's conversation.
    * `analysisWait` (decision 1478): the first turn waits for the analyses of these videos (names); the chat offers "Skip".
+   * `subtitles` (decision 1640): a subtitles job ended: `ready` (set `lang`; `detected` the transcriber's language, `briefLang`
+   * the brief's when it differs: the chat offers to translate), `failed`, `no-speech`, `unsupported-language` (`detected`).
    */
-  | { type: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string; origin?: 'agent' | 'brief'; keptVersion?: number; analysisWait?: { files: string[] } }
+  | { type: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string; origin?: 'agent' | 'brief'; keptVersion?: number; analysisWait?: { files: string[] };
+    subtitles?: { state: 'ready' | 'failed' | 'no-speech' | 'unsupported-language'; lang?: LocaleTag; detected?: string; briefLang?: LocaleTag } }
   /**
    * Phase 3 of the single agent (spec §4.1): a group turn settled. `outcome`: per variant it worked on; `usage`: the turn's
    * whole cost (the coordinator's runs and every helper's), when known. Written once, with `group: true`.
@@ -568,7 +573,18 @@ export type CreativeListItem = ({ ok: true } & CreativeSummary) | { ok: false; s
  * `formats`: one summary per brief format (history, ★, linkable primaries), always sent by the core; optional in the type
  * only so older fixtures stay valid. `versions` may carry hashes the core computed lazily for old versions.
  */
-export interface CreativeDetail { slug: string; creative: CreativeFile; versions: VersionEntry[]; jobKey: string; formats?: FormatSummary[]; /** Phase 15: absent outside a group. */ variants?: VariantDetail }
+/**
+ * A subtitle set of a creative as its detail lists it (decision 1636). `edited`: cues the user changed by hand; `hash`: the
+ * set file's; `timingChanged`: the audio fingerprint of the set's format moved since its timing was made ("the video changed:
+ * check the timing"); `staleCues`: the cues of a translation whose source text changed since.
+ */
+export interface SubtitlesSummary {
+  lang: LocaleTag; origin: 'speech' | 'translation'; sourceLang?: LocaleTag; cues: number; edited: number; hash: string;
+  timing: SubtitleSet['timing']; timingChanged: boolean; staleCues: number;
+}
+export interface CreativeDetail { slug: string; creative: CreativeFile; versions: VersionEntry[]; jobKey: string; formats?: FormatSummary[]; /** Phase 15: absent outside a group. */ variants?: VariantDetail;
+  /** The creative's subtitle sets; absent: none. */
+  subtitles?: SubtitlesSummary[] }
 
 /** Localized text of an output warning; an unknown key, or params that are not numbers, fall back to the key itself. */
 export function outputWarningText(w: OutputWarning, locale: Locale): string {

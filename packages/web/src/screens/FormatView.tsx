@@ -793,7 +793,8 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
       ) : null}
       <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
         title={cr?.title ?? ''} snapshot={exporting?.snapshot ?? null} presets={presets} labels={cr?.brief.formatLabels} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings}
-        jobs={live.jobs} {...(cr && creativeLocales(cr.brief) ? { locales: creativeLocales(cr.brief)! } : {})} />
+        jobs={live.jobs} {...(cr && creativeLocales(cr.brief) ? { locales: creativeLocales(cr.brief)! } : {})}
+        {...(detail?.subtitles?.length ? { subtitles: detail.subtitles } : {})} />
     </div>
   );
 }

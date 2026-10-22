@@ -8,6 +8,7 @@ import type { AgentQuestion } from './questions.ts';
 import type { ProjectFile, WorkspaceSettings, WorkspaceSettingsView } from './schemas.ts';
 import type { BriefField } from './brief-session.ts';
 import type { VideoAnalysisView } from './video-analysis.ts';
+import type { LocaleTag } from './localization/locales.ts';
 
 /** Agent-neutral event stream produced by any AgentRunner. */
 export type AgentEvent =
@@ -87,7 +88,8 @@ export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelle
 /** `creative-group` (phase 3 of the single agent): a variant group's turn: the coordinator, its helpers, its closing message. */
 /** `brief` (decision 1421): a turn of a project's brief session: a read-only agent that fills the New creative form. */
 /** `video-analysis` (decision 1468): the analysis of one video of a brief, its runs read only the extracted frames. */
-export type JobKind = 'creative' | 'brand-analysis' | 'asset-description' | 'console' | 'render' | 'asset-generation' | 'localize' | 'variant-directions' | 'export' | 'creative-group' | 'brief' | 'video-analysis';
+/** `subtitles` (decision 1640): the transcription of a creative's audio mix into its subtitle sets (no agent). */
+export type JobKind = 'creative' | 'brand-analysis' | 'asset-description' | 'console' | 'render' | 'asset-generation' | 'localize' | 'variant-directions' | 'export' | 'creative-group' | 'brief' | 'video-analysis' | 'subtitles';
 
 /**
  * An export job (decision 974, user report 20): the export runs in the background, so the dialog may close. `stage`
@@ -234,7 +236,9 @@ export type ServerMessage =
    * A creative's first turn waits for the analyses of its brief's videos (decision 1478): `files` are their names; empty: the
    * wait ended (done or skipped).
    */
-  | { type: 'analysis-wait'; project: string; creative: string; files: string[] };
+  | { type: 'analysis-wait'; project: string; creative: string; files: string[] }
+  /** A creative's subtitle sets changed (decision 1636): `lang` the one set, absent: any of them. Clients refetch them. */
+  | { type: 'subtitles'; project: string; creative: string; lang?: LocaleTag };
 
 /** Whether the desktop app updates itself: 'off' in a development run or an unsigned build, 'unknown' where there is no updater (browser, CLI) or before it has settled. */
 export type UpdatesState = 'active' | 'off' | 'unknown';

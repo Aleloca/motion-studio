@@ -1,10 +1,11 @@
-import type { JobWaitReason, VideoAnalysisView } from '@motion-studio/shared';
+import type { JobSummary, JobWaitReason, TranscriptionPending, VideoAnalysisView } from '@motion-studio/shared';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { api } from '../api.ts';
 import type { EventsState } from '../eventsReducer.ts';
 import { jobPlace } from '../shell/ActivityCenter.tsx';
 import { anyLayerOpen } from '../ui/index.ts';
 import { useVideoAnalyses } from '../useVideoAnalyses.ts';
-import { AnalysisQuestionDialog } from './TranscriptionDialog.tsx';
+import { AnalysisQuestionDialog, SubtitlesQuestionDialog, type SubtitlesQuestion } from './TranscriptionDialog.tsx';
 
 /** A key pressed in a text field this recently means the user is typing: the dialog waits (decision 1597). */
 export const TYPING_IDLE_MS = 2500;
@@ -12,9 +13,13 @@ export const TYPING_IDLE_MS = 2500;
 export const DEFER_POLL_MS = 250;
 /** The holds of an analysis that asks the user (the long video, the transcription choice). */
 const ASKING: ReadonlySet<JobWaitReason> = new Set<JobWaitReason>(['video-long', 'transcription-choice']);
+/** How often the question of a subtitles job whose dialog is open is read again (a model download's failure is not broadcast). */
+export const SUBTITLES_POLL_MS = 2000;
 
 /** One question: the project, the job, what it asks and about which video (a long video then its transcription: two). */
 export const questionKey = (slug: string, v: VideoAnalysisView) => `${slug}:${v.jobId ?? ''}:${v.pending?.kind ?? ''}:${v.file}`;
+/** A subtitles job's question (decision 1640): one per job of a creative. */
+const subtitlesKey = (q: Pick<SubtitlesQuestion, 'slug' | 'creative' | 'jobId'>) => `subtitles:${q.slug}:${q.creative}:${q.jobId}`;
 
 export interface AnalysisQuestions {
   /** A screen shows these videos' questions itself (the brief chat's cards): no dialog opens for them. Returns the release. */
@@ -45,13 +50,51 @@ function HeldProject({ slug, live, onViews }: { slug: string; live: EventsState;
   return null;
 }
 
+/** A creative whose subtitles job is held on its transcription question (decision 1640). */
+interface SubtitlesHold { slug: string; creative: string; job: JobSummary }
+
+/**
+ * The question of a held subtitles job (and its creative's title, read once), told to the host. Read again when the job or
+ * the creative changes, and every SUBTITLES_POLL_MS while its dialog is open: a model download that fails is not broadcast.
+ */
+function HeldSubtitles({ hold, tick, watch, onQuestion }: { hold: SubtitlesHold; tick: number; watch: boolean; onQuestion(creativeKey: string, q: SubtitlesQuestion | null): void }) {
+  const { slug, creative, job } = hold;
+  const at = `${slug}/${creative}`;
+  const [title, setTitle] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve().then(() => api.getCreative(slug, creative)).then((d) => { if (alive) setTitle(d.creative.title); }, () => { if (alive) setTitle(creative); });
+    return () => { alive = false; };
+  }, [slug, creative]);
+  const [pending, setPending] = useState<TranscriptionPending | null>(null);
+  const [nonce, setNonce] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve().then(() => api.subtitles(slug, creative)).then((r) => { if (alive) setPending(r.pending); }, () => { /* the next change reads it again */ });
+    return () => { alive = false; };
+  }, [slug, creative, job, tick, nonce]);
+  useEffect(() => {
+    if (!watch) return;
+    const id = window.setInterval(() => setNonce((n) => n + 1), SUBTITLES_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [watch]);
+  useEffect(() => { onQuestion(at, title !== null && pending ? { slug, creative, title, jobId: job.id, pending } : null); }, [at, slug, creative, title, pending, job.id, onQuestion]);
+  useEffect(() => () => onQuestion(at, null), [at, onQuestion]);
+  return null;
+}
+
+/** A question the host may open: a video's (its analysis's view) or a subtitles job's. */
+type Question = { key: string; slug: string; file: string | null } & ({ kind: 'analysis'; view: VideoAnalysisView } | { kind: 'subtitles'; sub: SubtitlesQuestion });
+type Target = { key: string; slug: string; file: string | null; sub?: SubtitlesQuestion };
+
 /**
  * Report 65 (decisions 1596–1601): a held analysis's question (the long video, the transcription choice) opens its dialog by
  * itself, on whatever screen the user is on, once per question. One at a time: the next opens when the current one is
  * answered or closed. It never takes the focus while the user types in a text field or another dialog or popover is open: it
  * waits until that ends. A question closed with Chiudi does not open again by itself (it stays in the activity centre's
  * "Needs you" and on its video's card); one answered elsewhere closes its dialog. A question a screen shows itself (the brief
- * chat's card) is left to it.
+ * chat's card) is left to it. Decision 1640: a creative's subtitles job held on its transcription question asks the same way,
+ * its answer going to the subtitles routes.
  */
 export function AnalysisQuestionHost({ live, enabled = true, children }: { live: EventsState; enabled?: boolean; children?: ReactNode }) {
   // The projects with an analysis held for the user, from the jobs (the activity centre's "Needs you").
@@ -65,6 +108,23 @@ export function AnalysisQuestionHost({ live, enabled = true, children }: { live:
     }
     return [...out].sort();
   }, [live.jobs, enabled]);
+  const subtitleHolds = useMemo(() => {
+    if (!enabled) return [];
+    const out: SubtitlesHold[] = [];
+    for (const j of Object.values(live.jobs)) {
+      if (j.kind !== 'subtitles' || j.state !== 'queued' || j.waitReason !== 'transcription-choice') continue;
+      const at = jobPlace(j);
+      if (at?.creative) out.push({ slug: at.project, creative: at.creative, job: j });
+    }
+    return out.sort((a, b) => `${a.slug}/${a.creative}`.localeCompare(`${b.slug}/${b.creative}`));
+  }, [live.jobs, enabled]);
+  const [subs, setSubs] = useState<Record<string, SubtitlesQuestion>>({});
+  const onSubtitles = useCallback((at: string, q: SubtitlesQuestion | null) => {
+    setSubs((all) => {
+      if (q === null) { if (!(at in all)) return all; const { [at]: _gone, ...rest } = all; return rest; }
+      return all[at] === q ? all : { ...all, [at]: q };
+    });
+  }, []);
   const [views, setViews] = useState<Record<string, Record<string, VideoAnalysisView>>>({});
   const onViews = useCallback((slug: string, v: Record<string, VideoAnalysisView> | null) => {
     setViews((all) => {
@@ -94,16 +154,24 @@ export function AnalysisQuestionHost({ live, enabled = true, children }: { live:
     park: (slug, view) => { if (view.pending) parkKey(questionKey(slug, view)); },
   }), [parkKey]);
 
-  const questions = useMemo(() => projects.flatMap((slug) => Object.values(views[slug] ?? {})
-    .filter((v) => v.pending !== null)
-    .map((v) => ({ slug, view: v, key: questionKey(slug, v) }))), [projects, views]);
-  const claimed = (slug: string, file: string) => claims.some((c) => c.slug === slug && c.files.includes(file));
-  const next = questions.find((q) => !dismissed.has(q.key) && !parked.has(q.key) && !claimed(q.slug, q.view.file)) ?? null;
+  const questions = useMemo<Question[]>(() => [
+    ...projects.flatMap((slug) => Object.values(views[slug] ?? {})
+      .filter((v) => v.pending !== null)
+      .map((v): Question => ({ kind: 'analysis', slug, file: v.file, view: v, key: questionKey(slug, v) }))),
+    // Only the jobs still held: a question read just before its job went on is not asked.
+    ...subtitleHolds.flatMap((h): Question[] => {
+      const sub = subs[`${h.slug}/${h.creative}`];
+      return sub && sub.jobId === h.job.id ? [{ kind: 'subtitles', slug: h.slug, file: null, sub, key: subtitlesKey(sub) }] : [];
+    }),
+  ], [projects, views, subtitleHolds, subs]);
+  // A screen claims videos only (the brief chat's cards); a subtitles question is always the host's.
+  const claimed = (slug: string, file: string | null) => file !== null && claims.some((c) => c.slug === slug && c.files.includes(file));
+  const next = questions.find((q) => !dismissed.has(q.key) && !parked.has(q.key) && !claimed(q.slug, q.file)) ?? null;
   // Read when a waiting question tries to open (decision 1604): a screen may claim it between the render and the try.
   const claimedNow = useRef(claimed);
   claimedNow.current = claimed;
 
-  const [current, setCurrent] = useState<{ key: string; slug: string; file: string } | null>(null);
+  const [current, setCurrent] = useState<Target | null>(null);
   // The last key pressed in the page: a text field with the focus and a recent key means the user is typing.
   const lastKey = useRef(0);
   useEffect(() => {
@@ -114,7 +182,7 @@ export function AnalysisQuestionHost({ live, enabled = true, children }: { live:
   const nextKey = next?.key ?? null;
   useEffect(() => {
     if (current !== null || next === null) return;
-    const target = { key: next.key, slug: next.slug, file: next.view.file };
+    const target: Target = { key: next.key, slug: next.slug, file: next.file, ...(next.kind === 'subtitles' ? { sub: next.sub } : {}) };
     const tryOpen = () => {
       if (claimedNow.current(target.slug, target.file)) return true;
       if (anyLayerOpen() || (inTextField() && Date.now() - lastKey.current < TYPING_IDLE_MS)) return false;
@@ -133,7 +201,7 @@ export function AnalysisQuestionHost({ live, enabled = true, children }: { live:
   const takenOver = current !== null && claimed(current.slug, current.file);
   useEffect(() => { if (takenOver) setCurrent(null); }, [takenOver]);
   // The last question stays shown while its dialog closes; each question its own dialog (keyed).
-  const [shown, setShown] = useState<{ key: string; slug: string; file: string } | null>(null);
+  const [shown, setShown] = useState<Target | null>(null);
   useEffect(() => { if (current !== null) setShown(current); }, [current]);
   const close = (key: string) => {
     setDismissed((d) => new Set([...d, key]));
@@ -144,7 +212,16 @@ export function AnalysisQuestionHost({ live, enabled = true, children }: { live:
     <Ctx.Provider value={api}>
       {children}
       {projects.map((slug) => <HeldProject key={slug} slug={slug} live={live} onViews={onViews} />)}
-      {shown ? (
+      {subtitleHolds.map((h) => (
+        <HeldSubtitles key={`${h.slug}/${h.creative}`} hold={h} tick={live.creativeTicks[`${h.slug}/${h.creative}`] ?? 0} onQuestion={onSubtitles}
+          watch={current !== null && current.sub?.slug === h.slug && current.sub.creative === h.creative} />
+      ))}
+      {shown?.sub ? (
+        // The question as last read (while Whisper installs the job still asks; once it goes on, the dialog closes).
+        <SubtitlesQuestionDialog key={shown.key} question={subs[`${shown.sub.slug}/${shown.sub.creative}`] ?? shown.sub}
+          open={current?.key === shown.key} onClose={() => close(shown.key)}
+          onSettings={() => { parkKey(shown.key); setCurrent((c) => (c?.key === shown.key ? null : c)); }} />
+      ) : shown && shown.file !== null ? (
         <AnalysisQuestionDialog key={shown.key} slug={shown.slug} view={views[shown.slug]?.[shown.file] ?? null}
           open={current?.key === shown.key} onClose={() => close(shown.key)}
           onSettings={() => { parkKey(shown.key); setCurrent((c) => (c?.key === shown.key ? null : c)); }} />

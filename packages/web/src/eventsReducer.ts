@@ -107,6 +107,8 @@ export function eventsReducer(state: EventsState, msg: EventsAction): EventsStat
       const seq = (state.analysisSeq ?? 0) + 1;
       return { ...state, analysisSeq: seq, analyses: { ...state.analyses, [msg.project]: { ...state.analyses?.[msg.project], [msg.file]: { view: msg.view, seq } } } };
     }
+    // A creative's subtitle sets changed: its detail (which lists them) refetches.
+    case 'subtitles':
     case 'creative': {
       const key = `${msg.project}/${msg.creative}`;
       return { ...state, creativeTicks: { ...state.creativeTicks, [key]: (state.creativeTicks[key] ?? 0) + 1 } };

@@ -190,6 +190,10 @@ describe('localize: tools and sandbox', { timeout: 120_000 }, () => {
     const versionDir = env.store().outputsDir(slug, 1);
     expect(recorded.args).toContain(`Edit(/${versionDir}/**)`);
     expect(recorded.args).toContain(`Write(/${versionDir}/**)`);
+    // So is the creative's subtitles folder (decision 1636: only the core writes it).
+    const subtitles = join(env.store().dir(slug), 'subtitles');
+    expect(recorded.args).toContain(`Edit(/${subtitles}/**)`);
+    expect(recorded.args).toContain(`Write(/${subtitles}/**)`);
     expect(recorded.args.slice(recorded.args.indexOf('--disallowedTools'))).toEqual(expect.arrayContaining(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']));
   });
 

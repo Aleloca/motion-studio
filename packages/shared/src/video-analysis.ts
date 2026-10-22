@@ -53,6 +53,14 @@ export const transcriptSegmentSchema = z.object({
 }).strict().refine((s) => s.to >= s.from, { message: 'to must not be before from' });
 export type TranscriptSegment = z.infer<typeof transcriptSegmentSchema>;
 
+/** One timed word (seconds from the start of the video), as an engine heard it: the subtitles are cut from these. */
+export const transcriptWordSchema = z.object({
+  from: z.number().min(0),
+  to: z.number().min(0),
+  text: z.string().min(1).max(200),
+}).strict().refine((w) => w.to >= w.from, { message: 'to must not be before from' });
+export type TranscriptWord = z.infer<typeof transcriptWordSchema>;
+
 const colour = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 const timelineItemSchema = z.object({
   from: z.number().min(0),

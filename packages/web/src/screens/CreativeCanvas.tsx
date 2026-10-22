@@ -1155,7 +1155,8 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
             <ExportDialog open={exportingMember.open} onClose={() => setExportingMember((x) => (x ? { ...x, open: false } : x))} slug={slug} creative={exportingMember.detail.slug}
               title={exportingMember.detail.creative.title} snapshot={exportingMember.snapshot} presets={presets} labels={exportingMember.detail.creative.brief.formatLabels}
               pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings} jobs={live.jobs}
-              {...(creativeLocales(exportingMember.detail.creative.brief) ? { locales: creativeLocales(exportingMember.detail.creative.brief)! } : {})} />
+              {...(creativeLocales(exportingMember.detail.creative.brief) ? { locales: creativeLocales(exportingMember.detail.creative.brief)! } : {})}
+              {...(exportingMember.detail.subtitles?.length ? { subtitles: exportingMember.detail.subtitles } : {})} />
           ) : null}
         </>
       ) : null}
@@ -1165,7 +1166,7 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
       ) : null}
       <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={hostSlug}
         title={title} snapshot={exporting?.snapshot ?? null} {...(group ? { group: true } : {})} presets={presets} labels={cr.brief.formatLabels} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings} jobs={live.jobs}
-        {...(creativeLocales(cr.brief) ? { locales: creativeLocales(cr.brief)! } : {})} />
+        {...(creativeLocales(cr.brief) ? { locales: creativeLocales(cr.brief)! } : {})} {...(!group && detail.subtitles?.length ? { subtitles: detail.subtitles } : {})} />
       {storePack ? (
         <ExportChoice open={exportChoice} onClose={() => setExportChoice(false)}
           onPack={() => { setExportChoice(false); setPackExport(true); }}
