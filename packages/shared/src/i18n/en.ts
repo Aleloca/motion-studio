@@ -266,7 +266,7 @@ export const en = {
     subtitlesNoVideo: 'The latest version has no video format: there is nothing to subtitle.',
     noFfmpegSubtitles: 'Subtitles need ffmpeg, which was not found on this Mac.',
     subtitlesTranscriptionOff: 'Video transcription is switched off: turn it on in Settings → Video transcription to make subtitles.',
-    subtitlesOncePerTurn: 'The subtitles were already started in this turn: tell the user they are being made.',
+    subtitlesOncePerTurn: 'The subtitles were already asked for in this turn: they start when it ends.',
     transcriptionNoBundled: 'This app has no Whisper of its own: install one or point to it in Settings → Video transcription.',
   },
   videoAnalysis: {
@@ -419,6 +419,8 @@ export const en = {
     unsupportedUnknown: 'No subtitles: the language spoken in the video could not be recognised.',
     unsupported: (p: { detected: string }) => `No subtitles: the language spoken in the video (${p.detected}) is not supported.`,
     failed: (p: { reason: string }) => `The subtitles could not be made: ${p.reason}`,
+    notStarted: (p: { reason: string }) => `The subtitles did not start: ${p.reason}`,
+    notStartedTurn: 'The subtitles did not start: the turn did not finish. Ask for them again.',
   },
   briefSession: {
     filled: (p: { parts: string }) => `Filled in the brief: ${p.parts}`,

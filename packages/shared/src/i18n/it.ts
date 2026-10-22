@@ -264,7 +264,7 @@ export const it: Messages = {
     subtitlesNoVideo: 'L\'ultima versione non ha un formato video: non c\'è niente da sottotitolare.',
     noFfmpegSubtitles: 'Per i sottotitoli serve ffmpeg, che non è stato trovato su questo Mac.',
     subtitlesTranscriptionOff: 'La trascrizione dei video è disattivata: attivala in Impostazioni → Trascrizione video per fare i sottotitoli.',
-    subtitlesOncePerTurn: 'I sottotitoli sono già stati avviati in questo turno: di\' all\'utente che sono in preparazione.',
+    subtitlesOncePerTurn: 'I sottotitoli sono già stati chiesti in questo turno: partono quando finisce.',
     transcriptionNoBundled: 'Questa app non ha un Whisper suo: installane uno o indicalo in Impostazioni → Trascrizione video.',
   },
   videoAnalysis: {
@@ -417,6 +417,8 @@ export const it: Messages = {
     unsupportedUnknown: 'Nessun sottotitolo: non è stato possibile riconoscere la lingua parlata nel video.',
     unsupported: (p) => `Nessun sottotitolo: la lingua parlata nel video (${p.detected}) non è supportata.`,
     failed: (p) => `I sottotitoli non sono riusciti: ${p.reason}`,
+    notStarted: (p) => `I sottotitoli non sono partiti: ${p.reason}`,
+    notStartedTurn: 'I sottotitoli non sono partiti: il turno non si è concluso. Chiedili di nuovo.',
   },
   briefSession: {
     filled: (p) => `Compilato il brief: ${p.parts}`,

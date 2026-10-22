@@ -161,6 +161,14 @@ export class SubtitlesService {
   }
 
   /**
+   * 409 `subtitles-transcription-off` when the transcription is switched off in the settings: said at once (the agent tells
+   * the user), no job that could only fail.
+   */
+  async assertTranscriptionOn(): Promise<void> {
+    if ((await this.deps.transcriber?.settings?.().catch(() => null))?.method === 'never') throw new CodedError(409, t().errors.subtitlesTranscriptionOff, 'subtitles-transcription-off');
+  }
+
+  /**
    * Queues the subtitles of `ref`'s latest version. 409 `subtitles-running` while one is queued or running for the creative,
    * `subtitles-no-video` when the version has no video format to time them on, `subtitles-no-ffmpeg` without ffmpeg.
    */
@@ -177,8 +185,7 @@ export class SubtitlesService {
     if (!ic) throw new CodedError(409, t().errors.subtitlesNoVideo, 'subtitles-no-video');
     if (!(await this.deps.ffmpeg?.().catch(() => null))) throw new CodedError(409, t().errors.noFfmpegSubtitles, 'subtitles-no-ffmpeg');
     const tr = this.deps.transcriber;
-    // The transcription switched off in the settings: said at once (the agent tells the user), no job that could only fail.
-    if ((await tr?.settings?.().catch(() => null))?.method === 'never') throw new CodedError(409, t().errors.subtitlesTranscriptionOff, 'subtitles-transcription-off');
+    await this.assertTranscriptionOn();
     if (this.active.has(key) || this.jobActive(key)) throw running();
     const entry: Active = { ref, jobId: '', o, audioSec: ic.composition.duration, ic, blocked: null, method: null, pending: null, planning: tr ? new AbortController() : null };
     const job = this.deps.queue.enqueue({
