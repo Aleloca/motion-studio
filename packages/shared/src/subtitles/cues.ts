@@ -200,26 +200,42 @@ function freshWords(fresh: SubtitleCue[]): SubtitleWord[] {
   return out;
 }
 
-/** Where the words of an edited cue are in the fresh words: at least 60 % found in order, or null. */
-function locate(tokens: string[], fresh: SubtitleWord[], norm: string[]): { start: number; end: number } | null {
+/**
+ * Where the words of an edited cue are in the fresh words: at least 60 % found in order, or null. Any of its words may be
+ * the anchor (the user often corrects the first one): from each place the anchor is heard, the words after it are looked
+ * for forward and the words before it backward. Words of the cue not found at its edges (the ones the user corrected) take
+ * the fresh words heard right there, as long as no pause comes between (decision 1713).
+ */
+function locate(tokens: string[], fresh: SubtitleWord[], norm: string[], rules: SubtitleRules = SUBTITLE_RULES): { start: number; end: number } | null {
   const wanted = tokens.map(normalizeToken).filter((t) => t !== '');
   if (wanted.length === 0) return null;
-  let best: { count: number; first: number; last: number } | null = null;
-  for (let s = 0; s < fresh.length; s++) {
-    if (norm[s] !== wanted[0]) continue;
-    let p = s;
-    let count = 0;
-    let last = s;
-    const limit = Math.min(fresh.length, s + wanted.length * 2 + 4);
-    for (const w of wanted) {
-      let q = p;
-      while (q < limit && norm[q] !== w) q++;
-      if (q < limit) { count++; last = q; p = q + 1; }
+  const reach = wanted.length * 2 + 4;
+  let best: { count: number; first: number; last: number; lead: number; trail: number } | null = null;
+  for (let a = 0; a < wanted.length; a++) {
+    for (let s = 0; s < fresh.length; s++) {
+      if (norm[s] !== wanted[a]) continue;
+      let count = 1;
+      let first = s, last = s, firstAt = a, lastAt = a;
+      const hi = Math.min(fresh.length, s + reach);
+      for (let i = a + 1, p = s + 1; i < wanted.length; i++) {
+        let q = p;
+        while (q < hi && norm[q] !== wanted[i]) q++;
+        if (q < hi) { count++; last = q; lastAt = i; p = q + 1; }
+      }
+      const lo = Math.max(0, s - reach);
+      for (let i = a - 1, p = s - 1; i >= 0; i--) {
+        let q = p;
+        while (q >= lo && norm[q] !== wanted[i]) q--;
+        if (q >= lo) { count++; first = q; firstAt = i; p = q - 1; }
+      }
+      if (!best || count > best.count) best = { count, first, last, lead: firstAt, trail: wanted.length - 1 - lastAt };
     }
-    if (!best || count > best.count) best = { count, first: s, last };
   }
   if (!best || best.count / wanted.length < 0.6) return null;
-  return { start: fresh[best.first]!.start, end: Math.max(fresh[best.last]!.end, fresh[best.first]!.start + 1) };
+  let { first, last } = best;
+  for (let n = best.lead; n > 0 && first > 0 && fresh[first]!.start - fresh[first - 1]!.end < rules.pauseMs; n--) first--;
+  for (let n = best.trail; n > 0 && last + 1 < fresh.length && fresh[last + 1]!.start - fresh[last]!.end < rules.pauseMs; n--) last++;
+  return { start: fresh[first]!.start, end: Math.max(fresh[last]!.end, fresh[first]!.start + 1) };
 }
 
 /** The old cues the user edited stay (text kept, times following the fresh words they match); fresh cues over them are dropped. */

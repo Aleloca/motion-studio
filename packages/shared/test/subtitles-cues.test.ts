@@ -106,6 +106,23 @@ describe('mergeKeepingEdited', () => {
     const out = mergeKeepingEdited(old, [freshCue('c1', 'new one', 0, 900)]);
     expect(out.map((c) => c.id)).toEqual(['f2', 'f1']);
   });
+  it('an edited cue whose FIRST word changed is still found (anchored on a later word), its misheard first word included', () => {
+    // The user corrected "Ciao" to "Benvenuti"; the video now starts 1 s later.
+    const mine: SubtitleCue[] = [{ id: 'c1', edited: true, text: 'Benvenuti a tutti quanti', start: 0, end: 1400 }];
+    const fresh = [freshCue('c1', 'Ciao a tutti quanti', 1000, 2400), freshCue('c2', 'Prenota ora', 3000, 4000)];
+    const out = mergeKeepingEdited(mine, fresh);
+    expect(out.map((c) => [c.id, c.text, c.start, c.end, c.edited])).toEqual([['c1', 'Benvenuti a tutti quanti', 1000, 2400, true], ['f1', 'Prenota ora', 3000, 4000, undefined]]);
+  });
+  it('the first word changed and nothing heard before it within a pause: the cue starts on its first word found', () => {
+    const mine: SubtitleCue[] = [{ id: 'c1', edited: true, text: 'Oggi prenota in tre tocchi', start: 0, end: 1000 }];
+    const out = mergeKeepingEdited(mine, [freshCue('c1', 'Fine.', 0, 400), freshCue('c2', 'prenota in tre tocchi', 2000, 3000)]);
+    expect(out.map((c) => [c.id, c.text, c.start, c.end])).toEqual([['f1', 'Fine.', 0, 400], ['c1', 'Oggi prenota in tre tocchi', 2000, 3000]]);
+  });
+  it('still needs 60 % of the words in order: an edit that changed more stays where it was', () => {
+    const mine: SubtitleCue[] = [{ id: 'c1', edited: true, text: 'Salve a voi gente', start: 0, end: 1400 }];
+    const out = mergeKeepingEdited(mine, [freshCue('c1', 'Ciao a tutti quanti', 1000, 2400)]);
+    expect(out.map((c) => [c.id, c.text, c.start, c.end])).toEqual([['c1', 'Salve a voi gente', 0, 1400]]);
+  });
 });
 
 describe('alignToScript', () => {
