@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
-import { COMPOSITION_LIMITS, draftJsonBytes, draftSizeProblem, formatLabel, messages, starOf, type Composition, type EditorCompositionView, type FormatPreset, type JobSummary, type ManifestV2, type ServerMessage, type StagedAsset, type VersionEntry } from '@motion-studio/shared';
+import { COMPOSITION_LIMITS, SUBTITLES_SCHEMA_ID, draftJsonBytes, draftSizeProblem, formatLabel, messages, starOf, type Composition, type EditorCompositionView, type FormatPreset, type JobSummary, type ManifestV2, type ServerMessage, type StagedAsset, type SubtitleSet, type VersionEntry } from '@motion-studio/shared';
 import { AppConfigStore } from '../src/app-config.ts';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AgentBridge } from '../src/bridge/bridge.ts';
@@ -34,6 +34,7 @@ import { usageLedgerFile } from '../src/usage/usage-ledger.ts';
 import { FONT } from './helpers/render-env.ts';
 import { findFfmpeg } from '../src/render/encode.ts';
 import { stagingIdOf } from '../src/creatives/editor-staging.ts';
+import { audioFingerprint, writeSubtitleSet } from '../src/subtitles/store.ts';
 const ffmpegInfo = await findFfmpeg();
 
 // A crash between the copy and the manifest: `assembleCompositions` throws while `crash.on` is set.
@@ -570,6 +571,37 @@ describe('saving a draft as a new version', { timeout: 120_000 }, () => {
     expect(creative.brief.links?.['test-wide-b']).toBe('test-wide');
     expect(v1.compositions!.find((c) => c.format === 'test-short')!.hash).toBe(v1.compositions!.find((c) => c.format === 'test-wide')!.hash);
     expect(agentRuns()).toBe(runs);
+  });
+});
+
+describe('the video changed under the subtitles (Task 14, spec §6.7)', { timeout: 120_000 }, () => {
+  it('a direct edit and an agent turn that change the main format\'s audio each write one notice; a text edit, or the same audio again, none', async () => {
+    const slug = await create(['test-wide']);
+    const v1 = JSON.parse(readFileSync(join(compDir(slug, 1, 'test-wide'), 'composition.json'), 'utf8')) as Composition;
+    const set: SubtitleSet = {
+      $schema: SUBTITLES_SCHEMA_ID, lang: 'it', origin: 'speech', transcript: 'whisper-small', detected: 'it',
+      timing: { version: 1, format: 'test-wide', fingerprint: audioFingerprint(v1) }, cues: [{ id: 'c1', start: 0, end: 1500, text: 'Ciao a tutti' }],
+    };
+    await writeSubtitleSet(store().dir(slug), set);
+    const before = readFileSync(join(store().dir(slug), 'subtitles', 'it.json'), 'utf8');
+    const notices = async () => (await store().readConversation(slug)).filter((e) => e.type === 'system' && e.subtitles?.state === 'timing-changed');
+    // A text edit keeps the audio.
+    const text = await draft(slug, 1, 'test-wide', (c) => { clip(c, 'title').props.text = 'Goodbye'; }, [{ kind: 'clipProps', clipId: 'title', props: { text: 'Goodbye' } }]);
+    expect((await save(slug, text)).statusCode).toBe(200);
+    expect(await notices()).toEqual([]);
+    // A longer video: the timing changed.
+    const longer = await draft(slug, 2, 'test-wide', (c) => { c.duration = 5.8; c.scenes[1]!.duration = Math.round((5.8 - c.scenes[1]!.start) * 10) / 10; }, [{ kind: 'sceneDuration', sceneId: 'two', duration: 3.3 }]);
+    expect((await save(slug, longer)).statusCode).toBe(200);
+    expect(await notices()).toEqual([expect.objectContaining({ level: 'warning', text: messages(currentLocale()).subtitles.timingChanged, subtitles: { state: 'timing-changed', lang: 'it' } })]);
+    // An agent turn that changes it again: one more; a turn that keeps it: none.
+    process.env.FAKE_CLAUDE_DURATION = '5';
+    await turn(slug, { text: 'shorter' });
+    expect(await notices()).toHaveLength(2);
+    await turn(slug, { text: 'again' });
+    expect((await store().readVersions(slug)).length).toBe(5);
+    expect(await notices()).toHaveLength(2);
+    // Nothing touched the set.
+    expect(readFileSync(join(store().dir(slug), 'subtitles', 'it.json'), 'utf8')).toBe(before);
   });
 });
 

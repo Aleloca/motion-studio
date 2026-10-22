@@ -22,7 +22,7 @@ import { decodePcmWith, type MediaTools } from '../media/media-tools.ts';
 import { mixAudio, mixClips } from '../render/audio-mix.ts';
 import type { FfmpegInfo } from '../render/encode.ts';
 import { CodedError } from '../workspace-store.ts';
-import { audioFingerprint, readSubtitleSet, type SubtitleCommits, subtitlePath, subtitleSetLocks, writeSubtitleSet } from './store.ts';
+import { audioFingerprint, listSubtitleSets, readSubtitleSet, type SubtitleCommits, subtitlePath, subtitleSetLocks, writeSubtitleSet } from './store.ts';
 
 /** The queue lane of the subtitles jobs (decision 1640): one at a time, never in an agent turn's slot. */
 export const SUBTITLES_LANE = 'subtitles';
@@ -54,6 +54,11 @@ export interface SubtitlesDeps {
   planMaxMs?: number;
 }
 
+/**
+ * `new`: transcribe and cut (the language `lang` when the user picked one, else the one heard). `retime` (Task 14, spec §6.7,
+ * "Rifai i tempi"): the same flow on an existing set (`lang`, else the first one timed on other audio, else the first),
+ * transcribed in the set's language; the merge keeps every edited cue's text and moves it onto the words heard now.
+ */
 export interface SubtitlesStart { mode: 'new' | 'retime'; lang?: LocaleTag; drawn?: boolean }
 
 /** A subtitles job queued or running: one per creative. */
@@ -189,6 +194,15 @@ export class SubtitlesService {
     const format = latest ? subtitleSourceFormat(latest, creative.brief, presets) : null;
     const ic = latest && format ? await instanceComposition(store.dir(ref.creativeSlug), latest, format, presets) : null;
     if (!ic) throw new CodedError(409, t().errors.subtitlesNoVideo, 'subtitles-no-video');
+    if (o.mode === 'retime') {
+      // Decision 1714: a retime redoes one set in its own language (the transcriber is told it, so the heard words land in
+      // that set): the one asked for, else the first one timed on other audio than the latest version's, else the first.
+      const sets = (await listSubtitleSets(store.dir(ref.creativeSlug))).filter((s) => s.origin === 'speech');
+      const now = audioFingerprint(ic.composition);
+      const set = o.lang ? sets.find((s) => s.lang === o.lang) : sets.find((s) => s.timing.fingerprint !== now) ?? sets[0];
+      if (!set) throw new CodedError(409, t().errors.subtitlesNoSet, 'subtitles-no-set');
+      o = { ...o, lang: set.lang };
+    }
     if (!(await this.deps.ffmpeg?.().catch(() => null))) throw new CodedError(409, t().errors.noFfmpegSubtitles, 'subtitles-no-ffmpeg');
     const tr = this.deps.transcriber;
     await this.assertTranscriptionOn();
@@ -396,6 +410,40 @@ export class SubtitlesService {
     return a.pending;
   }
 
+  /**
+   * Task 14 (spec §6.7): version `n` of `ref` was just saved (an agent turn, `jobId`, or a direct edit, null). When its main
+   * format's audio differs from what a subtitle set was timed on, the chat says "Il video è cambiato: ricontrolla i tempi"
+   * (with "Rifai i tempi"): once, on the version that moved the audio (decision 1715): a version whose audio is the previous
+   * version's tells nothing new. Nothing is changed: the sets keep their cues until the user retimes them. Never throws.
+   */
+  async versionSaved(ref: CreativeRef, n: number, jobId: string | null): Promise<void> {
+    try {
+      const store = new CreativeStore(ref.projectDir);
+      const dir = store.dir(ref.creativeSlug);
+      const sets = await listSubtitleSets(dir);
+      if (sets.length === 0) return;
+      const versions = await store.readVersions(ref.creativeSlug);
+      const i = versions.findIndex((v) => v.n === n);
+      if (i < 0) return;
+      const brief = (await store.get(ref.creativeSlug)).brief;
+      const presets = await this.deps.presets();
+      const fingerprint = async (v: VersionEntry): Promise<string | null> => {
+        const format = subtitleSourceFormat(v, brief, presets);
+        const ic = format ? await instanceComposition(dir, v, format, presets).catch(() => null) : null;
+        return ic ? audioFingerprint(ic.composition) : null;
+      };
+      const now = await fingerprint(versions[i]!);
+      if (!now) return;
+      const off = sets.filter((s) => s.timing.fingerprint !== now);
+      if (off.length === 0) return;
+      if (i > 0 && (await fingerprint(versions[i - 1]!)) === now) return;
+      const set = off.find((s) => s.origin === 'speech') ?? off[0]!;
+      await this.note(jobId ?? '', ref, 'warning', t().subtitles.timingChanged, { state: 'timing-changed', lang: set.lang });
+    } catch (err) {
+      console.warn(`Motion Studio: the subtitles' timing check of ${ref.creativeSlug} v${n} failed: ${errText(err)}`);
+    }
+  }
+
   private async note(jobId: string, ref: CreativeRef, level: 'info' | 'warning' | 'error', text: string, subtitles: NonNullable<Extract<ConversationEntry, { type: 'system' }>['subtitles']>): Promise<void> {
     await this.deps.turns.noteFromTurn(jobId, ref, { type: 'system', at: new Date().toISOString(), level, text, subtitles }).catch(() => {});
   }
@@ -487,7 +535,9 @@ export class SubtitlesService {
       try { this.deps.broadcast({ type: 'subtitles', project: ref.projectSlug, creative: ref.creativeSlug, lang }); } catch { /* a faulty listener */ }
       const briefLang = creative.brief.locales?.primary;
       const other = briefLang !== undefined && briefLang !== lang;
-      await this.note(jobId, ref, 'info', other ? t().subtitles.readyOtherLang({ lang: languageName(lang), brief: languageName(briefLang) }) : t().subtitles.ready({ lang: languageName(lang) }), {
+      const text = o.mode === 'retime' ? t().subtitles.retimed({ lang: languageName(lang) })
+        : other ? t().subtitles.readyOtherLang({ lang: languageName(lang), brief: languageName(briefLang) }) : t().subtitles.ready({ lang: languageName(lang) });
+      await this.note(jobId, ref, 'info', text, {
         state: 'ready', lang, ...(tr.language ? { detected: tr.language } : {}), ...(other ? { briefLang } : {}),
       });
       for (const fn of this.readyHooks) { try { fn(ref, { lang, drawn: o.drawn === true }); } catch { /* a hook never fails the job */ } }

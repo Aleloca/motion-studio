@@ -455,6 +455,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
   });
   deps.onSubtitles?.(subtitles);
+  // Task 14 (spec §6.7): a version that moves the audio under a subtitle set says so in the chat.
+  turns.onVersionSaved((ref, n, jobId) => subtitles.versionSaved(ref, n, jobId));
 
   afterOtherJob = (key, state) => { void turns.otherJobEndedByKey(key, state); };
   turnsRef = turns;
