@@ -94,6 +94,17 @@ export function subtitleSourceFormat(version: VersionEntry, brief: Brief, preset
   return brief.formats.find((id) => !followers.has(id) && findPreset(presets, id)?.kind === 'video' && version.compositions?.some((c) => c.format === id)) ?? null;
 }
 
+/**
+ * The audio the subtitles of `version` are timed on: its main format (`subtitleSourceFormat`), that composition and the
+ * fingerprint of its audio; null when there is no such format or its composition cannot be read. The one derivation of the
+ * job, the chat notice and the routes' `timingChanged`, so they never disagree (Task 14, review round 1).
+ */
+export async function subtitleTimingOf(creativeDir: string, version: VersionEntry, brief: Brief, presets: readonly FormatPreset[]): Promise<{ format: string; ic: InstanceComposition; fingerprint: string } | null> {
+  const format = subtitleSourceFormat(version, brief, presets);
+  const ic = format ? await instanceComposition(creativeDir, version, format, presets).catch(() => null) : null;
+  return format && ic ? { format, ic, fingerprint: audioFingerprint(ic.composition) } : null;
+}
+
 /** The scripts written without spaces between words (Korean has spaces: its words stay whole, decision 1701). */
 const CJK_CHAR = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}]/u;
 
@@ -191,15 +202,14 @@ export class SubtitlesService {
     const creative = await store.get(ref.creativeSlug);
     const latest = (await store.readVersions(ref.creativeSlug)).at(-1);
     const presets = await this.deps.presets();
-    const format = latest ? subtitleSourceFormat(latest, creative.brief, presets) : null;
-    const ic = latest && format ? await instanceComposition(store.dir(ref.creativeSlug), latest, format, presets) : null;
-    if (!ic) throw new CodedError(409, t().errors.subtitlesNoVideo, 'subtitles-no-video');
+    const timing = latest ? await subtitleTimingOf(store.dir(ref.creativeSlug), latest, creative.brief, presets) : null;
+    if (!timing) throw new CodedError(409, t().errors.subtitlesNoVideo, 'subtitles-no-video');
+    const { ic } = timing;
     if (o.mode === 'retime') {
       // Decision 1714: a retime redoes one set in its own language (the transcriber is told it, so the heard words land in
       // that set): the one asked for, else the first one timed on other audio than the latest version's, else the first.
       const sets = (await listSubtitleSets(store.dir(ref.creativeSlug))).filter((s) => s.origin === 'speech');
-      const now = audioFingerprint(ic.composition);
-      const set = o.lang ? sets.find((s) => s.lang === o.lang) : sets.find((s) => s.timing.fingerprint !== now) ?? sets[0];
+      const set = o.lang ? sets.find((s) => s.lang === o.lang) : sets.find((s) => s.timing.fingerprint !== timing.fingerprint) ?? sets[0];
       if (!set) throw new CodedError(409, t().errors.subtitlesNoSet, 'subtitles-no-set');
       o = { ...o, lang: set.lang };
     }
@@ -303,13 +313,13 @@ export class SubtitlesService {
     const version = (await store.readVersions(ref.creativeSlug)).find((v) => v.n === n);
     if (!version) throw new CodedError(404, t().errors.notFound, 'version-not-found');
     const presets = await this.deps.presets();
-    const format = subtitleSourceFormat(version, (await store.get(ref.creativeSlug)).brief, presets);
-    const ic = format ? await instanceComposition(store.dir(ref.creativeSlug), version, format, presets) : null;
-    if (!format || !ic) throw new CodedError(409, t().errors.subtitlesNoVideo, 'subtitles-no-video');
+    const timing = await subtitleTimingOf(store.dir(ref.creativeSlug), version, (await store.get(ref.creativeSlug)).brief, presets);
+    if (!timing) throw new CodedError(409, t().errors.subtitlesNoVideo, 'subtitles-no-video');
+    const { format, ic } = timing;
     const durationMs = ms(ic.composition.duration);
     const dir = await realDirChain(ref.projectDir, ['.studio', 'cache', 'subtitles', ref.creativeSlug]);
     if (!dir) throw new CodedError(422, t().errors.waveformUnavailable, 'waveform-unavailable');
-    const cache = join(dir, `wave-${audioFingerprint(ic.composition)}.json`);
+    const cache = join(dir, `wave-${timing.fingerprint}.json`);
     const pending = waveInFlight.get(cache);
     if (pending) return pending;
     const job = (async () => {
@@ -427,11 +437,7 @@ export class SubtitlesService {
       if (i < 0) return;
       const brief = (await store.get(ref.creativeSlug)).brief;
       const presets = await this.deps.presets();
-      const fingerprint = async (v: VersionEntry): Promise<string | null> => {
-        const format = subtitleSourceFormat(v, brief, presets);
-        const ic = format ? await instanceComposition(dir, v, format, presets).catch(() => null) : null;
-        return ic ? audioFingerprint(ic.composition) : null;
-      };
+      const fingerprint = async (v: VersionEntry) => (await subtitleTimingOf(dir, v, brief, presets))?.fingerprint ?? null;
       const now = await fingerprint(versions[i]!);
       if (!now) return;
       const off = sets.filter((s) => s.timing.fingerprint !== now);
@@ -457,9 +463,9 @@ export class SubtitlesService {
       const creative = await store.get(ref.creativeSlug);
       const version = (await store.readVersions(ref.creativeSlug)).at(-1);
       const presets = await this.deps.presets();
-      const format = version ? subtitleSourceFormat(version, creative.brief, presets) : null;
-      const ic = version && format ? await instanceComposition(creativeDir, version, format, presets) : null;
-      if (!version || !format || !ic) throw new Error(t().errors.subtitlesNoVideo);
+      const timing = version ? await subtitleTimingOf(creativeDir, version, creative.brief, presets) : null;
+      if (!version || !timing) throw new Error(t().errors.subtitlesNoVideo);
+      const { format, ic } = timing;
       const ff = await this.deps.ffmpeg?.().catch(() => null);
       if (!ff) throw new Error(t().errors.noFfmpegSubtitles);
       const duration = ic.composition.duration;
@@ -523,7 +529,7 @@ export class SubtitlesService {
         const cues = capCues(existing ? mergeKeepingEdited(existing.set.cues, fresh) : fresh);
         let set: SubtitleSet = {
           $schema: SUBTITLES_SCHEMA_ID, lang, origin: 'speech', transcript: tr.kind, detected: tr.language,
-          timing: { version: version.n, format, fingerprint: audioFingerprint(ic.composition) }, cues,
+          timing: { version: version.n, format, fingerprint: timing.fingerprint }, cues,
         };
         // A set over the file limit loses its word timings (word highlighting then falls back to whole cues).
         if (Buffer.byteLength(subtitleSetText(set)) > SUBTITLE_LIMITS.fileBytes) set = { ...set, cues: set.cues.map(({ words: _w, ...c }) => c) };

@@ -7,9 +7,8 @@ import {
 import { CreativeStore } from '../creatives/creative-store.ts';
 import type { CreativeRef } from '../creatives/creative-turns.ts';
 import { currentLocale, t } from '../i18n.ts';
-import { instanceComposition } from '../localization/store.ts';
-import { audioFingerprint, listSubtitleSets, readSubtitleSet, type SubtitleCommits, subtitleSetLocks, writeSubtitleSet } from '../subtitles/store.ts';
-import { subtitleSourceFormat, type SubtitlesService } from '../subtitles/subtitles-job.ts';
+import { listSubtitleSets, readSubtitleSet, type SubtitleCommits, subtitleSetLocks, writeSubtitleSet } from '../subtitles/store.ts';
+import { subtitleTimingOf, type SubtitlesService } from '../subtitles/subtitles-job.ts';
 
 export { SUBTITLE_WAVEFORM_PEAKS } from '../subtitles/subtitles-job.ts';
 import { CodedError, type WorkspaceStore } from '../workspace-store.ts';
@@ -34,9 +33,8 @@ export async function subtitleTimingNow(projectDir: string, creativeSlug: string
   const store = new CreativeStore(projectDir);
   const latest = (await store.readVersions(creativeSlug)).at(-1);
   if (!latest) return null;
-  const format = subtitleSourceFormat(latest, (await store.get(creativeSlug)).brief, presets);
-  const ic = format ? await instanceComposition(store.dir(creativeSlug), latest, format, presets).catch(() => null) : null;
-  return ic ? { durationMs: Math.round(ic.composition.duration * 1000), fingerprint: audioFingerprint(ic.composition) } : null;
+  const timing = await subtitleTimingOf(store.dir(creativeSlug), latest, (await store.get(creativeSlug)).brief, presets);
+  return timing ? { durationMs: Math.round(timing.ic.composition.duration * 1000), fingerprint: timing.fingerprint } : null;
 }
 
 /**
