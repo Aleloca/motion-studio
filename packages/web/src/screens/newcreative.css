@@ -329,8 +329,16 @@ button.ms-nc-link:focus-visible { outline: 2px solid var(--accent); outline-offs
 .ms-nc-pick-warn svg { flex: none; color: var(--warn); margin-top: 1px; }
 .ms-nc-pick-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; max-height: 320px; overflow: auto; padding: 2px; }
 .ms-nc-pick {
-  position: relative; height: 74px; padding: 0; margin: 0; border: 0; border-radius: 8px; overflow: hidden; background: var(--field); cursor: pointer;
+  position: relative; display: flex; flex-direction: column; min-width: 0; padding: 0; margin: 0; border: 0; border-radius: 8px; overflow: hidden; background: var(--field); cursor: pointer;
   transition: box-shadow var(--d-m) var(--e-std);
+}
+.ms-nc-pick-face { position: relative; display: block; height: 74px; flex: none; overflow: hidden; }
+/* Report 69: the file name, one line, cut with an ellipsis (the full name is the tile's tooltip and accessible name). */
+.ms-nc-pick-name { display: block; min-width: 0; padding: 3px 5px 4px; font-size: 10px; line-height: 13px; color: var(--muted); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ms-nc-pick .ms-nc-face-file > span { display: none; }
+.ms-nc-face-play {
+  position: absolute; left: 4px; bottom: 4px; width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .55); color: #fff; pointer-events: none;
 }
 .ms-nc-pick:hover { box-shadow: 0 0 0 1px var(--faint); }
 .ms-nc-pick.ms-on, .ms-nc-pick.ms-on:hover { box-shadow: 0 0 0 2px var(--accent); }

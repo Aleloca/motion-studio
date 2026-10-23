@@ -17,8 +17,10 @@ export function AssetFace({ slug, path, entry, small }: { slug: string; path: st
   const kind = entry?.kind ?? (isVideoFile(path) ? 'video' : /\.(png|jpe?g|webp|gif|avif|svg)$/i.test(path) ? 'image' : 'other');
   const url = api.projectFileUrl(slug, path);
   if (VISUAL.test(kind)) {
+    // A video shows its first frame, which is black for one that fades in (the Assets grid does the same): the play badge
+    // tells it from a picture, and the picker puts the name under it (report 69).
     return kind === 'video'
-      ? <video className={cx('ms-nc-face', small && 'ms-sm')} src={url} muted preload="metadata" aria-hidden="true" />
+      ? <><video className={cx('ms-nc-face', small && 'ms-sm')} src={url} muted preload="metadata" aria-hidden="true" />{small ? null : <span className="ms-nc-face-play" aria-hidden="true"><Icon name="play" size={10} fill /></span>}</>
       : <img className={cx('ms-nc-face', kind === 'svg' && 'ms-nc-face-svg', small && 'ms-sm')} src={url} alt="" />;
   }
   if (small) return <span className="ms-nc-face ms-sm ms-nc-face-file" aria-hidden="true"><Icon name="folder" size={10} /></span>;
@@ -80,8 +82,9 @@ export function LibraryPicker({ slug, projectName, open, onClose, anchor, placem
               const path = assetPath(a.file);
               const on = chosen.includes(path);
               return (
-                <button key={a.file} type="button" data-row className={cx('ms-nc-pick', on && 'ms-on')} aria-pressed={on} aria-label={a.file} title={a.description || a.file} onClick={() => onToggle(path)}>
-                  <AssetFace slug={slug} path={path} entry={a} />
+                <button key={a.file} type="button" data-row className={cx('ms-nc-pick', on && 'ms-on')} aria-pressed={on} aria-label={a.file} title={a.description ? `${a.file}\n${a.description}` : a.file} onClick={() => onToggle(path)}>
+                  <span className="ms-nc-pick-face"><AssetFace slug={slug} path={path} entry={a} /></span>
+                  <span className="ms-nc-pick-name" aria-hidden="true">{a.file}</span>
                   {on ? <span className="ms-nc-tick" aria-hidden="true"><Icon name="check" size={10} strokeWidth={2.4} /></span> : null}
                 </button>
               );
