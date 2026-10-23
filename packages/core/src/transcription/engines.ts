@@ -27,24 +27,38 @@ function word(from: unknown, to: unknown, text: unknown): TranscriptWord | null 
 
 const shapeError = (engine: string) => new Error(t().errors.transcriptionFailed({ reason: `${engine}: unexpected output` }));
 
+type CppToken = { offsets?: { from?: unknown; to?: unknown }; text?: unknown };
+const isTimedToken = (k: CppToken): k is { offsets: { from: number; to: number }; text: string } =>
+  typeof k?.text === 'string' && !/^\[_/.test(k.text.trim()) && typeof k.offsets?.from === 'number' && typeof k.offsets.to === 'number';
+
 /**
  * whisper.cpp `-ojf` tokens as words: a token starting with a space opens a word, the others continue it; special tokens
- * (`[_BEG_]`, `[_TT_50]`…) are dropped, and a word never runs across two segments.
+ * (`[_BEG_]`, `[_TT_50]`…) are dropped, and a word never runs across two segments. `vad` (report 76, decision 1799): with
+ * `--vad` the segments are on the source's clock but the tokens on the clock of the speech without its pauses, so each
+ * segment's tokens move by the segment's start minus its first token's, kept inside the segment and in order.
  */
-function cppWords(transcription: unknown[]): TranscriptWord[] {
+function cppWords(transcription: unknown[], vad: boolean): TranscriptWord[] {
   const out: TranscriptWord[] = [];
-  for (const seg of transcription.slice(0, MAX_SEGMENTS) as Array<{ tokens?: unknown }>) {
+  let floor = 0;
+  for (const seg of transcription.slice(0, MAX_SEGMENTS) as Array<{ tokens?: unknown; offsets?: { from?: unknown; to?: unknown } }>) {
     if (!Array.isArray(seg?.tokens)) continue;
+    const tokens = seg.tokens as CppToken[];
+    const sf = seg.offsets?.from, st = seg.offsets?.to;
+    const first = tokens.find((k) => isTimedToken(k) && k.text.trim() !== '');
+    const map = vad && typeof sf === 'number' && typeof st === 'number' && first && isTimedToken(first)
+      ? (ms: number) => Math.min(st, Math.max(sf, floor, ms + sf - first.offsets.from)) : (ms: number) => ms;
     let cur: { from: number; to: number; text: string } | null = null;
     const close = () => {
       const w = cur && word(cur.from, cur.to, cur.text);
       if (w) out.push(w);
       cur = null;
     };
-    for (const k of seg.tokens as Array<{ offsets?: { from?: unknown; to?: unknown }; text?: unknown }>) {
-      if (typeof k?.text !== 'string' || /^\[_/.test(k.text.trim()) || typeof k.offsets?.from !== 'number' || typeof k.offsets.to !== 'number') continue;
+    for (const k of tokens) {
+      if (!isTimedToken(k)) continue;
       if (!k.text.trim()) { close(); continue; }
-      const from = k.offsets.from / 1000, to = k.offsets.to / 1000;
+      const a = map(k.offsets.from);
+      if (vad) floor = a;
+      const from = a / 1000, to = Math.max(a, map(k.offsets.to)) / 1000;
       if (!cur || /^\s/.test(k.text)) { close(); cur = { from, to, text: k.text.trim() }; }
       else { cur.text += k.text; cur.to = Math.max(cur.to, to); }
     }
@@ -66,13 +80,16 @@ function pythonWords(segs: unknown[]): TranscriptWord[] {
   return out;
 }
 
-/** whisper.cpp `-oj`: `transcription[].offsets.from/to` in milliseconds; `result.language`. With `-ojf` also the words (from the tokens). */
-export function parseWhisperCpp(json: unknown): EngineTranscript {
+/**
+ * whisper.cpp `-oj`: `transcription[].offsets.from/to` in milliseconds; `result.language`. With `-ojf` also the words (from
+ * the tokens); `vad`: the run had `--vad` (its token times are moved to the source's clock, `cppWords`).
+ */
+export function parseWhisperCpp(json: unknown, o: { vad?: boolean } = {}): EngineTranscript {
   const j = json as { transcription?: unknown; result?: { language?: unknown } } | null;
   if (!j || typeof j !== 'object' || !Array.isArray(j.transcription)) throw shapeError('whisper.cpp');
   const segments = j.transcription.slice(0, MAX_SEGMENTS).map((s: { offsets?: { from?: unknown; to?: unknown }; text?: unknown }) =>
     segment(typeof s?.offsets?.from === 'number' ? s.offsets.from / 1000 : null, typeof s?.offsets?.to === 'number' ? s.offsets.to / 1000 : null, s?.text));
-  const words = cppWords(j.transcription);
+  const words = cppWords(j.transcription, o.vad === true);
   return { segments: segments.filter((s): s is TranscriptSegment => s !== null), ...(words.length ? { words } : {}), language: lang(j.result?.language) };
 }
 
@@ -155,7 +172,7 @@ export async function runWhisper(found: WhisperFound & { vadModel?: string }, wa
     if (text === null) throw new Error(t().errors.transcriptionFailed({ reason: `${found.engine}: no output file` }));
     let json: unknown;
     try { json = JSON.parse(text); } catch { throw shapeError(found.engine); }
-    return found.engine === 'whisper.cpp' ? parseWhisperCpp(json) : found.engine === 'openai-whisper' ? parseOpenAiWhisper(json) : parseFasterWhisper(json);
+    return found.engine === 'whisper.cpp' ? parseWhisperCpp(json, { vad: args.includes('--vad') }) : found.engine === 'openai-whisper' ? parseOpenAiWhisper(json) : parseFasterWhisper(json);
   } finally {
     await rm(outDir, { recursive: true, force: true }).catch(() => {});
   }

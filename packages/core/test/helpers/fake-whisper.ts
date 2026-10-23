@@ -7,9 +7,9 @@ import { join } from 'node:path';
  * last call; `<name>.calls.log`, one JSON line per call),
  * prints `stderr`, and writes the recorded `fixture` where the engine would (`-of <x>` → `<x>.json`; `--output_dir <d>` →
  * `<d>/<audio name>.json`). `sleep`: it writes its PID to `<name>.pid` and hangs. `exit`: its exit code; `broken`: even
- * `--help` and `--version` print `stderr` and exit with it.
+ * `--help` and `--version` print `stderr` and exit with it. `fixtureNoVad`: written instead of `fixture` by a call without `--vad`.
  */
-export async function fakeWhisper(dir: string, name: string, o: { fixture?: string; version?: string; help?: string; stderr?: string; exit?: number; sleep?: boolean; broken?: boolean } = {}): Promise<string> {
+export async function fakeWhisper(dir: string, name: string, o: { fixture?: string; fixtureNoVad?: string; version?: string; help?: string; stderr?: string; exit?: number; sleep?: boolean; broken?: boolean } = {}): Promise<string> {
   await mkdir(dir, { recursive: true });
   const program = join(dir, name);
   const script = `#!/usr/bin/env node
@@ -24,7 +24,7 @@ if (${JSON.stringify(o.sleep === true)}) { fs.writeFileSync(${JSON.stringify(`${
 process.stderr.write(${JSON.stringify(o.stderr ?? '')});
 const exit = ${JSON.stringify(o.exit ?? 0)};
 if (exit !== 0) process.exit(exit);
-const fixture = ${JSON.stringify(o.fixture ?? null)};
+const fixture = !args.includes('--vad') && ${JSON.stringify(o.fixtureNoVad ?? null)} || ${JSON.stringify(o.fixture ?? null)};
 if (fixture) {
   const of = args.indexOf('-of'), od = args.indexOf('--output_dir');
   const out = of >= 0 ? args[of + 1] + '.json' : od >= 0 ? path.join(args[od + 1], path.basename(args[0]).replace(/\\.[^.]+$/, '') + '.json') : null;
