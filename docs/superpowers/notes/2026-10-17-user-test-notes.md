@@ -586,6 +586,12 @@ arrives and worked on later together.
     0:15, pausing, dragging the time bar back to 0:05 and pressing play starts again from 0:15, not from 0:05.
     Wanted: play starts from where the time bar was moved.
 
+75. **The editor's chat tabs look different and the chat slides under them (user report of 2026-10-23).** In the video
+    editor the side panel has a segmented "Chat | Inspector" control, unlike the underlined "Chat · Comments · Brief"
+    tabs outside; the agent's message scrolls under the control (its top is cut off behind it), and "· Details" wraps
+    onto its own line in the narrow panel.
+    Wanted: the same tab style as the creative's panel, the list starting below the tabs, nothing hidden under them.
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
