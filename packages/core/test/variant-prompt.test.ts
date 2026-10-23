@@ -81,6 +81,6 @@ describe('variant prompt in a real turn', () => {
 
 /** sha256 of the prompts above, computed on the code before phase 15 Task 3; decision 1232 (report 38) added the no will-change line. */
 const GOLDEN = {
-  first: '0c518ed79e288a4a04b570155214fad2c2f3063818391013463afe7b6e3ea240',
-  iteration: '03b4a79a873b8ac0bc532a0cba715eab58c7e0e410774dd45166c99d244f6671',
+  first: '1834f8685de215cf3711ef3cdce15220e21c5b29ff4990cec194585ae43800f4',
+  iteration: '5ae59400ae092e9c1a1de2851d95f9450b6d322057405d6e144ced09ef9318c8',
 };

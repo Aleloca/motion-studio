@@ -71,6 +71,31 @@ describe('from the brief session to the creative (decision 1423)', () => {
     await h().waitIdle();
   });
 
+  it('subtitles asked in the brief chat reach the first turn as the notes line, and its start_subtitles goes to the subtitles job (report 70)', async () => {
+    t = await briefApp();
+    const s = await h().open();
+    await h().send(s.id, 'Aggiungimi i sottotitoli a questo video');
+    const run = await t.runner.next(0);
+    expect(run.req.prompt).toContain('## Subtitles');
+    const notes = 'Subtitles: drawn into the video.';
+    expect((await h().tool(run, 'fill_brief', { goal: 'Sottotitoli del video', notes, formats: ['instagram-post-1x1'] })).statusCode).toBe(200);
+    run.finish({ write: false });
+    await h().waitIdle();
+    const res = await create({ generate: true, briefSession: { id: s.id }, brief: { ...brief, notes } });
+    expect(res.statusCode, res.body).toBe(201);
+    const first = await t.runner.next(1);
+    expect(first.req.prompt).toContain(notes);
+    const line = first.req.prompt.split('\n').find((l) => l.startsWith('- start_subtitles:'))!;
+    expect(line).toContain('When the brief\'s notes have a `Subtitles: …` line');
+    expect(line).toContain('never copy it from a video analysis\'s transcript');
+    // The subtitles feature takes the call (the job starts when the turn ends): no caption text goes through the agent.
+    const started = await h().tool(first, 'start_subtitles', { drawn: true });
+    expect(started.statusCode, started.body).toBe(200);
+    expect(started.json()).toEqual({ started: true, when: 'after-turn' });
+    first.finish();
+    await h().waitIdle();
+  });
+
   it('missing brief session: one fresh attempt with the digest and a chat line', async () => {
     t = await briefApp();
     const { id, run } = await session();

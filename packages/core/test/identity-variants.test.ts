@@ -153,4 +153,4 @@ describe('identity prompt of a grouped creative', () => {
 // Decision 1132 (report 34) added the outline-from-ttf/otf sentence and the Sandbox "no cd chains" line.
 // Decision 1232 (report 38) added the html layers' "no will-change" line.
 // Decision 1434 (report 58) reworded SAME_SIZE_NOTE (copies are different images): only `instances`, the one with an @2 copy, changes.
-const GOLDEN = { three: '519c3a6cf963498958c1d2a68de2f924aaeeb690add45f1ffdb9e7c483144fdd', instances: 'b5859ed6efa79813064adbdb7651357659eb198cc464ba80200d6d90cc9bfcb4' };
+const GOLDEN = { three: '12e4d48391cdf56b8d05612f06c469042b01ae01fa6f07c1c5eae6e70197d24f', instances: 'f98027f5e838d30640170f11de3295dacd0cc39ccad41ad36a121c391bb3f267' };
