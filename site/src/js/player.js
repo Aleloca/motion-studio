@@ -81,6 +81,20 @@ export class CompositionPlayer {
 
   seek(t) { this.send({ type: 'seek', t }); }
 
+  /**
+   * Back to the first frame (the hero shows each creative from its start). A seek stops the runtime's playback, so a
+   * playing player is told to play again; a paused one stays there and plays from it when it next plays.
+   * @returns {boolean} false when there is no live runtime to restart (still loading, or on its poster for good).
+   */
+  restart() {
+    if (!this.ready || !this.frame || this.failed) return false;
+    this.still = false;
+    this.atPoster = false;
+    this.seek(0);
+    if (this.playing) this.send({ type: 'play', loop: true });
+    return true;
+  }
+
   showStill() {
     if (this.still) return;
     this.pause();

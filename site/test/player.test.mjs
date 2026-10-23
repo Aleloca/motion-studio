@@ -25,7 +25,7 @@ function harness({ posterTime = 2 } = {}) {
   const classes = new Set();
   const frame = { contentWindow: { postMessage: (m, origin) => sent.push({ m, origin }) }, removed: false, remove() { this.removed = true; } };
   let mounts = 0;
-  const figure = { dataset: { composition: 'hero-16x9', posterTime: String(posterTime) }, classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c) } };
+  const figure = { dataset: { composition: 'kova-16x9', posterTime: String(posterTime) }, classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c) } };
   const player = new CompositionPlayer(figure, {
     origin: ORIGIN,
     mount: (src) => { mounts++; frame.src = src; return frame; },
@@ -41,7 +41,7 @@ test('mounts the runtime page in preview mode with the parent origin', () => {
   const h = harness();
   h.player.update(S({ near: true }));
   assert.equal(h.mounts(), 1);
-  assert.equal(h.frame.src, `runtime/hero-16x9.html?mode=preview&parentOrigin=${encodeURIComponent(ORIGIN)}`);
+  assert.equal(h.frame.src, `runtime/kova-16x9.html?mode=preview&parentOrigin=${encodeURIComponent(ORIGIN)}`);
   h.player.update(S({ near: true, visible: true }));
   assert.equal(h.mounts(), 1, 'mounted once');
 });
@@ -185,4 +185,36 @@ test('a timed-out player retries once it has left and comes back; an errored one
   e.player.update(S({ near: true }));
   assert.equal(e.mounts(), 1);
   assert.ok(e.classes.has('is-failed'));
+});
+
+test('restart: back to the first frame, playing again when it was playing', () => {
+  const h = harness();
+  h.player.update(S({ near: true }));
+  assert.equal(h.player.restart(), false, 'not ready yet');
+  h.msg({ type: 'ready' });
+  h.player.update(S({ near: true, visible: true }));
+  h.sent.length = 0;
+  assert.equal(h.player.restart(), true);
+  assert.deepEqual(h.sent.map((s) => s.m), [{ type: 'seek', t: 0 }, { type: 'play', loop: true }]);
+});
+
+test('restart while paused only seeks; the next play starts from there', () => {
+  const h = harness();
+  h.player.update(S({ near: true }));
+  h.msg({ type: 'ready' });
+  h.player.update(S({ near: true, visible: false }));
+  h.sent.length = 0;
+  assert.equal(h.player.restart(), true);
+  assert.deepEqual(h.sent.map((s) => s.m), [{ type: 'seek', t: 0 }]);
+  h.player.update(S({ near: true, visible: true }));
+  assert.deepEqual(h.sent.map((s) => s.m.type), ['seek', 'play']);
+});
+
+test('restart leaves a failed player on its poster', () => {
+  const h = harness();
+  h.player.update(S({ near: true }));
+  h.msg({ type: 'error', error: { code: 'compositionInvalid', message: 'x' } });
+  h.sent.length = 0;
+  assert.equal(h.player.restart(), false);
+  assert.deepEqual(h.sent, []);
 });
