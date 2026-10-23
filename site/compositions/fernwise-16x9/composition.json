@@ -169,7 +169,7 @@
           ]
         },
         {
-          "id": "chip-83",
+          "id": "chip-80",
           "type": "shape",
           "scene": "savings",
           "start": 8,
@@ -195,7 +195,7 @@
           ]
         },
         {
-          "id": "shadow-85",
+          "id": "shadow-82",
           "type": "shape",
           "scene": "savings",
           "start": 5.8,
@@ -245,7 +245,7 @@
           ]
         },
         {
-          "id": "card-86",
+          "id": "card-83",
           "type": "shape",
           "scene": "savings",
           "start": 5.8,
@@ -295,7 +295,7 @@
           ]
         },
         {
-          "id": "phone-shadow-107",
+          "id": "phone-shadow-104",
           "type": "shape",
           "scene": "app",
           "start": 9.2,
@@ -325,7 +325,7 @@
           ]
         },
         {
-          "id": "disc-108",
+          "id": "disc-105",
           "type": "shape",
           "scene": "app",
           "start": 9.15,
@@ -720,7 +720,7 @@
           ]
         },
         {
-          "id": "grid-88",
+          "id": "grid-85",
           "type": "svg",
           "src": "assets/grid-16x9.svg",
           "scene": "savings",
@@ -754,7 +754,7 @@
           ]
         },
         {
-          "id": "curve-89",
+          "id": "curve-86",
           "type": "svg",
           "src": "assets/chart-16x9.svg",
           "scene": "savings",
@@ -789,7 +789,7 @@
           ]
         },
         {
-          "id": "phone-109",
+          "id": "phone-106",
           "type": "svg",
           "src": "assets/phone.svg",
           "scene": "app",
@@ -2092,8 +2092,8 @@
           "id": "balance-67",
           "type": "text",
           "scene": "savings",
-          "start": 5.95,
-          "duration": 0.15,
+          "start": 6.15,
+          "duration": 0.188,
           "props": {
             "text": "$0",
             "fontFamily": "Bricolage Grotesque",
@@ -2110,10 +2110,10 @@
           "id": "balance-68",
           "type": "text",
           "scene": "savings",
-          "start": 6.1,
-          "duration": 0.15,
+          "start": 6.338,
+          "duration": 0.188,
           "props": {
-            "text": "$140",
+            "text": "$620",
             "fontFamily": "Bricolage Grotesque",
             "fontWeight": 800,
             "color": "#0E2A1F",
@@ -2128,10 +2128,10 @@
           "id": "balance-69",
           "type": "text",
           "scene": "savings",
-          "start": 6.25,
-          "duration": 0.15,
+          "start": 6.525,
+          "duration": 0.188,
           "props": {
-            "text": "$420",
+            "text": "$1,350",
             "fontFamily": "Bricolage Grotesque",
             "fontWeight": 800,
             "color": "#0E2A1F",
@@ -2146,10 +2146,10 @@
           "id": "balance-70",
           "type": "text",
           "scene": "savings",
-          "start": 6.4,
-          "duration": 0.15,
+          "start": 6.713,
+          "duration": 0.188,
           "props": {
-            "text": "$900",
+            "text": "$1,900",
             "fontFamily": "Bricolage Grotesque",
             "fontWeight": 800,
             "color": "#0E2A1F",
@@ -2164,10 +2164,10 @@
           "id": "balance-71",
           "type": "text",
           "scene": "savings",
-          "start": 6.55,
-          "duration": 0.15,
+          "start": 6.9,
+          "duration": 0.188,
           "props": {
-            "text": "$1,650",
+            "text": "$2,950",
             "fontFamily": "Bricolage Grotesque",
             "fontWeight": 800,
             "color": "#0E2A1F",
@@ -2182,10 +2182,10 @@
           "id": "balance-72",
           "type": "text",
           "scene": "savings",
-          "start": 6.7,
-          "duration": 0.15,
+          "start": 7.088,
+          "duration": 0.188,
           "props": {
-            "text": "$2,700",
+            "text": "$3,600",
             "fontFamily": "Bricolage Grotesque",
             "fontWeight": 800,
             "color": "#0E2A1F",
@@ -2200,10 +2200,10 @@
           "id": "balance-73",
           "type": "text",
           "scene": "savings",
-          "start": 6.85,
-          "duration": 0.15,
+          "start": 7.275,
+          "duration": 0.188,
           "props": {
-            "text": "$3,900",
+            "text": "$4,800",
             "fontFamily": "Bricolage Grotesque",
             "fontWeight": 800,
             "color": "#0E2A1F",
@@ -2218,10 +2218,10 @@
           "id": "balance-74",
           "type": "text",
           "scene": "savings",
-          "start": 7,
-          "duration": 0.15,
+          "start": 7.463,
+          "duration": 0.188,
           "props": {
-            "text": "$5,200",
+            "text": "$5,400",
             "fontFamily": "Bricolage Grotesque",
             "fontWeight": 800,
             "color": "#0E2A1F",
@@ -2236,10 +2236,10 @@
           "id": "balance-75",
           "type": "text",
           "scene": "savings",
-          "start": 7.15,
-          "duration": 0.15,
+          "start": 7.65,
+          "duration": 0.188,
           "props": {
-            "text": "$6,600",
+            "text": "$6,900",
             "fontFamily": "Bricolage Grotesque",
             "fontWeight": 800,
             "color": "#0E2A1F",
@@ -2254,10 +2254,10 @@
           "id": "balance-76",
           "type": "text",
           "scene": "savings",
-          "start": 7.3,
-          "duration": 0.15,
+          "start": 7.838,
+          "duration": 0.188,
           "props": {
-            "text": "$8,000",
+            "text": "$8,100",
             "fontFamily": "Bricolage Grotesque",
             "fontWeight": 800,
             "color": "#0E2A1F",
@@ -2272,10 +2272,10 @@
           "id": "balance-77",
           "type": "text",
           "scene": "savings",
-          "start": 7.45,
-          "duration": 0.15,
+          "start": 8.025,
+          "duration": 0.188,
           "props": {
-            "text": "$9,300",
+            "text": "$9,600",
             "fontFamily": "Bricolage Grotesque",
             "fontWeight": 800,
             "color": "#0E2A1F",
@@ -2290,10 +2290,10 @@
           "id": "balance-78",
           "type": "text",
           "scene": "savings",
-          "start": 7.6,
-          "duration": 0.15,
+          "start": 8.213,
+          "duration": 0.188,
           "props": {
-            "text": "$10,400",
+            "text": "$10,900",
             "fontFamily": "Bricolage Grotesque",
             "fontWeight": 800,
             "color": "#0E2A1F",
@@ -2308,62 +2308,8 @@
           "id": "balance-79",
           "type": "text",
           "scene": "savings",
-          "start": 7.75,
-          "duration": 0.15,
-          "props": {
-            "text": "$11,300",
-            "fontFamily": "Bricolage Grotesque",
-            "fontWeight": 800,
-            "color": "#0E2A1F",
-            "fontSize": 168,
-            "x": 140,
-            "y": 380,
-            "width": 619.264,
-            "height": 221.76
-          }
-        },
-        {
-          "id": "balance-80",
-          "type": "text",
-          "scene": "savings",
-          "start": 7.9,
-          "duration": 0.15,
-          "props": {
-            "text": "$11,950",
-            "fontFamily": "Bricolage Grotesque",
-            "fontWeight": 800,
-            "color": "#0E2A1F",
-            "fontSize": 168,
-            "x": 140,
-            "y": 380,
-            "width": 619.264,
-            "height": 221.76
-          }
-        },
-        {
-          "id": "balance-81",
-          "type": "text",
-          "scene": "savings",
-          "start": 8.05,
-          "duration": 0.15,
-          "props": {
-            "text": "$12,320",
-            "fontFamily": "Bricolage Grotesque",
-            "fontWeight": 800,
-            "color": "#0E2A1F",
-            "fontSize": 168,
-            "x": 140,
-            "y": 380,
-            "width": 619.264,
-            "height": 221.76
-          }
-        },
-        {
-          "id": "balance-82",
-          "type": "text",
-          "scene": "savings",
-          "start": 8.2,
-          "duration": 0.85,
+          "start": 8.4,
+          "duration": 0.65,
           "props": {
             "text": "$12,480",
             "fontFamily": "Bricolage Grotesque",
@@ -2409,7 +2355,7 @@
               "prop": "blur",
               "from": 0,
               "to": 10,
-              "start": 0.5,
+              "start": 0.3,
               "duration": 0.35,
               "ease": "cubic-bezier(.7,0,.84,0)"
             },
@@ -2420,7 +2366,7 @@
           ]
         },
         {
-          "id": "chip-l-84",
+          "id": "chip-l-81",
           "type": "text",
           "scene": "savings",
           "start": 8.1,
@@ -2450,7 +2396,7 @@
           ]
         },
         {
-          "id": "chart-t-87",
+          "id": "chart-t-84",
           "type": "text",
           "scene": "savings",
           "start": 5.95,
@@ -2487,7 +2433,7 @@
           ]
         },
         {
-          "id": "month-93",
+          "id": "month-90",
           "type": "text",
           "scene": "savings",
           "start": 6.15,
@@ -2525,7 +2471,7 @@
           ]
         },
         {
-          "id": "month-94",
+          "id": "month-91",
           "type": "text",
           "scene": "savings",
           "start": 6.338,
@@ -2563,7 +2509,7 @@
           ]
         },
         {
-          "id": "month-95",
+          "id": "month-92",
           "type": "text",
           "scene": "savings",
           "start": 6.525,
@@ -2601,7 +2547,7 @@
           ]
         },
         {
-          "id": "month-96",
+          "id": "month-93",
           "type": "text",
           "scene": "savings",
           "start": 6.713,
@@ -2639,7 +2585,7 @@
           ]
         },
         {
-          "id": "month-97",
+          "id": "month-94",
           "type": "text",
           "scene": "savings",
           "start": 6.9,
@@ -2677,7 +2623,7 @@
           ]
         },
         {
-          "id": "month-98",
+          "id": "month-95",
           "type": "text",
           "scene": "savings",
           "start": 7.088,
@@ -2715,7 +2661,7 @@
           ]
         },
         {
-          "id": "month-99",
+          "id": "month-96",
           "type": "text",
           "scene": "savings",
           "start": 7.275,
@@ -2753,7 +2699,7 @@
           ]
         },
         {
-          "id": "month-100",
+          "id": "month-97",
           "type": "text",
           "scene": "savings",
           "start": 7.463,
@@ -2791,7 +2737,7 @@
           ]
         },
         {
-          "id": "month-101",
+          "id": "month-98",
           "type": "text",
           "scene": "savings",
           "start": 7.65,
@@ -2829,7 +2775,7 @@
           ]
         },
         {
-          "id": "month-102",
+          "id": "month-99",
           "type": "text",
           "scene": "savings",
           "start": 7.838,
@@ -2867,7 +2813,7 @@
           ]
         },
         {
-          "id": "month-103",
+          "id": "month-100",
           "type": "text",
           "scene": "savings",
           "start": 8.025,
@@ -2905,7 +2851,7 @@
           ]
         },
         {
-          "id": "month-104",
+          "id": "month-101",
           "type": "text",
           "scene": "savings",
           "start": 8.213,
@@ -2943,7 +2889,7 @@
           ]
         },
         {
-          "id": "tip-l-106",
+          "id": "tip-l-103",
           "type": "text",
           "scene": "savings",
           "start": 8.5,
@@ -2973,7 +2919,7 @@
           ]
         },
         {
-          "id": "word-111",
+          "id": "word-108",
           "type": "text",
           "scene": "app",
           "start": 9.65,
@@ -3007,7 +2953,7 @@
           ]
         },
         {
-          "id": "tag-112",
+          "id": "tag-109",
           "type": "text",
           "scene": "app",
           "start": 9.9,
@@ -3041,7 +2987,7 @@
           ]
         },
         {
-          "id": "cta-113",
+          "id": "cta-110",
           "type": "shape",
           "scene": "app",
           "start": 10.15,
@@ -3063,7 +3009,7 @@
           ]
         },
         {
-          "id": "cta-l-114",
+          "id": "cta-l-111",
           "type": "text",
           "scene": "app",
           "start": 10.3,
@@ -3275,7 +3221,7 @@
           ]
         },
         {
-          "id": "halo-90",
+          "id": "halo-87",
           "type": "shape",
           "scene": "savings",
           "start": 6.15,
@@ -3464,7 +3410,7 @@
           ]
         },
         {
-          "id": "dot-91",
+          "id": "dot-88",
           "type": "shape",
           "scene": "savings",
           "start": 6.15,
@@ -3617,7 +3563,7 @@
           ]
         },
         {
-          "id": "dot-core-92",
+          "id": "dot-core-89",
           "type": "shape",
           "scene": "savings",
           "start": 6.15,
@@ -3764,7 +3710,7 @@
           ]
         },
         {
-          "id": "tip-105",
+          "id": "tip-102",
           "type": "shape",
           "scene": "savings",
           "start": 8.45,
@@ -3790,7 +3736,7 @@
           ]
         },
         {
-          "id": "logo-110",
+          "id": "logo-107",
           "type": "svg",
           "src": "assets/logo.svg",
           "scene": "app",
