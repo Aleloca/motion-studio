@@ -192,7 +192,7 @@ export function CanvasBoard(p: BoardProps) {
           </div>
         ) : null}
       </div>
-      <div className={cx('ms-cv-frame-wrap', narrow && 'ms-narrow', (liveOn || fileOn) && 'ms-live')} style={{ width: size.width * zoom, height: size.height * zoom }}
+      <div className={cx('ms-cv-frame-wrap', narrow && 'ms-narrow')} style={{ width: size.width * zoom, height: size.height * zoom }}
         onPointerEnter={hoverIn} onPointerLeave={hoverOut}>
         <div
           ref={frame}
