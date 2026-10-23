@@ -56,7 +56,8 @@ const HELPER_TEXT_MAX = 1500;
 /** One variant's work in a group turn (spec §4.3). `instruction` null: its first generation (a variant made in this turn). */
 export interface WorkItem { variant: VariantId; instruction: string | null; formats?: string[]; pins: Pin[] }
 /** What a group turn starts from: the user's message (its pins carry their variants) and any explicit targets. */
-export interface GroupRequest { text: string; pins: Pin[]; variants?: VariantId[]; clientId?: string; queued?: boolean }
+/** `attachments` (report 79): the project library files the message carries (checked by the route). */
+export interface GroupRequest { text: string; pins: Pin[]; attachments?: string[]; variants?: VariantId[]; clientId?: string; queued?: boolean }
 
 export interface GroupTurnDeps extends PaidCardDeps {
   queue: JobQueue; launcher: AgentLauncher; turns: CreativeTurnService; approvals: ApprovalBroker;
@@ -213,7 +214,7 @@ export class GroupTurnService implements GroupRouter {
     const written = req.clientId !== undefined && (await store.readConversation(host.creativeSlug)).some((e) => e.type === 'user' && e.group && e.clientId === req.clientId);
     if (!written) {
       await this.write(r, {
-        type: 'user', at: now(), text: req.text, pins: req.pins, attachments: [], jobId, group: true, clientId,
+        type: 'user', at: now(), text: req.text, pins: req.pins, attachments: req.attachments ?? [], jobId, group: true, clientId,
         ...(req.queued ? { mode: 'queued' as const, deliveredAt: now() } : {}),
       });
     }
@@ -621,7 +622,8 @@ export class GroupTurnService implements GroupRouter {
     const items = [...r.plan.values()].sort((a, b) => compareVariantIds(a.variant, b.variant));
     const outcomes: ReportOutcome[] = [];
     const started: Array<{ item: WorkItem; slug: string; jobId: string; before: number | null }> = [];
-    const userRequest = r.request.text || r.request.pins.length ? { text: r.request.text, pins: r.request.pins } : null;
+    const userRequest = r.request.text || r.request.pins.length || r.request.attachments?.length
+      ? { text: r.request.text, pins: r.request.pins, ...(r.request.attachments?.length ? { attachments: r.request.attachments } : {}) } : null;
     for (const item of items) {
       if (signal.aborted) break;
       const m = group.members.find((x) => x.letter === item.variant);

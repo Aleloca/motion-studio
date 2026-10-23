@@ -974,6 +974,7 @@ export const it: Messages = {
   jobs: {
     regenerateRequest: 'Rigenera tutti i formati partendo dal brief aggiornato.',
     pinsOnlyRequest: 'Applica i commenti puntuali.',
+    attachmentsOnlyRequest: 'Usa i file allegati.',
     addFormatsRequest: (p) => `Aggiungi i formati ${p.formats} riusando i sorgenti esistenti in work/ e lo stesso stile della versione ${p.n}.`,
     renderCommandWas: (p) => `Il comando di render della versione ${p.n} era: ${p.command}.`,
     regenerateFormatsRequest: (p) => `Rigenera ${p.formats} partendo dal brief aggiornato.`,

@@ -1,5 +1,5 @@
 import type { CreativeFile, FormatPreset, IdentityBrief, Pin, StorePack, VariantId } from '@motion-studio/shared';
-import { BRIEF_TEXT_MAX, STORE_CAPTION_MAX, agentNamedLabel, formatDisplayName, isUserNamed, languageName, presetOf, statedDurationSec, videoTargetBitrateKbps, type BrandKit, type BriefServices, type Locale } from '@motion-studio/shared';
+import { BRIEF_TEXT_MAX, assetKindOf, STORE_CAPTION_MAX, agentNamedLabel, formatDisplayName, isUserNamed, languageName, presetOf, statedDurationSec, videoTargetBitrateKbps, type BrandKit, type BriefServices, type Locale } from '@motion-studio/shared';
 import { chatReplyInstruction, replyInstruction } from '../i18n.ts';
 import { findPreset } from '../formats/format-catalog.ts';
 import { servicesLine } from '../services/service-policy.ts';
@@ -18,6 +18,8 @@ export type AgentContract = 'compositions' | 'media';
 export interface PromptInput {
   slug: string; creative: CreativeFile; presets: FormatPreset[]; version: number; kind: PromptKind;
   userText?: string; pins?: Pin[]; attachments?: string[]; problems?: string[];
+  /** Report 79: the project library files the user attached to the message (project paths, checked by the route). */
+  files?: string[];
   /**
    * Fix turns (F4, orchestrator decision): the user's own words for this version, verbatim (absent: the version comes from
    * the brief alone). The repair turn carries them so it respects the user's constraints ("no voice-over").
@@ -92,7 +94,7 @@ export interface PromptInput {
    * talks to. `request`: the user's message to the group (quoted for context; the turn's request is the coordinator's
    * instruction). First and iteration turns only.
    */
-  helper?: { request: { text: string; pins: Pin[] } | null };
+  helper?: { request: { text: string; pins: Pin[]; attachments?: string[] } | null };
 }
 /** Phase 15: what a variant's prompt says about its group (see `PromptInput.variant`). */
 export interface PromptVariant { letter: VariantId; count: number; direction: string | null; others: Array<{ letter: VariantId; direction: string | null }> }
@@ -227,6 +229,16 @@ const pct = (v: number) => `${Math.round(v * 100)}%`;
  */
 export function quotePromptString(s: string): string {
   return JSON.stringify(s).replace(/[\u007f-\u009f\u2028\u2029]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
+
+/** Report 79: the section listing the library files attached to a message (project paths, quoted, with their kind). */
+export function attachedFilesSection(paths: readonly string[] | undefined): string[] {
+  if (!paths?.length) return [];
+  return [
+    '## Attached files',
+    'The user attached these files of the project library to the message (project paths). Open them and use them as the request says:',
+    ...paths.map((p) => `- ${quotePromptString(p)} (${assetKindOf(p)})`),
+  ];
 }
 
 /** One line of user-derived text: every control character and line separator becomes a space, at most `max` characters. */
@@ -607,6 +619,8 @@ export function helperSection(letter: VariantId | undefined, h: NonNullable<Prom
       ...(r.pins.length ? ['Pinned comments:', ...r.pins.map((p) => defuseTags(`${p.variant ? `[${p.variant.toUpperCase()}] ` : ''}${pinLine(p).slice(2)}`))] : []),
       USER_REQUEST_CLOSE,
     ] : []),
+    // Report 79: the files the user attached to the message (outside the quote: project paths the core checked).
+    ...(r?.attachments?.length ? attachedFilesSection(r.attachments) : []),
   ];
 }
 
@@ -680,6 +694,7 @@ export function buildCreativePrompt(i: PromptInput): string {
     parts.push(`Create the creative "${i.creative.title}" (version ${i.version}).`, ...(i.stoppedNote ? ['', STOPPED_TURN_NOTE] : []), '', '## Brief', ...briefLines);
     if (i.briefChat) parts.push('', '## The brief session (summary)', 'The user wrote this brief with an agent in Motion Studio; this is that conversation.', i.briefChat);
     if (i.userText) parts.push('', '## Additional notes', i.userText);
+    if (i.files?.length) parts.push('', ...attachedFilesSection(i.files));
     if (i.liveMessages?.length) parts.push('', ...laterMessagesSection(i.liveMessages));
   } else if (i.kind === 'iteration') {
     parts.push(`New request for the creative "${i.creative.title}": produce version ${i.version}.`, ...(i.stoppedNote ? ['', STOPPED_TURN_NOTE] : []), '', '## Request', i.userText ?? '');
@@ -693,6 +708,7 @@ export function buildCreativePrompt(i: PromptInput): string {
       }
       for (const p of i.pins) parts.push(pinLine(p));
     }
+    if (i.files?.length) parts.push('', ...attachedFilesSection(i.files));
     if (i.attachments?.length) parts.push('', '## Attached frames (read them)', ...i.attachments.map((a) => `- ${a}`));
     if (i.conversion && contract === 'compositions') parts.push('', ...conversionSection(i.conversion));
     const edits = contract === 'compositions' ? directEditSection(i) : [];

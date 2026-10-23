@@ -986,6 +986,7 @@ export const en = {
   jobs: {
     regenerateRequest: 'Regenerate all formats from the updated brief.',
     pinsOnlyRequest: 'Apply the pinned comments.',
+    attachmentsOnlyRequest: 'Use the attached files.',
     addFormatsRequest: (p: { formats: string; n: number }) => `Add the formats ${p.formats}, reusing the existing sources in work/ and the same style as version ${p.n}.`,
     renderCommandWas: (p: { n: number; command: string }) => `The render command of version ${p.n} was: ${p.command}.`,
     regenerateFormatsRequest: (p: { formats: string }) => `Regenerate ${p.formats} from the updated brief.`,

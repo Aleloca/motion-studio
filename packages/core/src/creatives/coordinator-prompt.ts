@@ -1,6 +1,6 @@
 import { chatReplyInstruction } from '../i18n.ts';
 import { BRIEF_TEXT_MAX, agentNamedLabel, compareVariantIds, isUserNamed, languageName, type Brief, type ConversationEntry, type GroupTurnOutcome, type Locale, type Pin, type VariantId } from '@motion-studio/shared';
-import { defuseTags, pinLine, quotePromptString, USER_REQUEST_CLOSE, USER_REQUEST_OPEN } from './prompt.ts';
+import { attachedFilesSection, defuseTags, pinLine, quotePromptString, USER_REQUEST_CLOSE, USER_REQUEST_OPEN } from './prompt.ts';
 
 /**
  * Phase 3 of the single agent (spec §6, §10): the prompts of a variant group's coordinator, the agent the user talks to, and
@@ -33,8 +33,8 @@ export interface CoordinatorPromptInput {
   title: string; slug: string; brief: Brief; locale: Locale;
   variants: CoordinatorVariant[];
   picks: Record<string, { variant: VariantId; version: number }>;
-  /** The user's message; its pins carry their variants. */
-  request: { text: string; pins: Pin[] };
+  /** The user's message; its pins carry their variants; `attachments` (report 79): the library files it carries. */
+  request: { text: string; pins: Pin[]; attachments?: string[] };
   /** The variants the message points to (its comments' variants, and a queued request's own). */
   explicit: VariantId[];
   /** The chat as the core summed it up: the whole of it (no session yet) or what happened since the last run. */
@@ -115,6 +115,8 @@ export function buildCoordinatorPrompt(i: CoordinatorPromptInput): string {
       ? `The comments point to the variants ${listOf([...new Set([...pinned, ...i.explicit])].sort(compareVariantIds))}.`
       : 'The message has no pinned comment.',
   );
+  // Report 79: the files go to the helpers with the message too; the coordinator may read them to decide.
+  if (i.request.attachments?.length) parts.push('', ...attachedFilesSection(i.request.attachments), 'Each helper you start gets these files with the message.');
   if (i.later?.length) {
     parts.push('', '## The user\'s later messages', 'After the message the user also sent these, in order (their words too; a later one wins):', ...i.later.flatMap((m) => userBlock(m.text, m.pins)));
   }
