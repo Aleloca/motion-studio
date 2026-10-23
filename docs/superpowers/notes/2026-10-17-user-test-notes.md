@@ -592,6 +592,13 @@ arrives and worked on later together.
     onto its own line in the narrow panel.
     Wanted: the same tab style as the creative's panel, the list starting below the tabs, nothing hidden under them.
 
+76. **Subtitles drift away from the speech (user report of 2026-10-23).** On the 2:29 "Video Codecs 101" creative the
+    lines are "completely" out of sync. The English set (whisper-small, local whisper.cpp) ends at 2:08 while the voice
+    runs to about 2:27: the first pause (3.4 s) matches a cue boundary, then the lines fall further behind, ~19 s at
+    the end, about the sum of the pauses. Suspect: whisper.cpp `--vad` returning times of the silence-stripped audio.
+    The Italian translation follows the English timing, so it is off the same way.
+    Wanted: subtitle times on the video's own clock; the user then presses "Rifai i tempi".
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
