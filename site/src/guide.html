@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Motion Studio user guide</title>
+<meta name="description" content="How to use Motion Studio, step by step: install, brand, assets, briefs, the canvas, the chat, the editor, variants, languages, identity formats and export.">
+<link rel="icon" href="assets/favicon/favicon.ico" sizes="48x48">
+<link rel="icon" href="assets/favicon/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="assets/favicon/apple-touch-icon.png">
+<link rel="manifest" href="assets/favicon/site.webmanifest">
+<meta name="theme-color" content="#0f0f0f">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Motion Studio user guide">
+<meta property="og:description" content="Every feature of Motion Studio, step by step, with screenshots of the app.">
+<meta property="og:image" content="https://aleloca.github.io/motion-studio/assets/og-image.png">
+<meta property="og:url" content="https://aleloca.github.io/motion-studio/guide.html">
+<link rel="preload" href="assets/fonts/BricolageGrotesque.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/InstrumentSans.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/site.css">
+<link rel="stylesheet" href="css/guide.css">
+<script type="module" src="js/guide.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="site-header site-header--static">
+  <div class="wrap site-header__inner">
+    <a class="site-header__logo" href="./" aria-label="Motion Studio, home"><img src="assets/logo-horizontal-light.svg" alt="Motion Studio" width="180" height="34"></a>
+    <nav aria-label="Main">
+      <ul class="site-nav">
+        <li><a href="./">Home</a></li>
+        <li class="site-nav__keep"><a href="guide.html" aria-current="page">Guide</a></li>
+        <li><a class="btn btn--small" href="https://github.com/Aleloca/motion-studio">GitHub</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <div class="guide-hero">
+    <div class="wrap">
+      <p class="eyebrow">{ user guide }</p>
+      <h1>Using Motion Studio</h1>
+      <p>Everything the app does, in the order you meet it: install it, teach it your brand, write a brief, then iterate with the agent and the editor until every format is ready to export. The screenshots are of the real app, on a demo project called Ember Coffee.</p>
+    </div>
+  </div>
+
+  <div class="wrap guide">
+    <nav class="toc" aria-label="Contents">
+      <details open>
+        <summary>Contents</summary>
+        <ol>
+          <li><a href="#install">Install and requirements</a></li>
+          <li><a href="#first-launch">First launch</a></li>
+          <li><a href="#settings">Settings</a></li>
+          <li><a href="#projects">Projects</a></li>
+          <li><a href="#brand">Brand</a></li>
+          <li><a href="#assets">Assets and references</a></li>
+          <li><a href="#new-creative">New creative and the brief</a></li>
+          <li><a href="#canvas">The canvas</a></li>
+          <li><a href="#chat">The chat</a></li>
+          <li><a href="#versions">Versions</a></li>
+          <li><a href="#editor">The format view and editor</a></li>
+          <li><a href="#subtitles">Subtitles</a></li>
+          <li><a href="#languages">Formats and languages</a></li>
+          <li><a href="#variants">Creative variants</a></li>
+          <li><a href="#identity">Identity formats and store pack</a></li>
+          <li><a href="#export">Export</a></li>
+          <li><a href="#git">Git and your files</a></li>
+          <li><a href="#archive">Archive and delete</a></li>
+          <li><a href="#usage">Usage and tokens</a></li>
+          <li><a href="#security">Security</a></li>
+          <li><a href="#troubleshooting">Troubleshooting and limits</a></li>
+        </ol>
+      </details>
+    </nav>
+
+    <div class="guide-body">
+
+      <!-- source: README "Installation", "Requirements" -->
+      <section class="guide-section" id="install" aria-labelledby="install-title">
+        <h2 id="install-title">Install and requirements</h2>
+        <p class="lede">Motion Studio runs on your computer and opens in your browser, or in its own desktop window. The agent is Claude Code, so it needs to be installed and signed in first.</p>
+        <h3 id="requirements">Requirements</h3>
+        <ul>
+          <li><a href="https://docs.claude.com/claude-code">Claude Code</a>, installed and signed in (<code>claude auth login</code>).</li>
+          <li>Git.</li>
+          <li>FFmpeg, to render compositions into videos (stills need none; without it, outputs show as "unverified").</li>
+          <li>Node.js 22 or newer, for the sources and <code>npx</code> (not for the desktop app).</li>
+          <li>For the npm version only: Google Chrome or Chromium, which renders the compositions. Without it, <b>Settings → System check</b> offers to download Chrome for Testing, after showing its size and with your consent. The desktop app renders with its own Chromium.</li>
+        </ul>
+        <h3 id="install-ways">Three ways to install</h3>
+        <ol class="steps">
+          <li><b>From source</b>, available today: clone the repository, then run <code>pnpm install</code> and <code>pnpm motion-studio</code>. It builds and starts on <code>http://127.0.0.1:4317</code> and opens the browser.</li>
+          <li><b>Desktop app</b>: download the installer from the project's GitHub Releases, once published (macOS Apple Silicon and Intel, Windows, Linux). An unsigned macOS build opens the first time with right-click → <b>Open</b>.</li>
+          <li><b>From npm</b>: <code>npx @motion-studio/cli</code>, once published. The installed command is <code>motion-studio</code>.</li>
+        </ol>
+        <pre class="code" tabindex="0"><code>git clone https://github.com/Aleloca/motion-studio
+cd motion-studio
+pnpm install
+pnpm motion-studio</code></pre>
+        <p>Launcher options go after the script name, for example <code>pnpm motion-studio --port 5000 --no-open</code>: <code>--port &lt;n&gt;</code> (default 4317), <code>--no-open</code> (do not open the browser) and <code>--print-url</code> (print the address of the Motion Studio already running).</p>
+        <div class="callout callout--tip"><span class="callout__label">Tip</span>
+          <p>The address printed at startup carries an access code (<code>#t=…</code>). Open Motion Studio from that link; if the interface ever asks you to reopen it from the terminal, run <code>motion-studio --print-url</code>. Only one Motion Studio runs per configuration folder: a second launch opens the one already running.</p>
+        </div>
+      </section>
+
+      <!-- source: packages/web/src/screens/Welcome.tsx -->
+      <section class="guide-section" id="first-launch" aria-labelledby="first-launch-title">
+        <h2 id="first-launch-title">First launch</h2>
+        <p class="lede">The first time, a three-step setup checks your computer, asks where to keep projects and creates the first one.</p>
+        <ol class="steps">
+          <li><b>Check your setup.</b> Motion Studio looks for Node.js, Git, FFmpeg, Claude Code and its sign-in, whether live messages and interrupt work with your Claude Code version, and whether the agent sandbox is available. A missing required tool says how to fix it; <b>Continue</b> once everything needed passes.</li>
+          <li><b>Choose a workspace.</b> The folder where every project is saved (each project is a folder of JSON and Markdown files under git).</li>
+          <li><b>Create your first project.</b> Give it a name; you can then add its website in Brand.</li>
+        </ol>
+        <figure class="shot"><a class="shot__open" href="assets/guide/welcome-check.webp"><img src="assets/guide/welcome-check.webp" alt="The first-run setup, step 1 of 3: eight checks passed, from Node.js and Git to Claude Code sign-in, live messages, interrupt and the agent sandbox." width="1440" height="900" loading="lazy" decoding="async"></a><figcaption>Step 1 of the setup: every check passed. The language menu is at the top right.</figcaption></figure>
+      </section>
+
+      <!-- source: README "Language", "Providers", "Video analysis"; packages/web/src/screens/AppSettings.tsx -->
+      <section class="guide-section" id="settings" aria-labelledby="settings-title">
+        <h2 id="settings-title">Settings</h2>
+        <p class="lede">Open <b>Settings</b> from the account menu (the round badge at the top right). They apply to every project on this computer.</p>
+        <h3 id="settings-general">General: language and theme</h3>
+        <p><b>Language</b> is System, English or Italiano. System uses the first of your preferred languages that Motion Studio supports. The interface, the desktop menus and the terminal messages switch at once, and the agent replies, and writes the texts meant for you, in the chosen language. Texts saved earlier are not translated. <b>Theme</b> follows the system, or stays light or dark.</p>
+        <figure class="shot"><a class="shot__open" href="assets/guide/settings-general.webp"><img src="assets/guide/settings-general.webp" alt="Settings, General: the Language menu set to System (English) and the theme picker with System, Light and Dark; on the right a card says Everything works." width="1440" height="900" loading="lazy" decoding="async"></a><figcaption>General settings. The card on the right sums up the system check.</figcaption></figure>
+        <h3 id="settings-system">System check</h3>
+        <p>The same checks as the first launch, with <b>Check again</b>, plus the render engine (the Chrome or Chromium that renders compositions).</p>
+        <figure class="shot"><a class="shot__open" href="assets/guide/settings-system.webp"><img src="assets/guide/settings-system.webp" alt="Settings, System check: Node.js, Git, FFmpeg, Claude Code, sign-in, live messages, interrupt and agent sandbox, all passed, and the render engine." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <h3 id="settings-agent">The agent backend</h3>
+        <p>The agent is Claude Code, the one you installed and signed in to. The <b>model</b> is set in a project's Settings → Agent and approvals (empty: Claude Code's default). Live messages and interrupt are on for Claude Code 2.1.301 and newer; to switch either off, set <code>agentLiveInput</code> or <code>agentInterrupt</code> to <code>false</code> in the workspace's <code>.studio/settings.json</code> (there is no switch in the interface).</p>
+        <h3 id="settings-paid">Paid services and keys</h3>
+        <p>Paid services are optional. Add a key per provider: OpenAI (images and voice-over), ElevenLabs (voices, music, sound effects), Pexels and Unsplash (stock footage and photos). Saving a key, or its <b>Test</b> button, tries it with free, read-only requests and shows what it can do. Keys live in the system keychain (or in the <code>OPENAI_API_KEY</code>, <code>ELEVENLABS_API_KEY</code>, <code>PEXELS_API_KEY</code>, <code>UNSPLASH_ACCESS_KEY</code> environment variables) and the agent never sees them.</p>
+        <figure class="shot"><a class="shot__open" href="assets/guide/settings-paid.webp"><img src="assets/guide/settings-paid.webp" alt="Settings, Paid services: OpenAI, ElevenLabs, Pexels and Unsplash, each Not connected with an Add key button." width="1440" height="900" loading="lazy" decoding="async"></a><figcaption>Paid services with no key set (the demo has none).</figcaption></figure>
+        <div class="callout callout--safe"><span class="callout__label">Costs</span>
+          <p>Every image, voice-over, sound effect or music generation asks for confirmation before the paid call, from the agent and from Generate in Assets alike. You can turn that off in a project's Settings with <b>Confirm before using paid services</b>.</p>
+        </div>
+        <h3 id="settings-transcription">Video transcription</h3>
+        <p>When a video with speech enters a brief, Motion Studio can transcribe it: <b>Ask every time</b>, <b>Whisper on the Mac</b> (free, local; install the Small model, about 490 MB, or Large v3 Turbo, about 1.6 GB), <b>OpenAI</b> or <b>ElevenLabs</b> (paid, with a key) or <b>Never</b>. You can also point to a Whisper already installed (whisper.cpp, openai-whisper or faster-whisper); it is test-run on one second of audio before it is saved.</p>
+        <figure class="shot"><a class="shot__open" href="assets/guide/settings-transcription.webp"><img src="assets/guide/settings-transcription.webp" alt="Settings, Video transcription: the method (Ask every time selected), the Whisper models with Install buttons, and Use an installed Whisper." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <h3 id="settings-notifications">Notifications and updates</h3>
+        <p><b>Notifications</b>: when the agent needs your OK (a banner, the Dock badge and a notification), when a creative is ready (only while Motion Studio is in the background), with or without a sound; <b>Send a test notification</b> checks that you see them. <b>Updates</b> shows the version; the desktop app checks for updates at launch when the build is signed.</p>
+        <figure class="shot"><a class="shot__open" href="assets/guide/settings-notifications.webp"><img src="assets/guide/settings-notifications.webp" alt="Settings, Notifications: When the agent needs your OK, When a creative is ready and Play a sound, all on, and Send a test notification." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+      </section>
+
+      <!-- source: packages/web/src/screens/Projects.tsx, ProjectSettings.tsx -->
+      <section class="guide-section" id="projects" aria-labelledby="projects-title">
+        <h2 id="projects-title">Projects</h2>
+        <p class="lede">A project holds one brand: its brand kit, its Assets and references, and its creatives.</p>
+        <ol class="steps">
+          <li>On <b>Projects</b>, type a name in <b>Start a new project</b> and press <b>Create</b> (or <b>+ New project</b>).</li>
+          <li>Open a project: its tabs are <b>Creatives</b>, <b>Brand</b>, <b>Assets</b>, <b>References</b> and <b>Settings</b>. The search box at the top (<kbd>⌘K</kbd>) finds projects, creatives and pages.</li>
+        </ol>
+        <figure class="shot"><a class="shot__open" href="assets/guide/projects.webp"><img src="assets/guide/projects.webp" alt="The Projects page with two projects, Spring Menu and Ember Coffee, and a Start a new project card with a name field and Create." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <figure class="shot"><a class="shot__open" href="assets/guide/creatives.webp"><img src="assets/guide/creatives.webp" alt="A project's Creatives tab: two creatives with their formats and status (a group of 3 variants and the App launch teaser at v3), filters by state, Archived (1) and + New creative." width="1440" height="900" loading="lazy" decoding="async"></a><figcaption>A project's creatives, filtered by state: All, Needs you, In progress, Ready, Drafts.</figcaption></figure>
+        <h3 id="project-settings">Project settings</h3>
+        <p><b>General</b> holds the name, the description (the agent reads both in every job) and the project icon. <b>Agent and approvals</b> holds what the agent may do without asking: automatic approval of sandboxed commands, the paid-service confirmation, how many jobs run at the same time, the rules you allowed with "Always", the agent isolation and the model. <b>Internet access</b> lists the extra websites creatives may reach, and <b>Linked code</b> the folders the agent may read (never write).</p>
+        <figure class="shot"><a class="shot__open" href="assets/guide/project-agent.webp"><img src="assets/guide/project-agent.webp" alt="Project settings, Agent and approvals: Approve sandboxed commands automatically and Confirm before using paid services both on, jobs at the same time 2, Always allowed empty, agent isolation Automatic, and the model field." width="1440" height="900" loading="lazy" decoding="async"></a><figcaption>Some of these settings are shared by every project, and say so.</figcaption></figure>
+        <figure class="shot"><a class="shot__open" href="assets/guide/project-settings.webp"><img src="assets/guide/project-settings.webp" alt="Project settings, General: project name, description and the project icon picker." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+      </section>
+
+      <!-- source: README "Brand, assets and linked codebases" -->
+      <section class="guide-section" id="brand" aria-labelledby="brand-title">
+        <h2 id="brand-title">Brand</h2>
+        <p class="lede">The brand kit keeps every format consistent: palette, fonts, logos, voice, do and avoid rules, photo style and sound. Every entry says where it came from.</p>
+        <h3 id="brand-site">From a website</h3>
+        <ol class="steps">
+          <li>On the <b>Brand</b> tab of a new project, paste the website and press <b>Analyze</b> (or <b>Or set it up by hand</b>). Later, add more sources in the <b>Sources</b> panel (websites, and reference images marked "Use for brand analysis") and press <b>Analyze again</b>.</li>
+          <li>The analysis shows its phases: reading, fonts, colours, logos, tone, writing. Google fonts are fetched into the project, self-hosted ones downloaded, Adobe and system fonts only named.</li>
+          <li>When <b>Suggestions ready</b> appears, press <b>Review</b> and apply the suggestions entry by entry. Entries you typed by hand are never removed.</li>
+        </ol>
+        <figure class="shot"><a class="shot__open" href="assets/guide/brand-empty.webp"><img src="assets/guide/brand-empty.webp" alt="The Brand page of a new project: Teach Claude this brand, with From a website or From a codebase, a website field, Analyze, and Or set it up by hand." width="1440" height="900" loading="lazy" decoding="async"></a><figcaption>A project without a brand yet.</figcaption></figure>
+        <figure class="shot"><a class="shot__open" href="assets/guide/brand-proposal.webp"><img src="assets/guide/brand-proposal.webp" alt="The Brand page after an analysis: a Suggestions ready card with 11 suggestions to review and a Review button; the summary reads the palette and fonts found." width="1440" height="900" loading="lazy" decoding="async"></a><figcaption>An analysis finished: review its 11 suggestions.</figcaption></figure>
+        <figure class="shot"><a class="shot__open" href="assets/guide/brand-kit.webp"><img src="assets/guide/brand-kit.webp" alt="The brand kit after applying the suggestions: four colours with roles, two fonts with specimens, the bean logo, and the brand health list on the right." width="1440" height="900" loading="lazy" decoding="async"></a><figcaption>The applied kit. Brand health on the right lists what is still missing.</figcaption></figure>
+        <h3 id="brand-codebase">From a codebase</h3>
+        <p>Choose <b>From a codebase</b> (on the empty Brand page, or in the Sources panel) and pick the folder of your app or site, with an optional note (up to 5 per brand, mixed freely with websites). The agent reads design tokens and themes, fonts, logos and icons, and the tone of your README and store texts. It only reads: no commands, no content search, and secret files (<code>.env*</code>, keys, credentials and the like) are never opened. If anything in the folder changes during the analysis, the proposal is discarded.</p>
+        <h3 id="brand-fonts">Fonts, sound and guidelines</h3>
+        <ul>
+          <li><b>Typography → + Add from Google Fonts</b> searches the catalogue, previews each family and adds the weights you tick to the project; <b>+ Add manually</b> links your own files.</li>
+          <li><b>Sound</b> holds the genre, energy, instruments to use and avoid, and the brand voice (picked from your ElevenLabs voices or OpenAI's list).</li>
+          <li><b>Guidelines</b> is the brand's prose, in <code>brand/guidelines.md</code>.</li>
+        </ul>
+      </section>
+
+      <!-- source: README "Brand, assets and linked codebases" (Assets), "Video analysis" -->
+      <section class="guide-section" id="assets" aria-labelledby="assets-title">
+        <h2 id="assets-title">Assets and references</h2>
+        <p class="lede">Assets are the project's files the agent can use in a creative: images, SVG, video, fonts and audio.</p>
+        <ol class="steps">
+          <li><b>Upload</b>, or drop files anywhere on the page (up to 200 MB each). Filter by type, origin and tag, sort by date, name, type or duration.</li>
+          <li>Click a file to open its details: play audio and video, add a description and tags, <b>Rename file</b> (the brand kit and briefs that use it follow), or <b>Use in a creative</b>.</li>
+          <li><b>Describe them</b> asks the agent to describe the files that have no description yet.</li>
+        </ol>
+        <figure class="shot"><a class="shot__open" href="assets/guide/assets.webp"><img src="assets/guide/assets.webp" alt="Assets: eight files (audio, video, images, fonts, the logo) with filters by type and origin on the left, and Generate and Upload at the top." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <figure class="shot"><a class="shot__open" href="assets/guide/asset-detail.webp"><img src="assets/guide/asset-detail.webp" alt="The details of a video asset: the player, the Analysis section (Not analysed, with Analyse), the description, tags and file facts, and Use in a creative." width="1440" height="900" loading="lazy" decoding="async"></a><figcaption>A video's details, with its Analysis section.</figcaption></figure>
+        <h3 id="video-analysis">Video analysis</h3>
+        <p>A video that enters a brief is analysed once: frames at each cut and the audio are extracted on your computer, the speech is transcribed if you allow it, and a read-only agent describes what is on screen. The result is a text file next to the video (summary, timeline, on-screen text, transcript, usable moments) that the agents read before opening the video. In Assets press <b>Analyse</b> to do it now; videos over 20 minutes ask first. When a video has speech and no transcription method is set, a choice appears: install Whisper, transcribe with OpenAI or ElevenLabs, or continue without. <span class="no-shot">no screenshot</span></p>
+        <div class="callout callout--limit"><span class="callout__label">Not captured</span>
+          <p>The analysis result and the transcription choice are not pictured: they need a real agent run and, for speech, a transcription method.</p>
+        </div>
+        <h3 id="generate">Generate</h3>
+        <p><b>Generate</b> makes an image (OpenAI), a voice-over (OpenAI or ElevenLabs), a sound effect or a music track (ElevenLabs) straight into Assets, after the usual paid confirmation. A tab works only when its provider's key is set.</p>
+        <figure class="shot"><a class="shot__open" href="assets/guide/generate.webp"><img src="assets/guide/generate.webp" alt="The Generate an asset dialog with Image, Voice-over, Sound effect and Music tabs; with no key set it says nothing can be generated and links to Settings." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <h3 id="references">References</h3>
+        <p><b>References</b> are images for the look and feel: the agent reads them, and they can feed the brand analysis, but renders only use what is in Assets.</p>
+        <figure class="shot"><a class="shot__open" href="assets/guide/references.webp"><img src="assets/guide/references.webp" alt="The References tab, empty, with Add images." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+      </section>
+
+      <!-- source: README "How it works", "Brief with the agent", "Providers" (Services per creative) -->
+      <section class="guide-section" id="new-creative" aria-labelledby="new-creative-title">
+        <h2 id="new-creative-title">New creative and the brief</h2>
+        <p class="lede">A creative is one idea in many formats. The brief says what to make, and the agent makes one composition per format.</p>
+        <h3 id="brief-form">Fill it in yourself</h3>
+        <ol class="steps">
+          <li>In a project, open <b>Creatives → + New creative</b>.</li>
+          <li>Describe what you want to make (or start from a <b>Try</b> suggestion), and add the <b>key message</b> shown on screen.</li>
+          <li>Pick the formats under <b>Where will it be published?</b>: Instagram, TikTok, YouTube, and more channels (Facebook, LinkedIn, X, Pinterest, Web, Identity, App Store, Play Store), or a <b>Custom</b> size. The <b>+</b> and <b>−</b> on a selected format add copies of it.</li>
+          <li>Set the <b>video length</b>, the <b>assets to use</b> (from your computer or from Assets) and, under <b>More options</b>, notes for the agent, codebases and <b>Services</b>.</li>
+          <li>Press <b>Generate</b> (<kbd>⌘↵</kbd>), or <b>Save draft</b>. It runs in the background and tells you when it is ready.</li>
+        </ol>
+        <figure class="shot"><a class="shot__open" href="assets/guide/new-creative.webp"><img src="assets/guide/new-creative.webp" alt="New creative: the goal and key message filled in, three formats selected (Post 1:1, Story/Reel 9:16, Video 16:9), video length 6 s, and the Generate button." width="1440" height="900" loading="lazy" decoding="async"></a><figcaption>The form, here filled in by the agent: its fields carry the Agent mark.</figcaption></figure>
+        <h3 id="brief-agent">With the agent</h3>
+        <p><b>With the agent</b> (top bar), or <b>Let the agent fill it in</b>, opens a chat with a read-only agent beside the form. Tell it what you want; the <b>+</b> under the message links code folders or attaches assets. It fills the real form and marks each field it wrote with <b>Agent</b>. A field you change by hand is yours: the agent never overwrites it unless you ask. Nothing is created until you press <b>Generate</b>; the chat then becomes the start of the creative's chat. Leaving the page keeps the session, and New creative later offers <b>Resume</b> or <b>Start over</b>.</p>
+        <figure class="shot"><a class="shot__open" href="assets/guide/brief-agent.webp"><img src="assets/guide/brief-agent.webp" alt="Brief with the agent: on the left the chat (the request and the agent's reply, and an Agent action line), on the right the form filled in with Agent marks." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <div class="callout callout--tip"><span class="callout__label">Tip</span>
+          <p>The form warns when the text states another duration than the field ("The text says 60 s, the duration is 6 s · Use 60 s"), and estimates the tokens from your own past first generations.</p>
+        </div>
+        <h3 id="services">Services per creative</h3>
+        <p>The brief says which external services the agent may use, per kind: images (Auto, OpenAI, Stock only, Off), voice (Auto, OpenAI, ElevenLabs, Off), music and sound effects (Auto, ElevenLabs, Off). Motion Studio enforces the choice in every agent tool, before any confirmation; a provider without its key cannot be chosen. A change applies from the next message.</p>
+      </section>
+
+      <!-- source: README "How it works" steps 3-4; packages/web/src/screens/CreativeCanvas.tsx -->
+      <section class="guide-section" id="canvas" aria-labelledby="canvas-title">
+        <h2 id="canvas-title">The canvas</h2>
+        <p class="lede">A creative opens on its canvas: a board per format, the formats list on the left and the chat on the right.</p>
+        <ul>
+          <li>Each board plays a <b>live preview</b> of its composition, with no render to wait for. Its badge (<b>★ v2</b>) is the version used for export.</li>
+          <li>Motion Studio checks each composition (schema, files, duration against the brief); if something is off it asks the agent to fix it, up to 3 attempts, then saves the version.</li>
+          <li>Point at a board for <b>Open editor</b>, or click a format in the list.</li>
+          <li>The right panel has three tabs: <b>Chat</b>, <b>Comments</b> and <b>Brief</b> (with <b>Edit the brief</b>).</li>
+        </ul>
+        <figure class="shot"><a class="shot__open" href="assets/guide/canvas.webp"><img src="assets/guide/canvas.webp" alt="The canvas of the App launch teaser: three boards (Story/Reel 9:16, Post 1:1, Video 16:9) with v1, the formats list on the left and the chat with the agent's first version on the right." width="1440" height="900" loading="lazy" decoding="async"></a><figcaption>The first version, in three formats, each laid out for its own frame.</figcaption></figure>
+        <div class="shot-row">
+          <figure class="shot shot--panel"><a class="shot__open" href="assets/guide/chat.webp"><img src="assets/guide/chat.webp" alt="The chat panel: the agent's messages, a summary, Activity details and the v1 Ready card with tokens and cost." width="368" height="848" loading="lazy" decoding="async"></a><figcaption>Chat.</figcaption></figure>
+          <figure class="shot shot--panel"><a class="shot__open" href="assets/guide/brief-tab.webp"><img src="assets/guide/brief-tab.webp" alt="The Brief tab: goal, key message, length, formats, assets, notes, services, tokens and Edit the brief." width="368" height="848" loading="lazy" decoding="async"></a><figcaption>Brief.</figcaption></figure>
+        </div>
+      </section>
+
+      <!-- source: README "Talking to the agent while it works", "The agent acts on the app" -->
+      <section class="guide-section" id="chat" aria-labelledby="chat-title">
+        <h2 id="chat-title">The chat</h2>
+        <p class="lede">Ask for changes in words. Each request is a turn of the agent, and each turn that changes something saves a new version.</p>
+        <ol class="steps">
+          <li>Type in <b>Request a change</b> and press <kbd>⌘↵</kbd> (<kbd>Ctrl</kbd>+<kbd>↵</kbd> on Windows and Linux).</li>
+          <li><b>Applies to</b> limits the request to some formats (all by default).</li>
+          <li><b>+</b> attaches files: from your computer (they are saved in Assets too) or from Assets.</li>
+          <li><b>Services</b> changes which paid services the agent may use for this creative.</li>
+        </ol>
+        <div class="shot-row">
+          <figure class="shot shot--panel"><a class="shot__open" href="assets/guide/composer-attach.webp"><img src="assets/guide/composer-attach.webp" alt="The + menu of the message box: From computer or From Assets." width="368" height="848" loading="lazy" decoding="async"></a><figcaption>Attach files with <b>+</b>.</figcaption></figure>
+          <figure class="shot shot--panel"><a class="shot__open" href="assets/guide/stop-menu.webp"><img src="assets/guide/stop-menu.webp" alt="The message box while the agent works: Stop with its menu open (Stop, Stop and redirect…) and the send button." width="368" height="848" loading="lazy" decoding="async"></a><figcaption>Stop, or Stop and redirect.</figcaption></figure>
+        </div>
+        <figure class="shot"><a class="shot__open" href="assets/guide/services.webp"><img src="assets/guide/services.webp" alt="The Services popover: Images, Voice, Music and Sound effects, each Auto, a provider or Off; providers without a key are greyed with a link to Settings." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <h3 id="while-it-works">Talking to it while it works</h3>
+        <p>The message box stays active while the agent works.</p>
+        <ul>
+          <li><b>Send</b> (live): with Claude Code 2.1.301 or newer the message reaches the running agent, which reads it when its current step ends. It shows "Sent", then "Delivered" when Claude Code took it.</li>
+          <li><b>Queue for after</b>: the message runs as the next request. You can edit, remove and reorder queued requests; after a failure, a Stop or a restart they wait for <b>Run next</b>.</li>
+          <li><b>Stop</b> stops the turn at once and cancels any open approval. The next request resumes the stopped session, so the agent knows what was left half done.</li>
+          <li><b>Stop and redirect…</b> stops the current step and continues the same job with your new text.</li>
+        </ul>
+        <figure class="shot"><a class="shot__open" href="assets/guide/agent-working.webp"><img src="assets/guide/agent-working.webp" alt="The canvas while the agent works: Working in the top bar with a live token count, the agent's first step in the chat, and a new message ready in the box with Stop and send." width="1440" height="900" loading="lazy" decoding="async"></a><figcaption>A turn in progress: the status, the live token count and the steps so far.</figcaption></figure>
+        <h3 id="steps">Steps and agent actions</h3>
+        <p><b>Activity details</b> under a reply lists the steps the agent took (files read and written, commands, approvals). In a creative turn the agent can also act on the app, without a confirmation card: change the brief, add a format or a language, add or discard a variant, set the ★, render a version. Each action is a line marked <b>Agent action</b>. It never archives, deletes, or touches settings, keys or permissions, and paid services keep their confirmations.</p>
+        <h3 id="approvals">Approvals</h3>
+        <p>Anything outside the agent's perimeter (installing a program, writing outside the project, a new website) appears as a request on the job and at the top right: <b>Allow once</b>, <b>Always for this project</b> or <b>Deny</b>. Each card explains the command in plain words with risk indicators; <b>Show command</b> shows it all. With no answer in 10 minutes the request is denied. <span class="no-shot">no screenshot</span></p>
+      </section>
+
+      <!-- source: README "How it works" step 6; packages/web/src/screens/FormatVersions.tsx, CompareDialog.tsx -->
+      <section class="guide-section" id="versions" aria-labelledby="versions-title">
+        <h2 id="versions-title">Versions</h2>
+        <p class="lede">Every change is a version (v1, v2…), and every version is a git commit of the project.</p>
+        <ul>
+          <li>The ★ badge of a format opens its versions: view any of them, set the ★ (the version exported) or <b>Compare</b>.</li>
+          <li><b>Compare</b> shows two versions side by side or overlaid, with one transport for both, and <b>Use vN for export</b>.</li>
+          <li><b>View vN</b> on a version card in the chat opens it read-only. <b>Version history</b>, in the ⋯ menu, lists every version of the creative, and you can restart from an earlier one.</li>
+        </ul>
+        <figure class="shot"><a class="shot__open" href="assets/guide/versions.webp"><img src="assets/guide/versions.webp" alt="The versions of YouTube Video 16:9: v3 (direct edits, starred automatically), v2 and v1 with their requests and tokens, and Compare." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <figure class="shot"><a class="shot__open" href="assets/guide/compare.webp"><img src="assets/guide/compare.webp" alt="The Compare dialog: v2 and v3 side by side, the version pickers for left and right, and Use v2 for export." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <figure class="shot"><a class="shot__open" href="assets/guide/canvas-v2.webp"><img src="assets/guide/canvas-v2.webp" alt="The canvas after a second request: the boards show the new headline and v2 is ready in the chat." width="1440" height="900" loading="lazy" decoding="async"></a><figcaption>After "Make the headline warmer": v2 on every board.</figcaption></figure>
+      </section>
+
+      <!-- source: README "Editing a composition directly", "Editing an SVG" -->
+      <section class="guide-section" id="editor" aria-labelledby="editor-title">
+        <h2 id="editor-title">The format view and editor</h2>
+        <p class="lede">Opening a format opens its editor: scenes (or layers, for a still) on the left, the stage with the live preview in the middle, the timeline below, and Chat and Inspector on the right.</p>
+        <figure class="shot"><a class="shot__open" href="assets/guide/editor.webp"><img src="assets/guide/editor.webp" alt="The editor of the YouTube 16:9 format: scenes on the left, the stage with the composition at 3.3 seconds, the chat on the right and the timeline with scenes, texts and shapes below." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <h3 id="direct-edits">Direct edits</h3>
+        <ol class="steps">
+          <li>Select a clip on the timeline, on the stage or in <b>In this scene</b>: the <b>Inspector</b> opens.</li>
+          <li>Change a text's content, font (one of the composition's, or a brand font with a file), weight, size, colour and alignment; position, size, rotation and opacity with the handles or the numbers (<kbd>Alt</kbd>+arrows nudges); timing by trimming and moving clips on the timeline (<b>Ripple</b> pushes later scenes); the entry and exit animation presets; replace an image, video or audio file from Assets.</li>
+          <li>The pill <b>Draft · N edits</b> offers <b>Save as vN</b> and <b>Discard</b>. Saving makes a normal new version, with no agent and no tokens.</li>
+        </ol>
+        <figure class="shot"><a class="shot__open" href="assets/guide/editor-inspector.webp"><img src="assets/guide/editor-inspector.webp" alt="The Headline clip selected: handles on the stage, its timing, box and text settings in the Inspector, and the brand palette." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <figure class="shot"><a class="shot__open" href="assets/guide/editor-draft.webp"><img src="assets/guide/editor-draft.webp" alt="After editing the headline text: the pill Draft · 1 edit with Save as v3 and Discard above the stage." width="1440" height="900" loading="lazy" decoding="async"></a><figcaption>One edit waiting: Save as v3.</figcaption></figure>
+        <div class="callout callout--tip"><span class="callout__label">Keys</span>
+          <p><kbd>⌘Z</kbd> and <kbd>⇧⌘Z</kbd> undo and redo; <kbd>Space</kbd> plays; <kbd>←</kbd> <kbd>→</kbd> step one frame; <kbd>P</kbd> comments a spot, <kbd>C</kbd> a clip, <kbd>R</kbd> a range (or <kbd>Shift</kbd>+drag on the ruler).</p>
+        </div>
+        <div class="callout callout--limit"><span class="callout__label">Limits</span>
+          <p>New clips, layers, custom animations, effects and new scenes stay with the agent: ask for them in the chat. An earlier version, a discarded variant, or a creative while a turn or a render runs open read-only, with the reason on the stage. Leaving with unsaved edits asks "Save · Discard · Keep editing".</p>
+        </div>
+        <h3 id="comments">Comments for the agent</h3>
+        <p>Comment a spot of the frame (<b>Comment a spot</b>, then click it), a clip (<b>Comment on clip</b>) or a time range (<b>Comment on range</b>). The comment becomes a chip in the message box, and the agent gets the clip, the time and a frame.</p>
+        <figure class="shot"><a class="shot__open" href="assets/guide/comment-spot.webp"><img src="assets/guide/comment-spot.webp" alt="Comment on the frame at 00:03.30: a dialog with the note Make the bean a little smaller here, and Add comment." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <figure class="shot shot--panel"><a class="shot__open" href="assets/guide/comment-chip.webp"><img src="assets/guide/comment-chip.webp" alt="The chat panel with the comment as a numbered chip above the message box." width="320" height="654" loading="lazy" decoding="async"></a><figcaption>The comment, as chip 1, ready to send with a request.</figcaption></figure>
+        <h3 id="svg">Editing an SVG</h3>
+        <p>Select an SVG clip (a logo, an icon, a vector image): the Inspector's <b>SVG content</b> edits its colours (every distinct colour, replaced everywhere), its texts and its elements (fill, stroke, hide). Each change passes the same strict SVG check as identity formats. <span class="no-shot">no screenshot</span></p>
+        <h3 id="dark">In the dark theme</h3>
+        <figure class="shot shot--dark"><a class="shot__open" href="assets/guide/dark-editor.webp"><img src="assets/guide/dark-editor.webp" alt="The same editor in the dark theme, with the language switcher (Original, Italian, German, Spanish) under the stage." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+      </section>
+
+      <!-- source: README "Video analysis" (transcription); packages/web/src/screens/subtitles -->
+      <section class="guide-section" id="subtitles" aria-labelledby="subtitles-title">
+        <h2 id="subtitles-title">Subtitles</h2>
+        <p class="lede">For a video with speech, Motion Studio makes subtitles from the transcription, and you edit them in their own editor. <span class="no-shot">no screenshot</span></p>
+        <ul>
+          <li>The subtitle editor lists the cues with their text and times, on a timeline with the audio's waveform; edit a cue's text or drag its timing, per language.</li>
+          <li>Add a language to translate the subtitles; retranslate the cues that changed.</li>
+          <li>Download the <code>.srt</code> or <code>.vtt</code> file, or choose in <b>Export</b> to draw them into the video, write them as files next to it, or add them as a soft MP4 track.</li>
+        </ul>
+        <div class="callout callout--limit"><span class="callout__label">Not captured</span>
+          <p>Subtitles need speech and a transcription method (Whisper or a paid service), which the demo does not have.</p>
+        </div>
+      </section>
+
+      <!-- source: README "Adding formats", "Variants: duplicate formats, languages, store pack" -->
+      <section class="guide-section" id="languages" aria-labelledby="languages-title">
+        <h2 id="languages-title">Formats and languages</h2>
+        <h3 id="adding-formats">Adding formats</h3>
+        <p>Add formats in <b>Edit the brief</b> and press <b>Save and regenerate</b>: the agent adds only the missing compositions, in the same style. A format that <b>follows</b> another (TikTok following the Reel) needs no agent: it shares the composition and the render.</p>
+        <figure class="shot"><a class="shot__open" href="assets/guide/brief-editor.webp"><img src="assets/guide/brief-editor.webp" alt="Edit the brief in the right panel: title, goal, key message, length, assets, notes and the formats by channel." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <h3 id="duplicate">Duplicate and reorder formats</h3>
+        <p>A creative can hold the same format more than once (up to 20 copies). In a format's ⋯ menu, <b>Duplicate format</b> copies the open version's composition into the next copy and saves it as a new version, with no agent. Label, reorder and remove copies in the brief editor.</p>
+        <figure class="shot"><a class="shot__open" href="assets/guide/format-menu.webp"><img src="assets/guide/format-menu.webp" alt="The format's ⋯ menu with Duplicate format and Version history." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <h3 id="translate">Languages</h3>
+        <ol class="steps">
+          <li>In the brief editor, under <b>Languages</b>, pick the original language and up to 10 languages to translate into.</li>
+          <li>The <b>Languages</b> button opens the panel: tick languages and formats and press <b>Translate</b>. The agent only writes the texts; positions, timings, colours and images stay the original's, and a text that does not fit its box is shortened.</li>
+          <li>Per language, the voice is <b>Translate</b> (a new voice-over with the brief's voice service, after one confirmation), <b>Keep original</b> or <b>Mute</b>.</li>
+          <li><b>Review</b> each translation in a table, and switch the preview's language under the stage. Render and export per language: files are named <code>&lt;format&gt;.&lt;language&gt;</code>.</li>
+        </ol>
+        <figure class="shot"><a class="shot__open" href="assets/guide/languages.webp"><img src="assets/guide/languages.webp" alt="The Languages panel: three formats ticked, Italian, German and Spanish not translated yet, each with Translate, Keep original or Mute for the voice, and Translate 3 languages." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <div class="callout callout--limit"><span class="callout__label">Limit</span>
+          <p>Right-to-left languages are listed but not supported yet. For scripts the original font cannot draw, Motion Studio adds the Noto Sans of that script.</p>
+        </div>
+      </section>
+
+      <!-- source: README "Creative variants" -->
+      <section class="guide-section" id="variants" aria-labelledby="variants-title">
+        <h2 id="variants-title">Creative variants</h2>
+        <p class="lede">A variant is a different creative direction for the same brief, with all the formats. A creative can have up to 5 (A to E).</p>
+        <ol class="steps">
+          <li>In New creative set <b>Variants</b> (1 to 5) and, if you like, a direction for each; empty ones are proposed by the agent. Later, <b>+ Variant</b> adds one, from the brief or from a variant's latest version.</li>
+          <li>Talk to one variant or to all: the chat names them ("variant C", "all variants").</li>
+          <li>Pick, per format, the version to export from any variant: <b>Choose</b> on a board, or <b>Final selection</b>.</li>
+          <li><b>Discard</b> takes a variant out of the choice; <b>Show discarded</b> and <b>Restore</b> bring it back.</li>
+        </ol>
+        <figure class="shot"><a class="shot__open" href="assets/guide/variants.webp"><img src="assets/guide/variants.webp" alt="Oat latte promo with three variants: A Dark and bold, B Light, C Loud orange, each with a Reel and a YouTube board and Choose buttons." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <figure class="shot"><a class="shot__open" href="assets/guide/final-selection.webp"><img src="assets/guide/final-selection.webp" alt="The Final selection dialog: for each format, the three variants side by side, A chosen by the default rule." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <figure class="shot"><a class="shot__open" href="assets/guide/add-variant.webp"><img src="assets/guide/add-variant.webp" alt="Add a variant: an optional direction and where to start from (the brief)." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <div class="callout callout--limit"><span class="callout__label">Limits</span>
+          <p>At most 2 variants work at the same time; the others wait in the queue. A discarded variant is read-only until you restore it. With paid services on, one cost confirmation covers a request sent to all.</p>
+        </div>
+        <figure class="shot shot--dark"><a class="shot__open" href="assets/guide/dark-variants.webp"><img src="assets/guide/dark-variants.webp" alt="The same variants in the dark theme." width="1440" height="900" loading="lazy" decoding="async"></a><figcaption>The variants in the dark theme.</figcaption></figure>
+      </section>
+
+      <!-- source: README "Identity formats", "App store pack" -->
+      <section class="guide-section" id="identity" aria-labelledby="identity-title">
+        <h2 id="identity-title">Identity formats and store pack</h2>
+        <h3 id="identity-formats">Logo, favicon, app icon, social preview</h3>
+        <p>The <b>Identity</b> group has four formats. They render real file sets, drawn as SVG by the agent (no paid image generation):</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th scope="col">Format</th><th scope="col">What the render writes</th></tr></thead>
+          <tbody>
+            <tr><td>Logo</td><td><code>logo.svg</code> and <code>logo.png</code> (1024 px, transparent)</td></tr>
+            <tr><td>Website favicon</td><td><code>favicon.ico</code>, <code>favicon.svg</code>, the Apple touch icon, 192 and 512 px icons, a maskable icon, <code>site.webmanifest</code> and a <code>head-snippet.html</code> to paste in your page</td></tr>
+            <tr><td>App icon</td><td>iOS <code>AppIcon-1024.png</code> and <code>Contents.json</code>; Android adaptive icon layers, Play Store icon and the <code>mipmap-*</code> sizes</td></tr>
+            <tr><td>Social preview</td><td>a 1200×630 image</td></tr>
+          </tbody>
+        </table></div>
+        <p>Picking a logo, favicon or app icon shows <b>Start</b>: <b>From the brand logo</b> (the agent adapts it, without redrawing it) or <b>From scratch</b> (a name or initials, style keywords, brand or free colours). A logo from scratch makes 3 concepts by default, as variants. The format's page then switches between <b>Edit</b>, <b>Image</b> and <b>Sizes</b> (every file of the set, and the icon in a browser tab, on iOS and on Android), and <b>Use as brand logo</b> adds a version to the brand kit.</p>
+        <figure class="shot"><a class="shot__open" href="assets/guide/identity-start.webp"><img src="assets/guide/identity-start.webp" alt="New creative with the Identity Logo format selected: the Start section offers From the brand logo or From scratch." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <div class="callout callout--limit"><span class="callout__label">Not captured</span>
+          <p>The Sizes view needs a rendered file set and is not pictured. A translated identity render makes only the main image, never the set.</p>
+        </div>
+        <h3 id="store-pack">App store pack</h3>
+        <p>The <b>Store pack</b> tile (first in the App Store and Play Store groups) opens an assistant: the app, the stores (App Store, Google Play or both), the devices, the screenshots with a caption each, an optional preview video and your real app screens. It adds one format per screenshot and device. <b>Export pack</b> writes the files in the layout each store wants, checks sizes, formats and the preview video, and adds a <code>README.txt</code> with the upload order.</p>
+        <figure class="shot"><a class="shot__open" href="assets/guide/store-pack.webp"><img src="assets/guide/store-pack.webp" alt="The App store pack assistant, step 1 of 5 (App): the app name and one line about it; the next steps are stores and devices, screenshots, preview video and review." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+      </section>
+
+      <!-- source: README "Export" -->
+      <section class="guide-section" id="export" aria-labelledby="export-title">
+        <h2 id="export-title">Export</h2>
+        <p class="lede">Export copies the ★ version of each format into a folder you choose, rendering first what needs it.</p>
+        <ol class="steps">
+          <li>Press <b>Export</b> in the creative's top bar.</li>
+          <li>Tick the formats, choose the folder (<b>Save to</b>), the <b>Resolution</b>, the <b>Frame rate</b> and the <b>Quality</b> (Standard, High, Max).</li>
+          <li>Edit the file-name pattern with <code>{title} {channel} {format} {ratio} {v} {date}</code> (and <code>{locale}</code> with languages); the dialog previews the names. <b>Save as default</b> keeps the pattern.</li>
+          <li>Press <b>Export N files</b>. The export runs in the background: the Export button shows its progress, the activity centre has <b>Cancel</b>, and <b>Show in Finder</b> appears when the files are there.</li>
+        </ol>
+        <figure class="shot"><a class="shot__open" href="assets/guide/export.webp"><img src="assets/guide/export.webp" alt="Export the starred versions: three formats with their file names and ★ versions, Save to, Resolution, Frame rate, Quality (High) and the file-name pattern with its preview." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <div class="callout callout--tip"><span class="callout__label">Good to know</span>
+          <p>Export never overwrites a file (it adds <code>-2</code>, <code>-3</code>…), refuses destinations inside the workspace, and refuses two formats with the same name. A choice other than the format size at High is rendered for that export alone.</p>
+        </div>
+      </section>
+
+      <!-- source: README intro, "How it works" step 2 and 6, "Security" -->
+      <section class="guide-section" id="git" aria-labelledby="git-title">
+        <h2 id="git-title">Git and your files</h2>
+        <p class="lede">Everything stays on your computer, in plain files you can open.</p>
+        <ul>
+          <li>A project is a folder with <code>brand/</code>, <code>assets/</code>, <code>references/</code> and <code>creatives/</code>. Each creative keeps its working files in <code>work/</code> and its versions in <code>outputs/vN/</code>, one composition per format (<code>composition.json</code> and its <code>assets/</code>).</li>
+          <li>Each version is a git commit of the project, so the history keeps every version, including deleted creatives.</li>
+          <li>The agent cannot change the project's <code>.git/</code>, <code>.studio/</code>, <code>.claude/</code>, <code>CLAUDE.md</code> or <code>.mcp.json</code>, and Motion Studio runs git without the project's hooks.</li>
+        </ul>
+      </section>
+
+      <!-- source: README "Archiving and deleting a creative" -->
+      <section class="guide-section" id="archive" aria-labelledby="archive-title">
+        <h2 id="archive-title">Archive and delete</h2>
+        <ol class="steps">
+          <li>From a creative's <b>⋯</b> menu (on its page or its card), <b>Archive</b> takes it out of the lists and search at once. <b>Archived</b> on the creatives page lists them, with <b>Restore</b>.</li>
+          <li><b>Delete…</b> asks first, then moves the creative's folder to the system Trash (recoverable until you empty it). The git history keeps every version.</li>
+          <li>On a variant group, both act on all its variants; a single variant can be archived or deleted from its row menu.</li>
+        </ol>
+        <figure class="shot"><a class="shot__open" href="assets/guide/creative-menu.webp"><img src="assets/guide/creative-menu.webp" alt="The creative's ⋯ menu: Add variant, Version history, Archive and Delete…" width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <figure class="shot"><a class="shot__open" href="assets/guide/delete-confirm.webp"><img src="assets/guide/delete-confirm.webp" alt="Delete App launch teaser? Its folder, with every version and render, goes to the Trash. Cancel or Move to Trash." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <figure class="shot"><a class="shot__open" href="assets/guide/archived.webp"><img src="assets/guide/archived.webp" alt="Archived creatives: Holiday card, archived now, with Restore and Delete…" width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <figure class="shot"><a class="shot__open" href="assets/guide/group-menu.webp"><img src="assets/guide/group-menu.webp" alt="The ⋯ menu of a variant group: Version history of variant A, Archive all 3 variants and Delete all 3 variants…" width="1440" height="900" loading="lazy" decoding="async"></a><figcaption>On a variant group, the menu acts on all its variants.</figcaption></figure>
+        <div class="callout callout--limit"><span class="callout__label">Limit</span>
+          <p>Neither is possible while a request, a queued request or a render of the creative is in progress. The agent never archives or deletes.</p>
+        </div>
+      </section>
+
+      <!-- source: README "Usage and tokens" -->
+      <section class="guide-section" id="usage" aria-labelledby="usage-title">
+        <h2 id="usage-title">Usage and tokens</h2>
+        <p class="lede">Every agent job records the tokens Claude Code reported and, when known, the cost at API list prices.</p>
+        <ul>
+          <li>The figure shown is input + output + cache-write tokens. On a Claude subscription the cost reads "at API prices it would be about…", since the usage counts toward your plan.</li>
+          <li>You see it on the running job, in today's total in the top bar (it opens Usage), in the activity centre, on each version card, on brand analyses and in the brief.</li>
+          <li><b>Settings → Usage</b> shows the last 7 days, by project and by kind of work, and the paid services.</li>
+        </ul>
+        <figure class="shot"><a class="shot__open" href="assets/guide/settings-usage.webp"><img src="assets/guide/settings-usage.webp" alt="Settings, Usage: Claude tokens for the last 7 days as bars, by project and by kind of work, with the estimate at API prices, and paid services." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <p>The bell opens the <b>activity centre</b>: what needs you, what is running (with Cancel) and what is done, with today's tokens.</p>
+        <figure class="shot"><a class="shot__open" href="assets/guide/activity.webp"><img src="assets/guide/activity.webp" alt="The activity centre, Done tab: seven finished jobs (creatives, a brief session, a brand analysis) with their tokens." width="1440" height="900" loading="lazy" decoding="async"></a></figure>
+        <div class="callout callout--tip"><span class="callout__label">Demo figures</span>
+          <p>The token counts in these screenshots come from the demo, not from a real Claude Code run.</p>
+        </div>
+      </section>
+
+      <!-- source: README "Security" -->
+      <section class="guide-section" id="security" aria-labelledby="security-title">
+        <h2 id="security-title">Security</h2>
+        <ul>
+          <li><b>Sandbox</b> (macOS; Linux with bubblewrap and socat): every agent job runs isolated. It writes only in the project folder, cannot read sensitive folders (SSH keys, cloud credentials, keychains, Motion Studio's configuration), and reaches only package registries, CDNs and the domains you allow. If the sandbox cannot start, commands do not run.</li>
+          <li><b>Automatic approval</b> of sandboxed commands is safe because an approved command still runs inside the sandbox; everything else asks.</li>
+          <li><b>Linked codebases</b> and codebase brand sources are read-only; secret files are never opened.</li>
+          <li><b>API keys</b> stay in the system keychain; the agent never sees them, and its tools ask Motion Studio to call the providers.</li>
+          <li><b>Compositions</b> written by the agent are rendered outside the sandbox but isolated: their own local server, no network, sandboxed frames, and a render page whose requests outside the composition are blocked.</li>
+          <li><b>Access code</b>: Motion Studio's APIs answer only to the interface opened from the terminal link.</li>
+        </ul>
+        <div class="callout callout--safe"><span class="callout__label">Without the sandbox</span>
+          <p>On Windows, Linux without bubblewrap, or with isolation turned off, the agent's commands can read and write anywhere you can. Motion Studio reports it in the System check; analyze only websites you trust.</p>
+        </div>
+      </section>
+
+      <!-- source: README "Current agent limits", "Requirements", "Editing a composition directly" (current limits) -->
+      <section class="guide-section" id="troubleshooting" aria-labelledby="troubleshooting-title">
+        <h2 id="troubleshooting-title">Troubleshooting and limits</h2>
+        <h3 id="trouble">When something does not work</h3>
+        <ul>
+          <li><b>The interface asks to reopen it from the terminal link</b>: run <code>motion-studio --print-url</code> and open that address.</li>
+          <li><b>"Motion Studio is already running"</b>: only one runs per configuration folder; the launcher opens the one already running.</li>
+          <li><b>Outputs show as "unverified"</b>: install FFmpeg.</li>
+          <li><b>No Chrome to render</b> (npm version): <b>Settings → System check</b> offers to download Chrome for Testing.</li>
+          <li><b>A version is incomplete</b>: the chat says what is wrong and what to do; changing the brief's duration checks it again at once.</li>
+          <li><b>An unsigned macOS app does not open</b>: right-click it, then <b>Open</b>.</li>
+        </ul>
+        <h3 id="limits">Current limits</h3>
+        <ul>
+          <li>Folder names with glob characters (<code>( ) [ ] { } * ?</code>, and <code>\</code> on macOS and Linux) are refused for workspaces, projects and codebases: rename the folder.</li>
+          <li>Image, voice, sound, music and stock providers are described but have not been verified live with real keys.</li>
+          <li>Right-to-left languages are not supported yet; translated identity renders make only the main image.</li>
+          <li>On Ubuntu 24.04 and later the AppImage may need an AppArmor profile to start.</li>
+        </ul>
+        <p>More in the <a href="https://github.com/Aleloca/motion-studio/blob/main/README.md">README</a> and the <a href="https://github.com/Aleloca/motion-studio/tree/main/docs">docs</a>.</p>
+        <a class="back-top" href="#main">Back to the top ↑</a>
+      </section>
+
+    </div>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap site-footer__inner">
+    <img src="assets/logo-light.svg" alt="Motion Studio" width="160" height="65" loading="lazy">
+    <ul class="site-footer__links">
+      <li><a href="./">Home</a></li>
+      <li><a href="https://github.com/Aleloca/motion-studio">Repository</a></li>
+      <li><a href="https://github.com/Aleloca/motion-studio/blob/main/README.md">README</a></li>
+      <li><a href="https://github.com/Aleloca/motion-studio/tree/main/docs">Docs</a></li>
+      <li><a href="https://github.com/Aleloca/motion-studio/blob/main/LICENSE">MIT licence</a></li>
+    </ul>
+    <p class="muted small">Open source, and it runs on your computer. This page has no analytics and no trackers.</p>
+  </div>
+</footer>
+</body>
+</html>
