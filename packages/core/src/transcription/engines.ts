@@ -4,6 +4,7 @@ import { basename, join } from 'node:path';
 import type { TranscriptionModelId, TranscriptSegment, TranscriptWord, WhisperEngine, WhisperFound } from '@motion-studio/shared';
 import { t } from '../i18n.ts';
 import { lastLine, runChild } from './child-run.ts';
+import { speechSpan } from './wav.ts';
 
 /** What an engine heard: the segments (seconds), the language it detected (null: it did not say) and, when asked for, the words. */
 export interface EngineTranscript { segments: TranscriptSegment[]; words?: TranscriptWord[]; language: string | null }
@@ -123,15 +124,30 @@ export async function whisperHelp(program: string): Promise<{ ok: boolean; text:
   return p;
 }
 
-/** The argv of one transcription. `model`: a ggml file for whisper.cpp, a name for the Python engines. `language` null: auto. */
+/**
+ * The argv of one transcription. `model`: a ggml file for whisper.cpp, a name for the Python engines. `language` null: auto.
+ * Report 76: whisper.cpp's VAD cuts the pauses out and its token times stay on that shorter clock, so the word times (the
+ * subtitles) are always asked for without it.
+ */
 export function whisperArgs(e: WhisperEngine, i: { program: string; wav: string; outDir: string; model: string; vadModel?: string; language: string | null; flags?: EngineFlags; words?: boolean }): string[] {
   if (e === 'whisper.cpp') {
     const f = i.flags ?? { vad: true, sns: true, np: true, ojf: true };
     return ['-m', i.model, '-f', i.wav, i.words && f.ojf ? '-ojf' : '-oj', '-of', join(i.outDir, 'out'), ...(f.np ? ['-np'] : []), ...(f.sns ? ['-sns'] : []),
-      ...(i.vadModel && f.vad ? ['--vad', '--vad-model', i.vadModel] : []), '-l', i.language ?? 'auto'];
+      ...(i.vadModel && f.vad && !i.words ? ['--vad', '--vad-model', i.vadModel] : []), '-l', i.language ?? 'auto'];
   }
   return [i.wav, '--model', i.model, '--output_format', 'json', '--output_dir', i.outDir, ...(i.language ? ['--language', i.language] : []), ...(i.words ? ['--word_timestamps', 'True'] : [])];
 }
+
+/**
+ * Report 76: a VAD transcript whose last line ends before the speech does by at least 2 s and by at least half the pauses
+ * the VAD would cut out (`speechSpan`): its times are on the clock of the speech without its pauses, not the source's.
+ */
+export function vadClockSuspect(lastEndSec: number, span: { endSec: number; quietSec: number }): boolean {
+  const short = span.endSec - lastEndSec;
+  return short >= 2 && short >= span.quietSec / 2;
+}
+
+const lastEndOf = (r: EngineTranscript) => Math.max(0, ...r.segments.map((s) => s.to), ...(r.words ?? []).map((w) => w.to));
 
 /** Where the engine wrote its JSON. */
 const outputOf = (e: WhisperEngine, outDir: string, wav: string) => (e === 'whisper.cpp' ? join(outDir, 'out.json') : join(outDir, `${basename(wav).replace(/\.[^.]+$/, '')}.json`));
@@ -139,13 +155,24 @@ const outputOf = (e: WhisperEngine, outDir: string, wav: string) => (e === 'whis
 /**
  * Transcribes `wav` with a found Whisper (spec §7): a child process with a deadline and the job's signal, its JSON in a
  * temp folder removed afterwards. Throws a translated `transcriptionFailed` (the engine's last stderr line), or an
- * AbortError when cancelled.
+ * AbortError when cancelled. Report 76: a transcript made with VAD that `vadClockSuspect` finds off the source's clock is
+ * made again without VAD, and that one is returned.
  */
 export async function runWhisper(found: WhisperFound & { vadModel?: string }, wav: string, o: { language: string | null; signal: AbortSignal; timeoutMs: number; words?: boolean }): Promise<EngineTranscript> {
+  const flags = found.engine === 'whisper.cpp' ? engineFlags((await whisperHelp(found.program)).text) : undefined;
+  const first = await runOnce(found, wav, o, flags);
+  if (!first.vad || (first.r.segments.length === 0 && !first.r.words?.length)) return first.r;
+  const span = await speechSpan(wav).catch(() => null);
+  if (!span || !vadClockSuspect(lastEndOf(first.r), span)) return first.r;
+  console.warn(`Motion Studio: whisper.cpp with VAD ended at ${lastEndOf(first.r)} s, the speech at ${span.endSec} s: transcribing again without VAD`);
+  const { vadModel: _v, ...plain } = found;
+  return (await runOnce(plain, wav, o, flags)).r;
+}
+
+async function runOnce(found: WhisperFound & { vadModel?: string }, wav: string, o: { language: string | null; signal: AbortSignal; timeoutMs: number; words?: boolean }, flags: EngineFlags | undefined): Promise<{ r: EngineTranscript; vad: boolean }> {
   if (o.signal.aborted) throw abortError();
   const outDir = await mkdtemp(join(tmpdir(), 'ms-whisper-'));
   try {
-    const flags = found.engine === 'whisper.cpp' ? engineFlags((await whisperHelp(found.program)).text) : undefined;
     const args = whisperArgs(found.engine, { program: found.program, wav, outDir, model: found.model, ...(found.vadModel ? { vadModel: found.vadModel } : {}), language: o.language, ...(flags ? { flags } : {}), ...(o.words ? { words: true } : {}) });
     const r = await runChild(found.program, args, { timeoutMs: o.timeoutMs, signal: o.signal, cwd: outDir });
     if (r.cancelled || o.signal.aborted) throw abortError();
@@ -155,7 +182,7 @@ export async function runWhisper(found: WhisperFound & { vadModel?: string }, wa
     if (text === null) throw new Error(t().errors.transcriptionFailed({ reason: `${found.engine}: no output file` }));
     let json: unknown;
     try { json = JSON.parse(text); } catch { throw shapeError(found.engine); }
-    return found.engine === 'whisper.cpp' ? parseWhisperCpp(json) : found.engine === 'openai-whisper' ? parseOpenAiWhisper(json) : parseFasterWhisper(json);
+    return { r: found.engine === 'whisper.cpp' ? parseWhisperCpp(json) : found.engine === 'openai-whisper' ? parseOpenAiWhisper(json) : parseFasterWhisper(json), vad: args.includes('--vad') };
   } finally {
     await rm(outDir, { recursive: true, force: true }).catch(() => {});
   }
