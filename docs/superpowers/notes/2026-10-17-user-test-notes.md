@@ -567,6 +567,11 @@ arrives and worked on later together.
     yet (needs a creative field); the source format is created during the chat, not at Generate; library entries stored
     before keep their coded (unrotated) size (`fillMissingMeta`); a phone JPEG with EXIF orientation 6 is to be checked.
 
+71. **Short chat: the tabs sit halfway down (user report of 2026-10-23).** In a creative's side panel with a short chat,
+    the "Chat · Comments · Brief" tabs are drawn in the middle of the panel, under a large empty space (only the
+    "Subtitles" button is at the top), instead of at the top.
+    Wanted: the tabs stay at the top of the panel; the empty space goes between the tabs and the messages.
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
