@@ -571,26 +571,35 @@ arrives and worked on later together.
     the "Chat · Comments · Brief" tabs are drawn in the middle of the panel, under a large empty space (only the
     "Subtitles" button is at the top), instead of at the top.
     Wanted: the tabs stay at the top of the panel; the empty space goes between the tabs and the messages.
+    Done (decisions 1783, 1792): the Subtitles row above the tabs took `flex: 1`; the row is gone (report 72) and the
+    rule now applies only to the panel bodies.
 
 72. **The "Subtitles" button belongs in the video editor (user report of 2026-10-23).** The "Subtitles" link at the top
     right of the creative's chat panel is in the wrong place: the subtitle editor is reached from the video editor.
     Wanted: move it (not copy it) into the video editor as a button that opens the subtitle editor. The chat's
     "Subtitles ready" card with its buttons stays as it is.
+    Done (decisions 1784-1785, 1791, 1793, 1801): the button sits in the editor's toolbar with the canvas's old rule
+    (not for variant-group members); the subtitle editor's back button returns to the editor when opened from there.
 
 73. **The editor's player gives no sign it is still loading (user report of 2026-10-23).** Opening the editor of a long
     video creative (the subtitled 2:29 video), the player is not ready for a while, with nothing on screen saying so: the
     user pressed play many times before understanding it was still loading.
     Wanted: a visible loading state on the player (and play disabled or queued) until it can play.
+    Done (decisions 1786, 1790): a "Caricamento del video…" pill with a spinner, play disabled with that tooltip; a
+    fatal runtime error or an unusable session hides it and shows the error with "Riprova".
 
 74. **Play resumes from the old time after a seek (user report of 2026-10-23).** In the video editor, watching up to
     0:15, pausing, dragging the time bar back to 0:05 and pressing play starts again from 0:15, not from 0:05.
     Wanted: play starts from where the time bar was moved.
+    Done (decisions 1787, 1794): the runtime queued seeks and only moved `time` when a seek's turn came; `seek()` now
+    sets it at once. Same player in the editor, subtitle editor and format view.
 
 75. **The editor's chat tabs look different and the chat slides under them (user report of 2026-10-23).** In the video
     editor the side panel has a segmented "Chat | Inspector" control, unlike the underlined "Chat · Comments · Brief"
     tabs outside; the agent's message scrolls under the control (its top is cut off behind it), and "· Details" wraps
     onto its own line in the narrow panel.
     Wanted: the same tab style as the creative's panel, the list starting below the tabs, nothing hidden under them.
+    Done (decisions 1788-1789): the editor's panel uses the underlined tabs; the "· Details" line wraps as one.
 
 76. **Subtitles drift away from the speech (user report of 2026-10-23).** On the 2:29 "Video Codecs 101" creative the
     lines are "completely" out of sync. The English set (whisper-small, local whisper.cpp) ends at 2:08 while the voice
@@ -598,6 +607,13 @@ arrives and worked on later together.
     the end, about the sum of the pauses. Suspect: whisper.cpp `--vad` returning times of the silence-stripped audio.
     The Italian translation follows the English timing, so it is off the same way.
     Wanted: subtitle times on the video's own clock; the user then presses "Rifai i tempi".
+    Done (decisions 1795, 1798-1800): confirmed with the bundled whisper-cli v1.9.5 on the user's video: with `--vad` the
+    segments are on the source clock but the `-ojf` tokens on the clock without pauses (first word 0.04 s instead of
+    4.03 s). VAD is kept (without it the words smear over the music intro) and each segment's tokens move by the
+    segment's start minus its first token's; on the full video the words now end at 2:24 instead of 2:08. Existing sets:
+    "Rifai i tempi" (the edited text stays, the Italian translation follows).
+- **Flaky under load:** `core/test/agent-actions.test.ts` "duplicate_format runs after the turn, on the version it
+  saved" failed once in a full local run (2026-10-23, waitFor on the action line) and passes alone 3/3.
 
 ## Follow-ups found while working on 12–30
 
