@@ -243,6 +243,7 @@ export const en = {
     briefCodebaseOutside: (p: { path: string }) => `${p.path} is not among the folders linked to this session.`,
     briefFillLimit: (p: { max: number }) => `fill_brief can be called at most ${p.max} times in a turn.`,
     briefBadField: (p: { field: string; detail: string }) => `fill_brief: ${p.field}: ${p.detail}`,
+    briefSourceSize: (p: { path: string }) => `${p.path}: its size is not known (only a video or an image of the project library whose size was read can give a format).`,
     briefAssetNotFound: (p: { path: string }) => `${p.path} is not a file of the project library.`,
     analysisEdited: 'This analysis was edited by hand: confirm to overwrite it with a new analysis.',
     analysisNotVideo: 'Only videos of the project library can be analysed.',
@@ -587,6 +588,8 @@ export const en = {
       variants: (p: { count: number }) => (p.count === 1 ? '1 variant' : `${p.count} variants`),
     },
     keptYours: (p: { fields: string }) => ` · kept yours: ${p.fields}`,
+    sourceFormatName: (p: { width: number; height: number }) => `Original ${p.width}×${p.height}`,
+    sourceFormatAdded: (p: { name: string }) => `Added “${p.name}” to your custom formats`,
     nothingWritten: 'Nothing changed in the brief',
     reclaimed: (p: { fields: string }) => `The agent rewrote ${p.fields} at your request`,
     fieldNames: {

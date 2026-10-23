@@ -792,7 +792,7 @@ describe('a brief session launch (decision 1421)', () => {
     expect(r.req.disallowedTools).toEqual(expect.arrayContaining([`Read(/${escapeGlob(join(codebase, '.env'))})`, 'Bash', 'Grep', 'Edit']));
     expect(r.req.addDirs).toEqual([codebase]);
     const cfg = JSON.parse(readFileSync(r.req.mcpConfigPath!, 'utf8'));
-    expect(cfg.mcpServers.studio.env.MOTION_STUDIO_TOOLS).toBe('report_progress,read_brand_kit,list_formats,fill_brief');
+    expect(cfg.mcpServers.studio.env.MOTION_STUDIO_TOOLS).toBe('report_progress,read_brand_kit,list_formats,source_format,fill_brief');
     const ctx = bridge.resolve(readFileSync(cfg.mcpServers.studio.env.MOTION_STUDIO_BRIDGE_TOKEN_FILE, 'utf8'));
     expect(ctx).toMatchObject({ kind: 'brief', creativeSlug: null, briefScope });
     // A live kind: the run takes messages while it works when the version and the settings allow it.

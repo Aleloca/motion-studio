@@ -20,9 +20,21 @@ export interface BriefPromptContext {
   assets: readonly string[];
   /** Decision 1468: the attached videos with a fresh analysis file (asset → its analysis file). */
   analyses?: Record<string, string>;
+  /** Report 70: what the library knows of the attached videos and images (asset → kind, size, length), when it knows it. */
+  assetFacts?: Record<string, AssetFacts>;
   /** The user's words of this message (or of the queued messages, joined). */
   request: string;
 }
+
+/** Report 70: an attached asset as the library knows it (its size and length are null when not read). */
+export interface AssetFacts { kind: string; width: number | null; height: number | null; durationSec?: number | null }
+
+/** `video 1920×1188, 149.3 s`, `image 1080×1080`; null when the library knows neither size nor length. */
+const factsText = (f: AssetFacts | undefined): string | null => {
+  if (!f || (f.kind !== 'video' && f.kind !== 'image')) return null;
+  const parts = [...(f.width && f.height ? [`${f.width}×${f.height}`] : []), ...(f.kind === 'video' && f.durationSec ? [`${Math.round(f.durationSec * 10) / 10} s`] : [])];
+  return parts.length ? `${f.kind} ${parts.join(', ')}` : null;
+};
 
 const formLine = (field: BriefField, form: BriefForm, mine: boolean): string => {
   const v = form[field];
@@ -43,7 +55,7 @@ function formSection(i: Pick<BriefPromptContext, 'form' | 'userEdited'>): string
   ];
 }
 
-function contextSection(i: Pick<BriefPromptContext, 'codebases' | 'missingCodebases' | 'assets' | 'analyses'>, projectCodebases: readonly string[] = []): string[] {
+function contextSection(i: Pick<BriefPromptContext, 'codebases' | 'missingCodebases' | 'assets' | 'analyses' | 'assetFacts'>, projectCodebases: readonly string[] = []): string[] {
   const out: string[] = [];
   if (i.codebases.length || i.missingCodebases.length || projectCodebases.length) {
     out.push('', '## Reference codebases (read-only)',
@@ -53,7 +65,8 @@ function contextSection(i: Pick<BriefPromptContext, 'codebases' | 'missingCodeba
       ...projectCodebases.map((p) => `- ${p} (already linked to the project: do not add them)`),
       'Only read these folders (Read and Glob): you cannot change them, run commands or search file contents. Never read or quote secrets (keys, tokens, .env files).');
   }
-  out.push('', '## Attached assets', ...(i.assets.length ? i.assets.map((a) => `- ${quotePromptString(a)}${i.analyses?.[a] ? ` (analysis: ${quotePromptString(i.analyses[a])} — read it before opening the video)` : ''}`) : ['(none yet)']));
+  const facts = (a: string) => { const f = factsText(i.assetFacts?.[a]); return f ? ` (${f})` : ''; };
+  out.push('', '## Attached assets', ...(i.assets.length ? i.assets.map((a) => `- ${quotePromptString(a)}${facts(a)}${i.analyses?.[a] ? ` (analysis: ${quotePromptString(i.analyses[a])} — read it before opening the video)` : ''}`) : ['(none yet)']));
   if (i.assets.some((a) => i.analyses?.[a])) out.push(VIDEO_ANALYSIS_RULE);
   return out;
 }

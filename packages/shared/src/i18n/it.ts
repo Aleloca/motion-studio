@@ -241,6 +241,7 @@ export const it: Messages = {
     briefCodebaseOutside: (p) => `${p.path} non è tra le cartelle collegate a questa sessione.`,
     briefFillLimit: (p) => `fill_brief si può chiamare al massimo ${p.max} volte in un turno.`,
     briefBadField: (p) => `fill_brief: ${p.field}: ${p.detail}`,
+    briefSourceSize: (p) => `${p.path}: la sua misura non è nota (solo un video o un’immagine della libreria del progetto di cui si conosce la misura può dare un formato).`,
     briefAssetNotFound: (p) => `${p.path} non è un file della libreria del progetto.`,
     analysisEdited: 'Questa analisi è stata modificata a mano: conferma per sostituirla con una nuova analisi.',
     analysisNotVideo: 'Si possono analizzare solo i video della libreria del progetto.',
@@ -585,6 +586,8 @@ export const it: Messages = {
       variants: (p) => (p.count === 1 ? '1 variante' : `${p.count} varianti`),
     },
     keptYours: (p) => ` · tenuti i tuoi: ${p.fields}`,
+    sourceFormatName: (p) => `Originale ${p.width}×${p.height}`,
+    sourceFormatAdded: (p) => `Aggiunto «${p.name}» ai formati personalizzati`,
     nothingWritten: 'Nessun campo del brief è cambiato',
     reclaimed: (p) => `L'agente ha riscritto ${p.fields} su tua richiesta`,
     fieldNames: {

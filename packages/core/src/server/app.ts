@@ -66,6 +66,7 @@ import { UsageLedger } from '../usage/usage-ledger.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
 import { tokenMatches } from './ui-token.ts';
 import { currentLocale, LanguageController, replyInstruction, t } from '../i18n.ts';
+import { addCustomFormat } from '../formats/custom-formats.ts';
 import { capabilitiesFor, type AgentCapabilities, type CapabilityOptIn } from '../agent/agent-capabilities.ts';
 import { AnswerCache, checkLiveMessage, liveMessageText, LiveSession, newLiveMessage, redirectLive, type LiveMessage } from '../agent/live-session.ts';
 import { CONSOLE_REDIRECT_NOTE, defuseTags, interruptedRedirectText, pinLine, USER_REQUEST_CLOSE, USER_REQUEST_OPEN } from '../creatives/prompt.ts';
@@ -429,6 +430,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
     model: async () => (await requireWorkspace().readSettings()).model,
     side: turns.side,
+    // Report 70: the brief agent's `source_format` adds a custom format as the New creative dialog does (catalog lock).
+    addFormat: async (input) => (await addCustomFormat({ catalog: new FormatCatalog(requireWorkspace().root), ws: requireWorkspace() }, input)).preset,
   });
 
   // Spec §6–§7: the transcription of the analyses (settings app-wide in config.json, decision 1503).
