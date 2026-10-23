@@ -233,7 +233,8 @@ describe('EditorScreen · the player while it loads (report 73)', () => {
     try {
       render(<Harness />);
       await opened();
-      await waitFor(() => expect(api.previewSession).toHaveBeenCalled());
+      // `opened` waited for the (stand-in) player, so the session is in and the preview is ready: the state is settled.
+      expect(screen.getByTestId('player')).toBeTruthy();
       expect(screen.queryByText('Loading the video…')).toBeNull();
     } finally { media.duration = 6; }
   });

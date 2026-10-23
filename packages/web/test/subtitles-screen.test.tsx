@@ -146,6 +146,10 @@ describe('the subtitle editor screen (Task 12)', () => {
     await userEvent.click(screen.getByRole('button', { name: "Torna all'editor" }));
     expect(location.hash).toBe('#/p/acme/c/lancio/f/instagram-reel-9x16');
     first.unmount();
+    // The entry was used up on opening: format A's origin cannot serve a later visit (opened from the card, say).
+    const second = await open();
+    expect(screen.queryByRole('button', { name: "Torna all'editor" })).toBeNull();
+    second.unmount();
     clearSubtitlesBack('acme/lancio');
     await open();
     await userEvent.click(screen.getByRole('button', { name: 'Torna alla creatività' }));
