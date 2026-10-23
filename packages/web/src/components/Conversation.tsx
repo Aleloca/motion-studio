@@ -1053,14 +1053,26 @@ function Composer({ transport, top, tools, label, placeholderText, draft, extraC
   // session) has its own "+"; "Tutte" sends to every variant through another route: neither attaches here.
   const attachable = !transport && !fanout;
   const [files, setFiles] = useState<string[]>([]);
-  const addFiles = (paths: string[]) => setFiles((list) => [...list, ...paths.filter((p) => !list.includes(p))]);
+  // Round 2 (finding A): the uploads still wanted here. A result of one abandoned (closed, or the chat moved to another
+  // creative or to "Tutte") is ignored: a file never lands where it was not attached.
+  const liveUploads = useRef(new Set<number>());
+  const addFiles = (paths: string[], upload?: number) => {
+    if (upload !== undefined && !liveUploads.current.has(upload)) return;
+    setFiles((list) => [...list, ...paths.filter((p) => !list.includes(p))]);
+  };
+  const uploadError = (text: string | null, upload?: number) => { if (upload === undefined || liveUploads.current.has(upload)) setError(text); };
   const removeFile = (path: string) => setFiles((list) => list.filter((p) => p !== path));
   // Round 1 (finding 1): uploads on their way; nothing is sent until they land (or fail), so a file never misses its message.
   const [uploading, setUploading] = useState<PendingUpload[]>([]);
-  const onPending = (change: { started: PendingUpload } | { settled: number }) =>
+  const onPending = (change: { started: PendingUpload } | { settled: number }) => {
+    if ('started' in change) liveUploads.current.add(change.started.id);
+    else liveUploads.current.delete(change.settled);
     setUploading((list) => ('started' in change ? [...list, change.started] : list.filter((u) => u.id !== change.settled)));
-  // Round 1 (findings 4): "Tutte" does not send them, and another creative starts with none: the files attached here go.
-  useEffect(() => { setFiles([]); }, [creative, Boolean(fanout)]);
+  };
+  const cancelUpload = (id: number) => { liveUploads.current.delete(id); setUploading((list) => list.filter((u) => u.id !== id)); };
+  // Round 1 (finding 4): "Tutte" does not send them, and another creative starts with none: the files attached here go,
+  // and (round 2) so do the uploads on their way.
+  useEffect(() => { setFiles([]); setUploading([]); liveUploads.current.clear(); }, [creative, Boolean(fanout)]);
   const [sending, setSending] = useState(false);
   // Synchronous guard: two keystrokes in the same tick both see `sending` false.
   const inFlight = useRef(false);
@@ -1280,7 +1292,7 @@ function Composer({ transport, top, tools, label, placeholderText, draft, extraC
             ))}
           </div>
         )}
-        {attachable ? <AttachedChips slug={slug} paths={files} pending={uploading} onRemove={removeFile} /> : null}
+        {attachable ? <AttachedChips slug={slug} paths={files} pending={uploading} onRemove={removeFile} onCancel={cancelUpload} /> : null}
         {attachable && files.length > 0 && working ? <p className="ms-composer-note">{c.attachWait}</p> : null}
         {appliesTo && !working ? <AppliesMenu appliesTo={appliesTo} targets={targets} onChange={setChoice} /> : null}
         {appliesTo && targets && !working ? appliesTo.primaries.filter((p) => targets.includes(p.id)).flatMap((p) => p.followers.map((f) => (
@@ -1296,7 +1308,7 @@ function Composer({ transport, top, tools, label, placeholderText, draft, extraC
         {notice && <p role="status" className="ms-composer-note">{notice}</p>}
         {error && <p role="alert" className="ms-composer-error">{error}</p>}
         <div className="ms-composer-foot">
-          {attachable ? <AttachButton slug={slug} chosen={files} onAdd={addFiles} onRemove={removeFile} onError={setError} onPending={onPending} disabled={busy || Boolean(sendOff)} /> : null}
+          {attachable ? <AttachButton slug={slug} chosen={files} onAdd={addFiles} onRemove={removeFile} onError={uploadError} onPending={onPending} disabled={busy || Boolean(sendOff)} /> : null}
           {tools}
           {brief ? <ServicesChip slug={slug} creative={creative} brief={brief} busy={busy} onSaved={() => onBriefSaved?.()} /> : null}
           <span className="ms-composer-hint">{hint}</span>

@@ -254,4 +254,51 @@ describe('attachments, round 1', () => {
     rerender(view({ creative: 'c2' }));
     expect(screen.queryByRole('button', { name: 'Remove logo.png' })).toBeNull();
   });
+
+  it('round 2: an upload still running when the chat switches creative lands nowhere, and the new composer is not blocked', async () => {
+    const user = userEvent.setup();
+    const d = deferred();
+    api.uploadFiles.mockImplementationOnce(() => d.promise);
+    const { rerender } = render(view());
+    await pick(user, 'big.mp4');
+    await screen.findByRole('status', { name: 'Uploading big.mp4…' });
+    rerender(view({ creative: 'c2' }));
+    expect(screen.queryByRole('status', { name: 'Uploading big.mp4…' })).toBeNull();
+    await user.type(box(), 'Hi');
+    expect((send() as HTMLButtonElement).disabled).toBe(false);
+    d.resolve({ assets: [entry('big.mp4', 'video')] });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole('button', { name: 'Remove big.mp4' })).toBeNull();
+    await user.click(send());
+    await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'c2', { text: 'Hi', pins: [] }));
+  });
+
+  it('round 2: a late error of an abandoned upload is not shown either', async () => {
+    const user = userEvent.setup();
+    const d = deferred();
+    api.uploadFiles.mockImplementationOnce(() => d.promise);
+    const { rerender } = render(view());
+    await pick(user, 'big.mp4');
+    await screen.findByRole('status', { name: 'Uploading big.mp4…' });
+    rerender(view({ creative: 'c2' }));
+    d.reject(new Error('disk full'));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('round 2: the pending chip\'s close button abandons that upload; its late result is ignored', async () => {
+    const user = userEvent.setup();
+    const d = deferred();
+    api.uploadFiles.mockImplementationOnce(() => d.promise);
+    render(view());
+    await user.type(box(), 'Hi');
+    await pick(user, 'big.mp4');
+    expect((send() as HTMLButtonElement).disabled).toBe(true);
+    await user.click(await screen.findByRole('button', { name: 'Cancel the upload of big.mp4' }));
+    expect(screen.queryByRole('status', { name: 'Uploading big.mp4…' })).toBeNull();
+    expect((send() as HTMLButtonElement).disabled).toBe(false);
+    d.resolve({ assets: [entry('big.mp4', 'video')] });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole('button', { name: 'Remove big.mp4' })).toBeNull();
+  });
 });

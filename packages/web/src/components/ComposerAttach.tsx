@@ -26,7 +26,8 @@ let uploads = 0;
  * library. `chosen`: the project paths (`assets/…`) attached now; the composer sends them with its next message.
  */
 export function AttachButton({ slug, chosen, onAdd, onRemove, onError, onPending, disabled }: {
-  slug: string; chosen: readonly string[]; onAdd(paths: string[]): void; onRemove(path: string): void; onError(text: string | null): void;
+  /** `upload`: the id of the upload a result comes from (round 2: the composer ignores an abandoned one's). */
+  slug: string; chosen: readonly string[]; onAdd(paths: string[], upload?: number): void; onRemove(path: string): void; onError(text: string | null, upload?: number): void;
   /** An upload started (`started`) or settled (`settled`, its id). */
   onPending(change: { started: PendingUpload } | { settled: number }): void;
   disabled?: boolean;
@@ -54,9 +55,9 @@ export function AttachButton({ slug, chosen, onAdd, onRemove, onError, onPending
     try {
       const r = await api.uploadFiles(slug, 'assets', files);
       const paths = (r.assets ?? []).map((a) => assetPath(a.file));
-      if (paths.length) onAdd(paths);
+      if (paths.length) onAdd(paths, id);
       if (library.value !== null) load();
-    } catch (e) { onError(t.web.briefSession.uploadFailed({ detail: errText(e) })); }
+    } catch (e) { onError(t.web.briefSession.uploadFailed({ detail: errText(e) }), id); }
     finally { onPending({ settled: id }); }
   };
   return (
@@ -88,10 +89,12 @@ function ChipFace({ slug, path }: { slug: string; path: string }) {
  * Report 79: the files attached in the composer, each removable, and (round 1) the uploads still on their way, with a
  * spinner: the message waits for them.
  */
-export function AttachedChips({ slug, paths, pending, onRemove }: { slug: string; paths: readonly string[]; pending: readonly PendingUpload[]; onRemove(path: string): void }) {
+export function AttachedChips({ slug, paths, pending, onRemove, onCancel }: { slug: string; paths: readonly string[]; pending: readonly PendingUpload[]; onRemove(path: string): void;
+  /** Round 2: abandons upload `id` (the file may still reach the library; it is not attached). */
+  onCancel(id: number): void }) {
   const t = useT();
   const b = t.web.briefSession;
-  const names = pending.flatMap((u) => u.names.map((name, k) => ({ key: `${u.id}:${k}`, name })));
+  const names = pending.flatMap((u) => u.names.map((name, k) => ({ key: `${u.id}:${k}`, id: u.id, name })));
   if (paths.length === 0 && names.length === 0) return null;
   return (
     <div className="ms-composer-pins ms-brief-pins">
@@ -108,6 +111,7 @@ export function AttachedChips({ slug, paths, pending, onRemove }: { slug: string
       {names.map((n) => (
         <span key={n.key} role="status" aria-label={t.web.chat.uploading({ name: n.name })} className="ms-chip ms-composer-pin ms-brief-pin ms-attach-pending">
           <Spinner size={11} decorative /><span className="ms-brief-pin-name">{n.name}</span>
+          <button type="button" className="ms-x" aria-label={t.web.chat.cancelUpload({ name: n.name })} onClick={() => onCancel(n.id)}><Icon name="close" size={10} /></button>
         </span>
       ))}
     </div>
