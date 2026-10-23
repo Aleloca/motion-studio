@@ -965,15 +965,15 @@ function Details({ jobId, entries, open, onToggle }: { jobId: string; entries: D
 const firstLine = (s: string) => { const l = s.split('\n', 1)[0] ?? ''; return l.length > 120 ? `${l.slice(0, 119)}\u2026` : l; };
 
 /** End-of-turn line: how many commands ran (and how many you approved); "Details" (described by the line) opens Activity details. */
-function AutoLine({ jobId, log, onOpen }: { jobId: string; log: CommandLog; onOpen(jobId: string): void }) {
+export function AutoLine({ jobId, log, onOpen }: { jobId: string; log: CommandLog; onOpen(jobId: string): void }) {
   const c = useT().web.chat;
   const id = useId();
   return (
     <p className="ms-convo-autoline">
       <span className="ms-step-check" aria-hidden="true"><Icon name={log.sandboxed ? 'shield' : 'terminal'} size={13} /></span>
       <span id={id}>{c.commandsRan({ count: log.ran, approved: log.approved, sandbox: log.sandboxed, attempted: log.attempted })}</span>
-      <span aria-hidden="true">·</span>
-      <Button size="sm" variant="ghost" aria-describedby={id} onClick={() => onOpen(jobId)}>{c.autoDetails}</Button>
+      {/* The dot goes with "Details" to the next line, never leaving it alone (report 75). */}
+      <span className="ms-convo-autoline-more"><span aria-hidden="true">·</span><Button size="sm" variant="ghost" aria-describedby={id} onClick={() => onOpen(jobId)}>{c.autoDetails}</Button></span>
     </p>
   );
 }

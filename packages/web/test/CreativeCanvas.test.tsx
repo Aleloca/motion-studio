@@ -160,8 +160,8 @@ describe('CreativeCanvas · arrives from the brief panel (decision 1419)', () =>
   });
 });
 
-describe('CreativeCanvas · the subtitles entry (Task 26)', () => {
-  it('"Sottotitoli" opens the original speech set, not the first set listed', async () => {
+describe('CreativeCanvas · the subtitles entry (Task 26, report 72)', () => {
+  it('has no "Sottotitoli" button in the chat panel: it moved to the editor', async () => {
     const timing = { version: 1, format: 'tiktok-9x16', fingerprint: 'f'.repeat(64) };
     const set = { cues: 3, edited: 0, hash: 'a'.repeat(64), timing, timingChanged: false, staleCues: 0 };
     detail = { ...makeDetail([version(1, 'Dal brief')]), subtitles: [
@@ -171,8 +171,7 @@ describe('CreativeCanvas · the subtitles entry (Task 26)', () => {
     ] };
     render(<Harness live={emptyLive()} />);
     await ready();
-    fireEvent.click(await screen.findByRole('button', { name: 'Sottotitoli' }));
-    expect(location.hash).toBe('#/p/acme/c/lancio/subtitles/it');
+    expect(screen.queryByRole('button', { name: 'Sottotitoli' })).toBeNull();
   });
 });
 

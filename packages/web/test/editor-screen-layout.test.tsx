@@ -44,6 +44,8 @@ const detailOf = (): CreativeDetail => ({
     createdAt: at, updatedAt: at, resumeFrom: null, linkedCodebases: [],
     brief: { goal: 'g', message: 'm', formats: [VIDEO], durationSec: 8, assets: [], notes: '', locales: { primary: 'it', extra: ['en'] } },
   },
+  // Report 72: a subtitle set, so the editor tools carry the "Subtitles" button (measured with the rest at 1024 and 1280).
+  subtitles: [{ lang: 'it', origin: 'speech', cues: 3, edited: 0, hash: 'a'.repeat(64), timing: { version: 1, format: VIDEO, fingerprint: 'f'.repeat(64) }, timingChanged: false, staleCues: 0 }],
 } as unknown as CreativeDetail);
 
 const composition = {
@@ -254,6 +256,7 @@ run('format page (the editor): whole page in real Chrome', () => {
     it(`${locale}, ${state}: chat and inspector, 1024 and 1280 px, nothing overflows, is clipped or overlaps`, async () => {
       const markup = await appMarkup(locale, state);
       const failures: string[] = [];
+      for (const tab of ['chat', 'inspector'] as const) if (!markup[tab].includes('ms-ed-subtitles')) failures.push(`${locale} ${state} ${tab}: no Subtitles button in the editor tools`);
       for (const tab of ['chat', 'inspector'] as const) for (const width of [1024, 1280]) {
         const page = `<!doctype html><html lang="${locale}"><head><meta charset="utf-8"><style>${FONTS()}\n${ALL_CSS()}
           html,body{margin:0;height:100%;background:var(--bg)}</style></head><body>${markup[tab]}</body></html>`;
@@ -265,6 +268,7 @@ run('format page (the editor): whole page in real Chrome', () => {
           const r = await tabPage.eval<{ problems: string[]; notes: string[]; seen: Record<string, unknown> }>(MEASURE, 30_000);
           // MS_LAYOUT_SHOTS=<folder>: a screenshot of each case, to look at.
           if (process.env.MS_LAYOUT_SHOTS) writeFileSync(join(process.env.MS_LAYOUT_SHOTS, `editor-${locale}-${state}-${tab}-${width}.png`), await tabPage.screenshot());
+          if (process.env.MS_LAYOUT_SHOTS && locale === 'en' && state === 'idle' && tab === 'chat' && width === 1024) writeFileSync(join(process.env.MS_LAYOUT_SHOTS, 'editor-subtitles-button.png'), await tabPage.screenshot());
           console.info(`[ed-layout] ${locale} ${state} ${tab} @${width}: ${JSON.stringify(r)}`);
           const at = `${locale} ${state} ${tab} @${width}`;
           for (const p of r.problems) failures.push(`${at}: ${p}`);

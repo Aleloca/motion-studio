@@ -67,6 +67,7 @@ const media = vi.hoisted(() => {
     setComposition: vi.fn((_c: unknown) => { m.seq += 1; return m.seq; }),
     addSessionMedia: vi.fn((_src: string, _m: unknown) => true),
     clipBounds: null as unknown,
+    error: null as unknown,
     select: vi.fn((_id: string | null) => {}),
     play: vi.fn(async () => { m.paused = false; events.dispatchEvent(new Event('play')); }),
     pause: vi.fn(() => { m.paused = true; events.dispatchEvent(new Event('pause')); }),
@@ -181,7 +182,104 @@ beforeEach(() => {
 });
 afterEach(() => { vi.useRealTimers(); });
 
+describe('EditorScreen · the player while it loads (report 73)', () => {
+  it('loading: a visible "Loading the video…" over the stage and a disabled, explained play; ready: the label goes and play works', async () => {
+    probe.real = true;
+    media.duration = Number.NaN;
+    try {
+      render(<Harness />);
+      await opened();
+      const timeline = screen.getByRole('region', { name: 'Timeline' });
+      const play = within(timeline).getByRole('button', { name: 'Play (Space)' }) as HTMLButtonElement;
+      await screen.findByText('Loading the video…');
+      expect(play.disabled).toBe(true);
+      expect(play.title).toBe('Loading the video…');
+      // A press during loading does nothing (a disabled button), and no playback is queued.
+      await userEvent.click(play);
+      expect(media.play).not.toHaveBeenCalled();
+      // The frame reports its media: the label goes, play is available and works.
+      media.duration = 6;
+      act(() => media.emit('durationchange'));
+      await waitFor(() => expect(screen.queryByText('Loading the video…')).toBeNull());
+      expect(play.disabled).toBe(false);
+      expect(play.title).toBe('');
+      await userEvent.click(play);
+      expect(media.play).toHaveBeenCalledTimes(1);
+    } finally { media.duration = 6; }
+  });
+
+  it('loading to fatal error: the runtime reports an error instead of a duration: the label goes, play says nothing about loading', async () => {
+    probe.real = true;
+    media.duration = Number.NaN;
+    try {
+      render(<Harness />);
+      await opened();
+      await screen.findByText('Loading the video…');
+      media.error = { code: 'compositionMissing' };
+      act(() => media.emit('error'));
+      await waitFor(() => expect(screen.queryByText('Loading the video…')).toBeNull());
+      const play = within(screen.getByRole('region', { name: 'Timeline' })).getByRole('button', { name: 'Play (Space)' }) as HTMLButtonElement;
+      expect(play.title).toBe('');
+    } finally { media.duration = 6; media.error = null; }
+  });
+
+  it('an unusable session URL never shows the loading label', async () => {
+    probe.real = true;
+    media.duration = Number.NaN;
+    api.previewSession.mockReset().mockImplementation(async (_s, _c, n, format) => ({
+      url: 'javascript:alert(1)', token: `tok-${format}-v${n}`, origin: 'http://127.0.0.1:61234',
+      expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(), format, hash: hashOf(n), width: 1080, height: 1920, duration: 6, fps: 30,
+    }));
+    try {
+      render(<Harness />);
+      await opened();
+      // `opened` waited for the (stand-in) player, so the session is in and the preview is ready: the state is settled.
+      expect(screen.getByTestId('player')).toBeTruthy();
+      expect(screen.queryByText('Loading the video…')).toBeNull();
+    } finally { media.duration = 6; }
+  });
+
+  it('play shows no "loading" tooltip while the preview has failed', async () => {
+    probe.real = true;
+    api.previewSession.mockReset().mockImplementation(async () => { throw new Error('gone'); });
+    render(<Harness />);
+    await screen.findByRole('alert');
+    const play = within(screen.getByRole('region', { name: 'Timeline' })).getByRole('button', { name: 'Play (Space)' }) as HTMLButtonElement;
+    expect(play.title).toBe('');
+  });
+
+  it('loading to error: a failed preview shows the existing error and Retry, never the loading label', async () => {
+    probe.real = true;
+    api.previewSession.mockReset().mockImplementation(async () => { throw new Error('the core went away'); });
+    render(<Harness />);
+    expect((await screen.findByRole('alert')).textContent).toContain('the core went away');
+    expect(screen.getByRole('button', { name: /Try again/ })).toBeTruthy();
+    expect(screen.queryByText('Loading the video…')).toBeNull();
+  });
+});
+
 describe('EditorScreen · shell', () => {
+  it('report 72: a creative with a subtitle set has "Subtitles" in the editor tools, opening the original speech set; without one there is none', async () => {
+    const set = { cues: 3, edited: 0, hash: 'a'.repeat(64), timing: { version: 1, format: REEL, fingerprint: 'f'.repeat(64) }, timingChanged: false, staleCues: 0 };
+    detail = { ...makeDetail([v2(1), v2(2)]), subtitles: [{ ...set, lang: 'en', origin: 'translation', sourceLang: 'it' }, { ...set, lang: 'it', origin: 'speech' }] } as CreativeDetail;
+    const first = render(<Harness />);
+    await opened();
+    const tools = document.querySelector('.ms-ed-tools') as HTMLElement;
+    await userEvent.click(within(tools).getByRole('button', { name: 'Subtitles' }));
+    expect(location.hash).toBe('#/p/acme/c/lancio/subtitles/it');
+    first.unmount();
+    // A member of a variant group has none (the rule the canvas had: outside variant groups only).
+    detail = { ...(detail as object), variants: { orphan: false, letter: 'a', host: 'lancio', group: { members: [{ letter: 'a', slug: 'lancio', status: 'active' }, { letter: 'b', slug: 'lancio~b', status: 'active' }], picks: {} }, missing: [] } } as unknown as CreativeDetail;
+    const second = render(<Harness />);
+    await opened();
+    expect(within(document.querySelector('.ms-ed-tools') as HTMLElement).queryByRole('button', { name: 'Subtitles' })).toBeNull();
+    second.unmount();
+    detail = makeDetail([v2(1), v2(2)]);
+    render(<Harness />);
+    await opened();
+    expect(within(document.querySelector('.ms-ed-tools') as HTMLElement).queryByRole('button', { name: 'Subtitles' })).toBeNull();
+  });
+
   it('opens the latest version: the layout slots, the format crumb and the stage player, no pill without edits', async () => {
     render(<Harness />);
     await opened();

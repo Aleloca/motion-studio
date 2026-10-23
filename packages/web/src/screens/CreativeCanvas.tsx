@@ -21,7 +21,7 @@ import { D, enter, flip, pulse, stagger, usePageShortcut } from '../motion/index
 import { instanceName, presetFor } from '../instances.ts';
 import { href, routeKey } from '../routes.ts';
 import { useBarClaim } from '../shell/barSlots.ts';
-import { setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } from '../shell/intents.ts';
+import { clearSubtitlesBack, setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } from '../shell/intents.ts';
 import { go, ShellContext } from '../shell/ShellContext.tsx';
 import { Button, ChannelMark, Empty, Icon, Input, NavItem, Pill, Popover, Segmented, Spinner, Tabs, Tag, Toggle, cx, toast } from '../ui/index.ts';
 import { CreativeActionsMenu, type RemovalDone } from './creative/CreativeRemoval.tsx';
@@ -39,7 +39,6 @@ import { StorePackExport } from './creative/StorePackExport.tsx';
 import { LanguagesButton } from './creative/LanguagesButton.tsx';
 import { RenderLanguagesDialog } from './creative/RenderLanguagesDialog.tsx';
 import { creativeLocales, packLanguageGaps } from './creative/languagesModel.ts';
-import { entrySubtitleLang } from './subtitles/LangSwitcher.tsx';
 import { activatesControl, bare, inOverlay, isTyping } from './keys.ts';
 import { useChatPins } from './pendingPins.ts';
 import { FollowerChip, FormatBadge, useNewVersionNotice, useVersionActions, VersionTimeline } from './FormatVersions.tsx';
@@ -104,6 +103,8 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   const locale = useLocale();
   const shell = useContext(ShellContext);
   const root = useRef<HTMLDivElement>(null);
+  // The canvas is where the subtitle editor goes back to from here on: no origin kept from an earlier visit of the video editor.
+  useEffect(() => { clearSubtitlesBack(`${slug}/${creative}`); }, [slug, creative]);
   // Decision 980: a group's one chat is read again when any of its members changes.
   const { detail, conversation, error, reload } = useCreative(slug, creative, chatTick(live.creativeTicks, slug, creative));
   const groupChat = useGroupChat(live, slug, creative, detail);
@@ -1116,11 +1117,6 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
       {/* Decision 1424: the panel is the glass card, inset 12 px in its column (which keeps its width). */}
       <aside className="ms-cv-side ms-cv-panel ms-chat-col" aria-label={c.panel}>
         <div className="ms-chat-card">
-          {!group && detail.subtitles?.length ? (
-            <div className="ms-cv-subs-entry">
-              <Button size="sm" variant="outline" onClick={() => go(href.subtitles(slug, creative, entrySubtitleLang(detail.subtitles, creativeLocales(detail.creative.brief)?.primary) ?? undefined))}><Icon name="text" size={13} />{c.subtitles}</Button>
-            </div>
-          ) : null}
           <Tabs label={c.panel} value={tab} onChange={setTab}
             tabs={[{ value: 'chat', label: c.tabs.chat }, { value: 'comments', label: c.tabs.comments, count: sent.count }, { value: 'brief', label: c.tabs.brief }]} />
           {tab === 'chat' ? (

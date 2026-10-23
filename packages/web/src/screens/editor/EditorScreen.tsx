@@ -39,7 +39,8 @@ import { LocaleOutline, LocaleSwitcher } from '../creative/LocaleSwitcher.tsx';
 import { localePreviewSource, useLocalePreview } from '../creative/useLocalePreview.ts';
 import { LanguagesButton } from '../creative/LanguagesButton.tsx';
 import { creativeLocales } from '../creative/languagesModel.ts';
-import { usePreviewSession } from '../../components/compositionPreview.ts';
+import { entrySubtitleLang } from '../subtitles/LangSwitcher.tsx';
+import { frameUrl, usePreviewSession } from '../../components/compositionPreview.ts';
 import { Conversation } from '../../components/Conversation.tsx';
 import { chatTick, useGroupChat } from '../variants/useGroupChat.ts';
 import { IntegrityNotice, useIntegrity } from '../../components/IntegrityNotice.tsx';
@@ -49,7 +50,7 @@ import { formatNumber, useLocale, useT } from '../../i18n.tsx';
 import { D, enter, flip } from '../../motion/index.ts';
 import { href, parseRoute, routeKey } from '../../routes.ts';
 import { useBarClaim } from '../../shell/barSlots.ts';
-import { setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } from '../../shell/intents.ts';
+import { setFrameOrigin, setShownVersions, setSubtitlesBack, takeFrameOrigin, takeShownVersions } from '../../shell/intents.ts';
 import { go, ShellContext } from '../../shell/ShellContext.tsx';
 import { Button, ChannelMark, Empty, Icon, Modal, Pill, Segmented, Spinner, Tabs, Toggle, cx, toast } from '../../ui/index.ts';
 import { useCreative } from '../../useCreative.ts';
@@ -373,6 +374,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   // M1); a staged file that did not come along (used now or not: an undo may bring it back) is staged again from where it
   // came from, once. Save waits meanwhile.
   const session = preview.state.kind === 'ready' ? preview.state.session : null;
+  const loadingVideo = Boolean(draft) && session !== null && frameUrl(session) !== null && !controls.ready && !controls.failed;
   const [restaging, setRestaging] = useState(false);
   useEffect(() => {
     const d = peekDraft(key);
@@ -766,7 +768,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   const [safe, setSafe] = useState(false);
 
   const ctx: EditorState | null = draft ? {
-    slug, creative, format, primary, draft, actions: safeActions, player, controls, selection, select, snap, setSnap, token, staging,
+    slug, creative, format, primary, draft, actions: safeActions, player, controls, loadingVideo, selection, select, snap, setSnap, token, staging,
     stageAsset: readOnly === null ? stageAsset : async () => null,
     stageSvg: readOnly === null ? stageSvg : async () => { throw new Error(readOnly); },
     readOnly, svgElement, selectSvgElement, askAnimation, askElement,
@@ -927,6 +929,12 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
             <DraftPill edits={draft.ops.length} nextN={nextN} blocked={blocked} saving={saving} saved={saved} onSave={() => { void save(); }} onDiscard={discardDraft} />
           ) : null}
           <span className="ms-grow" />
+          {/* Report 72: the way into the subtitle editor (it was above the chat's tabs), where the creative has a subtitle set. */}
+          {!group && detail?.subtitles?.length ? (
+            <Button size="sm" variant="outline" className="ms-ed-subtitles" onClick={() => { setSubtitlesBack(`${slug}/${creative}`, location.hash); go(href.subtitles(slug, creative, entrySubtitleLang(detail.subtitles, creativeLocales(detail.creative.brief)?.primary) ?? undefined)); }}>
+              <Icon name="text" size={13} />{c.subtitles}
+            </Button>
+          ) : null}
           {preset?.safeZone && draft && !otherView ? (
             <span className="ms-fv-safe-toggle"><Toggle size="sm" on={safe} onChange={setSafe} label={c.safeZones} /><span aria-hidden="true">{c.safeZones}</span></span>
           ) : null}
@@ -1001,6 +1009,11 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
               {!draft || preview.state.kind === 'loading' || preview.state.kind === 'busy' || preview.state.kind === 'idle' ? (
                 <span className="ms-cplayer-state" role="status">{!draft ? e.loading : preview.state.kind === 'busy' ? t.web.render.busy : t.web.render.loading}</span>
               ) : null}
+              {/* Report 73: the session is there but the frame has not reported its media yet (a long video takes a while): say so,
+                  the play control is disabled until it can play. A stalled frame mints a new session, a failed one shows its error. */}
+              {loadingVideo ? (
+                <span className="ms-cplayer-state ms-cplayer-loading" role="status"><Spinner size={16} decorative />{e.loadingVideo}</span>
+              ) : null}
               {preview.state.kind === 'ready' ? (
                 <CompositionPlayer key={attempt} session={preview.state.session} title={t.web.render.playerFrame({ label: `${label} v${n ?? ''}` })}
                   onMedia={setPlayer} onStall={preview.stalled} onShowing={onShowing} />
@@ -1030,7 +1043,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
       {/* Decision 1424: chat and inspector share the glass card, inset 12 px in the column (which keeps its width). */}
       <aside className="ms-ed-side ms-ed-right ms-chat-col" aria-label={e.panelTabs} data-part="r">
         <div className="ms-chat-card">
-          <Tabs label={e.panelTabs} value={tab} onChange={setTab} className="ms-fv-tabs ms-ed-tabs"
+          <Tabs label={e.panelTabs} value={tab} onChange={setTab} className="ms-ed-tabs"
             tabs={[{ value: 'chat', label: e.chat, controls: 'ms-ed-panel', ...(sourcePins.length ? { count: sourcePins.length } : {}) }, { value: 'inspector', label: e.inspector, controls: 'ms-ed-panel' }]} />
           {sourcePins.length ? <span className="ms-sr" role="status">{e.pendingComments({ n: sourcePins.length })}</span> : null}
           <div id="ms-ed-panel" role="tabpanel" className="ms-ed-panel">

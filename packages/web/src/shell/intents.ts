@@ -80,6 +80,14 @@ export function takeFrameOrigin(key: string): DOMRect | null {
   return rect;
 }
 
+// Report 74/M6: the subtitle editor's back button goes to where it was opened from. The video editor stores its page (keyed by
+// `<project>/<creative>`) before navigating; the canvas, which opens it from the "Subtitles ready" card, clears it on mount, so
+// no stale origin outlives a visit to the canvas.
+const subtitlesBack = new Map<string, string>();
+export function setSubtitlesBack(key: string, hash: string): void { subtitlesBack.set(key, hash); }
+export function peekSubtitlesBack(key: string): string | null { return subtitlesBack.get(key) ?? null; }
+export function clearSubtitlesBack(key: string): void { subtitlesBack.delete(key); }
+
 // The versions on screen travel with T3/T4: the version viewed on each board of the canvas (format → vN, only where it is
 // not the ★) is the one the format view opens on, and back. Keyed by `<project>/<creative>`; the next page takes it once,
 // on mount.

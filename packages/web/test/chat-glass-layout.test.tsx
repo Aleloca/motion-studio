@@ -52,6 +52,8 @@ const conversation: ConversationEntry[] = [
 ];
 
 let mode: 'single' | 'group' = 'single';
+/** Report 71: a chat of three messages, nowhere near filling the column. */
+let shortChat = false;
 const composition = {
   $schema: 'motion-studio/composition@1', width: 1080, height: 1920, fps: 30, duration: 8, background: '#000000', fonts: [],
   scenes: [{ id: 's1', name: 'Apertura', start: 0, duration: 4 }, { id: 's2', name: 'Chiusura', start: 4, duration: 4 }],
@@ -63,7 +65,7 @@ const composition = {
 const api = {
   getFormats: vi.fn(async () => ({ presets: DEFAULT_FORMATS, error: null, path: '/x' })),
   getCreative: vi.fn(async (_s: string, c: string) => (mode === 'group' ? grouped(c) : single(c))),
-  getConversation: vi.fn(async () => conversation),
+  getConversation: vi.fn(async () => (shortChat ? conversation.slice(-3) : conversation)),
   fileUrl: (s: string, c: string, rel: string) => `/f/${s}/${c}/${rel}`,
   fileBytes: vi.fn(async () => 12_400_000),
   getUsage: vi.fn(async () => { throw new Error('offline'); }),
@@ -102,6 +104,7 @@ const { EditorScreen } = await import('../src/screens/editor/EditorScreen.tsx');
 const { TopBar } = await import('../src/shell/TopBars.tsx');
 const { ShellContext } = await import('../src/shell/ShellContext.tsx');
 const { I18nProvider } = await import('../src/i18n.tsx');
+const { AutoLine } = await import('../src/components/Conversation.tsx');
 
 const running: JobSummary = { id: 'j1', key: `creative:/w:acme:${HOST}`, kind: 'creative', label: 'Lancio', state: 'running', createdAt: at, startedAt: at };
 const approval: ApprovalRequest = {
@@ -150,7 +153,7 @@ async function markup(screen: Screen): Promise<Record<string, string>> {
     const { container } = render(<I18nProvider locale="it"><ShellContext.Provider value={shell}><header className="ms-topbar"><TopBar /></header>{page}</ShellContext.Provider></I18nProvider>);
     const col = () => container.querySelector(COL[screen]) as HTMLElement | null;
     await waitFor(() => expect(col()?.querySelector('form.ms-composer')).toBeTruthy());
-    await waitFor(() => expect(col()!.querySelectorAll('.ms-convo-list .ms-msg').length).toBeGreaterThan(8));
+    await waitFor(() => expect(col()!.querySelectorAll('.ms-convo-list .ms-msg').length).toBeGreaterThan(shortChat ? 1 : 8));
     if (screen === 'canvas') await waitFor(() => expect(col()!.querySelector('.ms-approval')).toBeTruthy());
     if (screen === 'group') await waitFor(() => expect(col()!.querySelector('.ms-composer-group')).toBeTruthy());
     if (screen === 'editor') await waitFor(() => expect(container.querySelector('.ms-tl')).toBeTruthy());
@@ -312,7 +315,7 @@ run('every chat is the glass card: real Chrome layout', () => {
   beforeAll(async () => { dir = mkdtempSync(join(tmpdir(), 'ms-chat-glass-')); browser = await launchChrome(chrome!); });
   afterAll(async () => { await browser?.close(); rmSync(dir, { recursive: true, force: true }); });
 
-  async function measure(screen: Screen, tab: string, html: string, width: Width, theme: 'light' | 'dark', transparency: 'no-preference' | 'reduce' = 'no-preference'): Promise<Measure> {
+  async function measure(screen: Screen, tab: string, html: string, width: Width, theme: 'light' | 'dark', transparency: 'no-preference' | 'reduce' = 'no-preference', expr?: string, shot?: string): Promise<Measure> {
     const height = width === 1440 ? 900 : 700;
     const page = `<!doctype html><html lang="it" data-theme="${theme}"><head><meta charset="utf-8"><style>${FONTS()}\n${ALL_CSS()}
       html,body{margin:0;height:100%;background:var(--bg)} #page{height:100vh}
@@ -326,7 +329,8 @@ run('every chat is the glass card: real Chrome layout', () => {
       // allowed, the opaque card when the case asks for `reduce`.
       await t.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-transparency', value: transparency }, { name: 'prefers-reduced-motion', value: 'no-preference' }] });
       await t.goto(`file://${file}`);
-      const r = await t.eval<Measure>(MEASURE(COL[screen], MID[screen], tab), 30_000);
+      const r = await t.eval<Measure>(expr ?? MEASURE(COL[screen], MID[screen], tab), 30_000);
+      if (shot) writeFileSync(shot, await t.screenshot());
       if (shots) writeFileSync(join(shots, `${screen}-${tab}-${theme}-${width}x${height}${reduced}.png`), await t.screenshot());
       return r;
     } finally { await t.close(); }
@@ -395,6 +399,90 @@ run('every chat is the glass card: real Chrome layout', () => {
         const text = contrast(r.bubbleText!, r.bubble!, r.bg), field = contrast(r.composerText!, r.composerBox!, r.bg);
         check(text >= 4.5, `agent bubble text contrast ${text.toFixed(2)}`);
         check(field >= 4.5, `composer text contrast ${field.toFixed(2)}`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+  it('report 71: the tabs stay under the card header in every tab, with a short and with a long chat, light and dark', async () => {
+    const TOP = `(async () => {
+      await document.fonts.ready;
+      const card = document.querySelector('.ms-cv-panel > .ms-chat-card');
+      const tabs = card.querySelector(':scope > .ms-tabs').getBoundingClientRect();
+      // Nothing sits above the tabs in the card: they start at its top edge.
+      const above = card.getBoundingClientRect().top;
+      const list = card.querySelector('.ms-convo-list');
+      const dock = card.querySelector('.ms-convo-dock');
+      // A row above the tabs (a future button or notice) keeps its own height and the tabs follow it at once.
+      const row = document.createElement('div');
+      row.textContent = 'row above the tabs'; row.style.cssText = 'height:28px';
+      card.insertBefore(row, card.firstChild);
+      const rowBox = row.getBoundingClientRect(), tabsAfter = card.querySelector(':scope > .ms-tabs').getBoundingClientRect();
+      const rowGap = tabsAfter.top - rowBox.bottom, rowHeight = rowBox.height;
+      row.remove();
+      return { rowGap, rowHeight, gap: tabs.top - above, scrolls: list ? list.scrollHeight > list.clientHeight + 4 : null,
+        dockIn: dock ? dock.getBoundingClientRect().bottom <= card.getBoundingClientRect().bottom + 0.5 : null,
+        tabsBottom: tabs.bottom, cardBottom: card.getBoundingClientRect().bottom };
+    })()`;
+    type Top = { rowGap: number; rowHeight: number; gap: number; scrolls: boolean | null; dockIn: boolean | null };
+    const failures: string[] = [];
+    try {
+      for (const long of [false, true]) {
+        shortChat = !long;
+        const html = await markup('canvas');
+        for (const theme of ['light', 'dark'] as const) for (const [tab, markupOf] of Object.entries(html)) {
+          const name = `${long ? 'long' : 'short'}-${tab}-${theme}`;
+          const shot = shots && tab === 'chat' && theme === 'light' ? join(shots, `chat-tabs-${long ? 'long' : 'short'}.png`) : undefined;
+          const r = (await measure('canvas', `top-${name}`, markupOf, 1440, theme, 'no-preference', TOP, shot)) as unknown as Top;
+          if (Math.abs(r.gap) > 4) failures.push(`${name}: the tabs are ${r.gap} px under the header`);
+          if (Math.abs(r.rowGap) > 1 || r.rowHeight !== 28) failures.push(`${name}: a row above the tabs takes ${r.rowHeight} px and the tabs are ${r.rowGap} px under it`);
+          if (tab === 'chat') {
+            if (long && r.scrolls !== true) failures.push(`${name}: the long list does not scroll`);
+            if (!long && r.scrolls !== false) failures.push(`${name}: the short list scrolls`);
+            if (r.dockIn !== true) failures.push(`${name}: the composer is outside the card`);
+          }
+        }
+      }
+    } finally { shortChat = false; }
+    expect(failures).toEqual([]);
+  });
+  it('report 75: the editor panel has the creative panel\'s underlined tabs at the top, the list starts under them, and "· Details" stays together; light and dark, at 1440, 1024 and 700', async () => {
+    // The real component's markup (a long line, as in the narrow panel).
+    const AUTOLINE = JSON.stringify(render(<I18nProvider locale="it"><AutoLine jobId="j1" log={{ ran: 3, approved: 1, sandboxed: true, attempted: 3 } as never} onOpen={() => {}} /></I18nProvider>).container.innerHTML);
+    cleanup();
+    const EXPR = `(async () => {\n      await document.fonts.ready;\n      const card = document.querySelector('.ms-ed-right > .ms-chat-card');
+      const tabsEl = card.querySelector(':scope > .ms-tabs');
+      const tabs = tabsEl.getBoundingClientRect(), cs = getComputedStyle(tabsEl), on = getComputedStyle(tabsEl.querySelector('.ms-tab.ms-on'));
+      const out = { gap: tabs.top - card.getBoundingClientRect().top, radius: cs.borderTopLeftRadius, line: cs.borderBottomWidth, bg: cs.backgroundColor,
+        underline: on.boxShadow.includes('inset') && on.boxShadow.includes('-2px') };
+      const list = card.querySelector('.ms-convo-list');
+      if (list) {
+        const panel = card.querySelector('.ms-ed-panel');
+        out.listTopGap = list.getBoundingClientRect().top - tabs.bottom;
+        out.panelScroll = panel.scrollHeight - panel.clientHeight;
+        // A line like "3 commands ran in the sandbox · Details", in the narrow panel.
+        const li = document.createElement('li');
+        li.innerHTML = ${AUTOLINE};
+                list.appendChild(li);
+        const dot = li.querySelector('.ms-convo-autoline-more > span').getBoundingClientRect(), btn = li.querySelector('button').getBoundingClientRect();
+        out.detailsTogether = Math.abs((dot.top + dot.bottom) / 2 - (btn.top + btn.bottom) / 2) < 8;
+        li.remove();
+      }
+      return out;
+    })()`;
+    type R = { gap: number; radius: string; line: string; bg: string; underline: boolean; listTopGap?: number; panelScroll?: number; detailsTogether?: boolean };
+    const failures: string[] = [];
+    shortChat = false;
+    const html = await markup('editor');
+    for (const theme of ['light', 'dark'] as const) for (const width of [1440, 1024, 700] as const) for (const tab of ['chat', 'inspector'] as const) {
+      const at = `editor ${tab} ${theme} @${width}`;
+      const shot = shots && tab === 'chat' && theme === 'light' && width === 1024 ? join(shots, 'editor-chat-tabs.png') : undefined;
+      const r = (await measure('editor', `tabs75-${tab}`, html[tab]!, width, theme, 'no-preference', EXPR, shot)) as unknown as R;
+      if (Math.abs(r.gap) > 4) failures.push(`${at}: the tabs are ${r.gap} px under the card's top`);
+      if (r.radius !== '0px' || r.line !== '1px' || r.bg !== 'rgba(0, 0, 0, 0)' || !r.underline) failures.push(`${at}: not the underlined tabs (${r.radius}, ${r.line}, ${r.bg}, underline ${r.underline})`);
+      if (tab === 'chat') {
+        if (!(r.listTopGap! >= -0.5)) failures.push(`${at}: the list starts ${r.listTopGap} px under the tab bar's bottom`);
+        if (r.panelScroll! > 1) failures.push(`${at}: the panel scrolls itself (${r.panelScroll} px) instead of the list`);
+        if (r.detailsTogether !== true) failures.push(`${at}: "·" and "Details" are on different lines`);
       }
     }
     expect(failures).toEqual([]);

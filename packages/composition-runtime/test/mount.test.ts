@@ -294,6 +294,29 @@ describe('render mode never captures an unpainted frame', () => {
     expect(errors.map((e) => e.code)).toContain('frameTimeout');
   });
 
+  // Report 74: scrubbing back and pressing play restarted from where the playhead had been. A seek queued behind one still
+  // running did not move `time` until its turn, so a `play` sent right after it started from the old time.
+  for (const wasPlaying of [false, true]) {
+    it(`preview: a play right after a seek queued behind a running one starts from the sought time (${wasPlaying ? 'was playing' : 'paused'}; report 74)`, async () => {
+      const root = document.getElementById('ms-root')!;
+      const c = comp({ tracks: [{ id: 'bg', kind: 'visual', clips: [{ id: 'card', type: 'shape', start: 0, duration: 60, props: {} }] }], duration: 60, scenes: [{ id: 's', start: 0, duration: 60 }] } as Partial<Composition>);
+      const player = mount(root, c, { mode: 'preview', base: BASE, natives, report: () => {}, timeouts: { load: 50, seek: 50, layer: 50 } });
+      await player.ready();
+      await player.seek(15);
+      if (wasPlaying) player.play({ loop: true, rate: 1 });
+      // The drag: a first seek is still running when the next one is asked for; then the play of the user.
+      const first = player.seek(8);
+      const last = player.seek(5);
+      player.play({ loop: true, rate: 1 });
+      await Promise.all([first, last]);
+      await new Promise((r) => setTimeout(r, 60));
+      expect(player.playing).toBe(true);
+      expect(player.time).toBeGreaterThanOrEqual(5);
+      expect(player.time).toBeLessThan(6);
+      player.pause();
+    });
+  }
+
   it('preview: a play that arrives while a seek runs is reported as playing when the seek ends (A5, never a false end)', async () => {
     const root = document.getElementById('ms-root')!;
     const c = comp({ tracks: [{ id: 'bg', kind: 'visual', clips: [{ id: 'card', type: 'shape', start: 0, duration: 6, props: {} }] }] } as Partial<Composition>);

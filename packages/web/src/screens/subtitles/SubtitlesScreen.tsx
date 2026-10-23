@@ -5,8 +5,9 @@
 // banner when the video changed under the set ("Rifai i tempi", and "Tempi controllati" to keep the timing), and "Rifai la
 // trascrizione…" in the header. Task 26: the subtitle languages in the header (LangSwitcher), a translation's stale lines
 // marked with "Ritraduci" per line and "Ritraduci tutto", the source text under each translated line.
+import { clearSubtitlesBack, peekSubtitlesBack } from '../../shell/intents.ts';
 import { SUPPORTED_LOCALES, drawsSubtitles, missingSourceLines, sourceCueOf, staleCues, translationSources, type CreativeDetail, type JobSummary, type LocaleTag, type SubtitleCue } from '@motion-studio/shared';
-import { useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
 import { api, ApiError } from '../../api.ts';
 import { CompositionPlayer, type CompositionMedia } from '../../components/CompositionPlayer.tsx';
 import { usePreviewSession } from '../../components/compositionPreview.ts';
@@ -42,7 +43,15 @@ const textOf = (cues: readonly SubtitleCue[]): string => JSON.stringify(cues);
 /** Scrolls a row into view inside the list without moving the focus (jsdom has no scrollIntoView). */
 const reveal = (el: Element | null | undefined) => { (el as HTMLElement | null | undefined)?.scrollIntoView?.({ block: 'nearest' }); };
 
-export function SubtitlesScreen({ slug, creative, lang }: { slug: string; creative: string; lang?: LocaleTag }) {
+export function SubtitlesScreen(p: { slug: string; creative: string; lang?: LocaleTag }) {
+  const key = `${p.slug}/${p.creative}`;
+  // Read once when the screen opens and removed at once: browser back, a crumb or a cancelled navigation can leave nothing behind.
+  const [back] = useState(() => peekSubtitlesBack(key));
+  useEffect(() => { clearSubtitlesBack(key); }, [key]);
+  return <BackContext.Provider value={back}><SubtitlesBody {...p} /></BackContext.Provider>;
+}
+
+function SubtitlesBody({ slug, creative, lang }: { slug: string; creative: string; lang?: LocaleTag }) {
   const t = useT();
   const shell = useContext(ShellContext);
   // A `subtitles` (or `creative`) broadcast bumps the creative's tick: the detail and the set are read again.
@@ -78,12 +87,16 @@ export function SubtitlesScreen({ slug, creative, lang }: { slug: string; creati
   );
 }
 
+/** Where the editor goes back to: read once when the screen opened (then forgotten), so a later visit never inherits it. */
+const BackContext = createContext<string | null>(null);
+
 /** The header; `langs`: the language switcher, after the title. */
 function Head({ slug, creative, langs, children }: { slug: string; creative: string; langs?: ReactNode; children?: ReactNode }) {
   const t = useT();
+  const back = useContext(BackContext);
   return (
     <header className="ms-subs-head">
-      <Button variant="ghost" size="sm" onClick={() => go(href.creative(slug, creative))}><Icon name="back" size={13} />{t.subtitles.backToCreative}</Button>
+      <Button variant="ghost" size="sm" onClick={() => { go(back ?? href.creative(slug, creative)); }}><Icon name="back" size={13} />{back ? t.subtitles.backToEditor : t.subtitles.backToCreative}</Button>
       <h1 className="ms-subs-title">{t.subtitles.editorTitle}</h1>
       {langs}
       <span className="ms-subs-grow" />
