@@ -616,6 +616,10 @@ arrives and worked on later together.
     editor" in the middle, then moves it up once the preview starts playing. The user wants it to stay in the middle:
     nobody really watches the whole video in that small preview.
     Done (decision 1802): the button stays centred while the preview plays; the step-aside rule is removed.
+78. **The agent's messages leave a wide gap on the left (user report of 2026-10-23).** In a narrow chat panel every
+    bubble sat 36 px in, beside the avatar column, so long replies wrapped early. Wanted: messages aligned to the left.
+    Done (decision 1803): the avatar, the name and the time share the first row; the bubble and the rows that followed
+    the avatar column (steps, version, errors, approvals, cards) start at the left edge and take the whole width.
 - **Flaky under load:** `core/test/agent-actions.test.ts` "duplicate_format runs after the turn, on the version it
   saved" failed once in a full local run (2026-10-23, waitFor on the action line) and passes alone 3/3.
 

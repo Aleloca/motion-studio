@@ -71,11 +71,14 @@
   display: flex; flex-direction: column; gap: 12px; overflow-wrap: anywhere;
 }
 .ms-convo-list > li { min-width: 0; }
-.ms-msg { display: flex; gap: 10px; align-items: flex-start; min-width: 0; }
+/* Report 78: the avatar and the name share the first row; the bubble and what follows take the whole width below. */
+.ms-msg { display: grid; grid-template-columns: 26px minmax(0, 1fr); column-gap: 8px; row-gap: 4px; align-items: center; min-width: 0; }
+.ms-msg-body { display: contents; }
+.ms-msg-body > :not(.ms-msg-meta) { grid-column: 1 / -1; }
+.ms-convo-typing .ms-msg-bubble { justify-self: start; }
 .ms-msg-avatar { flex: none; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
 .ms-msg-avatar.ms-agent { background: var(--ink); color: var(--accent); }
 .ms-msg-avatar.ms-you { background: var(--field); color: var(--muted); box-shadow: inset 0 0 0 1px var(--line); }
-.ms-msg-body { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
 .ms-msg-meta { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
 .ms-msg-meta b { color: var(--text); font-weight: 600; }
 .ms-msg-meta time { font-variant-numeric: tabular-nums; }
@@ -85,12 +88,12 @@
 .ms-msg-pins { display: flex; flex-wrap: wrap; gap: 4px; }
 .ms-msg-pins .ms-chip { height: 22px; font-size: 11px; color: var(--muted); }
 
-.ms-step { display: flex; align-items: flex-start; gap: 10px; padding-left: 36px; font-size: 12.5px; line-height: 1.45; min-width: 0; }
+.ms-step { display: flex; align-items: flex-start; gap: 10px; font-size: 12.5px; line-height: 1.45; min-width: 0; }
 .ms-step-check { color: var(--ok); flex: none; margin-top: 2px; display: inline-flex; }
 .ms-step-text { flex: 1; min-width: 0; }
 .ms-step time { color: var(--faint); font-family: var(--mono); font-size: 10.5px; flex: none; font-variant-numeric: tabular-nums; }
 .ms-convo-fold {
-  margin-left: 36px; align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; height: 24px; min-height: 0; padding: 0 8px;
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; height: 24px; min-height: 0; padding: 0 8px;
   border: 0; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer;
   transition: background var(--d-s) var(--e-std), color var(--d-s) var(--e-std);
 }
@@ -100,7 +103,7 @@
 .ms-convo-fold[aria-expanded="true"] svg.ms-chev { transform: none; }
 .ms-convo-details .ms-convo-fold { margin-left: 0; }
 
-.ms-convo-details { margin-left: 36px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ms-convo-details { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .ms-convo-log {
   list-style: none; margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--field);
   font-family: var(--mono); font-size: 11px; line-height: 1.5; max-height: 240px; overflow: auto;
@@ -126,11 +129,11 @@
 /* A command that did not run (denied, or never answered): kept in the log, quieter; its mark says why. */
 .ms-convo-auto-off .ms-convo-auto-text { color: var(--muted); }
 .ms-convo-mark { flex: none; font-size: 11px; color: var(--muted); padding: 0 6px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--line); }
-.ms-convo-autoline { margin-left: 36px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 12px; color: var(--muted); min-width: 0; }
+.ms-convo-autoline { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 12px; color: var(--muted); min-width: 0; }
 .ms-convo-autoline .ms-step-check { margin-top: 0; }
 .ms-convo-autoline-more { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 
-.ms-convo-version { margin-left: 36px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--line); background: var(--panel); }
+.ms-convo-version { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--line); background: var(--panel); }
 .ms-convo-version .ms-grow { flex: 1; }
 .ms-convo-version { flex-wrap: wrap; }
 .ms-convo-version-summary { flex-basis: 100%; order: 8; font-size: 12px; line-height: 1.45; color: var(--text); overflow-wrap: anywhere; min-width: 0; }
@@ -138,7 +141,7 @@
 .ms-convo-version-notes li { display: flex; align-items: flex-start; gap: 6px; overflow-wrap: anywhere; min-width: 0; }
 .ms-convo-version-notes svg { flex: none; margin-top: 2px; color: var(--warn); }
 .ms-convo-version-notes b { font-weight: 600; }
-.ms-convo-system { margin-left: 36px; font-size: 12px; color: var(--muted); }
+.ms-convo-system { font-size: 12px; color: var(--muted); }
 .ms-convo-system.ms-error, .ms-convo-error { color: var(--warn); }
 /* A warning line (level 'warning'): the text stays --text on the --warnBg tint (AA in both themes); the icon carries the
    --warn colour (a glyph: 3:1 is enough). */
@@ -151,8 +154,7 @@
 .ms-convo-skip { padding: 0; margin: 0; border: 0; background: transparent; font: inherit; font-weight: 600; color: var(--accentText); cursor: pointer; border-radius: 4px; }
 .ms-convo-skip:hover:not(:disabled) { text-decoration: underline; }
 .ms-convo-action-tag { font-size: 11px; color: var(--muted); }
-.ms-convo-error { margin-left: 36px; font-size: 12.5px; padding: 8px 10px; border-radius: 8px; background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); }
-.ms-convo-approval { margin-left: 36px; }
+.ms-convo-error { font-size: 12.5px; padding: 8px 10px; border-radius: 8px; background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); }
 .ms-convo-typing .ms-msg-bubble { padding: 12px; }
 .ms-convo-empty { margin: auto 0; }
 
@@ -294,7 +296,7 @@ aside.ms-chat-col { padding: 12px; background: var(--bg); border: 0; overflow: v
 .ms-pin-edit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 
 /* C2: a turn sent again after a failure (Try again) is a compact label, not a second identical bubble. */
-.ms-convo-retried { display: flex; align-items: center; gap: 6px; margin-left: 36px; font-size: 11.5px; color: var(--faint); }
+.ms-convo-retried { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--faint); }
 
 /* ---------- Phase 13: talking to the agent while it works ---------- */
 .ms-composer-note { margin: 0; font-size: 11.5px; line-height: 1.4; color: var(--muted); overflow-wrap: anywhere; }
@@ -335,10 +337,10 @@ aside.ms-chat-col { padding: 12px; background: var(--bg); border: 0; overflow: v
 .ms-msg-meta .ms-vchip + .ms-vchip { margin-left: -3px; }
 .ms-convo-system > .ms-vchip, .ms-convo-error > .ms-vchip { margin-right: 6px; vertical-align: 1px; }
 /* Phase 3 of the single agent: what a group turn did, per variant (its `group-turn` entry). */
-.ms-convo-groupturn { margin-left: 36px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--line); color: var(--muted); font-size: 12px; }
+.ms-convo-groupturn { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--line); color: var(--muted); font-size: 12px; }
 .ms-composer-pin > .ms-vchip { margin-right: 2px; }
 /* Phase 5 of the single agent (decision 983): a helper's row, its steps folded under it. */
-.ms-convo-helper { margin-left: 36px; min-width: 0; }
+.ms-convo-helper { min-width: 0; }
 .ms-convo-helper .ms-convo-fold { margin-left: 0; max-width: 100%; min-width: 0; }
 .ms-convo-helper-row { display: flex; align-items: center; gap: 6px; }
 .ms-convo-helper-row > * { flex: none; }
