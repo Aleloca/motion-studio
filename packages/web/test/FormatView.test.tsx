@@ -239,9 +239,16 @@ describe('FormatView · shared element and bar', () => {
   it('opening with the saved rect calls flip on the player', async () => {
     const rect = new DOMRect(10, 20, 300, 540);
     setFrameOrigin('format:acme/lancio/tiktok-9x16', rect);
-    render(<Harness format={VIDEO} />);
-    const video = await player();
-    await waitFor(() => expect(flip).toHaveBeenCalledWith(video.closest('.ms-fv-frame'), rect, D.l));
+    // The player flies only within FLIP_WINDOW_MS of the mount (decision 1756): `performance.now` stands still here, so a
+    // loaded machine cannot turn it into the plain arrival. Timers stay real.
+    vi.useFakeTimers({ toFake: ['performance'] });
+    try {
+      render(<Harness format={VIDEO} />);
+      const video = await player();
+      await waitFor(() => expect(flip).toHaveBeenCalledWith(video.closest('.ms-fv-frame'), rect, D.l));
+    } finally {
+      vi.useRealTimers();
+    }
     expect(takeFrameOrigin('format:acme/lancio/tiktok-9x16')).toBeNull();
   });
 
@@ -426,7 +433,12 @@ describe('FormatView · fix round 1', () => {
     api.getCreative.mockImplementationOnce(() => new Promise(() => {}));
     const rect = new DOMRect(10, 20, 300, 540);
     setFrameOrigin('format:acme/lancio/tiktok-9x16', rect);
-    render(<Harness format={VIDEO} />);
+    vi.useFakeTimers({ toFake: ['performance'] }); // decision 1756, as above
+    try {
+      render(<Harness format={VIDEO} />);
+    } finally {
+      vi.useRealTimers();
+    }
     const frame = document.querySelector('.ms-fv-frame');
     expect(frame).not.toBeNull();
     expect(flip).toHaveBeenCalledWith(frame, rect, D.l);
