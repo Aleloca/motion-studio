@@ -560,6 +560,9 @@ arrives and worked on later together.
 - **Flaky under load:** `web/test/CreativeCanvas.test.tsx` "the chat panel moves from the brief panel… the boards rise one after
   the other" failed once in a full local run (5.6 s, "expected flip to be called") and passes alone 3/3. Raise its waitFor
   timeout or make the animation wait deterministic.
+- **Flaky tests recurring (2026-10-23):** on CI run 39869141246 macOS part 3/3 failed twice in a row, first on
+  "render mode ignores setComposition" (diff 0.0073) and then on the VFR WebM frame-index test, and passed on the third
+  attempt. Both are listed above; fix them before they block a release.
 - **CI on macOS waits for runners:** with 3 parts plus the Electron job, 3 macOS jobs started 10 minutes after the run
   (run 39638356088). If it keeps happening, go to 2 macOS parts.
 - **"Replace with a text layer"** for outlined SVG lettering (report 13): not built (decision 1024).
