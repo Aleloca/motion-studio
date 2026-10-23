@@ -14,11 +14,13 @@ export const replyInstruction = (locale: Locale): string =>
   `Always reply to the user in ${languageName(locale)}. Write every text meant for the user (conversation messages, brand guidelines, asset descriptions, problem reports) in ${languageName(locale)}.`;
 
 /**
- * Report 70: the closing instruction of a chat with the user (the brief chat, a creative's chat): the agent replies in the
- * language the user writes in, whatever the app's language; `others` says what else is written in the app's language.
+ * Report 70: the closing instruction of a chat with the user (the brief chat, a creative's chat, the group's coordinator, the
+ * console): the agent replies in the language the user writes in, whatever the app's language. A message that shows no
+ * language keeps the conversation's (round 1, I2); the app's language only before the user wrote any. `others`: what else is
+ * written, and in which language (default: the other user-facing texts in the app's language).
  */
-export const chatReplyInstruction = (locale: Locale, others: string): string =>
-  `Reply to the user in the language of their latest message (your messages and your AskUserQuestion questions alike), whatever the app's language; when the message shows no language (only a name, a number or a file), reply in ${languageName(locale)}. ${others}`;
+export const chatReplyInstruction = (locale: Locale, others = `Write every other text meant for the user (brand guidelines, asset descriptions, problem reports) in ${languageName(locale)}.`): string =>
+  `Reply to the user in the language they write in (your messages and your AskUserQuestion questions alike), whatever the app's language. When their latest message shows no language (only "ok", a name, a number or a file), keep the language they have been writing in during this conversation; only when they have not written anything in a language yet, reply in ${languageName(locale)}. ${others}`;
 
 /** `it_IT.UTF-8` → `it-IT`; `C`, `POSIX` and empty values → null. */
 function normalizePosixLocale(value: string | undefined): string | null {

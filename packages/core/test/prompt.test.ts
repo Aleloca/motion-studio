@@ -129,7 +129,7 @@ describe('buildCreativePrompt', () => {
     for (const kind of ['first', 'iteration', 'fix'] as const) {
       for (const [locale, name] of [['it', 'Italian'], ['en', 'English']] as const) {
         const p = buildCreativePrompt({ ...base, kind, userText: 'x', problems: ['y'], locale });
-        expect(p).toContain(`Reply to the user in the language of their latest message (your messages and your AskUserQuestion questions alike), whatever the app's language; when the message shows no language (only a name, a number or a file), reply in ${name}. Write every other text meant for the user (brand guidelines, asset descriptions, problem reports) in ${name}.\n\n\`\`\`motion-studio\n`);
+        expect(p).toContain(`only when they have not written anything in a language yet, reply in ${name}. Text shown in the video (titles, the key message, any line you put on screen) is in the language of the brief's texts, the one the user wrote them in, unless the brief or the user asks for another; never the app's language just because the app is in it. Write every other text meant for the user (brand guidelines, asset descriptions, problem reports) in ${name}.\n\n\`\`\`motion-studio\n`);
         expect(p).not.toMatch(/italiano/i);
       }
     }

@@ -1,4 +1,4 @@
-import { BRIEF_FIELDS, BRIEF_VARIANTS_MAX, MAX_INSTANCES, languageName, type BriefField, type BriefForm, type ConversationEntry, type Locale } from '@motion-studio/shared';
+import { BRIEF_FIELDS, BRIEF_VARIANTS_MAX, MAX_INSTANCES, type BriefField, type BriefForm, type ConversationEntry, type Locale } from '@motion-studio/shared';
 import { chatReplyInstruction } from '../i18n.ts';
 import { defuseTags, quotePromptString, USER_REQUEST_CLOSE, USER_REQUEST_OPEN, VIDEO_ANALYSIS_RULE } from '../creatives/prompt.ts';
 
@@ -72,10 +72,10 @@ function contextSection(i: Pick<BriefPromptContext, 'codebases' | 'missingCodeba
 }
 
 /**
- * Report 70: the brief chat replies in the language the user writes in; the brief's fields stay in the app's language, the
- * rule every user-facing text of the app follows (decision 17).
+ * Report 70: the brief chat replies in the language the user writes in, and (the user's ruling of round 1) the brief's fields
+ * are written in that language too, not the app's: the text shown in the video comes from them.
  */
-const briefReply = (locale: Locale) => chatReplyInstruction(locale, `Write the brief's fields in ${languageName(locale)}, the app's language, unless the user asks for another language.`);
+const briefReply = (locale: Locale) => chatReplyInstruction(locale, "Write the brief's fields (goal, message, notes) in the language the user writes in too, whatever the app's language, unless they ask for another language: the text shown in the video comes from them.");
 
 /**
  * Report 70 (spec of the subtitles, U3, U9, §6.2, §6.4): subtitles are made by the app's subtitles feature after Generate;
@@ -85,7 +85,7 @@ const SUBTITLES_SECTION = [
   '## Subtitles',
   '- Motion Studio makes the subtitles itself after Generate: the creative\'s agent starts them, the speech of the video is transcribed, the user corrects the lines in the subtitle editor, and more languages are added there as translations. You never write, transcribe or correct subtitle text, and you never put it in the notes or the message.',
   '- When the user asks for subtitles without saying how they want them, ask it with AskUserQuestion (with your other questions, if any), with these options: "In the video" (drawn into the picture), "As a track and file" (.srt/.vtt files and a track in the MP4; the picture stays clean), "Both". Do not write "burned-in" or "drawn" unless the user chose it: never choose it yourself.',
-  '- Then write in notes exactly one of these lines: `Subtitles: drawn into the video.`, `Subtitles: only as files (.srt/.vtt) and a track in the MP4, not drawn into the video.`, `Subtitles: drawn into the video, and as files (.srt/.vtt) and a track in the MP4.` Add the look the user asked for, if any, in a sentence after it.',
+  '- Then write in notes exactly one of these lines: `Subtitles: drawn into the video.`, `Subtitles: only as files (.srt/.vtt) and a track in the MP4, not drawn into the video.`, `Subtitles: drawn into the video, and as files (.srt/.vtt) and a track in the MP4.` Add the look the user asked for, if any, in a sentence after it. For "Both", tell the user that the files and the MP4 track are picked in the export.',
   '- Their first language is the language spoken in the video (the transcription detects it): do not ask it. When the user wants subtitles in another language too (or only in another one), add `Subtitle languages: <languages>.` to the notes; they are translated.',
   '- Drawn subtitles have one style for every line: font, size, colours, a box or an outline, one position (bottom, middle or top) with a margin, an entrance, and optionally the spoken word highlighted. A line shows only while someone speaks. Lines are not placed one by one and do not move around what is in the picture: never promise that they avoid labels, text or faces in the video; if the user asks, say plainly that it is not possible and offer a position or a margin instead.',
 ];

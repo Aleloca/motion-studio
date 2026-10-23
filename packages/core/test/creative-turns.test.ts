@@ -119,7 +119,7 @@ describe('CreativeTurnService', { timeout: 90_000 }, () => {
     const all = await prompts();
     expect(all).toHaveLength(2);
     for (const { prompt } of all) {
-      expect(prompt).toContain('reply in Italian. Write every other text meant for the user');
+      expect(prompt).toContain('reply in Italian. Text shown in the video');
       expect(prompt).not.toContain('in English.');
     }
   });
