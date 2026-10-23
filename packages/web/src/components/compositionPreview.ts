@@ -295,3 +295,13 @@ export function useStoryboard(o: { slug: string; creative: string; n: number | n
 
 /** The storyboard's poster frame (the frame at 1 s), else its first. */
 export const posterOf = (sb: StoryboardView | null) => sb?.frames.find((f) => f.kind === 'poster') ?? sb?.frames[0] ?? null;
+
+/** The session's URL, when it is an http(s) URL on the session's own origin; else null (nothing is loaded). */
+export function frameUrl(s: PreviewSessionInfo): string | null {
+  try {
+    const u = new URL(s.url);
+    return (u.protocol === 'http:' || u.protocol === 'https:') && u.origin === s.origin ? u.href : null;
+  } catch {
+    return null;
+  }
+}

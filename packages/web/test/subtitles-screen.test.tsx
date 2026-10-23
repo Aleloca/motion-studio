@@ -139,6 +139,19 @@ beforeEach(() => {
 afterEach(() => { vi.clearAllMocks(); __resetPreviewSessions(); });
 
 describe('the subtitle editor screen (Task 12)', () => {
+  it('report 72: back goes to the video editor when it was opened from there, else to the creative', async () => {
+    const { setSubtitlesBack, clearSubtitlesBack } = await import('../src/shell/intents.ts');
+    setSubtitlesBack('acme/lancio', '#/p/acme/c/lancio/f/instagram-reel-9x16');
+    const first = await open();
+    await userEvent.click(screen.getByRole('button', { name: "Torna all'editor" }));
+    expect(location.hash).toBe('#/p/acme/c/lancio/f/instagram-reel-9x16');
+    first.unmount();
+    clearSubtitlesBack('acme/lancio');
+    await open();
+    await userEvent.click(screen.getByRole('button', { name: 'Torna alla creatività' }));
+    expect(location.hash).toBe('#/p/acme/c/lancio');
+  });
+
   it('shows one row per cue with its start, end and text', async () => {
     await open();
     expect(rows()).toHaveLength(3);

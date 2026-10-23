@@ -26,6 +26,7 @@ import { parseDraft } from '@motion-studio/composition-runtime/draft';
 import type { Composition, PreviewSessionInfo, StagedVideoMedia } from '@motion-studio/shared';
 import { useEffect, useRef, useState } from 'react';
 import { useT } from '../i18n.tsx';
+import { frameUrl } from './compositionPreview.ts';
 import { cx } from '../ui/index.ts';
 import type { SyncMedia } from '../ui/useSyncedMedia.ts';
 import './player.css';
@@ -309,16 +310,6 @@ export interface CompositionPlayerProps {
    */
   subtitles?: PreviewSubtitles;
   className?: string;
-}
-
-/** The session's URL, when it is an http(s) URL on the session's own origin; else null (nothing is loaded). */
-function frameUrl(s: PreviewSessionInfo): string | null {
-  try {
-    const u = new URL(s.url);
-    return (u.protocol === 'http:' || u.protocol === 'https:') && u.origin === s.origin ? u.href : null;
-  } catch {
-    return null;
-  }
 }
 
 export function CompositionPlayer({ session, title, onMedia, onStall, onShowing, autoPlay, muted = false, subtitles, className }: CompositionPlayerProps) {

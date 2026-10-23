@@ -473,6 +473,7 @@ export const en = {
     openEditor: 'Open the editor',
     editorTitle: 'Subtitles',
     backToCreative: 'Back to the creative',
+    backToEditor: 'Back to the editor',
     savedElsewhere: 'Changed elsewhere: reloaded, your corrections are kept',
     // The editor (Task 12).
     saveState: 'Save status',

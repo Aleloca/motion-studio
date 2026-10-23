@@ -67,6 +67,7 @@ const media = vi.hoisted(() => {
     setComposition: vi.fn((_c: unknown) => { m.seq += 1; return m.seq; }),
     addSessionMedia: vi.fn((_src: string, _m: unknown) => true),
     clipBounds: null as unknown,
+    error: null as unknown,
     select: vi.fn((_id: string | null) => {}),
     play: vi.fn(async () => { m.paused = false; events.dispatchEvent(new Event('play')); }),
     pause: vi.fn(() => { m.paused = true; events.dispatchEvent(new Event('pause')); }),
@@ -207,6 +208,45 @@ describe('EditorScreen · the player while it loads (report 73)', () => {
     } finally { media.duration = 6; }
   });
 
+  it('loading to fatal error: the runtime reports an error instead of a duration: the label goes, play says nothing about loading', async () => {
+    probe.real = true;
+    media.duration = Number.NaN;
+    try {
+      render(<Harness />);
+      await opened();
+      await screen.findByText('Loading the video…');
+      media.error = { code: 'compositionMissing' };
+      act(() => media.emit('error'));
+      await waitFor(() => expect(screen.queryByText('Loading the video…')).toBeNull());
+      const play = within(screen.getByRole('region', { name: 'Timeline' })).getByRole('button', { name: 'Play (Space)' }) as HTMLButtonElement;
+      expect(play.title).toBe('');
+    } finally { media.duration = 6; media.error = null; }
+  });
+
+  it('an unusable session URL never shows the loading label', async () => {
+    probe.real = true;
+    media.duration = Number.NaN;
+    api.previewSession.mockReset().mockImplementation(async (_s, _c, n, format) => ({
+      url: 'javascript:alert(1)', token: `tok-${format}-v${n}`, origin: 'http://127.0.0.1:61234',
+      expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(), format, hash: hashOf(n), width: 1080, height: 1920, duration: 6, fps: 30,
+    }));
+    try {
+      render(<Harness />);
+      await opened();
+      await waitFor(() => expect(api.previewSession).toHaveBeenCalled());
+      expect(screen.queryByText('Loading the video…')).toBeNull();
+    } finally { media.duration = 6; }
+  });
+
+  it('play shows no "loading" tooltip while the preview has failed', async () => {
+    probe.real = true;
+    api.previewSession.mockReset().mockImplementation(async () => { throw new Error('gone'); });
+    render(<Harness />);
+    await screen.findByRole('alert');
+    const play = within(screen.getByRole('region', { name: 'Timeline' })).getByRole('button', { name: 'Play (Space)' }) as HTMLButtonElement;
+    expect(play.title).toBe('');
+  });
+
   it('loading to error: a failed preview shows the existing error and Retry, never the loading label', async () => {
     probe.real = true;
     api.previewSession.mockReset().mockImplementation(async () => { throw new Error('the core went away'); });
@@ -227,6 +267,12 @@ describe('EditorScreen · shell', () => {
     await userEvent.click(within(tools).getByRole('button', { name: 'Subtitles' }));
     expect(location.hash).toBe('#/p/acme/c/lancio/subtitles/it');
     first.unmount();
+    // A member of a variant group has none (the rule the canvas had: outside variant groups only).
+    detail = { ...(detail as object), variants: { orphan: false, letter: 'a', host: 'lancio', group: { members: [{ letter: 'a', slug: 'lancio', status: 'active' }, { letter: 'b', slug: 'lancio~b', status: 'active' }], picks: {} }, missing: [] } } as unknown as CreativeDetail;
+    const second = render(<Harness />);
+    await opened();
+    expect(within(document.querySelector('.ms-ed-tools') as HTMLElement).queryByRole('button', { name: 'Subtitles' })).toBeNull();
+    second.unmount();
     detail = makeDetail([v2(1), v2(2)]);
     render(<Harness />);
     await opened();

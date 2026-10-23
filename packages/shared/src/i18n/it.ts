@@ -471,6 +471,7 @@ export const it: Messages = {
     openEditor: "Apri l'editor",
     editorTitle: 'Sottotitoli',
     backToCreative: 'Torna alla creatività',
+    backToEditor: "Torna all'editor",
     savedElsewhere: 'Modificati altrove: ricaricati, le tue correzioni restano',
     // The editor (Task 12).
     saveState: 'Stato del salvataggio',

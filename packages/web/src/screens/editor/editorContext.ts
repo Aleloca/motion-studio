@@ -18,6 +18,8 @@ export interface EditorState {
   /** The stage player's media handle (null until the frame is mounted). */
   player: CompositionMedia | null;
   controls: PlayerControls;
+  /** The frame is still on its way (a session is there, the runtime has not reported its media, nor failed): play waits. */
+  loadingVideo?: boolean;
   /** The selected clip id (or null). */
   selection: string | null;
   select(id: string | null): void;

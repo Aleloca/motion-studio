@@ -965,7 +965,7 @@ function Details({ jobId, entries, open, onToggle }: { jobId: string; entries: D
 const firstLine = (s: string) => { const l = s.split('\n', 1)[0] ?? ''; return l.length > 120 ? `${l.slice(0, 119)}\u2026` : l; };
 
 /** End-of-turn line: how many commands ran (and how many you approved); "Details" (described by the line) opens Activity details. */
-function AutoLine({ jobId, log, onOpen }: { jobId: string; log: CommandLog; onOpen(jobId: string): void }) {
+export function AutoLine({ jobId, log, onOpen }: { jobId: string; log: CommandLog; onOpen(jobId: string): void }) {
   const c = useT().web.chat;
   const id = useId();
   return (

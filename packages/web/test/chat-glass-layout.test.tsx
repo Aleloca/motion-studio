@@ -104,6 +104,7 @@ const { EditorScreen } = await import('../src/screens/editor/EditorScreen.tsx');
 const { TopBar } = await import('../src/shell/TopBars.tsx');
 const { ShellContext } = await import('../src/shell/ShellContext.tsx');
 const { I18nProvider } = await import('../src/i18n.tsx');
+const { AutoLine } = await import('../src/components/Conversation.tsx');
 
 const running: JobSummary = { id: 'j1', key: `creative:/w:acme:${HOST}`, kind: 'creative', label: 'Lancio', state: 'running', createdAt: at, startedAt: at };
 const approval: ApprovalRequest = {
@@ -411,11 +412,18 @@ run('every chat is the glass card: real Chrome layout', () => {
       const above = card.getBoundingClientRect().top;
       const list = card.querySelector('.ms-convo-list');
       const dock = card.querySelector('.ms-convo-dock');
-      return { gap: tabs.top - above, scrolls: list ? list.scrollHeight > list.clientHeight + 4 : null,
+      // A row above the tabs (a future button or notice) keeps its own height and the tabs follow it at once.
+      const row = document.createElement('div');
+      row.textContent = 'row above the tabs'; row.style.cssText = 'height:28px';
+      card.insertBefore(row, card.firstChild);
+      const rowBox = row.getBoundingClientRect(), tabsAfter = card.querySelector(':scope > .ms-tabs').getBoundingClientRect();
+      const rowGap = tabsAfter.top - rowBox.bottom, rowHeight = rowBox.height;
+      row.remove();
+      return { rowGap, rowHeight, gap: tabs.top - above, scrolls: list ? list.scrollHeight > list.clientHeight + 4 : null,
         dockIn: dock ? dock.getBoundingClientRect().bottom <= card.getBoundingClientRect().bottom + 0.5 : null,
         tabsBottom: tabs.bottom, cardBottom: card.getBoundingClientRect().bottom };
     })()`;
-    type Top = { gap: number; scrolls: boolean | null; dockIn: boolean | null };
+    type Top = { rowGap: number; rowHeight: number; gap: number; scrolls: boolean | null; dockIn: boolean | null };
     const failures: string[] = [];
     try {
       for (const long of [false, true]) {
@@ -426,6 +434,7 @@ run('every chat is the glass card: real Chrome layout', () => {
           const shot = shots && tab === 'chat' && theme === 'light' ? join(shots, `chat-tabs-${long ? 'long' : 'short'}.png`) : undefined;
           const r = (await measure('canvas', `top-${name}`, markupOf, 1440, theme, 'no-preference', TOP, shot)) as unknown as Top;
           if (Math.abs(r.gap) > 4) failures.push(`${name}: the tabs are ${r.gap} px under the header`);
+          if (Math.abs(r.rowGap) > 1 || r.rowHeight !== 28) failures.push(`${name}: a row above the tabs takes ${r.rowHeight} px and the tabs are ${r.rowGap} px under it`);
           if (tab === 'chat') {
             if (long && r.scrolls !== true) failures.push(`${name}: the long list does not scroll`);
             if (!long && r.scrolls !== false) failures.push(`${name}: the short list scrolls`);
@@ -437,9 +446,10 @@ run('every chat is the glass card: real Chrome layout', () => {
     expect(failures).toEqual([]);
   });
   it('report 75: the editor panel has the creative panel\'s underlined tabs at the top, the list starts under them, and "· Details" stays together; light and dark, at 1440, 1024 and 700', async () => {
-    const EXPR = `(async () => {
-      await document.fonts.ready;
-      const card = document.querySelector('.ms-ed-right > .ms-chat-card');
+    // The real component's markup (a long line, as in the narrow panel).
+    const AUTOLINE = JSON.stringify(render(<I18nProvider locale="it"><AutoLine jobId="j1" log={{ ran: 3, approved: 1, sandboxed: true, attempted: 3 } as never} onOpen={() => {}} /></I18nProvider>).container.innerHTML);
+    cleanup();
+    const EXPR = `(async () => {\n      await document.fonts.ready;\n      const card = document.querySelector('.ms-ed-right > .ms-chat-card');
       const tabsEl = card.querySelector(':scope > .ms-tabs');
       const tabs = tabsEl.getBoundingClientRect(), cs = getComputedStyle(tabsEl), on = getComputedStyle(tabsEl.querySelector('.ms-tab.ms-on'));
       const out = { gap: tabs.top - card.getBoundingClientRect().top, radius: cs.borderTopLeftRadius, line: cs.borderBottomWidth, bg: cs.backgroundColor,
@@ -451,8 +461,8 @@ run('every chat is the glass card: real Chrome layout', () => {
         out.panelScroll = panel.scrollHeight - panel.clientHeight;
         // A line like "3 commands ran in the sandbox · Details", in the narrow panel.
         const li = document.createElement('li');
-        li.innerHTML = '<p class="ms-convo-autoline"><span class="ms-step-check"></span><span>3 commands ran in the sandbox with a long enough text</span><span class="ms-convo-autoline-more"><span>·</span><button class="ms-btn ms-sm ms-ghost">Details</button></span></p>';
-        list.appendChild(li);
+        li.innerHTML = ${AUTOLINE};
+                list.appendChild(li);
         const dot = li.querySelector('.ms-convo-autoline-more > span').getBoundingClientRect(), btn = li.querySelector('button').getBoundingClientRect();
         out.detailsTogether = Math.abs((dot.top + dot.bottom) / 2 - (btn.top + btn.bottom) / 2) < 8;
         li.remove();

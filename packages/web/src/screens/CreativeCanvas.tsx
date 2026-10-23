@@ -21,7 +21,7 @@ import { D, enter, flip, pulse, stagger, usePageShortcut } from '../motion/index
 import { instanceName, presetFor } from '../instances.ts';
 import { href, routeKey } from '../routes.ts';
 import { useBarClaim } from '../shell/barSlots.ts';
-import { setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } from '../shell/intents.ts';
+import { clearSubtitlesBack, setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } from '../shell/intents.ts';
 import { go, ShellContext } from '../shell/ShellContext.tsx';
 import { Button, ChannelMark, Empty, Icon, Input, NavItem, Pill, Popover, Segmented, Spinner, Tabs, Tag, Toggle, cx, toast } from '../ui/index.ts';
 import { CreativeActionsMenu, type RemovalDone } from './creative/CreativeRemoval.tsx';
@@ -103,6 +103,8 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
   const locale = useLocale();
   const shell = useContext(ShellContext);
   const root = useRef<HTMLDivElement>(null);
+  // The canvas is where the subtitle editor goes back to from here on: no origin kept from an earlier visit of the video editor.
+  useEffect(() => { clearSubtitlesBack(`${slug}/${creative}`); }, [slug, creative]);
   // Decision 980: a group's one chat is read again when any of its members changes.
   const { detail, conversation, error, reload } = useCreative(slug, creative, chatTick(live.creativeTicks, slug, creative));
   const groupChat = useGroupChat(live, slug, creative, detail);

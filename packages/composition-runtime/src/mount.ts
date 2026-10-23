@@ -786,21 +786,22 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     if (destroyed) return;
     const deadline = n.performanceNow() + timeouts.seek;
     const events = canvasEvents;
-    time = clampT(t);
-    opts.clock?.advanceTo(time * 1000);
+    const at = clampT(t);
+    time = at;
+    opts.clock?.advanceTo(at * 1000);
     await fontsLoaded;
     if (destroyed) return;
-    applyStatic(time);
+    applyStatic(at);
     const work: Array<Promise<void>> = [];
     for (const m of mounted) {
-      if (!isClipVisible(m.clip, time, c.duration)) continue;
-      if (m.video) work.push(seekVideo(m, time));
+      if (!isClipVisible(m.clip, at, c.duration)) continue;
+      if (m.video) work.push(seekVideo(m, at));
       if (m.layer && !(opts.mode === 'render' && (outOfFrame(m.content) || clippedAway(m.content)))) {
-        work.push(m.layer.seek(time - m.clip.start).catch((e: unknown) => {
+        work.push(m.layer.seek(at - m.clip.start).catch((e: unknown) => {
           // A subtitle template replaced while this seek ran (`remountTemplate`): its successor is sought at the time shown.
           if (e instanceof LayerDisposedError) return;
           if (e instanceof LayerRequestError && e.code === 'frameTimeout') {
-            report('frameTimeout', `html layer painted no frame after seeking to ${time}: ${e.message}`, m.clip.id);
+            report('frameTimeout', `html layer painted no frame after seeking to ${at}: ${e.message}`, m.clip.id);
             throw e; // render: fail the seek rather than capture a stale layer
           }
           // Not thrown, deliberately (C8): the report fails the render at its end (the renderer refuses any runtime error but
@@ -816,7 +817,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
       try {
         await twoFrames(n, { strict: true, timeoutMs: timeouts.seek });
       } catch (e) {
-        if (e instanceof FrameTimeoutError) report('frameTimeout', `no animation frame after seeking to ${time}: ${e.message}`);
+        if (e instanceof FrameTimeoutError) report('frameTimeout', `no animation frame after seeking to ${at}: ${e.message}`);
         throw e;
       }
       // A canvas that lost its context during this seek (or still is lost) shows nothing: wait for it and draw again.

@@ -9,6 +9,8 @@ export interface PlayerControls {
   playing: boolean;
   /** The frame reported its duration: controls may drive it. */
   ready: boolean;
+  /** The runtime reported a fatal error (its frame will not report a duration): nothing is loading any more. */
+  failed: boolean;
   duration: number;
   seek(t: number): void;
   pause(): void;
@@ -21,17 +23,21 @@ export function usePlayerControls(player: CompositionMedia | null, resetKey: str
   const [clock] = useState(createClock);
   const [playing, setPlaying] = useState(false);
   const [ready, setReady] = useState(false);
+  const [failed, setFailed] = useState(false);
   const [duration, setDuration] = useState(0);
 
-  useEffect(() => { setPlaying(false); setReady(false); clock.set(0, true); }, [resetKey, clock]);
+  useEffect(() => { setPlaying(false); setReady(false); setFailed(false); clock.set(0, true); }, [resetKey, clock]);
   useEffect(() => {
-    if (!player) { setReady(false); setPlaying(false); return; }
+    if (!player) { setReady(false); setFailed(false); setPlaying(false); return; }
     const off: Array<() => void> = [];
     const on = (type: string, f: () => void) => { player.addEventListener(type, f); off.push(() => player.removeEventListener(type, f)); };
     const meta = () => {
       if (Number.isFinite(player.duration)) setDuration(player.duration);
       setReady(true);
+      setFailed(false);
     };
+    on('error', () => setFailed(true));
+    if (player.error) setFailed(true);
     on('timeupdate', () => clock.set(player.currentTime, true));
     on('loadedmetadata', meta);
     on('durationchange', meta);
@@ -73,5 +79,5 @@ export function usePlayerControls(player: CompositionMedia | null, resetKey: str
     if (playing) pause();
     seek(Math.round((player.currentTime + dir / fps) * fps) / fps);
   }, [player, ready, playing, pause, seek, fps]);
-  return { clock, playing, ready, duration, seek, pause, toggle, step };
+  return { clock, playing, ready, failed, duration, seek, pause, toggle, step };
 }

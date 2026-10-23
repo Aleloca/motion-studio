@@ -265,7 +265,8 @@
 aside.ms-chat-col { padding: 12px; background: var(--bg); border: 0; overflow: visible; }
 .ms-chat-col > .ms-chat-card { flex: 1; min-width: 0; }
 .ms-chat-col > .ms-chat-card > .ms-tabs { flex: none; }
-.ms-chat-col > .ms-chat-card > :not(.ms-tabs) { flex: 1; min-height: 0; }
+/* Only the body fills the card: a row added above or under the tabs keeps its own height (report 71 came from such a row). */
+.ms-chat-col > .ms-chat-card > :is(.ms-convo, .ms-cv-tabbody, .ms-cv-brief-wrap, .ms-ed-panel) { flex: 1; min-height: 0; }
 .ms-chat-card > .ms-tabs.ms-panel { padding: 8px 10px 0; border-bottom-color: var(--glassLine); }
 /* No context row under it here: the composer keeps the card's 14 px from the bottom edge too. */
 .ms-chat-col .ms-chat-card .ms-composer { margin-bottom: 14px; }

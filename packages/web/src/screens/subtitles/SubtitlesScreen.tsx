@@ -5,6 +5,7 @@
 // banner when the video changed under the set ("Rifai i tempi", and "Tempi controllati" to keep the timing), and "Rifai la
 // trascrizione…" in the header. Task 26: the subtitle languages in the header (LangSwitcher), a translation's stale lines
 // marked with "Ritraduci" per line and "Ritraduci tutto", the source text under each translated line.
+import { clearSubtitlesBack, peekSubtitlesBack } from '../../shell/intents.ts';
 import { SUPPORTED_LOCALES, drawsSubtitles, missingSourceLines, sourceCueOf, staleCues, translationSources, type CreativeDetail, type JobSummary, type LocaleTag, type SubtitleCue } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
 import { api, ApiError } from '../../api.ts';
@@ -81,9 +82,10 @@ export function SubtitlesScreen({ slug, creative, lang }: { slug: string; creati
 /** The header; `langs`: the language switcher, after the title. */
 function Head({ slug, creative, langs, children }: { slug: string; creative: string; langs?: ReactNode; children?: ReactNode }) {
   const t = useT();
+  const back = peekSubtitlesBack(`${slug}/${creative}`);
   return (
     <header className="ms-subs-head">
-      <Button variant="ghost" size="sm" onClick={() => go(href.creative(slug, creative))}><Icon name="back" size={13} />{t.subtitles.backToCreative}</Button>
+      <Button variant="ghost" size="sm" onClick={() => { clearSubtitlesBack(`${slug}/${creative}`); go(back ?? href.creative(slug, creative)); }}><Icon name="back" size={13} />{back ? t.subtitles.backToEditor : t.subtitles.backToCreative}</Button>
       <h1 className="ms-subs-title">{t.subtitles.editorTitle}</h1>
       {langs}
       <span className="ms-subs-grow" />
