@@ -620,6 +620,15 @@ arrives and worked on later together.
     bubble sat 36 px in, beside the avatar column, so long replies wrapped early. Wanted: messages aligned to the left.
     Done (decision 1803): the avatar, the name and the time share the first row; the bubble and the rows that followed
     the avatar column (steps, version, errors, approvals, cards) start at the left edge and take the whole width.
+79. **The chat composer: Services icon, attachments, the send shortcut (user report of 2026-10-23).** The Services
+    button's key icon said nothing; there was no way to attach a file in the chat; the round send button did not say
+    that ⌘↵ sends. The user chose: a plug icon, ⌘↵ always shown, files from the computer saved in the library too.
+    Done (decisions 1804-1819): a "+" menu "Dal computer" / "Dalla libreria"; chips with a picture or the kind icon;
+    an upload in progress holds the send and can be cancelled; the core checks every path (only files under assets/)
+    and gives the agent an "Attached files" list (coordinator and helpers in a group). The send button is a pill with
+    the paper plane and ⌘↵ at every width, with an "Invia (⌘↵)" tooltip.
+    Not done: drag-and-drop onto the composer; files on live, queued or redirect messages (only a new request carries
+    them); a cancelled upload can still land in the library (not attached).
 - **Flaky under load:** `core/test/agent-actions.test.ts` "duplicate_format runs after the turn, on the version it
   saved" failed once in a full local run (2026-10-23, waitFor on the action line) and passes alone 3/3.
 
