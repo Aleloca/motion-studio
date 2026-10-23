@@ -55,13 +55,29 @@ export function imageSize(buf: Buffer): { width: number; height: number } | null
   return null;
 }
 
+/** How many times a frame is sought and captured while a video canvas keeps losing its GPU context (decision 1752). */
+export const CANVAS_LOSS_ATTEMPTS = 3;
+
+/**
+ * Decision 1752: `seek(t)` then `grab()`, again while the page says a video canvas lost its GPU context since the seek ended
+ * (`RenderPage.canvasLost`: its box may be black in what was grabbed; the next seek waits for it to be back and redraws
+ * it). After `CANVAS_LOSS_ATTEMPTS` spoiled grabs the frame fails rather than be encoded.
+ */
+async function seekAndGrab<T>(page: RenderPage, t: number, grab: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    await page.seek(t);
+    const got = await grab();
+    if (!page.canvasLost || !(await page.canvasLost())) return got;
+    if (attempt >= CANVAS_LOSS_ATTEMPTS) throw new RenderError('frameTimeout', `a video canvas lost its GPU context during each of ${attempt} captures at ${t.toFixed(3)} s`);
+  }
+}
+
 /**
  * Captures one frame and checks its size: a frame of another size is never encoded. `tolerance`: a render at another scale
  * (decision 974) may come out a pixel off its rounded size (the encode then scales it exactly).
  */
 export async function captureFrame(page: RenderPage, t: number, o: { format: CaptureFormat; quality?: number; width: number; height: number; tolerance?: number }): Promise<Buffer> {
-  await page.seek(t);
-  const buf = await page.capture(o.format, o.quality);
+  const buf = await seekAndGrab(page, t, () => page.capture(o.format, o.quality));
   const size = imageSize(buf);
   const off = (a: number, b: number) => Math.abs(a - b) > (o.tolerance ?? 0);
   if (!size || off(size.width, o.width) || off(size.height, o.height)) {
@@ -75,9 +91,9 @@ export async function captureFrame(page: RenderPage, t: number, o: { format: Cap
  * `tolerance`) and for its length: a buffer that is not `width × height × 4` bytes is never encoded.
  */
 export async function captureRawFrame(page: RenderPage, t: number, o: { width: number; height: number; tolerance?: number }): Promise<RawFrame> {
-  if (!page.captureRaw) throw new RenderError('badFrame', 'this page has no raw frames');
-  await page.seek(t);
-  const f = await page.captureRaw();
+  const captureRaw = page.captureRaw?.bind(page);
+  if (!captureRaw) throw new RenderError('badFrame', 'this page has no raw frames');
+  const f = await seekAndGrab(page, t, captureRaw);
   const off = (a: number, b: number) => Math.abs(a - b) > (o.tolerance ?? 0);
   if (off(f.width, o.width) || off(f.height, o.height) || f.data.length !== f.width * f.height * 4) {
     throw new RenderError('badFrame', `captured frame is ${f.width}×${f.height} (${f.data.length} bytes), expected ${o.width}×${o.height}`);
