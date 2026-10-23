@@ -470,6 +470,11 @@ export const queuedRequestSchema = z.object({
    * variant before the group had one agent, moved into the group's queue with that variant).
    */
   variants: z.array(variantIdSchema).max(1000).optional(),
+  /**
+   * Report 79 (round 1): the project library files a group message carried, kept when a restart puts its cut turn back in
+   * the queue (checked again when it starts: a file gone since is dropped).
+   */
+  attachments: z.array(z.string().min(1).max(1024)).max(20).optional(),
 });
 export type QueuedRequest = z.infer<typeof queuedRequestSchema>;
 

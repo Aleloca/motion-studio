@@ -77,7 +77,7 @@ type SideRecord = z.infer<typeof recordSchema>;
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
 /** The item as the core keeps it: `bootId` is no longer stored (Ruling T is in memory now), a legacy one is dropped. */
-const clean = (q: QueuedRequest): QueuedRequest => ({ clientId: q.clientId, text: q.text, pins: q.pins, at: q.at, ...(q.pinsVersion !== undefined ? { pinsVersion: q.pinsVersion } : {}), ...(q.fanout ? { fanout: { id: q.fanout.id, lead: q.fanout.lead } } : {}), ...(q.variants?.length ? { variants: [...q.variants] } : {}) });
+const clean = (q: QueuedRequest): QueuedRequest => ({ clientId: q.clientId, text: q.text, pins: q.pins, at: q.at, ...(q.pinsVersion !== undefined ? { pinsVersion: q.pinsVersion } : {}), ...(q.fanout ? { fanout: { id: q.fanout.id, lead: q.fanout.lead } } : {}), ...(q.variants?.length ? { variants: [...q.variants] } : {}), ...(q.attachments?.length ? { attachments: [...q.attachments] } : {}) });
 /** A remembered session is kept only when its id could be resumed (the same check as where the command line is built). */
 const validStopped = (s: StoppedSession | undefined): StoppedSession | undefined => (s && isSessionId(s.sessionId) ? s : undefined);
 

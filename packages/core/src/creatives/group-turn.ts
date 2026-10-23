@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { keptAttachments } from './attachments.ts';
 import { join } from 'node:path';
 import { z } from 'zod';
 import {
@@ -220,7 +221,7 @@ export class GroupTurnService implements GroupRouter {
     }
     // Until its run starts, the marker keeps the request (a restart puts it back in the queue: `recoverGroupTurns`).
     const side = this.deps.turns.side;
-    await side.updateGroup(host.projectDir, host.creativeSlug, () => ({ turn: { jobId, at: now(), request: { clientId, text: req.text, pins: req.pins, at: now(), ...(req.variants?.length ? { variants: req.variants } : {}) } } }));
+    await side.updateGroup(host.projectDir, host.creativeSlug, () => ({ turn: { jobId, at: now(), request: { clientId, text: req.text, pins: req.pins, at: now(), ...(req.variants?.length ? { variants: req.variants } : {}), ...(req.attachments?.length ? { attachments: req.attachments } : {}) } } }));
     const unmark = () => side.updateGroup(host.projectDir, host.creativeSlug, (g) => (g.turn?.jobId === jobId ? { turn: undefined } : {})).catch(() => {});
     this.runs.set(jobId, r);
     this.paused.delete(this.keyOf(host));
@@ -878,7 +879,9 @@ export class GroupTurnService implements GroupRouter {
     const taken = head;
     if (!taken) return null;
     try {
-      const job = await this.startLocked(host, group, { text: taken.text, pins: taken.pins, clientId: taken.clientId, queued: true, ...(taken.variants ? { variants: taken.variants } : {}) });
+      // Report 79 (round 1): a request a restart put back keeps its files; one gone from the library since is dropped.
+      const attachments = taken.attachments?.length ? await keptAttachments(host.projectDir, taken.attachments) : [];
+      const job = await this.startLocked(host, group, { text: taken.text, pins: taken.pins, clientId: taken.clientId, queued: true, ...(taken.variants ? { variants: taken.variants } : {}), ...(attachments.length ? { attachments } : {}) });
       this.queuedHere.delete(`${this.keyOf(host)}\0${taken.clientId}`);
       return job;
     } catch (err) {
