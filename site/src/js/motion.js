@@ -1,5 +1,7 @@
 // The page choreography (GSAP, ScrollTrigger, SplitText). Every element starts from the hidden state set in CSS under
 // html.js-motion and ends in its normal state, so stopping anywhere leaves a readable page.
+import { CycleTimer } from './cycle-timer.js';
+
 const EASE = 'expo.out';
 
 export function startMotion({ reducedMotion, players = [] }) {
@@ -59,18 +61,22 @@ function hero(gsap, SplitText, players) {
   /**
    * The cycle: over the end card of a creative the brief is erased and the next one typed, with its own format chips;
    * the next set is mounted meanwhile, transparent under the current one, so its runtimes load; then the sets cross-fade
-   * and every frame of the new one starts from its first frame. It waits while the hero is off screen or the tab hidden.
+   * and every frame of the new one starts from its first frame.
    */
   function cycle() {
     let current = 0;
     let onScreen = true;
-    new IntersectionObserver(([e]) => { onScreen = e.isIntersecting; }).observe(document.querySelector('.hero__formats'));
+    // Off screen or in a hidden tab the players pause, and so does the cycle's clock: back on screen, the next brief
+    // still comes when the creative reaches its end card.
+    const timer = new CycleTimer({ now: () => performance.now(), setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (id) => clearTimeout(id) });
+    const sync = () => (onScreen && !document.hidden ? timer.resume() : timer.pause());
+    new IntersectionObserver(([e]) => { onScreen = e.isIntersecting; sync(); }).observe(document.querySelector('.hero__formats'));
+    document.addEventListener('visibilitychange', sync);
     const typedEl = document.querySelector('.brief__typed');
     const chipsEl = document.querySelector('.brief__chips');
     let split = typed;
 
     const step = () => {
-      if (!onScreen || document.hidden) { gsap.delayedCall(1, step); return; }
       const from = sets[current];
       current = (current + 1) % sets.length;
       const to = sets[current];
@@ -101,7 +107,7 @@ function hero(gsap, SplitText, players) {
         tl.to(split.chars, { opacity: 1, duration: 0.01, stagger: 0.022, ease: 'none' }, 0.1);
         generate(tl);
         tl.call(() => { tl.pause(); ready.then(() => tl.resume()); });
-        tl.call(() => { restart(to); gsap.delayedCall(NEXT_BRIEF_AT, step); })
+        tl.call(() => { restart(to); timer.after(NEXT_BRIEF_AT, step); })
           .to(from, { opacity: 0, duration: 0.5, ease: 'power2.in' })
           .to(figures, { opacity: 1, y: 0, scale: 1, duration: 1, stagger: 0.12 }, '<0.1')
           .call(() => {
@@ -111,7 +117,7 @@ function hero(gsap, SplitText, players) {
           });
       }
     };
-    gsap.delayedCall(NEXT_BRIEF_AT, step);
+    timer.after(NEXT_BRIEF_AT, step);
   }
 }
 
