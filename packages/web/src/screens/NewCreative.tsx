@@ -234,7 +234,9 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
     let alive = true;
     Promise.resolve().then(() => api.getFormats())
       .then((c) => { if (alive) setCatalog({ value: c.presets, error: null, warning: c.error }); })
-      .catch((e: unknown) => { if (alive) setCatalog({ value: null, error: errText(e), warning: null }); });
+      // Round 1 (M4): a re-read that fails keeps the catalog that works (a format it lacks stays chosen; the core checks it
+      // again at Genera); only a first load shows the error.
+      .catch((e: unknown) => { if (alive) setCatalog((c) => (c.value ? c : { value: null, error: errText(e), warning: null })); });
     return () => { alive = false; };
   }, [catalogNonce]);
   useEffect(() => {

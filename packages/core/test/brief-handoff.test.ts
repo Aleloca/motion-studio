@@ -81,7 +81,10 @@ describe('from the brief session to the creative (decision 1423)', () => {
     expect((await h().tool(run, 'fill_brief', { goal: 'Sottotitoli del video', notes, formats: ['instagram-post-1x1'] })).statusCode).toBe(200);
     run.finish({ write: false });
     await h().waitIdle();
-    const res = await create({ generate: true, briefSession: { id: s.id }, brief: { ...brief, notes } });
+    // Round 1 (M7): the brief sent with Genera is the session's form as the agent filled it (what the page sends), not a copy.
+    const form = (await h().view())!.form;
+    expect(form.notes).toBe(notes);
+    const res = await create({ generate: true, briefSession: { id: s.id }, brief: { ...brief, goal: form.goal, notes: form.notes, formats: form.formats } });
     expect(res.statusCode, res.body).toBe(201);
     const first = await t.runner.next(1);
     expect(first.req.prompt).toContain(notes);

@@ -489,4 +489,19 @@ describe('NewCreative · a format the agent added (report 70)', () => {
     await screen.findByText('Un formato scelto non è più disponibile ed è stato tolto');
     expect(api.getFormats).toHaveBeenCalledTimes(2);
   });
+  it('a re-read that fails keeps the catalog on screen and the format chosen (round 1, M4)', async () => {
+    const { rerender } = render(page(live()));
+    await board();
+    await waitFor(() => expect(api.getBriefSession).toHaveBeenCalled());
+    api.getFormats.mockRejectedValueOnce(new Error('rete giù'));
+    api.getBriefSession.mockResolvedValueOnce(view({ revision: 2, form: { ...EMPTY_BRIEF_FORM, formats: ['custom-originale-1920-1188'] }, agentFields: ['formats'] }));
+    rerender(page(fillTick(1, ['formats'])));
+    await waitFor(() => expect(api.getFormats).toHaveBeenCalledTimes(2));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByRole('group', { name: 'Instagram' })).toBeTruthy();
+    expect(screen.queryByText('rete giù')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Riprova' })).toBeNull();
+    expect(screen.queryByText(/non è più disponibile/)).toBeNull();
+  });
 });
+
