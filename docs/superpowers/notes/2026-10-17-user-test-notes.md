@@ -559,6 +559,13 @@ arrives and worked on later together.
     - it answered in English to Italian messages;
     - it promised the lines avoid "the labels already in the video", which the drawn subtitles may not support.
     Wanted: all of these fixed before the user tries again.
+    Done (decisions 1761-1782): the brief agent asks in the video / track and file / both; `source_format` gives the
+    original format at the size the video is shown at (rotation and, for videos, SAR, the render's rule), never reusing a
+    custom format with a limit; the creative's first turn calls `start_subtitles`, one style, no avoidance promises; the
+    chats (brief, creative, coordinator, console) and the brief's fields follow the language the user writes in (user's
+    ruling 2026-10-23); the agent sets the duration from the attached video. Follow-ups: "both" is not an export default
+    yet (needs a creative field); the source format is created during the chat, not at Generate; library entries stored
+    before keep their coded (unrotated) size (`fillMissingMeta`); a phone JPEG with EXIF orientation 6 is to be checked.
 
 ## Follow-ups found while working on 12–30
 
