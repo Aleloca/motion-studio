@@ -436,4 +436,45 @@ run('every chat is the glass card: real Chrome layout', () => {
     } finally { shortChat = false; }
     expect(failures).toEqual([]);
   });
+  it('report 75: the editor panel has the creative panel\'s underlined tabs at the top, the list starts under them, and "· Details" stays together; light and dark, at 1440, 1024 and 700', async () => {
+    const EXPR = `(async () => {
+      await document.fonts.ready;
+      const card = document.querySelector('.ms-ed-right > .ms-chat-card');
+      const tabsEl = card.querySelector(':scope > .ms-tabs');
+      const tabs = tabsEl.getBoundingClientRect(), cs = getComputedStyle(tabsEl), on = getComputedStyle(tabsEl.querySelector('.ms-tab.ms-on'));
+      const out = { gap: tabs.top - card.getBoundingClientRect().top, radius: cs.borderTopLeftRadius, line: cs.borderBottomWidth, bg: cs.backgroundColor,
+        underline: on.boxShadow.includes('inset') && on.boxShadow.includes('-2px') };
+      const list = card.querySelector('.ms-convo-list');
+      if (list) {
+        const panel = card.querySelector('.ms-ed-panel');
+        out.listTopGap = list.getBoundingClientRect().top - tabs.bottom;
+        out.panelScroll = panel.scrollHeight - panel.clientHeight;
+        // A line like "3 commands ran in the sandbox · Details", in the narrow panel.
+        const li = document.createElement('li');
+        li.innerHTML = '<p class="ms-convo-autoline"><span class="ms-step-check"></span><span>3 commands ran in the sandbox with a long enough text</span><span class="ms-convo-autoline-more"><span>·</span><button class="ms-btn ms-sm ms-ghost">Details</button></span></p>';
+        list.appendChild(li);
+        const dot = li.querySelector('.ms-convo-autoline-more > span').getBoundingClientRect(), btn = li.querySelector('button').getBoundingClientRect();
+        out.detailsTogether = Math.abs((dot.top + dot.bottom) / 2 - (btn.top + btn.bottom) / 2) < 8;
+        li.remove();
+      }
+      return out;
+    })()`;
+    type R = { gap: number; radius: string; line: string; bg: string; underline: boolean; listTopGap?: number; panelScroll?: number; detailsTogether?: boolean };
+    const failures: string[] = [];
+    shortChat = false;
+    const html = await markup('editor');
+    for (const theme of ['light', 'dark'] as const) for (const width of [1440, 1024, 700] as const) for (const tab of ['chat', 'inspector'] as const) {
+      const at = `editor ${tab} ${theme} @${width}`;
+      const shot = shots && tab === 'chat' && theme === 'light' && width === 1024 ? join(shots, 'editor-chat-tabs.png') : undefined;
+      const r = (await measure('editor', `tabs75-${tab}`, html[tab]!, width, theme, 'no-preference', EXPR, shot)) as unknown as R;
+      if (Math.abs(r.gap) > 4) failures.push(`${at}: the tabs are ${r.gap} px under the card's top`);
+      if (r.radius !== '0px' || r.line !== '1px' || r.bg !== 'rgba(0, 0, 0, 0)' || !r.underline) failures.push(`${at}: not the underlined tabs (${r.radius}, ${r.line}, ${r.bg}, underline ${r.underline})`);
+      if (tab === 'chat') {
+        if (!(r.listTopGap! >= -0.5)) failures.push(`${at}: the list starts ${r.listTopGap} px under the tab bar's bottom`);
+        if (r.panelScroll! > 1) failures.push(`${at}: the panel scrolls itself (${r.panelScroll} px) instead of the list`);
+        if (r.detailsTogether !== true) failures.push(`${at}: "·" and "Details" are on different lines`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
 });

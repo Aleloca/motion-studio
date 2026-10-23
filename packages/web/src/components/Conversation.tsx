@@ -972,8 +972,8 @@ function AutoLine({ jobId, log, onOpen }: { jobId: string; log: CommandLog; onOp
     <p className="ms-convo-autoline">
       <span className="ms-step-check" aria-hidden="true"><Icon name={log.sandboxed ? 'shield' : 'terminal'} size={13} /></span>
       <span id={id}>{c.commandsRan({ count: log.ran, approved: log.approved, sandbox: log.sandboxed, attempted: log.attempted })}</span>
-      <span aria-hidden="true">·</span>
-      <Button size="sm" variant="ghost" aria-describedby={id} onClick={() => onOpen(jobId)}>{c.autoDetails}</Button>
+      {/* The dot goes with "Details" to the next line, never leaving it alone (report 75). */}
+      <span className="ms-convo-autoline-more"><span aria-hidden="true">·</span><Button size="sm" variant="ghost" aria-describedby={id} onClick={() => onOpen(jobId)}>{c.autoDetails}</Button></span>
     </p>
   );
 }

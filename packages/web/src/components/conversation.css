@@ -128,6 +128,7 @@
 .ms-convo-mark { flex: none; font-size: 11px; color: var(--muted); padding: 0 6px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--line); }
 .ms-convo-autoline { margin-left: 36px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 12px; color: var(--muted); min-width: 0; }
 .ms-convo-autoline .ms-step-check { margin-top: 0; }
+.ms-convo-autoline-more { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 
 .ms-convo-version { margin-left: 36px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--line); background: var(--panel); }
 .ms-convo-version .ms-grow { flex: 1; }
