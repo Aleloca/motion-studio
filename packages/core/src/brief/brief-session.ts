@@ -49,19 +49,29 @@ export interface BriefSessionDeps {
   side: CreativeSideStateStore;
   /** Report 70: adds a custom format to the catalog (`source_format`), under the catalog's lock; the preset added. */
   addFormat?(input: CustomFormatInput): Promise<FormatPreset>;
+  /**
+   * Round 1 (I1): the size a library file is shown at, read now (its rotation applied), for entries stored before the library
+   * applied it; null when it cannot be read (the library's size is used).
+   */
+  probeSize?(projectDir: string, path: string): Promise<{ width: number; height: number } | null>;
 }
 
 /** Report 70: `source_format`'s argument, an attached asset's library path. */
 const sourceFormatArgs = z.object({ asset: z.string().min(1).max(1024) }).strict();
 
-/** Report 70: what the project library knows of `paths` (`assets/<file>`): kind, size, length; nothing when it cannot be read. */
-async function libraryFacts(projectDir: string, paths: readonly string[]): Promise<Record<string, AssetFacts>> {
+/**
+ * Report 70: what the project library knows of `paths` (`assets/<file>`): kind, size, length; nothing when it cannot be read.
+ * With `probeSize`, a video's or an image's size is the one read now (round 1, I1: an older entry may hold the coded size).
+ */
+async function libraryFacts(projectDir: string, paths: readonly string[], probeSize?: BriefSessionDeps['probeSize']): Promise<Record<string, AssetFacts>> {
   if (paths.length === 0) return {};
   const assets = await readJsonFile(join(projectDir, 'assets', 'assets.json'), assetsFileSchema).then((f) => f.assets).catch(() => []);
   const out: Record<string, AssetFacts> = {};
   for (const p of paths) {
     const a = assets.find((x) => `assets/${x.file}` === p);
-    if (a) out[p] = { kind: a.kind, width: a.width, height: a.height, durationSec: a.durationSec ?? null };
+    if (!a) continue;
+    const now = probeSize && (a.kind === 'video' || a.kind === 'image') ? await probeSize(projectDir, p).catch(() => null) : null;
+    out[p] = { kind: a.kind, width: now?.width ?? a.width, height: now?.height ?? a.height, durationSec: a.durationSec ?? null };
   }
   return out;
 }
@@ -253,7 +263,7 @@ export class BriefSessionService {
         const adds = added.codebases.length + added.assets.length > 0;
         if (m.mode === 'live' && !adds && act?.run && act.liveInput && act.sessionId === id) {
           const analyses = await this.videoAnalyses?.analysisRefs(ref, s.context.assets).catch(() => ({})) ?? {};
-          const assetFacts = await libraryFacts(ref.projectDir, s.context.assets);
+          const assetFacts = await libraryFacts(ref.projectDir, s.context.assets, this.deps.probeSize);
           const text = briefFollowUp({ locale: currentLocale(), form: s.form, userEdited: s.userEdited, ...(await this.readable(ref, s)), assets: s.context.assets, analyses, assetFacts, request: m.text });
           if (await act.run.send?.({ text, clientId: m.clientId }) === 'written') {
             await this.deps.store.append(ref.projectDir, id, { type: 'user', at: new Date().toISOString(), text: m.text, pins: [], attachments: [], jobId: act.jobId, mode: 'live', clientId: m.clientId, deliveredAt: new Date().toISOString() });
@@ -343,7 +353,7 @@ export class BriefSessionService {
         const paths = [...new Set(await Promise.all([...codebases.map((c) => c.path), ...project.paths].map(async (p) => codebaseSpellings({ path: p, real: await realpath(p).catch(() => p) }))).then((x) => x.flat()))];
         const resume = fresh ? undefined : s.claudeSessionId;
         const analyses = await this.videoAnalyses?.analysisRefs(ref, s.context.assets).catch(() => ({})) ?? {};
-        const assetFacts = await libraryFacts(ref.projectDir, s.context.assets);
+        const assetFacts = await libraryFacts(ref.projectDir, s.context.assets, this.deps.probeSize);
         const common = { locale: currentLocale(), form: s.form, userEdited: s.userEdited, codebases, missingCodebases, assets: s.context.assets, analyses, assetFacts, request };
         const prompt = resume ? briefFollowUp(common)
           : buildBriefPrompt({ ...common, projectName: ref.projectName, projectCodebases: project.paths.filter((p) => !codebases.some((c) => c.path === p)),
@@ -526,30 +536,38 @@ export class BriefSessionService {
         const s = await this.deps.store.open(scope.projectDir);
         if (!s || s.id !== scope.sessionId) throw gone();
         if (!s.context.assets.includes(path) && !s.form.assets.includes(path)) throw new CodedError(400, t().errors.briefAssetOutside({ path }), 'brief-fill-invalid');
-        const facts = (await libraryFacts(scope.projectDir, [path]))[path];
+        const facts = (await libraryFacts(scope.projectDir, [path], this.deps.probeSize))[path];
+        // Round 1 (M1): each refusal says what is wrong, so the agent tells the user the truth.
         const kind = facts?.kind === 'video' || facts?.kind === 'image' ? facts.kind : null;
-        const size = kind && facts?.width && facts.height ? sourceFormatSize({ kind, width: facts.width, height: facts.height }) : null;
-        if (!kind || !size || !facts?.width || !facts.height) throw new CodedError(400, t().errors.briefSourceSize({ path }), 'brief-source-size');
+        if (facts && !kind) throw new CodedError(400, t().errors.briefSourceKind({ path }), 'brief-source-kind');
+        if (!kind || !facts?.width || !facts.height) throw new CodedError(400, t().errors.briefSourceSize({ path }), 'brief-source-size');
+        const size = sourceFormatSize({ kind, width: facts.width, height: facts.height });
+        if (!size) throw new CodedError(400, t().errors.briefSourceSmall({ path }), 'brief-source-small');
         const source = { width: facts.width, height: facts.height };
-        const answer = (p: FormatPreset, added: boolean) => ({ format: p.id, name: p.name, kind, width: p.width, height: p.height, source, added });
+        // Round 1 (M2): scaled down to fit (more than the odd pixel a video loses): the agent says so.
+        const scaled = source.width - size.width > 1 || source.height - size.height > 1;
+        const answer = (p: FormatPreset, added: boolean) => ({ format: p.id, name: p.name, kind, width: p.width, height: p.height, source, scaled, added });
         const base = t().briefSession.sourceFormatName(size);
-        // A name another custom format holds (of another size: one of this size is reused) takes " (2)", " (3)"…; a window
-        // adding the same name meanwhile is a 409, and the catalog is read again.
+        // A name another custom format holds (of another size, or with a limit: neither is reused) takes " (2)", " (3)"…; a
+        // window adding the same name meanwhile is a 409, and the catalog is read again.
         for (let k = 1; k <= 20; k++) {
           const presets = await this.deps.presets();
-          const same = sameSizeCustom(presets, kind, size.width, size.height);
+          const same = sameSizeCustom(presets, kind, size.width, size.height, base);
           if (same) return answer(same, false);
           const name = k === 1 ? base : `${base} (${k})`;
           if (presets.some((p) => isCustomPreset(p) && !p.hidden && sameCustomName(p.name, name))) continue;
           try {
             const p = await this.deps.addFormat({ name, kind, width: size.width, height: size.height });
-            await this.deps.store.append(scope.projectDir, scope.sessionId, { type: 'system', at: new Date().toISOString(), level: 'info', origin: 'agent', text: t().briefSession.sourceFormatAdded({ name: p.name }) });
+            const at = new Date().toISOString();
+            await this.deps.store.append(scope.projectDir, scope.sessionId, { type: 'system', at, level: 'info', origin: 'agent', text: t().briefSession.sourceFormatAdded({ name: p.name }) });
+            // Round 1 (M3): the line reaches the chat now (the clients refetch the session), not with the next fill.
+            this.deps.broadcast({ type: 'brief-session', project: scope.projectSlug, sessionId: scope.sessionId, revision: s.revision });
             return answer(p, true);
           } catch (err) {
             if (!(err instanceof CodedError && err.apiCode === 'custom-format-name-taken')) throw err;
           }
         }
-        throw new CodedError(409, t().errors.briefSourceSize({ path }), 'brief-source-size');
+        throw new CodedError(409, t().errors.briefSourceNoName({ path }), 'brief-source-no-name');
       },
     };
   }

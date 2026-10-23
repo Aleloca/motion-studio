@@ -171,6 +171,12 @@ describe('the source\'s own size (report 70)', () => {
     expect(sameSizeCustom([...DEFAULT_FORMATS, own], 'video', 1920, 1188)?.id).toBe('custom-originale-1920-1188');
     expect(sameSizeCustom([...DEFAULT_FORMATS, { ...own, hidden: true as const }], 'video', 1920, 1188)).toBeUndefined();
     expect(sameSizeCustom([...DEFAULT_FORMATS, own], 'image', 1920, 1188)).toBeUndefined();
+    // Round 1 (I4): one with a length limit is never "the original"; one named as the original is preferred.
+    const totem = customPreset({ name: 'Totem lobby', kind: 'video', width: 1920, height: 1188, maxDurationSec: 15 }, 'custom-totem-lobby');
+    expect(sameSizeCustom([...DEFAULT_FORMATS, totem], 'video', 1920, 1188)).toBeUndefined();
+    const other = customPreset({ name: 'Schermo', kind: 'video', width: 1920, height: 1188 }, 'custom-schermo');
+    expect(sameSizeCustom([...DEFAULT_FORMATS, other, own], 'video', 1920, 1188, 'originale 1920×1188')?.id).toBe('custom-originale-1920-1188');
+    expect(sameSizeCustom([...DEFAULT_FORMATS, other], 'video', 1920, 1188, 'Originale 1920×1188')?.id).toBe('custom-schermo');
     // youtube 1920×1080 exists in the catalog but is not a custom format.
     expect(sameSizeCustom(DEFAULT_FORMATS, 'video', 1920, 1080)).toBeUndefined();
   });

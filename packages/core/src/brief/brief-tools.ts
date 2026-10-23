@@ -1,4 +1,4 @@
-import { BRIEF_FIELDS, CUSTOM_VIDEO_MAX, briefFillSchema, channelName, formatLabel, instanceIdOf, instanceIndex, isCustomPreset, presetOf, type BriefContext, type BriefField, type BriefForm, type FormatPreset, type Locale } from '@motion-studio/shared';
+import { BRIEF_FIELDS, CUSTOM_VIDEO_MAX, briefFillSchema, channelName, formatLabel, instanceIdOf, instanceIndex, isCustomPreset, presetOf, sameCustomName, type BriefContext, type BriefField, type BriefForm, type FormatPreset, type Locale } from '@motion-studio/shared';
 import { t } from '../i18n.ts';
 import { CodedError } from '../workspace-store.ts';
 
@@ -44,11 +44,15 @@ export function sourceFormatSize(s: { kind: 'video' | 'image'; width: number; he
 }
 
 /**
- * Report 70: a visible custom format of that kind and size, which "the original format" reuses. A shipped preset of the same
- * size is not reused: it carries a platform's limits (a maximum length, a safe zone) the source's video does not have.
+ * Report 70: a visible custom format of that kind and size with nothing more (no maximum length, no safe zone), which "the
+ * original format" reuses; one named `preferName` first. A shipped preset of the same size is not reused, nor a custom one with
+ * a limit (round 1, I4): both carry constraints (a platform's, or a use the user made it for) the source's video does not have.
  */
-export const sameSizeCustom = (presets: readonly FormatPreset[], kind: 'video' | 'image', width: number, height: number): FormatPreset | undefined =>
-  presets.find((p) => isCustomPreset(p) && !p.hidden && !p.identity && p.kind === kind && p.width === width && p.height === height);
+export function sameSizeCustom(presets: readonly FormatPreset[], kind: 'video' | 'image', width: number, height: number, preferName?: string): FormatPreset | undefined {
+  const plain = presets.filter((p) => isCustomPreset(p) && !p.hidden && !p.identity && p.kind === kind && p.width === width && p.height === height
+    && p.maxDurationSec === undefined && !p.safeZone);
+  return (preferName ? plain.find((p) => sameCustomName(p.name, preferName)) : undefined) ?? plain[0];
+}
 
 export interface FillOutcome {
   form: BriefForm;
