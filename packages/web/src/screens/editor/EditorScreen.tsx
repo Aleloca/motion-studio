@@ -39,6 +39,7 @@ import { LocaleOutline, LocaleSwitcher } from '../creative/LocaleSwitcher.tsx';
 import { localePreviewSource, useLocalePreview } from '../creative/useLocalePreview.ts';
 import { LanguagesButton } from '../creative/LanguagesButton.tsx';
 import { creativeLocales } from '../creative/languagesModel.ts';
+import { entrySubtitleLang } from '../subtitles/LangSwitcher.tsx';
 import { usePreviewSession } from '../../components/compositionPreview.ts';
 import { Conversation } from '../../components/Conversation.tsx';
 import { chatTick, useGroupChat } from '../variants/useGroupChat.ts';
@@ -927,6 +928,12 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
             <DraftPill edits={draft.ops.length} nextN={nextN} blocked={blocked} saving={saving} saved={saved} onSave={() => { void save(); }} onDiscard={discardDraft} />
           ) : null}
           <span className="ms-grow" />
+          {/* Report 72: the way into the subtitle editor (it was above the chat's tabs), where the creative has a subtitle set. */}
+          {detail?.subtitles?.length ? (
+            <Button size="sm" variant="outline" className="ms-ed-subtitles" onClick={() => go(href.subtitles(slug, creative, entrySubtitleLang(detail.subtitles, creativeLocales(detail.creative.brief)?.primary) ?? undefined))}>
+              <Icon name="text" size={13} />{c.subtitles}
+            </Button>
+          ) : null}
           {preset?.safeZone && draft && !otherView ? (
             <span className="ms-fv-safe-toggle"><Toggle size="sm" on={safe} onChange={setSafe} label={c.safeZones} /><span aria-hidden="true">{c.safeZones}</span></span>
           ) : null}

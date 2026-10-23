@@ -52,6 +52,8 @@ const conversation: ConversationEntry[] = [
 ];
 
 let mode: 'single' | 'group' = 'single';
+/** Report 71: a chat of three messages, nowhere near filling the column. */
+let shortChat = false;
 const composition = {
   $schema: 'motion-studio/composition@1', width: 1080, height: 1920, fps: 30, duration: 8, background: '#000000', fonts: [],
   scenes: [{ id: 's1', name: 'Apertura', start: 0, duration: 4 }, { id: 's2', name: 'Chiusura', start: 4, duration: 4 }],
@@ -63,7 +65,7 @@ const composition = {
 const api = {
   getFormats: vi.fn(async () => ({ presets: DEFAULT_FORMATS, error: null, path: '/x' })),
   getCreative: vi.fn(async (_s: string, c: string) => (mode === 'group' ? grouped(c) : single(c))),
-  getConversation: vi.fn(async () => conversation),
+  getConversation: vi.fn(async () => (shortChat ? conversation.slice(-3) : conversation)),
   fileUrl: (s: string, c: string, rel: string) => `/f/${s}/${c}/${rel}`,
   fileBytes: vi.fn(async () => 12_400_000),
   getUsage: vi.fn(async () => { throw new Error('offline'); }),
@@ -150,7 +152,7 @@ async function markup(screen: Screen): Promise<Record<string, string>> {
     const { container } = render(<I18nProvider locale="it"><ShellContext.Provider value={shell}><header className="ms-topbar"><TopBar /></header>{page}</ShellContext.Provider></I18nProvider>);
     const col = () => container.querySelector(COL[screen]) as HTMLElement | null;
     await waitFor(() => expect(col()?.querySelector('form.ms-composer')).toBeTruthy());
-    await waitFor(() => expect(col()!.querySelectorAll('.ms-convo-list .ms-msg').length).toBeGreaterThan(8));
+    await waitFor(() => expect(col()!.querySelectorAll('.ms-convo-list .ms-msg').length).toBeGreaterThan(shortChat ? 1 : 8));
     if (screen === 'canvas') await waitFor(() => expect(col()!.querySelector('.ms-approval')).toBeTruthy());
     if (screen === 'group') await waitFor(() => expect(col()!.querySelector('.ms-composer-group')).toBeTruthy());
     if (screen === 'editor') await waitFor(() => expect(container.querySelector('.ms-tl')).toBeTruthy());
@@ -312,7 +314,7 @@ run('every chat is the glass card: real Chrome layout', () => {
   beforeAll(async () => { dir = mkdtempSync(join(tmpdir(), 'ms-chat-glass-')); browser = await launchChrome(chrome!); });
   afterAll(async () => { await browser?.close(); rmSync(dir, { recursive: true, force: true }); });
 
-  async function measure(screen: Screen, tab: string, html: string, width: Width, theme: 'light' | 'dark', transparency: 'no-preference' | 'reduce' = 'no-preference'): Promise<Measure> {
+  async function measure(screen: Screen, tab: string, html: string, width: Width, theme: 'light' | 'dark', transparency: 'no-preference' | 'reduce' = 'no-preference', expr?: string, shot?: string): Promise<Measure> {
     const height = width === 1440 ? 900 : 700;
     const page = `<!doctype html><html lang="it" data-theme="${theme}"><head><meta charset="utf-8"><style>${FONTS()}\n${ALL_CSS()}
       html,body{margin:0;height:100%;background:var(--bg)} #page{height:100vh}
@@ -326,7 +328,8 @@ run('every chat is the glass card: real Chrome layout', () => {
       // allowed, the opaque card when the case asks for `reduce`.
       await t.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-transparency', value: transparency }, { name: 'prefers-reduced-motion', value: 'no-preference' }] });
       await t.goto(`file://${file}`);
-      const r = await t.eval<Measure>(MEASURE(COL[screen], MID[screen], tab), 30_000);
+      const r = await t.eval<Measure>(expr ?? MEASURE(COL[screen], MID[screen], tab), 30_000);
+      if (shot) writeFileSync(shot, await t.screenshot());
       if (shots) writeFileSync(join(shots, `${screen}-${tab}-${theme}-${width}x${height}${reduced}.png`), await t.screenshot());
       return r;
     } finally { await t.close(); }
@@ -397,6 +400,40 @@ run('every chat is the glass card: real Chrome layout', () => {
         check(field >= 4.5, `composer text contrast ${field.toFixed(2)}`);
       }
     }
+    expect(failures).toEqual([]);
+  });
+  it('report 71: the tabs stay under the card header in every tab, with a short and with a long chat, light and dark', async () => {
+    const TOP = `(async () => {
+      await document.fonts.ready;
+      const card = document.querySelector('.ms-cv-panel > .ms-chat-card');
+      const tabs = card.querySelector(':scope > .ms-tabs').getBoundingClientRect();
+      // Nothing sits above the tabs in the card: they start at its top edge.
+      const above = card.getBoundingClientRect().top;
+      const list = card.querySelector('.ms-convo-list');
+      const dock = card.querySelector('.ms-convo-dock');
+      return { gap: tabs.top - above, scrolls: list ? list.scrollHeight > list.clientHeight + 4 : null,
+        dockIn: dock ? dock.getBoundingClientRect().bottom <= card.getBoundingClientRect().bottom + 0.5 : null,
+        tabsBottom: tabs.bottom, cardBottom: card.getBoundingClientRect().bottom };
+    })()`;
+    type Top = { gap: number; scrolls: boolean | null; dockIn: boolean | null };
+    const failures: string[] = [];
+    try {
+      for (const long of [false, true]) {
+        shortChat = !long;
+        const html = await markup('canvas');
+        for (const theme of ['light', 'dark'] as const) for (const [tab, markupOf] of Object.entries(html)) {
+          const name = `${long ? 'long' : 'short'}-${tab}-${theme}`;
+          const shot = shots && tab === 'chat' && theme === 'light' ? join(shots, `chat-tabs-${long ? 'long' : 'short'}.png`) : undefined;
+          const r = (await measure('canvas', `top-${name}`, markupOf, 1440, theme, 'no-preference', TOP, shot)) as unknown as Top;
+          if (Math.abs(r.gap) > 4) failures.push(`${name}: the tabs are ${r.gap} px under the header`);
+          if (tab === 'chat') {
+            if (long && r.scrolls !== true) failures.push(`${name}: the long list does not scroll`);
+            if (!long && r.scrolls !== false) failures.push(`${name}: the short list scrolls`);
+            if (r.dockIn !== true) failures.push(`${name}: the composer is outside the card`);
+          }
+        }
+      }
+    } finally { shortChat = false; }
     expect(failures).toEqual([]);
   });
 });

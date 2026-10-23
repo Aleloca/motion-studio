@@ -453,4 +453,3 @@
 .ms-cv-problem-list { margin: 0; padding-left: 16px; line-height: 1.5; overflow-wrap: anywhere; }
 .ms-cv-large-pop .ms-btn { align-self: flex-start; }
 .ms-exp-problem { font-size: 11px; color: var(--warn); overflow-wrap: anywhere; }
-.ms-cv-subs-entry { display: flex; justify-content: flex-end; padding: 10px 14px 0; }

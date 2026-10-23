@@ -39,7 +39,6 @@ import { StorePackExport } from './creative/StorePackExport.tsx';
 import { LanguagesButton } from './creative/LanguagesButton.tsx';
 import { RenderLanguagesDialog } from './creative/RenderLanguagesDialog.tsx';
 import { creativeLocales, packLanguageGaps } from './creative/languagesModel.ts';
-import { entrySubtitleLang } from './subtitles/LangSwitcher.tsx';
 import { activatesControl, bare, inOverlay, isTyping } from './keys.ts';
 import { useChatPins } from './pendingPins.ts';
 import { FollowerChip, FormatBadge, useNewVersionNotice, useVersionActions, VersionTimeline } from './FormatVersions.tsx';
@@ -1116,11 +1115,6 @@ function CanvasBody({ slug, creative, routeCreative, live, exportNamePattern, on
       {/* Decision 1424: the panel is the glass card, inset 12 px in its column (which keeps its width). */}
       <aside className="ms-cv-side ms-cv-panel ms-chat-col" aria-label={c.panel}>
         <div className="ms-chat-card">
-          {!group && detail.subtitles?.length ? (
-            <div className="ms-cv-subs-entry">
-              <Button size="sm" variant="outline" onClick={() => go(href.subtitles(slug, creative, entrySubtitleLang(detail.subtitles, creativeLocales(detail.creative.brief)?.primary) ?? undefined))}><Icon name="text" size={13} />{c.subtitles}</Button>
-            </div>
-          ) : null}
           <Tabs label={c.panel} value={tab} onChange={setTab}
             tabs={[{ value: 'chat', label: c.tabs.chat }, { value: 'comments', label: c.tabs.comments, count: sent.count }, { value: 'brief', label: c.tabs.brief }]} />
           {tab === 'chat' ? (

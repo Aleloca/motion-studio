@@ -182,6 +182,21 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); });
 
 describe('EditorScreen · shell', () => {
+  it('report 72: a creative with a subtitle set has "Subtitles" in the editor tools, opening the original speech set; without one there is none', async () => {
+    const set = { cues: 3, edited: 0, hash: 'a'.repeat(64), timing: { version: 1, format: REEL, fingerprint: 'f'.repeat(64) }, timingChanged: false, staleCues: 0 };
+    detail = { ...makeDetail([v2(1), v2(2)]), subtitles: [{ ...set, lang: 'en', origin: 'translation', sourceLang: 'it' }, { ...set, lang: 'it', origin: 'speech' }] } as CreativeDetail;
+    const first = render(<Harness />);
+    await opened();
+    const tools = document.querySelector('.ms-ed-tools') as HTMLElement;
+    await userEvent.click(within(tools).getByRole('button', { name: 'Subtitles' }));
+    expect(location.hash).toBe('#/p/acme/c/lancio/subtitles/it');
+    first.unmount();
+    detail = makeDetail([v2(1), v2(2)]);
+    render(<Harness />);
+    await opened();
+    expect(within(document.querySelector('.ms-ed-tools') as HTMLElement).queryByRole('button', { name: 'Subtitles' })).toBeNull();
+  });
+
   it('opens the latest version: the layout slots, the format crumb and the stage player, no pill without edits', async () => {
     render(<Harness />);
     await opened();
