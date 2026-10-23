@@ -572,6 +572,11 @@ arrives and worked on later together.
     "Subtitles" button is at the top), instead of at the top.
     Wanted: the tabs stay at the top of the panel; the empty space goes between the tabs and the messages.
 
+72. **The "Subtitles" button belongs in the video editor (user report of 2026-10-23).** The "Subtitles" link at the top
+    right of the creative's chat panel is in the wrong place: the subtitle editor is reached from the video editor.
+    Wanted: move it (not copy it) into the video editor as a button that opens the subtitle editor. The chat's
+    "Subtitles ready" card with its buttons stays as it is.
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
