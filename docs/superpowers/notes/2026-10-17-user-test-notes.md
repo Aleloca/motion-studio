@@ -543,6 +543,11 @@ arrives and worked on later together.
     styled by the agent (built-in look or HTML template), .srt/.vtt files and soft MP4 tracks, translations and own-voice
     languages, multi-language exports with video/subtitle pairs. To be tested by the user in the real app.
 
+69. **The library picker in the brief chat shows only thumbnails (user report of 2026-10-23).** Inserting an asset into
+    the chat with the agent for the brief, the "ACME LIBRARY" popover shows square thumbnails with no name; two videos
+    that both start on a black frame look identical.
+    Wanted: show the file name too, so two assets can be told apart.
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
