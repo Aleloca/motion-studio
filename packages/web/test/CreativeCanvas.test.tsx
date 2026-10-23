@@ -115,9 +115,17 @@ afterEach(() => {
 describe('CreativeCanvas · arrives from the brief panel (decision 1419)', () => {
   it('the chat panel moves from the brief panel, its tabs come after it, the boards rise one after the other', async () => {
     setFrameOrigin('brief-panel:acme/lancio', { left: 12, top: 64, width: 448, height: 800, right: 460, bottom: 864, x: 12, y: 64, toJSON: () => ({}) } as DOMRect);
-    render(<Harness live={emptyLive()} />);
-    await ready();
-    await waitFor(() => expect(motion.flip).toHaveBeenCalled());
+    // The panel flies only when the boards show up within FLIP_WINDOW_MS (400 ms) of the mount; later ones cascade in (by
+    // design). Under a loaded full run the mocked load alone took longer (decision 1754): `performance.now` stands still
+    // here, so the test checks the arrival, not the machine's speed. Timers stay real.
+    vi.useFakeTimers({ toFake: ['performance'] });
+    try {
+      render(<Harness live={emptyLive()} />);
+      await ready();
+      await waitFor(() => expect(motion.flip).toHaveBeenCalled());
+    } finally {
+      vi.useRealTimers();
+    }
     const [el, from, ms] = vi.mocked(motion.flip).mock.calls[0]!;
     expect((el as Element).classList.contains('ms-cv-panel')).toBe(true);
     expect(from).toMatchObject({ left: 12, width: 448 });
@@ -126,6 +134,21 @@ describe('CreativeCanvas · arrives from the brief panel (decision 1419)', () =>
     expect(opts).toMatchObject({ y: 16, scale: 0.97 });
     expect(step).toBe(70);
     expect(takeFrameOrigin('brief-panel:acme/lancio')).toBeNull();
+  });
+
+  it('boards that show up after the window (a slow load) cascade in instead of flying from a stale spot', async () => {
+    setFrameOrigin('brief-panel:acme/lancio', { left: 12, top: 64, width: 448, height: 800, right: 460, bottom: 864, x: 12, y: 64, toJSON: () => ({}) } as DOMRect);
+    vi.useFakeTimers({ toFake: ['performance'] });
+    try {
+      render(<Harness live={emptyLive()} />);
+      vi.advanceTimersByTime(401); // the load took longer than FLIP_WINDOW_MS
+      await ready();
+      await waitFor(() => expect(motion.stagger).toHaveBeenCalled());
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(vi.mocked(motion.stagger).mock.calls[0]!.slice(1)).toEqual([{ y: 12 }, 40]);
+    expect(motion.flip).not.toHaveBeenCalled();
   });
 
   it('without it the boards cascade in as always', async () => {
