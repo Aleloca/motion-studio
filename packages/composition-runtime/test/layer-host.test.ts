@@ -23,7 +23,7 @@ function fakeFrame(answers: () => boolean, reply: Record<string, unknown> = { ok
       },
     },
   };
-  return { frame: frame as unknown as HTMLIFrameElement, load: () => onLoad!(), seeks: () => seeks, close: () => ports.forEach((p) => p.close()) };
+  return { frame: frame as unknown as HTMLIFrameElement, load: () => onLoad!(), seeks: () => seeks, close: () => ports.forEach((p) => p.close()), push: (m: unknown) => ports.at(-1)!.postMessage(m) };
 }
 const natives = { setTimeout: (f: () => void, ms: number) => setTimeout(f, ms), clearTimeout: (id: unknown) => clearTimeout(id as NodeJS.Timeout) } as unknown as Natives;
 
@@ -94,6 +94,24 @@ describe('layer host: dispose (subtitles Task 17)', () => {
     const waiting = host.ready().catch((e: unknown) => e); // never loaded: no hello yet
     host.dispose();
     expect(await waiting).toBeInstanceOf(LayerDisposedError);
+    f.close();
+  });
+});
+
+describe('layer host: canvas losses (decision 1752)', () => {
+  it('counts the losses a layer reports, pushed at once or on a seek reply, never going back', async () => {
+    const f = fakeFrame(() => true, { ok: true, canvasLosses: 1 });
+    const host = connectLayer(f.frame, natives, 10_000);
+    f.load();
+    await host.connected;
+    expect(host.canvasLosses).toBe(0);
+    await host.seek(1);
+    expect(host.canvasLosses).toBe(1);
+    f.push({ type: 'canvasLost', canvasLosses: 3 });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(host.canvasLosses).toBe(3);
+    await host.seek(2); // a reply sent before the push arrived says 1: the count stays 3
+    expect(host.canvasLosses).toBe(3);
     f.close();
   });
 });

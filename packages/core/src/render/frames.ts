@@ -4,7 +4,7 @@ import { RUNTIME_DIST_DIR } from '@motion-studio/composition-runtime/dist';
 import { startCompositionServer, type CompositionServer, type CompositionSession, type SessionMedia } from '../compositions/composition-server.ts';
 import { readRegularFile } from '../safe-read.ts';
 import { join } from 'node:path';
-import { imageSize } from './capture.ts';
+import { imageSize, seekAndGrab } from './capture.ts';
 import { RenderError, type CaptureFormat, type ChromiumProvider, type RenderPage, type RuntimeErrorInfo } from './chromium-provider.ts';
 
 /**
@@ -91,8 +91,9 @@ export async function renderFrames(o: RenderFramesOptions): Promise<RenderFrames
     for (const t of o.times) {
       if (ctl.signal.aborted) throw ctl.signal.reason instanceof Error ? ctl.signal.reason : new RenderError('cancelled', 'cancelled');
       const at = frameTime(c, t);
-      await page.seek(at);
-      const data = await page.capture(o.imageFormat, o.imageFormat === 'png' ? undefined : o.quality ?? 80, scale < 1 ? scale : undefined);
+      const p = page;
+      // Decision 1755: captured again when a canvas lost its GPU context meanwhile, as a render's frames are.
+      const data = await seekAndGrab(p, at, () => p.capture(o.imageFormat, o.imageFormat === 'png' ? undefined : o.quality ?? 80, scale < 1 ? scale : undefined));
       const size = imageSize(data);
       if (!size) throw new RenderError('badFrame', 'captured frame is unreadable');
       frames.push({ t: at, data, width: size.width, height: size.height });

@@ -250,11 +250,16 @@ describe('layer replies (untrusted)', () => {
     expect(parseLayerReply({ id: 3, ok: true, warnings: ['a', 'b'.repeat(400)] })).toEqual({ id: 3, ok: true, warnings: ['a', 'b'.repeat(300)] });
     expect(parseLayerReply({ id: 4, ok: false, error: 'boom', code: 'frameTimeout', junk: 1 })).toEqual({ id: 4, ok: false, error: 'boom', code: 'frameTimeout' });
     expect(parseLayerReply({ id: 5, ok: false, error: 'stuck', code: 'layerStalled' })).toEqual({ id: 5, ok: false, error: 'stuck', code: 'layerStalled' });
+    // Decision 1752: the layer's canvas losses, on a seek reply and pushed at once.
+    expect(parseLayerReply({ id: 6, ok: true, canvasLosses: 2 })).toEqual({ id: 6, ok: true, canvasLosses: 2 });
+    expect(parseLayerReply({ type: 'canvasLost', canvasLosses: 3 })).toEqual({ type: 'canvasLost', canvasLosses: 3 });
   });
   it('ignores anything else', () => {
     for (const bad of [null, 'x', [], { id: 1 }, { id: 1, ok: 'yes' }, { id: '1', ok: true }, { id: 1.5, ok: true },
       { id: 1, ok: true, warnings: 'w' }, { id: 1, ok: true, warnings: [1] }, { id: 1, ok: true, warnings: Array(21).fill('w') },
-      { id: 1, ok: false, error: {} }, { id: 1, ok: false, code: 'other' }, { type: 'hello' }]) {
+      { id: 1, ok: false, error: {} }, { id: 1, ok: false, code: 'other' }, { type: 'hello' },
+      { id: 1, ok: true, canvasLosses: -1 }, { id: 1, ok: true, canvasLosses: 1.5 }, { id: 1, ok: true, canvasLosses: '1' },
+      { type: 'canvasLost' }, { type: 'canvasLost', canvasLosses: Number.NaN }, { type: 'canvasLost', canvasLosses: 1e12 }]) {
       expect(parseLayerReply(bad)).toBeNull();
     }
   });

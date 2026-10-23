@@ -18,7 +18,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Composition, FormatPreset } from '@motion-studio/shared';
 import { decodePng } from '../../composition-runtime/test/support/png.ts';
 import { sourceFrameIndex, videoSourceTime, VFR_NUDGE } from '../../composition-runtime/src/timing.ts';
-import { ChromeProvider } from '../src/render/chromium-provider.ts';
+import { ChromeProvider, type RenderPage } from '../src/render/chromium-provider.ts';
 import { renderComposition } from '../src/render/renderer.ts';
 import { checkVideotoolbox } from '../src/render/encode.ts';
 import { buildRuntime, burstWav, decodeAudio, decodeStrips, frameCodedVideo, framePts, expectNoLeftovers, onset, readCode, renderTools } from './helpers/render-env.ts';
@@ -313,6 +313,52 @@ describe.skipIf(!tools.ok)('renderer: media timing, seams, audio, still', () => 
     // its warning. The renderer keeps the first 50 distinct warnings, so fewer than 50 means none was cut (35 here).
     expect(r.warnings.length).toBeLessThan(50);
     expect(r.warnings.filter((w) => /seek deadline/.test(w.message))).toEqual([]);
+    rmSync(out);
+  }, 1_800_000);
+
+  it('the GPU process lost mid-render (every video canvas and held frame cleared): every frame is still exact (decision 1752)', async () => {
+    // The macOS CI failures of the strict and the lenient WebM tests (runs 39144320381 and 39869141246): video boxes black
+    // on one or two frames, the rest of the page fine. Forced here with CDP `Browser.crashGpuProcess` while both pages render.
+    const ff = tools.ffmpeg!;
+    const id = 'test-gpu-loss';
+    const dir = join(creative, VERSION_DIR, 'compositions', id);
+    frameCodedVideo(ff, join(dir, 'assets', 'n.mp4'), { fps: FPS, frames: 30, gop: 15 });
+    frameCodedVideo(ff, join(dir, 'assets', 'vfr.webm'), { fps: 30, frames: 30, pts: 'if(lt(N,10),N/24,if(lt(N,20),10/24+(N-10)/12,10/24+10/12+(N-20)/6))' });
+    const times = framePts(ff, join(dir, 'assets', 'vfr.webm'));
+    const D = 1.3, N = Math.round(D * FPS);
+    const comp = {
+      $schema: 'motion-studio/composition@1', width: W, height: H, fps: FPS, duration: D, background: '#000000', fonts: [],
+      scenes: [{ id: 'all', start: 0, duration: D }],
+      tracks: [{ id: 'v', kind: 'video', clips: [
+        { id: 'a', type: 'video', src: 'assets/n.mp4', start: 0, duration: D, sourceFps: FPS, sourceStart: 0, sourceVideoEnd: 1.0, sourceTrusted: true, props: { ...BOXES.v24 } },
+        { id: 'w', type: 'video', src: 'assets/vfr.webm', start: 0, duration: D, props: { ...BOXES.v25 } },
+      ] }, { id: 's', kind: 'visual', clips: [{ id: 'mark', type: 'shape', start: 0, duration: D, props: { ...BOXES.trim, fill: '#ffffff' } }] }],
+    } as unknown as Composition;
+    const p = new ChromeProvider({ exe: tools.chrome!.exe, kind: 'system', limits: { timeLimitMs: 30 * 60_000 } });
+    const browser = () => (p as unknown as { launched: { cdp: { send(method: string): Promise<unknown> } } }).launched.cdp;
+    const pages: RenderPage[] = [];
+    const open = p.open.bind(p);
+    p.open = async (o) => { const page = await open(o); pages.push(page); return page; };
+    let crash: Promise<unknown> | null = null;
+    const out = join(creative, VERSION_DIR, `${id}.mp4`);
+    await renderComposition({
+      dir: creative, versionDir: VERSION_DIR, composition: comp, format: { ...FORMAT, id }, out, provider: p, parallel: 2, signal: new AbortController().signal, distDir: dist, ffmpeg: ff, encoder: 'libx264',
+      onProgress: (x) => { if (!crash && x.frames >= 8) crash = browser().send('Browser.crashGpuProcess'); },
+    });
+    await expect(crash).resolves.toBeDefined();
+    // The loss reached the pages during the render (review M4): otherwise this test would prove nothing.
+    expect(Math.max(...pages.map((x) => x.canvasLossesSeen?.() ?? 0))).toBeGreaterThan(0);
+    const frames = Array.from({ length: N }, (_, i) => i);
+    const shown = (t: number) => { let k = 0; for (let j = 0; j < times.length; j++) if (times[j]! <= Math.min(t, times.at(-1)!) + 1e-9) k = j; return k + 1; };
+    const a = decodeStrips(ff, out, BOXES.v24, 2).map(readCode), w = decodeStrips(ff, out, BOXES.v25, 2).map(readCode);
+    const mark = decodeStrips(ff, out, BOXES.trim, 2).map((x) => Math.min(x[0]!, x[1]!));
+    const expA = frames.map((i) => Math.min(i, 29) + 1), expW = frames.map((i) => shown(i / FPS + VFR_NUDGE));
+    const wrong = frames.filter((i) => a[i] !== expA[i] || w[i] !== expW[i]);
+    if (wrong.length) console.error(`[render] gpu loss: wrong frames ${wrong.map((i) => `${i} (a ${a[i]}≠${expA[i]}, w ${w[i]}≠${expW[i]}, mark ${mark[i]})`).join(', ')}`);
+    expect(mark.every((x) => x > 200)).toBe(true);
+    expect(a).toEqual(expA);
+    expect(w).toEqual(expW);
+    await expectNoLeftovers({ pgids: [p.pgid!], markers: [p.profileDir!] });
     rmSync(out);
   }, 1_800_000);
 

@@ -28,6 +28,8 @@ export interface LayerHost {
   seek(t: number): Promise<void>;
   /** Preview playback: applies `t` without waiting. */
   tick(t: number): void;
+  /** How many times a canvas of the layer lost its GPU context, as the layer reported it (decision 1752). */
+  readonly canvasLosses: number;
   /**
    * Closes the channel; every pending request and every later one rejects at once with a `LayerDisposedError` (a caller
    * awaiting a seek of a layer just replaced is never held for the layer timeout).
@@ -44,6 +46,8 @@ export function connectLayer(frame: HTMLIFrameElement, natives: Natives, timeout
   let dead: string | null = null;
   let disposedNow = false;
   let nextId = 1;
+  let canvasLosses = 0;
+  const lossesSeen = (n: number | undefined) => { if (n !== undefined && n > canvasLosses) canvasLosses = n; };
   const pending = new Map<number, { resolve: (r: LayerResult) => void; reject: (e: Error) => void; op: string }>();
   let onDispose: (() => void) | null = null;
   const disposed = new Promise<never>((_, reject) => { onDispose = () => reject(new LayerDisposedError('request')); });
@@ -60,7 +64,12 @@ export function connectLayer(frame: HTMLIFrameElement, natives: Natives, timeout
     port.onmessage = (m: MessageEvent) => {
       const d = parseLayerReply(m.data);
       if (!d) return; // malformed (a layer is untrusted): ignored, the request times out
-      if ('type' in d) { if (d.v === LAYER_PROTOCOL_VERSION) onHello?.(); return; }
+      if ('type' in d) {
+        if (d.type === 'canvasLost') lossesSeen(d.canvasLosses);
+        else if (d.v === LAYER_PROTOCOL_VERSION) onHello?.();
+        return;
+      }
+      lossesSeen(d.canvasLosses);
       const p = pending.get(d.id); pending.delete(d.id); p?.resolve(d);
     };
     w.postMessage({ type: 'ms-layer-connect', v: LAYER_PROTOCOL_VERSION }, '*', [channel.port2]);
@@ -90,6 +99,7 @@ export function connectLayer(frame: HTMLIFrameElement, natives: Natives, timeout
     async ready() { const r = await request('ready'); return r.warnings ?? []; },
     async seek(t: number) { await request('seek', t); },
     tick(t: number) { port?.postMessage({ op: 'tick', t }); },
+    get canvasLosses() { return canvasLosses; },
     dispose() {
       if (disposedNow) return;
       disposedNow = true;

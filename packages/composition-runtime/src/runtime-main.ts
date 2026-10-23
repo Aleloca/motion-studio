@@ -13,6 +13,8 @@ export interface RuntimeApi {
   ready(): Promise<ReadyInfo & { errors: RuntimeError[] }>;
   /** Shows composition time `t` (seconds); resolves once it is painted. */
   seek(t: number): Promise<void>;
+  /** How many times a video canvas lost its GPU context (its pixels) so far (decision 1752; `Player.canvasLosses`). */
+  readonly canvasLosses: number;
   readonly duration: number;
   readonly fps: number;
   readonly width: number;
@@ -50,7 +52,7 @@ export function startRuntime(w: Window & typeof globalThis): RuntimeApi {
     if (parentOrigin) w.parent.postMessage({ type: 'error', error: e }, parentOrigin);
     const failed = Promise.reject(new Error(`${code}: ${message}`));
     failed.catch(() => {});
-    return { mode, ready: () => failed, seek: () => failed, duration: 0, fps: 0, width: 0, height: 0, errors };
+    return { mode, ready: () => failed, seek: () => failed, canvasLosses: 0, duration: 0, fps: 0, width: 0, height: 0, errors };
   };
 
   const block = w.document.getElementById(COMPOSITION_DATA_ID);
@@ -114,6 +116,7 @@ export function startRuntime(w: Window & typeof globalThis): RuntimeApi {
     mode,
     ready: () => ready,
     seek: (t: number) => (Number.isFinite(t) ? player.seek(t) : Promise.reject(new Error('seek: t must be a finite number'))),
+    get canvasLosses() { return player.canvasLosses; },
     duration: player.duration,
     fps: player.fps,
     width: player.width,

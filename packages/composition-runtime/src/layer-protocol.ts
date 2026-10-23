@@ -10,8 +10,10 @@ import { readRuntimeSubtitles, type RuntimeSubtitles } from './subtitles.ts';
  * 1. after the iframe's `load`, the runtime posts `{ type: 'ms-layer-connect', v: 1 }` to the layer window with a
  *    transferred port (target `*`: the layer origin is opaque; the message carries no data);
  * 2. layer.js accepts it only from `window.parent`, and answers `{ type: 'hello', v: 1 }` on the port;
- * 3. requests `{ id, op: 'ready' | 'seek', t? }` get `{ id, ok, error?, warnings? }`; `{ op: 'tick', t }` (preview
- *    playback, every animation frame) gets no answer.
+ * 3. requests `{ id, op: 'ready' | 'seek', t? }` get `{ id, ok, error?, warnings?, canvasLosses? }`; `{ op: 'tick', t }`
+ *    (preview playback, every animation frame) gets no answer;
+ * 4. the layer pushes `{ type: 'canvasLost', canvasLosses }` as soon as one of its canvases lost its GPU context
+ *    (decision 1752).
  */
 
 export const LAYER_NAME_PREFIX = 'ms-layer:';
@@ -43,10 +45,12 @@ export type LayerRequest = { id: number; op: 'ready' } | { id: number; op: 'seek
  */
 export type LayerFailureCode = 'frameTimeout' | 'layerStalled';
 const LAYER_FAILURE_CODES: ReadonlySet<unknown> = new Set<LayerFailureCode>(['frameTimeout', 'layerStalled']);
-export interface LayerResult { id: number; ok: boolean; error?: string; code?: LayerFailureCode; warnings?: string[] }
+/** `canvasLosses` (decision 1752): how many times a canvas of the layer lost its GPU context so far (a seek's reply). */
+export interface LayerResult { id: number; ok: boolean; error?: string; code?: LayerFailureCode; warnings?: string[]; canvasLosses?: number }
 
 /** Caps on what a layer may send back (a layer is untrusted code). */
-export const LAYER_REPLY_LIMITS = { warnings: 20, text: 300 } as const;
+export const LAYER_REPLY_LIMITS = { warnings: 20, text: 300, canvasLosses: 1_000_000 } as const;
+const lossCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= LAYER_REPLY_LIMITS.canvasLosses;
 
 /**
  * Validates a reply from a layer: a hello, or `{ id, ok: boolean, error?: string, code?: LayerFailureCode, warnings?: string[] }`.
@@ -57,9 +61,11 @@ export function parseLayerReply(d: unknown): LayerReply | null {
   if (typeof d !== 'object' || d === null || Array.isArray(d)) return null;
   const o = d as Record<string, unknown>;
   if (o.type === 'hello') return typeof o.v === 'number' ? { type: 'hello', v: o.v } : null;
+  if (o.type === 'canvasLost') return lossCount(o.canvasLosses) ? { type: 'canvasLost', canvasLosses: o.canvasLosses } : null;
   if (typeof o.id !== 'number' || !Number.isInteger(o.id) || typeof o.ok !== 'boolean') return null;
   if (o.error !== undefined && typeof o.error !== 'string') return null;
   if (o.code !== undefined && !LAYER_FAILURE_CODES.has(o.code)) return null;
+  if (o.canvasLosses !== undefined && !lossCount(o.canvasLosses)) return null;
   if (o.warnings !== undefined && !(Array.isArray(o.warnings) && o.warnings.length <= LAYER_REPLY_LIMITS.warnings && o.warnings.every((w) => typeof w === 'string'))) return null;
   const cut = (s: string) => s.slice(0, LAYER_REPLY_LIMITS.text);
   return {
@@ -67,9 +73,11 @@ export function parseLayerReply(d: unknown): LayerReply | null {
     ...(typeof o.error === 'string' ? { error: cut(o.error) } : {}),
     ...(o.code !== undefined ? { code: o.code as LayerFailureCode } : {}),
     ...(Array.isArray(o.warnings) ? { warnings: (o.warnings as string[]).map(cut) } : {}),
+    ...(o.canvasLosses !== undefined ? { canvasLosses: o.canvasLosses as number } : {}),
   };
 }
-export type LayerReply = { type: 'hello'; v: number } | LayerResult;
+/** `canvasLost` (decision 1752): pushed by the layer as soon as one of its canvases lost its GPU context. */
+export type LayerReply = { type: 'hello'; v: number } | { type: 'canvasLost'; canvasLosses: number } | LayerResult;
 
 export function encodeLayerConfig(c: LayerConfig): string {
   return LAYER_NAME_PREFIX + JSON.stringify(c);

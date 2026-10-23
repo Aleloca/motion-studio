@@ -364,13 +364,22 @@ function defineSubtitles(lw: LayerWindow, s: RuntimeSubtitles): void {
   Object.defineProperty(lw, 'msActiveCue', { value: activeAt, ...fixed });
 }
 
-/** `stallMs`: the render-mode stall bound (`CLOCK_STALL_MS`; shorter only in tests). */
-export function startLayerAgent(w: Window & typeof globalThis, o: { stallMs?: number } = {}): void {
+/** A layer canvas lost its GPU context and did not get it back in time (decision 1752): the seek fails as `frameTimeout`. */
+class CanvasLostError extends FrameTimeoutError {
+  constructor(ms: number) { super(ms); this.message = `a canvas of the layer lost its GPU context and did not get it back within ${ms} ms`; }
+}
+
+/**
+ * `stallMs`: the render-mode stall bound (`CLOCK_STALL_MS`; shorter only in tests). `trusted`: which canvas events are
+ * Chrome's (tests only: jsdom cannot make a trusted event).
+ */
+export function startLayerAgent(w: Window & typeof globalThis, o: { stallMs?: number; trusted?: (ev: Event) => boolean } = {}): void {
   const config: LayerConfig | null = decodeLayerConfig(w.name);
   if (!config) return; // not a Motion Studio layer frame (opened on its own): leave the page alone
   const clock: VirtualClock = installVirtualClock(w);
   // Render: a missing frame fails the seek (never a stale capture); preview: a short fallback.
-  const frameWait: FrameWait = config.mode === 'render' ? { strict: true, timeoutMs: config.frameTimeoutMs ?? 30_000 } : PREVIEW_FRAME_WAIT;
+  const renderMode = config.mode === 'render';
+  const frameWait: FrameWait = renderMode ? { strict: true, timeoutMs: config.frameTimeoutMs ?? 30_000 } : PREVIEW_FRAME_WAIT;
   const lw = w as unknown as LayerWindow;
   const unfreezer = createUnfreezer(w.document);
   Object.defineProperty(lw, 'msParams', { value: Object.freeze({ ...config.params }), writable: false, configurable: false, enumerable: true });
@@ -387,6 +396,53 @@ export function startLayerAgent(w: Window & typeof globalThis, o: { stallMs?: nu
 
   let port: MessagePort | null = null;
   let seekRunning = false;
+
+  /**
+   * Decision 1752: when Chrome's GPU process goes, the layer's own 2D canvases lose their pixels (`contextlost`, back by
+   * themselves ~0.5 s later with `contextrestored`, blank). Render mode: a seek during which one was lost or restored is
+   * made again once every canvas is back, so the layer draws its frame again (`msSeek`, its animation frames); each loss is
+   * also pushed to the runtime at once (`canvasLost`), which tells the renderer that a capture since may be spoiled.
+   */
+  let canvasLosses = 0;
+  let canvasEvents = 0;
+  const lostCanvases = new Set<EventTarget>();
+  let onCanvasEvent: (() => void) | null = null;
+  // Only Chrome's own events (decision 1755): a layer cannot fake a loss to make every capture be made again.
+  const trusted = o.trusted ?? ((ev: Event) => ev.isTrusted);
+  w.addEventListener('contextlost', (ev) => {
+    if (!trusted(ev)) return;
+    canvasLosses++;
+    canvasEvents++;
+    if (ev.target) lostCanvases.add(ev.target);
+    port?.postMessage({ type: 'canvasLost', canvasLosses });
+    onCanvasEvent?.();
+  }, true);
+  w.addEventListener('contextrestored', (ev) => {
+    if (!trusted(ev)) return;
+    canvasEvents++;
+    if (ev.target) lostCanvases.delete(ev.target);
+    onCanvasEvent?.();
+  }, true);
+  /**
+   * Whether a canvas of the layer is still lost. One the layer removed meanwhile no longer counts (decision 1755): its
+   * `contextrestored` cannot reach the window from a detached canvas, so it would be waited for forever.
+   */
+  const anyLost = (): boolean => {
+    for (const c of lostCanvases) if (!(c as Node).isConnected) lostCanvases.delete(c);
+    return lostCanvases.size > 0;
+  };
+  /** Resolves once no canvas is lost; rejects (frameTimeout) after `frameWait.timeoutMs`. */
+  const canvasesBack = async (): Promise<void> => {
+    const deadline = clock.native.performanceNow() + frameWait.timeoutMs;
+    while (anyLost()) {
+      const left = deadline - clock.native.performanceNow();
+      if (left <= 0) throw new CanvasLostError(frameWait.timeoutMs);
+      await new Promise<void>((resolve) => {
+        const id = clock.native.setTimeout(() => { onCanvasEvent = null; resolve(); }, Math.min(50, left));
+        onCanvasEvent = () => { onCanvasEvent = null; clock.native.clearTimeout(id); resolve(); };
+      });
+    }
+  };
 
   const syncAnimations = (t: number) => pauseAnimations(w.document, t);
   /** Sets the layer to `t`; returns the animations it paused that were not paused yet (`settleAnimations`). */
@@ -432,6 +488,17 @@ export function startLayerAgent(w: Window & typeof globalThis, o: { stallMs?: nu
     return warnings;
   }
 
+  async function seekOnce(t: number): Promise<void> {
+    const started = applyTime(t);
+    if (seekStalled !== null) throw new SeekStalledError(`msSeek not called again: ${seekStalled}`);
+    started.push(...await callSeek(t));
+    unfreezer.run(); // after the layer's own code drew the frame, before it is painted (decision 1238)
+    await twoFrames(clock.native, frameWait);
+    // Report 56: animations that were running (the first seek pauses the layer's CSS animations) shown at `t`, then
+    // two more frames, so the capture sees it.
+    if (started.length && await settleAnimations(started, t, () => nextFrame(clock.native, frameWait))) await twoFrames(clock.native, frameWait);
+  }
+
   async function onRequest(req: LayerRequest): Promise<void> {
     if (req.op === 'tick') {
       if (!Number.isFinite(req.t)) return;
@@ -450,15 +517,15 @@ export function startLayerAgent(w: Window & typeof globalThis, o: { stallMs?: nu
         unfreezer.run();
         port?.postMessage({ id: req.id, ok: true, warnings });
       } else if (req.op === 'seek') {
-        const started = applyTime(req.t);
-        if (seekStalled !== null) throw new SeekStalledError(`msSeek not called again: ${seekStalled}`);
-        started.push(...await callSeek(req.t));
-        unfreezer.run(); // after the layer's own code drew the frame, before it is painted (decision 1238)
-        await twoFrames(clock.native, frameWait);
-        // Report 56: animations that were running (the first seek pauses the layer's CSS animations) shown at `t`, then
-        // two more frames, so the capture sees it.
-        if (started.length && await settleAnimations(started, req.t, () => nextFrame(clock.native, frameWait))) await twoFrames(clock.native, frameWait);
-        port?.postMessage({ id: req.id, ok: true });
+        let seen = canvasEvents;
+        await seekOnce(req.t);
+        // Decision 1752: a canvas lost (or back) meanwhile may hold nothing: once all are back, the frame is made again.
+        while (renderMode && (canvasEvents !== seen || anyLost())) {
+          await canvasesBack();
+          seen = canvasEvents;
+          await seekOnce(req.t);
+        }
+        port?.postMessage({ id: req.id, ok: true, canvasLosses });
       }
     } catch (err) {
       const code = err instanceof FrameTimeoutError ? 'frameTimeout' : err instanceof ClockStallError || err instanceof SeekStalledError ? 'layerStalled' : undefined;

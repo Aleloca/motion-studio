@@ -553,13 +553,29 @@ arrives and worked on later together.
 - **Flaky on Linux CI:** `core/test/render-media.chrome.test.ts` "lenient (untrusted): a VFR WebM … renders and never fails"
   failed once on ubuntu (run 39141011457, frame index list off by one) with no render code changed, and passed on rerun.
   Make the frame-index assertion tolerant of the container-default-duration rounding, or pin the expected sequence per platform.
+  Done (2026-10-23): a real product bug, not the assertion. The Linux off-by-one was fixed by decision 1110; the macOS zeros
+  (frames 0 and 30, run 39869141246) were video boxes left black when Chrome's GPU process went (canvases and held video
+  frames cleared; reproduced with `Browser.crashGpuProcess`). A render seek now waits for every lost canvas, decodes the
+  frame again and redraws it, and the renderer re-captures a frame when `__ms.canvasLosses` changed meanwhile; pinned by a
+  real Chrome test that crashes the GPU process mid-render (decision 1752). The assertion stays exact.
 - **Flaky on macOS CI:** `composition-runtime/test/chrome.integration.test.ts` "render mode ignores setComposition" failed once
   (run 39638356088, part 3/3: diff ratio 0.0073 against < 0.002 between two shots of the same frame) and passed on rerun.
   Find what differs between the two shots (a video or animated pixel not settled on the frozen clock) or compare only the
   logo's region.
+  Done (2026-10-23): not a setComposition leak. The 0.0073 is exactly the probe layer's three white canvas rectangles
+  (420 px) cleared by a lost GPU process between the shots (forced, the test gives 0.00729). Layers now redo a render seek
+  once their canvases are back and report their losses; the test captures with the renderer's rule (again if
+  `canvasLosses` changed), prints where the shots differ, and a new test crashes the GPU process between two seeks
+  (decision 1753). The comparison keeps its 0.002 bound on the whole frame.
 - **Flaky under load:** `web/test/CreativeCanvas.test.tsx` "the chat panel moves from the brief panel… the boards rise one after
   the other" failed once in a full local run (5.6 s, "expected flip to be called") and passes alone 3/3. Raise its waitFor
   timeout or make the animation wait deterministic.
+  Done (2026-10-23): the panel flies only if the boards arrive within FLIP_WINDOW_MS (400 ms) of the mount, by design; under
+  load the mocked load took longer and the canvas cascaded in (reproduced by letting performance.now run fast). The test
+  now fakes only `performance` (timers stay real), and a sibling test pins the slow-load cascade (decision 1754).
+  Review round 1 (2026-10-23): FormatView's two flip tests got the same fix (decision 1756); the canvas-loss handling was
+  tightened (count taken before the seek, removed lost canvases pruned, `isContextLost()`, one seek deadline, storyboard
+  frames, untrusted layer events ignored; decision 1755).
 - **Flaky tests recurring (2026-10-23):** on CI run 39869141246 macOS part 3/3 failed twice in a row, first on
   "render mode ignores setComposition" (diff 0.0073) and then on the VFR WebM frame-index test, and passed on the third
   attempt. Both are listed above; fix them before they block a release.

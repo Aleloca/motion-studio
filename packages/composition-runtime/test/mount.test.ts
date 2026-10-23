@@ -508,6 +508,98 @@ describe('render mode video frames (fake VideoFrame)', () => {
     expect(errors.some((e) => e.code === 'videoFrameMismatch')).toBe(false);
   }, 20_000);
 
+  // Decision 1752: when Chrome's GPU process goes (macOS CI), every 2D canvas loses its pixels (`contextlost`), draws do
+  // nothing until `contextrestored` (~0.5 s later), and a capture shows the video box black. A stand-in 2D context records
+  // each draw (the frame's timestamp, and whether the context was lost then).
+  const gpu = { lost: false, loseOnDraw: null as number | null, restoreOnDraw: false, draws: [] as Array<{ ts: number; lost: boolean }> };
+  const canvasOf = () => document.querySelector<HTMLCanvasElement>('[data-clip-id="vid"] canvas')!;
+  const loseGpu = (restoreAfterMs: number | null) => {
+    gpu.lost = true;
+    canvasOf().dispatchEvent(new Event('contextlost'));
+    if (restoreAfterMs !== null) setTimeout(() => { gpu.lost = false; canvasOf().dispatchEvent(new Event('contextrestored')); }, restoreAfterMs);
+  };
+  const useContexts = () => {
+    Object.assign(gpu, { lost: false, loseOnDraw: null, restoreOnDraw: false, draws: [] });
+    define(HTMLCanvasElement.prototype, 'getContext', {
+      writable: true,
+      value: () => ({
+        isContextLost: () => gpu.lost,
+        drawImage: (f: { timestamp: number }) => {
+          gpu.draws.push({ ts: f.timestamp, lost: gpu.lost });
+          // The GPU process goes just after this draw, while the seek waits for its two frames.
+          if (gpu.loseOnDraw !== null) { const ms = gpu.loseOnDraw; gpu.loseOnDraw = null; setTimeout(() => loseGpu(ms), 0); }
+          // The context comes back just after a draw made while it was lost (a no-op).
+          if (gpu.restoreOnDraw && gpu.lost) { gpu.restoreOnDraw = false; setTimeout(() => { gpu.lost = false; canvasOf().dispatchEvent(new Event('contextrestored')); }, 0); }
+        },
+      }),
+    });
+  };
+
+  it('a canvas cleared by a lost GPU context is drawn again once restored, before the seek resolves; the page counts the losses', async () => {
+    useContexts();
+    const { player, errors } = run(videoComp({ sourceTrusted: true, sourceVideoEnd: 6 }), 'render', 5_000);
+    await player.seek(0);
+    expect(player.canvasLosses).toBe(0);
+    // Lost right after the seek drew its frame: the seek waits for the restore and draws the frame again, decoded again
+    // (the video's held frame went with the context): the video moves off its frame (0) and back.
+    const sets: number[] = [];
+    const video = document.querySelector('video')!;
+    onSeek = () => { sets.push(video.currentTime); held = { timestamp: Math.round((Math.floor(video.currentTime * 30 + 1e-9) / 30) * 1e6), duration: 33_333 }; };
+    gpu.loseOnDraw = 100;
+    let t0 = performance.now();
+    await player.seek(1);
+    expect(performance.now() - t0).toBeGreaterThanOrEqual(90);
+    expect(sets[0]).toBeCloseTo(1, 1);
+    expect(sets).toEqual([sets[0], 0, sets[0]]);
+    expect(gpu.draws.at(-1)).toEqual({ ts: 1_000_000, lost: false });
+    expect(player.canvasLosses).toBe(1);
+    // Lost before the seek: its draw is a no-op, so it is made again once the context is back.
+    loseGpu(100);
+    t0 = performance.now();
+    await player.seek(2);
+    expect(performance.now() - t0).toBeGreaterThanOrEqual(90);
+    expect(gpu.draws.filter((d) => d.ts === 2_000_000).map((d) => d.lost)).toEqual([true, false]);
+    expect(player.canvasLosses).toBe(2);
+    // Lost before the seek and back right after its (no-op) draw: nothing is lost when the seek ends, yet it draws again.
+    loseGpu(null);
+    gpu.restoreOnDraw = true;
+    await player.seek(3);
+    expect(gpu.draws.filter((d) => d.ts === 3_000_000).map((d) => d.lost)).toEqual([true, false]);
+    expect(player.canvasLosses).toBe(3);
+    expect(errors).toEqual([]);
+  });
+
+  it('a context already lost but whose event has not come yet counts at once, and the next seek decodes and draws again (M1)', async () => {
+    useContexts();
+    const { player, errors } = run(videoComp({ sourceTrusted: true, sourceVideoEnd: 6 }), 'render', 5_000);
+    const sets: number[] = [];
+    const video = document.querySelector('video')!;
+    onSeek = () => { sets.push(video.currentTime); held = { timestamp: Math.round((Math.floor(video.currentTime * 30 + 1e-9) / 30) * 1e6), duration: 33_333 }; };
+    await player.seek(1);
+    sets.length = 0;
+    gpu.lost = true; // Chrome knows; the contextlost task has not run yet
+    expect(player.canvasLosses).toBe(1);
+    canvasOf().dispatchEvent(new Event('contextlost')); // its event, late: no second count
+    expect(player.canvasLosses).toBe(1);
+    setTimeout(() => { gpu.lost = false; canvasOf().dispatchEvent(new Event('contextrestored')); }, 50);
+    await player.seek(1);
+    expect(sets[0]).toBe(0); // moved off its frame first: the held frame went with the context
+    expect(gpu.draws.at(-1)!.lost).toBe(false);
+    expect(player.canvasLosses).toBe(1);
+    expect(errors).toEqual([]);
+  });
+
+  it('a canvas whose context never comes back fails the seek (frameTimeout) at its deadline: no black frame is captured', async () => {
+    useContexts();
+    const { player, errors } = run(videoComp({ sourceTrusted: true, sourceVideoEnd: 6 }), 'render', 300);
+    await player.seek(0);
+    loseGpu(null);
+    onSeek = () => { held = { timestamp: 1_000_000, duration: 33_333 }; };
+    await expect(player.seek(1)).rejects.toThrow(/frameTimeout/);
+    expect(errors.map((e) => e.code)).toEqual(['frameTimeout']);
+    expect(errors[0]!.message).toMatch(/lost its GPU context/);
+  });
+
   // Final wave P5: a paused preview shows the sought frame from a canvas (Chrome may keep compositing the load frame of a
   // `<video>` shown for the first time), plays with the `<video>`, and never reports a frame error.
   const shown = (root: HTMLElement) => ({

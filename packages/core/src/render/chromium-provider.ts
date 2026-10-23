@@ -61,6 +61,14 @@ export interface RenderPage {
    * then go to ffmpeg as they are; stills and storyboards still use `capture`.
    */
   captureRaw?(): Promise<RawFrame>;
+  /**
+   * Decision 1752: whether a canvas of the page lost its GPU context (`__ms.canvasLosses` changed) since the last seek
+   * began (decision 1755: a loss during the seek counts too, e.g. a layer's canvas lost after the layer's own seek ended),
+   * so that what was captured since may show a box black. The capture helpers then seek and capture again.
+   */
+  canvasLost?(): Promise<boolean>;
+  /** The page's `__ms.canvasLosses` as `canvasLost()` last read it, or null (diagnostics and tests; no CDP call). */
+  canvasLossesSeen?(): number | null;
   /** Every runtime error so far (`__ms.errors`). */
   errors(): Promise<RuntimeErrorInfo[]>;
   close(): Promise<void>;
@@ -163,6 +171,14 @@ const DEFAULT_TIMEOUTS: Required<PageTimeouts> = { loadMs: 180_000, readyMs: 180
 
 interface EvalResult { result?: { value?: unknown }; exceptionDetails?: { text?: string; exception?: { description?: string } } }
 
+/**
+ * The page side of `RenderPage.seek(t)`: `__ms.seek(t)`, resolving to `__ms.canvasLosses` as it was *before* the seek
+ * (decision 1755), so that `canvasLost()` sees any loss from the seek's start to the capture's end.
+ */
+export function seekExpression(t: number): string {
+  return `(() => { const before = window.__ms.canvasLosses; return window.__ms.seek(${JSON.stringify(t)}).then(() => before); })()`;
+}
+
 /** Evaluates `expression` (awaiting a promise) with a page-side timeout and a slightly longer CDP-side one. */
 export async function evaluate(client: CdpClient, sessionId: string | undefined, expression: string, timeoutMs: number): Promise<unknown> {
   const r = await client.send<EvalResult>('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, timeout: timeoutMs }, { sessionId, timeoutMs: timeoutMs + 5_000 });
@@ -228,13 +244,23 @@ export async function openCdpRenderPage(client: CdpClient, o: OpenPageOptions & 
     if (info.width !== o.width || info.height !== o.height) {
       throw new RenderError('compositionMismatch', `the composition is ${info.width}×${info.height}, the page ${o.width}×${o.height}`);
     }
+    /** `__ms.canvasLosses` when the last seek began (null: a runtime without it). */
+    let lossesAtSeek: number | null = null;
+    let lastLosses: number | null = null;
+    const losses = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
     return {
       info, interception,
       async seek(time: number) {
         if (!Number.isFinite(time)) throw new RenderError('badFrame', 'bad time');
         if (interception.failure) throw new RenderError('isolation', interception.failure.message);
-        await evaluate(client, sid, `window.__ms.seek(${JSON.stringify(time)}).then(() => true)`, t.frameMs);
+        lossesAtSeek = losses(await evaluate(client, sid, seekExpression(time), t.frameMs));
       },
+      async canvasLost() {
+        if (lossesAtSeek === null) return false;
+        lastLosses = losses(await evaluate(client, sid, 'window.__ms.canvasLosses', t.callMs));
+        return lastLosses !== lossesAtSeek;
+      },
+      canvasLossesSeen: () => lastLosses,
       async capture(format: CaptureFormat, quality?: number, scale?: number) {
         if (interception.failure) throw new RenderError('isolation', interception.failure.message);
         const scaled = scale !== undefined && Number.isFinite(scale) && scale > 0 && scale < 1;

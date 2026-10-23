@@ -82,6 +82,7 @@ Everything lives under one token prefix on the composition server's own origin (
 |---|---|
 | `__ms.ready(): Promise<{ duration, fps, width, height, frames, errors }>` | Resolves when all of this is done: mounted, every declared font `FontFace.load()`ed, images decoded, videos loaded (`loadeddata`), every layer connected with its fonts loaded and `msReady` awaited, and t = 0 shown. It rejects only on a fatal error (no composition data, a bad base, a malformed composition or one the mount cannot handle, or a `frameTimeout` on the first frame). Asset problems appear in `errors`: Task 4 decides whether they fail the render. |
 | `__ms.seek(t): Promise<void>` | Shows composition time `t` in seconds, clamped to `[0, duration]` (a still is always 0). See "Seek" below. It rejects with `frameTimeout` when no frame was painted; the renderer must then fail, never capture. |
+| `__ms.canvasLosses` | How many times a canvas lost its GPU context (its pixels) so far, e.g. when Chrome's GPU process goes: the video canvases' and those of the html layers (each layer pushes its losses). A seek ends only once every lost canvas is back and redrawn (a video decodes its frame again, a layer gets `msSeek` again); the renderer reads it before each seek and after the capture, and seeks again if it changed (decision 1752, 1755). Reading it also counts a video canvas Chrome already marks lost (`isContextLost()`) before its event runs; a layer's loss reaches it only once the layer's event ran and its message arrived, a residual window of a few ms (decision 1755). |
 | `__ms.duration`, `__ms.fps`, `__ms.width`, `__ms.height` | From the composition. `duration` is 0 for a still. |
 | `__ms.mode` | `'render'` or `'preview'`. |
 | `__ms.errors` | Every `RuntimeError` reported so far. |
@@ -207,7 +208,11 @@ never hangs. Task 4 still puts its own timeout on each `Runtime.evaluate`.
   2. every `document.getAnimations()` is paused at `t`;
   3. `msTimeline` goes to `t`: `seek(t, false)` (GSAP style), or `currentTime = t × 1000` (WAAPI style);
   4. `msSeek(t)` is awaited;
-  5. then two native animation frames.
+  5. then two native animation frames;
+  6. render mode (decision 1752): if one of the layer's 2D canvases lost its GPU context meanwhile (Chrome's GPU process
+     went: its pixels are gone), the seek waits for every canvas to come back and runs steps 1–5 again, so a layer that
+     draws its canvas from `msSeek` or its animation frames draws it again. A canvas drawn once, outside them, stays
+     blank; a WebGL canvas (`webglcontextlost`) is the layer's own to restore.
 
   While `msSeek` or `msReady` is pending, the frozen clock is **pumped at the current time**, once per native macrotask:
   - the timers that are due fire first;
