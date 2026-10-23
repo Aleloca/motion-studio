@@ -369,8 +369,11 @@ class CanvasLostError extends FrameTimeoutError {
   constructor(ms: number) { super(ms); this.message = `a canvas of the layer lost its GPU context and did not get it back within ${ms} ms`; }
 }
 
-/** `stallMs`: the render-mode stall bound (`CLOCK_STALL_MS`; shorter only in tests). */
-export function startLayerAgent(w: Window & typeof globalThis, o: { stallMs?: number } = {}): void {
+/**
+ * `stallMs`: the render-mode stall bound (`CLOCK_STALL_MS`; shorter only in tests). `trusted`: which canvas events are
+ * Chrome's (tests only: jsdom cannot make a trusted event).
+ */
+export function startLayerAgent(w: Window & typeof globalThis, o: { stallMs?: number; trusted?: (ev: Event) => boolean } = {}): void {
   const config: LayerConfig | null = decodeLayerConfig(w.name);
   if (!config) return; // not a Motion Studio layer frame (opened on its own): leave the page alone
   const clock: VirtualClock = installVirtualClock(w);
@@ -404,7 +407,10 @@ export function startLayerAgent(w: Window & typeof globalThis, o: { stallMs?: nu
   let canvasEvents = 0;
   const lostCanvases = new Set<EventTarget>();
   let onCanvasEvent: (() => void) | null = null;
+  // Only Chrome's own events (decision 1755): a layer cannot fake a loss to make every capture be made again.
+  const trusted = o.trusted ?? ((ev: Event) => ev.isTrusted);
   w.addEventListener('contextlost', (ev) => {
+    if (!trusted(ev)) return;
     canvasLosses++;
     canvasEvents++;
     if (ev.target) lostCanvases.add(ev.target);
@@ -412,14 +418,23 @@ export function startLayerAgent(w: Window & typeof globalThis, o: { stallMs?: nu
     onCanvasEvent?.();
   }, true);
   w.addEventListener('contextrestored', (ev) => {
+    if (!trusted(ev)) return;
     canvasEvents++;
     if (ev.target) lostCanvases.delete(ev.target);
     onCanvasEvent?.();
   }, true);
+  /**
+   * Whether a canvas of the layer is still lost. One the layer removed meanwhile no longer counts (decision 1755): its
+   * `contextrestored` cannot reach the window from a detached canvas, so it would be waited for forever.
+   */
+  const anyLost = (): boolean => {
+    for (const c of lostCanvases) if (!(c as Node).isConnected) lostCanvases.delete(c);
+    return lostCanvases.size > 0;
+  };
   /** Resolves once no canvas is lost; rejects (frameTimeout) after `frameWait.timeoutMs`. */
   const canvasesBack = async (): Promise<void> => {
     const deadline = clock.native.performanceNow() + frameWait.timeoutMs;
-    while (lostCanvases.size > 0) {
+    while (anyLost()) {
       const left = deadline - clock.native.performanceNow();
       if (left <= 0) throw new CanvasLostError(frameWait.timeoutMs);
       await new Promise<void>((resolve) => {
@@ -505,7 +520,7 @@ export function startLayerAgent(w: Window & typeof globalThis, o: { stallMs?: nu
         let seen = canvasEvents;
         await seekOnce(req.t);
         // Decision 1752: a canvas lost (or back) meanwhile may hold nothing: once all are back, the frame is made again.
-        while (renderMode && (canvasEvents !== seen || lostCanvases.size > 0)) {
+        while (renderMode && (canvasEvents !== seen || anyLost())) {
           await canvasesBack();
           seen = canvasEvents;
           await seekOnce(req.t);

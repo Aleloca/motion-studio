@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { captureFrame, captureRawFrame, CANVAS_LOSS_ATTEMPTS } from '../src/render/capture.ts';
-import type { RenderPage } from '../src/render/chromium-provider.ts';
+import { seekExpression, type RenderPage } from '../src/render/chromium-provider.ts';
 
 function pngOf(w: number, h: number, tag: number): Buffer {
   const b = Buffer.alloc(25);
@@ -60,5 +60,16 @@ describe('a capture that a lost canvas may have spoiled is made again (decision 
     delete (page as { canvasLost?: unknown }).canvasLost;
     await captureFrame(page, 0, { format: 'png', width: 4, height: 2 });
     expect(calls).toEqual(['seek 0', 'capture']);
+  });
+});
+
+describe('the page takes its loss count before the seek (review I1)', () => {
+  it('a loss during the seek (a layer replying, then losing its canvas before the seek ends) is a loss since the seek', async () => {
+    // The page side of `RenderPage.seek`, run against a stand-in runtime whose count grows during the seek.
+    const ms = { canvasLosses: 4, seek: async () => { ms.canvasLosses = 5; } };
+    const run = new Function('window', `return ${seekExpression(1.5)};`) as (w: unknown) => Promise<unknown>;
+    expect(await run({ __ms: ms })).toBe(4);
+    // A runtime without the count: no check.
+    expect(await run({ __ms: { seek: async () => {} } })).toBeUndefined();
   });
 });

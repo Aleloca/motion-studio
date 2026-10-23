@@ -152,21 +152,31 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
   const lostCanvases = new Set<HTMLCanvasElement>();
   /** Videos whose held frame went with a lost GPU context: their next seek decodes again (`decodeAgain`). */
   const staleDecodes = new WeakSet<HTMLVideoElement>();
+  /** The losses of the html layers closed so far (a replaced subtitle template): `canvasLosses` never goes back. */
+  let closedLayerLosses = 0;
   let onCanvasRestored: (() => void) | null = null;
+  /** A loss, seen by its event or earlier by `isContextLost()` (decision 1755): counted once per loss. */
+  const markLost = (cv: HTMLCanvasElement) => {
+    if (lostCanvases.has(cv)) return;
+    canvasLosses++;
+    canvasEvents++;
+    lostCanvases.add(cv);
+    for (const m of mounted) if (m.video) staleDecodes.add(m.video);
+  };
   const watchContext = (cv: HTMLCanvasElement) => {
-    cv.addEventListener('contextlost', () => {
-      canvasLosses++;
-      canvasEvents++;
-      lostCanvases.add(cv);
-      for (const m of mounted) if (m.video) staleDecodes.add(m.video);
-    });
+    cv.addEventListener('contextlost', () => markLost(cv));
     cv.addEventListener('contextrestored', () => { canvasEvents++; lostCanvases.delete(cv); onCanvasRestored?.(); });
   };
-  /** Whether `cv`'s 2D context is lost now (its event may still be on its way). */
+  /**
+   * Whether `cv`'s 2D context is lost now. Chrome marks a context lost before its `contextlost` task runs, so a loss is
+   * taken from `isContextLost()` as soon as it shows (decision 1755): the renderer's check after a capture does not depend
+   * on the event having been dispatched first.
+   */
   const contextLost = (cv: HTMLCanvasElement) => {
     if (lostCanvases.has(cv)) return true;
     const ctx = cv.getContext('2d') as (CanvasRenderingContext2D & { isContextLost?: () => boolean }) | null;
-    return typeof ctx?.isContextLost === 'function' && ctx.isContextLost();
+    if (typeof ctx?.isContextLost === 'function' && ctx.isContextLost()) { markLost(cv); return true; }
+    return false;
   };
   /** Resolves once `lost()` is false (checked on each `contextrestored` and every 50 ms); rejects at `deadline` (native ms). */
   const canvasesRestored = async (lost: () => boolean, deadline: number): Promise<void> => {
@@ -302,6 +312,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
   };
   /** Lets go of a layer and its frame. */
   const closeLayer = (l: { frame: HTMLIFrameElement; layer: LayerHost }) => {
+    closedLayerLosses += l.layer.canvasLosses;
     l.layer.dispose();
     l.frame.removeAttribute('src');
     l.frame.remove();
@@ -657,10 +668,10 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
    * a frame that could not be drawn rejects the seek (`videoSeekTimeout`), so the renderer stops at once instead of
    * waiting out the deadline of every later seek.
    */
-  const seekVideo = async (m: Mounted, t: number) => {
+  const seekVideo = async (m: Mounted, t: number, until?: number) => {
     const v = m.video!;
     if (m.clip.type !== 'video') return;
-    const deadline = n.performanceNow() + timeouts.seek;
+    const deadline = until ?? n.performanceNow() + timeouts.seek;
     const target = videoSourceTime(m.clip, t, v.duration);
     if (!v.paused) v.pause();
     if (opts.mode === 'render' && staleDecodes.has(v)) {
@@ -749,8 +760,14 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
         throw e;
       }
       seen = canvasEvents; // every canvas is back: a loss or restore from here on is seen by the next turn
-      await Promise.all(shown().map((m) => seekVideo(m, time)));
-      await twoFrames(n, { strict: true, timeoutMs: Math.max(1, deadline - n.performanceNow()) });
+      // The redraws share the seek's deadline (decision 1755): one seek with a loss never takes more than `timeouts.seek`.
+      await Promise.all(shown().map((m) => seekVideo(m, time, deadline)));
+      try {
+        await twoFrames(n, { strict: true, timeoutMs: Math.max(1, deadline - n.performanceNow()) });
+      } catch (e) {
+        if (e instanceof FrameTimeoutError) report('frameTimeout', `no animation frame after redrawing a lost video canvas at ${time}: ${e.message}`);
+        throw e;
+      }
     }
   };
   /**
@@ -1044,7 +1061,10 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     width: c.width,
     height: c.height,
     get time() { return time; },
-    get canvasLosses() { return mounted.reduce((sum, m) => sum + (m.layer?.canvasLosses ?? 0), canvasLosses); },
+    get canvasLosses() {
+      if (opts.mode === 'render') for (const m of mounted) if (m.canvas && m.video) contextLost(m.canvas); // decision 1755
+      return mounted.reduce((sum, m) => sum + (m.layer?.canvasLosses ?? 0), canvasLosses + closedLayerLosses);
+    },
     get playing() { return playing; },
     get scale() { return scale; },
     get selected() { return selected; },

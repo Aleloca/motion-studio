@@ -55,15 +55,16 @@ export function imageSize(buf: Buffer): { width: number; height: number } | null
   return null;
 }
 
-/** How many times a frame is sought and captured while a video canvas keeps losing its GPU context (decision 1752). */
+/** How many times a frame is sought and captured while a canvas keeps losing its GPU context (decision 1752). */
 export const CANVAS_LOSS_ATTEMPTS = 3;
 
 /**
- * Decision 1752: `seek(t)` then `grab()`, again while the page says a video canvas lost its GPU context since the seek ended
- * (`RenderPage.canvasLost`: its box may be black in what was grabbed; the next seek waits for it to be back and redraws
- * it). After `CANVAS_LOSS_ATTEMPTS` spoiled grabs the frame fails rather than be encoded.
+ * Decision 1752: `seek(t)` then `grab()`, again while the page says a canvas lost its GPU context since the seek began
+ * (`RenderPage.canvasLost`, decision 1755: its box may be black in what was grabbed; the next seek waits for it to be back
+ * and redraws it). After `CANVAS_LOSS_ATTEMPTS` spoiled grabs the frame fails rather than be encoded. Renders, stills and
+ * storyboard frames all capture through it.
  */
-async function seekAndGrab<T>(page: RenderPage, t: number, grab: () => Promise<T>): Promise<T> {
+export async function seekAndGrab<T>(page: RenderPage, t: number, grab: () => Promise<T>): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     await page.seek(t);
     const got = await grab();

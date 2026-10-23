@@ -352,12 +352,13 @@ describe('pausing the layer\'s animations', () => {
 // Decision 1752: when Chrome's GPU process goes, the layer's own canvases lose their pixels too (the macOS CI failure of
 // "render mode ignores setComposition": exactly the probe canvas's three white rectangles gone, 420 px, diff 0.0073).
 describe('a layer canvas that loses its GPU context', () => {
-  function renderLayer(layerCode: (w: Window & typeof globalThis) => void, frameTimeoutMs = 5_000) {
+  /** The events these tests dispatch stand for Chrome's (`isTrusted` cannot be set in jsdom), unless `trusted` says no. */
+  function renderLayer(layerCode: (w: Window & typeof globalThis) => void, frameTimeoutMs = 5_000, trusted: (ev: Event) => boolean = () => true) {
     const w = freshWindow();
     w.name = encodeLayerConfig({ v: 1, mode: 'render', clipId: 'l', params: {}, fonts: [], frameTimeoutMs });
     Object.defineProperty(w.document, 'fonts', { value: [], configurable: true });
     Object.defineProperty(w.document, 'getAnimations', { value: () => [], configurable: true });
-    startLayerAgent(w, { stallMs: 1_000 });
+    startLayerAgent(w, { stallMs: 1_000, trusted });
     layerCode(w);
     const replies = new Map<number, (r: Record<string, unknown>) => void>();
     const pushed: unknown[] = [];
@@ -404,5 +405,39 @@ describe('a layer canvas that loses its GPU context', () => {
     const r = await request({ op: 'seek', t: 1 });
     expect(r).toMatchObject({ ok: false, code: 'frameTimeout' });
     expect(r.error).toMatch(/lost its GPU context/);
+  });
+
+  it('render: a lost canvas the layer removes (it builds a new one each seek) is not waited for (I2)', async () => {
+    let lose = false;
+    const { request } = renderLayer((w) => {
+      (w as unknown as { msSeek: unknown }).msSeek = () => {
+        w.document.querySelectorAll('canvas').forEach((c) => c.remove()); // a chart library that rebuilds
+        const c = canvasIn(w);
+        if (lose) {
+          lose = false;
+          // Lost after this seek's reply; the next seek removes it before its restore, which so never reaches the window.
+          setTimeout(() => c.dispatchEvent(new w.Event('contextlost')), 150);
+          setTimeout(() => c.dispatchEvent(new w.Event('contextrestored')), 400);
+        }
+      };
+    }, 2_000);
+    lose = true;
+    expect(await request({ op: 'seek', t: 1 })).toMatchObject({ ok: true, canvasLosses: 0 });
+    await new Promise((r) => setTimeout(r, 200));
+    let t0 = performance.now();
+    expect(await request({ op: 'seek', t: 2 })).toMatchObject({ ok: true, canvasLosses: 1 });
+    await new Promise((r) => setTimeout(r, 300)); // the restore went to the removed canvas
+    t0 = performance.now();
+    expect(await request({ op: 'seek', t: 3 })).toMatchObject({ ok: true, canvasLosses: 1 });
+    expect(performance.now() - t0).toBeLessThan(1_000);
+  });
+
+  it('render: an event the layer dispatched itself (not Chrome\'s) is ignored (M5)', async () => {
+    const { request, pushed } = renderLayer((w) => {
+      const c = canvasIn(w);
+      (w as unknown as { msSeek: unknown }).msSeek = () => { c.dispatchEvent(new w.Event('contextlost')); };
+    }, 5_000, (ev) => ev.isTrusted);
+    expect(await request({ op: 'seek', t: 1 })).toEqual({ id: 1, ok: true, canvasLosses: 0 });
+    expect(pushed).not.toContainEqual(expect.objectContaining({ type: 'canvasLost' }));
   });
 });

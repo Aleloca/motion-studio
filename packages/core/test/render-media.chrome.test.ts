@@ -18,7 +18,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Composition, FormatPreset } from '@motion-studio/shared';
 import { decodePng } from '../../composition-runtime/test/support/png.ts';
 import { sourceFrameIndex, videoSourceTime, VFR_NUDGE } from '../../composition-runtime/src/timing.ts';
-import { ChromeProvider } from '../src/render/chromium-provider.ts';
+import { ChromeProvider, type RenderPage } from '../src/render/chromium-provider.ts';
 import { renderComposition } from '../src/render/renderer.ts';
 import { checkVideotoolbox } from '../src/render/encode.ts';
 import { buildRuntime, burstWav, decodeAudio, decodeStrips, frameCodedVideo, framePts, expectNoLeftovers, onset, readCode, renderTools } from './helpers/render-env.ts';
@@ -336,6 +336,9 @@ describe.skipIf(!tools.ok)('renderer: media timing, seams, audio, still', () => 
     } as unknown as Composition;
     const p = new ChromeProvider({ exe: tools.chrome!.exe, kind: 'system', limits: { timeLimitMs: 30 * 60_000 } });
     const browser = () => (p as unknown as { launched: { cdp: { send(method: string): Promise<unknown> } } }).launched.cdp;
+    const pages: RenderPage[] = [];
+    const open = p.open.bind(p);
+    p.open = async (o) => { const page = await open(o); pages.push(page); return page; };
     let crash: Promise<unknown> | null = null;
     const out = join(creative, VERSION_DIR, `${id}.mp4`);
     await renderComposition({
@@ -343,6 +346,8 @@ describe.skipIf(!tools.ok)('renderer: media timing, seams, audio, still', () => 
       onProgress: (x) => { if (!crash && x.frames >= 8) crash = browser().send('Browser.crashGpuProcess'); },
     });
     await expect(crash).resolves.toBeDefined();
+    // The loss reached the pages during the render (review M4): otherwise this test would prove nothing.
+    expect(Math.max(...pages.map((x) => x.canvasLossesSeen?.() ?? 0))).toBeGreaterThan(0);
     const frames = Array.from({ length: N }, (_, i) => i);
     const shown = (t: number) => { let k = 0; for (let j = 0; j < times.length; j++) if (times[j]! <= Math.min(t, times.at(-1)!) + 1e-9) k = j; return k + 1; };
     const a = decodeStrips(ff, out, BOXES.v24, 2).map(readCode), w = decodeStrips(ff, out, BOXES.v25, 2).map(readCode);
