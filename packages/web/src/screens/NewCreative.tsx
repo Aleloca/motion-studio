@@ -333,14 +333,21 @@ export function NewCreative({ slug, live }: { slug: string; /** The app's live s
   // Report 59 (review): a restored draft or brief session can name a format no longer offered (a custom format deleted in another
   // window): it leaves the choice, and a line says so. Only once the catalog is known.
   const [dropped, setDropped] = useState(0);
+  // Report 70: a format the catalog gained after the page loaded it (the brief agent's `source_format`) is not gone: the
+  // catalog is read again once for those ids, and only what is still missing then leaves the choice.
+  const reloadedFor = useRef<{ key: string; catalog: typeof catalog } | null>(null);
   useEffect(() => {
     if (catalog.value === null) return;
     const gone = selected.filter((id) => !instancePreset(presets, id));
     if (gone.length === 0) return;
+    const key = gone.join('\n');
+    // Not asked for these ids yet: read again. Asked and not answered yet (the same catalog object): wait.
+    if (reloadedFor.current?.key !== key) { reloadedFor.current = { key, catalog }; setCatalogNonce((x) => x + 1); return; }
+    if (reloadedFor.current.catalog === catalog) return;
     setDropped(gone.length);
     edited('formats');
     setSelected((s) => s.filter((id) => instancePreset(presets, id)));
-  }, [catalog.value, presets, selected]); // eslint-disable-line react-hooks/exhaustive-deps -- `edited` is a fresh closure each render
+  }, [catalog, presets, selected]); // eslint-disable-line react-hooks/exhaustive-deps -- `edited` is a fresh closure each render
   /** Report 59: a saved custom format; a new one is chosen at once. */
   const customSaved = (p: FormatPreset, cat: { presets: FormatPreset[]; error: string | null }, created: boolean) => {
     setCatalog({ value: cat.presets, error: null, warning: cat.error });
