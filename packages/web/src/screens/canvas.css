@@ -110,8 +110,6 @@
 }
 .ms-cv-frame-wrap:hover .ms-cv-live, .ms-cv-live:focus-visible, .ms-cv-live.ms-on { opacity: 1; }
 .ms-cv-live:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-/* While it plays, "Open editor" steps aside to the top (the picture moves under it). */
-.ms-cv-frame-wrap.ms-live .ms-cv-open { top: 28px; }
 /* A card plays its rendered file on hover (decision 973): over the picture, muted, never taking the pointer. */
 .ms-cv-live-file { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
 /* A board's own "Comment" (decision 973): in the top-right corner, screen-sized like the play button, on hover or focus. */

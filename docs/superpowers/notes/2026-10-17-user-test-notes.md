@@ -612,6 +612,10 @@ arrives and worked on later together.
     4.03 s). VAD is kept (without it the words smear over the music intro) and each segment's tokens move by the
     segment's start minus its first token's; on the full video the words now end at 2:24 instead of 2:08. Existing sets:
     "Rifai i tempi" (the edited text stays, the Italian translation follows).
+77. **"Open editor" jumps to the top on the canvas (user report of 2026-10-23).** Hovering a video board shows "Open
+    editor" in the middle, then moves it up once the preview starts playing. The user wants it to stay in the middle:
+    nobody really watches the whole video in that small preview.
+    Done (decision 1802): the button stays centred while the preview plays; the step-aside rule is removed.
 - **Flaky under load:** `core/test/agent-actions.test.ts` "duplicate_format runs after the turn, on the version it
   saved" failed once in a full local run (2026-10-23, waitFor on the action line) and passes alone 3/3.
 

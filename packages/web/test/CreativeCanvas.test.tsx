@@ -1539,7 +1539,6 @@ describe('CreativeCanvas · compositions (Task 8)', () => {
     await new Promise((r) => setTimeout(r, 600));
     expect(api.previewSession).not.toHaveBeenCalled();
     expect(board('identity-favicon').querySelector('iframe')).toBeNull();
-    expect(wrap.classList.contains('ms-live')).toBe(false);
     expect(within(board('identity-favicon')).queryByRole('button', { name: /^Riproduci l’anteprima dal vivo di/ })).toBeNull();
   });
 
