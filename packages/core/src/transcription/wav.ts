@@ -53,38 +53,3 @@ export async function wavData(path: string): Promise<{ offset: number; bytes: nu
     await fh.close();
   }
 }
-
-/** Report 76: 20 ms windows; one is speech above -40 dBFS RMS, and a pause is at least 0.25 s of windows below it. */
-const SPAN_WINDOW = WAV_RATE / 50;
-const SPAN_LOUD_RMS = 32768 * 10 ** (-40 / 20);
-const SPAN_PAUSE_SEC = 0.25;
-
-/**
- * Where the speech of a 16 kHz mono WAV ends (`endSec`, the last loud window) and how long its pauses before that are in all
- * (`quietSec`, the leading silence included), read from its samples (report 76: what a VAD would cut out). Null when it is
- * silent throughout or is not that WAV.
- */
-export async function speechSpan(path: string): Promise<{ endSec: number; quietSec: number } | null> {
-  const where = await wavData(path).catch(() => null);
-  if (!where) return null;
-  const fh = await open(path, 'r');
-  try {
-    const buf = Buffer.alloc(SPAN_WINDOW * 2 * 1600);
-    let win = 0, lastLoud = -1, run = 0, quiet = 0;
-    for (let pos = 0; pos < where.bytes; pos += buf.length) {
-      const { bytesRead } = await fh.read(buf, 0, Math.min(buf.length, where.bytes - pos), where.offset + pos);
-      for (let w = 0; w + 1 < bytesRead; w += SPAN_WINDOW * 2, win++) {
-        let sum = 0, n = 0;
-        for (let i = w; i + 1 < Math.min(bytesRead, w + SPAN_WINDOW * 2); i += 2, n++) { const v = buf.readInt16LE(i); sum += v * v; }
-        if (Math.sqrt(sum / n) < SPAN_LOUD_RMS) { run++; continue; }
-        if (run * (SPAN_WINDOW / WAV_RATE) >= SPAN_PAUSE_SEC) quiet += run * (SPAN_WINDOW / WAV_RATE);
-        run = 0;
-        lastLoud = win;
-      }
-      if (bytesRead === 0) break;
-    }
-    return lastLoud < 0 ? null : { endSec: Number((((lastLoud + 1) * SPAN_WINDOW) / WAV_RATE).toFixed(3)), quietSec: Number(quiet.toFixed(3)) };
-  } finally {
-    await fh.close();
-  }
-}
