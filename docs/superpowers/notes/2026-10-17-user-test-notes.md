@@ -548,6 +548,16 @@ arrives and worked on later together.
     that both start on a black frame look identical.
     Wanted: show the file name too, so two assets can be told apart.
 
+70. **Subtitles from the brief chat (user test of 2026-10-23).** The user asked "Aggiungimi i sottotitoli a questo video"
+    with an uploaded 1920×1188 video. The brief agent asked the language and the format, then filled the brief:
+    - it wrote "burned-in" without asking drawn vs track/file (the spec says it asks when the user does not say);
+    - "Formato originale" was offered but no preset is 1920×1188, so it fell back to 16:9 with side margins;
+    - the notes say the subtitle text is "taken from the timed transcript, corrected": the agent seems set to write the
+      lines itself instead of going through the subtitle set (transcription, editor, languages);
+    - it answered in English to Italian messages;
+    - it promised the lines avoid "the labels already in the video", which the drawn subtitles may not support.
+    Wanted: all of these fixed before the user tries again.
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
