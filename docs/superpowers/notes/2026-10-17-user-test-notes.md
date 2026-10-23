@@ -547,6 +547,8 @@ arrives and worked on later together.
     the chat with the agent for the brief, the "ACME LIBRARY" popover shows square thumbnails with no name; two videos
     that both start on a black frame look identical.
     Wanted: show the file name too, so two assets can be told apart.
+    Done (decisions 1757-1760): each picker tile shows the file name on one line (ellipsis; full name and description in
+    the tooltip), and videos get a play badge; no better poster exists (the Assets grid also shows the first frame).
 
 70. **Subtitles from the brief chat (user test of 2026-10-23).** The user asked "Aggiungimi i sottotitoli a questo video"
     with an uploaded 1920×1188 video. The brief agent asked the language and the format, then filled the brief:
