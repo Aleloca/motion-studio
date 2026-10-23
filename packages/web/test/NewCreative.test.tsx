@@ -328,7 +328,7 @@ describe('NewCreative · accessible reasons', () => {
     api.listAssets.mockResolvedValueOnce({ assets: [asset('foto.jpg')], error: 'assets.json: riga 3 non valida', unregistered: [] } as never);
     render(<NewCreative slug="acme" />);
     await board();
-    await userEvent.click(screen.getByRole('button', { name: 'Sfoglia la libreria' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Sfoglia gli Asset' }));
     const picker = await screen.findByRole('dialog');
     expect(within(picker).getByText(/assets\.json: riga 3 non valida/)).toBeTruthy();
     expect(within(picker).getByRole('button', { name: /foto\.jpg/ })).toBeTruthy();
@@ -463,7 +463,7 @@ describe('NewCreative · assets', () => {
   it('the picker adds the assets to the brief', async () => {
     render(<NewCreative slug="acme" />);
     await board();
-    await userEvent.click(screen.getByRole('button', { name: 'Sfoglia la libreria' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Sfoglia gli Asset' }));
     const picker = await screen.findByRole('dialog');
     // Fonts come from the brand kit: not offered.
     expect(within(picker).queryByRole('button', { name: /Inter\.woff2/ })).toBeNull();
@@ -512,7 +512,7 @@ describe('NewCreative · assets', () => {
     api.listAssets.mockResolvedValueOnce({ assets: [], error: null, unregistered: [] });
     render(<NewCreative slug="acme" />);
     await board();
-    await userEvent.click(screen.getByRole('button', { name: 'Sfoglia la libreria' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Sfoglia gli Asset' }));
     const picker = await screen.findByRole('dialog');
     await within(picker).findByText('Ancora nessun asset in questo progetto');
     await userEvent.click(within(picker).getByRole('button', { name: 'Apri Asset' }));

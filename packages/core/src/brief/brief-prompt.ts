@@ -104,7 +104,7 @@ export function buildBriefPrompt(i: BriefPromptContext & { projectName: string; 
     '- goal: what the user wants to make (the purpose of the video or image).',
     '- message: the key message shown on screen (short).',
     '- durationSec: the length of the videos in seconds, 1–600 (null: not set). When an attached video is the content itself (subtitles for it, the video as it is), set its length, rounded up (the attached assets below show it).',
-    '- assets: files of the project library to use, as their paths (`assets/…`), only among the attached assets below.',
+    '- assets: files in the project Assets to use, as their paths (`assets/…`), only among the attached assets below.',
     '- linkedCodebases: the folders the creative\'s agent will read later, each with a note on what it is for, only among the folders below.',
     '- notes: notes for the agent that will make the creative (style, constraints, what to avoid).',
     '- formats: preset ids of the catalog: call list_formats and use only its ids, never a guessed one.',

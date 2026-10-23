@@ -141,7 +141,7 @@ describe('StorePackWizard · steps', () => {
     expect(screen.getByRole('button', { name: 'Screenshot 2: no app screen' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByText('Choose an app screen, or “No app screen”, for: 1, 3')).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Choose the app screen of screenshot 1' }));
-    const picker = await screen.findByRole('dialog', { name: 'App screen from the library' });
+    const picker = await screen.findByRole('dialog', { name: 'App screen from Assets' });
     await userEvent.click(await within(picker).findByRole('button', { name: /home\.png/ }));
     await waitFor(() => expect(screen.getByText('Choose an app screen, or “No app screen”, for: 3')).toBeTruthy());
     // Picking a screen on a row marked "No app screen" takes the mark off; toggling the mark again undoes it.
@@ -163,11 +163,11 @@ describe('StorePackWizard · app screens', () => {
     open();
     await toScreens();
     await userEvent.click(screen.getByRole('button', { name: 'Choose the app screen of screenshot 1' }));
-    const picker = await screen.findByRole('dialog', { name: 'App screen from the library' });
-    const list = await within(picker).findByRole('list', { name: 'Library images' });
+    const picker = await screen.findByRole('dialog', { name: 'App screen from Assets' });
+    const list = await within(picker).findByRole('list', { name: 'Images from Assets' });
     expect(within(list).getAllByRole('button').map((b) => b.textContent)).toEqual(['home.png']);
     await userEvent.click(within(list).getByRole('button', { name: /home\.png/ }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'App screen from the library' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'App screen from Assets' })).toBeNull());
     expect(screen.getByText('home.png')).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Remove the screen of screenshot 1' }));
     expect(screen.queryByText('home.png')).toBeNull();
@@ -177,11 +177,11 @@ describe('StorePackWizard · app screens', () => {
     open();
     await toScreens();
     await userEvent.click(screen.getByRole('button', { name: 'Choose the app screen of screenshot 2' }));
-    const picker = await screen.findByRole('dialog', { name: 'App screen from the library' });
+    const picker = await screen.findByRole('dialog', { name: 'App screen from Assets' });
     const file = new File(['x'], 'settings.png', { type: 'image/png' });
     fireEvent.change(within(picker).getByLabelText('Image file to upload'), { target: { files: [file] } });
     await waitFor(() => expect(api.uploadFiles).toHaveBeenCalledWith('acme', 'assets', [file]));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'App screen from the library' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'App screen from Assets' })).toBeNull());
     expect(screen.getByText('settings.png')).toBeTruthy();
   });
 
@@ -190,10 +190,10 @@ describe('StorePackWizard · app screens', () => {
     open();
     await toScreens();
     await userEvent.click(screen.getByRole('button', { name: 'Choose the app screen of screenshot 1' }));
-    const picker = await screen.findByRole('dialog', { name: 'App screen from the library' });
+    const picker = await screen.findByRole('dialog', { name: 'App screen from Assets' });
     fireEvent.change(within(picker).getByLabelText('Image file to upload'), { target: { files: [new File(['x'], 'settings.png')] } });
     expect((await within(picker).findByRole('alert')).textContent).toContain('settings.png is a symbolic link: not accepted');
-    expect(screen.getByRole('dialog', { name: 'App screen from the library' })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'App screen from Assets' })).toBeTruthy();
   });
 
   it('review shows the choices and Generate sends the validated pack', async () => {
@@ -203,9 +203,9 @@ describe('StorePackWizard · app screens', () => {
     await userEvent.click(next());
     await fillCaptions();
     await userEvent.click(screen.getByRole('button', { name: 'Choose the app screen of screenshot 1' }));
-    const picker = await screen.findByRole('dialog', { name: 'App screen from the library' });
+    const picker = await screen.findByRole('dialog', { name: 'App screen from Assets' });
     await userEvent.click(await within(picker).findByRole('button', { name: /home\.png/ }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'App screen from the library' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'App screen from Assets' })).toBeNull());
     await decideRest();
     await userEvent.click(next());
     // Step 4: the preview.
@@ -273,7 +273,7 @@ describe('StorePackWizard · picker types and closing', () => {
     open();
     await toScreens();
     await userEvent.click(screen.getByRole('button', { name: 'Choose the app screen of screenshot 1' }));
-    const list = await screen.findByRole('list', { name: 'Library images' });
+    const list = await screen.findByRole('list', { name: 'Images from Assets' });
     expect(within(list).getAllByRole('button').map((b) => b.textContent)).toEqual(['a.png', 'b.JPG', 'c.webp']);
   });
 
@@ -282,7 +282,7 @@ describe('StorePackWizard · picker types and closing', () => {
     open();
     await toScreens();
     await userEvent.click(screen.getByRole('button', { name: 'Choose the app screen of screenshot 2' }));
-    const picker = await screen.findByRole('dialog', { name: 'App screen from the library' });
+    const picker = await screen.findByRole('dialog', { name: 'App screen from Assets' });
     fireEvent.change(within(picker).getByLabelText('Image file to upload'), { target: { files: [new File(['x'], 'anim.gif')] } });
     expect((await within(picker).findByRole('alert')).textContent).toBe('Only images (PNG, JPEG or WebP) can be an app screen');
     expect(screen.queryByText('anim.gif', { selector: '.ms-spw-file' })).toBeNull();

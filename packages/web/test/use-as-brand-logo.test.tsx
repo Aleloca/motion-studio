@@ -23,7 +23,7 @@ describe('UseAsBrandLogo', () => {
     view();
     await userEvent.click(button());
     const dialog = await screen.findByRole('dialog', { name: 'Usare come logo del brand?' });
-    expect(within(dialog).getByText(/copiato negli asset del progetto e aggiunto al kit del brand/)).not.toBeNull();
+    expect(within(dialog).getByText(/copiato negli Asset del progetto e aggiunto al kit del brand/)).not.toBeNull();
     expect(useAsBrandLogo).not.toHaveBeenCalled();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Annulla' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());

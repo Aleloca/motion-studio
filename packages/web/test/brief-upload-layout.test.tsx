@@ -60,7 +60,7 @@ async function markup(): Promise<string> {
   const file = (name: string) => new File(['x'], name);
   await userEvent.upload(input, [file('moodboard-campagna-primavera.pdf'), file('voce-guida.mp3')]);
   await userEvent.click(await screen.findByRole('button', { name: /voce-guida\.mp3 è solo per questa creatività/ }));
-  await screen.findByRole('button', { name: /voce-guida\.mp3 è salvato negli Assets/ });
+  await screen.findByRole('button', { name: /voce-guida\.mp3 è salvato negli Asset/ });
   await userEvent.upload(input, [file('ripresa-drone-4k.mov')]);
   await userEvent.upload(input, [file('video-troppo-grande.mov')]);
   const section = screen.getByRole('list', { name: 'Asset da usare' });
@@ -137,7 +137,7 @@ run('brief files from the computer: real Chrome layout (report 62)', () => {
           r = await tab.eval<Measure>(MEASURE, 30_000);
           if (shots) writeFileSync(join(shots, `brief-upload-${theme}-${width}x${height}.png`), await tab.screenshot());
         } finally { await tab.close(); }
-        expect(r.marks.map((m) => m.text)).toEqual(['Solo per questa creatività', 'Salvato negli Assets']);
+        expect(r.marks.map((m) => m.text)).toEqual(['Solo per questa creatività', 'Salvato negli Asset']);
         expect(r.uploading).toBe(1);
         expect(r.failed).toBe(1);
         expect(r.cols.length).toBe(4);

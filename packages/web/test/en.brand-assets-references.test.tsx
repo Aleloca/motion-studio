@@ -38,7 +38,7 @@ describe('brand, assets and references in English', () => {
   });
   it('lists assets with English kinds and counts', async () => {
     en(<Assets slug="acme" live={live} />);
-    expect(await screen.findByText('2 files in the assets folder are not in the library yet')).toBeTruthy();
+    expect(await screen.findByText('2 files in the assets folder are not in Assets yet')).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Open logo.svg' }));
     const panel = screen.getByRole('complementary', { name: 'Asset details' });
     expect(within(panel).getByText(`Generated · ${formatWhen('en', asset.addedAt)}`)).toBeTruthy();

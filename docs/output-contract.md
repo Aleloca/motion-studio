@@ -111,7 +111,7 @@ Followers, carried primaries and carried renders follow the targeted-turn rules 
 - a turn or a render of the creative is queued or running (`409 editor-busy`);
 - the edited format's latest composition is no longer the draft's base (`409 editor-base-changed`; the draft is kept).
 
-**`assets/lib/` is reserved for files the editor adds:** library assets and brand font files picked in the editor.
+**`assets/lib/` is reserved for files the editor adds:** files from Assets and brand font files picked in the editor.
 - They are named `assets/lib/<first 8 hex of the sha256>-<name>`.
 - While the draft is open they live in the preview session's staging folder, `.studio/cache/editor-staging/<creative>/<id>/assets/lib/`. The composition server serves a session's `assets/lib/…` path from there only when the composition folder has no such file (the version always wins).
 - At save, only the staged files the composition uses are copied into the new version, verified.

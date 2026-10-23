@@ -59,12 +59,12 @@ describe('send button (report 79)', () => {
 });
 
 describe('attachments in the composer (report 79)', () => {
-  it('the "+" opens a menu with "From computer" and "From library"', async () => {
+  it('the "+" opens a menu with "From computer" and "From Assets"', async () => {
     const user = userEvent.setup();
     render(view());
     await user.click(screen.getByRole('button', { name: 'Attach files' }));
     const menu = await screen.findByRole('menu', { name: 'Attach files to the message' });
-    expect(within(menu).getAllByRole('menuitem').map((m) => m.querySelector('b')!.textContent)).toEqual(['From computer', 'From library']);
+    expect(within(menu).getAllByRole('menuitem').map((m) => m.querySelector('b')!.textContent)).toEqual(['From computer', 'From Assets']);
   });
 
   it('a file from the computer is saved in the library and attached as a chip', async () => {
@@ -82,7 +82,7 @@ describe('attachments in the composer (report 79)', () => {
     const user = userEvent.setup();
     render(view());
     await user.click(screen.getByRole('button', { name: 'Attach files' }));
-    await user.click(await screen.findByRole('menuitem', { name: /^From library/ }));
+    await user.click(await screen.findByRole('menuitem', { name: /^From Assets/ }));
     await user.click(await screen.findByRole('button', { name: 'clip.mp4' }));
     expect(api.listAssets).toHaveBeenCalledWith('acme');
     await user.click(await screen.findByRole('button', { name: 'Remove clip.mp4' }));
@@ -226,9 +226,9 @@ describe('attachments, round 1', () => {
     await pick(user, 'clip.mp4');
     await screen.findByRole('button', { name: 'Remove clip.mp4' });
     await user.type(box(), 'Go');
-    api.sendCreativeTurn.mockRejectedValueOnce(new ApiError(400, 'assets/logo.png is not a file of the project library.', 'attachment-invalid', undefined, ['assets/logo.png']));
+    api.sendCreativeTurn.mockRejectedValueOnce(new ApiError(400, 'assets/logo.png is not a file in the project’s Assets.', 'attachment-invalid', undefined, ['assets/logo.png']));
     await user.click(send());
-    expect((await screen.findByRole('alert')).textContent).toBe('logo.png is no longer in the library: removed from the attachments. Send again.');
+    expect((await screen.findByRole('alert')).textContent).toBe('logo.png is no longer in Assets: removed from the attachments. Send again.');
     expect(screen.queryByRole('button', { name: 'Remove logo.png' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Remove clip.mp4' })).toBeTruthy();
     expect((box() as HTMLTextAreaElement).value).toBe('Go');

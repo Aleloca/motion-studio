@@ -33,7 +33,7 @@ function renderPicker(chosen: string[] = []) {
 describe('library picker: names under the thumbnails', () => {
   it('shows each file name under its thumbnail, with the full name as tooltip and accessible name', () => {
     renderPicker();
-    const dialog = screen.getByRole('dialog', { name: 'Libreria di Acme' });
+    const dialog = screen.getByRole('dialog', { name: 'Asset di Acme' });
     for (const f of ['intro.mp4', 'intro-2.mp4', LONG, 'logo.svg', 'foto.png']) {
       const tile = within(dialog).getByRole('button', { name: f });
       expect(tile.title).toBe(f);
