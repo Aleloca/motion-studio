@@ -13,6 +13,13 @@ export function t(): Messages { return messages(current); }
 export const replyInstruction = (locale: Locale): string =>
   `Always reply to the user in ${languageName(locale)}. Write every text meant for the user (conversation messages, brand guidelines, asset descriptions, problem reports) in ${languageName(locale)}.`;
 
+/**
+ * Report 70: the closing instruction of a chat with the user (the brief chat, a creative's chat): the agent replies in the
+ * language the user writes in, whatever the app's language; `others` says what else is written in the app's language.
+ */
+export const chatReplyInstruction = (locale: Locale, others: string): string =>
+  `Reply to the user in the language of their latest message (your messages and your AskUserQuestion questions alike), whatever the app's language; when the message shows no language (only a name, a number or a file), reply in ${languageName(locale)}. ${others}`;
+
 /** `it_IT.UTF-8` → `it-IT`; `C`, `POSIX` and empty values → null. */
 function normalizePosixLocale(value: string | undefined): string | null {
   const base = (value ?? '').trim().split(/[.@]/)[0] ?? '';
