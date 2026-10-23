@@ -24,6 +24,10 @@ Each folder in `compositions/` is a regular Motion Studio composition (`composit
 
 The site's fonts (`src/assets/fonts/`) are copied into every composition's `assets/fonts/` at build time.
 
+The hero cycles through example creatives: each `.hero__set` in `index.html` holds one creative's three formats, with its
+brief (`data-brief`) and format chips (`data-chips`). The first set is the one shown without JS and under reduced motion;
+the others are hidden until the cycle reaches them, and each creative also has a card in the showcase.
+
 After changing a composition, render its poster again (headless Chrome with a throwaway profile):
 
 ```bash
