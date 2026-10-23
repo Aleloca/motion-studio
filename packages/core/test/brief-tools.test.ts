@@ -1,6 +1,6 @@
 import { customPreset, DEFAULT_FORMATS, EMPTY_BRIEF_FORM, type BriefField } from '@motion-studio/shared';
 import { describe, expect, it } from 'vitest';
-import { applyFill, fillLine, listFormats, mergeClientForm, reclaimLine } from '../src/brief/brief-tools.ts';
+import { applyFill, fillLine, listFormats, mergeClientForm, reclaimLine, sameSizeCustom, sourceFormatSize } from '../src/brief/brief-tools.ts';
 import { setLocale } from '../src/i18n.ts';
 
 const session = (o: Partial<Parameters<typeof applyFill>[0]> = {}) => ({
@@ -151,5 +151,33 @@ describe('custom formats (report 59)', () => {
     const presets = [...DEFAULT_FORMATS, { ...totem, hidden: true as const }];
     expect(listFormats(presets, 'it').formats.some((f) => f.id === 'custom-totem')).toBe(false);
     expect(() => applyFill(session(), { formats: ['custom-totem'] }, presets)).toThrow(/custom-totem/);
+  });
+});
+
+describe('the source\'s own size (report 70)', () => {
+  it('a video keeps its size, each odd side one pixel less; a larger one is scaled to 4096 on its longer side', () => {
+    expect(sourceFormatSize({ kind: 'video', width: 1920, height: 1188 })).toEqual({ width: 1920, height: 1188 });
+    expect(sourceFormatSize({ kind: 'video', width: 1081, height: 1921 })).toEqual({ width: 1080, height: 1920 });
+    expect(sourceFormatSize({ kind: 'video', width: 7680, height: 4320 })).toEqual({ width: 4096, height: 2304 });
+    expect(sourceFormatSize({ kind: 'video', width: 5000, height: 3001 })).toEqual({ width: 4096, height: 2458 });
+  });
+  it('an image keeps odd sides (up to 8192); a size below 16 px cannot be a format', () => {
+    expect(sourceFormatSize({ kind: 'image', width: 1081, height: 1921 })).toEqual({ width: 1081, height: 1921 });
+    expect(sourceFormatSize({ kind: 'image', width: 10000, height: 5000 })).toEqual({ width: 8192, height: 4096 });
+    expect(sourceFormatSize({ kind: 'video', width: 12, height: 1080 })).toBeNull();
+  });
+  it('reuses only a visible custom format of the same kind and size (a shipped preset has a platform\'s limits)', () => {
+    const own = customPreset({ name: 'Originale 1920×1188', kind: 'video', width: 1920, height: 1188 }, 'custom-originale-1920-1188');
+    expect(sameSizeCustom([...DEFAULT_FORMATS, own], 'video', 1920, 1188)?.id).toBe('custom-originale-1920-1188');
+    expect(sameSizeCustom([...DEFAULT_FORMATS, { ...own, hidden: true as const }], 'video', 1920, 1188)).toBeUndefined();
+    expect(sameSizeCustom([...DEFAULT_FORMATS, own], 'image', 1920, 1188)).toBeUndefined();
+    // Round 1 (I4): one with a length limit is never "the original"; one named as the original is preferred.
+    const totem = customPreset({ name: 'Totem lobby', kind: 'video', width: 1920, height: 1188, maxDurationSec: 15 }, 'custom-totem-lobby');
+    expect(sameSizeCustom([...DEFAULT_FORMATS, totem], 'video', 1920, 1188)).toBeUndefined();
+    const other = customPreset({ name: 'Schermo', kind: 'video', width: 1920, height: 1188 }, 'custom-schermo');
+    expect(sameSizeCustom([...DEFAULT_FORMATS, other, own], 'video', 1920, 1188, 'originale 1920×1188')?.id).toBe('custom-originale-1920-1188');
+    expect(sameSizeCustom([...DEFAULT_FORMATS, other], 'video', 1920, 1188, 'Originale 1920×1188')?.id).toBe('custom-schermo');
+    // youtube 1920×1080 exists in the catalog but is not a custom format.
+    expect(sameSizeCustom(DEFAULT_FORMATS, 'video', 1920, 1080)).toBeUndefined();
   });
 });

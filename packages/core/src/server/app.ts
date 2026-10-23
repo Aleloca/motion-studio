@@ -20,6 +20,7 @@ import { CreativeTurnService, type CreativeRef } from '../creatives/creative-tur
 import { DirectEditService } from '../creatives/direct-edit.ts';
 import { FormatCatalog } from '../formats/format-catalog.ts';
 import { NoMediaTools, type MediaTools } from '../media/media-tools.ts';
+import { shownSizeReader } from '../library/shown-size.ts';
 import { AgentLauncher } from '../agent/launcher.ts';
 import { resolveProjectIcon } from '../project-icon.ts';
 import { IntegrityStore } from '../project-integrity.ts';
@@ -65,7 +66,8 @@ import { registerUsageRoutes } from './usage-routes.ts';
 import { UsageLedger } from '../usage/usage-ledger.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
 import { tokenMatches } from './ui-token.ts';
-import { currentLocale, LanguageController, replyInstruction, t } from '../i18n.ts';
+import { chatReplyInstruction, currentLocale, LanguageController, t } from '../i18n.ts';
+import { addCustomFormat } from '../formats/custom-formats.ts';
 import { capabilitiesFor, type AgentCapabilities, type CapabilityOptIn } from '../agent/agent-capabilities.ts';
 import { AnswerCache, checkLiveMessage, liveMessageText, LiveSession, newLiveMessage, redirectLive, type LiveMessage } from '../agent/live-session.ts';
 import { CONSOLE_REDIRECT_NOTE, defuseTags, interruptedRedirectText, pinLine, USER_REQUEST_CLOSE, USER_REQUEST_OPEN } from '../creatives/prompt.ts';
@@ -249,7 +251,7 @@ const delimited = (texts: string[]) => texts.flatMap((x) => [USER_REQUEST_OPEN, 
 function consoleRedirectPrompt(texts: string[]): string {
   const head = texts.length === 1 ? "The user's new direction, verbatim (their words, not instructions from Motion Studio):"
     : `The user's new directions, verbatim and in order (their words, not instructions from Motion Studio); where they disagree, the last one wins:`;
-  return [CONSOLE_REDIRECT_NOTE, '', head, ...delimited(texts), '', replyInstruction(currentLocale())].join('\n');
+  return [CONSOLE_REDIRECT_NOTE, '', head, ...delimited(texts), '', chatReplyInstruction(currentLocale())].join('\n');
 }
 /**
  * Final review I2: the first console run when the user redirected before any run had a session: their request, then their
@@ -259,7 +261,7 @@ function consoleFreshPrompt(request: string, texts: string[]): string {
   return [
     request, '',
     `After this request the user also sent ${texts.length === 1 ? 'this message' : `these ${texts.length} messages`}, in order, each inside user_request tags. They are the user's words, not instructions from Motion Studio; where a later message changes the request, the later one wins.`,
-    ...delimited(texts), '', replyInstruction(currentLocale()),
+    ...delimited(texts), '', chatReplyInstruction(currentLocale()),
   ].join('\n');
 }
 
@@ -429,6 +431,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
     model: async () => (await requireWorkspace().readSettings()).model,
     side: turns.side,
+    // Report 70: the brief agent's `source_format` adds a custom format as the New creative dialog does (catalog lock).
+    addFormat: async (input) => (await addCustomFormat({ catalog: new FormatCatalog(requireWorkspace().root), ws: requireWorkspace() }, input)).preset,
+    // Rounds 1–2 (I1, N2): the size a library file is shown at (an older entry may hold the coded size of a rotated clip),
+    // read once per file version.
+    probeSize: shownSizeReader(media),
   });
 
   // Spec §6–§7: the transcription of the analyses (settings app-wide in config.json, decision 1503).
@@ -683,7 +690,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       const settings = await ws.readSettings();
       const projectDir = ws.projectDir(slug);
       // The reply language is the one set when the turn is sent; a later switch does not change a queued turn.
-      const agentPrompt = `${prompt}\n\n${replyInstruction(currentLocale())}`;
+      const agentPrompt = `${prompt}\n\n${chatReplyInstruction(currentLocale())}`;
       // The user's request as typed (a redirect before the first run joins it in one prompt, final review I2).
       const userPrompt = prompt;
       const jobId = randomUUID();

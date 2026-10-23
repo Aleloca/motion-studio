@@ -1,3 +1,4 @@
+import { chatReplyInstruction } from '../i18n.ts';
 import { BRIEF_TEXT_MAX, agentNamedLabel, compareVariantIds, isUserNamed, languageName, type Brief, type ConversationEntry, type GroupTurnOutcome, type Locale, type Pin, type VariantId } from '@motion-studio/shared';
 import { defuseTags, pinLine, quotePromptString, USER_REQUEST_CLOSE, USER_REQUEST_OPEN } from './prompt.ts';
 
@@ -125,7 +126,7 @@ export function buildCoordinatorPrompt(i: CoordinatorPromptInput): string {
   if (i.added?.length) {
     parts.push('', `This turn already added the variants ${listOf(i.added.map((a) => a.id))} (${i.added.map((a) => `${L(a.id)}: ${a.direction ? quotePromptString(oneLine(a.direction, 140)) : 'no direction'}`).join('; ')}): their first generation runs in this turn. Do not add them again; give them work with work_on_variants only if the user asks for more than their first generation.`);
   }
-  parts.push('', `Reply in ${languageName(i.locale)}.`, '', `\`\`\`${GROUP_BLOCK}`, JSON.stringify({ phase: 'coordinator' }), '```');
+  parts.push('', chatReplyInstruction(i.locale), '', `\`\`\`${GROUP_BLOCK}`, JSON.stringify({ phase: 'coordinator' }), '```');
   return parts.join('\n');
 }
 
@@ -154,7 +155,7 @@ export function buildCoordinatorReport(i: { locale: Locale; outcomes: ReportOutc
     '',
     'Write your reply to the user now: what changed in each variant (with its version), what did not and why, and what to look at. Keep it short.',
     'Do not call work_on_variants or add_variants now: the work of this turn is over. If more is needed, say so; the user will ask.',
-    `Reply in ${languageName(i.locale)}.`,
+    chatReplyInstruction(i.locale),
     '', `\`\`\`${GROUP_BLOCK}`, JSON.stringify({ phase: 'report' }), '```',
   ].join('\n');
 }

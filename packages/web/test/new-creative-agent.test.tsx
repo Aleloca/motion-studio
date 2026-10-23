@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { DEFAULT_FORMATS, EMPTY_BRAND_KIT, EMPTY_BRIEF_FORM, type AssetEntry, type BriefSessionView, type ConversationEntry } from '@motion-studio/shared';
+import { customPreset, DEFAULT_FORMATS, EMPTY_BRAND_KIT, EMPTY_BRIEF_FORM, type AssetEntry, type BriefSessionView, type ConversationEntry } from '@motion-studio/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../src/i18n.tsx';
 import { initialEventsState, type EventsState } from '../src/eventsReducer.ts';
@@ -463,3 +463,45 @@ describe('NewCreative · review round 1 (decisions 1422–1423)', () => {
     api.getBriefSession.mockResolvedValue(view());
   });
 });
+
+describe('NewCreative · a format the agent added (report 70)', () => {
+  const own = customPreset({ name: 'Originale 1920×1188', kind: 'video', width: 1920, height: 1188 }, 'custom-originale-1920-1188');
+  it('a fill naming a format the page has not loaded reloads the catalog once and keeps it chosen', async () => {
+    const { rerender } = render(page(live()));
+    await board();
+    await waitFor(() => expect(api.getBriefSession).toHaveBeenCalled());
+    expect(api.getFormats).toHaveBeenCalledTimes(1);
+    api.getFormats.mockResolvedValueOnce({ presets: [...DEFAULT_FORMATS, own], error: null, path: '/x' });
+    api.getBriefSession.mockResolvedValueOnce(view({ revision: 2, form: { ...EMPTY_BRIEF_FORM, formats: ['custom-originale-1920-1188'] }, agentFields: ['formats'] }));
+    rerender(page(fillTick(1, ['formats'])));
+    const custom = await screen.findByRole('group', { name: 'Personalizzati' });
+    await waitFor(() => expect(within(custom).getByRole('button', { name: /^Originale 1920×1188/ }).getAttribute('aria-pressed')).toBe('true'));
+    expect(api.getFormats).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText(/non è più disponibile/)).toBeNull();
+    expect(within(rowOf('Dove verrà pubblicata?')).getByText('Agente')).toBeTruthy();
+  });
+  it('one still missing after the reload leaves the choice, as before', async () => {
+    const { rerender } = render(page(live()));
+    await board();
+    await waitFor(() => expect(api.getBriefSession).toHaveBeenCalled());
+    api.getBriefSession.mockResolvedValueOnce(view({ revision: 2, form: { ...EMPTY_BRIEF_FORM, formats: ['custom-gone'] }, agentFields: ['formats'] }));
+    rerender(page(fillTick(1, ['formats'])));
+    await screen.findByText('Un formato scelto non è più disponibile ed è stato tolto');
+    expect(api.getFormats).toHaveBeenCalledTimes(2);
+  });
+  it('a re-read that fails keeps the catalog on screen and the format chosen (round 1, M4)', async () => {
+    const { rerender } = render(page(live()));
+    await board();
+    await waitFor(() => expect(api.getBriefSession).toHaveBeenCalled());
+    api.getFormats.mockRejectedValueOnce(new Error('rete giù'));
+    api.getBriefSession.mockResolvedValueOnce(view({ revision: 2, form: { ...EMPTY_BRIEF_FORM, formats: ['custom-originale-1920-1188'] }, agentFields: ['formats'] }));
+    rerender(page(fillTick(1, ['formats'])));
+    await waitFor(() => expect(api.getFormats).toHaveBeenCalledTimes(2));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByRole('group', { name: 'Instagram' })).toBeTruthy();
+    expect(screen.queryByText('rete giù')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Riprova' })).toBeNull();
+    expect(screen.queryByText(/non è più disponibile/)).toBeNull();
+  });
+});
+

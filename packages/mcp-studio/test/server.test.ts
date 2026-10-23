@@ -119,11 +119,12 @@ describe('mcp-studio server', () => {
     expect((await rpc(5, 'tools/call', { name: 'submit_variant_directions', arguments: { directions: ['x'] } })).result.isError).toBe(true);
     expect(calls).toHaveLength(before);
   });
-  it('lists list_formats and fill_brief alone for a brief session and forwards fill_brief', async () => {
+  it('lists list_formats, source_format and fill_brief alone for a brief session and forwards fill_brief', async () => {
     child.kill();
-    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,read_brand_kit,list_formats,fill_brief' });
+    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,read_brand_kit,list_formats,source_format,fill_brief' });
     const tools = (await rpc(3, 'tools/list')).result.tools as Array<{ name: string; description: string; inputSchema: { additionalProperties?: boolean; minProperties?: number; properties: Record<string, { type?: unknown; items?: unknown }> } }>;
-    expect(tools.map((t) => t.name)).toEqual(['approve', 'report_progress', 'read_brand_kit', 'list_formats', 'fill_brief']);
+    expect(tools.map((t) => t.name)).toEqual(['approve', 'report_progress', 'read_brand_kit', 'list_formats', 'source_format', 'fill_brief']);
+    expect(tools.find((t) => t.name === 'source_format')!.inputSchema).toMatchObject({ required: ['asset'], additionalProperties: false });
     const fill = tools.find((t) => t.name === 'fill_brief')!;
     expect(fill.inputSchema.additionalProperties).toBe(false);
     expect(fill.inputSchema.minProperties).toBe(1);
@@ -202,9 +203,9 @@ describe('mcp-studio server', () => {
   });
   it('describes every tool in English', async () => {
     child.kill();
-    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,validate_composition,preview_frames,read_brand_kit,generate_image,tts,stock_search,stock_download,fonts_fetch,download_file,inspect_site_fonts,list_formats,fill_brief' });
+    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,validate_composition,preview_frames,read_brand_kit,generate_image,tts,stock_search,stock_download,fonts_fetch,download_file,inspect_site_fonts,list_formats,source_format,fill_brief' });
     const tools = (await rpc(3, 'tools/list')).result.tools as Array<{ name: string }>;
-    expect(tools).toHaveLength(14);
+    expect(tools).toHaveLength(15);
     const text = JSON.stringify(tools);
     expect(text).not.toMatch(/[àèéìòù]|\b(Genera|Scarica|Cerca|Legge|Controlla|Comunica|Uso interno|italiano)\b/);
     expect(text).toContain('Searches photos or videos on Pexels or Unsplash.');

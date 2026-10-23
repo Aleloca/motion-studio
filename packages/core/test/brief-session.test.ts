@@ -12,6 +12,7 @@ import { ControlledRunner } from './helpers/controlled-runner.ts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BRIEF_QUEUE_MAX, briefJobKey, EMPTY_BRIEF_FORM } from '@motion-studio/shared';
 import { setLocale } from '../src/i18n.ts';
+import { NoMediaTools, type MediaTools } from '../src/media/media-tools.ts';
 import { briefApp, briefHelpers, S, type BriefApp } from './helpers/brief-app.ts';
 
 let t: BriefApp;
@@ -411,6 +412,114 @@ describe('the brief session (decisions 1421–1422)', () => {
     expect(next.req.prompt).toContain('Seconda sessione');
     expect(next.req.prompt).not.toContain('Prima sessione');
     next.finish({ write: false });
+    await waitIdle();
+  });
+});
+
+describe('the source\'s own format (report 70)', () => {
+  const entry = (file: string, kind: 'video' | 'image', width: number | null, height: number | null, durationSec: number | null = null) =>
+    ({ file, kind, origin: 'upload', sourceUrl: null, description: '', tags: [], width, height, addedAt: '2026-10-23T10:00:00.000Z', attribution: null, durationSec });
+  const library = async (assets: unknown[]) => {
+    for (const a of assets as Array<{ file: string }>) await writeFile(join(t.projectDir, 'assets', a.file), 'x');
+    await writeFile(join(t.projectDir, 'assets', 'assets.json'), JSON.stringify({ schemaVersion: 1, assets }));
+  };
+  const formats = async () => (await t.app.inject('/api/formats')).json().presets as Array<{ id: string; name: string; channel: string; kind: string; width: number; height: number; maxDurationSec?: number }>;
+
+  it('the prompt shows an attached video\'s size and length', async () => {
+    t = await briefApp();
+    await library([entry('codecs.mp4', 'video', 1920, 1188, 149.3), entry('logo.png', 'image', null, null)]);
+    const s = await open();
+    await send(s.id, 'Aggiungimi i sottotitoli a questo video', { assets: ['assets/codecs.mp4', 'assets/logo.png'] });
+    const run = await t.runner.next(0);
+    expect(run.req.prompt).toContain('- "assets/codecs.mp4" (video 1920×1188, 149.3 s)\n- "assets/logo.png"\n');
+    run.finish({ write: false });
+    await waitIdle();
+  });
+
+  it('source_format adds a custom format of the attached video\'s size once and reuses it; fill_brief takes its id', async () => {
+    t = await briefApp();
+    setLocale('it');
+    await library([entry('codecs.mp4', 'video', 1920, 1188, 149.3), entry('odd.mp4', 'video', 1081, 1921, 5)]);
+    const s = await open();
+    await send(s.id, 'Sottotitoli', { assets: ['assets/codecs.mp4', 'assets/odd.mp4'] });
+    const run = await t.runner.next(0);
+    const res = await tool(run, 'source_format', { asset: 'assets/codecs.mp4' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ format: 'custom-originale-1920-1188', name: 'Originale 1920×1188', kind: 'video', width: 1920, height: 1188, source: { width: 1920, height: 1188 }, scaled: false, added: true });
+    expect((await formats()).find((p) => p.id === 'custom-originale-1920-1188')).toMatchObject({ channel: 'custom', kind: 'video', width: 1920, height: 1188 });
+    expect((await formats()).find((p) => p.id === 'custom-originale-1920-1188')?.maxDurationSec).toBeUndefined();
+    // Asked again: the same format, nothing added.
+    expect((await tool(run, 'source_format', { asset: 'assets/codecs.mp4' })).json()).toMatchObject({ format: 'custom-originale-1920-1188', added: false });
+    expect((await formats()).filter((p) => p.width === 1920 && p.height === 1188)).toHaveLength(1);
+    // An odd side loses one pixel (H.264 wants even sides); the answer says the source's size.
+    expect((await tool(run, 'source_format', { asset: 'assets/odd.mp4' })).json()).toMatchObject({ width: 1080, height: 1920, source: { width: 1081, height: 1921 }, added: true });
+    expect((await tool(run, 'list_formats', {})).json().formats.some((f: { id: string }) => f.id === 'custom-originale-1920-1188')).toBe(true);
+    expect((await tool(run, 'fill_brief', { goal: 'Sottotitoli', formats: ['custom-originale-1920-1188'] })).statusCode).toBe(200);
+    expect((await view())?.form.formats).toEqual(['custom-originale-1920-1188']);
+    // The chat says a format was added to the user's custom formats.
+    expect((await conversation(s.id)).some((e) => e.type === 'system' && /Originale 1920×1188/.test(e.text))).toBe(true);
+    run.finish({ write: false });
+    await waitIdle();
+  });
+
+  it('source_format refuses an asset not attached, one the library does not know and one without a known size', async () => {
+    t = await briefApp();
+    setLocale('en');
+    await library([entry('codecs.mp4', 'video', 1920, 1188), entry('nosize.mp4', 'video', null, null), entry('other.mp4', 'video', 640, 360)]);
+    await writeFile(join(t.projectDir, 'assets', 'loose.mp4'), 'x');
+    const s = await open();
+    await send(s.id, 'Sottotitoli', { assets: ['assets/codecs.mp4', 'assets/nosize.mp4', 'assets/loose.mp4'] });
+    const run = await t.runner.next(0);
+    const before = (await formats()).length;
+    const other = await tool(run, 'source_format', { asset: 'assets/other.mp4' });
+    expect(other.statusCode).toBe(400);
+    expect(other.json().error).toContain('not among the assets attached');
+    const loose = await tool(run, 'source_format', { asset: 'assets/loose.mp4' });
+    expect(loose.statusCode).toBe(400);
+    expect(loose.json().error).toContain('size');
+    const nosize = await tool(run, 'source_format', { asset: 'assets/nosize.mp4' });
+    expect(nosize.statusCode).toBe(400);
+    expect(nosize.json().error).toContain('size');
+    expect((await tool(run, 'source_format', {})).statusCode).toBe(400);
+    expect((await formats()).length).toBe(before);
+    run.finish({ write: false });
+    await waitIdle();
+  });
+
+  it('round 1: a limited custom format of that size is not reused; distinct refusals; a downscale is flagged; the line is pushed', async () => {
+    t = await briefApp();
+    setLocale('en');
+    await library([entry('codecs.mp4', 'video', 1920, 1188, 149.3), entry('big.mp4', 'video', 7680, 4320, 10), entry('tiny.png', 'image', 10, 1080), entry('logo.svg', 'svg' as 'image', 40, 20)]);
+    // The user's own format of that size, limited to 15 s: never "the original".
+    expect((await t.app.inject({ method: 'POST', url: '/api/formats/custom', payload: { name: 'Totem lobby', kind: 'video', width: 1920, height: 1188, maxDurationSec: 15 } })).statusCode).toBe(200);
+    const s = await open();
+    await send(s.id, 'Sottotitoli', { assets: ['assets/codecs.mp4', 'assets/big.mp4', 'assets/tiny.png', 'assets/logo.svg'] });
+    const run = await t.runner.next(0);
+    const sentBefore = briefMessages().length;
+    expect((await tool(run, 'source_format', { asset: 'assets/codecs.mp4' })).json()).toMatchObject({ format: 'custom-original-1920-1188', added: true, scaled: false });
+    expect(briefMessages().length).toBeGreaterThan(sentBefore);
+    expect((await tool(run, 'source_format', { asset: 'assets/big.mp4' })).json()).toMatchObject({ width: 4096, height: 2304, source: { width: 7680, height: 4320 }, scaled: true });
+    const tiny = await tool(run, 'source_format', { asset: 'assets/tiny.png' });
+    expect([tiny.statusCode, tiny.json().error]).toEqual([400, 'assets/tiny.png is too small for a format (a side under 16 px).']);
+    const svg = await tool(run, 'source_format', { asset: 'assets/logo.svg' });
+    expect(svg.statusCode).toBe(400);
+    expect(svg.json().error).toContain('is not a video or an image');
+    run.finish({ write: false });
+    await waitIdle();
+  });
+
+  it('round 1: a rotated clip gives the format of the size it is shown at, also for an entry stored before (I1)', async () => {
+    const media: MediaTools = { ...NoMediaTools, available: true, probe: async () => ({ width: 1920, height: 1080, durationSec: 30, display: { width: 1080, height: 1920 } }) };
+    t = await briefApp({ media });
+    setLocale('it');
+    // The entry holds the coded size, as the library stored it before rotations were applied.
+    await library([entry('phone.mp4', 'video', 1920, 1080, 30)]);
+    const s = await open();
+    await send(s.id, 'Sottotitoli', { assets: ['assets/phone.mp4'] });
+    const run = await t.runner.next(0);
+    expect(run.req.prompt).toContain('- "assets/phone.mp4" (video 1080×1920, 30 s)');
+    expect((await tool(run, 'source_format', { asset: 'assets/phone.mp4' })).json()).toMatchObject({ width: 1080, height: 1920, source: { width: 1080, height: 1920 } });
+    run.finish({ write: false });
     await waitIdle();
   });
 });

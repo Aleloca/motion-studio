@@ -11,7 +11,7 @@ import { AppConfigStore } from '../src/app-config.ts';
 import { Git } from '../src/git.ts';
 import { runDoctor } from '../src/doctor.ts';
 import { buildServer } from '../src/server/app.ts';
-import { replyInstruction, setLocale, t } from '../src/i18n.ts';
+import { chatReplyInstruction, setLocale, t } from '../src/i18n.ts';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 let app: FastifyInstance;
@@ -248,7 +248,7 @@ describe('turns over WebSocket', () => {
       setLocale('it');
       await waitFor(() => messages.some((m) => m.type === 'job' && m.job.id === id && m.job.state === 'succeeded'));
       const { prompt } = JSON.parse((await readFile(promptFile, 'utf8')).trim().split('\n')[0]!) as { prompt: string };
-      expect(prompt).toBe(`ciao\n\n${replyInstruction('en')}`);
+      expect(prompt).toBe(`ciao\n\n${chatReplyInstruction('en')}`);
     } finally { setLocale('it'); delete process.env.FAKE_CLAUDE_PROMPT_FILE; ws.close(); }
   });
   it('broadcasts a project message when the project is updated', async () => {

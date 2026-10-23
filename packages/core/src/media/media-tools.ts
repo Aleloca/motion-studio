@@ -4,12 +4,24 @@ import { execCommand, type CommandExec } from '../exec.ts';
 import { execFfVia, isRegularFileNow, mediaInput, type FfArg } from './ffmpeg-exec.ts';
 import { frameScaleFilter, waveformPcmFilter } from './ffmpeg-filters.ts';
 import { isSvgName, svgSize } from './svg-size.ts';
+import { streamDisplaySize, type DisplayStream } from './display-size.ts';
 
 export interface MediaInfo { width: number; height: number; durationSec: number | null; /** Average frame rate of the video stream, when known. */ fps?: number;
   /** The video stream's codec (ffprobe name, e.g. `h264`), when known (Phase 12: store checks). */
   videoCodec?: string;
   /** Whether the file has an audio stream (Phase 12: the App Store preview needs one); absent when not probed by ffprobe. */
-  audio?: boolean }
+  audio?: boolean;
+  /**
+   * Report 70 (rounds 1–2): the size a player shows (sample aspect ratio and a quarter turn applied, `streamDisplaySize`, the
+   * render normalisation's rule), rounded; absent when it is the coded size. `width` and `height` stay the coded size (what an
+   * encoder makes and the renders check).
+   */
+  display?: { width: number; height: number } }
+
+/** The size a player shows: `display` when the probe found one, else the coded size. */
+export const displaySize = (m: Pick<MediaInfo, 'width' | 'height' | 'display'>): { width: number; height: number } =>
+  m.display ?? { width: m.width, height: m.height };
+
 export interface MediaTools {
   readonly available: boolean;
   probe(file: string): Promise<MediaInfo | null>;
@@ -74,14 +86,18 @@ export async function createFfmpegTools(exec: CommandExec = execCommand): Promis
       const r = await execFfVia(exec, 'ffprobe', ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', ...mediaInput({ file })], { timeoutMs: 30_000 });
       if (r.code !== 0) return null;
       try {
-        const data = JSON.parse(r.stdout) as { streams?: Array<{ codec_type?: string; codec_name?: string; width?: number; height?: number; avg_frame_rate?: string }>; format?: { duration?: string } };
+        const data = JSON.parse(r.stdout) as { streams?: Array<DisplayStream & { codec_type?: string; codec_name?: string; width?: number; height?: number; avg_frame_rate?: string }>; format?: { duration?: string } };
         const s = data.streams?.find((x) => x.codec_type === 'video' && x.width && x.height);
         if (!s?.width || !s.height) return null;
         const still = s.codec_name !== undefined && STILL_CODECS.has(s.codec_name);
         const d = Number(data.format?.duration);
         const [num, den] = (s.avg_frame_rate ?? '').split('/').map(Number);
         const fps = num && den && Number.isFinite(num / den) ? num / den : undefined;
-        return { width: s.width, height: s.height, durationSec: !still && Number.isFinite(d) && d > 0 ? d : null, ...(fps && !still ? { fps } : {}),
+        // Round 3 (R2-1): the sample aspect ratio is a video's; a still keeps its pixels as they are (renders unchanged).
+        const shown = streamDisplaySize({ ...s, width: s.width, height: s.height, ...(still ? { sample_aspect_ratio: undefined } : {}) });
+        const display = { width: Math.round(shown.width), height: Math.round(shown.height) };
+        const turned = display.width !== s.width || display.height !== s.height;
+        return { width: s.width, height: s.height, ...(turned ? { display } : {}), durationSec: !still && Number.isFinite(d) && d > 0 ? d : null, ...(fps && !still ? { fps } : {}),
           ...(typeof s.codec_name === 'string' ? { videoCodec: s.codec_name } : {}), audio: data.streams?.some((x) => x.codec_type === 'audio') ?? false };
       } catch {
         return null;

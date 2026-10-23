@@ -125,11 +125,11 @@ describe('buildCreativePrompt', () => {
     expect(p).toContain('same folder');
   });
 
-  it('every kind ends with the reply-language instruction right before the machine block', () => {
+  it('every kind ends with the reply-language instruction right before the machine block (the user\'s language, report 70)', () => {
     for (const kind of ['first', 'iteration', 'fix'] as const) {
       for (const [locale, name] of [['it', 'Italian'], ['en', 'English']] as const) {
         const p = buildCreativePrompt({ ...base, kind, userText: 'x', problems: ['y'], locale });
-        expect(p).toContain(`Always reply to the user in ${name}. Write every text meant for the user (conversation messages, brand guidelines, asset descriptions, problem reports) in ${name}.\n\n\`\`\`motion-studio\n`);
+        expect(p).toContain(`only when they have not written anything in a language yet, reply in ${name}. Text shown in the video (titles, the key message, any line you put on screen) is in the language of the brief's texts, the one the user wrote them in, unless the brief or the user asks for another; never the app's language just because the app is in it. Write every other text meant for the user (brand guidelines, asset descriptions, problem reports) in ${name}.\n\n\`\`\`motion-studio\n`);
         expect(p).not.toMatch(/italiano/i);
       }
     }
@@ -442,6 +442,12 @@ describe('app actions in the prompt (decision 917, user note 6)', () => {
     expect(more).toContain('never together with start_subtitles for the same language');
     const look = on.split('\n').find((l) => l.startsWith('- Drawn subtitles are the subtitles track:'))!;
     for (const x of ['brand fonts and colours', '4.5 % of the frame height', '18 % of the frame height', 'highlight only when', 'window.msActiveCue(ms)', 'textContent only', 'remove the track']) expect(look).toContain(x);
+    // Report 70: the brief chat's answer is in the notes; the text never comes from an analysis's transcript.
+    expect(line).toContain('`Subtitles: …` line');
+    expect(line).toContain('without asking again');
+    expect(line).toContain('never copy it from a video analysis\'s transcript');
+    expect(look).toContain('One style for every line');
+    expect(look).toMatch(/never promise[^.]*(labels|faces)/);
     expect(CONTEXT_MD).toContain('**Subtitles**: call `start_subtitles` (drawn into the video, or files/track only: ask the user when they did not say); never one text clip per sentence.');
     expect(CONTEXT_MD).toContain('`add_subtitle_language` adds subtitles in another language (never `add_language`');
     expect(CONTEXT_MD).toContain('kind: visual|video|text|audio|subtitles');

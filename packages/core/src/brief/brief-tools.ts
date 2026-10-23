@@ -1,4 +1,4 @@
-import { BRIEF_FIELDS, briefFillSchema, channelName, formatLabel, instanceIdOf, instanceIndex, presetOf, type BriefContext, type BriefField, type BriefForm, type FormatPreset, type Locale } from '@motion-studio/shared';
+import { BRIEF_FIELDS, CUSTOM_VIDEO_MAX, briefFillSchema, channelName, formatLabel, instanceIdOf, instanceIndex, isCustomPreset, presetOf, sameCustomName, type BriefContext, type BriefField, type BriefForm, type FormatPreset, type Locale } from '@motion-studio/shared';
 import { t } from '../i18n.ts';
 import { CodedError } from '../workspace-store.ts';
 
@@ -21,6 +21,37 @@ export function listFormats(presets: readonly FormatPreset[], locale: Locale): {
       ...(p.maxDurationSec !== undefined ? { maxDurationSec: p.maxDurationSec } : {}),
     })),
   };
+}
+
+/** The largest side of a custom image (`customFormatInputSchema`). */
+const CUSTOM_IMAGE_MAX = 8192;
+
+/**
+ * Report 70: the size of a format made from a source (an attached video or image) for "the original format". A video keeps
+ * its size with each odd side one pixel less (H.264 in yuv420p wants even sides: 1081 × 1921 → 1080 × 1920), and one larger
+ * than 4096 px is scaled so its longer side is 4096 (ratio kept, sides rounded down, then made even). An image keeps its size
+ * up to 8192 px. Null: a side below 16 px, which no format can have.
+ */
+export function sourceFormatSize(s: { kind: 'video' | 'image'; width: number; height: number }): { width: number; height: number } | null {
+  const max = s.kind === 'video' ? CUSTOM_VIDEO_MAX : CUSTOM_IMAGE_MAX;
+  const longest = Math.max(s.width, s.height);
+  const side = (n: number) => {
+    const x = longest > max ? Math.floor((n * max) / longest) : Math.floor(n);
+    return s.kind === 'video' ? x - (x % 2) : x;
+  };
+  const width = side(s.width), height = side(s.height);
+  return width >= 16 && height >= 16 ? { width, height } : null;
+}
+
+/**
+ * Report 70: a visible custom format of that kind and size with nothing more (no maximum length, no safe zone), which "the
+ * original format" reuses; one named `preferName` first. A shipped preset of the same size is not reused, nor a custom one with
+ * a limit (round 1, I4): both carry constraints (a platform's, or a use the user made it for) the source's video does not have.
+ */
+export function sameSizeCustom(presets: readonly FormatPreset[], kind: 'video' | 'image', width: number, height: number, preferName?: string): FormatPreset | undefined {
+  const plain = presets.filter((p) => isCustomPreset(p) && !p.hidden && !p.identity && p.kind === kind && p.width === width && p.height === height
+    && p.maxDurationSec === undefined && !p.safeZone);
+  return (preferName ? plain.find((p) => sameCustomName(p.name, preferName)) : undefined) ?? plain[0];
 }
 
 export interface FillOutcome {

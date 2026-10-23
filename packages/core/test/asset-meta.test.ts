@@ -2,10 +2,11 @@ import { mkdir, mkdtemp, readdir, readFile, symlink, writeFile } from 'node:fs/p
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { execCommand } from '../src/exec.ts';
+import { execCommand, type CommandExec } from '../src/exec.ts';
 import { assetWaveform, peaksOf, readAssetMeta, WAVEFORM_PEAKS } from '../src/library/asset-meta.ts';
 import { LibraryStore } from '../src/library/library-store.ts';
-import { createFfmpegTools, NoMediaTools, type MediaTools } from '../src/media/media-tools.ts';
+import { createFfmpegTools, displaySize, NoMediaTools, type MediaTools } from '../src/media/media-tools.ts';
+import { sourceInfoOf } from '../src/render/media-normalize.ts';
 import { ffArgv } from '../src/media/ffmpeg-exec.ts';
 import { waveformPcmFilter } from '../src/media/ffmpeg-filters.ts';
 
@@ -163,5 +164,50 @@ describe('lazy fill without ffmpeg and under concurrency', () => {
     const media: MediaTools = { ...NoMediaTools, available: true, probe: async () => { probes++; return { width: 10, height: 10, durationSec: null }; } };
     await Promise.all([1, 2, 3].map(() => new LibraryStore(project, media).fillMissingMeta()));
     expect(probes).toBe(1);
+  });
+});
+
+describe('display orientation (report 70, round 1)', () => {
+  /** An ffprobe that answers `streams` for every file (and its version check). */
+  const fakeProbe = (streams: unknown[]): CommandExec => async (_cmd, args) => (args.includes('-version')
+    ? { code: 0, stdout: 'ffprobe version 7', stderr: '', notFound: false }
+    : { code: 0, stdout: JSON.stringify({ streams, format: { duration: '3.0' } }), stderr: '', notFound: false });
+  const file = async () => { const d = await mkdtemp(join(tmpdir(), 'ms-rot-')); const f = join(d, 'v.mp4'); await writeFile(f, 'x'); return f; };
+
+  it('probe gives the shown size by the render normalisation\'s rule: a quarter turn swaps the sides, the SAR widens (round 2, N3)', async () => {
+    const f = await file();
+    const probe = async (stream: Record<string, unknown>) => (await createFfmpegTools(fakeProbe([{ codec_type: 'video', codec_name: 'h264', ...stream }]))).probe(f);
+    const matrix = await probe({ width: 1920, height: 1080, side_data_list: [{ side_data_type: 'Display Matrix', rotation: -90 }] });
+    expect(matrix).toMatchObject({ width: 1920, height: 1080, display: { width: 1080, height: 1920 } });
+    expect(displaySize(matrix!)).toEqual({ width: 1080, height: 1920 });
+    expect(displaySize((await probe({ width: 1920, height: 1080, tags: { rotate: '180' } }))!)).toEqual({ width: 1920, height: 1080 });
+    const anamorphic = await probe({ width: 1440, height: 1080, sample_aspect_ratio: '4:3' });
+    expect(displaySize(anamorphic!)).toEqual({ width: 1920, height: 1080 });
+    // The same numbers as the normalisation's own reading of the stream.
+    expect(sourceInfoOf({ streams: [{ codec_type: 'video', width: 1440, height: 1080, sample_aspect_ratio: '4:3' }] })).toMatchObject({ width: 1920, height: 1080 });
+    // Round 3 (R2-1): a still image keeps its pixels, whatever its sample aspect ratio says.
+    const still = await (await createFfmpegTools(fakeProbe([{ codec_type: 'video', codec_name: 'png', width: 1440, height: 1080, sample_aspect_ratio: '4:3' }]))).probe(f);
+    expect(displaySize(still!)).toEqual({ width: 1440, height: 1080 });
+    const plain = await probe({ width: 1920, height: 1188, sample_aspect_ratio: '1:1' });
+    expect(plain?.display).toBeUndefined();
+    expect(displaySize(plain!)).toEqual({ width: 1920, height: 1188 });
+  });
+
+  it('the library stores a rotated video at the size it is shown', async () => {
+    const media: MediaTools = { ...NoMediaTools, available: true, probe: async () => ({ width: 1920, height: 1080, durationSec: 12, display: { width: 1080, height: 1920 } }) };
+    expect(await readAssetMeta({ media }, await file(), 'video')).toMatchObject({ width: 1080, height: 1920, durationSec: 12 });
+  });
+});
+
+describe.skipIf(!hasFfmpeg)('display orientation with real ffmpeg (report 70, round 1)', () => {
+  it('a clip stored 320×240 with a quarter-turn display matrix is 240×320 in the library', async () => {
+    const d = await mkdtemp(join(tmpdir(), 'ms-rot-real-'));
+    const plain = join(d, 'plain.mp4'), turned = join(d, 'turned.mp4');
+    await execCommand('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=blue:s=320x240:d=1', '-pix_fmt', 'yuv420p', plain]);
+    await execCommand('ffmpeg', ['-v', 'error', '-y', '-display_rotation', '90', '-i', plain, '-c', 'copy', turned]);
+    const media = await createFfmpegTools();
+    expect((await media.probe(turned))?.display).toEqual({ width: 240, height: 320 });
+    expect(await readAssetMeta({ media }, turned, 'video')).toMatchObject({ width: 240, height: 320 });
+    expect(await readAssetMeta({ media }, plain, 'video')).toMatchObject({ width: 320, height: 240 });
   });
 });

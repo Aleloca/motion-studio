@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import type { VideoAnalysisService } from '../analysis/video-analysis.ts';
 import { realpath, stat } from 'node:fs/promises';
+import { join } from 'node:path';
+import { z } from 'zod';
 import {
-  BRIEF_QUEUE_MAX, briefJobKey, isSessionId, type AgentEvent, type BriefContext, type BriefField, type BriefForm, type BriefMessageInput, type BriefQueued, type BriefSendResult,
+  BRIEF_QUEUE_MAX, assetsFileSchema, briefJobKey, isCustomPreset, sameCustomName, type CustomFormatInput, isSessionId, type AgentEvent, type BriefContext, type BriefField, type BriefForm, type BriefMessageInput, type BriefQueued, type BriefSendResult,
   type BriefFormSaved, type BriefSessionView, type ConversationEntry, type FormatPreset, type JobSummary, type LinkedCodebase, type ServerMessage,
 } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
@@ -18,9 +20,10 @@ import { currentLocale, t } from '../i18n.ts';
 import type { JobQueue } from '../jobs/job-queue.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
-import { briefDigest, briefFollowUp, buildBriefPrompt } from './brief-prompt.ts';
+import { briefDigest, briefFollowUp, buildBriefPrompt, type AssetFacts } from './brief-prompt.ts';
+import { readJsonFile } from '../json-file.ts';
 import { isUnreadable, type BriefSessionFile, type BriefSessionStore } from './brief-session-store.ts';
-import { applyFill, fillLine, listFormats, mergeClientForm, reclaimLine } from './brief-tools.ts';
+import { applyFill, fillLine, listFormats, mergeClientForm, reclaimLine, sameSizeCustom, sourceFormatSize } from './brief-tools.ts';
 import { assertFormatsOffered } from '../formats/format-catalog.ts';
 
 /** The most `fill_brief` calls one brief job may make (the app actions' cap idea, decision 917). */
@@ -44,6 +47,33 @@ export interface BriefSessionDeps {
   model(): Promise<string | null | undefined>;
   /** The creatives' side state (the handoff records the brief's session there, decision 1423). */
   side: CreativeSideStateStore;
+  /** Report 70: adds a custom format to the catalog (`source_format`), under the catalog's lock; the preset added. */
+  addFormat?(input: CustomFormatInput): Promise<FormatPreset>;
+  /**
+   * Round 1 (I1): the size a library file is shown at, read now (its rotation applied), for entries stored before the library
+   * applied it; null when it cannot be read (the library's size is used).
+   */
+  probeSize?(projectDir: string, path: string, o?: { cachedOnly?: boolean }): Promise<{ width: number; height: number } | null>;
+}
+
+/** Report 70: `source_format`'s argument, an attached asset's library path. */
+const sourceFormatArgs = z.object({ asset: z.string().min(1).max(1024) }).strict();
+
+/**
+ * Report 70: what the project library knows of `paths` (`assets/<file>`): kind, size, length; nothing when it cannot be read.
+ * With `probeSize`, a video's or an image's size is the one read now (round 1, I1: an older entry may hold the coded size).
+ */
+async function libraryFacts(projectDir: string, paths: readonly string[], probeSize?: BriefSessionDeps['probeSize'], o: { cachedOnly?: boolean } = {}): Promise<Record<string, AssetFacts>> {
+  if (paths.length === 0) return {};
+  const assets = await readJsonFile(join(projectDir, 'assets', 'assets.json'), assetsFileSchema).then((f) => f.assets).catch(() => []);
+  // Round 2 (N2): the files are read in parallel (each once per version, `shownSizeReader`).
+  const facts = await Promise.all(paths.map(async (p): Promise<[string, AssetFacts] | null> => {
+    const a = assets.find((x) => `assets/${x.file}` === p);
+    if (!a) return null;
+    const now = probeSize && (a.kind === 'video' || a.kind === 'image') ? await probeSize(projectDir, p, o).catch(() => null) : null;
+    return [p, { kind: a.kind, width: now?.width ?? a.width, height: now?.height ?? a.height, durationSec: a.durationSec ?? null }];
+  }));
+  return Object.fromEntries(facts.filter((f): f is [string, AssetFacts] => f !== null));
 }
 
 /** A session held for Genera / Salva bozza (`claim`): no message, discard or other claim until `handOff` or `release`. */
@@ -233,7 +263,9 @@ export class BriefSessionService {
         const adds = added.codebases.length + added.assets.length > 0;
         if (m.mode === 'live' && !adds && act?.run && act.liveInput && act.sessionId === id) {
           const analyses = await this.videoAnalyses?.analysisRefs(ref, s.context.assets).catch(() => ({})) ?? {};
-          const text = briefFollowUp({ locale: currentLocale(), form: s.form, userEdited: s.userEdited, ...(await this.readable(ref, s)), assets: s.context.assets, analyses, request: m.text });
+          // Round 2 (N2): a live message is never held for ffprobe: only the sizes already read.
+          const assetFacts = await libraryFacts(ref.projectDir, s.context.assets, this.deps.probeSize, { cachedOnly: true });
+          const text = briefFollowUp({ locale: currentLocale(), form: s.form, userEdited: s.userEdited, ...(await this.readable(ref, s)), assets: s.context.assets, analyses, assetFacts, request: m.text });
           if (await act.run.send?.({ text, clientId: m.clientId }) === 'written') {
             await this.deps.store.append(ref.projectDir, id, { type: 'user', at: new Date().toISOString(), text: m.text, pins: [], attachments: [], jobId: act.jobId, mode: 'live', clientId: m.clientId, deliveredAt: new Date().toISOString() });
             this.changed(ref, s);
@@ -322,7 +354,8 @@ export class BriefSessionService {
         const paths = [...new Set(await Promise.all([...codebases.map((c) => c.path), ...project.paths].map(async (p) => codebaseSpellings({ path: p, real: await realpath(p).catch(() => p) }))).then((x) => x.flat()))];
         const resume = fresh ? undefined : s.claudeSessionId;
         const analyses = await this.videoAnalyses?.analysisRefs(ref, s.context.assets).catch(() => ({})) ?? {};
-        const common = { locale: currentLocale(), form: s.form, userEdited: s.userEdited, codebases, missingCodebases, assets: s.context.assets, analyses, request };
+        const assetFacts = await libraryFacts(ref.projectDir, s.context.assets, this.deps.probeSize);
+        const common = { locale: currentLocale(), form: s.form, userEdited: s.userEdited, codebases, missingCodebases, assets: s.context.assets, analyses, assetFacts, request };
         const prompt = resume ? briefFollowUp(common)
           : buildBriefPrompt({ ...common, projectName: ref.projectName, projectCodebases: project.paths.filter((p) => !codebases.some((c) => c.path === p)),
             ...(fresh ? { digest: briefDigest((await this.deps.store.conversation(ref.projectDir, sessionId)).filter((e) => !('jobId' in e && e.jobId === jobId && e.type === 'user'))) } : {}) });
@@ -460,7 +493,7 @@ export class BriefSessionService {
   }
 
   /** The brief job's `studio` tools (`MCP_TOOLS.brief`): the bridge checks the job's kind, the handlers check it again. */
-  tools(): Record<'list_formats' | 'fill_brief', BridgeHandler> {
+  tools(): Record<'list_formats' | 'fill_brief' | 'source_format', BridgeHandler> {
     return {
       list_formats: async (c) => {
         if (c.kind !== 'brief' || !c.briefScope) throw new WorkspaceError(403, t().errors.toolUnavailable);
@@ -492,6 +525,50 @@ export class BriefSessionService {
         this.deps.broadcast({ type: 'brief-session', project: scope.projectSlug, sessionId: scope.sessionId, revision: after.revision, fill: { written: o.written, kept, reclaimed: o.reclaimed } });
         if (o.written.includes('assets')) this.analyse(scope, after);
         return { ok: true, written: o.written, kept: o.kept, reclaimed: o.reclaimed };
+      },
+      // Report 70: "the original format" is a custom format of the source's own size (even sides for a video), never the
+      // nearest preset. One of that kind and size already among the custom formats is reused; else one is added.
+      source_format: async (c, a) => {
+        const scope = c.briefScope;
+        if (c.kind !== 'brief' || !scope || !this.deps.addFormat) throw new WorkspaceError(403, t().errors.toolUnavailable);
+        const args = sourceFormatArgs.safeParse(a);
+        if (!args.success) throw new CodedError(400, t().errors.briefBadField({ field: 'asset', detail: args.error.issues[0]?.message ?? 'invalid' }), 'brief-fill-invalid');
+        const path = args.data.asset;
+        const s = await this.deps.store.open(scope.projectDir);
+        if (!s || s.id !== scope.sessionId) throw gone();
+        if (!s.context.assets.includes(path) && !s.form.assets.includes(path)) throw new CodedError(400, t().errors.briefAssetOutside({ path }), 'brief-fill-invalid');
+        const facts = (await libraryFacts(scope.projectDir, [path], this.deps.probeSize))[path];
+        // Round 1 (M1): each refusal says what is wrong, so the agent tells the user the truth.
+        const kind = facts?.kind === 'video' || facts?.kind === 'image' ? facts.kind : null;
+        if (facts && !kind) throw new CodedError(400, t().errors.briefSourceKind({ path }), 'brief-source-kind');
+        if (!kind || !facts?.width || !facts.height) throw new CodedError(400, t().errors.briefSourceSize({ path }), 'brief-source-size');
+        const size = sourceFormatSize({ kind, width: facts.width, height: facts.height });
+        if (!size) throw new CodedError(400, t().errors.briefSourceSmall({ path }), 'brief-source-small');
+        const source = { width: facts.width, height: facts.height };
+        // Round 1 (M2): scaled down to fit (more than the odd pixel a video loses): the agent says so.
+        const scaled = source.width - size.width > 1 || source.height - size.height > 1;
+        const answer = (p: FormatPreset, added: boolean) => ({ format: p.id, name: p.name, kind, width: p.width, height: p.height, source, scaled, added });
+        const base = t().briefSession.sourceFormatName(size);
+        // A name another custom format holds (of another size, or with a limit: neither is reused) takes " (2)", " (3)"…; a
+        // window adding the same name meanwhile is a 409, and the catalog is read again.
+        for (let k = 1; k <= 20; k++) {
+          const presets = await this.deps.presets();
+          const same = sameSizeCustom(presets, kind, size.width, size.height, base);
+          if (same) return answer(same, false);
+          const name = k === 1 ? base : `${base} (${k})`;
+          if (presets.some((p) => isCustomPreset(p) && !p.hidden && sameCustomName(p.name, name))) continue;
+          try {
+            const p = await this.deps.addFormat({ name, kind, width: size.width, height: size.height });
+            const at = new Date().toISOString();
+            await this.deps.store.append(scope.projectDir, scope.sessionId, { type: 'system', at, level: 'info', origin: 'agent', text: t().briefSession.sourceFormatAdded({ name: p.name }) });
+            // Round 1 (M3): the line reaches the chat now (the clients refetch the session), not with the next fill.
+            this.deps.broadcast({ type: 'brief-session', project: scope.projectSlug, sessionId: scope.sessionId, revision: s.revision });
+            return answer(p, true);
+          } catch (err) {
+            if (!(err instanceof CodedError && err.apiCode === 'custom-format-name-taken')) throw err;
+          }
+        }
+        throw new CodedError(409, t().errors.briefSourceNoName({ path }), 'brief-source-no-name');
       },
     };
   }

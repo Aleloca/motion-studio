@@ -5,7 +5,7 @@ import { type AssetEntry, type AssetKind } from '@motion-studio/shared';
 import { realDirChain, writeThroughTemp } from '../creatives/core-files.ts';
 import { noteCoreTemp } from '../core-temps.ts';
 import { svgSize } from '../media/svg-size.ts';
-import type { MediaTools } from '../media/media-tools.ts';
+import { displaySize, type MediaTools } from '../media/media-tools.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 import { t } from '../i18n.ts';
 
@@ -23,7 +23,9 @@ export async function readAssetMeta(deps: { media: MediaTools }, absPath: string
   if (!deps.media.available) return none;
   if (kind === 'image' || kind === 'video') {
     const p = await deps.media.probe(absPath);
-    return { ...none, width: p?.width ?? null, height: p?.height ?? null, durationSec: p?.durationSec ?? null };
+    // Report 70 (round 1): the size the user sees (a phone's portrait clip is often stored landscape with a rotation).
+    const size = p ? displaySize(p) : null;
+    return { ...none, width: size?.width ?? null, height: size?.height ?? null, durationSec: p?.durationSec ?? null };
   }
   if (kind === 'audio' && deps.media.probeAudio) return { ...none, durationSec: (await deps.media.probeAudio(absPath))?.durationSec ?? null };
   return none;

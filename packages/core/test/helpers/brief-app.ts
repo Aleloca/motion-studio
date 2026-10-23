@@ -9,6 +9,7 @@ import { ApprovalBroker } from '../../src/approvals/broker.ts';
 import { AgentBridge } from '../../src/bridge/bridge.ts';
 import { Git } from '../../src/git.ts';
 import { MemoryVault } from '../../src/secrets/vault.ts';
+import type { MediaTools } from '../../src/media/media-tools.ts';
 import { buildServer } from '../../src/server/app.ts';
 import { ControlledRunner, type ControlledRun } from './controlled-runner.ts';
 
@@ -23,7 +24,7 @@ export interface BriefApp {
   app: FastifyInstance; runner: ControlledRunner; base: string; code: string; projectDir: string; sent: ServerMessage[];
 }
 
-export async function briefApp(o: { live?: boolean; settings?: Record<string, unknown>; runner?: ControlledRunner } = {}): Promise<BriefApp> {
+export async function briefApp(o: { live?: boolean; settings?: Record<string, unknown>; runner?: ControlledRunner; media?: MediaTools } = {}): Promise<BriefApp> {
   // The real path (macOS: /var → /private/var), so a folder has one spelling unless a test makes a link on purpose.
   const base = await realpath(await mkdtemp(join(tmpdir(), 'ms-brief-')));
   const runner = o.runner ?? new ControlledRunner();
@@ -38,6 +39,7 @@ export async function briefApp(o: { live?: boolean; settings?: Record<string, un
     // Every message the hub sends, as a client would see it.
     onBroadcast: (m) => sent.push(m),
     mcpCommand: [process.execPath, join(base, 'never-started-mcp.mjs')], vault: new MemoryVault({}), agentContract: 'media',
+    ...(o.media ? { media: o.media } : {}),
   });
   await app.inject({ method: 'PUT', url: '/api/workspace', payload: { path: join(base, 'ws') } });
   await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Acme' } });
