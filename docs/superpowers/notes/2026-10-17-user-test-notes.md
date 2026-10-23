@@ -629,6 +629,11 @@ arrives and worked on later together.
     the paper plane and ⌘↵ at every width, with an "Invia (⌘↵)" tooltip.
     Not done: drag-and-drop onto the composer; files on live, queued or redirect messages (only a new request carries
     them); a cancelled upload can still land in the library (not attached).
+80. **"Library" and "Assets" for the same thing (user report of 2026-10-23).** The project's files were called
+    "Library"/"libreria" in some places and "Assets"/"Asset" in others.
+    Done (decisions 1820-1822): the tab's name everywhere — en "Assets", it "Asset" ("negli Asset", "Dagli Asset") — in
+    the UI, the READMEs and docs, and the agents' prompts so their replies use the same word. Code names (LibraryPicker,
+    i18n keys, the `assets/` folder) are unchanged; a test fails if "library"/"libreria" comes back in a visible string.
 - **Flaky under load:** `core/test/agent-actions.test.ts` "duplicate_format runs after the turn, on the version it
   saved" failed once in a full local run (2026-10-23, waitFor on the action line) and passes alone 3/3.
 
