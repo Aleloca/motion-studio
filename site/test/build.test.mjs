@@ -6,7 +6,7 @@ import { build } from '../build.mjs';
 import { loadCompositions, validateAll } from '../lib/compositions.mjs';
 import { SITE, tempDir, walk } from './helpers.mjs';
 
-const SAMPLE = 'hero-16x9';
+const SAMPLE = 'kova-16x9';
 let out;
 
 before(async () => {

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1920">
+<defs><pattern id="p" width="48" height="48" patternUnits="userSpaceOnUse"><circle cx="24" cy="24" r="1.6" fill="#8A93A6"/></pattern>
+<radialGradient id="fade" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+<mask id="m"><rect width="1920" height="1920" fill="url(#fade)"/></mask></defs>
+<rect width="1920" height="1920" fill="url(#p)" mask="url(#m)"/>
+</svg>

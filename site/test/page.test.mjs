@@ -71,3 +71,47 @@ test('the paid services copy says the confirmation can be turned off', () => {
   assert.doesNotMatch(visibleText, /Every paid generation asks for confirmation first\./);
   assert.match(visibleText, /asks for confirmation first, unless you turn it off in Settings/);
 });
+
+const hero = /<section class="hero"[\s\S]*?<\/section>/.exec(html)[0];
+const heroSets = hero.split('<div class="hero__set"').slice(1).map((part) => {
+  const head = part.slice(0, part.indexOf('>'));
+  return {
+    hidden: /\shidden$/.test(head),
+    brief: /data-brief="([^"]+)"/.exec(head)?.[1],
+    chips: /data-chips="([^"]+)"/.exec(head)?.[1].split('|') ?? [],
+    ids: [...part.matchAll(/data-composition="([\w-]+)"/g)].map((m) => m[1]),
+    imgs: [...part.matchAll(/<img [^>]*>/g)].map((m) => m[0]),
+  };
+});
+
+test('the hero cycles through three or four creatives; without JS the first one shows', () => {
+  assert.ok(heroSets.length >= 3 && heroSets.length <= 4, `${heroSets.length} sets`);
+  heroSets.forEach((set, i) => {
+    assert.equal(set.hidden, i > 0, `set ${i} hidden`);
+    assert.ok(set.brief, `set ${i} brief`);
+    assert.equal(set.ids.length, 3, `set ${i} frames`);
+    assert.equal(set.chips.length, set.ids.length, `set ${i} chips`);
+    // The later sets load their posters only when the cycle reaches them.
+    for (const img of set.imgs) assert.equal(img.includes('loading="lazy"'), i > 0, img);
+  });
+  const prefixes = heroSets.map((s) => s.ids[0].split('-')[0]);
+  assert.equal(new Set(prefixes).size, heroSets.length, 'one creative per set');
+  for (const s of heroSets) assert.ok(s.ids.every((id) => id.startsWith(`${s.ids[0].split('-')[0]}-`)), s.ids.join());
+  const typed = /<span class="brief__typed">([^<]+)<\/span>/.exec(hero)[1];
+  assert.equal(typed, heroSets[0].brief);
+  const chips = [.../<ul class="brief__chips"[^>]*>([\s\S]*?)<\/ul>/.exec(hero)[1].matchAll(/<li>([^<]+)<\/li>/g)].map((m) => m[1]);
+  assert.deepEqual(chips, heroSets[0].chips);
+});
+
+test('every hero creative can also be played in the showcase', () => {
+  const showcase = /<section[^>]*id="showcase"[\s\S]*?<\/section>/.exec(html)[0];
+  const shown = new Set([...showcase.matchAll(/data-composition="([\w-]+)"/g)].map((m) => m[1].split('-')[0]));
+  for (const s of heroSets) assert.ok(shown.has(s.ids[0].split('-')[0]), s.ids[0]);
+});
+
+test('every figure starts from its composition\'s poster time', () => {
+  for (const [, id, t] of html.matchAll(/data-composition="([\w-]+)" data-poster-time="([\d.]+)"/g)) {
+    const meta = JSON.parse(readFileSync(join(SITE, 'compositions', id, 'meta.json'), 'utf8'));
+    assert.equal(Number(t), meta.posterTime, id);
+  }
+});

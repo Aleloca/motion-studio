@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 460">
+<defs>
+<linearGradient id="body" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3B4250"/><stop offset=".45" stop-color="#1A1E27"/><stop offset="1" stop-color="#07080B"/></linearGradient>
+<linearGradient id="lid" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6B7385"/><stop offset=".4" stop-color="#2A303C"/><stop offset="1" stop-color="#11141A"/></linearGradient>
+<linearGradient id="edge" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#7CF5FF" stop-opacity="0"/><stop offset=".5" stop-color="#7CF5FF" stop-opacity=".9"/><stop offset="1" stop-color="#7CF5FF" stop-opacity="0"/></linearGradient>
+<radialGradient id="led" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#E9FEFF"/><stop offset=".35" stop-color="#7CF5FF"/><stop offset="1" stop-color="#7CF5FF" stop-opacity="0"/></radialGradient>
+<radialGradient id="shine" cx=".3" cy=".2" r=".6"><stop offset="0" stop-color="#FFFFFF" stop-opacity=".35"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/></radialGradient>
+<clipPath id="shape"><rect x="40" y="40" width="520" height="380" rx="150"/></clipPath>
+</defs>
+<ellipse cx="300" cy="436" rx="230" ry="16" fill="#000" fill-opacity=".6"/>
+<g clip-path="url(#shape)">
+  <rect x="40" y="40" width="520" height="380" fill="url(#body)"/>
+  <rect x="40" y="40" width="520" height="150" fill="url(#lid)"/>
+  <rect x="40" y="40" width="520" height="380" fill="url(#shine)"/>
+  <rect x="40" y="188" width="520" height="4" fill="#030406"/>
+  <rect x="40" y="192" width="520" height="2" fill="#FFFFFF" fill-opacity=".12"/>
+  <rect x="40" y="40" width="520" height="3" fill="url(#edge)"/>
+</g>
+<rect x="41" y="41" width="518" height="378" rx="149" fill="none" stroke="#FFFFFF" stroke-opacity=".1" stroke-width="2"/>
+<circle cx="300" cy="300" r="34" fill="none" stroke="#FFFFFF" stroke-opacity=".18" stroke-width="3"/>
+<path d="M270 300 q7.5 -16 15 0 t15 0 t15 0 t15 0" fill="none" stroke="#FFFFFF" stroke-opacity=".28" stroke-width="3" stroke-linecap="round"/>
+<circle cx="300" cy="382" r="16" fill="url(#led)"/>
+<circle cx="300" cy="382" r="4" fill="#E9FEFF"/>
+</svg>

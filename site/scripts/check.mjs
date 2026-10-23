@@ -36,7 +36,8 @@ export async function check({ out } = {}) {
         await page.eval(`(async () => { const h = document.documentElement.scrollHeight; for (let y = 0; y < h; y += 500) { scrollTo({ top: y, behavior: 'instant' }); await new Promise(r => setTimeout(r, 350)); } })()`);
         await wait(page, 4000);
         const s = await page.eval(`(() => {
-          const figs = [...document.querySelectorAll('.comp')];
+          // Figures in the hero's waiting sets (hidden until the cycle reaches them, posters loaded lazily) are not shown.
+          const figs = [...document.querySelectorAll('.comp')].filter((f) => f.getClientRects().length > 0);
           return {
             scrollWidth: document.documentElement.scrollWidth, innerWidth,
             figures: figs.length,

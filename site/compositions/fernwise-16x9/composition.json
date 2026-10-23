@@ -1,0 +1,3826 @@
+{
+  "$schema": "motion-studio/composition@1",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "duration": 12,
+  "background": "#F3EFE6",
+  "fonts": [
+    {
+      "family": "Bricolage Grotesque",
+      "src": "assets/fonts/BricolageGrotesque.woff2",
+      "weight": 800
+    },
+    {
+      "family": "Instrument Sans",
+      "src": "assets/fonts/InstrumentSans.woff2",
+      "weight": 500
+    },
+    {
+      "family": "Instrument Sans",
+      "src": "assets/fonts/InstrumentSans.woff2",
+      "weight": 600
+    },
+    {
+      "family": "Instrument Sans",
+      "src": "assets/fonts/InstrumentSans.woff2",
+      "weight": 700
+    },
+    {
+      "family": "JetBrains Mono",
+      "src": "assets/fonts/JetBrainsMono.woff2",
+      "weight": 500
+    },
+    {
+      "family": "JetBrains Mono",
+      "src": "assets/fonts/JetBrainsMono.woff2",
+      "weight": 600
+    }
+  ],
+  "scenes": [
+    {
+      "id": "hook",
+      "name": "Hook",
+      "start": 0,
+      "duration": 2.6
+    },
+    {
+      "id": "spending",
+      "name": "Spending",
+      "start": 2.6,
+      "duration": 3.1
+    },
+    {
+      "id": "savings",
+      "name": "Savings curve",
+      "start": 5.7,
+      "duration": 3.4
+    },
+    {
+      "id": "app",
+      "name": "The app",
+      "start": 9.1,
+      "duration": 2.9
+    }
+  ],
+  "tracks": [
+    {
+      "id": "cards",
+      "kind": "visual",
+      "clips": [
+        {
+          "id": "shadow-9",
+          "type": "shape",
+          "scene": "spending",
+          "start": 2.75,
+          "duration": 2.95,
+          "props": {
+            "x": 860,
+            "y": 144,
+            "width": 920,
+            "height": 820,
+            "fill": "#E6DECF",
+            "radius": 40
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "prop": "y",
+              "from": 80,
+              "to": 0,
+              "start": 0,
+              "duration": 0.8,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "scale",
+              "from": 0.96,
+              "to": 1,
+              "start": 0,
+              "duration": 0.8,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.6,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "card-10",
+          "type": "shape",
+          "scene": "spending",
+          "start": 2.75,
+          "duration": 2.95,
+          "props": {
+            "x": 860,
+            "y": 130,
+            "width": 920,
+            "height": 820,
+            "fill": "#FFFFFF",
+            "radius": 40
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "prop": "y",
+              "from": 80,
+              "to": 0,
+              "start": 0,
+              "duration": 0.8,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "scale",
+              "from": 0.96,
+              "to": 1,
+              "start": 0,
+              "duration": 0.8,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.6,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "chip-83",
+          "type": "shape",
+          "scene": "savings",
+          "start": 8,
+          "duration": 1.05,
+          "props": {
+            "x": 140,
+            "y": 620,
+            "width": 300,
+            "height": 76,
+            "fill": "#A7E8C3",
+            "radius": 38
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.5
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "shadow-85",
+          "type": "shape",
+          "scene": "savings",
+          "start": 5.8,
+          "duration": 3.25,
+          "props": {
+            "x": 860,
+            "y": 144,
+            "width": 920,
+            "height": 820,
+            "fill": "#E6DECF",
+            "radius": 40
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "prop": "y",
+              "from": 80,
+              "to": 0,
+              "start": 0,
+              "duration": 0.8,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "scale",
+              "from": 0.96,
+              "to": 1,
+              "start": 0,
+              "duration": 0.8,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.9,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "card-86",
+          "type": "shape",
+          "scene": "savings",
+          "start": 5.8,
+          "duration": 3.25,
+          "props": {
+            "x": 860,
+            "y": 130,
+            "width": 920,
+            "height": 820,
+            "fill": "#FFFFFF",
+            "radius": 40
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "prop": "y",
+              "from": 80,
+              "to": 0,
+              "start": 0,
+              "duration": 0.8,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "scale",
+              "from": 0.96,
+              "to": 1,
+              "start": 0,
+              "duration": 0.8,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.9,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "phone-shadow-107",
+          "type": "shape",
+          "scene": "app",
+          "start": 9.2,
+          "duration": 2.8,
+          "props": {
+            "x": 1213.6,
+            "y": 961,
+            "width": 352.8,
+            "height": 40,
+            "fill": "#DDD4C3",
+            "radius": 20
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0.3,
+              "duration": 0.6
+            },
+            {
+              "prop": "scale",
+              "from": 0.6,
+              "to": 1,
+              "start": 0.2,
+              "duration": 0.9,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            }
+          ]
+        },
+        {
+          "id": "disc-108",
+          "type": "shape",
+          "scene": "app",
+          "start": 9.15,
+          "duration": 2.85,
+          "props": {
+            "x": 1002.55,
+            "y": 153.05,
+            "width": 774.9,
+            "height": 774.9,
+            "fill": "#A7E8C3",
+            "radius": 387.45
+          },
+          "animations": [
+            {
+              "preset": "scaleIn",
+              "start": 0,
+              "duration": 0.9,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "scale",
+              "start": 0.9,
+              "duration": 1.9,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 1
+                },
+                {
+                  "t": 0.5,
+                  "v": 1.03,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 1,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "charts",
+      "kind": "visual",
+      "clips": [
+        {
+          "id": "track-12",
+          "type": "shape",
+          "scene": "spending",
+          "start": 3.05,
+          "duration": 2.65,
+          "props": {
+            "x": 1120,
+            "y": 229.2,
+            "width": 480,
+            "height": 58.8,
+            "fill": "#EFEAE0",
+            "radius": 29.4
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.3,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "bar-13",
+          "type": "shape",
+          "scene": "spending",
+          "start": 3.15,
+          "duration": 2.55,
+          "props": {
+            "x": 1120,
+            "y": 229.2,
+            "width": 456,
+            "height": 58.8,
+            "fill": "#0E2A1F",
+            "radius": 29.4
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.9,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.2,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "track-23",
+          "type": "shape",
+          "scene": "spending",
+          "start": 3.21,
+          "duration": 2.49,
+          "props": {
+            "x": 1120,
+            "y": 369.2,
+            "width": 480,
+            "height": 58.8,
+            "fill": "#EFEAE0",
+            "radius": 29.4
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.14,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "bar-24",
+          "type": "shape",
+          "scene": "spending",
+          "start": 3.31,
+          "duration": 2.39,
+          "props": {
+            "x": 1120,
+            "y": 369.2,
+            "width": 216,
+            "height": 58.8,
+            "fill": "#0E2A1F",
+            "radius": 29.4
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.9,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.04,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "track-34",
+          "type": "shape",
+          "scene": "spending",
+          "start": 3.37,
+          "duration": 2.33,
+          "props": {
+            "x": 1120,
+            "y": 509.2,
+            "width": 480,
+            "height": 58.8,
+            "fill": "#EFEAE0",
+            "radius": 29.4
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 1.98,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "bar-35",
+          "type": "shape",
+          "scene": "spending",
+          "start": 3.47,
+          "duration": 2.23,
+          "props": {
+            "x": 1120,
+            "y": 509.2,
+            "width": 168,
+            "height": 58.8,
+            "fill": "#0E2A1F",
+            "radius": 29.4
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.9,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 1.88,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "track-45",
+          "type": "shape",
+          "scene": "spending",
+          "start": 3.53,
+          "duration": 2.17,
+          "props": {
+            "x": 1120,
+            "y": 649.2,
+            "width": 480,
+            "height": 58.8,
+            "fill": "#EFEAE0",
+            "radius": 29.4
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 1.82,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "bar-46",
+          "type": "shape",
+          "scene": "spending",
+          "start": 3.63,
+          "duration": 2.07,
+          "props": {
+            "x": 1120,
+            "y": 649.2,
+            "width": 108,
+            "height": 58.8,
+            "fill": "#0E2A1F",
+            "radius": 29.4
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.9,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 1.72,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "track-56",
+          "type": "shape",
+          "scene": "spending",
+          "start": 3.69,
+          "duration": 2.01,
+          "props": {
+            "x": 1120,
+            "y": 789.2,
+            "width": 480,
+            "height": 58.8,
+            "fill": "#EFEAE0",
+            "radius": 29.4
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 1.66,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "bar-57",
+          "type": "shape",
+          "scene": "spending",
+          "start": 3.79,
+          "duration": 1.91,
+          "props": {
+            "x": 1120,
+            "y": 789.2,
+            "width": 252,
+            "height": 58.8,
+            "fill": "#17784A",
+            "radius": 29.4
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.9,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 1.56,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "grid-88",
+          "type": "svg",
+          "src": "assets/grid-16x9.svg",
+          "scene": "savings",
+          "start": 6,
+          "duration": 3.05,
+          "props": {
+            "fit": "fill",
+            "x": 924,
+            "y": 234,
+            "width": 792,
+            "height": 592
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.5
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.7,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "curve-89",
+          "type": "svg",
+          "src": "assets/chart-16x9.svg",
+          "scene": "savings",
+          "start": 6.15,
+          "duration": 2.9,
+          "props": {
+            "fit": "fill",
+            "x": 924,
+            "y": 234,
+            "width": 792,
+            "height": 592
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 2.25,
+              "ease": "linear"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.55,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "phone-109",
+          "type": "svg",
+          "src": "assets/phone.svg",
+          "scene": "app",
+          "start": 9.2,
+          "duration": 2.8,
+          "props": {
+            "fit": "contain",
+            "x": 1180,
+            "y": 110,
+            "width": 420,
+            "height": 861
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "prop": "y",
+              "from": 648,
+              "to": 0,
+              "start": 0,
+              "duration": 1,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "rotation",
+              "from": 8,
+              "to": -3,
+              "start": 0,
+              "duration": 1.1,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "rotation",
+              "from": -3,
+              "to": 0,
+              "start": 1.1,
+              "duration": 1.7,
+              "ease": "cubic-bezier(.37,0,.63,1)"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "type",
+      "kind": "text",
+      "clips": [
+        {
+          "id": "kicker-1",
+          "type": "text",
+          "scene": "hook",
+          "start": 0.15,
+          "duration": 2.3,
+          "props": {
+            "text": "YOUR YEAR IN MONEY  ·  2026",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 600,
+            "color": "#17784A",
+            "fontSize": 30,
+            "x": 140,
+            "y": 210,
+            "width": 900,
+            "height": 39.6
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "hook-2",
+          "type": "text",
+          "scene": "hook",
+          "start": 0.3,
+          "duration": 2.2,
+          "props": {
+            "text": "Where did",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#0E2A1F",
+            "fontSize": 160,
+            "x": 140,
+            "y": 300,
+            "width": 744.8,
+            "height": 211.2
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.25
+            },
+            {
+              "prop": "y",
+              "from": 96,
+              "to": 0,
+              "start": 0,
+              "duration": 0.8,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "blur",
+              "from": 10,
+              "to": 0,
+              "start": 0,
+              "duration": 0.4,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -64,
+              "start": 1.75,
+              "duration": 0.45,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "hook-3",
+          "type": "text",
+          "scene": "hook",
+          "start": 0.46,
+          "duration": 2.04,
+          "props": {
+            "text": "2026 go?",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#17784A",
+            "fontSize": 160,
+            "x": 140,
+            "y": 460,
+            "width": 650.56,
+            "height": 211.2
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.25
+            },
+            {
+              "prop": "y",
+              "from": 96,
+              "to": 0,
+              "start": 0,
+              "duration": 0.8,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "blur",
+              "from": 10,
+              "to": 0,
+              "start": 0,
+              "duration": 0.4,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -64,
+              "start": 1.59,
+              "duration": 0.45,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "spend-k-7",
+          "type": "text",
+          "scene": "spending",
+          "start": 2.7,
+          "duration": 2.9,
+          "props": {
+            "text": "SPENDING  ·  SHARE OF INCOME",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 600,
+            "color": "#6E7B72",
+            "fontSize": 28,
+            "x": 140,
+            "y": 320,
+            "width": 900,
+            "height": 36.96
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "spend-t-8",
+          "type": "text",
+          "scene": "spending",
+          "start": 2.75,
+          "duration": 2.85,
+          "props": {
+            "text": "Where it\nwent.",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#0E2A1F",
+            "fontSize": 104,
+            "x": 140,
+            "y": 380,
+            "width": 1640,
+            "height": 274.56
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "prop": "y",
+              "from": 40,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "bar-label-11",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.05,
+          "duration": 2.65,
+          "props": {
+            "text": "Rent",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 500,
+            "color": "#0E2A1F",
+            "fontSize": 38,
+            "x": 920,
+            "y": 233.52,
+            "width": 400,
+            "height": 50.16
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "prop": "x",
+              "from": -20,
+              "to": 0,
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.3,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "bar-val-14",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.15,
+          "duration": 0.09,
+          "props": {
+            "text": "0%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1596,
+            "y": 232.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-15",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.24,
+          "duration": 0.09,
+          "props": {
+            "text": "6%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1596,
+            "y": 232.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-16",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.33,
+          "duration": 0.09,
+          "props": {
+            "text": "13%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1596,
+            "y": 232.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-17",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.42,
+          "duration": 0.09,
+          "props": {
+            "text": "21%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1596,
+            "y": 232.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-18",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.51,
+          "duration": 0.09,
+          "props": {
+            "text": "27%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1596,
+            "y": 232.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-19",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.6,
+          "duration": 0.09,
+          "props": {
+            "text": "32%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1596,
+            "y": 232.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-20",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.69,
+          "duration": 0.09,
+          "props": {
+            "text": "35%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1596,
+            "y": 232.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-21",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.78,
+          "duration": 1.92,
+          "props": {
+            "text": "38%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1596,
+            "y": 232.6,
+            "width": 120,
+            "height": 52.8
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 1.57,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "bar-label-22",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.21,
+          "duration": 2.49,
+          "props": {
+            "text": "Groceries",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 500,
+            "color": "#0E2A1F",
+            "fontSize": 38,
+            "x": 920,
+            "y": 373.52,
+            "width": 400,
+            "height": 50.16
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "prop": "x",
+              "from": -20,
+              "to": 0,
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.14,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "bar-val-25",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.31,
+          "duration": 0.09,
+          "props": {
+            "text": "0%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1356,
+            "y": 372.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-26",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.4,
+          "duration": 0.09,
+          "props": {
+            "text": "3%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1356,
+            "y": 372.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-27",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.49,
+          "duration": 0.09,
+          "props": {
+            "text": "6%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1356,
+            "y": 372.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-28",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.58,
+          "duration": 0.09,
+          "props": {
+            "text": "10%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1356,
+            "y": 372.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-29",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.67,
+          "duration": 0.09,
+          "props": {
+            "text": "13%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1356,
+            "y": 372.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-30",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.76,
+          "duration": 0.09,
+          "props": {
+            "text": "15%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1356,
+            "y": 372.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-31",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.85,
+          "duration": 0.09,
+          "props": {
+            "text": "17%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1356,
+            "y": 372.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-32",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.94,
+          "duration": 1.76,
+          "props": {
+            "text": "18%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1356,
+            "y": 372.6,
+            "width": 120,
+            "height": 52.8
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 1.41,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "bar-label-33",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.37,
+          "duration": 2.33,
+          "props": {
+            "text": "Travel",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 500,
+            "color": "#0E2A1F",
+            "fontSize": 38,
+            "x": 920,
+            "y": 513.52,
+            "width": 400,
+            "height": 50.16
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "prop": "x",
+              "from": -20,
+              "to": 0,
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 1.98,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "bar-val-36",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.47,
+          "duration": 0.09,
+          "props": {
+            "text": "0%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1308,
+            "y": 512.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-37",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.56,
+          "duration": 0.09,
+          "props": {
+            "text": "2%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1308,
+            "y": 512.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-38",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.65,
+          "duration": 0.09,
+          "props": {
+            "text": "5%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1308,
+            "y": 512.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-39",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.74,
+          "duration": 0.09,
+          "props": {
+            "text": "8%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1308,
+            "y": 512.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-40",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.83,
+          "duration": 0.09,
+          "props": {
+            "text": "10%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1308,
+            "y": 512.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-41",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.92,
+          "duration": 0.09,
+          "props": {
+            "text": "12%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1308,
+            "y": 512.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-42",
+          "type": "text",
+          "scene": "spending",
+          "start": 4.01,
+          "duration": 0.09,
+          "props": {
+            "text": "13%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1308,
+            "y": 512.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-43",
+          "type": "text",
+          "scene": "spending",
+          "start": 4.1,
+          "duration": 1.6,
+          "props": {
+            "text": "14%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1308,
+            "y": 512.6,
+            "width": 120,
+            "height": 52.8
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 1.25,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "bar-label-44",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.53,
+          "duration": 2.17,
+          "props": {
+            "text": "Going out",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 500,
+            "color": "#0E2A1F",
+            "fontSize": 38,
+            "x": 920,
+            "y": 653.52,
+            "width": 400,
+            "height": 50.16
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "prop": "x",
+              "from": -20,
+              "to": 0,
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 1.82,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "bar-val-47",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.63,
+          "duration": 0.09,
+          "props": {
+            "text": "0%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1248,
+            "y": 652.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-48",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.72,
+          "duration": 0.09,
+          "props": {
+            "text": "1%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1248,
+            "y": 652.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-49",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.81,
+          "duration": 0.09,
+          "props": {
+            "text": "3%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1248,
+            "y": 652.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-50",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.9,
+          "duration": 0.09,
+          "props": {
+            "text": "5%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1248,
+            "y": 652.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-51",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.99,
+          "duration": 0.09,
+          "props": {
+            "text": "6%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1248,
+            "y": 652.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-52",
+          "type": "text",
+          "scene": "spending",
+          "start": 4.08,
+          "duration": 0.09,
+          "props": {
+            "text": "8%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1248,
+            "y": 652.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-53",
+          "type": "text",
+          "scene": "spending",
+          "start": 4.17,
+          "duration": 0.09,
+          "props": {
+            "text": "8%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1248,
+            "y": 652.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-54",
+          "type": "text",
+          "scene": "spending",
+          "start": 4.26,
+          "duration": 1.44,
+          "props": {
+            "text": "9%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 40,
+            "x": 1248,
+            "y": 652.6,
+            "width": 120,
+            "height": 52.8
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 1.09,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "bar-label-55",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.69,
+          "duration": 2.01,
+          "props": {
+            "text": "Saved",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#17784A",
+            "fontSize": 38,
+            "x": 920,
+            "y": 793.52,
+            "width": 400,
+            "height": 50.16
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "prop": "x",
+              "from": -20,
+              "to": 0,
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 1.66,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "bar-val-58",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.79,
+          "duration": 0.09,
+          "props": {
+            "text": "0%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#17784A",
+            "fontSize": 40,
+            "x": 1392,
+            "y": 792.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-59",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.88,
+          "duration": 0.09,
+          "props": {
+            "text": "3%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#17784A",
+            "fontSize": 40,
+            "x": 1392,
+            "y": 792.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-60",
+          "type": "text",
+          "scene": "spending",
+          "start": 3.97,
+          "duration": 0.09,
+          "props": {
+            "text": "7%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#17784A",
+            "fontSize": 40,
+            "x": 1392,
+            "y": 792.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-61",
+          "type": "text",
+          "scene": "spending",
+          "start": 4.06,
+          "duration": 0.09,
+          "props": {
+            "text": "12%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#17784A",
+            "fontSize": 40,
+            "x": 1392,
+            "y": 792.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-62",
+          "type": "text",
+          "scene": "spending",
+          "start": 4.15,
+          "duration": 0.09,
+          "props": {
+            "text": "15%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#17784A",
+            "fontSize": 40,
+            "x": 1392,
+            "y": 792.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-63",
+          "type": "text",
+          "scene": "spending",
+          "start": 4.24,
+          "duration": 0.09,
+          "props": {
+            "text": "18%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#17784A",
+            "fontSize": 40,
+            "x": 1392,
+            "y": 792.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-64",
+          "type": "text",
+          "scene": "spending",
+          "start": 4.33,
+          "duration": 0.09,
+          "props": {
+            "text": "20%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#17784A",
+            "fontSize": 40,
+            "x": 1392,
+            "y": 792.6,
+            "width": 120,
+            "height": 52.8
+          }
+        },
+        {
+          "id": "bar-val-65",
+          "type": "text",
+          "scene": "spending",
+          "start": 4.42,
+          "duration": 1.28,
+          "props": {
+            "text": "21%",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#17784A",
+            "fontSize": 40,
+            "x": 1392,
+            "y": 792.6,
+            "width": 120,
+            "height": 52.8
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 0.93,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "save-k-66",
+          "type": "text",
+          "scene": "savings",
+          "start": 5.8,
+          "duration": 3.2,
+          "props": {
+            "text": "SAVED THIS YEAR",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 600,
+            "color": "#6E7B72",
+            "fontSize": 28,
+            "x": 140,
+            "y": 330,
+            "width": 900,
+            "height": 36.96
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "balance-67",
+          "type": "text",
+          "scene": "savings",
+          "start": 5.95,
+          "duration": 0.15,
+          "props": {
+            "text": "$0",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#0E2A1F",
+            "fontSize": 168,
+            "x": 140,
+            "y": 380,
+            "width": 619.264,
+            "height": 221.76
+          }
+        },
+        {
+          "id": "balance-68",
+          "type": "text",
+          "scene": "savings",
+          "start": 6.1,
+          "duration": 0.15,
+          "props": {
+            "text": "$140",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#0E2A1F",
+            "fontSize": 168,
+            "x": 140,
+            "y": 380,
+            "width": 619.264,
+            "height": 221.76
+          }
+        },
+        {
+          "id": "balance-69",
+          "type": "text",
+          "scene": "savings",
+          "start": 6.25,
+          "duration": 0.15,
+          "props": {
+            "text": "$420",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#0E2A1F",
+            "fontSize": 168,
+            "x": 140,
+            "y": 380,
+            "width": 619.264,
+            "height": 221.76
+          }
+        },
+        {
+          "id": "balance-70",
+          "type": "text",
+          "scene": "savings",
+          "start": 6.4,
+          "duration": 0.15,
+          "props": {
+            "text": "$900",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#0E2A1F",
+            "fontSize": 168,
+            "x": 140,
+            "y": 380,
+            "width": 619.264,
+            "height": 221.76
+          }
+        },
+        {
+          "id": "balance-71",
+          "type": "text",
+          "scene": "savings",
+          "start": 6.55,
+          "duration": 0.15,
+          "props": {
+            "text": "$1,650",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#0E2A1F",
+            "fontSize": 168,
+            "x": 140,
+            "y": 380,
+            "width": 619.264,
+            "height": 221.76
+          }
+        },
+        {
+          "id": "balance-72",
+          "type": "text",
+          "scene": "savings",
+          "start": 6.7,
+          "duration": 0.15,
+          "props": {
+            "text": "$2,700",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#0E2A1F",
+            "fontSize": 168,
+            "x": 140,
+            "y": 380,
+            "width": 619.264,
+            "height": 221.76
+          }
+        },
+        {
+          "id": "balance-73",
+          "type": "text",
+          "scene": "savings",
+          "start": 6.85,
+          "duration": 0.15,
+          "props": {
+            "text": "$3,900",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#0E2A1F",
+            "fontSize": 168,
+            "x": 140,
+            "y": 380,
+            "width": 619.264,
+            "height": 221.76
+          }
+        },
+        {
+          "id": "balance-74",
+          "type": "text",
+          "scene": "savings",
+          "start": 7,
+          "duration": 0.15,
+          "props": {
+            "text": "$5,200",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#0E2A1F",
+            "fontSize": 168,
+            "x": 140,
+            "y": 380,
+            "width": 619.264,
+            "height": 221.76
+          }
+        },
+        {
+          "id": "balance-75",
+          "type": "text",
+          "scene": "savings",
+          "start": 7.15,
+          "duration": 0.15,
+          "props": {
+            "text": "$6,600",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#0E2A1F",
+            "fontSize": 168,
+            "x": 140,
+            "y": 380,
+            "width": 619.264,
+            "height": 221.76
+          }
+        },
+        {
+          "id": "balance-76",
+          "type": "text",
+          "scene": "savings",
+          "start": 7.3,
+          "duration": 0.15,
+          "props": {
+            "text": "$8,000",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#0E2A1F",
+            "fontSize": 168,
+            "x": 140,
+            "y": 380,
+            "width": 619.264,
+            "height": 221.76
+          }
+        },
+        {
+          "id": "balance-77",
+          "type": "text",
+          "scene": "savings",
+          "start": 7.45,
+          "duration": 0.15,
+          "props": {
+            "text": "$9,300",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#0E2A1F",
+            "fontSize": 168,
+            "x": 140,
+            "y": 380,
+            "width": 619.264,
+            "height": 221.76
+          }
+        },
+        {
+          "id": "balance-78",
+          "type": "text",
+          "scene": "savings",
+          "start": 7.6,
+          "duration": 0.15,
+          "props": {
+            "text": "$10,400",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#0E2A1F",
+            "fontSize": 168,
+            "x": 140,
+            "y": 380,
+            "width": 619.264,
+            "height": 221.76
+          }
+        },
+        {
+          "id": "balance-79",
+          "type": "text",
+          "scene": "savings",
+          "start": 7.75,
+          "duration": 0.15,
+          "props": {
+            "text": "$11,300",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#0E2A1F",
+            "fontSize": 168,
+            "x": 140,
+            "y": 380,
+            "width": 619.264,
+            "height": 221.76
+          }
+        },
+        {
+          "id": "balance-80",
+          "type": "text",
+          "scene": "savings",
+          "start": 7.9,
+          "duration": 0.15,
+          "props": {
+            "text": "$11,950",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#0E2A1F",
+            "fontSize": 168,
+            "x": 140,
+            "y": 380,
+            "width": 619.264,
+            "height": 221.76
+          }
+        },
+        {
+          "id": "balance-81",
+          "type": "text",
+          "scene": "savings",
+          "start": 8.05,
+          "duration": 0.15,
+          "props": {
+            "text": "$12,320",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#0E2A1F",
+            "fontSize": 168,
+            "x": 140,
+            "y": 380,
+            "width": 619.264,
+            "height": 221.76
+          }
+        },
+        {
+          "id": "balance-82",
+          "type": "text",
+          "scene": "savings",
+          "start": 8.2,
+          "duration": 0.85,
+          "props": {
+            "text": "$12,480",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#0E2A1F",
+            "fontSize": 168,
+            "x": 140,
+            "y": 380,
+            "width": 619.264,
+            "height": 221.76
+          },
+          "animations": [
+            {
+              "prop": "color",
+              "from": "#0E2A1F",
+              "to": "#17784A",
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.37,0,.63,1)"
+            },
+            {
+              "prop": "scale",
+              "start": 0,
+              "duration": 0.5,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 1
+                },
+                {
+                  "t": 0.4,
+                  "v": 1.06,
+                  "ease": "cubic-bezier(.16,1,.3,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 1,
+                  "ease": "cubic-bezier(.22,1,.36,1)"
+                }
+              ]
+            },
+            {
+              "prop": "blur",
+              "from": 0,
+              "to": 10,
+              "start": 0.5,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "chip-l-84",
+          "type": "text",
+          "scene": "savings",
+          "start": 8.1,
+          "duration": 0.95,
+          "props": {
+            "text": "▲ 18.4% vs 2025",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#0E2A1F",
+            "fontSize": 34,
+            "align": "center",
+            "x": 140,
+            "y": 635,
+            "width": 300,
+            "height": 44.88
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "chart-t-87",
+          "type": "text",
+          "scene": "savings",
+          "start": 5.95,
+          "duration": 3.1,
+          "props": {
+            "text": "Savings, month by month",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 600,
+            "color": "#0E2A1F",
+            "fontSize": 34,
+            "x": 924,
+            "y": 180,
+            "width": 792,
+            "height": 44.88
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.4
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.75,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "month-93",
+          "type": "text",
+          "scene": "savings",
+          "start": 6.15,
+          "duration": 2.9,
+          "props": {
+            "text": "J",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 500,
+            "color": "#6E7B72",
+            "fontSize": 24,
+            "align": "center",
+            "x": 942,
+            "y": 844,
+            "width": 30,
+            "height": 31.68
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.55,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "month-94",
+          "type": "text",
+          "scene": "savings",
+          "start": 6.338,
+          "duration": 2.713,
+          "props": {
+            "text": "F",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 500,
+            "color": "#6E7B72",
+            "fontSize": 24,
+            "align": "center",
+            "x": 1008,
+            "y": 844,
+            "width": 30,
+            "height": 31.68
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.363,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "month-95",
+          "type": "text",
+          "scene": "savings",
+          "start": 6.525,
+          "duration": 2.525,
+          "props": {
+            "text": "M",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 500,
+            "color": "#6E7B72",
+            "fontSize": 24,
+            "align": "center",
+            "x": 1074,
+            "y": 844,
+            "width": 30,
+            "height": 31.68
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.175,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "month-96",
+          "type": "text",
+          "scene": "savings",
+          "start": 6.713,
+          "duration": 2.338,
+          "props": {
+            "text": "A",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 500,
+            "color": "#6E7B72",
+            "fontSize": 24,
+            "align": "center",
+            "x": 1140,
+            "y": 844,
+            "width": 30,
+            "height": 31.68
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 1.987,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "month-97",
+          "type": "text",
+          "scene": "savings",
+          "start": 6.9,
+          "duration": 2.15,
+          "props": {
+            "text": "M",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 500,
+            "color": "#6E7B72",
+            "fontSize": 24,
+            "align": "center",
+            "x": 1206,
+            "y": 844,
+            "width": 30,
+            "height": 31.68
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 1.8,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "month-98",
+          "type": "text",
+          "scene": "savings",
+          "start": 7.088,
+          "duration": 1.963,
+          "props": {
+            "text": "J",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 500,
+            "color": "#6E7B72",
+            "fontSize": 24,
+            "align": "center",
+            "x": 1272,
+            "y": 844,
+            "width": 30,
+            "height": 31.68
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 1.612,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "month-99",
+          "type": "text",
+          "scene": "savings",
+          "start": 7.275,
+          "duration": 1.775,
+          "props": {
+            "text": "J",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 500,
+            "color": "#6E7B72",
+            "fontSize": 24,
+            "align": "center",
+            "x": 1338,
+            "y": 844,
+            "width": 30,
+            "height": 31.68
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 1.425,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "month-100",
+          "type": "text",
+          "scene": "savings",
+          "start": 7.463,
+          "duration": 1.588,
+          "props": {
+            "text": "A",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 500,
+            "color": "#6E7B72",
+            "fontSize": 24,
+            "align": "center",
+            "x": 1404,
+            "y": 844,
+            "width": 30,
+            "height": 31.68
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 1.237,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "month-101",
+          "type": "text",
+          "scene": "savings",
+          "start": 7.65,
+          "duration": 1.4,
+          "props": {
+            "text": "S",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 500,
+            "color": "#6E7B72",
+            "fontSize": 24,
+            "align": "center",
+            "x": 1470,
+            "y": 844,
+            "width": 30,
+            "height": 31.68
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 1.05,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "month-102",
+          "type": "text",
+          "scene": "savings",
+          "start": 7.838,
+          "duration": 1.213,
+          "props": {
+            "text": "O",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 500,
+            "color": "#6E7B72",
+            "fontSize": 24,
+            "align": "center",
+            "x": 1536,
+            "y": 844,
+            "width": 30,
+            "height": 31.68
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 0.862,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "month-103",
+          "type": "text",
+          "scene": "savings",
+          "start": 8.025,
+          "duration": 1.025,
+          "props": {
+            "text": "N",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 500,
+            "color": "#6E7B72",
+            "fontSize": 24,
+            "align": "center",
+            "x": 1602,
+            "y": 844,
+            "width": 30,
+            "height": 31.68
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 0.675,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "month-104",
+          "type": "text",
+          "scene": "savings",
+          "start": 8.213,
+          "duration": 0.837,
+          "props": {
+            "text": "D",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 500,
+            "color": "#6E7B72",
+            "fontSize": 24,
+            "align": "center",
+            "x": 1668,
+            "y": 844,
+            "width": 30,
+            "height": 31.68
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 0.487,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "tip-l-106",
+          "type": "text",
+          "scene": "savings",
+          "start": 8.5,
+          "duration": 0.55,
+          "props": {
+            "text": "Dec",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#FFFFFF",
+            "fontSize": 30,
+            "align": "center",
+            "x": 1566,
+            "y": 174.88,
+            "width": 150,
+            "height": 39.6
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.2
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "word-111",
+          "type": "text",
+          "scene": "app",
+          "start": 9.65,
+          "duration": 2.35,
+          "props": {
+            "text": "Fernwise",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#0E2A1F",
+            "fontSize": 150,
+            "x": 308,
+            "y": 330,
+            "width": 628.85,
+            "height": 198
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "x",
+              "from": -30,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            }
+          ]
+        },
+        {
+          "id": "tag-112",
+          "type": "text",
+          "scene": "app",
+          "start": 9.9,
+          "duration": 2.1,
+          "props": {
+            "text": "Watch your money grow.",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 500,
+            "color": "#6E7B72",
+            "fontSize": 46,
+            "align": "left",
+            "x": 140,
+            "y": 530,
+            "width": 1740,
+            "height": 60.72
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.4
+            },
+            {
+              "prop": "y",
+              "from": 20,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            }
+          ]
+        },
+        {
+          "id": "cta-113",
+          "type": "shape",
+          "scene": "app",
+          "start": 10.15,
+          "duration": 1.85,
+          "props": {
+            "x": 140,
+            "y": 650,
+            "width": 520,
+            "height": 104,
+            "fill": "#17784A",
+            "radius": 52
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.5
+            }
+          ]
+        },
+        {
+          "id": "cta-l-114",
+          "type": "text",
+          "scene": "app",
+          "start": 10.3,
+          "duration": 1.7,
+          "props": {
+            "text": "Start free for 30 days",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#FFFFFF",
+            "fontSize": 35.36,
+            "align": "center",
+            "x": 140,
+            "y": 678.08,
+            "width": 520,
+            "height": 46.675
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "accents",
+      "kind": "visual",
+      "clips": [
+        {
+          "id": "coin-4",
+          "type": "svg",
+          "src": "assets/coin-green.svg",
+          "scene": "hook",
+          "start": 0.6,
+          "duration": 1.8,
+          "props": {
+            "fit": "contain",
+            "x": 1420,
+            "y": 300,
+            "width": 260,
+            "height": 260
+          },
+          "animations": [
+            {
+              "preset": "scaleIn",
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "prop": "rotation",
+              "from": -30,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "prop": "y",
+              "start": 0.5,
+              "duration": 0.8,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.5,
+                  "v": -16,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": 1080,
+              "start": 1.32,
+              "duration": 0.45,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            }
+          ]
+        },
+        {
+          "id": "coin-5",
+          "type": "svg",
+          "src": "assets/coin-mint.svg",
+          "scene": "hook",
+          "start": 0.78,
+          "duration": 1.62,
+          "props": {
+            "fit": "contain",
+            "x": 1240,
+            "y": 620,
+            "width": 170,
+            "height": 170
+          },
+          "animations": [
+            {
+              "preset": "scaleIn",
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "prop": "rotation",
+              "from": 30,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "prop": "y",
+              "start": 0.5,
+              "duration": 0.62,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.5,
+                  "v": -16,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": 1080,
+              "start": 1.14,
+              "duration": 0.45,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            }
+          ]
+        },
+        {
+          "id": "coin-6",
+          "type": "svg",
+          "src": "assets/coin-green.svg",
+          "scene": "hook",
+          "start": 0.96,
+          "duration": 1.44,
+          "props": {
+            "fit": "contain",
+            "x": 1620,
+            "y": 700,
+            "width": 140,
+            "height": 140
+          },
+          "animations": [
+            {
+              "preset": "scaleIn",
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "prop": "rotation",
+              "from": -30,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "prop": "y",
+              "start": 0.5,
+              "duration": 0.44,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.5,
+                  "v": -16,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": 1080,
+              "start": 0.96,
+              "duration": 0.45,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            }
+          ]
+        },
+        {
+          "id": "halo-90",
+          "type": "shape",
+          "scene": "savings",
+          "start": 6.15,
+          "duration": 2.9,
+          "props": {
+            "x": 890,
+            "y": 788,
+            "width": 68,
+            "height": 68,
+            "fill": "#17784A33",
+            "radius": 34
+          },
+          "animations": [
+            {
+              "prop": "x",
+              "start": 0,
+              "duration": 2.25,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.083,
+                  "v": 66
+                },
+                {
+                  "t": 0.167,
+                  "v": 132
+                },
+                {
+                  "t": 0.25,
+                  "v": 198
+                },
+                {
+                  "t": 0.333,
+                  "v": 264
+                },
+                {
+                  "t": 0.417,
+                  "v": 330
+                },
+                {
+                  "t": 0.5,
+                  "v": 396
+                },
+                {
+                  "t": 0.583,
+                  "v": 462
+                },
+                {
+                  "t": 0.667,
+                  "v": 528
+                },
+                {
+                  "t": 0.75,
+                  "v": 594
+                },
+                {
+                  "t": 0.833,
+                  "v": 660
+                },
+                {
+                  "t": 0.917,
+                  "v": 726
+                },
+                {
+                  "t": 1,
+                  "v": 792
+                }
+              ]
+            },
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.25,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.083,
+                  "v": -27.28
+                },
+                {
+                  "t": 0.167,
+                  "v": -59.4
+                },
+                {
+                  "t": 0.25,
+                  "v": -83.6
+                },
+                {
+                  "t": 0.333,
+                  "v": -129.8
+                },
+                {
+                  "t": 0.417,
+                  "v": -158.4
+                },
+                {
+                  "t": 0.5,
+                  "v": -211.2
+                },
+                {
+                  "t": 0.583,
+                  "v": -237.6
+                },
+                {
+                  "t": 0.667,
+                  "v": -303.6
+                },
+                {
+                  "t": 0.75,
+                  "v": -356.4
+                },
+                {
+                  "t": 0.833,
+                  "v": -422.4
+                },
+                {
+                  "t": 0.917,
+                  "v": -479.6
+                },
+                {
+                  "t": 1,
+                  "v": -549.12
+                }
+              ]
+            },
+            {
+              "prop": "scale",
+              "start": 0,
+              "duration": 1,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0.6
+                },
+                {
+                  "t": 0.5,
+                  "v": 1.1,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0.6,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            },
+            {
+              "prop": "scale",
+              "start": 1,
+              "duration": 1.25,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0.6
+                },
+                {
+                  "t": 0.5,
+                  "v": 1.2,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0.8,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.55,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "dot-91",
+          "type": "shape",
+          "scene": "savings",
+          "start": 6.15,
+          "duration": 2.9,
+          "props": {
+            "x": 907,
+            "y": 805,
+            "width": 34,
+            "height": 34,
+            "fill": "#17784A",
+            "radius": 17
+          },
+          "animations": [
+            {
+              "preset": "scaleIn",
+              "start": 0,
+              "duration": 0.3,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "prop": "x",
+              "start": 0,
+              "duration": 2.25,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.083,
+                  "v": 66
+                },
+                {
+                  "t": 0.167,
+                  "v": 132
+                },
+                {
+                  "t": 0.25,
+                  "v": 198
+                },
+                {
+                  "t": 0.333,
+                  "v": 264
+                },
+                {
+                  "t": 0.417,
+                  "v": 330
+                },
+                {
+                  "t": 0.5,
+                  "v": 396
+                },
+                {
+                  "t": 0.583,
+                  "v": 462
+                },
+                {
+                  "t": 0.667,
+                  "v": 528
+                },
+                {
+                  "t": 0.75,
+                  "v": 594
+                },
+                {
+                  "t": 0.833,
+                  "v": 660
+                },
+                {
+                  "t": 0.917,
+                  "v": 726
+                },
+                {
+                  "t": 1,
+                  "v": 792
+                }
+              ]
+            },
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.25,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.083,
+                  "v": -27.28
+                },
+                {
+                  "t": 0.167,
+                  "v": -59.4
+                },
+                {
+                  "t": 0.25,
+                  "v": -83.6
+                },
+                {
+                  "t": 0.333,
+                  "v": -129.8
+                },
+                {
+                  "t": 0.417,
+                  "v": -158.4
+                },
+                {
+                  "t": 0.5,
+                  "v": -211.2
+                },
+                {
+                  "t": 0.583,
+                  "v": -237.6
+                },
+                {
+                  "t": 0.667,
+                  "v": -303.6
+                },
+                {
+                  "t": 0.75,
+                  "v": -356.4
+                },
+                {
+                  "t": 0.833,
+                  "v": -422.4
+                },
+                {
+                  "t": 0.917,
+                  "v": -479.6
+                },
+                {
+                  "t": 1,
+                  "v": -549.12
+                }
+              ]
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.55,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "dot-core-92",
+          "type": "shape",
+          "scene": "savings",
+          "start": 6.15,
+          "duration": 2.9,
+          "props": {
+            "x": 917,
+            "y": 815,
+            "width": 14,
+            "height": 14,
+            "fill": "#FFFFFF",
+            "radius": 7
+          },
+          "animations": [
+            {
+              "prop": "x",
+              "start": 0,
+              "duration": 2.25,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.083,
+                  "v": 66
+                },
+                {
+                  "t": 0.167,
+                  "v": 132
+                },
+                {
+                  "t": 0.25,
+                  "v": 198
+                },
+                {
+                  "t": 0.333,
+                  "v": 264
+                },
+                {
+                  "t": 0.417,
+                  "v": 330
+                },
+                {
+                  "t": 0.5,
+                  "v": 396
+                },
+                {
+                  "t": 0.583,
+                  "v": 462
+                },
+                {
+                  "t": 0.667,
+                  "v": 528
+                },
+                {
+                  "t": 0.75,
+                  "v": 594
+                },
+                {
+                  "t": 0.833,
+                  "v": 660
+                },
+                {
+                  "t": 0.917,
+                  "v": 726
+                },
+                {
+                  "t": 1,
+                  "v": 792
+                }
+              ]
+            },
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 2.25,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.083,
+                  "v": -27.28
+                },
+                {
+                  "t": 0.167,
+                  "v": -59.4
+                },
+                {
+                  "t": 0.25,
+                  "v": -83.6
+                },
+                {
+                  "t": 0.333,
+                  "v": -129.8
+                },
+                {
+                  "t": 0.417,
+                  "v": -158.4
+                },
+                {
+                  "t": 0.5,
+                  "v": -211.2
+                },
+                {
+                  "t": 0.583,
+                  "v": -237.6
+                },
+                {
+                  "t": 0.667,
+                  "v": -303.6
+                },
+                {
+                  "t": 0.75,
+                  "v": -356.4
+                },
+                {
+                  "t": 0.833,
+                  "v": -422.4
+                },
+                {
+                  "t": 0.917,
+                  "v": -479.6
+                },
+                {
+                  "t": 1,
+                  "v": -549.12
+                }
+              ]
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": -40,
+              "start": 2.55,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "tip-105",
+          "type": "shape",
+          "scene": "savings",
+          "start": 8.45,
+          "duration": 0.6,
+          "props": {
+            "x": 1566,
+            "y": 162.88,
+            "width": 150,
+            "height": 64,
+            "fill": "#0E2A1F",
+            "radius": 18
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.4
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.25
+            }
+          ]
+        },
+        {
+          "id": "logo-110",
+          "type": "svg",
+          "src": "assets/logo.svg",
+          "scene": "app",
+          "start": 9.55,
+          "duration": 2.45,
+          "props": {
+            "fit": "contain",
+            "x": 140,
+            "y": 357,
+            "width": 135,
+            "height": 135
+          },
+          "animations": [
+            {
+              "preset": "scaleIn",
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "prop": "rotation",
+              "from": -90,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
