@@ -28,6 +28,7 @@ import { localeAssetsCheck, prepareExportRenders } from '../creatives/export-pre
 import { exportGroup, itemOfPlan, pendingByMember, planGroupExport, renderGroupLocales, resolveGroupLocalized, withGroupProfile, type GroupPlanItem } from '../creatives/variant-export.ts';
 import type { VariantFanout } from '../creatives/variant-fanout.ts';
 import { groupJobKey, recoverGroupTurns, type GroupTurnService } from '../creatives/group-turn.ts';
+import { attachmentsSchema, checkAttachments } from '../creatives/attachments.ts';
 import { withLazyHashes } from '../creatives/output-hashes.ts';
 import { claimCreativeReferences, sweepCreativeReferences } from '../library/creative-references.ts';
 import { CreativeRemoval } from '../creatives/creative-removal.ts';
@@ -101,6 +102,8 @@ const isInsideDir = (p: string, base: string | null) => Boolean(base && p.starts
  * Retry): the variant's own turn even in a group with one agent.
  */
 export const turnBodySchema = z.object({ text: z.string().max(10_000).optional(), pins: z.array(pinSchema).max(50).optional(), formats: z.array(z.string().min(1).max(200)).max(100).optional(), direct: z.literal(true).optional() });
+/** Report 79: a message of the chat may carry files of the project library (`attachments`, project paths). */
+const creativeTurnBody = turnBodySchema.extend({ attachments: attachmentsSchema.optional() });
 /** `briefSession` (decision 1423): the brief session this creative is made from; `group` when the brief asks for variants. */
 const createBody = z.object({ title: z.string(), brief: briefWriteSchema, generate: z.boolean().optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional(),
   briefSession: briefSessionRefSchema.optional() });
@@ -740,16 +743,19 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   });
 
   app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/turns', async (req, reply) => {
-    const body = parse(turnBodySchema, req.body);
+    const body = parse(creativeTurnBody, req.body);
     const ref = await refOf(req.params.slug, req.params.c);
     const text = body.text?.trim() ?? '';
     const pins = body.pins ?? [];
+    // Report 79: only regular files of the project library, refused before anything starts.
+    const attachments = body.attachments?.length ? await checkAttachments(ref.projectDir, body.attachments) : [];
+    const files = attachments.length ? { attachments } : {};
     // Phase 3 of the single agent: a message to a group with one agent is the group's turn; a turn with no message or with
     // formats is a UI action that names its variant (Genera, regenerate a format: decision 1145) and stays the variant's.
-    if ((text || pins.length) && !body.formats?.length && !body.direct && ctx.groups && await ctx.groups.enabled(plainRef(ref))) {
-      return reply.status(202).send(await ctx.groups.start(plainRef(ref), { text, pins }));
+    if ((text || pins.length || attachments.length) && !body.formats?.length && !body.direct && ctx.groups && await ctx.groups.enabled(plainRef(ref))) {
+      return reply.status(202).send(await ctx.groups.start(plainRef(ref), { text, pins, ...files }));
     }
-    const job = await ctx.turns.start(ref, text || pins.length ? { text, pins } : undefined, body.formats ? { formats: body.formats } : {});
+    const job = await ctx.turns.start(ref, text || pins.length || attachments.length ? { text, pins, ...files } : undefined, body.formats ? { formats: body.formats } : {});
     return reply.status(202).send(job);
   });
 

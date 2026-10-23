@@ -64,6 +64,8 @@ export const ICONS = {
   volume: 'M3 6.5h2.5L9 3.5v9L5.5 9.5H3ZM11.5 5.5a3.5 3.5 0 0 1 0 5',
   mute: 'M3 6.5h2.5L9 3.5v9L5.5 9.5H3ZM11 6l3 4M14 6l-3 4',
   magnet: 'M3 13.5v-6a5 5 0 0 1 10 0v6M3 11h2.5M10.5 11H13',
+  // Report 79: connected (external) services: a plug with its two pins and the cord.
+  plug: 'M6 1.5v3M10 1.5v3M4 4.5h8V7a4 4 0 0 1-8 0ZM8 11v3.5',
 } as const;
 
 export type IconName = keyof typeof ICONS;

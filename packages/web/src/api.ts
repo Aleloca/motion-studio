@@ -8,7 +8,7 @@ import { markPairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
  */
 export class ApiError extends Error {
   /**
-   * `problems`: every translated problem behind a 422 (a draft that does not validate). `dropped`: the subtitle lines a
+   * `problems`: every translated problem behind a 422 (a draft that does not validate); for `attachment-invalid` (report 79), the refused paths. `dropped`: the subtitle lines a
    * "Ritraduci" removed before it was refused (Task 25).
    */
   constructor(public readonly status: number, message: string, public readonly code?: string, public readonly retryAfterSec?: number, public readonly problems?: string[],
@@ -330,7 +330,7 @@ export const api = {
     request<CreativeDetail>('PUT', `${c(slug, creative)}/links`, { follower, primary }),
   getConversation: (slug: string, creative: string) => request<ConversationEntry[]>('GET', `${c(slug, creative)}/conversation`),
   /** `formats`: the formats the change applies to (spec §2.5); absent means all of them. */
-  sendCreativeTurn: (slug: string, creative: string, body: { text?: string; pins?: Pin[]; formats?: string[]; direct?: true }) => request<JobSummary>('POST', `${c(slug, creative)}/turns`, body),
+  sendCreativeTurn: (slug: string, creative: string, body: { text?: string; pins?: Pin[]; formats?: string[]; direct?: true; /** Report 79: project library paths. */ attachments?: string[] }) => request<JobSummary>('POST', `${c(slug, creative)}/turns`, body),
   /** Phase 13: a message while the agent works (`live`) or for after it (`queued`). Idempotent on `clientId`. */
   postLiveMessage: (slug: string, creative: string, body: { clientId: string; text: string; pins?: Pin[]; mode: 'live' | 'queued' }) =>
     request<{ entry: ConversationEntry; outcome: LiveMessageOutcome }>('POST', `${c(slug, creative)}/messages`, body),

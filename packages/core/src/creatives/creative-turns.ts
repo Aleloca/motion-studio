@@ -139,7 +139,7 @@ export type FanoutTag = NonNullable<QueuedRequest['fanout']>;
  * Phase 3 of the single agent: a variant's turn run as a helper of a group turn (spec §4.3). `request`: the user's message to
  * the group (quoted in the helper's prompt for context; its instruction is the turn's message); `variant`: its id.
  */
-export interface HelperOf { jobId: string; variant: VariantId; request: { text: string; pins: Pin[] } | null }
+export interface HelperOf { jobId: string; variant: VariantId; request: { text: string; pins: Pin[]; attachments?: string[] } | null }
 /**
  * Phase 3: where a grouped member's requests go when its group has one agent (`GroupTurnService`): a helper's leftover
  * messages join the group's queue, and a member's own queue never starts by itself.
@@ -365,7 +365,7 @@ export class CreativeTurnService {
    * subtitles): `message` is an instruction for the agent's prompt only, never written as the user's, and the version's
    * request is `opts.app.request` (in the app language).
    */
-  async start(ref: CreativeRef, message?: { text: string; pins: Pin[] }, opts: { formats?: string[]; hold?: JobWaitReason; fanout?: FanoutTag; helper?: HelperOf; app?: AppTurn } = {}): Promise<JobSummary> {
+  async start(ref: CreativeRef, message?: { text: string; pins: Pin[]; attachments?: string[] }, opts: { formats?: string[]; hold?: JobWaitReason; fanout?: FanoutTag; helper?: HelperOf; app?: AppTurn } = {}): Promise<JobSummary> {
     return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), () => this.startLocked(ref, message, opts.formats, undefined, opts.hold, opts.fanout, opts.helper, opts.app));
   }
 
@@ -886,7 +886,7 @@ export class CreativeTurnService {
     });
   }
 
-  private async startLocked(ref: CreativeRef, message: { text: string; pins: Pin[]; pinsVersion?: number } | undefined, formats: string[] | undefined, queued?: { clientId: string }, hold?: JobWaitReason, fanout?: FanoutTag, helper?: HelperOf, app?: AppTurn): Promise<JobSummary> {
+  private async startLocked(ref: CreativeRef, message: { text: string; pins: Pin[]; pinsVersion?: number; attachments?: string[] } | undefined, formats: string[] | undefined, queued?: { clientId: string }, hold?: JobWaitReason, fanout?: FanoutTag, helper?: HelperOf, app?: AppTurn): Promise<JobSummary> {
     const store = new CreativeStore(ref.projectDir);
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     // Same check the queue does, but before touching the creative's files.
@@ -919,7 +919,7 @@ export class CreativeTurnService {
         && e.text === message.text && JSON.stringify(e.pins) === JSON.stringify(message.pins));
       if (!written) {
         await store.appendConversation(ref.creativeSlug, {
-          type: 'user', at: now(), text: message.text, pins: message.pins, attachments: [],
+          type: 'user', at: now(), text: message.text, pins: message.pins, attachments: message.attachments ?? [],
           ...(queued ? { jobId, mode: 'queued' as const, clientId: queued.clientId, deliveredAt: now() } : {}),
           ...(fanout ? { fanout: fanout.id } : {}),
         });
@@ -1070,7 +1070,7 @@ export class CreativeTurnService {
     return this.side.merged(ref.projectDir, ref.creativeSlug, updated);
   }
 
-  private async run(ref: CreativeRef, store: CreativeStore, previous: CreativeStatus, message: { text: string; pins: Pin[]; pinsVersion?: number } | undefined, signal: AbortSignal, jobId: string, requestedFormats?: string[]): Promise<void | 'cancelled'> {
+  private async run(ref: CreativeRef, store: CreativeStore, previous: CreativeStatus, message: { text: string; pins: Pin[]; pinsVersion?: number; attachments?: string[] } | undefined, signal: AbortSignal, jobId: string, requestedFormats?: string[]): Promise<void | 'cancelled'> {
     const slug = ref.creativeSlug;
     // The agent's language is fixed when the job starts: a setting change mid-turn does not affect it.
     const locale = currentLocale();
@@ -1110,7 +1110,7 @@ export class CreativeTurnService {
       if (pinsAt !== undefined && !pinSource) await store.appendConversation(slug, { type: 'system', at: now(), level: 'warning', text: t().live.queuedPinsVersionGone({ n: pinsAt }) });
       const attachments = await this.extractPinFrames(ref, store, message?.pins ?? [], pinSource, n);
       const pinsVersionNote = pinsAt !== undefined && pinsAt !== base?.n ? { n: pinsAt, gone: !pinSource } : undefined;
-      const hasMessage = Boolean(message?.text || message?.pins.length);
+      const hasMessage = Boolean(message?.text || message?.pins.length || message?.attachments?.length);
       // Final review I4, ruling A: on a legacy base (phase 9 media, no compositions), a turn that only adds LINKED followers
       // (no message, no explicit formats) keeps the phase 9 no-agent path: the followers are copies of their primaries'
       // files, the version stays a v1-contract one. When a primary's file cannot be carried, the turn converts as usual
@@ -1138,7 +1138,7 @@ export class CreativeTurnService {
         formats: noAgent && plan.added.length > 0 ? [...plan.added]
           : targets.length > 0 && targets.length < primaries.length ? [...targets] : undefined,
       });
-      const request = message?.text || (message?.pins.length ? j.pinsOnlyRequest : versions.length === 0 ? undefined
+      const request = message?.text || (message?.pins.length ? j.pinsOnlyRequest : message?.attachments?.length ? j.attachmentsOnlyRequest : versions.length === 0 ? undefined
         : noAgent ? this.addedFollowersRequest(plan, base!, versions, label, locale)
           : (addFormatsRequest(targets.filter((f) => plan.added.includes(f)), base, n, turnContract)
             ?? (targets.length < primaries.length ? j.regenerateFormatsRequest({ formats: listText(targets.map(label), locale) }) : j.regenerateRequest)));
@@ -1379,6 +1379,8 @@ export class CreativeTurnService {
             pins: resumed ? resumed.pins : kind === 'iteration' ? message?.pins : undefined,
             pinsVersion: !resumed && kind === 'iteration' ? pinsVersionNote : undefined,
             attachments: kind === 'iteration' && !resumed ? attachments : undefined,
+            // Report 79: the library files the user attached to the message (a repair or a redirect does not repeat them).
+            files: (kind === 'iteration' || kind === 'first') && !resumed ? message?.attachments : undefined,
             problems, context, locale, sandboxed, contract: turnContract,
             conversion: kind === 'iteration' ? conversion : undefined,
             directEdit: kind === 'iteration' ? directEdit : undefined,

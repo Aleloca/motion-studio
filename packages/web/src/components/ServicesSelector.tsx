@@ -190,7 +190,7 @@ export function ServicesChip({ slug, creative, brief, busy, onSaved }: { slug: s
       <Tooltip label={busy ? `${sv.chipAria({ summary })} · ${sv.busy}` : sv.chipAria({ summary })} whenHidden=".ms-services-chip-label">
       <Button ref={anchor} size="sm" variant="ghost" className="ms-services-chip" aria-haspopup="dialog" aria-expanded={open}
         aria-label={sv.chipAria({ summary })} onClick={() => setOpen((o) => !o)}>
-        <Icon name="key" size={12} /><span className="ms-services-chip-label">{label}</span>{label === sv.chip ? <span className="ms-services-chip-sum">{summary}</span> : null}
+        <Icon name="plug" size={12} /><span className="ms-services-chip-label">{label}</span>{label === sv.chip ? <span className="ms-services-chip-sum">{summary}</span> : null}
       </Button>
       </Tooltip>
       <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="top-start" width={420} label={sv.title}>

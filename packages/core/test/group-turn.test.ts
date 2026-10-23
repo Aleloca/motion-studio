@@ -6,6 +6,8 @@
  * for the closing message and writes the `group-turn` entry. The ask rule is enforced by the core too. Controlled runner
  * only (no `claude`), no provider.
  */
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { messages, type ConversationEntry, type JobSummary } from '@motion-studio/shared';
 import { MCP_TOOLS } from '../src/agent/launcher.ts';
@@ -36,8 +38,8 @@ const conversation = async (slug: string) => (await v.app.inject(`${v.url(slug)}
 const groupJob = async () => (await v.jobs()).find((j) => j.kind === 'creative-group');
 const pin = (variant: string, note: string) => ({ format: 'instagram-post-1x1', x: 0.5, y: 0.5, timeSec: null, note, variant });
 
-async function setup(directions: Array<string | null> = ['Audace', 'Calma', 'Retro'], settings: Record<string, unknown> = {}) {
-  v = await variantApp({ settings: { singleAgent: true, confirmPaidProviders: false, ...settings } });
+async function setup(directions: Array<string | null> = ['Audace', 'Calma', 'Retro'], settings: Record<string, unknown> = {}, sideState?: CreativeSideStateStore) {
+  v = await variantApp({ settings: { singleAgent: true, confirmPaidProviders: false, ...settings }, ...(sideState ? { sideState } : {}) });
   const slug = await v.group(directions);
   return slug;
 }
@@ -598,6 +600,66 @@ describe('the paid-services card on the plan (phase 4, decisions 1125, 1126, 114
     expect(v.runner.runs.length).toBe(before);
     expect(await v.pending()).toEqual([]);
     expect(await groupJob()).toMatchObject({ state: 'cancelled' });
+  });
+});
+
+describe('report 79: files attached to a group message', () => {
+  const logo = async () => { await mkdir(join(v.projectDir, 'assets'), { recursive: true }); await writeFile(join(v.projectDir, 'assets', 'logo.png'), 'png'); };
+  it('reach the coordinator and the helper it starts; the message keeps them', async () => {
+    const slug = await setup();
+    await logo();
+    const res = await v.app.inject({ method: 'POST', url: `${v.url(slug)}/turns`, payload: { text: 'Usa il logo', pins: [pin('b', 'qui')], attachments: ['assets/logo.png'] } });
+    expect(res.statusCode, res.body).toBe(202);
+    const c = await coordinator();
+    expect(c.req.prompt).toContain('- "assets/logo.png" (image)');
+    expect((await conversation(slug)).filter((e) => e.type === 'user').at(-1)).toMatchObject({ text: 'Usa il logo', group: true, attachments: ['assets/logo.png'] });
+    expect((await v.bridge(c, 'work_on_variants', { items: [{ variant: 'b', instruction: 'Metti il logo in alto' }] })).statusCode).toBe(200);
+    c.finish({ write: false });
+    const b = await v.runOf(`${slug}~b`);
+    expect(b.req.prompt).toContain('Metti il logo in alto');
+    expect(b.req.prompt).toContain('- "assets/logo.png" (image)');
+  });
+
+  it('a group message with a file outside the library is refused before any turn', async () => {
+    const slug = await setup();
+    const res = await v.app.inject({ method: 'POST', url: `${v.url(slug)}/turns`, payload: { text: 'x', pins: [pin('b', 'qui')], attachments: ['assets/missing.png'] } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('attachment-invalid');
+    expect(await groupJob()).toBeUndefined();
+  });
+
+  it('round 2: a requeued request runs with the files still in the library; one left with nothing is dropped with a notice', async () => {
+    const side = new CreativeSideStateStore(null);
+    const slug = await setup(undefined, {}, side);
+    await logo();
+    const at = new Date().toISOString();
+    await side.updateGroup(v.projectDir, slug, () => ({ queued: [
+      { clientId: 'q-empty', text: '', pins: [], attachments: ['assets/gone.png'], at },
+      { clientId: 'q-1', text: '', pins: [pin('b', 'qui')], attachments: ['assets/logo.png', 'assets/gone.png'], at },
+    ] }));
+    const run = await v.app.inject({ method: 'POST', url: `${v.url(slug)}/queue/run-next` });
+    expect(run.statusCode, run.body).toBe(202);
+    const c = await coordinator();
+    expect(c.req.prompt).toContain('- "assets/logo.png" (image)');
+    expect(c.req.prompt).not.toContain('assets/gone.png');
+    const conv = await conversation(slug);
+    expect(conv.find((e) => e.type === 'user' && e.clientId === 'q-1')).toMatchObject({ attachments: ['assets/logo.png'] });
+    expect(conv.some((e) => e.type === 'user' && e.clientId === 'q-empty')).toBe(false);
+    expect(conv.some((e) => e.type === 'system' && e.text === messages('it').jobs.queuedFilesGone)).toBe(true);
+    expect((await side.group(v.projectDir, slug)).queued ?? []).toEqual([]);
+  });
+
+  it('a request cut by a restart before it started goes back in the queue with its files (an attachments-only request is never an empty one)', async () => {
+    const slug = await setup();
+    await logo();
+    const side = new CreativeSideStateStore(null);
+    await side.read(v.projectDir, slug);
+    await new CreativeStore(v.projectDir).appendConversation(slug, { type: 'user', at: new Date().toISOString(), text: '', pins: [pin('b', 'qui')], attachments: ['assets/logo.png', 'assets/gone.png'], jobId: 'cut', clientId: 'c-1', group: true });
+    await side.updateGroup(v.projectDir, slug, () => ({
+      turn: { jobId: 'cut', at: new Date().toISOString(), request: { clientId: 'c-1', text: '', pins: [pin('b', 'qui')], attachments: ['assets/logo.png', 'assets/gone.png'], at: new Date().toISOString() } },
+    }));
+    expect(await recoverGroupTurns(v.projectDir, [slug], side, () => false)).toEqual([slug]);
+    expect((await side.group(v.projectDir, slug)).queued?.[0]).toMatchObject({ clientId: 'c-1', attachments: ['assets/logo.png', 'assets/gone.png'] });
   });
 });
 

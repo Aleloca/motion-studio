@@ -35,7 +35,7 @@ export class WorkspaceError extends Error {
  * `retryAfterSec` adds a `Retry-After` header (503).
  */
 export class CodedError extends WorkspaceError {
-  /** `problems`: every translated problem behind a refusal (a draft that does not validate), sent as `problems`. */
+  /** `problems`: every translated problem behind a refusal (a draft that does not validate), sent as `problems`; for `attachment-invalid` (report 79), the refused paths themselves (untranslated). */
   problems?: string[];
   /** Task 25: subtitle lines removed before the refusal (`retranslateSubtitles`), sent as `dropped`. */
   dropped?: number;

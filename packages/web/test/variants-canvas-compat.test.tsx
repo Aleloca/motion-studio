@@ -4,7 +4,7 @@
  * rendered it (idle in Italian, working in English), with the generated ids normalised; this test renders it with the current
  * code and compares. Decision 973 changed the canvas on purpose (no tool bar, a Comment button on each board): the fixtures were
  * made again from that code (`MS_UPDATE_GOLDEN=1` writes them), again for report 40 (the boards in lines, one per group of the formats column), and again for decision 1424 (the chat panel
- * wrapped in its glass card), and still guard the ungrouped canvas against the variant code.
+ * wrapped in its glass card), and again for report 79 (the composer's "+", plug and send tooltip), and still guard the ungrouped canvas against the variant code.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
