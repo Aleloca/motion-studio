@@ -579,6 +579,10 @@ arrives and worked on later together.
 - **Flaky tests recurring (2026-10-23):** on CI run 39869141246 macOS part 3/3 failed twice in a row, first on
   "render mode ignores setComposition" (diff 0.0073) and then on the VFR WebM frame-index test, and passed on the third
   attempt. Both are listed above; fix them before they block a release.
+  Done (2026-10-23): fixed on fix/flaky-tests (decisions 1752-1756). Left from the review, all minor: a lost layer canvas
+  taken out and put back while still lost is no longer waited for (check `isContextLost()` per entry in `anyLost()`);
+  a layer that calls `preventDefault()` on a 2D `contextlost` makes the render fail with frameTimeout after 30 s (worth a
+  README line next to the WebGL gap); the `seekAndGrab` error still says "video canvas" for layer and storyboard frames.
 - **CI on macOS waits for runners:** with 3 parts plus the Electron job, 3 macOS jobs started 10 minutes after the run
   (run 39638356088). If it keeps happening, go to 2 macOS parts.
 - **"Replace with a text layer"** for outlined SVG lettering (report 13): not built (decision 1024).
