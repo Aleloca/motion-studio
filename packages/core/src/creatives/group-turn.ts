@@ -881,6 +881,13 @@ export class GroupTurnService implements GroupRouter {
     try {
       // Report 79 (round 1): a request a restart put back keeps its files; one gone from the library since is dropped.
       const attachments = taken.attachments?.length ? await keptAttachments(host.projectDir, taken.attachments) : [];
+      // Round 2: a request of files only, all gone, would be an empty request: it leaves the queue with a notice, the next goes.
+      if (taken.attachments?.length && !attachments.length && !taken.text.trim() && taken.pins.length === 0) {
+        this.queuedHere.delete(`${this.keyOf(host)}\0${taken.clientId}`);
+        await new CreativeStore(host.projectDir).appendConversation(host.creativeSlug, { type: 'system', at: now(), level: 'warning', text: t().jobs.queuedFilesGone, group: true });
+        this.changed(host);
+        return await this.startQueuedLocked(host, group);
+      }
       const job = await this.startLocked(host, group, { text: taken.text, pins: taken.pins, clientId: taken.clientId, queued: true, ...(taken.variants ? { variants: taken.variants } : {}), ...(attachments.length ? { attachments } : {}) });
       this.queuedHere.delete(`${this.keyOf(host)}\0${taken.clientId}`);
       return job;
