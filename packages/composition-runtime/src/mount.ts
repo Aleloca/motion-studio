@@ -832,6 +832,8 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     if (destroyed) return Promise.resolve();
     if (playing) stopPlayback();
     pendingSeek = t;
+    // The time asked for is the time now, even while an earlier seek still runs: a `play` right after starts from here (report 74).
+    time = clampT(t);
     if (!seekLoop) {
       seekLoop = (async () => {
         try {
