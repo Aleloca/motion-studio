@@ -226,7 +226,7 @@ describe('attachments, round 1', () => {
     await pick(user, 'clip.mp4');
     await screen.findByRole('button', { name: 'Remove clip.mp4' });
     await user.type(box(), 'Go');
-    api.sendCreativeTurn.mockRejectedValueOnce(new ApiError(400, 'assets/logo.png is not a file of the project library.', 'attachment-invalid', undefined, ['assets/logo.png']));
+    api.sendCreativeTurn.mockRejectedValueOnce(new ApiError(400, 'assets/logo.png is not a file in the project’s Assets.', 'attachment-invalid', undefined, ['assets/logo.png']));
     await user.click(send());
     expect((await screen.findByRole('alert')).textContent).toBe('logo.png is no longer in Assets: removed from the attachments. Send again.');
     expect(screen.queryByRole('button', { name: 'Remove logo.png' })).toBeNull();
