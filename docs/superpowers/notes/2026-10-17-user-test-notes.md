@@ -577,6 +577,11 @@ arrives and worked on later together.
     Wanted: move it (not copy it) into the video editor as a button that opens the subtitle editor. The chat's
     "Subtitles ready" card with its buttons stays as it is.
 
+73. **The editor's player gives no sign it is still loading (user report of 2026-10-23).** Opening the editor of a long
+    video creative (the subtitled 2:29 video), the player is not ready for a while, with nothing on screen saying so: the
+    user pressed play many times before understanding it was still loading.
+    Wanted: a visible loading state on the player (and play disabled or queued) until it can play.
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
