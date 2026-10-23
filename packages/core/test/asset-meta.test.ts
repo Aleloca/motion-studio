@@ -185,6 +185,9 @@ describe('display orientation (report 70, round 1)', () => {
     expect(displaySize(anamorphic!)).toEqual({ width: 1920, height: 1080 });
     // The same numbers as the normalisation's own reading of the stream.
     expect(sourceInfoOf({ streams: [{ codec_type: 'video', width: 1440, height: 1080, sample_aspect_ratio: '4:3' }] })).toMatchObject({ width: 1920, height: 1080 });
+    // Round 3 (R2-1): a still image keeps its pixels, whatever its sample aspect ratio says.
+    const still = await (await createFfmpegTools(fakeProbe([{ codec_type: 'video', codec_name: 'png', width: 1440, height: 1080, sample_aspect_ratio: '4:3' }]))).probe(f);
+    expect(displaySize(still!)).toEqual({ width: 1440, height: 1080 });
     const plain = await probe({ width: 1920, height: 1188, sample_aspect_ratio: '1:1' });
     expect(plain?.display).toBeUndefined();
     expect(displaySize(plain!)).toEqual({ width: 1920, height: 1188 });

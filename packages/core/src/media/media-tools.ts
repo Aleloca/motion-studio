@@ -93,7 +93,8 @@ export async function createFfmpegTools(exec: CommandExec = execCommand): Promis
         const d = Number(data.format?.duration);
         const [num, den] = (s.avg_frame_rate ?? '').split('/').map(Number);
         const fps = num && den && Number.isFinite(num / den) ? num / den : undefined;
-        const shown = streamDisplaySize({ ...s, width: s.width, height: s.height });
+        // Round 3 (R2-1): the sample aspect ratio is a video's; a still keeps its pixels as they are (renders unchanged).
+        const shown = streamDisplaySize({ ...s, width: s.width, height: s.height, ...(still ? { sample_aspect_ratio: undefined } : {}) });
         const display = { width: Math.round(shown.width), height: Math.round(shown.height) };
         const turned = display.width !== s.width || display.height !== s.height;
         return { width: s.width, height: s.height, ...(turned ? { display } : {}), durationSec: !still && Number.isFinite(d) && d > 0 ? d : null, ...(fps && !still ? { fps } : {}),

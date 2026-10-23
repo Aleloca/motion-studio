@@ -65,3 +65,32 @@ describe('shownSizeReader (report 70, round 2)', () => {
     expect(m.runs()).toBe(3);
   });
 });
+
+describe('shownSizeReader, round 3 (R2-2, R2-3)', () => {
+  it('a failed read is tried again next time', async () => {
+    const dir = await project();
+    let runs = 0;
+    const tools: MediaTools = { ...NoMediaTools, available: true, probe: async () => (++runs === 1 ? null : { width: 640, height: 360, durationSec: 1 }) };
+    const read = shownSizeReader(tools);
+    expect(await read(dir, 'assets/phone.mp4')).toBeNull();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(await read(dir, 'assets/phone.mp4')).toEqual({ width: 640, height: 360 });
+    expect(runs).toBe(2);
+  });
+
+  it('runs at most 4 probes at once', async () => {
+    const dir = await project();
+    for (let i = 0; i < 9; i++) await writeFile(join(dir, 'assets', `c${i}.mp4`), `c${i}`);
+    let now = 0, most = 0;
+    const tools: MediaTools = { ...NoMediaTools, available: true, probe: async () => {
+      now++; most = Math.max(most, now);
+      await new Promise((r) => setTimeout(r, 15));
+      now--;
+      return { width: 640, height: 360, durationSec: 1 };
+    } };
+    const read = shownSizeReader(tools);
+    const sizes = await Promise.all(Array.from({ length: 9 }, (_, i) => read(dir, `assets/c${i}.mp4`)));
+    expect(sizes.every((s) => s?.width === 640)).toBe(true);
+    expect(most).toBe(4);
+  });
+});
