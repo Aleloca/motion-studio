@@ -7,7 +7,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { AgentCapabilities, Brief, JobSummary } from '@motion-studio/shared';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -20,13 +20,15 @@ const api = {
   sendCreativeTurn: vi.fn(async () => ({ id: 'j9' })), stopJob: vi.fn(async () => ({ status: 'stopping' })),
   getAgentCapabilities: vi.fn(async () => caps), postLiveMessage: vi.fn(), redirectJob: vi.fn(),
   removeQueued: vi.fn(), editQueued: vi.fn(), reorderQueue: vi.fn(), runNext: vi.fn(), decideApproval: vi.fn(),
+  uploadFiles: vi.fn(async (_s: string, _k: string, files: File[]) => ({ assets: files.map((f) => ({ file: f.name, kind: 'image' })) })),
+  listAssets: vi.fn(async () => ({ assets: [], error: null, unregistered: [] })), projectFileUrl: (_s: string, p: string) => p,
 };
 class ApiError extends Error { constructor(public status: number, m: string, public code?: string) { super(m); } }
 vi.mock('../src/api.ts', () => ({ api, ApiError }));
 const { Conversation } = await import('../src/components/Conversation.tsx');
 
 const src = (p: string) => readFileSync(join(import.meta.dirname, '../src', p), 'utf8');
-const CSS = ['theme.css', 'ui/ui.css', 'components/conversation.css', 'components/services.css'].map(src).join('\n');
+const CSS = ['theme.css', 'ui/ui.css', 'components/conversation.css', 'components/services.css', 'screens/new-creative/briefsession.css'].map(src).join('\n');
 const running: JobSummary = { id: 'j1', key: 'creative:k', kind: 'creative', label: 'x', state: 'running', createdAt: '2026-10-14T10:00:00.000Z' };
 const brief = { services: {} } as unknown as Brief;
 const required = process.env.MS_REQUIRE_CHROME === '1';
@@ -45,6 +47,10 @@ describe('busy composer: CSS rules', () => {
     expect(narrow).toMatch(/ms-composer-hint\s*\{[^}]*display:\s*none/);
     expect(narrow).toMatch(/ms-composer-text\s*\{[^}]*display:\s*none/);
     expect(narrow).toMatch(/ms-services-chip-label/);
+  });
+  it('the shortcut is never hidden, and the send button is a pill (report 79)', () => {
+    expect(conv).not.toMatch(/ms-composer-keys\s*\{[^}]*display:\s*none/);
+    expect(conv).toMatch(/\.ms-composer-send\s*\{[^}]*border-radius:\s*999px/);
   });
 });
 
@@ -67,10 +73,24 @@ describe('floating glass composer: CSS rules (user test note 25)', () => {
   });
 });
 
-async function markup(mode: 'live' | 'queue' | 'redirect', locale: 'en' | 'it'): Promise<string> {
+async function markup(mode: 'live' | 'queue' | 'redirect' | 'idle', locale: 'en' | 'it', mac = false): Promise<string> {
   caps = { ...caps, liveInput: mode !== 'queue' };
+  // jsdom is not a Mac: the measures use the wider "Ctrl+↵"; the screenshots show what a Mac shows.
+  const platform = mac ? vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel') : null;
   const { container, unmount } = render(
-    <I18nProvider locale={locale}><Conversation slug="acme" creative="c1" entries={[]} approvals={[]} pins={[]} job={running} onSent={vi.fn()} brief={brief} /></I18nProvider>);
+    <I18nProvider locale={locale}><Conversation slug="acme" creative="c1" entries={[]} approvals={[]} pins={[]} job={mode === 'idle' ? undefined : running} onSent={vi.fn()} brief={brief} /></I18nProvider>);
+  if (mode === 'idle') {
+    // Report 79: the idle composer with one attached file (its chip in the box) and a few words.
+    await userEvent.click(screen.getByRole('button', { name: /^(Attach files|Allega file)$/ }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: /^(From computer|Dal computer)/ }));
+    fireEvent.change(container.querySelector('input[type=file]')!, { target: { files: [new File(['x'], 'brand-logo-final.png', { type: 'image/png' })] } });
+    await screen.findByRole('button', { name: /brand-logo-final\.png/ });
+    await userEvent.type(screen.getByRole('textbox'), 'Use the logo');
+    const html = (container.querySelector('form.ms-composer') as HTMLElement).outerHTML;
+    unmount();
+    platform?.mockRestore();
+    return html;
+  }
   // The explanation line only exists once the capabilities answered, i.e. the real send action has replaced the neutral one.
   await waitFor(() => { expect(container.querySelector('.ms-composer-note')).toBeTruthy(); });
   if (mode === 'redirect') {
@@ -106,7 +126,8 @@ const send = h('button[type=submit]');
 if (stop !== null && send !== null && Math.abs(stop - send) > 0.5) problems.push('heights differ ' + stop + ' vs ' + send);
 const chip = foot.querySelector('.ms-services-chip');
 const lines = [...form.querySelectorAll('.ms-composer-note')].filter(vis).length;
-return ({ problems, hint: !!foot.querySelector('.ms-composer-hint') && vis(foot.querySelector('.ms-composer-hint')), chip: !!chip && vis(chip), chipW: chip && chip.getBoundingClientRect().width, notes: lines, stop, send, label: [...foot.querySelectorAll('.ms-composer-text')].some(vis), sum: [...foot.querySelectorAll('.ms-services-chip-sum')].some(vis) });
+const keys = [...foot.querySelectorAll('.ms-composer-send .ms-composer-keys, .ms-composer-act .ms-composer-keys')].some(vis);
+return ({ keys, problems, hint: !!foot.querySelector('.ms-composer-hint') && vis(foot.querySelector('.ms-composer-hint')), chip: !!chip && vis(chip), chipW: chip && chip.getBoundingClientRect().width, notes: lines, stop, send, label: [...foot.querySelectorAll('.ms-composer-text')].some(vis), sum: [...foot.querySelectorAll('.ms-services-chip-sum')].some(vis) });
 })()`;
 
 const run = chrome ? describe : describe.skip;
@@ -126,8 +147,35 @@ run('busy composer: real Chrome layout', () => {
     const tab = await browser.newPage(width, 900);
     try {
       await tab.goto(`file://${file}`);
-      return await tab.eval<{ problems: string[]; hint: boolean; chip: boolean; chipW: number; notes: number; stop: number | null; send: number | null; label: boolean; sum: boolean }>(MEASURE, 30_000);
+      return await tab.eval<{ keys: boolean; problems: string[]; hint: boolean; chip: boolean; chipW: number; notes: number; stop: number | null; send: number | null; label: boolean; sum: boolean }>(MEASURE, 30_000);
     } finally { await tab.close(); }
+  }
+
+  // Report 79: the idle composer with an attached file. MS_COMPOSER_SHOTS=<folder> also saves composer-narrow.png and
+  // composer-wide.png there (for the report's review).
+  for (const locale of ['en', 'it'] as const) {
+    it(`${locale} idle: the send pill keeps its shortcut and the "+" and the file chip fit, at every width`, async () => {
+      const html = await markup('idle', locale);
+      for (const width of [300, 320, 360, 480, 600, 760]) {
+        const r = await measure(html, width, `${locale}-idle`);
+        expect(r.problems, `${locale} idle @${width}`).toEqual([]);
+        expect(r.keys, `shortcut shown @${width}`).toBe(true);
+        expect(r.chip, 'the Services chip stays').toBe(true);
+        const wide = await measure(html, width, `${locale}-idle`, true);
+        expect(wide.problems, `${locale} idle wide @${width}`).toEqual([]);
+      }
+      const shots = process.env.MS_COMPOSER_SHOTS;
+      if (shots && locale === 'en') {
+        const mac = await markup('idle', locale, true);
+        for (const [width, name] of [[340, 'composer-narrow.png'], [760, 'composer-wide.png']] as const) {
+          const file = join(dir, `shot-${width}.html`);
+          writeFileSync(file, `<!doctype html><html lang="en"><head><meta charset="utf-8"><style>${CSS}
+            body{margin:0;background:var(--bg)} #w{width:${width}px;box-sizing:border-box;padding-top:12px}</style></head><body><div id="w">${mac}</div></body></html>`);
+          const tab = await browser.newPage(width, 190);
+          try { await tab.goto(`file://${file}`); writeFileSync(join(shots, name), await tab.screenshot()); } finally { await tab.close(); }
+        }
+      }
+    }, 120_000);
   }
 
   for (const locale of ['en', 'it'] as const) {
@@ -141,6 +189,8 @@ run('busy composer: real Chrome layout', () => {
           expect(r.chipW).toBeGreaterThan(20);
           expect(r.notes, 'one explanation line').toBeLessThanOrEqual(1);
           if (width <= 360) expect(r.hint, `hint hidden @${width}`).toBe(false);
+          // Report 79: the send actions keep their shortcut in a narrow panel too.
+          if (mode !== 'redirect') expect(r.keys, `shortcut shown @${width}`).toBe(true);
           if (mode !== 'redirect') {
             // Never vacuous: the Stop and the send buttons are both there, and as tall as each other (the page checks that).
             expect(r.stop, `Stop present @${width}`).not.toBeNull();

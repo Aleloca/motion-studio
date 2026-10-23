@@ -1,5 +1,5 @@
 import { QUESTION_DISPLAY } from '@motion-studio/shared';
-import { compareVariantIds } from '@motion-studio/shared';
+import { assetKindOf, compareVariantIds } from '@motion-studio/shared';
 import type { AgentEvent, ApprovalRequest, Brief, ConversationEntry, ExplainContext, GroupTurnOutcome, JobSummary, LiveMessageOutcome, Pin, QueuedRequest, RedirectOutcome, UsageSummary, VariantGroup, VariantId } from '@motion-studio/shared';
 import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { api, ApiError, type VariantRunResult } from '../api.ts';
@@ -25,10 +25,17 @@ import { ApprovalCard } from './ApprovalCard.tsx';
 import { Clipped } from './QuestionCard.tsx';
 import { groupTurnText } from './groupTurnText.ts';
 import { ServicesChip } from './ServicesSelector.tsx';
+import { AttachButton, AttachedChips } from './ComposerAttach.tsx';
 import { SubtitlesReadyCard } from './SubtitlesReadyCard.tsx';
 import { explanationView, RiskChips } from './RiskChips.tsx';
 import { useApprovalPresence, type ShownApproval } from './approvalPresence.ts';
 import { commandLog, webExplainContext, WorkspacePathContext, type CommandLog, type CommandMark, type CommandRow } from './commandLog.ts';
+
+/** Report 79: an attached file's icon, by its kind. */
+const fileIcon = (path: string): IconName => {
+  const k = assetKindOf(path);
+  return k === 'image' || k === 'svg' ? 'image' : k === 'video' ? 'video' : k === 'audio' ? 'music' : 'folder';
+};
 
 /**
  * Events of a job across a page reload. `persisted` are the job's agent entries read from conversation.jsonl
@@ -188,7 +195,7 @@ export interface AppliesTo {
 
 /** Decision 980: the variant(s) an entry belongs to, shown as chips (absent outside a variant group). */
 type Item =
-  | { key: string; kind: 'user'; at: string; text: string; pins: Pin[]; state?: MessageState; redirect?: boolean; variants?: VariantId[]; context?: { codebases: string[]; assets: string[] } }
+  | { key: string; kind: 'user'; at: string; text: string; pins: Pin[]; state?: MessageState; redirect?: boolean; variants?: VariantId[]; context?: { codebases: string[]; assets: string[] }; files?: string[] }
   | { key: string; kind: 'agent'; at: string; text: string; summary: boolean; variant?: VariantId }
   | { key: string; kind: 'step'; at: string; text: string }
   | { key: string; kind: 'fold'; jobId: string; count: number; open: boolean }
@@ -402,7 +409,9 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
       // Phase 3: a message to the group shows the variants its comments are on.
       const pinned = e.group ? [...new Set(e.pins.map((p) => p.variant).filter((v): v is VariantId => Boolean(v)))].sort(compareVariantIds) : [];
       const added = e.context && (e.context.codebases.length > 0 || e.context.assets.length > 0) ? { context: e.context } : {};
-      return { key, kind: 'user', at: e.at, text: e.text, pins: e.pins, ...(state ? { state } : {}), ...(e.mode === 'redirect' ? { redirect: true } : {}), ...(pinned.length ? { variants: pinned } : {}), ...added };
+      // Report 79: the library files the message carried (older entries: none).
+      const files = e.attachments?.length ? { files: e.attachments } : {};
+      return { key, kind: 'user', at: e.at, text: e.text, pins: e.pins, ...(state ? { state } : {}), ...(e.mode === 'redirect' ? { redirect: true } : {}), ...(pinned.length ? { variants: pinned } : {}), ...added, ...files };
     };
     // User note 7: a message of a job written after that job's first event was sent during the turn. It goes inside the
     // turn, after the job's events written before it (the core writes it in the same ordered chain), not below the turn.
@@ -772,6 +781,12 @@ function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetai
                 {item.context.assets.map((path) => <span key={`a:${path}`} className="ms-chip" title={path}><Icon name="image" size={11} /><span className="ms-pin-ref">{path.split('/').pop()}</span></span>)}
               </div>
             )}
+            {item.files && (
+              // Report 79: the files of the library attached to the message.
+              <ul className="ms-msg-pins ms-msg-files" aria-label={c.attachedFiles}>
+                {item.files.map((path) => <li key={path} className="ms-chip" title={path}><Icon name={fileIcon(path)} size={11} /><span className="ms-pin-ref">{path.split('/').pop()}</span></li>)}
+              </ul>
+            )}
           </div>
         </article>
       );
@@ -1040,6 +1055,12 @@ function Composer({ transport, top, tools, label, placeholderText, draft, extraC
     draftNonce.current = draft.nonce;
     setText(draft.text);
   }, [draft]);
+  // Report 79: the library files attached to the next message (project paths). A chat with its own transport (the brief
+  // session) has its own "+"; "Tutte" sends to every variant through another route: neither attaches here.
+  const attachable = !transport && !fanout;
+  const [files, setFiles] = useState<string[]>([]);
+  const addFiles = (paths: string[]) => setFiles((list) => [...list, ...paths.filter((p) => !list.includes(p))]);
+  const removeFile = (path: string) => setFiles((list) => list.filter((p) => p !== path));
   const [sending, setSending] = useState(false);
   // Synchronous guard: two keystrokes in the same tick both see `sending` false.
   const inFlight = useRef(false);
@@ -1093,7 +1114,9 @@ function Composer({ transport, top, tools, label, placeholderText, draft, extraC
   // Residual fix (decisions log 865): in "Tutte" the comments are never sent, so they never make a request on their own: only
   // the text or formats chosen by hand can (else the request would be empty, the first-generation path).
   const handFormats = Array.isArray(choice) && choice.length > 0;
-  const hasContent = text.trim().length > 0 || (fanout ? handFormats : pins.length > 0) || Boolean(extraContent);
+  // Report 79: attached files go only with a new request (never into a running turn): while the agent works they wait.
+  const sentFiles = attachable && !working ? files : [];
+  const hasContent = text.trim().length > 0 || (fanout ? handFormats : pins.length > 0 || sentFiles.length > 0) || Boolean(extraContent);
   const idleBusy = sending || awaiting !== null;
   const busy = working || idleBusy;
   const canSend = !sendOff && (working ? hasContent && !sending && (capsNow !== null || redirect) : !idleBusy && hasContent);
@@ -1115,7 +1138,7 @@ function Composer({ transport, top, tools, label, placeholderText, draft, extraC
   }, [primaryKey]);
 
   /** `first`: the first generation of a never-started group ("Genera"), the only send that may be an empty request. */
-  const send = async (body: { text?: string; pins?: Pin[]; formats?: string[] }, first = false) => {
+  const send = async (body: { text?: string; pins?: Pin[]; formats?: string[]; attachments?: string[] }, first = false) => {
     if (busy || inFlight.current) return;
     inFlight.current = true;
     setError(null); setNotice(null); setSending(true);
@@ -1150,6 +1173,8 @@ function Composer({ transport, top, tools, label, placeholderText, draft, extraC
       if (started && typeof started.id === 'string' && started.id !== latestJobId) setAwaiting(started.id);
       else inFlight.current = false;
       setText('');
+      // The files sent leave the box; one attached while it was sending stays for the next message.
+      if (body.attachments?.length) setFiles((list) => list.filter((p) => !body.attachments!.includes(p)));
       setChoice(undefined);
       onSent?.({ pins: body.pins ?? [] });
     } catch (e) {
@@ -1201,7 +1226,7 @@ function Composer({ transport, top, tools, label, placeholderText, draft, extraC
   const submit = () => {
     if (!canSend) return;
     if (working) void sendWhileWorking(mainKind);
-    else void send({ text: text.trim(), pins: sentPins, ...(targets ? { formats: targets } : {}) });
+    else void send({ text: text.trim(), pins: sentPins, ...(sentFiles.length ? { attachments: sentFiles } : {}), ...(targets ? { formats: targets } : {}) });
   };
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     // The app-wide submit chord: ⌘↵ on macOS, Ctrl+↵ elsewhere (a held key does not send twice).
@@ -1247,6 +1272,8 @@ function Composer({ transport, top, tools, label, placeholderText, draft, extraC
             ))}
           </div>
         )}
+        {attachable && files.length > 0 ? <AttachedChips slug={slug} paths={files} onRemove={removeFile} /> : null}
+        {attachable && files.length > 0 && working ? <p className="ms-composer-note">{c.attachWait}</p> : null}
         {appliesTo && !working ? <AppliesMenu appliesTo={appliesTo} targets={targets} onChange={setChoice} /> : null}
         {appliesTo && targets && !working ? appliesTo.primaries.filter((p) => targets.includes(p.id)).flatMap((p) => p.followers.map((f) => (
           <p key={`${p.id}:${f}`} className="ms-composer-follows"><Icon name="link" size={11} />{c.followsBoth({ follower: f, primary: p.label })}</p>
@@ -1261,6 +1288,7 @@ function Composer({ transport, top, tools, label, placeholderText, draft, extraC
         {notice && <p role="status" className="ms-composer-note">{notice}</p>}
         {error && <p role="alert" className="ms-composer-error">{error}</p>}
         <div className="ms-composer-foot">
+          {attachable ? <AttachButton slug={slug} chosen={files} onAdd={addFiles} onRemove={removeFile} onError={setError} disabled={busy || Boolean(sendOff)} /> : null}
           {tools}
           {brief ? <ServicesChip slug={slug} creative={creative} brief={brief} busy={busy} onSaved={() => onBriefSaved?.()} /> : null}
           <span className="ms-composer-hint">{hint}</span>
@@ -1271,9 +1299,11 @@ function Composer({ transport, top, tools, label, placeholderText, draft, extraC
             </Button>
           )}
           {!working && (
-            <Button type="submit" size="sm" variant="accent" className="ms-composer-send" aria-label={t.web.common.send} disabled={!canSend}>
-              <Icon name="send" size={13} strokeWidth={1.6} />{kbd}
-            </Button>
+            <Tooltip label={c.sendWithKeys({ keys })}>
+              <Button type="submit" size="sm" variant="accent" className="ms-composer-send" aria-label={t.web.common.send} disabled={!canSend}>
+                <Icon name="send" size={13} strokeWidth={1.6} />{kbd}
+              </Button>
+            </Tooltip>
           )}
           {working && redirect && (
             <>

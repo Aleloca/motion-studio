@@ -18,12 +18,14 @@ export function folderProblem(path: string, t: ReturnType<typeof useT>): string 
   return null;
 }
 
+/** One row of a composer "+" menu: what it does, said in a title and an optional hint. */
+export interface PlusMenuItem { key: string; icon: IconName; title: string; hint?: string; run(anchor: HTMLElement): void }
+
 /**
- * The composer's "+" (decision 1414): a menu to link a folder, pick assets from the library or upload from the Mac. Picking an
- * item does what it says; the menu itself does nothing. Esc closes it (the focus goes back to the "+").
+ * A composer's "+" and its menu (decision 1414; report 79: the creative chat's attach menu too). Picking an item does what it
+ * says; the menu itself does nothing. Esc closes it (the focus goes back to the "+").
  */
-export function AddContextMenu({ onFolder, onLibrary, onUpload, disabled }: { onFolder(): void; onLibrary(anchor: HTMLElement): void; onUpload(): void; disabled?: boolean }) {
-  const b = useT().web.briefSession;
+export function PlusMenu({ label, menuLabel, items, disabled, className }: { label: string; menuLabel: string; items: readonly PlusMenuItem[]; disabled?: boolean; className?: string }) {
   const [open, setOpen] = useState(false);
   const plus = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
@@ -35,26 +37,35 @@ export function AddContextMenu({ onFolder, onLibrary, onUpload, disabled }: { on
     e.preventDefault();
     rows[to]?.focus();
   };
-  const item = (icon: IconName, title: string, hint: string, run: () => void) => (
-    <button type="button" role="menuitem" data-row="" className="ms-brief-mi" onClick={() => { setOpen(false); run(); }}>
-      <Icon name={icon} size={16} />
-      <span><b>{title}</b><small>{hint}</small></span>
-    </button>
-  );
   return (
     <>
-      <Button ref={plus} type="button" variant="ghost" icon className="ms-brief-plus" aria-label={b.add} title={b.add} aria-haspopup="menu" aria-expanded={open}
+      <Button ref={plus} type="button" variant="ghost" icon className={cx('ms-plus', className)} aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open}
         disabled={disabled} onClick={() => setOpen((o) => !o)}>
         <Icon name="plus" size={18} />
       </Button>
       <Popover open={open} onClose={() => setOpen(false)} anchor={plus} placement="top-start" width={300}>
-        <div ref={menu} role="menu" aria-label={b.addMenu} className="ms-brief-menu" onKeyDown={onKeyDown}>
-          {item('folder', b.folder.title, b.folder.hint, onFolder)}
-          {item('image', b.library.title, b.library.hint, () => onLibrary(plus.current!))}
-          {item('upload', b.upload.title, b.upload.hint, onUpload)}
+        <div ref={menu} role="menu" aria-label={menuLabel} className="ms-brief-menu" onKeyDown={onKeyDown}>
+          {items.map((it) => (
+            <button key={it.key} type="button" role="menuitem" data-row="" className="ms-brief-mi" onClick={() => { setOpen(false); it.run(plus.current!); }}>
+              <Icon name={it.icon} size={16} />
+              <span><b>{it.title}</b>{it.hint ? <small>{it.hint}</small> : null}</span>
+            </button>
+          ))}
         </div>
       </Popover>
     </>
+  );
+}
+
+/** The brief session's "+" (decision 1414): link a folder, pick assets from the library or upload from the Mac. */
+export function AddContextMenu({ onFolder, onLibrary, onUpload, disabled }: { onFolder(): void; onLibrary(anchor: HTMLElement): void; onUpload(): void; disabled?: boolean }) {
+  const b = useT().web.briefSession;
+  return (
+    <PlusMenu label={b.add} menuLabel={b.addMenu} disabled={disabled} className="ms-brief-plus" items={[
+      { key: 'folder', icon: 'folder', title: b.folder.title, hint: b.folder.hint, run: onFolder },
+      { key: 'library', icon: 'image', title: b.library.title, hint: b.library.hint, run: onLibrary },
+      { key: 'upload', icon: 'upload', title: b.upload.title, hint: b.upload.hint, run: onUpload },
+    ]} />
   );
 }
 

@@ -11,8 +11,8 @@
 .ms-brief-alert > span { flex: 1 1 200px; min-width: 0; }
 
 /* The "+" (left of the composer's bottom row) turns into a × while its menu is open. */
-.ms-brief-plus svg { transition: transform var(--d-s) var(--e-spring); }
-.ms-brief-plus[aria-expanded="true"] svg { transform: rotate(45deg); }
+.ms-plus svg { transition: transform var(--d-s) var(--e-spring); }
+.ms-plus[aria-expanded="true"] svg { transform: rotate(45deg); }
 .ms-chat-card .ms-composer-foot > .ms-brief-plus { margin-right: auto; }
 .ms-brief-menu { display: flex; flex-direction: column; gap: 2px; }
 .ms-brief-mi { display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 7px; background: transparent;

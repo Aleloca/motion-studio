@@ -330,7 +330,7 @@ export const api = {
     request<CreativeDetail>('PUT', `${c(slug, creative)}/links`, { follower, primary }),
   getConversation: (slug: string, creative: string) => request<ConversationEntry[]>('GET', `${c(slug, creative)}/conversation`),
   /** `formats`: the formats the change applies to (spec §2.5); absent means all of them. */
-  sendCreativeTurn: (slug: string, creative: string, body: { text?: string; pins?: Pin[]; formats?: string[]; direct?: true }) => request<JobSummary>('POST', `${c(slug, creative)}/turns`, body),
+  sendCreativeTurn: (slug: string, creative: string, body: { text?: string; pins?: Pin[]; formats?: string[]; direct?: true; /** Report 79: project library paths. */ attachments?: string[] }) => request<JobSummary>('POST', `${c(slug, creative)}/turns`, body),
   /** Phase 13: a message while the agent works (`live`) or for after it (`queued`). Idempotent on `clientId`. */
   postLiveMessage: (slug: string, creative: string, body: { clientId: string; text: string; pins?: Pin[]; mode: 'live' | 'queued' }) =>
     request<{ entry: ConversationEntry; outcome: LiveMessageOutcome }>('POST', `${c(slug, creative)}/messages`, body),
