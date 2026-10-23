@@ -89,6 +89,16 @@ describe('ServicesSelector', () => {
     expect(option('Voice', 'Auto').disabled).toBe(false);
     expect(document.getElementById(group('Voice').getAttribute('aria-describedby')!)!.textContent).toContain('text_to_speech');
   });
+  it('the Services chip shows the plug icon, not the key (report 79)', async () => {
+    secrets = [secret('openai', true), secret('elevenlabs', true), secret('pexels', false), secret('unsplash', false)];
+    keyChecks = { openai: null, elevenlabs: null, pexels: null, unsplash: null };
+    const { ServicesChip } = await import('../src/components/ServicesSelector.tsx');
+    const { ICONS } = await import('../src/ui/icons.ts');
+    render(en(<ServicesChip slug="acme" creative="c1" brief={brief} busy={false} onSaved={() => {}} />));
+    const d = screen.getByRole('button', { name: /Services/ }).querySelector('svg path')!.getAttribute('d');
+    expect(d).toBe((ICONS as Record<string, string>).plug);
+    expect(d).not.toBe(ICONS.key);
+  });
   it('the Services chip reads the key checks and disables a provider whose capability is missing (F5)', async () => {
     secrets = [secret('openai', true), secret('elevenlabs', true), secret('pexels', false), secret('unsplash', false)];
     keyChecks = { openai: null, elevenlabs: { provider: 'elevenlabs', checkedAt: '', capabilities: [{ capability: 'key', status: 'ok' }, { capability: 'tts', status: 'missing', permission: 'text_to_speech' }] }, pexels: null, unsplash: null };
