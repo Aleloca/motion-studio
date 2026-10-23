@@ -63,9 +63,9 @@ describe('NewCreative · files from the computer (report 62)', () => {
     api.listAssets.mockResolvedValue({ assets: [asset('foto.jpg'), asset('logo.png')], error: null, unregistered: [], creativeReferences: [] });
     await userEvent.click(mark);
     expect(api.setAssetReference).toHaveBeenLastCalledWith('acme', 'logo.png', false);
-    const saved = await screen.findByRole('button', { name: /logo\.png è salvato negli Assets/ });
+    const saved = await screen.findByRole('button', { name: /logo\.png è salvato negli Asset/ });
     expect(saved.getAttribute('aria-pressed')).toBe('true');
-    expect(within(section()).getByText('Salvato negli Assets')).toBeTruthy();
+    expect(within(section()).getByText('Salvato negli Asset')).toBeTruthy();
     await userEvent.click(saved);
     expect(api.setAssetReference).toHaveBeenLastCalledWith('acme', 'logo.png', true);
     await screen.findByRole('button', { name: /logo\.png è solo per questa creatività/ });
@@ -77,8 +77,8 @@ describe('NewCreative · files from the computer (report 62)', () => {
     await userEvent.click(within(section()).getByRole('button', { name: 'Aggiungi asset' }));
     const menu = await screen.findByRole('menu', { name: 'Aggiungi asset' });
     expect(within(menu).getByRole('menuitem', { name: /Dal computer…/ })).toBeTruthy();
-    await userEvent.click(within(menu).getByRole('menuitem', { name: /Dalla libreria/ }));
-    expect(await screen.findByRole('dialog', { name: /libreria/i })).toBeTruthy();
+    await userEvent.click(within(menu).getByRole('menuitem', { name: /Dagli Asset/ }));
+    expect(await screen.findByRole('dialog', { name: /Asset di/i })).toBeTruthy();
   });
 
   it('files dropped on the section are uploaded the same way', async () => {
@@ -115,7 +115,7 @@ describe('NewCreative · files from the computer (report 62)', () => {
     await board();
     // A reference already in the brief (a resumed brief) has its mark too.
     await screen.findByRole('button', { name: /mio\.png è solo per questa creatività/ });
-    await userEvent.click(screen.getByRole('button', { name: 'Sfoglia la libreria' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Sfoglia gli Asset' }));
     const picker = await screen.findByRole('dialog');
     expect(within(picker).getByRole('button', { name: 'foto.jpg' })).toBeTruthy();
     expect(within(picker).getByRole('button', { name: 'mio.png' }).getAttribute('aria-pressed')).toBe('true');
@@ -126,7 +126,7 @@ describe('NewCreative · files from the computer (report 62)', () => {
     api.listAssets.mockResolvedValueOnce({ assets: [], error: null, unregistered: [], creativeReferences: [] });
     render(<NewCreative slug="acme" />);
     await board();
-    await userEvent.click(screen.getByRole('button', { name: 'Sfoglia la libreria' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Sfoglia gli Asset' }));
     const picker = await screen.findByRole('dialog');
     await within(picker).findByText('Ancora nessun asset in questo progetto');
     expect(within(picker).getByText('Aggiungi immagini, loghi o clip dal computer, o caricali in Asset.')).toBeTruthy();

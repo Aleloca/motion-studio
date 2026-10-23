@@ -29,7 +29,7 @@ const api = {
   sendCreativeTurn: vi.fn(async () => ({ id: 'j9', key: 'creative:/w:acme:lancio', kind: 'creative', label: 'x', state: 'queued', createdAt: at })),
   updateCreative: vi.fn(async () => detail.creative),
   restoreVersion: vi.fn(async () => detail.creative),
-  // Report 62: the brief's own references (files from the computer) and "Salva negli Assets".
+  // Report 62: the brief's own references (files from the computer) and "Salva negli Asset".
   listAssets: vi.fn(async (_s: string): Promise<{ assets: unknown[]; error: null; unregistered: string[]; creativeReferences?: Array<{ file: string }> }> => ({ assets: [], error: null, unregistered: [] })),
   setAssetReference: vi.fn(async (_s: string, file: string, _r: boolean) => ({ file })),
   revealVersion: vi.fn(async () => ({ ok: true })),
@@ -888,12 +888,12 @@ describe('CreativeCanvas · review round 1', () => {
     render(<Harness live={emptyLive()} />);
     await ready();
     await userEvent.click(screen.getByRole('tab', { name: 'Brief' }));
-    const save = await screen.findByRole('button', { name: 'Salva negli Assets: mood.png' });
+    const save = await screen.findByRole('button', { name: 'Salva negli Asset: mood.png' });
     expect(screen.getByText('Solo per questa creatività')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Salva negli Assets: logo.png' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Salva negli Asset: logo.png' })).toBeNull();
     await userEvent.click(save);
     expect(api.setAssetReference).toHaveBeenCalledWith('acme', 'mood.png', false);
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Salva negli Assets: mood.png' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Salva negli Asset: mood.png' })).toBeNull());
   });
 
   it('a legacy creative: adding a non-linked format warns before "Save and regenerate" that it converts with the agent; a linked one does not (I4)', async () => {

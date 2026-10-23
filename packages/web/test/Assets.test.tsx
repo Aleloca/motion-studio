@@ -432,7 +432,7 @@ describe('Assets · upload and states', () => {
   it('offers to add files found in the folder but missing from the library', async () => {
     listing.unregistered = ['a.png', 'b.png'];
     en(<Assets slug="acme" live={live()} />);
-    expect(await screen.findByText('2 files in the assets folder are not in the library yet')).toBeTruthy();
+    expect(await screen.findByText('2 files in the assets folder are not in Assets yet')).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Add them' }));
     expect(api.registerAssets).toHaveBeenCalledWith('acme', ['a.png', 'b.png']);
   });

@@ -236,7 +236,7 @@ export function attachedFilesSection(paths: readonly string[] | undefined): stri
   if (!paths?.length) return [];
   return [
     '## Attached files',
-    'The user attached these files of the project library to the message (project paths). Open them and use them as the request says:',
+    'The user attached these files in the project Assets to the message (project paths). Open them and use them as the request says:',
     ...paths.map((p) => `- ${quotePromptString(p)} (${assetKindOf(p)})`),
   ];
 }
@@ -299,7 +299,7 @@ export const COMPOSITION_SECTION = [
   '  - every visual clip has a box in props: x, y, width, height, rotation, scale, opacity (composition pixels);',
   '  - animations (times relative to the clip): `{ preset: fadeIn|fadeOut|slideUp|slideDown|slideLeft|slideRight|popIn|scaleIn|wipe, duration, start?, ease? }`, `{ prop, from, to, duration, start?, ease? }` or `{ prop, keyframes: [{ t: 0..1, v }], duration }`; props: opacity, x, y, scale, rotation, color, blur;',
   '  - paths are relative, under `assets/` or `layers/`, without `..`, schemes or absolute paths;',
-  '  - `assets/lib/` is reserved for the files Motion Studio\'s editor adds (library assets and brand fonts the user picked): keep them and their names as they are, never put your own files there.',
+  '  - `assets/lib/` is reserved for the files Motion Studio\'s editor adds (assets from Assets and brand fonts the user picked): keep them and their names as they are, never put your own files there.',
   '- html layers (`layers/*.html`) are for effects the clips cannot express: pure in time (CSS/WAAPI animations, or `window.msSeek = (t) => …` / `window.msTimeline`), signal loading with `window.msReady` (a promise), read `window.msParams`; `msReady` and `msSeek` never wait on time (no setTimeout, setInterval, Date or performance.now waits: time does not pass while a frame is rendered); no network, no Worker, no AudioContext, no media playing on its own.',
   // Report 38 (decision 1232): a will-change layer is rasterised once and resampled, so zoomed text came out blurred.
   '- In html layers never use `will-change` (nor `translateZ`/`translate3d` hacks) on elements that scale or rotate, such as a camera rig: renders rasterise every frame at the output size, and the hint only freezes the raster scale and blurs the text.',

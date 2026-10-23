@@ -60,8 +60,8 @@ describe('BriefSessionPanel (decisions 1412–1414)', () => {
     const items = within(menu).getAllByRole('menuitem');
     expect(items.map((i) => i.textContent)).toEqual([
       'Collega una cartellaCodice sul tuo Mac, letto in sola lettura',
-      'Asset dalla libreriaImmagini, video e loghi del progetto',
-      'Carica dal MacSolo per questa creatività, se non lo salvi negli Assets',
+      'Dagli AssetImmagini, video e loghi del progetto',
+      'Carica dal MacSolo per questa creatività, se non lo salvi negli Asset',
     ]);
     await userEvent.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
@@ -86,7 +86,7 @@ describe('BriefSessionPanel (decisions 1412–1414)', () => {
 
   it('two assets chosen in the library are two pins', async () => {
     render(page());
-    await userEvent.click(within(await openMenu()).getByRole('menuitem', { name: /Asset dalla libreria/ }));
+    await userEvent.click(within(await openMenu()).getByRole('menuitem', { name: /Dagli Asset/ }));
     const picker = await screen.findByRole('dialog', { name: /Acme/ });
     await userEvent.click(within(picker).getByRole('button', { name: 'casella.png' }));
     await userEvent.click(within(picker).getByRole('button', { name: 'logo.svg' }));
@@ -109,7 +109,7 @@ describe('BriefSessionPanel (decisions 1412–1414)', () => {
     render(page());
     await userEvent.click(within(await openMenu()).getByRole('menuitem', { name: /Collega una cartella/ }));
     await screen.findByRole('button', { name: 'Togli /Users/x/app' });
-    await userEvent.click(within(await openMenu()).getByRole('menuitem', { name: /Asset dalla libreria/ }));
+    await userEvent.click(within(await openMenu()).getByRole('menuitem', { name: /Dagli Asset/ }));
     await userEvent.click(within(await screen.findByRole('dialog', { name: /Acme/ })).getByRole('button', { name: 'casella.png' }));
     await userEvent.keyboard('{Escape}');
     api.sendBriefMessage.mockRejectedValueOnce(new ApiError(409, "L'agente sta ancora lavorando al brief", 'brief-session-busy'));
