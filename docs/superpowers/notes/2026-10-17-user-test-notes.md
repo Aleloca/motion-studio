@@ -582,6 +582,10 @@ arrives and worked on later together.
     user pressed play many times before understanding it was still loading.
     Wanted: a visible loading state on the player (and play disabled or queued) until it can play.
 
+74. **Play resumes from the old time after a seek (user report of 2026-10-23).** In the video editor, watching up to
+    0:15, pausing, dragging the time bar back to 0:05 and pressing play starts again from 0:15, not from 0:05.
+    Wanted: play starts from where the time bar was moved.
+
 ## Follow-ups found while working on 12–30
 
 - **Single agent: `add_language` from the coordinator (re-review of feat/single-agent-coordinator, point 4).** The coordinator's
