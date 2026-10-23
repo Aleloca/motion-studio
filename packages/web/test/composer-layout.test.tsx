@@ -21,12 +21,14 @@ const api = {
   getAgentCapabilities: vi.fn(async () => caps), postLiveMessage: vi.fn(), redirectJob: vi.fn(),
   removeQueued: vi.fn(), editQueued: vi.fn(), reorderQueue: vi.fn(), runNext: vi.fn(), decideApproval: vi.fn(),
   uploadFiles: vi.fn(async (_s: string, _k: string, files: File[]) => ({ assets: files.map((f) => ({ file: f.name, kind: 'image' })) })),
-  listAssets: vi.fn(async () => ({ assets: [], error: null, unregistered: [] })), projectFileUrl: (_s: string, p: string) => p,
+  // A picture that loads (round 1: the screenshots show a real thumbnail).
+  listAssets: vi.fn(async () => ({ assets: [], error: null, unregistered: [] })), projectFileUrl: (_s: string, _p: string) => THUMB,
 };
 class ApiError extends Error { constructor(public status: number, m: string, public code?: string) { super(m); } }
 vi.mock('../src/api.ts', () => ({ api, ApiError }));
 const { Conversation } = await import('../src/components/Conversation.tsx');
 
+const THUMB = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff7a3d"/><stop offset="1" stop-color="#5b3dff"/></linearGradient></defs><rect width="16" height="16" fill="url(#g)"/><circle cx="8" cy="8" r="3.5" fill="#fff"/></svg>')}`;
 const src = (p: string) => readFileSync(join(import.meta.dirname, '../src', p), 'utf8');
 const CSS = ['theme.css', 'ui/ui.css', 'components/conversation.css', 'components/services.css', 'screens/new-creative/briefsession.css'].map(src).join('\n');
 const running: JobSummary = { id: 'j1', key: 'creative:k', kind: 'creative', label: 'x', state: 'running', createdAt: '2026-10-14T10:00:00.000Z' };
@@ -85,6 +87,11 @@ async function markup(mode: 'live' | 'queue' | 'redirect' | 'idle', locale: 'en'
     await userEvent.click(await screen.findByRole('menuitem', { name: /^(From computer|Dal computer)/ }));
     fireEvent.change(container.querySelector('input[type=file]')!, { target: { files: [new File(['x'], 'brand-logo-final.png', { type: 'image/png' })] } });
     await screen.findByRole('button', { name: /brand-logo-final\.png/ });
+    // Round 1: a second chip, a video: its kind icon.
+    await userEvent.click(screen.getByRole('button', { name: /^(Attach files|Allega file)$/ }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: /^(From computer|Dal computer)/ }));
+    fireEvent.change(container.querySelector('input[type=file]')!, { target: { files: [new File(['x'], 'launch-teaser.mp4', { type: 'video/mp4' })] } });
+    await screen.findByRole('button', { name: /launch-teaser\.mp4/ });
     await userEvent.type(screen.getByRole('textbox'), 'Use the logo');
     const html = (container.querySelector('form.ms-composer') as HTMLElement).outerHTML;
     unmount();
@@ -167,11 +174,11 @@ run('busy composer: real Chrome layout', () => {
       const shots = process.env.MS_COMPOSER_SHOTS;
       if (shots && locale === 'en') {
         const mac = await markup('idle', locale, true);
-        for (const [width, name] of [[340, 'composer-narrow.png'], [760, 'composer-wide.png']] as const) {
-          const file = join(dir, `shot-${width}.html`);
-          writeFileSync(file, `<!doctype html><html lang="en"><head><meta charset="utf-8"><style>${CSS}
+        for (const [width, name, theme] of [[340, 'composer-narrow.png', 'dark'], [760, 'composer-wide.png', 'dark'], [340, 'composer-narrow-light.png', 'light'], [760, 'composer-wide-light.png', 'light']] as const) {
+          const file = join(dir, `shot-${width}-${theme}.html`);
+          writeFileSync(file, `<!doctype html><html lang="en" data-theme="${theme}"><head><meta charset="utf-8"><style>${CSS}
             body{margin:0;background:var(--bg)} #w{width:${width}px;box-sizing:border-box;padding-top:12px}</style></head><body><div id="w">${mac}</div></body></html>`);
-          const tab = await browser.newPage(width, 190);
+          const tab = await browser.newPage(width, 200);
           try { await tab.goto(`file://${file}`); writeFileSync(join(shots, name), await tab.screenshot()); } finally { await tab.close(); }
         }
       }

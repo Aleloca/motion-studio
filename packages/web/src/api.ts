@@ -8,7 +8,7 @@ import { markPairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
  */
 export class ApiError extends Error {
   /**
-   * `problems`: every translated problem behind a 422 (a draft that does not validate). `dropped`: the subtitle lines a
+   * `problems`: every translated problem behind a 422 (a draft that does not validate); for `attachment-invalid` (report 79), the refused paths. `dropped`: the subtitle lines a
    * "Ritraduci" removed before it was refused (Task 25).
    */
   constructor(public readonly status: number, message: string, public readonly code?: string, public readonly retryAfterSec?: number, public readonly problems?: string[],

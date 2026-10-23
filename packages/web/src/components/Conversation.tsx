@@ -1,5 +1,5 @@
 import { QUESTION_DISPLAY } from '@motion-studio/shared';
-import { assetKindOf, compareVariantIds } from '@motion-studio/shared';
+import { compareVariantIds } from '@motion-studio/shared';
 import type { AgentEvent, ApprovalRequest, Brief, ConversationEntry, ExplainContext, GroupTurnOutcome, JobSummary, LiveMessageOutcome, Pin, QueuedRequest, RedirectOutcome, UsageSummary, VariantGroup, VariantId } from '@motion-studio/shared';
 import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { api, ApiError, type VariantRunResult } from '../api.ts';
@@ -25,17 +25,11 @@ import { ApprovalCard } from './ApprovalCard.tsx';
 import { Clipped } from './QuestionCard.tsx';
 import { groupTurnText } from './groupTurnText.ts';
 import { ServicesChip } from './ServicesSelector.tsx';
-import { AttachButton, AttachedChips } from './ComposerAttach.tsx';
+import { AttachButton, AttachedChips, fileIcon, type PendingUpload } from './ComposerAttach.tsx';
 import { SubtitlesReadyCard } from './SubtitlesReadyCard.tsx';
 import { explanationView, RiskChips } from './RiskChips.tsx';
 import { useApprovalPresence, type ShownApproval } from './approvalPresence.ts';
 import { commandLog, webExplainContext, WorkspacePathContext, type CommandLog, type CommandMark, type CommandRow } from './commandLog.ts';
-
-/** Report 79: an attached file's icon, by its kind. */
-const fileIcon = (path: string): IconName => {
-  const k = assetKindOf(path);
-  return k === 'image' || k === 'svg' ? 'image' : k === 'video' ? 'video' : k === 'audio' ? 'music' : 'folder';
-};
 
 /**
  * Events of a job across a page reload. `persisted` are the job's agent entries read from conversation.jsonl
@@ -1061,6 +1055,12 @@ function Composer({ transport, top, tools, label, placeholderText, draft, extraC
   const [files, setFiles] = useState<string[]>([]);
   const addFiles = (paths: string[]) => setFiles((list) => [...list, ...paths.filter((p) => !list.includes(p))]);
   const removeFile = (path: string) => setFiles((list) => list.filter((p) => p !== path));
+  // Round 1 (finding 1): uploads on their way; nothing is sent until they land (or fail), so a file never misses its message.
+  const [uploading, setUploading] = useState<PendingUpload[]>([]);
+  const onPending = (change: { started: PendingUpload } | { settled: number }) =>
+    setUploading((list) => ('started' in change ? [...list, change.started] : list.filter((u) => u.id !== change.settled)));
+  // Round 1 (findings 4): "Tutte" does not send them, and another creative starts with none: the files attached here go.
+  useEffect(() => { setFiles([]); }, [creative, Boolean(fanout)]);
   const [sending, setSending] = useState(false);
   // Synchronous guard: two keystrokes in the same tick both see `sending` false.
   const inFlight = useRef(false);
@@ -1119,7 +1119,7 @@ function Composer({ transport, top, tools, label, placeholderText, draft, extraC
   const hasContent = text.trim().length > 0 || (fanout ? handFormats : pins.length > 0 || sentFiles.length > 0) || Boolean(extraContent);
   const idleBusy = sending || awaiting !== null;
   const busy = working || idleBusy;
-  const canSend = !sendOff && (working ? hasContent && !sending && (capsNow !== null || redirect) : !idleBusy && hasContent);
+  const canSend = !sendOff && (working ? hasContent && !sending && (capsNow !== null || redirect) : !idleBusy && hasContent && uploading.length === 0);
   const primaryIds = appliesTo?.primaries.map((p) => p.id) ?? [];
   const primaryOf = (id: string) => appliesTo?.followerOf(id) ?? id;
   // Phase 15 (final wave M2): the comments are the open variant's own; "Tutte" never sends them, nor the formats they chose.
@@ -1183,6 +1183,14 @@ function Composer({ transport, top, tools, label, placeholderText, draft, extraC
       if (fanout) { setError(t.web.variantGroup.sendAllFailed({ detail: message(e) })); inFlight.current = false; return; }
       // The brief session's refusals (busy, queue full, gone…) are the core's own words.
       if (transport) { setError(e instanceof ApiError && e.status >= 400 && e.status < 500 ? liveErrorText(e, t) : c.sendFailed({ detail: message(e) })); inFlight.current = false; return; }
+      // Round 1 (finding 5): a file no longer in the library leaves the attachments, said by name; the rest stays.
+      const gone = errorCode(e) === 'attachment-invalid' && e instanceof ApiError ? (e.problems ?? []).filter((p) => body.attachments?.includes(p)) : [];
+      if (gone.length) {
+        setFiles((list) => list.filter((p) => !gone.includes(p)));
+        setError(c.attachmentGone({ names: gone.map((p) => p.split('/').pop() ?? p).join(', '), count: gone.length }));
+        inFlight.current = false;
+        return;
+      }
       setError(SEND_CODES.has(errorCode(e) ?? '') ? versionErrorText(e, t, { label: '' }) : e instanceof ApiError && e.status === 409 ? c.sendBusy : c.sendFailed({ detail: message(e) }));
       inFlight.current = false;
     } finally { setSending(false); }
@@ -1272,7 +1280,7 @@ function Composer({ transport, top, tools, label, placeholderText, draft, extraC
             ))}
           </div>
         )}
-        {attachable && files.length > 0 ? <AttachedChips slug={slug} paths={files} onRemove={removeFile} /> : null}
+        {attachable ? <AttachedChips slug={slug} paths={files} pending={uploading} onRemove={removeFile} /> : null}
         {attachable && files.length > 0 && working ? <p className="ms-composer-note">{c.attachWait}</p> : null}
         {appliesTo && !working ? <AppliesMenu appliesTo={appliesTo} targets={targets} onChange={setChoice} /> : null}
         {appliesTo && targets && !working ? appliesTo.primaries.filter((p) => targets.includes(p.id)).flatMap((p) => p.followers.map((f) => (
@@ -1288,7 +1296,7 @@ function Composer({ transport, top, tools, label, placeholderText, draft, extraC
         {notice && <p role="status" className="ms-composer-note">{notice}</p>}
         {error && <p role="alert" className="ms-composer-error">{error}</p>}
         <div className="ms-composer-foot">
-          {attachable ? <AttachButton slug={slug} chosen={files} onAdd={addFiles} onRemove={removeFile} onError={setError} disabled={busy || Boolean(sendOff)} /> : null}
+          {attachable ? <AttachButton slug={slug} chosen={files} onAdd={addFiles} onRemove={removeFile} onError={setError} onPending={onPending} disabled={busy || Boolean(sendOff)} /> : null}
           {tools}
           {brief ? <ServicesChip slug={slug} creative={creative} brief={brief} busy={busy} onSaved={() => onBriefSaved?.()} /> : null}
           <span className="ms-composer-hint">{hint}</span>

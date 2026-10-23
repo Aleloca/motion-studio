@@ -28,7 +28,7 @@
 .ms-brief-pin-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Report 62: the mark of an uploaded file inside its pin (one line there). */
 .ms-nc-refmark.ms-brief-refmark { width: auto; flex: none; padding: 1px 5px; white-space: nowrap; }
-.ms-brief-swatch { width: 10px; height: 10px; flex: none; border-radius: 3px; background: var(--line2) center / cover no-repeat; }
+.ms-brief-swatch { width: 10px; height: 10px; flex: none; border-radius: 3px; background: var(--line2) center / cover no-repeat; box-shadow: inset 0 0 0 1px var(--line); }
 .ms-brief-folder-form { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .ms-brief-folder-input { flex: 1; min-width: 0; height: 30px; font-family: var(--mono); font-size: 12px; }
 

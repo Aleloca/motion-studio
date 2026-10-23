@@ -25,7 +25,7 @@ export interface PlusMenuItem { key: string; icon: IconName; title: string; hint
  * A composer's "+" and its menu (decision 1414; report 79: the creative chat's attach menu too). Picking an item does what it
  * says; the menu itself does nothing. Esc closes it (the focus goes back to the "+").
  */
-export function PlusMenu({ label, menuLabel, items, disabled, className }: { label: string; menuLabel: string; items: readonly PlusMenuItem[]; disabled?: boolean; className?: string }) {
+export function PlusMenu({ label, menuLabel, items, disabled, className, size }: { label: string; menuLabel: string; items: readonly PlusMenuItem[]; disabled?: boolean; className?: string; /** `sm`: the 28 px of a composer row's buttons. */ size?: 'sm' }) {
   const [open, setOpen] = useState(false);
   const plus = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
@@ -39,9 +39,9 @@ export function PlusMenu({ label, menuLabel, items, disabled, className }: { lab
   };
   return (
     <>
-      <Button ref={plus} type="button" variant="ghost" icon className={cx('ms-plus', className)} aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open}
+      <Button ref={plus} type="button" variant="ghost" icon {...(size ? { size } : {})} className={cx('ms-plus', className)} aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open}
         disabled={disabled} onClick={() => setOpen((o) => !o)}>
-        <Icon name="plus" size={18} />
+        <Icon name="plus" size={size === 'sm' ? 16 : 18} />
       </Button>
       <Popover open={open} onClose={() => setOpen(false)} anchor={plus} placement="top-start" width={300}>
         <div ref={menu} role="menu" aria-label={menuLabel} className="ms-brief-menu" onKeyDown={onKeyDown}>
