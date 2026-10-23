@@ -573,6 +573,9 @@ arrives and worked on later together.
   Done (2026-10-23): the panel flies only if the boards arrive within FLIP_WINDOW_MS (400 ms) of the mount, by design; under
   load the mocked load took longer and the canvas cascaded in (reproduced by letting performance.now run fast). The test
   now fakes only `performance` (timers stay real), and a sibling test pins the slow-load cascade (decision 1754).
+  Review round 1 (2026-10-23): FormatView's two flip tests got the same fix (decision 1756); the canvas-loss handling was
+  tightened (count taken before the seek, removed lost canvases pruned, `isContextLost()`, one seek deadline, storyboard
+  frames, untrusted layer events ignored; decision 1755).
 - **Flaky tests recurring (2026-10-23):** on CI run 39869141246 macOS part 3/3 failed twice in a row, first on
   "render mode ignores setComposition" (diff 0.0073) and then on the VFR WebM frame-index test, and passed on the third
   attempt. Both are listed above; fix them before they block a release.
