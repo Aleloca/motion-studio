@@ -6,6 +6,7 @@ import { execCommand, type CommandExec } from '../src/exec.ts';
 import { assetWaveform, peaksOf, readAssetMeta, WAVEFORM_PEAKS } from '../src/library/asset-meta.ts';
 import { LibraryStore } from '../src/library/library-store.ts';
 import { createFfmpegTools, displaySize, NoMediaTools, type MediaTools } from '../src/media/media-tools.ts';
+import { sourceInfoOf } from '../src/render/media-normalize.ts';
 import { ffArgv } from '../src/media/ffmpeg-exec.ts';
 import { waveformPcmFilter } from '../src/media/ffmpeg-filters.ts';
 
@@ -173,21 +174,24 @@ describe('display orientation (report 70, round 1)', () => {
     : { code: 0, stdout: JSON.stringify({ streams, format: { duration: '3.0' } }), stderr: '', notFound: false });
   const file = async () => { const d = await mkdtemp(join(tmpdir(), 'ms-rot-')); const f = join(d, 'v.mp4'); await writeFile(f, 'x'); return f; };
 
-  it('probe reads the rotation from the display matrix or the rotate tag; displaySize swaps the sides at 90 and 270', async () => {
+  it('probe gives the shown size by the render normalisation\'s rule: a quarter turn swaps the sides, the SAR widens (round 2, N3)', async () => {
     const f = await file();
-    const matrix = await (await createFfmpegTools(fakeProbe([{ codec_type: 'video', codec_name: 'h264', width: 1920, height: 1080, side_data_list: [{ side_data_type: 'Display Matrix', rotation: -90 }] }]))).probe(f);
-    expect(matrix).toMatchObject({ width: 1920, height: 1080, rotation: 90 });
+    const probe = async (stream: Record<string, unknown>) => (await createFfmpegTools(fakeProbe([{ codec_type: 'video', codec_name: 'h264', ...stream }]))).probe(f);
+    const matrix = await probe({ width: 1920, height: 1080, side_data_list: [{ side_data_type: 'Display Matrix', rotation: -90 }] });
+    expect(matrix).toMatchObject({ width: 1920, height: 1080, display: { width: 1080, height: 1920 } });
     expect(displaySize(matrix!)).toEqual({ width: 1080, height: 1920 });
-    const tag = await (await createFfmpegTools(fakeProbe([{ codec_type: 'video', codec_name: 'h264', width: 1920, height: 1080, tags: { rotate: '180' } }]))).probe(f);
-    expect(tag).toMatchObject({ rotation: 180 });
-    expect(displaySize(tag!)).toEqual({ width: 1920, height: 1080 });
-    const plain = await (await createFfmpegTools(fakeProbe([{ codec_type: 'video', codec_name: 'h264', width: 1920, height: 1188 }]))).probe(f);
-    expect(plain?.rotation).toBeUndefined();
+    expect(displaySize((await probe({ width: 1920, height: 1080, tags: { rotate: '180' } }))!)).toEqual({ width: 1920, height: 1080 });
+    const anamorphic = await probe({ width: 1440, height: 1080, sample_aspect_ratio: '4:3' });
+    expect(displaySize(anamorphic!)).toEqual({ width: 1920, height: 1080 });
+    // The same numbers as the normalisation's own reading of the stream.
+    expect(sourceInfoOf({ streams: [{ codec_type: 'video', width: 1440, height: 1080, sample_aspect_ratio: '4:3' }] })).toMatchObject({ width: 1920, height: 1080 });
+    const plain = await probe({ width: 1920, height: 1188, sample_aspect_ratio: '1:1' });
+    expect(plain?.display).toBeUndefined();
     expect(displaySize(plain!)).toEqual({ width: 1920, height: 1188 });
   });
 
   it('the library stores a rotated video at the size it is shown', async () => {
-    const media: MediaTools = { ...NoMediaTools, available: true, probe: async () => ({ width: 1920, height: 1080, durationSec: 12, rotation: 90 }) };
+    const media: MediaTools = { ...NoMediaTools, available: true, probe: async () => ({ width: 1920, height: 1080, durationSec: 12, display: { width: 1080, height: 1920 } }) };
     expect(await readAssetMeta({ media }, await file(), 'video')).toMatchObject({ width: 1080, height: 1920, durationSec: 12 });
   });
 });
@@ -199,7 +203,7 @@ describe.skipIf(!hasFfmpeg)('display orientation with real ffmpeg (report 70, ro
     await execCommand('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=blue:s=320x240:d=1', '-pix_fmt', 'yuv420p', plain]);
     await execCommand('ffmpeg', ['-v', 'error', '-y', '-display_rotation', '90', '-i', plain, '-c', 'copy', turned]);
     const media = await createFfmpegTools();
-    expect((await media.probe(turned))?.rotation).toBe(270);
+    expect((await media.probe(turned))?.display).toEqual({ width: 240, height: 320 });
     expect(await readAssetMeta({ media }, turned, 'video')).toMatchObject({ width: 240, height: 320 });
     expect(await readAssetMeta({ media }, plain, 'video')).toMatchObject({ width: 320, height: 240 });
   });

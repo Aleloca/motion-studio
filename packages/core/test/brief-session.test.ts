@@ -509,7 +509,7 @@ describe('the source\'s own format (report 70)', () => {
   });
 
   it('round 1: a rotated clip gives the format of the size it is shown at, also for an entry stored before (I1)', async () => {
-    const media: MediaTools = { ...NoMediaTools, available: true, probe: async () => ({ width: 1920, height: 1080, durationSec: 30, rotation: 90 }) };
+    const media: MediaTools = { ...NoMediaTools, available: true, probe: async () => ({ width: 1920, height: 1080, durationSec: 30, display: { width: 1080, height: 1920 } }) };
     t = await briefApp({ media });
     setLocale('it');
     // The entry holds the coded size, as the library stored it before rotations were applied.

@@ -15,6 +15,7 @@ import { RenderError } from './errors.ts';
 import { spawnFfmpeg, type FfmpegInfo } from './encode.ts';
 import { killGroup, trackGroup } from './watchdog.ts';
 import { makeOwnedTempDir } from './owner.ts';
+import { streamDisplaySize } from '../media/display-size.ts';
 import { ffprobeOf, mediaInput, MP4_DEMUXERS, spawnFf, type FfArg } from '../media/ffmpeg-exec.ts';
 import { gamutStage, hdrStage, normalizeVideoFilter, type ColourStage, type HdrInfo } from '../media/ffmpeg-filters.ts';
 
@@ -203,10 +204,8 @@ export interface SourceInfo {
 export function sourceInfoOf(j: Record<string, unknown> | null): SourceInfo | null {
   const v = streamsOf(j).find((s) => s.codec_type === 'video' && (s.width ?? 0) > 0 && (s.height ?? 0) > 0);
   if (!v) return null;
-  const sar = ratio(v.sample_aspect_ratio?.replace(':', '/')) ?? 1;
-  let w = v.width! * (sar > 0.1 && sar < 10 ? sar : 1), h = v.height!;
-  const rot = Number(v.side_data_list?.find((d) => typeof d.rotation === 'number')?.rotation ?? v.tags?.rotate ?? 0);
-  if (Math.abs(rot) % 180 === 90) [w, h] = [h, w];
+  // The shown size: the rule the media probe shares (report 70, round 2).
+  const { width: w, height: h } = streamDisplaySize({ ...v, width: v.width!, height: v.height! });
   const d = Number(v.duration ?? (j?.format as { duration?: string } | undefined)?.duration);
   const untagged = !v.color_space || v.color_space === 'unknown' || v.color_space === 'unspecified';
   const transfer = v.color_transfer ?? '', primaries = v.color_primaries ?? '';

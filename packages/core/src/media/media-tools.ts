@@ -4,6 +4,7 @@ import { execCommand, type CommandExec } from '../exec.ts';
 import { execFfVia, isRegularFileNow, mediaInput, type FfArg } from './ffmpeg-exec.ts';
 import { frameScaleFilter, waveformPcmFilter } from './ffmpeg-filters.ts';
 import { isSvgName, svgSize } from './svg-size.ts';
+import { streamDisplaySize, type DisplayStream } from './display-size.ts';
 
 export interface MediaInfo { width: number; height: number; durationSec: number | null; /** Average frame rate of the video stream, when known. */ fps?: number;
   /** The video stream's codec (ffprobe name, e.g. `h264`), when known (Phase 12: store checks). */
@@ -11,23 +12,15 @@ export interface MediaInfo { width: number; height: number; durationSec: number 
   /** Whether the file has an audio stream (Phase 12: the App Store preview needs one); absent when not probed by ffprobe. */
   audio?: boolean;
   /**
-   * Report 70 (round 1): the clockwise rotation a player applies (90, 180 or 270) from the stream's display matrix or its
-   * `rotate` tag; absent when none. `width` and `height` stay the coded size (what an encoder makes and the renders check).
+   * Report 70 (rounds 1–2): the size a player shows (sample aspect ratio and a quarter turn applied, `streamDisplaySize`, the
+   * render normalisation's rule), rounded; absent when it is the coded size. `width` and `height` stay the coded size (what an
+   * encoder makes and the renders check).
    */
-  rotation?: 90 | 180 | 270 }
+  display?: { width: number; height: number } }
 
-/** The size a player shows: the coded size with its sides swapped at 90 and 270 degrees. */
-export const displaySize = (m: Pick<MediaInfo, 'width' | 'height' | 'rotation'>): { width: number; height: number } =>
-  (m.rotation === 90 || m.rotation === 270 ? { width: m.height, height: m.width } : { width: m.width, height: m.height });
-
-/** ffprobe's rotation (the display matrix's counter-clockwise degrees, or the older `rotate` tag) as 90/180/270, or undefined. */
-function rotationOf(s: { tags?: { rotate?: unknown }; side_data_list?: Array<{ rotation?: unknown }> }): MediaInfo['rotation'] {
-  const matrix = s.side_data_list?.find((d) => typeof d.rotation === 'number')?.rotation as number | undefined;
-  // The display matrix says counter-clockwise (-90 = a quarter turn clockwise), the tag clockwise.
-  const deg = matrix !== undefined ? -matrix : Number(s.tags?.rotate ?? 0);
-  const r = ((Math.round(deg / 90) * 90) % 360 + 360) % 360;
-  return r === 90 || r === 180 || r === 270 ? r : undefined;
-}
+/** The size a player shows: `display` when the probe found one, else the coded size. */
+export const displaySize = (m: Pick<MediaInfo, 'width' | 'height' | 'display'>): { width: number; height: number } =>
+  m.display ?? { width: m.width, height: m.height };
 
 export interface MediaTools {
   readonly available: boolean;
@@ -93,15 +86,17 @@ export async function createFfmpegTools(exec: CommandExec = execCommand): Promis
       const r = await execFfVia(exec, 'ffprobe', ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', ...mediaInput({ file })], { timeoutMs: 30_000 });
       if (r.code !== 0) return null;
       try {
-        const data = JSON.parse(r.stdout) as { streams?: Array<{ codec_type?: string; codec_name?: string; width?: number; height?: number; avg_frame_rate?: string; tags?: { rotate?: unknown }; side_data_list?: Array<{ rotation?: unknown }> }>; format?: { duration?: string } };
+        const data = JSON.parse(r.stdout) as { streams?: Array<DisplayStream & { codec_type?: string; codec_name?: string; width?: number; height?: number; avg_frame_rate?: string }>; format?: { duration?: string } };
         const s = data.streams?.find((x) => x.codec_type === 'video' && x.width && x.height);
         if (!s?.width || !s.height) return null;
         const still = s.codec_name !== undefined && STILL_CODECS.has(s.codec_name);
         const d = Number(data.format?.duration);
         const [num, den] = (s.avg_frame_rate ?? '').split('/').map(Number);
         const fps = num && den && Number.isFinite(num / den) ? num / den : undefined;
-        const rotation = rotationOf(s);
-        return { width: s.width, height: s.height, ...(rotation ? { rotation } : {}), durationSec: !still && Number.isFinite(d) && d > 0 ? d : null, ...(fps && !still ? { fps } : {}),
+        const shown = streamDisplaySize({ ...s, width: s.width, height: s.height });
+        const display = { width: Math.round(shown.width), height: Math.round(shown.height) };
+        const turned = display.width !== s.width || display.height !== s.height;
+        return { width: s.width, height: s.height, ...(turned ? { display } : {}), durationSec: !still && Number.isFinite(d) && d > 0 ? d : null, ...(fps && !still ? { fps } : {}),
           ...(typeof s.codec_name === 'string' ? { videoCodec: s.codec_name } : {}), audio: data.streams?.some((x) => x.codec_type === 'audio') ?? false };
       } catch {
         return null;
