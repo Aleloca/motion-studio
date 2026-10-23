@@ -181,6 +181,42 @@ beforeEach(() => {
 });
 afterEach(() => { vi.useRealTimers(); });
 
+describe('EditorScreen · the player while it loads (report 73)', () => {
+  it('loading: a visible "Loading the video…" over the stage and a disabled, explained play; ready: the label goes and play works', async () => {
+    probe.real = true;
+    media.duration = Number.NaN;
+    try {
+      render(<Harness />);
+      await opened();
+      const timeline = screen.getByRole('region', { name: 'Timeline' });
+      const play = within(timeline).getByRole('button', { name: 'Play (Space)' }) as HTMLButtonElement;
+      await screen.findByText('Loading the video…');
+      expect(play.disabled).toBe(true);
+      expect(play.title).toBe('Loading the video…');
+      // A press during loading does nothing (a disabled button), and no playback is queued.
+      await userEvent.click(play);
+      expect(media.play).not.toHaveBeenCalled();
+      // The frame reports its media: the label goes, play is available and works.
+      media.duration = 6;
+      act(() => media.emit('durationchange'));
+      await waitFor(() => expect(screen.queryByText('Loading the video…')).toBeNull());
+      expect(play.disabled).toBe(false);
+      expect(play.title).toBe('');
+      await userEvent.click(play);
+      expect(media.play).toHaveBeenCalledTimes(1);
+    } finally { media.duration = 6; }
+  });
+
+  it('loading to error: a failed preview shows the existing error and Retry, never the loading label', async () => {
+    probe.real = true;
+    api.previewSession.mockReset().mockImplementation(async () => { throw new Error('the core went away'); });
+    render(<Harness />);
+    expect((await screen.findByRole('alert')).textContent).toContain('the core went away');
+    expect(screen.getByRole('button', { name: /Try again/ })).toBeTruthy();
+    expect(screen.queryByText('Loading the video…')).toBeNull();
+  });
+});
+
 describe('EditorScreen · shell', () => {
   it('report 72: a creative with a subtitle set has "Subtitles" in the editor tools, opening the original speech set; without one there is none', async () => {
     const set = { cues: 3, edited: 0, hash: 'a'.repeat(64), timing: { version: 1, format: REEL, fingerprint: 'f'.repeat(64) }, timingChanged: false, staleCues: 0 };

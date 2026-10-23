@@ -2905,6 +2905,8 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
       meta: (p: { size: string; seconds: string; fps: number }) => `${p.size} · ${p.seconds} s · ${p.fps} fps`,
       metaImage: (p: { size: string }) => `${p.size} · still image`,
       loading: 'Opening the editor…',
+      /** The stage's frame is not ready yet: the play control waits for it (report 73). */
+      loadingVideo: 'Loading the video…',
       loadFailed: (p: { detail: string }) => `Can't open the editor: ${p.detail}`,
       legacy: 'This version has no composition to edit. Ask the agent to make it again, or go back to the preview.',
       busyAgent: 'The agent or a render is working on this creative: direct edits are available again when it has finished.',

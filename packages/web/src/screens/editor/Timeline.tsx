@@ -406,7 +406,7 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay, on
   return (
     <div className="ms-tl">
       <div className="ms-tl-bar">
-        <button type="button" className="ms-fv-play" aria-label={controls.playing ? f.pause : f.play} aria-keyshortcuts="Space" disabled={disabled} onClick={controls.toggle}>
+        <button type="button" className="ms-fv-play" aria-label={controls.playing ? f.pause : f.play} aria-keyshortcuts="Space" disabled={disabled} title={disabled ? e.loadingVideo : undefined} onClick={controls.toggle}>
           <Icon name={controls.playing ? 'pause' : 'play'} size={13} fill={!controls.playing} strokeWidth={controls.playing ? 2 : 1.4} />
         </button>
         <span className="ms-fv-tc"><Readout clock={controls.clock} /><span className="ms-faint"> / {timecode(controls.duration)}</span></span>

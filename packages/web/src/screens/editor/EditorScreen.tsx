@@ -1008,6 +1008,11 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
               {!draft || preview.state.kind === 'loading' || preview.state.kind === 'busy' || preview.state.kind === 'idle' ? (
                 <span className="ms-cplayer-state" role="status">{!draft ? e.loading : preview.state.kind === 'busy' ? t.web.render.busy : t.web.render.loading}</span>
               ) : null}
+              {/* Report 73: the session is there but the frame has not reported its media yet (a long video takes a while): say so,
+                  the play control is disabled until it can play. A stalled frame mints a new session, a failed one shows its error. */}
+              {draft && preview.state.kind === 'ready' && !controls.ready ? (
+                <span className="ms-cplayer-state ms-cplayer-loading" role="status"><Spinner size={16} decorative />{e.loadingVideo}</span>
+              ) : null}
               {preview.state.kind === 'ready' ? (
                 <CompositionPlayer key={attempt} session={preview.state.session} title={t.web.render.playerFrame({ label: `${label} v${n ?? ''}` })}
                   onMedia={setPlayer} onStall={preview.stalled} onShowing={onShowing} />
