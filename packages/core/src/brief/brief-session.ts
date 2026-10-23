@@ -53,7 +53,7 @@ export interface BriefSessionDeps {
    * Round 1 (I1): the size a library file is shown at, read now (its rotation applied), for entries stored before the library
    * applied it; null when it cannot be read (the library's size is used).
    */
-  probeSize?(projectDir: string, path: string): Promise<{ width: number; height: number } | null>;
+  probeSize?(projectDir: string, path: string, o?: { cachedOnly?: boolean }): Promise<{ width: number; height: number } | null>;
 }
 
 /** Report 70: `source_format`'s argument, an attached asset's library path. */
@@ -63,17 +63,17 @@ const sourceFormatArgs = z.object({ asset: z.string().min(1).max(1024) }).strict
  * Report 70: what the project library knows of `paths` (`assets/<file>`): kind, size, length; nothing when it cannot be read.
  * With `probeSize`, a video's or an image's size is the one read now (round 1, I1: an older entry may hold the coded size).
  */
-async function libraryFacts(projectDir: string, paths: readonly string[], probeSize?: BriefSessionDeps['probeSize']): Promise<Record<string, AssetFacts>> {
+async function libraryFacts(projectDir: string, paths: readonly string[], probeSize?: BriefSessionDeps['probeSize'], o: { cachedOnly?: boolean } = {}): Promise<Record<string, AssetFacts>> {
   if (paths.length === 0) return {};
   const assets = await readJsonFile(join(projectDir, 'assets', 'assets.json'), assetsFileSchema).then((f) => f.assets).catch(() => []);
-  const out: Record<string, AssetFacts> = {};
-  for (const p of paths) {
+  // Round 2 (N2): the files are read in parallel (each once per version, `shownSizeReader`).
+  const facts = await Promise.all(paths.map(async (p): Promise<[string, AssetFacts] | null> => {
     const a = assets.find((x) => `assets/${x.file}` === p);
-    if (!a) continue;
-    const now = probeSize && (a.kind === 'video' || a.kind === 'image') ? await probeSize(projectDir, p).catch(() => null) : null;
-    out[p] = { kind: a.kind, width: now?.width ?? a.width, height: now?.height ?? a.height, durationSec: a.durationSec ?? null };
-  }
-  return out;
+    if (!a) return null;
+    const now = probeSize && (a.kind === 'video' || a.kind === 'image') ? await probeSize(projectDir, p, o).catch(() => null) : null;
+    return [p, { kind: a.kind, width: now?.width ?? a.width, height: now?.height ?? a.height, durationSec: a.durationSec ?? null }];
+  }));
+  return Object.fromEntries(facts.filter((f): f is [string, AssetFacts] => f !== null));
 }
 
 /** A session held for Genera / Salva bozza (`claim`): no message, discard or other claim until `handOff` or `release`. */
@@ -263,7 +263,8 @@ export class BriefSessionService {
         const adds = added.codebases.length + added.assets.length > 0;
         if (m.mode === 'live' && !adds && act?.run && act.liveInput && act.sessionId === id) {
           const analyses = await this.videoAnalyses?.analysisRefs(ref, s.context.assets).catch(() => ({})) ?? {};
-          const assetFacts = await libraryFacts(ref.projectDir, s.context.assets, this.deps.probeSize);
+          // Round 2 (N2): a live message is never held for ffprobe: only the sizes already read.
+          const assetFacts = await libraryFacts(ref.projectDir, s.context.assets, this.deps.probeSize, { cachedOnly: true });
           const text = briefFollowUp({ locale: currentLocale(), form: s.form, userEdited: s.userEdited, ...(await this.readable(ref, s)), assets: s.context.assets, analyses, assetFacts, request: m.text });
           if (await act.run.send?.({ text, clientId: m.clientId }) === 'written') {
             await this.deps.store.append(ref.projectDir, id, { type: 'user', at: new Date().toISOString(), text: m.text, pins: [], attachments: [], jobId: act.jobId, mode: 'live', clientId: m.clientId, deliveredAt: new Date().toISOString() });

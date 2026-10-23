@@ -19,8 +19,8 @@ import { UPLOAD_LIMITS } from '../library/upload.ts';
 import { CreativeTurnService, type CreativeRef } from '../creatives/creative-turns.ts';
 import { DirectEditService } from '../creatives/direct-edit.ts';
 import { FormatCatalog } from '../formats/format-catalog.ts';
-import { displaySize, NoMediaTools, type MediaTools } from '../media/media-tools.ts';
-import { LibraryStore } from '../library/library-store.ts';
+import { NoMediaTools, type MediaTools } from '../media/media-tools.ts';
+import { shownSizeReader } from '../library/shown-size.ts';
 import { AgentLauncher } from '../agent/launcher.ts';
 import { resolveProjectIcon } from '../project-icon.ts';
 import { IntegrityStore } from '../project-integrity.ts';
@@ -433,13 +433,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     side: turns.side,
     // Report 70: the brief agent's `source_format` adds a custom format as the New creative dialog does (catalog lock).
     addFormat: async (input) => (await addCustomFormat({ catalog: new FormatCatalog(requireWorkspace().root), ws: requireWorkspace() }, input)).preset,
-    // Round 1 (I1): the size a library file is shown at, read now (an older entry may hold the coded size of a rotated clip).
-    probeSize: async (projectDir, path) => {
-      if (!media.available || !path.startsWith('assets/')) return null;
-      const abs = await new LibraryStore(projectDir, media).existingFile('assets', path.slice('assets/'.length)).catch(() => null);
-      const p = abs ? await media.probe(abs).catch(() => null) : null;
-      return p ? displaySize(p) : null;
-    },
+    // Rounds 1–2 (I1, N2): the size a library file is shown at (an older entry may hold the coded size of a rotated clip),
+    // read once per file version.
+    probeSize: shownSizeReader(media),
   });
 
   // Spec §6–§7: the transcription of the analyses (settings app-wide in config.json, decision 1503).
