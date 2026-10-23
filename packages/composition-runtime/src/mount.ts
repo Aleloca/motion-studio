@@ -42,8 +42,9 @@ export interface Player {
   /** Deterministic seek; concurrent calls coalesce to the latest time. Pauses playback. */
   seek(t: number): Promise<void>;
   /**
-   * Render mode (decision 1752): how many times a video canvas lost its GPU context (its pixels) so far. The renderer reads
-   * it after a capture: a loss since the seek ended means the capture may show the box black, so it seeks again.
+   * Render mode (decision 1752): how many times a canvas lost its GPU context (its pixels) so far: the video canvases' and
+   * those the html layers reported. The renderer reads it after a capture: a loss since the seek ended means the capture
+   * may show a box black, so it seeks again.
    */
   readonly canvasLosses: number;
   /** `from`: start there instead of the time shown (a re-mount resumes where the old mount had got to). */
@@ -146,6 +147,8 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
    * lets the renderer see a loss after the seek.
    */
   let canvasLosses = 0;
+  /** Losses and restores: a seek during which one happened may have drawn into a lost canvas. */
+  let canvasEvents = 0;
   const lostCanvases = new Set<HTMLCanvasElement>();
   /** Videos whose held frame went with a lost GPU context: their next seek decodes again (`decodeAgain`). */
   const staleDecodes = new WeakSet<HTMLVideoElement>();
@@ -153,10 +156,11 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
   const watchContext = (cv: HTMLCanvasElement) => {
     cv.addEventListener('contextlost', () => {
       canvasLosses++;
+      canvasEvents++;
       lostCanvases.add(cv);
       for (const m of mounted) if (m.video) staleDecodes.add(m.video);
     });
-    cv.addEventListener('contextrestored', () => { lostCanvases.delete(cv); onCanvasRestored?.(); });
+    cv.addEventListener('contextrestored', () => { canvasEvents++; lostCanvases.delete(cv); onCanvasRestored?.(); });
   };
   /** Whether `cv`'s 2D context is lost now (its event may still be on its way). */
   const contextLost = (cv: HTMLCanvasElement) => {
@@ -730,21 +734,21 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     clipPathHasNoArea(doc.defaultView?.getComputedStyle(el).clipPath ?? '', el.offsetWidth, el.offsetHeight);
 
   /**
-   * Render (decision 1752): after a seek, while a visible video canvas lost its context during it (or still is lost), waits
-   * for every canvas to be back, draws each visible video's frame again, and waits two frames. Fails at `deadline` rather
-   * than let a black box be captured.
+   * Render (decision 1752): after a seek, while a canvas was lost or restored during it (a draw may have gone into a lost
+   * canvas) or a visible video canvas still is lost, waits for every canvas to be back, draws each visible video's frame
+   * again, and waits two frames. Fails at `deadline` rather than let a black box be captured.
    */
-  const redrawLostCanvases = async (lossesAtStart: number, deadline: number) => {
+  const redrawLostCanvases = async (eventsAtStart: number, deadline: number) => {
     const shown = () => mounted.filter((m) => m.canvas && m.video && isClipVisible(m.clip, time, c.duration));
-    let losses = lossesAtStart;
-    while (!destroyed && (canvasLosses !== losses || shown().some((m) => contextLost(m.canvas!)))) {
-      losses = canvasLosses;
+    let seen = eventsAtStart;
+    while (!destroyed && (canvasEvents !== seen || shown().some((m) => contextLost(m.canvas!)))) {
       try {
         await canvasesRestored(() => lostCanvases.size > 0 || shown().some((m) => contextLost(m.canvas!)), deadline);
       } catch (e) {
         report('frameTimeout', `a video canvas lost its GPU context and did not get it back after seeking to ${time}`);
         throw e;
       }
+      seen = canvasEvents; // every canvas is back: a loss or restore from here on is seen by the next turn
       await Promise.all(shown().map((m) => seekVideo(m, time)));
       await twoFrames(n, { strict: true, timeoutMs: Math.max(1, deadline - n.performanceNow()) });
     }
@@ -764,7 +768,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
   const doSeek = async (t: number) => {
     if (destroyed) return;
     const deadline = n.performanceNow() + timeouts.seek;
-    const losses = canvasLosses;
+    const events = canvasEvents;
     time = clampT(t);
     opts.clock?.advanceTo(time * 1000);
     await fontsLoaded;
@@ -799,7 +803,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
         throw e;
       }
       // A canvas that lost its context during this seek (or still is lost) shows nothing: wait for it and draw again.
-      await redrawLostCanvases(losses, deadline);
+      await redrawLostCanvases(events, deadline);
     } else {
       await twoFrames(n);
     }
@@ -1040,7 +1044,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     width: c.width,
     height: c.height,
     get time() { return time; },
-    get canvasLosses() { return canvasLosses; },
+    get canvasLosses() { return mounted.reduce((sum, m) => sum + (m.layer?.canvasLosses ?? 0), canvasLosses); },
     get playing() { return playing; },
     get scale() { return scale; },
     get selected() { return selected; },

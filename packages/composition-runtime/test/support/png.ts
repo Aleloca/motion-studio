@@ -40,6 +40,20 @@ export function diffRatio(a: Image, b: Image, channelTolerance = 8): number {
   return bad / (a.w * a.h);
 }
 
+/** Where two images differ (as `diffRatio` counts): the count, the bounding box and a few pixels, for a failure message. */
+export function diffWhere(a: Image, b: Image, channelTolerance = 8): string {
+  if (a.w !== b.w || a.h !== b.h) return `sizes ${a.w}×${a.h} and ${b.w}×${b.h}`;
+  let n = 0; let x0 = a.w; let y0 = a.h; let x1 = -1; let y1 = -1;
+  const some: string[] = [];
+  for (let y = 0; y < a.h; y++) for (let x = 0; x < a.w; x++) {
+    const p = a.px(x, y); const q = b.px(x, y);
+    if (Math.max(Math.abs(p[0] - q[0]), Math.abs(p[1] - q[1]), Math.abs(p[2] - q[2])) <= channelTolerance) continue;
+    n++; x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+    if (some.length < 5 && n % 25 === 1) some.push(`(${x},${y}) ${p.join('/')}→${q.join('/')}`);
+  }
+  return n ? `${n} px differ in (${x0},${y0})–(${x1},${y1}): ${some.join(', ')}` : 'no pixel differs';
+}
+
 /** Mean grey of a square of side `size` centred on (x, y). */
 export function meanGrey(img: Image, x: number, y: number, size = 6): number {
   let sum = 0; let n = 0;

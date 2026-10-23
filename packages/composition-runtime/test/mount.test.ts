@@ -511,7 +511,7 @@ describe('render mode video frames (fake VideoFrame)', () => {
   // Decision 1752: when Chrome's GPU process goes (macOS CI), every 2D canvas loses its pixels (`contextlost`), draws do
   // nothing until `contextrestored` (~0.5 s later), and a capture shows the video box black. A stand-in 2D context records
   // each draw (the frame's timestamp, and whether the context was lost then).
-  const gpu = { lost: false, loseOnDraw: null as number | null, draws: [] as Array<{ ts: number; lost: boolean }> };
+  const gpu = { lost: false, loseOnDraw: null as number | null, restoreOnDraw: false, draws: [] as Array<{ ts: number; lost: boolean }> };
   const canvasOf = () => document.querySelector<HTMLCanvasElement>('[data-clip-id="vid"] canvas')!;
   const loseGpu = (restoreAfterMs: number | null) => {
     gpu.lost = true;
@@ -519,7 +519,7 @@ describe('render mode video frames (fake VideoFrame)', () => {
     if (restoreAfterMs !== null) setTimeout(() => { gpu.lost = false; canvasOf().dispatchEvent(new Event('contextrestored')); }, restoreAfterMs);
   };
   const useContexts = () => {
-    Object.assign(gpu, { lost: false, loseOnDraw: null, draws: [] });
+    Object.assign(gpu, { lost: false, loseOnDraw: null, restoreOnDraw: false, draws: [] });
     define(HTMLCanvasElement.prototype, 'getContext', {
       writable: true,
       value: () => ({
@@ -528,6 +528,8 @@ describe('render mode video frames (fake VideoFrame)', () => {
           gpu.draws.push({ ts: f.timestamp, lost: gpu.lost });
           // The GPU process goes just after this draw, while the seek waits for its two frames.
           if (gpu.loseOnDraw !== null) { const ms = gpu.loseOnDraw; gpu.loseOnDraw = null; setTimeout(() => loseGpu(ms), 0); }
+          // The context comes back just after a draw made while it was lost (a no-op).
+          if (gpu.restoreOnDraw && gpu.lost) { gpu.restoreOnDraw = false; setTimeout(() => { gpu.lost = false; canvasOf().dispatchEvent(new Event('contextrestored')); }, 0); }
         },
       }),
     });
@@ -558,6 +560,12 @@ describe('render mode video frames (fake VideoFrame)', () => {
     expect(performance.now() - t0).toBeGreaterThanOrEqual(90);
     expect(gpu.draws.filter((d) => d.ts === 2_000_000).map((d) => d.lost)).toEqual([true, false]);
     expect(player.canvasLosses).toBe(2);
+    // Lost before the seek and back right after its (no-op) draw: nothing is lost when the seek ends, yet it draws again.
+    loseGpu(null);
+    gpu.restoreOnDraw = true;
+    await player.seek(3);
+    expect(gpu.draws.filter((d) => d.ts === 3_000_000).map((d) => d.lost)).toEqual([true, false]);
+    expect(player.canvasLosses).toBe(3);
     expect(errors).toEqual([]);
   });
 

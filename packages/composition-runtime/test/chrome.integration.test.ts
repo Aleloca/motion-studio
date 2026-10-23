@@ -12,7 +12,7 @@ import { runtimeBuildOptions } from '../tsup.config.ts';
 import { sourceFrameIndex, videoSourceTime } from '../src/timing.ts';
 import { findChrome, launchChrome, Page, type Browser } from './support/chrome.ts';
 import { CLIPPED_PATH, CLOCK_PATH, COMP_PATH, findFfmpeg, H, LAYER, OFFSCREEN_PATH, VIDEO, W, writeClippedFixture, writeClockFixture, writeFixture, writeOffscreenFixture } from './support/fixture.ts';
-import { decodePng, diffRatio, meanGrey, type Image } from './support/png.ts';
+import { decodePng, diffRatio, diffWhere, meanGrey, type Image } from './support/png.ts';
 import { startCompositionServer, startUiServer, type TestServer } from './support/server.ts';
 
 const chrome = findChrome();
@@ -65,9 +65,16 @@ describe.skipIf(!chrome)('runtime in headless Chrome', () => {
     expect(info).toMatchObject({ duration: 4, fps: 30, frames: 120 });
     return page;
   }
+  /**
+   * Seeks to `t` and captures the page as the renderer does (decision 1752): a capture during which a canvas lost its GPU
+   * context (`__ms.canvasLosses` changed since the seek; Chrome's GPU process went) may show it blank, so it is made again.
+   */
   const shot = async (page: Page, t: number): Promise<Image> => {
-    await page.eval(`window.__ms.seek(${t})`);
-    return decodePng(await page.screenshot());
+    for (let attempt = 1; ; attempt++) {
+      const losses = await page.eval<number>(`window.__ms.seek(${t}).then(() => window.__ms.canvasLosses)`);
+      const img = decodePng(await page.screenshot());
+      if (attempt >= 3 || await page.eval<number>('window.__ms.canvasLosses') === losses) return img;
+    }
   };
   /** Width of the msSeek bar: red pixels from the left edge of the layer's first row. */
   const barWidth = (img: Image, ox = 0, oy = 0) => {
@@ -344,8 +351,31 @@ describe.skipIf(!chrome)('runtime in headless Chrome', () => {
       await new Promise((r) => setTimeout(r, 500)); // the page's own timers run on the frozen virtual clock
       const b = await shot(page, 1.5);
       expect(teal(b, 290, 30)).toBe(true);
-      expect(diffRatio(a, b)).toBeLessThan(0.002);
+      expect(diffRatio(a, b), diffWhere(a, b)).toBeLessThan(0.002);
     });
+  }, 240_000);
+
+  it.skipIf(!ffmpeg)('render: the GPU process lost between two seeks (canvases and held video frames cleared): the frame is drawn again in full (decision 1752)', async () => {
+    // The macOS CI failure of the test above (run 39869141246, diff 0.0073): exactly the probe canvas's three white
+    // rectangles gone (420 px). Its own browser: Chrome gives up after a few GPU process crashes.
+    const own = await launchChrome(chrome!);
+    try {
+      const page = await own.newPage(W, H);
+      await page.goto(server.pageUrl('mode=render'));
+      expect((await page.eval<{ errors: unknown[] }>('window.__ms.ready()')).errors).toEqual([]);
+      const a = await shot(page, 1.5);
+      expect(rectX(a, 0)).toBe(60); // the probe canvas's rectangles are drawn
+      await own.send('Browser.crashGpuProcess');
+      const b = await shot(page, 1.5);
+      expect(await page.eval<number>('window.__ms.canvasLosses')).toBeGreaterThan(0);
+      expect(diffRatio(a, b), diffWhere(a, b)).toBeLessThan(0.002);
+      // The next frame too (the video decodes a frame again after the loss).
+      const c = await shot(page, 1.6);
+      expect(rectX(c, 0)).toBe(64);
+      expect(meanGrey(c, VIDEO.x + VIDEO.width / 4, VIDEO.y + VIDEO.height / 2)).toBeGreaterThan(20);
+    } finally {
+      await own.close();
+    }
   }, 240_000);
 
   it('render mode does not draw a hidden clip', async () => {
