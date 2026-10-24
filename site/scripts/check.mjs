@@ -1,7 +1,7 @@
 // Real-browser checks of the built site, served under /motion-studio/ like GitHub Pages:
 // at 360, 768 and 1440 px, with motion on and with prefers-reduced-motion, it checks for no horizontal scroll, no console
 // errors or failed requests, every composition either live or on its poster, and no player told to play under reduced
-// motion. Usage: node site/scripts/check.mjs [--out <folder for screenshots>]
+// motion; then the guide (guide.html) at the same widths. Usage: node site/scripts/check.mjs [--out <folder for screenshots>]
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -69,6 +69,50 @@ export async function check({ out } = {}) {
         }
         await page.close();
       }
+    }
+    // The guide: no sideways scroll, every screenshot loads (after scrolling past the lazy ones), every in-page link has its
+    // target, and the contents are collapsed below 1000 px and open from there.
+    for (const width of WIDTHS) {
+      const tag = `guide ${width}`;
+      const page = await chrome.newPage();
+      const problems = [];
+      page.on('Runtime.exceptionThrown', (p) => problems.push(`exception: ${p.exceptionDetails.exception?.description ?? p.exceptionDetails.text}`));
+      page.on('Runtime.consoleAPICalled', (p) => { if (p.type === 'error') problems.push(`console.error: ${p.args.map((a) => a.value ?? a.description).join(' ')}`); });
+      page.on('Network.loadingFailed', (p) => { if (!p.canceled) problems.push(`request failed: ${p.errorText}`); });
+      page.on('Network.responseReceived', (p) => { if (p.response.status >= 400) problems.push(`HTTP ${p.response.status} ${p.response.url}`); });
+      await page.send('Runtime.enable'); await page.send('Network.enable'); await page.send('Page.enable');
+      await page.send('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 600 });
+      await page.goto(`${server.url}guide.html`);
+      await wait(page, 800);
+      await page.eval(`(async () => { const h = document.documentElement.scrollHeight; for (let y = 0; y < h; y += 700) { scrollTo({ top: y, behavior: 'instant' }); await new Promise(r => setTimeout(r, 120)); } })()`);
+      await wait(page, 1500);
+      const s = await page.eval(`(() => {
+        const imgs = [...document.images];
+        return {
+          scrollWidth: document.documentElement.scrollWidth, innerWidth,
+          images: imgs.length,
+          broken: imgs.filter((i) => !i.complete || i.naturalWidth === 0).map((i) => i.getAttribute('src')),
+          noAlt: imgs.filter((i) => !i.alt.trim()).map((i) => i.getAttribute('src')),
+          deadLinks: [...document.querySelectorAll('a[href^="#"]')].map((a) => a.getAttribute('href').slice(1)).filter((id) => !document.getElementById(id)),
+          tocOpen: document.querySelector('.toc details').open,
+          wider: [...document.querySelectorAll('main *')].filter((e) => e.getBoundingClientRect().right > innerWidth + 1 && !e.closest('pre, .table-wrap')).map((e) => e.tagName + '.' + e.className).slice(0, 5),
+        };
+      })()`);
+      if (s.scrollWidth > s.innerWidth) problems.push(`horizontal scroll: ${s.scrollWidth} > ${s.innerWidth}`);
+      if (s.wider.length) problems.push(`elements past the right edge: ${s.wider.join(', ')}`);
+      if (s.broken.length) problems.push(`images not loaded: ${s.broken.join(', ')}`);
+      if (s.noAlt.length) problems.push(`images without alt: ${s.noAlt.join(', ')}`);
+      if (s.deadLinks.length) problems.push(`links without a target: ${s.deadLinks.join(', ')}`);
+      if (s.tocOpen !== (width >= 1000)) problems.push(`contents ${s.tocOpen ? 'open' : 'closed'} at ${width} px`);
+      console.log(`${tag}: ${s.images} images, ${problems.length ? problems.length + ' problem(s)' : 'ok'}`);
+      failures.push(...problems.map((p) => `${tag}: ${p}`));
+      if (out) {
+        await page.eval(`scrollTo({ top: 0, behavior: 'instant' })`);
+        await wait(page, 600);
+        const { data } = await page.send('Page.captureScreenshot', { format: 'png', clip: { x: 0, y: 0, width, height: 900, scale: 1 } });
+        writeFileSync(join(out, `guide-${width}.png`), Buffer.from(data, 'base64'));
+      }
+      await page.close();
     }
   } finally {
     await chrome.close();

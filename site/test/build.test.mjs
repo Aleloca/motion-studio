@@ -59,3 +59,9 @@ test('no .DS_Store and no meta.json in _site', () => {
   assert.ok(!files.some((f) => f.endsWith('.DS_Store')));
   assert.ok(!files.some((f) => f.endsWith('meta.json')));
 });
+
+test('copies the guide page and its screenshots', () => {
+  assert.ok(existsSync(join(out, 'guide.html')));
+  assert.ok(existsSync(join(out, 'js', 'guide.js')) && existsSync(join(out, 'css', 'guide.css')));
+  assert.ok(walk(out).some((f) => f.startsWith('assets/guide/') && f.endsWith('.webp')));
+});

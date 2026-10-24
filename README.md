@@ -13,6 +13,8 @@ A local, open-source app for creating motion-graphics videos and images with you
 
 <!-- screenshot: add -->
 
+> **User guide**: every feature, step by step, with screenshots: https://aleloca.github.io/motion-studio/guide.html
+
 > The full design is in `docs/superpowers/specs/`. Developer guides: [CONTRIBUTING.md](CONTRIBUTING.md), [output contract](docs/output-contract.md), [providers](docs/providers.md), [agent backends](docs/agent-backends.md).
 
 ## Language
