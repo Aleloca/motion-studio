@@ -18,7 +18,7 @@ const LAYOUT = {
     label: { x: 90, y: 250 },
     noise: { x: 40, y: 940, w: 1000, h: 260 },
     loud: { x: 90, y: 470, size: 150, lines: true },
-    glow: { x: -460, y: 160, w: 2000, h: 2000 },
+    glow: { x: -260, y: 250, w: 1600, h: 1600 },
     buds: { x: 40, y: 480, w: 1000, h: 800 },
     budsSpecs: { x: 0, y: -300, scale: 0.8 },
     head: { y: 1290, size: 136, stacked: true },

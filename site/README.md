@@ -54,8 +54,10 @@ node site/build.mjs && node site/scripts/posters.mjs <id>   # no id: all; `og` a
 node site/scripts/check.mjs --out /tmp/site-check
 ```
 
-At 360, 768 and 1440 px, with and without reduced motion: no horizontal scroll, no errors or failed requests, every
-composition live or on its poster, nothing told to play under reduced motion. Then the guide at the same widths: no
+At 360, 768, 1440 and 2000 px, with and without reduced motion: no horizontal scroll, no errors or failed requests, every
+composition live or on its poster, nothing told to play under reduced motion; every showcase card a clean frame (scrolled
+to the top, middle and bottom of the screen, its figure fills the media area above the label within 1 px and the stage
+sits centred in it, in its own ratio); and no poster a near-blank frame (luminance deviation under 12). Then the guide at the same widths: no
 horizontal scroll, every screenshot loaded and with alt text, every in-page link with its target, the contents collapsed
 below 1000 px. Set `CHROME` if Chrome is not in a standard place.
 

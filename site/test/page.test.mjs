@@ -115,3 +115,31 @@ test('every figure starts from its composition\'s poster time', () => {
     assert.equal(Number(t), meta.posterTime, id);
   }
 });
+
+test('every showcase card letterboxes in its composition\'s own background', () => {
+  // The card's media area can be taller than the composition (the 9:16 card spans two rows): the band around it is the
+  // composition's background, so the frame reads as one picture.
+  const showcase = /<section[^>]*id="showcase"[\s\S]*?<\/section>/.exec(html)[0];
+  const figures = [...showcase.matchAll(/<figure\b[^>]*>/g)].map((m) => m[0]);
+  assert.ok(figures.length >= 6);
+  for (const tag of figures) {
+    const id = /data-composition="([\w-]+)"/.exec(tag)[1];
+    const { background } = JSON.parse(readFileSync(join(SITE, 'compositions', id, 'composition.json'), 'utf8'));
+    assert.match(tag, new RegExp(`style="--comp-bg: ${background}"`), id);
+  }
+});
+
+test('every showcase card plays again from its poster frame when it comes back on screen', () => {
+  const showcase = /<section[^>]*id="showcase"[\s\S]*?<\/section>/.exec(html)[0];
+  for (const [tag] of showcase.matchAll(/<figure\b[^>]*>/g)) assert.match(tag, /data-replay="poster"/, tag);
+});
+
+test('every showcase card loops from a time inside its composition, past the empty first frame', () => {
+  const showcase = /<section[^>]*id="showcase"[\s\S]*?<\/section>/.exec(html)[0];
+  for (const [tag] of showcase.matchAll(/<figure\b[^>]*>/g)) {
+    const id = /data-composition="([\w-]+)"/.exec(tag)[1];
+    const from = Number(/data-loop-from="([\d.]+)"/.exec(tag)?.[1]);
+    const { duration } = JSON.parse(readFileSync(join(SITE, 'compositions', id, 'composition.json'), 'utf8'));
+    assert.ok(from > 0 && from < duration, `${id}: data-loop-from ${from}`);
+  }
+});

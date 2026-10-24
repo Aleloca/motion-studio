@@ -9,7 +9,7 @@ export const READY_TIMEOUT_MS = 20000;
 
 export class CompositionPlayer {
   /**
-   * @param {{ dataset: { composition: string, posterTime?: string }, classList: { add(c: string): void, remove(c: string): void } }} figure
+   * @param {{ dataset: { composition: string, posterTime?: string, replay?: string, loopFrom?: string }, classList: { add(c: string): void, remove(c: string): void } }} figure
    * @param {{ origin: string, mount(src: string, player: CompositionPlayer): { contentWindow: { postMessage(m: unknown, o: string): void }, remove(): void },
    *   setTimeout(fn: () => void, ms: number): unknown, clearTimeout(id: unknown): void, log?: (m: unknown) => void }} deps
    */
@@ -18,6 +18,12 @@ export class CompositionPlayer {
     this.deps = deps;
     this.id = figure.dataset.composition;
     this.posterTime = Number(figure.dataset.posterTime ?? 0) || 0;
+    /** data-replay="poster" (the showcase): each return to the screen plays again from the poster frame, not mid-film. */
+    this.replayFromPoster = figure.dataset.replay === 'poster';
+    /** data-loop-from (seconds): where the loop starts again, past an opening that is still empty (t = 0 always is). */
+    this.loopFrom = Number(figure.dataset.loopFrom ?? 0) || 0;
+    /** The last time the runtime reported while playing: a smaller one means it wrapped to the start. */
+    this.lastTime = 0;
     this.frame = null;
     this.ready = false;
     /** null, or why the poster is shown for good: 'error' (the runtime refused it) or 'timeout' (retried on its return). */
@@ -67,6 +73,7 @@ export class CompositionPlayer {
 
   play() {
     if (this.playing) return;
+    if (this.replayFromPoster && !this.atPoster) this.seek(this.posterTime);
     this.playing = true;
     this.still = false;
     this.atPoster = false;
@@ -138,6 +145,13 @@ export class CompositionPlayer {
     } else if (data.type === 'time' && data.playing === true && this.ready) {
       // The poster goes only once the runtime is really playing frames: never a blank or unpainted frame.
       this.figure.classList.add('is-ready');
+      const wrapped = data.t < this.lastTime && data.t < this.loopFrom;
+      this.lastTime = data.t;
+      if (wrapped && this.playing) {
+        // A seek stops the runtime's playback: play again from there.
+        this.seek(this.loopFrom);
+        this.send({ type: 'play', loop: true });
+      }
     } else if (data.type === 'error' && !this.ready) {
       // Before ready only fatal errors are posted (no data, bad base, a composition that cannot mount).
       this.fail('error');

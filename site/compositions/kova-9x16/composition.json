@@ -101,10 +101,10 @@
           "duration": 9.7,
           "props": {
             "fit": "contain",
-            "x": -460,
-            "y": 160,
-            "width": 2000,
-            "height": 2000
+            "x": -260,
+            "y": 250,
+            "width": 1600,
+            "height": 1600
           },
           "animations": [
             {
