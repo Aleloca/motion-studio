@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1920">
+<defs><clipPath id="c"><rect width="1080" height="1920" rx="37"/></clipPath>
+<radialGradient id="g" gradientUnits="userSpaceOnUse" cx="540" cy="660" r="1190.4"><stop offset="0" stop-color="#FF5A1F" stop-opacity=".42"/><stop offset=".38" stop-color="#C2410C" stop-opacity=".16"/><stop offset="1" stop-color="#C2410C" stop-opacity="0"/></radialGradient>
+<pattern id="p" width="48" height="48" patternUnits="userSpaceOnUse"><circle cx="24" cy="24" r="1.7" fill="#6B6B6B" fill-opacity=".32"/></pattern></defs>
+<g clip-path="url(#c)"><rect width="1080" height="1920" fill="#0C0C0C"/><rect width="1080" height="1920" fill="url(#p)"/><rect width="1080" height="1920" fill="url(#g)"/></g>
+<rect x="1" y="1" width="1078" height="1918" rx="37" fill="none" stroke="#FFFFFF" stroke-opacity=".08" stroke-width="2"/>
+</svg>
