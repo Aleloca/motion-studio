@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800"><g fill="none" stroke="#FACC15">
+<circle cx="400" cy="400" r="390" stroke-width="3" stroke-opacity=".25"/>
+<circle cx="400" cy="400" r="290" stroke-width="4" stroke-opacity=".45"/>
+<circle cx="400" cy="400" r="190" stroke-width="5" stroke-opacity=".7"/>
+<circle cx="400" cy="400" r="90" stroke-width="6"/>
+</g><circle cx="400" cy="400" r="22" fill="#FACC15"/></svg>

@@ -9,6 +9,11 @@
 
 🇮🇹 [Italiano](README.it.md)
 
+<p align="center">
+  <a href="https://aleloca.github.io/motion-studio/#final-cut"><img src="site/src/assets/video/launch-poster.webp" alt="The Motion Studio launch video" width="720"></a><br>
+  <a href="https://aleloca.github.io/motion-studio/#final-cut">Watch the launch video</a>
+</p>
+
 A local, open-source app for creating motion-graphics videos and images with your coding agent (initially **Claude Code**). Describe what you want, pick channels and formats: the agent produces a dedicated recomposition for each format. Everything stays on your computer: projects are folders of JSON/Markdown files versioned with git.
 
 <!-- screenshot: add -->

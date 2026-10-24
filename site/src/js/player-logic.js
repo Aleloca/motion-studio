@@ -1,6 +1,8 @@
 /**
  * What a composition figure should be doing, from where it is and what we know about it.
- * @param {{ visible: boolean, near: boolean, reducedMotion: boolean, ready: boolean, failed: boolean }} s
+ * `still` holds the poster frame (a board being edited by hand); `intent` is the viewer's own play or pause (the final
+ * cut's controls): a pause holds wherever it is, a play plays even under reduced motion.
+ * @param {{ visible: boolean, near: boolean, reducedMotion: boolean, ready: boolean, failed: boolean, still?: boolean, intent?: 'play' | 'pause' | null }} s
  * @returns {'unmounted' | 'mount' | 'unmount' | 'play' | 'pause' | 'still' | 'poster'}
  */
 export function decide(s) {
@@ -8,7 +10,8 @@ export function decide(s) {
   if (s.ready) {
     // Far from the screen a live runtime only costs memory: drop it, the poster covers the frame until it is back.
     if (!s.near) return 'unmount';
-    if (s.reducedMotion) return 'still';
+    if (s.intent === 'pause') return 'pause';
+    if (s.still || (s.reducedMotion && s.intent !== 'play')) return 'still';
     return s.visible ? 'play' : 'pause';
   }
   return s.near ? 'mount' : 'unmounted';

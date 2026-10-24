@@ -14,18 +14,24 @@ test('decide table', () => {
   assert.equal(decide(S({ near: true, ready: true })), 'pause');
   assert.equal(decide(S({ ready: true, visible: false })), 'unmount');
   assert.equal(decide(S({ ready: true, reducedMotion: true })), 'unmount');
+  // A board held still (edited by hand), and the viewer's own play or pause (the final cut).
+  assert.equal(decide(S({ near: true, ready: true, visible: true, still: true })), 'still');
+  assert.equal(decide(S({ near: true, ready: true, visible: true, intent: 'pause' })), 'pause');
+  assert.equal(decide(S({ near: true, ready: true, visible: true, reducedMotion: true, intent: 'play' })), 'play');
+  assert.equal(decide(S({ near: true, ready: true, visible: false, intent: 'play' })), 'pause');
+  assert.equal(decide(S({ ready: true, intent: 'play' })), 'unmount');
 });
 
 const ORIGIN = 'https://aleloca.github.io';
 
 /** A player wired to fakes: a figure, an iframe window that records commands, and a manual clock. */
-function harness({ posterTime = 2, replay, loopFrom } = {}) {
+function harness({ posterTime = 2, replay, loopFrom, loop } = {}) {
   const sent = [];
   const timers = [];
   const classes = new Set();
   const frame = { contentWindow: { postMessage: (m, origin) => sent.push({ m, origin }) }, removed: false, remove() { this.removed = true; } };
   let mounts = 0;
-  const figure = { dataset: { composition: 'kova-16x9', posterTime: String(posterTime), ...(replay ? { replay } : {}), ...(loopFrom ? { loopFrom } : {}) }, classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c) } };
+  const figure = { dataset: { composition: 'kova-16x9', posterTime: String(posterTime), ...(replay ? { replay } : {}), ...(loopFrom ? { loopFrom } : {}), ...(loop ? { loop } : {}) }, classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c) } };
   const player = new CompositionPlayer(figure, {
     origin: ORIGIN,
     mount: (src) => { mounts++; frame.src = src; return frame; },
@@ -264,4 +270,48 @@ test('without data-loop-from the film loops from its start untouched', () => {
   h.msg({ type: 'time', t: 6.98, playing: true });
   h.msg({ type: 'time', t: 0.02, playing: true });
   assert.deepEqual(h.types(), ['setScale', 'mute', 'seek', 'play']);
+});
+
+test('a board held still pauses on its poster frame, and plays on when released', () => {
+  const h = harness({ posterTime: 4 });
+  h.player.update(S({ near: true, visible: true }));
+  h.msg({ type: 'ready', duration: 8, scenes: [] });
+  h.player.update({ still: true });
+  assert.deepEqual(h.types().slice(-2), ['pause', 'seek']);
+  h.player.update({ still: false });
+  assert.equal(h.types().at(-1), 'play');
+});
+
+test('ready reports the duration and scenes; time and play state reach the listeners', () => {
+  const h = harness();
+  const seen = [];
+  h.player.onChange((p) => seen.push([p.time, p.playing]));
+  h.player.update(S({ near: true, visible: true }));
+  h.msg({ type: 'ready', duration: 12, scenes: [{ id: 'a', start: 0, duration: 12 }] });
+  assert.equal(h.player.duration, 12);
+  assert.equal(h.player.scenes.length, 1);
+  h.msg({ type: 'time', t: 3.5, playing: true });
+  assert.deepEqual(seen.at(-1), [3.5, true]);
+});
+
+test('a film played once (data-loop="false") stops at its end; Play starts it again from 0', () => {
+  const h = harness({ loop: 'false', posterTime: 1 });
+  h.player.update(S({ near: true, visible: true }));
+  h.msg({ type: 'ready', duration: 10, scenes: [] });
+  assert.deepEqual(h.sent.at(-1).m, { type: 'play', loop: false });
+  h.msg({ type: 'time', t: 10, playing: false });
+  assert.equal(h.player.ended, true);
+  assert.equal(h.player.playing, false);
+  h.player.update({ intent: 'play' });
+  assert.deepEqual(h.sent.slice(-2).map((s) => s.m), [{ type: 'seek', t: 0 }, { type: 'play', loop: false }]);
+});
+
+test('the viewer\'s seek plays on from there when playing, and is refused before the runtime is ready', () => {
+  const h = harness();
+  assert.equal(h.player.seekTo(2), false);
+  h.player.update(S({ near: true, visible: true }));
+  h.msg({ type: 'ready', duration: 10, scenes: [] });
+  assert.equal(h.player.seekTo(6), true);
+  assert.deepEqual(h.sent.slice(-2).map((s) => s.m), [{ type: 'seek', t: 6 }, { type: 'play', loop: true }]);
+  assert.equal(h.player.time, 6);
 });

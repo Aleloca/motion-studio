@@ -21,15 +21,21 @@ node --test 'site/test/*.test.mjs'
 
 Each folder in `compositions/` is a regular Motion Studio composition (`composition.json` and `assets/`) plus:
 - `meta.json`: `format` (a preset id), `posterTime` (seconds) and `label` (the description used as alt text);
-- `poster.webp`: the frame at `posterTime`, shown before the runtime is ready, under reduced motion and without JS.
+- `poster.webp`: the frame at `posterTime`, shown before the runtime is ready, under reduced motion and without JS;
+- `subtitles.json` (only with a `subtitles` clip): the subtitle set, times in ms, inlined in the runtime page as the core does.
 
 The site's fonts (`src/assets/fonts/`) are copied into every composition's `assets/fonts/` at build time.
 
-The hero cycles through example creatives: each `.hero__set` in `index.html` holds one creative's three formats, with its
-brief (`data-brief`) and format chips (`data-chips`). The first set is the one shown without JS and under reduced motion;
-the others are hidden until the cycle reaches them, and each creative also has a card in the showcase.
+The home is a story on the app's canvas (`index.html`, `css/story.css`, `js/story.js`): Motion Studio makes its own launch
+video in ten steps. Each `.step` of the page holds its exchange (`.msg--you`, `.msg--agent`, `.msg--event`) and the posters
+of its result: that is the page without JS and under reduced motion. With motion, `story.js` builds the chat panel from
+the steps and drives the canvas (`[data-stage]`): a world of boards and panels placed with `--x/--y/--w/--h` (and
+`--px/--py/--pw/--ph` on narrow screens), each shown in its `data-steps`; one GSAP timeline scrubbed by the scroll moves
+the camera and brings each change in place, and the boards' players are driven by step (only the step's boards play). The
+final cut (`figure[data-final-cut]`) is a composition player with controls (`js/final-cut.js`).
 
-The hero creatives (`kova-*`, `tidefall-*`, `fernwise-*`) are generated: change `scripts/hero-gen/`, not their JSON.
+The hero creatives (`kova-*`, `tidefall-*`, `fernwise-*`) and the story's boards (`story-*`, `story.mjs`) are generated:
+change `scripts/hero-gen/`, not their JSON.
 
 ```bash
 node site/build.mjs                         # once: the width measurer uses the built site's fonts
@@ -37,10 +43,29 @@ node site/scripts/hero-gen/build.mjs        # → site/compositions/<id>/composi
 node site/build.mjs && node site/scripts/posters.mjs kova-9x16 …   # then the posters of what changed
 ```
 
-`kova.mjs`, `tidefall.mjs` and `fernwise.mjs` lay out each creative per format with the builders of `lib.mjs`. Text
+`kova.mjs`, `tidefall.mjs`, `fernwise.mjs` and `story.mjs` lay out each creative per format with the builders of `lib.mjs`. Text
 widths come from `widths.json` (measured in Chrome with the site's fonts by `measure.mjs`, which the build runs by itself
 for a new string), so generating needs plain node only. A site test regenerates everything and fails on any difference
 from the checked-in files.
+
+## The launch film
+
+`compositions/launch-16x9` (56 s) is Motion Studio's own launch video: the home page's ten steps, one beat each, with the
+interface redrawn as vector motion, ending on "Brief in. Motion out.". It is generated: change `scripts/launch-gen/`, not
+its JSON (`engine.mjs` keeps the moves of a group, such as a board or a panel, apart from each element's own and writes
+their sum per clip; `launch.mjs` is the film; text widths come from `hero-gen/widths.json`). A site test regenerates it
+and fails on any difference.
+
+```bash
+node site/build.mjs && node site/scripts/launch-gen/build.mjs      # → compositions/launch-16x9
+node site/build.mjs && node site/scripts/posters.mjs launch-16x9
+packages/core/node_modules/.bin/tsx site/scripts/launch-gen/render.ts <empty temp dir>
+```
+
+`render.ts` renders the film with the product's renderer (`packages/core`: composition server, system Chrome through the
+core's provider with its isolation flags, ffmpeg; `max` quality) into the temp folder, then writes the site's copy
+`src/assets/video/launch.mp4` (H.264 1080p, about 1.5 Mbit/s, ~10 MB) and `src/assets/video/launch-poster.webp` (the
+composition's poster).
 
 After changing a composition, render its poster again (headless Chrome with a throwaway profile):
 
@@ -55,9 +80,11 @@ node site/scripts/check.mjs --out /tmp/site-check
 ```
 
 At 360, 768, 1440 and 2000 px, with and without reduced motion: no horizontal scroll, no errors or failed requests, every
-composition live or on its poster, nothing told to play under reduced motion; every showcase card a clean frame (scrolled
-to the top, middle and bottom of the screen, its figure fills the media area above the label within 1 px and the stage
-sits centred in it, in its own ratio); and no poster a near-blank frame (luminance deviation under 12). Then the guide at the same widths: no
+composition live or on its poster, nothing told to play under reduced motion, every link with its target or file, the
+final cut's slot and controls, and no poster a near-blank frame (luminance deviation under 12). With motion, scrolled to
+each step, the story shows that step, every board it plays has a runtime, at most 9 runtimes are on the canvas, and none
+plays once the story has scrolled away; under reduced motion every step is a static block with its messages and its
+result loaded. Then the guide at the same widths: no
 horizontal scroll, every screenshot loaded and with alt text, every in-page link with its target, the contents collapsed
 below 1000 px. Set `CHROME` if Chrome is not in a standard place.
 

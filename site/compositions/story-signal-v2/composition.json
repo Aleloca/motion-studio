@@ -1,0 +1,673 @@
+{
+  "$schema": "motion-studio/composition@1",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "duration": 8,
+  "background": "#0B1D2A",
+  "fonts": [
+    {
+      "family": "JetBrains Mono",
+      "src": "assets/fonts/JetBrainsMono.woff2",
+      "weight": 500
+    },
+    {
+      "family": "JetBrains Mono",
+      "src": "assets/fonts/JetBrainsMono.woff2",
+      "weight": 800
+    }
+  ],
+  "scenes": [
+    {
+      "id": "brief",
+      "name": "Brief",
+      "start": 0,
+      "duration": 2.4
+    },
+    {
+      "id": "title",
+      "name": "Title",
+      "start": 2.4,
+      "duration": 3.6
+    },
+    {
+      "id": "endcard",
+      "name": "End card",
+      "start": 6,
+      "duration": 2
+    }
+  ],
+  "tracks": [
+    {
+      "id": "backdrop",
+      "kind": "visual",
+      "clips": [
+        {
+          "id": "grid-1",
+          "type": "svg",
+          "src": "assets/grid.svg",
+          "start": 0,
+          "duration": 8,
+          "props": {
+            "fit": "cover",
+            "x": 0,
+            "y": 0,
+            "width": 1920,
+            "height": 1080,
+            "opacity": 0.6,
+            "kenBurns": {
+              "from": {
+                "scale": 1.06
+              },
+              "to": {
+                "scale": 1
+              }
+            }
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.8
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "signal",
+      "kind": "visual",
+      "clips": [
+        {
+          "id": "scan-2",
+          "type": "shape",
+          "scene": "brief",
+          "start": 0,
+          "duration": 2.4,
+          "props": {
+            "x": 0,
+            "y": 0,
+            "width": 1920,
+            "height": 3,
+            "fill": "#2DD4BF",
+            "opacity": 0.8
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 0,
+              "to": 1077,
+              "start": 0,
+              "duration": 2.4,
+              "ease": "linear"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "ring-3",
+          "type": "svg",
+          "src": "assets/rings.svg",
+          "start": 2.2,
+          "duration": 1.8,
+          "props": {
+            "fit": "contain",
+            "x": 1180,
+            "y": 220,
+            "width": 640,
+            "height": 640
+          },
+          "animations": [
+            {
+              "prop": "scale",
+              "from": 0.2,
+              "to": 1.15,
+              "start": 0,
+              "duration": 1.8,
+              "ease": "cubic-bezier(.22,1,.36,1)"
+            },
+            {
+              "prop": "opacity",
+              "start": 0,
+              "duration": 1.8,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.12,
+                  "v": 0.9
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ring-4",
+          "type": "svg",
+          "src": "assets/rings.svg",
+          "scene": "title",
+          "start": 2.695,
+          "duration": 1.8,
+          "props": {
+            "fit": "contain",
+            "x": 1180,
+            "y": 220,
+            "width": 640,
+            "height": 640
+          },
+          "animations": [
+            {
+              "prop": "scale",
+              "from": 0.2,
+              "to": 1.25,
+              "start": 0,
+              "duration": 1.8,
+              "ease": "cubic-bezier(.22,1,.36,1)"
+            },
+            {
+              "prop": "opacity",
+              "start": 0,
+              "duration": 1.8,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.12,
+                  "v": 0.9
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ring-5",
+          "type": "svg",
+          "src": "assets/rings.svg",
+          "scene": "title",
+          "start": 3.19,
+          "duration": 1.8,
+          "props": {
+            "fit": "contain",
+            "x": 1180,
+            "y": 220,
+            "width": 640,
+            "height": 640
+          },
+          "animations": [
+            {
+              "prop": "scale",
+              "from": 0.2,
+              "to": 1.15,
+              "start": 0,
+              "duration": 1.8,
+              "ease": "cubic-bezier(.22,1,.36,1)"
+            },
+            {
+              "prop": "opacity",
+              "start": 0,
+              "duration": 1.8,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.12,
+                  "v": 0.9
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ring-6",
+          "type": "svg",
+          "src": "assets/rings.svg",
+          "scene": "title",
+          "start": 3.685,
+          "duration": 1.8,
+          "props": {
+            "fit": "contain",
+            "x": 1180,
+            "y": 220,
+            "width": 640,
+            "height": 640
+          },
+          "animations": [
+            {
+              "prop": "scale",
+              "from": 0.2,
+              "to": 1.25,
+              "start": 0,
+              "duration": 1.8,
+              "ease": "cubic-bezier(.22,1,.36,1)"
+            },
+            {
+              "prop": "opacity",
+              "start": 0,
+              "duration": 1.8,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.12,
+                  "v": 0.9
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "flash-14",
+          "type": "shape",
+          "scene": "title",
+          "start": 2.4,
+          "duration": 0.5,
+          "props": {
+            "x": 0,
+            "y": 0,
+            "width": 1920,
+            "height": 1080,
+            "fill": "#2DD4BF"
+          },
+          "animations": [
+            {
+              "prop": "opacity",
+              "start": 0,
+              "duration": 0.5,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.15,
+                  "v": 0.35
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.16,1,.3,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "bar-15",
+          "type": "shape",
+          "scene": "title",
+          "start": 2.75,
+          "duration": 3.25,
+          "props": {
+            "x": 136,
+            "y": 500.16,
+            "width": 1156.8,
+            "height": 184.8,
+            "fill": "#2DD4BF2E"
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.3,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "blur",
+              "from": 0,
+              "to": 14,
+              "start": 2.9,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "type",
+      "kind": "text",
+      "clips": [
+        {
+          "id": "brief-7",
+          "type": "text",
+          "scene": "brief",
+          "start": 0.25,
+          "duration": 0.12,
+          "props": {
+            "text": ">",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 500,
+            "color": "#2DD4BF",
+            "fontSize": 32,
+            "x": 160,
+            "y": 190,
+            "width": 1400,
+            "height": 42.24
+          }
+        },
+        {
+          "id": "brief-8",
+          "type": "text",
+          "scene": "brief",
+          "start": 0.37,
+          "duration": 0.12,
+          "props": {
+            "text": "> a",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 500,
+            "color": "#2DD4BF",
+            "fontSize": 32,
+            "x": 160,
+            "y": 190,
+            "width": 1400,
+            "height": 42.24
+          }
+        },
+        {
+          "id": "brief-9",
+          "type": "text",
+          "scene": "brief",
+          "start": 0.49,
+          "duration": 0.12,
+          "props": {
+            "text": "> a launch",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 500,
+            "color": "#2DD4BF",
+            "fontSize": 32,
+            "x": 160,
+            "y": 190,
+            "width": 1400,
+            "height": 42.24
+          }
+        },
+        {
+          "id": "brief-10",
+          "type": "text",
+          "scene": "brief",
+          "start": 0.61,
+          "duration": 0.12,
+          "props": {
+            "text": "> a launch video",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 500,
+            "color": "#2DD4BF",
+            "fontSize": 32,
+            "x": 160,
+            "y": 190,
+            "width": 1400,
+            "height": 42.24
+          }
+        },
+        {
+          "id": "brief-11",
+          "type": "text",
+          "scene": "brief",
+          "start": 0.73,
+          "duration": 0.12,
+          "props": {
+            "text": "> a launch video for",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 500,
+            "color": "#2DD4BF",
+            "fontSize": 32,
+            "x": 160,
+            "y": 190,
+            "width": 1400,
+            "height": 42.24
+          }
+        },
+        {
+          "id": "brief-12",
+          "type": "text",
+          "scene": "brief",
+          "start": 0.85,
+          "duration": 0.12,
+          "props": {
+            "text": "> a launch video for Motion",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 500,
+            "color": "#2DD4BF",
+            "fontSize": 32,
+            "x": 160,
+            "y": 190,
+            "width": 1400,
+            "height": 42.24
+          }
+        },
+        {
+          "id": "brief-13",
+          "type": "text",
+          "scene": "brief",
+          "start": 0.97,
+          "duration": 1.43,
+          "props": {
+            "text": "> a launch video for Motion Studio",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 500,
+            "color": "#2DD4BF",
+            "fontSize": 32,
+            "x": 160,
+            "y": 190,
+            "width": 1400,
+            "height": 42.24
+          },
+          "animations": [
+            {
+              "prop": "blur",
+              "from": 0,
+              "to": 14,
+              "start": 1.08,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "brief-in-16",
+          "type": "text",
+          "scene": "title",
+          "start": 2.5,
+          "duration": 3.5,
+          "props": {
+            "text": "Brief in.",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 800,
+            "color": "#E8F1F2",
+            "fontSize": 168,
+            "x": 160,
+            "y": 300,
+            "width": 1148.8,
+            "height": 221.76
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.12
+            },
+            {
+              "prop": "scale",
+              "from": 1.35,
+              "to": 1,
+              "start": 0,
+              "duration": 0.45,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "prop": "blur",
+              "from": 20,
+              "to": 0,
+              "start": 0,
+              "duration": 0.3,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "blur",
+              "from": 0,
+              "to": 14,
+              "start": 3.15,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "motion-out-17",
+          "type": "text",
+          "scene": "title",
+          "start": 2.72,
+          "duration": 3.28,
+          "props": {
+            "text": "Motion out.",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 800,
+            "color": "#2DD4BF",
+            "fontSize": 168,
+            "x": 160,
+            "y": 480,
+            "width": 1148.8,
+            "height": 221.76
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.12
+            },
+            {
+              "prop": "scale",
+              "from": 1.35,
+              "to": 1,
+              "start": 0,
+              "duration": 0.45,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "prop": "blur",
+              "from": 20,
+              "to": 0,
+              "start": 0,
+              "duration": 0.3,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "blur",
+              "from": 0,
+              "to": 14,
+              "start": 2.93,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "name-18",
+          "type": "text",
+          "scene": "endcard",
+          "start": 6.1,
+          "duration": 1.9,
+          "props": {
+            "text": "MOTION STUDIO",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 800,
+            "color": "#E8F1F2",
+            "fontSize": 104,
+            "x": 160,
+            "y": 400,
+            "width": 1600,
+            "height": 137.28
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "prop": "x",
+              "from": -30,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            }
+          ]
+        },
+        {
+          "id": "tag-19",
+          "type": "text",
+          "scene": "endcard",
+          "start": 6.35,
+          "duration": 1.65,
+          "props": {
+            "text": "Local. Open source. On top of Claude Code.",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 500,
+            "color": "#7FA9B5",
+            "fontSize": 34,
+            "x": 164,
+            "y": 560,
+            "width": 1600,
+            "height": 44.88
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.8,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -3,13 +3,23 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { SITE, REPO } from './helpers.mjs';
+import { parseSteps, inSteps } from '../src/js/story-logic.js';
 
 const html = readFileSync(join(SITE, 'src', 'index.html'), 'utf8');
 const visibleText = html.replace(/<!--[\s\S]*?-->/g, '').replace(/<(script|style)[\s\S]*?<\/\1>/g, '').replace(/<[^>]+>/g, ' ');
 const REPO_URL = 'https://github.com/Aleloca/motion-studio';
+const LATEST = `${REPO_URL}/releases/latest`;
+const attr = (tag, name) => new RegExp(`\\b${name}="([^"]*)"`).exec(tag)?.[1];
+const section = (id) => new RegExp(`<section[^>]*id="${id}"[\\s\\S]*?</section>`).exec(html)?.[0] ?? '';
+const meta = (id) => JSON.parse(readFileSync(join(SITE, 'compositions', id, 'meta.json'), 'utf8'));
+const comp = (id) => JSON.parse(readFileSync(join(SITE, 'compositions', id, 'composition.json'), 'utf8'));
 
-/** GitHub's heading anchors: lower case, punctuation dropped (but - and _), spaces to hyphens. */
-const slug = (h) => h.trim().toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-');
+const story = section('story');
+const stage = /<div class="stage"[\s\S]*?<p class="story__note">/.exec(story)[0];
+const steps = story.split('<li class="step"').slice(1).map((part) => ({
+  head: part.slice(0, part.indexOf('>')),
+  body: part.slice(0, part.indexOf('</li>')),
+}));
 
 test('one h1, and headings never skip a level', () => {
   const levels = [...html.matchAll(/<h([1-6])\b/g)].map((m) => Number(m[1]));
@@ -18,36 +28,116 @@ test('one h1, and headings never skip a level', () => {
   levels.reduce((prev, l) => { assert.ok(l <= prev + 1, `h${prev} then h${l}`); return l; });
 });
 
-test('nine feature blocks in order with the right data-category', () => {
-  const blocks = [...html.matchAll(/<article class="feature[^"]*" id="([\w-]+)" data-category="(\w+)"/g)].map((m) => `${m[1]}:${m[2]}`);
-  assert.deepEqual(blocks, ['formats:formats', 'editor:formats', 'brand:brand', 'identity:store', 'languages:lang', 'agent:agent', 'local:agent', 'services:brand', 'variants:formats']);
+test('the page is the story, then the final cut, then Get started', () => {
+  const ids = [...html.matchAll(/<section[^>]*\bid="([\w-]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(ids, ['story', 'final-cut', 'install']);
 });
 
-test('every README anchor link resolves', () => {
-  const readme = readFileSync(join(REPO, 'README.md'), 'utf8');
-  const anchors = new Set([...readme.matchAll(/^#{1,6}\s+(.+)$/gm)].map((m) => slug(m[1])));
-  const used = [...html.matchAll(/href="https:\/\/github\.com\/Aleloca\/motion-studio#([^"]+)"/g)].map((m) => m[1]);
-  assert.ok(used.length >= 9, `only ${used.length} README links`);
-  for (const a of used) assert.ok(anchors.has(a), `#${a}`);
+test('the first viewport offers the download of the latest release and the final cut', () => {
+  const intro = /<div class="intro">[\s\S]*?<\/div>\s*<!--/.exec(story)[0];
+  assert.match(intro, /<h1\b/);
+  assert.ok(intro.includes(`class="btn btn--primary" href="${LATEST}"`), 'Download for macOS');
+  assert.match(intro, /Download for macOS/);
+  assert.match(intro, /href="#final-cut"/);
+  assert.ok(html.includes(`class="btn btn--small topbar__download" href="${LATEST}"`), 'the bar\'s Download');
 });
 
-test('every repo file link points at a file that exists', () => {
-  for (const [, path] of html.matchAll(/href="https:\/\/github\.com\/Aleloca\/motion-studio\/(?:blob|tree)\/main\/([^"#]+)/g)) assert.ok(existsSync(join(REPO, path)), path);
+test('ten steps in order, each a static block: a title, what it shows, the exchange and the result', () => {
+  const names = ['Brief', 'Choose', 'Ask', 'Edit by hand', 'Brand', 'Formats', 'Languages', 'Subtitles', 'Identity', 'Export'];
+  assert.equal(steps.length, 10);
+  steps.forEach(({ head, body }, i) => {
+    assert.equal(attr(head, 'data-step'), String(i + 1));
+    const title = /<h2 class="step__title"><span class="step__n">(\d\d)<\/span> ([^<]+)<\/h2>/.exec(body);
+    assert.ok(title, `step ${i + 1} title`);
+    assert.equal(title[1], String(i + 1).padStart(2, '0'));
+    assert.equal(title[2], names[i]);
+    assert.match(body, /<p class="step__what">[^<]+<\/p>/, `step ${i + 1} what`);
+    assert.match(body, /<p class="msg msg--(you|event)">[^<]+<\/p>/, `step ${i + 1} gesture`);
+    const result = body.slice(body.indexOf('<div class="step__result'));
+    const imgs = [...result.matchAll(/<img\b[^>]*>/g)].map((m) => m[0]);
+    assert.ok(imgs.length > 0 || /<ul class="files">/.test(result), `step ${i + 1} result`);
+    for (const img of imgs) {
+      for (const a of ['src', 'alt', 'width', 'height']) assert.ok(attr(img, a), `${a} in ${img}`);
+      const src = attr(img, 'src');
+      assert.ok(existsSync(join(SITE, 'src', src)) || existsSync(join(SITE, src)), src);
+      // Only the first step's posters load at once; the rest wait for the scroll.
+      assert.equal(img.includes('loading="lazy"'), i > 0, img);
+    }
+  });
 });
 
-test('every figure has a poster with alt, width and height', () => {
+test('the chat is labelled once as a demo', () => {
+  assert.equal((visibleText.match(/\bdemo\b/gi) ?? []).length, 1);
+  assert.match(story, /<p class="story__note">[^<]*demo[^<]*real features[^<]*<\/p>/);
+});
+
+test('every composition figure has a poster with alt and size, of a composition that exists, from its poster time', () => {
   const figures = [...html.matchAll(/<figure class="comp[^"]*"[^>]*>([\s\S]*?)<\/figure>/g)];
-  assert.ok(figures.length >= 3 + 9 + 6);
-  for (const [, inner] of figures) {
+  assert.equal(figures.length, 14, '13 on the canvas and the final cut');
+  for (const [whole, inner] of figures) {
+    const id = attr(whole, 'data-composition');
+    assert.ok(existsSync(join(SITE, 'compositions', id, 'composition.json')), id);
+    assert.equal(Number(attr(whole, 'data-poster-time')), meta(id).posterTime, id);
     const img = /<img class="poster"([^>]*)>/.exec(inner)?.[1];
     assert.ok(img, inner.slice(0, 80));
-    for (const attr of ['alt="', 'width="', 'height="', 'src="compositions/']) assert.ok(img.includes(attr), `${attr} in ${img}`);
+    for (const a of ['alt="', 'width="', 'height="', `src="compositions/${id}/poster.webp"`]) assert.ok(img.includes(a), `${a} in ${img}`);
     assert.doesNotMatch(img, /alt=""/);
   }
 });
 
-test('every data-composition id exists in site/compositions', () => {
-  for (const [, id] of html.matchAll(/data-composition="([\w-]+)"/g)) assert.ok(existsSync(join(SITE, 'compositions', id, 'composition.json')), id);
+test('the story\'s boards loop from a time inside their composition, past the typed brief', () => {
+  const tags = [...stage.matchAll(/<figure\b[^>]*>/g)].map((m) => m[0]).filter((t) => attr(t, 'data-composition').startsWith('story-'));
+  assert.ok(tags.length >= 12);
+  for (const tag of tags) {
+    const id = attr(tag, 'data-composition');
+    const from = Number(attr(tag, 'data-loop-from'));
+    assert.ok(from > 0 && from < comp(id).duration, `${id}: data-loop-from ${from}`);
+  }
+});
+
+test('every board and panel has a place in the world and a step range; a figure\'s steps lie inside its board\'s', () => {
+  const boards = [...stage.matchAll(/<div class="(?:board|panel)\b[^"]*"[^>]*>/g)].map((m) => m[0]);
+  assert.ok(boards.length >= 15);
+  for (const tag of boards) {
+    const style = attr(tag, 'style');
+    for (const v of ['--x', '--y', '--w', '--h']) assert.match(style, new RegExp(`${v}:-?[\\d.]+`), tag);
+    const range = parseSteps(attr(tag, 'data-steps'));
+    assert.ok(range.every(([a, b]) => a >= 1 && b <= 10 && a <= b), tag);
+  }
+  const c = /<div class="board board--main"[\s\S]*?<!-- Step 4/.exec(stage)[0];
+  const range = parseSteps(attr(c, 'data-steps'));
+  const figs = [...c.matchAll(/<figure\b[^>]*>/g)].map((m) => parseSteps(attr(m[0], 'data-steps')));
+  assert.equal(figs.length, 5, 'board C: v1, v2, v3, v4, v5');
+  for (const f of figs) for (const [a, b] of f) assert.ok(inSteps(range, a) && inSteps(range, b));
+  for (let n = 1; n <= 10; n++) assert.ok(figs.some((f) => inSteps(f, n)), `C has a version in step ${n}`);
+});
+
+test('the final cut: a composition player with controls, its poster, and the one slot the launch video takes', () => {
+  const final = section('final-cut');
+  const slots = [...html.matchAll(/<figure\b[^>]*\bdata-final-cut\b[^>]*>/g)];
+  assert.equal(slots.length, 1);
+  const tag = slots[0][0];
+  assert.ok(tag.includes('data-controls') && tag.includes('data-loop="false"'), tag);
+  const id = attr(tag, 'data-composition');
+  assert.ok(existsSync(join(SITE, 'compositions', id, 'composition.json')), id);
+  assert.match(final, /<img class="poster"[^>]*alt="[^"]+"/);
+  for (const c of ['player-bar__play', 'player-bar__seek', 'player-bar__replay', 'player-bar__full']) assert.ok(final.includes(c), c);
+  assert.match(final, /type="range"[^>]*aria-label="Seek"/);
+  assert.ok(final.includes(`class="btn btn--primary" href="${LATEST}"`), 'Download');
+  assert.ok(final.includes(`href="${REPO_URL}"`), 'GitHub');
+});
+
+test('every in-page link has its target, and every local file the page links exists', () => {
+  const ids = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
+  for (const [, target] of html.matchAll(/href="#([^"]+)"/g)) assert.ok(ids.has(target), `#${target}`);
+  for (const [, url] of html.matchAll(/(?:href|src)="(?![a-z]+:|#|\.\/")([^"]+)"/g)) {
+    const path = url.split(/[?#]/)[0];
+    assert.ok(existsSync(join(SITE, 'src', path)) || existsSync(join(SITE, path)), url);
+  }
+});
+
+test('every repo file link points at a file that exists', () => {
+  for (const [, path] of html.matchAll(/href="https:\/\/github\.com\/Aleloca\/motion-studio\/(?:blob|tree)\/main\/([^"#]+)/g)) assert.ok(existsSync(join(REPO, path)), path);
 });
 
 test('no forbidden words', () => {
@@ -55,91 +145,19 @@ test('no forbidden words', () => {
 });
 
 test('install section is faithful to the README', () => {
-  const install = /<section[^>]*id="install"[\s\S]*?<\/section>/.exec(html)[0];
+  const install = section('install');
+  const readme = readFileSync(join(REPO, 'README.md'), 'utf8');
   assert.ok(install.includes('pnpm install') && install.includes('pnpm motion-studio'));
-  assert.equal((install.match(/once published/g) ?? []).length, 2);
+  assert.equal((install.match(/once published/g) ?? []).length, 1, 'only npm is still to be published');
   assert.ok(install.includes('npx @motion-studio/cli'));
+  for (const file of ['.dmg', '.exe', '.AppImage']) { assert.ok(install.includes(file), file); assert.ok(readme.includes(file), `README ${file}`); }
+  assert.match(readme, /signed and notarized/);
+  assert.match(install, /signed and notarized/);
   for (const req of ['Claude Code', 'Git', 'FFmpeg', 'Node.js 22']) assert.ok(install.includes(req), req);
+  assert.match(install, /href="guide\.html"/);
 });
 
 test('no external URLs other than the repo, its pages and the Claude Code docs', () => {
   const urls = [...html.matchAll(/(?:href|src|content)="(https?:[^"]+)"/g)].map((m) => m[1]);
   for (const u of urls) assert.ok(u.startsWith(REPO_URL) || u.startsWith('https://aleloca.github.io/motion-studio/') || u.startsWith('https://docs.claude.com/'), u);
-});
-
-test('the paid services copy says the confirmation can be turned off', () => {
-  assert.doesNotMatch(visibleText, /Every paid generation asks for confirmation first\./);
-  assert.match(visibleText, /asks for confirmation first, unless you turn it off in Settings/);
-});
-
-const hero = /<section class="hero"[\s\S]*?<\/section>/.exec(html)[0];
-const heroSets = hero.split('<div class="hero__set"').slice(1).map((part) => {
-  const head = part.slice(0, part.indexOf('>'));
-  return {
-    hidden: /\shidden$/.test(head),
-    brief: /data-brief="([^"]+)"/.exec(head)?.[1],
-    chips: /data-chips="([^"]+)"/.exec(head)?.[1].split('|') ?? [],
-    ids: [...part.matchAll(/data-composition="([\w-]+)"/g)].map((m) => m[1]),
-    imgs: [...part.matchAll(/<img [^>]*>/g)].map((m) => m[0]),
-  };
-});
-
-test('the hero cycles through three or four creatives; without JS the first one shows', () => {
-  assert.ok(heroSets.length >= 3 && heroSets.length <= 4, `${heroSets.length} sets`);
-  heroSets.forEach((set, i) => {
-    assert.equal(set.hidden, i > 0, `set ${i} hidden`);
-    assert.ok(set.brief, `set ${i} brief`);
-    assert.equal(set.ids.length, 3, `set ${i} frames`);
-    assert.equal(set.chips.length, set.ids.length, `set ${i} chips`);
-    // The later sets load their posters only when the cycle reaches them.
-    for (const img of set.imgs) assert.equal(img.includes('loading="lazy"'), i > 0, img);
-  });
-  const prefixes = heroSets.map((s) => s.ids[0].split('-')[0]);
-  assert.equal(new Set(prefixes).size, heroSets.length, 'one creative per set');
-  for (const s of heroSets) assert.ok(s.ids.every((id) => id.startsWith(`${s.ids[0].split('-')[0]}-`)), s.ids.join());
-  const typed = /<span class="brief__typed">([^<]+)<\/span>/.exec(hero)[1];
-  assert.equal(typed, heroSets[0].brief);
-  const chips = [.../<ul class="brief__chips"[^>]*>([\s\S]*?)<\/ul>/.exec(hero)[1].matchAll(/<li>([^<]+)<\/li>/g)].map((m) => m[1]);
-  assert.deepEqual(chips, heroSets[0].chips);
-});
-
-test('every hero creative can also be played in the showcase', () => {
-  const showcase = /<section[^>]*id="showcase"[\s\S]*?<\/section>/.exec(html)[0];
-  const shown = new Set([...showcase.matchAll(/data-composition="([\w-]+)"/g)].map((m) => m[1].split('-')[0]));
-  for (const s of heroSets) assert.ok(shown.has(s.ids[0].split('-')[0]), s.ids[0]);
-});
-
-test('every figure starts from its composition\'s poster time', () => {
-  for (const [, id, t] of html.matchAll(/data-composition="([\w-]+)" data-poster-time="([\d.]+)"/g)) {
-    const meta = JSON.parse(readFileSync(join(SITE, 'compositions', id, 'meta.json'), 'utf8'));
-    assert.equal(Number(t), meta.posterTime, id);
-  }
-});
-
-test('every showcase card letterboxes in its composition\'s own background', () => {
-  // The card's media area can be taller than the composition (the 9:16 card spans two rows): the band around it is the
-  // composition's background, so the frame reads as one picture.
-  const showcase = /<section[^>]*id="showcase"[\s\S]*?<\/section>/.exec(html)[0];
-  const figures = [...showcase.matchAll(/<figure\b[^>]*>/g)].map((m) => m[0]);
-  assert.ok(figures.length >= 6);
-  for (const tag of figures) {
-    const id = /data-composition="([\w-]+)"/.exec(tag)[1];
-    const { background } = JSON.parse(readFileSync(join(SITE, 'compositions', id, 'composition.json'), 'utf8'));
-    assert.match(tag, new RegExp(`style="--comp-bg: ${background}"`), id);
-  }
-});
-
-test('every showcase card plays again from its poster frame when it comes back on screen', () => {
-  const showcase = /<section[^>]*id="showcase"[\s\S]*?<\/section>/.exec(html)[0];
-  for (const [tag] of showcase.matchAll(/<figure\b[^>]*>/g)) assert.match(tag, /data-replay="poster"/, tag);
-});
-
-test('every showcase card loops from a time inside its composition, past the empty first frame', () => {
-  const showcase = /<section[^>]*id="showcase"[\s\S]*?<\/section>/.exec(html)[0];
-  for (const [tag] of showcase.matchAll(/<figure\b[^>]*>/g)) {
-    const id = /data-composition="([\w-]+)"/.exec(tag)[1];
-    const from = Number(/data-loop-from="([\d.]+)"/.exec(tag)?.[1]);
-    const { duration } = JSON.parse(readFileSync(join(SITE, 'compositions', id, 'composition.json'), 'utf8'));
-    assert.ok(from > 0 && from < duration, `${id}: data-loop-from ${from}`);
-  }
 });

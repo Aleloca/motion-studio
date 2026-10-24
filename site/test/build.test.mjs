@@ -54,10 +54,19 @@ test('no root-absolute URLs in _site', () => {
   }
 });
 
-test('no .DS_Store and no meta.json in _site', () => {
+test('no .DS_Store, meta.json or subtitles.json in _site', () => {
   const files = walk(out);
   assert.ok(!files.some((f) => f.endsWith('.DS_Store')));
   assert.ok(!files.some((f) => f.endsWith('meta.json')));
+  assert.ok(!files.some((f) => f.endsWith('subtitles.json')));
+});
+
+test('a composition\'s subtitle set is inlined in its runtime page, like the core stages it', () => {
+  const page = readFileSync(join(out, 'runtime', 'story-subs.html'), 'utf8');
+  const data = JSON.parse(/<script type="application\/json" id="ms-composition">([\s\S]*?)<\/script>/.exec(page)[1]);
+  const set = JSON.parse(readFileSync(join(SITE, 'compositions', 'story-subs', 'subtitles.json'), 'utf8'));
+  assert.deepEqual(data.subtitles, set);
+  assert.ok(!readFileSync(join(out, 'runtime', `${SAMPLE}.html`), 'utf8').includes('"subtitles"'));
 });
 
 test('copies the guide page and its screenshots', () => {

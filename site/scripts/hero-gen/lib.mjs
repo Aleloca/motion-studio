@@ -73,7 +73,7 @@ export function makeComp({ width, height, duration, background, scenes, fonts })
     },
     build() {
       const families = new Map();
-      for (const t of tracks) for (const c of t.clips) if (c.type === 'text') {
+      for (const t of tracks) for (const c of t.clips) if (c.type === 'text' || c.type === 'subtitles') {
         const key = `${c.props.fontFamily}|${c.props.fontWeight}`;
         families.set(key, { family: c.props.fontFamily, weight: c.props.fontWeight });
       }
