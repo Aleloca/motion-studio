@@ -9,25 +9,35 @@ import { makeComp } from '../hero-gen/lib.mjs';
 const EPS = 1e-6;
 const r3 = (v) => Math.round(v * 1000) / 1000;
 
-/** One animated value: an initial value and non-overlapping segments { t0, t1, to, ease } on the composition timeline. */
-function lane(init) {
+/**
+ * One animated value: an initial value and non-overlapping segments { t0, t1, to, ease } on the composition timeline.
+ * `W` maps the authoring time the film is written in to the composition's time (see `stage`).
+ */
+function laneOf(init, W) {
   const l = {
     init, segs: [],
-    seg(t0, d, to, ease) {
-      const s = { t0, t1: t0 + d, to, ease, lane: l };
+    seg(ta, da, to, ease) {
+      const t0 = W(ta);
+      const s = { t0, t1: W(ta + da), to, ease, lane: l };
       for (const o of l.segs) if (s.t0 < o.t1 - EPS && o.t0 < s.t1 - EPS) throw new Error(`overlapping segments on ${l.name}: ${o.t0}–${o.t1} and ${s.t0}–${s.t1}`);
       l.segs.push(s);
       l.segs.sort((a, b) => a.t0 - b.t0);
     },
-    /** The value at `t`, which must not be inside one of this lane's segments. */
+    /** The value at `t` (composition time), which must not be inside one of this lane's segments. */
     at(t) { let v = l.init; for (const s of l.segs) if (s.t1 <= t + EPS) v = s.to; return v; },
   };
   return l;
 }
 
+/**
+ * `spec.warp` (optional): the film is written in authoring seconds and each beat is stretched to its voice-over line; the
+ * warp maps an authoring time to the composition's time (monotonic), and every start, end and duration goes through it.
+ */
 export function stage(spec) {
   const c = makeComp(spec);
   const nodes = [];
+  const W = spec.warp ?? ((t) => t);
+  const lane = (init) => laneOf(init, W);
 
   /** A group: local coordinates (w × h) drawn at (x, y) with scale k; it moves (tx, ty), scales (s, about `pivot`), fades and blurs as one. */
   function group({ x = 0, y = 0, k = 1, w = spec.width, h = spec.height, pivot } = {}) {
@@ -65,7 +75,8 @@ export function stage(spec) {
       anim(a) {
         if (a.prop && !['color', 'rotation'].includes(a.prop)) throw new Error(`${name}: raw animation of ${a.prop}`);
         if (a.preset && a.preset !== 'wipe') throw new Error(`${name}: raw preset ${a.preset}`);
-        n.raw.push(a); return n;
+        const s0 = a.start ?? n.start;
+        n.raw.push({ ...a, start: W(s0), duration: W(s0 + a.duration) - W(s0) }); return n;
       },
       fadeIn(t, d = 0.4, ease) { n.l.o.init = 0; return n.to(t, d, { o: 1 }, ease); },
       fadeOut(d = 0.35, ease, at) { return n.to(at ?? n.end - d, d, { o: 0 }, ease); },
@@ -79,7 +90,9 @@ export function stage(spec) {
 
   /** Writes every node's clip, in creation order (the stacking order within a track). */
   function build() {
-    for (const n of nodes) {
+    for (const a of nodes) {
+      // The node's clip in composition time.
+      const n = { ...a, start: W(a.start), end: W(a.end) };
       const g = n.g; const [px, py] = g.pivot;
       const val = (lane, t) => lane.at(t);
       const props = {
@@ -133,15 +146,17 @@ export function stage(spec) {
       const dur = n.end - n.start;
       if (n.kind === 'text') c.text(n.track, n.name, n.start, dur, n.P, anims);
       else if (n.kind === 'shape') c.shape(n.track, n.name, n.start, dur, n.P, anims);
+      else if (n.kind === 'image') c.image(n.track, n.name, n.start, dur, n.src, n.P, anims);
       else c.svg(n.track, n.name, n.start, dur, n.src, n.P, anims);
     }
     return c.build();
   }
 
   return {
-    c, ROOT, group, build,
+    c, ROOT, group, build, W,
     text: (track, name, start, dur, g, p) => node('text', track, name, start, dur, g, p),
     shape: (track, name, start, dur, g, p) => node('shape', track, name, start, dur, g, p),
     svg: (track, name, start, dur, g, src, p) => node('svg', track, name, start, dur, g, p, src),
+    image: (track, name, start, dur, g, src, p) => node('image', track, name, start, dur, g, p, src),
   };
 }

@@ -126,6 +126,17 @@ export function waveform(w, h, color = '#6B6B6B') {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}"><g fill="${color}">${bars.join('')}</g></svg>`;
 }
 
+/** A real recording's waveform from its peaks (0..1, media.json): bars every `step` px, w × h. */
+export function peaksWave(w, h, peaks, color = '#6B6B6B', step = 9) {
+  const bars = [];
+  for (let x = 0; x < w - 4; x += step) {
+    const v = peaks[Math.min(peaks.length - 1, Math.floor((x / w) * peaks.length))];
+    const bh = Math.max(3, Math.round(h * Math.min(1, v * 1.1)));
+    bars.push(`<rect x="${x}" y="${((h - bh) / 2).toFixed(1)}" width="5" height="${bh}" rx="2.5"/>`);
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}"><g fill="${color}">${bars.join('')}</g></svg>`;
+}
+
 /** A browser tab with the favicon: the favicon's place in the identity set. */
 export function browserTab() {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 200">

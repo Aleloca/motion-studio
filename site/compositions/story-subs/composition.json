@@ -506,6 +506,22 @@
       ]
     },
     {
+      "id": "voice",
+      "kind": "audio",
+      "clips": [
+        {
+          "id": "voice-15",
+          "type": "audio",
+          "scene": "title",
+          "start": 2.8,
+          "duration": 2.4,
+          "src": "assets/audio/vo-09.mp3",
+          "role": "voice",
+          "script": "Subtitles stay in sync with the voice."
+        }
+      ]
+    },
+    {
       "id": "subtitles",
       "kind": "subtitles",
       "clips": [

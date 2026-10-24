@@ -2,7 +2,7 @@
 // Three directions (Night launch, Paper, Signal), Signal's versions (v2 bigger and louder, v3 edited by hand), the brand
 // applied (v4) in three formats and three more languages, and v4 with subtitles. Every board shares one script: the brief
 // typed (0-2.4 s), the title (2.4-6 s), the end card (6-8 s).
-import { writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeComp, A, EASE, writeComposition, tw } from './lib.mjs';
 import * as S from './story-assets.mjs';
@@ -23,20 +23,24 @@ export const TEXT = {
   es: { brief: 'un vídeo de lanzamiento para Motion Studio', l1: 'Entra el brief.', l2: 'Sale el motion.', tag: 'Local. Código abierto. Sobre Claude Code.' },
 };
 
-/** The subtitle set of `story-subs` (milliseconds), as the app would write it from the voice-over. */
-export const SUBTITLES = {
-  lang: 'en',
-  cues: [
-    ['Write a brief.', 300, 1900],
-    ['Motion Studio builds every format,', 2100, 4300],
-    ['and you stay in control', 4450, 5900],
-    ['of every frame.', 6000, 7700],
-  ].map(([text, start, end]) => {
-    const words = text.split(' ');
-    const step = (end - start) / words.length;
-    return { start, end, text, words: words.map((w, i) => ({ start: Math.round(start + i * step), end: Math.round(start + (i + 1) * step), text: w })) };
-  }),
-};
+/**
+ * `story-subs` speaks the launch film's subtitles line (site/scripts/audio-gen: the file, its length and its words' times,
+ * in media.json) from `VOICE_AT`, and its subtitle set is that line in two cues, each word timed as spoken (milliseconds,
+ * as the app writes a set from the voice-over).
+ */
+export const SUBS_LINE = 8;
+export const VOICE_AT = 2.8;
+const MEDIA_FILE = new URL('../audio-gen/media.json', import.meta.url);
+const VOICE = existsSync(MEDIA_FILE) ? JSON.parse(readFileSync(MEDIA_FILE, 'utf8')).vo?.[SUBS_LINE] ?? null : null;
+export const SUBTITLES = (() => {
+  const words = (VOICE?.words ?? 'Subtitles stay in sync with the voice.'.split(' ').map((w, i) => ({ text: w, start: 0.1 + i * 0.32, end: 0.4 + i * 0.32 })))
+    .map((w) => ({ start: Math.round((VOICE_AT + w.start) * 1000), end: Math.round((VOICE_AT + w.end) * 1000), text: w.text }));
+  const half = Math.ceil(words.length / 2);
+  const cues = [words.slice(0, half), words.slice(half)].map((ws, i, all) => ({
+    start: i === 0 ? ws[0].start - 100 : ws[0].start, end: i === 0 ? all[1][0].start : ws.at(-1).end + 700, text: ws.map((w) => w.text).join(' '), words: ws,
+  }));
+  return { lang: 'en', cues };
+})();
 
 /** Types a line word by word: one short text clip per prefix, the last one held to `end`. */
 function typed(c, t, name, start, end, text, p, step = 0.12, outro = []) {
@@ -158,6 +162,9 @@ function brand(key, lang = 'en', { subtitles = false } = {}) {
   const lw = L.logo.w; const lh = lw / LOGO_RATIO;
   c.svg(mark, 'logo', 6.05, 1.95, 'logo.svg', { x: (w - lw) / 2, y: L.logo.y, w: lw, h: lh }, [A.fadeIn(0, 0.4), A.tw('scale', 0.92, 1, 0, 0.8), A.tw('blur', 16, 0, 0, 0.5)]);
   c.text(type, 'tag', 6.35, 1.65, { font: 'body', weight: 400, size: L.tag.size, color: B.muted, text: t.tag, align: 'center', x: 0, y: L.tag.y, w }, [A.fadeIn(0, 0.5), A.tw('y', 16, 0, 0, 0.8)]);
+  if (subtitles && VOICE) {
+    c.audio(c.track('voice', 'audio'), 'voice', VOICE_AT, VOICE.duration, `audio/${VOICE.file}`, { role: 'voice', script: VOICE.text });
+  }
   if (subtitles) {
     const sub = c.track('subtitles', 'subtitles');
     sub.clips.push({ id: 'lines', type: 'subtitles', start: 0, duration: D, props: {
@@ -185,7 +192,7 @@ export const STORY = [
   { id: 'story-it', make: () => brand('16x9', 'it'), format: 'youtube-16x9', label: 'The 16:9 in Italian: “Entra il brief. Esce il motion.”, same layout, timing and colours.' },
   { id: 'story-de', make: () => brand('16x9', 'de'), format: 'youtube-16x9', label: 'The 16:9 in German: “Briefing rein. Motion raus.”, inside the same box.' },
   { id: 'story-es', make: () => brand('16x9', 'es'), format: 'youtube-16x9', label: 'The 16:9 in Spanish: “Entra el brief. Sale el motion.”, inside the same box.' },
-  { id: 'story-subs', make: () => brand('16x9', 'en', { subtitles: true }), format: 'youtube-16x9', label: 'The 16:9 with subtitles from the voice-over, each word lit in orange as it is spoken.' },
+  { id: 'story-subs', make: () => brand('16x9', 'en', { subtitles: true }), format: 'youtube-16x9', label: 'The 16:9 with its voice-over and the subtitles drawn from it, each word lit in orange as it is spoken.' },
 ];
 export const STORY_IDS = STORY.map((s) => s.id);
 

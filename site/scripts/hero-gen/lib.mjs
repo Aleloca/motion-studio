@@ -63,6 +63,24 @@ export function makeComp({ width, height, duration, background, scenes, fonts })
         ...(p.kenBurns ? { kenBurns: p.kenBurns } : {}),
       }, anims, { src: `assets/${src}` });
     },
+    image(t, name, start, dur, src, p, anims) {
+      return base(t, name, 'image', start, dur, {
+        fit: p.fit ?? 'cover', x: p.x, y: p.y, width: p.w, height: p.h,
+        ...(p.opacity !== undefined ? { opacity: p.opacity } : {}), ...(p.scale !== undefined ? { scale: p.scale } : {}),
+      }, anims, { src: `assets/${src}` });
+    },
+    /** An audio clip (no props): `o` = { volume, fadeIn, fadeOut, trimStart, role, script }. */
+    audio(t, name, start, dur, src, o = {}) {
+      const clip = { id: uid(name), type: 'audio' };
+      const sc = sceneOf(start, dur);
+      if (sc) clip.scene = sc;
+      Object.assign(clip, { start: r(start), duration: r(dur), src: `assets/${src}` });
+      for (const k of ['trimStart', 'volume', 'fadeIn', 'fadeOut']) if (o[k] !== undefined) clip[k] = r(o[k]);
+      if (o.role) clip.role = o.role;
+      if (o.script) clip.script = o.script;
+      t.clips.push(clip);
+      return clip;
+    },
     /** A number that counts up: one short text clip per value, the last one held to `end`. */
     counter(t, name, start, end, values, step, p, lastAnims = []) {
       values.forEach((v, i) => {

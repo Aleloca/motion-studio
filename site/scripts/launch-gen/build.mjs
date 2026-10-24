@@ -7,17 +7,19 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MISSING, writeComposition } from '../hero-gen/lib.mjs';
 import { launch, launchAssets } from './launch.mjs';
+import { timeline } from './timeline.mjs';
 
 export const LAUNCH_IDS = ['launch-16x9'];
 export const DEFAULT_OUT = fileURLToPath(new URL('../../compositions', import.meta.url));
-export const POSTER_TIME = 29.2;
+/** The poster: the three formats side by side (4.4 s into the formats beat, as written). */
+export const POSTER_TIME = (() => { const TL = timeline(); return Math.round(TL.W(TL.A.formats + 4.4) * 100) / 100; })();
 
 /** Writes the launch composition under `out`; returns the texts whose width is not in widths.json yet. */
 export function generate(out = DEFAULT_OUT) {
   MISSING.clear();
   writeComposition(out, 'launch-16x9', launch(), {
     format: 'youtube-16x9', posterTime: POSTER_TIME,
-    label: 'Motion Studio\'s launch film: a brief typed, three variants, a chat request, a hand edit, the brand from a site, every format, three languages, subtitles, an identity set and the export, ending on "Brief in. Motion out."',
+    label: 'Motion Studio\'s launch film, with its voice-over: a brief typed, three variants, a chat request, a hand edit, the brand from a site, a generated picture, voice and music, every format, three languages, subtitles, an identity set and the export, ending on "Brief in. Motion out."',
   }, launchAssets());
   return [...MISSING];
 }

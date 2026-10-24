@@ -1,6 +1,7 @@
 // Renders the launch film to MP4 with the product's own renderer (packages/core: the composition server, headless Chrome
-// through the core's ChromeProvider with its isolation flags, ffmpeg), then encodes the site's copy small enough for the
-// page and the README (H.264, 1080p, about 1.5 Mbit/s), and writes the poster frame as WebP.
+// through the core's ChromeProvider with its isolation flags, ffmpeg, which mixes the composition's audio clips), then
+// encodes the site's copy small enough for the page and the README (H.264, 1080p, about 1.5 Mbit/s, AAC 128 kbit/s), and
+// writes the poster frame as WebP.
 // Usage (the core's tsx; a temp work folder, never the app's own data):
 //   node site/build.mjs && node site/scripts/posters.mjs launch-16x9
 //   packages/core/node_modules/.bin/tsx site/scripts/launch-gen/render.ts <work dir>
@@ -53,6 +54,6 @@ console.log(`master ${r.width}×${r.height}, ${r.frames} frames, ${r.encoder}, $
 mkdirSync(OUT, { recursive: true });
 const site = join(OUT, 'launch.mp4');
 execFileSync(ffmpeg.path, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-i', master, '-c:v', 'libx264', '-preset', 'slow', '-profile:v', 'high',
-  '-pix_fmt', 'yuv420p', '-b:v', '1500k', '-maxrate', '2500k', '-bufsize', '5000k', '-g', '60', '-movflags', '+faststart', '-an', site]);
+  '-pix_fmt', 'yuv420p', '-b:v', '1500k', '-maxrate', '2500k', '-bufsize', '5000k', '-g', '60', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', site]);
 console.log(`${site}: ${(statSync(site).size / 1e6).toFixed(2)} MB`);
 copyFileSync(join(SITE, 'compositions', ID, 'poster.webp'), join(OUT, 'launch-poster.webp'));
