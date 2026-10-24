@@ -648,6 +648,15 @@ arrives and worked on later together.
     Done (decisions 1849-1854): no negative margin and no parallax on the showcase art; each composition fills its
     media area, the band around it in its own background; the showcase players replay from the poster and skip the
     empty opening on loop; check.mjs fails a misaligned card or a near-blank poster.
+84. **Showcase formats swapped (user request of 2026-10-24).** The KOVA Reel card read badly mid-film: Fernwise now
+    plays in the Reel 9:16 card, KOVA in the Post 1:1 card.
+85. **The home tells the product through its own launch video (user request of 2026-10-24).** Spec
+    docs/superpowers/specs/2026-10-24-home-canvas-story-design.md; the user picked "the page is the canvas".
+    Done (decisions 1855-1876): the home is the app's canvas with a chat driving ten steps on scroll (bottom sheet on
+    phones), ending with the 56 s launch film (composition launch-16x9 from site/scripts/launch-gen, MP4 rendered with
+    the product's renderer at site/src/assets/video/launch.mp4); both READMEs show its poster linking to #final-cut.
+    Open, user's call: the film picks variant A and shows Japanese, the page picks C and uses IT/DE/ES (Japanese was
+    dropped on the page for lack of a shipped font, which the film shows is not needed).
 - **Flaky under load:** `core/test/agent-actions.test.ts` "duplicate_format runs after the turn, on the version it
   saved" failed once in a full local run (2026-10-23, waitFor on the action line) and passes alone 3/3.
 
