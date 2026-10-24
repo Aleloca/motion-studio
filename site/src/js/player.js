@@ -42,6 +42,15 @@ export class CompositionPlayer {
     this.time = 0;
     this.listeners = new Set();
     this.state = { visible: false, near: false, reducedMotion: false, still: false, intent: null };
+    /** Silent unless the page's sound is on (setMuted): browsers allow sound only after a gesture. */
+    this.muted = true;
+  }
+
+  /** Mutes or unmutes the composition's sound; kept for a runtime mounted later. */
+  setMuted(muted) {
+    if (this.muted === muted) return;
+    this.muted = muted;
+    if (this.ready) this.send({ type: 'mute', muted });
   }
 
   /** Calls `fn(player)` on ready, on every reported time and when playing starts or stops. Returns the unsubscribe. */
@@ -171,7 +180,7 @@ export class CompositionPlayer {
       if (Array.isArray(data.scenes)) this.scenes = data.scenes;
       this.deps.clearTimeout(this.timer);
       this.send({ type: 'setScale', scale: 'fit' });
-      this.send({ type: 'mute', muted: true });
+      this.send({ type: 'mute', muted: this.muted });
       // Start from the poster's frame: the hand-over from poster to live frame is seamless (t = 0 is an empty frame,
       // every clip enters after it).
       this.seek(this.posterTime);

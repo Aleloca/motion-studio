@@ -27,12 +27,18 @@ Each folder in `compositions/` is a regular Motion Studio composition (`composit
 The site's fonts (`src/assets/fonts/`) are copied into every composition's `assets/fonts/` at build time.
 
 The home is a story on the app's canvas (`index.html`, `css/story.css`, `js/story.js`): Motion Studio makes its own launch
-video in ten steps. Each `.step` of the page holds its exchange (`.msg--you`, `.msg--agent`, `.msg--event`) and the posters
-of its result: that is the page without JS and under reduced motion. With motion, `story.js` builds the chat panel from
+video in eleven steps. Each `.step` of the page holds its exchange (`.msg--you`, `.msg--agent`, `.msg--event`, and
+`.msg--paid` for a paid call's approval card) and the posters of its result: that is the page without JS and under reduced
+motion. With motion, `story.js` builds the chat panel from
 the steps and drives the canvas (`[data-stage]`): a world of boards and panels placed with `--x/--y/--w/--h` (and
 `--px/--py/--pw/--ph` on narrow screens), each shown in its `data-steps`; one GSAP timeline scrubbed by the scroll moves
 the camera and brings each change in place, and the boards' players are driven by step (only the step's boards play). The
 final cut (`figure[data-final-cut]`) is a composition player with controls (`js/final-cut.js`).
+
+Sound (`js/sound.js`) is off until the viewer asks for it: one switch for the page, turned on by the story's "Sound on"
+button or by Play on the final cut (unless the viewer switched it off). With the sound on, each step says its voice-over
+line once the scroll rests on it (`data-voice` on the `.step`: the film's line of that beat); the subtitles step lets its
+board speak (`data-voice="board"`), in sync with the subtitles it draws; every player stays muted otherwise.
 
 The hero creatives (`kova-*`, `tidefall-*`, `fernwise-*`) and the story's boards (`story-*`, `story.mjs`) are generated:
 change `scripts/hero-gen/`, not their JSON.
@@ -50,11 +56,25 @@ from the checked-in files.
 
 ## The launch film
 
-`compositions/launch-16x9` (56 s) is Motion Studio's own launch video: the home page's ten steps, one beat each, with the
-interface redrawn as vector motion, ending on "Brief in. Motion out.". It is generated: change `scripts/launch-gen/`, not
-its JSON (`engine.mjs` keeps the moves of a group, such as a board or a panel, apart from each element's own and writes
-their sum per clip; `launch.mjs` is the film; text widths come from `hero-gen/widths.json`). A site test regenerates it
-and fails on any difference.
+`compositions/launch-16x9` (about a minute) is Motion Studio's own launch video: the home page's eleven steps, one beat
+each, with the interface redrawn as vector motion, a voice-over line per beat, ending on "Brief in. Motion out.". It is
+generated: change `scripts/launch-gen/`, not its JSON (`engine.mjs` keeps the moves of a group, such as a board or a
+panel, apart from each element's own and writes their sum per clip; `launch.mjs` is the film, written in authoring
+seconds; `timeline.mjs` stretches each beat to its voice-over line and the engine maps every time through it; text widths
+come from `hero-gen/widths.json`). A site test regenerates it and fails on any difference.
+
+Its media are made by `scripts/audio-gen/` with the product's own providers and the maintainer's keys
+(`~/.config/motion-studio-site/elevenlabs.key` and `openai.key`, read only by that script): the voice-over lines
+(`lines.mjs`), timed word by word, the Generate beat's picture, and the music bed and sound effects (ElevenLabs). The voice
+is normalised to about -16 LUFS; the music bed is ducked under it in the composition (`musicStretches`). It writes the
+files next to the film (`assets/audio/`, `assets/generated-*`) and `media.json` (lengths, words, waveform peaks), which
+the generators read. Re-running it keeps what exists; every paid call prints its estimated cost. The byte-identical
+tests leave these files out (they come from paid calls).
+
+```bash
+node site/scripts/audio-gen/build.mjs                    # what is missing (paid calls, re-runnable)
+node site/scripts/audio-gen/build.mjs trial openai cedar onyx   # line 01 in a few voices, to choose one
+```
 
 ```bash
 node site/build.mjs && node site/scripts/launch-gen/build.mjs      # → compositions/launch-16x9
@@ -63,8 +83,8 @@ packages/core/node_modules/.bin/tsx site/scripts/launch-gen/render.ts <empty tem
 ```
 
 `render.ts` renders the film with the product's renderer (`packages/core`: composition server, system Chrome through the
-core's provider with its isolation flags, ffmpeg; `max` quality) into the temp folder, then writes the site's copy
-`src/assets/video/launch.mp4` (H.264 1080p, about 1.5 Mbit/s, ~10 MB) and `src/assets/video/launch-poster.webp` (the
+core's provider with its isolation flags, ffmpeg, which mixes the audio clips; `max` quality) into the temp folder, then
+writes the site's copy `src/assets/video/launch.mp4` (H.264 1080p, about 1.5 Mbit/s, AAC 128 kbit/s, ~12 MB) and `src/assets/video/launch-poster.webp` (the
 composition's poster).
 
 After changing a composition, render its poster again (headless Chrome with a throwaway profile):
@@ -83,7 +103,7 @@ At 360, 768, 1440 and 2000 px, with and without reduced motion: no horizontal sc
 composition live or on its poster, nothing told to play under reduced motion, every link with its target or file, the
 final cut's slot and controls, and no poster a near-blank frame (luminance deviation under 12). With motion, scrolled to
 each step, the story shows that step, every board it plays has a runtime, at most 9 runtimes are on the canvas, and none
-plays once the story has scrolled away; under reduced motion every step is a static block with its messages and its
+plays once the story has scrolled away; the story's sound button turns step 6's line and step 9's board voice on, and off again; under reduced motion every step is a static block with its messages and its
 result loaded. Then the guide at the same widths: no
 horizontal scroll, every screenshot loaded and with alt text, every in-page link with its target, the contents collapsed
 below 1000 px. Set `CHROME` if Chrome is not in a standard place.

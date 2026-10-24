@@ -2,35 +2,43 @@
 // (CSS sticky, no scroll-jacking), moves the camera over a fixed world of boards and brings each step's change in place;
 // a render pass reads the timeline's time for everything that is a state rather than a tween (the step, the chat, the
 // composer's typing, the cursor, the inspector's values, the export's progress). The boards are real compositions: their
-// players are driven here by step (only the boards of the step on screen play), never by their own observers.
+// players are driven here by step (only the boards of the step on screen play), never by their own observers. With the
+// sound on, each step says its voice-over line once it settles (the subtitles step lets its board speak, in sync with
+// the subtitles it draws).
 import { cameraFit, framingAt, lerp, clamp, stepAt, typedAt, parseSteps, inSteps } from './story-logic.js';
+import { soundButton } from './sound.js';
 
-export const STEPS = 10;
+export const STEPS = 11;
 /** Timeline units after the last step, so the final state holds before the canvas scrolls away. */
 const HOLD = 0.6;
 
 /** Camera framings in world units, in the order of `FRAMES`; the phone's frame tighter in a portrait canvas. */
-const FRAMES = ['intro', 'variants', 'choose', 'c', 'edit', 'brand', 'formats', 'langs', 'subs', 'identity', 'all'];
+const FRAMES = ['intro', 'variants', 'choose', 'c', 'edit', 'brand', 'generate', 'formats', 'langs', 'subs', 'identity', 'all'];
 const WIDE = {
   intro: [-40, -70, 1640, 380], variants: [-40, -70, 1640, 400], choose: [-40, -70, 1640, 400], c: [930, -80, 780, 420],
-  edit: [1040, -70, 850, 560], brand: [520, -70, 1080, 380], formats: [1040, -70, 1060, 380], langs: [1040, -70, 1220, 650],
+  edit: [1040, -70, 850, 560], brand: [520, -70, 1080, 380], generate: [520, -70, 1390, 520], formats: [1040, -70, 1060, 380], langs: [1040, -70, 1220, 650],
   subs: [520, -70, 1080, 380], identity: [1040, 580, 940, 370], all: [1040, -90, 1240, 1040],
 };
 const NARROW = {
   intro: [-20, -60, 520, 330], variants: [1060, -60, 520, 330], choose: [1060, -60, 520, 330], c: [1060, -60, 520, 330],
-  edit: [1060, -50, 520, 860], brand: [1060, -370, 520, 660], formats: [1060, -50, 520, 660], langs: [1060, 610, 520, 980],
+  edit: [1060, -50, 520, 860], brand: [1060, -370, 520, 660], generate: [1060, -370, 520, 960], formats: [1060, -50, 520, 660], langs: [1060, 610, 520, 980],
   subs: [1060, -370, 520, 660], identity: [1060, 1590, 520, 640], all: [1060, -50, 520, 660],
 };
 /** Which boards play in each step (the others hold their poster or are unmounted). */
 const LIVE = {
-  1: ['a', 'b', 'c'], 2: ['a', 'b', 'c'], 3: ['c'], 4: ['c'], 5: ['c'], 6: ['c', 'f916', 'f11'], 7: ['c', 'f916', 'f11', 'it', 'de', 'es'],
-  8: ['c'], 9: ['identity'], 10: ['c'],
+  1: ['a', 'b', 'c'], 2: ['a', 'b', 'c'], 3: ['c'], 4: ['c'], 5: ['c'], 6: ['c'], 7: ['c', 'f916', 'f11'], 8: ['c', 'f916', 'f11', 'it', 'de', 'es'],
+  9: ['c'], 10: ['identity'], 11: ['c'],
 };
 /** Board C's version label over time, with the agent's render turns before each new version. */
-const VERSIONS = [[0, 'v1'], [2.48, 'v2'], [3.93, 'v3'], [4.74, 'v4'], [7.58, 'v5']];
-const RENDERING = [[2.06, 2.48], [4.22, 4.74], [7.12, 7.58]];
+const VERSIONS = [[0, 'v1'], [2.48, 'v2'], [3.93, 'v3'], [4.74, 'v4'], [8.58, 'v5']];
+const RENDERING = [[2.06, 2.48], [4.22, 4.74], [8.12, 8.58]];
+/** The subtitles step: its board speaks the line (the board's loop starts again at `SUBS_FROM`, just before the voice). */
+const SUBS_STEP = 9;
+const SUBS_FROM = 2.4;
+/** A step speaks once the scroll has rested on it this long (a fast scroll passes steps in silence). */
+const VOICE_SETTLE_MS = 450;
 
-export function startStory({ gsap, ScrollTrigger, players }) {
+export function startStory({ gsap, ScrollTrigger, players, sound }) {
   const story = document.querySelector('.story');
   const pin = story.querySelector('.story__pin');
   const stage = story.querySelector('[data-stage]');
@@ -127,28 +135,40 @@ export function startStory({ gsap, ScrollTrigger, players }) {
     .fromTo($$('.brandkit__colors li'), { y: 16, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: 0.2, stagger: 0.05, ease: 'expo.out' }, 4.24)
     .to(v4, { clipPath: 'inset(0% 0% 0% 0%)', duration: 0.26, ease: 'power3.inOut' }, 4.5)
     .to($('.brandkit'), { autoAlpha: 0, x: -30, duration: 0.2 }, 5);
-  // 6. Formats: the 16:9 multiplies into a 9:16 and a 1:1.
-  tl.to(cam, { k: 6, duration: 0.4 }, 5);
-  enterFromC(['f916', 'f11'], 5.16);
-  // 7. Languages: three translations fan out under the formats; the German one shows its box.
+  // 6. Generate: the Generate dialog beside C; its paid call is confirmed; the picture and the voice-over land beside C.
+  const gen = $('.genpanel'); const paid = $('.genpanel__paid'); const genDone = $('.genpanel__done');
+  const genBoards = [board('genimg'), board('genvoice')];
+  gsap.set([paid, genDone, ...genBoards], hidden);
+  tl.to(cam, { k: 6, duration: 0.4 }, 5)
+    .fromTo(gen, { autoAlpha: 0, y: 30 }, { autoAlpha: 1, y: 0, duration: 0.3, ease: 'expo.out' }, 5.12)
+    .fromTo(paid, { autoAlpha: 0, y: 16, scale: 0.96 }, { autoAlpha: 1, y: 0, scale: 1, duration: 0.14, ease: 'back.out(1.6)' }, 5.36)
+    .to(paid, { autoAlpha: 0, duration: 0.08 }, 5.62)
+    .to(genDone, { autoAlpha: 1, duration: 0.08 }, 5.66)
+    .fromTo(board('genimg'), { autoAlpha: 0, x: -260, scale: 0.4 }, { autoAlpha: 1, x: 0, scale: 1, duration: 0.3, ease: 'expo.out' }, 5.64)
+    .fromTo(board('genvoice'), { autoAlpha: 0, y: 30 }, { autoAlpha: 1, y: 0, duration: 0.24, ease: 'expo.out' }, 5.74)
+    .to([gen, ...genBoards], { autoAlpha: 0, duration: 0.18 }, 6);
+  // 7. Formats: the 16:9 multiplies into a 9:16 and a 1:1.
   tl.to(cam, { k: 7, duration: 0.4 }, 6);
-  enterFromC(['it', 'de', 'es'], 6.14);
-  tl.to($('.fit'), { autoAlpha: 1, duration: 0.1 }, 6.62).to($('.fit'), { autoAlpha: 0, duration: 0.1 }, 7);
-  // 8. Subtitles: the subtitle set beside C; v5 draws it.
-  tl.to(cam, { k: 8, duration: 0.4 }, 7)
-    .fromTo($('.lines'), { autoAlpha: 0, x: -30 }, { autoAlpha: 1, x: 0, duration: 0.3, ease: 'expo.out' }, 7.12)
-    .to(v5, { clipPath: 'inset(0% 0% 0% 0%)', duration: 0.24, ease: 'power3.inOut' }, 7.34)
-    .to($('.lines'), { autoAlpha: 0, duration: 0.2 }, 8);
-  // 9. Identity: the logo's file sets appear in a new corner of the canvas.
+  enterFromC(['f916', 'f11'], 6.16);
+  // 8. Languages: three translations fan out under the formats; the German one shows its box.
+  tl.to(cam, { k: 8, duration: 0.4 }, 7);
+  enterFromC(['it', 'de', 'es'], 7.14);
+  tl.to($('.fit'), { autoAlpha: 1, duration: 0.1 }, 7.62).to($('.fit'), { autoAlpha: 0, duration: 0.1 }, 8);
+  // 9. Subtitles: the subtitle set beside C; v5 draws it.
+  tl.to(cam, { k: 9, duration: 0.4 }, 8)
+    .fromTo($('.lines'), { autoAlpha: 0, x: -30 }, { autoAlpha: 1, x: 0, duration: 0.3, ease: 'expo.out' }, 8.12)
+    .to(v5, { clipPath: 'inset(0% 0% 0% 0%)', duration: 0.24, ease: 'power3.inOut' }, 8.34)
+    .to($('.lines'), { autoAlpha: 0, duration: 0.2 }, 9);
+  // 10. Identity: the logo's file sets appear in a new corner of the canvas.
   const idBoards = ['identity', 'appicon', 'favicon', 'social'].map(board);
   gsap.set(idBoards, { autoAlpha: 0, y: 60, scale: 0.9 });
-  tl.to(cam, { k: 9, duration: 0.42 }, 8)
-    .to(idBoards, { autoAlpha: 1, y: 0, scale: 1, duration: 0.35, stagger: 0.07, ease: 'expo.out' }, 8.2);
-  // 10. Export: the dialog opens over the canvas, every file fills, then the whole canvas shows.
-  tl.to(exportBox, { autoAlpha: 1, scale: 1, duration: 0.1, ease: 'expo.out' }, 9.24)
-    .to(exportBox, { autoAlpha: 0, scale: 0.98, duration: 0.1, ease: 'power2.in' }, 9.82)
-    .to(cam, { k: 10, duration: 0.45 }, 9.5)
-    .to({}, { duration: HOLD }, 10);
+  tl.to(cam, { k: 10, duration: 0.42 }, 9)
+    .to(idBoards, { autoAlpha: 1, y: 0, scale: 1, duration: 0.35, stagger: 0.07, ease: 'expo.out' }, 9.2);
+  // 11. Export: the dialog opens over the canvas, every file fills, then the whole canvas shows.
+  tl.to(exportBox, { autoAlpha: 1, scale: 1, duration: 0.1, ease: 'expo.out' }, 10.24)
+    .to(exportBox, { autoAlpha: 0, scale: 0.98, duration: 0.1, ease: 'power2.in' }, 10.82)
+    .to(cam, { k: 11, duration: 0.45 }, 10.5)
+    .to({}, { duration: HOLD }, 11);
 
   /* ---------------------------------------------------------------- states read from the time */
   const cBoard = board('c');
@@ -160,6 +180,11 @@ export function startStory({ gsap, ScrollTrigger, players }) {
   const swatch = $('.swatch'); const hex = $('.inspector__hex'); const save = $('.inspector__save');
   const exportRows = $$('.export__rows li');
   const exportBtn = $('.toolbar__export');
+  const paidGo = $('.paid__btn--go', paid);
+  const kinds = $$('.genpanel__kinds [data-kind]');
+  // The dialog's description and provider follow its tab: the picture's, then the voice-over's.
+  const genTexts = $$('.genpanel [data-voice-text]');
+  for (const el of genTexts) el.dataset.imageText = el.textContent;
   const caption = { n: $('.caption__n'), name: $('.caption__name'), what: $('.caption__what'), bar: $('.caption__bar') };
   editGhost.style.cssText = boxCss(BOX2);
 
@@ -173,11 +198,12 @@ export function startStory({ gsap, ScrollTrigger, players }) {
     // [from, to, target at the end, pressed]
     [1.02, 1.26, () => center($('.board__choose', cBoard)), false], [1.26, 1.4, () => center($('.board__choose', cBoard)), true], [1.4, 1.6, () => center($('.board__choose', cBoard)), false],
     [3.3, 3.42, () => center(editBox), false], [3.42, 3.7, () => center(editBox), true], [3.7, 3.82, () => center(save), false], [3.82, 3.9, () => center(save), true], [3.9, 3.98, () => center(save), false],
-    [9.02, 9.16, () => center(exportBtn), false], [9.16, 9.24, () => center(exportBtn), true], [9.24, 9.32, () => center(exportBtn), false],
+    [5.36, 5.5, () => center(paidGo), false], [5.5, 5.58, () => center(paidGo), true], [5.58, 5.66, () => center(paidGo), false],
+    [10.02, 10.16, () => center(exportBtn), false], [10.16, 10.24, () => center(exportBtn), true], [10.24, 10.32, () => center(exportBtn), false],
   ];
   const renderCursor = (t) => {
     const i = cursorPath.findIndex(([a, b]) => t >= a && t < b);
-    if (i < 0 || (size.narrow && t > 9)) { cursor.style.opacity = '0'; cursor.style.visibility = 'hidden'; return; }
+    if (i < 0 || (size.narrow && t > 10)) { cursor.style.opacity = '0'; cursor.style.visibility = 'hidden'; return; }
     const [a, b, target, pressed] = cursorPath[i];
     const to = target();
     const prev = i > 0 && cursorPath[i - 1][1] === a ? cursorPath[i - 1][2]() : null;
@@ -215,10 +241,14 @@ export function startStory({ gsap, ScrollTrigger, players }) {
     swatch.style.setProperty('--swatch', yellow ? '#FACC15' : '#2DD4BF');
     hex.textContent = yellow ? '#FACC15' : '#2DD4BF';
     save.classList.toggle('is-pressed', t >= 3.82 && t < 3.92);
-    // Step 10: Export pressed, each row fills, then done.
-    exportBtn.classList.toggle('is-pressed', t >= 9.16 && t < 9.3);
+    // Step 6: the paid call's Generate pressed (5.5-5.58), then the voice-over tab.
+    paidGo.classList.toggle('is-pressed', t >= 5.5 && t < 5.6);
+    for (const k of kinds) k.classList.toggle('is-on', (k.dataset.kind === 'voice') === (t >= 5.7));
+    for (const el of genTexts) el.textContent = t >= 5.7 ? el.dataset.voiceText : el.dataset.imageText;
+    // Step 11: Export pressed, each row fills, then done.
+    exportBtn.classList.toggle('is-pressed', t >= 10.16 && t < 10.3);
     exportRows.forEach((row, i) => {
-      const p = clamp((t - 9.32 - i * 0.04) / 0.16, 0, 1);
+      const p = clamp((t - 10.32 - i * 0.04) / 0.16, 0, 1);
       row.style.setProperty('--p', String(p));
       row.classList.toggle('is-done', p >= 1);
     });
@@ -265,10 +295,55 @@ export function startStory({ gsap, ScrollTrigger, players }) {
     caption.what.textContent = s.what;
     clearTimeout(settle);
     settle = setTimeout(syncPlayers, before === 0 ? 0 : 140);
+    clearTimeout(voiceTimer);
+    stopLine();
+    voiceTimer = setTimeout(speak, VOICE_SETTLE_MS);
   }
 
   // Subtitle lines follow the time of the board that draws them.
   const subsPlayer = stagePlayers.find((p) => p.figure === v5);
+
+  /* ---------------------------------------------------------------- the voice-over (sound on) */
+  let line = null;
+  let voiceTimer = null;
+  const voiceTile = board('genvoice');
+  const stopLine = () => {
+    if (line) { line.pause(); line = null; }
+    voiceTile.classList.remove('is-playing');
+  };
+  // The subtitles step: its board's own voice, in sync with its subtitles, from just before the line.
+  const subsSpeaks = () => Boolean(sound?.on) && onScreen && step === SUBS_STEP;
+  const syncSubsVoice = () => {
+    if (!subsPlayer) return;
+    const on = subsSpeaks();
+    if (on && subsPlayer.muted && subsPlayer.ready) subsPlayer.seekTo(SUBS_FROM);
+    subsPlayer.setMuted(!on);
+  };
+  let subsWasReady = false;
+  subsPlayer?.onChange((p) => {
+    if (p.ready && !subsWasReady && subsSpeaks()) p.seekTo(SUBS_FROM);
+    subsWasReady = p.ready;
+  });
+  function speak() {
+    stopLine();
+    syncSubsVoice();
+    const src = steps[step - 1]?.voice;
+    if (!sound?.on || !onScreen || !src || src === 'board') return;
+    const a = new Audio(src);
+    line = a;
+    // Step 6's line is the voice-over it generates: its tile plays along.
+    if (inSteps(parseSteps(voiceTile.dataset.steps), step)) {
+      a.addEventListener('playing', () => voiceTile.classList.add('is-playing'));
+      a.addEventListener('timeupdate', () => voiceTile.style.setProperty('--p', String(a.duration ? a.currentTime / a.duration : 0)));
+      a.addEventListener('ended', () => voiceTile.classList.remove('is-playing'));
+    }
+    a.play().catch(() => {});
+  }
+  if (sound) {
+    const btn = story.querySelector('.story__sound');
+    if (btn) { btn.hidden = false; soundButton(btn, sound); }
+    sound.onChange(() => { clearTimeout(voiceTimer); speak(); });
+  }
   const lineItems = $$('.lines__list li');
   subsPlayer?.onChange((p) => {
     for (const li of lineItems) li.classList.toggle('is-on', p.time >= Number(li.dataset.start) && p.time < Number(li.dataset.end));
@@ -283,13 +358,13 @@ export function startStory({ gsap, ScrollTrigger, players }) {
   });
   ScrollTrigger.create({
     trigger: story, start: 'top bottom', end: 'bottom top',
-    onToggle: (self) => { onScreen = self.isActive; syncPlayers(); },
+    onToggle: (self) => { onScreen = self.isActive; syncPlayers(); clearTimeout(voiceTimer); speak(); },
   });
   const onResize = () => { measure(); render(); };
   new ResizeObserver(onResize).observe(stage);
   narrowQuery.addEventListener('change', () => { onResize(); syncPlayers(); });
   stage.classList.add('is-live');
-  return { timeline: tl, get step() { return step; } };
+  return { timeline: tl, get step() { return step; }, get speaking() { return line ? { src: line.src, paused: line.paused } : null; } };
 }
 
 /* ---------------------------------------------------------------- the chat panel, built from the steps */
@@ -304,11 +379,13 @@ function readStep(li) {
     you: text('.msg--you'),
     agent: text('.msg--agent'),
     event: text('.msg--event'),
+    paid: li.querySelector('.msg--paid'),
+    voice: li.dataset.voice ?? null,
     get request() { return this.you; },
   };
 }
 
-const VERSION_CARD = { 1: 'A · B · C v1', 3: 'v2', 5: 'v4', 6: '9:16 · 1:1 v1', 7: 'IT · DE · ES', 8: 'v5' };
+const VERSION_CARD = { 1: 'A · B · C v1', 3: 'v2', 5: 'v4', 6: 'Image · Voice-over', 7: '9:16 · 1:1 v1', 8: 'IT · DE · ES', 9: 'v5' };
 
 function buildChat(steps, note) {
   const el = h('aside', { class: 'chat', 'aria-hidden': 'true' });
@@ -322,6 +399,8 @@ function buildChat(steps, note) {
     if (s.event) ex.append(h('p', { class: 'msg msg--event' }, s.event));
     if (s.agent) {
       const agent = [h('p', { class: 'who' }, [h('span', { class: 'avatar' }), h('b', {}, 'Agent'), h('span', { class: 'tag' }, 'Summary')]), h('p', { class: 'msg msg--agent' }, s.agent)];
+      // A paid call: the approval card the app shows before it, then the answer.
+      if (s.paid) agent.unshift(s.paid.cloneNode(true));
       if (VERSION_CARD[s.n]) agent.push(h('div', { class: 'version' }, [h('span', { class: 'tag' }, `${VERSION_CARD[s.n]} · Ready`), h('span', {}, 'View')]));
       const wrap = h('div', { class: 'ex__agent' }, agent);
       wrap.style.display = 'contents';

@@ -3,8 +3,8 @@
 // errors or failed requests, every composition either live or on its poster, no player told to play under reduced
 // motion, no poster a near-blank frame, every link with its target or file. The story: with motion, each step comes on
 // screen at its scroll position, only its boards are mounted, and the canvas's players stop once it has scrolled away;
-// under reduced motion every step is a static block (its messages and its result's images loaded). The final cut's slot
-// and controls exist. Then the guide (guide.html) at 360, 768 and 1440 px.
+// under reduced motion every step is a static block (its messages and its result's images loaded). The story's sound
+// button turns the voice-over on and off. The final cut's slot and controls exist. Then the guide (guide.html) at 360, 768 and 1440 px.
 // Usage: node site/scripts/check.mjs [--out <folder for screenshots>]
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -62,6 +62,7 @@ export async function check({ out } = {}) {
             hidden: [...document.querySelectorAll('h1, h2, h3, p, .btn, .way')].filter((e) => !(live && e.closest('.story__pin')) && getComputedStyle(e).opacity < 0.5).length,
             stagePlaying: stage.filter((p) => p.playing).map((p) => p.id),
             finalCut: Boolean(document.querySelector('figure[data-final-cut][data-composition] .player-bar .player-bar__play')),
+            soundButton: !document.querySelector('.story__sound').hidden && document.querySelector('.story__sound').getClientRects().length > 0,
             steps: [...document.querySelectorAll('.step')].map((st) => ({
               n: st.dataset.step,
               shown: st.getClientRects().length > 0 && st.offsetHeight > 0 && getComputedStyle(st).visibility !== 'hidden',
@@ -80,7 +81,8 @@ export async function check({ out } = {}) {
         if (s.live === reduced) problems.push(`the story is ${s.live ? 'live' : 'static'} ${reduced ? 'under' : 'without'} reduced motion`);
         if (s.stagePlaying.length) problems.push(`canvas boards still playing off screen: ${s.stagePlaying.join(', ')}`);
         if (!s.finalCut) problems.push('the final cut\'s slot or controls are missing');
-        if (s.steps.length !== 10) problems.push(`${s.steps.length} steps, not 10`);
+        if (s.steps.length !== 11) problems.push(`${s.steps.length} steps, not 11`);
+        if (s.soundButton !== !reduced) problems.push(`the story's sound button is ${s.soundButton ? 'shown' : 'hidden'} ${reduced ? 'under' : 'without'} reduced motion`);
         if (reduced) {
           for (const st of s.steps) {
             if (!st.shown) problems.push(`step ${st.n} is not shown as a static block`);
@@ -160,12 +162,19 @@ export async function check({ out } = {}) {
 
 /**
  * The live story, step by step: scrolled to the middle of each step, the story says it is on that step, every board it plays
- * has a runtime mounted, and no more than MAX_STAGE_FRAMES runtimes are on the canvas.
+ * has a runtime mounted, and no more than MAX_STAGE_FRAMES runtimes are on the canvas. With the sound turned on (a real
+ * click on the story's button), step 6 says its line and step 9 lets its board speak; turned off, everything is silent.
  */
 async function liveStory(page) {
   const problems = [];
-  for (let n = 1; n <= 10; n++) {
-    await page.eval(`(() => { const s = document.querySelector('.story'); scrollTo({ top: s.offsetTop + (s.offsetHeight - innerHeight) * (${n - 0.45} / 10.6), behavior: 'instant' }); })()`);
+  const scrollToStep = (n) => page.eval(`(() => { const s = document.querySelector('.story'); scrollTo({ top: s.offsetTop + (s.offsetHeight - innerHeight) * (${n - 0.45} / 11.6), behavior: 'instant' }); })()`);
+  const clickSound = async () => {
+    const [x, y] = await page.eval(`(() => { const r = document.querySelector('.story__sound').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+    for (const type of ['mousePressed', 'mouseReleased']) await page.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 });
+  };
+  const voice = () => page.eval(`(() => { const st = window.__siteDebug.story; const subs = window.__siteDebug.players.find((p) => p.id === 'story-subs'); return { sound: window.__siteDebug.sound.on, line: st.speaking, subsMuted: subs.muted }; })()`);
+  for (let n = 1; n <= 11; n++) {
+    await scrollToStep(n);
     await wait(page, 1200);
     const r = await page.eval(`(() => {
       const stage = window.__siteDebug.players.filter((p) => p.figure.closest('[data-stage]'));
@@ -179,6 +188,21 @@ async function liveStory(page) {
     if (r.frames > MAX_STAGE_FRAMES) problems.push(`step ${n}: ${r.frames} runtimes on the canvas`);
     if (r.unmounted.length) problems.push(`step ${n}: boards to play with no runtime: ${r.unmounted.join(', ')}`);
   }
+  await scrollToStep(6);
+  await wait(page, 1200);
+  await clickSound();
+  await wait(page, 1500);
+  let v = await voice();
+  if (!v.sound) problems.push('the story\'s sound button did not turn the sound on');
+  if (!v.line?.src.endsWith('/vo-06.mp3') || v.line.paused) problems.push(`step 6 with sound: ${JSON.stringify(v.line)}, not its line playing`);
+  await scrollToStep(9);
+  await wait(page, 2500);
+  v = await voice();
+  if (v.subsMuted || v.line) problems.push(`step 9 with sound: the board ${v.subsMuted ? 'is muted' : 'speaks'}, a line ${v.line ? 'plays' : 'is silent'}`);
+  await clickSound();
+  await wait(page, 400);
+  v = await voice();
+  if (v.sound || v.line || !v.subsMuted) problems.push(`sound off: still ${JSON.stringify(v)}`);
   return problems;
 }
 
@@ -187,7 +211,9 @@ async function links(page) {
   return page.eval(`(async () => {
     const out = [];
     for (const a of document.querySelectorAll('a[href^="#"]')) if (a.getAttribute('href').length > 1 && !document.getElementById(a.getAttribute('href').slice(1))) out.push('no target for ' + a.getAttribute('href'));
-    const urls = new Set([...document.querySelectorAll('a[href], img[src]')].map((e) => new URL(e.getAttribute('href') ?? e.getAttribute('src'), location.href)).filter((u) => u.origin === location.origin).map((u) => u.href.split('#')[0]));
+    const refs = [...document.querySelectorAll('a[href], img[src], audio[src]')].map((e) => e.getAttribute('href') ?? e.getAttribute('src'))
+      .concat([...document.querySelectorAll('[data-voice]')].map((e) => e.dataset.voice).filter((v) => v !== 'board'));
+    const urls = new Set(refs.map((r) => new URL(r, location.href)).filter((u) => u.origin === location.origin).map((u) => u.href.split('#')[0]));
     for (const u of urls) { const r = await fetch(u, { method: 'HEAD' }); if (!r.ok) out.push('HTTP ' + r.status + ' ' + u); }
     return out;
   })()`);

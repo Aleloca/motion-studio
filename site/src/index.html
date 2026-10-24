@@ -45,6 +45,8 @@
   <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6.5" y="5" width="4" height="14" rx="1.2"/><rect x="13.5" y="5" width="4" height="14" rx="1.2"/></symbol>
   <symbol id="i-replay" viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4.5 4.5v4h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-expand" viewBox="0 0 24 24"><path d="M4.5 9V4.5H9M15 4.5h4.5V9M19.5 15v4.5H15M9 19.5H4.5V15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-sound" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-muted" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor"/><path d="M15.5 9.5l5 5m0-5l-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
   <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 11.5L20 4l-6.5 16-2.3-6.2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
@@ -104,8 +106,8 @@
               </div>
             </div>
 
-            <div class="board board--main" data-board="c" data-steps="1-10" style="--x:1080;--y:0;--w:480;--h:270">
-              <p class="board__label"><span class="board__name">C · Signal</span><span class="board__ver" data-versions="1:v1 3:v2 4:v3 5:v4 8:v5">v1</span><span class="board__choose"><svg class="i" aria-hidden="true"><use href="#i-star"/></svg><span class="board__choose-text">Choose</span></span></p>
+            <div class="board board--main" data-board="c" data-steps="1-11" style="--x:1080;--y:0;--w:480;--h:270">
+              <p class="board__label"><span class="board__name">C · Signal</span><span class="board__ver" data-versions="1:v1 3:v2 4:v3 5:v4 9:v5">v1</span><span class="board__choose"><svg class="i" aria-hidden="true"><use href="#i-star"/></svg><span class="board__choose-text">Choose</span></span></p>
               <div class="board__frame">
                 <figure class="comp comp--16x9" data-composition="story-signal-v1" data-poster-time="4.6" data-loop-from="2.4" data-steps="1-2">
                   <div class="comp-stage"><img class="poster" src="compositions/story-signal-v1/poster.webp" alt="Variant C, Signal: the launch title in teal monospace over a navy grid." width="1920" height="1080"></div>
@@ -116,10 +118,10 @@
                 <figure class="comp comp--16x9" data-composition="story-signal-v3" data-poster-time="4.6" data-loop-from="2.4" data-steps="4" hidden>
                   <div class="comp-stage"><img class="poster" src="compositions/story-signal-v3/poster.webp" alt="Signal v3: the title moved lower, resized and recoloured yellow by hand." width="1920" height="1080" loading="lazy"></div>
                 </figure>
-                <figure class="comp comp--16x9" data-composition="story-brand-16x9" data-poster-time="4.6" data-loop-from="2.4" data-steps="5-7" hidden>
+                <figure class="comp comp--16x9" data-composition="story-brand-16x9" data-poster-time="4.6" data-loop-from="2.4" data-steps="5-8" hidden>
                   <div class="comp-stage"><img class="poster" src="compositions/story-brand-16x9/poster.webp" alt="v4 in the Motion Studio brand: cream and orange title on the dark dot grid." width="1920" height="1080" loading="lazy"></div>
                 </figure>
-                <figure class="comp comp--16x9" data-composition="story-subs" data-poster-time="4.6" data-loop-from="2.4" data-steps="8-10" hidden>
+                <figure class="comp comp--16x9" data-composition="story-subs" data-poster-time="4.6" data-loop-from="2.4" data-steps="9-11" hidden>
                   <div class="comp-stage"><img class="poster" src="compositions/story-subs/poster.webp" alt="v5: the branded title with subtitles, each word lit as it is spoken." width="1920" height="1080" loading="lazy"></div>
                 </figure>
                 <div class="edit" data-steps="4" hidden>
@@ -162,8 +164,31 @@
               </div>
             </div>
 
-            <!-- Step 6: every format, recomposed -->
-            <div class="board" data-board="f916" data-steps="6-10" data-from="c" style="--x:1600;--y:0;--w:152;--h:270;--px:1080;--py:320" hidden>
+            <!-- Step 6: the Generate dialog beside C; its paid call confirmed; the picture and the voice on the canvas -->
+            <div class="panel genpanel" data-steps="6" style="--x:560;--y:0;--w:480;--h:270;--px:1080;--py:-330" hidden>
+              <p class="panel__head"><span>Generate an asset</span><span class="panel__sub">Assets</span></p>
+              <p class="genpanel__kinds"><span class="is-on" data-kind="image">Image</span><span data-kind="voice">Voice-over</span><span>Sound effect</span><span>Music</span></p>
+              <p class="genpanel__field" data-voice-text="Need an image, a voice, music or a sound effect? Generate it, with your own keys.">Studio product photo of matte black wireless earbuds floating above a dark surface, cyan rim light</p>
+              <p class="genpanel__row"><span class="genpanel__provider" data-voice-text="OpenAI · gpt-4o-mini-tts · cedar">OpenAI · gpt-image-2 · 1024×1024</span><span class="genpanel__go">Generate</span></p>
+              <div class="genpanel__paid">
+                <p class="paid__kind">External service</p>
+                <p class="paid__title">Generate an image with gpt-image-2</p>
+                <p class="paid__keys">A paid call to your own OpenAI account, with your key.</p>
+                <p class="paid__actions"><span class="paid__btn paid__btn--go">Generate</span><span class="paid__btn">Always here</span><span class="paid__btn">Deny</span></p>
+              </div>
+              <p class="genpanel__done">Added to Assets</p>
+            </div>
+            <div class="board board--asset" data-board="genimg" data-steps="6" style="--x:1600;--y:0;--w:270;--h:270;--px:1080;--py:320;--pw:230;--ph:230" hidden>
+              <p class="board__label"><span class="board__name">Image · gpt-image-2</span></p>
+              <div class="board__frame"><img src="compositions/launch-16x9/assets/generated-earbuds.jpg" alt="" width="900" height="900" loading="lazy"></div>
+            </div>
+            <div class="board board--asset" data-board="genvoice" data-steps="6" style="--x:1600;--y:330;--w:270;--h:96;--px:1330;--py:320;--pw:230;--ph:96" hidden>
+              <p class="board__label"><span class="board__name">Voice-over · gpt-4o-mini-tts</span></p>
+              <div class="board__frame board__frame--audio"><span class="audio-tile__play"><svg class="i" aria-hidden="true"><use href="#i-play"/></svg></span><span class="audio-tile__wave"><img src="compositions/launch-16x9/assets/wave-voice.svg" alt="" width="412" height="90" loading="lazy"></span></div>
+            </div>
+
+            <!-- Step 7: every format, recomposed -->
+            <div class="board" data-board="f916" data-steps="7-11" data-from="c" style="--x:1600;--y:0;--w:152;--h:270;--px:1080;--py:320" hidden>
               <p class="board__label"><span class="board__name">Reel 9:16</span></p>
               <div class="board__frame">
                 <figure class="comp comp--9x16" data-composition="story-brand-9x16" data-poster-time="4.6" data-loop-from="2.4">
@@ -171,7 +196,7 @@
                 </figure>
               </div>
             </div>
-            <div class="board" data-board="f11" data-steps="6-10" data-from="c" style="--x:1792;--y:0;--w:270;--h:270;--px:1262;--py:320" hidden>
+            <div class="board" data-board="f11" data-steps="7-11" data-from="c" style="--x:1792;--y:0;--w:270;--h:270;--px:1262;--py:320" hidden>
               <p class="board__label"><span class="board__name">Post 1:1</span></p>
               <div class="board__frame">
                 <figure class="comp comp--1x1" data-composition="story-brand-1x1" data-poster-time="4.6" data-loop-from="2.4">
@@ -180,8 +205,8 @@
               </div>
             </div>
 
-            <!-- Step 7: three more languages -->
-            <div class="board" data-board="it" data-steps="7-10" data-from="c" style="--x:1080;--y:340;--w:360;--h:202.5;--px:1080;--py:660;--pw:480;--ph:270" hidden>
+            <!-- Step 8: three more languages -->
+            <div class="board" data-board="it" data-steps="8-11" data-from="c" style="--x:1080;--y:340;--w:360;--h:202.5;--px:1080;--py:660;--pw:480;--ph:270" hidden>
               <p class="board__label"><span class="board__name">16:9 · Italiano</span></p>
               <div class="board__frame">
                 <figure class="comp comp--16x9" data-composition="story-it" data-poster-time="4.6" data-loop-from="2.4">
@@ -189,16 +214,16 @@
                 </figure>
               </div>
             </div>
-            <div class="board" data-board="de" data-steps="7-10" data-from="c" style="--x:1470;--y:340;--w:360;--h:202.5;--px:1080;--py:980;--pw:480;--ph:270" hidden>
+            <div class="board" data-board="de" data-steps="8-11" data-from="c" style="--x:1470;--y:340;--w:360;--h:202.5;--px:1080;--py:980;--pw:480;--ph:270" hidden>
               <p class="board__label"><span class="board__name">16:9 · Deutsch</span></p>
               <div class="board__frame">
                 <figure class="comp comp--16x9" data-composition="story-de" data-poster-time="4.6" data-loop-from="2.4">
                   <div class="comp-stage"><img class="poster" src="compositions/story-de/poster.webp" alt="The 16:9 in German." width="1920" height="1080" loading="lazy"></div>
                 </figure>
-                <span class="fit" data-steps="7" hidden><span class="fit__tag">fits its box</span></span>
+                <span class="fit" data-steps="8" hidden><span class="fit__tag">fits its box</span></span>
               </div>
             </div>
-            <div class="board" data-board="es" data-steps="7-10" data-from="c" style="--x:1860;--y:340;--w:360;--h:202.5;--px:1080;--py:1300;--pw:480;--ph:270" hidden>
+            <div class="board" data-board="es" data-steps="8-11" data-from="c" style="--x:1860;--y:340;--w:360;--h:202.5;--px:1080;--py:1300;--pw:480;--ph:270" hidden>
               <p class="board__label"><span class="board__name">16:9 · Español</span></p>
               <div class="board__frame">
                 <figure class="comp comp--16x9" data-composition="story-es" data-poster-time="4.6" data-loop-from="2.4">
@@ -207,19 +232,17 @@
               </div>
             </div>
 
-            <!-- Step 8: the subtitle set beside the board -->
-            <div class="panel lines" data-steps="8" style="--x:560;--y:0;--w:480;--h:270;--px:1080;--py:-330" hidden>
+            <!-- Step 9: the subtitle set beside the board, the voice it was drawn from -->
+            <div class="panel lines" data-steps="9" style="--x:560;--y:0;--w:480;--h:270;--px:1080;--py:-330" hidden>
               <p class="panel__head"><span>Subtitles</span><span class="panel__sub">English · from the voice-over</span></p>
               <ol class="lines__list">
-                <li data-start="0.3" data-end="1.9"><span class="lines__t">00:00.3</span>Write a brief.</li>
-                <li data-start="2.1" data-end="4.3"><span class="lines__t">00:02.1</span>Motion Studio builds every format,</li>
-                <li data-start="4.45" data-end="5.9"><span class="lines__t">00:04.4</span>and you stay in control</li>
-                <li data-start="6" data-end="7.7"><span class="lines__t">00:06.0</span>of every frame.</li>
+                <li data-start="2.7" data-end="4.2"><span class="lines__t">00:02.7</span>Subtitles stay in sync</li>
+                <li data-start="4.2" data-end="5.72"><span class="lines__t">00:04.2</span>with the voice.</li>
               </ol>
             </div>
 
-            <!-- Step 9: the identity set -->
-            <div class="board" data-board="identity" data-steps="9-10" style="--x:1080;--y:640;--w:270;--h:270;--px:1080;--py:1640" hidden>
+            <!-- Step 10: the identity set -->
+            <div class="board" data-board="identity" data-steps="10-11" style="--x:1080;--y:640;--w:270;--h:270;--px:1080;--py:1640" hidden>
               <p class="board__label"><span class="board__name">Logo 1:1</span></p>
               <div class="board__frame">
                 <figure class="comp comp--1x1" data-composition="identity" data-poster-time="5">
@@ -227,11 +250,11 @@
                 </figure>
               </div>
             </div>
-            <div class="board board--asset" data-board="appicon" data-steps="9-10" style="--x:1390;--y:640;--w:130;--h:130;--px:1390;--py:1640" hidden>
+            <div class="board board--asset" data-board="appicon" data-steps="10-11" style="--x:1390;--y:640;--w:130;--h:130;--px:1390;--py:1640" hidden>
               <p class="board__label"><span class="board__name">App icon</span></p>
               <div class="board__frame board__frame--icon"><img src="assets/app-icon.png" alt="" width="1024" height="1024" loading="lazy"></div>
             </div>
-            <div class="board board--asset" data-board="favicon" data-steps="9-10" style="--x:1390;--y:810;--w:130;--h:100;--px:1390;--py:1810" hidden>
+            <div class="board board--asset" data-board="favicon" data-steps="10-11" style="--x:1390;--y:810;--w:130;--h:100;--px:1390;--py:1810" hidden>
               <p class="board__label"><span class="board__name">Favicon</span></p>
               <div class="board__frame board__frame--favicons">
                 <img src="assets/favicon/favicon.svg" alt="" width="48" height="48" loading="lazy">
@@ -239,7 +262,7 @@
                 <img src="assets/favicon/favicon.svg" alt="" width="16" height="16" loading="lazy">
               </div>
             </div>
-            <div class="board board--asset" data-board="social" data-steps="9-10" style="--x:1560;--y:640;--w:380;--h:199.5;--px:1080;--py:1960;--pw:480;--ph:252" hidden>
+            <div class="board board--asset" data-board="social" data-steps="10-11" style="--x:1560;--y:640;--w:380;--h:199.5;--px:1080;--py:1960;--pw:480;--ph:252" hidden>
               <p class="board__label"><span class="board__name">Social preview 1200×630</span></p>
               <div class="board__frame"><img src="assets/og-image.png" alt="" width="1200" height="630" loading="lazy"></div>
             </div>
@@ -247,8 +270,8 @@
           </div>
           <span class="cursor"><svg class="i" aria-hidden="true"><use href="#i-cursor"/></svg></span>
 
-          <!-- Step 10: the export dialog, over the canvas -->
-          <div class="export" data-steps="10" hidden>
+          <!-- Step 11: the export dialog, over the canvas -->
+          <div class="export" data-steps="11" hidden>
             <p class="export__title">Export the starred versions</p>
             <p class="export__sub">Each format at its <svg class="i" aria-hidden="true"><use href="#i-star"/></svg> version, ready to post.</p>
             <ul class="export__rows">
@@ -265,15 +288,17 @@
           </div>
 
           <div class="toolbar"><span class="toolbar__zoom">100%</span><span class="toolbar__sep"></span><span class="toolbar__export"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Export</span></div>
-          <div class="caption"><p class="caption__step"><span class="caption__n">01</span><span class="caption__of">/10</span> <span class="caption__name">Brief</span></p><p class="caption__what"></p><div class="caption__bar"><span></span></div></div>
+          <div class="caption"><p class="caption__step"><span class="caption__n">01</span><span class="caption__of">/11</span> <span class="caption__name">Brief</span></p><p class="caption__what"></p><div class="caption__bar"><span></span></div></div>
         </div>
+        <!-- The story's voice-over: off until asked for (shown by story.js). -->
+        <button class="sound-btn story__sound" type="button" data-sound hidden><svg class="i i--muted" aria-hidden="true"><use href="#i-muted"/></svg><svg class="i i--sound" aria-hidden="true"><use href="#i-sound"/></svg><span class="sound-btn__label">Sound on</span></button>
       </div>
     </div>
 
     <p class="story__note">The chat in this story is a demo: scripted messages, real features.</p>
 
     <ol class="steps">
-      <li class="step" id="step-brief" data-step="1">
+      <li class="step" id="step-brief" data-step="1" data-voice="compositions/launch-16x9/assets/audio/vo-01.mp3">
         <div class="step__text">
           <h2 class="step__title"><span class="step__n">01</span> Brief</h2>
           <p class="step__what">One brief, three directions, each a real composition.</p>
@@ -286,7 +311,7 @@
           <figure class="shot"><img src="compositions/story-signal-v1/poster.webp" alt="Variant C, Signal." width="1920" height="1080"><figcaption>C · Signal</figcaption></figure>
         </div>
       </li>
-      <li class="step" id="step-choose" data-step="2">
+      <li class="step" id="step-choose" data-step="2" data-voice="compositions/launch-16x9/assets/audio/vo-02.mp3">
         <div class="step__text">
           <h2 class="step__title"><span class="step__n">02</span> Choose</h2>
           <p class="step__what">One click picks the direction. The others are set aside, not lost: Restore brings one back.</p>
@@ -296,7 +321,7 @@
           <figure class="shot shot--chosen"><img src="compositions/story-signal-v1/poster.webp" alt="Variant C, Signal, chosen." width="1920" height="1080" loading="lazy"><figcaption>C · Signal, chosen</figcaption></figure>
         </div>
       </li>
-      <li class="step" id="step-ask" data-step="3">
+      <li class="step" id="step-ask" data-step="3" data-voice="compositions/launch-16x9/assets/audio/vo-03.mp3">
         <div class="step__text">
           <h2 class="step__title"><span class="step__n">03</span> Ask</h2>
           <p class="step__what">One sentence in the chat makes a new version.</p>
@@ -307,7 +332,7 @@
           <figure class="shot"><img src="compositions/story-signal-v2/poster.webp" alt="Signal v2, with a larger title." width="1920" height="1080" loading="lazy"><figcaption>C · Signal · v2</figcaption></figure>
         </div>
       </li>
-      <li class="step" id="step-edit" data-step="4">
+      <li class="step" id="step-edit" data-step="4" data-voice="compositions/launch-16x9/assets/audio/vo-04.mp3">
         <div class="step__text">
           <h2 class="step__title"><span class="step__n">04</span> Edit by hand</h2>
           <p class="step__what">Move, resize and recolour the title in the editor, then save as v3. No agent, no tokens.</p>
@@ -317,7 +342,7 @@
           <figure class="shot"><img src="compositions/story-signal-v3/poster.webp" alt="Signal v3, edited by hand." width="1920" height="1080" loading="lazy"><figcaption>C · Signal · v3</figcaption></figure>
         </div>
       </li>
-      <li class="step" id="step-brand" data-step="5">
+      <li class="step" id="step-brand" data-step="5" data-voice="compositions/launch-16x9/assets/audio/vo-05.mp3">
         <div class="step__text">
           <h2 class="step__title"><span class="step__n">05</span> Brand</h2>
           <p class="step__what">A website becomes a brand kit: palette, fonts and logo, each with where it came from.</p>
@@ -328,9 +353,27 @@
           <figure class="shot"><img src="compositions/story-brand-16x9/poster.webp" alt="v4 in the Motion Studio brand." width="1920" height="1080" loading="lazy"><figcaption>C · v4 · the brand applied</figcaption></figure>
         </div>
       </li>
-      <li class="step" id="step-formats" data-step="6">
+      <li class="step" id="step-generate" data-step="6" data-voice="compositions/launch-16x9/assets/audio/vo-06.mp3">
         <div class="step__text">
-          <h2 class="step__title"><span class="step__n">06</span> Formats</h2>
+          <h2 class="step__title"><span class="step__n">06</span> Generate</h2>
+          <p class="step__what">Images, voice-overs, music and sound effects from OpenAI and ElevenLabs, on your own keys. Every paid call waits for your OK.</p>
+          <p class="msg msg--you">Make a product shot of black earbuds, and a voice-over for the Generate step.</p>
+          <div class="msg msg--paid">
+            <p class="paid__kind">External service</p>
+            <p class="paid__title">Generate an image with gpt-image-2</p>
+            <p class="paid__keys">A paid call to your own OpenAI account, with your key.</p>
+            <p class="paid__actions"><span class="paid__btn paid__btn--go">Generate</span><span class="paid__btn">Always here</span><span class="paid__btn">Deny</span></p>
+          </div>
+          <p class="msg msg--agent">You said yes, so both are made: the picture with gpt-image-2 and the voice-over with gpt-4o-mini-tts, each a paid call you confirmed. They’re in Assets and on the canvas.</p>
+        </div>
+        <div class="step__result step__result--generate">
+          <figure class="shot shot--1x1"><img src="compositions/launch-16x9/assets/generated-earbuds.jpg" alt="The generated picture: matte black wireless earbuds floating over a dark surface, lit cyan from behind." width="900" height="900" loading="lazy"><figcaption>Image · gpt-image-2</figcaption></figure>
+          <figure class="shot shot--audio"><img src="compositions/launch-16x9/assets/wave-voice.svg" alt="The generated voice-over’s waveform." width="412" height="90" loading="lazy"><figcaption>Voice-over · gpt-4o-mini-tts</figcaption><audio controls preload="none" src="compositions/launch-16x9/assets/audio/vo-06.mp3"></audio></figure>
+        </div>
+      </li>
+      <li class="step" id="step-formats" data-step="7" data-voice="compositions/launch-16x9/assets/audio/vo-07.mp3">
+        <div class="step__text">
+          <h2 class="step__title"><span class="step__n">07</span> Formats</h2>
           <p class="step__what">Every format laid out for its own frame, never cropped.</p>
           <p class="msg msg--you">Also make it for Reels and Instagram posts.</p>
           <p class="msg msg--agent">Done: a 9:16 and a 1:1, each recomposed for its frame. The mark leads the Reel, the title stacks under it.</p>
@@ -341,9 +384,9 @@
           <figure class="shot"><img src="compositions/story-brand-16x9/poster.webp" alt="The 16:9 video." width="1920" height="1080" loading="lazy"><figcaption>Video 16:9</figcaption></figure>
         </div>
       </li>
-      <li class="step" id="step-languages" data-step="7">
+      <li class="step" id="step-languages" data-step="8" data-voice="compositions/launch-16x9/assets/audio/vo-08.mp3">
         <div class="step__text">
-          <h2 class="step__title"><span class="step__n">07</span> Languages</h2>
+          <h2 class="step__title"><span class="step__n">08</span> Languages</h2>
           <p class="step__what">Up to ten languages, one layout: only the words change.</p>
           <p class="msg msg--you">Italian, German and Spanish too.</p>
           <p class="msg msg--agent">Three translations. Positions, timing and colours are the original’s, and every line fits its box at the same size.</p>
@@ -354,20 +397,20 @@
           <figure class="shot"><img src="compositions/story-es/poster.webp" alt="The 16:9 in Spanish." width="1920" height="1080" loading="lazy"><figcaption>Español</figcaption></figure>
         </div>
       </li>
-      <li class="step" id="step-subtitles" data-step="8">
+      <li class="step" id="step-subtitles" data-step="9" data-voice="board">
         <div class="step__text">
-          <h2 class="step__title"><span class="step__n">08</span> Subtitles</h2>
+          <h2 class="step__title"><span class="step__n">09</span> Subtitles</h2>
           <p class="step__what">From the voice-over, transcribed on your computer, timed to the word.</p>
           <p class="msg msg--you">Add subtitles from the voice-over.</p>
-          <p class="msg msg--agent">Transcribed locally with Whisper: four lines, each word timed. They’re drawn on the 16:9, and .srt and .vtt are one click away.</p>
+          <p class="msg msg--agent">Transcribed locally with Whisper: two lines, each word timed. They’re drawn on the 16:9, and .srt and .vtt are one click away.</p>
         </div>
         <div class="step__result">
           <figure class="shot"><img src="compositions/story-subs/poster.webp" alt="The 16:9 with subtitles." width="1920" height="1080" loading="lazy"><figcaption>C · v5 · subtitles</figcaption></figure>
         </div>
       </li>
-      <li class="step" id="step-identity" data-step="9">
+      <li class="step" id="step-identity" data-step="10" data-voice="compositions/launch-16x9/assets/audio/vo-10.mp3">
         <div class="step__text">
-          <h2 class="step__title"><span class="step__n">09</span> Identity</h2>
+          <h2 class="step__title"><span class="step__n">10</span> Identity</h2>
           <p class="step__what">The logo becomes real file sets: favicon, app icons, social preview.</p>
           <p class="msg msg--you">Turn the logo into a favicon, an app icon and a social preview.</p>
           <p class="msg msg--agent">Rendered: a favicon set with its head snippet, iOS and Android icons, and a 1200×630 preview. This site’s own logo and favicon came out of Motion Studio.</p>
@@ -378,9 +421,9 @@
           <figure class="shot"><img src="assets/og-image.png" alt="The social preview image." width="1200" height="630" loading="lazy"><figcaption>Social preview</figcaption></figure>
         </div>
       </li>
-      <li class="step" id="step-export" data-step="10">
+      <li class="step" id="step-export" data-step="11" data-voice="compositions/launch-16x9/assets/audio/vo-11.mp3">
         <div class="step__text">
-          <h2 class="step__title"><span class="step__n">10</span> Export</h2>
+          <h2 class="step__title"><span class="step__n">11</span> Export</h2>
           <p class="step__what">Every starred version rendered on your computer and named for its channel.</p>
           <p class="msg msg--event">Exported 8 items to your folder, each named for its channel.</p>
         </div>
@@ -402,24 +445,25 @@
     <div class="wrap final__head">
       <div>
         <h2 id="final-title">The final cut.</h2>
-        <p class="final__lede">The launch video Motion Studio made of itself, played here by its own runtime: the same ten steps, fast.</p>
+        <p class="final__lede">The launch video Motion Studio made of itself, played here by its own runtime: the same eleven steps, with its voice-over. Play turns the sound on.</p>
       </div>
       <div class="final__actions">
         <a class="btn btn--primary" href="https://github.com/Aleloca/motion-studio/releases/latest"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Download for macOS</a>
         <a class="btn" href="https://github.com/Aleloca/motion-studio"><svg class="i" aria-hidden="true"><use href="#i-github"/></svg>Star on GitHub</a>
-        <a class="final__guide" href="assets/video/launch.mp4" download>Download the video (MP4, 10 MB)</a>
+        <a class="final__guide" href="assets/video/launch.mp4" download>Download the video (MP4, 12 MB)</a>
         <a class="final__guide" href="guide.html">Read the user guide <span aria-hidden="true">→</span></a>
       </div>
     </div>
     <div class="wrap">
       <!-- The final cut: Motion Studio's launch film, played by its own runtime; the MP4 is the same film rendered by the product. -->
       <figure class="comp comp--16x9 final__player" data-composition="launch-16x9" data-poster-time="34.96" data-final-cut data-controls data-loop="false">
-        <div class="comp-stage"><img class="poster" src="compositions/launch-16x9/poster.webp" alt="Motion Studio's launch film: a brief typed, three variants, a chat request, a hand edit, the brand from a site, every format, three languages, subtitles, an identity set and the export, ending on “Brief in. Motion out.”" width="1920" height="1080" loading="lazy"></div>
+        <div class="comp-stage"><img class="poster" src="compositions/launch-16x9/poster.webp" alt="Motion Studio's launch film, with its voice-over: a brief typed, three variants, a chat request, a hand edit, the brand from a site, a generated picture and voice, every format, three languages, subtitles, an identity set and the export, ending on “Brief in. Motion out.”" width="1920" height="1080" loading="lazy"></div>
         <div class="player-bar">
           <button class="player-bar__play" type="button" aria-label="Play"><svg class="i i--play" aria-hidden="true"><use href="#i-play"/></svg><svg class="i i--pause" aria-hidden="true"><use href="#i-pause"/></svg></button>
           <span class="player-bar__time"><span class="player-bar__now">00:00</span><span class="player-bar__slash"> / </span><span class="player-bar__dur">--:--</span></span>
           <div class="player-bar__track"><input class="player-bar__seek" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek"><span class="player-bar__fill"></span><span class="player-bar__chapters"></span></div>
           <button class="player-bar__btn player-bar__replay" type="button" aria-label="Play from the start"><svg class="i" aria-hidden="true"><use href="#i-replay"/></svg></button>
+          <button class="player-bar__btn player-bar__sound" type="button" data-sound aria-label="Sound on"><svg class="i i--muted" aria-hidden="true"><use href="#i-muted"/></svg><svg class="i i--sound" aria-hidden="true"><use href="#i-sound"/></svg></button>
           <button class="player-bar__btn player-bar__full" type="button" aria-label="Full screen"><svg class="i" aria-hidden="true"><use href="#i-expand"/></svg></button>
         </div>
       </figure>

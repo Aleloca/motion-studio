@@ -42,9 +42,9 @@ test('the first viewport offers the download of the latest release and the final
   assert.ok(html.includes(`class="btn btn--small topbar__download" href="${LATEST}"`), 'the bar\'s Download');
 });
 
-test('ten steps in order, each a static block: a title, what it shows, the exchange and the result', () => {
-  const names = ['Brief', 'Choose', 'Ask', 'Edit by hand', 'Brand', 'Formats', 'Languages', 'Subtitles', 'Identity', 'Export'];
-  assert.equal(steps.length, 10);
+test('eleven steps in order, each a static block: a title, what it shows, the exchange and the result', () => {
+  const names = ['Brief', 'Choose', 'Ask', 'Edit by hand', 'Brand', 'Generate', 'Formats', 'Languages', 'Subtitles', 'Identity', 'Export'];
+  assert.equal(steps.length, 11);
   steps.forEach(({ head, body }, i) => {
     assert.equal(attr(head, 'data-step'), String(i + 1));
     const title = /<h2 class="step__title"><span class="step__n">(\d\d)<\/span> ([^<]+)<\/h2>/.exec(body);
@@ -102,14 +102,14 @@ test('every board and panel has a place in the world and a step range; a figure\
     const style = attr(tag, 'style');
     for (const v of ['--x', '--y', '--w', '--h']) assert.match(style, new RegExp(`${v}:-?[\\d.]+`), tag);
     const range = parseSteps(attr(tag, 'data-steps'));
-    assert.ok(range.every(([a, b]) => a >= 1 && b <= 10 && a <= b), tag);
+    assert.ok(range.every(([a, b]) => a >= 1 && b <= 11 && a <= b), tag);
   }
   const c = /<div class="board board--main"[\s\S]*?<!-- Step 4/.exec(stage)[0];
   const range = parseSteps(attr(c, 'data-steps'));
   const figs = [...c.matchAll(/<figure\b[^>]*>/g)].map((m) => parseSteps(attr(m[0], 'data-steps')));
   assert.equal(figs.length, 5, 'board C: v1, v2, v3, v4, v5');
   for (const f of figs) for (const [a, b] of f) assert.ok(inSteps(range, a) && inSteps(range, b));
-  for (let n = 1; n <= 10; n++) assert.ok(figs.some((f) => inSteps(f, n)), `C has a version in step ${n}`);
+  for (let n = 1; n <= 11; n++) assert.ok(figs.some((f) => inSteps(f, n)), `C has a version in step ${n}`);
 });
 
 test('the final cut: a composition player with controls, its poster, and the one slot the launch video takes', () => {
@@ -121,7 +121,8 @@ test('the final cut: a composition player with controls, its poster, and the one
   const id = attr(tag, 'data-composition');
   assert.ok(existsSync(join(SITE, 'compositions', id, 'composition.json')), id);
   assert.match(final, /<img class="poster"[^>]*alt="[^"]+"/);
-  for (const c of ['player-bar__play', 'player-bar__seek', 'player-bar__replay', 'player-bar__full']) assert.ok(final.includes(c), c);
+  for (const c of ['player-bar__play', 'player-bar__seek', 'player-bar__replay', 'player-bar__sound', 'player-bar__full']) assert.ok(final.includes(c), c);
+  assert.match(final, /<button class="player-bar__btn player-bar__sound" type="button" data-sound aria-label="Sound on">/);
   assert.match(final, /type="range"[^>]*aria-label="Seek"/);
   assert.ok(final.includes(`class="btn btn--primary" href="${LATEST}"`), 'Download');
   assert.ok(final.includes(`href="${REPO_URL}"`), 'GitHub');
@@ -160,4 +161,34 @@ test('install section is faithful to the README', () => {
 test('no external URLs other than the repo, its pages and the Claude Code docs', () => {
   const urls = [...html.matchAll(/(?:href|src|content)="(https?:[^"]+)"/g)].map((m) => m[1]);
   for (const u of urls) assert.ok(u.startsWith(REPO_URL) || u.startsWith('https://aleloca.github.io/motion-studio/') || u.startsWith('https://docs.claude.com/'), u);
+});
+
+test('every step says its voice-over line: the film\'s line of that beat, or (subtitles) its board\'s own voice', () => {
+  const vo = JSON.parse(readFileSync(join(SITE, 'scripts', 'audio-gen', 'media.json'), 'utf8')).vo;
+  steps.forEach(({ head }, i) => {
+    const voice = attr(head, 'data-voice');
+    if (i + 1 === 9) { assert.equal(voice, 'board'); return; }
+    assert.equal(voice, `compositions/launch-16x9/assets/audio/${vo[i].file}`, `step ${i + 1}`);
+    assert.ok(existsSync(join(SITE, voice)), voice);
+  });
+  const subs = comp('story-subs').tracks.flatMap((t) => t.clips).find((c) => c.type === 'audio');
+  assert.equal(subs.script, vo[8].text);
+  // The story's sound button sits outside the aria-hidden canvas, off until story.js shows it.
+  assert.match(story, /<button class="sound-btn story__sound" type="button" data-sound hidden>[\s\S]*?Sound on/);
+  const hiddenCanvas = stage.slice(0, stage.indexOf('<div class="caption">'));
+  assert.doesNotMatch(hiddenCanvas, /data-sound/);
+  assert.match(stage, /<div class="caption">[\s\S]*?<\/div><\/div>\s*<\/div>\s*<!--[^>]*-->\s*<button class="sound-btn story__sound"/, 'the button follows the canvas');
+});
+
+test('the Generate step: the real generated picture and voice, the paid call confirmed first, no invented price', () => {
+  const gen = steps[5].body;
+  assert.match(gen, /<p class="msg msg--you">[^<]+<\/p>/);
+  assert.match(gen, /<div class="msg msg--paid">[\s\S]*Generate an image with gpt-image-2[\s\S]*your own OpenAI account[\s\S]*<\/div>/);
+  assert.doesNotMatch(story, /\$\s?\d|\d\s?USD|€/, 'no price anywhere in the story');
+  assert.match(gen, /src="compositions\/launch-16x9\/assets\/generated-earbuds\.jpg"/);
+  assert.match(gen, /<audio controls preload="none" src="compositions\/launch-16x9\/assets\/audio\/vo-06\.mp3"><\/audio>/);
+  const media = JSON.parse(readFileSync(join(SITE, 'scripts', 'audio-gen', 'media.json'), 'utf8'));
+  assert.ok(gen.includes(media.image.model) && gen.includes(media.voice.model), 'the models that really made them');
+  assert.match(stage, /data-board="genimg" data-steps="6"/);
+  assert.match(stage, /<div class="panel genpanel" data-steps="6"/);
 });

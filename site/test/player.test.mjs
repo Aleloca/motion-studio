@@ -315,3 +315,21 @@ test('the viewer\'s seek plays on from there when playing, and is refused before
   assert.deepEqual(h.sent.slice(-2).map((s) => s.m), [{ type: 'seek', t: 6 }, { type: 'play', loop: true }]);
   assert.equal(h.player.time, 6);
 });
+
+test('silent by default; setMuted reaches a live runtime, and a runtime mounted later starts with the last setting', () => {
+  const h = harness();
+  h.player.update(S({ near: true, visible: true }));
+  h.msg({ type: 'ready' });
+  assert.deepEqual(h.sent[1].m, { type: 'mute', muted: true });
+  h.player.setMuted(false);
+  assert.deepEqual(h.sent.at(-1).m, { type: 'mute', muted: false });
+  const count = h.sent.length;
+  h.player.setMuted(false);
+  assert.equal(h.sent.length, count, 'no repeat');
+  const later = harness();
+  later.player.setMuted(false);
+  assert.equal(later.sent.length, 0, 'nothing to tell before ready');
+  later.player.update(S({ near: true, visible: true }));
+  later.msg({ type: 'ready' });
+  assert.deepEqual(later.sent[1].m, { type: 'mute', muted: false });
+});

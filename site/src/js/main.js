@@ -3,6 +3,7 @@
 import { mountPlayers } from './player.js';
 import { startStory } from './story.js';
 import { finalCut } from './final-cut.js';
+import { soundSwitch } from './sound.js';
 
 const root = document.documentElement;
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -16,17 +17,19 @@ const players = mountPlayers(document, {
   // The canvas's boards are driven by the story, step by step; without it they are never shown (nor mounted).
   manual: inStage,
 });
-for (const p of players) if (p.figure.hasAttribute('data-controls')) finalCut(p);
+// One sound switch for the page: the story's voice-over and the final cut.
+const sound = soundSwitch();
+for (const p of players) if (p.figure.hasAttribute('data-controls')) finalCut(p, sound);
 
 if (live) {
   root.classList.add('js-motion');
   window.gsap.registerPlugin(window.ScrollTrigger);
   document.fonts.ready.then(() => {
-    const story = startStory({ gsap: window.gsap, ScrollTrigger: window.ScrollTrigger, players });
+    const story = startStory({ gsap: window.gsap, ScrollTrigger: window.ScrollTrigger, players, sound });
     if (debug) window.__siteDebug.story = story;
     root.classList.add('motion-ready');
   });
 } else {
   root.classList.remove('js-motion');
 }
-if (debug) window.__siteDebug = { commands, players };
+if (debug) window.__siteDebug = { commands, players, sound };

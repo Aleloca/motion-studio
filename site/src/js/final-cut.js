@@ -1,13 +1,18 @@
-// The final cut's controls: play and pause, seek (with a mark at each scene), play from the start, full screen. The film
-// plays once when it comes on screen (motion allowed); under reduced motion it waits on its poster frame for Play. A pause
-// is the viewer's and holds; off screen the film pauses and picks up again when it returns.
+// The final cut's controls: play and pause, seek (with a mark at each scene), play from the start, sound, full screen. The
+// film plays once, silent, when it comes on screen (motion allowed); under reduced motion it waits on its poster frame for
+// Play. Play (or play from the start) turns the sound on, unless the viewer switched it off. A pause is the viewer's and
+// holds; off screen the film pauses and picks up again when it returns.
+import { soundButton } from './sound.js';
 export const formatTime = (t) => {
   const s = Math.max(0, Math.floor(t));
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 };
 
-/** @param {import('./player.js').CompositionPlayer} player */
-export function finalCut(player) {
+/**
+ * @param {import('./player.js').CompositionPlayer} player
+ * @param {ReturnType<typeof import('./sound.js').soundSwitch>} sound
+ */
+export function finalCut(player, sound) {
   const fig = player.figure;
   const q = (s) => fig.querySelector(s);
   const play = q('.player-bar__play'); const seek = q('.player-bar__seek'); const fill = q('.player-bar__fill');
@@ -40,11 +45,17 @@ export function finalCut(player) {
   };
   player.onChange(paint);
 
+  const withSound = () => { if (!sound.declined) sound.set(true); };
+  player.setMuted(!sound.on);
+  sound.onChange((on) => player.setMuted(!on));
+  soundButton(q('.player-bar__sound'), sound);
   play.addEventListener('click', () => {
+    if (!player.playing) withSound();
     player.update({ intent: player.playing ? 'pause' : 'play' });
     paint(player);
   });
   q('.player-bar__replay').addEventListener('click', () => {
+    withSound();
     player.update({ intent: 'play' });
     if (!player.seekTo(0)) return;
     if (!player.playing) player.update({});
