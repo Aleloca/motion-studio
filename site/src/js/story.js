@@ -246,14 +246,25 @@ export function startStory({ gsap, ScrollTrigger, players }) {
       p.update({ near: plays || soon, visible: plays, still });
     }
   };
+  // The players follow once the step settles: a fast scroll (or the jump to the final cut) passes steps without
+  // mounting every board on the way.
+  let settle = null;
+  // Out of its steps (and the one before, so its poster is there when it enters) a board is not laid out: its lazy poster
+  // waits, and the first load fetches only the first steps' posters.
+  const ranged = $$('[data-steps]');
+  const layOut = (n) => {
+    for (const el of ranged) el.hidden = !parseSteps(el.dataset.steps).some(([a, b]) => n >= a - 1 && n <= b + 1);
+  };
   function setStep(n, before) {
     step = n;
+    layOut(n);
     const s = steps[n - 1];
     chat.show(n, before);
     caption.n.textContent = String(n).padStart(2, '0');
     caption.name.textContent = s.name;
     caption.what.textContent = s.what;
-    syncPlayers();
+    clearTimeout(settle);
+    settle = setTimeout(syncPlayers, before === 0 ? 0 : 140);
   }
 
   // Subtitle lines follow the time of the board that draws them.
@@ -358,7 +369,7 @@ function buildChat(steps, note) {
         animateIn(ex.firstElementChild);
         if (agent) {
           agent.style.display = 'none';
-          const working = h('div', { class: 'working' }, [h('i'), h('i'), h('i')]);
+          const working = h('p', { class: 'working' }, 'Working…');
           ex.append(working);
           pending = setTimeout(() => {
             working.remove();
