@@ -25,6 +25,23 @@ Each folder in `compositions/` is a regular Motion Studio composition (`composit
 
 The site's fonts (`src/assets/fonts/`) are copied into every composition's `assets/fonts/` at build time.
 
+The hero cycles through example creatives: each `.hero__set` in `index.html` holds one creative's three formats, with its
+brief (`data-brief`) and format chips (`data-chips`). The first set is the one shown without JS and under reduced motion;
+the others are hidden until the cycle reaches them, and each creative also has a card in the showcase.
+
+The hero creatives (`kova-*`, `tidefall-*`, `fernwise-*`) are generated: change `scripts/hero-gen/`, not their JSON.
+
+```bash
+node site/build.mjs                         # once: the width measurer uses the built site's fonts
+node site/scripts/hero-gen/build.mjs        # → site/compositions/<id>/composition.json, meta.json, assets/*.svg
+node site/build.mjs && node site/scripts/posters.mjs kova-9x16 …   # then the posters of what changed
+```
+
+`kova.mjs`, `tidefall.mjs` and `fernwise.mjs` lay out each creative per format with the builders of `lib.mjs`. Text
+widths come from `widths.json` (measured in Chrome with the site's fonts by `measure.mjs`, which the build runs by itself
+for a new string), so generating needs plain node only. A site test regenerates everything and fails on any difference
+from the checked-in files.
+
 After changing a composition, render its poster again (headless Chrome with a throwaway profile):
 
 ```bash

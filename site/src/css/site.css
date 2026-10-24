@@ -74,6 +74,7 @@ code, pre { font-family: var(--f-mono); font-size: .9em; }
 .comp--16x9 .comp-stage { aspect-ratio: 16 / 9; }
 .comp--1x1 .comp-stage { aspect-ratio: 1; }
 .comp--9x16 .comp-stage { aspect-ratio: 9 / 16; }
+.comp--4x5 .comp-stage { aspect-ratio: 4 / 5; }
 .comp .poster, .comp iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 .comp .poster { object-fit: cover; transition: opacity .4s ease .15s; }
 /* The runtime page is color-scheme normal: matching it keeps Chrome from painting an opaque white backdrop. */
@@ -91,7 +92,8 @@ code, pre { font-family: var(--f-mono); font-size: .9em; }
   background: linear-gradient(180deg, #1C1C1C, var(--c-surface)); border: 1px solid var(--c-line); border-radius: var(--radius);
 }
 .brief__label { margin: 0 0 6px; font: 400 13px/1.4 var(--f-mono); color: var(--c-muted); }
-.brief__text { margin: 0 0 14px; font: 500 clamp(18px, 2vw, 22px)/1.35 var(--f-body); min-height: 1.35em; }
+/* Two lines held for every example brief, so the box keeps its height while the cycle retypes it. */
+.brief__text { margin: 0 0 14px; font: 500 clamp(18px, 2vw, 22px)/1.35 var(--f-body); min-height: 2.7em; }
 .brief__caret { display: inline-block; width: 2px; height: 1.1em; margin-left: 2px; vertical-align: -0.15em; background: var(--c-orange); }
 .brief__chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .brief__chips li { padding: 6px 12px; border: 1px solid color-mix(in srgb, var(--c-formats) 50%, transparent); border-radius: 999px; color: var(--c-formats); font: 400 13px/1.2 var(--f-mono); }
@@ -105,15 +107,19 @@ code, pre { font-family: var(--f-mono); font-size: .9em; }
 .frames__video { fill: var(--c-orange); stroke: none; }
 .frames__play { fill: #fff; }
 
-.hero__formats { display: flex; align-items: flex-end; gap: clamp(10px, 2vw, 24px); }
+/* One set of frames per example creative, stacked in one cell: the cycle cross-fades from one to the next. */
+.hero__formats { display: grid; align-items: end; }
+.hero__set { grid-area: 1 / 1; display: flex; align-items: flex-end; gap: clamp(10px, 2vw, 24px); }
+.hero__set[hidden] { display: none; }
 .hero__formats .comp--9x16 { flex: 0.5625 1 0; }
+.hero__formats .comp--4x5 { flex: 0.8 1 0; }
 .hero__formats .comp--1x1 { flex: 1 1 0; }
 .hero__formats .comp--16x9 { flex: 1.7778 1 0; }
 .hero__formats .comp-stage { border: 1px solid var(--c-line); }
 @media (max-width: 640px) {
-  .hero__formats { flex-wrap: wrap; }
+  .hero__set { flex-wrap: wrap; }
   .hero__formats .comp--16x9 { order: -1; flex-basis: 100%; }
-  .hero__formats .comp--9x16, .hero__formats .comp--1x1 { flex-basis: 0; }
+  .hero__formats .comp--9x16, .hero__formats .comp--4x5, .hero__formats .comp--1x1 { flex-basis: 0; }
 }
 
 .hero__title {

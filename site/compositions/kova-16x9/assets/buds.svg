@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 640">
+<defs>
+<linearGradient id="shell" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5B6374"/><stop offset=".38" stop-color="#232833"/><stop offset=".75" stop-color="#0D0F14"/><stop offset="1" stop-color="#040507"/></linearGradient>
+<linearGradient id="stem" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#07080B"/><stop offset=".3" stop-color="#3A4150"/><stop offset=".55" stop-color="#1A1E27"/><stop offset="1" stop-color="#040507"/></linearGradient>
+<linearGradient id="chrome" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#4B5563"/><stop offset=".28" stop-color="#F8FAFC"/><stop offset=".5" stop-color="#A3ACB9"/><stop offset=".8" stop-color="#E5E7EB"/><stop offset="1" stop-color="#374151"/></linearGradient>
+<radialGradient id="tip" cx=".42" cy=".38" r=".7"><stop offset="0" stop-color="#454C5B"/><stop offset=".7" stop-color="#191C24"/><stop offset="1" stop-color="#0B0D12"/></radialGradient>
+<radialGradient id="sheen" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#FFFFFF" stop-opacity=".5"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/></radialGradient>
+<linearGradient id="rim" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7CF5FF" stop-opacity=".9"/><stop offset=".5" stop-color="#7CF5FF" stop-opacity=".1"/><stop offset="1" stop-color="#7CF5FF" stop-opacity=".6"/></linearGradient>
+<pattern id="mesh" width="7" height="7" patternUnits="userSpaceOnUse"><circle cx="3.5" cy="3.5" r="1.5" fill="#7CF5FF" fill-opacity=".45"/></pattern>
+<g id="bud">
+  <g transform="translate(150 118) rotate(-14)">
+    <rect x="-35" y="0" width="70" height="262" rx="35" fill="url(#stem)"/>
+    <rect x="-35" y="206" width="70" height="56" rx="35" fill="url(#chrome)"/>
+    <rect x="-35" y="204" width="70" height="5" fill="#7CF5FF"/>
+    <rect x="-7" y="56" width="14" height="50" rx="7" fill="#020305"/>
+    <rect x="-4" y="226" width="8" height="18" rx="4" fill="#1F2937" fill-opacity=".7"/>
+    <rect x="-22" y="12" width="8" height="180" rx="4" fill="#FFFFFF" fill-opacity=".08"/>
+  </g>
+  <ellipse cx="122" cy="80" rx="138" ry="114" transform="rotate(-18 122 80)" fill="url(#shell)"/>
+  <ellipse cx="122" cy="80" rx="136" ry="112" transform="rotate(-18 122 80)" fill="none" stroke="url(#rim)" stroke-width="2.5"/>
+  <ellipse cx="150" cy="96" rx="80" ry="66" transform="rotate(-18 150 96)" fill="#0A0C11" fill-opacity=".55"/>
+  <ellipse cx="150" cy="96" rx="80" ry="66" transform="rotate(-18 150 96)" fill="none" stroke="#7CF5FF" stroke-opacity=".55" stroke-width="2"/>
+  <circle cx="176" cy="104" r="5" fill="#7CF5FF"/>
+  <ellipse cx="78" cy="22" rx="70" ry="26" transform="rotate(-28 78 22)" fill="url(#sheen)"/>
+  <ellipse cx="8" cy="40" rx="64" ry="74" transform="rotate(-30 8 40)" fill="url(#tip)"/>
+  <ellipse cx="-4" cy="34" rx="32" ry="38" transform="rotate(-30 -4 34)" fill="#05060A"/>
+  <ellipse cx="-4" cy="34" rx="28" ry="34" transform="rotate(-30 -4 34)" fill="url(#mesh)"/>
+  <ellipse cx="-14" cy="14" rx="24" ry="10" transform="rotate(-30 -14 14)" fill="url(#sheen)" opacity=".6"/>
+</g>
+</defs>
+<use href="#bud" transform="translate(665 200) rotate(16) scale(-.86 .86)"/>
+<use href="#bud" transform="translate(140 180) rotate(-12)"/>
+</svg>
