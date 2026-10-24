@@ -11,7 +11,7 @@ const EXPECTED = {
   'fernwise-9x16': 'instagram-reel-9x16', 'fernwise-1x1': 'instagram-post-1x1', 'fernwise-16x9': 'youtube-16x9',
   formats: 'youtube-16x9', editor: 'youtube-16x9', brand: 'instagram-post-1x1', identity: 'instagram-post-1x1',
   languages: 'youtube-16x9', agent: 'youtube-16x9', git: 'youtube-16x9', services: 'instagram-post-1x1',
-  variants: 'youtube-16x9', og: 'og-image-1200x630',
+  variants: 'youtube-16x9', og: 'og-image-1200x630', 'launch-16x9': 'youtube-16x9',
   'story-night': 'youtube-16x9', 'story-paper': 'youtube-16x9', 'story-signal-v1': 'youtube-16x9', 'story-signal-v2': 'youtube-16x9',
   'story-signal-v3': 'youtube-16x9', 'story-brand-16x9': 'youtube-16x9', 'story-brand-9x16': 'instagram-reel-9x16',
   'story-brand-1x1': 'instagram-post-1x1', 'story-it': 'youtube-16x9', 'story-de': 'youtube-16x9', 'story-es': 'youtube-16x9',
