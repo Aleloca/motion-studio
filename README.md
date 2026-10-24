@@ -34,7 +34,7 @@ Texts saved in the past (validation problems in a version, conversation messages
 - Windows: the `.exe` installer. It is not signed yet: the first time, SmartScreen shows "Windows protected your PC": click **More info**, then **Run anyway**.
 - Linux: the `.AppImage`: make it executable (`chmod +x Motion*.AppImage`) and run it.
 
-**From npm.** `npx @motion-studio/cli` (the installed command is called `motion-studio`), once it is published. Publishing it requires the `motion-studio` npm organization. Until then, use the sources.
+**From npm.** `npx @motion-studio/cli` (Node 22 or newer; installed globally the command is called `motion-studio`): it starts Motion Studio and opens it in the browser.
 
 **From source.**
 ```bash
@@ -293,12 +293,12 @@ Useful variables:
 To contribute, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Release
-For maintainers. Align the version in `apps/desktop/package.json` and `apps/cli/package.json`, then create and push the matching `vX.Y.Z` tag: every job of the `.github/workflows/release.yml` workflow stops immediately if the tag does not match both versions. The workflow builds the desktop app on macOS (`arm64` and `x64`), Windows and Linux and creates a **draft** GitHub release (on macOS it first builds whisper.cpp's `whisper-cli` for both architectures with `scripts/build-whisper.sh`, verified on every release; it can also be run on a Mac into `apps/desktop/vendor/whisper/`, which the development app then uses) with the installers (to be published by hand); in parallel, if `NPM_TOKEN` is present, it publishes `@motion-studio/cli` to npm (a failure in a desktop build does not block it). CI (`ci.yml`) runs the type check, the i18n check and the tests on every push to `main` and on pull requests.
+For maintainers. Align the version in `apps/desktop/package.json` and `apps/cli/package.json`, then create and push the matching `vX.Y.Z` tag: every job of the `.github/workflows/release.yml` workflow stops immediately if the tag does not match both versions. The workflow builds the desktop app on macOS (`arm64` and `x64`), Windows and Linux and creates a **draft** GitHub release (on macOS it first builds whisper.cpp's `whisper-cli` for both architectures with `scripts/build-whisper.sh`, verified on every release; it can also be run on a Mac into `apps/desktop/vendor/whisper/`, which the development app then uses) with the installers (to be published by hand); in parallel it publishes `@motion-studio/cli` to npm with npm Trusted Publishing (no token: the package's npm settings trust this repository's `release.yml`; provenance attached) (a failure in a desktop build does not block it). CI (`ci.yml`) runs the type check, the i18n check and the tests on every push to `main` and on pull requests.
 
 Repository secrets used by the workflow (all optional: without them the build is unsigned or npm is skipped):
 - macOS (signing and notarization): `MAC_CERT_P12_BASE64`, `MAC_CERT_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`. Without `MAC_CERT_P12_BASE64` signing is off; notarization runs only if the certificate (`MAC_CERT_P12_BASE64`) and all three `APPLE_*` secrets are present, otherwise it is explicitly off.
 - Windows: `WIN_CERT_PFX_BASE64`, `WIN_CERT_PASSWORD`.
-- npm: `NPM_TOKEN`.
+- npm: none (Trusted Publishing).
 - `GITHUB_TOKEN` is provided by GitHub Actions.
 
 ## License
