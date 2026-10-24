@@ -76,7 +76,7 @@ export function volt() {
   return {
     id: 'gallery-volt-1x1',
     comp: c.build(),
-    meta: { format: 'instagram-post-1x1', posterTime: 4.1, label: 'VOLT Run Club, a weekly city run: speed lines whip across a diagonal, RUN, FASTER and TOGETHER slam in with a motion blur, a volt flash carries marquee rows and the distances, then the lockup, in a 1:1 Instagram post.' },
+    meta: { format: 'instagram-post-1x1', posterTime: 4.35, label: 'VOLT Run Club, a weekly city run: speed lines whip across a diagonal, RUN, FASTER and TOGETHER slam in with a motion blur, a volt flash carries marquee rows and the distances, then the lockup, in a 1:1 Instagram post.' },
     assets: {},
   };
 }

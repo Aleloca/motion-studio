@@ -149,10 +149,13 @@ import { readFileSync } from 'node:fs';
 export const WIDTHS_FILE = new URL('widths.json', import.meta.url).pathname;
 export const WIDTHS = JSON.parse(readFileSync(WIDTHS_FILE, 'utf8'));
 export const MISSING = new Set();
+/** Every width key the generators asked for (to drop unused ones from widths.json). */
+export const USED = new Set();
 // Fraunces has an optical-size axis: the browser draws it wider at small sizes, so its widths are measured at their size.
 const OPTICAL = new Set(['serif']);
 export function tw(text, size, font = 'display', weight = 800) {
   const key = `${FAM[font]}|${weight}${OPTICAL.has(font) ? `@${Math.round(size)}` : ''}|${text}`;
+  USED.add(key);
   if (key in WIDTHS) return (WIDTHS[key] * size) / 1000;
   MISSING.add(key);
   return text.length * size * 0.58;
