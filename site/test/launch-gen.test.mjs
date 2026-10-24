@@ -12,7 +12,7 @@ test('the launch film is exactly what its generator writes (edit the generator, 
   assert.deepEqual(generate(out), [], 'every text width is measured in widths.json');
   for (const id of LAUNCH_IDS) {
     const repo = walk(join(SITE, 'compositions', id)).filter((f) => f !== 'poster.webp' && !isGeneratedMedia(f)).sort();
-    assert.deepEqual(walk(join(out, id)).sort(), repo, `${id}: files`);
+    assert.deepEqual(walk(join(out, id)).filter((f) => !isGeneratedMedia(f)).sort(), repo, `${id}: files`);
     for (const f of repo) assert.ok(readFileSync(join(out, id, f)).equals(readFileSync(join(SITE, 'compositions', id, f))), `${id}/${f} differs from the generator's output`);
   }
 });
@@ -25,7 +25,7 @@ test('the launch film: 50 to 75 s at 1920×1080 and 30 fps, one scene per step p
   assert.deepEqual(c.scenes.map((s) => s.id), ['brief', 'variants', 'chat', 'edit', 'brand', 'generate', 'formats', 'languages', 'subtitles', 'identity', 'export', 'endcard']);
   const clips = c.tracks.flatMap((t) => t.clips);
   assert.ok(!clips.some((k) => ['video', 'html'].includes(k.type)), 'no video or html layers');
-  assert.deepEqual([...new Set(clips.filter((k) => k.type === 'image').map((k) => k.src))], ['assets/generated-earbuds.jpg'], 'the one raster: the generated picture');
+  assert.deepEqual([...new Set(clips.filter((k) => k.type === 'image').map((k) => k.src))], ['assets/generated-backdrop.jpg'], 'the one raster: the generated backdrop');
   for (const f of readdirSync(join(dir, 'assets'))) if (!isGeneratedMedia(`assets/${f}`) && f !== 'audio') assert.match(f, /\.svg$/, `assets/${f}`);
   const texts = clips.filter((k) => k.type === 'text').map((k) => k.props.text);
   for (const s of ['Brief in.', 'Motion out.', 'github.com/Aleloca/motion-studio', 'Entra il brief.', 'Briefing rein.', 'ブリーフを入れて、', 'Save as v3', 'Generate an asset', 'Generate an image with gpt-image-2', 'Added to Assets']) assert.ok(texts.includes(s), s);

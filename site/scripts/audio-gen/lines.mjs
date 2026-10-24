@@ -33,8 +33,10 @@ export const SFX = [
 ];
 export const sfxFile = (id) => `sfx-${id}.mp3`;
 
-export const IMAGE_PROMPT = 'Studio product photo of matte black wireless earbuds floating above a dark surface, cyan rim light, minimal, high detail';
-export const IMAGE_FILE = 'generated-earbuds.jpg';
+/** The title card's backdrop: the film's Generate beat makes it and puts it behind "Brief in. Motion out.". */
+export const IMAGE_PROMPT = 'Dark studio backdrop, warm orange light beams through haze, floating translucent frames like motion-graphics boards, cinematic, no text, 16:9';
+export const IMAGE_FILE = 'generated-backdrop.jpg';
+export const IMAGE_SMALL = 'generated-backdrop-960.jpg';
 
 /** Loudness targets (integrated LUFS, true peak dBTP): the voice at about -16; music and effects lower, set by volume. */
 export const LOUDNESS = { voice: [-16, -1.5], music: [-18, -1.5], sfx: [-20, -3] };

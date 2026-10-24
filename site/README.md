@@ -75,7 +75,7 @@ tests leave these files out (they come from paid calls).
 
 ```bash
 node site/scripts/audio-gen/build.mjs                    # what is missing (paid calls, re-runnable)
-node site/scripts/audio-gen/build.mjs trial openai cedar onyx   # line 01 in a few voices, to choose one
+node site/scripts/audio-gen/build.mjs trial elevenlabs <voice id>…   # line 01 in a few voices, to choose one
 ```
 
 ```bash
@@ -86,7 +86,7 @@ packages/core/node_modules/.bin/tsx site/scripts/launch-gen/render.ts <empty tem
 
 `render.ts` renders the film with the product's renderer (`packages/core`: composition server, system Chrome through the
 core's provider with its isolation flags, ffmpeg, which mixes the audio clips; `max` quality) into the temp folder, then
-writes the site's copy `src/assets/video/launch.mp4` (H.264 1080p, about 1.5 Mbit/s, AAC 128 kbit/s, ~12 MB) and `src/assets/video/launch-poster.webp` (the
+writes the site's copy `src/assets/video/launch.mp4` (H.264 1080p, about 1.5 Mbit/s, AAC 128 kbit/s, ~11 MB) and `src/assets/video/launch-poster.webp` (the
 composition's poster).
 
 After changing a composition, render its poster again (headless Chrome with a throwaway profile):

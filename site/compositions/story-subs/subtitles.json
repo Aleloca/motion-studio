@@ -3,49 +3,49 @@
   "cues": [
     {
       "start": 2700,
-      "end": 4200,
+      "end": 4000,
       "text": "Subtitles stay in sync",
       "words": [
         {
           "start": 2800,
-          "end": 3520,
+          "end": 3420,
           "text": "Subtitles"
         },
         {
-          "start": 3520,
-          "end": 3780,
+          "start": 3420,
+          "end": 3660,
           "text": "stay"
         },
         {
-          "start": 3780,
-          "end": 4020,
+          "start": 3660,
+          "end": 3780,
           "text": "in"
         },
         {
-          "start": 4020,
-          "end": 4200,
+          "start": 3780,
+          "end": 4000,
           "text": "sync"
         }
       ]
     },
     {
-      "start": 4200,
-      "end": 5720,
+      "start": 4000,
+      "end": 5220,
       "text": "with the voice.",
       "words": [
         {
-          "start": 4200,
-          "end": 4640,
+          "start": 4000,
+          "end": 4140,
           "text": "with"
         },
         {
-          "start": 4640,
-          "end": 4780,
+          "start": 4140,
+          "end": 4260,
           "text": "the"
         },
         {
-          "start": 4780,
-          "end": 5020,
+          "start": 4260,
+          "end": 4520,
           "text": "voice."
         }
       ]

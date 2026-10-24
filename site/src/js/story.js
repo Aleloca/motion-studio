@@ -30,8 +30,8 @@ const LIVE = {
   9: ['c'], 10: ['identity'], 11: ['c'],
 };
 /** Board C's version label over time, with the agent's render turns before each new version. */
-const VERSIONS = [[0, 'v1'], [2.48, 'v2'], [3.65, 'v3'], [4.74, 'v4'], [8.58, 'v5']];
-const RENDERING = [[2.06, 2.48], [4.22, 4.74], [8.12, 8.58]];
+const VERSIONS = [[0, 'v1'], [2.48, 'v2'], [3.65, 'v3'], [4.74, 'v4'], [5.52, 'v5'], [8.58, 'v6']];
+const RENDERING = [[2.06, 2.48], [4.22, 4.74], [5.42, 5.52], [8.12, 8.58]];
 /** The subtitles step: its board speaks the line (the board's loop starts again at `SUBS_FROM`, just before the voice). */
 const SUBS_STEP = 9;
 const SUBS_FROM = 2.4;
@@ -88,9 +88,10 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   /* ---------------------------------------------------------------- the timeline (scrubbed) */
   const tl = gsap.timeline({ paused: true, defaults: { ease: 'power2.inOut' } });
   const cFigs = $$('.comp', board('c'));
-  const [v1, v2, v3, v4, v5] = cFigs;
+  // v5: the generated backdrop behind the title (step 6); v6 draws the subtitles.
+  const [v1, v2, v3, v4, v5, v6] = cFigs;
   const wipeFrom = { clipPath: 'inset(0% 100% 0% 0%)' };
-  gsap.set([v2, v3, v4, v5], wipeFrom);
+  gsap.set([v2, v3, v4, v5, v6], wipeFrom);
   const hidden = { autoAlpha: 0 };
   const panels = ['.inspector', '.timeline', '.brandkit', '.lines', '.edit', '.fit'].flatMap((s) => $$(s));
   gsap.set(panels, hidden);
@@ -145,6 +146,7 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
     .to(paid, { autoAlpha: 0, duration: 0.06 }, 5.42)
     .to(genDone, { autoAlpha: 1, duration: 0.06 }, 5.46)
     .fromTo(board('genimg'), { autoAlpha: 0, x: -260, scale: 0.4 }, { autoAlpha: 1, x: 0, scale: 1, duration: 0.22, ease: 'expo.out' }, 5.44)
+    .to(v5, { clipPath: 'inset(0% 0% 0% 0%)', duration: 0.16, ease: 'power3.inOut' }, 5.48)
     .fromTo(board('genvoice'), { autoAlpha: 0, y: 30 }, { autoAlpha: 1, y: 0, duration: 0.18, ease: 'expo.out' }, 5.52)
     .fromTo(board('genmusic'), { autoAlpha: 0, y: 30 }, { autoAlpha: 1, y: 0, duration: 0.18, ease: 'expo.out' }, 5.57)
     .to([gen, ...genBoards], { autoAlpha: 0, duration: 0.18 }, 6);
@@ -155,10 +157,10 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   tl.to(cam, { k: 8, duration: 0.4 }, 7);
   enterFromC(['it', 'de', 'es'], 7.14);
   tl.to($('.fit'), { autoAlpha: 1, duration: 0.1 }, 7.62).to($('.fit'), { autoAlpha: 0, duration: 0.1 }, 8);
-  // 9. Subtitles: the subtitle set beside C; v5 draws it.
+  // 9. Subtitles: the subtitle set beside C; v6 draws it.
   tl.to(cam, { k: 9, duration: 0.4 }, 8)
     .fromTo($('.lines'), { autoAlpha: 0, x: -30 }, { autoAlpha: 1, x: 0, duration: 0.3, ease: 'expo.out' }, 8.12)
-    .to(v5, { clipPath: 'inset(0% 0% 0% 0%)', duration: 0.24, ease: 'power3.inOut' }, 8.34)
+    .to(v6, { clipPath: 'inset(0% 0% 0% 0%)', duration: 0.24, ease: 'power3.inOut' }, 8.34)
     .to($('.lines'), { autoAlpha: 0, duration: 0.2 }, 9);
   // 10. Identity: the logo's file sets appear in a new corner of the canvas.
   const idBoards = ['identity', 'appicon', 'favicon', 'social'].map(board);
@@ -302,16 +304,56 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   }
 
   // Subtitle lines follow the time of the board that draws them.
-  const subsPlayer = stagePlayers.find((p) => p.figure === v5);
+  const subsPlayer = stagePlayers.find((p) => p.figure === v6);
 
   /* ---------------------------------------------------------------- the voice-over (sound on) */
   let line = null;
   let voiceTimer = null;
-  const voiceTile = board('genvoice');
+  let fadeRaf = 0;
+  const voiceTile = board('genvoice'); const musicTile = board('genmusic');
   const stopLine = () => {
+    cancelAnimationFrame(fadeRaf);
     if (line) { line.pause(); line = null; }
-    voiceTile.classList.remove('is-playing');
+    for (const t of [voiceTile, musicTile]) t.classList.remove('is-playing');
   };
+  /**
+   * Plays one sound: `tile` shows its playhead; `seconds` plays only that much, faded in and out (a taste of the music
+   * bed); `then` follows when it ends by itself.
+   */
+  function playClip(src, { tile = null, seconds = 0, then = null } = {}) {
+    const a = new Audio(src);
+    line = a;
+    const done = () => { cancelAnimationFrame(fadeRaf); tile?.classList.remove('is-playing'); if (line === a) { line = null; then?.(); } };
+    if (tile) {
+      a.addEventListener('playing', () => tile.classList.add('is-playing'));
+      a.addEventListener('timeupdate', () => tile.style.setProperty('--p', String(clamp(a.currentTime / (seconds || a.duration || 1), 0, 1))));
+    }
+    a.addEventListener('ended', done);
+    if (seconds) {
+      a.volume = 0;
+      const tick = () => {
+        if (line !== a) return;
+        const t = a.currentTime;
+        a.volume = clamp(Math.min(t / 0.6, (seconds - t) / 1.2), 0, 1) * 0.8;
+        if (t >= seconds) { a.pause(); done(); return; }
+        fadeRaf = requestAnimationFrame(tick);
+      };
+      a.addEventListener('playing', () => { fadeRaf = requestAnimationFrame(tick); }, { once: true });
+    }
+    a.play().catch(() => { if (line === a) line = null; tile?.classList.remove('is-playing'); });
+  }
+  // The voice-over and music tiles play on a click, sound on or off (the click is the viewer's own gesture); a second
+  // click stops them.
+  for (const btn of $$('[data-play]')) {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const tile = btn.closest('[data-board]');
+      const playing = tile.classList.contains('is-playing');
+      clearTimeout(voiceTimer);
+      stopLine();
+      if (!playing) playClip(btn.dataset.play, { tile, seconds: Number(btn.dataset.playFor) || 0 });
+    });
+  }
   // The subtitles step: its board's own voice, in sync with its subtitles, from just before the line.
   const subsSpeaks = () => Boolean(sound?.on) && onScreen && step === SUBS_STEP;
   const syncSubsVoice = () => {
@@ -330,15 +372,11 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
     syncSubsVoice();
     const src = steps[step - 1]?.voice;
     if (!sound?.on || !onScreen || !src || src === 'board') return;
-    const a = new Audio(src);
-    line = a;
-    // Step 6's line is the voice-over it generates: its tile plays along.
+    // Step 6 says the voice-over it generates (its tile plays along), then lets the music bed it made be heard.
     if (inSteps(parseSteps(voiceTile.dataset.steps), step)) {
-      a.addEventListener('playing', () => voiceTile.classList.add('is-playing'));
-      a.addEventListener('timeupdate', () => voiceTile.style.setProperty('--p', String(a.duration ? a.currentTime / a.duration : 0)));
-      a.addEventListener('ended', () => voiceTile.classList.remove('is-playing'));
-    }
-    a.play().catch(() => {});
+      const music = $('[data-play]', musicTile);
+      playClip(src, { tile: voiceTile, then: () => playClip(music.dataset.play, { tile: musicTile, seconds: Number(music.dataset.playFor) || 6 }) });
+    } else playClip(src);
   }
   if (sound) {
     const btn = story.querySelector('.story__sound');
@@ -390,7 +428,7 @@ function readStep(li) {
   };
 }
 
-const VERSION_CARD = { 1: 'A · B · C v1', 3: 'v2', 5: 'v4', 6: 'Image · Voice-over · Music', 7: '9:16 · 1:1 v1', 8: 'IT · DE · ES', 9: 'v5' };
+const VERSION_CARD = { 1: 'A · B · C v1', 3: 'v2', 5: 'v4', 6: 'v5 · Voice-over · Music', 7: '9:16 · 1:1 v1', 8: 'IT · DE · ES', 9: 'v6' };
 
 function buildChat(steps, note) {
   const el = h('aside', { class: 'chat', 'aria-hidden': 'true' });

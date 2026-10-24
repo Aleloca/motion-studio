@@ -191,7 +191,8 @@ a:not(.btn):hover { text-decoration-color: var(--c-orange); }
   box-shadow: inset 0 0 0 1px #5A3420, 0 18px 40px -12px #000; }
 .genpanel__done { position: absolute; left: 14px; bottom: 14px; margin: 0; padding: 5px 11px; border-radius: 999px; background: #132A1D; color: #6FCF97; font-weight: 600; font-size: 12px; }
 .board__frame--audio { display: flex !important; align-items: center; gap: 12px; padding: 0 14px; }
-.audio-tile__play { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--c-orange); color: #141414; }
+.audio-tile__play { flex: none; display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 50%; background: var(--c-orange); color: #141414; cursor: pointer; }
+.audio-tile__play:hover { background: #FF7A45; }
 .audio-tile__play .i { width: 16px; height: 16px; margin-left: 2px; }
 .audio-tile__wave { position: relative; flex: 1; height: 54px; }
 .audio-tile__wave img { width: 100%; height: 100%; object-fit: fill; }

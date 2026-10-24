@@ -138,7 +138,8 @@ export function writeComposition(out, id, comp, meta, assets = {}) {
   mkdirSync(join(dir, 'assets'), { recursive: true });
   writeFileSync(join(dir, 'composition.json'), `${JSON.stringify(comp, null, 2)}\n`);
   writeFileSync(join(dir, 'meta.json'), `${JSON.stringify(meta, null, 2)}\n`);
-  for (const [name, svg] of Object.entries(assets)) writeFileSync(join(dir, 'assets', name), `${svg.trim()}\n`);
+  // SVG text, or a file's bytes (a generated picture) copied as they are.
+  for (const [name, data] of Object.entries(assets)) writeFileSync(join(dir, 'assets', name), typeof data === 'string' ? `${data.trim()}\n` : data);
 }
 
 // Text widths (px at 1000 px) measured in Chrome with the site's fonts (measure.mjs), kept in widths.json so the generator

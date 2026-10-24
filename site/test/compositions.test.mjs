@@ -15,7 +15,7 @@ const EXPECTED = {
   'story-night': 'youtube-16x9', 'story-paper': 'youtube-16x9', 'story-signal-v1': 'youtube-16x9', 'story-signal-v2': 'youtube-16x9',
   'story-signal-v3': 'youtube-16x9', 'story-brand-16x9': 'youtube-16x9', 'story-brand-9x16': 'instagram-reel-9x16',
   'story-brand-1x1': 'instagram-post-1x1', 'story-it': 'youtube-16x9', 'story-de': 'youtube-16x9', 'story-es': 'youtube-16x9',
-  'story-subs': 'youtube-16x9',
+  'story-subs': 'youtube-16x9', 'story-backdrop-16x9': 'youtube-16x9',
 };
 const items = await loadCompositions(join(SITE, 'compositions'));
 

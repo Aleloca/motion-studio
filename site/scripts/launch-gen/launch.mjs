@@ -51,6 +51,9 @@ const FILM = {
   '1x1': { w: 1080, h: 1080, tag: { x: 90, y: 100, size: 30 }, logo: { x: 690, y: 86, w: 300 }, head: { x: 90, y: 540, size: 128, avail: 900 }, ring: { cx: 780, cy: 340, d: 560 }, sub: { y: 900, size: 58 } },
 };
 const LH = 1.08; // headline line spacing (× size)
+/** The generated backdrop (audio-gen) and how strongly it shows behind the title. */
+const IMAGE = MEDIA.image?.file ?? 'generated-backdrop.jpg';
+const BACKDROP_OPACITY = 0.6;
 const LOGO_RATIO = 322 / 1720;
 /** The size at which both headline lines of `lang` fit `avail` (never above `base`). */
 const fitSize = (lang, base, avail) => Math.min(base, ...LINES[lang].map((s, i) => (avail * base) / tw(s, base, 'display', i ? 300 : 800)));
@@ -149,6 +152,13 @@ export function launch() {
     const bg = E.svg(trk, `${fmt}-film`, t0, t1 - t0, g, bgName(night ? 'night' : 'brand'), { x: 0, y: 0, w: L.w, h: L.h, fit: 'fill' });
     let brandBg = null;
     if (night && brandAt < t1) brandBg = E.svg(trk, `${fmt}-brand`, brandAt, t1 - brandAt, g, bgName('brand'), { x: 0, y: 0, w: L.w, h: L.h, fit: 'fill' }).anim({ preset: 'wipe', start: brandAt, duration: 0.9, ease: EASE.inOut });
+    // The backdrop made in the Generate beat, from `o.backdrop` on: over the film's ground, under its rings and title.
+    if (o.backdrop !== undefined && o.backdrop < t1) {
+      const at = Math.max(o.backdrop, t0);
+      const b = E.image(trk, `${fmt}-backdrop`, at, t1 - at, g, IMAGE, { x: 0, y: 0, w: L.w, h: L.h, fit: 'cover' });
+      if (o.backdrop > t0) b.init({ o: 0, s: 1.08 }).to(at, 0.5, { o: BACKDROP_OPACITY }, EASE.sine).to(at, 1.4, { s: 1 }, EASE.expo);
+      else b.init({ o: BACKDROP_OPACITY });
+    }
     const R = L.ring;
     rings(trk, g, `${fmt}-ring`, o.ringsFrom ?? t0 + 0.4, o.ringsTo ?? t1, R.cx, R.cy, R.d, o.ringPlan ?? [[0, 1.3, night ? 'cyan' : 'orange', 0.75]], o.ringGaps);
     const tag = mono(trk, `${fmt}-tag`, t0, t1 - t0, g, { size: L.tag.size, color: night ? C.steel : C.orange, text: 'MOTION STUDIO  ·  0.1.0', x: L.tag.x, y: L.tag.y, w: 900 });
@@ -303,8 +313,10 @@ export function launch() {
   const BAKE = T.formats + 0.1; // the hero's headline, grown and moved by hand, is rewritten at its new size
   const ENERGY = 12.3; const BRAND = 23.2;
   const heroEnd = T.identity + 0.6;
+  /** The backdrop lands on the film in the Generate beat (the thumbnail's flight ends here). */
+  const BACKDROP_AT = T.generate + 3.95;
   const hero = film('16x9', GH, SWAP, heroEnd, {
-    brandAt: BRAND, ringsFrom: SWAP + 0.3, ringsTo: T.identity - 0.25, ringGaps: [[T.formats + 0.25, T.formats + 1.3]],
+    brandAt: BRAND, backdrop: BACKDROP_AT, ringsFrom: SWAP + 0.3, ringsTo: T.identity - 0.25, ringGaps: [[T.formats + 0.25, T.formats + 1.3]],
     ringPlan: [[0, 1.3, 'cyan', 0.75], [ENERGY, 0.55, 'cyan', 0.95], [BRAND, 1.1, 'orange', 0.8]],
   });
   const H16 = FILM['16x9'].head;
@@ -504,6 +516,8 @@ export function launch() {
     const kx = []; { let x = 1330; for (const w of kw) { kx.push(x); x += w + 4; } }
     card(tr.ui, 'kinds', t0, life, Gg, { x: 1324, y: 376, w: 452, h: 48, radius: 24, fill: C.raised });
     const VOICE_AT = G0 + 4.1; const MUSIC_AT = G0 + 5.5;
+    /** The picture is made: it leaves the panel for the film. */
+    const land = G0 + 3.2;
     const pill = E.shape(tr.ui, 'kind-active', t0, life, Gg, { x: kx[0], y: 382, w: kw[0], h: 36, fill: '#333333', radius: 18 });
     pill.to(VOICE_AT, 0.45, { dx: kx[1] - kx[0] }, EASE.expo).to(MUSIC_AT, 0.45, { dx: kx[3] - kx[0] }, EASE.expo);
     const on = [[t0, 0], [VOICE_AT, 1], [MUSIC_AT, 3]];
@@ -528,10 +542,10 @@ export function launch() {
     // Image: the description typed, Generate pressed.
     mono(tr.ui, 'image-label', t0, VOICE_AT - t0, Gg, { size: 15, color: C.dash, text: 'DESCRIPTION', x: 1332, y: 446, w: 300 }).fadeOut(0.2, EASE.in);
     const p = { font: 'body', weight: 500, size: 19, color: C.text };
-    const l1 = typing(tr.ui, 'prompt', Gg, G0 + 0.55, 0.022, 'Studio product photo of matte black', { ...p, x: 1344, y: 488, w: 420 }, VOICE_AT);
-    typing(tr.ui, 'prompt', Gg, l1.done + 0.06, 0.022, 'wireless earbuds, cyan rim light.', { ...p, x: 1344, y: 518, w: 420 }, VOICE_AT);
+    const l1 = typing(tr.ui, 'prompt', Gg, G0 + 0.55, 0.022, 'Dark studio backdrop, warm orange', { ...p, x: 1344, y: 488, w: 420 }, land);
+    typing(tr.ui, 'prompt', Gg, l1.done + 0.06, 0.022, 'light through haze, floating frames.', { ...p, x: 1344, y: 518, w: 420 }, land);
     sfx(G0 + 0.55, 'typing', 0.3);
-    const provider = mono(tr.ui, 'image-provider', t0, G0 + 3.45 - t0, Gg, { size: 15, color: C.muted, text: 'OPENAI  ·  GPT-IMAGE-2  ·  1024×1024', x: 1332, y: 600, w: 440 });
+    const provider = mono(tr.ui, 'image-provider', t0, G0 + 3.45 - t0, Gg, { size: 15, color: C.muted, text: `OPENAI  ·  GPT-IMAGE-2  ·  ${MEDIA.image?.asked ?? '1920×1088'}`, x: 1332, y: 600, w: 440 });
     provider.fadeOut(0.2, EASE.in);
     const genBtn = [
       E.shape(tr.ui, 'gen-button', t0, life, Gg, { x: 1324, y: 836, w: 150, h: 52, fill: C.orange, radius: 26 }),
@@ -549,7 +563,7 @@ export function launch() {
     card(tr.fx, 'approval', a0, a1 - a0, Ga, { x: 1316, y: 560, w: 468, h: 250, radius: 20, fill: '#222222', border: '#5A3420' });
     mono(tr.fx, 'approval-kind', a0, a1 - a0, Ga, { size: 14, color: C.orange, text: 'EXTERNAL SERVICE', x: 1340, y: 582, w: 300 });
     txt(tr.fx, 'approval-title', a0, a1 - a0, Ga, { weight: 600, size: 20, color: C.text, text: 'Generate an image with gpt-image-2', x: 1340, y: 610, w: 430 });
-    txt(tr.fx, 'approval-detail', a0, a1 - a0, Ga, { size: 16, color: C.muted, text: '1024×1024: Studio product photo of matte…', x: 1340, y: 646, w: 430 });
+    txt(tr.fx, 'approval-detail', a0, a1 - a0, Ga, { size: 16, color: C.muted, text: `${MEDIA.image?.asked ?? '1920×1088'}: Dark studio backdrop, warm orange…`, x: 1340, y: 646, w: 430 });
     txt(tr.fx, 'approval-keys', a0, a1 - a0, Ga, { size: 16, color: C.text, text: 'A paid call, on your own OpenAI key.', x: 1340, y: 676, w: 430 });
     const okBtn = [
       E.shape(tr.fx, 'approval-ok', a0, a1 - a0, Ga, { x: 1340, y: 728, w: 124, h: 46, fill: C.orange, radius: 23 }),
@@ -566,18 +580,14 @@ export function launch() {
     // Generating, then the picture flies from the panel onto the film, beside the title.
     E.shape(tr.ui, 'generating', G0 + 2.6, 0.65, Gg, { x: 1326, y: 578, w: 448, h: 3, fill: C.orange, radius: 1.5 })
       .anim({ preset: 'wipe', start: G0 + 2.6, duration: 0.5, ease: EASE.inOut }).fadeOut(0.12);
-    const land = G0 + 3.2;
-    const IMG = { x: 1260, y: 330, w: 520, h: 520 };
-    const k = GH.k;
-    const fromX = (1550 - HERO.x) / k - (IMG.x + IMG.w / 2); const fromY = (526 - HERO.y) / k - (IMG.y + IMG.h / 2);
-    const imgEnd = T.formats + 0.2;
-    const pic = [
-      E.shape(tr.stage, 'generated-frame', land, imgEnd - land, GH, { x: IMG.x - 6, y: IMG.y - 6, w: IMG.w + 12, h: IMG.h + 12, fill: C.store, radius: 26 }),
-      E.image(tr.stage, 'generated-image', land, imgEnd - land, GH, 'generated-earbuds.jpg', { x: IMG.x, y: IMG.y, w: IMG.w, h: IMG.h }),
-    ];
-    each(pic, (n) => n.init({ o: 0, s: 0.3, dx: fromX, dy: fromY }).to(land, 0.2, { o: 1 }, EASE.sine).to(land, 0.75, { s: 1, dx: 0, dy: 0 }, EASE.inOut).to(imgEnd - 0.45, 0.4, { o: 0 }, EASE.in));
+    // The picture leaves the panel as a thumbnail and grows onto the film, where the backdrop takes over (BACKDROP_AT).
+    const th = { x: 1344, y: 486, w: 192, h: 108 };
+    const thumb = E.image(tr.fx, 'generated-thumb', land, BACKDROP_AT + 0.35 - land, null, IMAGE, { x: th.x, y: th.y, w: th.w, h: th.h, fit: 'cover' });
+    thumb.init({ o: 0 }).to(land, 0.15, { o: 1 }, EASE.sine)
+      .to(land, 0.75, { dx: HERO.x + HERO.w / 2 - (th.x + th.w / 2), dy: HERO.y + HERO.h / 2 - (th.y + th.h / 2), s: HERO.w / th.w }, EASE.inOut)
+      .to(BACKDROP_AT, 0.35, { o: 0 }, EASE.sine);
     sfx(land, 'whoosh', 0.3);
-    sfx(land + 0.75, 'pop', 0.45);
+    sfx(BACKDROP_AT, 'pop', 0.45);
     const added = [
       E.shape(tr.ui, 'added', G0 + 3.5, VOICE_AT - G0 - 3.5, Gg, { x: 1324, y: 594, w: 174, h: 32, fill: C.okBg, radius: 16 }),
       txt(tr.ui, 'added-text', G0 + 3.5, VOICE_AT - G0 - 3.5, Gg, { weight: 600, size: 16, color: C.ok, text: 'Added to Assets', align: 'center', x: 1324, y: 600, w: 174 }),
@@ -588,7 +598,7 @@ export function launch() {
     cur.click(VOICE_AT, [kx[1] + kw[1] / 2, 400]);
     cur.move(G0 + 5.05, 0.35, [kx[3] + kw[3] / 2, 400]);
     cur.click(MUSIC_AT, [kx[3] + kw[3] / 2, 400]);
-    const voice = MEDIA.voice ? `${MEDIA.voice.provider === 'openai' ? 'OPENAI' : 'ELEVENLABS'}  ·  ${MEDIA.voice.model.toUpperCase()}` : 'ELEVENLABS  ·  ELEVEN_MULTILINGUAL_V2';
+    const voice = MEDIA.voice ? `${MEDIA.voice.provider === 'openai' ? 'OPENAI' : 'ELEVENLABS'}  ·  ${MEDIA.voice.model.toUpperCase()}  ·  ${MEDIA.voice.name.toUpperCase()}` : 'ELEVENLABS  ·  ELEVEN_MULTILINGUAL_V2';
     field('voice', VOICE_AT, MUSIC_AT, 'TEXT TO SPEAK', ['Need an image, a voice, music', 'or a sound effect?'], voice);
     field('music', MUSIC_AT, end, 'DESCRIPTION', ['Confident launch underscore,', '110 BPM, warm synth bass.'], 'ELEVENLABS  ·  MUSIC_V1  ·  INSTRUMENTAL');
     for (const [name, from, to] of [['voice', VOICE_AT + 0.25, MUSIC_AT], ['music', MUSIC_AT + 0.25, end]]) {
@@ -631,7 +641,7 @@ export function launch() {
   for (const fmt of ['9x16', '1x1']) {
     const g = boards[fmt];
     const t0 = fmt === '1x1' ? MOVE + 0.75 : MOVE + 0.9;
-    filmOf[fmt] = film(fmt, g, t0, rowEnd, { brandAt: -1, track: 'back', ringsFrom: t0 + 1.2, ringsTo: T.identity - 0.25, ringPlan: [[0, 1.2, 'orange', 0.8]] });
+    filmOf[fmt] = film(fmt, g, t0, rowEnd, { brandAt: -1, backdrop: t0, track: 'back', ringsFrom: t0 + 1.2, ringsTo: T.identity - 0.25, ringPlan: [[0, 1.2, 'orange', 0.8]] });
   }
   // The headlines per format and language: the 16:9 at the size and place set by hand, the others in their own layouts.
   const HEADS = {
@@ -861,6 +871,7 @@ export function launch() {
   // ── End card ───────────────────────────────────────────────────────────────────────────────────────────────────────
   {
     const t0 = T.end;
+    E.image(tr.ground, 'end-backdrop', t0, D - t0, null, IMAGE, { x: 0, y: 0, w: 1920, h: 1080, fit: 'cover' }).init({ o: 0, s: 1.06 }).to(t0, 1.6, { o: 0.32 }, EASE.sine).to(t0, D - t0, { s: 1 }, 'linear');
     E.svg(tr.ground, 'ember', t0, D - t0, null, 'ember.svg', { x: 260, y: -160, w: 1400, h: 1400 }).init({ o: 0, s: 0.85 }).to(t0, 2.2, { o: 1, s: 1 }, EASE.sine);
     const lw = 620;
     sfx(t0 + 0.2, 'chime', 0.35);

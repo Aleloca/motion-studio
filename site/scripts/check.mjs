@@ -204,6 +204,21 @@ async function liveStory(page) {
   await wait(page, 400);
   v = await voice();
   if (v.sound || v.line || !v.subsMuted) problems.push(`sound off: still ${JSON.stringify(v)}`);
+  // With the sound off, a click on the Generate step's music tile still plays it (the click is the viewer's gesture).
+  await scrollToStep(6);
+  await wait(page, 1500);
+  const at = await page.eval(`(() => { const r = document.querySelector('[data-board="genmusic"] [data-play]').getBoundingClientRect(); return r.width ? [r.left + r.width / 2, r.top + r.height / 2] : null; })()`);
+  if (!at) problems.push('step 6: the music tile\'s play button is not on screen');
+  else {
+    for (const type of ['mousePressed', 'mouseReleased']) await page.send('Input.dispatchMouseEvent', { type, x: at[0], y: at[1], button: 'left', clickCount: 1 });
+    await wait(page, 1200);
+    v = await voice();
+    if (!v.line?.src.endsWith('/music.mp3') || v.line.paused) problems.push(`step 6: a click on the music tile plays ${JSON.stringify(v.line)}`);
+    await scrollToStep(8);
+    await wait(page, 1200);
+    v = await voice();
+    if (v.line) problems.push(`the music tile still plays after the step scrolled away: ${JSON.stringify(v.line)}`);
+  }
   return problems;
 }
 

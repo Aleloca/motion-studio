@@ -14,11 +14,11 @@
 // compositions/launch-16x9/assets/, the voice of the subtitles step in compositions/story-subs/assets/audio/, and
 // media.json (durations, the words' timing, waveform peaks) for the generators and the home.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { IMAGE_FILE, IMAGE_PROMPT, LOUDNESS, MUSIC_PROMPT, SFX, sfxFile, VO_LINES, voFile } from './lines.mjs';
+import { IMAGE_FILE, IMAGE_PROMPT, IMAGE_SMALL, LOUDNESS, MUSIC_PROMPT, SFX, sfxFile, VO_LINES, voFile } from './lines.mjs';
 
 // The product's providers are TypeScript with parameter properties: node runs them with --experimental-transform-types.
 if (!process.execArgv.includes('--experimental-transform-types')) {
@@ -27,8 +27,7 @@ if (!process.execArgv.includes('--experimental-transform-types')) {
 }
 
 const CORE = new URL('../../../packages/core/src/', import.meta.url);
-const { requestBytes } = await import(new URL('providers/http.ts', CORE));
-const { ELEVENLABS_TTS_MODEL, OPENAI_TTS_MODEL, openaiSpeech } = await import(new URL('providers/tts.ts', CORE));
+const { ELEVENLABS_TTS_MODEL, OPENAI_TTS_MODEL, elevenlabsSpeech, openaiSpeech } = await import(new URL('providers/tts.ts', CORE));
 const { openaiTranscribe } = await import(new URL('transcription/openai-stt.ts', CORE));
 const { elevenlabsMusic, elevenlabsSoundEffect, elevenlabsVoices } = await import(new URL('providers/elevenlabs-audio.ts', CORE));
 const { generateImage, OPENAI_IMAGE_MODEL } = await import(new URL('providers/openai-images.ts', CORE));
@@ -41,10 +40,10 @@ const SUBS_AUDIO = join(SITE, 'compositions', 'story-subs', 'assets', 'audio');
 export const MEDIA_FILE = fileURLToPath(new URL('media.json', import.meta.url));
 
 /**
- * The voice of the film, chosen from a trial of line 01 (see the decisions log). ElevenLabs speech gives the characters'
- * timing with the audio; OpenAI speech is timed by OpenAI's transcription with word timestamps, as the app's subtitles are.
+ * The voice of the film, chosen from a trial of line 01 (see the decisions log). Either provider's speech is timed word by
+ * word by OpenAI's transcription with word timestamps, as the app's subtitles are.
  */
-export const VOICE = { provider: 'openai', id: 'cedar', name: 'Cedar' };
+export const VOICE = { provider: 'elevenlabs', id: 'cjVigY5qzO86Huf0OWal', name: 'Eric' };
 const INSTRUCTIONS = 'A confident, warm, professional narrator for a software product launch film. Clear and measured, upbeat but never salesy; short pauses at full stops.';
 /** The subtitles step of the home plays this line on its board. */
 export const SUBS_LINE = 8;
@@ -85,7 +84,14 @@ function normalize(src, out, [lufs, tp], mono = false) {
   const r = spawnSync('ffmpeg', ['-hide_banner', '-nostdin', '-i', src, '-af', `loudnorm=I=${lufs}:TP=${tp}:LRA=11:print_format=json`, '-f', 'null', '-'], { encoding: 'utf8' });
   const m = loudJson(r.stderr);
   const af = `loudnorm=I=${lufs}:TP=${tp}:LRA=11:measured_I=${m.input_i}:measured_TP=${m.input_tp}:measured_LRA=${m.input_lra}:measured_thresh=${m.input_thresh}:offset=${m.target_offset}:linear=true`;
-  ff(['-i', src, '-af', af, '-ar', '44100', ...(mono ? ['-ac', '1'] : []), '-c:a', 'libmp3lame', '-b:a', mono ? '96k' : '160k', out]);
+  const tmp = join(CACHE, 'normalize-tmp.wav');
+  ff(['-i', src, '-af', af, '-ar', '44100', ...(mono ? ['-ac', '1'] : []), '-c:a', 'pcm_f32le', tmp]);
+  // A short clip (a line of two seconds) can miss the target with linear loudnorm (it falls short by 4-5 dB): the
+  // rest is a plain gain, its peaks held under the true-peak ceiling by a limiter.
+  const gain = lufs - loudness(tmp).lufs;
+  const fix = Math.abs(gain) > 0.3 ? `volume=${gain.toFixed(2)}dB,alimiter=limit=${(10 ** (tp / 20)).toFixed(3)}:level=false` : 'anull';
+  ff(['-i', tmp, '-af', fix, '-ar', '44100', ...(mono ? ['-ac', '1'] : []), '-c:a', 'libmp3lame', '-b:a', mono ? '96k' : '160k', out]);
+  unlinkSync(tmp);
   return Number(m.input_i);
 }
 /** Integrated loudness and true peak of a file. */
@@ -113,28 +119,21 @@ const readMedia = () => (existsSync(MEDIA_FILE) ? JSON.parse(readFileSync(MEDIA_
 const writeMedia = (m) => writeFileSync(MEDIA_FILE, `${JSON.stringify(m, null, 2)}\n`);
 
 // ---- voice ----
-/** ElevenLabs speech with the characters' timing (the same model and format as the app's speech, on the -with-timestamps route). */
-async function speakElevenLabs(voice, text, what) {
-  const k = key('elevenlabs');
-  const { bytes, headers } = await requestBytes({ fetch, timeoutMs: 120_000 }, `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}/with-timestamps?output_format=mp3_44100_128`, {
-    method: 'POST', headers: { 'xi-api-key': k, 'content-type': 'application/json' }, body: JSON.stringify({ text, model_id: ELEVENLABS_TTS_MODEL }),
-  }, { provider: 'ElevenLabs', secrets: [k], maxBytes: 50 * 1024 * 1024 });
-  const j = JSON.parse(bytes.toString('utf8'));
-  const charged = /^\d+$/.test(headers.get('character-cost')?.trim() ?? '') ? Number(headers.get('character-cost').trim()) : text.length;
-  bill(what, voiceBill('elevenlabs', charged));
-  return { audio: Buffer.from(j.audio_base64, 'base64'), words: wordsOf(j.alignment), timed: true };
-}
 /** OpenAI speech (the app's call), then its words timed by OpenAI's transcription (the app's subtitles call, words on). */
 async function speakOpenAI(voice, text, what, raw) {
   const r = await openaiSpeech(deps('openai'), { text, voice, instructions: INSTRUCTIONS, format: 'mp3' });
   bill(what, r.bill);
   writeFileSync(raw, r.bytes);
+  const words = await timeWords(text, raw, what);
+  return { audio: r.bytes, words, timed: !words.byLength };
+}
+/** The script's words timed by OpenAI's transcription with word timestamps (the app's subtitles call). */
+async function timeWords(text, raw, what) {
   const wav = `${raw}.16k.wav`;
   ff(['-i', raw, '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', wav]);
   const t = await openaiTranscribe(deps('openai'), wav, { language: 'en', words: true, signal: new AbortController().signal });
   bill(`${what} timing`, sttBill('openai', duration(wav)));
-  const words = matchWords(text, t.words ?? []);
-  return { audio: r.bytes, words, timed: !words.byLength };
+  return matchWords(text, t.words ?? []);
 }
 /** The script's words with the transcription's times (the transcription drops punctuation); proportional when they differ. */
 function matchWords(text, heard) {
@@ -153,24 +152,17 @@ function matchWords(text, heard) {
   const out = words.map((w) => { const d = ((b - a) * w.length) / total; const o = { text: w, start: round3(at), end: round3(at + d) }; at += d; return o; });
   return Object.assign(out, { byLength: true });
 }
-async function speak(voice, text, what, raw) {
-  if (voice.provider === 'elevenlabs') {
-    const r = await speakElevenLabs(voice.id, text, what);
-    writeFileSync(raw, r.audio);
-    return r;
-  }
-  return speakOpenAI(voice.id, text, what, raw);
+/** ElevenLabs speech (the app's call), then its words timed by OpenAI's transcription, as for OpenAI's speech. */
+async function speakElevenLabsTimed(voice, text, what, raw) {
+  const r = await elevenlabsSpeech(deps('elevenlabs'), { text, voice, format: 'mp3' });
+  bill(what, r.bill);
+  writeFileSync(raw, r.bytes);
+  const words = await timeWords(text, raw, what);
+  return { audio: r.bytes, words, timed: !words.byLength };
 }
-/** Words with their start and end (seconds), from the characters' timing. */
-function wordsOf(al) {
-  const words = []; let cur = null;
-  al.characters.forEach((ch, i) => {
-    if (/\s/.test(ch)) { if (cur) words.push(cur); cur = null; return; }
-    if (!cur) cur = { text: '', start: al.character_start_times_seconds[i] };
-    cur.text += ch; cur.end = al.character_end_times_seconds[i];
-  });
-  if (cur) words.push(cur);
-  return words.map((w) => ({ text: w.text, start: round3(w.start), end: round3(w.end) }));
+async function speak(voice, text, what, raw) {
+  if (voice.provider === 'elevenlabs') return speakElevenLabsTimed(voice.id, text, what, raw);
+  return speakOpenAI(voice.id, text, what, raw);
 }
 
 async function voiceOver(media) {
@@ -180,7 +172,7 @@ async function voiceOver(media) {
   for (const [i, text] of VO_LINES.entries()) {
     const file = voFile(i); const out = join(AUDIO, file);
     const known = media.vo[i];
-    if (existsSync(out) && known?.text === text && known.voice === VOICE.id && known.timed) continue;
+    if (existsSync(out) && known?.text === text && known.voice === VOICE.id) continue;
     console.log(`voice ${file}: ${text}`);
     const raw = join(CACHE, `raw-${file}`);
     const { words, timed } = await speak(VOICE, text, `voice ${file}`, raw);
@@ -227,16 +219,18 @@ async function effects(media) {
   }
 }
 
+/** The film's backdrop (16:9): the size the film uses, and a small copy for the home's boards. */
 async function image(media) {
   const out = join(FILM, IMAGE_FILE);
   if (existsSync(out) && media.image?.prompt === IMAGE_PROMPT) return;
   console.log('image');
-  const r = await generateImage(deps('openai'), { prompt: IMAGE_PROMPT, width: 1024, height: 1024, quality: 'high', background: 'opaque' });
+  const r = await generateImage(deps('openai'), { prompt: IMAGE_PROMPT, width: 1920, height: 1080, quality: 'high', background: 'opaque' });
   bill('image', r.bill);
   const raw = join(CACHE, 'raw-image.png');
   writeFileSync(raw, r.bytes);
-  ff(['-i', raw, '-vf', 'scale=900:900:flags=lanczos', '-q:v', '3', out]);
-  media.image = { file: IMAGE_FILE, prompt: IMAGE_PROMPT, model: OPENAI_IMAGE_MODEL, width: 900, height: 900 };
+  ff(['-i', raw, '-vf', 'scale=1920:1080:force_original_aspect_ratio=increase:flags=lanczos,crop=1920:1080', '-q:v', '4', out]);
+  ff(['-i', raw, '-vf', 'scale=960:540:force_original_aspect_ratio=increase:flags=lanczos,crop=960:540', '-q:v', '5', join(FILM, IMAGE_SMALL)]);
+  media.image = { file: IMAGE_FILE, small: IMAGE_SMALL, prompt: IMAGE_PROMPT, model: OPENAI_IMAGE_MODEL, asked: `${r.width}×${r.height}`, width: 1920, height: 1080 };
   writeMedia(media);
 }
 

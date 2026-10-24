@@ -73,7 +73,7 @@ test('the chat is labelled once as a demo', () => {
 
 test('every composition figure has a poster with alt and size, of a composition that exists, from its poster time', () => {
   const figures = [...html.matchAll(/<figure class="comp[^"]*"[^>]*>([\s\S]*?)<\/figure>/g)];
-  assert.equal(figures.length, 14, '13 on the canvas and the final cut');
+  assert.equal(figures.length, 15, '14 on the canvas and the final cut');
   for (const [whole, inner] of figures) {
     const id = attr(whole, 'data-composition');
     assert.ok(existsSync(join(SITE, 'compositions', id, 'composition.json')), id);
@@ -107,7 +107,7 @@ test('every board and panel has a place in the world and a step range; a figure\
   const c = /<div class="board board--main"[\s\S]*?<!-- Step 4/.exec(stage)[0];
   const range = parseSteps(attr(c, 'data-steps'));
   const figs = [...c.matchAll(/<figure\b[^>]*>/g)].map((m) => parseSteps(attr(m[0], 'data-steps')));
-  assert.equal(figs.length, 5, 'board C: v1, v2, v3, v4, v5');
+  assert.equal(figs.length, 6, 'board C: v1, v2, v3, v4, v5 (the backdrop), v6 (subtitles)');
   for (const f of figs) for (const [a, b] of f) assert.ok(inSteps(range, a) && inSteps(range, b));
   for (let n = 1; n <= 11; n++) assert.ok(figs.some((f) => inSteps(f, n)), `C has a version in step ${n}`);
 });
@@ -181,12 +181,16 @@ test('every step says its voice-over line: the film\'s line of that beat, or (su
   assert.match(stage, /<div class="caption">[\s\S]*?<\/div><\/div>\s*<\/div>\s*<!--[^>]*-->\s*<button class="sound-btn story__sound"/, 'the button follows the canvas');
 });
 
-test('the Generate step: the real generated picture and voice, the paid call confirmed first, no invented price', () => {
+test('the Generate step: the backdrop it makes lands in board C, with the film\'s own voice and music; the paid call confirmed first, no invented price', () => {
   const gen = steps[5].body;
   assert.match(gen, /<p class="msg msg--you">[^<]+<\/p>/);
   assert.match(gen, /<div class="msg msg--paid">[\s\S]*Generate an image with gpt-image-2[\s\S]*your own OpenAI account[\s\S]*<\/div>/);
   assert.doesNotMatch(story, /\$\s?\d|\d\s?USD|€/, 'no price anywhere in the story');
-  assert.match(gen, /src="compositions\/launch-16x9\/assets\/generated-earbuds\.jpg"/);
+  assert.match(gen, /src="compositions\/story-backdrop-16x9\/poster\.webp"/);
+  assert.match(gen, /<audio controls preload="none" src="compositions\/launch-16x9\/assets\/audio\/music\.mp3"><\/audio>/);
+  assert.match(stage, /data-composition="story-backdrop-16x9"[^>]*data-steps="6-8"/);
+  assert.doesNotMatch(html, /gpt-4o-mini-tts|cedar|earbuds/);
+  for (const m of stage.matchAll(/data-play="([^"]+)"/g)) assert.ok(existsSync(join(SITE, m[1])), m[1]);
   assert.match(gen, /<audio controls preload="none" src="compositions\/launch-16x9\/assets\/audio\/vo-06\.mp3"><\/audio>/);
   const media = JSON.parse(readFileSync(join(SITE, 'scripts', 'audio-gen', 'media.json'), 'utf8'));
   assert.ok(gen.includes(media.image.model) && gen.includes(media.voice.model), 'the models that really made them');
