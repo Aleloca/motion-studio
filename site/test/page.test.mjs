@@ -152,7 +152,7 @@ test('install section is faithful to the README', () => {
   const install = section('install');
   const readme = readFileSync(join(REPO, 'README.md'), 'utf8');
   assert.ok(install.includes('pnpm install') && install.includes('pnpm motion-studio'));
-  assert.equal((install.match(/once published/g) ?? []).length, 1, 'only npm is still to be published');
+  assert.equal((install.match(/once published/g) ?? []).length, 0, 'everything in the install section is published');
   assert.ok(install.includes('npx @motion-studio/cli'));
   for (const file of ['.dmg', '.exe', '.AppImage']) { assert.ok(install.includes(file), file); assert.ok(readme.includes(file), `README ${file}`); }
   assert.match(readme, /signed and notarized/);
