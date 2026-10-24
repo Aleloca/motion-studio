@@ -66,19 +66,23 @@ from the real app:
 
 ```bash
 pnpm install && pnpm build                 # the web UI the demo serves (packages/web/dist)
-node site/scripts/guide-shots.mjs          # all of them, about 4 minutes
+node site/scripts/guide-shots.mjs          # all of them, about 15 minutes
 node site/scripts/guide-shots.mjs --only editor,export   # only these images (every step still runs)
 ```
 
 `guide-shots.mjs` starts the real core and web UI (`scripts/guide/demo-server.ts`, under the core's `tsx`) on a demo
 folder whose path names no user (`/private/tmp/ms-guide-demo`, or `GUIDE_DEMO`), with an in-memory keychain and no
 keys, and `scripts/guide/demo-agent.mjs` in place of Claude Code: it speaks Claude Code's stream-json and answers each
-job with fixed work (the site's Ember Coffee teaser as compositions, a brand proposal, a filled brief). No model, no paid
-service and no real configuration is used. It seeds an "Ember Coffee" project through the app's API and its UI, drives
-headless Chrome (`scripts/chrome.mjs`: throwaway profile, mock keychain) with `scripts/guide/browser.mjs`, and removes the
-demo folder at the end (`--keep` keeps it; a failed step leaves `<demo>-failure.webp`). The steps are in
-`scripts/guide/shots.mjs`, in order: each builds on the state the previous ones left. Look at every image before
-committing: none may show a path, a name, a key or a token.
+job with fixed work, in the brand of the project it runs in (the site's hero creatives KOVA Air, TIDEFALL and Fernwise as
+compositions, a brand proposal, a filled brief, a video analysis written from its frames, a permission request). No model,
+no paid service and no real configuration is used. It seeds three projects (KOVA, TIDEFALL, Fernwise) through the app's
+API and its UI, renders an identity set with the app's own Chrome renderer, seeds a subtitle set with the app's own
+writer (`scripts/guide/seed-subtitles.ts`: there is no transcription engine), and drives headless Chrome
+(`scripts/chrome.mjs`: throwaway profile, mock keychain) with `scripts/guide/browser.mjs`. The steps are in
+`scripts/guide/shots.mjs`, in order: each builds on the state the previous ones left. It needs macOS `say` for the spoken
+clips (a tone elsewhere). It never deletes anything: the demo folder must be empty or absent at the start and is left in
+place (remove it by hand, or set `GUIDE_DEMO` to a new folder); a failed step leaves `<demo>-failure.webp`. Look at every
+image before committing: none may show a path, a name, a key or a token.
 
 ## Third parties
 
