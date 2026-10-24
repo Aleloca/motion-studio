@@ -42,6 +42,25 @@ widths come from `widths.json` (measured in Chrome with the site's fonts by `mea
 for a new string), so generating needs plain node only. A site test regenerates everything and fails on any difference
 from the checked-in files.
 
+## The launch film
+
+`compositions/launch-16x9` (56 s) is Motion Studio's own launch video: the home page's ten steps, one beat each, with the
+interface redrawn as vector motion, ending on "Brief in. Motion out.". It is generated: change `scripts/launch-gen/`, not
+its JSON (`engine.mjs` keeps the moves of a group, such as a board or a panel, apart from each element's own and writes
+their sum per clip; `launch.mjs` is the film; text widths come from `hero-gen/widths.json`). A site test regenerates it
+and fails on any difference.
+
+```bash
+node site/build.mjs && node site/scripts/launch-gen/build.mjs      # → compositions/launch-16x9
+node site/build.mjs && node site/scripts/posters.mjs launch-16x9
+packages/core/node_modules/.bin/tsx site/scripts/launch-gen/render.ts <empty temp dir>
+```
+
+`render.ts` renders the film with the product's renderer (`packages/core`: composition server, system Chrome through the
+core's provider with its isolation flags, ffmpeg; `max` quality) into the temp folder, then writes the site's copy
+`src/assets/video/launch.mp4` (H.264 1080p, about 1.5 Mbit/s, ~10 MB) and `src/assets/video/launch-poster.webp` (the
+composition's poster).
+
 After changing a composition, render its poster again (headless Chrome with a throwaway profile):
 
 ```bash
