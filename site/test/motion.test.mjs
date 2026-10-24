@@ -44,3 +44,9 @@ test('the story is scroll-linked, never scroll-jacked: no snapping, no wheel or 
   assert.doesNotMatch(story, /snap|addEventListener\('(wheel|touchmove|keydown)'|preventDefault|pin:\s*true|window\.scrollTo|scrollIntoView/);
   assert.match(src('css/story.css'), /\.js-motion \.story__pin \{ position: sticky;/);
 });
+
+test('with motion the page scrolls instantly: a smooth scroll-behavior breaks the story\'s measurements when it loads scrolled down', () => {
+  const css = src('css/site.css');
+  assert.match(css, /html\.js-motion \{ scroll-behavior: auto; \}/);
+  assert.match(src('js/main.js'), /scrollIntoView\(\{ behavior: 'smooth'/, 'in-page links still glide');
+});

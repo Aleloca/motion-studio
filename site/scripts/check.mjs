@@ -43,6 +43,7 @@ export async function check({ out } = {}) {
         await page.goto(`${server.url}?debug`);
         await wait(page, 2500);
         if (!reduced) problems.push(...await liveStory(page));
+        if (!reduced && (width === 1440 || width === 360)) problems.push(...await storyFromAnywhere(page, server));
         await page.eval(`(async () => { const h = document.documentElement.scrollHeight; for (let y = 0; y < h; y += 500) { scrollTo({ top: y, behavior: 'instant' }); await new Promise(r => setTimeout(r, 250)); } })()`);
         await wait(page, 4000);
         const s = await page.eval(`(() => {
@@ -288,6 +289,46 @@ async function finalCutStart(page) {
   s = await state();
   if (!s.playing || s.time > 3 || s.muted || !s.sound) problems.push(`after Play: ${JSON.stringify({ playing: s.playing, time: s.time, muted: s.muted, sound: s.sound })}, not playing from 0:00 with sound`);
   await page.eval(`(() => { const p = window.__siteDebug.players.find((x) => x.figure.hasAttribute('data-final-cut')); p.update({ intent: 'pause' }); window.__siteDebug.sound.set(false); })()`);
+  return problems;
+}
+
+/**
+ * The story follows the scroll both ways whatever the scroll position at load: loaded at #final-cut, reloaded at the
+ * bottom (the browser restores the scroll) and reloaded mid-story, then scrolled up step by step and down again, each
+ * step is the one on screen and the canvas (camera, board C's version or its Chosen mark) changes with it.
+ */
+export async function storyFromAnywhere(page, server) {
+  const problems = [];
+  const toStep = (n) => page.eval(`(() => { const s = document.querySelector('.story'); scrollTo({ top: s.offsetTop + (s.offsetHeight - innerHeight) * (${n - 0.45} / 11.6), behavior: 'instant' }); })()`);
+  const state = () => page.eval(`(() => ({ step: window.__siteDebug.story?.step, world: document.querySelector('.world').style.transform, ver: document.querySelector('[data-board="c"] .board__ver').textContent, chosen: document.querySelector('[data-board="c"]').classList.contains('is-chosen'), caption: document.querySelector('.caption__n').textContent }))()`);
+  const walk = async (label, order) => {
+    let prev = null;
+    for (const n of order) {
+      await toStep(n);
+      await wait(page, 900);
+      const s = await state();
+      if (s.step !== n || s.caption !== String(n).padStart(2, '0')) problems.push(`${label}: scrolled to step ${n}, the story shows step ${s.step} (caption ${s.caption})`);
+      if (prev && s.world === prev.world && s.ver === prev.ver && s.chosen === prev.chosen) problems.push(`${label}: the canvas did not change from step ${prev.step} to step ${n}`);
+      prev = s;
+    }
+  };
+  const up = [11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]; const down = [...up].reverse();
+  // A reload from the page itself never answers the evaluation: the protocol's reload, then a wait on this side.
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const reload = async () => { await page.send('Page.reload', {}); await sleep(4000); };
+  const loads = [
+    // A new query: the same URL with only a new hash would be a same-page jump, with no load to wait for.
+    ['loaded at #final-cut', async () => { await page.goto(`${server.url}?debug&load=hash#final-cut`); await sleep(3000); }],
+    ['reloaded at the bottom', async () => { await page.eval(`scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' })`); await sleep(400); await reload(); }],
+    ['reloaded mid-story', async () => { await toStep(6); await sleep(400); await reload(); }],
+  ];
+  for (const [label, load] of loads) {
+    await load();
+    const y = await page.eval('scrollY');
+    if (label !== 'reloaded mid-story' && y < 1000) problems.push(`${label}: the page opened at ${y}, not scrolled down`);
+    await walk(`${label}, up`, label === 'reloaded mid-story' ? [6, 5, 4, 3, 2, 1] : up);
+    await walk(`${label}, down`, down);
+  }
   return problems;
 }
 

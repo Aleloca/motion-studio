@@ -27,6 +27,15 @@ const gallery = startGallery(players);
 
 if (live) {
   root.classList.add('js-motion');
+  // The page's scroll-behavior is instant here (see site.css): an in-page link still glides to its target.
+  document.addEventListener('click', (e) => {
+    const a = e.target instanceof Element ? e.target.closest('a[href^="#"]') : null;
+    const target = a && a.getAttribute('href').length > 1 ? document.getElementById(a.getAttribute('href').slice(1)) : null;
+    if (!target || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
+    e.preventDefault();
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    history.pushState(null, '', a.getAttribute('href'));
+  });
   window.gsap.registerPlugin(window.ScrollTrigger);
   document.fonts.ready.then(() => {
     const story = startStory({ gsap: window.gsap, ScrollTrigger: window.ScrollTrigger, players, sound });
