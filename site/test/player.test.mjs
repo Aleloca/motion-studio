@@ -19,13 +19,13 @@ test('decide table', () => {
 const ORIGIN = 'https://aleloca.github.io';
 
 /** A player wired to fakes: a figure, an iframe window that records commands, and a manual clock. */
-function harness({ posterTime = 2 } = {}) {
+function harness({ posterTime = 2, replay, loopFrom } = {}) {
   const sent = [];
   const timers = [];
   const classes = new Set();
   const frame = { contentWindow: { postMessage: (m, origin) => sent.push({ m, origin }) }, removed: false, remove() { this.removed = true; } };
   let mounts = 0;
-  const figure = { dataset: { composition: 'kova-16x9', posterTime: String(posterTime) }, classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c) } };
+  const figure = { dataset: { composition: 'kova-16x9', posterTime: String(posterTime), ...(replay ? { replay } : {}), ...(loopFrom ? { loopFrom } : {}) }, classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c) } };
   const player = new CompositionPlayer(figure, {
     origin: ORIGIN,
     mount: (src) => { mounts++; frame.src = src; return frame; },
@@ -217,4 +217,51 @@ test('restart leaves a failed player on its poster', () => {
   h.sent.length = 0;
   assert.equal(h.player.restart(), false);
   assert.deepEqual(h.sent, []);
+});
+
+test('data-replay="poster": every return to the screen plays again from the poster frame', () => {
+  const h = harness({ posterTime: 4.4, replay: 'poster' });
+  h.player.update(S({ near: true }));
+  h.msg({ type: 'ready' });
+  h.player.update(S({ near: true, visible: true }));
+  h.player.update(S({ near: true, visible: false }));
+  h.player.update(S({ near: true, visible: true }));
+  assert.deepEqual(h.types(), ['setScale', 'mute', 'seek', 'play', 'pause', 'seek', 'play']);
+  assert.deepEqual(h.sent[5].m, { type: 'seek', t: 4.4 });
+});
+
+test('without data-replay a player resumes where it paused', () => {
+  const h = harness();
+  h.player.update(S({ near: true }));
+  h.msg({ type: 'ready' });
+  h.player.update(S({ near: true, visible: true }));
+  h.player.update(S({ near: true, visible: false }));
+  h.player.update(S({ near: true, visible: true }));
+  assert.deepEqual(h.types(), ['setScale', 'mute', 'seek', 'play', 'pause', 'play']);
+});
+
+test('data-loop-from: when the film wraps to its start it jumps past the empty opening, and plays on', () => {
+  const h = harness({ posterTime: 5, loopFrom: '2.5' });
+  h.player.update(S({ near: true }));
+  h.msg({ type: 'ready' });
+  h.player.update(S({ near: true, visible: true }));
+  h.msg({ type: 'time', t: 5.1, playing: true });
+  h.msg({ type: 'time', t: 6.98, playing: true });
+  assert.deepEqual(h.types(), ['setScale', 'mute', 'seek', 'play']);
+  h.msg({ type: 'time', t: 0.02, playing: true });
+  assert.deepEqual(h.types(), ['setScale', 'mute', 'seek', 'play', 'seek', 'play']);
+  assert.deepEqual(h.sent[4].m, { type: 'seek', t: 2.5 });
+  h.msg({ type: 'time', t: 2.52, playing: true });
+  h.msg({ type: 'time', t: 3, playing: true });
+  assert.equal(h.types().length, 6, 'no jump while it plays forward from there');
+});
+
+test('without data-loop-from the film loops from its start untouched', () => {
+  const h = harness({ posterTime: 5 });
+  h.player.update(S({ near: true }));
+  h.msg({ type: 'ready' });
+  h.player.update(S({ near: true, visible: true }));
+  h.msg({ type: 'time', t: 6.98, playing: true });
+  h.msg({ type: 'time', t: 0.02, playing: true });
+  assert.deepEqual(h.types(), ['setScale', 'mute', 'seek', 'play']);
 });

@@ -128,3 +128,18 @@ test('every showcase card letterboxes in its composition\'s own background', () 
     assert.match(tag, new RegExp(`style="--comp-bg: ${background}"`), id);
   }
 });
+
+test('every showcase card plays again from its poster frame when it comes back on screen', () => {
+  const showcase = /<section[^>]*id="showcase"[\s\S]*?<\/section>/.exec(html)[0];
+  for (const [tag] of showcase.matchAll(/<figure\b[^>]*>/g)) assert.match(tag, /data-replay="poster"/, tag);
+});
+
+test('every showcase card loops from a time inside its composition, past the empty first frame', () => {
+  const showcase = /<section[^>]*id="showcase"[\s\S]*?<\/section>/.exec(html)[0];
+  for (const [tag] of showcase.matchAll(/<figure\b[^>]*>/g)) {
+    const id = /data-composition="([\w-]+)"/.exec(tag)[1];
+    const from = Number(/data-loop-from="([\d.]+)"/.exec(tag)?.[1]);
+    const { duration } = JSON.parse(readFileSync(join(SITE, 'compositions', id, 'composition.json'), 'utf8'));
+    assert.ok(from > 0 && from < duration, `${id}: data-loop-from ${from}`);
+  }
+});
