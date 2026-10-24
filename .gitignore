@@ -16,3 +16,9 @@ apps/cli/LICENSE
 
 # GitHub Pages site build output
 site/_site/
+
+# Brainstorm companion and Impeccable decision mocks (local only)
+.superpowers/brainstorm/
+.impeccable/mocks/
+.impeccable/review/
+.impeccable/build/

@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "instrument sans",
+        "createdAt": "2026-10-24T11:50:57.796Z",
+        "reason": "incumbent site body face in site/src/css/tokens.css (existing visual system, kept for this surface)"
+      }
+    ]
+  }
+}
