@@ -33,14 +33,26 @@ export class CompositionPlayer {
     /** The runtime shows the poster frame (just seeked there, not played since). */
     this.atPoster = false;
     this.timer = null;
-    this.state = { visible: false, near: false, reducedMotion: false };
+    /** data-loop="false" (the final cut): plays once and stops on its last frame; `ended` until it plays again. */
+    this.loop = figure.dataset.loop !== 'false';
+    this.ended = false;
+    /** From the runtime: the composition's length and scenes (on ready), and the time it last reported. */
+    this.duration = 0;
+    this.scenes = [];
+    this.time = 0;
+    this.listeners = new Set();
+    this.state = { visible: false, near: false, reducedMotion: false, still: false, intent: null };
   }
+
+  /** Calls `fn(player)` on ready, on every reported time and when playing starts or stops. Returns the unsubscribe. */
+  onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+  emit() { for (const fn of this.listeners) fn(this); }
 
   get src() {
     return `runtime/${this.id}.html?mode=preview&parentOrigin=${encodeURIComponent(this.deps.origin)}`;
   }
 
-  /** @param {{ visible?: boolean, near?: boolean, reducedMotion?: boolean }} state */
+  /** @param {{ visible?: boolean, near?: boolean, reducedMotion?: boolean, still?: boolean, intent?: 'play' | 'pause' | null }} state */
   update(state) {
     this.state = { ...this.state, ...state };
     if (this.failed === 'timeout' && !this.state.near) this.clearFailure();
@@ -74,19 +86,40 @@ export class CompositionPlayer {
   play() {
     if (this.playing) return;
     if (this.replayFromPoster && !this.atPoster) this.seek(this.posterTime);
+    // Played to its end once: a new play starts it again from the beginning.
+    if (this.ended) { this.seek(0); this.time = 0; }
     this.playing = true;
+    this.ended = false;
     this.still = false;
     this.atPoster = false;
-    this.send({ type: 'play', loop: true });
+    this.send({ type: 'play', loop: this.loop });
+    this.emit();
   }
 
   pause() {
     if (!this.playing) return;
     this.playing = false;
     this.send({ type: 'pause' });
+    this.emit();
   }
 
   seek(t) { this.send({ type: 'seek', t }); }
+
+  /**
+   * The viewer's seek (the final cut's bar): a seek stops the runtime's playback, so a playing player plays on from there.
+   * @returns {boolean} false when there is no live runtime yet.
+   */
+  seekTo(t) {
+    if (!this.ready || !this.frame || this.failed) return false;
+    this.ended = false;
+    this.atPoster = false;
+    this.still = false;
+    this.time = t;
+    this.seek(t);
+    if (this.playing) this.send({ type: 'play', loop: this.loop });
+    this.emit();
+    return true;
+  }
 
   /**
    * Back to the first frame (the hero shows each creative from its start). A seek stops the runtime's playback, so a
@@ -134,6 +167,8 @@ export class CompositionPlayer {
     if (typeof data !== 'object' || data === null) return;
     if (data.type === 'ready' && !this.ready) {
       this.ready = true;
+      if (typeof data.duration === 'number') this.duration = data.duration;
+      if (Array.isArray(data.scenes)) this.scenes = data.scenes;
       this.deps.clearTimeout(this.timer);
       this.send({ type: 'setScale', scale: 'fit' });
       this.send({ type: 'mute', muted: true });
@@ -141,12 +176,22 @@ export class CompositionPlayer {
       // every clip enters after it).
       this.seek(this.posterTime);
       this.atPoster = true;
+      this.time = this.posterTime;
       this.update({});
+      this.emit();
+    } else if (data.type === 'time' && data.playing === false && this.ready && this.playing && !this.loop && typeof data.t === 'number' && data.t >= this.duration - 0.05) {
+      // A film played once reached its end: it stays on its last frame.
+      this.time = data.t;
+      this.playing = false;
+      this.ended = true;
+      this.emit();
     } else if (data.type === 'time' && data.playing === true && this.ready) {
       // The poster goes only once the runtime is really playing frames: never a blank or unpainted frame.
       this.figure.classList.add('is-ready');
       const wrapped = data.t < this.lastTime && data.t < this.loopFrom;
       this.lastTime = data.t;
+      this.time = data.t;
+      this.emit();
       if (wrapped && this.playing) {
         // A seek stops the runtime's playback: play again from there.
         this.seek(this.loopFrom);
@@ -167,10 +212,12 @@ export class CompositionPlayer {
 
 /**
  * One player per `figure[data-composition]` of the document: mounted while within one viewport of the screen (and unmounted
- * beyond it), playing while at least a quarter of it is visible, a still frame under prefers-reduced-motion.
+ * beyond it), playing while at least a quarter of it is visible, a still frame under prefers-reduced-motion. The figures
+ * `manual(figure)` names are left to their caller (the story's canvas drives its boards by step): never observed here.
  * @param {Document} doc
+ * @param {{ log?: (m: unknown) => void, manual?: (figure: Element) => boolean }} [options]
  */
-export function mountPlayers(doc, { log } = {}) {
+export function mountPlayers(doc, { log, manual = () => false } = {}) {
   const win = doc.defaultView;
   const motion = win.matchMedia('(prefers-reduced-motion: reduce)');
   const players = new Map();
@@ -199,7 +246,7 @@ export function mountPlayers(doc, { log } = {}) {
   const visible = new win.IntersectionObserver((entries) => {
     for (const e of entries) players.get(e.target)?.update({ visible: isVisible(e), reducedMotion: motion.matches });
   }, { threshold: [0, VISIBLE_RATIO] });
-  for (const figure of players.keys()) { near.observe(figure); visible.observe(figure); }
+  for (const figure of players.keys()) if (!manual(figure)) { near.observe(figure); visible.observe(figure); }
   motion.addEventListener('change', () => { for (const p of players.values()) p.update({ reducedMotion: motion.matches }); });
   return [...players.values()];
 }
