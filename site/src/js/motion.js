@@ -182,9 +182,6 @@ function features(gsap) {
 function showcase(gsap) {
   gsap.to('.showcase .wrap > :not(.showcase__grid)', { opacity: 1, y: 0, duration: 1, stagger: 0.1, ease: EASE, scrollTrigger: { trigger: '.showcase', start: 'top 80%' } });
   gsap.to('.card', { opacity: 1, y: 0, duration: 1.1, stagger: 0.1, ease: EASE, scrollTrigger: { trigger: '.showcase__grid', start: 'top 85%' } });
-  for (const card of document.querySelectorAll('.card .comp')) {
-    gsap.fromTo(card, { y: 12 }, { y: -12, ease: 'none', scrollTrigger: { trigger: card, start: 'top bottom', end: 'bottom top', scrub: true } });
-  }
 }
 
 function install(gsap) {
