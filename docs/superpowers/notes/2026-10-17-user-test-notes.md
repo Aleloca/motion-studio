@@ -643,6 +643,11 @@ arrives and worked on later together.
     Fernwise), captured by site/scripts/guide-shots.mjs with a demo agent (no Claude, no paid services). Subtitles are
     the only seeded state. The board frame is the composition's middle (decision 1040): a 12 s film with a counter in
     the middle shows it mid-count, so the guide's KOVA film is 16 s.
+83. **The showcase creatives sit badly in their cards (user report of 2026-10-24).** Art offset up/left of the card,
+    empty bands, near-blank frames.
+    Done (decisions 1849-1854): no negative margin and no parallax on the showcase art; each composition fills its
+    media area, the band around it in its own background; the showcase players replay from the poster and skip the
+    empty opening on loop; check.mjs fails a misaligned card or a near-blank poster.
 - **Flaky under load:** `core/test/agent-actions.test.ts` "duplicate_format runs after the turn, on the version it
   saved" failed once in a full local run (2026-10-23, waitFor on the action line) and passes alone 3/3.
 
