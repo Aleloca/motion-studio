@@ -657,6 +657,22 @@ arrives and worked on later together.
     the product's renderer at site/src/assets/video/launch.mp4); both READMEs show its poster linking to #final-cut.
     Open, user's call: the film picks variant A and shows Japanese, the page picks C and uses IT/DE/ES (Japanese was
     dropped on the page for lack of a shipped font, which the film shows is not needed).
+86. **The home and the film are silent; generation is never shown (user report of 2026-10-24).** Done (decisions
+    1877-1894): ElevenLabs "Eric" voice-over (12 lines), ElevenLabs music bed and 6 sound effects, a Generate step and
+    beat that make the title's backdrop (OpenAI image) and its voice and music; "Sound on" on the page; the final cut
+    waits for Play and starts with sound; each step holds its finished state before the next request. Media made by
+    site/scripts/audio-gen with the user's dedicated keys (~/.config/motion-studio-site, never in the repo); spend about
+    1.46 USD. Product gap found: the mixer ignores `role: music` (no ducking under the voice); the film ducks by hand.
+87. **A gallery of creatives on the home (user request of 2026-10-24).** Done (decisions 1895-1904): twelve boards
+    after Get started (nine new generated creatives on different topics, styles and motion, plus KOVA, TIDEFALL,
+    Fernwise), at most four playing.
+88. **Steps frozen after a reload at the bottom (user report of 2026-10-25).** Done (decisions 1905-1907): CSS smooth
+    scrolling made ScrollTrigger measure the story offset by the restored scroll; scrolling is instant now (in-page
+    links still glide) and check.mjs reloads at the bottom, at #final-cut and mid-story and walks the steps both ways.
+- **CLI on npm (2026-10-24):** @motion-studio/cli 0.1.0 published; release.yml now publishes with npm Trusted
+  Publishing (no token; the user configured the trusted publisher and deleted NPM_TOKEN). Verify on the next release.
+- **Product ticket to file:** audio `role: music` ducking is documented but not implemented in core audio-mix.ts and
+  the runtime.
 - **Flaky under load:** `core/test/agent-actions.test.ts` "duplicate_format runs after the turn, on the version it
   saved" failed once in a full local run (2026-10-23, waitFor on the action line) and passes alone 3/3.
 
