@@ -4,7 +4,7 @@
 // motion, no poster a near-blank frame, every link with its target or file. The story: with motion, each step comes on
 // screen at its scroll position, only its boards are mounted, and the canvas's players stop once it has scrolled away;
 // under reduced motion every step is a static block (its messages and its result's images loaded). The story's sound
-// button turns the voice-over on and off. The final cut never starts by itself; its big Play starts it from 0:00 with sound. Then the guide (guide.html) at 360, 768 and 1440 px.
+// button turns the voice-over on and off. The gallery plays at most four boards at once and none under reduced motion. The final cut never starts by itself; its big Play starts it from 0:00 with sound. Then the guide (guide.html) at 360, 768 and 1440 px.
 // Usage: node site/scripts/check.mjs [--out <folder for screenshots>]
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -91,6 +91,7 @@ export async function check({ out } = {}) {
             if (st.images.some((ok) => !ok)) problems.push(`step ${st.n}: an image of its result did not load`);
           }
         }
+        problems.push(...await galleryBoards(page, reduced));
         problems.push(...await links(page));
         problems.push(...await finalCutStart(page));
         if (!reduced && width === WIDTHS[0]) {
@@ -226,6 +227,45 @@ async function liveStory(page) {
     v = await voice();
     if (v.line) problems.push(`the music tile still plays after the step scrolled away: ${JSON.stringify(v.line)}`);
   }
+  return problems;
+}
+
+/**
+ * The gallery, scrolled through: with motion at most four boards play and at most six runtimes are mounted at any point,
+ * and none plays once it has scrolled away; under reduced motion none mounts. Every board ends live or on its loaded poster.
+ */
+async function galleryBoards(page, reduced) {
+  const problems = [];
+  const state = () => page.eval(`(() => {
+    const boards = [...document.querySelectorAll('.gallery figure[data-gallery]')];
+    return {
+      count: boards.length,
+      frames: document.querySelectorAll('.gallery iframe').length,
+      playing: window.__siteDebug.gallery.playing,
+      shown: boards.filter((f) => f.classList.contains('is-ready') || (f.querySelector('.poster').complete && f.querySelector('.poster').naturalWidth > 0)).length,
+    };
+  })()`);
+  const top = await page.eval(`document.querySelector('.gallery').offsetTop`);
+  const height = await page.eval(`document.querySelector('.gallery').offsetHeight`);
+  let most = { playing: 0, frames: 0 };
+  for (let y = top - 900; y < top + height; y += 400) {
+    await page.eval(`scrollTo({ top: ${y}, behavior: 'instant' })`);
+    await wait(page, 900);
+    const s = await state();
+    most = { playing: Math.max(most.playing, s.playing.length), frames: Math.max(most.frames, s.frames) };
+  }
+  await wait(page, 3000);
+  const s = await state();
+  if (s.count !== 12) problems.push(`gallery: ${s.count} boards, not 12`);
+  if (s.shown < s.count) problems.push(`gallery: ${s.count - s.shown} boards neither live nor on their poster`);
+  if (reduced && (most.frames || most.playing)) problems.push(`gallery under reduced motion: ${most.frames} runtimes, ${most.playing} playing`);
+  if (!reduced && most.playing > 4) problems.push(`gallery: ${most.playing} boards playing at once`);
+  if (!reduced && most.frames > 6) problems.push(`gallery: ${most.frames} runtimes mounted at once`);
+  if (!reduced && !most.playing) problems.push('gallery: no board played');
+  await page.eval(`scrollTo({ top: 0, behavior: 'instant' })`);
+  await wait(page, 800);
+  const away = await state();
+  if (away.playing.length) problems.push(`gallery boards still playing off screen: ${away.playing.join(', ')}`);
   return problems;
 }
 

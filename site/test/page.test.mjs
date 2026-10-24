@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { SITE, REPO } from './helpers.mjs';
 import { parseSteps, inSteps } from '../src/js/story-logic.js';
+import { GALLERY_IDS } from '../scripts/gallery-gen/build.mjs';
 
 const html = readFileSync(join(SITE, 'src', 'index.html'), 'utf8');
 const visibleText = html.replace(/<!--[\s\S]*?-->/g, '').replace(/<(script|style)[\s\S]*?<\/\1>/g, '').replace(/<[^>]+>/g, ' ');
@@ -28,9 +29,10 @@ test('one h1, and headings never skip a level', () => {
   levels.reduce((prev, l) => { assert.ok(l <= prev + 1, `h${prev} then h${l}`); return l; });
 });
 
-test('the page is the story, then the final cut, then Get started', () => {
+test('the page is the story, then the final cut, then Get started, then the gallery', () => {
   const ids = [...html.matchAll(/<section[^>]*\bid="([\w-]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(ids, ['story', 'final-cut', 'install']);
+  assert.deepEqual(ids, ['story', 'final-cut', 'install', 'gallery']);
+  assert.ok(html.indexOf('id="gallery"') < html.indexOf('<footer'), 'the gallery comes before the footer');
 });
 
 test('the first viewport offers the download of the latest release and the final cut', () => {
@@ -73,7 +75,7 @@ test('the chat is labelled once as a demo', () => {
 
 test('every composition figure has a poster with alt and size, of a composition that exists, from its poster time', () => {
   const figures = [...html.matchAll(/<figure class="comp[^"]*"[^>]*>([\s\S]*?)<\/figure>/g)];
-  assert.equal(figures.length, 15, '14 on the canvas and the final cut');
+  assert.equal(figures.length, 27, '14 on the canvas, the final cut and 12 in the gallery');
   for (const [whole, inner] of figures) {
     const id = attr(whole, 'data-composition');
     assert.ok(existsSync(join(SITE, 'compositions', id, 'composition.json')), id);
@@ -189,11 +191,41 @@ test('the Generate step: the backdrop it makes lands in board C, with the film\'
   assert.match(gen, /src="compositions\/story-backdrop-16x9\/poster\.webp"/);
   assert.match(gen, /<audio controls preload="none" src="compositions\/launch-16x9\/assets\/audio\/music\.mp3"><\/audio>/);
   assert.match(stage, /data-composition="story-backdrop-16x9"[^>]*data-steps="6-8"/);
-  assert.doesNotMatch(html, /gpt-4o-mini-tts|cedar|earbuds/);
+  // The story no longer generates earbuds (the gallery's KOVA board is an earbuds launch: that is fine).
+  assert.doesNotMatch(story, /gpt-4o-mini-tts|cedar|earbuds/);
+  assert.doesNotMatch(html, /gpt-4o-mini-tts|cedar/);
   for (const m of stage.matchAll(/data-play="([^"]+)"/g)) assert.ok(existsSync(join(SITE, m[1])), m[1]);
   assert.match(gen, /<audio controls preload="none" src="compositions\/launch-16x9\/assets\/audio\/vo-06\.mp3"><\/audio>/);
   const media = JSON.parse(readFileSync(join(SITE, 'scripts', 'audio-gen', 'media.json'), 'utf8'));
   assert.ok(gen.includes(media.image.model) && gen.includes(media.voice.model), 'the models that really made them');
   assert.match(stage, /data-board="genimg" data-steps="6"/);
   assert.match(stage, /<div class="panel genpanel" data-steps="6"/);
+});
+
+test('the gallery: twelve boards on the canvas, each a real composition with its name, mono format label and topic and style', () => {
+  const gallery = section('gallery');
+  assert.match(gallery, /<h2 id="gallery-title">[^<]+<\/h2>/);
+  assert.doesNotMatch(gallery.slice(0, gallery.indexOf('<h2')), /eyebrow|<p\b/, 'no label above the heading');
+  const boards = gallery.split('<article class="gboard').slice(1).map((b) => b.slice(0, b.indexOf('</article>')));
+  assert.equal(boards.length, 12);
+  const FMT = { 'instagram-reel-9x16': ['9x16', '9:16', 'Reel'], 'instagram-post-4x5': ['4x5', '4:5', 'Post'], 'instagram-post-1x1': ['1x1', '1:1', 'Post'], 'youtube-16x9': ['16x9', '16:9', 'YouTube'] };
+  const ids = boards.map((b) => {
+    const fig = /<figure class="comp comp--([\dx]+)"[^>]*>/.exec(b)[0];
+    const id = attr(fig, 'data-composition');
+    const [cls, ratio, channel] = FMT[meta(id).format];
+    assert.ok(fig.includes(`comp--${cls}`) && b.startsWith(` gboard--${cls}"`), `${id}: its format's frame`);
+    assert.ok(fig.includes('data-gallery'), `${id}: driven by the gallery`);
+    assert.doesNotMatch(fig, /data-autoplay|data-controls/, id);
+    assert.ok(new RegExp(`<span class="gboard__name">[^<]+</span><span class="gboard__fmt">${ratio}<span class="gboard__ch"> · ${channel}</span></span>`).test(b), `${id}: name and format label`);
+    assert.match(b, /<img class="poster"[^>]*loading="lazy"/, `${id}: a lazy poster`);
+    const tag = /<p class="gboard__tag">([^<]+)<\/p>/.exec(b)[1];
+    const more = /<p class="gboard__more" aria-hidden="true">([^<]+)<\/p>/.exec(b)[1];
+    assert.equal(tag.split(' · ').length, 2, `${id}: topic · style`);
+    assert.ok(more.startsWith(`${tag} · `) && more.split(' · ').length === 3, `${id}: topic · style · motion`);
+    return id;
+  });
+  assert.deepEqual([...ids].sort(), [...GALLERY_IDS, 'kova-16x9', 'tidefall-4x5', 'fernwise-9x16'].sort());
+  const topics = boards.map((b) => /<p class="gboard__tag">([^<·]+)/.exec(b)[1].trim());
+  assert.equal(new Set(topics).size, 12, 'twelve topics');
+  for (const cls of ['9x16', '4x5', '1x1', '16x9']) assert.equal(boards.filter((b) => b.startsWith(` gboard--${cls}"`)).length, 3, cls);
 });

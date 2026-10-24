@@ -23,6 +23,7 @@
 <link rel="stylesheet" href="css/tokens.css">
 <link rel="stylesheet" href="css/site.css">
 <link rel="stylesheet" href="css/story.css">
+<link rel="stylesheet" href="css/gallery.css">
 <script>
   // The live story starts hidden only when motion is allowed, and is undone if the page script never takes over: then
   // every step stays a static block (its messages and the posters of its boards).
@@ -517,6 +518,136 @@ pnpm motion-studio</code></pre>
           </ul>
         </div>
       </div>
+    </div>
+  </section>
+
+  <section class="gallery" id="gallery" aria-labelledby="gallery-title">
+    <div class="wrap gallery__head">
+      <h2 id="gallery-title">Any brief, its own look.</h2>
+      <p class="gallery__lede">Twelve made-up brands, from a trattoria to a design conference. Each board is a real Motion Studio composition (type, shapes and hand-drawn SVG on a timeline) played by the app’s own runtime, so every layer stays editable.</p>
+    </div>
+    <!-- The gallery: each board plays its composition while it is on screen (gallery.js, at most four at once), muted and looping; its poster before that, under reduced motion and without JS. -->
+    <div class="gallery__wall">
+        <article class="gboard gboard--9x16" tabindex="0" aria-label="Alta Via Co.">
+          <p class="gboard__label"><span class="gboard__name">Alta Via Co.</span><span class="gboard__fmt">9:16<span class="gboard__ch"> · Reel</span></span></p>
+          <div class="gboard__frame">
+            <figure class="comp comp--9x16" data-composition="gallery-altavia-9x16" data-poster-time="5.6" data-gallery>
+              <div class="comp-stage"><img class="poster" src="compositions/gallery-altavia-9x16/poster.webp" alt="Alta Via Co., guided treks in the Dolomites: a dusk landscape in layers rises with parallax around a huge name, a dotted trail draws itself from hut to hut while the altitude counts up, then night falls on the booking card, in a 9:16 Instagram Reel." width="1080" height="1920" loading="lazy"></div>
+            </figure>
+            <p class="gboard__more" aria-hidden="true">Travel · Dusk landscape in layers · parallax rise, a trail that draws itself</p>
+          </div>
+          <p class="gboard__tag">Travel · Dusk landscape in layers</p>
+        </article>
+        <article class="gboard gboard--16x9" tabindex="0" aria-label="FORM/27">
+          <p class="gboard__label"><span class="gboard__name">FORM/27</span><span class="gboard__fmt">16:9<span class="gboard__ch"> · YouTube</span></span></p>
+          <div class="gboard__frame">
+            <figure class="comp comp--16x9" data-composition="gallery-form-16x9" data-poster-time="7.6" data-gallery>
+              <div class="comp-stage"><img class="poster" src="compositions/gallery-form-16x9/poster.webp" alt="FORM/27, a design conference opening its tickets: a Swiss grid draws itself, the year is built from square cells, a countdown runs from ten with a red progress rule, then a red field carries the name and dates beside the speakers set on the grid, in a 16:9 YouTube video." width="1920" height="1080" loading="lazy"></div>
+            </figure>
+            <p class="gboard__more" aria-hidden="true">Conference · Swiss grid · cells build the year, a countdown from ten</p>
+          </div>
+          <p class="gboard__tag">Conference · Swiss grid</p>
+        </article>
+        <article class="gboard gboard--1x1" tabindex="0" aria-label="Night Sky 101">
+          <p class="gboard__label"><span class="gboard__name">Night Sky 101</span><span class="gboard__fmt">1:1<span class="gboard__ch"> · Post</span></span></p>
+          <div class="gboard__frame">
+            <figure class="comp comp--1x1" data-composition="gallery-nightsky-1x1" data-poster-time="2.95" data-gallery>
+              <div class="comp-stage"><img class="poster" src="compositions/gallery-nightsky-1x1/poster.webp" alt="Night Sky 101, an evening astronomy course: on a chalkboard the Big Dipper is joined star by star and points to Polaris, an eraser wipes the board, Earth and Mars turn on their orbits around a chalk sun, then the course and an Enrol button drawn in chalk, in a 1:1 Instagram post." width="1080" height="1080" loading="lazy"></div>
+            </figure>
+            <p class="gboard__more" aria-hidden="true">Education · Chalkboard · stars joined line by line, planets on orbits</p>
+          </div>
+          <p class="gboard__tag">Education · Chalkboard</p>
+        </article>
+        <article class="gboard gboard--1x1" tabindex="0" aria-label="Late Signal">
+          <p class="gboard__label"><span class="gboard__name">Late Signal</span><span class="gboard__fmt">1:1<span class="gboard__ch"> · Post</span></span></p>
+          <div class="gboard__frame">
+            <figure class="comp comp--1x1" data-composition="gallery-signal-1x1" data-poster-time="4.6" data-gallery>
+              <div class="comp-stage"><img class="poster" src="compositions/gallery-signal-1x1/poster.webp" alt="Late Signal, a night-time podcast's new episode: seventies stripes, a record that slides out of its sleeve and spins under a swinging tonearm, an equalizer rising from the floor on the beat, then the weekly date, in a 1:1 Instagram post." width="1080" height="1080" loading="lazy"></div>
+            </figure>
+            <p class="gboard__more" aria-hidden="true">Podcast · Seventies warm · a spinning record, an equalizer on the beat</p>
+          </div>
+          <p class="gboard__tag">Podcast · Seventies warm</p>
+        </article>
+        <article class="gboard gboard--16x9" tabindex="0" aria-label="Casa Ombra">
+          <p class="gboard__label"><span class="gboard__name">Casa Ombra</span><span class="gboard__fmt">16:9<span class="gboard__ch"> · YouTube</span></span></p>
+          <div class="gboard__frame">
+            <figure class="comp comp--16x9" data-composition="gallery-ombra-16x9" data-poster-time="6.2" data-gallery>
+              <div class="comp-stage"><img class="poster" src="compositions/gallery-ombra-16x9/poster.webp" alt="Casa Ombra, a modern house for sale: its south elevation draws itself line by line on a blueprint grid with its dimensions, the windows light up for dusk, then the listing counts its rooms, surface and price, in a 16:9 YouTube video." width="1920" height="1080" loading="lazy"></div>
+            </figure>
+            <p class="gboard__more" aria-hidden="true">Real estate · Blueprint · the house draws itself, then lights up</p>
+          </div>
+          <p class="gboard__tag">Real estate · Blueprint</p>
+        </article>
+        <article class="gboard gboard--9x16" tabindex="0" aria-label="Fernwise">
+          <p class="gboard__label"><span class="gboard__name">Fernwise</span><span class="gboard__fmt">9:16<span class="gboard__ch"> · Reel</span></span></p>
+          <div class="gboard__frame">
+            <figure class="comp comp--9x16" data-composition="fernwise-9x16" data-poster-time="8.6" data-gallery>
+              <div class="comp-stage"><img class="poster" src="compositions/fernwise-9x16/poster.webp" alt="Fernwise, a savings app's year in money: a spending bar chart, a savings curve drawn month by month with a counted balance, then the app, in a 9:16 Instagram Reel." width="1080" height="1920" loading="lazy"></div>
+            </figure>
+            <p class="gboard__more" aria-hidden="true">Fintech · Calm and light · bars and a curve that count the year</p>
+          </div>
+          <p class="gboard__tag">Fintech · Calm and light</p>
+        </article>
+        <article class="gboard gboard--16x9" tabindex="0" aria-label="KOVA Air">
+          <p class="gboard__label"><span class="gboard__name">KOVA Air</span><span class="gboard__fmt">16:9<span class="gboard__ch"> · YouTube</span></span></p>
+          <div class="gboard__frame">
+            <figure class="comp comp--16x9" data-composition="kova-16x9" data-poster-time="4.4" data-gallery>
+              <div class="comp-stage"><img class="poster" src="compositions/kova-16x9/poster.webp" alt="The KOVA Air earbuds launch recomposed for a 16:9 YouTube video." width="1920" height="1080" loading="lazy"></div>
+            </figure>
+            <p class="gboard__more" aria-hidden="true">Tech launch · Dark product glow · noise erased into a line, specs counted up</p>
+          </div>
+          <p class="gboard__tag">Tech launch · Dark product glow</p>
+        </article>
+        <article class="gboard gboard--9x16" tabindex="0" aria-label="Greenroots">
+          <p class="gboard__label"><span class="gboard__name">Greenroots</span><span class="gboard__fmt">9:16<span class="gboard__ch"> · Reel</span></span></p>
+          <div class="gboard__frame">
+            <figure class="comp comp--9x16" data-composition="gallery-greenroots-9x16" data-poster-time="5.8" data-gallery>
+              <div class="comp-stage"><img class="poster" src="compositions/gallery-greenroots-9x16/poster.webp" alt="Greenroots, a tree-planting charity's spring appeal: a seed drops into a hill and sprouts, a forest grows out of it tree by tree while the count climbs to 10,000 with a handwritten note, then the ask, in a 9:16 Instagram Reel." width="1080" height="1920" loading="lazy"></div>
+            </figure>
+            <p class="gboard__more" aria-hidden="true">Charity · Warm illustration · a forest grows from one seed</p>
+          </div>
+          <p class="gboard__tag">Charity · Warm illustration</p>
+        </article>
+        <article class="gboard gboard--4x5" tabindex="0" aria-label="TIDEFALL">
+          <p class="gboard__label"><span class="gboard__name">TIDEFALL</span><span class="gboard__fmt">4:5<span class="gboard__ch"> · Post</span></span></p>
+          <div class="gboard__frame">
+            <figure class="comp comp--4x5" data-composition="tidefall-4x5" data-poster-time="3.8" data-gallery>
+              <div class="comp-stage"><img class="poster" src="compositions/tidefall-4x5/poster.webp" alt="The TIDEFALL festival poster recomposed for a 4:5 Instagram post." width="1080" height="1350" loading="lazy"></div>
+            </figure>
+            <p class="gboard__more" aria-hidden="true">Music festival · Pop poster · every cut lands on a 120 BPM beat</p>
+          </div>
+          <p class="gboard__tag">Music festival · Pop poster</p>
+        </article>
+        <article class="gboard gboard--4x5" tabindex="0" aria-label="Osteria Fumo">
+          <p class="gboard__label"><span class="gboard__name">Osteria Fumo</span><span class="gboard__fmt">4:5<span class="gboard__ch"> · Post</span></span></p>
+          <div class="gboard__frame">
+            <figure class="comp comp--4x5" data-composition="gallery-osteria-4x5" data-poster-time="5.9" data-gallery>
+              <div class="comp-stage"><img class="poster" src="compositions/gallery-osteria-4x5/poster.webp" alt="Osteria Fumo, a Roman trattoria: hand-drawn ingredients drop around a turning plate, the menu of the night is written line by line, and a tomato-red iris opens on the booking card, in a 4:5 Instagram post." width="1080" height="1350" loading="lazy"></div>
+            </figure>
+            <p class="gboard__more" aria-hidden="true">Food · Warm editorial · ingredients drop, the menu writes itself</p>
+          </div>
+          <p class="gboard__tag">Food · Warm editorial</p>
+        </article>
+        <article class="gboard gboard--1x1" tabindex="0" aria-label="VOLT Run Club">
+          <p class="gboard__label"><span class="gboard__name">VOLT Run Club</span><span class="gboard__fmt">1:1<span class="gboard__ch"> · Post</span></span></p>
+          <div class="gboard__frame">
+            <figure class="comp comp--1x1" data-composition="gallery-volt-1x1" data-poster-time="4.35" data-gallery>
+              <div class="comp-stage"><img class="poster" src="compositions/gallery-volt-1x1/poster.webp" alt="VOLT Run Club, a weekly city run: speed lines whip across a diagonal, RUN, FASTER and TOGETHER slam in with a motion blur, a volt flash carries marquee rows and the distances, then the lockup, in a 1:1 Instagram post." width="1080" height="1080" loading="lazy"></div>
+            </figure>
+            <p class="gboard__more" aria-hidden="true">Sports · Diagonal kinetic type · words slam in with a motion blur</p>
+          </div>
+          <p class="gboard__tag">Sports · Diagonal kinetic type</p>
+        </article>
+        <article class="gboard gboard--4x5" tabindex="0" aria-label="Maison Noir">
+          <p class="gboard__label"><span class="gboard__name">Maison Noir</span><span class="gboard__fmt">4:5<span class="gboard__ch"> · Post</span></span></p>
+          <div class="gboard__frame">
+            <figure class="comp comp--4x5" data-composition="gallery-noir-4x5" data-poster-time="5.7" data-gallery>
+              <div class="comp-stage"><img class="poster" src="compositions/gallery-noir-4x5/poster.webp" alt="Maison Noir, a fashion label's Drop 03: black shutters wipe down and up, the name is cut in thin serif capitals, the shutters part on a coat drawn as a technical flat with red callouts and a swinging price tag, then the drop date on black, in a 4:5 Instagram post." width="1080" height="1350" loading="lazy"></div>
+            </figure>
+            <p class="gboard__more" aria-hidden="true">Fashion · High-contrast editorial · shutters wipe, a coat drawn as a flat</p>
+          </div>
+          <p class="gboard__tag">Fashion · High-contrast editorial</p>
+        </article>
     </div>
   </section>
 

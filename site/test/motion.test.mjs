@@ -9,7 +9,7 @@ const src = (p) => readFileSync(join(SITE, 'src', p), 'utf8');
 test('final states are the CSS default', () => {
   // Rules that hide things must be scoped to html.js-motion, which main.js adds only when motion is allowed.
   // @keyframes steps are animations, not starting states.
-  const css = (src('css/site.css') + src('css/story.css')).replace(/\/\*[\s\S]*?\*\//g, '').replace(/@keyframes[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, '');
+  const css = (src('css/site.css') + src('css/story.css') + src('css/gallery.css')).replace(/\/\*[\s\S]*?\*\//g, '').replace(/@keyframes[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, '');
   for (const [, selector, body] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
     if (/opacity:\s*0(?![.\d])|visibility:\s*hidden/.test(body) && !selector.includes('.js-motion') && !selector.includes('.is-ready')) {
       assert.fail(`hides without .js-motion: ${selector.trim()}`);

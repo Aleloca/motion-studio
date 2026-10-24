@@ -1,0 +1,44 @@
+/* The gallery, after Get started: a wall of boards on the app's dotted canvas, in columns of mixed formats (a masonry, not a
+   grid of equal cards). Each board has the canvas's label (name, mono format) over its frame and its topic and style under
+   it; hovered or focused, a line over the frame adds its motion idea. The posters are the page without JS and under
+   reduced motion; gallery.js plays the boards on screen. */
+.gallery { padding: clamp(72px, 10vw, 140px) 0 clamp(64px, 9vw, 128px); border-top: 1px solid var(--c-line);
+  background: var(--c-stage) radial-gradient(circle, var(--dot) 1.1px, transparent 1.4px) 0 0 / 22px 22px; }
+.gallery__head { display: grid; gap: 18px; max-width: 1600px; margin-bottom: clamp(40px, 5vw, 72px); }
+.gallery__lede { max-width: 60ch; margin: 0; color: var(--c-muted); font-size: clamp(16px, 1.3vw, 19px); }
+@media (min-width: 960px) { .gallery__head { grid-template-columns: minmax(0, 1fr) minmax(0, 48ch); align-items: end; } }
+
+/* The boards are in an order that balances two, three and four columns, with each format and light and dark in every row. */
+.gallery__wall { max-width: 1600px; margin: 0 auto; padding: 0 var(--gutter); columns: 2; column-gap: clamp(12px, 2.6vw, 44px); }
+@media (min-width: 760px) { .gallery__wall { columns: 3; } }
+@media (min-width: 1200px) { .gallery__wall { columns: 4; } }
+
+.gboard { break-inside: avoid; margin: 0 0 clamp(26px, 3.4vw, 56px); padding-top: 2px; border-radius: 8px; }
+.gboard:focus-visible { outline: none; }
+.gboard__label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 9px; white-space: nowrap;
+  font: 500 13px/1.2 var(--f-body); color: var(--c-text); }
+.gboard__name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.gboard__fmt { flex: none; padding: 3px 7px; border-radius: 6px; background: #1E1E1E; font: 500 11.5px/1.2 var(--f-mono); color: var(--c-muted); }
+.gboard__frame { position: relative; border-radius: 6px; box-shadow: 0 0 0 1px #2E2E2E, 0 24px 48px -20px #000; transition: box-shadow .35s var(--ease-out); }
+.gboard__frame .comp-stage { border-radius: 6px; }
+/* Hovered or focused, the board is selected the way the canvas selects one: the orange ring. */
+.gboard:hover .gboard__frame, .gboard:focus-visible .gboard__frame {
+  box-shadow: 0 0 0 2px var(--c-orange), 0 0 0 7px color-mix(in srgb, var(--c-orange) 20%, transparent), 0 28px 56px -22px #000; }
+.gboard__more { position: absolute; left: 8px; right: 8px; bottom: 8px; margin: 0; padding: 8px 11px; border-radius: 8px;
+  background: color-mix(in srgb, var(--c-stage) 90%, transparent);
+  font: 500 12.5px/1.35 var(--f-body); color: var(--c-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  clip-path: inset(100% 0 0 0 round 8px); transition: clip-path .4s var(--ease-out); pointer-events: none; }
+.gboard:focus-visible .gboard__more { clip-path: inset(0 0 0 0 round 8px); }
+@media (hover: hover) { .gboard:hover .gboard__more { clip-path: inset(0 0 0 0 round 8px); } }
+.gboard__tag { margin: 10px 0 0; font-size: 13.5px; line-height: 1.4; color: var(--c-muted); }
+
+/* Phones: two narrow columns; the format label keeps its ratio only. */
+@media (max-width: 639px) {
+  .gallery__wall { column-gap: 12px; }
+  .gboard__label { font-size: 12px; margin-bottom: 7px; }
+  .gboard__ch { display: none; }
+  .gboard__fmt { padding: 3px 5px; font-size: 11px; }
+  .gboard__tag { font-size: 12px; margin-top: 7px; }
+  .gboard__more { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .gboard__frame, .gboard__more { transition: none; } }
