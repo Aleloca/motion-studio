@@ -25,13 +25,13 @@ test('decide table', () => {
 const ORIGIN = 'https://aleloca.github.io';
 
 /** A player wired to fakes: a figure, an iframe window that records commands, and a manual clock. */
-function harness({ posterTime = 2, replay, loopFrom, loop } = {}) {
+function harness({ posterTime = 2, replay, loopFrom, loop, autoplay } = {}) {
   const sent = [];
   const timers = [];
   const classes = new Set();
   const frame = { contentWindow: { postMessage: (m, origin) => sent.push({ m, origin }) }, removed: false, remove() { this.removed = true; } };
   let mounts = 0;
-  const figure = { dataset: { composition: 'kova-16x9', posterTime: String(posterTime), ...(replay ? { replay } : {}), ...(loopFrom ? { loopFrom } : {}), ...(loop ? { loop } : {}) }, classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c) } };
+  const figure = { dataset: { composition: 'kova-16x9', posterTime: String(posterTime), ...(replay ? { replay } : {}), ...(loopFrom ? { loopFrom } : {}), ...(loop ? { loop } : {}), ...(autoplay ? { autoplay } : {}) }, classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c) } };
   const player = new CompositionPlayer(figure, {
     origin: ORIGIN,
     mount: (src) => { mounts++; frame.src = src; return frame; },
@@ -332,4 +332,20 @@ test('silent by default; setMuted reaches a live runtime, and a runtime mounted 
   later.player.update(S({ near: true, visible: true }));
   later.msg({ type: 'ready' });
   assert.deepEqual(later.sent[1].m, { type: 'mute', muted: false });
+});
+
+test('data-autoplay="false": on screen it holds its poster frame, and the viewer\'s first play starts it from 0:00', () => {
+  const h = harness({ posterTime: 30, loop: 'false', autoplay: 'false' });
+  h.player.update(S({ near: true, visible: true }));
+  h.msg({ type: 'ready', duration: 60 });
+  assert.equal(h.player.playing, false);
+  assert.ok(!h.types().includes('play'), 'never starts by itself');
+  h.player.update(S({ near: true, visible: false })); h.player.update(S({ near: true, visible: true }));
+  assert.ok(!h.types().includes('play'), 'nor when it scrolls back on screen');
+  h.player.update({ intent: 'play' });
+  assert.equal(h.player.playing, true);
+  assert.deepEqual(h.sent.slice(-2).map((x) => x.m), [{ type: 'seek', t: 0 }, { type: 'play', loop: false }]);
+  h.player.update({ intent: 'pause' }); h.player.update({ intent: 'play' });
+  assert.deepEqual(h.sent.at(-1).m, { type: 'play', loop: false });
+  assert.notDeepEqual(h.sent.at(-2).m, { type: 'seek', t: 0 }, 'a later play resumes where it paused');
 });

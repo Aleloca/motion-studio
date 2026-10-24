@@ -1,7 +1,8 @@
-// The final cut's controls: play and pause, seek (with a mark at each scene), play from the start, sound, full screen. The
-// film plays once, silent, when it comes on screen (motion allowed); under reduced motion it waits on its poster frame for
-// Play. Play (or play from the start) turns the sound on, unless the viewer switched it off. A pause is the viewer's and
-// holds; off screen the film pauses and picks up again when it returns.
+// The final cut's controls: a big Play over the poster, then play and pause, seek (with a mark at each scene), play from
+// the start, sound, full screen. The film never starts by itself: it waits on its poster frame for the viewer's Play, and
+// the first Play starts it from 0:00 with the sound on (that click is the gesture that lets it speak). Later plays turn
+// the sound on unless the viewer switched it off. A pause is the viewer's and holds; off screen the film pauses and picks
+// up again when it returns.
 import { soundButton } from './sound.js';
 export const formatTime = (t) => {
   const s = Math.max(0, Math.floor(t));
@@ -22,7 +23,8 @@ export function finalCut(player, sound) {
 
   const paint = (p) => {
     const d = p.duration || 0;
-    const t = Math.min(p.time, d || p.time);
+    // Before its first play the film sits on its poster frame but has not started: the bar reads 0:00.
+    const t = p.manualStart && !p.started ? 0 : Math.min(p.time, d || p.time);
     fig.classList.toggle('is-playing', p.playing);
     play.setAttribute('aria-label', p.playing ? 'Pause' : 'Play');
     now.textContent = formatTime(t);
@@ -45,7 +47,16 @@ export function finalCut(player, sound) {
   };
   player.onChange(paint);
 
-  const withSound = () => { if (!sound.declined) sound.set(true); };
+  const withSound = () => { if (!player.started || !sound.declined) sound.set(true); };
+  const start = q('.final__start');
+  const paintStart = () => fig.classList.toggle('is-started', player.started);
+  player.onChange(paintStart);
+  start?.addEventListener('click', () => {
+    withSound();
+    player.update({ intent: 'play' });
+    paintStart();
+    play.focus();
+  });
   player.setMuted(!sound.on);
   sound.onChange((on) => player.setMuted(!on));
   soundButton(q('.player-bar__sound'), sound);

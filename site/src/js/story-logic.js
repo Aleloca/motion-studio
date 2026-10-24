@@ -30,16 +30,37 @@ export function framingAt(list, k) {
 /** The step on screen at a time of the story's timeline: step n runs from n - 1 to n (the last one holds). */
 export const stepAt = (t, count) => clamp(Math.floor(t) + 1, 1, count);
 
+/** Where a step's timeline segment ends its change (`ACT`) and starts typing the next request (`TYPE`). */
+export const PACE = { ACT: 0.75, TYPE: 0.8, TYPED: 0.97 };
+/** The share of a step's scroll for its change, then for the hold on its finished state; the rest types the next request. */
+export const SCROLL = { act: 0.45, hold: 0.4 };
+
 /**
- * What the composer shows at a time: in the second half of a step, the next step's request typed letter by letter; it
- * is sent (and the composer empties) when that step starts. Steps without a request (a click) leave it empty.
+ * The story's timeline time at a scroll position (in steps: step n is scrolled from n - 1 to n): the first 45% of a
+ * step's scroll plays its change (timeline 0-0.75 of the step), the next 40% holds its finished state (0.75-0.8, where
+ * nothing moves), the last 15% types the next request (0.8-1), sent as the next step starts. Past the last step it holds.
+ */
+export function scrollToTime(p, count) {
+  if (p <= 0) return 0;
+  if (p >= count) return p;
+  const n = Math.floor(p); const u = p - n;
+  if (n === count - 1 && u >= SCROLL.act) return n + PACE.ACT + ((u - SCROLL.act) / (1 - SCROLL.act)) * (1 - PACE.ACT);
+  if (u < SCROLL.act) return n + (u / SCROLL.act) * PACE.ACT;
+  if (u < SCROLL.act + SCROLL.hold) return n + PACE.ACT + ((u - SCROLL.act) / SCROLL.hold) * (PACE.TYPE - PACE.ACT);
+  return n + PACE.TYPE + ((u - SCROLL.act - SCROLL.hold) / (1 - SCROLL.act - SCROLL.hold)) * (1 - PACE.TYPE);
+}
+
+/**
+ * What the composer shows at a time: at the end of a step, once its finished state has held, the next step's request
+ * typed letter by letter; it is sent (and the composer empties) when that step starts. Steps without a request (a click)
+ * leave it empty.
  * @param {(string | null)[]} requests the request of each step, in order
  */
 export function typedAt(t, requests) {
   const seg = Math.floor(t);
   const req = requests[seg + 1];
   if (!req) return '';
-  const p = clamp((t - seg - 0.45) / 0.45, 0, 1);
+  const p = clamp((t - seg - PACE.TYPE) / (PACE.TYPED - PACE.TYPE), 0, 1);
   return req.slice(0, Math.round(p * req.length));
 }
 

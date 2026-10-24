@@ -117,7 +117,8 @@ test('the final cut: a composition player with controls, its poster, and the one
   const slots = [...html.matchAll(/<figure\b[^>]*\bdata-final-cut\b[^>]*>/g)];
   assert.equal(slots.length, 1);
   const tag = slots[0][0];
-  assert.ok(tag.includes('data-controls') && tag.includes('data-loop="false"'), tag);
+  assert.ok(tag.includes('data-controls') && tag.includes('data-loop="false"') && tag.includes('data-autoplay="false"'), tag);
+  assert.match(final, /<button class="final__start" type="button" aria-label="Play the launch film, with sound">/);
   const id = attr(tag, 'data-composition');
   assert.ok(existsSync(join(SITE, 'compositions', id, 'composition.json')), id);
   assert.match(final, /<img class="poster"[^>]*alt="[^"]+"/);

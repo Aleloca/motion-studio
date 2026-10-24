@@ -4,7 +4,7 @@
 // motion, no poster a near-blank frame, every link with its target or file. The story: with motion, each step comes on
 // screen at its scroll position, only its boards are mounted, and the canvas's players stop once it has scrolled away;
 // under reduced motion every step is a static block (its messages and its result's images loaded). The story's sound
-// button turns the voice-over on and off. The final cut's slot and controls exist. Then the guide (guide.html) at 360, 768 and 1440 px.
+// button turns the voice-over on and off. The final cut never starts by itself; its big Play starts it from 0:00 with sound. Then the guide (guide.html) at 360, 768 and 1440 px.
 // Usage: node site/scripts/check.mjs [--out <folder for screenshots>]
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -92,6 +92,7 @@ export async function check({ out } = {}) {
           }
         }
         problems.push(...await links(page));
+        problems.push(...await finalCutStart(page));
         if (!reduced && width === WIDTHS[0]) {
           problems.push(...await blankPosters(page));
           console.log(`poster luminance deviation: ${JSON.stringify(await page.eval('window.__posterDeviation'))}`);
@@ -203,6 +204,28 @@ async function liveStory(page) {
   await wait(page, 400);
   v = await voice();
   if (v.sound || v.line || !v.subsMuted) problems.push(`sound off: still ${JSON.stringify(v)}`);
+  return problems;
+}
+
+/**
+ * The final cut never starts by itself: scrolled onto it, it holds its poster with the big Play. A real click on that Play
+ * starts it from 0:00 with the sound on.
+ */
+async function finalCutStart(page) {
+  const problems = [];
+  await page.eval(`(() => { const f = document.querySelector('#final-cut'); scrollTo({ top: f.offsetTop, behavior: 'instant' }); })()`);
+  await wait(page, 5000);
+  const state = () => page.eval(`(() => { const p = window.__siteDebug.players.find((x) => x.figure.hasAttribute('data-final-cut'));
+    const b = document.querySelector('.final__start').getBoundingClientRect();
+    return { playing: p.playing, started: p.started, ready: p.ready, time: p.time, muted: p.muted, sound: window.__siteDebug.sound.on, at: [b.left + b.width / 2, b.top + b.height / 2], shown: b.width > 0 }; })()`);
+  let s = await state();
+  if (s.playing || s.started) problems.push(`the final cut started by itself (at ${s.time.toFixed(1)} s)`);
+  if (!s.shown) problems.push('the final cut has no big Play');
+  for (const type of ['mousePressed', 'mouseReleased']) await page.send('Input.dispatchMouseEvent', { type, x: s.at[0], y: s.at[1], button: 'left', clickCount: 1 });
+  await wait(page, 1500);
+  s = await state();
+  if (!s.playing || s.time > 3 || s.muted || !s.sound) problems.push(`after Play: ${JSON.stringify({ playing: s.playing, time: s.time, muted: s.muted, sound: s.sound })}, not playing from 0:00 with sound`);
+  await page.eval(`(() => { const p = window.__siteDebug.players.find((x) => x.figure.hasAttribute('data-final-cut')); p.update({ intent: 'pause' }); window.__siteDebug.sound.set(false); })()`);
   return problems;
 }
 

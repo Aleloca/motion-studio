@@ -5,7 +5,7 @@
 // players are driven here by step (only the boards of the step on screen play), never by their own observers. With the
 // sound on, each step says its voice-over line once it settles (the subtitles step lets its board speak, in sync with
 // the subtitles it draws).
-import { cameraFit, framingAt, lerp, clamp, stepAt, typedAt, parseSteps, inSteps } from './story-logic.js';
+import { cameraFit, framingAt, lerp, clamp, stepAt, typedAt, parseSteps, inSteps, scrollToTime } from './story-logic.js';
 import { soundButton } from './sound.js';
 
 export const STEPS = 11;
@@ -30,7 +30,7 @@ const LIVE = {
   9: ['c'], 10: ['identity'], 11: ['c'],
 };
 /** Board C's version label over time, with the agent's render turns before each new version. */
-const VERSIONS = [[0, 'v1'], [2.48, 'v2'], [3.93, 'v3'], [4.74, 'v4'], [8.58, 'v5']];
+const VERSIONS = [[0, 'v1'], [2.48, 'v2'], [3.65, 'v3'], [4.74, 'v4'], [8.58, 'v5']];
 const RENDERING = [[2.06, 2.48], [4.22, 4.74], [8.12, 8.58]];
 /** The subtitles step: its board speaks the line (the board's loop starts again at `SUBS_FROM`, just before the voice). */
 const SUBS_STEP = 9;
@@ -112,7 +112,7 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   const furniture = [$('.toolbar'), $('.caption')];
   gsap.set(furniture, { autoAlpha: 0, y: 12 });
   tl.to(intro, { autoAlpha: 0, y: -40, duration: 0.45, ease: 'power2.in' }, 0.1)
-    .to(cam, { k: 1, duration: 0.7 }, 0.12)
+    .to(cam, { k: 1, duration: 0.6 }, 0.12)
     .to(furniture, { autoAlpha: 1, y: 0, duration: 0.3, ease: 'power2.out' }, 0.5);
   // 2. Choose: C is chosen (the cursor clicks it); A and B dim.
   tl.to(cam, { k: 2, duration: 0.3 }, 1)
@@ -125,9 +125,9 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   tl.to(cam, { k: 4, duration: 0.4 }, 3)
     .fromTo($('.inspector'), { autoAlpha: 0, x: 40 }, { autoAlpha: 1, x: 0, duration: 0.3, ease: 'expo.out' }, 3.12)
     .fromTo($('.timeline'), { autoAlpha: 0, y: 40 }, { autoAlpha: 1, y: 0, duration: 0.3, ease: 'expo.out' }, 3.18)
-    .to($('.edit'), { autoAlpha: 1, duration: 0.08 }, 3.34)
-    .to(v3, { clipPath: 'inset(0% 0% 0% 0%)', duration: 0.07, ease: 'power3.inOut' }, 3.86)
-    .to($('.edit'), { autoAlpha: 0, duration: 0.06 }, 3.9)
+    .to($('.edit'), { autoAlpha: 1, duration: 0.08 }, 3.2)
+    .to(v3, { clipPath: 'inset(0% 0% 0% 0%)', duration: 0.07, ease: 'power3.inOut' }, 3.58)
+    .to($('.edit'), { autoAlpha: 0, duration: 0.06 }, 3.62)
     .to([$('.inspector'), $('.timeline')], { autoAlpha: 0, duration: 0.18 }, 4);
   // 5. Brand: the brand kit read from the site lands beside C; v4 wears it.
   tl.to(cam, { k: 5, duration: 0.4 }, 4)
@@ -140,12 +140,12 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   const genBoards = [board('genimg'), board('genvoice')];
   gsap.set([paid, genDone, ...genBoards], hidden);
   tl.to(cam, { k: 6, duration: 0.4 }, 5)
-    .fromTo(gen, { autoAlpha: 0, y: 30 }, { autoAlpha: 1, y: 0, duration: 0.3, ease: 'expo.out' }, 5.12)
-    .fromTo(paid, { autoAlpha: 0, y: 16, scale: 0.96 }, { autoAlpha: 1, y: 0, scale: 1, duration: 0.14, ease: 'back.out(1.6)' }, 5.36)
-    .to(paid, { autoAlpha: 0, duration: 0.08 }, 5.62)
-    .to(genDone, { autoAlpha: 1, duration: 0.08 }, 5.66)
-    .fromTo(board('genimg'), { autoAlpha: 0, x: -260, scale: 0.4 }, { autoAlpha: 1, x: 0, scale: 1, duration: 0.3, ease: 'expo.out' }, 5.64)
-    .fromTo(board('genvoice'), { autoAlpha: 0, y: 30 }, { autoAlpha: 1, y: 0, duration: 0.24, ease: 'expo.out' }, 5.74)
+    .fromTo(gen, { autoAlpha: 0, y: 30 }, { autoAlpha: 1, y: 0, duration: 0.24, ease: 'expo.out' }, 5.08)
+    .fromTo(paid, { autoAlpha: 0, y: 16, scale: 0.96 }, { autoAlpha: 1, y: 0, scale: 1, duration: 0.1, ease: 'back.out(1.6)' }, 5.22)
+    .to(paid, { autoAlpha: 0, duration: 0.06 }, 5.42)
+    .to(genDone, { autoAlpha: 1, duration: 0.06 }, 5.46)
+    .fromTo(board('genimg'), { autoAlpha: 0, x: -260, scale: 0.4 }, { autoAlpha: 1, x: 0, scale: 1, duration: 0.22, ease: 'expo.out' }, 5.44)
+    .fromTo(board('genvoice'), { autoAlpha: 0, y: 30 }, { autoAlpha: 1, y: 0, duration: 0.18, ease: 'expo.out' }, 5.52)
     .to([gen, ...genBoards], { autoAlpha: 0, duration: 0.18 }, 6);
   // 7. Formats: the 16:9 multiplies into a 9:16 and a 1:1.
   tl.to(cam, { k: 7, duration: 0.4 }, 6);
@@ -163,7 +163,7 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   const idBoards = ['identity', 'appicon', 'favicon', 'social'].map(board);
   gsap.set(idBoards, { autoAlpha: 0, y: 60, scale: 0.9 });
   tl.to(cam, { k: 10, duration: 0.42 }, 9)
-    .to(idBoards, { autoAlpha: 1, y: 0, scale: 1, duration: 0.35, stagger: 0.07, ease: 'expo.out' }, 9.2);
+    .to(idBoards, { autoAlpha: 1, y: 0, scale: 1, duration: 0.3, stagger: 0.05, ease: 'expo.out' }, 9.12);
   // 11. Export: the dialog opens over the canvas, every file fills, then the whole canvas shows.
   tl.to(exportBox, { autoAlpha: 1, scale: 1, duration: 0.1, ease: 'expo.out' }, 10.24)
     .to(exportBox, { autoAlpha: 0, scale: 0.98, duration: 0.1, ease: 'power2.in' }, 10.82)
@@ -197,8 +197,8 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   const cursorPath = [
     // [from, to, target at the end, pressed]
     [1.02, 1.26, () => center($('.board__choose', cBoard)), false], [1.26, 1.4, () => center($('.board__choose', cBoard)), true], [1.4, 1.6, () => center($('.board__choose', cBoard)), false],
-    [3.3, 3.42, () => center(editBox), false], [3.42, 3.7, () => center(editBox), true], [3.7, 3.82, () => center(save), false], [3.82, 3.9, () => center(save), true], [3.9, 3.98, () => center(save), false],
-    [5.36, 5.5, () => center(paidGo), false], [5.5, 5.58, () => center(paidGo), true], [5.58, 5.66, () => center(paidGo), false],
+    [3.18, 3.26, () => center(editBox), false], [3.26, 3.46, () => center(editBox), true], [3.46, 3.54, () => center(save), false], [3.54, 3.6, () => center(save), true], [3.6, 3.66, () => center(save), false],
+    [5.24, 5.34, () => center(paidGo), false], [5.34, 5.4, () => center(paidGo), true], [5.4, 5.46, () => center(paidGo), false],
     [10.02, 10.16, () => center(exportBtn), false], [10.16, 10.24, () => center(exportBtn), true], [10.24, 10.32, () => center(exportBtn), false],
   ];
   const renderCursor = (t) => {
@@ -232,19 +232,19 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
     cVer.textContent = rendering ? 'Rendering…' : ver;
     cVer.classList.toggle('is-rendering', rendering);
     cVer.classList.toggle('is-new', !rendering && VERSIONS.some(([at]) => at > 0 && t >= at && t < at + 0.3));
-    // Step 4: the drag (3.42-3.7), the colour (from 3.72), Save as v3 pressed (3.82-3.9).
-    const drag = easeInOut(clamp((t - 3.42) / 0.28, 0, 1));
+    // Step 4: the drag (3.26-3.46), the colour (from 3.48), Save as v3 pressed (3.54-3.6).
+    const drag = easeInOut(clamp((t - 3.26) / 0.2, 0, 1));
     editBox.style.cssText = boxCss(BOX2.map((v, i) => lerp(v, BOX3[i], drag)));
     editGhost.style.opacity = drag > 0 ? '1' : '0';
     for (const dd of fields) dd.textContent = String(Math.round(lerp(Number(dd.dataset.from), Number(dd.dataset.to), drag)));
-    const yellow = t >= 3.72;
+    const yellow = t >= 3.48;
     swatch.style.setProperty('--swatch', yellow ? '#FACC15' : '#2DD4BF');
     hex.textContent = yellow ? '#FACC15' : '#2DD4BF';
-    save.classList.toggle('is-pressed', t >= 3.82 && t < 3.92);
-    // Step 6: the paid call's Generate pressed (5.5-5.58), then the voice-over tab.
-    paidGo.classList.toggle('is-pressed', t >= 5.5 && t < 5.6);
-    for (const k of kinds) k.classList.toggle('is-on', (k.dataset.kind === 'voice') === (t >= 5.7));
-    for (const el of genTexts) el.textContent = t >= 5.7 ? el.dataset.voiceText : el.dataset.imageText;
+    save.classList.toggle('is-pressed', t >= 3.54 && t < 3.62);
+    // Step 6: the paid call's Generate pressed (5.34-5.42), then the voice-over tab.
+    paidGo.classList.toggle('is-pressed', t >= 5.34 && t < 5.42);
+    for (const k of kinds) k.classList.toggle('is-on', (k.dataset.kind === 'voice') === (t >= 5.56));
+    for (const el of genTexts) el.textContent = t >= 5.56 ? el.dataset.voiceText : el.dataset.imageText;
     // Step 11: Export pressed, each row fills, then done.
     exportBtn.classList.toggle('is-pressed', t >= 10.16 && t < 10.3);
     exportRows.forEach((row, i) => {
@@ -352,9 +352,13 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
   /* ---------------------------------------------------------------- scroll */
   measure();
   render();
-  ScrollTrigger.create({
-    trigger: story, start: 'top top', end: 'bottom bottom', scrub: 0.5,
-    animation: tl,
+  // The scroll drives a position in steps (smoothed like a scrub); each step's stretch of scroll is paced by
+  // `scrollToTime`: the step's change, a long hold on its finished state, then the next request typed and sent.
+  const pos = { p: 0 };
+  gsap.to(pos, {
+    p: STEPS + HOLD, ease: 'none',
+    onUpdate: () => tl.time(scrollToTime(pos.p, STEPS)),
+    scrollTrigger: { trigger: story, start: 'top top', end: 'bottom bottom', scrub: 0.5 },
   });
   ScrollTrigger.create({
     trigger: story, start: 'top bottom', end: 'bottom top',

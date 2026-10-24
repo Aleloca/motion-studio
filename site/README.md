@@ -31,9 +31,11 @@ video in eleven steps. Each `.step` of the page holds its exchange (`.msg--you`,
 `.msg--paid` for a paid call's approval card) and the posters of its result: that is the page without JS and under reduced
 motion. With motion, `story.js` builds the chat panel from
 the steps and drives the canvas (`[data-stage]`): a world of boards and panels placed with `--x/--y/--w/--h` (and
-`--px/--py/--pw/--ph` on narrow screens), each shown in its `data-steps`; one GSAP timeline scrubbed by the scroll moves
-the camera and brings each change in place, and the boards' players are driven by step (only the step's boards play). The
-final cut (`figure[data-final-cut]`) is a composition player with controls (`js/final-cut.js`).
+`--px/--py/--pw/--ph` on narrow screens), each shown in its `data-steps`; one GSAP timeline, driven by the scroll (smoothed like a scrub) through `scrollToTime`, moves
+the camera and brings each change in place (each step's scroll: 45% its change, 40% a hold on the finished state, 15% the
+next request typed and sent), and the boards' players are driven by step (only the step's boards play). The
+final cut (`figure[data-final-cut]`, `data-autoplay="false"`) is a composition player with controls (`js/final-cut.js`): it never
+starts by itself; its big Play starts it from 0:00 with the sound on.
 
 Sound (`js/sound.js`) is off until the viewer asks for it: one switch for the page, turned on by the story's "Sound on"
 button or by Play on the final cut (unless the viewer switched it off). With the sound on, each step says its voice-over
