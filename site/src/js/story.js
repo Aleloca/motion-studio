@@ -5,7 +5,7 @@
 // players are driven here by step (only the boards of the step on screen play), never by their own observers. With the
 // sound on, each step says its voice-over line once it settles (the subtitles step lets its board speak, in sync with
 // the subtitles it draws).
-import { cameraFit, framingAt, lerp, clamp, stepAt, typedAt, parseSteps, inSteps, scrollToTime } from './story-logic.js';
+import { cameraFit, framingAt, lerp, clamp, stepAt, typedAt, parseSteps, inSteps, scrollToTime, sheetCover } from './story-logic.js';
 import { soundButton } from './sound.js';
 
 export const STEPS = 11;
@@ -62,8 +62,8 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
     size = {
       w: r.width, h: r.height, narrow,
       introH: intro.offsetHeight,
-      // The bottom sheet covers the canvas: frame above it.
-      sheet: narrow ? Math.max(0, r.bottom - chat.el.getBoundingClientRect().top) : 0,
+      // The bottom sheet covers the canvas: frame above it, as tall as it is now (it grows with the step's exchange).
+      sheet: narrow ? sheetCover({ stageBottom: r.bottom, sheetTop: chat.el.getBoundingClientRect().top, open: chat.el.classList.contains('is-open'), previous: size.sheet }) : 0,
     };
   };
   let scale = 1;
@@ -404,7 +404,10 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
     onToggle: (self) => { onScreen = self.isActive; syncPlayers(); clearTimeout(voiceTimer); speak(); },
   });
   const onResize = () => { measure(); render(); };
-  new ResizeObserver(onResize).observe(stage);
+  const resized = new ResizeObserver(onResize);
+  resized.observe(stage);
+  // On a phone each step's exchange changes the sheet's height: the camera frames above it again.
+  resized.observe(chat.el);
   narrowQuery.addEventListener('change', () => { onResize(); syncPlayers(); });
   stage.classList.add('is-live');
   return { timeline: tl, get step() { return step; }, get speaking() { return line ? { src: line.src, paused: line.paused } : null; } };

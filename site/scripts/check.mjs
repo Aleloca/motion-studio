@@ -207,6 +207,13 @@ async function liveStory(page) {
   // With the sound off, a click on the Generate step's music tile still plays it (the click is the viewer's gesture).
   await scrollToStep(6);
   await wait(page, 1500);
+  // On a phone the bottom sheet never covers the Generate step's tiles (the camera frames above it, as tall as it is).
+  const covered = await page.eval(`(() => {
+    if (!matchMedia('(max-width: 959px)').matches) return [];
+    const top = document.querySelector('.chat').getBoundingClientRect().top;
+    return [...document.querySelectorAll('[data-board^="gen"] .board__frame')].filter((f) => f.getBoundingClientRect().bottom > top + 1).map((f) => f.closest('[data-board]').dataset.board);
+  })()`);
+  if (covered.length) problems.push(`step 6: the bottom sheet covers ${covered.join(', ')}`);
   const at = await page.eval(`(() => { const r = document.querySelector('[data-board="genmusic"] [data-play]').getBoundingClientRect(); return r.width ? [r.left + r.width / 2, r.top + r.height / 2] : null; })()`);
   if (!at) problems.push('step 6: the music tile\'s play button is not on screen');
   else {

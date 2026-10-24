@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { cameraFit, framingAt, stepAt, typedAt, parseSteps, inSteps, scrollToTime, PACE } from '../src/js/story-logic.js';
+import { cameraFit, framingAt, stepAt, typedAt, parseSteps, inSteps, scrollToTime, sheetCover, PACE } from '../src/js/story-logic.js';
 import { formatTime } from '../src/js/final-cut.js';
 import { SIGNAL, TEXT, titleSize, BRAND } from '../scripts/hero-gen/story.mjs';
 import { SITE } from './helpers.mjs';
@@ -15,6 +15,13 @@ test('the camera fits a world rectangle in the canvas minus its insets, centred'
   assert.equal(f.ty, 100 + 50 - 125);
   const g = cameraFit([0, 0, 100, 100], { w: 300, h: 200 }, { top: 0, right: 0, bottom: 0, left: 0 });
   assert.deepEqual(g, { s: 2, tx: 50, ty: 0 });
+});
+
+test('on a phone the camera frames above the bottom sheet as tall as it is now; an opened answer covers the canvas without moving it', () => {
+  // The sheet grows with each step's exchange (step 6's is taller than step 1's): the cover follows its current top.
+  assert.equal(sheetCover({ stageBottom: 844, sheetTop: 690, open: false, previous: 120 }), 154);
+  assert.equal(sheetCover({ stageBottom: 844, sheetTop: 900, open: false, previous: 120 }), 0);
+  assert.equal(sheetCover({ stageBottom: 844, sheetTop: 400, open: true, previous: 154 }), 154);
 });
 
 test('between two framings the camera moves in proportion, and holds past the ends', () => {

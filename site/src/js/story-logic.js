@@ -19,6 +19,13 @@ export function cameraFit([x, y, w, h], view, inset) {
   return { s, tx: inset.left + (aw - w * s) / 2 - x * s, ty: inset.top + (ah - h * s) / 2 - y * s };
 }
 
+/**
+ * How much of the canvas the phone's bottom sheet covers, in pixels: it grows with the step's exchange, so it is read again
+ * whenever the sheet changes size. An opened answer covers the canvas for a moment: the camera keeps its framing.
+ * @param {{ stageBottom: number, sheetTop: number, open: boolean, previous: number }} s
+ */
+export const sheetCover = ({ stageBottom, sheetTop, open, previous }) => (open ? previous : Math.max(0, stageBottom - sheetTop));
+
 /** The framing at a fractional index of a list of framings: between two framings, each value in proportion. */
 export function framingAt(list, k) {
   const i = clamp(Math.floor(k), 0, list.length - 1);
