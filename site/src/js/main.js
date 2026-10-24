@@ -1,22 +1,32 @@
-// Boot: live compositions everywhere; the page choreography only when motion is allowed. Without JS, or with reduced
-// motion, the page is already in its final, readable state (the CSS default).
+// Boot: live compositions everywhere; the story's canvas only when motion is allowed. Without JS, or with reduced motion,
+// every step is already a static block (the CSS default) and the final cut waits on its poster for Play.
 import { mountPlayers } from './player.js';
-import { startMotion } from './motion.js';
+import { startStory } from './story.js';
+import { finalCut } from './final-cut.js';
 
 const root = document.documentElement;
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const debug = new URLSearchParams(location.search).has('debug');
 const commands = [];
-if (debug) window.__siteDebug = { commands };
+const live = !reducedMotion && Boolean(window.gsap && window.ScrollTrigger);
+const inStage = (figure) => Boolean(figure.closest('[data-stage]'));
 
-const players = mountPlayers(document, debug ? { log: (m) => commands.push(m) } : {});
+const players = mountPlayers(document, {
+  ...(debug ? { log: (m) => commands.push(m) } : {}),
+  // The canvas's boards are driven by the story, step by step; without it they are never shown (nor mounted).
+  manual: inStage,
+});
+for (const p of players) if (p.figure.hasAttribute('data-controls')) finalCut(p);
 
-if (!reducedMotion && window.gsap && window.ScrollTrigger && window.SplitText) {
+if (live) {
   root.classList.add('js-motion');
+  window.gsap.registerPlugin(window.ScrollTrigger);
   document.fonts.ready.then(() => {
-    startMotion({ reducedMotion, players });
+    const story = startStory({ gsap: window.gsap, ScrollTrigger: window.ScrollTrigger, players });
+    if (debug) window.__siteDebug.story = story;
     root.classList.add('motion-ready');
   });
 } else {
   root.classList.remove('js-motion');
 }
+if (debug) window.__siteDebug = { commands, players };

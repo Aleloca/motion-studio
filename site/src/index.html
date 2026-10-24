@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Motion Studio: motion graphics from a brief, with Claude Code</title>
-<meta name="description" content="A local, open-source app on top of Claude Code that turns a brief into animated videos and images for every channel.">
+<meta name="description" content="A local, open-source app on top of Claude Code that turns a brief into animated videos and images for every channel. Watch it make its own launch video.">
 <link rel="icon" href="assets/favicon/favicon.ico" sizes="48x48">
 <link rel="icon" href="assets/favicon/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="assets/favicon/apple-touch-icon.png">
@@ -22,8 +22,10 @@
 <link rel="preload" href="assets/fonts/InstrumentSans.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="css/tokens.css">
 <link rel="stylesheet" href="css/site.css">
+<link rel="stylesheet" href="css/story.css">
 <script>
-  // Motion starts hidden only when it is allowed, and is undone if the page script never takes over.
+  // The live story starts hidden only when motion is allowed, and is undone if the page script never takes over: then
+  // every step stays a static block (its messages and the posters of its boards).
   if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
     document.documentElement.classList.add('js-motion');
     setTimeout(function () { if (!document.documentElement.classList.contains('motion-ready')) document.documentElement.classList.remove('js-motion'); }, 4000);
@@ -31,328 +33,420 @@
 </script>
 <script defer src="vendor/gsap/gsap.min.js"></script>
 <script defer src="vendor/gsap/ScrollTrigger.min.js"></script>
-<script defer src="vendor/gsap/SplitText.min.js"></script>
 <script type="module" src="js/main.js"></script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to content</a>
 
-<header class="site-header">
-  <div class="wrap site-header__inner">
-    <a class="site-header__logo" href="./" aria-label="Motion Studio, home"><img src="assets/logo-horizontal-light.svg" alt="Motion Studio" width="180" height="34"></a>
-    <nav aria-label="Main">
-      <ul class="site-nav">
-        <li><a href="#features">Features</a></li>
-        <li><a href="#showcase">Showcase</a></li>
-        <li><a href="#install">Install</a></li>
-        <li class="site-nav__keep"><a href="guide.html">Guide</a></li>
-        <li><a class="btn btn--small" href="https://github.com/Aleloca/motion-studio">GitHub</a></li>
-      </ul>
+<svg class="sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3.2l2.7 5.6 6.1.8-4.5 4.2 1.1 6.1L12 17l-5.4 2.9 1.1-6.1-4.5-4.2 6.1-.8z"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 19.5h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.6v12.8a1 1 0 0 0 1.5.86l10.6-6.4a1 1 0 0 0 0-1.72L9.5 4.74A1 1 0 0 0 8 5.6z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6.5" y="5" width="4" height="14" rx="1.2"/><rect x="13.5" y="5" width="4" height="14" rx="1.2"/></symbol>
+  <symbol id="i-replay" viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4.5 4.5v4h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M4.5 9V4.5H9M15 4.5h4.5V9M19.5 15v4.5H15M9 19.5H4.5V15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 11.5L20 4l-6.5 16-2.3-6.2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+  <symbol id="i-github" viewBox="0 0 24 24"><path d="M12 2.5a9.5 9.5 0 0 0-3 18.5c.5.1.7-.2.7-.5v-1.7c-2.7.6-3.2-1.2-3.2-1.2-.4-1.1-1.1-1.4-1.1-1.4-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.3-1.1.6-1.3-2.1-.2-4.4-1.1-4.4-4.7 0-1 .4-1.9 1-2.6-.1-.2-.4-1.2.1-2.5 0 0 .8-.3 2.6 1a9 9 0 0 1 4.8 0c1.8-1.3 2.6-1 2.6-1 .5 1.3.2 2.3.1 2.5.6.7 1 1.6 1 2.6 0 3.7-2.3 4.5-4.4 4.7.3.3.6.9.6 1.8v2.7c0 .3.2.6.7.5A9.5 9.5 0 0 0 12 2.5z"/></symbol>
+  <symbol id="i-cursor" viewBox="0 0 24 24"><path d="M5 3.5l13.5 7.6-5.9 1.4 3.4 6.4-2.6 1.4-3.4-6.4-4.2 4.3z" stroke="#0F0F0F" stroke-width="1.4" stroke-linejoin="round"/></symbol>
+</svg>
+
+<header class="topbar">
+  <div class="topbar__inner">
+    <a class="topbar__brand" href="./" aria-label="Motion Studio, home">
+      <img src="assets/favicon/favicon.svg" alt="" width="28" height="28">
+      <span class="topbar__name">Motion Studio</span>
+    </a>
+    <p class="topbar__crumb" aria-hidden="true"><span class="topbar__slash">/</span> Launch video <span class="pill pill--ok">Ready</span></p>
+    <nav class="topbar__nav" aria-label="Main">
+      <a class="topbar__link" href="guide.html">Guide</a>
+      <a class="topbar__link" href="https://github.com/Aleloca/motion-studio">GitHub</a>
+      <a class="btn btn--small topbar__download" href="https://github.com/Aleloca/motion-studio/releases/latest"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg><span>Download<span class="topbar__for"> for macOS</span></span></a>
     </nav>
   </div>
 </header>
 
 <main id="main">
 
-  <section class="hero" id="hero" aria-labelledby="hero-title">
-    <div class="wrap hero__top">
-      <p class="eyebrow" data-category="formats">{ new creative }</p>
-
-      <div class="brief" aria-label="Example brief">
-        <p class="brief__label">Brief</p>
-        <p class="brief__text"><span class="brief__typed">Launch film for new earbuds, dark and precise</span><span class="brief__caret" aria-hidden="true"></span></p>
-        <ul class="brief__chips" aria-label="Formats">
-          <li>Instagram Reel 9:16</li>
-          <li>Instagram Post 1:1</li>
-          <li>YouTube 16:9</li>
-        </ul>
-        <span class="brief__generate" aria-hidden="true">Generate</span>
-      </div>
-
-      <svg class="frames" viewBox="-10 -10 360 320" aria-hidden="true" focusable="false">
-        <rect class="frames__draft" x="0" y="0" width="200" height="200" rx="44"/>
-        <rect class="frames__comp" x="70" y="50" width="200" height="200" rx="44" pathLength="1"/>
-        <rect class="frames__video" x="140" y="100" width="200" height="200" rx="44"/>
-        <path class="frames__play" d="M207.62 164Q207.62 154 216.31 158.94L279.88 195.06Q288.58 200 279.88 204.94L216.31 241.06Q207.62 246 207.62 236Z"/>
-      </svg>
-
-      <div class="hero__formats">
-        <div class="hero__set" data-brief="Launch film for new earbuds, dark and precise" data-chips="Instagram Reel 9:16|Instagram Post 1:1|YouTube 16:9">
-          <figure class="comp comp--9x16" data-composition="kova-9x16" data-poster-time="4.4">
-            <div class="comp-stage"><img class="poster" src="compositions/kova-9x16/poster.webp" alt="KOVA Air earbuds rising in cyan light under the line “Silence, engineered.”, in a 9:16 Instagram Reel." width="1080" height="1920"></div>
-            <figcaption>Reel 9:16</figcaption>
-          </figure>
-          <figure class="comp comp--1x1" data-composition="kova-1x1" data-poster-time="4.4">
-            <div class="comp-stage"><img class="poster" src="compositions/kova-1x1/poster.webp" alt="The KOVA Air earbuds launch recomposed for a 1:1 Instagram post." width="1080" height="1080"></div>
-            <figcaption>Post 1:1</figcaption>
-          </figure>
-          <figure class="comp comp--16x9" data-composition="kova-16x9" data-poster-time="4.4">
-            <div class="comp-stage"><img class="poster" src="compositions/kova-16x9/poster.webp" alt="The KOVA Air earbuds launch recomposed for a 16:9 YouTube video." width="1920" height="1080"></div>
-            <figcaption>YouTube 16:9</figcaption>
-          </figure>
+  <section class="story" id="story" aria-labelledby="story-title">
+    <div class="story__pin">
+      <div class="story__canvas">
+        <div class="intro">
+          <h1 class="intro__title" id="story-title">This page is Motion Studio. <span class="intro__accent">Watch it work.</span></h1>
+          <p class="intro__lede">A local, open-source app on top of Claude Code: a brief becomes real compositions for every channel, and you change them in chat or by hand. Scroll, and it makes its own launch video.</p>
+          <div class="intro__actions">
+            <a class="btn btn--primary" href="https://github.com/Aleloca/motion-studio/releases/latest"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Download for macOS</a>
+            <a class="btn" href="#final-cut">Watch the final cut <span class="arrow" aria-hidden="true">↓</span></a>
+          </div>
+          <p class="intro__more">Windows, Linux and the sources: <a href="#install">Get started</a>.</p>
         </div>
-        <div class="hero__set" data-brief="Festival line-up drop on the beat, loud colours" data-chips="Instagram Reel 9:16|Instagram Post 4:5|YouTube 16:9" hidden>
-          <figure class="comp comp--9x16" data-composition="tidefall-9x16" data-poster-time="3.8">
-            <div class="comp-stage"><img class="poster" src="compositions/tidefall-9x16/poster.webp" alt="The TIDEFALL festival title over a turning sun and rolling waves, in a 9:16 Instagram Reel." width="1080" height="1920" loading="lazy"></div>
-            <figcaption>Reel 9:16</figcaption>
-          </figure>
-          <figure class="comp comp--4x5" data-composition="tidefall-4x5" data-poster-time="3.8">
-            <div class="comp-stage"><img class="poster" src="compositions/tidefall-4x5/poster.webp" alt="The TIDEFALL festival poster recomposed for a 4:5 Instagram post." width="1080" height="1350" loading="lazy"></div>
-            <figcaption>Post 4:5</figcaption>
-          </figure>
-          <figure class="comp comp--16x9" data-composition="tidefall-16x9" data-poster-time="3.8">
-            <div class="comp-stage"><img class="poster" src="compositions/tidefall-16x9/poster.webp" alt="The TIDEFALL festival poster recomposed for a 16:9 YouTube video." width="1920" height="1080" loading="lazy"></div>
-            <figcaption>YouTube 16:9</figcaption>
-          </figure>
-        </div>
-        <div class="hero__set" data-brief="A savings app's year in money, calm, real charts" data-chips="Instagram Reel 9:16|Instagram Post 1:1|YouTube 16:9" hidden>
-          <figure class="comp comp--9x16" data-composition="fernwise-9x16" data-poster-time="8.6">
-            <div class="comp-stage"><img class="poster" src="compositions/fernwise-9x16/poster.webp" alt="A savings curve drawn month by month up to $12,480 saved, for the Fernwise app, in a 9:16 Instagram Reel." width="1080" height="1920" loading="lazy"></div>
-            <figcaption>Reel 9:16</figcaption>
-          </figure>
-          <figure class="comp comp--1x1" data-composition="fernwise-1x1" data-poster-time="8.6">
-            <div class="comp-stage"><img class="poster" src="compositions/fernwise-1x1/poster.webp" alt="The Fernwise year-in-money story recomposed for a 1:1 Instagram post." width="1080" height="1080" loading="lazy"></div>
-            <figcaption>Post 1:1</figcaption>
-          </figure>
-          <figure class="comp comp--16x9" data-composition="fernwise-16x9" data-poster-time="8.6">
-            <div class="comp-stage"><img class="poster" src="compositions/fernwise-16x9/poster.webp" alt="The Fernwise year-in-money story recomposed for a 16:9 YouTube video." width="1920" height="1080" loading="lazy"></div>
-            <figcaption>YouTube 16:9</figcaption>
-          </figure>
+
+        <!-- The live canvas: shown only when motion is allowed (story.js drives it). Every board plays a real composition. -->
+        <div class="stage" data-stage aria-hidden="true">
+          <div class="world">
+
+            <div class="board" data-board="a" data-steps="1-2" style="--x:0;--y:0;--w:480;--h:270">
+              <p class="board__label"><span class="board__name">A · Night launch</span><span class="board__ver">v1</span></p>
+              <div class="board__frame">
+                <figure class="comp comp--16x9" data-composition="story-night" data-poster-time="4.6" data-loop-from="2.4">
+                  <div class="comp-stage"><img class="poster" src="compositions/story-night/poster.webp" alt="Variant A, Night launch: the launch title in light violet type over a starfield." width="1920" height="1080"></div>
+                </figure>
+              </div>
+            </div>
+
+            <div class="board" data-board="b" data-steps="1-2" style="--x:540;--y:0;--w:480;--h:270">
+              <p class="board__label"><span class="board__name">B · Paper</span><span class="board__ver">v1</span></p>
+              <div class="board__frame">
+                <figure class="comp comp--16x9" data-composition="story-paper" data-poster-time="4.6" data-loop-from="2.4">
+                  <div class="comp-stage"><img class="poster" src="compositions/story-paper/poster.webp" alt="Variant B, Paper: the launch title in ink and blue on warm paper." width="1920" height="1080"></div>
+                </figure>
+              </div>
+            </div>
+
+            <div class="board board--main" data-board="c" data-steps="1-10" style="--x:1080;--y:0;--w:480;--h:270">
+              <p class="board__label"><span class="board__name">C · Signal</span><span class="board__ver" data-versions="1:v1 3:v2 4:v3 5:v4 8:v5">v1</span><span class="board__choose"><svg class="i" aria-hidden="true"><use href="#i-star"/></svg><span class="board__choose-text">Choose</span></span></p>
+              <div class="board__frame">
+                <figure class="comp comp--16x9" data-composition="story-signal-v1" data-poster-time="4.6" data-loop-from="2.4" data-steps="1-2">
+                  <div class="comp-stage"><img class="poster" src="compositions/story-signal-v1/poster.webp" alt="Variant C, Signal: the launch title in teal monospace over a navy grid." width="1920" height="1080"></div>
+                </figure>
+                <figure class="comp comp--16x9" data-composition="story-signal-v2" data-poster-time="4.6" data-loop-from="2.4" data-steps="3-4" data-still="4">
+                  <div class="comp-stage"><img class="poster" src="compositions/story-signal-v2/poster.webp" alt="Signal v2: the title 40% larger over a teal flash." width="1920" height="1080" loading="lazy"></div>
+                </figure>
+                <figure class="comp comp--16x9" data-composition="story-signal-v3" data-poster-time="4.6" data-loop-from="2.4" data-steps="4">
+                  <div class="comp-stage"><img class="poster" src="compositions/story-signal-v3/poster.webp" alt="Signal v3: the title moved lower, resized and recoloured yellow by hand." width="1920" height="1080" loading="lazy"></div>
+                </figure>
+                <figure class="comp comp--16x9" data-composition="story-brand-16x9" data-poster-time="4.6" data-loop-from="2.4" data-steps="5-7">
+                  <div class="comp-stage"><img class="poster" src="compositions/story-brand-16x9/poster.webp" alt="v4 in the Motion Studio brand: cream and orange title on the dark dot grid." width="1920" height="1080" loading="lazy"></div>
+                </figure>
+                <figure class="comp comp--16x9" data-composition="story-subs" data-poster-time="4.6" data-loop-from="2.4" data-steps="8-10">
+                  <div class="comp-stage"><img class="poster" src="compositions/story-subs/poster.webp" alt="v5: the branded title with subtitles, each word lit as it is spoken." width="1920" height="1080" loading="lazy"></div>
+                </figure>
+                <div class="edit" data-steps="4">
+                  <span class="edit__ghost"></span>
+                  <span class="edit__box"><i></i><i></i><i></i><i></i></span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Step 4: the editor around the board -->
+            <div class="panel inspector" data-steps="4" style="--x:1600;--y:0;--w:250;--h:270;--px:1080;--py:320">
+              <p class="panel__head"><span>Inspector</span><span class="panel__sub">Text · Title</span></p>
+              <dl class="inspector__fields">
+                <div><dt>X</dt><dd data-from="160" data-to="120">160</dd></div>
+                <div><dt>Y</dt><dd data-from="300" data-to="470">300</dd></div>
+                <div><dt>Size</dt><dd data-from="168" data-to="150">168</dd></div>
+                <div><dt>Colour</dt><dd><span class="swatch"></span><span class="inspector__hex">#2DD4BF</span></dd></div>
+              </dl>
+              <span class="inspector__save">Save as v3</span>
+            </div>
+            <div class="panel timeline" data-steps="4" style="--x:1080;--y:300;--w:770;--h:150;--px:1080;--py:630;--pw:480">
+              <div class="timeline__scenes"><span style="--a:0;--b:30">Brief</span><span style="--a:30;--b:75">Title</span><span style="--a:75;--b:100">End card</span></div>
+              <div class="timeline__track"><span class="timeline__clip timeline__clip--sel" style="--a:31;--b:74">Title</span></div>
+              <div class="timeline__track"><span class="timeline__clip" style="--a:3;--b:30">Brief</span><span class="timeline__clip" style="--a:76;--b:99">Name</span></div>
+              <div class="timeline__track"><span class="timeline__clip timeline__clip--fx" style="--a:0;--b:100">Grid · Rings</span></div>
+              <span class="timeline__head" style="--a:57.5"></span>
+            </div>
+
+            <!-- Step 5: the brand kit read from a website -->
+            <div class="panel brandkit" data-steps="5" style="--x:560;--y:0;--w:480;--h:270;--px:1080;--py:-330">
+              <p class="panel__head"><span>Brand</span><span class="panel__sub">from aleloca.github.io/motion-studio</span></p>
+              <ul class="brandkit__colors">
+                <li style="--c:#0F0F0F"><span>Stage</span><code>0F0F0F</code></li>
+                <li style="--c:#FF5A1F"><span>Orange</span><code>FF5A1F</code></li>
+                <li style="--c:#F5F1EC"><span>Cream</span><code>F5F1EC</code></li>
+              </ul>
+              <div class="brandkit__row">
+                <p class="brandkit__type"><span class="brandkit__aa">Aa</span><span>Bricolage Grotesque<br>Instrument Sans</span></p>
+                <img class="brandkit__logo" src="assets/logo-horizontal-light.svg" alt="" width="1720" height="322" loading="lazy">
+              </div>
+            </div>
+
+            <!-- Step 6: every format, recomposed -->
+            <div class="board" data-board="f916" data-steps="6-10" data-from="c" style="--x:1600;--y:0;--w:152;--h:270;--px:1080;--py:320">
+              <p class="board__label"><span class="board__name">Reel 9:16</span></p>
+              <div class="board__frame">
+                <figure class="comp comp--9x16" data-composition="story-brand-9x16" data-poster-time="4.6" data-loop-from="2.4">
+                  <div class="comp-stage"><img class="poster" src="compositions/story-brand-9x16/poster.webp" alt="The launch title recomposed for a 9:16 Reel." width="1080" height="1920" loading="lazy"></div>
+                </figure>
+              </div>
+            </div>
+            <div class="board" data-board="f11" data-steps="6-10" data-from="c" style="--x:1792;--y:0;--w:270;--h:270;--px:1262;--py:320">
+              <p class="board__label"><span class="board__name">Post 1:1</span></p>
+              <div class="board__frame">
+                <figure class="comp comp--1x1" data-composition="story-brand-1x1" data-poster-time="4.6" data-loop-from="2.4">
+                  <div class="comp-stage"><img class="poster" src="compositions/story-brand-1x1/poster.webp" alt="The launch title recomposed for a 1:1 post." width="1080" height="1080" loading="lazy"></div>
+                </figure>
+              </div>
+            </div>
+
+            <!-- Step 7: three more languages -->
+            <div class="board" data-board="it" data-steps="7-10" data-from="c" style="--x:1080;--y:340;--w:360;--h:202.5;--px:1080;--py:660;--pw:480;--ph:270">
+              <p class="board__label"><span class="board__name">16:9 · Italiano</span></p>
+              <div class="board__frame">
+                <figure class="comp comp--16x9" data-composition="story-it" data-poster-time="4.6" data-loop-from="2.4">
+                  <div class="comp-stage"><img class="poster" src="compositions/story-it/poster.webp" alt="The 16:9 in Italian." width="1920" height="1080" loading="lazy"></div>
+                </figure>
+              </div>
+            </div>
+            <div class="board" data-board="de" data-steps="7-10" data-from="c" style="--x:1470;--y:340;--w:360;--h:202.5;--px:1080;--py:980;--pw:480;--ph:270">
+              <p class="board__label"><span class="board__name">16:9 · Deutsch</span></p>
+              <div class="board__frame">
+                <figure class="comp comp--16x9" data-composition="story-de" data-poster-time="4.6" data-loop-from="2.4">
+                  <div class="comp-stage"><img class="poster" src="compositions/story-de/poster.webp" alt="The 16:9 in German." width="1920" height="1080" loading="lazy"></div>
+                </figure>
+                <span class="fit" data-steps="7"><span class="fit__tag">fits its box</span></span>
+              </div>
+            </div>
+            <div class="board" data-board="es" data-steps="7-10" data-from="c" style="--x:1860;--y:340;--w:360;--h:202.5;--px:1080;--py:1300;--pw:480;--ph:270">
+              <p class="board__label"><span class="board__name">16:9 · Español</span></p>
+              <div class="board__frame">
+                <figure class="comp comp--16x9" data-composition="story-es" data-poster-time="4.6" data-loop-from="2.4">
+                  <div class="comp-stage"><img class="poster" src="compositions/story-es/poster.webp" alt="The 16:9 in Spanish." width="1920" height="1080" loading="lazy"></div>
+                </figure>
+              </div>
+            </div>
+
+            <!-- Step 8: the subtitle set beside the board -->
+            <div class="panel lines" data-steps="8" style="--x:560;--y:0;--w:480;--h:270;--px:1080;--py:-330">
+              <p class="panel__head"><span>Subtitles</span><span class="panel__sub">English · from the voice-over</span></p>
+              <ol class="lines__list">
+                <li data-start="0.3" data-end="1.9"><span class="lines__t">00:00.3</span>Write a brief.</li>
+                <li data-start="2.1" data-end="4.3"><span class="lines__t">00:02.1</span>Motion Studio builds every format,</li>
+                <li data-start="4.45" data-end="5.9"><span class="lines__t">00:04.4</span>and you stay in control</li>
+                <li data-start="6" data-end="7.7"><span class="lines__t">00:06.0</span>of every frame.</li>
+              </ol>
+            </div>
+
+            <!-- Step 9: the identity set -->
+            <div class="board" data-board="identity" data-steps="9-10" style="--x:1080;--y:640;--w:270;--h:270;--px:1080;--py:1640">
+              <p class="board__label"><span class="board__name">Logo 1:1</span></p>
+              <div class="board__frame">
+                <figure class="comp comp--1x1" data-composition="identity" data-poster-time="5">
+                  <div class="comp-stage"><img class="poster" src="compositions/identity/poster.webp" alt="The Motion Studio mark turning into a favicon, an app icon and store screenshots." width="1080" height="1080" loading="lazy"></div>
+                </figure>
+              </div>
+            </div>
+            <div class="board board--asset" data-board="appicon" data-steps="9-10" style="--x:1390;--y:640;--w:130;--h:130;--px:1390;--py:1640">
+              <p class="board__label"><span class="board__name">App icon</span></p>
+              <div class="board__frame board__frame--icon"><img src="assets/app-icon.png" alt="" width="1024" height="1024" loading="lazy"></div>
+            </div>
+            <div class="board board--asset" data-board="favicon" data-steps="9-10" style="--x:1390;--y:810;--w:130;--h:100;--px:1390;--py:1810">
+              <p class="board__label"><span class="board__name">Favicon</span></p>
+              <div class="board__frame board__frame--favicons">
+                <img src="assets/favicon/favicon.svg" alt="" width="48" height="48" loading="lazy">
+                <img src="assets/favicon/favicon.svg" alt="" width="32" height="32" loading="lazy">
+                <img src="assets/favicon/favicon.svg" alt="" width="16" height="16" loading="lazy">
+              </div>
+            </div>
+            <div class="board board--asset" data-board="social" data-steps="9-10" style="--x:1560;--y:640;--w:380;--h:199.5;--px:1080;--py:1960;--pw:480;--ph:252">
+              <p class="board__label"><span class="board__name">Social preview 1200×630</span></p>
+              <div class="board__frame"><img src="assets/og-image.png" alt="" width="1200" height="630" loading="lazy"></div>
+            </div>
+
+          </div>
+          <span class="cursor"><svg class="i" aria-hidden="true"><use href="#i-cursor"/></svg></span>
+
+          <!-- Step 10: the export dialog, over the canvas -->
+          <div class="export" data-steps="10">
+            <p class="export__title">Export the starred versions</p>
+            <p class="export__sub">Each format at its <svg class="i" aria-hidden="true"><use href="#i-star"/></svg> version, ready to post.</p>
+            <ul class="export__rows">
+              <li><span class="export__name">launch-video-youtube-16x9-v5.mp4</span><span class="export__bar"></span></li>
+              <li><span class="export__name">launch-video-instagram-reel-9x16-v1.mp4</span><span class="export__bar"></span></li>
+              <li><span class="export__name">launch-video-instagram-post-1x1-v1.mp4</span><span class="export__bar"></span></li>
+              <li><span class="export__name">launch-video-youtube-16x9-v5-it.mp4</span><span class="export__bar"></span></li>
+              <li><span class="export__name">launch-video-youtube-16x9-v5-de.mp4</span><span class="export__bar"></span></li>
+              <li><span class="export__name">launch-video-youtube-16x9-v5-es.mp4</span><span class="export__bar"></span></li>
+              <li><span class="export__name">launch-video-logo/ · favicon/ · app-icon/</span><span class="export__bar"></span></li>
+              <li><span class="export__name">launch-video-social-preview-v1.png</span><span class="export__bar"></span></li>
+            </ul>
+            <p class="export__foot">Existing files are never overwritten</p>
+          </div>
+
+          <div class="toolbar"><span class="toolbar__zoom">100%</span><span class="toolbar__sep"></span><span class="toolbar__export"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Export</span></div>
+          <div class="caption"><p class="caption__step"><span class="caption__n">01</span><span class="caption__of">/10</span> <span class="caption__name">Brief</span></p><p class="caption__what"></p><div class="caption__bar"><span></span></div></div>
         </div>
       </div>
     </div>
 
-    <h1 class="hero__title" id="hero-title"><span class="line">Brief in.</span> <span class="line line--accent">Motion out.</span></h1>
+    <p class="story__note">The chat in this story is a demo: scripted messages, real features.</p>
 
-    <div class="wrap hero__foot">
-      <p class="hero__lede">Motion Studio is a local, open-source app on top of Claude Code. Describe what you want, pick channels and formats, and the agent builds a dedicated composition for each one: a live preview right away, and renders on your own computer.</p>
-      <div class="hero__actions">
-        <a class="btn btn--primary" href="#install">Get started <span class="arrow" aria-hidden="true">→</span></a>
-        <a class="btn" href="https://github.com/Aleloca/motion-studio">Star on GitHub</a>
-      </div>
-    </div>
+    <ol class="steps">
+      <li class="step" id="step-brief" data-step="1">
+        <div class="step__text">
+          <h2 class="step__title"><span class="step__n">01</span> Brief</h2>
+          <p class="step__what">One brief, three directions, each a real composition.</p>
+          <p class="msg msg--you">A launch video for Motion Studio. Three variants.</p>
+          <p class="msg msg--agent">Three directions are on the canvas: Night launch, Paper and Signal. Pick one and I’ll carry it through every format.</p>
+        </div>
+        <div class="step__result">
+          <figure class="shot"><img src="compositions/story-night/poster.webp" alt="Variant A, Night launch." width="1920" height="1080"><figcaption>A · Night launch</figcaption></figure>
+          <figure class="shot"><img src="compositions/story-paper/poster.webp" alt="Variant B, Paper." width="1920" height="1080"><figcaption>B · Paper</figcaption></figure>
+          <figure class="shot"><img src="compositions/story-signal-v1/poster.webp" alt="Variant C, Signal." width="1920" height="1080"><figcaption>C · Signal</figcaption></figure>
+        </div>
+      </li>
+      <li class="step" id="step-choose" data-step="2">
+        <div class="step__text">
+          <h2 class="step__title"><span class="step__n">02</span> Choose</h2>
+          <p class="step__what">One click picks the direction. The others are set aside, not lost: Restore brings one back.</p>
+          <p class="msg msg--event">You chose C · Signal as the final variant.</p>
+        </div>
+        <div class="step__result">
+          <figure class="shot shot--chosen"><img src="compositions/story-signal-v1/poster.webp" alt="Variant C, Signal, chosen." width="1920" height="1080" loading="lazy"><figcaption>C · Signal, chosen</figcaption></figure>
+        </div>
+      </li>
+      <li class="step" id="step-ask" data-step="3">
+        <div class="step__text">
+          <h2 class="step__title"><span class="step__n">03</span> Ask</h2>
+          <p class="step__what">One sentence in the chat makes a new version.</p>
+          <p class="msg msg--you">Make the title bigger, more energy.</p>
+          <p class="msg msg--agent">v2 is ready: the title is 40% larger and slams in on a flash. Same layout and timing everywhere else.</p>
+        </div>
+        <div class="step__result">
+          <figure class="shot"><img src="compositions/story-signal-v2/poster.webp" alt="Signal v2, with a larger title." width="1920" height="1080" loading="lazy"><figcaption>C · Signal · v2</figcaption></figure>
+        </div>
+      </li>
+      <li class="step" id="step-edit" data-step="4">
+        <div class="step__text">
+          <h2 class="step__title"><span class="step__n">04</span> Edit by hand</h2>
+          <p class="step__what">Drag, resize and recolour in the editor, then save. No agent, no tokens.</p>
+          <p class="msg msg--event">Direct edits in the editor: the title moved, resized and recoloured. Saved as v3.</p>
+        </div>
+        <div class="step__result">
+          <figure class="shot"><img src="compositions/story-signal-v3/poster.webp" alt="Signal v3, edited by hand." width="1920" height="1080" loading="lazy"><figcaption>C · Signal · v3</figcaption></figure>
+        </div>
+      </li>
+      <li class="step" id="step-brand" data-step="5">
+        <div class="step__text">
+          <h2 class="step__title"><span class="step__n">05</span> Brand</h2>
+          <p class="step__what">A website becomes a brand kit, and every entry says where it came from.</p>
+          <p class="msg msg--you">Use our brand: aleloca.github.io/motion-studio</p>
+          <p class="msg msg--agent">Read it: a #0F0F0F stage, #FF5A1F orange, Bricolage Grotesque and Instrument Sans, and the logo. v4 wears them, and your edits stay.</p>
+        </div>
+        <div class="step__result">
+          <figure class="shot"><img src="compositions/story-brand-16x9/poster.webp" alt="v4 in the Motion Studio brand." width="1920" height="1080" loading="lazy"><figcaption>C · v4 · the brand applied</figcaption></figure>
+        </div>
+      </li>
+      <li class="step" id="step-formats" data-step="6">
+        <div class="step__text">
+          <h2 class="step__title"><span class="step__n">06</span> Formats</h2>
+          <p class="step__what">Every format laid out for its own frame, never cropped.</p>
+          <p class="msg msg--you">Also make it for Reels and Instagram posts.</p>
+          <p class="msg msg--agent">Done: a 9:16 and a 1:1, each recomposed for its frame. The mark leads the Reel, the title stacks under it.</p>
+        </div>
+        <div class="step__result step__result--formats">
+          <figure class="shot shot--9x16"><img src="compositions/story-brand-9x16/poster.webp" alt="The 9:16 Reel." width="1080" height="1920" loading="lazy"><figcaption>Reel 9:16</figcaption></figure>
+          <figure class="shot shot--1x1"><img src="compositions/story-brand-1x1/poster.webp" alt="The 1:1 post." width="1080" height="1080" loading="lazy"><figcaption>Post 1:1</figcaption></figure>
+          <figure class="shot"><img src="compositions/story-brand-16x9/poster.webp" alt="The 16:9 video." width="1920" height="1080" loading="lazy"><figcaption>Video 16:9</figcaption></figure>
+        </div>
+      </li>
+      <li class="step" id="step-languages" data-step="7">
+        <div class="step__text">
+          <h2 class="step__title"><span class="step__n">07</span> Languages</h2>
+          <p class="step__what">Up to ten languages, one layout: only the words change.</p>
+          <p class="msg msg--you">Italian, German and Spanish too.</p>
+          <p class="msg msg--agent">Three translations. Positions, timing and colours are the original’s, and every line fits its box at the same size.</p>
+        </div>
+        <div class="step__result">
+          <figure class="shot"><img src="compositions/story-it/poster.webp" alt="The 16:9 in Italian." width="1920" height="1080" loading="lazy"><figcaption>Italiano</figcaption></figure>
+          <figure class="shot"><img src="compositions/story-de/poster.webp" alt="The 16:9 in German." width="1920" height="1080" loading="lazy"><figcaption>Deutsch</figcaption></figure>
+          <figure class="shot"><img src="compositions/story-es/poster.webp" alt="The 16:9 in Spanish." width="1920" height="1080" loading="lazy"><figcaption>Español</figcaption></figure>
+        </div>
+      </li>
+      <li class="step" id="step-subtitles" data-step="8">
+        <div class="step__text">
+          <h2 class="step__title"><span class="step__n">08</span> Subtitles</h2>
+          <p class="step__what">From the voice-over, transcribed on your computer, timed to the word.</p>
+          <p class="msg msg--you">Add subtitles from the voice-over.</p>
+          <p class="msg msg--agent">Transcribed locally with Whisper: four lines, each word timed. They’re drawn on the 16:9, and .srt and .vtt are one click away.</p>
+        </div>
+        <div class="step__result">
+          <figure class="shot"><img src="compositions/story-subs/poster.webp" alt="The 16:9 with subtitles." width="1920" height="1080" loading="lazy"><figcaption>C · v5 · subtitles</figcaption></figure>
+        </div>
+      </li>
+      <li class="step" id="step-identity" data-step="9">
+        <div class="step__text">
+          <h2 class="step__title"><span class="step__n">09</span> Identity</h2>
+          <p class="step__what">The logo becomes real file sets: favicon, app icons, social preview.</p>
+          <p class="msg msg--you">Turn the logo into a favicon, an app icon and a social preview.</p>
+          <p class="msg msg--agent">Rendered: a favicon set with its head snippet, iOS and Android icons, and a 1200×630 preview. This site’s own logo and favicon came out of Motion Studio.</p>
+        </div>
+        <div class="step__result step__result--identity">
+          <figure class="shot shot--1x1"><img src="compositions/identity/poster.webp" alt="The logo turning into a favicon and an app icon." width="1080" height="1080" loading="lazy"><figcaption>Logo</figcaption></figure>
+          <figure class="shot shot--icon"><img src="assets/app-icon.png" alt="The Motion Studio app icon." width="1024" height="1024" loading="lazy"><figcaption>App icon</figcaption></figure>
+          <figure class="shot"><img src="assets/og-image.png" alt="The social preview image." width="1200" height="630" loading="lazy"><figcaption>Social preview</figcaption></figure>
+        </div>
+      </li>
+      <li class="step" id="step-export" data-step="10">
+        <div class="step__text">
+          <h2 class="step__title"><span class="step__n">10</span> Export</h2>
+          <p class="step__what">Every starred version rendered on your computer and named for its channel.</p>
+          <p class="msg msg--event">Exported 8 items to your folder, each named for its channel.</p>
+        </div>
+        <div class="step__result">
+          <ul class="files">
+            <li>launch-video-youtube-16x9-v5.mp4</li>
+            <li>launch-video-instagram-reel-9x16-v1.mp4</li>
+            <li>launch-video-instagram-post-1x1-v1.mp4</li>
+            <li>launch-video-youtube-16x9-v5-it.mp4, -de, -es</li>
+            <li>launch-video-logo/ · favicon/ · app-icon/</li>
+            <li>launch-video-social-preview-v1.png</li>
+          </ul>
+        </div>
+      </li>
+    </ol>
   </section>
 
-  <section class="features" id="features" aria-label="Features">
-    <div class="wrap features__head">
-      <p class="eyebrow">{ features }</p>
-      <p class="features__intro">Every animation on this page is a Motion Studio composition, played live by its own runtime.</p>
+  <section class="final" id="final-cut" aria-labelledby="final-title">
+    <div class="wrap final__head">
+      <h2 id="final-title">The final cut.</h2>
+      <p class="final__lede">The launch video Motion Studio made of itself, played here by its own runtime: the same ten steps, fast.</p>
     </div>
-
-    <!-- source: README "How it works", "Adding formats" -->
-    <article class="feature" id="formats" data-category="formats">
-      <div class="wrap feature__inner">
-        <figure class="comp comp--16x9" data-composition="formats" data-poster-time="3.6">
-          <div class="comp-stage"><img class="poster" src="compositions/formats/poster.webp" alt="One orange tile recomposed into a 9:16 Reel, a 1:1 post and a 16:9 video." width="1920" height="1080" loading="lazy"></div>
-        </figure>
-        <div class="feature__text">
-          <p class="eyebrow">{ formats }</p>
-          <h2>Every format, every channel.</h2>
-          <p>Pick channels and formats, and the agent writes one composition per format, recomposed for its frame instead of cropped. Motion Studio checks each one before it saves the version.</p>
-          <p class="muted">A format can follow another, like TikTok following the Reel: it shares its composition and its render, with no extra agent run.</p>
-          <a class="btn btn--small" href="https://github.com/Aleloca/motion-studio#how-it-works">How it works <span class="arrow" aria-hidden="true">→</span></a>
-        </div>
-      </div>
-    </article>
-
-    <!-- source: README "Editing a composition directly" -->
-    <article class="feature feature--flip" id="editor" data-category="formats">
-      <div class="wrap feature__inner">
-        <figure class="comp comp--16x9" data-composition="editor" data-poster-time="5.6">
-          <div class="comp-stage"><img class="poster" src="compositions/editor/poster.webp" alt="A title moved and resized on the stage while the playhead runs, then Save as v3." width="1920" height="1080" loading="lazy"></div>
-        </figure>
-        <div class="feature__text">
-          <p class="eyebrow">{ preview &amp; editor }</p>
-          <h2>Live preview. Direct edits.</h2>
-          <p>Every composition plays live in the browser, with no render to wait for. Open the editor to change texts, fonts, colours, position, timing and animation presets.</p>
-          <p class="muted">Saving makes a new version with no agent and no tokens. New clips and effects stay with the agent: ask for them in the chat.</p>
-          <a class="btn btn--small" href="https://github.com/Aleloca/motion-studio#editing-a-composition-directly">The editor <span class="arrow" aria-hidden="true">→</span></a>
-        </div>
-      </div>
-    </article>
-
-    <!-- source: README "Brand, assets and linked codebases" -->
-    <article class="feature" id="brand" data-category="brand">
-      <div class="wrap feature__inner">
-        <figure class="comp comp--1x1" data-composition="brand" data-poster-time="5">
-          <div class="comp-stage"><img class="poster" src="compositions/brand/poster.webp" alt="Colour tokens and a font read from a theme file become brand swatches and a type specimen." width="1080" height="1080" loading="lazy"></div>
-        </figure>
-        <div class="feature__text">
-          <p class="eyebrow">{ brand }</p>
-          <h2>Your brand, from a site or a codebase.</h2>
-          <p>Point the brand analysis at your website, or at your app's code, which it only reads. It brings back palette, fonts, logos and tone, and every entry says where it came from.</p>
-          <p class="muted">Secret files are never opened, and the agent follows the brand in every creative.</p>
-          <a class="btn btn--small" href="https://github.com/Aleloca/motion-studio#brand-assets-and-linked-codebases">Brand and assets <span class="arrow" aria-hidden="true">→</span></a>
-        </div>
-      </div>
-    </article>
-
-    <!-- source: README "Identity formats", "App store pack" -->
-    <article class="feature feature--flip" id="identity" data-category="store">
-      <div class="wrap feature__inner">
-        <figure class="comp comp--1x1" data-composition="identity" data-poster-time="5">
-          <div class="comp-stage"><img class="poster" src="compositions/identity/poster.webp" alt="The Motion Studio mark turning into a favicon, an app icon and store screenshots." width="1080" height="1080" loading="lazy"></div>
-        </figure>
-        <div class="feature__text">
-          <p class="eyebrow">{ identity &amp; store }</p>
-          <h2>Logos, icons and store packs.</h2>
-          <p>Identity formats render real file sets: a logo in SVG and PNG, a complete favicon set with its head snippet, iOS and Android app icons, and a social preview.</p>
-          <p class="muted">The store pack plans the screenshots for the App Store, Google Play or both. This site's own logo and favicon came out of Motion Studio.</p>
-          <a class="btn btn--small" href="https://github.com/Aleloca/motion-studio#identity-formats-logo-favicon-app-icon-social-preview">Identity formats <span class="arrow" aria-hidden="true">→</span></a>
-        </div>
-      </div>
-    </article>
-
-    <!-- source: README "Variants: duplicate formats, languages, store pack" (Languages) -->
-    <article class="feature" id="languages" data-category="lang">
-      <div class="wrap feature__inner">
-        <figure class="comp comp--16x9" data-composition="languages" data-poster-time="1.4">
-          <div class="comp-stage"><img class="poster" src="compositions/languages/poster.webp" alt="One headline cycling through English, Italian, German and Spanish inside the same box." width="1920" height="1080" loading="lazy"></div>
-        </figure>
-        <div class="feature__text">
-          <p class="eyebrow">{ languages }</p>
-          <h2>Ten languages, one layout.</h2>
-          <p>Translate a version into up to 10 languages. The agent only writes the texts: positions, timings, colours and images stay the original's, and a text that overflows its box is shortened.</p>
-          <p class="muted">Voice-overs can be translated too. Render and export each language with its own file name.</p>
-          <a class="btn btn--small" href="https://github.com/Aleloca/motion-studio#variants-duplicate-formats-languages-store-pack">Languages <span class="arrow" aria-hidden="true">→</span></a>
-        </div>
-      </div>
-    </article>
-
-    <!-- source: README "Talking to the agent while it works" -->
-    <article class="feature feature--flip" id="agent" data-category="agent">
-      <div class="wrap feature__inner">
-        <figure class="comp comp--16x9" data-composition="agent" data-poster-time="5.6">
-          <div class="comp-stage"><img class="poster" src="compositions/agent/poster.webp" alt="An agent at work with queued requests; Stop and redirect sends a new message, shown as Delivered." width="1920" height="1080" loading="lazy"></div>
-        </figure>
-        <div class="feature__text">
-          <p class="eyebrow">{ agent }</p>
-          <h2>Talk to it while it works.</h2>
-          <p>Queue requests for after the current turn, stop at once, or stop and redirect the same job with new instructions.</p>
-          <p class="muted">With Claude Code 2.1.301 or newer, your messages reach the running agent live, and you see when it took them.</p>
-          <a class="btn btn--small" href="https://github.com/Aleloca/motion-studio#talking-to-the-agent-while-it-works">The agent <span class="arrow" aria-hidden="true">→</span></a>
-        </div>
-      </div>
-    </article>
-
-    <!-- source: README intro, "How it works" (step 6), "Export" -->
-    <article class="feature" id="local" data-category="agent">
-      <div class="wrap feature__inner">
-        <figure class="comp comp--16x9" data-composition="git" data-poster-time="5.6">
-          <div class="comp-stage"><img class="poster" src="compositions/git/poster.webp" alt="Versions v1 to v3 on a timeline, v3 starred, exported with a file name built from a pattern." width="1920" height="1080" loading="lazy"></div>
-        </figure>
-        <div class="feature__text">
-          <p class="eyebrow">{ local }</p>
-          <h2>Local, and versioned with git.</h2>
-          <p>Projects are folders of JSON and Markdown on your computer. Every version is a git commit: compare versions, comment on a moment, restart from an earlier one.</p>
-          <p class="muted">Export copies the starred version of each format, named from your own pattern.</p>
-          <a class="btn btn--small" href="https://github.com/Aleloca/motion-studio#export">Export <span class="arrow" aria-hidden="true">→</span></a>
-        </div>
-      </div>
-    </article>
-
-    <!-- source: README "Providers", "Security" (API keys, Costs) -->
-    <article class="feature feature--flip" id="services" data-category="brand">
-      <div class="wrap feature__inner">
-        <figure class="comp comp--1x1" data-composition="services" data-poster-time="5.5">
-          <div class="comp-stage"><img class="poster" src="compositions/services/poster.webp" alt="Image, voice-over and music generations, each waiting for a confirmation before the paid call." width="1080" height="1080" loading="lazy"></div>
-        </figure>
-        <div class="feature__text">
-          <p class="eyebrow">{ paid services }</p>
-          <h2>Paid services, only when you say so.</h2>
-          <p>Images with OpenAI, voice-overs with OpenAI or ElevenLabs, music and sound effects with ElevenLabs, stock photos and videos from Pexels and Unsplash.</p>
-          <p class="muted">Every paid generation asks for confirmation first, unless you turn it off in Settings. API keys stay in the system keychain, and the agent never sees them.</p>
-          <a class="btn btn--small" href="https://github.com/Aleloca/motion-studio#providers">Providers <span class="arrow" aria-hidden="true">→</span></a>
-        </div>
-      </div>
-    </article>
-
-    <!-- source: README "Creative variants" -->
-    <article class="feature" id="variants" data-category="formats">
-      <div class="wrap feature__inner">
-        <figure class="comp comp--16x9" data-composition="variants" data-poster-time="6">
-          <div class="comp-stage"><img class="poster" src="compositions/variants/poster.webp" alt="Five variant cards, A to E; B is picked for the Reel and D for YouTube, the others dim." width="1920" height="1080" loading="lazy"></div>
-        </figure>
-        <div class="feature__text">
-          <p class="eyebrow">{ variants }</p>
-          <h2>Five directions at once.</h2>
-          <p>Ask for up to five variants of a creative, each a different direction for the same brief, across every format. Talk to one variant in the chat, or to all of them at once.</p>
-          <p class="muted">Star the best version of each format, even from different variants, and export the group. Discard the rest; Restore brings one back.</p>
-          <a class="btn btn--small" href="https://github.com/Aleloca/motion-studio#creative-variants">Variants <span class="arrow" aria-hidden="true">→</span></a>
-        </div>
-      </div>
-    </article>
-  </section>
-
-  <section class="showcase section" id="showcase" aria-labelledby="showcase-title">
     <div class="wrap">
-      <p class="eyebrow">{ showcase }</p>
-      <h2 id="showcase-title">Made with Motion Studio.</h2>
-      <p class="showcase__lede muted">The three briefs from the top of the page, and the pieces behind it. Every card plays a real composition.</p>
-      <ul class="showcase__grid">
-        <li class="card card--tall" data-category="formats">
-          <figure class="comp comp--9x16" data-composition="fernwise-9x16" data-poster-time="8.6" data-replay="poster" data-loop-from="0.75" style="--comp-bg: #F3EFE6">
-            <div class="comp-stage"><img class="poster" src="compositions/fernwise-9x16/poster.webp" alt="The Fernwise savings app's year in money in a 9:16 Instagram Reel." width="1080" height="1920" loading="lazy"></div>
-          </figure>
-          <p class="card__label">Instagram Reel · 9:16</p>
-        </li>
-        <li class="card card--wide" data-category="formats">
-          <figure class="comp comp--16x9" data-composition="tidefall-16x9" data-poster-time="3.8" data-replay="poster" data-loop-from="0.75" style="--comp-bg: #2B1CFF">
-            <div class="comp-stage"><img class="poster" src="compositions/tidefall-16x9/poster.webp" alt="The TIDEFALL music festival announcement in a 16:9 YouTube video." width="1920" height="1080" loading="lazy"></div>
-          </figure>
-          <p class="card__label">YouTube · 16:9</p>
-        </li>
-        <li class="card" data-category="formats">
-          <figure class="comp comp--1x1" data-composition="kova-1x1" data-poster-time="4.4" data-replay="poster" data-loop-from="0.75" style="--comp-bg: #06070B">
-            <div class="comp-stage"><img class="poster" src="compositions/kova-1x1/poster.webp" alt="A launch film for the KOVA Air earbuds in a 1:1 Instagram post." width="1080" height="1080" loading="lazy"></div>
-          </figure>
-          <p class="card__label">Instagram Post · 1:1</p>
-        </li>
-        <li class="card" data-category="brand">
-          <figure class="comp comp--1x1" data-composition="brand" data-poster-time="5" data-replay="poster" data-loop-from="2.5" style="--comp-bg: #0F0F0F">
-            <div class="comp-stage"><img class="poster" src="compositions/brand/poster.webp" alt="Brand swatches and a type specimen from a theme file." width="1080" height="1080" loading="lazy"></div>
-          </figure>
-          <p class="card__label">Instagram Post · 1:1</p>
-        </li>
-        <li class="card" data-category="store">
-          <figure class="comp comp--1x1" data-composition="identity" data-poster-time="5" data-replay="poster" data-loop-from="0.5" style="--comp-bg: #0F0F0F">
-            <div class="comp-stage"><img class="poster" src="compositions/identity/poster.webp" alt="A logo becoming a favicon, an app icon and store screenshots." width="1080" height="1080" loading="lazy"></div>
-          </figure>
-          <p class="card__label">Instagram Post · 1:1</p>
-        </li>
-        <li class="card card--wide" data-category="lang">
-          <figure class="comp comp--16x9" data-composition="languages" data-poster-time="1.4" data-replay="poster" data-loop-from="0.75" style="--comp-bg: #0F0F0F">
-            <div class="comp-stage"><img class="poster" src="compositions/languages/poster.webp" alt="A headline in four languages inside one box." width="1920" height="1080" loading="lazy"></div>
-          </figure>
-          <p class="card__label">YouTube · 16:9</p>
-        </li>
-      </ul>
+      <!-- The final cut: the integration swaps this composition (id, poster time, poster) for launch-16x9 and adds the MP4 link to .final__actions. -->
+      <figure class="comp comp--16x9 final__player" data-composition="kova-16x9" data-poster-time="4.4" data-final-cut data-controls data-loop="false">
+        <div class="comp-stage"><img class="poster" src="compositions/kova-16x9/poster.webp" alt="The Motion Studio launch video." width="1920" height="1080" loading="lazy"></div>
+        <div class="player-bar">
+          <button class="player-bar__play" type="button" aria-label="Play"><svg class="i i--play" aria-hidden="true"><use href="#i-play"/></svg><svg class="i i--pause" aria-hidden="true"><use href="#i-pause"/></svg></button>
+          <span class="player-bar__time"><span class="player-bar__now">00:00</span><span class="player-bar__slash"> / </span><span class="player-bar__dur">00:00</span></span>
+          <div class="player-bar__track"><input class="player-bar__seek" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek"><span class="player-bar__fill"></span><span class="player-bar__chapters"></span></div>
+          <button class="player-bar__btn player-bar__replay" type="button" aria-label="Play from the start"><svg class="i" aria-hidden="true"><use href="#i-replay"/></svg></button>
+          <button class="player-bar__btn player-bar__full" type="button" aria-label="Full screen"><svg class="i" aria-hidden="true"><use href="#i-expand"/></svg></button>
+        </div>
+      </figure>
+      <div class="final__actions">
+        <a class="btn btn--primary" href="https://github.com/Aleloca/motion-studio/releases/latest"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Download for macOS</a>
+        <a class="btn" href="https://github.com/Aleloca/motion-studio"><svg class="i" aria-hidden="true"><use href="#i-github"/></svg>Star on GitHub</a>
+        <a class="final__guide" href="guide.html">Read the user guide <span aria-hidden="true">→</span></a>
+      </div>
     </div>
   </section>
-
-  <hr class="hairline">
 
   <section class="install section" id="install" aria-labelledby="install-title">
     <div class="wrap install__inner">
       <div class="install__head">
-        <p class="eyebrow">{ get started }</p>
         <h2 id="install-title">Get started.</h2>
-        <p class="muted">Motion Studio runs on your computer and opens in your browser, or in its own desktop window.</p>
+        <p class="muted">Motion Studio runs on your computer, in its own desktop window or in your browser.</p>
+        <p class="small"><a href="guide.html">Read the user guide <span aria-hidden="true">→</span></a> Every feature, step by step.</p>
       </div>
       <div class="install__ways">
         <div class="way way--main">
+          <h3>Desktop app</h3>
+          <p>From the <a href="https://github.com/Aleloca/motion-studio/releases/latest">latest release</a>:</p>
+          <ul class="reqs">
+            <li>macOS: the <code>.dmg</code> for Apple Silicon or Intel, signed and notarized.</li>
+            <li>Windows: the <code>.exe</code> installer, not signed yet (SmartScreen: More info, then Run anyway).</li>
+            <li>Linux: the <code>.AppImage</code>; make it executable and run it.</li>
+          </ul>
+        </div>
+        <div class="way">
           <h3>From source</h3>
-          <p class="muted">Available today.</p>
           <pre class="code" tabindex="0"><code>git clone https://github.com/Aleloca/motion-studio
 cd motion-studio
 pnpm install
 pnpm motion-studio</code></pre>
           <p class="muted small">Builds and starts on 127.0.0.1:4317, then opens the browser.</p>
-          <p class="small"><a href="guide.html">Read the user guide <span aria-hidden="true">→</span></a>: every feature, step by step.</p>
-        </div>
-        <div class="way">
-          <h3>Desktop app</h3>
-          <p>Download the installer from the project's GitHub Releases, once published.</p>
         </div>
         <div class="way">
           <h3>From npm</h3>
@@ -377,6 +471,7 @@ pnpm motion-studio</code></pre>
   <div class="wrap site-footer__inner">
     <img src="assets/logo-light.svg" alt="Motion Studio" width="160" height="65" loading="lazy">
     <ul class="site-footer__links">
+      <li><a href="guide.html">Guide</a></li>
       <li><a href="https://github.com/Aleloca/motion-studio">Repository</a></li>
       <li><a href="https://github.com/Aleloca/motion-studio/blob/main/README.md">README</a></li>
       <li><a href="https://github.com/Aleloca/motion-studio/tree/main/docs">Docs</a></li>

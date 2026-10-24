@@ -55,8 +55,10 @@ test('fonts are local', () => {
   for (const family of ['Bricolage Grotesque', 'Instrument Sans', 'JetBrains Mono']) assert.ok(css.includes(`'${family}'`), family);
 });
 
-test('only one primary button', () => {
-  assert.equal([...read('index.html').matchAll(/class="[^"]*\bbtn--primary\b/g)].length, 1);
+test('one primary action: every primary button is the download of the latest release', () => {
+  const primaries = [...read('index.html').matchAll(/<a class="[^"]*\bbtn--primary\b[^"]*" href="([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(primaries.length >= 1 && primaries.length <= 2, `${primaries.length} primary buttons`);
+  for (const href of primaries) assert.equal(href, 'https://github.com/Aleloca/motion-studio/releases/latest');
 });
 
 test('the light logo keeps the orange and turns Motion off-white', () => {

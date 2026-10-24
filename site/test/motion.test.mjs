@@ -9,7 +9,7 @@ const src = (p) => readFileSync(join(SITE, 'src', p), 'utf8');
 test('final states are the CSS default', () => {
   // Rules that hide things must be scoped to html.js-motion, which main.js adds only when motion is allowed.
   // @keyframes steps are animations, not starting states.
-  const css = src('css/site.css').replace(/\/\*[\s\S]*?\*\//g, '').replace(/@keyframes[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, '');
+  const css = (src('css/site.css') + src('css/story.css')).replace(/\/\*[\s\S]*?\*\//g, '').replace(/@keyframes[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, '');
   for (const [, selector, body] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
     if (/opacity:\s*0(?![.\d])|visibility:\s*hidden/.test(body) && !selector.includes('.js-motion') && !selector.includes('.is-ready')) {
       assert.fail(`hides without .js-motion: ${selector.trim()}`);
@@ -36,4 +36,11 @@ test('main.js marks motion only when it is allowed', () => {
   const main = src('js/main.js');
   assert.match(main, /prefers-reduced-motion/);
   assert.match(main, /classList\.add\('js-motion'\)/);
+});
+
+test('the story is scroll-linked, never scroll-jacked: no snapping, no wheel or touch handlers, no pinning spacer', () => {
+  const story = src('js/story.js');
+  assert.match(story, /scrub:/);
+  assert.doesNotMatch(story, /snap|addEventListener\('(wheel|touchmove|keydown)'|preventDefault|pin:\s*true|window\.scrollTo|scrollIntoView/);
+  assert.match(src('css/story.css'), /\.js-motion \.story__pin \{ position: sticky;/);
 });
