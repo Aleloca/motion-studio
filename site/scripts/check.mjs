@@ -3,8 +3,8 @@
 // errors or failed requests, every composition either live or on its poster, no player told to play under reduced
 // motion, no poster a near-blank frame, every link with its target or file. The story: with motion, each step comes on
 // screen at its scroll position, only its boards are mounted, and the canvas's players stop once it has scrolled away;
-// under reduced motion every step is a static block (its messages and its result's images loaded). The final cut's slot
-// and controls exist. Then the guide (guide.html) at 360, 768 and 1440 px.
+// under reduced motion every step is a static block (its messages and its result's images loaded). The story's sound
+// button turns the voice-over on and off. The gallery plays at most four boards at once and none under reduced motion. The final cut never starts by itself; its big Play starts it from 0:00 with sound. Then the guide (guide.html) at 360, 768 and 1440 px.
 // Usage: node site/scripts/check.mjs [--out <folder for screenshots>]
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -43,6 +43,7 @@ export async function check({ out } = {}) {
         await page.goto(`${server.url}?debug`);
         await wait(page, 2500);
         if (!reduced) problems.push(...await liveStory(page));
+        if (!reduced && (width === 1440 || width === 360)) problems.push(...await storyFromAnywhere(page, server));
         await page.eval(`(async () => { const h = document.documentElement.scrollHeight; for (let y = 0; y < h; y += 500) { scrollTo({ top: y, behavior: 'instant' }); await new Promise(r => setTimeout(r, 250)); } })()`);
         await wait(page, 4000);
         const s = await page.eval(`(() => {
@@ -62,6 +63,7 @@ export async function check({ out } = {}) {
             hidden: [...document.querySelectorAll('h1, h2, h3, p, .btn, .way')].filter((e) => !(live && e.closest('.story__pin')) && getComputedStyle(e).opacity < 0.5).length,
             stagePlaying: stage.filter((p) => p.playing).map((p) => p.id),
             finalCut: Boolean(document.querySelector('figure[data-final-cut][data-composition] .player-bar .player-bar__play')),
+            soundButton: !document.querySelector('.story__sound').hidden && document.querySelector('.story__sound').getClientRects().length > 0,
             steps: [...document.querySelectorAll('.step')].map((st) => ({
               n: st.dataset.step,
               shown: st.getClientRects().length > 0 && st.offsetHeight > 0 && getComputedStyle(st).visibility !== 'hidden',
@@ -80,7 +82,8 @@ export async function check({ out } = {}) {
         if (s.live === reduced) problems.push(`the story is ${s.live ? 'live' : 'static'} ${reduced ? 'under' : 'without'} reduced motion`);
         if (s.stagePlaying.length) problems.push(`canvas boards still playing off screen: ${s.stagePlaying.join(', ')}`);
         if (!s.finalCut) problems.push('the final cut\'s slot or controls are missing');
-        if (s.steps.length !== 10) problems.push(`${s.steps.length} steps, not 10`);
+        if (s.steps.length !== 11) problems.push(`${s.steps.length} steps, not 11`);
+        if (s.soundButton !== !reduced) problems.push(`the story's sound button is ${s.soundButton ? 'shown' : 'hidden'} ${reduced ? 'under' : 'without'} reduced motion`);
         if (reduced) {
           for (const st of s.steps) {
             if (!st.shown) problems.push(`step ${st.n} is not shown as a static block`);
@@ -89,7 +92,9 @@ export async function check({ out } = {}) {
             if (st.images.some((ok) => !ok)) problems.push(`step ${st.n}: an image of its result did not load`);
           }
         }
+        problems.push(...await galleryBoards(page, reduced));
         problems.push(...await links(page));
+        problems.push(...await finalCutStart(page));
         if (!reduced && width === WIDTHS[0]) {
           problems.push(...await blankPosters(page));
           console.log(`poster luminance deviation: ${JSON.stringify(await page.eval('window.__posterDeviation'))}`);
@@ -160,12 +165,19 @@ export async function check({ out } = {}) {
 
 /**
  * The live story, step by step: scrolled to the middle of each step, the story says it is on that step, every board it plays
- * has a runtime mounted, and no more than MAX_STAGE_FRAMES runtimes are on the canvas.
+ * has a runtime mounted, and no more than MAX_STAGE_FRAMES runtimes are on the canvas. With the sound turned on (a real
+ * click on the story's button), step 6 says its line and step 9 lets its board speak; turned off, everything is silent.
  */
 async function liveStory(page) {
   const problems = [];
-  for (let n = 1; n <= 10; n++) {
-    await page.eval(`(() => { const s = document.querySelector('.story'); scrollTo({ top: s.offsetTop + (s.offsetHeight - innerHeight) * (${n - 0.45} / 10.6), behavior: 'instant' }); })()`);
+  const scrollToStep = (n) => page.eval(`(() => { const s = document.querySelector('.story'); scrollTo({ top: s.offsetTop + (s.offsetHeight - innerHeight) * (${n - 0.45} / 11.6), behavior: 'instant' }); })()`);
+  const clickSound = async () => {
+    const [x, y] = await page.eval(`(() => { const r = document.querySelector('.story__sound').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+    for (const type of ['mousePressed', 'mouseReleased']) await page.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 });
+  };
+  const voice = () => page.eval(`(() => { const st = window.__siteDebug.story; const subs = window.__siteDebug.players.find((p) => p.id === 'story-subs'); return { sound: window.__siteDebug.sound.on, line: st.speaking, subsMuted: subs.muted }; })()`);
+  for (let n = 1; n <= 11; n++) {
+    await scrollToStep(n);
     await wait(page, 1200);
     const r = await page.eval(`(() => {
       const stage = window.__siteDebug.players.filter((p) => p.figure.closest('[data-stage]'));
@@ -179,6 +191,144 @@ async function liveStory(page) {
     if (r.frames > MAX_STAGE_FRAMES) problems.push(`step ${n}: ${r.frames} runtimes on the canvas`);
     if (r.unmounted.length) problems.push(`step ${n}: boards to play with no runtime: ${r.unmounted.join(', ')}`);
   }
+  await scrollToStep(6);
+  await wait(page, 1200);
+  await clickSound();
+  await wait(page, 1500);
+  let v = await voice();
+  if (!v.sound) problems.push('the story\'s sound button did not turn the sound on');
+  if (!v.line?.src.endsWith('/vo-06.mp3') || v.line.paused) problems.push(`step 6 with sound: ${JSON.stringify(v.line)}, not its line playing`);
+  await scrollToStep(9);
+  await wait(page, 2500);
+  v = await voice();
+  if (v.subsMuted || v.line) problems.push(`step 9 with sound: the board ${v.subsMuted ? 'is muted' : 'speaks'}, a line ${v.line ? 'plays' : 'is silent'}`);
+  await clickSound();
+  await wait(page, 400);
+  v = await voice();
+  if (v.sound || v.line || !v.subsMuted) problems.push(`sound off: still ${JSON.stringify(v)}`);
+  // With the sound off, a click on the Generate step's music tile still plays it (the click is the viewer's gesture).
+  await scrollToStep(6);
+  await wait(page, 1500);
+  // On a phone the bottom sheet never covers the Generate step's tiles (the camera frames above it, as tall as it is).
+  const covered = await page.eval(`(() => {
+    if (!matchMedia('(max-width: 959px)').matches) return [];
+    const top = document.querySelector('.chat').getBoundingClientRect().top;
+    return [...document.querySelectorAll('[data-board^="gen"] .board__frame')].filter((f) => f.getBoundingClientRect().bottom > top + 1).map((f) => f.closest('[data-board]').dataset.board);
+  })()`);
+  if (covered.length) problems.push(`step 6: the bottom sheet covers ${covered.join(', ')}`);
+  const at = await page.eval(`(() => { const r = document.querySelector('[data-board="genmusic"] [data-play]').getBoundingClientRect(); return r.width ? [r.left + r.width / 2, r.top + r.height / 2] : null; })()`);
+  if (!at) problems.push('step 6: the music tile\'s play button is not on screen');
+  else {
+    for (const type of ['mousePressed', 'mouseReleased']) await page.send('Input.dispatchMouseEvent', { type, x: at[0], y: at[1], button: 'left', clickCount: 1 });
+    await wait(page, 1200);
+    v = await voice();
+    if (!v.line?.src.endsWith('/music.mp3') || v.line.paused) problems.push(`step 6: a click on the music tile plays ${JSON.stringify(v.line)}`);
+    await scrollToStep(8);
+    await wait(page, 1200);
+    v = await voice();
+    if (v.line) problems.push(`the music tile still plays after the step scrolled away: ${JSON.stringify(v.line)}`);
+  }
+  return problems;
+}
+
+/**
+ * The gallery, scrolled through: with motion at most four boards play and at most six runtimes are mounted at any point,
+ * and none plays once it has scrolled away; under reduced motion none mounts. Every board ends live or on its loaded poster.
+ */
+async function galleryBoards(page, reduced) {
+  const problems = [];
+  const state = () => page.eval(`(() => {
+    const boards = [...document.querySelectorAll('.gallery figure[data-gallery]')];
+    return {
+      count: boards.length,
+      frames: document.querySelectorAll('.gallery iframe').length,
+      playing: window.__siteDebug.gallery.playing,
+      shown: boards.filter((f) => f.classList.contains('is-ready') || (f.querySelector('.poster').complete && f.querySelector('.poster').naturalWidth > 0)).length,
+    };
+  })()`);
+  const top = await page.eval(`document.querySelector('.gallery').offsetTop`);
+  const height = await page.eval(`document.querySelector('.gallery').offsetHeight`);
+  let most = { playing: 0, frames: 0 };
+  for (let y = top - 900; y < top + height; y += 400) {
+    await page.eval(`scrollTo({ top: ${y}, behavior: 'instant' })`);
+    await wait(page, 900);
+    const s = await state();
+    most = { playing: Math.max(most.playing, s.playing.length), frames: Math.max(most.frames, s.frames) };
+  }
+  await wait(page, 3000);
+  const s = await state();
+  if (s.count !== 12) problems.push(`gallery: ${s.count} boards, not 12`);
+  if (s.shown < s.count) problems.push(`gallery: ${s.count - s.shown} boards neither live nor on their poster`);
+  if (reduced && (most.frames || most.playing)) problems.push(`gallery under reduced motion: ${most.frames} runtimes, ${most.playing} playing`);
+  if (!reduced && most.playing > 4) problems.push(`gallery: ${most.playing} boards playing at once`);
+  if (!reduced && most.frames > 6) problems.push(`gallery: ${most.frames} runtimes mounted at once`);
+  if (!reduced && !most.playing) problems.push('gallery: no board played');
+  await page.eval(`scrollTo({ top: 0, behavior: 'instant' })`);
+  await wait(page, 800);
+  const away = await state();
+  if (away.playing.length) problems.push(`gallery boards still playing off screen: ${away.playing.join(', ')}`);
+  return problems;
+}
+
+/**
+ * The final cut never starts by itself: scrolled onto it, it holds its poster with the big Play. A real click on that Play
+ * starts it from 0:00 with the sound on.
+ */
+async function finalCutStart(page) {
+  const problems = [];
+  await page.eval(`(() => { const f = document.querySelector('#final-cut'); scrollTo({ top: f.offsetTop, behavior: 'instant' }); })()`);
+  await wait(page, 5000);
+  const state = () => page.eval(`(() => { const p = window.__siteDebug.players.find((x) => x.figure.hasAttribute('data-final-cut'));
+    const b = document.querySelector('.final__start').getBoundingClientRect();
+    return { playing: p.playing, started: p.started, ready: p.ready, time: p.time, muted: p.muted, sound: window.__siteDebug.sound.on, at: [b.left + b.width / 2, b.top + b.height / 2], shown: b.width > 0 }; })()`);
+  let s = await state();
+  if (s.playing || s.started) problems.push(`the final cut started by itself (at ${s.time.toFixed(1)} s)`);
+  if (!s.shown) problems.push('the final cut has no big Play');
+  for (const type of ['mousePressed', 'mouseReleased']) await page.send('Input.dispatchMouseEvent', { type, x: s.at[0], y: s.at[1], button: 'left', clickCount: 1 });
+  await wait(page, 1500);
+  s = await state();
+  if (!s.playing || s.time > 3 || s.muted || !s.sound) problems.push(`after Play: ${JSON.stringify({ playing: s.playing, time: s.time, muted: s.muted, sound: s.sound })}, not playing from 0:00 with sound`);
+  await page.eval(`(() => { const p = window.__siteDebug.players.find((x) => x.figure.hasAttribute('data-final-cut')); p.update({ intent: 'pause' }); window.__siteDebug.sound.set(false); })()`);
+  return problems;
+}
+
+/**
+ * The story follows the scroll both ways whatever the scroll position at load: loaded at #final-cut, reloaded at the
+ * bottom (the browser restores the scroll) and reloaded mid-story, then scrolled up step by step and down again, each
+ * step is the one on screen and the canvas (camera, board C's version or its Chosen mark) changes with it.
+ */
+export async function storyFromAnywhere(page, server) {
+  const problems = [];
+  const toStep = (n) => page.eval(`(() => { const s = document.querySelector('.story'); scrollTo({ top: s.offsetTop + (s.offsetHeight - innerHeight) * (${n - 0.45} / 11.6), behavior: 'instant' }); })()`);
+  const state = () => page.eval(`(() => ({ step: window.__siteDebug.story?.step, world: document.querySelector('.world').style.transform, ver: document.querySelector('[data-board="c"] .board__ver').textContent, chosen: document.querySelector('[data-board="c"]').classList.contains('is-chosen'), caption: document.querySelector('.caption__n').textContent }))()`);
+  const walk = async (label, order) => {
+    let prev = null;
+    for (const n of order) {
+      await toStep(n);
+      await wait(page, 900);
+      const s = await state();
+      if (s.step !== n || s.caption !== String(n).padStart(2, '0')) problems.push(`${label}: scrolled to step ${n}, the story shows step ${s.step} (caption ${s.caption})`);
+      if (prev && s.world === prev.world && s.ver === prev.ver && s.chosen === prev.chosen) problems.push(`${label}: the canvas did not change from step ${prev.step} to step ${n}`);
+      prev = s;
+    }
+  };
+  const up = [11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]; const down = [...up].reverse();
+  // A reload from the page itself never answers the evaluation: the protocol's reload, then a wait on this side.
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const reload = async () => { await page.send('Page.reload', {}); await sleep(4000); };
+  const loads = [
+    // A new query: the same URL with only a new hash would be a same-page jump, with no load to wait for.
+    ['loaded at #final-cut', async () => { await page.goto(`${server.url}?debug&load=hash#final-cut`); await sleep(3000); }],
+    ['reloaded at the bottom', async () => { await page.eval(`scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' })`); await sleep(400); await reload(); }],
+    ['reloaded mid-story', async () => { await toStep(6); await sleep(400); await reload(); }],
+  ];
+  for (const [label, load] of loads) {
+    await load();
+    const y = await page.eval('scrollY');
+    if (label !== 'reloaded mid-story' && y < 1000) problems.push(`${label}: the page opened at ${y}, not scrolled down`);
+    await walk(`${label}, up`, label === 'reloaded mid-story' ? [6, 5, 4, 3, 2, 1] : up);
+    await walk(`${label}, down`, down);
+  }
   return problems;
 }
 
@@ -187,7 +337,9 @@ async function links(page) {
   return page.eval(`(async () => {
     const out = [];
     for (const a of document.querySelectorAll('a[href^="#"]')) if (a.getAttribute('href').length > 1 && !document.getElementById(a.getAttribute('href').slice(1))) out.push('no target for ' + a.getAttribute('href'));
-    const urls = new Set([...document.querySelectorAll('a[href], img[src]')].map((e) => new URL(e.getAttribute('href') ?? e.getAttribute('src'), location.href)).filter((u) => u.origin === location.origin).map((u) => u.href.split('#')[0]));
+    const refs = [...document.querySelectorAll('a[href], img[src], audio[src]')].map((e) => e.getAttribute('href') ?? e.getAttribute('src'))
+      .concat([...document.querySelectorAll('[data-voice]')].map((e) => e.dataset.voice).filter((v) => v !== 'board'));
+    const urls = new Set(refs.map((r) => new URL(r, location.href)).filter((u) => u.origin === location.origin).map((u) => u.href.split('#')[0]));
     for (const u of urls) { const r = await fetch(u, { method: 'HEAD' }); if (!r.ok) out.push('HTTP ' + r.status + ' ' + u); }
     return out;
   })()`);

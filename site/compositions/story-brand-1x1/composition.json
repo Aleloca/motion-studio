@@ -48,7 +48,29 @@
       "kind": "visual",
       "clips": [
         {
-          "id": "dots-1",
+          "id": "backdrop-1",
+          "type": "image",
+          "src": "assets/generated-backdrop-960.jpg",
+          "start": 0,
+          "duration": 8,
+          "props": {
+            "fit": "cover",
+            "x": 0,
+            "y": 0,
+            "width": 1080,
+            "height": 1080,
+            "opacity": 0.55
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.8
+            }
+          ]
+        },
+        {
+          "id": "dots-2",
           "type": "svg",
           "src": "assets/dots.svg",
           "start": 0,
@@ -84,7 +106,7 @@
       "kind": "visual",
       "clips": [
         {
-          "id": "draft-2",
+          "id": "draft-3",
           "type": "svg",
           "src": "assets/frame-draft.svg",
           "start": 0.2,
@@ -125,7 +147,7 @@
           ]
         },
         {
-          "id": "composition-3",
+          "id": "composition-4",
           "type": "svg",
           "src": "assets/frame-comp.svg",
           "start": 0.8,
@@ -159,7 +181,7 @@
           ]
         },
         {
-          "id": "video-4",
+          "id": "video-5",
           "type": "svg",
           "src": "assets/frame-video.svg",
           "start": 1.4,
@@ -193,7 +215,7 @@
           ]
         },
         {
-          "id": "logo-13",
+          "id": "logo-14",
           "type": "svg",
           "src": "assets/logo.svg",
           "scene": "endcard",
@@ -237,7 +259,7 @@
       "kind": "text",
       "clips": [
         {
-          "id": "brief-5",
+          "id": "brief-6",
           "type": "text",
           "scene": "brief",
           "start": 0.3,
@@ -255,7 +277,7 @@
           }
         },
         {
-          "id": "brief-6",
+          "id": "brief-7",
           "type": "text",
           "scene": "brief",
           "start": 0.43,
@@ -273,7 +295,7 @@
           }
         },
         {
-          "id": "brief-7",
+          "id": "brief-8",
           "type": "text",
           "scene": "brief",
           "start": 0.56,
@@ -291,7 +313,7 @@
           }
         },
         {
-          "id": "brief-8",
+          "id": "brief-9",
           "type": "text",
           "scene": "brief",
           "start": 0.69,
@@ -309,7 +331,7 @@
           }
         },
         {
-          "id": "brief-9",
+          "id": "brief-10",
           "type": "text",
           "scene": "brief",
           "start": 0.82,
@@ -327,7 +349,7 @@
           }
         },
         {
-          "id": "brief-10",
+          "id": "brief-11",
           "type": "text",
           "scene": "brief",
           "start": 0.95,
@@ -359,7 +381,7 @@
           ]
         },
         {
-          "id": "brief-in-11",
+          "id": "brief-in-12",
           "type": "text",
           "scene": "title",
           "start": 2.5,
@@ -412,7 +434,7 @@
           ]
         },
         {
-          "id": "motion-out-12",
+          "id": "motion-out-13",
           "type": "text",
           "scene": "title",
           "start": 2.8,
@@ -465,7 +487,7 @@
           ]
         },
         {
-          "id": "tag-14",
+          "id": "tag-15",
           "type": "text",
           "scene": "endcard",
           "start": 6.35,

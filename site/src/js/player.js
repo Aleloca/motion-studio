@@ -35,6 +35,12 @@ export class CompositionPlayer {
     this.timer = null;
     /** data-loop="false" (the final cut): plays once and stops on its last frame; `ended` until it plays again. */
     this.loop = figure.dataset.loop !== 'false';
+    /**
+     * data-autoplay="false" (the final cut): never starts by itself, whatever the scroll; it holds its poster frame until the
+     * viewer's Play, and its first play starts from 0:00.
+     */
+    this.manualStart = figure.dataset.autoplay === 'false';
+    this.started = false;
     this.ended = false;
     /** From the runtime: the composition's length and scenes (on ready), and the time it last reported. */
     this.duration = 0;
@@ -42,6 +48,15 @@ export class CompositionPlayer {
     this.time = 0;
     this.listeners = new Set();
     this.state = { visible: false, near: false, reducedMotion: false, still: false, intent: null };
+    /** Silent unless the page's sound is on (setMuted): browsers allow sound only after a gesture. */
+    this.muted = true;
+  }
+
+  /** Mutes or unmutes the composition's sound; kept for a runtime mounted later. */
+  setMuted(muted) {
+    if (this.muted === muted) return;
+    this.muted = muted;
+    if (this.ready) this.send({ type: 'mute', muted });
   }
 
   /** Calls `fn(player)` on ready, on every reported time and when playing starts or stops. Returns the unsubscribe. */
@@ -56,7 +71,8 @@ export class CompositionPlayer {
   update(state) {
     this.state = { ...this.state, ...state };
     if (this.failed === 'timeout' && !this.state.near) this.clearFailure();
-    const action = decide({ ...this.state, ready: this.ready, failed: this.failed !== null });
+    const waiting = this.manualStart && !this.started && this.state.intent !== 'play';
+    const action = decide({ ...this.state, still: this.state.still || waiting, ready: this.ready, failed: this.failed !== null });
     if (action === 'mount' && !this.frame) this.mount();
     else if (action === 'unmount' || (action === 'unmounted' && this.frame)) this.unmount();
     else if (action === 'play') this.play();
@@ -86,8 +102,9 @@ export class CompositionPlayer {
   play() {
     if (this.playing) return;
     if (this.replayFromPoster && !this.atPoster) this.seek(this.posterTime);
-    // Played to its end once: a new play starts it again from the beginning.
-    if (this.ended) { this.seek(0); this.time = 0; }
+    // Played to its end once (or never played, when it waits for the viewer): a play starts it from the beginning.
+    if (this.ended || (this.manualStart && !this.started)) { this.seek(0); this.time = 0; }
+    this.started = true;
     this.playing = true;
     this.ended = false;
     this.still = false;
@@ -114,6 +131,7 @@ export class CompositionPlayer {
     this.ended = false;
     this.atPoster = false;
     this.still = false;
+    this.started = true;
     this.time = t;
     this.seek(t);
     if (this.playing) this.send({ type: 'play', loop: this.loop });
@@ -171,7 +189,7 @@ export class CompositionPlayer {
       if (Array.isArray(data.scenes)) this.scenes = data.scenes;
       this.deps.clearTimeout(this.timer);
       this.send({ type: 'setScale', scale: 'fit' });
-      this.send({ type: 'mute', muted: true });
+      this.send({ type: 'mute', muted: this.muted });
       // Start from the poster's frame: the hand-over from poster to live frame is seamless (t = 0 is an empty frame,
       // every clip enters after it).
       this.seek(this.posterTime);

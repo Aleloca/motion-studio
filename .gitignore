@@ -22,3 +22,6 @@ site/_site/
 .impeccable/mocks/
 .impeccable/review/
 .impeccable/build/
+
+# Raw answers and spend log of site/scripts/audio-gen (local only)
+site/_audio-raw/

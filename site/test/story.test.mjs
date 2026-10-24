@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { cameraFit, framingAt, stepAt, typedAt, parseSteps, inSteps } from '../src/js/story-logic.js';
+import { cameraFit, framingAt, stepAt, typedAt, parseSteps, inSteps, scrollToTime, sheetCover, PACE } from '../src/js/story-logic.js';
 import { formatTime } from '../src/js/final-cut.js';
 import { SIGNAL, TEXT, titleSize, BRAND } from '../scripts/hero-gen/story.mjs';
 import { SITE } from './helpers.mjs';
@@ -15,6 +15,13 @@ test('the camera fits a world rectangle in the canvas minus its insets, centred'
   assert.equal(f.ty, 100 + 50 - 125);
   const g = cameraFit([0, 0, 100, 100], { w: 300, h: 200 }, { top: 0, right: 0, bottom: 0, left: 0 });
   assert.deepEqual(g, { s: 2, tx: 50, ty: 0 });
+});
+
+test('on a phone the camera frames above the bottom sheet as tall as it is now; an opened answer covers the canvas without moving it', () => {
+  // The sheet grows with each step's exchange (step 6's is taller than step 1's): the cover follows its current top.
+  assert.equal(sheetCover({ stageBottom: 844, sheetTop: 690, open: false, previous: 120 }), 154);
+  assert.equal(sheetCover({ stageBottom: 844, sheetTop: 900, open: false, previous: 120 }), 0);
+  assert.equal(sheetCover({ stageBottom: 844, sheetTop: 400, open: true, previous: 154 }), 154);
 });
 
 test('between two framings the camera moves in proportion, and holds past the ends', () => {
@@ -34,14 +41,28 @@ test('step n runs from n - 1 to n on the timeline; the last one holds', () => {
   assert.equal(stepAt(10.4, 10), 10);
 });
 
-test('the composer types the next request in the second half of a step, and empties when it is sent', () => {
+test('the composer types the next request at the end of a step, once its finished state has held, and empties when it is sent', () => {
   const requests = ['Brief', null, 'Make the title bigger, more energy.', 'x'];
-  assert.equal(typedAt(0.7, requests), '', 'step 2 is a click: nothing to type');
-  assert.equal(typedAt(1.2, requests), '', 'not before the second half');
-  assert.equal(typedAt(1.9, requests), 'Make the title bigger, more energy.');
-  const half = typedAt(1.675, requests);
+  assert.equal(typedAt(0.9, requests), '', 'step 2 is a click: nothing to type');
+  assert.equal(typedAt(1.5, requests), '', 'not while the step plays its change');
+  assert.equal(typedAt(1.78, requests), '', 'not while the finished state holds');
+  assert.equal(typedAt(1.98, requests), 'Make the title bigger, more energy.');
+  const half = typedAt(1.885, requests);
   assert.ok(half.length > 5 && half.length < 30, half);
   assert.equal(typedAt(2, requests), '', 'sent at the start of step 3');
+});
+
+test('the scroll paces each step: its change, then a long hold on the finished state, then the next request', () => {
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+  assert.equal(scrollToTime(0, 11), 0);
+  assert.ok(near(scrollToTime(3.45, 11), 3 + PACE.ACT), 'the change ends at 45% of the scroll');
+  // 40% of the step's scroll moves the timeline only from 0.75 to 0.8 of the step, where nothing moves or types.
+  assert.ok(near(scrollToTime(3.85, 11), 3 + PACE.TYPE));
+  assert.ok(scrollToTime(3.85, 11) - scrollToTime(3.45, 11) <= 0.05 + 1e-9);
+  assert.equal(typedAt(scrollToTime(3.84, 11), [null, null, null, null, 'Use our brand']), '');
+  assert.ok(near(scrollToTime(4, 11), 4), 'the next step starts as its request is sent');
+  for (let p = 0; p < 11.6; p += 0.01) assert.ok(scrollToTime(p + 0.01, 11) >= scrollToTime(p, 11), `monotonic at ${p}`);
+  assert.ok(near(scrollToTime(11.3, 11), 11.3), 'past the last step it holds');
 });
 
 test('step ranges', () => {

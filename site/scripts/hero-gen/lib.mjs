@@ -16,8 +16,9 @@ export const EASE = {
   lin: 'linear',
 };
 
-const FAM = { display: 'Bricolage Grotesque', body: 'Instrument Sans', mono: 'JetBrains Mono' };
-const FILE = { display: 'BricolageGrotesque', body: 'InstrumentSans', mono: 'JetBrainsMono' };
+// The site's own faces, and three display faces the gallery's creatives use (site/src/assets/fonts, SIL OFL).
+export const FAM = { display: 'Bricolage Grotesque', body: 'Instrument Sans', mono: 'JetBrains Mono', serif: 'Fraunces', condensed: 'Anton', hand: 'Caveat' };
+export const FILE = { display: 'BricolageGrotesque', body: 'InstrumentSans', mono: 'JetBrainsMono', serif: 'Fraunces', condensed: 'Anton', hand: 'Caveat' };
 
 const r = (v) => Math.round(v * 1000) / 1000;
 
@@ -46,7 +47,7 @@ export function makeComp({ width, height, duration, background, scenes, fonts })
       return base(t, name, 'text', start, dur, {
         text: p.text, fontFamily: FAM[fam], fontWeight: p.weight ?? 800, color: p.color, fontSize: p.size,
         ...(p.align ? { align: p.align } : {}),
-        x: p.x, y: p.y, width: p.w, height: p.h ?? r(lines * p.size * 1.32),
+        x: p.x, y: p.y, width: p.w, height: p.h ?? r(lines * p.size * (fam === 'condensed' ? 1.5 : 1.32)),
         ...(p.rotation ? { rotation: p.rotation } : {}), ...(p.opacity !== undefined ? { opacity: p.opacity } : {}), ...(p.scale !== undefined ? { scale: p.scale } : {}),
       }, anims);
     },
@@ -62,6 +63,24 @@ export function makeComp({ width, height, duration, background, scenes, fonts })
         ...(p.rotation ? { rotation: p.rotation } : {}), ...(p.opacity !== undefined ? { opacity: p.opacity } : {}), ...(p.scale !== undefined ? { scale: p.scale } : {}),
         ...(p.kenBurns ? { kenBurns: p.kenBurns } : {}),
       }, anims, { src: `assets/${src}` });
+    },
+    image(t, name, start, dur, src, p, anims) {
+      return base(t, name, 'image', start, dur, {
+        fit: p.fit ?? 'cover', x: p.x, y: p.y, width: p.w, height: p.h,
+        ...(p.opacity !== undefined ? { opacity: p.opacity } : {}), ...(p.scale !== undefined ? { scale: p.scale } : {}),
+      }, anims, { src: `assets/${src}` });
+    },
+    /** An audio clip (no props): `o` = { volume, fadeIn, fadeOut, trimStart, role, script }. */
+    audio(t, name, start, dur, src, o = {}) {
+      const clip = { id: uid(name), type: 'audio' };
+      const sc = sceneOf(start, dur);
+      if (sc) clip.scene = sc;
+      Object.assign(clip, { start: r(start), duration: r(dur), src: `assets/${src}` });
+      for (const k of ['trimStart', 'volume', 'fadeIn', 'fadeOut']) if (o[k] !== undefined) clip[k] = r(o[k]);
+      if (o.role) clip.role = o.role;
+      if (o.script) clip.script = o.script;
+      t.clips.push(clip);
+      return clip;
     },
     /** A number that counts up: one short text clip per value, the last one held to `end`. */
     counter(t, name, start, end, values, step, p, lastAnims = []) {
@@ -120,7 +139,8 @@ export function writeComposition(out, id, comp, meta, assets = {}) {
   mkdirSync(join(dir, 'assets'), { recursive: true });
   writeFileSync(join(dir, 'composition.json'), `${JSON.stringify(comp, null, 2)}\n`);
   writeFileSync(join(dir, 'meta.json'), `${JSON.stringify(meta, null, 2)}\n`);
-  for (const [name, svg] of Object.entries(assets)) writeFileSync(join(dir, 'assets', name), `${svg.trim()}\n`);
+  // SVG text, or a file's bytes (a generated picture) copied as they are.
+  for (const [name, data] of Object.entries(assets)) writeFileSync(join(dir, 'assets', name), typeof data === 'string' ? `${data.trim()}\n` : data);
 }
 
 // Text widths (px at 1000 px) measured in Chrome with the site's fonts (measure.mjs), kept in widths.json so the generator
@@ -129,8 +149,13 @@ import { readFileSync } from 'node:fs';
 export const WIDTHS_FILE = new URL('widths.json', import.meta.url).pathname;
 export const WIDTHS = JSON.parse(readFileSync(WIDTHS_FILE, 'utf8'));
 export const MISSING = new Set();
+/** Every width key the generators asked for (to drop unused ones from widths.json). */
+export const USED = new Set();
+// Fraunces has an optical-size axis: the browser draws it wider at small sizes, so its widths are measured at their size.
+const OPTICAL = new Set(['serif']);
 export function tw(text, size, font = 'display', weight = 800) {
-  const key = `${FAM[font]}|${weight}|${text}`;
+  const key = `${FAM[font]}|${weight}${OPTICAL.has(font) ? `@${Math.round(size)}` : ''}|${text}`;
+  USED.add(key);
   if (key in WIDTHS) return (WIDTHS[key] * size) / 1000;
   MISSING.add(key);
   return text.length * size * 0.58;

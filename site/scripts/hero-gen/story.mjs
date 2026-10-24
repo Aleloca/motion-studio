@@ -2,7 +2,7 @@
 // Three directions (Night launch, Paper, Signal), Signal's versions (v2 bigger and louder, v3 edited by hand), the brand
 // applied (v4) in three formats and three more languages, and v4 with subtitles. Every board shares one script: the brief
 // typed (0-2.4 s), the title (2.4-6 s), the end card (6-8 s).
-import { writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeComp, A, EASE, writeComposition, tw } from './lib.mjs';
 import * as S from './story-assets.mjs';
@@ -23,20 +23,24 @@ export const TEXT = {
   es: { brief: 'un vídeo de lanzamiento para Motion Studio', l1: 'Entra el brief.', l2: 'Sale el motion.', tag: 'Local. Código abierto. Sobre Claude Code.' },
 };
 
-/** The subtitle set of `story-subs` (milliseconds), as the app would write it from the voice-over. */
-export const SUBTITLES = {
-  lang: 'en',
-  cues: [
-    ['Write a brief.', 300, 1900],
-    ['Motion Studio builds every format,', 2100, 4300],
-    ['and you stay in control', 4450, 5900],
-    ['of every frame.', 6000, 7700],
-  ].map(([text, start, end]) => {
-    const words = text.split(' ');
-    const step = (end - start) / words.length;
-    return { start, end, text, words: words.map((w, i) => ({ start: Math.round(start + i * step), end: Math.round(start + (i + 1) * step), text: w })) };
-  }),
-};
+/**
+ * `story-subs` speaks the launch film's subtitles line (site/scripts/audio-gen: the file, its length and its words' times,
+ * in media.json) from `VOICE_AT`, and its subtitle set is that line in two cues, each word timed as spoken (milliseconds,
+ * as the app writes a set from the voice-over).
+ */
+export const SUBS_LINE = 8;
+export const VOICE_AT = 2.8;
+const MEDIA_FILE = new URL('../audio-gen/media.json', import.meta.url);
+const VOICE = existsSync(MEDIA_FILE) ? JSON.parse(readFileSync(MEDIA_FILE, 'utf8')).vo?.[SUBS_LINE] ?? null : null;
+export const SUBTITLES = (() => {
+  const words = (VOICE?.words ?? 'Subtitles stay in sync with the voice.'.split(' ').map((w, i) => ({ text: w, start: 0.1 + i * 0.32, end: 0.4 + i * 0.32 })))
+    .map((w) => ({ start: Math.round((VOICE_AT + w.start) * 1000), end: Math.round((VOICE_AT + w.end) * 1000), text: w.text }));
+  const half = Math.ceil(words.length / 2);
+  const cues = [words.slice(0, half), words.slice(half)].map((ws, i, all) => ({
+    start: i === 0 ? ws[0].start - 100 : ws[0].start, end: i === 0 ? all[1][0].start : ws.at(-1).end + 700, text: ws.map((w) => w.text).join(' '), words: ws,
+  }));
+  return { lang: 'en', cues };
+})();
 
 /** Types a line word by word: one short text clip per prefix, the last one held to `end`. */
 function typed(c, t, name, start, end, text, p, step = 0.12, outro = []) {
@@ -138,10 +142,16 @@ export function titleSize(key, lang = 'en') {
   return Math.min(T.size, Math.floor((T.box / widest) * 1000));
 }
 
-function brand(key, lang = 'en', { subtitles = false } = {}) {
+/** The title card's backdrop, generated in the story's Generate step (site/scripts/audio-gen), in its small copy. */
+const BACKDROP = 'generated-backdrop-960.jpg';
+const BACKDROP_FILE = new URL(`../../compositions/launch-16x9/assets/${BACKDROP}`, import.meta.url);
+
+function brand(key, lang = 'en', { subtitles = false, backdrop = false } = {}) {
   const L = BRAND[key]; const { w, h } = L; const t = TEXT[lang];
   const c = makeComp({ width: w, height: h, duration: D, background: B.bg, scenes: SC });
   const bg = c.track('backdrop'); const mark = c.track('mark'); const type = c.track('type', 'text');
+  // From the Generate step on, the generated backdrop sits under the dot grid, dimmed so the title reads over it.
+  if (backdrop) c.image(bg, 'backdrop', 0, D, BACKDROP, { x: 0, y: 0, w, h, fit: 'cover', opacity: 0.55 }, [A.fadeIn(0, 0.8)]);
   c.svg(bg, 'dots', 0, D, 'dots.svg', { x: 0, y: 0, w, h, fit: 'cover', opacity: 0.9, kenBurns: { from: { scale: 1 }, to: { scale: 1.05 } } }, [A.fadeIn(0, 0.8)]);
   // The logo's three frames, drawn in the order the product works: draft, composition, video.
   const M = L.mark; const mh = M.w / MARK_RATIO;
@@ -158,6 +168,9 @@ function brand(key, lang = 'en', { subtitles = false } = {}) {
   const lw = L.logo.w; const lh = lw / LOGO_RATIO;
   c.svg(mark, 'logo', 6.05, 1.95, 'logo.svg', { x: (w - lw) / 2, y: L.logo.y, w: lw, h: lh }, [A.fadeIn(0, 0.4), A.tw('scale', 0.92, 1, 0, 0.8), A.tw('blur', 16, 0, 0, 0.5)]);
   c.text(type, 'tag', 6.35, 1.65, { font: 'body', weight: 400, size: L.tag.size, color: B.muted, text: t.tag, align: 'center', x: 0, y: L.tag.y, w }, [A.fadeIn(0, 0.5), A.tw('y', 16, 0, 0, 0.8)]);
+  if (subtitles && VOICE) {
+    c.audio(c.track('voice', 'audio'), 'voice', VOICE_AT, VOICE.duration, `audio/${VOICE.file}`, { role: 'voice', script: VOICE.text });
+  }
   if (subtitles) {
     const sub = c.track('subtitles', 'subtitles');
     sub.clips.push({ id: 'lines', type: 'subtitles', start: 0, duration: D, props: {
@@ -167,7 +180,10 @@ function brand(key, lang = 'en', { subtitles = false } = {}) {
   }
   return {
     comp: c.build(),
-    assets: { 'dots.svg': S.dots(w, h, B.dot), 'frame-draft.svg': S.frameDraft, 'frame-comp.svg': S.frameComp, 'frame-video.svg': S.frameVideo, 'logo.svg': S.logo },
+    assets: {
+      'dots.svg': S.dots(w, h, B.dot), 'frame-draft.svg': S.frameDraft, 'frame-comp.svg': S.frameComp, 'frame-video.svg': S.frameVideo, 'logo.svg': S.logo,
+      ...(backdrop ? { [BACKDROP]: readFileSync(BACKDROP_FILE) } : {}),
+    },
   };
 }
 
@@ -180,12 +196,13 @@ export const STORY = [
   { id: 'story-signal-v2', make: () => signal('v2'), format: 'youtube-16x9', label: 'Signal v2: the same title 40% larger, slammed in over a teal flash.' },
   { id: 'story-signal-v3', make: () => signal('v3'), format: 'youtube-16x9', label: 'Signal v3, edited by hand: the title moved lower, resized, “Motion out.” recoloured yellow.' },
   { id: 'story-brand-16x9', make: () => brand('16x9'), format: 'youtube-16x9', label: 'v4 with the Motion Studio brand: the logo’s three frames, “Brief in.” in cream and “Motion out.” in orange on the dark dot grid, 16:9.' },
-  { id: 'story-brand-9x16', make: () => brand('9x16'), format: 'instagram-reel-9x16', label: 'The branded launch title recomposed for a 9:16 Reel: the mark on top, the title stacked below.' },
-  { id: 'story-brand-1x1', make: () => brand('1x1'), format: 'instagram-post-1x1', label: 'The branded launch title recomposed for a 1:1 post.' },
-  { id: 'story-it', make: () => brand('16x9', 'it'), format: 'youtube-16x9', label: 'The 16:9 in Italian: “Entra il brief. Esce il motion.”, same layout, timing and colours.' },
-  { id: 'story-de', make: () => brand('16x9', 'de'), format: 'youtube-16x9', label: 'The 16:9 in German: “Briefing rein. Motion raus.”, inside the same box.' },
-  { id: 'story-es', make: () => brand('16x9', 'es'), format: 'youtube-16x9', label: 'The 16:9 in Spanish: “Entra el brief. Sale el motion.”, inside the same box.' },
-  { id: 'story-subs', make: () => brand('16x9', 'en', { subtitles: true }), format: 'youtube-16x9', label: 'The 16:9 with subtitles from the voice-over, each word lit in orange as it is spoken.' },
+  { id: 'story-backdrop-16x9', make: () => brand('16x9', 'en', { backdrop: true }), format: 'youtube-16x9', label: 'v5: the generated backdrop, warm light through haze and floating frames, behind “Brief in. Motion out.”, 16:9.' },
+  { id: 'story-brand-9x16', make: () => brand('9x16', 'en', { backdrop: true }), format: 'instagram-reel-9x16', label: 'The launch title with its backdrop recomposed for a 9:16 Reel: the mark on top, the title stacked below.' },
+  { id: 'story-brand-1x1', make: () => brand('1x1', 'en', { backdrop: true }), format: 'instagram-post-1x1', label: 'The launch title with its backdrop recomposed for a 1:1 post.' },
+  { id: 'story-it', make: () => brand('16x9', 'it', { backdrop: true }), format: 'youtube-16x9', label: 'The 16:9 in Italian: “Entra il brief. Esce il motion.”, same layout, timing and colours.' },
+  { id: 'story-de', make: () => brand('16x9', 'de', { backdrop: true }), format: 'youtube-16x9', label: 'The 16:9 in German: “Briefing rein. Motion raus.”, inside the same box.' },
+  { id: 'story-es', make: () => brand('16x9', 'es', { backdrop: true }), format: 'youtube-16x9', label: 'The 16:9 in Spanish: “Entra el brief. Sale el motion.”, inside the same box.' },
+  { id: 'story-subs', make: () => brand('16x9', 'en', { subtitles: true, backdrop: true }), format: 'youtube-16x9', label: 'v6: the 16:9 with its voice-over and the subtitles drawn from it, each word lit in orange as it is spoken.' },
 ];
 export const STORY_IDS = STORY.map((s) => s.id);
 

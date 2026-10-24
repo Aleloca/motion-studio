@@ -1,21 +1,27 @@
-// Motion Studio's own launch film (16:9, 56 s): the ten steps of the home page, one beat each, with the interface redrawn
-// as vector motion. The film inside the boards is the launch video itself: it starts in the KOVA direction (night, cyan),
-// grows in chat, is moved and recoloured by hand, takes the Motion Studio brand, then becomes every format and language.
+// Motion Studio's own launch film (16:9, about a minute): the eleven steps of the home page, one beat each, with the
+// interface redrawn as vector motion, a voice-over line per beat, the music bed and the sound effects. The film inside the
+// boards is the launch video itself: it starts in the KOVA direction (night, cyan), grows in chat, is moved and recoloured
+// by hand, takes the Motion Studio brand, gets a generated image, then becomes every format and language.
+// Times in this file are authoring seconds; timeline.mjs stretches each beat to its voice-over line (the engine's warp).
 import { readFileSync } from 'node:fs';
 import { EASE, tw } from '../hero-gen/lib.mjs';
 import { stage } from './engine.mjs';
+import { musicStretches, readMedia, timeline } from './timeline.mjs';
 import * as S from './assets.mjs';
 
 const { C } = S;
-export const D = 56;
-/** Beat starts (seconds). */
-export const T = { brief: 0, variants: 3.8, chat: 9.2, edit: 14.2, brand: 19.4, formats: 24.8, langs: 30.0, subs: 34.8, identity: 39.8, export: 44.6, end: 49.8 };
-const SCENES = [
-  ['brief', 'Brief', T.brief, T.variants], ['variants', 'Three variants', T.variants, T.chat], ['chat', 'Chat request', T.chat, T.edit],
-  ['edit', 'Manual edit', T.edit, T.brand], ['brand', 'Brand from a site', T.brand, T.formats], ['formats', 'Every format', T.formats, T.langs],
-  ['languages', 'Languages', T.langs, T.subs], ['subtitles', 'Subtitles', T.subs, T.identity], ['identity', 'Identity set', T.identity, T.export],
-  ['export', 'Export', T.export, T.end], ['endcard', 'End card', T.end, D],
-].map(([id, name, start, end]) => ({ id, name, start, duration: end - start }));
+const MEDIA = readMedia();
+const TL = timeline(MEDIA);
+/** The film's length in authoring seconds (the composition lasts `TL.D`). */
+export const D = TL.DA;
+/** Beat starts (authoring seconds). */
+export const T = TL.A;
+const SCENE_NAMES = {
+  brief: 'Brief', variants: 'Three variants', chat: 'Chat request', edit: 'Manual edit', brand: 'Brand from a site', generate: 'Generate',
+  formats: 'Every format', langs: 'Languages', subs: 'Subtitles', identity: 'Identity set', export: 'Export', end: 'End card',
+};
+const SCENE_IDS = { langs: 'languages', subs: 'subtitles', end: 'endcard' };
+const SCENES = Object.keys(T).map((b) => ({ id: SCENE_IDS[b] ?? b, name: SCENE_NAMES[b], start: TL.T[b], duration: TL.len[b] }));
 
 const CAPTIONS = [
   [T.brief + 0.2, '01', 'BRIEF', 'Type a brief.', C.agent],
@@ -23,11 +29,12 @@ const CAPTIONS = [
   [T.chat, '03', 'CHAT', 'Ask for a change.', C.agent],
   [T.edit, '04', 'EDITOR', 'Or edit it by hand.', C.text],
   [T.brand, '05', 'BRAND', 'Bring your brand.', C.orange],
-  [T.formats, '06', 'FORMATS', 'Every format, recomposed.', C.formats],
-  [T.langs, '07', 'LANGUAGES', 'Every language, same layout.', C.lang],
-  [T.subs, '08', 'SUBTITLES', 'Subtitles, in sync.', C.lang],
-  [T.identity, '09', 'IDENTITY', 'Logo in. Identity out.', C.store],
-  [T.export, '10', 'EXPORT', 'Every file, for every channel.', C.formats],
+  [T.generate, '06', 'GENERATE', 'Generate it. Your keys.', C.store],
+  [T.formats, '07', 'FORMATS', 'Every format, recomposed.', C.formats],
+  [T.langs, '08', 'LANGUAGES', 'Every language, same layout.', C.lang],
+  [T.subs, '09', 'SUBTITLES', 'Subtitles, in sync.', C.lang],
+  [T.identity, '10', 'IDENTITY', 'Logo in. Identity out.', C.store],
+  [T.export, '11', 'EXPORT', 'Every file, for every channel.', C.formats],
 ];
 
 export const LINES = {
@@ -44,14 +51,20 @@ const FILM = {
   '1x1': { w: 1080, h: 1080, tag: { x: 90, y: 100, size: 30 }, logo: { x: 690, y: 86, w: 300 }, head: { x: 90, y: 540, size: 128, avail: 900 }, ring: { cx: 780, cy: 340, d: 560 }, sub: { y: 900, size: 58 } },
 };
 const LH = 1.08; // headline line spacing (× size)
+/** The generated backdrop (audio-gen) and how strongly it shows behind the title. */
+const IMAGE = MEDIA.image?.file ?? 'generated-backdrop.jpg';
+const BACKDROP_OPACITY = 0.6;
 const LOGO_RATIO = 322 / 1720;
 /** The size at which both headline lines of `lang` fit `avail` (never above `base`). */
 const fitSize = (lang, base, avail) => Math.min(base, ...LINES[lang].map((s, i) => (avail * base) / tw(s, base, 'display', i ? 300 : 800)));
 
 export function launch() {
-  const E = stage({ width: 1920, height: 1080, duration: D, background: C.stage, scenes: SCENES });
+  const E = stage({ width: 1920, height: 1080, duration: TL.D, background: C.stage, scenes: SCENES, warp: TL.W });
   const tr = {};
   for (const id of ['ground', 'back', 'stage', 'ui', 'fx', 'chrome', 'cursor']) tr[id] = E.c.track(id);
+  /** Sound effects to place (authoring time, effect id, volume), written as audio clips at the end. */
+  const cues = [];
+  const sfx = (t, id, volume = 0.5) => { cues.push([t, id, volume]); };
 
   // ── Small builders ──────────────────────────────────────────────────────────────────────────────────────────────
   const txt = (track, name, start, dur, g, p) => E.text(track, name, start, dur, g, { font: 'body', weight: 500, ...p });
@@ -85,6 +98,7 @@ export function launch() {
     return {
       move(t, d, [x, y], ease = EASE.inOut) { n.to(t, d, { dx: x - x0, dy: y - y0 }, ease); },
       click(t, [x, y]) {
+        sfx(t, 'click', 0.6);
         n.to(t, 0.07, { s: 0.84 }, EASE.sine); n.to(t + 0.07, 0.16, { s: 1 }, EASE.quint);
         E.svg(tr.cursor, 'click', t + 0.03, 0.5, null, 'ripple.svg', { x: x - 32, y: y - 32, w: 64, h: 64 }).init({ s: 0.3, o: 0.85 }).to(t + 0.03, 0.5, { s: 1.5, o: 0 }, EASE.quint);
       },
@@ -138,6 +152,13 @@ export function launch() {
     const bg = E.svg(trk, `${fmt}-film`, t0, t1 - t0, g, bgName(night ? 'night' : 'brand'), { x: 0, y: 0, w: L.w, h: L.h, fit: 'fill' });
     let brandBg = null;
     if (night && brandAt < t1) brandBg = E.svg(trk, `${fmt}-brand`, brandAt, t1 - brandAt, g, bgName('brand'), { x: 0, y: 0, w: L.w, h: L.h, fit: 'fill' }).anim({ preset: 'wipe', start: brandAt, duration: 0.9, ease: EASE.inOut });
+    // The backdrop made in the Generate beat, from `o.backdrop` on: over the film's ground, under its rings and title.
+    if (o.backdrop !== undefined && o.backdrop < t1) {
+      const at = Math.max(o.backdrop, t0);
+      const b = E.image(trk, `${fmt}-backdrop`, at, t1 - at, g, IMAGE, { x: 0, y: 0, w: L.w, h: L.h, fit: 'cover' });
+      if (o.backdrop > t0) b.init({ o: 0, s: 1.08 }).to(at, 0.5, { o: BACKDROP_OPACITY }, EASE.sine).to(at, 1.4, { s: 1 }, EASE.expo);
+      else b.init({ o: BACKDROP_OPACITY });
+    }
     const R = L.ring;
     rings(trk, g, `${fmt}-ring`, o.ringsFrom ?? t0 + 0.4, o.ringsTo ?? t1, R.cx, R.cy, R.d, o.ringPlan ?? [[0, 1.3, night ? 'cyan' : 'orange', 0.75]], o.ringGaps);
     const tag = mono(trk, `${fmt}-tag`, t0, t1 - t0, g, { size: L.tag.size, color: night ? C.steel : C.orange, text: 'MOTION STUDIO  ·  0.1.0', x: L.tag.x, y: L.tag.y, w: 900 });
@@ -169,7 +190,7 @@ export function launch() {
       .anim({ preset: 'wipe', start: 0.4, duration: T.end - 0.4, ease: 'linear' });
     const head = E.shape(tr.chrome, 'playhead', 0.4, tEnd - 0.4, null, { x: x0 - 1, y: y - 7, w: 3, h: 16, fill: C.orange, radius: 1.5 }).to(0.4, T.end - 0.4, { dx: len }, 'linear');
     const all = [base, fill, head];
-    const names = ['Brief', 'Variants', 'Chat', 'Editor', 'Brand', 'Formats', 'Languages', 'Subtitles', 'Identity', 'Export'];
+    const names = ['Brief', 'Variants', 'Chat', 'Editor', 'Brand', 'Generate', 'Formats', 'Languages', 'Subtitles', 'Identity', 'Export'];
     CAPTIONS.forEach(([t, , , , color], i) => {
       const bt = Object.values(T)[i];
       const x = x0 + (len * bt) / T.end;
@@ -219,6 +240,8 @@ export function launch() {
     const send = E.shape(tr.ui, 'send', 0.35, end - 0.35, Gc, { x: 1330, y: 620, w: 100, h: 44, fill: '#3A2A22', radius: 22 }).anim({ prop: 'color', from: '#3A2A22', to: C.orange, start: 0.95, duration: 0.3, ease: EASE.sine });
     const key = mono(tr.ui, 'send-key', 0.35, end - 0.35, Gc, { size: 20, color: C.stage, text: '⌘↵', align: 'center', x: 1330, y: 629, w: 100 });
     press([send, key], 2.72);
+    sfx(0.9, 'typing', 0.35);
+    sfx(2.72, 'click', 0.6);
   }
 
   // ── 02 Variants: three directions burst out, one is chosen and becomes the film ────────────────────────────────────
@@ -233,6 +256,8 @@ export function launch() {
     g.set({ tx: 960 - cx, ty: 545 - cy, s: 0.18, o: 0 }).to(burst + i * 0.09, 1.0, { tx: 0, ty: 0, s: 1 }, EASE.backSoft).to(burst + i * 0.09, 0.3, { o: 1 }, EASE.sine);
     return g;
   });
+  sfx(burst, 'pop', 0.45);
+  sfx(7.8, 'whoosh', 0.4);
   // A: the film's first look (KOVA's night and cyan rings).
   {
     const g = GV[0];
@@ -288,8 +313,10 @@ export function launch() {
   const BAKE = T.formats + 0.1; // the hero's headline, grown and moved by hand, is rewritten at its new size
   const ENERGY = 12.3; const BRAND = 23.2;
   const heroEnd = T.identity + 0.6;
+  /** The backdrop lands on the film in the Generate beat (the thumbnail's flight ends here). */
+  const BACKDROP_AT = T.generate + 3.95;
   const hero = film('16x9', GH, SWAP, heroEnd, {
-    brandAt: BRAND, ringsFrom: SWAP + 0.3, ringsTo: T.identity - 0.25, ringGaps: [[T.formats + 0.25, T.formats + 1.3]],
+    brandAt: BRAND, backdrop: BACKDROP_AT, ringsFrom: SWAP + 0.3, ringsTo: T.identity - 0.25, ringGaps: [[T.formats + 0.25, T.formats + 1.3]],
     ringPlan: [[0, 1.3, 'cyan', 0.75], [ENERGY, 0.55, 'cyan', 0.95], [BRAND, 1.1, 'orange', 0.8]],
   });
   const H16 = FILM['16x9'].head;
@@ -321,6 +348,8 @@ export function launch() {
     const sendBtn = E.shape(tr.ui, 'chat-send', t0, end - t0, Gp, { x: 1700, y: 858, w: 60, h: 34, fill: C.orange, radius: 17 });
     const sendKey = mono(tr.ui, 'chat-send-key', t0, end - t0, Gp, { size: 15, color: C.stage, text: '⌘↵', align: 'center', x: 1700, y: 865, w: 60 });
     press([sendBtn, sendKey], 10.82);
+    sfx(9.85, 'typing', 0.35);
+    sfx(10.82, 'click', 0.6);
     // The request, as a bubble.
     const bw = tw(msg, 20, 'body', 500) + 36;
     const bubble = [
@@ -346,6 +375,7 @@ export function launch() {
       txt(tr.ui, 'ready-text', 12.9, end - 12.9, Gp, { weight: 600, size: 16, color: C.ok, text: 'v2 · Ready', align: 'center', x: 1324, y: 606, w: 112 }),
     ];
     each(chip, (n) => n.init({ o: 0, s: 0.8 }).to(12.9, 0.4, { o: 1, s: 1 }, EASE.backSoft));
+    sfx(12.9, 'chime', 0.4);
   }
 
   // 04: the inspector; the title is selected, dragged up, recoloured; Save as v3.
@@ -416,7 +446,7 @@ export function launch() {
   // 05: brand from a website — palette, fonts and logo read, then applied to the film.
   {
     const Gb = E.group({ pivot: [1550, 615] });
-    const t0 = 19.35; const end = 24.85;
+    const t0 = 19.35; const end = T.generate + 0.05;
     Gb.set({ tx: 60, o: 0 }).to(t0, 0.55, { tx: 0 }, EASE.expo).to(t0, 0.4, { o: 1 }, EASE.sine).to(end - 0.45, 0.45, { o: 0, tx: 40 }, EASE.in);
     card(tr.ui, 'brand', t0, end - t0, Gb, { x: 1300, y: 300, w: 500, h: 630, radius: 24 });
     txt(tr.ui, 'brand-title', t0, end - t0, Gb, { weight: 600, size: 24, color: C.text, text: 'Brand kit', x: 1332, y: 326, w: 200 });
@@ -424,6 +454,8 @@ export function launch() {
     card(tr.ui, 'url', t0, end - t0, Gb, { x: 1324, y: 380, w: 452, h: 56, radius: 14, fill: C.raised });
     const url = 'aleloca.github.io/motion-studio';
     typing(tr.ui, 'url-typed', Gb, 19.95, 0.03, url, { font: 'mono', weight: 500, size: 19, color: C.text, x: 1344, y: 396, w: 430 }, end);
+    sfx(19.95, 'typing', 0.3);
+    sfx(21.2, 'pop', 0.4);
     // Reading the site.
     const bar = E.shape(tr.ui, 'reading', 20.45, 21.5 - 20.45, Gb, { x: 1326, y: 432, w: 448, h: 3, fill: C.orange, radius: 1.5 }).anim({ preset: 'wipe', start: 20.45, duration: 0.9, ease: EASE.inOut });
     bar.fadeOut(0.15);
@@ -468,9 +500,123 @@ export function launch() {
     head.B.anim({ prop: 'color', from: C.agent, to: C.orange, start: BRAND + 0.15, duration: 0.5, ease: EASE.sine });
   }
 
-  // ── 06 Formats: the film recomposed for 9:16 and 1:1, beside the 16:9 ──────────────────────────────────────────────
+  // ── 06 Generate: an image asked for, the paid call confirmed, the picture lands on the film; then a voice and music ──
+  {
+    const G0 = T.generate;
+    const Gg = E.group({ pivot: [1550, 615] });
+    const t0 = G0 - 0.05; const end = T.formats + 0.05;
+    const life = end - t0;
+    Gg.set({ tx: 60, o: 0 }).to(t0, 0.55, { tx: 0 }, EASE.expo).to(t0, 0.4, { o: 1 }, EASE.sine).to(end - 0.45, 0.45, { o: 0, tx: 40 }, EASE.in);
+    card(tr.ui, 'generate', t0, life, Gg, { x: 1300, y: 300, w: 500, h: 630, radius: 24 });
+    txt(tr.ui, 'generate-title', t0, life, Gg, { weight: 600, size: 24, color: C.text, text: 'Generate an asset', x: 1332, y: 326, w: 300 });
+    mono(tr.ui, 'generate-where', t0, life, Gg, { size: 15, color: C.dash, text: 'ASSETS', x: 1712, y: 334, w: 80 });
+    // The kinds, as tabs: Image, then Voice-over, then Music.
+    const KINDS = ['Image', 'Voice-over', 'Sound effect', 'Music'];
+    const kw = KINDS.map((k) => tw(k, 17, 'body', 500) + 26);
+    const kx = []; { let x = 1330; for (const w of kw) { kx.push(x); x += w + 4; } }
+    card(tr.ui, 'kinds', t0, life, Gg, { x: 1324, y: 376, w: 452, h: 48, radius: 24, fill: C.raised });
+    const VOICE_AT = G0 + 4.1; const MUSIC_AT = G0 + 5.5;
+    /** The picture is made: it leaves the panel for the film. */
+    const land = G0 + 3.2;
+    const pill = E.shape(tr.ui, 'kind-active', t0, life, Gg, { x: kx[0], y: 382, w: kw[0], h: 36, fill: '#333333', radius: 18 });
+    pill.to(VOICE_AT, 0.45, { dx: kx[1] - kx[0] }, EASE.expo).to(MUSIC_AT, 0.45, { dx: kx[3] - kx[0] }, EASE.expo);
+    const on = [[t0, 0], [VOICE_AT, 1], [MUSIC_AT, 3]];
+    KINDS.forEach((k, j) => {
+      const label = txt(tr.ui, 'kind', t0, life, Gg, { size: 17, color: j === 0 ? C.text : C.dash, text: k, align: 'center', x: kx[j], y: 390, w: kw[j] });
+      on.forEach(([t, i], n) => {
+        if (n === 0) return;
+        const was = on[n - 1][1] === j; const is = i === j;
+        if (was !== is) label.anim({ prop: 'color', from: is ? C.dash : C.text, to: is ? C.text : C.dash, start: t, duration: 0.3, ease: EASE.sine });
+      });
+    });
+    const field = (name, from, to, label, lines, provider) => {
+      const nodes = [
+        mono(tr.ui, `${name}-label`, from, to - from, Gg, { size: 15, color: C.dash, text: label, x: 1332, y: 446, w: 300 }),
+        ...lines.map((l, i) => txt(tr.ui, `${name}-text`, from, to - from, Gg, { size: 19, color: C.text, text: l, x: 1344, y: 488 + i * 30, w: 420 })),
+        mono(tr.ui, `${name}-provider`, from, to - from, Gg, { size: 15, color: C.muted, text: provider, x: 1332, y: 600, w: 440 }),
+      ];
+      // The last one leaves with the panel.
+      return each(nodes, (n) => { n.init({ o: 0, dy: 10 }).to(from, 0.35, { o: 1, dy: 0 }, EASE.expo); if (to < end) n.fadeOut(0.2, EASE.in); });
+    };
+    card(tr.ui, 'gen-field', t0, life, Gg, { x: 1324, y: 470, w: 452, h: 112, radius: 14, fill: C.raised });
+    // Image: the description typed, Generate pressed.
+    mono(tr.ui, 'image-label', t0, VOICE_AT - t0, Gg, { size: 15, color: C.dash, text: 'DESCRIPTION', x: 1332, y: 446, w: 300 }).fadeOut(0.2, EASE.in);
+    const p = { font: 'body', weight: 500, size: 19, color: C.text };
+    const l1 = typing(tr.ui, 'prompt', Gg, G0 + 0.55, 0.022, 'Dark studio backdrop, warm orange', { ...p, x: 1344, y: 488, w: 420 }, land);
+    typing(tr.ui, 'prompt', Gg, l1.done + 0.06, 0.022, 'light through haze, floating frames.', { ...p, x: 1344, y: 518, w: 420 }, land);
+    sfx(G0 + 0.55, 'typing', 0.3);
+    const provider = mono(tr.ui, 'image-provider', t0, G0 + 3.45 - t0, Gg, { size: 15, color: C.muted, text: `OPENAI  ·  GPT-IMAGE-2  ·  ${MEDIA.image?.asked ?? '1920×1088'}`, x: 1332, y: 600, w: 440 });
+    provider.fadeOut(0.2, EASE.in);
+    const genBtn = [
+      E.shape(tr.ui, 'gen-button', t0, life, Gg, { x: 1324, y: 836, w: 150, h: 52, fill: C.orange, radius: 26 }),
+      txt(tr.ui, 'gen-button-text', t0, life, Gg, { weight: 600, size: 20, color: C.stage, text: 'Generate', align: 'center', x: 1324, y: 849, w: 150 }),
+    ];
+    mono(tr.ui, 'gen-note', t0, life, Gg, { size: 14, color: C.dash, text: 'PAID CALL  ·  YOUR OWN KEY', x: 1494, y: 856, w: 290 });
+    const cur = pointer(G0 + 0.9, G0 + 6.0, [1640, 960]);
+    cur.move(G0 + 1.0, 0.45, [1400, 862]);
+    cur.click(G0 + 1.5, [1400, 862]);
+    press(genBtn, G0 + 1.5);
+    // The paid call is confirmed first, on the app's approval card (the provider, the model, the size; no price on it).
+    const Ga = E.group({ pivot: [1550, 690] });
+    const a0 = G0 + 1.62; const a1 = G0 + 2.85;
+    Ga.set({ o: 0, s: 0.92, ty: 16 }).to(a0, 0.4, { s: 1, ty: 0 }, EASE.backSoft).to(a0, 0.2, { o: 1 }, EASE.sine).to(a1 - 0.25, 0.25, { o: 0, s: 0.97 }, EASE.in);
+    card(tr.fx, 'approval', a0, a1 - a0, Ga, { x: 1316, y: 560, w: 468, h: 250, radius: 20, fill: '#222222', border: '#5A3420' });
+    mono(tr.fx, 'approval-kind', a0, a1 - a0, Ga, { size: 14, color: C.orange, text: 'EXTERNAL SERVICE', x: 1340, y: 582, w: 300 });
+    txt(tr.fx, 'approval-title', a0, a1 - a0, Ga, { weight: 600, size: 20, color: C.text, text: 'Generate an image with gpt-image-2', x: 1340, y: 610, w: 430 });
+    txt(tr.fx, 'approval-detail', a0, a1 - a0, Ga, { size: 16, color: C.muted, text: `${MEDIA.image?.asked ?? '1920×1088'}: Dark studio backdrop, warm orange…`, x: 1340, y: 646, w: 430 });
+    txt(tr.fx, 'approval-keys', a0, a1 - a0, Ga, { size: 16, color: C.text, text: 'A paid call, on your own OpenAI key.', x: 1340, y: 676, w: 430 });
+    const okBtn = [
+      E.shape(tr.fx, 'approval-ok', a0, a1 - a0, Ga, { x: 1340, y: 728, w: 124, h: 46, fill: C.orange, radius: 23 }),
+      txt(tr.fx, 'approval-ok-text', a0, a1 - a0, Ga, { weight: 600, size: 18, color: C.stage, text: 'Generate', align: 'center', x: 1340, y: 740, w: 124 }),
+    ];
+    for (const [x, w, l] of [[1476, 136, 'Always here'], [1624, 86, 'Deny']]) {
+      card(tr.fx, 'approval-btn', a0, a1 - a0, Ga, { x, y: 728, w, h: 46, radius: 23, fill: '#222222', border: '#3A3A3A' });
+      txt(tr.fx, 'approval-btn-text', a0, a1 - a0, Ga, { size: 18, color: C.text, text: l, align: 'center', x, y: 740, w });
+    }
+    sfx(a0, 'pop', 0.4);
+    cur.move(G0 + 1.8, 0.4, [1402, 752]);
+    cur.click(G0 + 2.3, [1402, 752]);
+    press(okBtn, G0 + 2.3);
+    // Generating, then the picture flies from the panel onto the film, beside the title.
+    E.shape(tr.ui, 'generating', G0 + 2.6, 0.65, Gg, { x: 1326, y: 578, w: 448, h: 3, fill: C.orange, radius: 1.5 })
+      .anim({ preset: 'wipe', start: G0 + 2.6, duration: 0.5, ease: EASE.inOut }).fadeOut(0.12);
+    // The picture leaves the panel as a thumbnail and grows onto the film, where the backdrop takes over (BACKDROP_AT).
+    const th = { x: 1344, y: 486, w: 192, h: 108 };
+    const thumb = E.image(tr.fx, 'generated-thumb', land, BACKDROP_AT + 0.35 - land, null, IMAGE, { x: th.x, y: th.y, w: th.w, h: th.h, fit: 'cover' });
+    thumb.init({ o: 0 }).to(land, 0.15, { o: 1 }, EASE.sine)
+      .to(land, 0.75, { dx: HERO.x + HERO.w / 2 - (th.x + th.w / 2), dy: HERO.y + HERO.h / 2 - (th.y + th.h / 2), s: HERO.w / th.w }, EASE.inOut)
+      .to(BACKDROP_AT, 0.35, { o: 0 }, EASE.sine);
+    sfx(land, 'whoosh', 0.3);
+    sfx(BACKDROP_AT, 'pop', 0.45);
+    const added = [
+      E.shape(tr.ui, 'added', G0 + 3.5, VOICE_AT - G0 - 3.5, Gg, { x: 1324, y: 594, w: 174, h: 32, fill: C.okBg, radius: 16 }),
+      txt(tr.ui, 'added-text', G0 + 3.5, VOICE_AT - G0 - 3.5, Gg, { weight: 600, size: 16, color: C.ok, text: 'Added to Assets', align: 'center', x: 1324, y: 600, w: 174 }),
+    ];
+    each(added, (n) => n.init({ o: 0, s: 0.8 }).to(G0 + 3.5, 0.35, { o: 1, s: 1 }, EASE.backSoft).fadeOut(0.2, EASE.in));
+    // Voice-over, then music: what each makes, its waveform.
+    cur.move(G0 + 3.55, 0.4, [kx[1] + kw[1] / 2, 400]);
+    cur.click(VOICE_AT, [kx[1] + kw[1] / 2, 400]);
+    cur.move(G0 + 5.05, 0.35, [kx[3] + kw[3] / 2, 400]);
+    cur.click(MUSIC_AT, [kx[3] + kw[3] / 2, 400]);
+    const voice = MEDIA.voice ? `${MEDIA.voice.provider === 'openai' ? 'OPENAI' : 'ELEVENLABS'}  ·  ${MEDIA.voice.model.toUpperCase()}  ·  ${MEDIA.voice.name.toUpperCase()}` : 'ELEVENLABS  ·  ELEVEN_MULTILINGUAL_V2';
+    field('voice', VOICE_AT, MUSIC_AT, 'TEXT TO SPEAK', ['Need an image, a voice, music', 'or a sound effect?'], voice);
+    field('music', MUSIC_AT, end, 'DESCRIPTION', ['Confident launch underscore,', '110 BPM, warm synth bass.'], 'ELEVENLABS  ·  MUSIC_V1  ·  INSTRUMENTAL');
+    for (const [name, from, to] of [['voice', VOICE_AT + 0.25, MUSIC_AT], ['music', MUSIC_AT + 0.25, end]]) {
+      card(tr.ui, `${name}-wave-card`, from, to - from, Gg, { x: 1324, y: 652, w: 452, h: 150, radius: 14, fill: C.raised })
+        .forEach((n) => { n.init({ o: 0 }).to(from, 0.3, { o: 1 }, EASE.sine); if (to < end) n.fadeOut(0.2, EASE.in); });
+      const wv = E.svg(tr.ui, `${name}-wave`, from, to - from, Gg, `wave-${name}.svg`, { x: 1344, y: 682, w: 412, h: 90, fit: 'fill' })
+        .anim({ preset: 'wipe', start: from, duration: 0.7, ease: EASE.expo });
+      const play = E.svg(tr.ui, `${name}-play`, from + 0.3, to - from - 0.3, Gg, 'avatar.svg', { x: 1720, y: 612, w: 34, h: 34 });
+      play.init({ o: 0, s: 0.6 }).to(from + 0.3, 0.35, { o: 1, s: 1 }, EASE.backSoft);
+      if (to < end) { wv.fadeOut(0.2, EASE.in); play.fadeOut(0.2, EASE.in); }
+    }
+  }
+
+  // ── 07 Formats: the film recomposed for 9:16 and 1:1, beside the 16:9 ──────────────────────────────────────────────
   const ROW = { s916: { x: 107.5, y: 320, w: 315 }, s11: { x: 482.5, y: 410, w: 470 }, s169: { x: 1012.5, y: 430, w: 800 } };
   const MOVE = T.formats + 0.25;
+  sfx(MOVE, 'whoosh', 0.4);
+  sfx(MOVE + 0.8, 'pop', 0.35);
   {
     const [cx, cy] = GH.pivot;
     const s = ROW.s169.w / HERO.w;
@@ -495,7 +641,7 @@ export function launch() {
   for (const fmt of ['9x16', '1x1']) {
     const g = boards[fmt];
     const t0 = fmt === '1x1' ? MOVE + 0.75 : MOVE + 0.9;
-    filmOf[fmt] = film(fmt, g, t0, rowEnd, { brandAt: -1, track: 'back', ringsFrom: t0 + 1.2, ringsTo: T.identity - 0.25, ringPlan: [[0, 1.2, 'orange', 0.8]] });
+    filmOf[fmt] = film(fmt, g, t0, rowEnd, { brandAt: -1, backdrop: t0, track: 'back', ringsFrom: t0 + 1.2, ringsTo: T.identity - 0.25, ringPlan: [[0, 1.2, 'orange', 0.8]] });
   }
   // The headlines per format and language: the 16:9 at the size and place set by hand, the others in their own layouts.
   const HEADS = {
@@ -535,7 +681,7 @@ export function launch() {
     return l;
   });
 
-  // ── 07 Languages: the tabs, the flips ──────────────────────────────────────────────────────────────────────────────
+  // ── 08 Languages: the tabs, the flips ──────────────────────────────────────────────────────────────────────────────
   {
     const names = ['English', 'Italian', 'German', 'Japanese'];
     const ws = names.map((n) => tw(n, 20, 'body', 500) + 40);
@@ -547,7 +693,7 @@ export function launch() {
     strip.push(pill);
     const order = [0, 1, 2, 3, 0];
     const xs = []; let acc = x0 + 6; for (const w of ws) { xs.push(acc); acc += w; }
-    FLIPS.forEach(([, tf], i) => { if (i > 0) pill.to(tf, 0.45, { dx: xs[order[i]] - xs[0] }, EASE.expo); });
+    FLIPS.forEach(([, tf], i) => { if (i > 0) { pill.to(tf, 0.45, { dx: xs[order[i]] - xs[0] }, EASE.expo); sfx(tf, 'whoosh', 0.22); } });
     names.forEach((n, j) => {
       const label = txt(tr.chrome, 'lang-tab', t0, end - t0, null, { size: 20, color: j === 0 ? C.text : C.dash, text: n, align: 'center', x: xs[j], y: y + 15, w: ws[j] });
       FLIPS.forEach(([, tf], i) => {
@@ -560,38 +706,45 @@ export function launch() {
     each(strip, (n) => n.init({ o: 0, dy: -12 }).to(t0, 0.5, { o: 1, dy: 0 }, EASE.expo).fadeOut(0.3, EASE.in));
   }
 
-  // ── 08 Subtitles: a voice, its waveform, lines in sync in every format ─────────────────────────────────────────────
+  // ── 09 Subtitles: a voice, its waveform, lines in sync in every format ─────────────────────────────────────────────
   {
     const t0 = T.subs + 0.2; const end = T.identity + 0.1;
     const wave = { x: 107.5, y: 908, w: 1705, h: 62 };
     const wv = E.svg(tr.chrome, 'waveform', t0, end - t0, null, 'waveform.svg', { x: wave.x, y: wave.y, w: wave.w, h: wave.h, fit: 'fill' });
     wv.anim({ preset: 'wipe', start: t0, duration: 0.6, ease: EASE.expo }).fadeOut(0.3, EASE.in);
-    const speak = T.subs + 0.8; const len = 3.6;
+    // The real line: its voice-over starts at `speakR` (film time) and each word is lit from its start to the next one's
+    // (times from media.json); the nodes take authoring times (TL.U).
+    const v = TL.vo.find((x) => x.beat === 'subs');
+    const U = TL.U;
+    const speakR = v ? v.start : TL.W(T.subs + 0.8); const lenR = v ? v.duration : 3.6;
+    const fallback = 'Subtitles stay in sync with the voice.'.split(' ').map((w, i) => ({ text: w, start: 0.2 + i * 0.4, end: 0.55 + i * 0.4 }));
+    const words = (v ? v.words : fallback).map((w) => ({ text: w.text, s: speakR + w.start, e: speakR + w.end }));
+    const speak = U(speakR);
     const ph = E.shape(tr.chrome, 'voice-head', speak - 0.1, end - speak + 0.1, null, { x: wave.x - 1, y: wave.y - 8, w: 3, h: wave.h + 16, fill: C.orange, radius: 1.5 });
-    ph.fadeIn(speak - 0.1, 0.2).to(speak, len, { dx: wave.w }, 'linear').fadeOut(0.3, EASE.in);
-    // Two cues; words timed by their length inside each phrase (the waveform's two phrases).
-    const cues = [[['Type', 'a', 'brief.'], 0.04, 0.34], [['Get', 'motion', 'for', 'every', 'channel.'], 0.4, 0.96]];
+    ph.fadeIn(speak - 0.1, 0.2).to(speak, U(speakR + lenR) - speak, { dx: wave.w }, 'linear').fadeOut(0.3, EASE.in);
+    // Two cues (the 9:16 is too narrow for the line in one).
+    const half = Math.ceil(words.length / 2);
+    const cues = [words.slice(0, half), words.slice(half)];
     for (const [fmt, g] of Object.entries(boards)) {
       const L = FILM[fmt];
       const size = L.sub.size;
-      cues.forEach(([words, f0, f1], ci) => {
-        const line = words.join(' ');
+      cues.forEach((cw, ci) => {
+        const line = cw.map((w) => w.text).join(' ');
         const lw = tw(line, size, 'body', 600);
         const pad = size * 0.5;
         const x = (L.w - lw) / 2;
-        const cs = speak + f0 * len - 0.08; const ce = ci === 0 ? speak + cues[1][1] * len - 0.1 : rowEnd;
+        const cs = U(cw[0].s - 0.08); const ce = ci === 0 ? U(cues[1][0].s - 0.1) : rowEnd;
         const box = E.shape(tr.stage, `${fmt}-sub-box`, cs, ce - cs, g, { x: x - pad, y: L.sub.y - size * 0.32, w: lw + pad * 2, h: size * 1.32 + size * 0.5, fill: '#000000B3', radius: size * 0.3 });
         const text = E.text(tr.stage, `${fmt}-sub`, cs, ce - cs, g, { font: 'body', weight: 600, size, color: C.text, text: line, x, y: L.sub.y - size * 0.07, w: lw + 8 });
         for (const n of [box, text]) { n.init({ o: 0, dy: 14 }).to(cs, 0.25, { o: 1, dy: 0 }, EASE.expo); if (ci === 0) n.fadeOut(0.12, EASE.in); }
-        // The spoken word, in orange.
-        const chars = words.reduce((a, w) => a + w.length, 0);
-        let at = speak + f0 * len; let pre = '';
-        for (const w of words) {
-          const d = ((f1 - f0) * len * w.length) / chars;
+        // The spoken word, in orange, from its start to the next word's (the last one a little past its end).
+        let pre = '';
+        cw.forEach((w, wi) => {
+          const until = Math.min(cw[wi + 1]?.s ?? w.e + 0.3, TL.W(ce));
           const wx = x + tw(pre, size, 'body', 600);
-          E.text(tr.stage, `${fmt}-word`, at, Math.min(d, ce - at), g, { font: 'body', weight: 600, size, color: C.orange, text: w, x: wx, y: L.sub.y - size * 0.07, w: tw(w, size, 'body', 600) + 8 });
-          at += d; pre += `${w} `;
-        }
+          E.text(tr.stage, `${fmt}-word`, U(w.s), U(until) - U(w.s), g, { font: 'body', weight: 600, size, color: C.orange, text: w.text, x: wx, y: L.sub.y - size * 0.07, w: tw(w.text, size, 'body', 600) + 8 });
+          pre += `${w.text} `;
+        });
       });
     }
   }
@@ -602,16 +755,18 @@ export function launch() {
     order.forEach((g, i) => {
       const t = out + i * 0.07;
       g.to(t, 0.55, { o: 0 }, EASE.in);
-      g.to(t, 0.55, { ty: (g === GH ? g.v.ty.at(t) : 0) + 50 }, EASE.in);
+      g.to(t, 0.55, { ty: (g === GH ? g.v.ty.at(E.W(t)) : 0) + 50 }, EASE.in);
     });
   }
 
-  // ── 09 Identity: the mark becomes an app icon, a favicon in a tab, a social preview ───────────────────────────────
+  // ── 10 Identity: the mark becomes an app icon, a favicon in a tab, a social preview ───────────────────────────────
   {
     const t0 = T.identity + 0.4; const end = T.export + 0.1;
     const mark = E.svg(tr.stage, 'mark', t0, 1.4, null, 'mark.svg', { x: 780, y: 400, w: 360, h: 320 });
     mark.init({ o: 0, s: 0.6 }).to(t0, 0.7, { s: 1 }, EASE.backSoft).to(t0, 0.3, { o: 1 }, EASE.sine).to(t0 + 1.0, 0.4, { s: 0.7, o: 0 }, EASE.in);
     const split = t0 + 1.05;
+    sfx(t0, 'pop', 0.4);
+    sfx(split, 'whoosh', 0.35);
     const out = (nodes, t, from) => each(nodes, (n) => n.init({ o: 0, s: 0.4, dx: from }).to(t, 0.8, { s: 1, dx: 0 }, EASE.expo).to(t, 0.3, { o: 1 }, EASE.sine).to(end - 0.45, 0.4, { o: 0, dy: -30 }, EASE.in));
     // App icon (centre).
     out([
@@ -643,7 +798,7 @@ export function launch() {
     });
   }
 
-  // ── 10 Export: one click, the files fly into a folder per channel ──────────────────────────────────────────────────
+  // ── 11 Export: one click, the files fly into a folder per channel ──────────────────────────────────────────────────
   {
     const t0 = T.export + 0.2; const end = T.end - 0.1;
     const btn = [
@@ -698,6 +853,8 @@ export function launch() {
       });
       idx += row.length;
     });
+    sfx(click + 0.9, 'files', 0.45);
+    sfx(Math.max(...folders.flatMap((F) => F.times)), 'chime', 0.4);
     // Each arrival: the folder bumps, its count goes up.
     folders.forEach((F) => {
       F.times.forEach((t) => F.f.to(t, 0.06, { s: 1.06 }, EASE.sine).to(t + 0.06, 0.09, { s: 1 }, EASE.sine));
@@ -714,8 +871,10 @@ export function launch() {
   // ── End card ───────────────────────────────────────────────────────────────────────────────────────────────────────
   {
     const t0 = T.end;
+    E.image(tr.ground, 'end-backdrop', t0, D - t0, null, IMAGE, { x: 0, y: 0, w: 1920, h: 1080, fit: 'cover' }).init({ o: 0, s: 1.06 }).to(t0, 1.6, { o: 0.32 }, EASE.sine).to(t0, D - t0, { s: 1 }, 'linear');
     E.svg(tr.ground, 'ember', t0, D - t0, null, 'ember.svg', { x: 260, y: -160, w: 1400, h: 1400 }).init({ o: 0, s: 0.85 }).to(t0, 2.2, { o: 1, s: 1 }, EASE.sine);
     const lw = 620;
+    sfx(t0 + 0.2, 'chime', 0.35);
     const logo = E.svg(tr.stage, 'end-logo', t0 + 0.2, D - t0 - 0.2, null, 'logo.svg', { x: (1920 - lw) / 2, y: 300, w: lw, h: lw * LOGO_RATIO });
     logo.init({ o: 0, s: 0.92, blur: 14 }).to(t0 + 0.2, 1.0, { o: 1, s: 1, blur: 0 }, EASE.expo);
     const size = 120;
@@ -735,7 +894,33 @@ export function launch() {
       .fadeIn(t0 + 2.4, 0.7, EASE.sine);
   }
 
+  // ── Sound: the voice-over, the music bed ducked under it, the effects ─────────────────────────────────────────────
+  sound(E, cues);
   return E.build();
+}
+
+/**
+ * The audio tracks, in film time: one voice clip per line, the music bed in stretches of one level (musicStretches)
+ * alternating between two tracks, and the effects at their cues.
+ */
+function sound(E, cues) {
+  const voice = E.c.track('voice', 'audio');
+  for (const v of TL.vo) E.c.audio(voice, 'voice', v.start, v.duration, `audio/${v.file}`, { role: 'voice', script: v.text });
+  if (MEDIA.music) {
+    const tracks = [E.c.track('music-a', 'audio'), E.c.track('music-b', 'audio')];
+    musicStretches(TL.vo, Math.min(TL.D, MEDIA.music.duration)).forEach((m, i) => {
+      E.c.audio(tracks[i % 2], 'music', m.from, m.to - m.from, `audio/${MEDIA.music.file}`, { trimStart: m.from, volume: m.level, role: 'music', fadeIn: m.fadeIn, fadeOut: m.fadeOut });
+    });
+  }
+  if (MEDIA.sfx) {
+    const fx = E.c.track('sfx', 'audio');
+    for (const [t, id, volume] of cues.sort((a, b) => a[0] - b[0])) {
+      const m = MEDIA.sfx[id];
+      if (!m) continue;
+      const start = TL.W(t);
+      E.c.audio(fx, `sfx-${id}`, start, Math.min(m.duration, TL.D - start), `audio/${m.file}`, { volume, role: 'sfx' });
+    }
+  }
 }
 
 /** The SVG files of the composition's assets/ folder (the logo and the mark come from the site and the identity set). */
@@ -751,11 +936,16 @@ export function launchAssets() {
     'outline-variant.svg': S.outline(2012, 1172, 96, C.orange, 3),
     'outline-select.svg': S.outline(1000, 600, 6, C.orange, 2.5),
     'outline-swatch.svg': S.outline(72, 72, 18, C.text, 3),
-    'download.svg': S.download, 'tab.svg': S.browserTab(), 'waveform.svg': S.waveform(1705, 62),
+    'download.svg': S.download, 'tab.svg': S.browserTab(),
     'ratio-16x9.svg': S.ratioIcon(16, 9, C.orange), 'ratio-9x16.svg': S.ratioIcon(9, 16, C.orange), 'ratio-1x1.svg': S.ratioIcon(1, 1, C.orange),
     'folder-0.svg': S.folder(C.orange), 'folder-1.svg': S.folder(C.store), 'folder-2.svg': S.folder(C.formats),
     'file-0.svg': S.fileGlyph(C.orange), 'file-1.svg': S.fileGlyph(C.store), 'file-2.svg': S.fileGlyph(C.formats),
   };
+  // Waveforms: the subtitles beat's line, and the Generate beat's voice and music (the real recordings when there are).
+  const peaksOf = (beat) => TL.vo.find((v) => v.beat === beat)?.peaks;
+  A['waveform.svg'] = peaksOf('subs') ? S.peaksWave(1705, 62, peaksOf('subs')) : S.waveform(1705, 62);
+  A['wave-voice.svg'] = peaksOf('generate') ? S.peaksWave(412, 90, peaksOf('generate'), C.muted, 7) : S.waveform(412, 90, C.muted);
+  A['wave-music.svg'] = MEDIA.music ? S.peaksWave(412, 90, MEDIA.music.peaks, C.muted, 7) : S.waveform(412, 90, C.muted);
   for (const [fmt, L] of Object.entries(FILM)) {
     A[`film-${fmt}-night.svg`] = S.filmBg(L.w, L.h, L.ring.cx, L.ring.cy, 'night');
     A[`film-${fmt}-brand.svg`] = S.filmBg(L.w, L.h, L.ring.cx, L.ring.cy, 'brand');

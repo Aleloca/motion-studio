@@ -1,0 +1,1727 @@
+{
+  "$schema": "motion-studio/composition@1",
+  "width": 1080,
+  "height": 1920,
+  "fps": 30,
+  "duration": 10,
+  "background": "#F7E8D0",
+  "fonts": [
+    {
+      "family": "Bricolage Grotesque",
+      "src": "assets/fonts/BricolageGrotesque.woff2",
+      "weight": 800
+    },
+    {
+      "family": "Caveat",
+      "src": "assets/fonts/Caveat.woff2",
+      "weight": 700
+    },
+    {
+      "family": "Instrument Sans",
+      "src": "assets/fonts/InstrumentSans.woff2",
+      "weight": 700
+    },
+    {
+      "family": "JetBrains Mono",
+      "src": "assets/fonts/JetBrainsMono.woff2",
+      "weight": 600
+    }
+  ],
+  "scenes": [
+    {
+      "id": "seed",
+      "name": "One seed",
+      "start": 0,
+      "duration": 3
+    },
+    {
+      "id": "forest",
+      "name": "A forest",
+      "start": 3,
+      "duration": 3.6
+    },
+    {
+      "id": "ask",
+      "name": "The ask",
+      "start": 6.6,
+      "duration": 3.4
+    }
+  ],
+  "tracks": [
+    {
+      "id": "sky",
+      "kind": "visual",
+      "clips": [
+        {
+          "id": "sun-1",
+          "type": "svg",
+          "src": "assets/sun.svg",
+          "start": 0,
+          "duration": 10,
+          "props": {
+            "fit": "contain",
+            "x": 720,
+            "y": 110,
+            "width": 290,
+            "height": 290
+          },
+          "animations": [
+            {
+              "prop": "rotation",
+              "from": 0,
+              "to": 60,
+              "start": 0,
+              "duration": 10,
+              "ease": "linear"
+            },
+            {
+              "prop": "scale",
+              "start": 0,
+              "duration": 10,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0.92
+                },
+                {
+                  "t": 0.5,
+                  "v": 1.04,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0.92,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "clouds-2",
+          "type": "svg",
+          "src": "assets/clouds.svg",
+          "start": 0,
+          "duration": 10,
+          "props": {
+            "fit": "contain",
+            "x": -200,
+            "y": 560,
+            "width": 1500,
+            "height": 260
+          },
+          "animations": [
+            {
+              "prop": "x",
+              "from": 0,
+              "to": 180,
+              "start": 0,
+              "duration": 10,
+              "ease": "linear"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "trees",
+      "kind": "visual",
+      "clips": [
+        {
+          "id": "stem-6",
+          "type": "shape",
+          "start": 1.25,
+          "duration": 1.95,
+          "props": {
+            "x": 531,
+            "y": 1100,
+            "width": 18,
+            "height": 310,
+            "fill": "#3F8F4E",
+            "radius": 9
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 310,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": 340,
+              "start": 1.6,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            }
+          ]
+        },
+        {
+          "id": "leaf-l-7",
+          "type": "svg",
+          "src": "assets/leaf.svg",
+          "start": 1.7,
+          "duration": 1.5,
+          "props": {
+            "fit": "contain",
+            "x": 380,
+            "y": 1020,
+            "width": 154,
+            "height": 112,
+            "rotation": -18
+          },
+          "animations": [
+            {
+              "prop": "scale",
+              "from": 0,
+              "to": 1,
+              "start": 0,
+              "duration": 0.45,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "prop": "rotation",
+              "from": 20,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.3,1.35,.6,1)"
+            },
+            {
+              "prop": "scale",
+              "from": 1,
+              "to": 0,
+              "start": 1.15,
+              "duration": 0.3,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            }
+          ]
+        },
+        {
+          "id": "leaf-r-8",
+          "type": "svg",
+          "src": "assets/leaf.svg",
+          "start": 1.82,
+          "duration": 1.38,
+          "props": {
+            "fit": "contain",
+            "x": 544,
+            "y": 1062,
+            "width": 154,
+            "height": 112,
+            "rotation": 198
+          },
+          "animations": [
+            {
+              "prop": "scale",
+              "from": 0,
+              "to": 1,
+              "start": 0,
+              "duration": 0.45,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "prop": "rotation",
+              "from": -20,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.3,1.35,.6,1)"
+            },
+            {
+              "prop": "scale",
+              "from": 1,
+              "to": 0,
+              "start": 1.03,
+              "duration": 0.3,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            }
+          ]
+        },
+        {
+          "id": "trunk-13",
+          "type": "shape",
+          "start": 3.39,
+          "duration": 6.61,
+          "props": {
+            "x": 110.4,
+            "y": 1254.395,
+            "width": 19.2,
+            "height": 204,
+            "fill": "#5C3720",
+            "radius": 9.6
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 224,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": 224,
+              "start": 5.96,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            }
+          ]
+        },
+        {
+          "id": "crown-14",
+          "type": "svg",
+          "src": "assets/crown-0.svg",
+          "start": 3.69,
+          "duration": 6.31,
+          "props": {
+            "fit": "contain",
+            "x": 36,
+            "y": 1150.235,
+            "width": 168,
+            "height": 168
+          },
+          "animations": [
+            {
+              "prop": "scale",
+              "from": 0,
+              "to": 1,
+              "start": 0,
+              "duration": 0.55,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "prop": "rotation",
+              "from": -14,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.3,1.35,.6,1)"
+            },
+            {
+              "prop": "rotation",
+              "start": 0.7,
+              "duration": 2.4,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.5,
+                  "v": -2.5,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            },
+            {
+              "prop": "scale",
+              "from": 1,
+              "to": 0,
+              "start": 5.31,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.2
+            }
+          ]
+        },
+        {
+          "id": "trunk-15",
+          "type": "shape",
+          "start": 3.237,
+          "duration": 6.763,
+          "props": {
+            "x": 237.4,
+            "y": 1171.573,
+            "width": 25.2,
+            "height": 261.5,
+            "fill": "#5C3720",
+            "radius": 12.6
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 281.5,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": 281.5,
+              "start": 6.113,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            }
+          ]
+        },
+        {
+          "id": "crown-16",
+          "type": "svg",
+          "src": "assets/crown-1.svg",
+          "start": 3.537,
+          "duration": 6.463,
+          "props": {
+            "fit": "contain",
+            "x": 139.75,
+            "y": 1034.863,
+            "width": 220.5,
+            "height": 220.5
+          },
+          "animations": [
+            {
+              "prop": "scale",
+              "from": 0,
+              "to": 1,
+              "start": 0,
+              "duration": 0.55,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "prop": "rotation",
+              "from": 14,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.3,1.35,.6,1)"
+            },
+            {
+              "prop": "rotation",
+              "start": 0.7,
+              "duration": 2.4,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.5,
+                  "v": 2.5,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            },
+            {
+              "prop": "scale",
+              "from": 1,
+              "to": 0,
+              "start": 5.463,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.2
+            }
+          ]
+        },
+        {
+          "id": "trunk-17",
+          "type": "shape",
+          "start": 3.094,
+          "duration": 6.906,
+          "props": {
+            "x": 379.2,
+            "y": 1189.173,
+            "width": 21.6,
+            "height": 227,
+            "fill": "#5C3720",
+            "radius": 10.8
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 247,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": 247,
+              "start": 6.256,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            }
+          ]
+        },
+        {
+          "id": "crown-18",
+          "type": "svg",
+          "src": "assets/crown-2.svg",
+          "start": 3.394,
+          "duration": 6.606,
+          "props": {
+            "fit": "contain",
+            "x": 295.5,
+            "y": 1071.993,
+            "width": 189,
+            "height": 189
+          },
+          "animations": [
+            {
+              "prop": "scale",
+              "from": 0,
+              "to": 1,
+              "start": 0,
+              "duration": 0.55,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "prop": "rotation",
+              "from": -14,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.3,1.35,.6,1)"
+            },
+            {
+              "prop": "rotation",
+              "start": 0.7,
+              "duration": 2.4,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.5,
+                  "v": -2.5,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            },
+            {
+              "prop": "scale",
+              "from": 1,
+              "to": 0,
+              "start": 5.606,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.2
+            }
+          ]
+        },
+        {
+          "id": "trunk-19",
+          "type": "shape",
+          "start": 3.015,
+          "duration": 6.985,
+          "props": {
+            "x": 525,
+            "y": 1102.5,
+            "width": 30,
+            "height": 307.5,
+            "fill": "#5C3720",
+            "radius": 15
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 327.5,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": 327.5,
+              "start": 6.335,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            }
+          ]
+        },
+        {
+          "id": "crown-20",
+          "type": "svg",
+          "src": "assets/crown-0.svg",
+          "start": 3.315,
+          "duration": 6.685,
+          "props": {
+            "fit": "contain",
+            "x": 408.75,
+            "y": 939.75,
+            "width": 262.5,
+            "height": 262.5
+          },
+          "animations": [
+            {
+              "prop": "scale",
+              "from": 0,
+              "to": 1,
+              "start": 0,
+              "duration": 0.55,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "prop": "rotation",
+              "from": 14,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.3,1.35,.6,1)"
+            },
+            {
+              "prop": "rotation",
+              "start": 0.7,
+              "duration": 2.4,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.5,
+                  "v": 2.5,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            },
+            {
+              "prop": "scale",
+              "from": 1,
+              "to": 0,
+              "start": 5.685,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.2
+            }
+          ]
+        },
+        {
+          "id": "trunk-21",
+          "type": "shape",
+          "start": 3.094,
+          "duration": 6.906,
+          "props": {
+            "x": 678.6,
+            "y": 1177.673,
+            "width": 22.8,
+            "height": 238.5,
+            "fill": "#5C3720",
+            "radius": 11.4
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 258.5,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": 258.5,
+              "start": 6.256,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            }
+          ]
+        },
+        {
+          "id": "crown-22",
+          "type": "svg",
+          "src": "assets/crown-1.svg",
+          "start": 3.394,
+          "duration": 6.606,
+          "props": {
+            "fit": "contain",
+            "x": 590.25,
+            "y": 1053.983,
+            "width": 199.5,
+            "height": 199.5
+          },
+          "animations": [
+            {
+              "prop": "scale",
+              "from": 0,
+              "to": 1,
+              "start": 0,
+              "duration": 0.55,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "prop": "rotation",
+              "from": -14,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.3,1.35,.6,1)"
+            },
+            {
+              "prop": "rotation",
+              "start": 0.7,
+              "duration": 2.4,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.5,
+                  "v": -2.5,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            },
+            {
+              "prop": "scale",
+              "from": 1,
+              "to": 0,
+              "start": 5.606,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.2
+            }
+          ]
+        },
+        {
+          "id": "trunk-23",
+          "type": "shape",
+          "start": 3.294,
+          "duration": 6.706,
+          "props": {
+            "x": 816.8,
+            "y": 1160.073,
+            "width": 26.4,
+            "height": 273,
+            "fill": "#5C3720",
+            "radius": 13.2
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 293,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": 293,
+              "start": 6.056,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            }
+          ]
+        },
+        {
+          "id": "crown-24",
+          "type": "svg",
+          "src": "assets/crown-2.svg",
+          "start": 3.594,
+          "duration": 6.406,
+          "props": {
+            "fit": "contain",
+            "x": 714.5,
+            "y": 1016.853,
+            "width": 231,
+            "height": 231
+          },
+          "animations": [
+            {
+              "prop": "scale",
+              "from": 0,
+              "to": 1,
+              "start": 0,
+              "duration": 0.55,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "prop": "rotation",
+              "from": 14,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.3,1.35,.6,1)"
+            },
+            {
+              "prop": "rotation",
+              "start": 0.7,
+              "duration": 2.4,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.5,
+                  "v": 2.5,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            },
+            {
+              "prop": "scale",
+              "from": 1,
+              "to": 0,
+              "start": 5.406,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.2
+            }
+          ]
+        },
+        {
+          "id": "trunk-25",
+          "type": "shape",
+          "start": 3.426,
+          "duration": 6.574,
+          "props": {
+            "x": 949.8,
+            "y": 1242.895,
+            "width": 20.4,
+            "height": 215.5,
+            "fill": "#5C3720",
+            "radius": 10.2
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 235.5,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "prop": "y",
+              "from": 0,
+              "to": 235.5,
+              "start": 5.924,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            }
+          ]
+        },
+        {
+          "id": "crown-26",
+          "type": "svg",
+          "src": "assets/crown-0.svg",
+          "start": 3.726,
+          "duration": 6.274,
+          "props": {
+            "fit": "contain",
+            "x": 870.75,
+            "y": 1132.225,
+            "width": 178.5,
+            "height": 178.5
+          },
+          "animations": [
+            {
+              "prop": "scale",
+              "from": 0,
+              "to": 1,
+              "start": 0,
+              "duration": 0.55,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "prop": "rotation",
+              "from": -14,
+              "to": 0,
+              "start": 0,
+              "duration": 0.7,
+              "ease": "cubic-bezier(.3,1.35,.6,1)"
+            },
+            {
+              "prop": "rotation",
+              "start": 0.7,
+              "duration": 2.4,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 0.5,
+                  "v": -2.5,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                },
+                {
+                  "t": 1,
+                  "v": 0,
+                  "ease": "cubic-bezier(.37,0,.63,1)"
+                }
+              ]
+            },
+            {
+              "prop": "scale",
+              "from": 1,
+              "to": 0,
+              "start": 5.274,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.7,0,.84,0)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.2
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "hill",
+      "kind": "visual",
+      "clips": [
+        {
+          "id": "hill-3",
+          "type": "svg",
+          "src": "assets/hill.svg",
+          "start": 0,
+          "duration": 10,
+          "props": {
+            "fit": "fill",
+            "x": 0,
+            "y": 1260,
+            "width": 1080,
+            "height": 660
+          }
+        },
+        {
+          "id": "puff-5",
+          "type": "svg",
+          "src": "assets/puff.svg",
+          "scene": "seed",
+          "start": 0.82,
+          "duration": 0.6,
+          "props": {
+            "fit": "contain",
+            "x": 450,
+            "y": 1300,
+            "width": 180,
+            "height": 80
+          },
+          "animations": [
+            {
+              "prop": "scale",
+              "from": 0.3,
+              "to": 1.2,
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.35
+            }
+          ]
+        },
+        {
+          "id": "grass-27",
+          "type": "svg",
+          "src": "assets/grass.svg",
+          "start": 3.2,
+          "duration": 6.8,
+          "props": {
+            "fit": "fill",
+            "x": 0,
+            "y": 1360,
+            "width": 1080,
+            "height": 120
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.8,
+              "ease": "cubic-bezier(.83,0,.17,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "start": 6.2,
+              "duration": 0.5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "type",
+      "kind": "text",
+      "clips": [
+        {
+          "id": "seed-4",
+          "type": "svg",
+          "src": "assets/seed.svg",
+          "scene": "seed",
+          "start": 0.3,
+          "duration": 1,
+          "props": {
+            "fit": "contain",
+            "x": 514,
+            "y": 1310,
+            "width": 52,
+            "height": 64
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "start": 0,
+              "duration": 1,
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": -1350
+                },
+                {
+                  "t": 0.5,
+                  "v": 0,
+                  "ease": "cubic-bezier(.7,0,.84,0)"
+                },
+                {
+                  "t": 0.62,
+                  "v": -24,
+                  "ease": "cubic-bezier(.2,.7,.4,1)"
+                },
+                {
+                  "t": 0.74,
+                  "v": 0,
+                  "ease": "cubic-bezier(.7,0,.84,0)"
+                },
+                {
+                  "t": 1,
+                  "v": 30
+                }
+              ]
+            },
+            {
+              "prop": "rotation",
+              "from": -200,
+              "to": 0,
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.22,1,.36,1)"
+            }
+          ]
+        },
+        {
+          "id": "one-9",
+          "type": "text",
+          "scene": "seed",
+          "start": 0.6,
+          "duration": 2.35,
+          "props": {
+            "text": "It",
+            "fontFamily": "Caveat",
+            "fontWeight": 700,
+            "color": "#2B2A20",
+            "fontSize": 104,
+            "x": 201.272,
+            "y": 720,
+            "width": 93.6,
+            "height": 137.28
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.22,1,.36,1)"
+            },
+            {
+              "prop": "y",
+              "from": 20,
+              "to": 0,
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "one-10",
+          "type": "text",
+          "scene": "seed",
+          "start": 0.72,
+          "duration": 2.23,
+          "props": {
+            "text": "starts",
+            "fontFamily": "Caveat",
+            "fontWeight": 700,
+            "color": "#2B2A20",
+            "fontSize": 104,
+            "x": 304.44,
+            "y": 720,
+            "width": 241.072,
+            "height": 137.28
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.22,1,.36,1)"
+            },
+            {
+              "prop": "y",
+              "from": 20,
+              "to": 0,
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "one-11",
+          "type": "text",
+          "scene": "seed",
+          "start": 0.84,
+          "duration": 2.11,
+          "props": {
+            "text": "with",
+            "fontFamily": "Caveat",
+            "fontWeight": 700,
+            "color": "#2B2A20",
+            "fontSize": 104,
+            "x": 555.08,
+            "y": 720,
+            "width": 173.368,
+            "height": 137.28
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.22,1,.36,1)"
+            },
+            {
+              "prop": "y",
+              "from": 20,
+              "to": 0,
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "one-12",
+          "type": "text",
+          "scene": "seed",
+          "start": 0.96,
+          "duration": 1.99,
+          "props": {
+            "text": "one.",
+            "fontFamily": "Caveat",
+            "fontWeight": 700,
+            "color": "#2B2A20",
+            "fontSize": 104,
+            "x": 738.016,
+            "y": 720,
+            "width": 156.312,
+            "height": 137.28
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.35,
+              "ease": "cubic-bezier(.22,1,.36,1)"
+            },
+            {
+              "prop": "y",
+              "from": 20,
+              "to": 0,
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "count-28",
+          "type": "text",
+          "scene": "forest",
+          "start": 3.4,
+          "duration": 0.16,
+          "props": {
+            "text": "0",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#1F5136",
+            "fontSize": 200,
+            "align": "center",
+            "x": 0,
+            "y": 420,
+            "width": 1080,
+            "height": 264
+          }
+        },
+        {
+          "id": "count-29",
+          "type": "text",
+          "scene": "forest",
+          "start": 3.56,
+          "duration": 0.16,
+          "props": {
+            "text": "400",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#1F5136",
+            "fontSize": 200,
+            "align": "center",
+            "x": 0,
+            "y": 420,
+            "width": 1080,
+            "height": 264
+          }
+        },
+        {
+          "id": "count-30",
+          "type": "text",
+          "scene": "forest",
+          "start": 3.72,
+          "duration": 0.16,
+          "props": {
+            "text": "1,200",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#1F5136",
+            "fontSize": 200,
+            "align": "center",
+            "x": 0,
+            "y": 420,
+            "width": 1080,
+            "height": 264
+          }
+        },
+        {
+          "id": "count-31",
+          "type": "text",
+          "scene": "forest",
+          "start": 3.88,
+          "duration": 0.16,
+          "props": {
+            "text": "2,600",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#1F5136",
+            "fontSize": 200,
+            "align": "center",
+            "x": 0,
+            "y": 420,
+            "width": 1080,
+            "height": 264
+          }
+        },
+        {
+          "id": "count-32",
+          "type": "text",
+          "scene": "forest",
+          "start": 4.04,
+          "duration": 0.16,
+          "props": {
+            "text": "4,300",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#1F5136",
+            "fontSize": 200,
+            "align": "center",
+            "x": 0,
+            "y": 420,
+            "width": 1080,
+            "height": 264
+          }
+        },
+        {
+          "id": "count-33",
+          "type": "text",
+          "scene": "forest",
+          "start": 4.2,
+          "duration": 0.16,
+          "props": {
+            "text": "6,100",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#1F5136",
+            "fontSize": 200,
+            "align": "center",
+            "x": 0,
+            "y": 420,
+            "width": 1080,
+            "height": 264
+          }
+        },
+        {
+          "id": "count-34",
+          "type": "text",
+          "scene": "forest",
+          "start": 4.36,
+          "duration": 0.16,
+          "props": {
+            "text": "7,800",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#1F5136",
+            "fontSize": 200,
+            "align": "center",
+            "x": 0,
+            "y": 420,
+            "width": 1080,
+            "height": 264
+          }
+        },
+        {
+          "id": "count-35",
+          "type": "text",
+          "scene": "forest",
+          "start": 4.52,
+          "duration": 0.16,
+          "props": {
+            "text": "9,100",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#1F5136",
+            "fontSize": 200,
+            "align": "center",
+            "x": 0,
+            "y": 420,
+            "width": 1080,
+            "height": 264
+          }
+        },
+        {
+          "id": "count-36",
+          "type": "text",
+          "scene": "forest",
+          "start": 4.68,
+          "duration": 1.82,
+          "props": {
+            "text": "10,000",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#1F5136",
+            "fontSize": 200,
+            "align": "center",
+            "x": 0,
+            "y": 420,
+            "width": 1080,
+            "height": 264
+          },
+          "animations": [
+            {
+              "prop": "scale",
+              "from": 1.1,
+              "to": 1,
+              "start": 0,
+              "duration": 0.3,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "count-l-37",
+          "type": "text",
+          "scene": "forest",
+          "start": 3.6,
+          "duration": 2.9,
+          "props": {
+            "text": "trees planted this spring",
+            "fontFamily": "Caveat",
+            "fontWeight": 700,
+            "color": "#2B2A20",
+            "fontSize": 76,
+            "align": "center",
+            "x": 0,
+            "y": 680,
+            "width": 1080,
+            "height": 100.32,
+            "rotation": -3
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.6,
+              "ease": "cubic-bezier(.22,1,.36,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "under-38",
+          "type": "svg",
+          "src": "assets/underline.svg",
+          "scene": "forest",
+          "start": 4.3,
+          "duration": 2.2,
+          "props": {
+            "fit": "fill",
+            "x": 220,
+            "y": 778,
+            "width": 640,
+            "height": 44,
+            "rotation": -3
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.83,0,.17,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "k-39",
+          "type": "text",
+          "scene": "ask",
+          "start": 6.7,
+          "duration": 2.9,
+          "props": {
+            "text": "GREENROOTS  ·  SPRING APPEAL",
+            "fontFamily": "JetBrains Mono",
+            "fontWeight": 600,
+            "color": "#3F8F4E",
+            "fontSize": 28,
+            "align": "center",
+            "x": 0,
+            "y": 440,
+            "width": 1080,
+            "height": 36.96
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.16,1,.3,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "ask-40",
+          "type": "text",
+          "scene": "ask",
+          "start": 6.8,
+          "duration": 2.8,
+          "props": {
+            "text": "Plant",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#1F5136",
+            "fontSize": 124,
+            "x": 97.63,
+            "y": 492,
+            "width": 302.932,
+            "height": 163.68
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 70,
+              "to": 0,
+              "start": 0,
+              "duration": 0.55,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.15
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "ask-41",
+          "type": "text",
+          "scene": "ask",
+          "start": 6.9,
+          "duration": 2.7,
+          "props": {
+            "text": "one",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#1F5136",
+            "fontSize": 124,
+            "x": 407.134,
+            "y": 492,
+            "width": 225.184,
+            "height": 163.68
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 70,
+              "to": 0,
+              "start": 0,
+              "duration": 0.55,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.15
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "ask-42",
+          "type": "text",
+          "scene": "ask",
+          "start": 7,
+          "duration": 2.6,
+          "props": {
+            "text": "for",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#1F5136",
+            "fontSize": 124,
+            "x": 638.89,
+            "y": 492,
+            "width": 184.264,
+            "height": 163.68
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 70,
+              "to": 0,
+              "start": 0,
+              "duration": 0.55,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.15
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "ask-43",
+          "type": "text",
+          "scene": "ask",
+          "start": 7.1,
+          "duration": 2.5,
+          "props": {
+            "text": "€2",
+            "fontFamily": "Bricolage Grotesque",
+            "fontWeight": 800,
+            "color": "#1F5136",
+            "fontSize": 124,
+            "x": 829.726,
+            "y": 492,
+            "width": 171.244,
+            "height": 163.68
+          },
+          "animations": [
+            {
+              "prop": "y",
+              "from": 70,
+              "to": 0,
+              "start": 0,
+              "duration": 0.55,
+              "ease": "cubic-bezier(.34,1.56,.64,1)"
+            },
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.15
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "btn-44",
+          "type": "shape",
+          "scene": "ask",
+          "start": 7.3,
+          "duration": 2.3,
+          "props": {
+            "x": 340,
+            "y": 700,
+            "width": 400,
+            "height": 112,
+            "fill": "#3F8F4E",
+            "radius": 56
+          },
+          "animations": [
+            {
+              "preset": "popIn",
+              "start": 0,
+              "duration": 0.45
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "btn-t-45",
+          "type": "text",
+          "scene": "ask",
+          "start": 7.4,
+          "duration": 2.2,
+          "props": {
+            "text": "Donate  →",
+            "fontFamily": "Instrument Sans",
+            "fontWeight": 700,
+            "color": "#FFF8EC",
+            "fontSize": 42,
+            "align": "center",
+            "x": 340,
+            "y": 725.76,
+            "width": 400,
+            "height": 55.44
+          },
+          "animations": [
+            {
+              "preset": "fadeIn",
+              "start": 0,
+              "duration": 0.3
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        },
+        {
+          "id": "note-46",
+          "type": "text",
+          "scene": "ask",
+          "start": 7.75,
+          "duration": 1.85,
+          "props": {
+            "text": "every tree counts",
+            "fontFamily": "Caveat",
+            "fontWeight": 700,
+            "color": "#F29E4C",
+            "fontSize": 70,
+            "align": "center",
+            "x": 240,
+            "y": 836,
+            "width": 600,
+            "height": 92.4,
+            "rotation": 4
+          },
+          "animations": [
+            {
+              "preset": "wipe",
+              "start": 0,
+              "duration": 0.5,
+              "ease": "cubic-bezier(.22,1,.36,1)"
+            },
+            {
+              "preset": "fadeOut",
+              "duration": 0.3
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

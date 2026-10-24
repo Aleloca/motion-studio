@@ -17,3 +17,6 @@ export function walk(dir, base = dir) {
   }
   return out;
 }
+
+/** The media audio-gen makes with paid providers (the generators only reference them): left out of the byte-identical checks. */
+export const isGeneratedMedia = (rel) => rel.startsWith('assets/audio/') || rel.startsWith('assets/generated-');
