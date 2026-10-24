@@ -1,0 +1,113 @@
+{
+  "lang": "en",
+  "cues": [
+    {
+      "start": 300,
+      "end": 1900,
+      "text": "Write a brief.",
+      "words": [
+        {
+          "start": 300,
+          "end": 833,
+          "text": "Write"
+        },
+        {
+          "start": 833,
+          "end": 1367,
+          "text": "a"
+        },
+        {
+          "start": 1367,
+          "end": 1900,
+          "text": "brief."
+        }
+      ]
+    },
+    {
+      "start": 2100,
+      "end": 4300,
+      "text": "Motion Studio builds every format,",
+      "words": [
+        {
+          "start": 2100,
+          "end": 2540,
+          "text": "Motion"
+        },
+        {
+          "start": 2540,
+          "end": 2980,
+          "text": "Studio"
+        },
+        {
+          "start": 2980,
+          "end": 3420,
+          "text": "builds"
+        },
+        {
+          "start": 3420,
+          "end": 3860,
+          "text": "every"
+        },
+        {
+          "start": 3860,
+          "end": 4300,
+          "text": "format,"
+        }
+      ]
+    },
+    {
+      "start": 4450,
+      "end": 5900,
+      "text": "and you stay in control",
+      "words": [
+        {
+          "start": 4450,
+          "end": 4740,
+          "text": "and"
+        },
+        {
+          "start": 4740,
+          "end": 5030,
+          "text": "you"
+        },
+        {
+          "start": 5030,
+          "end": 5320,
+          "text": "stay"
+        },
+        {
+          "start": 5320,
+          "end": 5610,
+          "text": "in"
+        },
+        {
+          "start": 5610,
+          "end": 5900,
+          "text": "control"
+        }
+      ]
+    },
+    {
+      "start": 6000,
+      "end": 7700,
+      "text": "of every frame.",
+      "words": [
+        {
+          "start": 6000,
+          "end": 6567,
+          "text": "of"
+        },
+        {
+          "start": 6567,
+          "end": 7133,
+          "text": "every"
+        },
+        {
+          "start": 7133,
+          "end": 7700,
+          "text": "frame."
+        }
+      ]
+    }
+  ]
+}

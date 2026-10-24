@@ -12,6 +12,10 @@ const EXPECTED = {
   formats: 'youtube-16x9', editor: 'youtube-16x9', brand: 'instagram-post-1x1', identity: 'instagram-post-1x1',
   languages: 'youtube-16x9', agent: 'youtube-16x9', git: 'youtube-16x9', services: 'instagram-post-1x1',
   variants: 'youtube-16x9', og: 'og-image-1200x630',
+  'story-night': 'youtube-16x9', 'story-paper': 'youtube-16x9', 'story-signal-v1': 'youtube-16x9', 'story-signal-v2': 'youtube-16x9',
+  'story-signal-v3': 'youtube-16x9', 'story-brand-16x9': 'youtube-16x9', 'story-brand-9x16': 'instagram-reel-9x16',
+  'story-brand-1x1': 'instagram-post-1x1', 'story-it': 'youtube-16x9', 'story-de': 'youtube-16x9', 'story-es': 'youtube-16x9',
+  'story-subs': 'youtube-16x9',
 };
 const items = await loadCompositions(join(SITE, 'compositions'));
 
@@ -48,6 +52,18 @@ test('the hero creatives are rich: several scenes, 8 to 15 s, svg art made by ha
     assert.ok(clips.some((k) => k.type === 'svg'), `${item.id}: svg`);
     assert.ok(!clips.some((k) => k.type === 'image'), `${item.id}: no raster`);
     for (const f of readdirSync(join(item.dir, 'assets'))) assert.match(f, /\.svg$/, `${item.id}/assets/${f}`);
+  }
+});
+
+test('the story\'s boards: three scenes over 8 s, svg art made by hand, the subtitled one with its subtitle set', () => {
+  for (const item of items.filter((i) => i.id.startsWith('story-'))) {
+    const c = item.composition;
+    assert.equal(c.duration, 8, item.id);
+    assert.deepEqual(c.scenes.map((s) => s.id), ['brief', 'title', 'endcard'], item.id);
+    for (const f of readdirSync(join(item.dir, 'assets'))) assert.match(f, /\.svg$/, `${item.id}/assets/${f}`);
+    const subtitled = c.tracks.some((t) => t.kind === 'subtitles');
+    assert.equal(subtitled, item.id === 'story-subs', item.id);
+    assert.equal(Boolean(item.subtitles), subtitled, `${item.id}: subtitles.json`);
   }
 });
 

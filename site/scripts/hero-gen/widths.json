@@ -11,8 +11,13 @@
  "Bricolage Grotesque|800|4.9": 1448,
  "Bricolage Grotesque|800|48": 1215,
  "Bricolage Grotesque|800|A": 659,
+ "Bricolage Grotesque|800|Brief in.": 3400,
+ "Bricolage Grotesque|800|Briefing rein.": 5672,
  "Bricolage Grotesque|800|D": 621,
  "Bricolage Grotesque|800|E": 540,
+ "Bricolage Grotesque|800|Entra el brief.": 5877,
+ "Bricolage Grotesque|800|Entra il brief.": 5572,
+ "Bricolage Grotesque|800|Esce il motion.": 6393,
  "Bricolage Grotesque|800|F": 510,
  "Bricolage Grotesque|800|FA": 1104,
  "Bricolage Grotesque|800|FAL": 1564,
@@ -25,7 +30,10 @@
  "Bricolage Grotesque|800|KOVA": 2388,
  "Bricolage Grotesque|800|L": 460,
  "Bricolage Grotesque|800|MARLO VEX": 5201,
+ "Bricolage Grotesque|800|Motion out.": 5062,
+ "Bricolage Grotesque|800|Motion raus.": 5563,
  "Bricolage Grotesque|800|NINA SOLÉ": 4739,
+ "Bricolage Grotesque|800|Sale el motion.": 6476,
  "Bricolage Grotesque|800|Silence,": 3418,
  "Bricolage Grotesque|800|T": 516,
  "Bricolage Grotesque|800|TI": 759,
@@ -39,5 +47,7 @@
  "Bricolage Grotesque|800|Where did": 4530,
  "Bricolage Grotesque|800|did 2026": 3868,
  "Bricolage Grotesque|800|go?": 1459,
- "JetBrains Mono|600|THREE NIGHTS BY THE SEA": 13800
+ "JetBrains Mono|400|a launch video for Motion Studio": 19200,
+ "JetBrains Mono|600|THREE NIGHTS BY THE SEA": 13800,
+ "JetBrains Mono|800|Motion out.": 6600
 }

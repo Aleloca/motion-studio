@@ -29,7 +29,7 @@ export async function build({ root = HERE, out = join(HERE, '_site') } = {}) {
   for (const item of items) {
     await cp(item.dir, join(out, 'compositions', item.id), {
       recursive: true,
-      filter: (src) => skipJunk(src) && basename(src) !== 'meta.json',
+      filter: (src) => skipJunk(src) && !['meta.json', 'subtitles.json'].includes(basename(src)),
     });
     for (const [rel, { src }] of await sharedFonts(fontsDir)) await cp(src, join(out, 'compositions', item.id, rel));
     await writeFile(join(out, 'runtime', `${item.id}.html`), runtimePageFor(item, indexHtml));
