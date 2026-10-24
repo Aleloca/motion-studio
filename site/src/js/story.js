@@ -16,7 +16,7 @@ const HOLD = 0.6;
 const FRAMES = ['intro', 'variants', 'choose', 'c', 'edit', 'brand', 'generate', 'formats', 'langs', 'subs', 'identity', 'all'];
 const WIDE = {
   intro: [-40, -70, 1640, 380], variants: [-40, -70, 1640, 400], choose: [-40, -70, 1640, 400], c: [930, -80, 780, 420],
-  edit: [1040, -70, 850, 560], brand: [520, -70, 1080, 380], generate: [520, -70, 1390, 520], formats: [1040, -70, 1060, 380], langs: [1040, -70, 1220, 650],
+  edit: [1040, -70, 850, 560], brand: [520, -70, 1080, 380], generate: [520, -70, 1390, 660], formats: [1040, -70, 1060, 380], langs: [1040, -70, 1220, 650],
   subs: [520, -70, 1080, 380], identity: [1040, 580, 940, 370], all: [1040, -90, 1240, 1040],
 };
 const NARROW = {
@@ -137,7 +137,7 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
     .to($('.brandkit'), { autoAlpha: 0, x: -30, duration: 0.2 }, 5);
   // 6. Generate: the Generate dialog beside C; its paid call is confirmed; the picture and the voice-over land beside C.
   const gen = $('.genpanel'); const paid = $('.genpanel__paid'); const genDone = $('.genpanel__done');
-  const genBoards = [board('genimg'), board('genvoice')];
+  const genBoards = [board('genimg'), board('genvoice'), board('genmusic')];
   gsap.set([paid, genDone, ...genBoards], hidden);
   tl.to(cam, { k: 6, duration: 0.4 }, 5)
     .fromTo(gen, { autoAlpha: 0, y: 30 }, { autoAlpha: 1, y: 0, duration: 0.24, ease: 'expo.out' }, 5.08)
@@ -146,6 +146,7 @@ export function startStory({ gsap, ScrollTrigger, players, sound }) {
     .to(genDone, { autoAlpha: 1, duration: 0.06 }, 5.46)
     .fromTo(board('genimg'), { autoAlpha: 0, x: -260, scale: 0.4 }, { autoAlpha: 1, x: 0, scale: 1, duration: 0.22, ease: 'expo.out' }, 5.44)
     .fromTo(board('genvoice'), { autoAlpha: 0, y: 30 }, { autoAlpha: 1, y: 0, duration: 0.18, ease: 'expo.out' }, 5.52)
+    .fromTo(board('genmusic'), { autoAlpha: 0, y: 30 }, { autoAlpha: 1, y: 0, duration: 0.18, ease: 'expo.out' }, 5.57)
     .to([gen, ...genBoards], { autoAlpha: 0, duration: 0.18 }, 6);
   // 7. Formats: the 16:9 multiplies into a 9:16 and a 1:1.
   tl.to(cam, { k: 7, duration: 0.4 }, 6);
@@ -389,7 +390,7 @@ function readStep(li) {
   };
 }
 
-const VERSION_CARD = { 1: 'A · B · C v1', 3: 'v2', 5: 'v4', 6: 'Image · Voice-over', 7: '9:16 · 1:1 v1', 8: 'IT · DE · ES', 9: 'v5' };
+const VERSION_CARD = { 1: 'A · B · C v1', 3: 'v2', 5: 'v4', 6: 'Image · Voice-over · Music', 7: '9:16 · 1:1 v1', 8: 'IT · DE · ES', 9: 'v5' };
 
 function buildChat(steps, note) {
   const el = h('aside', { class: 'chat', 'aria-hidden': 'true' });

@@ -112,7 +112,7 @@
       "kind": "visual",
       "clips": [
         {
-          "id": "canvas-13",
+          "id": "canvas-71",
           "type": "svg",
           "src": "assets/canvas.svg",
           "start": 0,
@@ -144,7 +144,7 @@
           ]
         },
         {
-          "id": "ember-565",
+          "id": "ember-623",
           "type": "svg",
           "src": "assets/ember.svg",
           "scene": "endcard",
@@ -183,7 +183,7 @@
       "kind": "visual",
       "clips": [
         {
-          "id": "9x16-film-396",
+          "id": "9x16-film-454",
           "type": "svg",
           "src": "assets/film-9x16-brand.svg",
           "start": 32.258,
@@ -265,7 +265,7 @@
           ]
         },
         {
-          "id": "9x16-ring-397",
+          "id": "9x16-ring-455",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "scene": "formats",
@@ -311,7 +311,7 @@
           ]
         },
         {
-          "id": "9x16-ring-398",
+          "id": "9x16-ring-456",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "start": 34.256,
@@ -356,7 +356,7 @@
           ]
         },
         {
-          "id": "9x16-ring-399",
+          "id": "9x16-ring-457",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "start": 35.255,
@@ -401,7 +401,7 @@
           ]
         },
         {
-          "id": "9x16-ring-400",
+          "id": "9x16-ring-458",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "scene": "languages",
@@ -447,7 +447,7 @@
           ]
         },
         {
-          "id": "9x16-ring-401",
+          "id": "9x16-ring-459",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "scene": "languages",
@@ -493,7 +493,7 @@
           ]
         },
         {
-          "id": "9x16-ring-402",
+          "id": "9x16-ring-460",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "start": 38.15,
@@ -538,7 +538,7 @@
           ]
         },
         {
-          "id": "9x16-ring-403",
+          "id": "9x16-ring-461",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "start": 39.11,
@@ -583,7 +583,7 @@
           ]
         },
         {
-          "id": "9x16-ring-404",
+          "id": "9x16-ring-462",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "scene": "subtitles",
@@ -629,7 +629,7 @@
           ]
         },
         {
-          "id": "9x16-ring-405",
+          "id": "9x16-ring-463",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "scene": "subtitles",
@@ -675,7 +675,7 @@
           ]
         },
         {
-          "id": "9x16-tag-406",
+          "id": "9x16-tag-464",
           "type": "text",
           "start": 32.258,
           "duration": 11.959,
@@ -760,7 +760,7 @@
           ]
         },
         {
-          "id": "9x16-logo-407",
+          "id": "9x16-logo-465",
           "type": "svg",
           "src": "assets/logo.svg",
           "start": 32.258,
@@ -842,7 +842,7 @@
           ]
         },
         {
-          "id": "1x1-film-408",
+          "id": "1x1-film-466",
           "type": "svg",
           "src": "assets/film-1x1-brand.svg",
           "start": 32.133,
@@ -924,7 +924,7 @@
           ]
         },
         {
-          "id": "1x1-ring-409",
+          "id": "1x1-ring-467",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "scene": "formats",
@@ -970,7 +970,7 @@
           ]
         },
         {
-          "id": "1x1-ring-410",
+          "id": "1x1-ring-468",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "scene": "formats",
@@ -1016,7 +1016,7 @@
           ]
         },
         {
-          "id": "1x1-ring-411",
+          "id": "1x1-ring-469",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "start": 35.13,
@@ -1061,7 +1061,7 @@
           ]
         },
         {
-          "id": "1x1-ring-412",
+          "id": "1x1-ring-470",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "scene": "languages",
@@ -1107,7 +1107,7 @@
           ]
         },
         {
-          "id": "1x1-ring-413",
+          "id": "1x1-ring-471",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "scene": "languages",
@@ -1153,7 +1153,7 @@
           ]
         },
         {
-          "id": "1x1-ring-414",
+          "id": "1x1-ring-472",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "scene": "languages",
@@ -1199,7 +1199,7 @@
           ]
         },
         {
-          "id": "1x1-ring-415",
+          "id": "1x1-ring-473",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "start": 38.99,
@@ -1244,7 +1244,7 @@
           ]
         },
         {
-          "id": "1x1-ring-416",
+          "id": "1x1-ring-474",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "scene": "subtitles",
@@ -1290,7 +1290,7 @@
           ]
         },
         {
-          "id": "1x1-ring-417",
+          "id": "1x1-ring-475",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "scene": "subtitles",
@@ -1336,7 +1336,7 @@
           ]
         },
         {
-          "id": "1x1-tag-418",
+          "id": "1x1-tag-476",
           "type": "text",
           "start": 32.133,
           "duration": 12.084,
@@ -1421,7 +1421,7 @@
           ]
         },
         {
-          "id": "1x1-logo-419",
+          "id": "1x1-logo-477",
           "type": "svg",
           "src": "assets/logo.svg",
           "start": 32.133,
@@ -1503,7 +1503,7 @@
           ]
         },
         {
-          "id": "1x1-en-head-420",
+          "id": "1x1-en-head-478",
           "type": "text",
           "start": 32.133,
           "duration": 4.353,
@@ -1618,7 +1618,7 @@
           ]
         },
         {
-          "id": "1x1-en-head-421",
+          "id": "1x1-en-head-479",
           "type": "text",
           "start": 32.133,
           "duration": 4.353,
@@ -1737,7 +1737,7 @@
           ]
         },
         {
-          "id": "9x16-en-head-430",
+          "id": "9x16-en-head-488",
           "type": "text",
           "start": 32.258,
           "duration": 4.172,
@@ -1852,7 +1852,7 @@
           ]
         },
         {
-          "id": "9x16-en-head-431",
+          "id": "9x16-en-head-489",
           "type": "text",
           "start": 32.258,
           "duration": 4.172,
@@ -1977,7 +1977,7 @@
       "kind": "visual",
       "clips": [
         {
-          "id": "16x9-film-95",
+          "id": "16x9-film-153",
           "type": "svg",
           "src": "assets/film-16x9-night.svg",
           "start": 3.438,
@@ -2076,7 +2076,7 @@
           ]
         },
         {
-          "id": "16x9-ring-96",
+          "id": "16x9-ring-154",
           "type": "svg",
           "src": "assets/ring-cyan.svg",
           "scene": "variants",
@@ -2122,7 +2122,7 @@
           ]
         },
         {
-          "id": "16x9-ring-97",
+          "id": "16x9-ring-155",
           "type": "svg",
           "src": "assets/ring-cyan.svg",
           "scene": "variants",
@@ -2168,7 +2168,7 @@
           ]
         },
         {
-          "id": "16x9-tag-98",
+          "id": "16x9-tag-156",
           "type": "text",
           "start": 3.438,
           "duration": 5.35,
@@ -2270,7 +2270,7 @@
           ]
         },
         {
-          "id": "var-a-head-99",
+          "id": "var-a-head-157",
           "type": "text",
           "start": 3.438,
           "duration": 5.35,
@@ -2372,7 +2372,7 @@
           ]
         },
         {
-          "id": "var-a-head-100",
+          "id": "var-a-head-158",
           "type": "text",
           "start": 3.438,
           "duration": 5.35,
@@ -2474,7 +2474,7 @@
           ]
         },
         {
-          "id": "var-b-bg-101",
+          "id": "var-b-bg-159",
           "type": "svg",
           "src": "assets/poster.svg",
           "start": 3.438,
@@ -2565,7 +2565,7 @@
           ]
         },
         {
-          "id": "var-b-dots-102",
+          "id": "var-b-dots-160",
           "type": "svg",
           "src": "assets/halftone.svg",
           "start": 3.438,
@@ -2656,7 +2656,7 @@
           ]
         },
         {
-          "id": "var-b-sun-103",
+          "id": "var-b-sun-161",
           "type": "svg",
           "src": "assets/sun.svg",
           "start": 3.438,
@@ -2755,7 +2755,7 @@
           ]
         },
         {
-          "id": "var-b-waves-104",
+          "id": "var-b-waves-162",
           "type": "svg",
           "src": "assets/waves.svg",
           "start": 3.438,
@@ -2854,7 +2854,7 @@
           ]
         },
         {
-          "id": "var-b-head-105",
+          "id": "var-b-head-163",
           "type": "text",
           "start": 3.438,
           "duration": 4.874,
@@ -2949,7 +2949,7 @@
           ]
         },
         {
-          "id": "var-b-head-106",
+          "id": "var-b-head-164",
           "type": "text",
           "start": 3.438,
           "duration": 4.874,
@@ -3044,7 +3044,7 @@
           ]
         },
         {
-          "id": "var-c-bg-107",
+          "id": "var-c-bg-165",
           "type": "svg",
           "src": "assets/paper.svg",
           "start": 3.438,
@@ -3135,7 +3135,7 @@
           ]
         },
         {
-          "id": "var-c-card-108",
+          "id": "var-c-card-166",
           "type": "shape",
           "start": 3.438,
           "duration": 4.874,
@@ -3226,7 +3226,7 @@
           ]
         },
         {
-          "id": "var-c-chart-109",
+          "id": "var-c-chart-167",
           "type": "svg",
           "src": "assets/chart.svg",
           "start": 3.438,
@@ -3323,7 +3323,7 @@
           ]
         },
         {
-          "id": "var-c-tag-110",
+          "id": "var-c-tag-168",
           "type": "text",
           "start": 3.438,
           "duration": 4.874,
@@ -3417,7 +3417,7 @@
           ]
         },
         {
-          "id": "var-c-head-111",
+          "id": "var-c-head-169",
           "type": "text",
           "start": 3.438,
           "duration": 4.874,
@@ -3511,7 +3511,7 @@
           ]
         },
         {
-          "id": "var-c-head-112",
+          "id": "var-c-head-170",
           "type": "text",
           "start": 3.438,
           "duration": 4.874,
@@ -3605,7 +3605,7 @@
           ]
         },
         {
-          "id": "chosen-118",
+          "id": "chosen-176",
           "type": "svg",
           "src": "assets/outline-variant.svg",
           "scene": "variants",
@@ -3688,7 +3688,7 @@
           ]
         },
         {
-          "id": "16x9-film-119",
+          "id": "16x9-film-177",
           "type": "svg",
           "src": "assets/film-16x9-night.svg",
           "start": 8.789,
@@ -3753,7 +3753,7 @@
           ]
         },
         {
-          "id": "16x9-brand-120",
+          "id": "16x9-brand-178",
           "type": "svg",
           "src": "assets/film-16x9-brand.svg",
           "start": 22.657,
@@ -3824,7 +3824,7 @@
           ]
         },
         {
-          "id": "16x9-ring-121",
+          "id": "16x9-ring-179",
           "type": "svg",
           "src": "assets/ring-cyan.svg",
           "start": 9.075,
@@ -3869,7 +3869,7 @@
           ]
         },
         {
-          "id": "16x9-ring-122",
+          "id": "16x9-ring-180",
           "type": "svg",
           "src": "assets/ring-cyan.svg",
           "scene": "chat",
@@ -3915,7 +3915,7 @@
           ]
         },
         {
-          "id": "16x9-ring-123",
+          "id": "16x9-ring-181",
           "type": "svg",
           "src": "assets/ring-cyan.svg",
           "scene": "chat",
@@ -3961,7 +3961,7 @@
           ]
         },
         {
-          "id": "16x9-ring-124",
+          "id": "16x9-ring-182",
           "type": "svg",
           "src": "assets/ring-cyan.svg",
           "start": 12.21,
@@ -4006,7 +4006,7 @@
           ]
         },
         {
-          "id": "16x9-ring-125",
+          "id": "16x9-ring-183",
           "type": "svg",
           "src": "assets/ring-cyan.svg",
           "start": 12.65,
@@ -4051,7 +4051,7 @@
           ]
         },
         {
-          "id": "16x9-ring-126",
+          "id": "16x9-ring-184",
           "type": "svg",
           "src": "assets/ring-cyan.svg",
           "start": 13.09,
@@ -4096,7 +4096,7 @@
           ]
         },
         {
-          "id": "16x9-ring-127",
+          "id": "16x9-ring-185",
           "type": "svg",
           "src": "assets/ring-cyan.svg",
           "scene": "edit",
@@ -4142,7 +4142,7 @@
           ]
         },
         {
-          "id": "16x9-ring-128",
+          "id": "16x9-ring-186",
           "type": "svg",
           "src": "assets/ring-cyan.svg",
           "scene": "edit",
@@ -4188,7 +4188,7 @@
           ]
         },
         {
-          "id": "16x9-ring-129",
+          "id": "16x9-ring-187",
           "type": "svg",
           "src": "assets/ring-cyan.svg",
           "scene": "edit",
@@ -4234,7 +4234,7 @@
           ]
         },
         {
-          "id": "16x9-ring-130",
+          "id": "16x9-ring-188",
           "type": "svg",
           "src": "assets/ring-cyan.svg",
           "scene": "edit",
@@ -4280,7 +4280,7 @@
           ]
         },
         {
-          "id": "16x9-ring-131",
+          "id": "16x9-ring-189",
           "type": "svg",
           "src": "assets/ring-cyan.svg",
           "scene": "edit",
@@ -4326,7 +4326,7 @@
           ]
         },
         {
-          "id": "16x9-ring-132",
+          "id": "16x9-ring-190",
           "type": "svg",
           "src": "assets/ring-cyan.svg",
           "scene": "edit",
@@ -4372,7 +4372,7 @@
           ]
         },
         {
-          "id": "16x9-ring-133",
+          "id": "16x9-ring-191",
           "type": "svg",
           "src": "assets/ring-cyan.svg",
           "start": 17.043,
@@ -4417,7 +4417,7 @@
           ]
         },
         {
-          "id": "16x9-ring-134",
+          "id": "16x9-ring-192",
           "type": "svg",
           "src": "assets/ring-cyan.svg",
           "start": 17.611,
@@ -4462,7 +4462,7 @@
           ]
         },
         {
-          "id": "16x9-ring-135",
+          "id": "16x9-ring-193",
           "type": "svg",
           "src": "assets/ring-cyan.svg",
           "start": 18.179,
@@ -4507,7 +4507,7 @@
           ]
         },
         {
-          "id": "16x9-ring-136",
+          "id": "16x9-ring-194",
           "type": "svg",
           "src": "assets/ring-cyan.svg",
           "scene": "brand",
@@ -4553,7 +4553,7 @@
           ]
         },
         {
-          "id": "16x9-ring-137",
+          "id": "16x9-ring-195",
           "type": "svg",
           "src": "assets/ring-cyan.svg",
           "scene": "brand",
@@ -4599,7 +4599,7 @@
           ]
         },
         {
-          "id": "16x9-ring-138",
+          "id": "16x9-ring-196",
           "type": "svg",
           "src": "assets/ring-cyan.svg",
           "scene": "brand",
@@ -4645,7 +4645,7 @@
           ]
         },
         {
-          "id": "16x9-ring-139",
+          "id": "16x9-ring-197",
           "type": "svg",
           "src": "assets/ring-cyan.svg",
           "scene": "brand",
@@ -4691,7 +4691,7 @@
           ]
         },
         {
-          "id": "16x9-ring-140",
+          "id": "16x9-ring-198",
           "type": "svg",
           "src": "assets/ring-cyan.svg",
           "scene": "brand",
@@ -4737,7 +4737,7 @@
           ]
         },
         {
-          "id": "16x9-ring-141",
+          "id": "16x9-ring-199",
           "type": "svg",
           "src": "assets/ring-cyan.svg",
           "scene": "brand",
@@ -4783,7 +4783,7 @@
           ]
         },
         {
-          "id": "16x9-ring-142",
+          "id": "16x9-ring-200",
           "type": "svg",
           "src": "assets/ring-cyan.svg",
           "scene": "brand",
@@ -4829,7 +4829,7 @@
           ]
         },
         {
-          "id": "16x9-ring-143",
+          "id": "16x9-ring-201",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "start": 22.928,
@@ -4874,7 +4874,7 @@
           ]
         },
         {
-          "id": "16x9-ring-144",
+          "id": "16x9-ring-202",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "start": 24.119,
@@ -4919,7 +4919,7 @@
           ]
         },
         {
-          "id": "16x9-ring-145",
+          "id": "16x9-ring-203",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "scene": "generate",
@@ -4965,7 +4965,7 @@
           ]
         },
         {
-          "id": "16x9-ring-146",
+          "id": "16x9-ring-204",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "scene": "generate",
@@ -5011,7 +5011,7 @@
           ]
         },
         {
-          "id": "16x9-ring-147",
+          "id": "16x9-ring-205",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "scene": "generate",
@@ -5057,7 +5057,7 @@
           ]
         },
         {
-          "id": "16x9-ring-148",
+          "id": "16x9-ring-206",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "scene": "generate",
@@ -5103,7 +5103,7 @@
           ]
         },
         {
-          "id": "16x9-ring-149",
+          "id": "16x9-ring-207",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "start": 29.573,
@@ -5148,7 +5148,7 @@
           ]
         },
         {
-          "id": "16x9-ring-150",
+          "id": "16x9-ring-208",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "scene": "formats",
@@ -5208,7 +5208,7 @@
           ]
         },
         {
-          "id": "16x9-ring-151",
+          "id": "16x9-ring-209",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "scene": "formats",
@@ -5268,7 +5268,7 @@
           ]
         },
         {
-          "id": "16x9-ring-152",
+          "id": "16x9-ring-210",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "start": 34.256,
@@ -5327,7 +5327,7 @@
           ]
         },
         {
-          "id": "16x9-ring-153",
+          "id": "16x9-ring-211",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "start": 35.172,
@@ -5386,7 +5386,7 @@
           ]
         },
         {
-          "id": "16x9-ring-154",
+          "id": "16x9-ring-212",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "scene": "languages",
@@ -5446,7 +5446,7 @@
           ]
         },
         {
-          "id": "16x9-ring-155",
+          "id": "16x9-ring-213",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "scene": "languages",
@@ -5506,7 +5506,7 @@
           ]
         },
         {
-          "id": "16x9-ring-156",
+          "id": "16x9-ring-214",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "scene": "languages",
@@ -5566,7 +5566,7 @@
           ]
         },
         {
-          "id": "16x9-ring-157",
+          "id": "16x9-ring-215",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "start": 38.71,
@@ -5625,7 +5625,7 @@
           ]
         },
         {
-          "id": "16x9-ring-158",
+          "id": "16x9-ring-216",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "scene": "subtitles",
@@ -5685,7 +5685,7 @@
           ]
         },
         {
-          "id": "16x9-ring-159",
+          "id": "16x9-ring-217",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "scene": "subtitles",
@@ -5745,7 +5745,7 @@
           ]
         },
         {
-          "id": "16x9-ring-160",
+          "id": "16x9-ring-218",
           "type": "svg",
           "src": "assets/ring-orange.svg",
           "scene": "subtitles",
@@ -5805,7 +5805,7 @@
           ]
         },
         {
-          "id": "16x9-tag-161",
+          "id": "16x9-tag-219",
           "type": "text",
           "start": 8.789,
           "duration": 35.428,
@@ -5881,7 +5881,7 @@
           ]
         },
         {
-          "id": "16x9-logo-162",
+          "id": "16x9-logo-220",
           "type": "svg",
           "src": "assets/logo.svg",
           "start": 23.09,
@@ -5980,7 +5980,7 @@
           ]
         },
         {
-          "id": "hero-head-163",
+          "id": "hero-head-221",
           "type": "text",
           "start": 8.789,
           "duration": 22.595,
@@ -6040,7 +6040,7 @@
           ]
         },
         {
-          "id": "hero-head-164",
+          "id": "hero-head-222",
           "type": "text",
           "start": 8.789,
           "duration": 22.595,
@@ -6116,7 +6116,7 @@
           ]
         },
         {
-          "id": "selection-245",
+          "id": "selection-303",
           "type": "svg",
           "src": "assets/outline-select.svg",
           "scene": "edit",
@@ -6166,7 +6166,7 @@
           ]
         },
         {
-          "id": "handle-246",
+          "id": "handle-304",
           "type": "shape",
           "scene": "edit",
           "start": 14.719,
@@ -6216,7 +6216,7 @@
           ]
         },
         {
-          "id": "handle-247",
+          "id": "handle-305",
           "type": "shape",
           "scene": "edit",
           "start": 14.719,
@@ -6266,7 +6266,7 @@
           ]
         },
         {
-          "id": "handle-248",
+          "id": "handle-306",
           "type": "shape",
           "scene": "edit",
           "start": 14.719,
@@ -6316,7 +6316,7 @@
           ]
         },
         {
-          "id": "handle-249",
+          "id": "handle-307",
           "type": "shape",
           "scene": "edit",
           "start": 14.719,
@@ -6366,7 +6366,7 @@
           ]
         },
         {
-          "id": "generated-frame-374",
+          "id": "generated-frame-432",
           "type": "shape",
           "start": 27.549,
           "duration": 3.918,
@@ -6431,7 +6431,7 @@
           ]
         },
         {
-          "id": "generated-image-375",
+          "id": "generated-image-433",
           "type": "image",
           "src": "assets/generated-earbuds.jpg",
           "start": 27.549,
@@ -6496,7 +6496,7 @@
           ]
         },
         {
-          "id": "1x1-it-head-422",
+          "id": "1x1-it-head-480",
           "type": "text",
           "scene": "languages",
           "start": 36.326,
@@ -6591,7 +6591,7 @@
           ]
         },
         {
-          "id": "1x1-it-head-423",
+          "id": "1x1-it-head-481",
           "type": "text",
           "scene": "languages",
           "start": 36.326,
@@ -6686,7 +6686,7 @@
           ]
         },
         {
-          "id": "1x1-de-head-424",
+          "id": "1x1-de-head-482",
           "type": "text",
           "scene": "languages",
           "start": 37.366,
@@ -6781,7 +6781,7 @@
           ]
         },
         {
-          "id": "1x1-de-head-425",
+          "id": "1x1-de-head-483",
           "type": "text",
           "scene": "languages",
           "start": 37.366,
@@ -6876,7 +6876,7 @@
           ]
         },
         {
-          "id": "1x1-ja-head-426",
+          "id": "1x1-ja-head-484",
           "type": "text",
           "start": 38.406,
           "duration": 1.482,
@@ -6970,7 +6970,7 @@
           ]
         },
         {
-          "id": "1x1-ja-head-427",
+          "id": "1x1-ja-head-485",
           "type": "text",
           "start": 38.406,
           "duration": 1.482,
@@ -7064,7 +7064,7 @@
           ]
         },
         {
-          "id": "1x1-en-head-428",
+          "id": "1x1-en-head-486",
           "type": "text",
           "start": 39.727,
           "duration": 4.489,
@@ -7141,7 +7141,7 @@
           ]
         },
         {
-          "id": "1x1-en-head-429",
+          "id": "1x1-en-head-487",
           "type": "text",
           "start": 39.727,
           "duration": 4.489,
@@ -7218,7 +7218,7 @@
           ]
         },
         {
-          "id": "9x16-it-head-432",
+          "id": "9x16-it-head-490",
           "type": "text",
           "scene": "languages",
           "start": 36.27,
@@ -7313,7 +7313,7 @@
           ]
         },
         {
-          "id": "9x16-it-head-433",
+          "id": "9x16-it-head-491",
           "type": "text",
           "scene": "languages",
           "start": 36.27,
@@ -7408,7 +7408,7 @@
           ]
         },
         {
-          "id": "9x16-de-head-434",
+          "id": "9x16-de-head-492",
           "type": "text",
           "scene": "languages",
           "start": 37.31,
@@ -7503,7 +7503,7 @@
           ]
         },
         {
-          "id": "9x16-de-head-435",
+          "id": "9x16-de-head-493",
           "type": "text",
           "scene": "languages",
           "start": 37.31,
@@ -7598,7 +7598,7 @@
           ]
         },
         {
-          "id": "9x16-ja-head-436",
+          "id": "9x16-ja-head-494",
           "type": "text",
           "start": 38.35,
           "duration": 1.482,
@@ -7692,7 +7692,7 @@
           ]
         },
         {
-          "id": "9x16-ja-head-437",
+          "id": "9x16-ja-head-495",
           "type": "text",
           "start": 38.35,
           "duration": 1.482,
@@ -7786,7 +7786,7 @@
           ]
         },
         {
-          "id": "9x16-en-head-438",
+          "id": "9x16-en-head-496",
           "type": "text",
           "start": 39.671,
           "duration": 4.545,
@@ -7863,7 +7863,7 @@
           ]
         },
         {
-          "id": "9x16-en-head-439",
+          "id": "9x16-en-head-497",
           "type": "text",
           "start": 39.671,
           "duration": 4.545,
@@ -7940,7 +7940,7 @@
           ]
         },
         {
-          "id": "16x9-en-head-440",
+          "id": "16x9-en-head-498",
           "type": "text",
           "start": 31.383,
           "duration": 5.159,
@@ -8016,7 +8016,7 @@
           ]
         },
         {
-          "id": "16x9-en-head-441",
+          "id": "16x9-en-head-499",
           "type": "text",
           "start": 31.383,
           "duration": 5.159,
@@ -8092,7 +8092,7 @@
           ]
         },
         {
-          "id": "16x9-it-head-442",
+          "id": "16x9-it-head-500",
           "type": "text",
           "scene": "languages",
           "start": 36.382,
@@ -8201,7 +8201,7 @@
           ]
         },
         {
-          "id": "16x9-it-head-443",
+          "id": "16x9-it-head-501",
           "type": "text",
           "scene": "languages",
           "start": 36.382,
@@ -8310,7 +8310,7 @@
           ]
         },
         {
-          "id": "16x9-de-head-444",
+          "id": "16x9-de-head-502",
           "type": "text",
           "scene": "languages",
           "start": 37.422,
@@ -8419,7 +8419,7 @@
           ]
         },
         {
-          "id": "16x9-de-head-445",
+          "id": "16x9-de-head-503",
           "type": "text",
           "scene": "languages",
           "start": 37.422,
@@ -8528,7 +8528,7 @@
           ]
         },
         {
-          "id": "16x9-ja-head-446",
+          "id": "16x9-ja-head-504",
           "type": "text",
           "start": 38.462,
           "duration": 1.482,
@@ -8636,7 +8636,7 @@
           ]
         },
         {
-          "id": "16x9-ja-head-447",
+          "id": "16x9-ja-head-505",
           "type": "text",
           "start": 38.462,
           "duration": 1.482,
@@ -8744,7 +8744,7 @@
           ]
         },
         {
-          "id": "16x9-en-head-448",
+          "id": "16x9-en-head-506",
           "type": "text",
           "start": 39.784,
           "duration": 4.433,
@@ -8835,7 +8835,7 @@
           ]
         },
         {
-          "id": "16x9-en-head-449",
+          "id": "16x9-en-head-507",
           "type": "text",
           "start": 39.784,
           "duration": 4.433,
@@ -8926,7 +8926,7 @@
           ]
         },
         {
-          "id": "1x1-sub-box-468",
+          "id": "1x1-sub-box-526",
           "type": "shape",
           "scene": "subtitles",
           "start": 40.19,
@@ -8976,7 +8976,7 @@
           ]
         },
         {
-          "id": "1x1-sub-469",
+          "id": "1x1-sub-527",
           "type": "text",
           "scene": "subtitles",
           "start": 40.19,
@@ -9029,7 +9029,7 @@
           ]
         },
         {
-          "id": "1x1-word-470",
+          "id": "1x1-word-528",
           "type": "text",
           "scene": "subtitles",
           "start": 40.27,
@@ -9047,7 +9047,7 @@
           }
         },
         {
-          "id": "1x1-word-471",
+          "id": "1x1-word-529",
           "type": "text",
           "scene": "subtitles",
           "start": 40.99,
@@ -9065,7 +9065,7 @@
           }
         },
         {
-          "id": "1x1-word-472",
+          "id": "1x1-word-530",
           "type": "text",
           "scene": "subtitles",
           "start": 41.25,
@@ -9083,7 +9083,7 @@
           }
         },
         {
-          "id": "1x1-word-473",
+          "id": "1x1-word-531",
           "type": "text",
           "scene": "subtitles",
           "start": 41.49,
@@ -9101,7 +9101,7 @@
           }
         },
         {
-          "id": "1x1-sub-box-474",
+          "id": "1x1-sub-box-532",
           "type": "shape",
           "start": 41.59,
           "duration": 2.626,
@@ -9167,7 +9167,7 @@
           ]
         },
         {
-          "id": "1x1-sub-475",
+          "id": "1x1-sub-533",
           "type": "text",
           "start": 41.59,
           "duration": 2.626,
@@ -9236,7 +9236,7 @@
           ]
         },
         {
-          "id": "1x1-word-476",
+          "id": "1x1-word-534",
           "type": "text",
           "scene": "subtitles",
           "start": 41.67,
@@ -9254,7 +9254,7 @@
           }
         },
         {
-          "id": "1x1-word-477",
+          "id": "1x1-word-535",
           "type": "text",
           "scene": "subtitles",
           "start": 42.11,
@@ -9272,7 +9272,7 @@
           }
         },
         {
-          "id": "1x1-word-478",
+          "id": "1x1-word-536",
           "type": "text",
           "scene": "subtitles",
           "start": 42.25,
@@ -9290,7 +9290,7 @@
           }
         },
         {
-          "id": "9x16-sub-box-479",
+          "id": "9x16-sub-box-537",
           "type": "shape",
           "scene": "subtitles",
           "start": 40.19,
@@ -9340,7 +9340,7 @@
           ]
         },
         {
-          "id": "9x16-sub-480",
+          "id": "9x16-sub-538",
           "type": "text",
           "scene": "subtitles",
           "start": 40.19,
@@ -9393,7 +9393,7 @@
           ]
         },
         {
-          "id": "9x16-word-481",
+          "id": "9x16-word-539",
           "type": "text",
           "scene": "subtitles",
           "start": 40.27,
@@ -9411,7 +9411,7 @@
           }
         },
         {
-          "id": "9x16-word-482",
+          "id": "9x16-word-540",
           "type": "text",
           "scene": "subtitles",
           "start": 40.99,
@@ -9429,7 +9429,7 @@
           }
         },
         {
-          "id": "9x16-word-483",
+          "id": "9x16-word-541",
           "type": "text",
           "scene": "subtitles",
           "start": 41.25,
@@ -9447,7 +9447,7 @@
           }
         },
         {
-          "id": "9x16-word-484",
+          "id": "9x16-word-542",
           "type": "text",
           "scene": "subtitles",
           "start": 41.49,
@@ -9465,7 +9465,7 @@
           }
         },
         {
-          "id": "9x16-sub-box-485",
+          "id": "9x16-sub-box-543",
           "type": "shape",
           "start": 41.59,
           "duration": 2.626,
@@ -9531,7 +9531,7 @@
           ]
         },
         {
-          "id": "9x16-sub-486",
+          "id": "9x16-sub-544",
           "type": "text",
           "start": 41.59,
           "duration": 2.626,
@@ -9600,7 +9600,7 @@
           ]
         },
         {
-          "id": "9x16-word-487",
+          "id": "9x16-word-545",
           "type": "text",
           "scene": "subtitles",
           "start": 41.67,
@@ -9618,7 +9618,7 @@
           }
         },
         {
-          "id": "9x16-word-488",
+          "id": "9x16-word-546",
           "type": "text",
           "scene": "subtitles",
           "start": 42.11,
@@ -9636,7 +9636,7 @@
           }
         },
         {
-          "id": "9x16-word-489",
+          "id": "9x16-word-547",
           "type": "text",
           "scene": "subtitles",
           "start": 42.25,
@@ -9654,7 +9654,7 @@
           }
         },
         {
-          "id": "16x9-sub-box-490",
+          "id": "16x9-sub-box-548",
           "type": "shape",
           "scene": "subtitles",
           "start": 40.19,
@@ -9718,7 +9718,7 @@
           ]
         },
         {
-          "id": "16x9-sub-491",
+          "id": "16x9-sub-549",
           "type": "text",
           "scene": "subtitles",
           "start": 40.19,
@@ -9785,7 +9785,7 @@
           ]
         },
         {
-          "id": "16x9-word-492",
+          "id": "16x9-word-550",
           "type": "text",
           "scene": "subtitles",
           "start": 40.27,
@@ -9826,7 +9826,7 @@
           ]
         },
         {
-          "id": "16x9-word-493",
+          "id": "16x9-word-551",
           "type": "text",
           "scene": "subtitles",
           "start": 40.99,
@@ -9867,7 +9867,7 @@
           ]
         },
         {
-          "id": "16x9-word-494",
+          "id": "16x9-word-552",
           "type": "text",
           "scene": "subtitles",
           "start": 41.25,
@@ -9908,7 +9908,7 @@
           ]
         },
         {
-          "id": "16x9-word-495",
+          "id": "16x9-word-553",
           "type": "text",
           "scene": "subtitles",
           "start": 41.49,
@@ -9949,7 +9949,7 @@
           ]
         },
         {
-          "id": "16x9-sub-box-496",
+          "id": "16x9-sub-box-554",
           "type": "shape",
           "start": 41.59,
           "duration": 2.626,
@@ -10029,7 +10029,7 @@
           ]
         },
         {
-          "id": "16x9-sub-497",
+          "id": "16x9-sub-555",
           "type": "text",
           "start": 41.59,
           "duration": 2.626,
@@ -10112,7 +10112,7 @@
           ]
         },
         {
-          "id": "16x9-word-498",
+          "id": "16x9-word-556",
           "type": "text",
           "scene": "subtitles",
           "start": 41.67,
@@ -10153,7 +10153,7 @@
           ]
         },
         {
-          "id": "16x9-word-499",
+          "id": "16x9-word-557",
           "type": "text",
           "scene": "subtitles",
           "start": 42.11,
@@ -10194,7 +10194,7 @@
           ]
         },
         {
-          "id": "16x9-word-500",
+          "id": "16x9-word-558",
           "type": "text",
           "scene": "subtitles",
           "start": 42.25,
@@ -10235,7 +10235,7 @@
           ]
         },
         {
-          "id": "mark-501",
+          "id": "mark-559",
           "type": "svg",
           "src": "assets/mark.svg",
           "scene": "identity",
@@ -10302,7 +10302,7 @@
           ]
         },
         {
-          "id": "app-icon-edge-502",
+          "id": "app-icon-edge-560",
           "type": "shape",
           "start": 45.245,
           "duration": 4.135,
@@ -10367,7 +10367,7 @@
           ]
         },
         {
-          "id": "app-icon-503",
+          "id": "app-icon-561",
           "type": "svg",
           "src": "assets/app-icon.svg",
           "start": 45.245,
@@ -10432,7 +10432,7 @@
           ]
         },
         {
-          "id": "tab-504",
+          "id": "tab-562",
           "type": "svg",
           "src": "assets/tab.svg",
           "start": 45.39,
@@ -10497,7 +10497,7 @@
           ]
         },
         {
-          "id": "favicon-505",
+          "id": "favicon-563",
           "type": "svg",
           "src": "assets/app-icon.svg",
           "start": 45.39,
@@ -10562,7 +10562,7 @@
           ]
         },
         {
-          "id": "tab-title-506",
+          "id": "tab-title-564",
           "type": "text",
           "start": 45.39,
           "duration": 3.99,
@@ -10630,7 +10630,7 @@
           ]
         },
         {
-          "id": "tab-url-507",
+          "id": "tab-url-565",
           "type": "text",
           "start": 45.39,
           "duration": 3.99,
@@ -10698,7 +10698,7 @@
           ]
         },
         {
-          "id": "og-edge-508",
+          "id": "og-edge-566",
           "type": "shape",
           "start": 45.487,
           "duration": 3.893,
@@ -10763,7 +10763,7 @@
           ]
         },
         {
-          "id": "og-509",
+          "id": "og-567",
           "type": "shape",
           "start": 45.487,
           "duration": 3.893,
@@ -10828,7 +10828,7 @@
           ]
         },
         {
-          "id": "og-mark-510",
+          "id": "og-mark-568",
           "type": "svg",
           "src": "assets/mark.svg",
           "start": 45.487,
@@ -10893,7 +10893,7 @@
           ]
         },
         {
-          "id": "og-head-511",
+          "id": "og-head-569",
           "type": "text",
           "start": 45.487,
           "duration": 3.893,
@@ -10961,7 +10961,7 @@
           ]
         },
         {
-          "id": "og-head-512",
+          "id": "og-head-570",
           "type": "text",
           "start": 45.487,
           "duration": 3.893,
@@ -11029,7 +11029,7 @@
           ]
         },
         {
-          "id": "identity-label-513",
+          "id": "identity-label-571",
           "type": "text",
           "start": 45.85,
           "duration": 3.53,
@@ -11082,7 +11082,7 @@
           ]
         },
         {
-          "id": "identity-label-514",
+          "id": "identity-label-572",
           "type": "text",
           "start": 45.947,
           "duration": 3.433,
@@ -11135,7 +11135,7 @@
           ]
         },
         {
-          "id": "identity-label-515",
+          "id": "identity-label-573",
           "type": "text",
           "start": 46.044,
           "duration": 3.336,
@@ -11188,7 +11188,7 @@
           ]
         },
         {
-          "id": "folder-521",
+          "id": "folder-579",
           "type": "svg",
           "src": "assets/folder-0.svg",
           "scene": "export",
@@ -11273,7 +11273,7 @@
           ]
         },
         {
-          "id": "folder-name-522",
+          "id": "folder-name-580",
           "type": "text",
           "scene": "export",
           "start": 49.78,
@@ -11319,7 +11319,7 @@
           ]
         },
         {
-          "id": "folder-523",
+          "id": "folder-581",
           "type": "svg",
           "src": "assets/folder-1.svg",
           "scene": "export",
@@ -11404,7 +11404,7 @@
           ]
         },
         {
-          "id": "folder-name-524",
+          "id": "folder-name-582",
           "type": "text",
           "scene": "export",
           "start": 49.844,
@@ -11450,7 +11450,7 @@
           ]
         },
         {
-          "id": "folder-525",
+          "id": "folder-583",
           "type": "svg",
           "src": "assets/folder-2.svg",
           "scene": "export",
@@ -11549,7 +11549,7 @@
           ]
         },
         {
-          "id": "folder-name-526",
+          "id": "folder-name-584",
           "type": "text",
           "scene": "export",
           "start": 49.908,
@@ -11595,7 +11595,7 @@
           ]
         },
         {
-          "id": "folder-count-555",
+          "id": "folder-count-613",
           "type": "text",
           "scene": "export",
           "start": 49.86,
@@ -11624,7 +11624,7 @@
           ]
         },
         {
-          "id": "folder-count-556",
+          "id": "folder-count-614",
           "type": "text",
           "scene": "export",
           "start": 51.54,
@@ -11653,7 +11653,7 @@
           ]
         },
         {
-          "id": "folder-count-557",
+          "id": "folder-count-615",
           "type": "text",
           "scene": "export",
           "start": 51.924,
@@ -11690,7 +11690,7 @@
           ]
         },
         {
-          "id": "folder-count-558",
+          "id": "folder-count-616",
           "type": "text",
           "scene": "export",
           "start": 49.86,
@@ -11719,7 +11719,7 @@
           ]
         },
         {
-          "id": "folder-count-559",
+          "id": "folder-count-617",
           "type": "text",
           "scene": "export",
           "start": 51.668,
@@ -11748,7 +11748,7 @@
           ]
         },
         {
-          "id": "folder-count-560",
+          "id": "folder-count-618",
           "type": "text",
           "scene": "export",
           "start": 52.052,
@@ -11785,7 +11785,7 @@
           ]
         },
         {
-          "id": "folder-count-561",
+          "id": "folder-count-619",
           "type": "text",
           "scene": "export",
           "start": 49.86,
@@ -11814,7 +11814,7 @@
           ]
         },
         {
-          "id": "folder-count-562",
+          "id": "folder-count-620",
           "type": "text",
           "scene": "export",
           "start": 51.796,
@@ -11843,7 +11843,7 @@
           ]
         },
         {
-          "id": "folder-count-563",
+          "id": "folder-count-621",
           "type": "text",
           "scene": "export",
           "start": 52.18,
@@ -11872,7 +11872,7 @@
           ]
         },
         {
-          "id": "folder-count-564",
+          "id": "folder-count-622",
           "type": "text",
           "scene": "export",
           "start": 52.308,
@@ -11909,7 +11909,7 @@
           ]
         },
         {
-          "id": "end-logo-566",
+          "id": "end-logo-624",
           "type": "svg",
           "src": "assets/logo.svg",
           "scene": "endcard",
@@ -11950,7 +11950,7 @@
           ]
         },
         {
-          "id": "end-a-567",
+          "id": "end-a-625",
           "type": "text",
           "scene": "endcard",
           "start": 54.377,
@@ -11992,7 +11992,7 @@
           ]
         },
         {
-          "id": "end-b-568",
+          "id": "end-b-626",
           "type": "text",
           "scene": "endcard",
           "start": 54.683,
@@ -12034,7 +12034,7 @@
           ]
         },
         {
-          "id": "end-url-569",
+          "id": "end-url-627",
           "type": "text",
           "scene": "endcard",
           "start": 55.538,
@@ -12071,7 +12071,7 @@
           ]
         },
         {
-          "id": "end-rule-570",
+          "id": "end-rule-628",
           "type": "shape",
           "scene": "endcard",
           "start": 56.027,
@@ -12094,7 +12094,7 @@
           ]
         },
         {
-          "id": "end-line-571",
+          "id": "end-line-629",
           "type": "text",
           "scene": "endcard",
           "start": 56.394,
@@ -12129,7 +12129,7 @@
       "kind": "visual",
       "clips": [
         {
-          "id": "composer-edge-61",
+          "id": "composer-edge-119",
           "type": "shape",
           "scene": "brief",
           "start": 0.37,
@@ -12246,7 +12246,7 @@
           ]
         },
         {
-          "id": "composer-62",
+          "id": "composer-120",
           "type": "shape",
           "scene": "brief",
           "start": 0.37,
@@ -12363,7 +12363,7 @@
           ]
         },
         {
-          "id": "composer-label-63",
+          "id": "composer-label-121",
           "type": "text",
           "scene": "brief",
           "start": 0.37,
@@ -12483,7 +12483,7 @@
           ]
         },
         {
-          "id": "composer-label-64",
+          "id": "composer-label-122",
           "type": "text",
           "scene": "brief",
           "start": 0.37,
@@ -12603,7 +12603,7 @@
           ]
         },
         {
-          "id": "brief-65",
+          "id": "brief-123",
           "type": "text",
           "scene": "brief",
           "start": 0.952,
@@ -12621,7 +12621,7 @@
           }
         },
         {
-          "id": "brief-66",
+          "id": "brief-124",
           "type": "text",
           "scene": "brief",
           "start": 0.997,
@@ -12639,7 +12639,7 @@
           }
         },
         {
-          "id": "brief-67",
+          "id": "brief-125",
           "type": "text",
           "scene": "brief",
           "start": 1.041,
@@ -12657,7 +12657,7 @@
           }
         },
         {
-          "id": "brief-68",
+          "id": "brief-126",
           "type": "text",
           "scene": "brief",
           "start": 1.085,
@@ -12675,7 +12675,7 @@
           }
         },
         {
-          "id": "brief-69",
+          "id": "brief-127",
           "type": "text",
           "scene": "brief",
           "start": 1.13,
@@ -12693,7 +12693,7 @@
           }
         },
         {
-          "id": "brief-70",
+          "id": "brief-128",
           "type": "text",
           "scene": "brief",
           "start": 1.174,
@@ -12711,7 +12711,7 @@
           }
         },
         {
-          "id": "brief-71",
+          "id": "brief-129",
           "type": "text",
           "scene": "brief",
           "start": 1.219,
@@ -12729,7 +12729,7 @@
           }
         },
         {
-          "id": "brief-72",
+          "id": "brief-130",
           "type": "text",
           "scene": "brief",
           "start": 1.263,
@@ -12747,7 +12747,7 @@
           }
         },
         {
-          "id": "brief-73",
+          "id": "brief-131",
           "type": "text",
           "scene": "brief",
           "start": 1.308,
@@ -12765,7 +12765,7 @@
           }
         },
         {
-          "id": "brief-74",
+          "id": "brief-132",
           "type": "text",
           "scene": "brief",
           "start": 1.352,
@@ -12783,7 +12783,7 @@
           }
         },
         {
-          "id": "brief-75",
+          "id": "brief-133",
           "type": "text",
           "scene": "brief",
           "start": 1.396,
@@ -12801,7 +12801,7 @@
           }
         },
         {
-          "id": "brief-76",
+          "id": "brief-134",
           "type": "text",
           "scene": "brief",
           "start": 1.441,
@@ -12819,7 +12819,7 @@
           }
         },
         {
-          "id": "brief-77",
+          "id": "brief-135",
           "type": "text",
           "scene": "brief",
           "start": 1.485,
@@ -12837,7 +12837,7 @@
           }
         },
         {
-          "id": "brief-78",
+          "id": "brief-136",
           "type": "text",
           "scene": "brief",
           "start": 1.53,
@@ -12855,7 +12855,7 @@
           }
         },
         {
-          "id": "brief-79",
+          "id": "brief-137",
           "type": "text",
           "scene": "brief",
           "start": 1.574,
@@ -12873,7 +12873,7 @@
           }
         },
         {
-          "id": "brief-80",
+          "id": "brief-138",
           "type": "text",
           "scene": "brief",
           "start": 1.619,
@@ -12891,7 +12891,7 @@
           }
         },
         {
-          "id": "brief-81",
+          "id": "brief-139",
           "type": "text",
           "scene": "brief",
           "start": 1.663,
@@ -12943,7 +12943,7 @@
           ]
         },
         {
-          "id": "brief-82",
+          "id": "brief-140",
           "type": "text",
           "scene": "brief",
           "start": 1.875,
@@ -12961,7 +12961,7 @@
           }
         },
         {
-          "id": "brief-83",
+          "id": "brief-141",
           "type": "text",
           "scene": "brief",
           "start": 1.919,
@@ -12979,7 +12979,7 @@
           }
         },
         {
-          "id": "brief-84",
+          "id": "brief-142",
           "type": "text",
           "scene": "brief",
           "start": 1.963,
@@ -12997,7 +12997,7 @@
           }
         },
         {
-          "id": "brief-85",
+          "id": "brief-143",
           "type": "text",
           "scene": "brief",
           "start": 2.008,
@@ -13015,7 +13015,7 @@
           }
         },
         {
-          "id": "brief-86",
+          "id": "brief-144",
           "type": "text",
           "scene": "brief",
           "start": 2.052,
@@ -13033,7 +13033,7 @@
           }
         },
         {
-          "id": "brief-87",
+          "id": "brief-145",
           "type": "text",
           "scene": "brief",
           "start": 2.097,
@@ -13051,7 +13051,7 @@
           }
         },
         {
-          "id": "brief-88",
+          "id": "brief-146",
           "type": "text",
           "scene": "brief",
           "start": 2.141,
@@ -13069,7 +13069,7 @@
           }
         },
         {
-          "id": "brief-89",
+          "id": "brief-147",
           "type": "text",
           "scene": "brief",
           "start": 2.186,
@@ -13121,7 +13121,7 @@
           ]
         },
         {
-          "id": "caret-90",
+          "id": "caret-148",
           "type": "shape",
           "scene": "brief",
           "start": 0.37,
@@ -13426,7 +13426,7 @@
           ]
         },
         {
-          "id": "composer-plus-91",
+          "id": "composer-plus-149",
           "type": "text",
           "scene": "brief",
           "start": 0.37,
@@ -13546,7 +13546,7 @@
           ]
         },
         {
-          "id": "composer-services-92",
+          "id": "composer-services-150",
           "type": "text",
           "scene": "brief",
           "start": 0.37,
@@ -13666,7 +13666,7 @@
           ]
         },
         {
-          "id": "send-93",
+          "id": "send-151",
           "type": "shape",
           "scene": "brief",
           "start": 0.37,
@@ -13805,7 +13805,7 @@
           ]
         },
         {
-          "id": "send-key-94",
+          "id": "send-key-152",
           "type": "text",
           "scene": "brief",
           "start": 0.37,
@@ -13940,7 +13940,7 @@
           ]
         },
         {
-          "id": "chat-edge-170",
+          "id": "chat-edge-228",
           "type": "shape",
           "start": 8.979,
           "duration": 4.242,
@@ -14006,7 +14006,7 @@
           ]
         },
         {
-          "id": "chat-171",
+          "id": "chat-229",
           "type": "shape",
           "start": 8.979,
           "duration": 4.242,
@@ -14072,7 +14072,7 @@
           ]
         },
         {
-          "id": "tab-172",
+          "id": "tab-230",
           "type": "text",
           "start": 8.979,
           "duration": 4.242,
@@ -14141,7 +14141,7 @@
           ]
         },
         {
-          "id": "tab-line-173",
+          "id": "tab-line-231",
           "type": "shape",
           "start": 8.979,
           "duration": 4.242,
@@ -14207,7 +14207,7 @@
           ]
         },
         {
-          "id": "tab-174",
+          "id": "tab-232",
           "type": "text",
           "start": 8.979,
           "duration": 4.242,
@@ -14276,7 +14276,7 @@
           ]
         },
         {
-          "id": "tab-175",
+          "id": "tab-233",
           "type": "text",
           "start": 8.979,
           "duration": 4.242,
@@ -14345,7 +14345,7 @@
           ]
         },
         {
-          "id": "rule-176",
+          "id": "rule-234",
           "type": "shape",
           "start": 8.979,
           "duration": 4.242,
@@ -14410,7 +14410,7 @@
           ]
         },
         {
-          "id": "chat-composer-edge-177",
+          "id": "chat-composer-edge-235",
           "type": "shape",
           "start": 8.979,
           "duration": 4.242,
@@ -14476,7 +14476,7 @@
           ]
         },
         {
-          "id": "chat-composer-178",
+          "id": "chat-composer-236",
           "type": "shape",
           "start": 8.979,
           "duration": 4.242,
@@ -14542,7 +14542,7 @@
           ]
         },
         {
-          "id": "placeholder-179",
+          "id": "placeholder-237",
           "type": "text",
           "start": 8.979,
           "duration": 0.711,
@@ -14577,7 +14577,7 @@
           ]
         },
         {
-          "id": "chat-typed-180",
+          "id": "chat-typed-238",
           "type": "text",
           "scene": "chat",
           "start": 9.69,
@@ -14595,7 +14595,7 @@
           }
         },
         {
-          "id": "chat-typed-181",
+          "id": "chat-typed-239",
           "type": "text",
           "scene": "chat",
           "start": 9.717,
@@ -14613,7 +14613,7 @@
           }
         },
         {
-          "id": "chat-typed-182",
+          "id": "chat-typed-240",
           "type": "text",
           "scene": "chat",
           "start": 9.744,
@@ -14631,7 +14631,7 @@
           }
         },
         {
-          "id": "chat-typed-183",
+          "id": "chat-typed-241",
           "type": "text",
           "scene": "chat",
           "start": 9.772,
@@ -14649,7 +14649,7 @@
           }
         },
         {
-          "id": "chat-typed-184",
+          "id": "chat-typed-242",
           "type": "text",
           "scene": "chat",
           "start": 9.799,
@@ -14667,7 +14667,7 @@
           }
         },
         {
-          "id": "chat-typed-185",
+          "id": "chat-typed-243",
           "type": "text",
           "scene": "chat",
           "start": 9.826,
@@ -14685,7 +14685,7 @@
           }
         },
         {
-          "id": "chat-typed-186",
+          "id": "chat-typed-244",
           "type": "text",
           "scene": "chat",
           "start": 9.853,
@@ -14703,7 +14703,7 @@
           }
         },
         {
-          "id": "chat-typed-187",
+          "id": "chat-typed-245",
           "type": "text",
           "scene": "chat",
           "start": 9.88,
@@ -14721,7 +14721,7 @@
           }
         },
         {
-          "id": "chat-typed-188",
+          "id": "chat-typed-246",
           "type": "text",
           "scene": "chat",
           "start": 9.908,
@@ -14739,7 +14739,7 @@
           }
         },
         {
-          "id": "chat-typed-189",
+          "id": "chat-typed-247",
           "type": "text",
           "scene": "chat",
           "start": 9.935,
@@ -14757,7 +14757,7 @@
           }
         },
         {
-          "id": "chat-typed-190",
+          "id": "chat-typed-248",
           "type": "text",
           "scene": "chat",
           "start": 9.962,
@@ -14775,7 +14775,7 @@
           }
         },
         {
-          "id": "chat-typed-191",
+          "id": "chat-typed-249",
           "type": "text",
           "scene": "chat",
           "start": 9.989,
@@ -14793,7 +14793,7 @@
           }
         },
         {
-          "id": "chat-typed-192",
+          "id": "chat-typed-250",
           "type": "text",
           "scene": "chat",
           "start": 10.016,
@@ -14811,7 +14811,7 @@
           }
         },
         {
-          "id": "chat-typed-193",
+          "id": "chat-typed-251",
           "type": "text",
           "scene": "chat",
           "start": 10.044,
@@ -14829,7 +14829,7 @@
           }
         },
         {
-          "id": "chat-typed-194",
+          "id": "chat-typed-252",
           "type": "text",
           "scene": "chat",
           "start": 10.071,
@@ -14847,7 +14847,7 @@
           }
         },
         {
-          "id": "chat-typed-195",
+          "id": "chat-typed-253",
           "type": "text",
           "scene": "chat",
           "start": 10.098,
@@ -14865,7 +14865,7 @@
           }
         },
         {
-          "id": "chat-typed-196",
+          "id": "chat-typed-254",
           "type": "text",
           "scene": "chat",
           "start": 10.125,
@@ -14883,7 +14883,7 @@
           }
         },
         {
-          "id": "chat-typed-197",
+          "id": "chat-typed-255",
           "type": "text",
           "scene": "chat",
           "start": 10.152,
@@ -14901,7 +14901,7 @@
           }
         },
         {
-          "id": "chat-send-198",
+          "id": "chat-send-256",
           "type": "shape",
           "start": 8.979,
           "duration": 4.242,
@@ -14988,7 +14988,7 @@
           ]
         },
         {
-          "id": "chat-send-key-199",
+          "id": "chat-send-key-257",
           "type": "text",
           "start": 8.979,
           "duration": 4.242,
@@ -15079,7 +15079,7 @@
           ]
         },
         {
-          "id": "bubble-200",
+          "id": "bubble-258",
           "type": "shape",
           "start": 10.53,
           "duration": 2.692,
@@ -15136,7 +15136,7 @@
           ]
         },
         {
-          "id": "bubble-text-201",
+          "id": "bubble-text-259",
           "type": "text",
           "start": 10.53,
           "duration": 2.692,
@@ -15196,7 +15196,7 @@
           ]
         },
         {
-          "id": "avatar-202",
+          "id": "avatar-260",
           "type": "svg",
           "src": "assets/avatar.svg",
           "start": 10.77,
@@ -15253,7 +15253,7 @@
           ]
         },
         {
-          "id": "agent-203",
+          "id": "agent-261",
           "type": "text",
           "start": 10.77,
           "duration": 2.452,
@@ -15313,7 +15313,7 @@
           ]
         },
         {
-          "id": "typing-dot-204",
+          "id": "typing-dot-262",
           "type": "shape",
           "scene": "chat",
           "start": 10.89,
@@ -15365,7 +15365,7 @@
           ]
         },
         {
-          "id": "typing-dot-205",
+          "id": "typing-dot-263",
           "type": "shape",
           "scene": "chat",
           "start": 10.89,
@@ -15403,7 +15403,7 @@
           ]
         },
         {
-          "id": "typing-dot-206",
+          "id": "typing-dot-264",
           "type": "shape",
           "scene": "chat",
           "start": 10.89,
@@ -15441,7 +15441,7 @@
           ]
         },
         {
-          "id": "reply-207",
+          "id": "reply-265",
           "type": "text",
           "start": 11.65,
           "duration": 1.572,
@@ -15501,7 +15501,7 @@
           ]
         },
         {
-          "id": "ready-208",
+          "id": "ready-266",
           "type": "shape",
           "start": 12.13,
           "duration": 1.092,
@@ -15558,7 +15558,7 @@
           ]
         },
         {
-          "id": "ready-text-209",
+          "id": "ready-text-267",
           "type": "text",
           "start": 12.13,
           "duration": 1.092,
@@ -15619,7 +15619,7 @@
           ]
         },
         {
-          "id": "inspector-edge-210",
+          "id": "inspector-edge-268",
           "type": "shape",
           "start": 13.13,
           "duration": 5.464,
@@ -15685,7 +15685,7 @@
           ]
         },
         {
-          "id": "inspector-211",
+          "id": "inspector-269",
           "type": "shape",
           "start": 13.13,
           "duration": 5.464,
@@ -15751,7 +15751,7 @@
           ]
         },
         {
-          "id": "tab-212",
+          "id": "tab-270",
           "type": "text",
           "start": 13.13,
           "duration": 5.464,
@@ -15820,7 +15820,7 @@
           ]
         },
         {
-          "id": "tab-213",
+          "id": "tab-271",
           "type": "text",
           "start": 13.13,
           "duration": 5.464,
@@ -15889,7 +15889,7 @@
           ]
         },
         {
-          "id": "tab-line-214",
+          "id": "tab-line-272",
           "type": "shape",
           "start": 13.13,
           "duration": 5.464,
@@ -15955,7 +15955,7 @@
           ]
         },
         {
-          "id": "rule-215",
+          "id": "rule-273",
           "type": "shape",
           "start": 13.13,
           "duration": 5.464,
@@ -16020,7 +16020,7 @@
           ]
         },
         {
-          "id": "field-216",
+          "id": "field-274",
           "type": "text",
           "start": 13.13,
           "duration": 5.464,
@@ -16089,7 +16089,7 @@
           ]
         },
         {
-          "id": "field-value-217",
+          "id": "field-value-275",
           "type": "text",
           "start": 13.13,
           "duration": 5.464,
@@ -16158,7 +16158,7 @@
           ]
         },
         {
-          "id": "field-218",
+          "id": "field-276",
           "type": "text",
           "start": 13.13,
           "duration": 5.464,
@@ -16227,7 +16227,7 @@
           ]
         },
         {
-          "id": "pos-x-edge-219",
+          "id": "pos-x-edge-277",
           "type": "shape",
           "start": 13.13,
           "duration": 5.464,
@@ -16293,7 +16293,7 @@
           ]
         },
         {
-          "id": "pos-x-220",
+          "id": "pos-x-278",
           "type": "shape",
           "start": 13.13,
           "duration": 5.464,
@@ -16359,7 +16359,7 @@
           ]
         },
         {
-          "id": "pos-y-edge-221",
+          "id": "pos-y-edge-279",
           "type": "shape",
           "start": 13.13,
           "duration": 5.464,
@@ -16425,7 +16425,7 @@
           ]
         },
         {
-          "id": "pos-y-222",
+          "id": "pos-y-280",
           "type": "shape",
           "start": 13.13,
           "duration": 5.464,
@@ -16491,7 +16491,7 @@
           ]
         },
         {
-          "id": "pos-223",
+          "id": "pos-281",
           "type": "text",
           "start": 13.13,
           "duration": 5.464,
@@ -16560,7 +16560,7 @@
           ]
         },
         {
-          "id": "pos-224",
+          "id": "pos-282",
           "type": "text",
           "start": 13.13,
           "duration": 5.464,
@@ -16629,7 +16629,7 @@
           ]
         },
         {
-          "id": "pos-225",
+          "id": "pos-283",
           "type": "text",
           "start": 13.13,
           "duration": 5.464,
@@ -16698,7 +16698,7 @@
           ]
         },
         {
-          "id": "pos-226",
+          "id": "pos-284",
           "type": "text",
           "start": 13.13,
           "duration": 2.012,
@@ -16733,7 +16733,7 @@
           ]
         },
         {
-          "id": "pos-227",
+          "id": "pos-285",
           "type": "text",
           "scene": "edit",
           "start": 15.142,
@@ -16751,7 +16751,7 @@
           }
         },
         {
-          "id": "pos-228",
+          "id": "pos-286",
           "type": "text",
           "scene": "edit",
           "start": 15.256,
@@ -16769,7 +16769,7 @@
           }
         },
         {
-          "id": "pos-229",
+          "id": "pos-287",
           "type": "text",
           "scene": "edit",
           "start": 15.37,
@@ -16787,7 +16787,7 @@
           }
         },
         {
-          "id": "pos-230",
+          "id": "pos-288",
           "type": "text",
           "scene": "edit",
           "start": 15.483,
@@ -16805,7 +16805,7 @@
           }
         },
         {
-          "id": "pos-231",
+          "id": "pos-289",
           "type": "text",
           "scene": "edit",
           "start": 15.597,
@@ -16823,7 +16823,7 @@
           }
         },
         {
-          "id": "pos-232",
+          "id": "pos-290",
           "type": "text",
           "start": 15.71,
           "duration": 2.884,
@@ -16858,7 +16858,7 @@
           ]
         },
         {
-          "id": "field-233",
+          "id": "field-291",
           "type": "text",
           "start": 13.13,
           "duration": 5.464,
@@ -16927,7 +16927,7 @@
           ]
         },
         {
-          "id": "swatch-234",
+          "id": "swatch-292",
           "type": "shape",
           "start": 13.13,
           "duration": 5.464,
@@ -16993,7 +16993,7 @@
           ]
         },
         {
-          "id": "swatch-235",
+          "id": "swatch-293",
           "type": "shape",
           "start": 13.13,
           "duration": 5.464,
@@ -17059,7 +17059,7 @@
           ]
         },
         {
-          "id": "swatch-236",
+          "id": "swatch-294",
           "type": "shape",
           "start": 13.13,
           "duration": 5.464,
@@ -17125,7 +17125,7 @@
           ]
         },
         {
-          "id": "swatch-237",
+          "id": "swatch-295",
           "type": "shape",
           "start": 13.13,
           "duration": 5.464,
@@ -17191,7 +17191,7 @@
           ]
         },
         {
-          "id": "swatch-238",
+          "id": "swatch-296",
           "type": "shape",
           "start": 13.13,
           "duration": 5.464,
@@ -17257,7 +17257,7 @@
           ]
         },
         {
-          "id": "swatch-ring-239",
+          "id": "swatch-ring-297",
           "type": "svg",
           "src": "assets/outline-swatch.svg",
           "start": 13.13,
@@ -17332,7 +17332,7 @@
           ]
         },
         {
-          "id": "save-240",
+          "id": "save-298",
           "type": "shape",
           "start": 13.13,
           "duration": 5.464,
@@ -17419,7 +17419,7 @@
           ]
         },
         {
-          "id": "save-text-241",
+          "id": "save-text-299",
           "type": "text",
           "start": 13.13,
           "duration": 5.464,
@@ -17510,7 +17510,7 @@
           ]
         },
         {
-          "id": "no-tokens-242",
+          "id": "no-tokens-300",
           "type": "text",
           "start": 13.13,
           "duration": 5.464,
@@ -17579,7 +17579,7 @@
           ]
         },
         {
-          "id": "brand-edge-252",
+          "id": "brand-edge-310",
           "type": "shape",
           "start": 18.488,
           "duration": 5.951,
@@ -17645,7 +17645,7 @@
           ]
         },
         {
-          "id": "brand-253",
+          "id": "brand-311",
           "type": "shape",
           "start": 18.488,
           "duration": 5.951,
@@ -17711,7 +17711,7 @@
           ]
         },
         {
-          "id": "brand-title-254",
+          "id": "brand-title-312",
           "type": "text",
           "start": 18.488,
           "duration": 5.951,
@@ -17780,7 +17780,7 @@
           ]
         },
         {
-          "id": "brand-from-255",
+          "id": "brand-from-313",
           "type": "text",
           "start": 18.488,
           "duration": 5.951,
@@ -17849,7 +17849,7 @@
           ]
         },
         {
-          "id": "url-edge-256",
+          "id": "url-edge-314",
           "type": "shape",
           "start": 18.488,
           "duration": 5.951,
@@ -17915,7 +17915,7 @@
           ]
         },
         {
-          "id": "url-257",
+          "id": "url-315",
           "type": "shape",
           "start": 18.488,
           "duration": 5.951,
@@ -17981,7 +17981,7 @@
           ]
         },
         {
-          "id": "url-typed-258",
+          "id": "url-typed-316",
           "type": "text",
           "scene": "brand",
           "start": 19.136,
@@ -17999,7 +17999,7 @@
           }
         },
         {
-          "id": "url-typed-259",
+          "id": "url-typed-317",
           "type": "text",
           "scene": "brand",
           "start": 19.168,
@@ -18017,7 +18017,7 @@
           }
         },
         {
-          "id": "url-typed-260",
+          "id": "url-typed-318",
           "type": "text",
           "scene": "brand",
           "start": 19.201,
@@ -18035,7 +18035,7 @@
           }
         },
         {
-          "id": "url-typed-261",
+          "id": "url-typed-319",
           "type": "text",
           "scene": "brand",
           "start": 19.233,
@@ -18053,7 +18053,7 @@
           }
         },
         {
-          "id": "url-typed-262",
+          "id": "url-typed-320",
           "type": "text",
           "scene": "brand",
           "start": 19.266,
@@ -18071,7 +18071,7 @@
           }
         },
         {
-          "id": "url-typed-263",
+          "id": "url-typed-321",
           "type": "text",
           "scene": "brand",
           "start": 19.298,
@@ -18089,7 +18089,7 @@
           }
         },
         {
-          "id": "url-typed-264",
+          "id": "url-typed-322",
           "type": "text",
           "scene": "brand",
           "start": 19.331,
@@ -18107,7 +18107,7 @@
           }
         },
         {
-          "id": "url-typed-265",
+          "id": "url-typed-323",
           "type": "text",
           "scene": "brand",
           "start": 19.363,
@@ -18125,7 +18125,7 @@
           }
         },
         {
-          "id": "url-typed-266",
+          "id": "url-typed-324",
           "type": "text",
           "scene": "brand",
           "start": 19.396,
@@ -18143,7 +18143,7 @@
           }
         },
         {
-          "id": "url-typed-267",
+          "id": "url-typed-325",
           "type": "text",
           "scene": "brand",
           "start": 19.428,
@@ -18161,7 +18161,7 @@
           }
         },
         {
-          "id": "url-typed-268",
+          "id": "url-typed-326",
           "type": "text",
           "scene": "brand",
           "start": 19.461,
@@ -18179,7 +18179,7 @@
           }
         },
         {
-          "id": "url-typed-269",
+          "id": "url-typed-327",
           "type": "text",
           "scene": "brand",
           "start": 19.493,
@@ -18197,7 +18197,7 @@
           }
         },
         {
-          "id": "url-typed-270",
+          "id": "url-typed-328",
           "type": "text",
           "scene": "brand",
           "start": 19.526,
@@ -18215,7 +18215,7 @@
           }
         },
         {
-          "id": "url-typed-271",
+          "id": "url-typed-329",
           "type": "text",
           "scene": "brand",
           "start": 19.558,
@@ -18233,7 +18233,7 @@
           }
         },
         {
-          "id": "url-typed-272",
+          "id": "url-typed-330",
           "type": "text",
           "scene": "brand",
           "start": 19.591,
@@ -18251,7 +18251,7 @@
           }
         },
         {
-          "id": "url-typed-273",
+          "id": "url-typed-331",
           "type": "text",
           "start": 19.623,
           "duration": 4.816,
@@ -18286,7 +18286,7 @@
           ]
         },
         {
-          "id": "reading-274",
+          "id": "reading-332",
           "type": "shape",
           "scene": "brand",
           "start": 19.678,
@@ -18317,7 +18317,7 @@
           ]
         },
         {
-          "id": "brand-field-275",
+          "id": "brand-field-333",
           "type": "text",
           "start": 20.382,
           "duration": 4.058,
@@ -18368,7 +18368,7 @@
           ]
         },
         {
-          "id": "palette-edge-276",
+          "id": "palette-edge-334",
           "type": "shape",
           "start": 20.49,
           "duration": 3.949,
@@ -18425,7 +18425,7 @@
           ]
         },
         {
-          "id": "palette-277",
+          "id": "palette-335",
           "type": "shape",
           "start": 20.49,
           "duration": 3.949,
@@ -18482,7 +18482,7 @@
           ]
         },
         {
-          "id": "palette-hex-278",
+          "id": "palette-hex-336",
           "type": "text",
           "start": 20.49,
           "duration": 3.949,
@@ -18542,7 +18542,7 @@
           ]
         },
         {
-          "id": "palette-edge-279",
+          "id": "palette-edge-337",
           "type": "shape",
           "start": 20.566,
           "duration": 3.874,
@@ -18599,7 +18599,7 @@
           ]
         },
         {
-          "id": "palette-280",
+          "id": "palette-338",
           "type": "shape",
           "start": 20.566,
           "duration": 3.874,
@@ -18656,7 +18656,7 @@
           ]
         },
         {
-          "id": "palette-hex-281",
+          "id": "palette-hex-339",
           "type": "text",
           "start": 20.566,
           "duration": 3.874,
@@ -18716,7 +18716,7 @@
           ]
         },
         {
-          "id": "palette-edge-282",
+          "id": "palette-edge-340",
           "type": "shape",
           "start": 20.642,
           "duration": 3.798,
@@ -18773,7 +18773,7 @@
           ]
         },
         {
-          "id": "palette-283",
+          "id": "palette-341",
           "type": "shape",
           "start": 20.642,
           "duration": 3.798,
@@ -18830,7 +18830,7 @@
           ]
         },
         {
-          "id": "palette-hex-284",
+          "id": "palette-hex-342",
           "type": "text",
           "start": 20.642,
           "duration": 3.798,
@@ -18890,7 +18890,7 @@
           ]
         },
         {
-          "id": "palette-edge-285",
+          "id": "palette-edge-343",
           "type": "shape",
           "start": 20.718,
           "duration": 3.722,
@@ -18947,7 +18947,7 @@
           ]
         },
         {
-          "id": "palette-286",
+          "id": "palette-344",
           "type": "shape",
           "start": 20.718,
           "duration": 3.722,
@@ -19004,7 +19004,7 @@
           ]
         },
         {
-          "id": "palette-hex-287",
+          "id": "palette-hex-345",
           "type": "text",
           "start": 20.718,
           "duration": 3.722,
@@ -19064,7 +19064,7 @@
           ]
         },
         {
-          "id": "palette-edge-288",
+          "id": "palette-edge-346",
           "type": "shape",
           "start": 20.793,
           "duration": 3.646,
@@ -19121,7 +19121,7 @@
           ]
         },
         {
-          "id": "palette-289",
+          "id": "palette-347",
           "type": "shape",
           "start": 20.793,
           "duration": 3.646,
@@ -19178,7 +19178,7 @@
           ]
         },
         {
-          "id": "palette-hex-290",
+          "id": "palette-hex-348",
           "type": "text",
           "start": 20.793,
           "duration": 3.646,
@@ -19238,7 +19238,7 @@
           ]
         },
         {
-          "id": "brand-field-291",
+          "id": "brand-field-349",
           "type": "text",
           "start": 20.923,
           "duration": 3.516,
@@ -19289,7 +19289,7 @@
           ]
         },
         {
-          "id": "font-aa-292",
+          "id": "font-aa-350",
           "type": "text",
           "start": 21.032,
           "duration": 3.408,
@@ -19358,7 +19358,7 @@
           ]
         },
         {
-          "id": "font-name-293",
+          "id": "font-name-351",
           "type": "text",
           "start": 21.032,
           "duration": 3.408,
@@ -19427,7 +19427,7 @@
           ]
         },
         {
-          "id": "font-aa-294",
+          "id": "font-aa-352",
           "type": "text",
           "start": 21.14,
           "duration": 3.299,
@@ -19496,7 +19496,7 @@
           ]
         },
         {
-          "id": "font-name-295",
+          "id": "font-name-353",
           "type": "text",
           "start": 21.14,
           "duration": 3.299,
@@ -19565,7 +19565,7 @@
           ]
         },
         {
-          "id": "font-aa-296",
+          "id": "font-aa-354",
           "type": "text",
           "start": 21.248,
           "duration": 3.191,
@@ -19634,7 +19634,7 @@
           ]
         },
         {
-          "id": "font-name-297",
+          "id": "font-name-355",
           "type": "text",
           "start": 21.248,
           "duration": 3.191,
@@ -19703,7 +19703,7 @@
           ]
         },
         {
-          "id": "brand-field-298",
+          "id": "brand-field-356",
           "type": "text",
           "start": 21.411,
           "duration": 3.029,
@@ -19754,7 +19754,7 @@
           ]
         },
         {
-          "id": "brand-logo-299",
+          "id": "brand-logo-357",
           "type": "svg",
           "src": "assets/logo.svg",
           "start": 21.519,
@@ -19820,7 +19820,7 @@
           ]
         },
         {
-          "id": "generate-edge-303",
+          "id": "generate-edge-361",
           "type": "shape",
           "start": 24.336,
           "duration": 7.006,
@@ -19886,7 +19886,7 @@
           ]
         },
         {
-          "id": "generate-304",
+          "id": "generate-362",
           "type": "shape",
           "start": 24.336,
           "duration": 7.006,
@@ -19952,7 +19952,7 @@
           ]
         },
         {
-          "id": "generate-title-305",
+          "id": "generate-title-363",
           "type": "text",
           "start": 24.336,
           "duration": 7.006,
@@ -20021,7 +20021,7 @@
           ]
         },
         {
-          "id": "generate-where-306",
+          "id": "generate-where-364",
           "type": "text",
           "start": 24.336,
           "duration": 7.006,
@@ -20090,7 +20090,7 @@
           ]
         },
         {
-          "id": "kinds-edge-307",
+          "id": "kinds-edge-365",
           "type": "shape",
           "start": 24.336,
           "duration": 7.006,
@@ -20156,7 +20156,7 @@
           ]
         },
         {
-          "id": "kinds-308",
+          "id": "kinds-366",
           "type": "shape",
           "start": 24.336,
           "duration": 7.006,
@@ -20222,7 +20222,7 @@
           ]
         },
         {
-          "id": "kind-active-309",
+          "id": "kind-active-367",
           "type": "shape",
           "start": 24.336,
           "duration": 7.006,
@@ -20306,7 +20306,7 @@
           ]
         },
         {
-          "id": "kind-310",
+          "id": "kind-368",
           "type": "text",
           "start": 24.336,
           "duration": 7.006,
@@ -20384,7 +20384,7 @@
           ]
         },
         {
-          "id": "kind-311",
+          "id": "kind-369",
           "type": "text",
           "start": 24.336,
           "duration": 7.006,
@@ -20470,7 +20470,7 @@
           ]
         },
         {
-          "id": "kind-312",
+          "id": "kind-370",
           "type": "text",
           "start": 24.336,
           "duration": 7.006,
@@ -20540,7 +20540,7 @@
           ]
         },
         {
-          "id": "kind-313",
+          "id": "kind-371",
           "type": "text",
           "start": 24.336,
           "duration": 7.006,
@@ -20618,7 +20618,7 @@
           ]
         },
         {
-          "id": "gen-field-edge-314",
+          "id": "gen-field-edge-372",
           "type": "shape",
           "start": 24.336,
           "duration": 7.006,
@@ -20684,7 +20684,7 @@
           ]
         },
         {
-          "id": "gen-field-315",
+          "id": "gen-field-373",
           "type": "shape",
           "start": 24.336,
           "duration": 7.006,
@@ -20750,7 +20750,7 @@
           ]
         },
         {
-          "id": "image-label-316",
+          "id": "image-label-374",
           "type": "text",
           "start": 24.336,
           "duration": 4.101,
@@ -20802,7 +20802,7 @@
           ]
         },
         {
-          "id": "prompt-317",
+          "id": "prompt-375",
           "type": "text",
           "scene": "generate",
           "start": 24.933,
@@ -20820,7 +20820,7 @@
           }
         },
         {
-          "id": "prompt-318",
+          "id": "prompt-376",
           "type": "text",
           "scene": "generate",
           "start": 24.955,
@@ -20838,7 +20838,7 @@
           }
         },
         {
-          "id": "prompt-319",
+          "id": "prompt-377",
           "type": "text",
           "scene": "generate",
           "start": 24.976,
@@ -20856,7 +20856,7 @@
           }
         },
         {
-          "id": "prompt-320",
+          "id": "prompt-378",
           "type": "text",
           "scene": "generate",
           "start": 24.998,
@@ -20874,7 +20874,7 @@
           }
         },
         {
-          "id": "prompt-321",
+          "id": "prompt-379",
           "type": "text",
           "scene": "generate",
           "start": 25.02,
@@ -20892,7 +20892,7 @@
           }
         },
         {
-          "id": "prompt-322",
+          "id": "prompt-380",
           "type": "text",
           "scene": "generate",
           "start": 25.042,
@@ -20910,7 +20910,7 @@
           }
         },
         {
-          "id": "prompt-323",
+          "id": "prompt-381",
           "type": "text",
           "scene": "generate",
           "start": 25.063,
@@ -20928,7 +20928,7 @@
           }
         },
         {
-          "id": "prompt-324",
+          "id": "prompt-382",
           "type": "text",
           "scene": "generate",
           "start": 25.085,
@@ -20946,7 +20946,7 @@
           }
         },
         {
-          "id": "prompt-325",
+          "id": "prompt-383",
           "type": "text",
           "scene": "generate",
           "start": 25.107,
@@ -20964,7 +20964,7 @@
           }
         },
         {
-          "id": "prompt-326",
+          "id": "prompt-384",
           "type": "text",
           "scene": "generate",
           "start": 25.128,
@@ -20982,7 +20982,7 @@
           }
         },
         {
-          "id": "prompt-327",
+          "id": "prompt-385",
           "type": "text",
           "scene": "generate",
           "start": 25.15,
@@ -21000,7 +21000,7 @@
           }
         },
         {
-          "id": "prompt-328",
+          "id": "prompt-386",
           "type": "text",
           "scene": "generate",
           "start": 25.172,
@@ -21018,7 +21018,7 @@
           }
         },
         {
-          "id": "prompt-329",
+          "id": "prompt-387",
           "type": "text",
           "scene": "generate",
           "start": 25.194,
@@ -21036,7 +21036,7 @@
           }
         },
         {
-          "id": "prompt-330",
+          "id": "prompt-388",
           "type": "text",
           "scene": "generate",
           "start": 25.215,
@@ -21054,7 +21054,7 @@
           }
         },
         {
-          "id": "prompt-331",
+          "id": "prompt-389",
           "type": "text",
           "scene": "generate",
           "start": 25.237,
@@ -21072,7 +21072,7 @@
           }
         },
         {
-          "id": "prompt-332",
+          "id": "prompt-390",
           "type": "text",
           "scene": "generate",
           "start": 25.259,
@@ -21090,7 +21090,7 @@
           }
         },
         {
-          "id": "prompt-333",
+          "id": "prompt-391",
           "type": "text",
           "scene": "generate",
           "start": 25.28,
@@ -21108,7 +21108,7 @@
           }
         },
         {
-          "id": "prompt-334",
+          "id": "prompt-392",
           "type": "text",
           "scene": "generate",
           "start": 25.302,
@@ -21126,7 +21126,7 @@
           }
         },
         {
-          "id": "prompt-335",
+          "id": "prompt-393",
           "type": "text",
           "scene": "generate",
           "start": 25.361,
@@ -21144,7 +21144,7 @@
           }
         },
         {
-          "id": "prompt-336",
+          "id": "prompt-394",
           "type": "text",
           "scene": "generate",
           "start": 25.383,
@@ -21162,7 +21162,7 @@
           }
         },
         {
-          "id": "prompt-337",
+          "id": "prompt-395",
           "type": "text",
           "scene": "generate",
           "start": 25.405,
@@ -21180,7 +21180,7 @@
           }
         },
         {
-          "id": "prompt-338",
+          "id": "prompt-396",
           "type": "text",
           "scene": "generate",
           "start": 25.426,
@@ -21198,7 +21198,7 @@
           }
         },
         {
-          "id": "prompt-339",
+          "id": "prompt-397",
           "type": "text",
           "scene": "generate",
           "start": 25.448,
@@ -21216,7 +21216,7 @@
           }
         },
         {
-          "id": "prompt-340",
+          "id": "prompt-398",
           "type": "text",
           "scene": "generate",
           "start": 25.47,
@@ -21234,7 +21234,7 @@
           }
         },
         {
-          "id": "prompt-341",
+          "id": "prompt-399",
           "type": "text",
           "scene": "generate",
           "start": 25.492,
@@ -21252,7 +21252,7 @@
           }
         },
         {
-          "id": "prompt-342",
+          "id": "prompt-400",
           "type": "text",
           "scene": "generate",
           "start": 25.513,
@@ -21270,7 +21270,7 @@
           }
         },
         {
-          "id": "prompt-343",
+          "id": "prompt-401",
           "type": "text",
           "scene": "generate",
           "start": 25.535,
@@ -21288,7 +21288,7 @@
           }
         },
         {
-          "id": "prompt-344",
+          "id": "prompt-402",
           "type": "text",
           "scene": "generate",
           "start": 25.557,
@@ -21306,7 +21306,7 @@
           }
         },
         {
-          "id": "prompt-345",
+          "id": "prompt-403",
           "type": "text",
           "scene": "generate",
           "start": 25.579,
@@ -21324,7 +21324,7 @@
           }
         },
         {
-          "id": "prompt-346",
+          "id": "prompt-404",
           "type": "text",
           "scene": "generate",
           "start": 25.6,
@@ -21342,7 +21342,7 @@
           }
         },
         {
-          "id": "prompt-347",
+          "id": "prompt-405",
           "type": "text",
           "scene": "generate",
           "start": 25.622,
@@ -21360,7 +21360,7 @@
           }
         },
         {
-          "id": "prompt-348",
+          "id": "prompt-406",
           "type": "text",
           "scene": "generate",
           "start": 25.644,
@@ -21378,7 +21378,7 @@
           }
         },
         {
-          "id": "prompt-349",
+          "id": "prompt-407",
           "type": "text",
           "scene": "generate",
           "start": 25.665,
@@ -21396,7 +21396,7 @@
           }
         },
         {
-          "id": "prompt-350",
+          "id": "prompt-408",
           "type": "text",
           "scene": "generate",
           "start": 25.687,
@@ -21414,7 +21414,7 @@
           }
         },
         {
-          "id": "prompt-351",
+          "id": "prompt-409",
           "type": "text",
           "scene": "generate",
           "start": 25.709,
@@ -21432,7 +21432,7 @@
           }
         },
         {
-          "id": "image-provider-352",
+          "id": "image-provider-410",
           "type": "text",
           "start": 24.336,
           "duration": 3.46,
@@ -21484,7 +21484,7 @@
           ]
         },
         {
-          "id": "gen-button-353",
+          "id": "gen-button-411",
           "type": "shape",
           "start": 24.336,
           "duration": 7.006,
@@ -21571,7 +21571,7 @@
           ]
         },
         {
-          "id": "gen-button-text-354",
+          "id": "gen-button-text-412",
           "type": "text",
           "start": 24.336,
           "duration": 7.006,
@@ -21662,7 +21662,7 @@
           ]
         },
         {
-          "id": "gen-note-355",
+          "id": "gen-note-413",
           "type": "text",
           "start": 24.336,
           "duration": 7.006,
@@ -21731,7 +21731,7 @@
           ]
         },
         {
-          "id": "generating-373",
+          "id": "generating-431",
           "type": "shape",
           "scene": "generate",
           "start": 26.957,
@@ -21762,7 +21762,7 @@
           ]
         },
         {
-          "id": "added-376",
+          "id": "added-434",
           "type": "shape",
           "scene": "generate",
           "start": 27.845,
@@ -21812,7 +21812,7 @@
           ]
         },
         {
-          "id": "added-text-377",
+          "id": "added-text-435",
           "type": "text",
           "scene": "generate",
           "start": 27.845,
@@ -21866,7 +21866,7 @@
           ]
         },
         {
-          "id": "voice-label-380",
+          "id": "voice-label-438",
           "type": "text",
           "scene": "generate",
           "start": 28.437,
@@ -21919,7 +21919,7 @@
           ]
         },
         {
-          "id": "voice-text-381",
+          "id": "voice-text-439",
           "type": "text",
           "scene": "generate",
           "start": 28.437,
@@ -21972,7 +21972,7 @@
           ]
         },
         {
-          "id": "voice-text-382",
+          "id": "voice-text-440",
           "type": "text",
           "scene": "generate",
           "start": 28.437,
@@ -22025,7 +22025,7 @@
           ]
         },
         {
-          "id": "voice-provider-383",
+          "id": "voice-provider-441",
           "type": "text",
           "scene": "generate",
           "start": 28.437,
@@ -22078,7 +22078,7 @@
           ]
         },
         {
-          "id": "music-label-384",
+          "id": "music-label-442",
           "type": "text",
           "start": 29.819,
           "duration": 1.522,
@@ -22138,7 +22138,7 @@
           ]
         },
         {
-          "id": "music-text-385",
+          "id": "music-text-443",
           "type": "text",
           "start": 29.819,
           "duration": 1.522,
@@ -22198,7 +22198,7 @@
           ]
         },
         {
-          "id": "music-text-386",
+          "id": "music-text-444",
           "type": "text",
           "start": 29.819,
           "duration": 1.522,
@@ -22258,7 +22258,7 @@
           ]
         },
         {
-          "id": "music-provider-387",
+          "id": "music-provider-445",
           "type": "text",
           "start": 29.819,
           "duration": 1.522,
@@ -22318,7 +22318,7 @@
           ]
         },
         {
-          "id": "voice-wave-card-edge-388",
+          "id": "voice-wave-card-edge-446",
           "type": "shape",
           "scene": "generate",
           "start": 28.684,
@@ -22360,7 +22360,7 @@
           ]
         },
         {
-          "id": "voice-wave-card-389",
+          "id": "voice-wave-card-447",
           "type": "shape",
           "scene": "generate",
           "start": 28.684,
@@ -22402,7 +22402,7 @@
           ]
         },
         {
-          "id": "voice-wave-390",
+          "id": "voice-wave-448",
           "type": "svg",
           "src": "assets/wave-voice.svg",
           "scene": "generate",
@@ -22433,7 +22433,7 @@
           ]
         },
         {
-          "id": "voice-play-391",
+          "id": "voice-play-449",
           "type": "svg",
           "src": "assets/avatar.svg",
           "scene": "generate",
@@ -22483,7 +22483,7 @@
           ]
         },
         {
-          "id": "music-wave-card-edge-392",
+          "id": "music-wave-card-edge-450",
           "type": "shape",
           "start": 30.066,
           "duration": 1.276,
@@ -22532,7 +22532,7 @@
           ]
         },
         {
-          "id": "music-wave-card-393",
+          "id": "music-wave-card-451",
           "type": "shape",
           "start": 30.066,
           "duration": 1.276,
@@ -22581,7 +22581,7 @@
           ]
         },
         {
-          "id": "music-wave-394",
+          "id": "music-wave-452",
           "type": "svg",
           "src": "assets/wave-music.svg",
           "start": 30.066,
@@ -22619,7 +22619,7 @@
           ]
         },
         {
-          "id": "music-play-395",
+          "id": "music-play-453",
           "type": "svg",
           "src": "assets/avatar.svg",
           "start": 30.362,
@@ -22676,7 +22676,7 @@
           ]
         },
         {
-          "id": "export-516",
+          "id": "export-574",
           "type": "shape",
           "scene": "export",
           "start": 49.46,
@@ -22748,7 +22748,7 @@
           ]
         },
         {
-          "id": "export-icon-517",
+          "id": "export-icon-575",
           "type": "svg",
           "src": "assets/download.svg",
           "scene": "export",
@@ -22820,7 +22820,7 @@
           ]
         },
         {
-          "id": "export-text-518",
+          "id": "export-text-576",
           "type": "text",
           "scene": "export",
           "start": 49.46,
@@ -22901,7 +22901,7 @@
       "kind": "visual",
       "clips": [
         {
-          "id": "fly-orange-300",
+          "id": "fly-orange-358",
           "type": "shape",
           "scene": "brand",
           "start": 21.953,
@@ -22942,7 +22942,7 @@
           ]
         },
         {
-          "id": "fly-deep-301",
+          "id": "fly-deep-359",
           "type": "shape",
           "scene": "brand",
           "start": 22.028,
@@ -22983,7 +22983,7 @@
           ]
         },
         {
-          "id": "fly-logo-302",
+          "id": "fly-logo-360",
           "type": "svg",
           "src": "assets/logo.svg",
           "scene": "brand",
@@ -23024,7 +23024,7 @@
           ]
         },
         {
-          "id": "approval-edge-358",
+          "id": "approval-edge-416",
           "type": "shape",
           "scene": "generate",
           "start": 25.989,
@@ -23141,7 +23141,7 @@
           ]
         },
         {
-          "id": "approval-359",
+          "id": "approval-417",
           "type": "shape",
           "scene": "generate",
           "start": 25.989,
@@ -23258,7 +23258,7 @@
           ]
         },
         {
-          "id": "approval-kind-360",
+          "id": "approval-kind-418",
           "type": "text",
           "scene": "generate",
           "start": 25.989,
@@ -23378,7 +23378,7 @@
           ]
         },
         {
-          "id": "approval-title-361",
+          "id": "approval-title-419",
           "type": "text",
           "scene": "generate",
           "start": 25.989,
@@ -23498,7 +23498,7 @@
           ]
         },
         {
-          "id": "approval-detail-362",
+          "id": "approval-detail-420",
           "type": "text",
           "scene": "generate",
           "start": 25.989,
@@ -23618,7 +23618,7 @@
           ]
         },
         {
-          "id": "approval-keys-363",
+          "id": "approval-keys-421",
           "type": "text",
           "scene": "generate",
           "start": 25.989,
@@ -23738,7 +23738,7 @@
           ]
         },
         {
-          "id": "approval-ok-364",
+          "id": "approval-ok-422",
           "type": "shape",
           "scene": "generate",
           "start": 25.989,
@@ -23869,7 +23869,7 @@
           ]
         },
         {
-          "id": "approval-ok-text-365",
+          "id": "approval-ok-text-423",
           "type": "text",
           "scene": "generate",
           "start": 25.989,
@@ -24004,7 +24004,7 @@
           ]
         },
         {
-          "id": "approval-btn-edge-366",
+          "id": "approval-btn-edge-424",
           "type": "shape",
           "scene": "generate",
           "start": 25.989,
@@ -24121,7 +24121,7 @@
           ]
         },
         {
-          "id": "approval-btn-367",
+          "id": "approval-btn-425",
           "type": "shape",
           "scene": "generate",
           "start": 25.989,
@@ -24238,7 +24238,7 @@
           ]
         },
         {
-          "id": "approval-btn-text-368",
+          "id": "approval-btn-text-426",
           "type": "text",
           "scene": "generate",
           "start": 25.989,
@@ -24359,7 +24359,7 @@
           ]
         },
         {
-          "id": "approval-btn-edge-369",
+          "id": "approval-btn-edge-427",
           "type": "shape",
           "scene": "generate",
           "start": 25.989,
@@ -24476,7 +24476,7 @@
           ]
         },
         {
-          "id": "approval-btn-370",
+          "id": "approval-btn-428",
           "type": "shape",
           "scene": "generate",
           "start": 25.989,
@@ -24593,7 +24593,7 @@
           ]
         },
         {
-          "id": "approval-btn-text-371",
+          "id": "approval-btn-text-429",
           "type": "text",
           "scene": "generate",
           "start": 25.989,
@@ -24714,7 +24714,7 @@
           ]
         },
         {
-          "id": "file-edge-527",
+          "id": "file-edge-585",
           "type": "shape",
           "scene": "export",
           "start": 50.38,
@@ -24815,7 +24815,7 @@
           ]
         },
         {
-          "id": "file-528",
+          "id": "file-586",
           "type": "shape",
           "scene": "export",
           "start": 50.38,
@@ -24916,7 +24916,7 @@
           ]
         },
         {
-          "id": "file-glyph-529",
+          "id": "file-glyph-587",
           "type": "svg",
           "src": "assets/file-0.svg",
           "scene": "export",
@@ -25017,7 +25017,7 @@
           ]
         },
         {
-          "id": "file-name-530",
+          "id": "file-name-588",
           "type": "text",
           "scene": "export",
           "start": 50.38,
@@ -25121,7 +25121,7 @@
           ]
         },
         {
-          "id": "file-edge-531",
+          "id": "file-edge-589",
           "type": "shape",
           "scene": "export",
           "start": 50.42,
@@ -25222,7 +25222,7 @@
           ]
         },
         {
-          "id": "file-532",
+          "id": "file-590",
           "type": "shape",
           "scene": "export",
           "start": 50.42,
@@ -25323,7 +25323,7 @@
           ]
         },
         {
-          "id": "file-glyph-533",
+          "id": "file-glyph-591",
           "type": "svg",
           "src": "assets/file-1.svg",
           "scene": "export",
@@ -25424,7 +25424,7 @@
           ]
         },
         {
-          "id": "file-name-534",
+          "id": "file-name-592",
           "type": "text",
           "scene": "export",
           "start": 50.42,
@@ -25528,7 +25528,7 @@
           ]
         },
         {
-          "id": "file-edge-535",
+          "id": "file-edge-593",
           "type": "shape",
           "scene": "export",
           "start": 50.46,
@@ -25629,7 +25629,7 @@
           ]
         },
         {
-          "id": "file-536",
+          "id": "file-594",
           "type": "shape",
           "scene": "export",
           "start": 50.46,
@@ -25730,7 +25730,7 @@
           ]
         },
         {
-          "id": "file-glyph-537",
+          "id": "file-glyph-595",
           "type": "svg",
           "src": "assets/file-2.svg",
           "scene": "export",
@@ -25831,7 +25831,7 @@
           ]
         },
         {
-          "id": "file-name-538",
+          "id": "file-name-596",
           "type": "text",
           "scene": "export",
           "start": 50.46,
@@ -25935,7 +25935,7 @@
           ]
         },
         {
-          "id": "file-edge-539",
+          "id": "file-edge-597",
           "type": "shape",
           "scene": "export",
           "start": 50.5,
@@ -26036,7 +26036,7 @@
           ]
         },
         {
-          "id": "file-540",
+          "id": "file-598",
           "type": "shape",
           "scene": "export",
           "start": 50.5,
@@ -26137,7 +26137,7 @@
           ]
         },
         {
-          "id": "file-glyph-541",
+          "id": "file-glyph-599",
           "type": "svg",
           "src": "assets/file-0.svg",
           "scene": "export",
@@ -26238,7 +26238,7 @@
           ]
         },
         {
-          "id": "file-name-542",
+          "id": "file-name-600",
           "type": "text",
           "scene": "export",
           "start": 50.5,
@@ -26342,7 +26342,7 @@
           ]
         },
         {
-          "id": "file-edge-543",
+          "id": "file-edge-601",
           "type": "shape",
           "scene": "export",
           "start": 50.54,
@@ -26443,7 +26443,7 @@
           ]
         },
         {
-          "id": "file-544",
+          "id": "file-602",
           "type": "shape",
           "scene": "export",
           "start": 50.54,
@@ -26544,7 +26544,7 @@
           ]
         },
         {
-          "id": "file-glyph-545",
+          "id": "file-glyph-603",
           "type": "svg",
           "src": "assets/file-1.svg",
           "scene": "export",
@@ -26645,7 +26645,7 @@
           ]
         },
         {
-          "id": "file-name-546",
+          "id": "file-name-604",
           "type": "text",
           "scene": "export",
           "start": 50.54,
@@ -26749,7 +26749,7 @@
           ]
         },
         {
-          "id": "file-edge-547",
+          "id": "file-edge-605",
           "type": "shape",
           "scene": "export",
           "start": 50.58,
@@ -26850,7 +26850,7 @@
           ]
         },
         {
-          "id": "file-548",
+          "id": "file-606",
           "type": "shape",
           "scene": "export",
           "start": 50.58,
@@ -26951,7 +26951,7 @@
           ]
         },
         {
-          "id": "file-glyph-549",
+          "id": "file-glyph-607",
           "type": "svg",
           "src": "assets/file-2.svg",
           "scene": "export",
@@ -27052,7 +27052,7 @@
           ]
         },
         {
-          "id": "file-name-550",
+          "id": "file-name-608",
           "type": "text",
           "scene": "export",
           "start": 50.58,
@@ -27156,7 +27156,7 @@
           ]
         },
         {
-          "id": "file-edge-551",
+          "id": "file-edge-609",
           "type": "shape",
           "scene": "export",
           "start": 50.62,
@@ -27257,7 +27257,7 @@
           ]
         },
         {
-          "id": "file-552",
+          "id": "file-610",
           "type": "shape",
           "scene": "export",
           "start": 50.62,
@@ -27358,7 +27358,7 @@
           ]
         },
         {
-          "id": "file-glyph-553",
+          "id": "file-glyph-611",
           "type": "svg",
           "src": "assets/file-2.svg",
           "scene": "export",
@@ -27459,7 +27459,7 @@
           ]
         },
         {
-          "id": "file-name-554",
+          "id": "file-name-612",
           "type": "text",
           "scene": "export",
           "start": 50.62,
@@ -27569,7 +27569,7 @@
       "kind": "visual",
       "clips": [
         {
-          "id": "progress-14",
+          "id": "progress-72",
           "type": "shape",
           "start": 0.423,
           "duration": 53.648,
@@ -27610,7 +27610,7 @@
           ]
         },
         {
-          "id": "progress-fill-15",
+          "id": "progress-fill-73",
           "type": "shape",
           "start": 0.423,
           "duration": 53.648,
@@ -27657,7 +27657,7 @@
           ]
         },
         {
-          "id": "playhead-16",
+          "id": "playhead-74",
           "type": "shape",
           "start": 0.423,
           "duration": 53.648,
@@ -27706,7 +27706,7 @@
           ]
         },
         {
-          "id": "beat-17",
+          "id": "beat-75",
           "type": "shape",
           "start": 0.423,
           "duration": 53.648,
@@ -27755,7 +27755,7 @@
           ]
         },
         {
-          "id": "beat-name-18",
+          "id": "beat-name-76",
           "type": "text",
           "start": 0.423,
           "duration": 53.648,
@@ -27807,7 +27807,7 @@
           ]
         },
         {
-          "id": "beat-19",
+          "id": "beat-77",
           "type": "shape",
           "start": 0.423,
           "duration": 53.648,
@@ -27856,7 +27856,7 @@
           ]
         },
         {
-          "id": "beat-name-20",
+          "id": "beat-name-78",
           "type": "text",
           "start": 0.423,
           "duration": 53.648,
@@ -27908,7 +27908,7 @@
           ]
         },
         {
-          "id": "beat-21",
+          "id": "beat-79",
           "type": "shape",
           "start": 0.423,
           "duration": 53.648,
@@ -27957,7 +27957,7 @@
           ]
         },
         {
-          "id": "beat-name-22",
+          "id": "beat-name-80",
           "type": "text",
           "start": 0.423,
           "duration": 53.648,
@@ -28009,7 +28009,7 @@
           ]
         },
         {
-          "id": "beat-23",
+          "id": "beat-81",
           "type": "shape",
           "start": 0.423,
           "duration": 53.648,
@@ -28058,7 +28058,7 @@
           ]
         },
         {
-          "id": "beat-name-24",
+          "id": "beat-name-82",
           "type": "text",
           "start": 0.423,
           "duration": 53.648,
@@ -28110,7 +28110,7 @@
           ]
         },
         {
-          "id": "beat-25",
+          "id": "beat-83",
           "type": "shape",
           "start": 0.423,
           "duration": 53.648,
@@ -28159,7 +28159,7 @@
           ]
         },
         {
-          "id": "beat-name-26",
+          "id": "beat-name-84",
           "type": "text",
           "start": 0.423,
           "duration": 53.648,
@@ -28211,7 +28211,7 @@
           ]
         },
         {
-          "id": "beat-27",
+          "id": "beat-85",
           "type": "shape",
           "start": 0.423,
           "duration": 53.648,
@@ -28260,7 +28260,7 @@
           ]
         },
         {
-          "id": "beat-name-28",
+          "id": "beat-name-86",
           "type": "text",
           "start": 0.423,
           "duration": 53.648,
@@ -28312,7 +28312,7 @@
           ]
         },
         {
-          "id": "beat-29",
+          "id": "beat-87",
           "type": "shape",
           "start": 0.423,
           "duration": 53.648,
@@ -28361,7 +28361,7 @@
           ]
         },
         {
-          "id": "beat-name-30",
+          "id": "beat-name-88",
           "type": "text",
           "start": 0.423,
           "duration": 53.648,
@@ -28413,7 +28413,7 @@
           ]
         },
         {
-          "id": "beat-31",
+          "id": "beat-89",
           "type": "shape",
           "start": 0.423,
           "duration": 53.648,
@@ -28462,7 +28462,7 @@
           ]
         },
         {
-          "id": "beat-name-32",
+          "id": "beat-name-90",
           "type": "text",
           "start": 0.423,
           "duration": 53.648,
@@ -28514,7 +28514,7 @@
           ]
         },
         {
-          "id": "beat-33",
+          "id": "beat-91",
           "type": "shape",
           "start": 0.423,
           "duration": 53.648,
@@ -28563,7 +28563,7 @@
           ]
         },
         {
-          "id": "beat-name-34",
+          "id": "beat-name-92",
           "type": "text",
           "start": 0.423,
           "duration": 53.648,
@@ -28615,7 +28615,7 @@
           ]
         },
         {
-          "id": "beat-35",
+          "id": "beat-93",
           "type": "shape",
           "start": 0.423,
           "duration": 53.648,
@@ -28664,7 +28664,7 @@
           ]
         },
         {
-          "id": "beat-name-36",
+          "id": "beat-name-94",
           "type": "text",
           "start": 0.423,
           "duration": 53.648,
@@ -28716,7 +28716,7 @@
           ]
         },
         {
-          "id": "beat-37",
+          "id": "beat-95",
           "type": "shape",
           "start": 0.423,
           "duration": 53.648,
@@ -28765,7 +28765,7 @@
           ]
         },
         {
-          "id": "beat-name-38",
+          "id": "beat-name-96",
           "type": "text",
           "start": 0.423,
           "duration": 53.648,
@@ -28817,7 +28817,7 @@
           ]
         },
         {
-          "id": "step-39",
+          "id": "step-97",
           "type": "text",
           "scene": "brief",
           "start": 0.212,
@@ -28886,7 +28886,7 @@
           ]
         },
         {
-          "id": "caption-40",
+          "id": "caption-98",
           "type": "text",
           "scene": "brief",
           "start": 0.296,
@@ -28970,7 +28970,7 @@
           ]
         },
         {
-          "id": "step-41",
+          "id": "step-99",
           "type": "text",
           "scene": "variants",
           "start": 4.02,
@@ -29039,7 +29039,7 @@
           ]
         },
         {
-          "id": "caption-42",
+          "id": "caption-100",
           "type": "text",
           "scene": "variants",
           "start": 4.096,
@@ -29123,7 +29123,7 @@
           ]
         },
         {
-          "id": "step-43",
+          "id": "step-101",
           "type": "text",
           "scene": "chat",
           "start": 9.17,
@@ -29192,7 +29192,7 @@
           ]
         },
         {
-          "id": "caption-44",
+          "id": "caption-102",
           "type": "text",
           "scene": "chat",
           "start": 9.234,
@@ -29276,7 +29276,7 @@
           ]
         },
         {
-          "id": "step-45",
+          "id": "step-103",
           "type": "text",
           "scene": "edit",
           "start": 13.17,
@@ -29345,7 +29345,7 @@
           ]
         },
         {
-          "id": "caption-46",
+          "id": "caption-104",
           "type": "text",
           "scene": "edit",
           "start": 13.253,
@@ -29429,7 +29429,7 @@
           ]
         },
         {
-          "id": "step-47",
+          "id": "step-105",
           "type": "text",
           "scene": "brand",
           "start": 18.54,
@@ -29498,7 +29498,7 @@
           ]
         },
         {
-          "id": "caption-48",
+          "id": "caption-106",
           "type": "text",
           "scene": "brand",
           "start": 18.627,
@@ -29582,7 +29582,7 @@
           ]
         },
         {
-          "id": "step-49",
+          "id": "step-107",
           "type": "text",
           "scene": "generate",
           "start": 24.39,
@@ -29651,7 +29651,7 @@
           ]
         },
         {
-          "id": "caption-50",
+          "id": "caption-108",
           "type": "text",
           "scene": "generate",
           "start": 24.469,
@@ -29735,7 +29735,7 @@
           ]
         },
         {
-          "id": "step-51",
+          "id": "step-109",
           "type": "text",
           "scene": "formats",
           "start": 31.3,
@@ -29804,7 +29804,7 @@
           ]
         },
         {
-          "id": "caption-52",
+          "id": "caption-110",
           "type": "text",
           "scene": "formats",
           "start": 31.367,
@@ -29888,7 +29888,7 @@
           ]
         },
         {
-          "id": "step-53",
+          "id": "step-111",
           "type": "text",
           "scene": "languages",
           "start": 35.63,
@@ -29957,7 +29957,7 @@
           ]
         },
         {
-          "id": "caption-54",
+          "id": "caption-112",
           "type": "text",
           "scene": "languages",
           "start": 35.694,
@@ -30041,7 +30041,7 @@
           ]
         },
         {
-          "id": "step-55",
+          "id": "step-113",
           "type": "text",
           "scene": "subtitles",
           "start": 39.47,
@@ -30110,7 +30110,7 @@
           ]
         },
         {
-          "id": "caption-56",
+          "id": "caption-114",
           "type": "text",
           "scene": "subtitles",
           "start": 39.534,
@@ -30194,7 +30194,7 @@
           ]
         },
         {
-          "id": "step-57",
+          "id": "step-115",
           "type": "text",
           "scene": "identity",
           "start": 43.49,
@@ -30263,7 +30263,7 @@
           ]
         },
         {
-          "id": "caption-58",
+          "id": "caption-116",
           "type": "text",
           "scene": "identity",
           "start": 43.587,
@@ -30347,7 +30347,7 @@
           ]
         },
         {
-          "id": "step-59",
+          "id": "step-117",
           "type": "text",
           "scene": "export",
           "start": 49.3,
@@ -30416,7 +30416,7 @@
           ]
         },
         {
-          "id": "caption-60",
+          "id": "caption-118",
           "type": "text",
           "scene": "export",
           "start": 49.364,
@@ -30500,7 +30500,7 @@
           ]
         },
         {
-          "id": "variant-label-113",
+          "id": "variant-label-171",
           "type": "text",
           "scene": "variants",
           "start": 4.401,
@@ -30561,7 +30561,7 @@
           ]
         },
         {
-          "id": "variant-label-114",
+          "id": "variant-label-172",
           "type": "text",
           "scene": "variants",
           "start": 4.478,
@@ -30614,7 +30614,7 @@
           ]
         },
         {
-          "id": "variant-label-115",
+          "id": "variant-label-173",
           "type": "text",
           "scene": "variants",
           "start": 4.554,
@@ -30667,7 +30667,7 @@
           ]
         },
         {
-          "id": "hero-badge-165",
+          "id": "hero-badge-223",
           "type": "svg",
           "src": "assets/ratio-16x9.svg",
           "start": 8.884,
@@ -30707,7 +30707,7 @@
           ]
         },
         {
-          "id": "hero-name-166",
+          "id": "hero-name-224",
           "type": "text",
           "start": 8.884,
           "duration": 22.583,
@@ -30750,7 +30750,7 @@
           ]
         },
         {
-          "id": "hero-version-167",
+          "id": "hero-version-225",
           "type": "text",
           "start": 8.884,
           "duration": 3.246,
@@ -30777,7 +30777,7 @@
           ]
         },
         {
-          "id": "hero-version-168",
+          "id": "hero-version-226",
           "type": "text",
           "start": 12.13,
           "duration": 5.79,
@@ -30804,7 +30804,7 @@
           ]
         },
         {
-          "id": "hero-version-169",
+          "id": "hero-version-227",
           "type": "text",
           "start": 17.92,
           "duration": 13.546,
@@ -30839,7 +30839,7 @@
           ]
         },
         {
-          "id": "row-916-badge-450",
+          "id": "row-916-badge-508",
           "type": "svg",
           "src": "assets/ratio-9x16.svg",
           "start": 32.757,
@@ -30879,7 +30879,7 @@
           ]
         },
         {
-          "id": "row-916-name-451",
+          "id": "row-916-name-509",
           "type": "text",
           "start": 32.757,
           "duration": 11.096,
@@ -30922,7 +30922,7 @@
           ]
         },
         {
-          "id": "row-916-version-452",
+          "id": "row-916-version-510",
           "type": "text",
           "start": 32.757,
           "duration": 11.096,
@@ -30965,7 +30965,7 @@
           ]
         },
         {
-          "id": "row-11-badge-453",
+          "id": "row-11-badge-511",
           "type": "svg",
           "src": "assets/ratio-1x1.svg",
           "start": 32.674,
@@ -31005,7 +31005,7 @@
           ]
         },
         {
-          "id": "row-11-name-454",
+          "id": "row-11-name-512",
           "type": "text",
           "start": 32.674,
           "duration": 11.179,
@@ -31048,7 +31048,7 @@
           ]
         },
         {
-          "id": "row-11-version-455",
+          "id": "row-11-version-513",
           "type": "text",
           "start": 32.674,
           "duration": 11.179,
@@ -31091,7 +31091,7 @@
           ]
         },
         {
-          "id": "row-169-badge-456",
+          "id": "row-169-badge-514",
           "type": "svg",
           "src": "assets/ratio-16x9.svg",
           "start": 32.507,
@@ -31131,7 +31131,7 @@
           ]
         },
         {
-          "id": "row-169-name-457",
+          "id": "row-169-name-515",
           "type": "text",
           "start": 32.507,
           "duration": 11.346,
@@ -31174,7 +31174,7 @@
           ]
         },
         {
-          "id": "row-169-version-458",
+          "id": "row-169-version-516",
           "type": "text",
           "start": 32.507,
           "duration": 11.346,
@@ -31217,7 +31217,7 @@
           ]
         },
         {
-          "id": "lang-tabs-edge-459",
+          "id": "lang-tabs-edge-517",
           "type": "shape",
           "start": 35.71,
           "duration": 7.901,
@@ -31266,7 +31266,7 @@
           ]
         },
         {
-          "id": "lang-tabs-460",
+          "id": "lang-tabs-518",
           "type": "shape",
           "start": 35.71,
           "duration": 7.901,
@@ -31315,7 +31315,7 @@
           ]
         },
         {
-          "id": "lang-active-461",
+          "id": "lang-active-519",
           "type": "shape",
           "start": 35.71,
           "duration": 7.901,
@@ -31407,7 +31407,7 @@
           ]
         },
         {
-          "id": "lang-tab-462",
+          "id": "lang-tab-520",
           "type": "text",
           "start": 35.71,
           "duration": 7.901,
@@ -31476,7 +31476,7 @@
           ]
         },
         {
-          "id": "lang-tab-463",
+          "id": "lang-tab-521",
           "type": "text",
           "start": 35.71,
           "duration": 7.901,
@@ -31545,7 +31545,7 @@
           ]
         },
         {
-          "id": "lang-tab-464",
+          "id": "lang-tab-522",
           "type": "text",
           "start": 35.71,
           "duration": 7.901,
@@ -31614,7 +31614,7 @@
           ]
         },
         {
-          "id": "lang-tab-465",
+          "id": "lang-tab-523",
           "type": "text",
           "start": 35.71,
           "duration": 7.901,
@@ -31683,7 +31683,7 @@
           ]
         },
         {
-          "id": "waveform-466",
+          "id": "waveform-524",
           "type": "svg",
           "src": "assets/waveform.svg",
           "start": 39.631,
@@ -31713,7 +31713,7 @@
           ]
         },
         {
-          "id": "voice-head-467",
+          "id": "voice-head-525",
           "type": "shape",
           "start": 40.19,
           "duration": 3.421,
@@ -31767,7 +31767,7 @@
       "kind": "visual",
       "clips": [
         {
-          "id": "cursor-116",
+          "id": "cursor-174",
           "type": "svg",
           "src": "assets/cursor.svg",
           "scene": "variants",
@@ -31844,7 +31844,7 @@
           ]
         },
         {
-          "id": "click-117",
+          "id": "click-175",
           "type": "svg",
           "src": "assets/ripple.svg",
           "scene": "variants",
@@ -31877,7 +31877,7 @@
           ]
         },
         {
-          "id": "cursor-243",
+          "id": "cursor-301",
           "type": "svg",
           "src": "assets/cursor.svg",
           "scene": "edit",
@@ -32052,7 +32052,7 @@
           ]
         },
         {
-          "id": "click-244",
+          "id": "click-302",
           "type": "svg",
           "src": "assets/ripple.svg",
           "scene": "edit",
@@ -32085,7 +32085,7 @@
           ]
         },
         {
-          "id": "click-250",
+          "id": "click-308",
           "type": "svg",
           "src": "assets/ripple.svg",
           "scene": "edit",
@@ -32118,7 +32118,7 @@
           ]
         },
         {
-          "id": "click-251",
+          "id": "click-309",
           "type": "svg",
           "src": "assets/ripple.svg",
           "scene": "edit",
@@ -32151,7 +32151,7 @@
           ]
         },
         {
-          "id": "cursor-356",
+          "id": "cursor-414",
           "type": "svg",
           "src": "assets/cursor.svg",
           "scene": "generate",
@@ -32340,7 +32340,7 @@
           ]
         },
         {
-          "id": "click-357",
+          "id": "click-415",
           "type": "svg",
           "src": "assets/ripple.svg",
           "scene": "generate",
@@ -32373,7 +32373,7 @@
           ]
         },
         {
-          "id": "click-372",
+          "id": "click-430",
           "type": "svg",
           "src": "assets/ripple.svg",
           "scene": "generate",
@@ -32406,7 +32406,7 @@
           ]
         },
         {
-          "id": "click-378",
+          "id": "click-436",
           "type": "svg",
           "src": "assets/ripple.svg",
           "scene": "generate",
@@ -32439,7 +32439,7 @@
           ]
         },
         {
-          "id": "click-379",
+          "id": "click-437",
           "type": "svg",
           "src": "assets/ripple.svg",
           "scene": "generate",
@@ -32472,7 +32472,7 @@
           ]
         },
         {
-          "id": "cursor-519",
+          "id": "cursor-577",
           "type": "svg",
           "src": "assets/cursor.svg",
           "scene": "export",
@@ -32549,7 +32549,7 @@
           ]
         },
         {
-          "id": "click-520",
+          "id": "click-578",
           "type": "svg",
           "src": "assets/ripple.svg",
           "scene": "export",
@@ -32706,6 +32706,657 @@
           "src": "assets/audio/vo-12.mp3",
           "role": "voice",
           "script": "Motion Studio. Brief in. Motion out. Free and open source."
+        }
+      ]
+    },
+    {
+      "id": "music-a",
+      "kind": "audio",
+      "clips": [
+        {
+          "id": "music-13",
+          "type": "audio",
+          "scene": "brief",
+          "start": 0,
+          "duration": 0.4,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 0,
+          "volume": 0.55,
+          "fadeIn": 1.2,
+          "fadeOut": 0.3,
+          "role": "music"
+        },
+        {
+          "id": "music-15",
+          "type": "audio",
+          "start": 3.22,
+          "duration": 1.05,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 3.22,
+          "volume": 0.55,
+          "fadeIn": 0.3,
+          "fadeOut": 0.3,
+          "role": "music"
+        },
+        {
+          "id": "music-17",
+          "type": "audio",
+          "start": 8.37,
+          "duration": 1.05,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 8.37,
+          "volume": 0.55,
+          "fadeIn": 0.3,
+          "fadeOut": 0.3,
+          "role": "music"
+        },
+        {
+          "id": "music-19",
+          "type": "audio",
+          "start": 12.08,
+          "duration": 1.34,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 12.08,
+          "volume": 0.55,
+          "fadeIn": 0.3,
+          "fadeOut": 0.3,
+          "role": "music"
+        },
+        {
+          "id": "music-21",
+          "type": "audio",
+          "start": 17.74,
+          "duration": 1.05,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 17.74,
+          "volume": 0.55,
+          "fadeIn": 0.3,
+          "fadeOut": 0.3,
+          "role": "music"
+        },
+        {
+          "id": "music-23",
+          "type": "audio",
+          "start": 23.59,
+          "duration": 1.05,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 23.59,
+          "volume": 0.55,
+          "fadeIn": 0.3,
+          "fadeOut": 0.3,
+          "role": "music"
+        },
+        {
+          "id": "music-25",
+          "type": "audio",
+          "start": 30.5,
+          "duration": 1.05,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 30.5,
+          "volume": 0.55,
+          "fadeIn": 0.3,
+          "fadeOut": 0.3,
+          "role": "music"
+        },
+        {
+          "id": "music-27",
+          "type": "audio",
+          "start": 34.83,
+          "duration": 1.05,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 34.83,
+          "volume": 0.55,
+          "fadeIn": 0.3,
+          "fadeOut": 0.3,
+          "role": "music"
+        },
+        {
+          "id": "music-29",
+          "type": "audio",
+          "start": 37.86,
+          "duration": 2.31,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 37.86,
+          "volume": 0.55,
+          "fadeIn": 0.3,
+          "fadeOut": 0.3,
+          "role": "music"
+        },
+        {
+          "id": "music-31",
+          "type": "audio",
+          "start": 42.69,
+          "duration": 1.05,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 42.69,
+          "volume": 0.55,
+          "fadeIn": 0.3,
+          "fadeOut": 0.3,
+          "role": "music"
+        },
+        {
+          "id": "music-33",
+          "type": "audio",
+          "start": 48.5,
+          "duration": 1.05,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 48.5,
+          "volume": 0.55,
+          "fadeIn": 0.3,
+          "fadeOut": 0.3,
+          "role": "music"
+        },
+        {
+          "id": "music-35",
+          "type": "audio",
+          "start": 52.49,
+          "duration": 1.57,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 52.49,
+          "volume": 0.55,
+          "fadeIn": 0.3,
+          "fadeOut": 0.3,
+          "role": "music"
+        },
+        {
+          "id": "music-37",
+          "type": "audio",
+          "scene": "endcard",
+          "start": 59.44,
+          "duration": 1.6,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 59.44,
+          "volume": 0.55,
+          "fadeIn": 0.3,
+          "fadeOut": 3,
+          "role": "music"
+        }
+      ]
+    },
+    {
+      "id": "music-b",
+      "kind": "audio",
+      "clips": [
+        {
+          "id": "music-14",
+          "type": "audio",
+          "scene": "brief",
+          "start": 0.1,
+          "duration": 3.42,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 0.1,
+          "volume": 0.2,
+          "fadeIn": 0.3,
+          "fadeOut": 0.3,
+          "role": "music"
+        },
+        {
+          "id": "music-16",
+          "type": "audio",
+          "start": 3.97,
+          "duration": 4.7,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 3.97,
+          "volume": 0.2,
+          "fadeIn": 0.3,
+          "fadeOut": 0.3,
+          "role": "music"
+        },
+        {
+          "id": "music-18",
+          "type": "audio",
+          "start": 9.12,
+          "duration": 3.26,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 9.12,
+          "volume": 0.2,
+          "fadeIn": 0.3,
+          "fadeOut": 0.3,
+          "role": "music"
+        },
+        {
+          "id": "music-20",
+          "type": "audio",
+          "start": 13.12,
+          "duration": 4.92,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 13.12,
+          "volume": 0.2,
+          "fadeIn": 0.3,
+          "fadeOut": 0.3,
+          "role": "music"
+        },
+        {
+          "id": "music-22",
+          "type": "audio",
+          "start": 18.49,
+          "duration": 5.4,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 18.49,
+          "volume": 0.2,
+          "fadeIn": 0.3,
+          "fadeOut": 0.3,
+          "role": "music"
+        },
+        {
+          "id": "music-24",
+          "type": "audio",
+          "start": 24.34,
+          "duration": 6.46,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 24.34,
+          "volume": 0.2,
+          "fadeIn": 0.3,
+          "fadeOut": 0.3,
+          "role": "music"
+        },
+        {
+          "id": "music-26",
+          "type": "audio",
+          "start": 31.25,
+          "duration": 3.88,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 31.25,
+          "volume": 0.2,
+          "fadeIn": 0.3,
+          "fadeOut": 0.3,
+          "role": "music"
+        },
+        {
+          "id": "music-28",
+          "type": "audio",
+          "start": 35.58,
+          "duration": 2.58,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 35.58,
+          "volume": 0.2,
+          "fadeIn": 0.3,
+          "fadeOut": 0.3,
+          "role": "music"
+        },
+        {
+          "id": "music-30",
+          "type": "audio",
+          "scene": "subtitles",
+          "start": 39.87,
+          "duration": 3.12,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 39.87,
+          "volume": 0.2,
+          "fadeIn": 0.3,
+          "fadeOut": 0.3,
+          "role": "music"
+        },
+        {
+          "id": "music-32",
+          "type": "audio",
+          "start": 43.44,
+          "duration": 5.36,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 43.44,
+          "volume": 0.2,
+          "fadeIn": 0.3,
+          "fadeOut": 0.3,
+          "role": "music"
+        },
+        {
+          "id": "music-34",
+          "type": "audio",
+          "start": 49.25,
+          "duration": 3.54,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 49.25,
+          "volume": 0.2,
+          "fadeIn": 0.3,
+          "fadeOut": 0.3,
+          "role": "music"
+        },
+        {
+          "id": "music-36",
+          "type": "audio",
+          "scene": "endcard",
+          "start": 53.76,
+          "duration": 5.98,
+          "src": "assets/audio/music.mp3",
+          "trimStart": 53.76,
+          "volume": 0.2,
+          "fadeIn": 0.3,
+          "fadeOut": 0.3,
+          "role": "music"
+        }
+      ]
+    },
+    {
+      "id": "sfx",
+      "kind": "audio",
+      "clips": [
+        {
+          "id": "sfx-typing-38",
+          "type": "audio",
+          "scene": "brief",
+          "start": 0.952,
+          "duration": 1.48,
+          "src": "assets/audio/sfx-typing.mp3",
+          "volume": 0.35,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-click-39",
+          "type": "audio",
+          "scene": "brief",
+          "start": 2.877,
+          "duration": 0.48,
+          "src": "assets/audio/sfx-click.mp3",
+          "volume": 0.6,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-pop-40",
+          "type": "audio",
+          "scene": "brief",
+          "start": 3.438,
+          "duration": 0.48,
+          "src": "assets/audio/sfx-pop.mp3",
+          "volume": 0.45,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-click-41",
+          "type": "audio",
+          "scene": "variants",
+          "start": 6.69,
+          "duration": 0.48,
+          "src": "assets/audio/sfx-click.mp3",
+          "volume": 0.6,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-whoosh-42",
+          "type": "audio",
+          "scene": "variants",
+          "start": 7.835,
+          "duration": 1,
+          "src": "assets/audio/sfx-whoosh.mp3",
+          "volume": 0.4,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-typing-43",
+          "type": "audio",
+          "scene": "chat",
+          "start": 9.69,
+          "duration": 1.48,
+          "src": "assets/audio/sfx-typing.mp3",
+          "volume": 0.35,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-click-44",
+          "type": "audio",
+          "scene": "chat",
+          "start": 10.466,
+          "duration": 0.48,
+          "src": "assets/audio/sfx-click.mp3",
+          "volume": 0.6,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-chime-45",
+          "type": "audio",
+          "start": 12.13,
+          "duration": 1.48,
+          "src": "assets/audio/sfx-chime.mp3",
+          "volume": 0.4,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-click-46",
+          "type": "audio",
+          "scene": "edit",
+          "start": 14.667,
+          "duration": 0.48,
+          "src": "assets/audio/sfx-click.mp3",
+          "volume": 0.6,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-click-47",
+          "type": "audio",
+          "scene": "edit",
+          "start": 16.733,
+          "duration": 0.48,
+          "src": "assets/audio/sfx-click.mp3",
+          "volume": 0.6,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-click-48",
+          "type": "audio",
+          "scene": "edit",
+          "start": 17.817,
+          "duration": 0.48,
+          "src": "assets/audio/sfx-click.mp3",
+          "volume": 0.6,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-typing-49",
+          "type": "audio",
+          "scene": "brand",
+          "start": 19.136,
+          "duration": 1.48,
+          "src": "assets/audio/sfx-typing.mp3",
+          "volume": 0.3,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-pop-50",
+          "type": "audio",
+          "scene": "brand",
+          "start": 20.49,
+          "duration": 0.48,
+          "src": "assets/audio/sfx-pop.mp3",
+          "volume": 0.4,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-typing-51",
+          "type": "audio",
+          "scene": "generate",
+          "start": 24.933,
+          "duration": 1.48,
+          "src": "assets/audio/sfx-typing.mp3",
+          "volume": 0.3,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-click-52",
+          "type": "audio",
+          "scene": "generate",
+          "start": 25.871,
+          "duration": 0.48,
+          "src": "assets/audio/sfx-click.mp3",
+          "volume": 0.6,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-pop-53",
+          "type": "audio",
+          "scene": "generate",
+          "start": 25.989,
+          "duration": 0.48,
+          "src": "assets/audio/sfx-pop.mp3",
+          "volume": 0.4,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-click-54",
+          "type": "audio",
+          "scene": "generate",
+          "start": 26.66,
+          "duration": 0.48,
+          "src": "assets/audio/sfx-click.mp3",
+          "volume": 0.6,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-whoosh-55",
+          "type": "audio",
+          "scene": "generate",
+          "start": 27.549,
+          "duration": 1,
+          "src": "assets/audio/sfx-whoosh.mp3",
+          "volume": 0.3,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-pop-56",
+          "type": "audio",
+          "scene": "generate",
+          "start": 28.289,
+          "duration": 0.48,
+          "src": "assets/audio/sfx-pop.mp3",
+          "volume": 0.45,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-click-57",
+          "type": "audio",
+          "scene": "generate",
+          "start": 28.437,
+          "duration": 0.48,
+          "src": "assets/audio/sfx-click.mp3",
+          "volume": 0.6,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-click-58",
+          "type": "audio",
+          "scene": "generate",
+          "start": 29.819,
+          "duration": 0.48,
+          "src": "assets/audio/sfx-click.mp3",
+          "volume": 0.6,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-whoosh-59",
+          "type": "audio",
+          "scene": "formats",
+          "start": 31.508,
+          "duration": 1,
+          "src": "assets/audio/sfx-whoosh.mp3",
+          "volume": 0.4,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-pop-60",
+          "type": "audio",
+          "scene": "formats",
+          "start": 32.174,
+          "duration": 0.48,
+          "src": "assets/audio/sfx-pop.mp3",
+          "volume": 0.35,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-whoosh-61",
+          "type": "audio",
+          "scene": "languages",
+          "start": 36.19,
+          "duration": 1,
+          "src": "assets/audio/sfx-whoosh.mp3",
+          "volume": 0.22,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-whoosh-62",
+          "type": "audio",
+          "scene": "languages",
+          "start": 37.23,
+          "duration": 1,
+          "src": "assets/audio/sfx-whoosh.mp3",
+          "volume": 0.22,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-whoosh-63",
+          "type": "audio",
+          "scene": "languages",
+          "start": 38.27,
+          "duration": 1,
+          "src": "assets/audio/sfx-whoosh.mp3",
+          "volume": 0.22,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-whoosh-64",
+          "type": "audio",
+          "scene": "subtitles",
+          "start": 39.591,
+          "duration": 1,
+          "src": "assets/audio/sfx-whoosh.mp3",
+          "volume": 0.22,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-pop-65",
+          "type": "audio",
+          "scene": "identity",
+          "start": 43.974,
+          "duration": 0.48,
+          "src": "assets/audio/sfx-pop.mp3",
+          "volume": 0.4,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-whoosh-66",
+          "type": "audio",
+          "scene": "identity",
+          "start": 45.245,
+          "duration": 1,
+          "src": "assets/audio/sfx-whoosh.mp3",
+          "volume": 0.35,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-click-67",
+          "type": "audio",
+          "scene": "export",
+          "start": 50.26,
+          "duration": 0.48,
+          "src": "assets/audio/sfx-click.mp3",
+          "volume": 0.6,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-files-68",
+          "type": "audio",
+          "scene": "export",
+          "start": 50.98,
+          "duration": 1.48,
+          "src": "assets/audio/sfx-files.mp3",
+          "volume": 0.45,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-chime-69",
+          "type": "audio",
+          "start": 52.308,
+          "duration": 1.48,
+          "src": "assets/audio/sfx-chime.mp3",
+          "volume": 0.4,
+          "role": "sfx"
+        },
+        {
+          "id": "sfx-chime-70",
+          "type": "audio",
+          "scene": "endcard",
+          "start": 53.705,
+          "duration": 1.48,
+          "src": "assets/audio/sfx-chime.mp3",
+          "volume": 0.35,
+          "role": "sfx"
         }
       ]
     }

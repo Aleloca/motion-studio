@@ -164,7 +164,7 @@
               </div>
             </div>
 
-            <!-- Step 6: the Generate dialog beside C; its paid call confirmed; the picture and the voice on the canvas -->
+            <!-- Step 6: the Generate dialog beside C; its paid call confirmed; the picture, the voice and the music on the canvas -->
             <div class="panel genpanel" data-steps="6" style="--x:560;--y:0;--w:480;--h:270;--px:1080;--py:-330" hidden>
               <p class="panel__head"><span>Generate an asset</span><span class="panel__sub">Assets</span></p>
               <p class="genpanel__kinds"><span class="is-on" data-kind="image">Image</span><span data-kind="voice">Voice-over</span><span>Sound effect</span><span>Music</span></p>
@@ -185,6 +185,11 @@
             <div class="board board--asset" data-board="genvoice" data-steps="6" style="--x:1600;--y:330;--w:270;--h:96;--px:1330;--py:320;--pw:230;--ph:96" hidden>
               <p class="board__label"><span class="board__name">Voice-over · gpt-4o-mini-tts</span></p>
               <div class="board__frame board__frame--audio"><span class="audio-tile__play"><svg class="i" aria-hidden="true"><use href="#i-play"/></svg></span><span class="audio-tile__wave"><img src="compositions/launch-16x9/assets/wave-voice.svg" alt="" width="412" height="90" loading="lazy"></span></div>
+            </div>
+
+            <div class="board board--asset" data-board="genmusic" data-steps="6" style="--x:1600;--y:470;--w:270;--h:96;--px:1330;--py:460;--pw:230;--ph:96" hidden>
+              <p class="board__label"><span class="board__name">Music · music_v1</span></p>
+              <div class="board__frame board__frame--audio"><span class="audio-tile__play"><svg class="i" aria-hidden="true"><use href="#i-play"/></svg></span><span class="audio-tile__wave"><img src="compositions/launch-16x9/assets/wave-music.svg" alt="" width="412" height="90" loading="lazy"></span></div>
             </div>
 
             <!-- Step 7: every format, recomposed -->
@@ -357,18 +362,19 @@
         <div class="step__text">
           <h2 class="step__title"><span class="step__n">06</span> Generate</h2>
           <p class="step__what">Images, voice-overs, music and sound effects from OpenAI and ElevenLabs, on your own keys. Every paid call waits for your OK.</p>
-          <p class="msg msg--you">Make a product shot of black earbuds, and a voice-over for the Generate step.</p>
+          <p class="msg msg--you">Make a product shot of black earbuds, a voice-over for the Generate step and a music bed.</p>
           <div class="msg msg--paid">
             <p class="paid__kind">External service</p>
             <p class="paid__title">Generate an image with gpt-image-2</p>
             <p class="paid__keys">A paid call to your own OpenAI account, with your key.</p>
             <p class="paid__actions"><span class="paid__btn paid__btn--go">Generate</span><span class="paid__btn">Always here</span><span class="paid__btn">Deny</span></p>
           </div>
-          <p class="msg msg--agent">You said yes, so both are made: the picture with gpt-image-2 and the voice-over with gpt-4o-mini-tts, each a paid call you confirmed. They’re in Assets and on the canvas.</p>
+          <p class="msg msg--agent">You said yes, so they’re made: the picture with gpt-image-2, the voice-over with gpt-4o-mini-tts and the music bed with ElevenLabs music_v1, each a paid call you confirmed. They’re in Assets and on the canvas.</p>
         </div>
         <div class="step__result step__result--generate">
           <figure class="shot shot--1x1"><img src="compositions/launch-16x9/assets/generated-earbuds.jpg" alt="The generated picture: matte black wireless earbuds floating over a dark surface, lit cyan from behind." width="900" height="900" loading="lazy"><figcaption>Image · gpt-image-2</figcaption></figure>
           <figure class="shot shot--audio"><img src="compositions/launch-16x9/assets/wave-voice.svg" alt="The generated voice-over’s waveform." width="412" height="90" loading="lazy"><figcaption>Voice-over · gpt-4o-mini-tts</figcaption><audio controls preload="none" src="compositions/launch-16x9/assets/audio/vo-06.mp3"></audio></figure>
+          <figure class="shot shot--audio"><img src="compositions/launch-16x9/assets/wave-music.svg" alt="The generated music bed’s waveform." width="412" height="90" loading="lazy"><figcaption>Music · music_v1</figcaption><audio controls preload="none" src="compositions/launch-16x9/assets/audio/music.mp3"></audio></figure>
         </div>
       </li>
       <li class="step" id="step-formats" data-step="7" data-voice="compositions/launch-16x9/assets/audio/vo-07.mp3">
