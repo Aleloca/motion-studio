@@ -22,9 +22,10 @@ I testi salvati in passato (problemi di validazione di una versione, messaggi de
 
 ## Installazione
 
-**App desktop (Electron).** Scarica l'installer dalla pagina *Releases* di GitHub del progetto, quando sarà pubblicato (macOS: Apple Silicon `arm64` e Intel `x64`). Le build non firmate (quelle senza i certificati dei maintainer) richiedono un passaggio in più la prima volta:
-- macOS: clic destro sull'app, poi **Apri** (e conferma); un doppio clic normale viene bloccato da Gatekeeper.
-- Gli aggiornamenti automatici dell'app (controllo all'avvio, installazione al riavvio) richiedono build **firmate** su macOS; con una build non firmata aggiorna scaricando a mano la nuova versione.
+**App desktop (Electron).** Scarica l'installer dalla pagina [Releases](https://github.com/Aleloca/motion-studio/releases) di GitHub del progetto:
+- macOS: il `.dmg` per Apple Silicon (`arm64`) o Intel (`x64`), firmato e notarizzato; trascina Motion Studio in Applicazioni. Gli aggiornamenti vengono controllati all'avvio e installati al riavvio.
+- Windows: l'installer `.exe`. Non è ancora firmato: la prima volta SmartScreen mostra "Windows ha protetto il PC": clicca **Ulteriori informazioni**, poi **Esegui comunque**.
+- Linux: l'`.AppImage`: rendila eseguibile (`chmod +x Motion*.AppImage`) e avviala.
 
 **Da npm.** `npx @motion-studio/cli` (il comando installato si chiama `motion-studio`), quando sarà pubblicato. Per pubblicarlo serve l'organizzazione npm `motion-studio`. Finché non lo è, usa i sorgenti.
 

@@ -24,9 +24,10 @@ Texts saved in the past (validation problems in a version, conversation messages
 
 ## Installation
 
-**Desktop app (Electron).** Download the installer from the project's GitHub *Releases* page, once it is published (macOS: Apple Silicon `arm64` and Intel `x64`). Unsigned builds (those without the maintainers' certificates) need an extra step the first time:
-- macOS: right-click the app, then **Open** (and confirm); a normal double-click is blocked by Gatekeeper.
-- Automatic app updates (check at launch, install on restart) require **signed** builds on macOS; with an unsigned build, update by downloading the new version by hand.
+**Desktop app (Electron).** Download the installer from the project's GitHub [Releases](https://github.com/Aleloca/motion-studio/releases) page:
+- macOS: the `.dmg` for Apple Silicon (`arm64`) or Intel (`x64`), signed and notarized; drag Motion Studio to Applications. Updates are checked at launch and installed on restart.
+- Windows: the `.exe` installer. It is not signed yet: the first time, SmartScreen shows "Windows protected your PC": click **More info**, then **Run anyway**.
+- Linux: the `.AppImage`: make it executable (`chmod +x Motion*.AppImage`) and run it.
 
 **From npm.** `npx @motion-studio/cli` (the installed command is called `motion-studio`), once it is published. Publishing it requires the `motion-studio` npm organization. Until then, use the sources.
 
