@@ -39,8 +39,9 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Build web UI
-        run: pnpm --filter @motion-studio/web build
+      # The desktop app ships the web UI and the composition runtime (prepare-resources copies both dist folders).
+      - name: Build web UI and composition runtime
+        run: pnpm --filter @motion-studio/composition-runtime build && pnpm --filter @motion-studio/web build
       - name: Decide macOS code signing
         shell: bash
         run: |
