@@ -31,6 +31,9 @@ const bridgeEnv = (() => { try { return JSON.parse(readFileSync(args[mcpAt + 1],
 
 const BRANDS = {
   kova: {
+    // The end card is held 4 s longer (16 s in all), so the middle of the film, where the app takes a board's poster frame,
+    // lands on the finished specs instead of a counter mid-count.
+    hold: 4,
     name: 'KOVA', site: 'https://kova-labs.example', bg: '#06070B', fg: '#EEF2F7', accent: '#7CF5FF', label: 'KOVA LABS',
     headline: 'Silence, engineered.', closing: /^tag-/, lines: ['Hear only what matters.', 'Only what matters. Nothing else.', 'Quiet is the new loud.', 'Made for the quiet hours.'],
     colors: [['signal', 'Signal cyan', '#7CF5FF', 'primary'], ['void', 'Void', '#06070B', 'background'], ['ice', 'Ice', '#EEF2F7', 'text'], ['graphite', 'Graphite', '#232A36', 'secondary'], ['slate', 'Slate', '#8A93A6', 'other']],
@@ -143,6 +146,13 @@ function writeCompositions(block) {
     let c;
     if (src) {
       c = JSON.parse(readFileSync(join(src, 'composition.json'), 'utf8'));
+      if (B.hold) {
+        const end = c.duration;
+        for (const t of c.tracks) for (const clip of t.clips) if (clip.start + clip.duration >= end - 0.01) clip.duration = Math.round((clip.duration + B.hold) * 1000) / 1000;
+        const last = c.scenes.at(-1);
+        if (last) last.duration = Math.round((last.duration + B.hold) * 1000) / 1000;
+        c.duration = end + B.hold;
+      }
       for (const a of readdirSync(join(src, 'assets'), { withFileTypes: true })) {
         if (a.isFile()) writeFileSync(join(dir, 'assets', a.name), rotateHues(readFileSync(join(src, 'assets', a.name), 'utf8'), HUES[variant]));
       }
@@ -266,10 +276,10 @@ rl.once('line', async (line) => {
   } else if (/fill_brief/.test(all)) {
     await bridge('fill_brief', {
       goal: 'A launch film for KOVA Air, our new noise-cancelling earbuds: from the noise of the city to silence.',
-      message: 'Silence, engineered.', durationSec: 12, notes: 'Dark, precise, cyan accents. Show the specs as numbers.',
+      message: 'Silence, engineered.', durationSec: 16, notes: 'Dark, precise, cyan accents. Show the specs as numbers.',
       formats: ['instagram-reel-9x16', 'instagram-post-1x1', 'youtube-16x9'],
     });
-    reply = 'I filled in the goal, the key message, a 12 s length and three formats: Reel 9:16, Post 1:1 and YouTube 16:9. Change anything you like, then press Generate.';
+    reply = 'I filled in the goal, the key message, a 16 s length and three formats: Reel 9:16, Post 1:1 and YouTube 16:9. Change anything you like, then press Generate.';
   }
   say(reply);
   out({

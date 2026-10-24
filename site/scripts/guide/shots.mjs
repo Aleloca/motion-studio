@@ -55,7 +55,7 @@ async function pickClip(app, text) {
 
 const KOVA_BRIEF = {
   goal: 'A launch film for KOVA Air, our new noise-cancelling earbuds: from the noise of the city to silence, then the specs as numbers.',
-  message: 'Silence, engineered.', formats: ['instagram-reel-9x16', 'instagram-post-1x1', 'youtube-16x9'], durationSec: 12,
+  message: 'Silence, engineered.', formats: ['instagram-reel-9x16', 'instagram-post-1x1', 'youtube-16x9'], durationSec: 16,
   assets: ['assets/kova-air-hero.png'], notes: 'Dark, precise, cyan accents. Show the specs as numbers.',
 };
 
@@ -129,7 +129,7 @@ export const SHOTS = [
         return false;
       }, { args: [box], timeout: 30_000 });
       await app.sleep(2000);
-      await app.fill(box, 'A 12 second launch film for KOVA Air, for Instagram and YouTube. Dark and precise.');
+      await app.fill(box, 'A 16 second launch film for KOVA Air, for Instagram and YouTube. Dark and precise.');
       await app.click('Send', { selector: '.ms-nc-panel .ms-composer-send' });
       await app.waitText('press Generate', { timeout: 60_000 });
       await app.sleep(2500);
@@ -187,10 +187,10 @@ export const SHOTS = [
       const c = state.launch;
       await app.go(`#/p/${P}/c/${c}/f/youtube-16x9`, { settle: 6000 });
       // 4.3 s: "Silence, engineered." over the earbuds.
-      await seek(app, 0.36);
+      await seek(app, 0.27);
       await shot('editor');
       // The closing line, at 10.5 s.
-      await seek(app, 0.875);
+      await seek(app, 0.656);
       await pickClip(app, 'Only what matters');
       await shot('editor-inspector');
       await app.fill('textarea[aria-label="Content"]', 'Only what matters. Always.');
@@ -200,13 +200,13 @@ export const SHOTS = [
       await versions(demo, c, 3);
       await app.sleep(3000);
       // The SVG content of the case drawing.
-      await seek(app, 0.8);
+      await seek(app, 0.6);
       await pickClip(app, 'Case');
       await app.js(() => [...document.querySelectorAll('.ms-chat-col *')].find((e) => /^SVG content/.test(e.textContent?.trim() ?? '') && e.children.length < 3)?.scrollIntoView({ block: 'start' }));
       await app.sleep(1200);
       await shot('svg-editor');
       // A comment on a spot of the frame, at 4.3 s.
-      await seek(app, 0.36);
+      await seek(app, 0.27);
       await app.click('Comment a spot');
       await app.mouse('.ms-fv-stage, .ms-ed-stage, [class*=stage]', '', { dx: 0.7, dy: 0.45 });
       await app.sleep(1000);
@@ -268,7 +268,7 @@ export const SHOTS = [
       const d = await demo.api('GET', `${api(P)}/creatives/${c}`);
       await demo.api('PUT', `${api(P)}/creatives/${c}`, { brief: { ...d.creative.brief, locales: { primary: 'en', extra: ['it', 'de', 'ja'] } } });
       await app.go(`#/p/${P}/c/${c}/f/instagram-reel-9x16`, { settle: 5000 });
-      await seek(app, 0.36);
+      await seek(app, 0.27);
       await app.click('Languages', { selector: 'button' });
       await app.sleep(1500);
       await shot('languages');
@@ -299,6 +299,9 @@ export const SHOTS = [
       writeFileSync(demo.approve, 'ask');
       await app.go(`#/p/${P}/c/${c}`, { settle: 4000 });
       await app.click('Chat', { exact: true, within: '.ms-chat-col' });
+      // The boards' own renders finish first, so the cards read Ready, not Rendering…
+      await app.waitFor(() => ![...document.querySelectorAll('.ms-cv-board-state')].some((e) => e.textContent.includes('Rendering')), { timeout: 180_000, what: 'renders done' });
+      await app.sleep(1500);
       await app.fill('textarea[placeholder^="Describe what to change"]', 'Use the approved claims from the press kit.');
       await app.click('Send', { selector: '.ms-chat-col .ms-composer-send' });
       await app.waitText('Always here', { timeout: 60_000 });
@@ -471,7 +474,7 @@ export const SHOTS = [
   {
     name: 'archive',
     async run({ demo, app, shot }) {
-      const brief = { goal: 'A teaser for the KOVA Air pre-orders.', message: 'Pre-order now.', formats: ['instagram-post-1x1'], durationSec: 12, assets: [], notes: '' };
+      const brief = { goal: 'A teaser for the KOVA Air pre-orders.', message: 'Pre-order now.', formats: ['instagram-post-1x1'], durationSec: 16, assets: [], notes: '' };
       const { slug } = await demo.api('POST', `${api(P)}/creatives`, { title: 'Pre-order teaser', brief, generate: true });
       await versions(demo, slug, 1);
       await app.go(`#/p/${P}/c/${slug}`, { settle: 4000 });
@@ -504,7 +507,7 @@ export const SHOTS = [
       await app.go(`#/p/tidefall/c/${state.group}`, { settle: 7000 });
       await shot('dark-variants');
       await app.go(`#/p/${P}/c/${state.launch}/f/youtube-16x9`, { settle: 6000 });
-      await seek(app, 0.6);
+      await seek(app, 0.45);
       await shot('dark-editor');
       await demo.api('PUT', '/api/settings', { theme: 'light' });
       await app.reload();
