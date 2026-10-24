@@ -327,6 +327,9 @@ function buildChat(steps, note) {
       wrap.style.display = 'contents';
       ex.append(wrap);
     }
+    // On a phone the sheet shows what the step does (the boards' panels are too small to read there); the agent's answer
+    // opens with a tap on the sheet.
+    if (s.what) ex.append(h('p', { class: 'ex__what' }, s.what));
     log.append(ex);
     return ex;
   });
@@ -339,6 +342,7 @@ function buildChat(steps, note) {
     h('div', { class: 'chat__row' }, [icon('i-plus'), h('span', {}, 'Services'), h('span', { class: 'chat__send' }, [icon('i-send'), '⌘↵'])]),
   ]);
   el.append(tabs, mark, log, composer, h('p', { class: 'chat__note' }, note));
+  el.addEventListener('click', () => { if (matchMedia('(max-width: 959px)').matches) el.classList.toggle('is-open'); });
 
   let pending = null;
   let lastTyped = null;
@@ -362,7 +366,7 @@ function buildChat(steps, note) {
         if (agent) agent.style.display = 'contents';
       });
       const s = steps[n - 1];
-      mark.textContent = `${String(n).padStart(2, '0')} · ${s.name}`;
+      mark.replaceChildren(`${String(n).padStart(2, '0')} · ${s.name}`, ...(s.agent ? [h('span', { class: 'chat__more' })] : []));
       const ex = exchanges[n - 1];
       const agent = ex.querySelector('.ex__agent');
       if (n === before + 1 && before > 0) {
